@@ -17,17 +17,30 @@
 - [x] BEAM transport supports both local and distributed connections
 - [x] BEAM transport server discovery and registration
 - [x] Comprehensive BEAM transport tests - all 35 tests passing
+- [x] SSE (Server-Sent Events) transport implementation
+- [x] SSE transport tests
 
 ## In Progress
 
 - [ ] Additional transport implementations
   - [ ] WebSocket transport
+  
+### BEAM Transport Enhancements (from mcp_chat Phase 9)
+- [x] Basic BEAM transport implementation completed
+- [ ] Advanced BEAM transport features:
+  - [ ] Support for supervised GenServer-based MCP servers
+  - [ ] Distributed BEAM node connections
+  - [ ] Performance optimizations for local connections
+  - [ ] Zero-copy message passing for large payloads
+  - [ ] Native BEAM clustering support
+  - [ ] Hot code reloading for MCP servers
+  - [ ] Process monitoring and automatic reconnection
 
 ## Todo
 
 ### Core Components
-- [ ] Server Manager for multi-server support
-- [ ] Discovery mechanism for finding available servers
+- [x] Server Manager for multi-server support (implemented)
+- [x] Discovery mechanism for finding available servers (implemented)
 - [ ] Connection pooling for clients
 - [ ] Request/response timeout handling
 - [ ] Batch request support
@@ -55,12 +68,20 @@
 - [ ] Transport implementation guide
 - [ ] Server handler implementation examples
 - [ ] Client usage examples
+- [ ] Server configuration persistence (mentioned in CHANGELOG but not implemented)
 
 ### Utilities
 - [ ] CLI tool for testing MCP servers
 - [ ] Debug mode with protocol tracing
 - [ ] Connection diagnostics
 - [ ] Schema validation for messages
+
+### Testing
+- [ ] Client tests
+- [ ] Server tests
+- [ ] Server Manager tests
+- [ ] Discovery tests
+- [ ] stdio transport tests
 
 ### Advanced Features
 - [ ] Middleware support for clients and servers

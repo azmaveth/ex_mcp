@@ -64,10 +64,11 @@ defmodule ExMCP.MixProject do
       source_ref: "v#{@version}",
       groups_for_modules: [
         "Core Protocol": [ExMCP.Protocol, ExMCP.Types],
-        "Client": [ExMCP.Client, ExMCP.Client.StdioTransport, ExMCP.Client.SSETransport],
-        "Server": [ExMCP.Server, ExMCP.Server.Handler, ExMCP.Server.StdioTransport, ExMCP.Server.SSETransport],
+        "Client": [ExMCP.Client],
+        "Server": [ExMCP.Server, ExMCP.Server.Handler],
+        "Transport": [ExMCP.Transport, ExMCP.Transport.Stdio, ExMCP.Transport.SSE, ExMCP.Transport.BEAM],
         "Management": [ExMCP.ServerManager, ExMCP.Discovery],
-        "Utilities": [ExMCP.Transport, ExMCP.ServerPersistence]
+        "Application": [ExMCP.Application]
       ]
     ]
   end
