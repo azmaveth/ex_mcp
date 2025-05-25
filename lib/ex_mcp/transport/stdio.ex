@@ -139,20 +139,34 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   defp process_data(data, state) do
+    # Handle both binary and :eol tuple format from port
+    binary_data = case data do
+      {:eol, line} -> line <> "\n"
+      binary when is_binary(binary) -> binary
+      _ -> ""
+    end
+    
     # Accumulate data until we have a complete line
-    new_buffer = state.line_buffer <> data
+    new_buffer = state.line_buffer <> binary_data
     
     case String.split(new_buffer, "\n", parts: 2) do
       [line, rest] ->
         # We have a complete line
-        case String.trim(line) do
-          "" ->
+        trimmed = String.trim(line)
+        
+        cond do
+          trimmed == "" ->
             # Empty line, continue
             receive_loop(%{state | line_buffer: rest})
             
-          json_line ->
-            # Return the line and update state
-            {:ok, json_line, %{state | line_buffer: rest}}
+          # Skip non-JSON output like "Secure MCP Filesystem Server..."
+          not String.starts_with?(trimmed, "{") and not String.starts_with?(trimmed, "[") ->
+            Logger.debug("Skipping non-JSON output: #{inspect(trimmed)}")
+            receive_loop(%{state | line_buffer: rest})
+            
+          true ->
+            # Return the JSON line and update state
+            {:ok, trimmed, %{state | line_buffer: rest}}
         end
         
       [partial] ->
