@@ -53,8 +53,32 @@ defmodule ExMCP.Transport.Stdio do
         env -> [{:env, format_env(env)} | port_opts]
       end
     
+    executable = hd(command)
+    
+    # Try to find the executable in common locations if it's not a full path
+    executable_path = 
+      if Path.type(executable) == :absolute do
+        executable
+      else
+        case System.find_executable(executable) do
+          nil ->
+            # Try common locations for node/npm/npx on macOS
+            common_paths = [
+              "/opt/homebrew/bin/#{executable}",
+              "/usr/local/bin/#{executable}",
+              "/usr/bin/#{executable}",
+              "#{System.get_env("HOME")}/.nvm/versions/node/#{System.get_env("NODE_VERSION", "*")}/bin/#{executable}"
+            ]
+            
+            Enum.find(common_paths, executable, &File.exists?/1)
+            
+          path ->
+            path
+        end
+      end
+    
     try do
-      port = Port.open({:spawn_executable, to_charlist(hd(command))}, port_opts)
+      port = Port.open({:spawn_executable, to_charlist(executable_path)}, port_opts)
       
       state = %__MODULE__{
         port: port,
