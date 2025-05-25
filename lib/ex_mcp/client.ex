@@ -214,6 +214,17 @@ defmodule ExMCP.Client do
   def handle_info(:reconnect, state) do
     handle_continue(:connect, state)
   end
+  
+  # Handle port messages that might arrive before ownership transfer
+  def handle_info({port, {:data, _data}}, state) when is_port(port) do
+    # Ignore port messages - they should be handled by the transport
+    {:noreply, state}
+  end
+  
+  def handle_info({port, {:exit_status, _status}}, state) when is_port(port) do
+    # Port exited - treat as transport closed
+    {:noreply, state}
+  end
 
   def handle_info({:transport_message, message}, state) do
     case Protocol.parse_message(message) do

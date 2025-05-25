@@ -108,7 +108,12 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   @impl true
-  def receive_message(%__MODULE__{} = state) do
+  def receive_message(%__MODULE__{port: port} = state) do
+    # Transfer port ownership to this process if needed
+    if Port.info(port, :connected) != {:connected, self()} do
+      Port.connect(port, self())
+    end
+    
     receive_loop(state)
   end
 
