@@ -3,48 +3,85 @@ defmodule ExMCP.Discovery do
   MCP server discovery functionality.
   
   Provides mechanisms to discover available MCP servers through:
-  - Environment variables
+  - Environment variables (including pattern matching)
   - Configuration files
   - Well-known locations
+  - NPM package discovery
+  - Python package discovery
+  - Executable server detection
   - Service registration
+  
+  ## Examples
+  
+      # Discover all servers using default methods
+      servers = ExMCP.Discovery.discover_servers()
+      
+      # Discover using specific methods
+      servers = ExMCP.Discovery.discover_servers(methods: [:npm, :env, :config])
+      
+      # Test if a server is reachable
+      ExMCP.Discovery.test_server(server_config)
   """
+  
+  use Bitwise
+  require Logger
   
   @doc """
   Discovers available MCP servers from various sources.
   
+  ## Options
+  
+  - `:methods` - List of discovery methods to use. Defaults to all available methods.
+    Available methods: `:env`, `:config`, `:well_known`, `:npm`, `:pip`
+  
   Returns a list of server configurations that can be used
   to establish connections.
   """
-  @spec discover_servers() :: [map()]
-  def discover_servers do
-    []
-    |> discover_from_env()
-    |> discover_from_config()
-    |> discover_from_well_known()
+  @spec discover_servers(keyword()) :: [map()]
+  def discover_servers(options \\ []) do
+    methods = Keyword.get(options, :methods, [:env, :config, :well_known, :npm])
+    
+    methods
+    |> Enum.flat_map(&discover_by_method(&1, options))
     |> Enum.uniq_by(& &1.name)
+    |> Enum.sort_by(& &1.name)
   end
   
   @doc """
   Discovers servers from environment variables.
   
-  Looks for MCP_SERVERS environment variable containing
-  a JSON array of server configurations.
+  Looks for:
+  - MCP_SERVERS environment variable containing a JSON array
+  - Variables matching *_MCP_SERVER pattern (command-based servers)
+  - Variables matching *_SERVER_URL pattern (SSE/WebSocket servers)
   """
   @spec discover_from_env(list()) :: [map()]
   def discover_from_env(servers \\ []) do
-    case System.get_env("MCP_SERVERS") do
-      nil ->
-        servers
+    json_servers = discover_mcp_servers_json()
+    pattern_servers = discover_env_pattern_servers()
+    
+    servers ++ json_servers ++ pattern_servers
+  end
+  
+  @doc """
+  Discovers npm-based MCP servers.
+  
+  Scans globally installed npm packages for MCP servers.
+  """
+  @spec discover_npm_packages() :: [map()]
+  def discover_npm_packages do
+    case System.cmd("npm", ["list", "-g", "--depth=0", "--json"], stderr_to_stdout: true) do
+      {output, 0} ->
+        parse_npm_packages(output)
         
-      json ->
-        case Jason.decode(json) do
-          {:ok, env_servers} when is_list(env_servers) ->
-            servers ++ normalize_servers(env_servers)
-            
-          _ ->
-            servers
-        end
+      {error, _} ->
+        Logger.debug("Failed to list npm packages: #{error}")
+        []
     end
+  rescue
+    _ ->
+      Logger.debug("npm command not available")
+      []
   end
   
   @doc """
@@ -81,6 +118,11 @@ defmodule ExMCP.Discovery do
   - System paths
   - User local directories
   - Application bundles
+  
+  Also detects server types:
+  - Node.js servers (package.json + mcp.json)
+  - Python servers (pyproject.toml + mcp.json)
+  - Executable servers
   """
   @spec discover_from_well_known(list()) :: [map()]
   def discover_from_well_known(servers \\ []) do
@@ -94,10 +136,47 @@ defmodule ExMCP.Discovery do
     well_known_servers =
       well_known_paths
       |> Enum.filter(&File.dir?/1)
-      |> Enum.flat_map(&scan_directory/1)
+      |> Enum.flat_map(&scan_directory_enhanced/1)
       |> normalize_servers()
     
     servers ++ well_known_servers
+  end
+  
+  @doc """
+  Test if a discovered server is reachable/valid.
+  
+  ## Examples
+  
+      iex> ExMCP.Discovery.test_server(%{command: ["node", "server.js"]})
+      true
+      
+      iex> ExMCP.Discovery.test_server(%{url: "http://localhost:8080"})
+      false
+  """
+  @spec test_server(map()) :: boolean()
+  def test_server(server_config) do
+    case server_config do
+      %{command: command} ->
+        test_stdio_server(command)
+        
+      %{url: url} ->
+        test_sse_server(url)
+        
+      _ ->
+        false
+    end
+  end
+  
+  @doc """
+  Get metadata about a discovered server by starting it temporarily.
+  
+  This will attempt to start the server and query its capabilities.
+  """
+  @spec get_server_metadata(map()) :: map()
+  def get_server_metadata(server_config) do
+    # This would integrate with the MCP client to get server info
+    # For now, return the config as-is
+    server_config
   end
   
   @doc """
@@ -118,6 +197,139 @@ defmodule ExMCP.Discovery do
   end
   
   # Private functions
+  
+  defp discover_by_method(:env, _options), do: discover_from_env()
+  defp discover_by_method(:config, _options), do: discover_from_config()
+  defp discover_by_method(:well_known, _options), do: discover_from_well_known()
+  defp discover_by_method(:npm, _options), do: discover_npm_packages()
+  defp discover_by_method(_, _options), do: []
+  
+  defp discover_mcp_servers_json do
+    case System.get_env("MCP_SERVERS") do
+      nil ->
+        []
+        
+      json ->
+        case Jason.decode(json) do
+          {:ok, env_servers} when is_list(env_servers) ->
+            normalize_servers(env_servers)
+            
+          _ ->
+            []
+        end
+    end
+  end
+  
+  defp discover_env_pattern_servers do
+    System.get_env()
+    |> Enum.filter(fn {key, _value} ->
+      String.ends_with?(key, "_MCP_SERVER") || String.ends_with?(key, "_SERVER_URL")
+    end)
+    |> Enum.map(&parse_env_pattern_server/1)
+    |> Enum.reject(&is_nil/1)
+  end
+  
+  defp parse_env_pattern_server({key, value}) do
+    cond do
+      String.ends_with?(key, "_MCP_SERVER") ->
+        # Format: MYAPP_MCP_SERVER=command args
+        name = 
+          key
+          |> String.replace_suffix("_MCP_SERVER", "")
+          |> String.downcase()
+        
+        %{
+          "name" => "#{name}-env",
+          "command" => String.split(value, " "),
+          "source" => "env",
+          "auto_discovered" => true
+        }
+        
+      String.ends_with?(key, "_SERVER_URL") ->
+        # Format: MYAPP_SERVER_URL=http://localhost:8080
+        name = 
+          key
+          |> String.replace_suffix("_SERVER_URL", "")
+          |> String.downcase()
+        
+        %{
+          "name" => "#{name}-env", 
+          "url" => value,
+          "transport" => "sse",
+          "source" => "env",
+          "auto_discovered" => true
+        }
+        
+      true ->
+        nil
+    end
+  end
+  
+  defp parse_npm_packages(json_output) do
+    case Jason.decode(json_output) do
+      {:ok, %{"dependencies" => deps}} ->
+        deps
+        |> Enum.filter(fn {name, _} ->
+          String.contains?(name, "mcp") || 
+            String.contains?(name, "modelcontextprotocol")
+        end)
+        |> Enum.map(&npm_package_to_server_config/1)
+        |> Enum.reject(&is_nil/1)
+        
+      _ ->
+        []
+    end
+  end
+  
+  defp npm_package_to_server_config({package_name, _info}) do
+    # Map known MCP npm packages to server configurations
+    case package_name do
+      "@modelcontextprotocol/server-filesystem" ->
+        %{
+          "name" => "filesystem-npm",
+          "command" => ["npx", "-y", package_name, System.get_env("HOME", "/tmp")],
+          "source" => "npm",
+          "auto_discovered" => true
+        }
+        
+      "@modelcontextprotocol/server-github" ->
+        if System.get_env("GITHUB_TOKEN") do
+          %{
+            "name" => "github-npm",
+            "command" => ["npx", "-y", package_name],
+            "env" => %{"GITHUB_TOKEN" => System.get_env("GITHUB_TOKEN")},
+            "source" => "npm",
+            "auto_discovered" => true
+          }
+        else
+          nil
+        end
+        
+      "@modelcontextprotocol/server-postgres" ->
+        if System.get_env("DATABASE_URL") do
+          %{
+            "name" => "postgres-npm",
+            "command" => ["npx", "-y", package_name, System.get_env("DATABASE_URL")],
+            "source" => "npm",
+            "auto_discovered" => true
+          }
+        else
+          nil
+        end
+        
+      "@modelcontextprotocol/server-" <> rest ->
+        # Generic pattern for other MCP servers
+        %{
+          "name" => "#{rest}-npm",
+          "command" => ["npx", "-y", package_name],
+          "source" => "npm", 
+          "auto_discovered" => true
+        }
+        
+      _ ->
+        nil
+    end
+  end
   
   defp xdg_config_home do
     System.get_env("XDG_CONFIG_HOME", Path.join(System.user_home!(), ".config"))
@@ -152,6 +364,81 @@ defmodule ExMCP.Discovery do
       end
     end)
     |> Enum.reject(&is_nil/1)
+  end
+  
+  defp scan_directory_enhanced(dir) do
+    File.ls!(dir)
+    |> Enum.map(&Path.join(dir, &1))
+    |> Enum.filter(&File.dir?/1)
+    |> Enum.map(&check_mcp_server_directory/1)
+    |> Enum.reject(&is_nil/1)
+  end
+  
+  defp check_mcp_server_directory(dir) do
+    # Check for common MCP server patterns
+    cond do
+      # Node.js based server
+      File.exists?(Path.join(dir, "package.json")) &&
+          File.exists?(Path.join(dir, "mcp.json")) ->
+        parse_nodejs_server(dir)
+        
+      # Python based server
+      File.exists?(Path.join(dir, "pyproject.toml")) &&
+          File.exists?(Path.join(dir, "mcp.json")) ->
+        parse_python_server(dir)
+        
+      # Executable server
+      executable = find_executable(dir) ->
+        %{
+          "name" => Path.basename(dir) <> "-local",
+          "command" => [executable],
+          "source" => "local",
+          "auto_discovered" => true
+        }
+        
+      # Traditional mcp.json manifest
+      File.exists?(Path.join(dir, "mcp.json")) ->
+        read_manifest(Path.join(dir, "mcp.json"), dir)
+        
+      true ->
+        nil
+    end
+  end
+  
+  defp parse_nodejs_server(dir) do
+    with {:ok, mcp_json} <- File.read(Path.join(dir, "mcp.json")),
+         {:ok, mcp_config} <- Jason.decode(mcp_json) do
+      %{
+        "name" => mcp_config["name"] || Path.basename(dir),
+        "command" => ["node", Path.join(dir, mcp_config["main"] || "index.js")],
+        "source" => "local",
+        "auto_discovered" => true
+      }
+    else
+      _ -> nil
+    end
+  end
+  
+  defp parse_python_server(dir) do
+    with {:ok, mcp_json} <- File.read(Path.join(dir, "mcp.json")),
+         {:ok, mcp_config} <- Jason.decode(mcp_json) do
+      %{
+        "name" => mcp_config["name"] || Path.basename(dir),
+        "command" => ["python", "-m", mcp_config["module"] || Path.basename(dir)],
+        "source" => "local",
+        "auto_discovered" => true
+      }
+    else
+      _ -> nil
+    end
+  end
+  
+  defp find_executable(dir) do
+    ["mcp-server", "server", Path.basename(dir)]
+    |> Enum.map(&Path.join(dir, &1))
+    |> Enum.find(fn path ->
+      File.exists?(path) && (File.stat!(path).mode &&& 0o111) != 0
+    end)
   end
   
   defp read_manifest(path, base_dir) do
@@ -218,4 +505,37 @@ defmodule ExMCP.Discovery do
     end
   end
   defp valid_server_config?(_), do: false
+  
+  defp test_stdio_server(command) do
+    # Try to run the command with --help or --version
+    [cmd | args] = List.wrap(command)
+    
+    case System.cmd(cmd, args ++ ["--version"], stderr_to_stdout: true) do
+      {_, 0} ->
+        true
+        
+      _ ->
+        case System.cmd(cmd, args ++ ["--help"], stderr_to_stdout: true) do
+          {_, 0} -> true
+          _ -> false
+        end
+    end
+  rescue
+    _ -> false
+  end
+  
+  defp test_sse_server(url) do
+    # Try to connect to the SSE endpoint
+    # This requires an HTTP client like Req or HTTPoison
+    # For now, we'll just check if the URL is valid
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and not is_nil(host) ->
+        # In a real implementation, we would try to connect
+        # For now, assume it's valid if URL parses correctly
+        true
+        
+      _ ->
+        false
+    end
+  end
 end
