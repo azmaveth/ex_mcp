@@ -60,7 +60,7 @@ defmodule ExMCP.MixProject do
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "CHANGELOG.md", "guides/getting_started.md", "guides/building_servers.md", "guides/building_clients.md"],
+      extras: ["README.md", "CHANGELOG.md"],
       source_ref: "v#{@version}",
       groups_for_modules: [
         "Core Protocol": [ExMCP.Protocol, ExMCP.Types],
