@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Server can request client roots with `list_roots/2`
   - Server can request client to sample LLM with `create_message/3`
   - Client automatically advertises capabilities when handler is provided
+- Human-in-the-loop (HITL) interaction support
+  - `ExMCP.Approval` behaviour for implementing approval flows
+  - `ExMCP.Client.DefaultHandler` with built-in approval support
+  - `ExMCP.Approval.Console` for terminal-based approval prompts
+  - Approval required for LLM sampling requests and responses
+  - Support for approving, denying, or modifying requests/responses
+  - Full test coverage with approval and HITL integration tests
 
 ## [0.3.0] - 2025-05-26
 

@@ -33,9 +33,13 @@
   - Client.Handler behaviour for handling server requests
   - Server can make requests with ping/1, list_roots/1, create_message/2
   - Full test coverage with TestClientHandler
-- [ ] Human-in-the-loop interaction support
-  - [ ] Add approval flow for sampling/createMessage
-  - [ ] Add approval flow before returning sampled messages
+- [x] Human-in-the-loop interaction support
+  - [x] Add approval flow for sampling/createMessage
+  - [x] Add approval flow before returning sampled messages
+  - Created ExMCP.Approval behaviour for approval handlers
+  - Created ExMCP.Client.DefaultHandler with approval support
+  - Created ExMCP.Approval.Console for terminal-based approvals
+  - Full test coverage with approval_test.exs and hitl_integration_test.exs
 
 - [ ] Additional transport implementations
   - [ ] WebSocket transport

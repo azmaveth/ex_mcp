@@ -368,7 +368,17 @@ defmodule ExMCP.Client do
         nil ->
           {nil, nil}
 
-        handler_mod ->
+        {handler_mod, handler_args} when is_atom(handler_mod) ->
+          case handler_mod.init(handler_args) do
+            {:ok, initial_state} ->
+              {handler_mod, initial_state}
+
+            other ->
+              Logger.warning("Handler init returned unexpected value: #{inspect(other)}")
+              {nil, nil}
+          end
+
+        handler_mod when is_atom(handler_mod) ->
           handler_args = Keyword.get(opts, :handler_state, %{})
 
           case handler_mod.init(handler_args) do

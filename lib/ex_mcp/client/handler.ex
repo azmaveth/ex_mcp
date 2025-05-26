@@ -115,6 +115,13 @@ defmodule ExMCP.Client.Handler do
   - `content` - The content of the message
   - `model` - The model that was used
 
+  ## Human-in-the-Loop
+
+  This callback MUST implement human-in-the-loop approval. The handler can
+  use the `ExMCP.Approval` behaviour for this, or implement its own approval
+  mechanism. The user must be informed about the sampling request and have
+  the opportunity to approve or deny it.
+
   ## Example
 
       def handle_create_message(params, state) do
