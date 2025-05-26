@@ -209,6 +209,9 @@ defmodule ExMCP.Server do
       {:notification, method, params} ->
         handle_notification(method, params, state)
 
+      {:batch, messages} ->
+        handle_batch(messages, state)
+
       _ ->
         Logger.warning("Invalid message received: #{inspect(message)}")
         {:noreply, state}
@@ -747,21 +750,96 @@ defmodule ExMCP.Server do
     {:noreply, state}
   end
 
-  defp send_message(message, state) do
-    case Protocol.encode_to_string(message) do
-      {:ok, json} ->
-        case state.transport_mod.send_message(json, state.transport_state) do
-          {:ok, new_transport_state} ->
-            {:noreply, %{state | transport_state: new_transport_state}}
+  defp handle_batch(messages, state) do
+    # Process each message in the batch and collect responses
+    {responses, final_state} =
+      Enum.reduce(messages, {[], state}, fn message, {responses_acc, state_acc} ->
+        case message do
+          %{"method" => method, "params" => params, "id" => id} ->
+            # Process request and collect response
+            case handle_request_for_batch(method, params, id, state_acc) do
+              {:response, response_msg, newer_state} ->
+                {[response_msg | responses_acc], newer_state}
 
-          {:error, reason} ->
-            Logger.error("Failed to send message: #{inspect(reason)}")
-            {:noreply, state}
+              {:error, error_msg, newer_state} ->
+                {[error_msg | responses_acc], newer_state}
+            end
+
+          %{"method" => method, "params" => params} ->
+            # Process notification (no response needed)
+            {:noreply, new_state} = handle_notification(method, params, state_acc)
+            {responses_acc, new_state}
+
+          _ ->
+            # Invalid message in batch - add error response
+            error =
+              Protocol.encode_error(
+                Protocol.invalid_request(),
+                "Invalid message in batch",
+                nil,
+                nil
+              )
+
+            {[error | responses_acc], state_acc}
         end
+      end)
 
-      {:error, reason} ->
-        Logger.error("Failed to encode message: #{inspect(reason)}")
-        {:noreply, state}
+    # Send batch response
+    batch_response = Enum.reverse(responses)
+    send_message(batch_response, final_state)
+  end
+
+  # Helper function to handle requests for batch processing
+  defp handle_request_for_batch(method, params, id, state) do
+    # Call the regular handle_request but capture the response
+    # We need to intercept the send_message call
+
+    # Create a temporary state that captures messages instead of sending them
+    capture_state = Map.put(state, :capture_mode, true)
+    capture_state = Map.put(capture_state, :captured_message, nil)
+
+    # Process the request
+    {:noreply, result_state} = handle_request(method, params, id, capture_state)
+
+    # Extract the captured message
+    if captured = Map.get(result_state, :captured_message) do
+      # Remove capture fields and return the response
+      new_state =
+        result_state
+        |> Map.delete(:capture_mode)
+        |> Map.delete(:captured_message)
+
+      {:response, captured, new_state}
+    else
+      # No message was captured, return an error
+      error =
+        Protocol.encode_error(Protocol.internal_error(), "Failed to process request", nil, id)
+
+      {:error, error, state}
+    end
+  end
+
+  defp send_message(message, state) do
+    # Check if we're in capture mode (for batch processing)
+    if Map.get(state, :capture_mode, false) do
+      # Don't actually send, just capture the message
+      {:noreply, Map.put(state, :captured_message, message)}
+    else
+      case Protocol.encode_to_string(message) do
+        {:ok, json} ->
+          case state.transport_mod.send_message(json, state.transport_state) do
+            {:ok, new_transport_state} ->
+              {:noreply, %{state | transport_state: new_transport_state}}
+
+            {:error, reason} ->
+              Logger.error("Failed to send message: #{inspect(reason)}")
+              {:noreply, state}
+          end
+
+        {:error, reason} ->
+          Logger.error("Failed to encode message: #{inspect(reason)}")
+          {:noreply, state}
+      end
     end
   end
 

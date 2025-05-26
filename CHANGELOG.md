@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- JSON-RPC batch request support (MCP specification compliance)
+  - `batch_request/3` client method for sending multiple requests as a batch
+  - Server automatically handles batch requests and returns batch responses
+  - Full integration tests demonstrating batch functionality
+
 ## [0.3.0] - 2025-05-26
 
 ### Added

@@ -291,6 +291,44 @@ defmodule ExMCP.Client do
     GenServer.cast(client, {:log_message, level, message, data})
   end
 
+  @doc """
+  Sends a batch of requests to the server.
+
+  Takes a list of request specifications and returns a list of results
+  in the same order. Each request spec is a tuple of the function name
+  and arguments.
+
+  ## Example
+
+      requests = [
+        {:list_tools, []},
+        {:list_resources, []},
+        {:read_resource, ["file:///data.txt"]}
+      ]
+      
+      {:ok, [tools, resources, content]} = ExMCP.Client.batch_request(client, requests)
+
+  ## Request Specifications
+
+  - `{:list_tools, []}`
+  - `{:call_tool, [name, arguments]}` or `{:call_tool, [name, arguments, progress_token]}`
+  - `{:list_resources, []}`
+  - `{:read_resource, [uri]}`
+  - `{:list_prompts, []}`
+  - `{:get_prompt, [name, arguments]}`
+  - `{:create_message, [messages, options]}`
+  - `{:list_roots, []}`
+  - `{:list_resource_templates, []}`
+  - `{:ping, []}`
+  - `{:complete, [ref, argument]}`
+  """
+  @spec batch_request(GenServer.server(), list({atom(), list()}), timeout() | nil) ::
+          {:ok, list(any())} | {:error, any()}
+  def batch_request(client, requests, timeout \\ nil) do
+    actual_timeout = timeout || @request_timeout * length(requests)
+    GenServer.call(client, {:batch_request, requests}, actual_timeout)
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -402,6 +440,36 @@ defmodule ExMCP.Client do
     send_request(Protocol.encode_complete(ref, argument), from, state)
   end
 
+  def handle_call({:batch_request, requests}, from, state) do
+    # Build batch of encoded requests
+    {batch_messages, request_map} =
+      Enum.reduce(requests, {[], %{}}, fn request_spec, {messages, req_map} ->
+        {message, id} = encode_request_spec(request_spec, state)
+        {[message | messages], Map.put(req_map, id, request_spec)}
+      end)
+
+    batch = Protocol.encode_batch(Enum.reverse(batch_messages))
+
+    # Generate a batch ID to track this batch request
+    batch_id = Protocol.generate_id()
+
+    case Protocol.encode_to_string(batch) do
+      {:ok, json} ->
+        case state.transport_mod.send_message(json, state.transport_state) do
+          {:ok, new_transport_state} ->
+            # Store the batch request
+            pending = Map.put(state.pending_requests, batch_id, {from, :batch, request_map})
+            {:noreply, %{state | transport_state: new_transport_state, pending_requests: pending}}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
   @impl true
   def handle_cast({:send_cancelled, request_id, reason}, state) do
     send_notification(Protocol.encode_cancelled(request_id, reason), state)
@@ -437,6 +505,9 @@ defmodule ExMCP.Client do
 
       {:notification, method, params} ->
         handle_notification(method, params, state)
+
+      {:batch, messages} ->
+        handle_batch_response(messages, state)
 
       _ ->
         Logger.warning("Unexpected message from server: #{inspect(message)}")
@@ -594,6 +665,60 @@ defmodule ExMCP.Client do
     end
   end
 
+  defp handle_batch_response(messages, state) do
+    # Process batch responses
+    parsed_responses = Protocol.parse_batch_response(messages)
+
+    # Group responses by ID
+    {results, state} =
+      Enum.reduce(parsed_responses, {%{}, state}, fn parsed, {results_acc, state_acc} ->
+        case parsed do
+          {:result, result, id} ->
+            {Map.put(results_acc, id, {:ok, result}), state_acc}
+
+          {:error, error, id} ->
+            {Map.put(results_acc, id, {:error, error}), state_acc}
+
+          {:notification, method, params} ->
+            # Handle notifications that come in batch responses
+            {:noreply, new_state} = handle_notification(method, params, state_acc)
+            {results_acc, new_state}
+
+          _ ->
+            {results_acc, state_acc}
+        end
+      end)
+
+    # Find any batch request waiting for these responses
+    {batch_requests, _remaining_pending} =
+      Enum.split_with(state.pending_requests, fn {_id, req} ->
+        match?({_from, :batch, _map}, req)
+      end)
+
+    # Check if we have a complete batch response
+    state =
+      Enum.reduce(batch_requests, state, fn {batch_id, {from, :batch, request_map}}, acc_state ->
+        # Check if all requests in the batch have responses
+        all_responses =
+          Enum.map(request_map, fn {id, _spec} ->
+            Map.get(results, id)
+          end)
+
+        if Enum.all?(all_responses, &(&1 != nil)) do
+          # All responses received, reply to caller
+          GenServer.reply(from, {:ok, all_responses})
+
+          # Remove from pending
+          %{acc_state | pending_requests: Map.delete(acc_state.pending_requests, batch_id)}
+        else
+          # Still waiting for some responses
+          acc_state
+        end
+      end)
+
+    {:noreply, state}
+  end
+
   defp handle_notification(method, params, state) do
     case method do
       "notifications/resources/list_changed" ->
@@ -635,5 +760,79 @@ defmodule ExMCP.Client do
         Logger.debug("Received notification: #{method} #{inspect(params)}")
         {:noreply, state}
     end
+  end
+
+  # Helper functions for batch requests
+
+  defp encode_request_spec({:list_tools, []}, _state) do
+    request = Protocol.encode_list_tools()
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:call_tool, [name, arguments]}, _state) do
+    request = Protocol.encode_call_tool(name, arguments)
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:call_tool, [name, arguments, progress_token]}, _state) do
+    request = Protocol.encode_call_tool(name, arguments, progress_token)
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:list_resources, []}, _state) do
+    request = Protocol.encode_list_resources()
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:read_resource, [uri]}, _state) do
+    request = Protocol.encode_read_resource(uri)
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:list_prompts, []}, _state) do
+    request = Protocol.encode_list_prompts()
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:get_prompt, [name, arguments]}, _state) do
+    request = Protocol.encode_get_prompt(name, arguments)
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:create_message, [params]}, _state) do
+    request = Protocol.encode_create_message(params)
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:list_roots, []}, _state) do
+    request = Protocol.encode_list_roots()
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:list_resource_templates, []}, _state) do
+    # list_resource_templates is not implemented in Protocol yet
+    request = %{
+      "jsonrpc" => "2.0",
+      "method" => "resources/templates/list",
+      "id" => Protocol.generate_id()
+    }
+
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:ping, []}, _state) do
+    # ping is not implemented in Protocol yet
+    request = %{
+      "jsonrpc" => "2.0",
+      "method" => "ping",
+      "id" => Protocol.generate_id()
+    }
+
+    {request, request["id"]}
+  end
+
+  defp encode_request_spec({:complete, [ref, argument]}, _state) do
+    request = Protocol.encode_complete(ref, argument)
+    {request, request["id"]}
   end
 end

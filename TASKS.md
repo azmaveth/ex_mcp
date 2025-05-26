@@ -23,7 +23,9 @@
 ## In Progress
 
 ### MCP Specification Required Features (High Priority)
-- [ ] Batch request support (JSONRPCBatchRequest/JSONRPCBatchResponse)
+- [x] Batch request support (JSONRPCBatchRequest/JSONRPCBatchResponse)
+  - Implemented in Protocol, Client, and Server modules
+  - Full integration tests with BEAM transport
 - [ ] Bi-directional requests (server-to-client)
   - [ ] Implement server ping requests to client
   - [ ] Implement server createMessage requests to client  

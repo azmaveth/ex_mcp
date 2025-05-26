@@ -10,9 +10,6 @@ defmodule ExMCP.Protocol do
 
   All methods in this module are part of the official MCP specification.
 
-  > #### Note on Batch Requests {: .info}
-  > The MCP specification includes batch request support (JSONRPCBatchRequest),
-  > but this is not yet implemented in ExMCP. Single requests work for all use cases.
   """
 
   @protocol_version "2025-03-26"
@@ -237,7 +234,7 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes an error response.
   """
-  @spec encode_error(integer(), String.t(), any(), json_rpc_id()) :: map()
+  @spec encode_error(integer(), String.t(), any(), json_rpc_id() | nil) :: map()
   def encode_error(code, message, data \\ nil, id) do
     error = %{
       "code" => code,
@@ -377,6 +374,36 @@ defmodule ExMCP.Protocol do
     encode_notification("notifications/log", params)
   end
 
+  # Batch Request Support
+
+  @doc """
+  Encodes a batch of requests and/or notifications.
+
+  ## Example
+
+      batch = [
+        ExMCP.Protocol.encode_list_tools(1),
+        ExMCP.Protocol.encode_list_resources(2),
+        ExMCP.Protocol.encode_notification("initialized", %{})
+      ]
+      
+      encoded = ExMCP.Protocol.encode_batch(batch)
+  """
+  @spec encode_batch(list(map())) :: list(map())
+  def encode_batch(messages) when is_list(messages) do
+    messages
+  end
+
+  @doc """
+  Processes a batch of responses.
+
+  Returns a list of parsed messages.
+  """
+  @spec parse_batch_response(list(map())) :: list(tuple())
+  def parse_batch_response(responses) when is_list(responses) do
+    Enum.map(responses, &parse_message/1)
+  end
+
   # Message Parsing
 
   @doc """
@@ -387,19 +414,25 @@ defmodule ExMCP.Protocol do
   - `{:notification, method, params}` - An incoming notification
   - `{:result, result, id}` - A response to our request
   - `{:error, error, id}` - An error response
+  - `{:batch, messages}` - A batch of messages
   - `{:error, :invalid_message}` - Invalid message format
   """
-  @spec parse_message(String.t() | map()) ::
+  @spec parse_message(String.t() | map() | list()) ::
           {:request, method(), params(), json_rpc_id()}
           | {:notification, method(), params()}
           | {:result, result(), json_rpc_id()}
           | {:error, error(), json_rpc_id()}
+          | {:batch, list()}
           | {:error, :invalid_message}
   def parse_message(data) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, decoded} -> parse_message(decoded)
       {:error, _} -> {:error, :invalid_message}
     end
+  end
+
+  def parse_message(messages) when is_list(messages) do
+    {:batch, messages}
   end
 
   def parse_message(%{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => id}) do
@@ -425,7 +458,7 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a message to JSON string.
   """
-  @spec encode_to_string(map()) :: {:ok, String.t()} | {:error, any()}
+  @spec encode_to_string(map() | list(map())) :: {:ok, String.t()} | {:error, any()}
   def encode_to_string(message) do
     Jason.encode(message)
   end
