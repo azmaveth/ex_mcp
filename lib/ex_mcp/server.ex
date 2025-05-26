@@ -6,6 +6,14 @@ defmodule ExMCP.Server do
   the actual functionality to a handler module that implements the
   `ExMCP.Server.Handler` behaviour.
 
+  ## Features
+
+  - Multiple transport support (stdio, SSE, BEAM)
+  - Tool, resource, and prompt management
+  - Progress notifications for long operations
+  - Change notifications for dynamic content
+  - Sampling/LLM integration support
+
   ## Example
 
       defmodule MyHandler do
@@ -14,19 +22,62 @@ defmodule ExMCP.Server do
         @impl true
         def handle_initialize(_params, state) do
           {:ok, %{
-            server_info: %{name: "my-server", version: "1.0.0"},
-            capabilities: %{tools: %{}}
+            name: "my-server", 
+            version: "1.0.0",
+            capabilities: %{
+              tools: %{},
+              resources: %{},
+              prompts: %{},
+              sampling: %{}  # Enable LLM features
+            }
           }, state}
         end
         
-        # ... implement other callbacks ...
+        @impl true
+        def handle_call_tool("process", params, state) do
+          # Use progress notifications for long operations
+          if progress_token = params["_progressToken"] do
+            Task.start(fn ->
+              for i <- 1..100 do
+                ExMCP.Server.notify_progress(self(), progress_token, i, 100)
+                Process.sleep(100)
+              end
+            end)
+          end
+          
+          {:ok, [%{type: "text", text: "Processing..."}], state}
+        end
+        
+        # Implement sampling for LLM integration
+        @impl true
+        def handle_create_message(params, state) do
+          # Your LLM integration here
+          {:ok, %{content: %{type: "text", text: "Response"}}, state}
+        end
       end
       
-      # Start server on stdio
+      # Start server
       {:ok, server} = ExMCP.Server.start_link(
         handler: MyHandler,
-        transport: :stdio
+        transport: :stdio  # or :beam, :sse
       )
+
+  ## Notifications
+
+  The server can send various notifications to connected clients:
+
+      # Notify about resource changes
+      ExMCP.Server.notify_resources_changed(server)
+      ExMCP.Server.notify_resource_updated(server, "file:///path")
+      
+      # Notify about tool changes
+      ExMCP.Server.notify_tools_changed(server)
+      
+      # Notify about prompt changes  
+      ExMCP.Server.notify_prompts_changed(server)
+      
+      # Send progress updates
+      ExMCP.Server.notify_progress(server, "token", 50, 100)
   """
 
   use GenServer
@@ -110,7 +161,7 @@ defmodule ExMCP.Server do
     transport_mod = Transport.get_transport(transport_type)
 
     with {:ok, handler_state} <- handler.init(handler_args),
-         {:ok, transport_state} <- transport_mod.connect(opts) do
+         {:ok, transport_state} <- init_transport(transport_mod, transport_type, opts) do
       state = %__MODULE__{
         handler: handler,
         handler_state: handler_state,
@@ -151,6 +202,19 @@ defmodule ExMCP.Server do
   def handle_info({:transport_closed, reason}, state) do
     Logger.info("Transport closed: #{inspect(reason)}")
     {:stop, :normal, state}
+  end
+
+  def handle_info({:beam_connect, client_mailbox}, state) do
+    # Handle BEAM transport connection
+    if state.transport_mod == ExMCP.Transport.Beam do
+      {:ok, new_transport_state} =
+        ExMCP.Transport.Beam.handle_connection_request(client_mailbox, state.transport_state)
+
+      {:noreply, %{state | transport_state: new_transport_state}}
+    else
+      Logger.warning("Received BEAM connection request but not using BEAM transport")
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -492,4 +556,13 @@ defmodule ExMCP.Server do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
+
+  defp init_transport(transport_mod, transport_type, opts) do
+    # Special handling for BEAM transport on server side
+    if transport_type == :beam do
+      transport_mod.accept(opts)
+    else
+      transport_mod.connect(opts)
+    end
+  end
 end

@@ -7,10 +7,13 @@ defmodule ExMCP.Client do
   - Request/response correlation
   - Protocol message encoding/decoding
   - Concurrent request handling
+  - Progress notifications for long operations
+  - Server-initiated change notifications
+  - Sampling/LLM integration
 
-  ## Example
+  ## Basic Example
 
-      # Connect to a filesystem server
+      # Connect to a server
       {:ok, client} = ExMCP.Client.start_link(
         transport: :stdio,
         command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
@@ -18,12 +21,60 @@ defmodule ExMCP.Client do
       )
       
       # List available tools
-      {:ok, tools} = ExMCP.Client.list_tools(client)
+      {:ok, %{"tools" => tools}} = ExMCP.Client.list_tools(client)
       
       # Call a tool
       {:ok, result} = ExMCP.Client.call_tool(client, "read_file", %{
         "path" => "/tmp/example.txt"
       })
+
+  ## Progress Tracking
+
+  For tools that support progress notifications:
+
+      # Call with progress token
+      {:ok, result} = ExMCP.Client.call_tool(
+        client,
+        "process_large_file",
+        %{"path" => "/tmp/large.csv"},
+        progress_token: "process-123"
+      )
+      
+      # The server will send progress notifications that are logged
+
+  ## Sampling/LLM Integration
+
+  If the server supports sampling (LLM integration):
+
+      {:ok, response} = ExMCP.Client.create_message(client, %{
+        messages: [
+          %{
+            role: "user",
+            content: %{type: "text", text: "Explain quantum computing"}
+          }
+        ],
+        modelPreferences: %{
+          hints: [%{name: "claude-3-sonnet"}],
+          temperature: 0.7,
+          maxTokens: 1000
+        }
+      })
+      
+      # Response includes the generated content
+      IO.puts(response["content"]["text"])
+
+  ## Notifications
+
+  The client automatically handles server notifications:
+
+  - Resource changes (`notifications/resources/list_changed`)
+  - Resource updates (`notifications/resources/updated`)
+  - Tool changes (`notifications/tools/list_changed`) 
+  - Prompt changes (`notifications/prompts/list_changed`)
+  - Progress updates (`notifications/progress`)
+
+  These are logged by default. To handle them programmatically,
+  implement a custom client that processes notifications.
   """
 
   use GenServer

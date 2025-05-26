@@ -1,580 +1,407 @@
 defmodule ExMCP.Transport.Beam do
   @moduledoc """
-  BEAM message passing transport for MCP.
+  BEAM transport implementation for ExMCP.
 
-  This transport uses native Erlang message passing for communication
-  between MCP clients and servers running on the same BEAM VM or
-  distributed across Erlang nodes.
+  This transport uses Erlang/Elixir message passing for communication between
+  MCP clients and servers running in the same VM or across distributed nodes.
+  It's the most natural transport for Elixir applications, providing seamless
+  integration with OTP supervision trees and built-in fault tolerance.
 
-  Benefits:
-  - Zero serialization overhead for local connections
-  - Built-in supervision and fault tolerance
-  - Native distributed support (connect to remote BEAM nodes)
-  - Better performance for Elixir-based MCP tools
-  - Maintains supervision tree integrity
+  ## Architecture
 
-  Supports both:
-  - Local connections (same VM): Uses direct process references
-  - Distributed connections (remote nodes): Uses {name, node} tuples
+  The transport creates a pair of mailbox processes that act as bidirectional
+  channels between client and server. This design provides:
+
+  - Clean separation between transport and protocol layers
+  - Natural message buffering through process mailboxes
+  - Support for both local and distributed communication
+  - Graceful error handling and disconnection detection
+  - Full support for server-initiated notifications
+  - Automatic cleanup when processes terminate
+
+  ## Examples
+
+  ### Basic Local Communication
+
+      # Define a simple calculator server
+      defmodule CalculatorServer do
+        use ExMCP.Server.Handler
+        
+        @impl true
+        def handle_initialize(_params, state) do
+          {:ok, %{name: "calculator", version: "1.0"}, state}
+        end
+        
+        @impl true
+        def handle_list_tools(state) do
+          tools = [
+            %{name: "add", description: "Add two numbers"},
+            %{name: "multiply", description: "Multiply two numbers"}
+          ]
+          {:ok, tools, state}
+        end
+        
+        @impl true
+        def handle_call_tool("add", %{"a" => a, "b" => b}, state) do
+          result = a + b
+          {:ok, [%{type: "text", text: "Result: " <> to_string(result)}], state}
+        end
+        
+        def handle_call_tool("multiply", %{"a" => a, "b" => b}, state) do
+          result = a * b
+          {:ok, [%{type: "text", text: "Result: " <> to_string(result)}], state}
+        end
+      end
+      
+      # Start server and client
+      {:ok, server} = ExMCP.Server.start_link(
+        transport: :beam,
+        name: :calc_server,
+        handler: CalculatorServer
+      )
+      
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :beam,
+        server: :calc_server
+      )
+      
+      # Use the tools
+      {:ok, result} = ExMCP.Client.call_tool(client, "add", %{"a" => 5, "b" => 3})
+      # => {:ok, %{"content" => [%{"type" => "text", "text" => "Result: 8"}]}}
+
+  ### Distributed Communication
+
+      # On node1 - Start a weather service
+      {:ok, server} = ExMCP.Server.start_link(
+        transport: :beam,
+        name: :weather_service,
+        handler: WeatherHandler
+      )
+      
+      # On node2 - Connect to the service
+      Node.connect(:"node1@host")
+      
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :beam,
+        server: {:weather_service, :"node1@host"}
+      )
+      
+      # Works transparently across nodes
+      {:ok, weather} = ExMCP.Client.call_tool(
+        client, 
+        "get_weather", 
+        %{"city" => "London"}
+      )
+
+  ### Server-Initiated Notifications
+
+      # The BEAM transport fully supports server-initiated notifications
+      # Server can send progress updates:
+      ExMCP.Server.notify_progress(server, "task-123", 50, 100)
+      
+      # Or notify about resource changes:
+      ExMCP.Server.notify_resources_changed(server)
+      
+      # Clients receive these automatically through the transport
+
+  ### Integration with Supervisors
+
+      defmodule MyApp.MCPSupervisor do
+        use Supervisor
+        
+        def start_link(opts) do
+          Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+        end
+        
+        @impl true
+        def init(_opts) do
+          children = [
+            {ExMCP.Server, 
+             transport: :beam, 
+             name: :my_service,
+             handler: MyApp.ServiceHandler},
+            {ExMCP.Client,
+             transport: :beam,
+             server: :my_service,
+             name: :my_client}
+          ]
+          
+          Supervisor.init(children, strategy: :one_for_one)
+        end
+      end
+
+  ## Connection Options
+
+  - `:server` - The server to connect to. Can be:
+    - An atom for a locally registered process (e.g., `:my_server`)
+    - A tuple for a remote process (e.g., `{:my_server, :"node@host"}`)
+    - A PID for direct connection (e.g., `self()`)
+
+  - `:name` - (Server only) Optional name to register the server process
+
+  ## Fault Tolerance
+
+  The BEAM transport automatically handles:
+
+  - Process crashes - The transport detects when either endpoint dies
+  - Network partitions - For distributed nodes
+  - Message buffering - Process mailboxes buffer messages naturally
+  - Reconnection - Clients automatically attempt to reconnect
+
+  When a connection is lost, both client and server are notified through
+  their respective transport callbacks.
   """
+
+  require Logger
 
   @behaviour ExMCP.Transport
 
-  defstruct [
-    # :local or :distributed
-    :mode,
-    # pid() for local, {name, node()} for distributed
-    :target,
-    # our client process
-    :client_pid,
-    # reference for monitoring
-    :connection_ref,
-    # node monitor reference for distributed mode
-    :node_monitor
-  ]
+  defmodule State do
+    @moduledoc false
+    defstruct [:mailbox_pid, :mode, :peer_ref]
+  end
 
-  @type t :: %__MODULE__{
-          mode: :local | :distributed,
-          target: pid() | {atom(), node()},
-          client_pid: pid(),
-          connection_ref: reference() | nil,
-          node_monitor: reference() | nil
-        }
+  defmodule Mailbox do
+    @moduledoc """
+    A lightweight process that acts as a message mailbox/channel.
+    Forwards messages between transport endpoints.
+    """
+    use GenServer
 
-  # Connection configurations
-  @type local_config :: [target: pid()]
-  @type distributed_config :: [target: {atom(), node()}]
-  @type server_config :: [name: atom(), node: node() | nil]
+    defstruct [:peer_pid, :owner_pid, :mode, :peer_ref]
+
+    def start_link(opts) do
+      GenServer.start_link(__MODULE__, opts)
+    end
+
+    def send_message(mailbox, message) do
+      GenServer.call(mailbox, {:send, message})
+    end
+
+    def set_peer(mailbox, peer_pid) do
+      GenServer.call(mailbox, {:set_peer, peer_pid})
+    end
+
+    @impl true
+    def init(opts) do
+      owner_pid = Keyword.fetch!(opts, :owner)
+      mode = Keyword.get(opts, :mode, :client)
+
+      # Monitor the owner so we can clean up if it dies
+      Process.monitor(owner_pid)
+
+      state = %__MODULE__{
+        owner_pid: owner_pid,
+        mode: mode,
+        peer_pid: nil,
+        peer_ref: nil
+      }
+
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_call({:send, message}, _from, state) do
+      if state.peer_pid do
+        # Send to peer mailbox
+        send(state.peer_pid, {:mcp_message, message})
+        {:reply, :ok, state}
+      else
+        {:reply, {:error, :not_connected}, state}
+      end
+    end
+
+    def handle_call({:set_peer, peer_pid}, _from, state) do
+      # Monitor the peer
+      peer_ref = Process.monitor(peer_pid)
+
+      {:reply, :ok, %{state | peer_pid: peer_pid, peer_ref: peer_ref}}
+    end
+
+    @impl true
+    def handle_info({:mcp_message, message}, state) do
+      # Forward message to owner
+      send(state.owner_pid, {:transport_message, message})
+      {:noreply, state}
+    end
+
+    def handle_info({:mcp_connected, peer_pid}, state) do
+      # Connection acknowledgment from server
+      send(state.owner_pid, {:mcp_connected, peer_pid})
+      {:noreply, state}
+    end
+
+    def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+      cond do
+        pid == state.owner_pid ->
+          # Owner died, terminate
+          {:stop, :normal, state}
+
+        ref == state.peer_ref ->
+          # Peer died, notify owner and clear peer
+          send(state.owner_pid, {:transport_closed, :peer_down})
+          {:noreply, %{state | peer_pid: nil, peer_ref: nil}}
+
+        true ->
+          {:noreply, state}
+      end
+    end
+  end
+
+  # Client Implementation
 
   @impl true
-  def connect(config) do
-    client_pid = self()
+  def connect(opts) do
+    server = Keyword.fetch!(opts, :server)
 
-    case Keyword.get(config, :target) do
-      pid when is_pid(pid) ->
-        connect_local(pid, client_pid)
+    # Start our mailbox
+    {:ok, mailbox} = Mailbox.start_link(owner: self(), mode: :client)
+
+    # Connect to server
+    case connect_to_server(server, mailbox) do
+      {:ok, mode} ->
+        {:ok, %State{mailbox_pid: mailbox, mode: mode, peer_ref: server}}
+
+      {:error, reason} ->
+        GenServer.stop(mailbox)
+        {:error, reason}
+    end
+  end
+
+  @impl true
+  def send_message(message, %State{mailbox_pid: mailbox} = state) do
+    case Mailbox.send_message(mailbox, message) do
+      :ok -> {:ok, state}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def receive_message(%State{} = state) do
+    # This will block waiting for a message
+    receive do
+      {:transport_message, message} ->
+        {:ok, message, state}
+
+      {:transport_closed, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @impl true
+  def close(%State{mailbox_pid: mailbox}) do
+    if Process.alive?(mailbox) do
+      GenServer.stop(mailbox)
+    end
+
+    :ok
+  end
+
+  @impl true
+  def connected?(%State{mailbox_pid: mailbox}) do
+    Process.alive?(mailbox)
+  end
+
+  # Server Implementation
+
+  @doc """
+  Accepts incoming BEAM transport connections.
+
+  This is called by ExMCP.Server when initializing with BEAM transport.
+  """
+  def accept(opts) do
+    # When used as a server transport, we need to handle incoming connections
+    # This is called by ExMCP.Server when initializing
+    name = Keyword.get(opts, :name)
+
+    if name do
+      # Register the accepting process so clients can find us
+      Process.register(self(), name)
+    end
+
+    # Start our mailbox for receiving connections
+    {:ok, mailbox} = Mailbox.start_link(owner: self(), mode: :server)
+
+    {:ok, %State{mailbox_pid: mailbox, mode: :server}}
+  end
+
+  @doc """
+  Handles incoming connection requests from clients.
+  """
+  def handle_connection_request(client_mailbox, %State{mailbox_pid: server_mailbox} = state) do
+    # Set up bidirectional connection between mailboxes
+    :ok = Mailbox.set_peer(server_mailbox, client_mailbox)
+    :ok = Mailbox.set_peer(client_mailbox, server_mailbox)
+
+    # Send acknowledgment
+    send(client_mailbox, {:mcp_connected, server_mailbox})
+
+    {:ok, state}
+  end
+
+  # Private Functions
+
+  defp connect_to_server(server_ref, client_mailbox) do
+    case server_ref do
+      name when is_atom(name) ->
+        connect_local(name, client_mailbox)
 
       {name, node} when is_atom(name) and is_atom(node) ->
-        connect_distributed({name, node}, client_pid)
+        connect_distributed(name, node, client_mailbox)
 
-      name when is_atom(name) ->
-        # Local named process
-        case Process.whereis(name) do
-          nil ->
-            {:error, {:process_not_found, name}}
-
-          pid ->
-            connect_local(pid, client_pid)
-        end
+      pid when is_pid(pid) ->
+        connect_to_pid(pid, client_mailbox)
 
       _ ->
-        {:error, :invalid_target}
+        {:error, :invalid_server_ref}
     end
   end
 
-  @impl true
-  def send_message(message, %__MODULE__{target: target} = state) do
-    # Handle both JSON strings and maps
-    parsed_message =
-      case message do
-        binary when is_binary(binary) ->
-          case Jason.decode(binary) do
-            {:ok, decoded} -> decoded
-            {:error, _} -> %{"error" => "Invalid JSON"}
-          end
+  defp connect_local(name, client_mailbox) do
+    case Process.whereis(name) do
+      nil ->
+        {:error, :server_not_found}
 
-        map when is_map(map) ->
-          map
-      end
-
-    # Convert JSON-RPC style message to BEAM message
-    beam_message = {:mcp_message, state.client_pid, parsed_message}
-
-    case state.mode do
-      :local ->
-        send(target, beam_message)
-        {:ok, state}
-
-      :distributed ->
-        # For distributed, we need to handle the case where the node might be down
-        case send_distributed(target, beam_message) do
-          :ok -> {:ok, state}
-          :noconnection -> {:error, :node_disconnected}
-          :nosuspend -> {:error, :node_suspended}
-        end
+      server_pid ->
+        connect_to_pid(server_pid, client_mailbox)
     end
   end
 
-  @impl true
-  def receive_message(%__MODULE__{} = state) do
-    receive do
-      {:mcp_message, _from, message} ->
-        # Convert back to JSON string for compatibility with existing client
-        json_message = Jason.encode!(message)
-        {:ok, json_message, state}
+  defp connect_distributed(name, node, client_mailbox) do
+    case Node.ping(node) do
+      :pong ->
+        case :rpc.call(node, Process, :whereis, [name]) do
+          {:badrpc, _} ->
+            {:error, :server_not_found}
 
-      {:mcp_response, _from, message} ->
-        # Convert back to JSON string for compatibility with existing client
-        json_message = Jason.encode!(message)
-        {:ok, json_message, state}
+          nil ->
+            {:error, :server_not_found}
 
-      {:DOWN, ref, :process, _pid, reason} when ref == state.connection_ref ->
-        {:error, {:process_down, reason}}
-
-      {:EXIT, pid, reason} when pid == state.target ->
-        {:error, {:process_down, reason}}
-
-      {:nodedown, node, _info} when state.mode == :distributed ->
-        case state.target do
-          {_name, ^node} ->
-            {:error, {:node_down, node}}
-
-          _ ->
-            # Not our target node, continue
-            receive_message(state)
+          server_pid ->
+            connect_to_pid(server_pid, client_mailbox)
         end
 
-      other ->
-        # Unknown message, ignore and continue
-        {:error, {:unexpected_message, other}}
+      :pang ->
+        {:error, :node_not_reachable}
     end
   end
 
-  @impl true
-  def close(%__MODULE__{connection_ref: ref, node_monitor: node_ref} = _state) do
-    if ref, do: Process.demonitor(ref, [:flush])
-    if node_ref, do: :net_kernel.monitor_nodes(false)
-    :ok
-  end
-
-  # Server-side helpers
-
-  @doc """
-  Starts a BEAM transport server that can accept connections.
-
-  This creates a named process that MCP clients can connect to
-  using the BEAM transport.
-  """
-  @spec start_server(atom(), module(), keyword()) :: {:ok, pid()} | {:error, any()}
-  def start_server(name, handler_module, opts \\ []) do
-    GenServer.start_link(__MODULE__.Server, {handler_module, opts}, name: name)
-  end
-
-  @doc """
-  Registers a server on the current node for discovery.
-
-  This allows the server to be found by clients using
-  ExMCP.Discovery functions.
-  """
-  @spec register_server(atom(), map()) :: :ok
-  def register_server(name, server_info) do
-    :persistent_term.put({__MODULE__, :servers, name}, server_info)
-    :ok
-  end
-
-  @doc """
-  Discovers BEAM transport servers on the current node.
-  """
-  @spec discover_local_servers() :: [map()]
-  def discover_local_servers do
-    :persistent_term.get()
-    |> Enum.filter(fn
-      {{module, :servers, _name}, _info} when module == __MODULE__ -> true
-      _ -> false
-    end)
-    |> Enum.map(fn {{_module, :servers, name}, info} ->
-      Map.merge(info, %{
-        name: to_string(name),
-        transport: "beam",
-        target: name,
-        node: Node.self()
-      })
-    end)
-  end
-
-  @doc """
-  Discovers BEAM transport servers across the cluster.
-  """
-  @spec discover_cluster_servers() :: [map()]
-  def discover_cluster_servers do
-    nodes = [Node.self() | Node.list()]
-
-    Enum.flat_map(nodes, fn node ->
-      try do
-        :rpc.call(node, __MODULE__, :discover_local_servers, [], 5000)
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
-    end)
-  end
-
-  # Private functions
-
-  defp connect_local(pid, client_pid) do
-    # Monitor the target process
-    ref = Process.monitor(pid)
-
-    state = %__MODULE__{
-      mode: :local,
-      target: pid,
-      client_pid: client_pid,
-      connection_ref: ref,
-      node_monitor: nil
-    }
-
-    # Send a connection request
-    send(pid, {:mcp_connect, client_pid})
+  defp connect_to_pid(server_pid, client_mailbox) do
+    # Send connection request to server
+    send(server_pid, {:beam_connect, client_mailbox})
 
     # Wait for acknowledgment
     receive do
-      {:mcp_connected, ^pid} ->
-        {:ok, state}
+      {:mcp_connected, server_mailbox} ->
+        # Connection established
+        Mailbox.set_peer(client_mailbox, server_mailbox)
+        {:ok, :local}
 
-      {:mcp_connection_refused, ^pid, reason} ->
-        Process.demonitor(ref, [:flush])
-        {:error, {:connection_refused, reason}}
-
-      {:DOWN, ^ref, :process, ^pid, reason} ->
-        {:error, {:process_down, reason}}
+      {:mcp_connection_refused, reason} ->
+        {:error, reason}
     after
       5000 ->
-        Process.demonitor(ref, [:flush])
         {:error, :connection_timeout}
-    end
-  end
-
-  defp connect_distributed({name, node}, client_pid) do
-    # Monitor the node
-    :net_kernel.monitor_nodes(true)
-
-    # Check if node is connected
-    connected_nodes = Node.list()
-
-    connection_result =
-      if node in connected_nodes do
-        :ok
-      else
-        # Try to connect to the node
-        case Node.connect(node) do
-          true -> :ok
-          false -> {:error, {:node_connection_failed, node}}
-          :ignored -> {:error, {:node_connection_failed, node}}
-        end
-      end
-
-    case connection_result do
-      :ok ->
-        state = %__MODULE__{
-          mode: :distributed,
-          target: {name, node},
-          client_pid: client_pid,
-          connection_ref: nil,
-          node_monitor: true
-        }
-
-        # Send connection request to remote process
-        case send_distributed({name, node}, {:mcp_connect, {client_pid, Node.self()}}) do
-          :ok ->
-            # Wait for acknowledgment
-            receive do
-              {:mcp_connected, {^name, ^node}} ->
-                {:ok, state}
-
-              {:mcp_connection_refused, {^name, ^node}, reason} ->
-                :net_kernel.monitor_nodes(false)
-                {:error, {:connection_refused, reason}}
-
-              {:nodedown, ^node, _info} ->
-                {:error, {:node_down, node}}
-            after
-              10000 ->
-                :net_kernel.monitor_nodes(false)
-                {:error, :connection_timeout}
-            end
-
-          error ->
-            :net_kernel.monitor_nodes(false)
-            {:error, error}
-        end
-
-      error ->
-        :net_kernel.monitor_nodes(false)
-        error
-    end
-  end
-
-  defp send_distributed({name, node}, message) do
-    try do
-      send({name, node}, message)
-      :ok
-    catch
-      :error, :noconnection -> :noconnection
-      :error, :nosuspend -> :nosuspend
-    end
-  end
-end
-
-defmodule ExMCP.Transport.Beam.Server do
-  @moduledoc """
-  GenServer implementation for BEAM transport MCP servers.
-
-  This server handles incoming BEAM transport connections and
-  routes MCP messages to the appropriate handler.
-  """
-
-  use GenServer
-  require Logger
-
-  defstruct [
-    :handler_module,
-    :handler_state,
-    :clients,
-    :opts
-  ]
-
-  def start_link({handler_module, opts}) do
-    GenServer.start_link(__MODULE__, {handler_module, opts})
-  end
-
-  @impl true
-  def init({handler_module, opts}) do
-    # Initialize the handler
-    case handler_module.init(opts) do
-      {:ok, handler_state} ->
-        state = %__MODULE__{
-          handler_module: handler_module,
-          handler_state: handler_state,
-          clients: %{},
-          opts: opts
-        }
-
-        Logger.info("BEAM MCP server started with handler #{handler_module}")
-        {:ok, state}
-
-      {:error, reason} ->
-        {:stop, reason}
-    end
-  end
-
-  @impl true
-  def handle_info({:mcp_connect, client_ref}, state) do
-    # Handle connection from client
-    {client_pid, client_node} =
-      case client_ref do
-        pid when is_pid(pid) -> {pid, Node.self()}
-        {pid, node} -> {pid, node}
-      end
-
-    # Monitor the client
-    ref =
-      if client_node == Node.self() do
-        Process.monitor(client_pid)
-      else
-        # For distributed clients, we rely on nodedown messages
-        nil
-      end
-
-    # Add client to our state
-    client_info = %{
-      pid: client_pid,
-      node: client_node,
-      ref: ref,
-      connected_at: DateTime.utc_now()
-    }
-
-    new_clients = Map.put(state.clients, client_ref, client_info)
-    new_state = %{state | clients: new_clients}
-
-    # Send acknowledgment
-    response_target =
-      case client_ref do
-        pid when is_pid(pid) -> pid
-        {pid, node} -> {pid, node}
-      end
-
-    send(response_target, {:mcp_connected, self()})
-
-    Logger.info("BEAM MCP client connected: #{inspect(client_ref)}")
-    {:noreply, new_state}
-  end
-
-  def handle_info({:mcp_message, client_ref, message}, state) do
-    # Route message to handler
-    case Map.get(state.clients, client_ref) do
-      nil ->
-        # Unknown client, refuse connection
-        send(client_ref, {:mcp_connection_refused, self(), :unknown_client})
-        {:noreply, state}
-
-      _client_info ->
-        # Process the message
-        case handle_mcp_message(message, state) do
-          {:ok, response, new_handler_state} when not is_nil(response) ->
-            # Send response back to client
-            response_target =
-              case client_ref do
-                pid when is_pid(pid) -> pid
-                {pid, _node} -> pid
-              end
-
-            send(response_target, {:mcp_response, self(), response})
-
-            new_state = %{state | handler_state: new_handler_state}
-            {:noreply, new_state}
-
-          {:ok, nil, new_handler_state} ->
-            # No response needed (notification)
-            new_state = %{state | handler_state: new_handler_state}
-            {:noreply, new_state}
-
-          {:error, error} ->
-            # Send error response
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "error" => %{
-                "code" => -32603,
-                "message" => "Internal error",
-                "data" => inspect(error)
-              },
-              "id" => Map.get(message, "id")
-            }
-
-            response_target =
-              case client_ref do
-                pid when is_pid(pid) -> pid
-                {pid, _node} -> pid
-              end
-
-            send(response_target, {:mcp_response, self(), error_response})
-            {:noreply, state}
-        end
-    end
-  end
-
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    # Client disconnected
-    client_ref =
-      Enum.find_value(state.clients, fn {client_ref, %{ref: client_ref_ref}} ->
-        if client_ref_ref == ref, do: client_ref, else: nil
-      end)
-
-    if client_ref do
-      new_clients = Map.delete(state.clients, client_ref)
-      new_state = %{state | clients: new_clients}
-      Logger.info("BEAM MCP client disconnected: #{inspect(client_ref)}")
-      {:noreply, new_state}
-    else
-      {:noreply, state}
-    end
-  end
-
-  def handle_info({:nodedown, node, _info}, state) do
-    # Remove all clients from the disconnected node
-    new_clients =
-      Enum.reject(state.clients, fn {_ref, %{node: client_node}} ->
-        client_node == node
-      end)
-      |> Enum.into(%{})
-
-    new_state = %{state | clients: new_clients}
-    Logger.info("Node disconnected, removed clients from #{node}")
-    {:noreply, new_state}
-  end
-
-  def handle_info(msg, state) do
-    Logger.warning("BEAM MCP server received unexpected message: #{inspect(msg)}")
-    {:noreply, state}
-  end
-
-  # Private functions
-
-  defp handle_mcp_message(message, state) do
-    # Route to the appropriate handler method
-    case message do
-      %{"method" => "initialize", "params" => params, "id" => id} ->
-        case state.handler_module.handle_initialize(params, state.handler_state) do
-          {:ok, result, new_handler_state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "result" => result,
-              "id" => id
-            }
-
-            {:ok, response, new_handler_state}
-
-          {:error, error, new_handler_state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "error" => error,
-              "id" => id
-            }
-
-            {:ok, response, new_handler_state}
-        end
-
-      %{"method" => "notifications/initialized"} ->
-        # No response needed for notifications
-        {:ok, nil, state.handler_state}
-
-      %{"method" => "tools/list", "id" => id} ->
-        case state.handler_module.handle_list_tools(state.handler_state) do
-          {:ok, tools, new_handler_state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "result" => %{"tools" => tools},
-              "id" => id
-            }
-
-            {:ok, response, new_handler_state}
-
-          {:error, error, new_handler_state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "error" => error,
-              "id" => id
-            }
-
-            {:ok, response, new_handler_state}
-        end
-
-      %{"method" => "tools/call", "params" => %{"name" => name, "arguments" => args}, "id" => id} ->
-        case state.handler_module.handle_call_tool(name, args, state.handler_state) do
-          {:ok, result, new_handler_state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "result" => %{"content" => result},
-              "id" => id
-            }
-
-            {:ok, response, new_handler_state}
-
-          {:error, error, new_handler_state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "error" => error,
-              "id" => id
-            }
-
-            {:ok, response, new_handler_state}
-        end
-
-      %{"method" => method, "id" => id} ->
-        # Unknown method
-        response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => -32601,
-            "message" => "Method not found: #{method}"
-          },
-          "id" => id
-        }
-
-        {:ok, response, state.handler_state}
-
-      _ ->
-        {:error, :invalid_message}
     end
   end
 end

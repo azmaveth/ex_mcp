@@ -130,20 +130,171 @@ Server-Sent Events transport for HTTP streaming:
 
 ### BEAM Transport
 
-Native Erlang/Elixir process communication:
+The BEAM transport enables MCP communication between Elixir/Erlang processes, either locally or across distributed nodes. This is ideal for building Elixir-native tool ecosystems.
+
+#### Basic Usage
 
 ```elixir
-# Local process
-{:ok, client} = ExMCP.Client.start_link(
+# Start a server with a registered name
+{:ok, server} = ExMCP.Server.start_link(
+  handler: MyMCPServer,
   transport: :beam,
-  target: {:local, :my_mcp_server}
+  name: :calculator_server
 )
 
-# Remote node
+# Connect a client to the server
 {:ok, client} = ExMCP.Client.start_link(
   transport: :beam,
-  target: {:remote, :my_mcp_server, :"node@host"}
+  server: :calculator_server
 )
+
+# Use the server's tools
+{:ok, result} = ExMCP.Client.call_tool(client, "add", %{"a" => 5, "b" => 3})
+# => {:ok, %{"result" => 8}}
+```
+
+#### Distributed Usage
+
+```elixir
+# On node1@host1 - Start the server
+{:ok, server} = ExMCP.Server.start_link(
+  handler: WeatherService,
+  transport: :beam,
+  name: :weather_service
+)
+
+# On node2@host2 - Connect from another node
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :beam,
+  server: {:weather_service, :"node1@host1"}
+)
+
+# Works transparently across nodes
+{:ok, weather} = ExMCP.Client.call_tool(client, "get_weather", %{"city" => "London"})
+```
+
+#### Advanced Features
+
+```elixir
+# Server with dynamic tool registration
+defmodule DynamicToolServer do
+  use ExMCP.Server.Handler
+  
+  def init(_args) do
+    {:ok, %{tools: %{}}}
+  end
+  
+  def add_tool(server, name, fun) do
+    GenServer.call(server, {:add_tool, name, fun})
+  end
+  
+  # ... handler implementation
+end
+
+# Client with auto-reconnection (built-in)
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :beam,
+  server: :my_server
+)
+# If server crashes and restarts, client automatically reconnects
+
+# Server-initiated notifications work seamlessly
+ExMCP.Server.notify_progress(server, "task-123", 50, 100)
+# Client receives progress updates via handle_notification callback
+```
+
+## Advanced Features
+
+### Sampling (LLM Integration)
+
+ExMCP supports the sampling/createMessage feature for integrating with language models:
+
+```elixir
+# Define a server that can use an LLM
+defmodule MyAIServer do
+  use ExMCP.Server.Handler
+  
+  @impl true
+  def handle_create_message(params, state) do
+    messages = params["messages"]
+    model_preferences = params["modelPreferences"]
+    
+    # Call your LLM provider here
+    response = call_llm(messages, model_preferences)
+    
+    result = %{
+      content: %{
+        type: "text",
+        text: response
+      },
+      model: "gpt-4",
+      stopReason: "stop"
+    }
+    
+    {:ok, result, state}
+  end
+end
+
+# Client usage
+{:ok, result} = ExMCP.Client.create_message(client, %{
+  messages: [
+    %{role: "user", content: %{type: "text", text: "Hello!"}}
+  ],
+  modelPreferences: %{
+    hints: [%{name: "claude-3-sonnet"}],
+    temperature: 0.7
+  }
+})
+```
+
+### Progress Notifications
+
+Track progress of long-running operations:
+
+```elixir
+# Server implementation
+def handle_call_tool("process_data", params, state) do
+  progress_token = params["_progressToken"]
+  
+  # Send progress updates
+  Task.start(fn ->
+    for i <- 1..100 do
+      ExMCP.Server.notify_progress(self(), progress_token, i, 100)
+      Process.sleep(100)
+    end
+  end)
+  
+  {:ok, [%{type: "text", text: "Processing started"}], state}
+end
+
+# Client usage with progress token
+{:ok, result} = ExMCP.Client.call_tool(
+  client, 
+  "process_data", 
+  %{data: "..."},
+  progress_token: "task-123"
+)
+```
+
+### Change Notifications
+
+Servers can notify clients about changes:
+
+```elixir
+# Notify when resources change
+ExMCP.Server.notify_resources_changed(server)
+
+# Notify when a specific resource is updated
+ExMCP.Server.notify_resource_updated(server, "file:///path/to/resource")
+
+# Notify when tools change
+ExMCP.Server.notify_tools_changed(server)
+
+# Notify when prompts change
+ExMCP.Server.notify_prompts_changed(server)
+
+# Clients automatically receive these notifications
+# You can handle them by implementing a custom client
 ```
 
 ## Server Discovery

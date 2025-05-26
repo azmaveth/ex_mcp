@@ -47,9 +47,9 @@
 - [ ] Progress notification handling
 
 ### MCP Protocol Features (Missing from Spec)
-- [ ] Sampling/createMessage support for LLM interactions
-- [ ] Change notifications (resources/tools/prompts list_changed)
-- [ ] Progress notifications for long-running operations
+- [x] Sampling/createMessage support for LLM interactions
+- [x] Change notifications (resources/tools/prompts list_changed)
+- [x] Progress notifications for long-running operations
 - [ ] Request cancellation support
 - [ ] Logging protocol (logging/setLevel, log notifications)
 - [ ] Roots capability (roots/list, roots/list_changed)
@@ -104,6 +104,39 @@
 - [ ] Message compression
 - [ ] Circuit breaker for failed connections
 - [ ] Graceful shutdown procedures
+
+### Phase 16 Features (from mcp_chat)
+- [ ] Health Monitoring Infrastructure
+  - [ ] Health check protocol extension
+  - [ ] Periodic health polling with configurable intervals
+  - [ ] Server status types (healthy, degraded, unhealthy, unreachable)
+  - [ ] Health metrics collection (latency, success rate, uptime)
+  - [ ] Telemetry integration with :telemetry library
+  - [ ] Health status change notifications
+  - [ ] Automatic degraded mode handling
+- [ ] Advanced Resource Management
+  - [ ] Resource caching layer with TTL
+  - [ ] Cache invalidation strategies
+  - [ ] Resource versioning with ETags
+  - [ ] Resource access pattern tracking
+  - [ ] Batch resource fetching
+  - [ ] Resource compression support
+  - [ ] Distributed cache support (via Registry/PubSub)
+- [ ] Connection Management
+  - [ ] Connection pooling for multiple clients
+  - [ ] Connection health tracking
+  - [ ] Graceful degradation on connection issues
+  - [ ] Request queuing with priorities
+  - [ ] Dead letter queue for failed requests
+  - [ ] Connection metrics and analytics
+- [ ] Tool Execution Enhancements
+  - [ ] Tool execution history tracking
+  - [ ] Tool result caching with invalidation
+  - [ ] Batch tool execution support
+  - [ ] Tool execution analytics
+  - [ ] Tool dependency resolution
+  - [ ] Parallel tool execution where safe
+  - [ ] Tool execution cost tracking
 
 ## Notes
 

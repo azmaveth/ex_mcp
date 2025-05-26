@@ -2,7 +2,10 @@ defmodule ExMCP.Server.Handler do
   @moduledoc """
   Behaviour for implementing MCP server handlers.
 
-  To create an MCP server, implement this behaviour in your module:
+  This behaviour defines callbacks for handling all MCP protocol operations including
+  tools, resources, prompts, and the new sampling/LLM integration features.
+
+  ## Basic Example
 
       defmodule MyServer do
         use ExMCP.Server.Handler
@@ -10,13 +13,13 @@ defmodule ExMCP.Server.Handler do
         @impl true
         def handle_initialize(_params, state) do
           {:ok, %{
-            server_info: %{
-              name: "my-server",
-              version: "1.0.0"
-            },
+            name: "my-server",
+            version: "1.0.0",
             capabilities: %{
               tools: %{},
-              resources: %{list: true, read: true}
+              resources: %{},
+              prompts: %{},
+              sampling: %{}  # Enable LLM features
             }
           }, state}
         end
@@ -25,14 +28,14 @@ defmodule ExMCP.Server.Handler do
         def handle_list_tools(state) do
           tools = [
             %{
-              name: "hello",
-              description: "Says hello",
-              input_schema: %{
+              name: "calculate",
+              description: "Perform calculations",
+              inputSchema: %{
                 type: "object",
                 properties: %{
-                  "name" => %{type: "string"}
+                  expression: %{type: "string"}
                 },
-                required: ["name"]
+                required: ["expression"]
               }
             }
           ]
@@ -40,16 +43,89 @@ defmodule ExMCP.Server.Handler do
         end
         
         @impl true
-        def handle_call_tool("hello", %{"name" => name}, state) do
-          result = [%{type: "text", text: "Hello, \#{name}!"}]
-          {:ok, result, state}
+        def handle_call_tool("calculate", params, state) do
+          # Access progress token if provided
+          progress_token = params["_progressToken"]
+          
+          # Your tool implementation
+          result = eval_expression(params["expression"])
+          
+          # Send progress updates if token provided
+          if progress_token do
+            ExMCP.Server.notify_progress(self(), progress_token, 100, 100)
+          end
+          
+          {:ok, [%{type: "text", text: "Result: \#{result}"}], state}
         end
-        
-        # ... implement other handlers ...
       end
 
-  The `use` macro provides default implementations for all callbacks
-  that return appropriate "not implemented" responses.
+  ## Advanced Features
+
+  ### Sampling/LLM Integration
+
+      @impl true
+      def handle_create_message(params, state) do
+        messages = params["messages"]
+        model_prefs = params["modelPreferences"]
+        
+        # Integrate with your LLM provider
+        response = call_llm_api(messages, model_prefs)
+        
+        result = %{
+          content: %{type: "text", text: response.text},
+          model: response.model,
+          stopReason: "stop"
+        }
+        
+        {:ok, result, state}
+      end
+
+  ### Progress Notifications
+
+  For long-running operations, use progress tokens:
+
+      @impl true
+      def handle_call_tool("process_file", params, state) do
+        progress_token = params["_progressToken"]
+        file_path = params["path"]
+        
+        # Start async processing with progress updates
+        Task.start(fn ->
+          process_with_progress(file_path, progress_token, self())
+        end)
+        
+        {:ok, [%{type: "text", text: "Processing started"}], state}
+      end
+      
+      defp process_with_progress(path, token, server) when token != nil do
+        # Send progress updates
+        ExMCP.Server.notify_progress(server, token, 0, 100)
+        # ... processing ...
+        ExMCP.Server.notify_progress(server, token, 50, 100)
+        # ... more processing ...
+        ExMCP.Server.notify_progress(server, token, 100, 100)
+      end
+
+  ### Dynamic Content Notifications
+
+  Notify clients when your server's content changes:
+
+      def add_new_tool(server, tool_def) do
+        # Add tool to your server state
+        # Then notify clients
+        ExMCP.Server.notify_tools_changed(server)
+      end
+      
+      def update_resource(server, uri) do
+        # Update the resource
+        # Then notify clients
+        ExMCP.Server.notify_resource_updated(server, uri)
+      end
+
+  ## Callback Reference
+
+  The `use` macro provides default implementations for optional callbacks.
+  You only need to implement the callbacks for features your server supports.
   """
 
   @type state :: any()
