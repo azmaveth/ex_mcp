@@ -26,10 +26,13 @@
 - [x] Batch request support (JSONRPCBatchRequest/JSONRPCBatchResponse)
   - Implemented in Protocol, Client, and Server modules
   - Full integration tests with BEAM transport
-- [ ] Bi-directional requests (server-to-client)
-  - [ ] Implement server ping requests to client
-  - [ ] Implement server createMessage requests to client  
-  - [ ] Implement server listRoots requests to client
+- [x] Bi-directional requests (server-to-client)
+  - [x] Implement server ping requests to client
+  - [x] Implement server createMessage requests to client  
+  - [x] Implement server listRoots requests to client
+  - Client.Handler behaviour for handling server requests
+  - Server can make requests with ping/1, list_roots/1, create_message/2
+  - Full test coverage with TestClientHandler
 - [ ] Human-in-the-loop interaction support
   - [ ] Add approval flow for sampling/createMessage
   - [ ] Add approval flow before returning sampled messages

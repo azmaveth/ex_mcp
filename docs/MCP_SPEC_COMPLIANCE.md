@@ -85,13 +85,14 @@ All types defined in the TypeScript schema including:
 - Model preferences
 
 ### 8. Features
-- Batch request support
-- Progress notifications with tokens
-- Resource subscriptions
-- Pagination with cursors
-- Model hints and preferences
-- Human-in-the-loop markers
-- Context inclusion options
+- Batch request support ✓
+- Bi-directional requests ✓
+- Progress notifications with tokens ✓
+- Resource subscriptions ✓
+- Pagination with cursors ✓
+- Model hints and preferences ✓
+- Human-in-the-loop markers ✓
+- Context inclusion options ✓
 
 ## ExMCP Extensions (Not in MCP Spec)
 

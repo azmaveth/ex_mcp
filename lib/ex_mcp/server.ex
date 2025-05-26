@@ -99,7 +99,8 @@ defmodule ExMCP.Server do
     :handler_state,
     :transport_mod,
     :transport_state,
-    :initialized
+    :initialized,
+    :pending_requests
   ]
 
   @doc """
@@ -167,6 +168,53 @@ defmodule ExMCP.Server do
     GenServer.cast(server, {:notify_progress, progress_token, progress, total})
   end
 
+  @doc """
+  @mcp_spec
+
+  Sends a ping request to the client.
+
+  The client must respond promptly or may be disconnected.
+  """
+  @spec ping(GenServer.server(), timeout()) :: {:ok, map()} | {:error, any()}
+  def ping(server, timeout \\ 5000) do
+    GenServer.call(server, :ping, timeout)
+  end
+
+  @doc """
+  @mcp_spec
+
+  Requests the list of roots from the client.
+
+  This is used when the server needs to understand what file system
+  locations the client has access to.
+  """
+  @spec list_roots(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, any()}
+  def list_roots(server, timeout \\ 5000) do
+    GenServer.call(server, :list_roots, timeout)
+  end
+
+  @doc """
+  @mcp_spec
+
+  Requests the client to sample an LLM.
+
+  The client has full discretion over model selection and should
+  inform the user before sampling (human in the loop).
+
+  ## Options
+
+  - `:messages` (required) - List of messages to send to the LLM
+  - `:model_preferences` - Server's model preferences (may be ignored)
+  - `:system_prompt` - System prompt to use (may be modified/omitted)
+  - `:include_context` - Whether to include MCP context ("none", "thisServer", "allServers")
+  - `:temperature` - Sampling temperature
+  - `:max_tokens` - Maximum tokens to sample
+  """
+  @spec create_message(GenServer.server(), map(), timeout()) :: {:ok, map()} | {:error, any()}
+  def create_message(server, params, timeout \\ 30000) do
+    GenServer.call(server, {:create_message, params}, timeout)
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -183,7 +231,8 @@ defmodule ExMCP.Server do
         handler_state: handler_state,
         transport_mod: transport_mod,
         transport_state: transport_state,
-        initialized: false
+        initialized: false,
+        pending_requests: %{}
       }
 
       # Start receiving messages
@@ -205,6 +254,12 @@ defmodule ExMCP.Server do
     case Protocol.parse_message(message) do
       {:request, method, params, id} ->
         handle_request(method, params, id, state)
+
+      {:result, result, id} ->
+        handle_response(result, id, state)
+
+      {:error, error, id} ->
+        handle_error_response(error, id, state)
 
       {:notification, method, params} ->
         handle_notification(method, params, state)
@@ -259,6 +314,19 @@ defmodule ExMCP.Server do
 
   def handle_cast({:notify_progress, progress_token, progress, total}, state) do
     send_notification(Protocol.encode_progress(progress_token, progress, total), state)
+  end
+
+  @impl true
+  def handle_call(:ping, from, state) do
+    send_request(Protocol.encode_ping(), from, state)
+  end
+
+  def handle_call(:list_roots, from, state) do
+    send_request(Protocol.encode_list_roots(), from, state)
+  end
+
+  def handle_call({:create_message, params}, from, state) do
+    send_request(Protocol.encode_create_message(params), from, state)
   end
 
   @impl true
@@ -853,6 +921,60 @@ defmodule ExMCP.Server do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
+
+  defp send_request(message, from, state) do
+    if state.initialized && state.transport_state do
+      id = message["id"]
+
+      case Protocol.encode_to_string(message) do
+        {:ok, json} ->
+          case state.transport_mod.send_message(json, state.transport_state) do
+            {:ok, new_transport_state} ->
+              pending = Map.put(state.pending_requests, id, from)
+
+              new_state = %{
+                state
+                | transport_state: new_transport_state,
+                  pending_requests: pending
+              }
+
+              {:noreply, new_state}
+
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
+    else
+      {:reply, {:error, :not_initialized}, state}
+    end
+  end
+
+  defp handle_response(result, id, state) do
+    case Map.pop(state.pending_requests, id) do
+      {nil, _pending} ->
+        Logger.warning("Received response for unknown request #{id}")
+        {:noreply, state}
+
+      {from, pending} ->
+        GenServer.reply(from, {:ok, result})
+        {:noreply, %{state | pending_requests: pending}}
+    end
+  end
+
+  defp handle_error_response(error, id, state) do
+    case Map.pop(state.pending_requests, id) do
+      {nil, _pending} ->
+        Logger.warning("Received error for unknown request #{id}")
+        {:noreply, state}
+
+      {from, pending} ->
+        GenServer.reply(from, {:error, error})
+        {:noreply, %{state | pending_requests: pending}}
+    end
+  end
 
   defp init_transport(transport_mod, transport_type, opts) do
     # Special handling for BEAM transport on server side

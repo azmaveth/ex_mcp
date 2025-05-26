@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `batch_request/3` client method for sending multiple requests as a batch
   - Server automatically handles batch requests and returns batch responses
   - Full integration tests demonstrating batch functionality
+- Bi-directional communication support (server-to-client requests)
+  - New `ExMCP.Client.Handler` behaviour for handling server requests
+  - Server can ping clients with `ping/2`
+  - Server can request client roots with `list_roots/2`
+  - Server can request client to sample LLM with `create_message/3`
+  - Client automatically advertises capabilities when handler is provided
 
 ## [0.3.0] - 2025-05-26
 

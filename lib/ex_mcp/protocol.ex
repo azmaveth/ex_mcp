@@ -25,17 +25,17 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes an initialize request from client to server.
   """
-  @spec encode_initialize(map()) :: map()
-  def encode_initialize(client_info) do
+  @spec encode_initialize(map(), map() | nil) :: map()
+  def encode_initialize(client_info, capabilities \\ nil) do
+    # Use provided capabilities or defaults
+    caps = capabilities || %{"roots" => %{}, "sampling" => %{}}
+
     %{
       "jsonrpc" => "2.0",
       "method" => "initialize",
       "params" => %{
         "protocolVersion" => @protocol_version,
-        "capabilities" => %{
-          "roots" => %{},
-          "sampling" => %{}
-        },
+        "capabilities" => caps,
         "clientInfo" => client_info
       },
       "id" => generate_id()

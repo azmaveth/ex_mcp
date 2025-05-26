@@ -104,7 +104,9 @@ defmodule ExMCP.Client do
     :server_capabilities,
     :pending_requests,
     :initialized,
-    :client_info
+    :client_info,
+    :handler,
+    :handler_state
   ]
 
   # Public API
@@ -117,8 +119,26 @@ defmodule ExMCP.Client do
   - `:transport` - Transport type (:stdio, :sse, or module)
   - `:name` - GenServer name (optional)
   - `:client_info` - Client information map with :name and :version
+  - `:handler` - Module implementing `ExMCP.Client.Handler` behaviour (optional)
+  - `:handler_state` - Initial state for the handler (optional)
 
   Transport-specific options are passed through.
+
+  ## Bi-directional Communication
+
+  If a handler is provided, the client can respond to requests from the server.
+  This enables bi-directional communication where the server can:
+  - Ping the client
+  - Request the client's file system roots
+  - Request the client to sample an LLM
+
+  ## Example
+
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :stdio,
+        handler: MyClientHandler,
+        handler_state: %{roots: [%{uri: "file:///home", name: "Home"}]}
+      )
   """
   def start_link(opts) do
     {name, opts} = Keyword.pop(opts, :name)
@@ -342,13 +362,34 @@ defmodule ExMCP.Client do
         version: ExMCP.version()
       })
 
+    # Initialize handler if provided
+    {handler, handler_state} =
+      case Keyword.get(opts, :handler) do
+        nil ->
+          {nil, nil}
+
+        handler_mod ->
+          handler_args = Keyword.get(opts, :handler_state, %{})
+
+          case handler_mod.init(handler_args) do
+            {:ok, initial_state} ->
+              {handler_mod, initial_state}
+
+            other ->
+              Logger.warning("Handler init returned unexpected value: #{inspect(other)}")
+              {nil, nil}
+          end
+      end
+
     state = %__MODULE__{
       transport_mod: transport_mod,
       transport_opts: opts,
       transport_state: nil,
       pending_requests: %{},
       initialized: false,
-      client_info: client_info
+      client_info: client_info,
+      handler: handler,
+      handler_state: handler_state
     }
 
     {:ok, state, {:continue, :connect}}
@@ -497,6 +538,10 @@ defmodule ExMCP.Client do
 
   def handle_info({:transport_message, message}, state) do
     case Protocol.parse_message(message) do
+      {:request, method, params, id} ->
+        # Server is making a request to us
+        handle_server_request(method, params, id, state)
+
       {:result, result, id} ->
         handle_response(result, id, state)
 
@@ -540,7 +585,9 @@ defmodule ExMCP.Client do
   end
 
   defp initialize_connection(transport_state, state) do
-    init_msg = Protocol.encode_initialize(state.client_info)
+    # Build capabilities based on handler
+    capabilities = build_client_capabilities(state.handler)
+    init_msg = Protocol.encode_initialize(state.client_info, capabilities)
 
     with {:ok, json} <- Protocol.encode_to_string(init_msg),
          {:ok, _} <- state.transport_mod.send_message(json, transport_state) do
@@ -835,4 +882,136 @@ defmodule ExMCP.Client do
     request = Protocol.encode_complete(ref, argument)
     {request, request["id"]}
   end
+
+  # Helper functions for server requests
+
+  defp build_client_capabilities(nil), do: %{}
+
+  defp build_client_capabilities(_handler) do
+    %{
+      "roots" => %{},
+      "sampling" => %{}
+    }
+  end
+
+  defp handle_server_request(method, params, id, state) do
+    if state.handler do
+      case method do
+        "ping" ->
+          handle_ping_request(id, state)
+
+        "roots/list" ->
+          handle_list_roots_request(id, state)
+
+        "sampling/createMessage" ->
+          handle_create_message_request(params, id, state)
+
+        _ ->
+          # Unknown method
+          error =
+            Protocol.encode_error(
+              Protocol.method_not_found(),
+              "Method not supported: #{method}",
+              nil,
+              id
+            )
+
+          send_message(error, state)
+      end
+    else
+      # No handler configured, reject all requests
+      error =
+        Protocol.encode_error(
+          Protocol.method_not_found(),
+          "Client does not support server requests",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+    end
+  end
+
+  defp handle_ping_request(id, state) do
+    case state.handler.handle_ping(state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = Protocol.encode_response(result, id)
+        send_message(response, %{state | handler_state: new_handler_state})
+
+      {:error, reason, new_handler_state} ->
+        error =
+          Protocol.encode_error(
+            Protocol.internal_error(),
+            format_error(reason),
+            nil,
+            id
+          )
+
+        send_message(error, %{state | handler_state: new_handler_state})
+    end
+  end
+
+  defp handle_list_roots_request(id, state) do
+    case state.handler.handle_list_roots(state.handler_state) do
+      {:ok, roots, new_handler_state} ->
+        response = Protocol.encode_response(%{"roots" => roots}, id)
+        send_message(response, %{state | handler_state: new_handler_state})
+
+      {:error, reason, new_handler_state} ->
+        error =
+          Protocol.encode_error(
+            Protocol.internal_error(),
+            format_error(reason),
+            nil,
+            id
+          )
+
+        send_message(error, %{state | handler_state: new_handler_state})
+    end
+  end
+
+  defp handle_create_message_request(params, id, state) do
+    case state.handler.handle_create_message(params, state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = Protocol.encode_response(result, id)
+        send_message(response, %{state | handler_state: new_handler_state})
+
+      {:error, reason, new_handler_state} ->
+        error =
+          Protocol.encode_error(
+            Protocol.internal_error(),
+            format_error(reason),
+            nil,
+            id
+          )
+
+        send_message(error, %{state | handler_state: new_handler_state})
+    end
+  end
+
+  defp send_message(message, state) do
+    if state.initialized && state.transport_state do
+      case Protocol.encode_to_string(message) do
+        {:ok, json} ->
+          case state.transport_mod.send_message(json, state.transport_state) do
+            {:ok, new_transport_state} ->
+              {:noreply, %{state | transport_state: new_transport_state}}
+
+            {:error, reason} ->
+              Logger.error("Failed to send message: #{inspect(reason)}")
+              {:noreply, state}
+          end
+
+        {:error, reason} ->
+          Logger.error("Failed to encode message: #{inspect(reason)}")
+          {:noreply, state}
+      end
+    else
+      Logger.warning("Cannot send message - not connected")
+      {:noreply, state}
+    end
+  end
+
+  defp format_error(reason) when is_binary(reason), do: reason
+  defp format_error(reason), do: inspect(reason)
 end
