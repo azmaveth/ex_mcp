@@ -1,15 +1,15 @@
 defmodule ExMCP.Transport do
   @moduledoc """
   Behaviour for MCP transport implementations.
-  
+
   A transport is responsible for sending and receiving MCP protocol
   messages over a specific communication channel (stdio, SSE, WebSocket, etc).
-  
+
   ## Implementing a Transport
-  
+
   To implement a custom transport, create a module that implements
   all the callbacks defined in this behaviour:
-  
+
       defmodule MyTransport do
         @behaviour ExMCP.Transport
         
@@ -45,7 +45,7 @@ defmodule ExMCP.Transport do
 
   @doc """
   Establishes a connection for the transport.
-  
+
   Options are transport-specific. Should return `{:ok, state}`
   where state contains any necessary connection information.
   """
@@ -53,7 +53,7 @@ defmodule ExMCP.Transport do
 
   @doc """
   Sends a message through the transport.
-  
+
   The message will be a JSON-encoded string. Should return
   `{:ok, new_state}` on success.
   """
@@ -61,7 +61,7 @@ defmodule ExMCP.Transport do
 
   @doc """
   Receives a message from the transport.
-  
+
   This should block until a message is available. Returns
   `{:ok, message, new_state}` where message is a JSON string.
   """
@@ -69,14 +69,14 @@ defmodule ExMCP.Transport do
 
   @doc """
   Closes the transport connection.
-  
+
   Should clean up any resources and return `:ok`.
   """
   @callback close(state()) :: :ok
 
   @doc """
   Optional callback to check if the transport is still connected.
-  
+
   Default implementation always returns true.
   """
   @callback connected?(state()) :: boolean()

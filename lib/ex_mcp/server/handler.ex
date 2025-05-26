@@ -1,9 +1,9 @@
 defmodule ExMCP.Server.Handler do
   @moduledoc """
   Behaviour for implementing MCP server handlers.
-  
+
   To create an MCP server, implement this behaviour in your module:
-  
+
       defmodule MyServer do
         use ExMCP.Server.Handler
         
@@ -47,7 +47,7 @@ defmodule ExMCP.Server.Handler do
         
         # ... implement other handlers ...
       end
-  
+
   The `use` macro provides default implementations for all callbacks
   that return appropriate "not implemented" responses.
   """
@@ -60,53 +60,53 @@ defmodule ExMCP.Server.Handler do
 
   @doc """
   Handles the initialize request from a client.
-  
+
   Should return server information and capabilities.
   """
-  @callback handle_initialize(params :: map(), state()) :: 
-    {:ok, initialize_result(), state()} | {:error, any(), state()}
+  @callback handle_initialize(params :: map(), state()) ::
+              {:ok, initialize_result(), state()} | {:error, any(), state()}
 
   @doc """
   Handles listing available tools.
   """
-  @callback handle_list_tools(state()) :: 
-    {:ok, [tool()], state()} | {:error, any(), state()}
+  @callback handle_list_tools(state()) ::
+              {:ok, [tool()], state()} | {:error, any(), state()}
 
   @doc """
   Handles a tool call.
   """
   @callback handle_call_tool(name :: String.t(), arguments :: map(), state()) ::
-    {:ok, ExMCP.Types.tool_result(), state()} | {:error, any(), state()}
+              {:ok, ExMCP.Types.tool_result(), state()} | {:error, any(), state()}
 
   @doc """
   Handles listing available resources.
   """
   @callback handle_list_resources(state()) ::
-    {:ok, [resource()], state()} | {:error, any(), state()}
+              {:ok, [resource()], state()} | {:error, any(), state()}
 
   @doc """
   Handles reading a resource.
   """
   @callback handle_read_resource(uri :: String.t(), state()) ::
-    {:ok, ExMCP.Types.resource_content(), state()} | {:error, any(), state()}
+              {:ok, ExMCP.Types.resource_content(), state()} | {:error, any(), state()}
 
   @doc """
   Handles listing available prompts.
   """
   @callback handle_list_prompts(state()) ::
-    {:ok, [prompt()], state()} | {:error, any(), state()}
+              {:ok, [prompt()], state()} | {:error, any(), state()}
 
   @doc """
   Handles getting a prompt.
   """
   @callback handle_get_prompt(name :: String.t(), arguments :: map(), state()) ::
-    {:ok, ExMCP.Types.prompt_message(), state()} | {:error, any(), state()}
+              {:ok, ExMCP.Types.prompt_message(), state()} | {:error, any(), state()}
 
   @doc """
   Handles a completion request.
   """
   @callback handle_complete(ref :: String.t(), params :: map(), state()) ::
-    {:ok, result :: map(), state()} | {:error, any(), state()}
+              {:ok, result :: map(), state()} | {:error, any(), state()}
 
   @doc """
   Called when the handler process is started.
@@ -163,15 +163,13 @@ defmodule ExMCP.Server.Handler do
       @impl true
       def terminate(_reason, _state), do: :ok
 
-      defoverridable [
-        init: 1,
-        handle_list_resources: 1,
-        handle_read_resource: 2,
-        handle_list_prompts: 1,
-        handle_get_prompt: 3,
-        handle_complete: 3,
-        terminate: 2
-      ]
+      defoverridable init: 1,
+                     handle_list_resources: 1,
+                     handle_read_resource: 2,
+                     handle_list_prompts: 1,
+                     handle_get_prompt: 3,
+                     handle_complete: 3,
+                     terminate: 2
     end
   end
 end

@@ -162,6 +162,37 @@ ExMCP can automatically discover MCP servers:
 
 Full documentation is available on [HexDocs](https://hexdocs.pm/ex_mcp).
 
+## Development
+
+### Setup
+
+```bash
+# Install dependencies and set up git hooks
+make setup
+
+# Run all quality checks
+make quality
+
+# Run tests with coverage
+make coverage
+
+# Generate documentation
+make docs
+```
+
+### Code Quality
+
+This project uses several tools to maintain code quality:
+
+- **Formatter** - Elixir's built-in code formatter
+- **Credo** - Static code analysis for consistency and readability
+- **Dialyzer** - Type checking and discrepancy analysis
+- **Sobelow** - Security-focused static analysis
+- **ExCoveralls** - Test coverage reporting
+- **Git Hooks** - Pre-commit and pre-push hooks for quality checks
+
+Run `make help` to see all available commands.
+
 ## Contributing
 
 Contributions are welcome! Please see [TASKS.md](TASKS.md) for the current development status and roadmap.

@@ -1,13 +1,13 @@
 defmodule ExMCP.ProtocolTest do
   use ExUnit.Case
-  
+
   alias ExMCP.Protocol
 
   describe "client request encoding" do
     test "encode_initialize/1" do
       client_info = %{name: "test-client", version: "1.0.0"}
       msg = Protocol.encode_initialize(client_info)
-      
+
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "initialize"
       assert msg["params"]["protocolVersion"] == "2024-11-05"
@@ -17,7 +17,7 @@ defmodule ExMCP.ProtocolTest do
 
     test "encode_initialized/0" do
       msg = Protocol.encode_initialized()
-      
+
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "notifications/initialized"
       assert msg["params"] == %{}
@@ -26,7 +26,7 @@ defmodule ExMCP.ProtocolTest do
 
     test "encode_list_tools/0" do
       msg = Protocol.encode_list_tools()
-      
+
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "tools/list"
       assert msg["params"] == %{}
@@ -35,7 +35,7 @@ defmodule ExMCP.ProtocolTest do
 
     test "encode_call_tool/2" do
       msg = Protocol.encode_call_tool("calculator", %{"expression" => "2 + 2"})
-      
+
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "tools/call"
       assert msg["params"]["name"] == "calculator"
@@ -49,7 +49,7 @@ defmodule ExMCP.ProtocolTest do
       result = %{tools: []}
       id = 123
       msg = Protocol.encode_response(result, id)
-      
+
       assert msg["jsonrpc"] == "2.0"
       assert msg["result"] == result
       assert msg["id"] == id
@@ -57,7 +57,7 @@ defmodule ExMCP.ProtocolTest do
 
     test "encode_error/4" do
       msg = Protocol.encode_error(-32601, "Method not found", nil, 123)
-      
+
       assert msg["jsonrpc"] == "2.0"
       assert msg["error"]["code"] == -32601
       assert msg["error"]["message"] == "Method not found"
@@ -68,13 +68,13 @@ defmodule ExMCP.ProtocolTest do
     test "encode_error/4 with data" do
       data = %{details: "Additional info"}
       msg = Protocol.encode_error(-32602, "Invalid params", data, 123)
-      
+
       assert msg["error"]["data"] == data
     end
 
     test "encode_notification/2" do
       msg = Protocol.encode_notification("test/event", %{foo: "bar"})
-      
+
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "test/event"
       assert msg["params"] == %{foo: "bar"}
@@ -85,26 +85,27 @@ defmodule ExMCP.ProtocolTest do
   describe "message parsing" do
     test "parse_message/1 with request" do
       json = ~s({"jsonrpc":"2.0","method":"tools/list","params":{},"id":1})
-      
+
       assert {:request, "tools/list", %{}, 1} = Protocol.parse_message(json)
     end
 
     test "parse_message/1 with notification" do
       json = ~s({"jsonrpc":"2.0","method":"notifications/initialized","params":{}})
-      
+
       assert {:notification, "notifications/initialized", %{}} = Protocol.parse_message(json)
     end
 
     test "parse_message/1 with result" do
       json = ~s({"jsonrpc":"2.0","result":{"tools":[]},"id":1})
-      
+
       assert {:result, %{"tools" => []}, 1} = Protocol.parse_message(json)
     end
 
     test "parse_message/1 with error" do
       json = ~s({"jsonrpc":"2.0","error":{"code":-32601,"message":"Not found"},"id":1})
-      
-      assert {:error, %{"code" => -32601, "message" => "Not found"}, 1} = Protocol.parse_message(json)
+
+      assert {:error, %{"code" => -32601, "message" => "Not found"}, 1} =
+               Protocol.parse_message(json)
     end
 
     test "parse_message/1 with invalid JSON" do

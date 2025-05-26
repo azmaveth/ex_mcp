@@ -46,6 +46,20 @@
 - [ ] Batch request support
 - [ ] Progress notification handling
 
+### MCP Protocol Features (Missing from Spec)
+- [ ] Sampling/createMessage support for LLM interactions
+- [ ] Change notifications (resources/tools/prompts list_changed)
+- [ ] Progress notifications for long-running operations
+- [ ] Request cancellation support
+- [ ] Logging protocol (logging/setLevel, log notifications)
+- [ ] Roots capability (roots/list, roots/list_changed)
+- [ ] Resource templates with URI patterns
+- [ ] Resource subscriptions for dynamic resources
+- [ ] Bi-directional requests (server-to-client)
+- [ ] Human-in-the-loop interaction support
+- [ ] Context inclusion options for sampling
+- [ ] Model preference hints
+
 ### Features
 - [ ] Tool registration and management
 - [ ] Resource provider implementation

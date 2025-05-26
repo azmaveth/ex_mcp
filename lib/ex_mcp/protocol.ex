@@ -1,7 +1,7 @@
 defmodule ExMCP.Protocol do
   @moduledoc """
   MCP protocol message encoding and decoding.
-  
+
   Implements the Model Context Protocol JSON-RPC message format.
   This module handles the low-level protocol details for both
   client and server implementations.
@@ -171,9 +171,9 @@ defmodule ExMCP.Protocol do
       "code" => code,
       "message" => message
     }
-    
+
     error = if data, do: Map.put(error, "data", data), else: error
-    
+
     %{
       "jsonrpc" => "2.0",
       "error" => error,
@@ -197,7 +197,7 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Parses a JSON-RPC message.
-  
+
   Returns one of:
   - `{:request, method, params, id}` - An incoming request
   - `{:notification, method, params}` - An incoming notification
@@ -205,12 +205,12 @@ defmodule ExMCP.Protocol do
   - `{:error, error, id}` - An error response
   - `{:error, :invalid_message}` - Invalid message format
   """
-  @spec parse_message(String.t() | map()) :: 
-    {:request, method(), params(), json_rpc_id()} |
-    {:notification, method(), params()} |
-    {:result, result(), json_rpc_id()} |
-    {:error, error(), json_rpc_id()} |
-    {:error, :invalid_message}
+  @spec parse_message(String.t() | map()) ::
+          {:request, method(), params(), json_rpc_id()}
+          | {:notification, method(), params()}
+          | {:result, result(), json_rpc_id()}
+          | {:error, error(), json_rpc_id()}
+          | {:error, :invalid_message}
   def parse_message(data) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, decoded} -> parse_message(decoded)

@@ -24,3 +24,24 @@ ex_mcp-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Dialyzer PLT files
+/priv/plts/
+
+# Coverage reports
+/cover/
+/excoveralls.html
+
+# OS files
+.DS_Store
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local

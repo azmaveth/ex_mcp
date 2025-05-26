@@ -6,7 +6,7 @@ defmodule ExMCP.DiscoveryTest do
     test "discovers servers using default methods" do
       servers = ExMCP.Discovery.discover_servers()
       assert is_list(servers)
-      
+
       # Each server should have required fields
       Enum.each(servers, fn server ->
         assert Map.has_key?(server, :name)
@@ -24,7 +24,8 @@ defmodule ExMCP.DiscoveryTest do
     setup do
       # Save original env
       original_env = System.get_env("MCP_SERVERS")
-      on_exit(fn -> 
+
+      on_exit(fn ->
         if original_env do
           System.put_env("MCP_SERVERS", original_env)
         else
@@ -36,7 +37,7 @@ defmodule ExMCP.DiscoveryTest do
     test "discovers servers from MCP_SERVERS JSON" do
       json = ~s([{"name": "test-server", "command": ["node", "server.js"]}])
       System.put_env("MCP_SERVERS", json)
-      
+
       servers = ExMCP.Discovery.discover_from_env()
       assert length(servers) >= 1
       assert Enum.any?(servers, fn s -> s.name == "test-server" end)
@@ -45,12 +46,12 @@ defmodule ExMCP.DiscoveryTest do
     test "discovers servers from pattern-based env vars" do
       System.put_env("MYAPP_MCP_SERVER", "node myapp.js --port 3000")
       System.put_env("API_SERVER_URL", "http://localhost:8080")
-      
+
       servers = ExMCP.Discovery.discover_from_env()
-      
+
       assert Enum.any?(servers, fn s -> s.name == "myapp-env" end)
       assert Enum.any?(servers, fn s -> s.name == "api-env" end)
-      
+
       # Cleanup
       System.delete_env("MYAPP_MCP_SERVER")
       System.delete_env("API_SERVER_URL")
@@ -75,8 +76,9 @@ defmodule ExMCP.DiscoveryTest do
 
     test "validates SSE server URL" do
       result = ExMCP.Discovery.test_server(%{url: "http://localhost:8080"})
-      assert result == true  # Valid URL format
-      
+      # Valid URL format
+      assert result == true
+
       result = ExMCP.Discovery.test_server(%{url: "invalid-url"})
       assert result == false
     end
