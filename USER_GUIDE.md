@@ -10,6 +10,10 @@ A comprehensive guide to using ExMCP, the Elixir implementation of the Model Con
 4. [Core Concepts](#core-concepts)
 5. [Building MCP Servers](#building-mcp-servers)
 6. [Building MCP Clients](#building-mcp-clients)
+   - [Basic Client Usage](#basic-client-usage)
+   - [Batch Requests](#batch-requests)
+   - [Bi-directional Communication](#bi-directional-communication)
+   - [Human-in-the-Loop Approval](#human-in-the-loop-approval)
 7. [Transport Layers](#transport-layers)
 8. [Advanced Features](#advanced-features)
 9. [Best Practices](#best-practices)
@@ -404,6 +408,31 @@ def handle_create_message(params, state) do
 end
 ```
 
+### Server-to-Client Requests
+
+Servers can make requests back to clients:
+
+```elixir
+# Ping the client
+{:ok, _} = ExMCP.Server.ping(server)
+
+# Request client's roots
+{:ok, roots} = ExMCP.Server.list_roots(server)
+
+# Ask client to sample an LLM
+{:ok, response} = ExMCP.Server.create_message(server, %{
+  "messages" => [
+    %{"role" => "user", "content" => "What is the weather?"}
+  ],
+  "modelPreferences" => %{
+    "hints" => ["gpt-4", "claude-3"],
+    "temperature" => 0.7
+  }
+})
+
+# The client must have a handler implemented to respond to these requests
+```
+
 ## Building MCP Clients
 
 ### Connecting to Servers
@@ -537,6 +566,152 @@ end
 )
 
 IO.puts("Assistant: #{response.content.text}")
+```
+
+### Batch Requests
+
+Send multiple requests in a single call for better performance:
+
+```elixir
+# Define multiple requests
+requests = [
+  {:list_tools, []},
+  {:list_resources, []},
+  {:read_resource, ["file:///config.json"]},
+  {:call_tool, ["get_status", %{}]}
+]
+
+# Send as batch
+{:ok, [tools, resources, config, status]} = ExMCP.Client.batch_request(client, requests)
+
+# Process results
+IO.puts("Found #{length(tools)} tools")
+IO.puts("Found #{length(resources)} resources")
+```
+
+### Bi-directional Communication
+
+Enable servers to make requests back to clients:
+
+```elixir
+defmodule MyClientHandler do
+  @behaviour ExMCP.Client.Handler
+  
+  @impl true
+  def init(args) do
+    {:ok, %{model: args[:model] || "gpt-4", roots: args[:roots]}}
+  end
+  
+  @impl true
+  def handle_ping(state) do
+    {:ok, %{}, state}
+  end
+  
+  @impl true
+  def handle_list_roots(state) do
+    {:ok, state.roots, state}
+  end
+  
+  @impl true
+  def handle_create_message(params, state) do
+    # Server is asking client to sample an LLM
+    messages = params["messages"]
+    
+    # Call your LLM integration
+    response = MyLLM.chat(messages, model: state.model)
+    
+    result = %{
+      "role" => "assistant",
+      "content" => %{
+        "type" => "text",
+        "text" => response.content
+      },
+      "model" => state.model
+    }
+    
+    {:ok, result, state}
+  end
+end
+
+# Start client with handler
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: MyClientHandler,
+  handler_state: %{
+    model: "claude-3",
+    roots: [%{uri: "file:///home", name: "Home"}]
+  }
+)
+```
+
+### Human-in-the-Loop Approval
+
+Implement approval flows for sensitive operations:
+
+```elixir
+# Option 1: Use the built-in console approval handler
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: {ExMCP.Client.DefaultHandler, [
+    approval_handler: ExMCP.Approval.Console,
+    roots: [%{uri: "file:///data", name: "Data"}]
+  ]}
+)
+
+# Option 2: Implement a custom approval handler
+defmodule MyApprovalHandler do
+  @behaviour ExMCP.Approval
+  
+  @impl true
+  def request_approval(type, data, opts) do
+    case type do
+      :sampling ->
+        # Show approval UI for LLM sampling
+        if show_sampling_dialog(data) == :approved do
+          {:approved, data}
+        else
+          {:denied, "User cancelled"}
+        end
+        
+      :response ->
+        # Review LLM response before sending
+        reviewed_response = show_response_review(data)
+        if reviewed_response do
+          {:modified, reviewed_response}
+        else
+          {:denied, "Response rejected"}
+        end
+        
+      :tool_call ->
+        # Approve dangerous tool calls
+        tool_name = data["name"]
+        if dangerous_tool?(tool_name) do
+          case show_tool_approval(tool_name, data["arguments"]) do
+            :approve -> {:approved, data}
+            :deny -> {:denied, "Tool call blocked"}
+            {:modify, new_args} -> {:modified, %{data | "arguments" => new_args}}
+          end
+        else
+          {:approved, data}
+        end
+    end
+  end
+  
+  defp dangerous_tool?(name) do
+    name in ["delete_file", "execute_command", "send_email"]
+  end
+end
+
+# Use custom approval handler with default client handler
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: {ExMCP.Client.DefaultHandler, [
+    approval_handler: MyApprovalHandler
+  ]}
+)
 ```
 
 ## Transport Layers

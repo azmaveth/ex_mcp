@@ -32,6 +32,9 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - 🤖 **Sampling** - Direct LLM integration for response generation
 - 🌳 **Roots** - URI-based resource boundaries (new in 2025-03-26)
 - 🔔 **Subscriptions** - Monitor resources for changes (new in 2025-03-26)
+- 📦 **Batch Requests** - Send multiple requests in a single call
+- 🔁 **Bi-directional Communication** - Servers can make requests to clients
+- 👤 **Human-in-the-Loop** - Approval flows for sensitive operations
 
 ### Transport Layers
 - 📝 **stdio** - Process communication via standard I/O
@@ -45,6 +48,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - 🎭 **Change Notifications** - Real-time updates for resources, tools, and prompts
 - 🏗️ **OTP Integration** - Built on solid OTP principles with supervision trees
 - 🔌 **Extensible** - Easy to add custom transports and handlers
+- ✅ **Approval Handlers** - Implement custom approval flows for HITL
 
 ## 🎯 MCP Specification vs ExMCP Extensions
 
@@ -294,6 +298,90 @@ def handle_call_tool("process", %{"_progressToken" => token}, state) do
   end)
   
   {:ok, [%{type: "text", text: "Processing started"}], state}
+end
+```
+
+### Batch Requests
+
+Send multiple requests in a single call:
+
+```elixir
+# Send multiple requests as a batch
+requests = [
+  {:list_tools, []},
+  {:list_resources, []},
+  {:read_resource, ["file:///config.json"]}
+]
+
+{:ok, [tools, resources, config]} = ExMCP.Client.batch_request(client, requests)
+```
+
+### Bi-directional Communication
+
+Enable servers to make requests to clients:
+
+```elixir
+# Define a client handler
+defmodule MyClientHandler do
+  @behaviour ExMCP.Client.Handler
+  
+  @impl true
+  def handle_create_message(params, state) do
+    # Server wants client to sample an LLM
+    result = %{
+      "role" => "assistant",
+      "content" => %{"type" => "text", "text" => "Response from LLM"},
+      "model" => "gpt-4"
+    }
+    {:ok, result, state}
+  end
+  
+  @impl true
+  def handle_list_roots(state) do
+    {:ok, [%{uri: "file:///home", name: "Home"}], state}
+  end
+end
+
+# Start client with handler
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: MyClientHandler
+)
+
+# Server can now make requests to the client
+{:ok, response} = ExMCP.Server.create_message(server, %{
+  "messages" => [%{"role" => "user", "content" => "Hello"}]
+})
+```
+
+### Human-in-the-Loop Approval
+
+Implement approval flows for sensitive operations:
+
+```elixir
+# Use the built-in console approval handler
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: {ExMCP.Client.DefaultHandler, [
+    approval_handler: ExMCP.Approval.Console
+  ]}
+)
+
+# Or implement a custom approval handler
+defmodule MyApprovalHandler do
+  @behaviour ExMCP.Approval
+  
+  @impl true
+  def request_approval(:sampling, params, _opts) do
+    # Show params to user and get approval
+    case prompt_user("Approve LLM sampling?", params) do
+      :yes -> {:approved, params}
+      :no -> {:denied, "User rejected"}
+      {:modify, new_params} -> {:modified, new_params}
+    end
+  end
 end
 ```
 

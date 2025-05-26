@@ -4,10 +4,14 @@
 
 - [`ExMCP`](#exmcp) - Main module and version information
 - [`ExMCP.Client`](#exmcpclient) - MCP client implementation
+- [`ExMCP.Client.Handler`](#exmcpclienthandler) - Client handler behaviour
+- [`ExMCP.Client.DefaultHandler`](#exmcpclientdefaulthandler) - Default client handler
 - [`ExMCP.Server`](#exmcpserver) - MCP server implementation
 - [`ExMCP.Server.Handler`](#exmcpserverhandler) - Server handler behaviour
 - [`ExMCP.Protocol`](#exmcpprotocol) - Protocol encoding/decoding
 - [`ExMCP.Transport`](#exmcptransport) - Transport behaviour
+- [`ExMCP.Approval`](#exmcpapproval) - Human-in-the-loop approval behaviour
+- [`ExMCP.Approval.Console`](#exmcpapprovalconsole) - Console-based approval handler
 - [`ExMCP.ServerManager`](#exmcpservermanager) - Multiple server management
 - [`ExMCP.Discovery`](#exmcpdiscovery) - Server discovery utilities
 - [`ExMCP.Types`](#exmcptypes) - Type definitions
@@ -58,6 +62,8 @@ Starts a new MCP client process.
 
 # Options:
 # - transport: atom() - Transport type (:stdio, :sse, :beam)
+# - handler: module() | {module(), args} - Optional client handler
+# - handler_state: map() - Initial handler state (deprecated, use tuple form)
 # - Transport-specific options (see below)
 # - name: term() - Optional GenServer name
 
@@ -81,6 +87,23 @@ Starts a new MCP client process.
 {:ok, client} = ExMCP.Client.start_link(
   transport: :beam,
   server: :my_server  # or {:global, :name} or {node, :name}
+)
+
+# With client handler for bi-directional communication
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: MyClientHandler
+)
+
+# With handler and initialization args
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: {ExMCP.Client.DefaultHandler, [
+    approval_handler: ExMCP.Approval.Console,
+    roots: [%{uri: "file:///home", name: "Home"}]
+  ]}
 )
 ```
 
@@ -224,6 +247,38 @@ Creates a message using the server's LLM capabilities.
 # => {:ok, %{role: "assistant", content: %{type: "text", text: "Hi!"}}}
 ```
 
+#### `batch_request/3`
+Sends multiple requests as a batch for better performance.
+
+```elixir
+@spec batch_request(GenServer.server(), list({atom(), list()}), timeout() | nil) ::
+  {:ok, list(any())} | {:error, any()}
+
+# Example
+requests = [
+  {:list_tools, []},
+  {:list_resources, []},
+  {:read_resource, ["file:///config.json"]},
+  {:call_tool, ["search", %{query: "elixir"}]}
+]
+
+{:ok, [tools, resources, config, search_results]} = 
+  ExMCP.Client.batch_request(client, requests)
+
+# Supported request types:
+# - {:list_tools, []}
+# - {:call_tool, [name, arguments]} or {:call_tool, [name, arguments, progress_token]}
+# - {:list_resources, []}
+# - {:read_resource, [uri]}
+# - {:list_prompts, []}
+# - {:get_prompt, [name, arguments]}
+# - {:create_message, [messages, options]}
+# - {:list_roots, []}
+# - {:list_resource_templates, []}
+# - {:ping, []}
+# - {:complete, [ref, argument]}
+```
+
 #### `stop/1`
 Stops the client gracefully.
 
@@ -324,6 +379,46 @@ ExMCP.Server.notify_progress(server, "task-123", 50, 100)
 
 # Example without total
 ExMCP.Server.notify_progress(server, "task-123", 1024)
+```
+
+#### `ping/2`
+Pings the client to check connectivity.
+
+```elixir
+@spec ping(GenServer.server(), timeout()) :: {:ok, map()} | {:error, any()}
+
+# Example
+{:ok, _} = ExMCP.Server.ping(server)
+```
+
+#### `list_roots/2`
+Requests the list of roots from the client.
+
+```elixir
+@spec list_roots(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, any()}
+
+# Example
+{:ok, roots} = ExMCP.Server.list_roots(server)
+# => {:ok, [%{uri: "file:///home", name: "Home"}]}
+```
+
+#### `create_message/3`
+Requests the client to sample an LLM.
+
+```elixir
+@spec create_message(GenServer.server(), map(), timeout()) :: {:ok, map()} | {:error, any()}
+
+# Example
+{:ok, response} = ExMCP.Server.create_message(server, %{
+  "messages" => [
+    %{"role" => "user", "content" => "What is MCP?"}
+  ],
+  "modelPreferences" => %{
+    "hints" => ["gpt-4", "claude-3"],
+    "temperature" => 0.7
+  }
+})
+# => {:ok, %{"role" => "assistant", "content" => %{"type" => "text", "text" => "..."}}}
 ```
 
 ---
@@ -865,12 +960,169 @@ Server options:
 
 ---
 
+## ExMCP.Client.Handler
+
+Behaviour for handling server-to-client requests.
+
+### Callbacks
+
+#### `init/1`
+Initialize the handler state.
+
+```elixir
+@callback init(args :: any()) :: {:ok, state :: any()}
+
+# Example
+@impl true
+def init(args) do
+  {:ok, %{roots: args[:roots] || [], model: "gpt-4"}}
+end
+```
+
+#### `handle_ping/1`
+Handle a ping request from the server.
+
+```elixir
+@callback handle_ping(state) :: 
+  {:ok, map(), state} | {:error, error_info, state}
+
+# Example
+@impl true
+def handle_ping(state) do
+  {:ok, %{}, state}
+end
+```
+
+#### `handle_list_roots/1`
+Handle a request for the client's roots.
+
+```elixir
+@callback handle_list_roots(state) :: 
+  {:ok, [map()], state} | {:error, error_info, state}
+
+# Example
+@impl true
+def handle_list_roots(state) do
+  {:ok, state.roots, state}
+end
+```
+
+#### `handle_create_message/2`
+Handle a request to sample an LLM.
+
+```elixir
+@callback handle_create_message(params :: map(), state) ::
+  {:ok, map(), state} | {:error, error_info, state}
+
+# Example
+@impl true
+def handle_create_message(params, state) do
+  messages = params["messages"]
+  response = MyLLM.chat(messages, model: state.model)
+  
+  result = %{
+    "role" => "assistant",
+    "content" => %{"type" => "text", "text" => response},
+    "model" => state.model
+  }
+  
+  {:ok, result, state}
+end
+```
+
+---
+
+## ExMCP.Client.DefaultHandler
+
+Default implementation of ExMCP.Client.Handler with approval support.
+
+### Usage
+
+```elixir
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: {ExMCP.Client.DefaultHandler, [
+    approval_handler: ExMCP.Approval.Console,
+    roots: [%{uri: "file:///home", name: "Home"}],
+    model_selector: fn _params -> "claude-3" end
+  ]}
+)
+```
+
+### Options
+
+- `:approval_handler` - Module implementing ExMCP.Approval behaviour
+- `:roots` - List of root directories to expose
+- `:model_selector` - Function to select which model to use
+
+---
+
+## ExMCP.Approval
+
+Behaviour for implementing human-in-the-loop approval flows.
+
+### Callbacks
+
+#### `request_approval/3`
+Request user approval for an operation.
+
+```elixir
+@callback request_approval(
+  type :: approval_type(), 
+  data :: any(), 
+  opts :: keyword()
+) :: approval_result()
+
+@type approval_type :: :sampling | :response | :tool_call | :resource_access | atom()
+@type approval_result :: {:approved, any()} | {:denied, String.t()} | {:modified, any()}
+
+# Example
+@impl true
+def request_approval(:sampling, params, _opts) do
+  if user_approves?(params) do
+    {:approved, params}
+  else
+    {:denied, "User rejected the request"}
+  end
+end
+```
+
+---
+
+## ExMCP.Approval.Console
+
+Console-based implementation of the approval behaviour.
+
+### Usage
+
+```elixir
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["mcp-server"],
+  handler: {ExMCP.Client.DefaultHandler, [
+    approval_handler: ExMCP.Approval.Console
+  ]}
+)
+```
+
+This handler will:
+- Display approval prompts in the terminal
+- Show details about sampling requests and responses
+- Allow users to approve, deny, or (in future) modify requests
+- Support approval for tool calls and resource access
+
+---
+
 ## Examples
 
 See the [examples](examples/) directory for complete working examples:
 
 - `basic_server.exs` - Simple MCP server
 - `basic_client.exs` - Simple MCP client
+- `batch_requests.exs` - Batch request functionality
+- `bidirectional_communication.exs` - Server-to-client requests
+- `human_in_the_loop.exs` - Approval flows for sensitive operations
 - `beam_transport/` - BEAM transport examples
 - `roots_example.exs` - Roots capability example
 - `resource_subscription_example.exs` - Subscription example
