@@ -1,9 +1,14 @@
 defmodule ExMCP.Server.Handler do
   @moduledoc """
+  @mcp_spec
+
   Behaviour for implementing MCP server handlers.
 
   This behaviour defines callbacks for handling all MCP protocol operations including
   tools, resources, prompts, and the new sampling/LLM integration features.
+
+  The handler behaviour pattern is an implementation detail but all callbacks
+  correspond to official MCP protocol methods.
 
   ## Basic Example
 

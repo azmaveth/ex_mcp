@@ -1,11 +1,17 @@
 defmodule ExMCP.Transport.Beam do
   @moduledoc """
+  @exmcp_extension
+
   BEAM transport implementation for ExMCP.
 
   This transport uses Erlang/Elixir message passing for communication between
   MCP clients and servers running in the same VM or across distributed nodes.
   It's the most natural transport for Elixir applications, providing seamless
   integration with OTP supervision trees and built-in fault tolerance.
+
+  > #### Extension Module {: .info}
+  > This transport is an ExMCP extension and is not part of the official MCP specification.
+  > Use stdio or SSE transport for cross-implementation compatibility.
 
   ## Architecture
 

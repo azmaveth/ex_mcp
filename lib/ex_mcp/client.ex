@@ -1,15 +1,25 @@
 defmodule ExMCP.Client do
   @moduledoc """
+  @mcp_spec with @exmcp_extension features
+
   MCP client for connecting to Model Context Protocol servers.
 
-  The client handles:
-  - Connection management with automatic reconnection
-  - Request/response correlation
+  ## MCP Specification Features
+
+  Core protocol operations (all `@mcp_spec`):
+  - Request/response correlation  
   - Protocol message encoding/decoding
-  - Concurrent request handling
   - Progress notifications for long operations
   - Server-initiated change notifications
   - Sampling/LLM integration
+
+  ## ExMCP Extensions
+
+  Enhanced features (all `@exmcp_extension`):
+  - Connection management with automatic reconnection
+  - Concurrent request handling with request multiplexing
+  - Built-in exponential backoff for failed connections
+  - Process monitoring and supervision tree integration
 
   ## Basic Example
 

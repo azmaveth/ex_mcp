@@ -1,5 +1,7 @@
 defmodule ExMCP.ServerManager do
   @moduledoc """
+  @exmcp_extension
+
   Manages multiple MCP server connections.
 
   The ServerManager provides a centralized way to:
@@ -7,6 +9,10 @@ defmodule ExMCP.ServerManager do
   - Route requests to appropriate servers
   - Monitor server health
   - Handle server lifecycle
+
+  > #### Extension Module {: .info}
+  > Multi-server management is an ExMCP extension not part of the official MCP specification.
+  > Use this for complex applications that need to coordinate multiple MCP servers.
   """
 
   use GenServer

@@ -1,5 +1,7 @@
 defmodule ExMCP.Discovery do
   @moduledoc """
+  @exmcp_extension
+
   MCP server discovery functionality.
 
   Provides mechanisms to discover available MCP servers through:
@@ -10,6 +12,10 @@ defmodule ExMCP.Discovery do
   - Python package discovery
   - Executable server detection
   - Service registration
+
+  > #### Extension Module {: .info}
+  > Server discovery is an ExMCP extension not part of the official MCP specification.
+  > This provides convenient auto-discovery of MCP servers in your environment.
 
   ## Examples
 

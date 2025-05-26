@@ -9,6 +9,8 @@
 
 # Where third-party dependencies like ExDoc output generated docs.
 /doc/
+# But keep our docs folder with specifications
+!/docs/
 
 # Ignore .fetch files in case you like to edit your project deps locally.
 /.fetch

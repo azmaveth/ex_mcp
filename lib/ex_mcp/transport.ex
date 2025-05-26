@@ -1,9 +1,14 @@
 defmodule ExMCP.Transport do
   @moduledoc """
+  @mcp_spec
+
   Behaviour for MCP transport implementations.
 
   A transport is responsible for sending and receiving MCP protocol
   messages over a specific communication channel (stdio, SSE, WebSocket, etc).
+
+  While the behaviour itself is an implementation detail, it enables the
+  official MCP transports (stdio and SSE) as well as custom transports.
 
   ## Implementing a Transport
 

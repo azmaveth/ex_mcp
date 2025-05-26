@@ -1,5 +1,7 @@
 defmodule ExMCP do
   @moduledoc """
+  @mcp_spec with @exmcp_extension features
+
   ExMCP - Complete Elixir implementation of the Model Context Protocol.
 
   ExMCP enables AI models to securely interact with local and remote resources through
@@ -8,10 +10,16 @@ defmodule ExMCP do
 
   ## Main Components
 
+  **MCP Specification Components:**
   - `ExMCP.Client` - Connect to MCP servers
   - `ExMCP.Server` - Implement MCP servers
+  - `ExMCP.Protocol` - Message encoding/decoding
+  - `ExMCP.Types` - Type definitions
+
+  **ExMCP Extensions:**
   - `ExMCP.ServerManager` - Manage multiple server connections
   - `ExMCP.Discovery` - Discover available MCP servers
+  - `ExMCP.Transport.Beam` - Native Erlang transport
 
   ## Protocol Features
 
@@ -28,19 +36,19 @@ defmodule ExMCP do
 
   ## Transport Options
 
-  ### stdio Transport
+  ### stdio Transport (`@mcp_spec`)
   Process communication via standard input/output. Best for:
   - Subprocess communication
   - Cross-language integration
   - Command-line tools
 
-  ### SSE Transport
+  ### SSE Transport (`@mcp_spec`)
   Server-Sent Events over HTTP. Best for:
   - Web integration
   - Firewall-friendly communication
   - RESTful architectures
 
-  ### BEAM Transport
+  ### BEAM Transport (`@exmcp_extension`)
   Native Erlang/Elixir message passing. Best for:
   - Elixir-to-Elixir communication
   - High-performance local tools

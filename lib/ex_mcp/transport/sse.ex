@@ -1,9 +1,16 @@
 defmodule ExMCP.Transport.SSE do
   @moduledoc """
+  @mcp_spec
+
   Server-Sent Events (SSE) transport for MCP.
 
   This transport uses HTTP SSE for server-to-client messages
-  and HTTP POST for client-to-server messages.
+  and HTTP POST for client-to-server messages. This is one of the two
+  official MCP transports defined in the specification.
+
+  > #### Security Warning {: .warning}
+  > When implementing SSE servers, always validate Origin headers,
+  > bind to localhost only, and implement proper authentication.
   """
 
   @behaviour ExMCP.Transport

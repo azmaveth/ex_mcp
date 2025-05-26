@@ -46,6 +46,25 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - 🏗️ **OTP Integration** - Built on solid OTP principles with supervision trees
 - 🔌 **Extensible** - Easy to add custom transports and handlers
 
+## 🎯 MCP Specification vs ExMCP Extensions
+
+ExMCP provides both MCP specification features and Elixir-specific extensions:
+
+**MCP Specification Features** (`@mcp_spec`):
+- Protocol implementation (JSON-RPC 2.0)
+- Standard transports (stdio, SSE)
+- All core operations (tools, resources, prompts, sampling)
+- Standard types and message formats
+
+**ExMCP Extensions** (`@exmcp_extension`):
+- BEAM transport for native Erlang communication
+- Automatic server discovery
+- Multi-server management (ServerManager)
+- Auto-reconnection with backoff
+- OTP supervision integration
+
+See [EXTENSIONS.md](EXTENSIONS.md) for detailed breakdown.
+
 ## 📦 Installation
 
 Add `ex_mcp` to your list of dependencies in `mix.exs`:

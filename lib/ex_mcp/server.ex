@@ -1,5 +1,7 @@
 defmodule ExMCP.Server do
   @moduledoc """
+  @mcp_spec
+
   MCP server implementation.
 
   This module handles the protocol layer for MCP servers, delegating
@@ -8,11 +10,14 @@ defmodule ExMCP.Server do
 
   ## Features
 
-  - Multiple transport support (stdio, SSE, BEAM)
+  - Multiple transport support (stdio, SSE, BEAM*)
   - Tool, resource, and prompt management
   - Progress notifications for long operations
   - Change notifications for dynamic content
   - Sampling/LLM integration support
+
+  All core functionality is MCP specification compliant.
+  *BEAM transport is an ExMCP extension.
 
   ## Example
 

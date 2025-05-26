@@ -1,9 +1,12 @@
 defmodule ExMCP.Transport.Stdio do
   @moduledoc """
+  @mcp_spec
+
   stdio transport implementation for MCP.
 
   This transport communicates with MCP servers over standard input/output,
-  typically by spawning a subprocess.
+  typically by spawning a subprocess. This is one of the two official MCP
+  transports defined in the specification.
 
   ## Options
 

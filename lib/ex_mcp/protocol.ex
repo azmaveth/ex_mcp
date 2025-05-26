@@ -1,10 +1,18 @@
 defmodule ExMCP.Protocol do
   @moduledoc """
+  @mcp_spec
+
   MCP protocol message encoding and decoding.
 
   Implements the Model Context Protocol JSON-RPC message format.
   This module handles the low-level protocol details for both
   client and server implementations.
+
+  All methods in this module are part of the official MCP specification.
+
+  > #### Note on Batch Requests {: .info}
+  > The MCP specification includes batch request support (JSONRPCBatchRequest),
+  > but this is not yet implemented in ExMCP. Single requests work for all use cases.
   """
 
   @protocol_version "2025-03-26"

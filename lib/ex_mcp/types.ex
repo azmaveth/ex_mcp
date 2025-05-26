@@ -1,9 +1,13 @@
 defmodule ExMCP.Types do
   @moduledoc """
+  @mcp_spec
+
   Type definitions for the Model Context Protocol.
 
   This module defines the core types used throughout ExMCP,
   matching the MCP specification version 2025-03-26.
+
+  All types in this module are directly from the official MCP specification.
   """
 
   # Core types

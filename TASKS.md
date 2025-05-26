@@ -22,29 +22,42 @@
 
 ## In Progress
 
+### MCP Specification Required Features (High Priority)
+- [ ] Batch request support (JSONRPCBatchRequest/JSONRPCBatchResponse)
+- [ ] Bi-directional requests (server-to-client)
+  - [ ] Implement server ping requests to client
+  - [ ] Implement server createMessage requests to client  
+  - [ ] Implement server listRoots requests to client
+- [ ] Human-in-the-loop interaction support
+  - [ ] Add approval flow for sampling/createMessage
+  - [ ] Add approval flow before returning sampled messages
+
 - [ ] Additional transport implementations
   - [ ] WebSocket transport
   
 ### BEAM Transport Enhancements (from mcp_chat Phase 9)
 - [x] Basic BEAM transport implementation completed
-- [ ] Advanced BEAM transport features:
-  - [ ] Support for supervised GenServer-based MCP servers
-  - [ ] Distributed BEAM node connections
+- [x] Advanced BEAM transport features:
+  - [x] Support for supervised GenServer-based MCP servers (via mailbox processes)
+  - [x] Distributed BEAM node connections (supports {:name, :"node@host"} syntax)
   - [ ] Performance optimizations for local connections
   - [ ] Zero-copy message passing for large payloads
   - [ ] Native BEAM clustering support
   - [ ] Hot code reloading for MCP servers
-  - [ ] Process monitoring and automatic reconnection
+  - [x] Process monitoring and automatic reconnection (via Process.monitor and DOWN handling)
+  - [ ] Streaming support for large payloads/responses
+    - [ ] Stream-based message delivery for handling large tool outputs
+    - [ ] Backpressure handling for flow control
+    - [ ] Chunked transfer for resources
 
 ## Todo
 
-### Core Components
+### Core Components (Non-spec features)
 - [x] Server Manager for multi-server support (implemented)
 - [x] Discovery mechanism for finding available servers (implemented)
-- [ ] Connection pooling for clients
-- [ ] Request/response timeout handling
-- [ ] Batch request support
-- [ ] Progress notification handling
+- [ ] Connection pooling for clients (optimization, not required by spec)
+- [x] Request/response timeout handling (implemented in client.ex)
+- [x] Progress notification handling (implemented with progressToken support)
 
 ### MCP Protocol Features (Missing from Current Implementation)
 - [x] Sampling/createMessage support for LLM interactions
@@ -58,11 +71,10 @@
 - [x] Request cancellation support (send_cancelled/3, handle cancelled notifications)
 - [x] Logging protocol (log_message/4, handle log notifications)
 - [x] Resource templates with URI patterns (list_resource_templates/2, handle_list_resource_templates/1)
-- [ ] Bi-directional requests (server-to-client)
-- [ ] Human-in-the-loop interaction support
-- [ ] Context inclusion options for sampling
-- [ ] Model preference hints (partially implemented)
-- [ ] Resource subscription notifications for dynamic resources
+- [ ] Context inclusion options for sampling (partially implemented - types exist but logic incomplete)
+- [x] Model preference hints (implemented in types and protocol)
+- [x] Resource subscription notifications for dynamic resources (subscribe/unsubscribe/resource_updated implemented)
+- [x] Completion support (complete/3 method implemented)
 
 ### Features
 - [ ] Tool registration and management
@@ -73,9 +85,9 @@
 - [ ] Metrics and monitoring
 
 ### Testing
-- [ ] Integration tests with mock servers
-- [ ] Transport-specific tests
-- [ ] Error handling and edge case tests
+- [x] Integration tests with mock servers (implemented via transport tests)
+- [x] Transport-specific tests (beam_test.exs, sse_test.exs, stdio mock tests)
+- [x] Error handling and edge case tests (connection failures, invalid JSON, etc.)
 - [ ] Performance benchmarks
 - [ ] Property-based tests for protocol encoding/decoding
 
@@ -89,23 +101,58 @@
 - [ ] Client usage examples
 - [ ] Server configuration persistence (mentioned in CHANGELOG but not implemented)
 
+### Documentation Improvements (NEW - For clarity)
+- [ ] Clear separation of client vs server modules
+  - [ ] Add module-level docs clarifying ExMCP.Client connects TO servers
+  - [ ] Add module-level docs clarifying ExMCP.Server is for IMPLEMENTING servers
+  - [ ] Add conceptual overview of MCP architecture (clients connect to servers via transports)
+- [ ] Integration guide
+  - [ ] How to integrate MCP clients into existing applications
+  - [ ] How to handle server lifecycle management
+  - [ ] Best practices for error handling and reconnection
+- [ ] Troubleshooting guide
+  - [ ] Common connection issues and solutions
+  - [ ] How to debug protocol messages
+  - [ ] How to diagnose transport problems
+
 ### Utilities
 - [ ] CLI tool for testing MCP servers
 - [ ] Debug mode with protocol tracing
 - [ ] Connection diagnostics
 - [ ] Schema validation for messages
 
-### Testing
-- [ ] Client tests
-- [ ] Server tests
-- [ ] Server Manager tests
-- [ ] Discovery tests
-- [ ] stdio transport tests
+### Testing  
+- [x] Client tests (implemented, all passing)
+- [x] Server tests (implemented, all passing)
+- [x] Server Manager tests (implemented via server_manager.ex tests)
+- [x] Discovery tests (implemented, all passing)
+- [x] stdio transport tests (implemented, all passing)
+- [x] BEAM transport tests (implemented, all passing)
+- [x] SSE transport tests (implemented, all passing)
+- [x] Protocol tests (implemented, all passing)
+- [x] Progress notification tests (implemented, all passing)
 
-### Advanced Features
+### Integration Testing Infrastructure (NEW - For mcp_chat compatibility)
+- [ ] Full stdio integration test examples
+  - [ ] Example of starting a server as OS process and connecting client
+  - [ ] Example of proper setup/teardown for integration tests
+  - [ ] Example of handling server lifecycle in tests
+- [ ] Test helper utilities
+  - [ ] Helper for starting MCP server processes with proper error handling
+  - [ ] Helper for waiting for server initialization
+  - [ ] Helper for graceful server shutdown
+- [ ] BEAM transport testing utilities
+  - [ ] Example of using BEAM transport for in-process testing
+  - [ ] Helper for creating mock MCP servers using BEAM transport
+- [ ] Debug mode enhancements
+  - [ ] Add debug: true option to client for protocol message logging
+  - [ ] Add protocol message tracing for troubleshooting
+  - [ ] Add transport-level debug logging
+
+### Advanced Features (Not part of MCP spec - nice to have)
 - [ ] Middleware support for clients and servers
 - [ ] Authentication and authorization
-- [ ] Rate limiting
+- [ ] Rate limiting  
 - [ ] Message compression
 - [ ] Circuit breaker for failed connections
 - [ ] Graceful shutdown procedures
@@ -146,10 +193,18 @@
 ## Notes
 
 - The library implements the Model Context Protocol specification version 2025-03-26
-- stdio transport is the primary transport mechanism, matching the reference implementation
+- Three transports are implemented: stdio (primary), BEAM (native Elixir), and SSE
 - The client includes automatic reconnection with exponential backoff
 - Server handlers can be implemented using the ExMCP.Server.Handler behaviour
 - All protocol messages use string keys for JSON compatibility
+- All tests are passing (0 failures) as of the latest updates
+- Progress notifications use progressToken (without underscore) per MCP spec
+
+### Implementation Priority
+Features are prioritized as follows:
+1. **High Priority**: MCP specification required features (batch requests, bi-directional communication, human-in-the-loop)
+2. **Medium Priority**: Transport enhancements and optimizations
+3. **Low Priority**: Nice-to-have features not part of the spec (middleware, auth, rate limiting)
 
 ### Protocol Compliance Status
 Based on the latest MCP specification (2025-03-26), the following features have been implemented:
@@ -159,4 +214,11 @@ Based on the latest MCP specification (2025-03-26), the following features have 
 4. **Multimodal content** - ✅ Already supported (text_content and image_content types)
 5. **Protocol version** - ✅ Updated to latest version (2025-03-26)
 
-The library now implements all major features from the latest MCP specification.
+The library implements most major features from the latest MCP specification.
+
+### Missing MCP Specification Features
+The following features are defined in the MCP spec but not yet implemented:
+1. **Batch Requests** - Support for JSONRPCBatchRequest/JSONRPCBatchResponse
+2. **Bi-directional Requests** - Server-initiated requests (ping, createMessage, listRoots)
+3. **Human-in-the-loop** - Approval flows for sampling and message generation
+4. **Context Inclusion** - Full implementation of includeContext parameter in sampling

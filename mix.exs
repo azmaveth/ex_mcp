@@ -56,7 +56,8 @@ defmodule ExMCP.MixProject do
     """
     Complete Elixir implementation of the Model Context Protocol (MCP) v2025-03-26.
     Build MCP clients and servers with support for tools, resources, prompts, sampling,
-    roots, subscriptions, and multiple transports (stdio, SSE, BEAM).
+    roots, and subscriptions. Includes both spec-compliant features and Elixir-specific
+    extensions like BEAM transport, auto-reconnection, and server discovery.
     """
   end
 
@@ -68,7 +69,8 @@ defmodule ExMCP.MixProject do
         "Changelog" => "#{@github_url}/blob/master/CHANGELOG.md",
         "MCP Spec" => "https://modelcontextprotocol.io"
       },
-      files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md USER_GUIDE.md)
+      files:
+        ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md USER_GUIDE.md EXTENSIONS.md)
     ]
   end
 
@@ -81,27 +83,33 @@ defmodule ExMCP.MixProject do
         "README.md",
         "USER_GUIDE.md",
         "API_REFERENCE.md",
+        "EXTENSIONS.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",
       source_ref: "v#{@version}",
       groups_for_extras: [
         Introduction: ~r/README/,
-        Guides: ~r/USER_GUIDE|API_REFERENCE/,
+        Guides: ~r/USER_GUIDE|API_REFERENCE|EXTENSIONS/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
-        "Core Protocol": [ExMCP.Protocol, ExMCP.Types],
-        Client: [ExMCP.Client],
-        Server: [ExMCP.Server, ExMCP.Server.Handler],
-        Transport: [
-          ExMCP.Transport,
+        "MCP Specification": [
+          ExMCP.Protocol,
+          ExMCP.Types,
+          ExMCP.Server,
+          ExMCP.Server.Handler,
           ExMCP.Transport.Stdio,
-          ExMCP.Transport.SSE,
-          ExMCP.Transport.Beam
+          ExMCP.Transport.SSE
         ],
-        Management: [ExMCP.ServerManager, ExMCP.Discovery],
-        Application: [ExMCP.Application]
+        "MCP + Extensions": [ExMCP.Client],
+        "ExMCP Extensions": [
+          ExMCP.Transport.Beam,
+          ExMCP.ServerManager,
+          ExMCP.Discovery,
+          ExMCP.Specification
+        ],
+        Internal: [ExMCP.Transport, ExMCP.Application]
       ],
       before_closing_body_tag: fn
         :html ->
