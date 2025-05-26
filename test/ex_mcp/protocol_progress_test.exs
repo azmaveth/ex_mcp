@@ -11,7 +11,7 @@ defmodule ExMCP.ProtocolProgressTest do
 
       assert notification["jsonrpc"] == "2.0"
       assert notification["method"] == "notifications/progress"
-      assert notification["params"]["_progressToken"] == token
+      assert notification["params"]["progressToken"] == token
       assert notification["params"]["progress"] == progress
       refute Map.has_key?(notification["params"], "total")
       refute Map.has_key?(notification, "id")
@@ -26,7 +26,7 @@ defmodule ExMCP.ProtocolProgressTest do
 
       assert notification["jsonrpc"] == "2.0"
       assert notification["method"] == "notifications/progress"
-      assert notification["params"]["_progressToken"] == token
+      assert notification["params"]["progressToken"] == token
       assert notification["params"]["progress"] == progress
       assert notification["params"]["total"] == total
       refute Map.has_key?(notification, "id")
@@ -38,7 +38,7 @@ defmodule ExMCP.ProtocolProgressTest do
 
       notification = Protocol.encode_progress(token, progress)
 
-      assert notification["params"]["_progressToken"] == token
+      assert notification["params"]["progressToken"] == token
       assert notification["params"]["progress"] == 50.5
     end
 
@@ -71,7 +71,7 @@ defmodule ExMCP.ProtocolProgressTest do
       assert encoded["method"] == "tools/call"
       assert encoded["params"]["name"] == "my_tool"
       assert encoded["params"]["arguments"] == %{"arg" => "value"}
-      assert get_in(encoded["params"], ["_meta", "_progressToken"]) == token
+      assert get_in(encoded["params"], ["_meta", "progressToken"]) == token
     end
   end
 

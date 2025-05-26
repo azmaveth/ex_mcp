@@ -45,7 +45,7 @@ defmodule ExMCP.Server.Handler do
         @impl true
         def handle_call_tool("calculate", params, state) do
           # Access progress token if provided
-          progress_token = params["_progressToken"]
+          progress_token = get_in(params, ["_meta", "progressToken"])
           
           # Your tool implementation
           result = eval_expression(params["expression"])
@@ -86,7 +86,7 @@ defmodule ExMCP.Server.Handler do
 
       @impl true
       def handle_call_tool("process_file", params, state) do
-        progress_token = params["_progressToken"]
+        progress_token = get_in(params, ["_meta", "progressToken"])
         file_path = params["path"]
         
         # Start async processing with progress updates

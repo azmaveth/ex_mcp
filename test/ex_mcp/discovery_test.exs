@@ -49,8 +49,8 @@ defmodule ExMCP.DiscoveryTest do
 
       servers = ExMCP.Discovery.discover_from_env()
 
-      assert Enum.any?(servers, fn s -> s.name == "myapp-env" end)
-      assert Enum.any?(servers, fn s -> s.name == "api-env" end)
+      assert Enum.any?(servers, fn s -> s["name"] == "myapp-env" end)
+      assert Enum.any?(servers, fn s -> s["name"] == "api-env" end)
 
       # Cleanup
       System.delete_env("MYAPP_MCP_SERVER")

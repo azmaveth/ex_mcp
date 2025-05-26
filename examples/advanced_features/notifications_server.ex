@@ -142,7 +142,7 @@ defmodule Examples.AdvancedFeatures.NotificationsServer do
   def handle_call_tool("process_file", params, state) do
     path = params["path"]
     steps = params["steps"] || 10
-    progress_token = params["_progressToken"]
+    progress_token = get_in(params, ["_meta", "progressToken"])
     
     if progress_token do
       # Start async task with progress updates

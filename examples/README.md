@@ -90,7 +90,7 @@ end
 ```elixir
 # Server side
 def handle_call_tool("process", params, state) do
-  if token = params["_progressToken"] do
+  if token = get_in(params, ["_meta", "progressToken"]) do
     Task.start(fn ->
       for i <- 1..100 do
         Process.sleep(100)

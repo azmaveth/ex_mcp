@@ -34,14 +34,14 @@ defmodule ExMCP.Transport.NotificationTest do
       server_pid =
         spawn(fn ->
           receive do
-            {:mcp_connect, client_pid} ->
-              send(client_pid, {:mcp_connected, self()})
+            {:beam_connect, client_mailbox} ->
+              send(client_mailbox, {:mcp_connected, self()})
 
               # Wait for notification
               receive do
-                {:mcp_message, ^client_pid, message} ->
+                {:mcp_message, message} ->
                   # Echo back the message
-                  send(client_pid, {:mcp_response, self(), message})
+                  send(client_mailbox, {:mcp_response, self(), message})
               end
           end
         end)

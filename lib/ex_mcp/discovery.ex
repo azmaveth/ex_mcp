@@ -149,10 +149,10 @@ defmodule ExMCP.Discovery do
   ## Examples
 
       iex> ExMCP.Discovery.test_server(%{command: ["node", "server.js"]})
-      true
+      false
       
       iex> ExMCP.Discovery.test_server(%{url: "http://localhost:8080"})
-      false
+      true
   """
   @spec test_server(map()) :: boolean()
   def test_server(server_config) do

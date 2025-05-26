@@ -47,7 +47,7 @@ iex> Examples.AdvancedFeatures.NotificationsClient.demo()
 
 Key concepts:
 - Use `ExMCP.Server.notify_*` functions to send notifications
-- Progress tokens are passed in tool parameters as `_progressToken`
+- Progress tokens are passed in tool parameters as `_meta.progressToken`
 - Notifications are fire-and-forget (no response expected)
 - Clients automatically log notifications
 
@@ -57,7 +57,7 @@ Key concepts:
 
 ```elixir
 def handle_call_tool("long_operation", params, state) do
-  if token = params["_progressToken"] do
+  if token = get_in(params, ["_meta", "progressToken"]) do
     Task.start(fn ->
       for i <- 1..100 do
         do_work()

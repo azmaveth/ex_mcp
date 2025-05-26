@@ -82,9 +82,12 @@ defmodule ExMCP.ServerTest do
   setup :verify_on_exit!
 
   setup do
-    # Mock transport - servers use accept, not connect
+    # Set Mox to global mode for cross-process mocking
+    Mox.set_mox_global()
+
+    # Mock transport - servers may use connect or accept depending on transport type
     MockTransport
-    |> expect(:accept, fn _opts -> {:ok, :mock_state} end)
+    |> expect(:connect, fn _opts -> {:ok, :mock_state} end)
     |> stub(:send_message, fn _msg, state -> {:ok, state} end)
     |> stub(:receive_message, fn state ->
       # Block forever
@@ -226,7 +229,7 @@ defmodule ExMCP.ServerTest do
     test "returns error for requests before initialization", %{server: _server} do
       # Create a new server without initializing
       MockTransport
-      |> expect(:accept, fn _opts -> {:ok, :mock_state} end)
+      |> expect(:connect, fn _opts -> {:ok, :mock_state} end)
       |> stub(:receive_message, fn state ->
         # Block forever
         Process.sleep(:infinity)

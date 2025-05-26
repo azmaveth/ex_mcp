@@ -149,7 +149,7 @@ defmodule Examples.BeamTransport.CalculatorServer do
   
   def handle_call_tool("factorial", %{"n" => n} = params, state) do
     # Use progress token if provided
-    progress_token = Map.get(params, "_progressToken")
+    progress_token = get_in(params, ["_meta", "progressToken"])
     
     # Calculate factorial with progress updates
     result = factorial_with_progress(n, progress_token, self())

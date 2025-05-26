@@ -74,7 +74,7 @@ defmodule ExMCP.Protocol do
 
     params =
       if progress_token do
-        Map.put(params, "_meta", %{"_progressToken" => progress_token})
+        Map.put(params, "_meta", %{"progressToken" => progress_token})
       else
         params
       end
@@ -295,7 +295,7 @@ defmodule ExMCP.Protocol do
   @spec encode_progress(ExMCP.Types.progress_token(), number(), number() | nil) :: map()
   def encode_progress(progress_token, progress, total \\ nil) do
     params = %{
-      "_progressToken" => progress_token,
+      "progressToken" => progress_token,
       "progress" => progress
     }
 
