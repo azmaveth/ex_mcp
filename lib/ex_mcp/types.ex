@@ -20,7 +20,8 @@ defmodule ExMCP.Types do
           optional(:tools) => map(),
           optional(:resources) => map(),
           optional(:prompts) => map(),
-          optional(:logging) => map()
+          optional(:logging) => map(),
+          optional(:sampling) => map()
         }
 
   @type tool :: %{
@@ -89,4 +90,48 @@ defmodule ExMCP.Types do
         }
 
   @type error_code :: -32700..-32600 | -32099..-32000
+
+  @type sampling_message :: %{
+          required(:role) => String.t(),
+          required(:content) => prompt_content()
+        }
+
+  @type model_preferences :: %{
+          optional(:hints) => [String.t()],
+          optional(:costPriority) => float(),
+          optional(:speedPriority) => float(),
+          optional(:intelligencePriority) => float()
+        }
+
+  @type sampling_params :: %{
+          optional(:temperature) => float(),
+          optional(:topP) => float(),
+          optional(:topK) => integer(),
+          optional(:maxTokens) => integer(),
+          optional(:stopSequences) => [String.t()],
+          optional(:seed) => integer()
+        }
+
+  @type create_message_params :: %{
+          required(:messages) => [sampling_message()],
+          optional(:modelPreferences) => model_preferences(),
+          optional(:systemPrompt) => String.t(),
+          optional(:includeContext) => String.t(),
+          optional(:metadata) => map()
+        }
+
+  @type create_message_result :: %{
+          required(:role) => String.t(),
+          required(:content) => prompt_content(),
+          optional(:model) => String.t(),
+          optional(:stopReason) => String.t()
+        }
+
+  @type progress_token :: String.t() | integer()
+
+  @type progress_notification :: %{
+          required(:progressToken) => progress_token(),
+          required(:progress) => number(),
+          optional(:total) => number()
+        }
 end

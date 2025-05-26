@@ -65,15 +65,19 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a tool call request.
   """
-  @spec encode_call_tool(String.t(), map()) :: map()
-  def encode_call_tool(name, arguments) do
+  @spec encode_call_tool(String.t(), map(), ExMCP.Types.progress_token() | nil) :: map()
+  def encode_call_tool(name, arguments, progress_token \\ nil) do
+    params = %{
+      "name" => name,
+      "arguments" => arguments
+    }
+
+    params = if progress_token, do: Map.put(params, "progressToken", progress_token), else: params
+
     %{
       "jsonrpc" => "2.0",
       "method" => "tools/call",
-      "params" => %{
-        "name" => name,
-        "arguments" => arguments
-      },
+      "params" => params,
       "id" => generate_id()
     }
   end
@@ -148,6 +152,19 @@ defmodule ExMCP.Protocol do
     }
   end
 
+  @doc """
+  Encodes a sampling create message request.
+  """
+  @spec encode_create_message(ExMCP.Types.create_message_params()) :: map()
+  def encode_create_message(params) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "sampling/createMessage",
+      "params" => params,
+      "id" => generate_id()
+    }
+  end
+
   # Server Response Encoding
 
   @doc """
@@ -191,6 +208,52 @@ defmodule ExMCP.Protocol do
       "method" => method,
       "params" => params
     }
+  end
+
+  @doc """
+  Encodes a resources list changed notification.
+  """
+  @spec encode_resources_changed() :: map()
+  def encode_resources_changed do
+    encode_notification("notifications/resources/list_changed", %{})
+  end
+
+  @doc """
+  Encodes a tools list changed notification.
+  """
+  @spec encode_tools_changed() :: map()
+  def encode_tools_changed do
+    encode_notification("notifications/tools/list_changed", %{})
+  end
+
+  @doc """
+  Encodes a prompts list changed notification.
+  """
+  @spec encode_prompts_changed() :: map()
+  def encode_prompts_changed do
+    encode_notification("notifications/prompts/list_changed", %{})
+  end
+
+  @doc """
+  Encodes a resource updated notification.
+  """
+  @spec encode_resource_updated(String.t()) :: map()
+  def encode_resource_updated(uri) do
+    encode_notification("notifications/resources/updated", %{"uri" => uri})
+  end
+
+  @doc """
+  Encodes a progress notification.
+  """
+  @spec encode_progress(ExMCP.Types.progress_token(), number(), number() | nil) :: map()
+  def encode_progress(progress_token, progress, total \\ nil) do
+    params = %{
+      "progressToken" => progress_token,
+      "progress" => progress
+    }
+
+    params = if total, do: Map.put(params, "total", total), else: params
+    encode_notification("notifications/progress", params)
   end
 
   # Message Parsing

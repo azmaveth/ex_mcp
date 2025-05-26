@@ -85,9 +85,10 @@ defmodule ExMCP.Transport do
   @doc """
   Helper to get the appropriate transport module for an atom identifier.
   """
-  @spec get_transport(:stdio | :sse | :websocket | module()) :: module()
+  @spec get_transport(:stdio | :sse | :websocket | :beam | module()) :: module()
   def get_transport(:stdio), do: ExMCP.Transport.Stdio
   def get_transport(:sse), do: ExMCP.Transport.SSE
   def get_transport(:websocket), do: ExMCP.Transport.WebSocket
+  def get_transport(:beam), do: ExMCP.Transport.Beam
   def get_transport(module) when is_atom(module), do: module
 end

@@ -60,6 +60,46 @@ defmodule ExMCP.Server do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc """
+  Notifies connected clients that the resources list has changed.
+  """
+  def notify_resources_changed(server) do
+    GenServer.cast(server, :notify_resources_changed)
+  end
+
+  @doc """
+  Notifies connected clients that a specific resource has been updated.
+  """
+  def notify_resource_updated(server, uri) do
+    GenServer.cast(server, {:notify_resource_updated, uri})
+  end
+
+  @doc """
+  Notifies connected clients that the tools list has changed.
+  """
+  def notify_tools_changed(server) do
+    GenServer.cast(server, :notify_tools_changed)
+  end
+
+  @doc """
+  Notifies connected clients that the prompts list has changed.
+  """
+  def notify_prompts_changed(server) do
+    GenServer.cast(server, :notify_prompts_changed)
+  end
+
+  @doc """
+  Sends a progress notification to connected clients.
+
+  ## Parameters
+  - `progress_token` - Token identifying the operation
+  - `progress` - Current progress value (0-100 for percentage, or any positive number)
+  - `total` - Optional total value for the operation
+  """
+  def notify_progress(server, progress_token, progress, total \\ nil) do
+    GenServer.cast(server, {:notify_progress, progress_token, progress, total})
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -111,6 +151,27 @@ defmodule ExMCP.Server do
   def handle_info({:transport_closed, reason}, state) do
     Logger.info("Transport closed: #{inspect(reason)}")
     {:stop, :normal, state}
+  end
+
+  @impl true
+  def handle_cast(:notify_resources_changed, state) do
+    send_notification(Protocol.encode_resources_changed(), state)
+  end
+
+  def handle_cast({:notify_resource_updated, uri}, state) do
+    send_notification(Protocol.encode_resource_updated(uri), state)
+  end
+
+  def handle_cast(:notify_tools_changed, state) do
+    send_notification(Protocol.encode_tools_changed(), state)
+  end
+
+  def handle_cast(:notify_prompts_changed, state) do
+    send_notification(Protocol.encode_prompts_changed(), state)
+  end
+
+  def handle_cast({:notify_progress, progress_token, progress, total}, state) do
+    send_notification(Protocol.encode_progress(progress_token, progress, total), state)
   end
 
   @impl true
@@ -350,6 +411,37 @@ defmodule ExMCP.Server do
     end
   end
 
+  defp handle_request("sampling/createMessage", params, id, state) do
+    if not state.initialized do
+      error =
+        Protocol.encode_error(
+          Protocol.invalid_request(),
+          "Not initialized",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+    else
+      case state.handler.handle_create_message(params, state.handler_state) do
+        {:ok, result, new_handler_state} ->
+          response = Protocol.encode_response(result, id)
+          send_message(response, %{state | handler_state: new_handler_state})
+
+        {:error, reason, new_handler_state} ->
+          error =
+            Protocol.encode_error(
+              Protocol.internal_error(),
+              format_error(reason),
+              nil,
+              id
+            )
+
+          send_message(error, %{state | handler_state: new_handler_state})
+      end
+    end
+  end
+
   defp handle_request(method, _params, id, state) do
     error =
       Protocol.encode_error(
@@ -387,6 +479,14 @@ defmodule ExMCP.Server do
       {:error, reason} ->
         Logger.error("Failed to encode message: #{inspect(reason)}")
         {:noreply, state}
+    end
+  end
+
+  defp send_notification(notification, state) do
+    if state.initialized do
+      send_message(notification, state)
+    else
+      {:noreply, state}
     end
   end
 

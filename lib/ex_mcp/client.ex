@@ -75,11 +75,22 @@ defmodule ExMCP.Client do
 
   @doc """
   Calls a tool with the given arguments.
+
+  ## Options
+  - `:progress_token` - Optional token for progress tracking
   """
-  @spec call_tool(GenServer.server(), String.t(), map(), timeout()) ::
+  @spec call_tool(GenServer.server(), String.t(), map(), keyword() | timeout()) ::
           {:ok, ExMCP.Types.tool_result()} | {:error, any()}
-  def call_tool(client, name, arguments, timeout \\ @request_timeout) do
-    GenServer.call(client, {:call_tool, name, arguments}, timeout)
+  def call_tool(client, name, arguments, opts \\ []) do
+    {timeout, opts} =
+      if is_integer(opts) or opts == :infinity do
+        {opts, []}
+      else
+        Keyword.pop(opts, :timeout, @request_timeout)
+      end
+
+    progress_token = Keyword.get(opts, :progress_token)
+    GenServer.call(client, {:call_tool, name, arguments, progress_token}, timeout)
   end
 
   @doc """
@@ -116,6 +127,15 @@ defmodule ExMCP.Client do
           {:ok, ExMCP.Types.prompt_message()} | {:error, any()}
   def get_prompt(client, name, arguments \\ %{}, timeout \\ @request_timeout) do
     GenServer.call(client, {:get_prompt, name, arguments}, timeout)
+  end
+
+  @doc """
+  Creates a message using the server's LLM sampling capability.
+  """
+  @spec create_message(GenServer.server(), ExMCP.Types.create_message_params(), timeout()) ::
+          {:ok, ExMCP.Types.create_message_result()} | {:error, any()}
+  def create_message(client, params, timeout \\ @request_timeout) do
+    GenServer.call(client, {:create_message, params}, timeout)
   end
 
   @doc """
@@ -183,6 +203,10 @@ defmodule ExMCP.Client do
     send_request(Protocol.encode_call_tool(name, arguments), from, state)
   end
 
+  def handle_call({:call_tool, name, arguments, progress_token}, from, state) do
+    send_request(Protocol.encode_call_tool(name, arguments, progress_token), from, state)
+  end
+
   def handle_call(:list_resources, from, state) do
     send_request(Protocol.encode_list_resources(), from, state)
   end
@@ -197,6 +221,10 @@ defmodule ExMCP.Client do
 
   def handle_call({:get_prompt, name, arguments}, from, state) do
     send_request(Protocol.encode_get_prompt(name, arguments), from, state)
+  end
+
+  def handle_call({:create_message, params}, from, state) do
+    send_request(Protocol.encode_create_message(params), from, state)
   end
 
   def handle_call(:server_info, _from, state) do
@@ -377,7 +405,41 @@ defmodule ExMCP.Client do
   end
 
   defp handle_notification(method, params, state) do
-    Logger.debug("Received notification: #{method} #{inspect(params)}")
-    {:noreply, state}
+    case method do
+      "notifications/resources/list_changed" ->
+        Logger.info("Resources list changed")
+        # Could emit a telemetry event or update a cache here
+        {:noreply, state}
+
+      "notifications/resources/updated" ->
+        uri = Map.get(params, "uri", "unknown")
+        Logger.info("Resource updated: #{uri}")
+        {:noreply, state}
+
+      "notifications/tools/list_changed" ->
+        Logger.info("Tools list changed")
+        {:noreply, state}
+
+      "notifications/prompts/list_changed" ->
+        Logger.info("Prompts list changed")
+        {:noreply, state}
+
+      "notifications/progress" ->
+        token = Map.get(params, "progressToken", "unknown")
+        progress = Map.get(params, "progress", 0)
+        total = Map.get(params, "total")
+
+        if total do
+          Logger.info("Progress [#{token}]: #{progress}/#{total}")
+        else
+          Logger.info("Progress [#{token}]: #{progress}")
+        end
+
+        {:noreply, state}
+
+      _ ->
+        Logger.debug("Received notification: #{method} #{inspect(params)}")
+        {:noreply, state}
+    end
   end
 end

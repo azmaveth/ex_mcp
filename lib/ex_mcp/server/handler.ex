@@ -109,6 +109,12 @@ defmodule ExMCP.Server.Handler do
               {:ok, result :: map(), state()} | {:error, any(), state()}
 
   @doc """
+  Handles a sampling create message request.
+  """
+  @callback handle_create_message(params :: ExMCP.Types.create_message_params(), state()) ::
+              {:ok, ExMCP.Types.create_message_result(), state()} | {:error, any(), state()}
+
+  @doc """
   Called when the handler process is started.
   """
   @callback init(args :: any()) :: {:ok, state()} | {:error, any()}
@@ -125,6 +131,7 @@ defmodule ExMCP.Server.Handler do
     handle_list_prompts: 1,
     handle_get_prompt: 3,
     handle_complete: 3,
+    handle_create_message: 2,
     terminate: 2
   ]
 
@@ -161,6 +168,11 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl true
+      def handle_create_message(_params, state) do
+        {:error, "Sampling not implemented", state}
+      end
+
+      @impl true
       def terminate(_reason, _state), do: :ok
 
       defoverridable init: 1,
@@ -169,6 +181,7 @@ defmodule ExMCP.Server.Handler do
                      handle_list_prompts: 1,
                      handle_get_prompt: 3,
                      handle_complete: 3,
+                     handle_create_message: 2,
                      terminate: 2
     end
   end
