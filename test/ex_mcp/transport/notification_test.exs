@@ -41,7 +41,7 @@ defmodule ExMCP.Transport.NotificationTest do
               receive do
                 {:mcp_message, message} ->
                   # Echo back the message
-                  send(client_mailbox, {:mcp_response, self(), message})
+                  send(client_mailbox, {:mcp_message, message})
               end
           end
         end)
@@ -72,11 +72,11 @@ defmodule ExMCP.Transport.NotificationTest do
       server_pid =
         spawn(fn ->
           receive do
-            {:mcp_connect, client_pid} ->
-              send(client_pid, {:mcp_connected, self()})
+            {:beam_connect, client_mailbox} ->
+              send(client_mailbox, {:mcp_connected, self()})
 
               receive do
-                {:mcp_message, ^client_pid, message} ->
+                {:mcp_message, message} ->
                   # Verify we received a map
                   assert is_map(message)
                   assert message["method"] == "notifications/initialized"
@@ -88,7 +88,7 @@ defmodule ExMCP.Transport.NotificationTest do
                     "params" => %{}
                   }
 
-                  send(client_pid, {:mcp_response, self(), notification})
+                  send(client_mailbox, {:mcp_message, notification})
               end
           end
         end)
@@ -99,8 +99,7 @@ defmodule ExMCP.Transport.NotificationTest do
       {:ok, _state} = Beam.send_message(@notification, state)
 
       # Receive response
-      {:ok, response_json, _state} = Beam.receive_message(state)
-      {:ok, response} = Jason.decode(response_json)
+      {:ok, response, _state} = Beam.receive_message(state)
 
       assert response["method"] == "notifications/resources/list_changed"
       refute Map.has_key?(response, "id")
@@ -118,8 +117,8 @@ defmodule ExMCP.Transport.NotificationTest do
       server_pid =
         spawn(fn ->
           receive do
-            {:mcp_connect, client_pid} ->
-              send(client_pid, {:mcp_connected, self()})
+            {:beam_connect, client_mailbox} ->
+              send(client_mailbox, {:mcp_connected, self()})
 
               # Server sends a notification to client
               server_notif = %{
@@ -128,11 +127,11 @@ defmodule ExMCP.Transport.NotificationTest do
                 "params" => %{}
               }
 
-              send(client_pid, {:mcp_message, self(), server_notif})
+              send(client_mailbox, {:mcp_message, server_notif})
 
               # Receive notification from client
               receive do
-                {:mcp_message, ^client_pid, client_notif} ->
+                {:mcp_message, client_notif} ->
                   assert client_notif["method"] == "notifications/initialized"
 
                   # Send another notification
@@ -142,7 +141,7 @@ defmodule ExMCP.Transport.NotificationTest do
                     "params" => %{"progressToken" => "test", "progress" => 50}
                   }
 
-                  send(client_pid, {:mcp_message, self(), final_notif})
+                  send(client_mailbox, {:mcp_message, final_notif})
               end
           end
         end)
@@ -150,16 +149,14 @@ defmodule ExMCP.Transport.NotificationTest do
       {:ok, state} = Beam.connect(server: server_pid)
 
       # Receive first notification from server
-      {:ok, notif1_json, state} = Beam.receive_message(state)
-      {:ok, notif1} = Jason.decode(notif1_json)
+      {:ok, notif1, state} = Beam.receive_message(state)
       assert notif1["method"] == "notifications/tools/list_changed"
 
       # Send notification to server
-      {:ok, state} = Beam.send_message(Jason.encode!(@notification), state)
+      {:ok, state} = Beam.send_message(@notification, state)
 
       # Receive second notification from server
-      {:ok, notif2_json, _state} = Beam.receive_message(state)
-      {:ok, notif2} = Jason.decode(notif2_json)
+      {:ok, notif2, _state} = Beam.receive_message(state)
       assert notif2["method"] == "notifications/progress"
       assert notif2["params"]["progress"] == 50
     end
@@ -170,11 +167,11 @@ defmodule ExMCP.Transport.NotificationTest do
       server_pid =
         spawn(fn ->
           receive do
-            {:mcp_connect, client_pid} ->
-              send(client_pid, {:mcp_connected, self()})
+            {:beam_connect, client_mailbox} ->
+              send(client_mailbox, {:mcp_connected, self()})
 
               receive do
-                {:mcp_message, ^client_pid, message} ->
+                {:mcp_message, message} ->
                   # Should receive error map
                   assert message["error"] == "Invalid JSON"
               end
