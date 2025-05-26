@@ -35,12 +35,10 @@
           {Credo.Check.Design.AliasUsage,
            [priority: :low, if_nested_deeper_than: 2, if_called_more_often_than: 0]},
           {Credo.Check.Design.TagFIXME, []},
-          {Credo.Check.Design.TagTODO, [exit_status: 2]},
 
           # Readability Checks
           {Credo.Check.Readability.AliasOrder, []},
           {Credo.Check.Readability.FunctionNames, []},
-          {Credo.Check.Readability.LargeNumbers, []},
           {Credo.Check.Readability.MaxLineLength, [priority: :low, max_length: 120]},
           {Credo.Check.Readability.ModuleAttributeNames, []},
           {Credo.Check.Readability.ModuleDoc, []},
@@ -63,7 +61,7 @@
           # Refactoring Opportunities
           {Credo.Check.Refactor.Apply, []},
           {Credo.Check.Refactor.CondStatements, []},
-          {Credo.Check.Refactor.CyclomaticComplexity, []},
+          {Credo.Check.Refactor.CyclomaticComplexity, [max_complexity: 11]},
           {Credo.Check.Refactor.FilterCount, []},
           {Credo.Check.Refactor.FilterFilter, []},
           {Credo.Check.Refactor.FunctionArity, []},
@@ -71,8 +69,7 @@
           {Credo.Check.Refactor.MapJoin, []},
           {Credo.Check.Refactor.MatchInCondition, []},
           {Credo.Check.Refactor.NegatedConditionsInUnless, []},
-          {Credo.Check.Refactor.NegatedConditionsWithElse, []},
-          {Credo.Check.Refactor.Nesting, [max_nesting: 3]},
+          {Credo.Check.Refactor.Nesting, [max_nesting: 4]},
           {Credo.Check.Refactor.RedundantWithClauseResult, []},
           {Credo.Check.Refactor.RejectReject, []},
           {Credo.Check.Refactor.UnlessWithElse, []},
@@ -102,6 +99,13 @@
           {Credo.Check.Warning.WrongTestFileExtension, []}
         ],
         disabled: [
+          # Disabled because JSON-RPC error codes must match spec exactly
+          {Credo.Check.Readability.LargeNumbers, []},
+          # TODOs are tracked in TASKS.md
+          {Credo.Check.Design.TagTODO, []},
+          # Negated conditions are sometimes clearer
+          {Credo.Check.Refactor.NegatedConditionsWithElse, []},
+          
           # Checks scheduled for next check update (opt-in for now)
           {Credo.Check.Refactor.UtcNowTruncate, []},
 

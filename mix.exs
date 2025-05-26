@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.3.0"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -54,25 +54,42 @@ defmodule ExMCP.MixProject do
 
   defp description do
     """
-    A comprehensive Elixir implementation of the Model Context Protocol (MCP).
-    Build MCP clients and servers with support for tools, resources, prompts,
-    and multiple transport layers (stdio, SSE, WebSocket).
+    Complete Elixir implementation of the Model Context Protocol (MCP) v2025-03-26.
+    Build MCP clients and servers with support for tools, resources, prompts, sampling,
+    roots, subscriptions, and multiple transports (stdio, SSE, BEAM).
     """
   end
 
   defp package do
     [
       licenses: ["MIT"],
-      links: %{"GitHub" => @github_url},
-      files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md)
+      links: %{
+        "GitHub" => @github_url,
+        "Changelog" => "#{@github_url}/blob/master/CHANGELOG.md",
+        "MCP Spec" => "https://modelcontextprotocol.io"
+      },
+      files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md USER_GUIDE.md)
     ]
   end
 
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "CHANGELOG.md"],
+      name: "ExMCP",
+      canonical: "https://hexdocs.pm/ex_mcp",
+      extras: [
+        "README.md",
+        "USER_GUIDE.md",
+        "API_REFERENCE.md",
+        "CHANGELOG.md"
+      ],
+      extra_section: "GUIDES",
       source_ref: "v#{@version}",
+      groups_for_extras: [
+        Introduction: ~r/README/,
+        Guides: ~r/USER_GUIDE|API_REFERENCE/,
+        Changelog: ~r/CHANGELOG/
+      ],
       groups_for_modules: [
         "Core Protocol": [ExMCP.Protocol, ExMCP.Types],
         Client: [ExMCP.Client],
@@ -81,11 +98,50 @@ defmodule ExMCP.MixProject do
           ExMCP.Transport,
           ExMCP.Transport.Stdio,
           ExMCP.Transport.SSE,
-          ExMCP.Transport.BEAM
+          ExMCP.Transport.Beam
         ],
         Management: [ExMCP.ServerManager, ExMCP.Discovery],
         Application: [ExMCP.Application]
-      ]
+      ],
+      before_closing_body_tag: fn
+        :html ->
+          """
+          <script>
+            // Add copy button to code blocks
+            document.addEventListener('DOMContentLoaded', function() {
+              var blocks = document.querySelectorAll('pre code');
+              blocks.forEach(function(block) {
+                var button = document.createElement('button');
+                button.className = 'copy-button';
+                button.textContent = 'Copy';
+                button.addEventListener('click', function() {
+                  navigator.clipboard.writeText(block.textContent);
+                  button.textContent = 'Copied!';
+                  setTimeout(function() { button.textContent = 'Copy'; }, 2000);
+                });
+                block.parentNode.insertBefore(button, block);
+              });
+            });
+          </script>
+          <style>
+            .copy-button {
+              position: absolute;
+              top: 5px;
+              right: 5px;
+              padding: 2px 8px;
+              font-size: 12px;
+              background: #f0f0f0;
+              border: 1px solid #ccc;
+              border-radius: 3px;
+              cursor: pointer;
+            }
+            pre { position: relative; }
+          </style>
+          """
+
+        _ ->
+          ""
+      end
     ]
   end
 end

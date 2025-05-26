@@ -10,7 +10,7 @@ defmodule ExMCP.ProtocolTest do
 
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "initialize"
-      assert msg["params"]["protocolVersion"] == "2024-11-05"
+      assert msg["params"]["protocolVersion"] == "2025-03-26"
       assert msg["params"]["clientInfo"] == client_info
       assert is_integer(msg["id"])
     end
@@ -137,6 +137,64 @@ defmodule ExMCP.ProtocolTest do
       assert Protocol.method_not_found() == -32601
       assert Protocol.invalid_params() == -32602
       assert Protocol.internal_error() == -32603
+    end
+  end
+
+  describe "roots encoding" do
+    test "encode_list_roots/0" do
+      msg = Protocol.encode_list_roots()
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "roots/list"
+      assert msg["params"] == %{}
+      assert is_integer(msg["id"])
+    end
+
+    test "encode_roots_changed/0" do
+      msg = Protocol.encode_roots_changed()
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "notifications/roots/list_changed"
+      assert msg["params"] == %{}
+      refute Map.has_key?(msg, "id")
+    end
+  end
+
+  describe "resource subscriptions encoding" do
+    test "encode_subscribe_resource/1" do
+      msg = Protocol.encode_subscribe_resource("file:///test.txt")
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "resources/subscribe"
+      assert msg["params"]["uri"] == "file:///test.txt"
+      assert is_integer(msg["id"])
+    end
+
+    test "encode_unsubscribe_resource/1" do
+      msg = Protocol.encode_unsubscribe_resource("file:///test.txt")
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "resources/unsubscribe"
+      assert msg["params"]["uri"] == "file:///test.txt"
+      assert is_integer(msg["id"])
+    end
+  end
+
+  describe "sampling encoding" do
+    test "encode_create_message/1" do
+      params = %{
+        messages: [
+          %{role: "user", content: %{type: "text", text: "Hello"}}
+        ],
+        max_tokens: 100
+      }
+
+      msg = Protocol.encode_create_message(params)
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "sampling/createMessage"
+      assert msg["params"] == params
+      assert is_integer(msg["id"])
     end
   end
 end

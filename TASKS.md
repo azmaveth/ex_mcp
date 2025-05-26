@@ -46,19 +46,23 @@
 - [ ] Batch request support
 - [ ] Progress notification handling
 
-### MCP Protocol Features (Missing from Spec)
+### MCP Protocol Features (Missing from Current Implementation)
 - [x] Sampling/createMessage support for LLM interactions
 - [x] Change notifications (resources/tools/prompts list_changed)
 - [x] Progress notifications for long-running operations
-- [ ] Request cancellation support
-- [ ] Logging protocol (logging/setLevel, log notifications)
-- [ ] Roots capability (roots/list, roots/list_changed)
-- [ ] Resource templates with URI patterns
-- [ ] Resource subscriptions for dynamic resources
+- [x] Roots capability (roots/list, roots/list_changed notification)
+- [x] Resource subscriptions (resources/subscribe, resources/unsubscribe)
+- [x] Update protocol version to latest (now using 2025-03-26)
+- [x] Tool annotations (readOnlyHint, destructiveHint, idempotentHint, openWorldHint)  
+- [x] Multimodal content support (text, image, audio, embedded resources)
+- [x] Request cancellation support (send_cancelled/3, handle cancelled notifications)
+- [x] Logging protocol (log_message/4, handle log notifications)
+- [x] Resource templates with URI patterns (list_resource_templates/2, handle_list_resource_templates/1)
 - [ ] Bi-directional requests (server-to-client)
 - [ ] Human-in-the-loop interaction support
 - [ ] Context inclusion options for sampling
-- [ ] Model preference hints
+- [ ] Model preference hints (partially implemented)
+- [ ] Resource subscription notifications for dynamic resources
 
 ### Features
 - [ ] Tool registration and management
@@ -76,8 +80,9 @@
 - [ ] Property-based tests for protocol encoding/decoding
 
 ### Documentation
-- [ ] Comprehensive README with examples
-- [ ] API documentation
+- [x] Comprehensive README with examples
+- [x] API documentation (API_REFERENCE.md)
+- [x] User guide (USER_GUIDE.md)
 - [ ] Protocol implementation guide
 - [ ] Transport implementation guide
 - [ ] Server handler implementation examples
@@ -140,8 +145,18 @@
 
 ## Notes
 
-- The library implements the Model Context Protocol specification version 2024-11-05
+- The library implements the Model Context Protocol specification version 2025-03-26
 - stdio transport is the primary transport mechanism, matching the reference implementation
 - The client includes automatic reconnection with exponential backoff
 - Server handlers can be implemented using the ExMCP.Server.Handler behaviour
 - All protocol messages use string keys for JSON compatibility
+
+### Protocol Compliance Status
+Based on the latest MCP specification (2025-03-26), the following features have been implemented:
+1. **Roots capability** - ✅ Implemented (roots/list method and roots/list_changed notification)
+2. **Resource subscriptions** - ✅ Implemented (resources/subscribe, resources/unsubscribe methods)
+3. **Tool annotations** - ✅ Implemented (readOnlyHint, destructiveHint, costHint properties in types)
+4. **Multimodal content** - ✅ Already supported (text_content and image_content types)
+5. **Protocol version** - ✅ Updated to latest version (2025-03-26)
+
+The library now implements all major features from the latest MCP specification.

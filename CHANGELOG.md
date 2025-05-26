@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-05-26
+
+### Added
+- Protocol version updated to "2025-03-26" (latest MCP specification)
+- Roots capability for URI-based resource boundaries
+  - `list_roots/2` client method
+  - `handle_list_roots/1` server callback
+  - `notify_roots_changed/1` for dynamic root updates
+- Resource subscription support
+  - `subscribe_resource/3` and `unsubscribe_resource/3` client methods
+  - `handle_subscribe_resource/2` and `handle_unsubscribe_resource/2` server callbacks
+- Resource templates support
+  - `list_resource_templates/2` client method  
+  - `handle_list_resource_templates/1` server callback
+- Enhanced protocol method support
+  - `ping/2` for connection health checks
+  - `complete/4` for completion/autocomplete features
+  - `send_cancelled/3` for request cancellation notifications
+  - `log_message/4` for structured logging
+- Tool annotations (readOnlyHint, destructiveHint, idempotentHint, openWorldHint)
+- Audio content support (`audio_content` type)
+- Embedded resource support in content
+- Pagination support with cursor/nextCursor
+- RFC-5424 compliant logging levels
+- Progress tokens now use `_progressToken` in `_meta` as per spec
+- Comprehensive USER_GUIDE.md documentation
+- API_REFERENCE.md with complete module documentation
+- Enhanced examples for all new features
+
+### Changed  
+- **BREAKING**: JSON field names now use camelCase to match official MCP schema
+  - `mime_type` → `mimeType`
+  - `progress_token` → `_progressToken` (in `_meta`)
+  - All response fields follow camelCase convention
+- **BREAKING**: ModelHint is now an object with optional `name` field (was array)
+- Type specifications completely rewritten to match official schema
+- Updated all documentation to reflect protocol version 2025-03-26
+- Enhanced capabilities type to include roots and other new features
+
+### Fixed
+- Protocol compliance with official MCP schema
+- Missing cancellation and logging notification handlers
+- Type definitions for multimodal content
+- Progress token parameter location (now in `_meta._progressToken`)
+
 ## [0.2.0] - 2025-05-26
 
 ### Added

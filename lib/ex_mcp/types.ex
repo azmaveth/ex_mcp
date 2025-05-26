@@ -3,135 +3,229 @@ defmodule ExMCP.Types do
   Type definitions for the Model Context Protocol.
 
   This module defines the core types used throughout ExMCP,
-  matching the MCP specification.
+  matching the MCP specification version 2025-03-26.
   """
 
-  @type client_info :: %{
-          name: String.t(),
-          version: String.t()
+  # Core types
+  @type progress_token :: String.t() | integer()
+  @type cursor :: String.t()
+  @type request_id :: String.t() | integer()
+  # "user" | "assistant"
+  @type role :: String.t()
+  # RFC-5424 levels
+  @type log_level :: String.t()
+  # ref/resource or ref/prompt
+  @type complete_ref :: map()
+  @type complete_argument :: map()
+  @type complete_result :: map()
+
+  @type implementation :: %{
+          String.t() => any()
         }
 
-  @type server_info :: %{
-          name: String.t(),
-          version: String.t()
+  @type client_info :: implementation()
+  @type server_info :: implementation()
+
+  @type client_capabilities :: %{
+          String.t() => any()
         }
 
-  @type capabilities :: %{
-          optional(:tools) => map(),
-          optional(:resources) => map(),
-          optional(:prompts) => map(),
-          optional(:logging) => map(),
-          optional(:sampling) => map()
+  @type server_capabilities :: %{
+          String.t() => any()
+        }
+
+  @type capabilities :: client_capabilities() | server_capabilities()
+
+  # Annotations
+  @type annotations :: %{
+          String.t() => any()
+        }
+
+  # Tool types
+  @type tool_annotations :: %{
+          String.t() => any()
         }
 
   @type tool :: %{
-          required(:name) => String.t(),
-          required(:description) => String.t(),
-          optional(:input_schema) => json_schema()
+          String.t() => any()
         }
 
+  # Resource types
   @type resource :: %{
-          required(:uri) => String.t(),
-          required(:name) => String.t(),
-          optional(:description) => String.t(),
-          optional(:mime_type) => String.t()
+          String.t() => any()
         }
 
-  @type resource_content :: %{
-          required(:uri) => String.t(),
-          optional(:mime_type) => String.t(),
-          optional(:text) => String.t(),
-          # base64 encoded
-          optional(:blob) => String.t()
+  @type resource_template :: %{
+          String.t() => any()
         }
 
+  @type text_resource_contents :: %{
+          String.t() => any()
+        }
+
+  @type blob_resource_contents :: %{
+          String.t() => any()
+        }
+
+  @type resource_contents :: text_resource_contents() | blob_resource_contents()
+  # Alias for backwards compatibility
+  @type resource_content :: map()
+
+  # Root type
+  @type root :: %{
+          String.t() => any()
+        }
+
+  # Prompt types
   @type prompt :: %{
-          required(:name) => String.t(),
-          optional(:description) => String.t(),
-          optional(:arguments) => [prompt_argument()]
+          String.t() => any()
         }
 
   @type prompt_argument :: %{
-          required(:name) => String.t(),
-          optional(:description) => String.t(),
-          optional(:required) => boolean()
+          String.t() => any()
         }
 
   @type prompt_message :: %{
-          role: String.t(),
-          content: prompt_content()
+          String.t() => any()
         }
 
-  @type prompt_content :: String.t() | [content_part()]
+  # Content types
+  @type text_content :: %{
+          String.t() => any()
+        }
 
-  @type text_content :: %{type: String.t(), text: String.t()}
-  @type image_content :: %{type: String.t(), data: String.t(), mime_type: String.t()}
-  @type resource_ref :: %{type: String.t(), resource: resource_content()}
+  @type image_content :: %{
+          String.t() => any()
+        }
 
-  @type content_part :: text_content() | image_content() | resource_ref()
+  @type audio_content :: %{
+          String.t() => any()
+        }
 
-  @type tool_result :: [content_part()] | {:error, String.t()}
+  @type embedded_resource :: %{
+          String.t() => any()
+        }
 
+  @type content :: text_content() | image_content() | audio_content() | embedded_resource()
+
+  # Tool result
+  @type tool_result :: %{
+          String.t() => any()
+        }
+
+  # JSON Schema type
   @type json_schema :: map()
 
+  # Completion types
+  @type resource_reference :: %{
+          String.t() => any()
+        }
+
+  @type prompt_reference :: %{
+          String.t() => any()
+        }
+
+  @type completion_reference :: resource_reference() | prompt_reference()
+
   @type completion_argument :: %{
-          name: String.t(),
-          value: String.t()
+          String.t() => any()
         }
 
-  @type log_level :: :debug | :info | :warning | :error
-
-  @type transport :: :stdio | :sse | :websocket | module()
-
-  @type initialize_result :: %{
-          protocolVersion: String.t(),
-          serverInfo: server_info(),
-          capabilities: capabilities()
+  @type completion_result :: %{
+          String.t() => any()
         }
 
-  @type error_code :: -32700..-32600 | -32099..-32000
+  # Logging types (RFC-5424)
+  @type logging_level ::
+          :debug | :info | :notice | :warning | :error | :critical | :alert | :emergency
 
+  # Sampling types
   @type sampling_message :: %{
-          required(:role) => String.t(),
-          required(:content) => prompt_content()
+          String.t() => any()
+        }
+
+  @type model_hint :: %{
+          String.t() => any()
         }
 
   @type model_preferences :: %{
-          optional(:hints) => [String.t()],
-          optional(:costPriority) => float(),
-          optional(:speedPriority) => float(),
-          optional(:intelligencePriority) => float()
-        }
-
-  @type sampling_params :: %{
-          optional(:temperature) => float(),
-          optional(:topP) => float(),
-          optional(:topK) => integer(),
-          optional(:maxTokens) => integer(),
-          optional(:stopSequences) => [String.t()],
-          optional(:seed) => integer()
+          String.t() => any()
         }
 
   @type create_message_params :: %{
-          required(:messages) => [sampling_message()],
-          optional(:modelPreferences) => model_preferences(),
-          optional(:systemPrompt) => String.t(),
-          optional(:includeContext) => String.t(),
-          optional(:metadata) => map()
+          String.t() => any()
         }
 
   @type create_message_result :: %{
-          required(:role) => String.t(),
-          required(:content) => prompt_content(),
-          optional(:model) => String.t(),
-          optional(:stopReason) => String.t()
+          String.t() => any()
         }
 
-  @type progress_token :: String.t() | integer()
-
+  # Progress notification
   @type progress_notification :: %{
-          required(:progressToken) => progress_token(),
-          required(:progress) => number(),
-          optional(:total) => number()
+          String.t() => any()
         }
+
+  # Initialize types
+  @type initialize_request :: %{
+          String.t() => any()
+        }
+
+  @type initialize_result :: %{
+          String.t() => any()
+        }
+
+  # Error codes (JSON-RPC)
+  @type error_code :: integer()
+
+  # Transport types
+  @type transport :: :stdio | :sse | :beam | module()
+
+  # Pagination types
+  @type paginated_request :: %{
+          String.t() => any()
+        }
+
+  @type paginated_result :: %{
+          String.t() => any()
+        }
+
+  # List results with pagination
+  @type list_resources_result :: %{
+          String.t() => any()
+        }
+
+  @type list_resource_templates_result :: %{
+          String.t() => any()
+        }
+
+  @type list_tools_result :: %{
+          String.t() => any()
+        }
+
+  @type list_prompts_result :: %{
+          String.t() => any()
+        }
+
+  @type list_roots_result :: %{
+          String.t() => any()
+        }
+
+  # Subscription results
+  @type subscribe_result :: %{}
+  @type unsubscribe_result :: %{}
+
+  # Notification types
+  @type cancelled_notification :: %{
+          String.t() => any()
+        }
+
+  @type log_notification :: %{
+          String.t() => any()
+        }
+
+  @type resource_updated_notification :: %{
+          String.t() => any()
+        }
+
+  @type list_changed_notification :: %{}
 end

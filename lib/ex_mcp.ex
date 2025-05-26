@@ -1,111 +1,162 @@
 defmodule ExMCP do
   @moduledoc """
-  ExMCP - Elixir implementation of the Model Context Protocol.
+  ExMCP - Complete Elixir implementation of the Model Context Protocol.
 
-  This is the main entry point for the ExMCP library. For most use cases,
-  you'll want to use the specific modules:
+  ExMCP enables AI models to securely interact with local and remote resources through
+  a standardized protocol. It provides both client and server implementations with
+  multiple transport options.
 
-  - `ExMCP.Client` - For connecting to MCP servers
-  - `ExMCP.Server` - For implementing MCP servers
-  - `ExMCP.ServerManager` - For managing multiple server connections
-  - `ExMCP.Discovery` - For discovering available MCP servers
+  ## Main Components
+
+  - `ExMCP.Client` - Connect to MCP servers
+  - `ExMCP.Server` - Implement MCP servers
+  - `ExMCP.ServerManager` - Manage multiple server connections
+  - `ExMCP.Discovery` - Discover available MCP servers
+
+  ## Protocol Features
+
+  ExMCP implements the full MCP specification (version 2025-03-26):
+
+  - **Tools** - Register and execute functions with parameters
+  - **Resources** - List and read data from various sources
+  - **Prompts** - Manage reusable prompt templates
+  - **Sampling** - Direct LLM integration for response generation
+  - **Roots** - URI-based resource boundaries
+  - **Subscriptions** - Monitor resources for changes
+  - **Progress** - Track long-running operations
+  - **Notifications** - Real-time updates for changes
 
   ## Transport Options
 
-  ExMCP supports multiple transport layers:
+  ### stdio Transport
+  Process communication via standard input/output. Best for:
+  - Subprocess communication
+  - Cross-language integration
+  - Command-line tools
 
-  - **stdio** - Process communication via standard input/output
-  - **SSE** - Server-Sent Events over HTTP
-  - **BEAM** - Native Erlang/Elixir message passing
+  ### SSE Transport
+  Server-Sent Events over HTTP. Best for:
+  - Web integration
+  - Firewall-friendly communication
+  - RESTful architectures
 
-  ## Quick Examples
+  ### BEAM Transport
+  Native Erlang/Elixir message passing. Best for:
+  - Elixir-to-Elixir communication
+  - High-performance local tools
+  - Distributed Erlang clusters
 
-  ### Client Usage
+  ## Quick Start
 
-      # Connect via stdio to an external process
+  ### Client Example
+
+      # Connect to a stdio server
       {:ok, client} = ExMCP.Client.start_link(
         transport: :stdio,
-        command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+        command: ["python", "mcp-server.py"]
       )
 
-      # Connect via BEAM transport to an Elixir server
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :beam,
-        server: :my_server
-      )
-
-      # Connect via SSE
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :sse,
-        url: "http://localhost:8080/sse"
-      )
-
-      # List and call tools
+      # List available tools
       {:ok, tools} = ExMCP.Client.list_tools(client)
-      {:ok, result} = ExMCP.Client.call_tool(client, "read_file", %{"path" => "/tmp/test.txt"})
 
-  ### Server Usage
+      # Call a tool
+      {:ok, result} = ExMCP.Client.call_tool(client, "search", %{
+        query: "Elixir metaprogramming"
+      })
+
+      # Read a resource
+      {:ok, content} = ExMCP.Client.read_resource(client, "file:///data.json")
+
+      # Subscribe to changes
+      {:ok, _} = ExMCP.Client.subscribe_resource(client, "file:///config.json")
+
+  ### Server Example
 
       defmodule MyServer do
         use ExMCP.Server.Handler
 
         @impl true
+        def init(_args) do
+          {:ok, %{}}
+        end
+
+        @impl true
+        def handle_initialize(_params, state) do
+          {:ok, %{
+            name: "my-server",
+            version: "1.0.0",
+            capabilities: %{
+              tools: %{},
+              resources: %{subscribe: true},
+              roots: %{}
+            }
+          }, state}
+        end
+
+        @impl true
         def handle_list_tools(state) do
-          tools = [%{name: "hello", description: "Say hello"}]
+          tools = [
+            %{
+              name: "echo",
+              description: "Echoes the input",
+              input_schema: %{
+                type: "object",
+                properties: %{
+                  message: %{type: "string"}
+                },
+                required: ["message"]
+              },
+              # Tool annotations (new in 2025-03-26)
+              readOnlyHint: true,
+              destructiveHint: false,
+              costHint: :low
+            }
+          ]
           {:ok, tools, state}
         end
 
         @impl true
-        def handle_call_tool("hello", %{"name" => name} = _args, state) do
-          {:ok, [%{type: "text", text: "Hello, " <> name <> "!"}], state}
+        def handle_call_tool("echo", %{"message" => msg}, state) do
+          {:ok, [%{type: "text", text: msg}], state}
         end
+
+        # ... implement other callbacks
       end
 
-      # Start with stdio transport
+      # Start the server
       {:ok, server} = ExMCP.Server.start_link(
         handler: MyServer,
         transport: :stdio
       )
 
-      # Or with BEAM transport for Elixir-to-Elixir communication
-      {:ok, server} = ExMCP.Server.start_link(
-        handler: MyServer,
-        transport: :beam,
-        name: :my_server  # Optional: register with a name
-      )
-
   ### BEAM Transport Example
 
-  The BEAM transport is ideal for building Elixir-native tool ecosystems:
-
-      # Define a calculation server
-      defmodule CalcServer do
-        use ExMCP.Server.Handler
-        
-        @impl true
-        def handle_call_tool("add", %{"a" => a, "b" => b}, state) do
-          result = a + b
-          {:ok, [%{type: "text", text: "Result: " <> to_string(result)}], state}
-        end
-      end
-
-      # Start server
+      # Server on node1
       {:ok, server} = ExMCP.Server.start_link(
-        handler: CalcServer,
+        handler: ToolServer,
         transport: :beam,
-        name: :calc
+        name: {:global, :tool_server}
       )
 
-      # Connect client (can be from different process/node)
+      # Client on node2
       {:ok, client} = ExMCP.Client.start_link(
         transport: :beam,
-        server: :calc
+        server: {:global, :tool_server}
       )
 
-      # Use it
-      {:ok, result} = ExMCP.Client.call_tool(client, "add", %{"a" => 5, "b" => 3})
+      # Works transparently across nodes
+      {:ok, result} = ExMCP.Client.call_tool(client, "process", %{})
 
-  For more examples, see the `examples/beam_transport/` directory.
+  ## Documentation
+
+  - [User Guide](https://github.com/yourusername/ex_mcp/blob/master/USER_GUIDE.md) - Comprehensive guide
+  - [Examples](https://github.com/yourusername/ex_mcp/tree/master/examples) - Working examples
+  - [API Docs](https://hexdocs.pm/ex_mcp) - Full API reference
+
+  ## Protocol Compliance
+
+  ExMCP implements MCP specification version 2025-03-26, including all latest features:
+  roots capability, resource subscriptions, tool annotations, and multimodal content support.
   """
 
   @doc """
@@ -113,7 +164,7 @@ defmodule ExMCP do
   """
   @spec protocol_version() :: String.t()
   def protocol_version do
-    "2024-11-05"
+    "2025-03-26"
   end
 
   @doc """

@@ -191,6 +191,30 @@ defmodule ExMCP.Server.Handler do
               {:ok, ExMCP.Types.create_message_result(), state()} | {:error, any(), state()}
 
   @doc """
+  Handles listing available roots.
+  """
+  @callback handle_list_roots(state()) ::
+              {:ok, [ExMCP.Types.root()], state()} | {:error, any(), state()}
+
+  @doc """
+  Handles resource subscription.
+  """
+  @callback handle_subscribe_resource(uri :: String.t(), state()) ::
+              {:ok, map(), state()} | {:error, any(), state()}
+
+  @doc """
+  Handles resource unsubscription.
+  """
+  @callback handle_unsubscribe_resource(uri :: String.t(), state()) ::
+              {:ok, map(), state()} | {:error, any(), state()}
+
+  @doc """
+  Handles listing resource templates.
+  """
+  @callback handle_list_resource_templates(state()) ::
+              {:ok, [ExMCP.Types.resource_template()], state()} | {:error, any(), state()}
+
+  @doc """
   Called when the handler process is started.
   """
   @callback init(args :: any()) :: {:ok, state()} | {:error, any()}
@@ -208,6 +232,9 @@ defmodule ExMCP.Server.Handler do
     handle_get_prompt: 3,
     handle_complete: 3,
     handle_create_message: 2,
+    handle_list_roots: 1,
+    handle_subscribe_resource: 2,
+    handle_unsubscribe_resource: 2,
     terminate: 2
   ]
 
@@ -249,6 +276,26 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl true
+      def handle_list_roots(state) do
+        {:error, "Roots not implemented", state}
+      end
+
+      @impl true
+      def handle_subscribe_resource(_uri, state) do
+        {:error, "Resource subscriptions not implemented", state}
+      end
+
+      @impl true
+      def handle_unsubscribe_resource(_uri, state) do
+        {:error, "Resource subscriptions not implemented", state}
+      end
+
+      @impl true
+      def handle_list_resource_templates(state) do
+        {:error, "Resource templates not implemented", state}
+      end
+
+      @impl true
       def terminate(_reason, _state), do: :ok
 
       defoverridable init: 1,
@@ -258,6 +305,10 @@ defmodule ExMCP.Server.Handler do
                      handle_get_prompt: 3,
                      handle_complete: 3,
                      handle_create_message: 2,
+                     handle_list_roots: 1,
+                     handle_subscribe_resource: 2,
+                     handle_unsubscribe_resource: 2,
+                     handle_list_resource_templates: 1,
                      terminate: 2
     end
   end

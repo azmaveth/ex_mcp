@@ -7,7 +7,7 @@ defmodule ExMCP.Protocol do
   client and server implementations.
   """
 
-  @protocol_version "2024-11-05"
+  @protocol_version "2025-03-26"
 
   @type json_rpc_id :: String.t() | integer()
   @type method :: String.t()
@@ -41,7 +41,7 @@ defmodule ExMCP.Protocol do
   Encodes an initialized notification.
   """
   @spec encode_initialized() :: map()
-  def encode_initialized() do
+  def encode_initialized do
     %{
       "jsonrpc" => "2.0",
       "method" => "notifications/initialized",
@@ -53,7 +53,7 @@ defmodule ExMCP.Protocol do
   Encodes a request to list available tools.
   """
   @spec encode_list_tools() :: map()
-  def encode_list_tools() do
+  def encode_list_tools do
     %{
       "jsonrpc" => "2.0",
       "method" => "tools/list",
@@ -72,7 +72,12 @@ defmodule ExMCP.Protocol do
       "arguments" => arguments
     }
 
-    params = if progress_token, do: Map.put(params, "progressToken", progress_token), else: params
+    params =
+      if progress_token do
+        put_in(params, ["_meta", "_progressToken"], progress_token)
+      else
+        params
+      end
 
     %{
       "jsonrpc" => "2.0",
@@ -86,7 +91,7 @@ defmodule ExMCP.Protocol do
   Encodes a request to list available resources.
   """
   @spec encode_list_resources() :: map()
-  def encode_list_resources() do
+  def encode_list_resources do
     %{
       "jsonrpc" => "2.0",
       "method" => "resources/list",
@@ -114,7 +119,7 @@ defmodule ExMCP.Protocol do
   Encodes a request to list available prompts.
   """
   @spec encode_list_prompts() :: map()
-  def encode_list_prompts() do
+  def encode_list_prompts do
     %{
       "jsonrpc" => "2.0",
       "method" => "prompts/list",
@@ -142,12 +147,15 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a completion request.
   """
-  @spec encode_complete(String.t(), map()) :: map()
-  def encode_complete(ref, params) do
+  @spec encode_complete(ExMCP.Types.complete_ref(), ExMCP.Types.complete_argument()) :: map()
+  def encode_complete(ref, argument) do
     %{
       "jsonrpc" => "2.0",
       "method" => "completion/complete",
-      "params" => Map.merge(%{"ref" => ref}, params),
+      "params" => %{
+        "ref" => ref,
+        "argument" => argument
+      },
       "id" => generate_id()
     }
   end
@@ -161,6 +169,45 @@ defmodule ExMCP.Protocol do
       "jsonrpc" => "2.0",
       "method" => "sampling/createMessage",
       "params" => params,
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a request to list roots.
+  """
+  @spec encode_list_roots() :: map()
+  def encode_list_roots do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "roots/list",
+      "params" => %{},
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a resource subscription request.
+  """
+  @spec encode_subscribe_resource(String.t()) :: map()
+  def encode_subscribe_resource(uri) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "resources/subscribe",
+      "params" => %{"uri" => uri},
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a resource unsubscribe request.
+  """
+  @spec encode_unsubscribe_resource(String.t()) :: map()
+  def encode_unsubscribe_resource(uri) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "resources/unsubscribe",
+      "params" => %{"uri" => uri},
       "id" => generate_id()
     }
   end
@@ -248,12 +295,78 @@ defmodule ExMCP.Protocol do
   @spec encode_progress(ExMCP.Types.progress_token(), number(), number() | nil) :: map()
   def encode_progress(progress_token, progress, total \\ nil) do
     params = %{
-      "progressToken" => progress_token,
+      "_progressToken" => progress_token,
       "progress" => progress
     }
 
     params = if total, do: Map.put(params, "total", total), else: params
     encode_notification("notifications/progress", params)
+  end
+
+  @doc """
+  Encodes a roots list changed notification.
+  """
+  @spec encode_roots_changed() :: map()
+  def encode_roots_changed do
+    encode_notification("notifications/roots/list_changed", %{})
+  end
+
+  @doc """
+  Encodes a cancelled notification.
+  """
+  @spec encode_cancelled(ExMCP.Types.request_id(), String.t() | nil) :: map()
+  def encode_cancelled(request_id, reason \\ nil) do
+    params = %{"requestId" => request_id}
+    params = if reason, do: Map.put(params, "reason", reason), else: params
+    encode_notification("notifications/cancelled", params)
+  end
+
+  @doc """
+  Encodes a ping request.
+  """
+  @spec encode_ping() :: map()
+  def encode_ping do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "ping",
+      "params" => %{},
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a pong response.
+  """
+  @spec encode_pong(json_rpc_id()) :: map()
+  def encode_pong(id) do
+    encode_response(%{}, id)
+  end
+
+  @doc """
+  Encodes a request to list resource templates.
+  """
+  @spec encode_list_resource_templates() :: map()
+  def encode_list_resource_templates do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "resources/templates/list",
+      "params" => %{},
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a logging message.
+  """
+  @spec encode_log_message(ExMCP.Types.log_level(), String.t(), any()) :: map()
+  def encode_log_message(level, message, data \\ nil) do
+    params = %{
+      "level" => level,
+      "message" => message
+    }
+
+    params = if data, do: Map.put(params, "data", data), else: params
+    encode_notification("notifications/log", params)
   end
 
   # Message Parsing
@@ -313,7 +426,7 @@ defmodule ExMCP.Protocol do
   Generates a unique ID for requests.
   """
   @spec generate_id() :: integer()
-  def generate_id() do
+  def generate_id do
     System.unique_integer([:positive, :monotonic])
   end
 

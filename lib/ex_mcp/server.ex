@@ -76,6 +76,9 @@ defmodule ExMCP.Server do
       # Notify about prompt changes  
       ExMCP.Server.notify_prompts_changed(server)
       
+      # Notify about roots changes
+      ExMCP.Server.notify_roots_changed(server)
+      
       # Send progress updates
       ExMCP.Server.notify_progress(server, "token", 50, 100)
   """
@@ -84,6 +87,7 @@ defmodule ExMCP.Server do
   require Logger
 
   alias ExMCP.{Protocol, Transport}
+  alias ExMCP.Transport.Beam, as: BeamTransport
 
   defstruct [
     :handler,
@@ -137,6 +141,13 @@ defmodule ExMCP.Server do
   """
   def notify_prompts_changed(server) do
     GenServer.cast(server, :notify_prompts_changed)
+  end
+
+  @doc """
+  Notifies connected clients that the roots list has changed.
+  """
+  def notify_roots_changed(server) do
+    GenServer.cast(server, :notify_roots_changed)
   end
 
   @doc """
@@ -206,9 +217,9 @@ defmodule ExMCP.Server do
 
   def handle_info({:beam_connect, client_mailbox}, state) do
     # Handle BEAM transport connection
-    if state.transport_mod == ExMCP.Transport.Beam do
+    if state.transport_mod == BeamTransport do
       {:ok, new_transport_state} =
-        ExMCP.Transport.Beam.handle_connection_request(client_mailbox, state.transport_state)
+        BeamTransport.handle_connection_request(client_mailbox, state.transport_state)
 
       {:noreply, %{state | transport_state: new_transport_state}}
     else
@@ -232,6 +243,10 @@ defmodule ExMCP.Server do
 
   def handle_cast(:notify_prompts_changed, state) do
     send_notification(Protocol.encode_prompts_changed(), state)
+  end
+
+  def handle_cast(:notify_roots_changed, state) do
+    send_notification(Protocol.encode_roots_changed(), state)
   end
 
   def handle_cast({:notify_progress, progress_token, progress, total}, state) do
@@ -506,6 +521,172 @@ defmodule ExMCP.Server do
     end
   end
 
+  defp handle_request("roots/list", _params, id, state) do
+    if not state.initialized do
+      error =
+        Protocol.encode_error(
+          Protocol.invalid_request(),
+          "Not initialized",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+    else
+      case state.handler.handle_list_roots(state.handler_state) do
+        {:ok, roots, new_handler_state} ->
+          response = Protocol.encode_response(%{roots: roots}, id)
+          send_message(response, %{state | handler_state: new_handler_state})
+
+        {:error, reason, new_handler_state} ->
+          error =
+            Protocol.encode_error(
+              Protocol.internal_error(),
+              format_error(reason),
+              nil,
+              id
+            )
+
+          send_message(error, %{state | handler_state: new_handler_state})
+      end
+    end
+  end
+
+  defp handle_request("resources/subscribe", %{"uri" => uri} = _params, id, state) do
+    if not state.initialized do
+      error =
+        Protocol.encode_error(
+          Protocol.invalid_request(),
+          "Not initialized",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+    else
+      case state.handler.handle_subscribe_resource(uri, state.handler_state) do
+        {:ok, result, new_handler_state} ->
+          response = Protocol.encode_response(result, id)
+          send_message(response, %{state | handler_state: new_handler_state})
+
+        {:error, reason, new_handler_state} ->
+          error =
+            Protocol.encode_error(
+              Protocol.internal_error(),
+              format_error(reason),
+              nil,
+              id
+            )
+
+          send_message(error, %{state | handler_state: new_handler_state})
+      end
+    end
+  end
+
+  defp handle_request("resources/unsubscribe", %{"uri" => uri} = _params, id, state) do
+    if not state.initialized do
+      error =
+        Protocol.encode_error(
+          Protocol.invalid_request(),
+          "Not initialized",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+    else
+      case state.handler.handle_unsubscribe_resource(uri, state.handler_state) do
+        {:ok, result, new_handler_state} ->
+          response = Protocol.encode_response(result, id)
+          send_message(response, %{state | handler_state: new_handler_state})
+
+        {:error, reason, new_handler_state} ->
+          error =
+            Protocol.encode_error(
+              Protocol.internal_error(),
+              format_error(reason),
+              nil,
+              id
+            )
+
+          send_message(error, %{state | handler_state: new_handler_state})
+      end
+    end
+  end
+
+  defp handle_request("resources/templates/list", _params, id, state) do
+    if not state.initialized do
+      error =
+        Protocol.encode_error(
+          Protocol.invalid_request(),
+          "Not initialized",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+    else
+      case state.handler.handle_list_resource_templates(state.handler_state) do
+        {:ok, templates, new_handler_state} ->
+          response = Protocol.encode_response(%{resourceTemplates: templates}, id)
+          send_message(response, %{state | handler_state: new_handler_state})
+
+        {:error, reason, new_handler_state} ->
+          error =
+            Protocol.encode_error(
+              Protocol.internal_error(),
+              format_error(reason),
+              nil,
+              id
+            )
+
+          send_message(error, %{state | handler_state: new_handler_state})
+      end
+    end
+  end
+
+  defp handle_request("ping", _params, id, state) do
+    # Ping always responds with empty result
+    response = Protocol.encode_pong(id)
+    send_message(response, state)
+  end
+
+  defp handle_request(
+         "completion/complete",
+         %{"ref" => ref, "argument" => argument} = _params,
+         id,
+         state
+       ) do
+    if not state.initialized do
+      error =
+        Protocol.encode_error(
+          Protocol.invalid_request(),
+          "Not initialized",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+    else
+      case state.handler.handle_complete(ref, argument, state.handler_state) do
+        {:ok, result, new_handler_state} ->
+          response = Protocol.encode_response(result, id)
+          send_message(response, %{state | handler_state: new_handler_state})
+
+        {:error, reason, new_handler_state} ->
+          error =
+            Protocol.encode_error(
+              Protocol.internal_error(),
+              format_error(reason),
+              nil,
+              id
+            )
+
+          send_message(error, %{state | handler_state: new_handler_state})
+      end
+    end
+  end
+
   defp handle_request(method, _params, id, state) do
     error =
       Protocol.encode_error(
@@ -523,8 +704,41 @@ defmodule ExMCP.Server do
     {:noreply, state}
   end
 
+  defp handle_notification(
+         "notifications/cancelled",
+         %{"requestId" => request_id} = params,
+         state
+       ) do
+    reason = Map.get(params, "reason")
+    Logger.info("Request #{request_id} cancelled: #{reason || "no reason given"}")
+    # TODO: Actually cancel the request if it's still running
+    {:noreply, state}
+  end
+
+  defp handle_notification("notifications/log", params, state) do
+    level = Map.get(params, "level", "info")
+    message = Map.get(params, "message", "")
+    data = Map.get(params, "data")
+
+    log_data = if data, do: " - #{inspect(data)}", else: ""
+
+    case level do
+      "debug" -> Logger.debug("Client: #{message}#{log_data}")
+      "info" -> Logger.info("Client: #{message}#{log_data}")
+      "notice" -> Logger.info("Client: #{message}#{log_data}")
+      "warning" -> Logger.warning("Client: #{message}#{log_data}")
+      "error" -> Logger.error("Client: #{message}#{log_data}")
+      "critical" -> Logger.error("Client [CRITICAL]: #{message}#{log_data}")
+      "alert" -> Logger.error("Client [ALERT]: #{message}#{log_data}")
+      "emergency" -> Logger.error("Client [EMERGENCY]: #{message}#{log_data}")
+      _ -> Logger.info("Client [#{level}]: #{message}#{log_data}")
+    end
+
+    {:noreply, state}
+  end
+
   defp handle_notification(method, params, state) do
-    Logger.debug("Received notification: #{method} #{inspect(params)}")
+    Logger.warning("Unhandled notification: #{method} with params: #{inspect(params)}")
     {:noreply, state}
   end
 

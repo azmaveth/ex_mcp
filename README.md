@@ -1,89 +1,128 @@
 # ExMCP
 
-Model Context Protocol client/server library for Elixir.
+<div align="center">
 
-> ⚠️ **Alpha Quality Software**: This library is in early development. APIs may change without notice until version 1.0.0 is released. Use in production at your own risk.
+[![Hex.pm](https://img.shields.io/hexpm/v/ex_mcp.svg)](https://hex.pm/packages/ex_mcp)
+[![Documentation](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/ex_mcp)
+[![CI](https://github.com/yourusername/ex_mcp/workflows/CI/badge.svg)](https://github.com/yourusername/ex_mcp/actions)
+[![Coverage](https://img.shields.io/codecov/c/github/yourusername/ex_mcp.svg)](https://codecov.io/gh/yourusername/ex_mcp)
+[![License](https://img.shields.io/hexpm/l/ex_mcp.svg)](LICENSE)
+
+**A complete Elixir implementation of the Model Context Protocol (MCP)**
+
+[User Guide](USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](examples/) | [Changelog](CHANGELOG.md)
+
+</div>
+
+---
+
+> ⚠️ **Alpha Software**: This project is currently in alpha stage (v0.2.x). The API is unstable and may change significantly before v1.0 release.
 
 ## Overview
 
-ExMCP is an Elixir implementation of the [Model Context Protocol](https://modelcontextprotocol.io/), enabling AI models to communicate with external tools and resources through a standardized protocol. It provides both client and server implementations with multiple transport options.
+ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](https://modelcontextprotocol.io/), enabling AI models to securely interact with local and remote resources through a standardized protocol. It provides both client and server implementations with multiple transport options, making it easy to build MCP-compliant tools and services in Elixir.
 
-## Features
+## ✨ Features
 
-- 🚀 **Full MCP Protocol Support** - Complete implementation of the MCP specification
-- 🔌 **Multiple Transports** - stdio, SSE (Server-Sent Events), and BEAM native transports
+### Core Protocol Support
+- 🚀 **Full MCP Specification** - Implements protocol version 2025-03-26
+- 🛠️ **Tools** - Register and execute functions with type-safe parameters
+- 📚 **Resources** - List and read data from various sources
+- 🎯 **Prompts** - Manage reusable prompt templates
+- 🤖 **Sampling** - Direct LLM integration for response generation
+- 🌳 **Roots** - URI-based resource boundaries (new in 2025-03-26)
+- 🔔 **Subscriptions** - Monitor resources for changes (new in 2025-03-26)
+
+### Transport Layers
+- 📝 **stdio** - Process communication via standard I/O
+- 🌐 **SSE** - HTTP Server-Sent Events for web integration
+- ⚡ **BEAM** - Native Erlang/Elixir process communication
+
+### Advanced Features
 - 🔄 **Auto-Reconnection** - Built-in reconnection with exponential backoff
-- 🛠️ **Tool Integration** - Register and execute tools through the protocol
-- 📚 **Resource Management** - List and read resources from servers
-- 🎯 **Prompt Templates** - Manage and use prompt templates
+- 📊 **Progress Notifications** - Track long-running operations
 - 🔍 **Server Discovery** - Automatic discovery of MCP servers
-- ⚡ **Concurrent Requests** - Handle multiple requests simultaneously
-- 🏗️ **OTP Integration** - Built on OTP principles with supervision trees
+- 🎭 **Change Notifications** - Real-time updates for resources, tools, and prompts
+- 🏗️ **OTP Integration** - Built on solid OTP principles with supervision trees
+- 🔌 **Extensible** - Easy to add custom transports and handlers
 
-## Installation
+## 📦 Installation
 
 Add `ex_mcp` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.1.0"}
+    {:ex_mcp, "~> 0.2.0"}
   ]
 end
 ```
 
-## Quick Start
+Then run:
 
-### Creating a Client
+```bash
+mix deps.get
+```
+
+## 🚀 Quick Start
+
+### Creating an MCP Client
 
 ```elixir
-# Start a client with stdio transport
+# Connect to a stdio-based server
 {:ok, client} = ExMCP.Client.start_link(
   transport: :stdio,
-  command: "node",
-  args: ["path/to/mcp-server.js"]
+  command: ["node", "my-mcp-server.js"]
 )
-
-# Initialize the connection
-{:ok, _server_info} = ExMCP.Client.initialize(client)
 
 # List available tools
 {:ok, tools} = ExMCP.Client.list_tools(client)
 
-# Execute a tool
-{:ok, result} = ExMCP.Client.call_tool(client, "tool_name", %{param: "value"})
+# Call a tool
+{:ok, result} = ExMCP.Client.call_tool(client, "search", %{
+  query: "Elixir programming",
+  limit: 10
+})
+
+# Read a resource
+{:ok, content} = ExMCP.Client.read_resource(client, "file:///data.json")
 ```
 
-### Creating a Server
+### Creating an MCP Server
 
 ```elixir
-defmodule MyMCPServer do
+defmodule MyServer do
   use ExMCP.Server.Handler
 
   @impl true
+  def init(_args) do
+    {:ok, %{}}
+  end
+
+  @impl true
   def handle_initialize(_params, state) do
-    server_info = %{
+    {:ok, %{
       name: "my-server",
       version: "1.0.0",
       capabilities: %{
         tools: %{},
         resources: %{}
       }
-    }
-    {:ok, server_info, state}
+    }, state}
   end
 
   @impl true
-  def handle_list_tools(_params, state) do
+  def handle_list_tools(state) do
     tools = [
       %{
-        name: "hello",
-        description: "Says hello",
-        inputSchema: %{
+        name: "echo",
+        description: "Echoes back the input",
+        input_schema: %{
           type: "object",
           properties: %{
-            name: %{type: "string"}
-          }
+            message: %{type: "string", description: "Message to echo"}
+          },
+          required: ["message"]
         }
       }
     ]
@@ -91,229 +130,162 @@ defmodule MyMCPServer do
   end
 
   @impl true
-  def handle_call_tool("hello", %{"name" => name}, state) do
-    {:ok, %{content: [%{type: "text", text: "Hello, #{name}!"}]}, state}
+  def handle_call_tool("echo", %{"message" => msg}, state) do
+    {:ok, [%{type: "text", text: "Echo: #{msg}"}], state}
   end
+
+  # ... implement other required callbacks
 end
 
 # Start the server
 {:ok, server} = ExMCP.Server.start_link(
-  handler: MyMCPServer,
+  handler: MyServer,
   transport: :stdio
 )
 ```
 
-## Transport Options
+## 🔌 Transport Options
 
 ### stdio Transport
 
-Standard input/output transport, ideal for process communication:
+Best for subprocess communication:
 
 ```elixir
+# Server
+{:ok, server} = ExMCP.Server.start_link(
+  handler: MyHandler,
+  transport: :stdio
+)
+
+# Client
 {:ok, client} = ExMCP.Client.start_link(
   transport: :stdio,
-  command: "python",
-  args: ["mcp_server.py"]
+  command: ["python", "mcp-server.py"],
+  args: ["--config", "prod.json"]
 )
 ```
 
 ### SSE Transport
 
-Server-Sent Events transport for HTTP streaming:
+For HTTP-based streaming:
 
 ```elixir
+# Server
+{:ok, server} = ExMCP.Server.start_link(
+  handler: MyHandler,
+  transport: :sse,
+  port: 8080,
+  path: "/mcp"
+)
+
+# Client
 {:ok, client} = ExMCP.Client.start_link(
   transport: :sse,
-  url: "http://localhost:8080/sse"
+  url: "http://localhost:8080/mcp",
+  headers: [{"Authorization", "Bearer token"}]
 )
 ```
 
 ### BEAM Transport
 
-The BEAM transport enables MCP communication between Elixir/Erlang processes, either locally or across distributed nodes. This is ideal for building Elixir-native tool ecosystems.
-
-#### Basic Usage
+For native Elixir/Erlang communication:
 
 ```elixir
-# Start a server with a registered name
+# Server
 {:ok, server} = ExMCP.Server.start_link(
-  handler: MyMCPServer,
+  handler: MyHandler,
   transport: :beam,
-  name: :calculator_server
+  name: {:global, :my_mcp_server}
 )
 
-# Connect a client to the server
+# Client (same node)
 {:ok, client} = ExMCP.Client.start_link(
   transport: :beam,
-  server: :calculator_server
+  server: server
 )
 
-# Use the server's tools
-{:ok, result} = ExMCP.Client.call_tool(client, "add", %{"a" => 5, "b" => 3})
-# => {:ok, %{"result" => 8}}
-```
-
-#### Distributed Usage
-
-```elixir
-# On node1@host1 - Start the server
-{:ok, server} = ExMCP.Server.start_link(
-  handler: WeatherService,
-  transport: :beam,
-  name: :weather_service
-)
-
-# On node2@host2 - Connect from another node
+# Client (different node)
 {:ok, client} = ExMCP.Client.start_link(
   transport: :beam,
-  server: {:weather_service, :"node1@host1"}
+  server: {:global, :my_mcp_server}
 )
-
-# Works transparently across nodes
-{:ok, weather} = ExMCP.Client.call_tool(client, "get_weather", %{"city" => "London"})
 ```
 
-#### Advanced Features
+## 🎯 Key Features
+
+### Tools with Annotations
 
 ```elixir
-# Server with dynamic tool registration
-defmodule DynamicToolServer do
-  use ExMCP.Server.Handler
-  
-  def init(_args) do
-    {:ok, %{tools: %{}}}
-  end
-  
-  def add_tool(server, name, fun) do
-    GenServer.call(server, {:add_tool, name, fun})
-  end
-  
-  # ... handler implementation
-end
-
-# Client with auto-reconnection (built-in)
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :beam,
-  server: :my_server
-)
-# If server crashes and restarts, client automatically reconnects
-
-# Server-initiated notifications work seamlessly
-ExMCP.Server.notify_progress(server, "task-123", 50, 100)
-# Client receives progress updates via handle_notification callback
-```
-
-## Advanced Features
-
-### Sampling (LLM Integration)
-
-ExMCP supports the sampling/createMessage feature for integrating with language models:
-
-```elixir
-# Define a server that can use an LLM
-defmodule MyAIServer do
-  use ExMCP.Server.Handler
-  
-  @impl true
-  def handle_create_message(params, state) do
-    messages = params["messages"]
-    model_preferences = params["modelPreferences"]
-    
-    # Call your LLM provider here
-    response = call_llm(messages, model_preferences)
-    
-    result = %{
-      content: %{
-        type: "text",
-        text: response
-      },
-      model: "gpt-4",
-      stopReason: "stop"
+@impl true
+def handle_list_tools(state) do
+  tools = [
+    %{
+      name: "delete_file",
+      description: "Permanently deletes a file",
+      input_schema: %{...},
+      # New annotations in MCP 2025-03-26
+      readOnlyHint: false,
+      destructiveHint: true,
+      costHint: :low
     }
-    
-    {:ok, result, state}
-  end
+  ]
+  {:ok, tools, state}
 end
-
-# Client usage
-{:ok, result} = ExMCP.Client.create_message(client, %{
-  messages: [
-    %{role: "user", content: %{type: "text", text: "Hello!"}}
-  ],
-  modelPreferences: %{
-    hints: [%{name: "claude-3-sonnet"}],
-    temperature: 0.7
-  }
-})
 ```
 
-### Progress Notifications
+### Resource Subscriptions
 
-Track progress of long-running operations:
+Monitor resources for changes:
 
 ```elixir
-# Server implementation
-def handle_call_tool("process_data", params, state) do
-  progress_token = params["_progressToken"]
-  
-  # Send progress updates
+# Client subscribes to a resource
+{:ok, _} = ExMCP.Client.subscribe_resource(client, "file:///config.json")
+
+# Server notifies when resource changes
+ExMCP.Server.notify_resource_updated(server, "file:///config.json")
+```
+
+### Roots for Resource Organization
+
+Define URI boundaries:
+
+```elixir
+@impl true
+def handle_list_roots(state) do
+  roots = [
+    %{uri: "file:///home/user/projects", name: "Projects"},
+    %{uri: "https://api.example.com/v1", name: "API"}
+  ]
+  {:ok, roots, state}
+end
+```
+
+### Progress Tracking
+
+For long-running operations:
+
+```elixir
+@impl true
+def handle_call_tool("process", %{"_progressToken" => token}, state) do
   Task.start(fn ->
     for i <- 1..100 do
-      ExMCP.Server.notify_progress(self(), progress_token, i, 100)
+      ExMCP.Server.notify_progress(self(), token, i, 100)
       Process.sleep(100)
     end
   end)
   
   {:ok, [%{type: "text", text: "Processing started"}], state}
 end
-
-# Client usage with progress token
-{:ok, result} = ExMCP.Client.call_tool(
-  client, 
-  "process_data", 
-  %{data: "..."},
-  progress_token: "task-123"
-)
 ```
 
-### Change Notifications
+## 📚 Documentation
 
-Servers can notify clients about changes:
+- 📖 **[User Guide](USER_GUIDE.md)** - Comprehensive guide with examples
+- 🔧 **[API Documentation](https://hexdocs.pm/ex_mcp)** - Detailed API reference
+- 📂 **[Examples](examples/)** - Complete working examples
+- 📋 **[TASKS.md](TASKS.md)** - Development roadmap and status
 
-```elixir
-# Notify when resources change
-ExMCP.Server.notify_resources_changed(server)
-
-# Notify when a specific resource is updated
-ExMCP.Server.notify_resource_updated(server, "file:///path/to/resource")
-
-# Notify when tools change
-ExMCP.Server.notify_tools_changed(server)
-
-# Notify when prompts change
-ExMCP.Server.notify_prompts_changed(server)
-
-# Clients automatically receive these notifications
-# You can handle them by implementing a custom client
-```
-
-## Server Discovery
-
-ExMCP can automatically discover MCP servers:
-
-```elixir
-# Discover npm packages with MCP servers
-{:ok, servers} = ExMCP.Discovery.discover_npm_packages()
-
-# Discover servers in a directory
-{:ok, servers} = ExMCP.Discovery.discover_directory("/path/to/servers")
-```
-
-## Documentation
-
-Full documentation is available on [HexDocs](https://hexdocs.pm/ex_mcp).
-
-## Development
+## 🛠️ Development
 
 ### Setup
 
@@ -331,23 +303,42 @@ make coverage
 make docs
 ```
 
-### Code Quality
-
-This project uses several tools to maintain code quality:
+### Code Quality Tools
 
 - **Formatter** - Elixir's built-in code formatter
-- **Credo** - Static code analysis for consistency and readability
-- **Dialyzer** - Type checking and discrepancy analysis
-- **Sobelow** - Security-focused static analysis
-- **ExCoveralls** - Test coverage reporting
-- **Git Hooks** - Pre-commit and pre-push hooks for quality checks
+- **Credo** - Static code analysis
+- **Dialyzer** - Type checking
+- **Sobelow** - Security analysis
+- **ExCoveralls** - Test coverage
+- **Git Hooks** - Pre-commit and pre-push checks
 
-Run `make help` to see all available commands.
+## 🤝 Contributing
 
-## Contributing
+We welcome contributions! Please see:
 
-Contributions are welcome! Please see [TASKS.md](TASKS.md) for the current development status and roadmap.
+- [TASKS.md](TASKS.md) for current development priorities
+- [CHANGELOG.md](CHANGELOG.md) for version history
+- [GitHub Issues](https://github.com/yourusername/ex_mcp/issues) for bug reports and feature requests
 
-## License
+Before contributing:
+
+1. Fork the repository
+2. Create a feature branch
+3. Run `make quality` to ensure code quality
+4. Submit a pull request
+
+## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- The [Model Context Protocol](https://modelcontextprotocol.io/) specification creators
+- The Elixir community for excellent tooling and libraries
+- Contributors and early adopters providing feedback
+
+---
+
+<div align="center">
+Made with ❤️ for the Elixir community
+</div>

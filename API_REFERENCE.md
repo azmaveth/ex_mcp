@@ -1,0 +1,878 @@
+# ExMCP API Reference
+
+## Module Index
+
+- [`ExMCP`](#exmcp) - Main module and version information
+- [`ExMCP.Client`](#exmcpclient) - MCP client implementation
+- [`ExMCP.Server`](#exmcpserver) - MCP server implementation
+- [`ExMCP.Server.Handler`](#exmcpserverhandler) - Server handler behaviour
+- [`ExMCP.Protocol`](#exmcpprotocol) - Protocol encoding/decoding
+- [`ExMCP.Transport`](#exmcptransport) - Transport behaviour
+- [`ExMCP.ServerManager`](#exmcpservermanager) - Multiple server management
+- [`ExMCP.Discovery`](#exmcpdiscovery) - Server discovery utilities
+- [`ExMCP.Types`](#exmcptypes) - Type definitions
+
+---
+
+## ExMCP
+
+Main module providing version information and library overview.
+
+### Functions
+
+#### `protocol_version/0`
+Returns the MCP protocol version implemented by this library.
+
+```elixir
+@spec protocol_version() :: String.t()
+
+# Example
+ExMCP.protocol_version()
+# => "2025-03-26"
+```
+
+#### `version/0`
+Returns the ExMCP library version.
+
+```elixir
+@spec version() :: String.t()
+
+# Example
+ExMCP.version()
+# => "0.2.0"
+```
+
+---
+
+## ExMCP.Client
+
+MCP client for connecting to servers.
+
+### Functions
+
+#### `start_link/1`
+Starts a new MCP client process.
+
+```elixir
+@spec start_link(keyword()) :: GenServer.on_start()
+
+# Options:
+# - transport: atom() - Transport type (:stdio, :sse, :beam)
+# - Transport-specific options (see below)
+# - name: term() - Optional GenServer name
+
+# stdio transport
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["python", "server.py"],
+  args: ["--verbose"],
+  env: [{"DEBUG", "1"}],
+  cd: "/path/to/dir"
+)
+
+# SSE transport
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :sse,
+  url: "http://localhost:8080/mcp",
+  headers: [{"Authorization", "Bearer token"}]
+)
+
+# BEAM transport
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :beam,
+  server: :my_server  # or {:global, :name} or {node, :name}
+)
+```
+
+#### `list_tools/2`
+Lists available tools from the server.
+
+```elixir
+@spec list_tools(GenServer.server(), timeout()) :: 
+  {:ok, [tool()]} | {:error, term()}
+
+# Example
+{:ok, tools} = ExMCP.Client.list_tools(client)
+# => {:ok, [%{name: "search", description: "Search the web", ...}]}
+```
+
+#### `call_tool/4`
+Calls a tool on the server.
+
+```elixir
+@spec call_tool(GenServer.server(), String.t(), map(), timeout()) :: 
+  {:ok, [content()]} | {:error, term()}
+
+# Example
+{:ok, result} = ExMCP.Client.call_tool(
+  client, 
+  "search", 
+  %{query: "Elixir"},
+  5000
+)
+# => {:ok, [%{type: "text", text: "Results..."}]}
+
+# With progress token
+{:ok, result} = ExMCP.Client.call_tool(
+  client,
+  "process",
+  %{data: "...", "_progressToken" => "task-123"}
+)
+```
+
+#### `list_resources/2`
+Lists available resources from the server.
+
+```elixir
+@spec list_resources(GenServer.server(), timeout()) :: 
+  {:ok, [resource()]} | {:error, term()}
+
+# Example
+{:ok, resources} = ExMCP.Client.list_resources(client)
+# => {:ok, [%{uri: "file:///data.json", name: "Data", ...}]}
+```
+
+#### `read_resource/3`
+Reads a specific resource.
+
+```elixir
+@spec read_resource(GenServer.server(), String.t(), timeout()) :: 
+  {:ok, resource_content()} | {:error, term()}
+
+# Example
+{:ok, content} = ExMCP.Client.read_resource(client, "file:///data.json")
+# => {:ok, %{uri: "file:///data.json", text: "{...}", mimeType: "application/json"}}
+```
+
+#### `list_prompts/2`
+Lists available prompts from the server.
+
+```elixir
+@spec list_prompts(GenServer.server(), timeout()) :: 
+  {:ok, [prompt()]} | {:error, term()}
+
+# Example
+{:ok, prompts} = ExMCP.Client.list_prompts(client)
+# => {:ok, [%{name: "code_review", description: "Review code", ...}]}
+```
+
+#### `get_prompt/4`
+Gets a specific prompt with arguments.
+
+```elixir
+@spec get_prompt(GenServer.server(), String.t(), map(), timeout()) :: 
+  {:ok, prompt_messages()} | {:error, term()}
+
+# Example
+{:ok, messages} = ExMCP.Client.get_prompt(
+  client,
+  "code_review",
+  %{language: "elixir"}
+)
+# => {:ok, [%{role: "user", content: %{type: "text", text: "..."}}]}
+```
+
+#### `list_roots/2`
+Lists available roots (URI boundaries).
+
+```elixir
+@spec list_roots(GenServer.server(), timeout()) :: 
+  {:ok, [root()]} | {:error, term()}
+
+# Example
+{:ok, roots} = ExMCP.Client.list_roots(client)
+# => {:ok, [%{uri: "file:///home", name: "Home"}]}
+```
+
+#### `subscribe_resource/3`
+Subscribes to resource change notifications.
+
+```elixir
+@spec subscribe_resource(GenServer.server(), String.t(), timeout()) :: 
+  {:ok, map()} | {:error, term()}
+
+# Example
+{:ok, _} = ExMCP.Client.subscribe_resource(client, "file:///config.json")
+```
+
+#### `unsubscribe_resource/3`
+Unsubscribes from resource change notifications.
+
+```elixir
+@spec unsubscribe_resource(GenServer.server(), String.t(), timeout()) :: 
+  {:ok, map()} | {:error, term()}
+
+# Example
+{:ok, _} = ExMCP.Client.unsubscribe_resource(client, "file:///config.json")
+```
+
+#### `create_message/3`
+Creates a message using the server's LLM capabilities.
+
+```elixir
+@spec create_message(GenServer.server(), map(), timeout()) :: 
+  {:ok, message()} | {:error, term()}
+
+# Example
+{:ok, response} = ExMCP.Client.create_message(client, %{
+  messages: [
+    %{role: "user", content: %{type: "text", text: "Hello"}}
+  ],
+  max_tokens: 500,
+  temperature: 0.7
+})
+# => {:ok, %{role: "assistant", content: %{type: "text", text: "Hi!"}}}
+```
+
+#### `stop/1`
+Stops the client gracefully.
+
+```elixir
+@spec stop(GenServer.server()) :: :ok
+
+# Example
+:ok = ExMCP.Client.stop(client)
+```
+
+---
+
+## ExMCP.Server
+
+MCP server implementation.
+
+### Functions
+
+#### `start_link/1`
+Starts a new MCP server process.
+
+```elixir
+@spec start_link(keyword()) :: GenServer.on_start()
+
+# Options:
+# - handler: module() - Module implementing Server.Handler behaviour
+# - transport: atom() - Transport type (:stdio, :sse, :beam)
+# - handler_args: term() - Arguments passed to handler init/1
+# - Transport-specific options
+# - name: term() - Optional GenServer name
+
+# Example
+{:ok, server} = ExMCP.Server.start_link(
+  handler: MyHandler,
+  transport: :stdio,
+  handler_args: [db_url: "postgres://..."]
+)
+```
+
+#### `notify_resources_changed/1`
+Notifies clients that the resources list has changed.
+
+```elixir
+@spec notify_resources_changed(GenServer.server()) :: :ok
+
+# Example
+ExMCP.Server.notify_resources_changed(server)
+```
+
+#### `notify_resource_updated/2`
+Notifies clients that a specific resource was updated.
+
+```elixir
+@spec notify_resource_updated(GenServer.server(), String.t()) :: :ok
+
+# Example
+ExMCP.Server.notify_resource_updated(server, "file:///data.json")
+```
+
+#### `notify_tools_changed/1`
+Notifies clients that the tools list has changed.
+
+```elixir
+@spec notify_tools_changed(GenServer.server()) :: :ok
+
+# Example
+ExMCP.Server.notify_tools_changed(server)
+```
+
+#### `notify_prompts_changed/1`
+Notifies clients that the prompts list has changed.
+
+```elixir
+@spec notify_prompts_changed(GenServer.server()) :: :ok
+
+# Example
+ExMCP.Server.notify_prompts_changed(server)
+```
+
+#### `notify_roots_changed/1`
+Notifies clients that the roots list has changed.
+
+```elixir
+@spec notify_roots_changed(GenServer.server()) :: :ok
+
+# Example
+ExMCP.Server.notify_roots_changed(server)
+```
+
+#### `notify_progress/3` and `notify_progress/4`
+Sends progress notifications for long-running operations.
+
+```elixir
+@spec notify_progress(GenServer.server(), String.t(), number(), number() | nil) :: :ok
+
+# Example with percentage
+ExMCP.Server.notify_progress(server, "task-123", 50, 100)
+
+# Example without total
+ExMCP.Server.notify_progress(server, "task-123", 1024)
+```
+
+---
+
+## ExMCP.Server.Handler
+
+Behaviour for implementing MCP server handlers.
+
+### Callbacks
+
+#### `init/1`
+Initializes the handler state.
+
+```elixir
+@callback init(args :: term()) :: {:ok, state()} | {:error, reason :: term()}
+
+# Example
+@impl true
+def init(args) do
+  db_url = Keyword.get(args, :db_url)
+  {:ok, conn} = Database.connect(db_url)
+  {:ok, %{db: conn, cache: %{}}}
+end
+```
+
+#### `handle_initialize/2`
+Handles the initialize request from a client.
+
+```elixir
+@callback handle_initialize(params :: map(), state()) :: 
+  {:ok, server_info :: map(), state()} | {:error, reason :: term(), state()}
+
+# Example
+@impl true
+def handle_initialize(_params, state) do
+  {:ok, %{
+    name: "my-server",
+    version: "1.0.0",
+    capabilities: %{
+      tools: %{},
+      resources: %{subscribe: true},
+      roots: %{},
+      sampling: %{}
+    }
+  }, state}
+end
+```
+
+#### `handle_list_tools/1`
+Returns the list of available tools.
+
+```elixir
+@callback handle_list_tools(state()) :: 
+  {:ok, [tool()], state()} | {:error, reason :: term(), state()}
+
+# Example
+@impl true
+def handle_list_tools(state) do
+  tools = [
+    %{
+      name: "query",
+      description: "Query the database",
+      input_schema: %{
+        type: "object",
+        properties: %{
+          sql: %{type: "string", description: "SQL query"}
+        },
+        required: ["sql"]
+      },
+      readOnlyHint: true,
+      destructiveHint: false,
+      costHint: :medium
+    }
+  ]
+  {:ok, tools, state}
+end
+```
+
+#### `handle_call_tool/3`
+Executes a tool with the given arguments.
+
+```elixir
+@callback handle_call_tool(name :: String.t(), arguments :: map(), state()) :: 
+  {:ok, [content()], state()} | {:error, reason :: term(), state()}
+
+# Example
+@impl true
+def handle_call_tool("query", %{"sql" => sql}, state) do
+  case Database.query(state.db, sql) do
+    {:ok, results} ->
+      content = [%{
+        type: "text",
+        text: format_results(results)
+      }]
+      {:ok, content, state}
+    
+    {:error, reason} ->
+      {:error, "Query failed: #{reason}", state}
+  end
+end
+```
+
+#### `handle_list_resources/1`
+Returns the list of available resources.
+
+```elixir
+@callback handle_list_resources(state()) :: 
+  {:ok, [resource()], state()} | {:error, reason :: term(), state()}
+```
+
+#### `handle_read_resource/2`
+Reads a specific resource by URI.
+
+```elixir
+@callback handle_read_resource(uri :: String.t(), state()) :: 
+  {:ok, resource_content(), state()} | {:error, reason :: term(), state()}
+```
+
+#### `handle_list_prompts/1`
+Returns the list of available prompts.
+
+```elixir
+@callback handle_list_prompts(state()) :: 
+  {:ok, [prompt()], state()} | {:error, reason :: term(), state()}
+```
+
+#### `handle_get_prompt/3`
+Gets a specific prompt with arguments.
+
+```elixir
+@callback handle_get_prompt(name :: String.t(), arguments :: map(), state()) :: 
+  {:ok, prompt_messages(), state()} | {:error, reason :: term(), state()}
+```
+
+#### `handle_list_roots/1`
+Returns the list of available roots.
+
+```elixir
+@callback handle_list_roots(state()) :: 
+  {:ok, [root()], state()} | {:error, reason :: term(), state()}
+```
+
+#### `handle_subscribe_resource/2`
+Handles resource subscription requests.
+
+```elixir
+@callback handle_subscribe_resource(uri :: String.t(), state()) :: 
+  {:ok, map(), state()} | {:error, reason :: term(), state()}
+```
+
+#### `handle_unsubscribe_resource/2`
+Handles resource unsubscription requests.
+
+```elixir
+@callback handle_unsubscribe_resource(uri :: String.t(), state()) :: 
+  {:ok, map(), state()} | {:error, reason :: term(), state()}
+```
+
+#### `handle_create_message/2`
+Handles LLM message creation requests.
+
+```elixir
+@callback handle_create_message(params :: map(), state()) :: 
+  {:ok, message(), state()} | {:error, reason :: term(), state()}
+```
+
+#### `terminate/2`
+Called when the server is shutting down.
+
+```elixir
+@callback terminate(reason :: term(), state()) :: term()
+
+# Example
+@impl true
+def terminate(_reason, state) do
+  Database.disconnect(state.db)
+end
+```
+
+#### `handle_cast/2` (optional)
+Handles custom async messages.
+
+```elixir
+@callback handle_cast(msg :: term(), state()) :: {:noreply, state()}
+```
+
+#### `handle_info/2` (optional)
+Handles other messages.
+
+```elixir
+@callback handle_info(msg :: term(), state()) :: {:noreply, state()}
+```
+
+---
+
+## ExMCP.Protocol
+
+Protocol encoding and decoding functions.
+
+### Functions
+
+#### `encode_initialize/1`
+Encodes an initialize request.
+
+```elixir
+@spec encode_initialize(client_info :: map()) :: map()
+```
+
+#### `encode_list_tools/0`
+Encodes a tools/list request.
+
+```elixir
+@spec encode_list_tools() :: map()
+```
+
+#### `encode_call_tool/2`
+Encodes a tools/call request.
+
+```elixir
+@spec encode_call_tool(name :: String.t(), arguments :: map()) :: map()
+```
+
+#### `encode_list_roots/0`
+Encodes a roots/list request.
+
+```elixir
+@spec encode_list_roots() :: map()
+```
+
+#### `encode_subscribe_resource/1`
+Encodes a resources/subscribe request.
+
+```elixir
+@spec encode_subscribe_resource(uri :: String.t()) :: map()
+```
+
+#### `encode_response/2`
+Encodes a successful response.
+
+```elixir
+@spec encode_response(result :: any(), id :: any()) :: map()
+```
+
+#### `encode_error/4`
+Encodes an error response.
+
+```elixir
+@spec encode_error(code :: integer(), message :: String.t(), data :: any(), id :: any()) :: map()
+```
+
+#### `encode_notification/2`
+Encodes a notification message.
+
+```elixir
+@spec encode_notification(method :: String.t(), params :: map()) :: map()
+```
+
+#### `parse_message/1`
+Parses an incoming JSON-RPC message.
+
+```elixir
+@spec parse_message(String.t() | map()) :: 
+  {:request, method :: String.t(), params :: map(), id :: any()} |
+  {:notification, method :: String.t(), params :: map()} |
+  {:result, result :: any(), id :: any()} |
+  {:error, error :: map(), id :: any()} |
+  {:error, :invalid_message}
+```
+
+---
+
+## ExMCP.Transport
+
+Behaviour for implementing custom transports.
+
+### Callbacks
+
+#### `connect/1`
+Establishes a connection.
+
+```elixir
+@callback connect(opts :: keyword()) :: {:ok, state :: term()} | {:error, reason :: term()}
+```
+
+#### `accept/1`
+Accepts an incoming connection (server-side).
+
+```elixir
+@callback accept(opts :: keyword()) :: {:ok, state :: term()} | {:error, reason :: term()}
+```
+
+#### `send_message/2`
+Sends a message through the transport.
+
+```elixir
+@callback send_message(message :: String.t(), state :: term()) :: 
+  {:ok, new_state :: term()} | {:error, reason :: term()}
+```
+
+#### `receive_message/1`
+Receives a message from the transport (blocking).
+
+```elixir
+@callback receive_message(state :: term()) :: 
+  {:ok, message :: String.t() | nil, new_state :: term()} | 
+  {:error, reason :: term()}
+```
+
+#### `close/1`
+Closes the transport connection.
+
+```elixir
+@callback close(state :: term()) :: :ok
+```
+
+---
+
+## ExMCP.ServerManager
+
+Manages multiple MCP server connections.
+
+### Functions
+
+#### `start_link/1`
+Starts the server manager.
+
+```elixir
+@spec start_link(keyword()) :: GenServer.on_start()
+
+# Example
+{:ok, manager} = ExMCP.ServerManager.start_link(name: :mcp_manager)
+```
+
+#### `add_server/2`
+Adds a new server connection.
+
+```elixir
+@spec add_server(GenServer.server(), map()) :: {:ok, pid()} | {:error, term()}
+
+# Example
+{:ok, client} = ExMCP.ServerManager.add_server(manager, %{
+  name: "filesystem",
+  transport: :stdio,
+  command: ["mcp-server-filesystem", "/home"]
+})
+```
+
+#### `remove_server/2`
+Removes a server connection.
+
+```elixir
+@spec remove_server(GenServer.server(), String.t()) :: :ok | {:error, :not_found}
+
+# Example
+:ok = ExMCP.ServerManager.remove_server(manager, "filesystem")
+```
+
+#### `list_servers/1`
+Lists all managed servers.
+
+```elixir
+@spec list_servers(GenServer.server()) :: [server_info()]
+
+# Example
+servers = ExMCP.ServerManager.list_servers(manager)
+# => [%{name: "filesystem", pid: #PID<...>, status: :connected}]
+```
+
+#### `get_server/2`
+Gets a specific server client by name.
+
+```elixir
+@spec get_server(GenServer.server(), String.t()) :: {:ok, pid()} | {:error, :not_found}
+
+# Example
+{:ok, client} = ExMCP.ServerManager.get_server(manager, "filesystem")
+```
+
+---
+
+## ExMCP.Discovery
+
+Server discovery utilities.
+
+### Functions
+
+#### `discover_servers/1`
+Discovers available MCP servers using various methods.
+
+```elixir
+@spec discover_servers(keyword()) :: [server_config()]
+
+# Options:
+# - methods: [:env, :config, :well_known, :npm]
+
+# Example
+servers = ExMCP.Discovery.discover_servers()
+# => [%{name: "filesystem", transport: "stdio", command: [...]}]
+```
+
+#### `discover_from_env/1`
+Discovers servers from environment variables.
+
+```elixir
+@spec discover_from_env(list()) :: [server_config()]
+```
+
+#### `discover_npm_packages/0`
+Discovers globally installed npm packages with MCP servers.
+
+```elixir
+@spec discover_npm_packages() :: [server_config()]
+```
+
+#### `discover_from_well_known/1`
+Discovers servers from well-known directories.
+
+```elixir
+@spec discover_from_well_known(list()) :: [server_config()]
+```
+
+#### `test_server/1`
+Tests if a discovered server is reachable.
+
+```elixir
+@spec test_server(server_config()) :: boolean()
+
+# Example
+ExMCP.Discovery.test_server(%{
+  transport: "stdio",
+  command: ["mcp-server"]
+})
+# => true
+```
+
+---
+
+## ExMCP.Types
+
+Type definitions used throughout the library.
+
+### Types
+
+```elixir
+@type tool :: %{
+  required(:name) => String.t(),
+  required(:description) => String.t(),
+  optional(:input_schema) => json_schema(),
+  optional(:readOnlyHint) => boolean(),
+  optional(:destructiveHint) => boolean(),
+  optional(:costHint) => :low | :medium | :high,
+  optional(:annotations) => map()
+}
+
+@type resource :: %{
+  required(:uri) => String.t(),
+  required(:name) => String.t(),
+  optional(:description) => String.t(),
+  optional(:mimeType) => String.t()
+}
+
+@type prompt :: %{
+  required(:name) => String.t(),
+  optional(:description) => String.t(),
+  optional(:arguments) => [prompt_argument()]
+}
+
+@type root :: %{
+  required(:uri) => String.t(),
+  optional(:name) => String.t()
+}
+
+@type content :: text_content() | image_content() | resource_content()
+
+@type text_content :: %{
+  required(:type) => String.t(),
+  required(:text) => String.t()
+}
+
+@type image_content :: %{
+  required(:type) => String.t(),
+  required(:data) => String.t(),
+  required(:mimeType) => String.t()
+}
+
+@type message :: %{
+  required(:role) => String.t(),
+  required(:content) => content()
+}
+
+@type capabilities :: %{
+  optional(:tools) => map(),
+  optional(:resources) => map(),
+  optional(:prompts) => map(),
+  optional(:logging) => map(),
+  optional(:sampling) => map(),
+  optional(:roots) => map()
+}
+```
+
+---
+
+## Error Codes
+
+ExMCP uses standard JSON-RPC 2.0 error codes:
+
+- `-32700` - Parse error
+- `-32600` - Invalid request
+- `-32601` - Method not found
+- `-32602` - Invalid params
+- `-32603` - Internal error
+
+Custom MCP errors use codes in the `-32000` to `-32099` range.
+
+---
+
+## Transport-Specific Options
+
+### stdio Transport
+
+- `:command` (required) - Command to execute
+- `:args` - Command arguments (default: [])
+- `:env` - Environment variables (default: [])
+- `:cd` - Working directory
+
+### SSE Transport
+
+- `:url` (required) - SSE endpoint URL
+- `:headers` - HTTP headers (default: [])
+- `:timeout` - Connection timeout in ms (default: 5000)
+
+### BEAM Transport
+
+Client options:
+- `:server` (required) - Server process (pid, name, or {node, name})
+
+Server options:
+- `:name` - Optional process registration
+
+---
+
+## Examples
+
+See the [examples](examples/) directory for complete working examples:
+
+- `basic_server.exs` - Simple MCP server
+- `basic_client.exs` - Simple MCP client
+- `beam_transport/` - BEAM transport examples
+- `roots_example.exs` - Roots capability example
+- `resource_subscription_example.exs` - Subscription example
+- `progress_example.exs` - Progress notification example
+- `sampling_example.exs` - LLM integration example

@@ -266,9 +266,10 @@ defmodule ExMCP.ServerManager do
       _server_info ->
         # Find and remove monitor
         {ref, _} =
-          state.monitors
-          |> Enum.find(fn {_ref, server_name} -> server_name == name end)
-          |> (fn result -> result || {nil, nil} end).()
+          case Enum.find(state.monitors, fn {_ref, server_name} -> server_name == name end) do
+            nil -> {nil, nil}
+            result -> result
+          end
 
         new_monitors =
           if ref do

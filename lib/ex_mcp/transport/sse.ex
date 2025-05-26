@@ -157,7 +157,7 @@ defmodule ExMCP.Transport.SSE do
       Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
     }
 
-    case :httpc.request(:get, request, [{:sync, false}, {:stream, :self}], []) do
+    case :httpc.request(:get, request, [], [{:sync, false}, {:stream, :self}]) do
       {:ok, ref} ->
         {:ok, ref}
 

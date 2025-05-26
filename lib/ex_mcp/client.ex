@@ -207,6 +207,80 @@ defmodule ExMCP.Client do
     GenServer.call(client, :server_capabilities)
   end
 
+  @doc """
+  Lists available roots from the server.
+  """
+  @spec list_roots(GenServer.server(), timeout()) ::
+          {:ok, %{roots: [ExMCP.Types.root()]}} | {:error, any()}
+  def list_roots(client, timeout \\ @request_timeout) do
+    GenServer.call(client, :list_roots, timeout)
+  end
+
+  @doc """
+  Subscribes to resource updates.
+  """
+  @spec subscribe_resource(GenServer.server(), String.t(), timeout()) ::
+          {:ok, map()} | {:error, any()}
+  def subscribe_resource(client, uri, timeout \\ @request_timeout) do
+    GenServer.call(client, {:subscribe_resource, uri}, timeout)
+  end
+
+  @doc """
+  Unsubscribes from resource updates.
+  """
+  @spec unsubscribe_resource(GenServer.server(), String.t(), timeout()) ::
+          {:ok, map()} | {:error, any()}
+  def unsubscribe_resource(client, uri, timeout \\ @request_timeout) do
+    GenServer.call(client, {:unsubscribe_resource, uri}, timeout)
+  end
+
+  @doc """
+  Lists available resource templates.
+  """
+  @spec list_resource_templates(GenServer.server(), timeout()) ::
+          {:ok, %{resourceTemplates: [ExMCP.Types.resource_template()]}} | {:error, any()}
+  def list_resource_templates(client, timeout \\ @request_timeout) do
+    GenServer.call(client, :list_resource_templates, timeout)
+  end
+
+  @doc """
+  Sends a ping request to the server.
+  """
+  @spec ping(GenServer.server(), timeout()) :: :ok | {:error, any()}
+  def ping(client, timeout \\ @request_timeout) do
+    GenServer.call(client, :ping, timeout)
+  end
+
+  @doc """
+  Sends a completion request.
+  """
+  @spec complete(
+          GenServer.server(),
+          ExMCP.Types.complete_ref(),
+          ExMCP.Types.complete_argument(),
+          timeout()
+        ) ::
+          {:ok, ExMCP.Types.complete_result()} | {:error, any()}
+  def complete(client, ref, argument, timeout \\ @request_timeout) do
+    GenServer.call(client, {:complete, ref, argument}, timeout)
+  end
+
+  @doc """
+  Sends a cancellation notification for a request.
+  """
+  @spec send_cancelled(GenServer.server(), ExMCP.Types.request_id(), String.t() | nil) :: :ok
+  def send_cancelled(client, request_id, reason \\ nil) do
+    GenServer.cast(client, {:send_cancelled, request_id, reason})
+  end
+
+  @doc """
+  Sends a log message notification.
+  """
+  @spec log_message(GenServer.server(), ExMCP.Types.log_level(), String.t(), any()) :: :ok
+  def log_message(client, level, message, data \\ nil) do
+    GenServer.cast(client, {:log_message, level, message, data})
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -292,6 +366,39 @@ defmodule ExMCP.Client do
     else
       {:reply, {:error, :not_initialized}, state}
     end
+  end
+
+  def handle_call(:list_roots, from, state) do
+    send_request(Protocol.encode_list_roots(), from, state)
+  end
+
+  def handle_call({:subscribe_resource, uri}, from, state) do
+    send_request(Protocol.encode_subscribe_resource(uri), from, state)
+  end
+
+  def handle_call({:unsubscribe_resource, uri}, from, state) do
+    send_request(Protocol.encode_unsubscribe_resource(uri), from, state)
+  end
+
+  def handle_call(:list_resource_templates, from, state) do
+    send_request(Protocol.encode_list_resource_templates(), from, state)
+  end
+
+  def handle_call(:ping, from, state) do
+    send_request(Protocol.encode_ping(), from, state)
+  end
+
+  def handle_call({:complete, ref, argument}, from, state) do
+    send_request(Protocol.encode_complete(ref, argument), from, state)
+  end
+
+  @impl true
+  def handle_cast({:send_cancelled, request_id, reason}, state) do
+    send_notification(Protocol.encode_cancelled(request_id, reason), state)
+  end
+
+  def handle_cast({:log_message, level, message, data}, state) do
+    send_notification(Protocol.encode_log_message(level, message, data), state)
   end
 
   @impl true
@@ -431,6 +538,28 @@ defmodule ExMCP.Client do
     end
   end
 
+  defp send_notification(message, state) do
+    if state.initialized && state.transport_state do
+      case Protocol.encode_to_string(message) do
+        {:ok, json} ->
+          case state.transport_mod.send_message(json, state.transport_state) do
+            {:ok, new_transport_state} ->
+              {:noreply, %{state | transport_state: new_transport_state}}
+
+            {:error, reason} ->
+              Logger.error("Failed to send notification: #{inspect(reason)}")
+              {:noreply, state}
+          end
+
+        {:error, reason} ->
+          Logger.error("Failed to encode notification: #{inspect(reason)}")
+          {:noreply, state}
+      end
+    else
+      {:noreply, state}
+    end
+  end
+
   defp handle_response(result, id, state) do
     case Map.pop(state.pending_requests, id) do
       {nil, _} ->
@@ -486,6 +615,10 @@ defmodule ExMCP.Client do
           Logger.info("Progress [#{token}]: #{progress}")
         end
 
+        {:noreply, state}
+
+      "notifications/roots/list_changed" ->
+        Logger.info("Roots list changed")
         {:noreply, state}
 
       _ ->

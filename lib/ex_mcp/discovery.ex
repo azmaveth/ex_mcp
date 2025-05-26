@@ -43,6 +43,7 @@ defmodule ExMCP.Discovery do
 
     methods
     |> Enum.flat_map(&discover_by_method(&1, options))
+    |> normalize_servers()
     |> Enum.uniq_by(& &1.name)
     |> Enum.sort_by(& &1.name)
   end
