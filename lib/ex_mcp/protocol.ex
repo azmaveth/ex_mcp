@@ -74,7 +74,7 @@ defmodule ExMCP.Protocol do
 
     params =
       if progress_token do
-        put_in(params, ["_meta", "_progressToken"], progress_token)
+        Map.put(params, "_meta", %{"_progressToken" => progress_token})
       else
         params
       end
