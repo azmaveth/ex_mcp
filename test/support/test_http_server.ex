@@ -6,6 +6,7 @@ defmodule ExMCP.Test.HTTPServer do
   require Logger
 
   defmodule State do
+    @moduledoc false
     defstruct [:port, :ref, :requests, :sse_clients]
   end
 
@@ -248,7 +249,7 @@ defmodule ExMCP.Test.HTTPServer.SSEHandler do
 
     # Send initial event
     :cowboy_req.stream_body(
-      "event: connected\ndata: {\"clientId\":\"#{client_id}\"}\n\n",
+      ~s(event: connected\ndata: {"clientId":"#{client_id}"}\n\n),
       :nofin,
       req2
     )

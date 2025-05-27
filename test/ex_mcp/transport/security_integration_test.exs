@@ -1,17 +1,19 @@
 defmodule ExMCP.Transport.SecurityIntegrationTest do
   use ExUnit.Case
 
+  alias ExMCP.Security
+  alias ExMCP.Test.HTTPServer
   alias ExMCP.Transport.Beam, as: BEAM
   alias ExMCP.Transport.{SSE, WebSocket}
 
   describe "SSE transport security" do
     setup do
       # Start test HTTP server
-      {:ok, server} = ExMCP.Test.HTTPServer.start_link()
-      url = ExMCP.Test.HTTPServer.get_url(server)
+      {:ok, server} = HTTPServer.start_link()
+      url = HTTPServer.get_url(server)
 
       on_exit(fn ->
-        ExMCP.Test.HTTPServer.stop(server)
+        HTTPServer.stop(server)
       end)
 
       {:ok, server: server, url: url}
@@ -50,7 +52,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       Process.sleep(50)
 
       # Verify the request included our security headers
-      request = ExMCP.Test.HTTPServer.get_last_request(server)
+      request = HTTPServer.get_last_request(server)
       assert request != nil
       assert request.auth == "Bearer test-token"
       assert request.headers["x-custom"] == "value"
