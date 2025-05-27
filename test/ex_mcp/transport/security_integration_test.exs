@@ -1,7 +1,6 @@
 defmodule ExMCP.Transport.SecurityIntegrationTest do
   use ExUnit.Case
 
-  alias ExMCP.Security
   alias ExMCP.Test.HTTPServer
   alias ExMCP.Transport.Beam, as: BEAM
   alias ExMCP.Transport.{SSE, WebSocket}

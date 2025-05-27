@@ -145,14 +145,19 @@ defmodule ExMCP.Transport.BeamTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          server: :test_beam_server_3
+          server: :test_beam_server_3,
+          handler: ExMCP.Client.DefaultHandler,
+          handler_state: []
         )
+
+      # Wait for client to initialize
+      Process.sleep(100)
 
       # Capture logs to verify notification was received
       log =
-        capture_log(fn ->
+        capture_log([level: :info], fn ->
           Server.notify_resources_changed(server)
-          Process.sleep(50)
+          Process.sleep(100)
         end)
 
       assert log =~ "Resources list changed"
@@ -172,13 +177,18 @@ defmodule ExMCP.Transport.BeamTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          server: :test_beam_server_4
+          server: :test_beam_server_4,
+          handler: ExMCP.Client.DefaultHandler,
+          handler_state: []
         )
 
+      # Wait for client to initialize
+      Process.sleep(100)
+
       log =
-        capture_log(fn ->
+        capture_log([level: :info], fn ->
           Server.notify_tools_changed(server)
-          Process.sleep(50)
+          Process.sleep(100)
         end)
 
       assert log =~ "Tools list changed"
@@ -224,13 +234,18 @@ defmodule ExMCP.Transport.BeamTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          server: :test_beam_server_6
+          server: :test_beam_server_6,
+          handler: ExMCP.Client.DefaultHandler,
+          handler_state: []
         )
 
+      # Wait for client to initialize
+      Process.sleep(100)
+
       log =
-        capture_log(fn ->
+        capture_log([level: :info], fn ->
           Server.notify_resource_updated(server, "test://resource")
-          Process.sleep(50)
+          Process.sleep(100)
         end)
 
       assert log =~ "Resource updated: test://resource"
@@ -250,13 +265,18 @@ defmodule ExMCP.Transport.BeamTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          server: :test_beam_server_7
+          server: :test_beam_server_7,
+          handler: ExMCP.Client.DefaultHandler,
+          handler_state: []
         )
 
+      # Wait for client to initialize
+      Process.sleep(100)
+
       log =
-        capture_log(fn ->
+        capture_log([level: :info], fn ->
           Server.notify_prompts_changed(server)
-          Process.sleep(50)
+          Process.sleep(100)
         end)
 
       assert log =~ "Prompts list changed"
