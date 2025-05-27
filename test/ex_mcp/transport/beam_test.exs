@@ -162,8 +162,8 @@ defmodule ExMCP.Transport.BeamTest do
 
       assert log =~ "Resources list changed"
 
-      GenServer.stop(client)
-      GenServer.stop(server)
+      if Process.alive?(client), do: GenServer.stop(client)
+      if Process.alive?(server), do: GenServer.stop(server)
     end
 
     test "server can send tool change notifications" do
@@ -193,8 +193,8 @@ defmodule ExMCP.Transport.BeamTest do
 
       assert log =~ "Tools list changed"
 
-      GenServer.stop(client)
-      GenServer.stop(server)
+      if Process.alive?(client), do: GenServer.stop(client)
+      if Process.alive?(server), do: GenServer.stop(server)
     end
 
     test "server can send progress notifications" do
@@ -250,8 +250,8 @@ defmodule ExMCP.Transport.BeamTest do
 
       assert log =~ "Resource updated: test://resource"
 
-      GenServer.stop(client)
-      GenServer.stop(server)
+      if Process.alive?(client), do: GenServer.stop(client)
+      if Process.alive?(server), do: GenServer.stop(server)
     end
 
     test "server can send prompts change notifications" do
@@ -281,8 +281,8 @@ defmodule ExMCP.Transport.BeamTest do
 
       assert log =~ "Prompts list changed"
 
-      GenServer.stop(client)
-      GenServer.stop(server)
+      if Process.alive?(client), do: GenServer.stop(client)
+      if Process.alive?(server), do: GenServer.stop(server)
     end
   end
 
