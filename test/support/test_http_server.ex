@@ -119,96 +119,94 @@ defmodule ExMCP.Test.HTTPServer.MessageHandler do
   require Logger
 
   def init(req, opts) do
-    try do
-      server = Keyword.get(opts, :server)
+    server = Keyword.get(opts, :server)
 
-      # Read body
-      {:ok, body, req2} = :cowboy_req.read_body(req)
+    # Read body
+    {:ok, body, req2} = :cowboy_req.read_body(req)
 
-      # Parse JSON body
-      case Jason.decode(body) do
-        {:ok, json} ->
-          # Extract headers
-          headers = :cowboy_req.headers(req2)
-          auth = headers["authorization"]
-          origin = headers["origin"]
+    # Parse JSON body
+    case Jason.decode(body) do
+      {:ok, json} ->
+        # Extract headers
+        headers = :cowboy_req.headers(req2)
+        auth = headers["authorization"]
+        origin = headers["origin"]
 
-          # Store request
-          request = %{
-            path: :cowboy_req.path(req2),
-            method: :cowboy_req.method(req2),
-            headers: headers,
-            body: json,
-            auth: auth,
-            origin: origin,
-            timestamp: System.system_time(:millisecond)
+        # Store request
+        request = %{
+          path: :cowboy_req.path(req2),
+          method: :cowboy_req.method(req2),
+          headers: headers,
+          body: json,
+          auth: auth,
+          origin: origin,
+          timestamp: System.system_time(:millisecond)
+        }
+
+        GenServer.call(server, {:add_request, request})
+
+        # Send response
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => Map.get(json, "id"),
+          "result" => %{
+            "content" => [
+              %{"type" => "text", "text" => "Test response"}
+            ]
           }
+        }
 
-          GenServer.call(server, {:add_request, request})
-
-          # Send response
-          response = %{
-            "jsonrpc" => "2.0",
-            "id" => Map.get(json, "id"),
-            "result" => %{
-              "content" => [
-                %{"type" => "text", "text" => "Test response"}
-              ]
-            }
-          }
-
-          resp_body = Jason.encode!(response)
-
-          req3 =
-            :cowboy_req.reply(
-              200,
-              %{
-                "content-type" => "application/json"
-              },
-              resp_body,
-              req2
-            )
-
-          {:ok, req3, opts}
-
-        {:error, reason} ->
-          Logger.error("Failed to parse JSON: #{inspect(reason)}, body: #{inspect(body)}")
-
-          req3 =
-            :cowboy_req.reply(
-              400,
-              %{
-                "content-type" => "application/json"
-              },
-              Jason.encode!(%{
-                "jsonrpc" => "2.0",
-                "error" => %{
-                  "code" => -32700,
-                  "message" => "Parse error"
-                }
-              }),
-              req2
-            )
-
-          {:ok, req3, opts}
-      end
-    rescue
-      e ->
-        Logger.error("Error in MessageHandler: #{inspect(e)}")
-        Logger.error(Exception.format(:error, e, __STACKTRACE__))
+        resp_body = Jason.encode!(response)
 
         req3 =
           :cowboy_req.reply(
-            500,
+            200,
             %{
-              "content-type" => "text/plain"
+              "content-type" => "application/json"
             },
-            "Internal server error",
-            req
+            resp_body,
+            req2
+          )
+
+        {:ok, req3, opts}
+
+      {:error, reason} ->
+        Logger.error("Failed to parse JSON: #{inspect(reason)}, body: #{inspect(body)}")
+
+        req3 =
+          :cowboy_req.reply(
+            400,
+            %{
+              "content-type" => "application/json"
+            },
+            Jason.encode!(%{
+              "jsonrpc" => "2.0",
+              "error" => %{
+                "code" => -32700,
+                "message" => "Parse error"
+              }
+            }),
+            req2
           )
 
         {:ok, req3, opts}
     end
+  rescue
+    e ->
+      Logger.error("Error in MessageHandler: #{inspect(e)}")
+      Logger.error(Exception.format(:error, e, __STACKTRACE__))
+
+      req3 =
+        :cowboy_req.reply(
+          500,
+          %{
+            "content-type" => "text/plain"
+          },
+          "Internal server error",
+          req
+        )
+
+      {:ok, req3, opts}
   end
 end
 
