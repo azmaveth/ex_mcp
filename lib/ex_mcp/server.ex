@@ -279,10 +279,20 @@ defmodule ExMCP.Server do
   end
 
   def handle_info({:beam_connect, client_mailbox}, state) do
+    # Handle BEAM transport connection (legacy format without security)
+    handle_beam_connect(client_mailbox, nil, state)
+  end
+
+  def handle_info({:beam_connect, client_mailbox, security}, state) do
+    # Handle BEAM transport connection with security
+    handle_beam_connect(client_mailbox, security, state)
+  end
+
+  defp handle_beam_connect(client_mailbox, security, state) do
     # Handle BEAM transport connection
     if state.transport_mod == BeamTransport do
       {:ok, new_transport_state} =
-        BeamTransport.handle_connection_request(client_mailbox, state.transport_state)
+        BeamTransport.handle_connection_request(client_mailbox, state.transport_state, security)
 
       {:noreply, %{state | transport_state: new_transport_state}}
     else

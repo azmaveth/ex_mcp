@@ -167,24 +167,24 @@ defmodule ExMCP.Security do
     []
     |> add_origin_header(cors_config, origin)
     |> add_cors_header(
-      "Access-Control-Allow-Methods",
       cors_config,
+      "Access-Control-Allow-Methods",
       :allowed_methods,
       &Enum.join(&1, ", ")
     )
     |> add_cors_header(
-      "Access-Control-Allow-Headers",
       cors_config,
+      "Access-Control-Allow-Headers",
       :allowed_headers,
       &Enum.join(&1, ", ")
     )
     |> add_cors_header(
-      "Access-Control-Expose-Headers",
       cors_config,
+      "Access-Control-Expose-Headers",
       :expose_headers,
       &Enum.join(&1, ", ")
     )
-    |> add_cors_header("Access-Control-Max-Age", cors_config, :max_age, &to_string/1)
+    |> add_cors_header(cors_config, "Access-Control-Max-Age", :max_age, &to_string/1)
     |> add_credentials_header(cors_config)
     |> Enum.reverse()
   end

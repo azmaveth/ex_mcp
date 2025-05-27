@@ -169,10 +169,6 @@ defmodule ExMCP.Transport.WebSocket do
             Logger.error("WebSocket receive error: #{inspect(reason)}")
             {:error, reason}
         end
-
-      {:error, _conn, reason} ->
-        Logger.error("WebSocket receive error: #{inspect(reason)}")
-        {:error, reason}
     end
   end
 
@@ -251,10 +247,7 @@ defmodule ExMCP.Transport.WebSocket do
       {:ok, conn, ref} ->
         {:ok, conn, ref}
 
-      {:error, _conn, reason} when is_map(reason) ->
-        {:error, reason}
-
-      {:error, _conn, reason, _} ->
+      {:error, _conn, reason} ->
         {:error, reason}
     end
   end
@@ -280,23 +273,20 @@ defmodule ExMCP.Transport.WebSocket do
           {:ok, conn, responses} ->
             handle_upgrade_response(conn, ref, responses)
 
-          {:error, _conn, reason, _} ->
-            {:error, reason}
-
-          {:error, _conn, reason} ->
+          {:error, _conn, reason, _responses} ->
             {:error, reason}
         end
 
-      {:error, _conn, reason} ->
+      {:error, reason} ->
         {:error, reason}
     end
   end
 
   defp handle_upgrade_response(conn, ref, responses) do
     case check_upgrade_status(responses, ref) do
-      {:ok, headers} ->
-        # Use the Mint.WebSocket.new/4 function
-        case Mint.WebSocket.new(conn, ref, :client, headers) do
+      {:ok, status, headers} ->
+        # Use the Mint.WebSocket.new/4 function with the actual status code
+        case Mint.WebSocket.new(conn, ref, status, headers) do
           {:ok, conn, websocket} ->
             {:ok, conn, websocket, :connected}
 
@@ -314,7 +304,7 @@ defmodule ExMCP.Transport.WebSocket do
     headers = get_headers(responses, ref)
 
     case status do
-      101 -> {:ok, headers}
+      101 -> {:ok, 101, headers}
       nil -> {:error, :no_status}
       other -> {:error, other}
     end

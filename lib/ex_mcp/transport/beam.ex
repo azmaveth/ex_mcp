@@ -390,7 +390,18 @@ defmodule ExMCP.Transport.Beam do
   @doc """
   Handles incoming connection requests from clients.
   """
-  def handle_connection_request(client_mailbox, %State{mailbox_pid: server_mailbox} = state) do
+  def handle_connection_request(client_mailbox, state) do
+    handle_connection_request(client_mailbox, state, nil)
+  end
+
+  def handle_connection_request(
+        client_mailbox,
+        %State{mailbox_pid: server_mailbox} = state,
+        security
+      ) do
+    # TODO: Handle security authentication if provided
+    _ = security
+
     # Set up bidirectional connection between mailboxes
     :ok = Mailbox.set_peer(server_mailbox, client_mailbox)
     :ok = Mailbox.set_peer(client_mailbox, server_mailbox)
