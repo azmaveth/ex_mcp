@@ -4,8 +4,8 @@
 
 [![Hex.pm](https://img.shields.io/hexpm/v/ex_mcp.svg)](https://hex.pm/packages/ex_mcp)
 [![Documentation](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/ex_mcp)
-[![CI](https://github.com/yourusername/ex_mcp/workflows/CI/badge.svg)](https://github.com/yourusername/ex_mcp/actions)
-[![Coverage](https://img.shields.io/codecov/c/github/yourusername/ex_mcp.svg)](https://codecov.io/gh/yourusername/ex_mcp)
+[![CI](https://github.com/azmaveth/ex_mcp/workflows/CI/badge.svg)](https://github.com/azmaveth/ex_mcp/actions)
+[![Coverage](https://img.shields.io/codecov/c/github/azmaveth/ex_mcp.svg)](https://codecov.io/gh/azmaveth/ex_mcp)
 [![License](https://img.shields.io/hexpm/l/ex_mcp.svg)](LICENSE)
 
 **A complete Elixir implementation of the Model Context Protocol (MCP)**
@@ -439,7 +439,7 @@ We welcome contributions! Please see:
 
 - [TASKS.md](TASKS.md) for current development priorities
 - [CHANGELOG.md](CHANGELOG.md) for version history
-- [GitHub Issues](https://github.com/yourusername/ex_mcp/issues) for bug reports and feature requests
+- [GitHub Issues](https://github.com/azmaveth/ex_mcp/issues) for bug reports and feature requests
 
 Before contributing:
 

@@ -12,12 +12,24 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       }
 
       config = [
-        url: "https://example.com",
+        # Non-existent server
+        url: "http://localhost:9999",
         security: security
       ]
 
-      # This will fail to connect but we can verify the headers are built correctly
-      assert {:error, _} = SSE.connect(config)
+      # SSE connects asynchronously, so initial connect succeeds
+      assert {:ok, state} = SSE.connect(config)
+
+      # Verify security config is stored correctly
+      assert state.security == security
+
+      assert state.headers == [
+               {"Authorization", "Bearer test-token"},
+               {"X-Custom", "value"}
+             ]
+
+      # Clean up
+      :ok = SSE.close(state)
     end
 
     test "validates security configuration" do
@@ -28,17 +40,22 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: invalid_security
       ]
 
-      assert {:error, {:invalid_auth_config}} = SSE.connect(config)
+      assert {:error, :invalid_auth_config} = SSE.connect(config)
     end
 
     test "extracts origin from URL" do
       config = [
-        url: "https://api.example.com:8080/path",
+        url: "https://api.example.com:8080/custom/path",
         security: %{}
       ]
 
-      # This will fail to connect but we can test the origin extraction
-      assert {:error, _} = SSE.connect(config)
+      assert {:ok, state} = SSE.connect(config)
+
+      # The origin should be extracted without the path
+      assert state.origin == "https://api.example.com:8080"
+
+      # Clean up
+      :ok = SSE.close(state)
     end
 
     test "includes standard security headers when configured" do
@@ -48,11 +65,17 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       }
 
       config = [
-        url: "https://example.com",
+        url: "http://localhost:9999",
         security: security
       ]
 
-      assert {:error, _} = SSE.connect(config)
+      assert {:ok, state} = SSE.connect(config)
+
+      # Verify the security config is stored
+      assert state.security.include_security_headers == true
+
+      # Clean up
+      :ok = SSE.close(state)
     end
   end
 
@@ -80,7 +103,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: invalid_security
       ]
 
-      assert {:error, {:invalid_auth_config}} = WebSocket.connect(config)
+      assert {:error, :invalid_auth_config} = WebSocket.connect(config)
     end
 
     test "handles WSS with TLS configuration" do
@@ -131,7 +154,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: invalid_security
       ]
 
-      assert {:error, {:invalid_security_config}} = BEAM.connect(config)
+      assert {:error, :invalid_auth_config} = BEAM.connect(config)
     end
 
     test "accepts valid bearer token security" do
@@ -170,7 +193,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: invalid_security
       ]
 
-      assert {:error, {:invalid_security_config}} = BEAM.accept(config)
+      assert {:error, :invalid_auth_config} = BEAM.accept(config)
     end
 
     test "server accept works with valid security" do

@@ -142,4 +142,4 @@ ExMCP supports three transport types:
 
 - [ExMCP Documentation](https://hexdocs.pm/ex_mcp)
 - [Model Context Protocol Specification](https://modelcontextprotocol.io)
-- [GitHub Repository](https://github.com/yourusername/ex_mcp)
+- [GitHub Repository](https://github.com/azmaveth/ex_mcp)

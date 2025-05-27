@@ -145,6 +145,11 @@ defmodule ExMCP.Transport.Beam do
 
   - `:name` - (Server only) Optional name to register the server process
 
+  - `:format` - Message format (default: `:json`). Options:
+    - `:json` - Messages are encoded/decoded as JSON strings for MCP compatibility
+    - `:native` - Messages are sent as native Elixir terms (maps, lists, etc.)
+      This is more efficient when both client and server are Elixir processes
+
   ## Fault Tolerance
 
   The BEAM transport automatically handles:
@@ -167,7 +172,7 @@ defmodule ExMCP.Transport.Beam do
 
   defmodule State do
     @moduledoc false
-    defstruct [:mailbox_pid, :mode, :peer_ref, :security, :authenticated]
+    defstruct [:mailbox_pid, :mode, :peer_ref, :security, :authenticated, :format]
   end
 
   defmodule Mailbox do
@@ -299,6 +304,11 @@ defmodule ExMCP.Transport.Beam do
   def connect(opts) do
     server = Keyword.fetch!(opts, :server)
     security = Keyword.get(opts, :security)
+    format = Keyword.get(opts, :format, :json)
+
+    unless format in [:json, :native] do
+      raise ArgumentError, "format must be :json or :native, got: #{inspect(format)}"
+    end
 
     # Validate security config
     with :ok <- validate_security(security) do
@@ -315,7 +325,8 @@ defmodule ExMCP.Transport.Beam do
              mode: mode,
              peer_ref: server,
              security: security,
-             authenticated: true
+             authenticated: true,
+             format: format
            }}
 
         {:error, reason} ->
@@ -326,19 +337,24 @@ defmodule ExMCP.Transport.Beam do
   end
 
   @impl true
-  def send_message(message, %State{mailbox_pid: mailbox} = state) do
-    case Mailbox.send_message(mailbox, message) do
+  def send_message(message, %State{mailbox_pid: mailbox, format: format} = state) do
+    # Convert message based on format
+    formatted_message = format_outgoing_message(message, format)
+
+    case Mailbox.send_message(mailbox, formatted_message) do
       :ok -> {:ok, state}
       {:error, reason} -> {:error, reason}
     end
   end
 
   @impl true
-  def receive_message(%State{} = state) do
+  def receive_message(%State{format: format} = state) do
     # This will block waiting for a message
     receive do
       {:transport_message, message} ->
-        {:ok, message, state}
+        # Convert message based on format
+        formatted_message = format_incoming_message(message, format)
+        {:ok, formatted_message, state}
 
       {:transport_closed, reason} ->
         {:error, reason}
@@ -371,6 +387,11 @@ defmodule ExMCP.Transport.Beam do
     # This is called by ExMCP.Server when initializing
     name = Keyword.get(opts, :name)
     security = Keyword.get(opts, :security)
+    format = Keyword.get(opts, :format, :json)
+
+    unless format in [:json, :native] do
+      raise ArgumentError, "format must be :json or :native, got: #{inspect(format)}"
+    end
 
     # Validate security config
     with :ok <- validate_security(security) do
@@ -383,7 +404,7 @@ defmodule ExMCP.Transport.Beam do
       mailbox_opts = [owner: self(), mode: :server, security: security]
       {:ok, mailbox} = Mailbox.start_link(mailbox_opts)
 
-      {:ok, %State{mailbox_pid: mailbox, mode: :server, security: security}}
+      {:ok, %State{mailbox_pid: mailbox, mode: :server, security: security, format: format}}
     end
   end
 
@@ -550,6 +571,52 @@ defmodule ExMCP.Transport.Beam do
   end
 
   def validate_auth_token(_, _), do: {:error, :invalid_auth_token}
+
+  # Message formatting functions
+
+  defp format_outgoing_message(message, nil), do: format_outgoing_message(message, :json)
+
+  defp format_outgoing_message(message, :json) when is_binary(message) do
+    # Already JSON string
+    message
+  end
+
+  defp format_outgoing_message(message, :json) when is_map(message) do
+    # Encode map to JSON
+    case Jason.encode(message) do
+      {:ok, json} ->
+        json
+
+      {:error, _} ->
+        # If encoding fails, send as-is and let receiver handle error
+        message
+    end
+  end
+
+  defp format_outgoing_message(message, :native) do
+    # In native mode, send as-is
+    message
+  end
+
+  defp format_incoming_message(message, nil), do: format_incoming_message(message, :json)
+
+  defp format_incoming_message(message, :json) when is_binary(message) do
+    # Keep as JSON string for consistency with other transports
+    message
+  end
+
+  defp format_incoming_message(message, :json) when is_map(message) do
+    # Convert map to JSON string
+    case Jason.encode(message) do
+      {:ok, json} -> json
+      {:error, _} -> message
+    end
+  end
+
+  defp format_incoming_message(message, :native) do
+    # In native mode, return as-is
+    message
+  end
 
   defp handle_auth_challenge(challenge, security, server_pid) do
     case {challenge, Map.get(security, :auth)} do

@@ -1120,7 +1120,7 @@ end
 - Explore the [examples](examples/) directory for complete working examples
 - Read the [API documentation](https://hexdocs.pm/ex_mcp)
 - Check out the [MCP specification](https://modelcontextprotocol.io)
-- Join the community and contribute on [GitHub](https://github.com/yourusername/ex_mcp)
+- Join the community and contribute on [GitHub](https://github.com/azmaveth/ex_mcp)
 
 ## Support
 

@@ -251,6 +251,7 @@ defmodule ExMCP.Security do
   defp validate_auth({:api_key, key, _opts}) when is_binary(key), do: :ok
   defp validate_auth({:basic, user, pass}) when is_binary(user) and is_binary(pass), do: :ok
   defp validate_auth({:custom, headers}) when is_list(headers), do: :ok
+  defp validate_auth({:node_cookie, cookie}) when is_atom(cookie), do: :ok
   defp validate_auth(_), do: {:error, :invalid_auth_config}
 
   defp validate_cors(nil), do: :ok

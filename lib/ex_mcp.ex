@@ -157,8 +157,8 @@ defmodule ExMCP do
 
   ## Documentation
 
-  - [User Guide](https://github.com/yourusername/ex_mcp/blob/master/USER_GUIDE.md) - Comprehensive guide
-  - [Examples](https://github.com/yourusername/ex_mcp/tree/master/examples) - Working examples
+  - [User Guide](https://github.com/azmaveth/ex_mcp/blob/master/USER_GUIDE.md) - Comprehensive guide
+  - [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) - Working examples
   - [API Docs](https://hexdocs.pm/ex_mcp) - Full API reference
 
   ## Protocol Compliance
