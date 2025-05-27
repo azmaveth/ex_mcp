@@ -98,6 +98,7 @@
 - [x] Integration tests with mock servers (implemented via transport tests)
 - [x] Transport-specific tests (beam_test.exs, sse_test.exs, stdio mock tests)
 - [x] Error handling and edge case tests (connection failures, invalid JSON, etc.)
+- [x] HTTP test server for SSE testing (test_http_server.ex with Plug/Cowboy)
 - [ ] Performance benchmarks
 - [ ] Property-based tests for protocol encoding/decoding
 
@@ -235,18 +236,18 @@ The library implements most major features from the latest MCP specification.
 Based on thorough review of the MCP specification (docs/mcp-llms-full.txt), the following features need implementation for full compliance:
 
 ### High Priority - Security & Authentication
-- [ ] SSE Authentication Support
-  - [ ] Add authentication header support in SSE transport
-  - [ ] Implement token-based authentication (Bearer tokens)
-  - [ ] Add API key authentication option
-  - [ ] Document authentication configuration
-- [ ] SSE Security Headers
-  - [ ] Implement Origin header validation to prevent DNS rebinding attacks
-  - [ ] Add CORS header support with configurable origins
-  - [ ] Add security headers (X-Content-Type-Options, etc.)
-- [ ] Transport Security
-  - [ ] Add TLS/SSL configuration options for all transports
-  - [ ] Implement certificate validation options
+- [x] SSE Authentication Support
+  - [x] Add authentication header support in SSE transport
+  - [x] Implement token-based authentication (Bearer tokens)
+  - [x] Add API key authentication option
+  - [x] Document authentication configuration
+- [x] SSE Security Headers
+  - [x] Implement Origin header validation to prevent DNS rebinding attacks
+  - [x] Add CORS header support with configurable origins
+  - [x] Add security headers (X-Content-Type-Options, etc.)
+- [x] Transport Security
+  - [x] Add TLS/SSL configuration options for all transports
+  - [x] Implement certificate validation options
   - [ ] Add mutual TLS support
 
 ### High Priority - Protocol Compliance

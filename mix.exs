@@ -48,7 +48,9 @@ defmodule ExMCP.MixProject do
       {:mox, "~> 1.2", only: :test},
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
-      {:git_hooks, "~> 0.7", only: [:dev], runtime: false}
+      {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
+      {:plug_cowboy, "~> 2.7", only: :test},
+      {:plug, "~> 1.16", only: :test}
     ]
   end
 

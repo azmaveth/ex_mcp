@@ -1,5 +1,6 @@
 # Ensure support files are compiled
 Code.require_file("support/mock_sse_server.ex", __DIR__)
+Code.require_file("support/test_http_server.ex", __DIR__)
 
 ExUnit.start()
 

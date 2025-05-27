@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `:json` format (default) maintains MCP compatibility
   - `:native` format for direct Elixir term passing between processes
   - Configurable via `:format` option in connect/accept
+- HTTP test server for SSE testing
+  - Implemented with Plug and Cowboy
+  - Supports SSE connections and message endpoints
+  - Request tracking for test assertions
+  - Proper SSE event streaming with keep-alive
 
 ### Changed
 - SSE transport endpoint is now configurable (was hardcoded to /mcp/v1)
