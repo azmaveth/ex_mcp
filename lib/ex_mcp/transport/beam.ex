@@ -162,9 +162,12 @@ defmodule ExMCP.Transport.Beam do
 
   @behaviour ExMCP.Transport
 
+  alias ExMCP.Security
+  alias __MODULE__, as: BeamTransport
+
   defmodule State do
     @moduledoc false
-    defstruct [:mailbox_pid, :mode, :peer_ref]
+    defstruct [:mailbox_pid, :mode, :peer_ref, :security, :authenticated]
   end
 
   defmodule Mailbox do
@@ -174,7 +177,7 @@ defmodule ExMCP.Transport.Beam do
     """
     use GenServer
 
-    defstruct [:peer_pid, :owner_pid, :mode, :peer_ref]
+    defstruct [:peer_pid, :owner_pid, :mode, :peer_ref, :security, :auth_state]
 
     def start_link(opts) do
       GenServer.start_link(__MODULE__, opts)
@@ -192,6 +195,7 @@ defmodule ExMCP.Transport.Beam do
     def init(opts) do
       owner_pid = Keyword.fetch!(opts, :owner)
       mode = Keyword.get(opts, :mode, :client)
+      security = Keyword.get(opts, :security)
 
       # Monitor the owner so we can clean up if it dies
       Process.monitor(owner_pid)
@@ -200,7 +204,9 @@ defmodule ExMCP.Transport.Beam do
         owner_pid: owner_pid,
         mode: mode,
         peer_pid: nil,
-        peer_ref: nil
+        peer_ref: nil,
+        security: security,
+        auth_state: :pending
       }
 
       {:ok, state}
@@ -208,12 +214,17 @@ defmodule ExMCP.Transport.Beam do
 
     @impl true
     def handle_call({:send, message}, _from, state) do
-      if state.peer_pid do
-        # Send to peer mailbox
-        send(state.peer_pid, {:mcp_message, message})
-        {:reply, :ok, state}
-      else
-        {:reply, {:error, :not_connected}, state}
+      case {state.peer_pid, state.auth_state} do
+        {nil, _} ->
+          {:reply, {:error, :not_connected}, state}
+
+        {_, :pending} when not is_nil(state.security) ->
+          {:reply, {:error, :authentication_pending}, state}
+
+        {peer_pid, _} ->
+          # Send to peer mailbox
+          send(peer_pid, {:mcp_message, message})
+          {:reply, :ok, state}
       end
     end
 
@@ -221,7 +232,35 @@ defmodule ExMCP.Transport.Beam do
       # Monitor the peer
       peer_ref = Process.monitor(peer_pid)
 
-      {:reply, :ok, %{state | peer_pid: peer_pid, peer_ref: peer_ref}}
+      # If security is configured, initiate authentication
+      new_state = %{state | peer_pid: peer_pid, peer_ref: peer_ref}
+
+      case state.security do
+        nil ->
+          # No security, directly set as authenticated
+          {:reply, :ok, %{new_state | auth_state: :authenticated}}
+
+        security ->
+          # Start authentication process
+          case BeamTransport.authenticate_peer(peer_pid, security, state.mode) do
+            :ok ->
+              {:reply, :ok, %{new_state | auth_state: :authenticated}}
+
+            {:error, reason} ->
+              {:reply, {:error, reason}, new_state}
+          end
+      end
+    end
+
+    def handle_call({:authenticate, token}, _from, state) do
+      # Handle incoming authentication from peer
+      case BeamTransport.validate_auth_token(token, state.security) do
+        :ok ->
+          {:reply, :ok, %{state | auth_state: :authenticated}}
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
     end
 
     @impl true
@@ -259,18 +298,30 @@ defmodule ExMCP.Transport.Beam do
   @impl true
   def connect(opts) do
     server = Keyword.fetch!(opts, :server)
+    security = Keyword.get(opts, :security)
 
-    # Start our mailbox
-    {:ok, mailbox} = Mailbox.start_link(owner: self(), mode: :client)
+    # Validate security config
+    with :ok <- validate_security(security) do
+      # Start our mailbox with security config
+      mailbox_opts = [owner: self(), mode: :client, security: security]
+      {:ok, mailbox} = Mailbox.start_link(mailbox_opts)
 
-    # Connect to server
-    case connect_to_server(server, mailbox) do
-      {:ok, mode} ->
-        {:ok, %State{mailbox_pid: mailbox, mode: mode, peer_ref: server}}
+      # Connect to server with authentication
+      case connect_to_server(server, mailbox, security) do
+        {:ok, mode} ->
+          {:ok,
+           %State{
+             mailbox_pid: mailbox,
+             mode: mode,
+             peer_ref: server,
+             security: security,
+             authenticated: true
+           }}
 
-      {:error, reason} ->
-        GenServer.stop(mailbox)
-        {:error, reason}
+        {:error, reason} ->
+          GenServer.stop(mailbox)
+          {:error, reason}
+      end
     end
   end
 
@@ -319,16 +370,21 @@ defmodule ExMCP.Transport.Beam do
     # When used as a server transport, we need to handle incoming connections
     # This is called by ExMCP.Server when initializing
     name = Keyword.get(opts, :name)
+    security = Keyword.get(opts, :security)
 
-    if name do
-      # Register the accepting process so clients can find us
-      Process.register(self(), name)
+    # Validate security config
+    with :ok <- validate_security(security) do
+      if name do
+        # Register the accepting process so clients can find us
+        Process.register(self(), name)
+      end
+
+      # Start our mailbox for receiving connections with security
+      mailbox_opts = [owner: self(), mode: :server, security: security]
+      {:ok, mailbox} = Mailbox.start_link(mailbox_opts)
+
+      {:ok, %State{mailbox_pid: mailbox, mode: :server, security: security}}
     end
-
-    # Start our mailbox for receiving connections
-    {:ok, mailbox} = Mailbox.start_link(owner: self(), mode: :server)
-
-    {:ok, %State{mailbox_pid: mailbox, mode: :server}}
   end
 
   @doc """
@@ -347,33 +403,33 @@ defmodule ExMCP.Transport.Beam do
 
   # Private Functions
 
-  defp connect_to_server(server_ref, client_mailbox) do
+  defp connect_to_server(server_ref, client_mailbox, security) do
     case server_ref do
       name when is_atom(name) ->
-        connect_local(name, client_mailbox)
+        connect_local(name, client_mailbox, security)
 
       {name, node} when is_atom(name) and is_atom(node) ->
-        connect_distributed(name, node, client_mailbox)
+        connect_distributed(name, node, client_mailbox, security)
 
       pid when is_pid(pid) ->
-        connect_to_pid(pid, client_mailbox)
+        connect_to_pid(pid, client_mailbox, security)
 
       _ ->
         {:error, :invalid_server_ref}
     end
   end
 
-  defp connect_local(name, client_mailbox) do
+  defp connect_local(name, client_mailbox, security) do
     case Process.whereis(name) do
       nil ->
         {:error, :server_not_found}
 
       server_pid ->
-        connect_to_pid(server_pid, client_mailbox)
+        connect_to_pid(server_pid, client_mailbox, security)
     end
   end
 
-  defp connect_distributed(name, node, client_mailbox) do
+  defp connect_distributed(name, node, client_mailbox, security) do
     case Node.ping(node) do
       :pong ->
         case :rpc.call(node, Process, :whereis, [name]) do
@@ -384,7 +440,7 @@ defmodule ExMCP.Transport.Beam do
             {:error, :server_not_found}
 
           server_pid ->
-            connect_to_pid(server_pid, client_mailbox)
+            connect_to_pid(server_pid, client_mailbox, security)
         end
 
       :pang ->
@@ -392,9 +448,16 @@ defmodule ExMCP.Transport.Beam do
     end
   end
 
-  defp connect_to_pid(server_pid, client_mailbox) do
-    # Send connection request to server
-    send(server_pid, {:beam_connect, client_mailbox})
+  defp connect_to_pid(server_pid, client_mailbox, security) do
+    # Send connection request to server with auth info
+    auth_info =
+      case security do
+        nil -> nil
+        %{auth: auth} -> auth
+        _ -> nil
+      end
+
+    send(server_pid, {:beam_connect, client_mailbox, auth_info})
 
     # Wait for acknowledgment
     receive do
@@ -405,9 +468,90 @@ defmodule ExMCP.Transport.Beam do
 
       {:mcp_connection_refused, reason} ->
         {:error, reason}
+
+      {:mcp_auth_required, challenge} ->
+        # Handle authentication challenge
+        case handle_auth_challenge(challenge, security, server_pid) do
+          :ok ->
+            receive do
+              {:mcp_connected, server_mailbox} ->
+                Mailbox.set_peer(client_mailbox, server_mailbox)
+                {:ok, :local}
+            after
+              5000 -> {:error, :auth_timeout}
+            end
+
+          error ->
+            error
+        end
     after
       5000 ->
         {:error, :connection_timeout}
+    end
+  end
+
+  # Security helper functions
+
+  defp validate_security(nil), do: :ok
+
+  defp validate_security(security) when is_map(security) do
+    Security.validate_config(security)
+  end
+
+  defp validate_security(_), do: {:error, :invalid_security_config}
+
+  def authenticate_peer(peer_pid, security, _mode) do
+    case Map.get(security, :auth) do
+      {:bearer, token} ->
+        # Send bearer token to peer for validation
+        GenServer.call(peer_pid, {:authenticate, {:bearer, token}})
+
+      {:node_cookie, cookie} ->
+        # Validate Erlang node cookie
+        if Node.get_cookie() == cookie do
+          :ok
+        else
+          {:error, :invalid_cookie}
+        end
+
+      nil ->
+        :ok
+
+      _ ->
+        {:error, :unsupported_auth_method}
+    end
+  end
+
+  def validate_auth_token({:bearer, token}, %{auth: {:bearer, expected_token}}) do
+    if token == expected_token do
+      :ok
+    else
+      {:error, :invalid_token}
+    end
+  end
+
+  def validate_auth_token({:node_cookie, cookie}, %{auth: {:node_cookie, expected_cookie}}) do
+    if cookie == expected_cookie do
+      :ok
+    else
+      {:error, :invalid_cookie}
+    end
+  end
+
+  def validate_auth_token(_, _), do: {:error, :invalid_auth_token}
+
+  defp handle_auth_challenge(challenge, security, server_pid) do
+    case {challenge, Map.get(security, :auth)} do
+      {:bearer_required, {:bearer, token}} ->
+        send(server_pid, {:beam_auth_response, {:bearer, token}})
+        :ok
+
+      {:cookie_required, {:node_cookie, cookie}} ->
+        send(server_pid, {:beam_auth_response, {:node_cookie, cookie}})
+        :ok
+
+      _ ->
+        {:error, :unsupported_auth_challenge}
     end
   end
 end

@@ -25,6 +25,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Approval required for LLM sampling requests and responses
   - Support for approving, denying, or modifying requests/responses
   - Full test coverage with approval and HITL integration tests
+- WebSocket transport implementation (client-side only)
+  - Support for ws:// and wss:// protocols
+  - Automatic ping/pong frame handling
+  - Full integration with ExMCP transport system
+  - TLS/SSL support for secure connections
+- Comprehensive security features across all transports
+  - New `ExMCP.Security` module for unified security configuration
+  - Authentication support: Bearer tokens, API keys, Basic auth, custom headers
+  - SSE transport: Origin validation, CORS headers, security headers
+  - WebSocket transport: Authentication headers, TLS configuration
+  - BEAM transport: Process-level authentication, node cookie support
+  - TLS/SSL configuration with certificate validation
+  - Mutual TLS support for SSE and WebSocket transports
+  - Comprehensive security documentation in docs/SECURITY.md
+
+### Changed
+- SSE transport endpoint is now configurable (was hardcoded to /mcp/v1)
+
+### Documentation
+- Added comprehensive security guide (docs/SECURITY.md)
+- Added local copy of MCP specification (docs/mcp-llms-full.txt)
+- Updated TASKS.md with detailed compliance status
 
 ## [0.3.0] - 2025-05-26
 

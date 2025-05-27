@@ -40,6 +40,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - 📝 **stdio** - Process communication via standard I/O
 - 🌐 **SSE** - HTTP Server-Sent Events for web integration
 - ⚡ **BEAM** - Native Erlang/Elixir process communication
+- 🔌 **WebSocket** - WebSocket client for real-time communication
 
 ### Advanced Features
 - 🔄 **Auto-Reconnection** - Built-in reconnection with exponential backoff
@@ -49,6 +50,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - 🏗️ **OTP Integration** - Built on solid OTP principles with supervision trees
 - 🔌 **Extensible** - Easy to add custom transports and handlers
 - ✅ **Approval Handlers** - Implement custom approval flows for HITL
+- 🔐 **Security** - Comprehensive authentication, TLS/SSL, CORS, and origin validation
 
 ## 🎯 MCP Specification vs ExMCP Extensions
 
@@ -96,6 +98,17 @@ mix deps.get
 {:ok, client} = ExMCP.Client.start_link(
   transport: :stdio,
   command: ["node", "my-mcp-server.js"]
+)
+
+# Connect with authentication (SSE/WebSocket)
+{:ok, secure_client} = ExMCP.Client.start_link(
+  transport: :sse,
+  url: "https://api.example.com",
+  security: %{
+    auth: {:bearer, "your-token"},
+    validate_origin: true,
+    allowed_origins: ["https://app.example.com"]
+  }
 )
 
 # List available tools
@@ -389,6 +402,7 @@ end
 
 - 📖 **[User Guide](USER_GUIDE.md)** - Comprehensive guide with examples
 - 🔧 **[API Documentation](https://hexdocs.pm/ex_mcp)** - Detailed API reference
+- 🔐 **[Security Guide](docs/SECURITY.md)** - Authentication, TLS, and security best practices
 - 📂 **[Examples](examples/)** - Complete working examples
 - 📋 **[TASKS.md](TASKS.md)** - Development roadmap and status
 

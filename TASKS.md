@@ -42,7 +42,7 @@
   - Full test coverage with approval_test.exs and hitl_integration_test.exs
 
 - [ ] Additional transport implementations
-  - [ ] WebSocket transport
+  - [x] WebSocket transport (implemented - client mode only)
   
 ### BEAM Transport Enhancements (from mcp_chat Phase 9)
 - [x] Basic BEAM transport implementation completed
@@ -62,11 +62,12 @@
 ## Todo
 
 ### Core Components (Non-spec features)
-- [x] Server Manager for multi-server support (implemented)
-- [x] Discovery mechanism for finding available servers (implemented)
+- [x] Server Manager for multi-server support (implemented in server_manager.ex)
+- [x] Discovery mechanism for finding available servers (implemented in discovery.ex)
 - [ ] Connection pooling for clients (optimization, not required by spec)
 - [x] Request/response timeout handling (implemented in client.ex)
 - [x] Progress notification handling (implemented with progressToken support)
+- [x] Automatic reconnection with exponential backoff (implemented in client.ex)
 
 ### MCP Protocol Features (Missing from Current Implementation)
 - [x] Sampling/createMessage support for LLM interactions
@@ -165,6 +166,9 @@
 - [ ] Message compression
 - [ ] Circuit breaker for failed connections
 - [ ] Graceful shutdown procedures
+- [ ] WebSocket server mode implementation (requires HTTP server with upgrade support)
+- [ ] WebSocket reconnection support
+- [ ] WebSocket connection pooling
 
 ### Phase 16 Features (from mcp_chat)
 - [ ] Health Monitoring Infrastructure
@@ -202,12 +206,13 @@
 ## Notes
 
 - The library implements the Model Context Protocol specification version 2025-03-26
-- Three transports are implemented: stdio (primary), BEAM (native Elixir), and SSE
+- Four transports are implemented: stdio (primary), BEAM (native Elixir), SSE, and WebSocket (client-only)
 - The client includes automatic reconnection with exponential backoff
 - Server handlers can be implemented using the ExMCP.Server.Handler behaviour
 - All protocol messages use string keys for JSON compatibility
 - All tests are passing (0 failures) as of the latest updates
 - Progress notifications use progressToken (without underscore) per MCP spec
+- Discovery module is an ExMCP extension providing comprehensive server discovery
 
 ### Implementation Priority
 Features are prioritized as follows:
@@ -225,9 +230,148 @@ Based on the latest MCP specification (2025-03-26), the following features have 
 
 The library implements most major features from the latest MCP specification.
 
-### Missing MCP Specification Features
-The following features are defined in the MCP spec but not yet implemented:
-1. **Batch Requests** - Support for JSONRPCBatchRequest/JSONRPCBatchResponse
-2. **Bi-directional Requests** - Server-initiated requests (ping, createMessage, listRoots)
-3. **Human-in-the-loop** - Approval flows for sampling and message generation
-4. **Context Inclusion** - Full implementation of includeContext parameter in sampling
+## MCP Specification Compliance Gaps
+
+Based on thorough review of the MCP specification (docs/mcp-llms-full.txt), the following features need implementation for full compliance:
+
+### High Priority - Security & Authentication
+- [ ] SSE Authentication Support
+  - [ ] Add authentication header support in SSE transport
+  - [ ] Implement token-based authentication (Bearer tokens)
+  - [ ] Add API key authentication option
+  - [ ] Document authentication configuration
+- [ ] SSE Security Headers
+  - [ ] Implement Origin header validation to prevent DNS rebinding attacks
+  - [ ] Add CORS header support with configurable origins
+  - [ ] Add security headers (X-Content-Type-Options, etc.)
+- [ ] Transport Security
+  - [ ] Add TLS/SSL configuration options for all transports
+  - [ ] Implement certificate validation options
+  - [ ] Add mutual TLS support
+
+### High Priority - Protocol Compliance
+- [ ] Cancellation Protocol
+  - [ ] Implement notifications/cancelled message handling
+  - [ ] Add request cancellation API in client
+  - [ ] Handle cancelled requests in server
+- [ ] Logging Control
+  - [ ] Implement logging/setLevel request handler
+  - [ ] Add configurable logging levels
+  - [ ] Integrate with Elixir Logger properly
+- [ ] Missing Protocol Methods
+  - [x] completion/complete endpoint (implemented in server.ex)
+  - [x] resources/templates/list method (implemented as list_resource_templates)
+  - [ ] Add full progress token support across all methods
+  - [ ] Support _meta field in all request types
+
+### Medium Priority - Transport Enhancements  
+- [ ] SSE Transport Improvements
+  - [ ] Make SSE endpoint configurable (not hardcoded /mcp/v1)
+  - [ ] Add comprehensive HTTP status code handling
+  - [ ] Implement keep-alive/heartbeat mechanism
+  - [ ] Add automatic retry with exponential backoff
+  - [ ] Support custom HTTP headers
+- [ ] Connection Management
+  - [ ] Implement automatic reconnection for all transports
+  - [ ] Add connection pooling support
+  - [ ] Implement request queuing during reconnection
+  - [ ] Add connection state change notifications
+- [ ] Error Handling Improvements
+  - [ ] Add structured error data in responses
+  - [ ] Implement automatic error recovery
+  - [ ] Add configurable request timeouts
+  - [ ] Implement rate limiting support
+
+### Medium Priority - Discovery & Multi-Server  
+- [x] Discovery Implementation (ExMCP.Discovery - extension module)
+  - [x] Environment variable discovery (MCP_SERVERS JSON)
+  - [x] Pattern-based env var discovery (*_MCP_SERVER, *_SERVER_URL)
+  - [x] Configuration file discovery (mcp.json, .mcp/config.json)
+  - [x] Well-known locations scanning
+  - [x] NPM package discovery
+  - [x] Python package discovery  
+  - [x] Executable server detection
+  - [x] Service registration API
+  - [ ] DNS-SD discovery support (future enhancement)
+- [ ] Server Metadata Enhancement
+  - [x] Basic server metadata support
+  - [ ] Query server capabilities during discovery
+  - [ ] Cache discovered server metadata
+  - [ ] Add server description and documentation URLs
+
+### Low Priority - Advanced Features
+- [ ] Batch Request API
+  - [ ] Add high-level batch request API
+  - [ ] Implement batch response correlation
+  - [ ] Add batch error handling
+- [ ] Session Persistence
+  - [ ] Add session state persistence
+  - [ ] Implement session recovery after restart
+  - [ ] Add session migration support
+- [ ] Multi-Transport Server
+  - [ ] Allow servers to listen on multiple transports
+  - [ ] Add transport selection negotiation
+  - [ ] Implement transport fallback
+- [ ] Experimental Features Framework
+  - [ ] Add support for experimental capabilities
+  - [ ] Implement feature flags system
+  - [ ] Add protocol extension mechanism
+
+### Testing & Development Tools
+- [ ] Mock Transport
+  - [ ] Create mock transport for testing
+  - [ ] Add request/response recording
+  - [ ] Implement playback mode
+- [ ] Protocol Validation
+  - [ ] Add message schema validation
+  - [ ] Create strict compliance mode
+  - [ ] Add protocol conformance tests
+- [ ] Debug & Tracing
+  - [ ] Add debug mode with message tracing
+  - [ ] Implement performance profiling
+  - [ ] Add protocol analyzer tool
+
+### Documentation Updates
+- [ ] Security Guide
+  - [ ] Document authentication setup
+  - [ ] Add security best practices
+  - [ ] Include threat model
+- [ ] Transport Implementation Guide
+  - [ ] Document transport behaviour in detail
+  - [ ] Add example transport implementation
+  - [ ] Include testing guidelines
+- [ ] Error Reference
+  - [ ] Create comprehensive error code reference
+  - [ ] Document error recovery strategies
+  - [ ] Add troubleshooting guide
+- [ ] Migration Guides
+  - [ ] Add protocol version migration guide
+  - [ ] Document breaking changes
+  - [ ] Include upgrade scripts
+
+### Missing MCP Specification Features Summary
+The following key features from the MCP spec need implementation:
+1. **Authentication** - SSE transport lacks authentication support (Bearer tokens, API keys)
+2. **Security Headers** - Missing Origin validation and CORS support in SSE  
+3. **Cancellation** - No notifications/cancelled message handling
+4. **Logging Control** - Missing logging/setLevel request handler
+5. **Keep-Alive** - No heartbeat mechanism for SSE connections
+6. **Configurable SSE Endpoint** - SSE endpoint is hardcoded to /mcp/v1
+7. **Batch Request API** - Low-level support exists but no high-level API
+8. **Request Timeouts** - No configurable timeout support (fixed at 30s)
+9. **Debug Mode** - No protocol message tracing or debugging support
+10. **Extended Meta Fields** - Limited _meta field support (only for progress tokens)
+
+### Implementation Status Summary
+The ExMCP library has:
+- ✅ All core MCP protocol methods (initialize, resources, tools, prompts, sampling, completion)
+- ✅ Bi-directional communication and server-initiated requests
+- ✅ Human-in-the-loop support with approval flows
+- ✅ Comprehensive server discovery (extension feature)
+- ✅ Multi-transport support (stdio, SSE, BEAM, WebSocket client)
+- ✅ Automatic reconnection with exponential backoff
+- ✅ Progress notifications and subscriptions
+- ✅ Server manager for multi-server support
+- ⚠️  Context inclusion for sampling (types exist but implementation incomplete)
+- ❌ Transport-level security features (auth, CORS, Origin validation)
+- ❌ Advanced protocol features (cancellation, logging control, debug mode)
