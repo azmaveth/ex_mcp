@@ -124,7 +124,7 @@ defmodule ExMCP.Transport.NotificationTest do
           end
         end)
 
-      {:ok, state} = Beam.connect(server: server_pid)
+      {:ok, state} = Beam.connect(server: server_pid, format: :native)
 
       # Send notification as map
       {:ok, _state} = Beam.send_message(@notification, state)
@@ -184,7 +184,7 @@ defmodule ExMCP.Transport.NotificationTest do
           end
         end)
 
-      {:ok, state} = Beam.connect(server: server_pid)
+      {:ok, state} = Beam.connect(server: server_pid, format: :native)
 
       # Receive first notification from server
       {:ok, notif1, state} = Beam.receive_message(state)

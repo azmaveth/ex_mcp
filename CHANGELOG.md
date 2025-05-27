@@ -32,16 +32,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - TLS/SSL support for secure connections
 - Comprehensive security features across all transports
   - New `ExMCP.Security` module for unified security configuration
-  - Authentication support: Bearer tokens, API keys, Basic auth, custom headers
+  - Authentication support: Bearer tokens, API keys, Basic auth, custom headers, node cookies
   - SSE transport: Origin validation, CORS headers, security headers
   - WebSocket transport: Authentication headers, TLS configuration
   - BEAM transport: Process-level authentication, node cookie support
   - TLS/SSL configuration with certificate validation
   - Mutual TLS support for SSE and WebSocket transports
   - Comprehensive security documentation in docs/SECURITY.md
+- Native format support for BEAM transport
+  - `:json` format (default) maintains MCP compatibility
+  - `:native` format for direct Elixir term passing between processes
+  - Configurable via `:format` option in connect/accept
 
 ### Changed
 - SSE transport endpoint is now configurable (was hardcoded to /mcp/v1)
+- BEAM transport now supports both JSON and native Elixir term formats
+
+### Fixed
+- Dialyzer type errors in WebSocket and BEAM transports
+- BEAM transport connection format to support security authentication
+- Test compatibility issues with new security features
 
 ### Documentation
 - Added comprehensive security guide (docs/SECURITY.md)
