@@ -519,8 +519,10 @@ defmodule ExMCP.Server.Handler do
         }, state}
       end
   """
+  alias ExMCP.Server.Capabilities
+
   @spec build_capabilities(module()) :: map()
   def build_capabilities(handler_module) do
-    ExMCP.Server.Capabilities.build_capabilities(handler_module)
+    Capabilities.build_capabilities(handler_module)
   end
 end

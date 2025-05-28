@@ -7,8 +7,8 @@ defmodule ExMCP.LifecycleEnhancementsTest do
 
   alias ExMCP.Client
   alias ExMCP.Server
-  alias ExMCP.Server.Handler
   alias ExMCP.Server.Capabilities
+  alias ExMCP.Server.Handler
 
   describe "dynamic server capabilities" do
     defmodule FullFeaturedHandler do
