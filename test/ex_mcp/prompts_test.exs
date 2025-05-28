@@ -41,15 +41,15 @@ defmodule ExMCP.PromptsTest do
     @impl true
     def handle_list_prompts(cursor, state) do
       prompts = state.prompts
-      
+
       # Simple pagination: return 2 prompts at a time
       case cursor do
         nil ->
           {:ok, Enum.take(prompts, 2), "page2", state}
-        
+
         "page2" ->
           {:ok, Enum.drop(prompts, 2), nil, state}
-          
+
         _ ->
           {:error, "Invalid cursor", state}
       end
@@ -60,7 +60,7 @@ defmodule ExMCP.PromptsTest do
       case find_prompt(name, state.prompts) do
         nil ->
           {:error, "Prompt not found: #{name}", state}
-          
+
         prompt ->
           messages = generate_prompt_messages(prompt, arguments)
           {:ok, messages, state}
@@ -132,25 +132,29 @@ defmodule ExMCP.PromptsTest do
               role: "user",
               content: %{
                 type: "text",
-                text: "Please review the following #{arguments["language"]} code:\n\n```#{arguments["language"]}\n#{arguments["code"]}\n```"
+                text:
+                  "Please review the following #{arguments["language"]} code:\n\n```#{arguments["language"]}\n#{arguments["code"]}\n```"
               }
             }
           ]
-          
+
         "explain_concept" ->
           level = arguments["level"] || "intermediate"
+
           [
             %{
               role: "user",
               content: %{
                 type: "text",
-                text: "Please explain the concept of '#{arguments["concept"]}' at a #{level} level."
+                text:
+                  "Please explain the concept of '#{arguments["concept"]}' at a #{level} level."
               }
             }
           ]
-          
+
         "generate_tests" ->
           framework = arguments["framework"] || "default"
+
           [
             %{
               role: "user",
@@ -160,7 +164,7 @@ defmodule ExMCP.PromptsTest do
               }
             }
           ]
-          
+
         _ ->
           [
             %{
@@ -177,16 +181,18 @@ defmodule ExMCP.PromptsTest do
 
   setup do
     # Start server with prompts handler using BEAM transport
-    {:ok, server} = Server.start_link(
-      transport: :beam,
-      handler: TestPromptsHandler
-    )
+    {:ok, server} =
+      Server.start_link(
+        transport: :beam,
+        handler: TestPromptsHandler
+      )
 
     # Start client connecting to the server
-    {:ok, client} = Client.start_link(
-      transport: :beam,
-      server: server
-    )
+    {:ok, client} =
+      Client.start_link(
+        transport: :beam,
+        server: server
+      )
 
     # Wait for initialization
     Process.sleep(100)
@@ -200,11 +206,11 @@ defmodule ExMCP.PromptsTest do
       {:ok, %{prompts: page1, nextCursor: cursor}} = Client.list_prompts(client)
       assert length(page1) == 2
       assert cursor == "page2"
-      
+
       # Check first page prompts
       assert Enum.at(page1, 0).name == "code_review"
       assert Enum.at(page1, 1).name == "explain_concept"
-      
+
       # Second page
       {:ok, result2} = Client.list_prompts(client, cursor: cursor)
       page2 = result2.prompts
@@ -219,11 +225,11 @@ defmodule ExMCP.PromptsTest do
         "language" => "elixir",
         "code" => "def add(a, b), do: a + b"
       }
-      
+
       {:ok, result} = Client.get_prompt(client, "code_review", arguments)
       messages = result.messages
       assert length(messages) == 1
-      
+
       message = hd(messages)
       assert message.role == "user"
       assert message.content.type == "text"
@@ -240,23 +246,25 @@ defmodule ExMCP.PromptsTest do
       # Without optional level
       {:ok, result1} = Client.get_prompt(client, "explain_concept", %{"concept" => "recursion"})
       assert hd(result1.messages).content.text =~ "intermediate level"
-      
+
       # With optional level
-      {:ok, result2} = Client.get_prompt(client, "explain_concept", %{
-        "concept" => "recursion",
-        "level" => "beginner"
-      })
+      {:ok, result2} =
+        Client.get_prompt(client, "explain_concept", %{
+          "concept" => "recursion",
+          "level" => "beginner"
+        })
+
       assert hd(result2.messages).content.text =~ "beginner level"
     end
 
-
     test "prompts support embedded resources", %{client: client} do
       # Test with generate_tests prompt
-      {:ok, result} = Client.get_prompt(client, "generate_tests", %{
-        "code" => "function factorial(n) { return n <= 1 ? 1 : n * factorial(n - 1); }",
-        "framework" => "jest"
-      })
-      
+      {:ok, result} =
+        Client.get_prompt(client, "generate_tests", %{
+          "code" => "function factorial(n) { return n <= 1 ? 1 : n * factorial(n - 1); }",
+          "framework" => "jest"
+        })
+
       messages = result.messages
       assert length(messages) == 1
       message = hd(messages)

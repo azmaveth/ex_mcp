@@ -15,11 +15,12 @@ defmodule ExMCP.PingTest do
 
     @impl true
     def handle_initialize(_params, state) do
-      {:ok, %{
-        name: "ping-test-server",
-        version: "1.0.0",
-        capabilities: %{}
-      }, state}
+      {:ok,
+       %{
+         name: "ping-test-server",
+         version: "1.0.0",
+         capabilities: %{}
+       }, state}
     end
 
     @impl true
@@ -72,7 +73,7 @@ defmodule ExMCP.PingTest do
   describe "ping protocol compliance" do
     test "encode_ping creates correct request format" do
       ping_request = Protocol.encode_ping()
-      
+
       assert ping_request["jsonrpc"] == "2.0"
       assert ping_request["method"] == "ping"
       assert ping_request["params"] == %{}
@@ -81,7 +82,7 @@ defmodule ExMCP.PingTest do
 
     test "encode_pong creates correct response format" do
       pong_response = Protocol.encode_pong(123)
-      
+
       assert pong_response["jsonrpc"] == "2.0"
       assert pong_response["id"] == 123
       assert pong_response["result"] == %{}
@@ -91,16 +92,18 @@ defmodule ExMCP.PingTest do
 
   describe "client to server ping" do
     test "client can ping server successfully" do
-      {:ok, server} = Server.start_link(
-        transport: :beam,
-        name: :ping_test_server_1,
-        handler: TestServerHandler
-      )
+      {:ok, server} =
+        Server.start_link(
+          transport: :beam,
+          name: :ping_test_server_1,
+          handler: TestServerHandler
+        )
 
-      {:ok, client} = Client.start_link(
-        transport: :beam,
-        server: :ping_test_server_1
-      )
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :ping_test_server_1
+        )
 
       # Wait for initialization
       Process.sleep(100)
@@ -118,16 +121,18 @@ defmodule ExMCP.PingTest do
     end
 
     test "client ping respects timeout" do
-      {:ok, server} = Server.start_link(
-        transport: :beam,
-        name: :ping_test_server_2,
-        handler: TestServerHandler
-      )
+      {:ok, server} =
+        Server.start_link(
+          transport: :beam,
+          name: :ping_test_server_2,
+          handler: TestServerHandler
+        )
 
-      {:ok, client} = Client.start_link(
-        transport: :beam,
-        server: :ping_test_server_2
-      )
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :ping_test_server_2
+        )
 
       # Wait for initialization
       Process.sleep(100)
@@ -143,18 +148,20 @@ defmodule ExMCP.PingTest do
 
   describe "server to client ping" do
     test "server can ping client successfully" do
-      {:ok, server} = Server.start_link(
-        transport: :beam,
-        name: :ping_test_server_3,
-        handler: TestServerHandler
-      )
+      {:ok, server} =
+        Server.start_link(
+          transport: :beam,
+          name: :ping_test_server_3,
+          handler: TestServerHandler
+        )
 
-      {:ok, client} = Client.start_link(
-        transport: :beam,
-        server: :ping_test_server_3,
-        handler: TestClientHandler,
-        handler_state: %{ping_count: 0}
-      )
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :ping_test_server_3,
+          handler: TestClientHandler,
+          handler_state: %{ping_count: 0}
+        )
 
       # Wait for initialization
       Process.sleep(100)
@@ -172,17 +179,19 @@ defmodule ExMCP.PingTest do
     end
 
     test "server ping fails when client doesn't have handler" do
-      {:ok, server} = Server.start_link(
-        transport: :beam,
-        name: :ping_test_server_4,
-        handler: TestServerHandler
-      )
+      {:ok, server} =
+        Server.start_link(
+          transport: :beam,
+          name: :ping_test_server_4,
+          handler: TestServerHandler
+        )
 
-      {:ok, client} = Client.start_link(
-        transport: :beam,
-        server: :ping_test_server_4
-        # No handler specified - uses DefaultHandler which doesn't support server requests
-      )
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :ping_test_server_4
+          # No handler specified - uses DefaultHandler which doesn't support server requests
+        )
 
       # Wait for initialization
       Process.sleep(100)
@@ -198,18 +207,20 @@ defmodule ExMCP.PingTest do
 
   describe "bidirectional ping" do
     test "both client and server can ping each other" do
-      {:ok, server} = Server.start_link(
-        transport: :beam,
-        name: :ping_test_server_5,
-        handler: TestServerHandler
-      )
+      {:ok, server} =
+        Server.start_link(
+          transport: :beam,
+          name: :ping_test_server_5,
+          handler: TestServerHandler
+        )
 
-      {:ok, client} = Client.start_link(
-        transport: :beam,
-        server: :ping_test_server_5,
-        handler: TestClientHandler,
-        handler_state: %{}
-      )
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :ping_test_server_5,
+          handler: TestClientHandler,
+          handler_state: %{}
+        )
 
       # Wait for initialization
       Process.sleep(100)
@@ -234,10 +245,11 @@ defmodule ExMCP.PingTest do
   describe "ping error handling" do
     test "ping handles transport failures gracefully" do
       # Create a client without a server
-      {:ok, client} = Client.start_link(
-        transport: :beam,
-        server: :non_existent_server
-      )
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :non_existent_server
+        )
 
       # Ping should fail with connection error
       assert {:error, :not_connected} = Client.ping(client)
@@ -255,11 +267,12 @@ defmodule ExMCP.PingTest do
 
         @impl true
         def handle_initialize(_params, state) do
-          {:ok, %{
-            name: "slow-server",
-            version: "1.0.0",
-            capabilities: %{}
-          }, state}
+          {:ok,
+           %{
+             name: "slow-server",
+             version: "1.0.0",
+             capabilities: %{}
+           }, state}
         end
 
         @impl true
@@ -269,17 +282,19 @@ defmodule ExMCP.PingTest do
         def terminate(_reason, _state), do: :ok
       end
 
-      {:ok, server} = Server.start_link(
-        transport: :beam,
-        name: :slow_ping_server,
-        handler: SlowPingHandler
-      )
+      {:ok, server} =
+        Server.start_link(
+          transport: :beam,
+          name: :slow_ping_server,
+          handler: SlowPingHandler
+        )
 
       # Start client with custom transport that delays responses
-      {:ok, client} = Client.start_link(
-        transport: :beam,
-        server: :slow_ping_server
-      )
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :slow_ping_server
+        )
 
       # Wait for initialization
       Process.sleep(100)
@@ -295,30 +310,33 @@ defmodule ExMCP.PingTest do
 
   describe "ping as health check" do
     test "periodic pings can detect connection health" do
-      {:ok, server} = Server.start_link(
-        transport: :beam,
-        name: :health_check_server,
-        handler: TestServerHandler
-      )
+      {:ok, server} =
+        Server.start_link(
+          transport: :beam,
+          name: :health_check_server,
+          handler: TestServerHandler
+        )
 
-      {:ok, client} = Client.start_link(
-        transport: :beam,
-        server: :health_check_server
-      )
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :health_check_server
+        )
 
       # Wait for initialization
       Process.sleep(100)
 
       # Simulate periodic health checks
-      results = for _i <- 1..5 do
-        Process.sleep(50)
-        Client.ping(client)
-      end
+      results =
+        for _i <- 1..5 do
+          Process.sleep(50)
+          Client.ping(client)
+        end
 
       # All pings should succeed
-      assert Enum.all?(results, fn result -> 
-        match?({:ok, %{}}, result)
-      end)
+      assert Enum.all?(results, fn result ->
+               match?({:ok, %{}}, result)
+             end)
 
       # Stop server to simulate connection loss
       GenServer.stop(server)

@@ -338,7 +338,7 @@ defmodule ExMCP.Protocol do
       {:error, :cannot_cancel_initialize} = Protocol.encode_cancelled("initialize", "reason")
 
   """
-  @spec encode_cancelled(ExMCP.Types.request_id(), String.t() | nil) :: 
+  @spec encode_cancelled(ExMCP.Types.request_id(), String.t() | nil) ::
           {:ok, map()} | {:error, :cannot_cancel_initialize}
   def encode_cancelled(request_id, reason \\ nil) do
     # Per MCP spec: The "initialize" request CANNOT be cancelled
@@ -392,7 +392,7 @@ defmodule ExMCP.Protocol do
   @spec encode_list_resource_templates(String.t() | nil) :: map()
   def encode_list_resource_templates(cursor \\ nil) do
     params = if cursor, do: %{"cursor" => cursor}, else: %{}
-    
+
     %{
       "jsonrpc" => "2.0",
       "method" => "resources/templates/list",

@@ -88,6 +88,72 @@ defmodule ExMCP.Server.Handler do
 
   ## Advanced Features
 
+  ### Structured Tool Output (Draft Feature)
+
+  > #### Draft Feature {: .info}
+  > This implements a draft MCP specification feature that may change.
+
+  Example implementation:
+
+      defmodule WeatherServer do
+        use ExMCP.Server.Handler
+        
+        @impl true
+        def handle_list_tools(_cursor, state) do
+          tools = [
+            %{
+              name: "get_weather",
+              description: "Get current weather data",
+              inputSchema: %{
+                type: "object",
+                properties: %{
+                  location: %{type: "string", description: "City name"}
+                },
+                required: ["location"]
+              },
+              # Draft feature: declare expected output structure
+              outputSchema: %{
+                type: "object",
+                properties: %{
+                  temperature: %{type: "number", description: "Temperature in Celsius"},
+                  conditions: %{type: "string", description: "Weather conditions"},
+                  humidity: %{type: "number", description: "Humidity percentage"}
+                },
+                required: ["temperature", "conditions"]
+              }
+            }
+          ]
+          {:ok, tools, nil, state}
+        end
+        
+        @impl true
+        def handle_call_tool("get_weather", %{"location" => location}, state) do
+          # Fetch weather data (example implementation)
+          # In real code, this would call an actual weather API
+          temp = 22.5
+          conditions = "Partly cloudy"
+          humidity = 65
+          
+          # Return both unstructured and structured content
+          result = %{
+            content: [%{
+              type: "text", 
+              text: "Current weather in \#{location}: \#{temp}°C, \#{conditions}"
+            }],
+            # Draft feature: structured content matching outputSchema
+            structuredContent: %{
+              "temperature" => temp,
+              "conditions" => conditions,
+              "humidity" => humidity
+            }
+          }
+          
+          {:ok, result, state}
+        end
+        
+        # ... other callbacks ...
+      end
+
   ### Sampling/LLM Integration
 
       @impl true
@@ -211,7 +277,7 @@ defmodule ExMCP.Server.Handler do
   @doc """
   Handles a tool call.
 
-  The result can be returned in two formats:
+  The result can be returned in multiple formats:
 
   1. Simple format (array of content items):
       {:ok, [%{type: "text", text: "Success"}], state}
@@ -219,8 +285,25 @@ defmodule ExMCP.Server.Handler do
   2. Extended format (with isError flag):
       {:ok, %{content: [%{type: "text", text: "Error occurred"}], isError: true}, state}
       
+  3. Structured output format (draft feature):
+      {:ok, %{
+        content: [%{type: "text", text: "Weather data"}],
+        structuredContent: %{
+          "temperature" => 22.5,
+          "conditions" => "Partly cloudy",
+          "humidity" => 65
+        }
+      }, state}
+
+  > #### Draft Feature {: .info}
+  > Structured tool output is a draft MCP specification feature that may change.
+
   Use the extended format with `isError: true` to indicate tool execution errors
   that should be reported to the client as part of the result (not protocol errors).
+
+  When returning structured content, tools should provide both unstructured content
+  (for backwards compatibility) and structured content that conforms to the tool's
+  declared outputSchema.
   """
   @callback handle_call_tool(name :: String.t(), arguments :: map(), state()) ::
               {:ok, ExMCP.Types.tool_result() | list(map()), state()} | {:error, any(), state()}
@@ -294,7 +377,8 @@ defmodule ExMCP.Server.Handler do
   Should return resource templates and optional nextCursor for pagination.
   """
   @callback handle_list_resource_templates(cursor :: String.t() | nil, state()) ::
-              {:ok, resource_templates :: [ExMCP.Types.resource_template()], next_cursor :: String.t() | nil, state()}
+              {:ok, resource_templates :: [ExMCP.Types.resource_template()],
+               next_cursor :: String.t() | nil, state()}
               | {:error, any(), state()}
 
   @doc """

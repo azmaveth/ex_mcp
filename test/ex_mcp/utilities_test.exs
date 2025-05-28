@@ -8,12 +8,13 @@ defmodule ExMCP.UtilitiesTest do
 
     @impl true
     def init(_args) do
-      {:ok, %{
-        log_level: "info",
-        tools: generate_many_tools(20),
-        prompts: generate_many_prompts(15),
-        resources: generate_many_resources(25)
-      }}
+      {:ok,
+       %{
+         log_level: "info",
+         tools: generate_many_tools(20),
+         prompts: generate_many_prompts(15),
+         resources: generate_many_resources(25)
+       }}
     end
 
     @impl true
@@ -40,6 +41,7 @@ defmodule ExMCP.UtilitiesTest do
       case paginate_items(state.tools, cursor, 5) do
         {:ok, items, next_cursor, _} ->
           {:ok, items, next_cursor, state}
+
         {:error, reason, _} ->
           {:error, reason, state}
       end
@@ -55,6 +57,7 @@ defmodule ExMCP.UtilitiesTest do
       case paginate_items(state.prompts, cursor, 3) do
         {:ok, items, next_cursor, _} ->
           {:ok, items, next_cursor, state}
+
         {:error, reason, _} ->
           {:error, reason, state}
       end
@@ -62,7 +65,8 @@ defmodule ExMCP.UtilitiesTest do
 
     @impl true
     def handle_get_prompt(name, _arguments, state) do
-      prompt = Enum.find(state.prompts, & &1.name == name)
+      prompt = Enum.find(state.prompts, &(&1.name == name))
+
       if prompt do
         {:ok, [%{role: "user", content: %{type: "text", text: "Prompt: #{name}"}}], state}
       else
@@ -75,6 +79,7 @@ defmodule ExMCP.UtilitiesTest do
       case paginate_items(state.resources, cursor, 7) do
         {:ok, items, next_cursor, _} ->
           {:ok, items, next_cursor, state}
+
         {:error, reason, _} ->
           {:error, reason, state}
       end
@@ -88,22 +93,22 @@ defmodule ExMCP.UtilitiesTest do
     @impl true
     def handle_complete(ref, argument, state) do
       # Simulate completion based on ref type
-      completions = 
+      completions =
         case ref do
           %{"type" => "ref/prompt", "name" => prompt_name} ->
             generate_prompt_completions(prompt_name, argument, state)
-            
+
           %{"type" => "ref/resource", "uri" => uri} ->
             generate_resource_completions(uri, argument, state)
-            
+
           _ ->
             []
         end
-      
+
       # Limit to max 100 as per spec
       limited = Enum.take(completions, 100)
       total = length(completions)
-      
+
       result = %{
         completion: %{
           values: limited,
@@ -111,7 +116,7 @@ defmodule ExMCP.UtilitiesTest do
           hasMore: total > 100
         }
       }
-      
+
       {:ok, result, state}
     end
 
@@ -122,18 +127,20 @@ defmodule ExMCP.UtilitiesTest do
           page = Enum.take(items, page_size)
           next_cursor = if length(items) > page_size, do: encode_cursor(page_size), else: nil
           {:ok, page, next_cursor, %{}}
-          
+
         _ ->
           case decode_cursor(cursor) do
             {:ok, offset} ->
               remaining = Enum.drop(items, offset)
               page = Enum.take(remaining, page_size)
-              next_cursor = 
+
+              next_cursor =
                 if length(remaining) > page_size,
                   do: encode_cursor(offset + page_size),
                   else: nil
+
               {:ok, page, next_cursor, %{}}
-              
+
             :error ->
               {:error, "Invalid cursor", %{}}
           end
@@ -202,11 +209,11 @@ defmodule ExMCP.UtilitiesTest do
 
     defp generate_resource_completions("file:///", %{"name" => "path", "value" => value}, state) do
       # Get all resource URIs and extract paths
-      paths = 
+      paths =
         state.resources
         |> Enum.map(& &1.uri)
         |> Enum.map(&String.replace(&1, "file:///", ""))
-      
+
       filter_completions(paths, value)
     end
 
@@ -219,22 +226,22 @@ defmodule ExMCP.UtilitiesTest do
     end
 
     defp filter_completions(items, _), do: Enum.sort(items)
-
-
   end
 
   setup do
     # Start server with utilities handler using BEAM transport
-    {:ok, server} = Server.start_link(
-      transport: :beam,
-      handler: TestUtilitiesHandler
-    )
+    {:ok, server} =
+      Server.start_link(
+        transport: :beam,
+        handler: TestUtilitiesHandler
+      )
 
     # Start client connecting to the server
-    {:ok, client} = Client.start_link(
-      transport: :beam,
-      server: server
-    )
+    {:ok, client} =
+      Client.start_link(
+        transport: :beam,
+        server: server
+      )
 
     # Wait for initialization
     Process.sleep(100)
@@ -249,25 +256,25 @@ defmodule ExMCP.UtilitiesTest do
       assert length(page1) == 5
       assert cursor1 != nil
       assert Enum.at(page1, 0).name == "tool_1"
-      
+
       # Second page
       {:ok, %{tools: page2, nextCursor: cursor2}} = Client.list_tools(client, cursor: cursor1)
       assert length(page2) == 5
       assert cursor2 != nil
       assert Enum.at(page2, 0).name == "tool_6"
-      
+
       # Third page
       {:ok, %{tools: page3, nextCursor: cursor3}} = Client.list_tools(client, cursor: cursor2)
       assert length(page3) == 5
       assert Enum.at(page3, 0).name == "tool_11"
-      
+
       # Fourth page (last page - 20 tools total)
       {:ok, result4} = Client.list_tools(client, cursor: cursor3)
       page4 = result4.tools
       cursor4 = result4[:nextCursor]
       assert length(page4) == 5
       assert Enum.at(page4, 0).name == "tool_16"
-      
+
       # Last page should have no cursor
       assert cursor4 == nil
     end
@@ -276,7 +283,7 @@ defmodule ExMCP.UtilitiesTest do
       # Page size is 3 for prompts
       {:ok, %{prompts: page1, nextCursor: cursor1}} = Client.list_prompts(client)
       assert length(page1) == 3
-      
+
       # Collect all prompts through pagination
       all_prompts = collect_all_pages(&Client.list_prompts/2, client, page1, cursor1, :prompts)
       assert length(all_prompts) == 15
@@ -288,9 +295,11 @@ defmodule ExMCP.UtilitiesTest do
       # Page size is 7 for resources
       {:ok, %{resources: page1, nextCursor: cursor1}} = Client.list_resources(client)
       assert length(page1) == 7
-      
+
       # Verify we can paginate through all resources
-      all_resources = collect_all_pages(&Client.list_resources/2, client, page1, cursor1, :resources)
+      all_resources =
+        collect_all_pages(&Client.list_resources/2, client, page1, cursor1, :resources)
+
       assert length(all_resources) == 25
     end
 
@@ -304,10 +313,13 @@ defmodule ExMCP.UtilitiesTest do
   describe "completion" do
     test "prompt argument completion", %{client: client} do
       # Complete arg1 for prompt_1
-      {:ok, result} = Client.complete(client, 
-        %{"type" => "ref/prompt", "name" => "prompt_1"},
-        %{"name" => "arg1", "value" => "opt"})
-      
+      {:ok, result} =
+        Client.complete(
+          client,
+          %{"type" => "ref/prompt", "name" => "prompt_1"},
+          %{"name" => "arg1", "value" => "opt"}
+        )
+
       completion = result.completion
       assert "option1" in completion.values
       assert "option2" in completion.values
@@ -317,10 +329,13 @@ defmodule ExMCP.UtilitiesTest do
 
     test "resource URI completion", %{client: client} do
       # Complete resource paths starting with "resource_1"
-      {:ok, result} = Client.complete(client,
-        %{"type" => "ref/resource", "uri" => "file:///"},
-        %{"name" => "path", "value" => "resource_1"})
-      
+      {:ok, result} =
+        Client.complete(
+          client,
+          %{"type" => "ref/resource", "uri" => "file:///"},
+          %{"name" => "path", "value" => "resource_1"}
+        )
+
       completion = result.completion
       # Should match resource_1.txt, resource_10.txt through resource_19.txt
       assert length(completion.values) == 11
@@ -329,10 +344,13 @@ defmodule ExMCP.UtilitiesTest do
     end
 
     test "completion with no matches", %{client: client} do
-      {:ok, result} = Client.complete(client,
-        %{"type" => "ref/prompt", "name" => "prompt_1"},
-        %{"name" => "arg1", "value" => "xyz"})
-      
+      {:ok, result} =
+        Client.complete(
+          client,
+          %{"type" => "ref/prompt", "name" => "prompt_1"},
+          %{"name" => "arg1", "value" => "xyz"}
+        )
+
       assert result.completion.values == []
       assert result.completion.total == 0
       assert result.completion.hasMore == false
@@ -341,13 +359,16 @@ defmodule ExMCP.UtilitiesTest do
     test "completion respects 100 item limit", %{client: client} do
       # Create a scenario that would return more than 100 items
       # (In this test it won't, but the handler implements the limit)
-      {:ok, result} = Client.complete(client,
-        %{"type" => "ref/resource", "uri" => "file:///"},
-        %{"name" => "path", "value" => ""})
-      
+      {:ok, result} =
+        Client.complete(
+          client,
+          %{"type" => "ref/resource", "uri" => "file:///"},
+          %{"name" => "path", "value" => ""}
+        )
+
       completion = result.completion
       assert length(completion.values) <= 100
-      
+
       # If there were more than 100, hasMore would be true
       if completion.total > 100 do
         assert completion.hasMore == true
@@ -362,18 +383,18 @@ defmodule ExMCP.UtilitiesTest do
       Client.log_message(client, "info", "Info message")
       Client.log_message(client, "warning", "Warning message", %{code: 123})
       Client.log_message(client, "error", "Error message", %{details: "Something went wrong"})
-      
+
       # No errors should occur
       Process.sleep(50)
     end
 
     test "log message with different severity levels", %{client: client} do
       levels = ["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]
-      
+
       for level <- levels do
         Client.log_message(client, level, "Test message at #{level} level")
       end
-      
+
       Process.sleep(50)
     end
   end
@@ -385,18 +406,18 @@ defmodule ExMCP.UtilitiesTest do
 
   defp collect_pages(list_fn, client, current_page, cursor, key, acc) do
     new_acc = acc ++ current_page
-    
+
     case cursor do
       nil ->
         new_acc
-        
+
       _ ->
         case list_fn.(client, cursor: cursor) do
           {:ok, result} ->
             next_page = Map.get(result, key, [])
             next_cursor = Map.get(result, :nextCursor)
             collect_pages(list_fn, client, next_page, next_cursor, key, new_acc)
-            
+
           _ ->
             new_acc
         end

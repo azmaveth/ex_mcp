@@ -8,23 +8,25 @@ defmodule ExMCP.LoggingComplianceTest do
 
     @impl true
     def init(_args) do
-      {:ok, %{
-        log_messages: [],
-        log_count_by_level: %{},
-        last_log_time: nil
-      }}
+      {:ok,
+       %{
+         log_messages: [],
+         log_count_by_level: %{},
+         last_log_time: nil
+       }}
     end
 
     @impl true
     def handle_initialize(_params, state) do
-      {:ok, %{
-        protocolVersion: "2025-03-26",
-        serverInfo: %{name: "test-logging-server", version: "1.0.0"},
-        capabilities: %{
-          logging: %{},
-          tools: %{}
-        }
-      }, state}
+      {:ok,
+       %{
+         protocolVersion: "2025-03-26",
+         serverInfo: %{name: "test-logging-server", version: "1.0.0"},
+         capabilities: %{
+           logging: %{},
+           tools: %{}
+         }
+       }, state}
     end
 
     @impl true
@@ -52,53 +54,67 @@ defmodule ExMCP.LoggingComplianceTest do
           }
         }
       ]
-      
+
       {:ok, tools, nil, state}
     end
 
     @impl true
     def handle_call_tool("debug_operation", args, state) do
       operation = args["operation"]
-      
+
       # Generate various log levels during operation
       log_debug("Starting operation: #{operation}", %{operation: operation, step: "start"})
       log_info("Processing operation: #{operation}")
-      
-      result = case operation do
-        "normal" ->
-          log_info("Operation completed successfully", %{operation: operation, result: "success"})
-          [%{type: "text", text: "Operation '#{operation}' completed"}]
-          
-        "warning" ->
-          log_warning("Operation completed with warnings", %{operation: operation, warnings: ["minor issue"]})
-          [%{type: "text", text: "Operation '#{operation}' completed with warnings"}]
-          
-        "critical" ->
-          log_critical("Critical issue during operation", %{operation: operation, issue: "resource exhaustion"})
-          [%{type: "text", text: "Operation '#{operation}' had critical issues"}]
-          
-        _ ->
-          log_notice("Unknown operation requested", %{operation: operation})
-          [%{type: "text", text: "Unknown operation: #{operation}"}]
-      end
-      
+
+      result =
+        case operation do
+          "normal" ->
+            log_info("Operation completed successfully", %{
+              operation: operation,
+              result: "success"
+            })
+
+            [%{type: "text", text: "Operation '#{operation}' completed"}]
+
+          "warning" ->
+            log_warning("Operation completed with warnings", %{
+              operation: operation,
+              warnings: ["minor issue"]
+            })
+
+            [%{type: "text", text: "Operation '#{operation}' completed with warnings"}]
+
+          "critical" ->
+            log_critical("Critical issue during operation", %{
+              operation: operation,
+              issue: "resource exhaustion"
+            })
+
+            [%{type: "text", text: "Operation '#{operation}' had critical issues"}]
+
+          _ ->
+            log_notice("Unknown operation requested", %{operation: operation})
+            [%{type: "text", text: "Unknown operation: #{operation}"}]
+        end
+
       log_debug("Operation finished", %{operation: operation, step: "end"})
       {:ok, result, state}
     end
 
     def handle_call_tool("error_prone_task", args, state) do
       should_fail = Map.get(args, "should_fail", false)
-      
+
       log_info("Starting error-prone task", %{task: "error_prone", should_fail: should_fail})
-      
+
       if should_fail do
         log_error("Task failed as requested", %{task: "error_prone", error: "intentional failure"})
-        
+
         # Return tool execution error
         error_result = %{
           content: [%{type: "text", text: "Task failed intentionally"}],
           isError: true
         }
+
         {:ok, error_result, state}
       else
         log_info("Task completed successfully")
@@ -148,18 +164,27 @@ defmodule ExMCP.LoggingComplianceTest do
     defp send_log(level, message, data) do
       # In a real implementation, this would send to connected clients
       # For testing, we'll just validate the log structure
-      
+
       # Validate RFC 5424 levels
-      valid_levels = ["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]
-      
+      valid_levels = [
+        "debug",
+        "info",
+        "notice",
+        "warning",
+        "error",
+        "critical",
+        "alert",
+        "emergency"
+      ]
+
       if level in valid_levels do
         # Security check: ensure no sensitive data
         sanitized_data = sanitize_log_data(data)
         sanitized_message = sanitize_log_message(message)
-        
+
         # Rate limiting simulation
         current_time = :os.system_time(:millisecond)
-        
+
         # In real implementation, would send via Protocol.encode_log_message
         _log_entry = %{
           level: level,
@@ -168,7 +193,7 @@ defmodule ExMCP.LoggingComplianceTest do
           timestamp: current_time,
           logger: "test-logging-server"
         }
-        
+
         :ok
       else
         # Invalid log level
@@ -178,17 +203,20 @@ defmodule ExMCP.LoggingComplianceTest do
 
     # Security: sanitize log data to remove sensitive information
     defp sanitize_log_data(nil), do: nil
+
     defp sanitize_log_data(data) when is_map(data) do
       data
       |> Enum.reject(fn {key, _value} ->
         key_str = to_string(key)
+
         String.contains?(key_str, "password") or
-        String.contains?(key_str, "secret") or
-        String.contains?(key_str, "token") or
-        String.contains?(key_str, "key")
+          String.contains?(key_str, "secret") or
+          String.contains?(key_str, "token") or
+          String.contains?(key_str, "key")
       end)
       |> Enum.into(%{})
     end
+
     defp sanitize_log_data(data), do: data
 
     # Security: sanitize log messages
@@ -206,10 +234,12 @@ defmodule ExMCP.LoggingComplianceTest do
     @impl true
     def init(opts) do
       log_collector = Keyword.get(opts, :log_collector)
-      {:ok, %{
-        log_messages: [],
-        log_collector: log_collector
-      }}
+
+      {:ok,
+       %{
+         log_messages: [],
+         log_collector: log_collector
+       }}
     end
 
     @impl true
@@ -230,14 +260,14 @@ defmodule ExMCP.LoggingComplianceTest do
         data: data,
         timestamp: DateTime.utc_now()
       }
-      
+
       new_state = %{state | log_messages: [log_entry | state.log_messages]}
-      
+
       # Send to test collector if available
       if state.log_collector do
         send(state.log_collector, {:log_received, log_entry})
       end
-      
+
       {:ok, new_state}
     end
 
@@ -266,18 +296,20 @@ defmodule ExMCP.LoggingComplianceTest do
     log_collector = self()
 
     # Start server
-    {:ok, server} = Server.start_link(
-      transport: :beam,
-      handler: TestLoggingServer
-    )
+    {:ok, server} =
+      Server.start_link(
+        transport: :beam,
+        handler: TestLoggingServer
+      )
 
     # Start client with custom handler to capture logs
-    {:ok, client} = Client.start_link(
-      transport: :beam,
-      server: server,
-      handler: TestLoggingClient,
-      handler_state: [log_collector: log_collector]
-    )
+    {:ok, client} =
+      Client.start_link(
+        transport: :beam,
+        server: server,
+        handler: TestLoggingClient,
+        handler_state: [log_collector: log_collector]
+      )
 
     # Wait for initialization
     Process.sleep(100)
@@ -289,7 +321,7 @@ defmodule ExMCP.LoggingComplianceTest do
     test "server declares logging capability correctly", %{client: client} do
       # Should be able to make tool calls that generate logs
       {:ok, result} = Client.call_tool(client, "debug_operation", %{"operation" => "normal"})
-      
+
       assert %{content: content} = result
       assert is_list(content)
       # Tool should execute successfully, logs happen in background
@@ -298,15 +330,15 @@ defmodule ExMCP.LoggingComplianceTest do
     test "supports all RFC 5424 log levels", %{client: client} do
       # Test each required log level through tool execution
       levels = ["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]
-      
+
       for level <- levels do
         # Send log message of each level
         Client.log_message(client, level, "Test message at #{level} level", %{test: true})
       end
-      
+
       # Give time for messages to be processed
       Process.sleep(100)
-      
+
       # All should complete without errors
       :ok
     end
@@ -318,9 +350,9 @@ defmodule ExMCP.LoggingComplianceTest do
         request_id: "req-123",
         user_action: "button_click"
       })
-      
+
       Process.sleep(50)
-      
+
       # Message should be processed successfully
       :ok
     end
@@ -329,7 +361,7 @@ defmodule ExMCP.LoggingComplianceTest do
   describe "log level severity compliance" do
     test "debug level for detailed debugging", %{client: client} do
       {:ok, _} = Client.call_tool(client, "debug_operation", %{"operation" => "normal"})
-      
+
       # Debug operations should generate debug-level logs
       # Verified through the implementation
       assert true
@@ -337,35 +369,35 @@ defmodule ExMCP.LoggingComplianceTest do
 
     test "info level for general information", %{client: client} do
       Client.log_message(client, "info", "General information message")
-      
+
       Process.sleep(50)
       assert true
     end
 
     test "notice level for significant events", %{client: client} do
       {:ok, _} = Client.call_tool(client, "debug_operation", %{"operation" => "unknown"})
-      
+
       # Should generate notice-level log for unknown operation
       assert true
     end
 
     test "warning level for warning conditions", %{client: client} do
       {:ok, _} = Client.call_tool(client, "debug_operation", %{"operation" => "warning"})
-      
+
       # Should generate warning-level logs
       assert true
     end
 
     test "error level for error conditions", %{client: client} do
       {:ok, result} = Client.call_tool(client, "error_prone_task", %{"should_fail" => true})
-      
+
       # Tool should succeed but indicate error via isError flag
       assert %{isError: true} = result
     end
 
     test "critical level for critical conditions", %{client: client} do
       {:ok, _} = Client.call_tool(client, "debug_operation", %{"operation" => "critical"})
-      
+
       # Should generate critical-level logs
       assert true
     end
@@ -373,7 +405,7 @@ defmodule ExMCP.LoggingComplianceTest do
     test "alert and emergency levels", %{client: client} do
       Client.log_message(client, "alert", "Action must be taken immediately")
       Client.log_message(client, "emergency", "System is unusable")
-      
+
       Process.sleep(50)
       assert true
     end
@@ -382,7 +414,7 @@ defmodule ExMCP.LoggingComplianceTest do
   describe "message structure compliance" do
     test "required level field", %{client: client} do
       Client.log_message(client, "error", "Required level field test")
-      
+
       Process.sleep(50)
       assert true
     end
@@ -390,7 +422,7 @@ defmodule ExMCP.LoggingComplianceTest do
     test "optional logger field simulation", %{client: client} do
       # Our implementation includes logger name in the server logic
       Client.log_message(client, "info", "Logger field test", %{source: "test_component"})
-      
+
       Process.sleep(50)
       assert true
     end
@@ -406,16 +438,16 @@ defmodule ExMCP.LoggingComplianceTest do
         metrics: [1, 2, 3],
         success: true
       }
-      
+
       Client.log_message(client, "info", "Complex data structure test", data)
-      
+
       Process.sleep(50)
       assert true
     end
 
     test "handles nil data gracefully", %{client: client} do
       Client.log_message(client, "info", "Message without data")
-      
+
       Process.sleep(50)
       assert true
     end
@@ -429,11 +461,12 @@ defmodule ExMCP.LoggingComplianceTest do
         password: "secret123",
         api_key: "abc123def456",
         access_token: "bearer_token_here",
-        user_id: "user-123"  # This should be allowed
+        # This should be allowed
+        user_id: "user-123"
       }
-      
+
       Client.log_message(client, "info", "Login attempt with password=secret123", sensitive_data)
-      
+
       Process.sleep(50)
       # Implementation should sanitize this data
       assert true
@@ -446,9 +479,9 @@ defmodule ExMCP.LoggingComplianceTest do
         file_count: 5,
         duration_ms: 123
       }
-      
+
       Client.log_message(client, "debug", "Operation completed", safe_data)
-      
+
       Process.sleep(50)
       assert true
     end
@@ -456,13 +489,14 @@ defmodule ExMCP.LoggingComplianceTest do
     test "handles potential injection attempts", %{client: client} do
       # Test with potentially malicious content
       malicious_message = "User input: \"; DROP TABLE logs; --"
+
       malicious_data = %{
         user_input: "<script>alert('xss')</script>",
         sql_query: "SELECT * FROM users WHERE id = '1' OR '1'='1'"
       }
-      
+
       Client.log_message(client, "warning", malicious_message, malicious_data)
-      
+
       Process.sleep(50)
       # Should not cause any issues
       assert true
@@ -473,18 +507,19 @@ defmodule ExMCP.LoggingComplianceTest do
     test "notifications/message method format" do
       # Test the protocol encoding directly
       log_notification = Protocol.encode_log_message("info", "Test message")
-      
+
       assert log_notification["jsonrpc"] == "2.0"
       assert log_notification["method"] == "notifications/log"
       assert log_notification["params"]["level"] == "info"
       assert log_notification["params"]["message"] == "Test message"
-      refute Map.has_key?(log_notification, "id")  # Notifications don't have IDs
+      # Notifications don't have IDs
+      refute Map.has_key?(log_notification, "id")
     end
 
     test "log message with data field" do
       data = %{component: "test", code: 123}
       log_notification = Protocol.encode_log_message("error", "Error occurred", data)
-      
+
       assert log_notification["jsonrpc"] == "2.0"
       assert log_notification["method"] == "notifications/log"
       assert log_notification["params"]["level"] == "error"
@@ -494,7 +529,7 @@ defmodule ExMCP.LoggingComplianceTest do
 
     test "log message without data field" do
       log_notification = Protocol.encode_log_message("warning", "Warning message", nil)
-      
+
       assert log_notification["jsonrpc"] == "2.0"
       assert log_notification["method"] == "notifications/log"
       assert log_notification["params"]["level"] == "warning"
@@ -509,7 +544,7 @@ defmodule ExMCP.LoggingComplianceTest do
       for i <- 1..10 do
         Client.log_message(client, "debug", "Rapid message #{i}", %{sequence: i})
       end
-      
+
       Process.sleep(100)
       # Should handle all without issues
       assert true
@@ -518,9 +553,9 @@ defmodule ExMCP.LoggingComplianceTest do
     test "log messages don't block other operations", %{client: client} do
       # Send log message and immediately call tool
       Client.log_message(client, "info", "Background logging")
-      
+
       {:ok, result} = Client.call_tool(client, "debug_operation", %{"operation" => "normal"})
-      
+
       # Tool call should succeed despite logging activity
       assert %{content: content} = result
       assert is_list(content)
@@ -531,11 +566,11 @@ defmodule ExMCP.LoggingComplianceTest do
     test "clients can receive and process log messages", %{client: client} do
       # This tests the client's ability to handle log notifications
       # In our test setup, the client handler captures logs
-      
+
       Client.log_message(client, "info", "Client integration test")
-      
+
       Process.sleep(50)
-      
+
       # Client should have processed the log message
       # (Implementation detail: our test client captures logs)
       assert true
@@ -544,26 +579,26 @@ defmodule ExMCP.LoggingComplianceTest do
     test "supports log filtering by level", %{client: client} do
       # Send messages of different levels
       levels = ["debug", "info", "warning", "error"]
-      
+
       for level <- levels do
         Client.log_message(client, level, "Message at #{level} level")
       end
-      
+
       Process.sleep(100)
-      
+
       # Clients could filter these by level in their implementation
       assert true
     end
 
     test "log messages are timestamped", %{client: client} do
       before_time = DateTime.utc_now()
-      
+
       Client.log_message(client, "info", "Timestamp test")
-      
+
       Process.sleep(50)
-      
+
       after_time = DateTime.utc_now()
-      
+
       # Implementation should include timestamps
       # (Our test captures timestamps)
       assert DateTime.compare(before_time, after_time) in [:lt, :eq]
@@ -577,17 +612,19 @@ defmodule ExMCP.LoggingComplianceTest do
       try do
         Client.log_message(client, "invalid_level", "Test message")
         Process.sleep(50)
-        assert true  # Should not crash
+        # Should not crash
+        assert true
       rescue
-        _ -> assert true  # Acceptable to reject invalid levels
+        # Acceptable to reject invalid levels
+        _ -> assert true
       end
     end
 
     test "handles very long log messages", %{client: client} do
       long_message = String.duplicate("This is a very long message. ", 100)
-      
+
       Client.log_message(client, "info", long_message)
-      
+
       Process.sleep(50)
       # Should handle without issues
       assert true
@@ -595,22 +632,25 @@ defmodule ExMCP.LoggingComplianceTest do
 
     test "handles unicode in log messages", %{client: client} do
       unicode_message = "Test with unicode: 你好世界 🌍 café naïve"
+
       unicode_data = %{
         emoji: "🚀",
         chinese: "你好",
         accents: "café"
       }
-      
+
       Client.log_message(client, "info", unicode_message, unicode_data)
-      
+
       Process.sleep(50)
       assert true
     end
 
     test "handles nil and empty values", %{client: client} do
-      Client.log_message(client, "info", "")  # Empty message
-      Client.log_message(client, "debug", "Normal message", %{})  # Empty data
-      
+      # Empty message
+      Client.log_message(client, "info", "")
+      # Empty data
+      Client.log_message(client, "debug", "Normal message", %{})
+
       Process.sleep(50)
       assert true
     end

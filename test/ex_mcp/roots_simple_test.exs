@@ -70,7 +70,7 @@ defmodule ExMCP.RootsSimpleTest do
         %{uri: "file:///home/user", name: "Home"}
       ]
 
-      {:ok, handler_state} = TestClientHandler.init([roots: roots])
+      {:ok, handler_state} = TestClientHandler.init(roots: roots)
       {:ok, returned_roots, _new_state} = TestClientHandler.handle_list_roots(handler_state)
 
       assert returned_roots == roots
@@ -88,20 +88,22 @@ defmodule ExMCP.RootsSimpleTest do
 
     test "server can use list_roots API" do
       # Start server 
-      {:ok, server} = Server.start_link(
-        transport: :beam,
-        handler: SimpleServerHandler
-      )
+      {:ok, server} =
+        Server.start_link(
+          transport: :beam,
+          handler: SimpleServerHandler
+        )
 
       # Start client with roots
       roots = [%{uri: "file:///test", name: "Test"}]
-      
-      {:ok, _client} = Client.start_link(
-        transport: :beam,
-        server: server,
-        handler: TestClientHandler,
-        handler_state: [roots: roots]
-      )
+
+      {:ok, _client} =
+        Client.start_link(
+          transport: :beam,
+          server: server,
+          handler: TestClientHandler,
+          handler_state: [roots: roots]
+        )
 
       # Wait for connection
       Process.sleep(100)
@@ -135,7 +137,7 @@ defmodule ExMCP.RootsSimpleTest do
         }
       ]
 
-      {:ok, handler_state} = TestClientHandler.init([roots: roots])
+      {:ok, handler_state} = TestClientHandler.init(roots: roots)
       {:ok, returned_roots, _} = TestClientHandler.handle_list_roots(handler_state)
 
       # All roots should have URI
@@ -157,7 +159,7 @@ defmodule ExMCP.RootsSimpleTest do
 
       assert length(roots) == 1
       root = hd(roots)
-      
+
       assert root.name == "Current Directory"
       assert String.starts_with?(root.uri, "file://")
       assert String.contains?(root.uri, File.cwd!())
@@ -165,32 +167,36 @@ defmodule ExMCP.RootsSimpleTest do
 
     test "multiple servers can request roots from same client" do
       # Start two servers
-      {:ok, server1} = Server.start_link(
-        transport: :beam,
-        handler: SimpleServerHandler
-      )
+      {:ok, server1} =
+        Server.start_link(
+          transport: :beam,
+          handler: SimpleServerHandler
+        )
 
-      {:ok, server2} = Server.start_link(
-        transport: :beam,
-        handler: SimpleServerHandler
-      )
+      {:ok, server2} =
+        Server.start_link(
+          transport: :beam,
+          handler: SimpleServerHandler
+        )
 
       # Start client with roots
       roots = [%{uri: "file:///shared", name: "Shared"}]
 
-      {:ok, _client1} = Client.start_link(
-        transport: :beam,
-        server: server1,
-        handler: TestClientHandler,
-        handler_state: [roots: roots]
-      )
+      {:ok, _client1} =
+        Client.start_link(
+          transport: :beam,
+          server: server1,
+          handler: TestClientHandler,
+          handler_state: [roots: roots]
+        )
 
-      {:ok, _client2} = Client.start_link(
-        transport: :beam,
-        server: server2,
-        handler: TestClientHandler,
-        handler_state: [roots: roots]
-      )
+      {:ok, _client2} =
+        Client.start_link(
+          transport: :beam,
+          server: server2,
+          handler: TestClientHandler,
+          handler_state: [roots: roots]
+        )
 
       Process.sleep(100)
 
@@ -208,7 +214,7 @@ defmodule ExMCP.RootsSimpleTest do
     test "roots request uses correct protocol format" do
       # Test protocol encoding
       request = ExMCP.Protocol.encode_list_roots()
-      
+
       assert request["jsonrpc"] == "2.0"
       assert request["method"] == "roots/list"
       assert Map.has_key?(request, "id")
@@ -222,7 +228,7 @@ defmodule ExMCP.RootsSimpleTest do
       ]
 
       response = ExMCP.Protocol.encode_response(%{"roots" => roots}, "test-id")
-      
+
       assert response["jsonrpc"] == "2.0"
       assert response["id"] == "test-id"
       assert response["result"]["roots"] == roots
@@ -230,7 +236,7 @@ defmodule ExMCP.RootsSimpleTest do
 
     test "roots change notification format" do
       notification = ExMCP.Protocol.encode_roots_changed()
-      
+
       assert notification["jsonrpc"] == "2.0"
       assert notification["method"] == "notifications/roots/list_changed"
       refute Map.has_key?(notification, "id")

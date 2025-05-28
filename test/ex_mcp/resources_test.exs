@@ -8,15 +8,16 @@ defmodule ExMCP.ResourcesTest do
 
     @impl true
     def init(_args) do
-      {:ok, %{
-        resources: default_resources(),
-        subscriptions: MapSet.new(),
-        resource_data: %{
-          "file:///config.json" => ~s({"version": "1.0.0", "debug": true}),
-          "file:///data.csv" => "name,age\nAlice,30\nBob,25",
-          "file:///image.png" => Base.encode64("fake png data")
-        }
-      }}
+      {:ok,
+       %{
+         resources: default_resources(),
+         subscriptions: MapSet.new(),
+         resource_data: %{
+           "file:///config.json" => ~s({"version": "1.0.0", "debug": true}),
+           "file:///data.csv" => "name,age\nAlice,30\nBob,25",
+           "file:///image.png" => Base.encode64("fake png data")
+         }
+       }}
     end
 
     @impl true
@@ -50,15 +51,15 @@ defmodule ExMCP.ResourcesTest do
     @impl true
     def handle_list_resources(cursor, state) do
       resources = state.resources
-      
+
       # Simple pagination: return 2 resources at a time
       case cursor do
         nil ->
           {:ok, Enum.take(resources, 2), "page2", state}
-        
+
         "page2" ->
           {:ok, Enum.drop(resources, 2), nil, state}
-          
+
         _ ->
           {:error, "Invalid cursor", state}
       end
@@ -69,7 +70,7 @@ defmodule ExMCP.ResourcesTest do
       case Map.get(state.resource_data, uri) do
         nil ->
           {:error, "Resource not found: #{uri}", state}
-          
+
         data ->
           content = build_resource_content(uri, data)
           {:ok, content, state}
@@ -108,9 +109,9 @@ defmodule ExMCP.ResourcesTest do
           mimeType: "application/json"
         }
       ]
+
       {:ok, templates, nil, state}
     end
-
 
     defp default_resources do
       [
@@ -141,16 +142,17 @@ defmodule ExMCP.ResourcesTest do
           %{
             uri: uri,
             mimeType: "image/png",
-            blob: data  # Already base64 encoded
+            # Already base64 encoded
+            blob: data
           }
-          
+
         "file:///config.json" ->
           %{
             uri: uri,
             mimeType: "application/json",
             text: data
           }
-          
+
         _ ->
           %{
             uri: uri,
@@ -162,16 +164,18 @@ defmodule ExMCP.ResourcesTest do
 
   setup do
     # Start server with resources handler using BEAM transport
-    {:ok, server} = Server.start_link(
-      transport: :beam,
-      handler: TestResourcesHandler
-    )
+    {:ok, server} =
+      Server.start_link(
+        transport: :beam,
+        handler: TestResourcesHandler
+      )
 
     # Start client connecting to the server
-    {:ok, client} = Client.start_link(
-      transport: :beam,
-      server: server
-    )
+    {:ok, client} =
+      Client.start_link(
+        transport: :beam,
+        server: server
+      )
 
     # Wait for initialization
     Process.sleep(100)
@@ -185,12 +189,12 @@ defmodule ExMCP.ResourcesTest do
       {:ok, %{resources: page1, nextCursor: cursor}} = Client.list_resources(client)
       assert length(page1) == 2
       assert cursor == "page2"
-      
+
       # Check first page resources
       assert Enum.at(page1, 0).uri == "file:///config.json"
       assert Enum.at(page1, 0).mimeType == "application/json"
       assert Enum.at(page1, 1).uri == "file:///data.csv"
-      
+
       # Second page
       {:ok, result2} = Client.list_resources(client, cursor: cursor)
       page2 = result2.resources
@@ -204,13 +208,13 @@ defmodule ExMCP.ResourcesTest do
       {:ok, content} = Client.read_resource(client, "file:///config.json")
       assert content.contents
       assert length(content.contents) == 1
-      
+
       resource = hd(content.contents)
       assert resource.uri == "file:///config.json"
       assert resource.mimeType == "application/json"
       assert resource.text =~ "version"
       assert resource.text =~ "1.0.0"
-      
+
       # Read CSV resource
       {:ok, content2} = Client.read_resource(client, "file:///data.csv")
       resource2 = hd(content2.contents)
@@ -221,11 +225,13 @@ defmodule ExMCP.ResourcesTest do
     test "client can read binary resources", %{client: client} do
       {:ok, content} = Client.read_resource(client, "file:///image.png")
       resource = hd(content.contents)
-      
+
       assert resource.uri == "file:///image.png"
       assert resource.mimeType == "image/png"
-      assert resource.blob  # Base64 encoded
-      refute Map.has_key?(resource, :text)  # Binary resources don't have text
+      # Base64 encoded
+      assert resource.blob
+      # Binary resources don't have text
+      refute Map.has_key?(resource, :text)
     end
 
     test "read_resource returns error for unknown resource", %{client: client} do
@@ -236,10 +242,10 @@ defmodule ExMCP.ResourcesTest do
     test "client can subscribe to resources", %{client: client} do
       # Subscribe to a resource
       {:ok, _result} = Client.subscribe_resource(client, "file:///config.json")
-      
+
       # Subscribe to another resource
       {:ok, _result} = Client.subscribe_resource(client, "file:///data.csv")
-      
+
       # Try to subscribe to non-existent resource
       {:error, error} = Client.subscribe_resource(client, "file:///nonexistent.txt")
       assert error["message"] =~ "Resource not found"
@@ -248,10 +254,10 @@ defmodule ExMCP.ResourcesTest do
     test "client can unsubscribe from resources", %{client: client} do
       # First subscribe
       {:ok, _} = Client.subscribe_resource(client, "file:///config.json")
-      
+
       # Then unsubscribe
       {:ok, _result} = Client.unsubscribe_resource(client, "file:///config.json")
-      
+
       # Unsubscribing from non-subscribed resource should still succeed
       {:ok, _result} = Client.unsubscribe_resource(client, "file:///data.csv")
     end
@@ -259,14 +265,14 @@ defmodule ExMCP.ResourcesTest do
     test "client can list resource templates", %{client: client} do
       {:ok, result} = Client.list_resource_templates(client)
       templates = result.resourceTemplates
-      
+
       assert length(templates) == 2
-      
-      file_template = Enum.find(templates, & &1.uriTemplate == "file:///{path}")
+
+      file_template = Enum.find(templates, &(&1.uriTemplate == "file:///{path}"))
       assert file_template.name == "File Resource"
       assert file_template.mimeType == "text/plain"
-      
-      db_template = Enum.find(templates, & &1.uriTemplate == "db://{table}/{id}")
+
+      db_template = Enum.find(templates, &(&1.uriTemplate == "db://{table}/{id}"))
       assert db_template.name == "Database Record"
       assert db_template.description =~ "database records"
     end
@@ -276,11 +282,12 @@ defmodule ExMCP.ResourcesTest do
       {:ok, config} = Client.read_resource(client, "file:///config.json")
       {:ok, data} = Client.read_resource(client, "file:///data.csv")
       {:ok, image} = Client.read_resource(client, "file:///image.png")
-      
+
       # Verify each has correct content type
       assert hd(config.contents).mimeType == "application/json"
       assert hd(data.contents).text =~ "name,age"
-      assert hd(image.contents).blob  # Binary data
+      # Binary data
+      assert hd(image.contents).blob
     end
   end
 end

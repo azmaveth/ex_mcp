@@ -73,7 +73,8 @@ defmodule ExMCP.SamplingTest do
     end
 
     test "encodes error response correctly" do
-      response = Protocol.encode_error(-32603, "Sampling approval denied by user", nil, "test-456")
+      response =
+        Protocol.encode_error(-32603, "Sampling approval denied by user", nil, "test-456")
 
       assert response["jsonrpc"] == "2.0"
       assert response["id"] == "test-456"
@@ -98,25 +99,25 @@ defmodule ExMCP.SamplingTest do
 
     test "approval handler can approve requests" do
       params = %{"messages" => [], "modelPreferences" => %{}}
-      
+
       result = TestApprovalHandler.request_approval(:sampling, params, action: :approve)
-      
+
       assert {:approved, ^params} = result
     end
 
     test "approval handler can deny requests" do
       params = %{"messages" => [], "modelPreferences" => %{}}
-      
+
       result = TestApprovalHandler.request_approval(:sampling, params, action: :deny)
-      
+
       assert {:denied, "Request denied by test"} = result
     end
 
     test "approval handler can modify requests" do
       params = %{"messages" => [], "modelPreferences" => %{}}
-      
+
       result = TestApprovalHandler.request_approval(:sampling, params, action: :modify)
-      
+
       assert {:modified, modified_params} = result
       assert modified_params["modified"] == true
     end
@@ -128,7 +129,7 @@ defmodule ExMCP.SamplingTest do
       valid_message = %{
         "role" => "user",
         "content" => %{
-          "type" => "text", 
+          "type" => "text",
           "text" => "Hello"
         }
       }
@@ -201,7 +202,8 @@ defmodule ExMCP.SamplingTest do
         "messages" => [
           %{"role" => "user", "content" => %{"type" => "text", "text" => "Hi"}}
         ],
-        "temperature" => 3.0  # Too high
+        # Too high
+        "temperature" => 3.0
       }
 
       refute is_valid_sampling_params?(invalid_params2)
@@ -228,11 +230,12 @@ defmodule ExMCP.SamplingTest do
       }
 
       # Step 2: Client requests approval (simulate approved)
-      approval_result = __MODULE__.TestApprovalHandler.request_approval(
-        :sampling, 
-        sampling_request, 
-        action: :approve
-      )
+      approval_result =
+        __MODULE__.TestApprovalHandler.request_approval(
+          :sampling,
+          sampling_request,
+          action: :approve
+        )
 
       assert {:approved, approved_request} = approval_result
       assert approved_request == sampling_request
@@ -248,11 +251,12 @@ defmodule ExMCP.SamplingTest do
       }
 
       # Step 4: Request approval for response (simulate approved)
-      response_approval = __MODULE__.TestApprovalHandler.request_approval(
-        :response,
-        mock_response,
-        action: :approve
-      )
+      response_approval =
+        __MODULE__.TestApprovalHandler.request_approval(
+          :response,
+          mock_response,
+          action: :approve
+        )
 
       assert {:approved, approved_response} = response_approval
       assert approved_response == mock_response
@@ -266,11 +270,12 @@ defmodule ExMCP.SamplingTest do
       }
 
       # User denies the sampling request
-      approval_result = __MODULE__.TestApprovalHandler.request_approval(
-        :sampling,
-        sampling_request,
-        action: :deny
-      )
+      approval_result =
+        __MODULE__.TestApprovalHandler.request_approval(
+          :sampling,
+          sampling_request,
+          action: :deny
+        )
 
       assert {:denied, "Request denied by test"} = approval_result
     end
@@ -284,11 +289,12 @@ defmodule ExMCP.SamplingTest do
       }
 
       # User modifies the request
-      approval_result = __MODULE__.TestApprovalHandler.request_approval(
-        :sampling,
-        original_request,
-        action: :modify
-      )
+      approval_result =
+        __MODULE__.TestApprovalHandler.request_approval(
+          :sampling,
+          original_request,
+          action: :modify
+        )
 
       assert {:modified, modified_request} = approval_result
       assert modified_request["modified"] == true
@@ -297,10 +303,11 @@ defmodule ExMCP.SamplingTest do
   end
 
   # Helper functions for validation
-  defp is_valid_message?(%{"role" => role, "content" => content}) 
-    when role in ["user", "assistant", "system"] and is_map(content) do
+  defp is_valid_message?(%{"role" => role, "content" => content})
+       when role in ["user", "assistant", "system"] and is_map(content) do
     Map.has_key?(content, "type") and Map.has_key?(content, "text")
   end
+
   defp is_valid_message?(_), do: false
 
   defp is_valid_model_preferences?(prefs) when is_map(prefs) do
@@ -312,31 +319,35 @@ defmodule ExMCP.SamplingTest do
       _ -> false
     end)
   end
+
   defp is_valid_model_preferences?(_), do: false
 
-  defp is_valid_sampling_params?(%{"messages" => messages} = params) 
-    when is_list(messages) and length(messages) > 0 do
-    
+  defp is_valid_sampling_params?(%{"messages" => messages} = params)
+       when is_list(messages) and length(messages) > 0 do
     valid_messages = Enum.all?(messages, &is_valid_message?/1)
-    
-    valid_prefs = case Map.get(params, "modelPreferences") do
-      nil -> true
-      prefs -> is_valid_model_preferences?(prefs)
-    end
 
-    valid_temp = case Map.get(params, "temperature") do
-      nil -> true
-      temp when is_number(temp) and temp >= 0.0 and temp <= 2.0 -> true
-      _ -> false
-    end
+    valid_prefs =
+      case Map.get(params, "modelPreferences") do
+        nil -> true
+        prefs -> is_valid_model_preferences?(prefs)
+      end
 
-    valid_tokens = case Map.get(params, "maxTokens") do
-      nil -> true
-      tokens when is_integer(tokens) and tokens > 0 -> true
-      _ -> false
-    end
+    valid_temp =
+      case Map.get(params, "temperature") do
+        nil -> true
+        temp when is_number(temp) and temp >= 0.0 and temp <= 2.0 -> true
+        _ -> false
+      end
+
+    valid_tokens =
+      case Map.get(params, "maxTokens") do
+        nil -> true
+        tokens when is_integer(tokens) and tokens > 0 -> true
+        _ -> false
+      end
 
     valid_messages and valid_prefs and valid_temp and valid_tokens
   end
+
   defp is_valid_sampling_params?(_), do: false
 end

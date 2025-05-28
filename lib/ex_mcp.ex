@@ -36,8 +36,10 @@ defmodule ExMCP do
   > #### Draft Feature {: .info}
   > These features implement the draft MCP specification and may change.
 
-  Currently no draft features are implemented. When implemented, they will be marked
-  with `@doc api: :draft` in the function documentation.
+  - **Structured Tool Output** - Tools can return structured data with schema validation
+    - `outputSchema` field in tool definitions
+    - `structuredContent` in tool results
+    - See `ExMCP.Server.Handler` for examples
 
   ## Protocol Features
 

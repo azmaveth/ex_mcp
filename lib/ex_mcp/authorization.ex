@@ -289,6 +289,7 @@ defmodule ExMCP.Authorization do
         case Jason.decode(response_body) do
           {:ok, introspection_data} ->
             {:ok, parse_introspection_response(introspection_data)}
+
           {:error, reason} ->
             {:error, {:json_decode_error, reason}}
         end
@@ -297,6 +298,7 @@ defmodule ExMCP.Authorization do
         case Jason.decode(error_body) do
           {:ok, error_data} ->
             {:error, {:oauth_error, status, error_data}}
+
           {:error, _} ->
             {:error, {:http_error, status, error_body}}
         end

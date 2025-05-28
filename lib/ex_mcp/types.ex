@@ -1,13 +1,15 @@
 defmodule ExMCP.Types do
   @moduledoc """
-  @mcp_spec
-
   Type definitions for the Model Context Protocol.
 
   This module defines the core types used throughout ExMCP,
-  matching the MCP specification version 2025-03-26.
+  matching the MCP specification version 2025-03-26 and draft features.
 
-  All types in this module are directly from the official MCP specification.
+  ## MCP Specification Types
+  All core types are from the official MCP specification.
+
+  ## Draft Specification Types
+  Types marked with draft comments implement features from the draft MCP specification.
   """
 
   # Core types
@@ -45,13 +47,25 @@ defmodule ExMCP.Types do
           String.t() => any()
         }
 
+  # JSON Schema type (draft)
+  @type json_schema :: %{
+          required(:type) => String.t(),
+          optional(:properties) => %{String.t() => map()},
+          optional(:required) => [String.t()]
+        }
+
   # Tool types
   @type tool_annotations :: %{
           String.t() => any()
         }
 
   @type tool :: %{
-          String.t() => any()
+          required(:name) => String.t(),
+          optional(:description) => String.t(),
+          required(:inputSchema) => json_schema(),
+          # Draft feature: outputSchema for structured tool output
+          optional(:outputSchema) => json_schema(),
+          optional(:annotations) => tool_annotations()
         }
 
   # Resource types
@@ -114,11 +128,11 @@ defmodule ExMCP.Types do
 
   # Tool result
   @type tool_result :: %{
-          String.t() => any()
+          required(:content) => [content()],
+          optional(:isError) => boolean(),
+          # Draft features: structured tool output
+          optional(:structuredContent) => %{String.t() => any()}
         }
-
-  # JSON Schema type
-  @type json_schema :: map()
 
   # Completion types
   @type resource_reference :: %{
