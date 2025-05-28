@@ -2,18 +2,25 @@ defmodule ExMCP.Transport.HTTP do
   @moduledoc """
   @mcp_spec
 
-  Streamable HTTP transport for MCP.
+  Streamable HTTP transport for MCP with enhanced SSE support.
 
   This transport uses HTTP POST and GET requests with Server-Sent Events (SSE)
   for streaming server-to-client messages. This is one of the two
   official MCP transports defined in the specification.
+
+  ## Features
+
+  - **Auto-reconnection**: Automatic reconnection with exponential backoff
+  - **Keep-alive**: Built-in heartbeat mechanism for connection health
+  - **Event resumption**: Supports Last-Event-ID for event replay
+  - **Configurable endpoint**: Customize the MCP endpoint path
 
   ## Security Features
 
   The Streamable HTTP transport supports comprehensive security features:
 
   - **Authentication**: Bearer tokens, API keys, basic auth
-  - **Origin Validation**: Prevent DNS rebinding attacks
+  - **Origin Validation**: Prevent DNS rebinding attacks (recommended to enable)
   - **CORS Headers**: Cross-origin resource sharing
   - **Security Headers**: XSS protection, frame options, etc.
   - **TLS/SSL**: Secure connections with certificate validation
@@ -23,6 +30,7 @@ defmodule ExMCP.Transport.HTTP do
       {:ok, client} = ExMCP.Client.start_link(
         transport: :http,
         url: "https://api.example.com",
+        endpoint: "/mcp/v1",  # Configurable endpoint
         security: %{
           auth: {:bearer, "your-token"},
           validate_origin: true,
@@ -34,9 +42,13 @@ defmodule ExMCP.Transport.HTTP do
         }
       )
 
-  > #### Security Warning {: .warning}
-  > When implementing Streamable HTTP servers, always validate Origin headers,
-  > bind to localhost only, and implement proper authentication.
+  > #### Security Best Practices {: .warning}
+  > 
+  > 1. **Always use HTTPS** in production
+  > 2. **Enable origin validation** to prevent DNS rebinding attacks
+  > 3. **Bind to localhost** when possible for local servers
+  > 4. **Implement proper authentication** (bearer tokens, API keys, etc.)
+  > 5. **Set restrictive CORS policies** for cross-origin requests
   """
 
   @behaviour ExMCP.Transport
@@ -150,13 +162,14 @@ defmodule ExMCP.Transport.HTTP do
   @impl true
   def receive_message(%__MODULE__{sse_pid: sse_pid} = state) do
     receive do
-      {:sse_event, ^sse_pid, event} ->
-        case parse_sse_event(event) do
+      {:sse_event, ^sse_pid, %{data: data}} ->
+        # The enhanced SSE client sends structured events
+        case Jason.decode(data) do
           {:ok, message} ->
             {:ok, message, state}
 
-          error ->
-            error
+          {:error, reason} ->
+            {:error, {:json_decode_error, reason}}
         end
 
       {:sse_error, ^sse_pid, reason} ->
@@ -178,161 +191,36 @@ defmodule ExMCP.Transport.HTTP do
   # Private functions
 
   defp start_sse(state) do
-    parent = self()
     url = build_url(state, "/sse")
-
-    sse_pid =
-      spawn_link(fn ->
-        sse_loop(parent, url, state)
-      end)
-
-    # Wait for connection confirmation
-    receive do
-      {:sse_connected, ^sse_pid} ->
-        {:ok, sse_pid}
-
-      {:sse_error, ^sse_pid, reason} ->
-        {:error, reason}
-    after
-      5000 ->
-        Process.exit(sse_pid, :kill)
-        {:error, :connection_timeout}
-    end
-  end
-
-  defp sse_loop(parent, url, state) do
-    # Build SSL options if needed
     ssl_opts = build_ssl_options(state)
 
-    # This is a simplified SSE client - in production you'd want
-    # to use a proper SSE client library
-    case connect_sse(url, state.headers, ssl_opts) do
-      {:ok, ref} ->
-        send(parent, {:sse_connected, self()})
-        receive_sse_loop(parent, ref, "")
-
-      {:error, reason} ->
-        send(parent, {:sse_error, self(), reason})
-    end
-  end
-
-  defp connect_sse(url, headers, ssl_opts) do
-    headers = [
-      {"accept", "text/event-stream"},
-      {"cache-control", "no-cache"} | headers
+    # Use the enhanced SSE client with keep-alive and reconnection
+    opts = [
+      url: url,
+      headers: state.headers,
+      ssl_opts: ssl_opts,
+      parent: self()
     ]
 
-    request = {
-      String.to_charlist(url),
-      Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
-    }
+    case ExMCP.Transport.SSEClient.start_link(opts) do
+      {:ok, sse_pid} ->
+        # Wait for connection confirmation
+        receive do
+          {:sse_connected, ^sse_pid} ->
+            {:ok, sse_pid}
 
-    # Determine if we need SSL options
-    http_opts =
-      case URI.parse(url).scheme do
-        "https" -> ssl_opts
-        _ -> []
-      end
-
-    case :httpc.request(:get, request, http_opts, [{:sync, false}, {:stream, :self}]) do
-      {:ok, ref} ->
-        {:ok, ref}
+          {:sse_error, ^sse_pid, reason} ->
+            {:error, reason}
+        after
+          10_000 ->
+            Process.exit(sse_pid, :kill)
+            {:error, :connection_timeout}
+        end
 
       {:error, reason} ->
         {:error, reason}
     end
   end
-
-  defp receive_sse_loop(parent, ref, buffer) do
-    receive do
-      {:http, {^ref, :stream_start, _headers}} ->
-        receive_sse_loop(parent, ref, buffer)
-
-      {:http, {^ref, :stream, chunk}} ->
-        new_buffer = buffer <> chunk
-        {events, remaining} = parse_sse_chunk(new_buffer)
-
-        Enum.each(events, fn event ->
-          send(parent, {:sse_event, self(), event})
-        end)
-
-        receive_sse_loop(parent, ref, remaining)
-
-      {:http, {^ref, :stream_end, _headers}} ->
-        send(parent, {:sse_closed, self()})
-
-      {:http, {^ref, {:error, reason}}} ->
-        send(parent, {:sse_error, self(), reason})
-    end
-  end
-
-  defp parse_sse_chunk(buffer) do
-    # Split but keep the last incomplete line
-    case String.split(buffer, "\n") do
-      lines when length(lines) > 1 ->
-        {complete_lines, [last_line]} = Enum.split(lines, -1)
-
-        # Check if the buffer ended with a newline
-        if String.ends_with?(buffer, "\n") do
-          # Last line is complete
-          {events, _} = parse_sse_lines(lines, %{}, [])
-          {Enum.reverse(events), ""}
-        else
-          # Last line is incomplete
-          {events, _} = parse_sse_lines(complete_lines, %{}, [])
-          {Enum.reverse(events), last_line}
-        end
-
-      [single_line] ->
-        # No complete lines yet
-        {[], single_line}
-    end
-  end
-
-  defp parse_sse_lines([line | rest], current_event, events) do
-    case line do
-      "" ->
-        # Empty line signals end of event
-        if map_size(current_event) > 0 do
-          parse_sse_lines(rest, %{}, [current_event | events])
-        else
-          parse_sse_lines(rest, current_event, events)
-        end
-
-      ":" <> _comment ->
-        # Comment, ignore
-        parse_sse_lines(rest, current_event, events)
-
-      _ ->
-        case String.split(line, ":", parts: 2) do
-          [field, value] ->
-            value = String.trim_leading(value)
-            updated_event = Map.put(current_event, field, value)
-            parse_sse_lines(rest, updated_event, events)
-
-          _ ->
-            # Invalid line, skip
-            parse_sse_lines(rest, current_event, events)
-        end
-    end
-  end
-
-  defp parse_sse_lines([], _current_event, events) do
-    # Return events and empty remaining buffer
-    {events, ""}
-  end
-
-  defp parse_sse_event(%{"data" => data}) do
-    case Jason.decode(data) do
-      {:ok, message} ->
-        {:ok, Jason.encode!(message)}
-
-      {:error, reason} ->
-        {:error, {:parse_error, reason}}
-    end
-  end
-
-  defp parse_sse_event(_), do: {:error, :invalid_sse_event}
 
   defp build_url(%__MODULE__{base_url: base_url, endpoint: endpoint}, path) do
     base_url
