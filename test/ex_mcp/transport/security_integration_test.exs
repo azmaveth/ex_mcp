@@ -44,8 +44,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         "id" => 1
       }
 
-      result = HTTP.send_message(test_message, state)
-      assert result == :ok
+      assert {:ok, _state} = HTTP.send_message(test_message, state)
 
       # Give the request time to complete
       Process.sleep(50)

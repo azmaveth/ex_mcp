@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **OAuth 2.1 Authorization Support** (MCP draft specification compliance)
+  - Full OAuth 2.1 implementation with PKCE support
+  - Automatic token refresh before expiration
+  - TokenManager GenServer for token lifecycle management
+  - Authorization error handling for 401/403 responses
+  - Request interceptor for automatic header injection
+  - Integration with HTTP transport for seamless auth
+  - Example demonstrating OAuth-protected MCP servers
+- **Enhanced SSE Transport** (MCP specification compliance)
+  - Automatic reconnection with exponential backoff
+  - Built-in keep-alive mechanism (30-second heartbeat)
+  - Support for Last-Event-ID header for event resumption
+  - Improved connection stability and error recovery
+- **Lifecycle Management Enhancements** (MCP draft specification compliance)
+  - Added logging/setLevel handler implementation
+  - Improved BEAM transport server lifecycle (supports reconnections)
+  - Dynamic client capability building based on handler
+  - Protocol version validation and negotiation
 - **Client Roots Tests and Examples** (MCP specification compliance)
   - Comprehensive tests for client roots functionality
   - Root demo showing client-server root exchange

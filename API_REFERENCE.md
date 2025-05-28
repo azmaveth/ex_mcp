@@ -12,6 +12,9 @@
 - [`ExMCP.Transport`](#exmcptransport) - Transport behaviour
 - [`ExMCP.Approval`](#exmcpapproval) - Human-in-the-loop approval behaviour
 - [`ExMCP.Approval.Console`](#exmcpapprovalconsole) - Console-based approval handler
+- [`ExMCP.Authorization.TokenManager`](#exmcpauthorizationtokenmanager) - OAuth token management
+- [`ExMCP.Authorization.ErrorHandler`](#exmcpauthorizationerrorhandler) - Authorization error handling
+- [`ExMCP.Authorization.Interceptor`](#exmcpauthorizationinterceptor) - Request authorization middleware
 - [`ExMCP.ServerManager`](#exmcpservermanager) - Multiple server management
 - [`ExMCP.Discovery`](#exmcpdiscovery) - Server discovery utilities
 - [`ExMCP.Types`](#exmcptypes) - Type definitions
@@ -61,9 +64,10 @@ Starts a new MCP client process.
 @spec start_link(keyword()) :: GenServer.on_start()
 
 # Options:
-# - transport: atom() - Transport type (:stdio, :sse, :beam)
+# - transport: atom() - Transport type (:stdio, :http, :beam)
 # - handler: module() | {module(), args} - Optional client handler
 # - handler_state: map() - Initial handler state (deprecated, use tuple form)
+# - auth_config: map() - Authorization configuration (optional)
 # - Transport-specific options (see below)
 # - name: term() - Optional GenServer name
 
@@ -104,6 +108,22 @@ Starts a new MCP client process.
     approval_handler: ExMCP.Approval.Console,
     roots: [%{uri: "file:///home", name: "Home"}]
   ]}
+)
+
+# With OAuth authorization
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://api.example.com",
+  auth_config: %{
+    client_id: "my-client",
+    client_secret: "secret",
+    token_endpoint: "https://auth.example.com/token",
+    initial_token: %{
+      "access_token" => "current-token",
+      "refresh_token" => "refresh-token",
+      "expires_in" => 3600
+    }
+  }
 )
 ```
 
@@ -1114,6 +1134,139 @@ This handler will:
 
 ---
 
+## ExMCP.Authorization.TokenManager
+
+OAuth token lifecycle management with automatic refresh.
+
+### Functions
+
+#### `start_link/1`
+Starts a TokenManager process.
+
+```elixir
+@spec start_link(keyword()) :: GenServer.on_start()
+
+# Options:
+# - :auth_config - Authorization configuration map
+# - :initial_token - Initial OAuth token (optional)
+# - :refresh_window - Seconds before expiry to refresh (default: 300)
+
+{:ok, manager} = TokenManager.start_link(
+  auth_config: %{
+    client_id: "my-client",
+    client_secret: "secret",
+    token_endpoint: "https://auth.example.com/token"
+  },
+  initial_token: %{
+    "access_token" => "token123",
+    "refresh_token" => "refresh123",
+    "expires_in" => 3600
+  }
+)
+```
+
+#### `get_token/1`
+Gets the current access token.
+
+```elixir
+@spec get_token(GenServer.server()) :: {:ok, String.t()} | {:error, atom()}
+
+{:ok, token} = TokenManager.get_token(manager)
+```
+
+#### `refresh_now/1`
+Forces an immediate token refresh.
+
+```elixir
+@spec refresh_now(GenServer.server()) :: {:ok, String.t()} | {:error, any()}
+
+{:ok, new_token} = TokenManager.refresh_now(manager)
+```
+
+#### `subscribe/1`
+Subscribes to token update notifications.
+
+```elixir
+@spec subscribe(GenServer.server()) :: :ok
+
+TokenManager.subscribe(manager)
+# Will receive:
+# - {:token_refreshed, new_token}
+# - {:token_refresh_failed, reason}
+```
+
+---
+
+## ExMCP.Authorization.ErrorHandler
+
+Handles OAuth authorization errors (401/403 responses).
+
+### Functions
+
+#### `handle_auth_error/4`
+Processes authorization errors and determines appropriate action.
+
+```elixir
+@spec handle_auth_error(
+  status_code :: integer(),
+  headers :: list(),
+  body :: String.t(),
+  state :: map()
+) :: {:retry, map()} | {:error, atom()} | :ok
+
+case ErrorHandler.handle_auth_error(401, headers, body, state) do
+  {:retry, %{action: :refresh_token}} ->
+    # Refresh token and retry
+  {:error, :unauthorized_no_auth_info} ->
+    # No auth info in response
+  :ok ->
+    # Continue (not an auth error)
+end
+```
+
+---
+
+## ExMCP.Authorization.Interceptor
+
+Request interceptor for automatic authorization header injection.
+
+### Functions
+
+#### `add_auth_headers/2`
+Adds authorization headers to requests.
+
+```elixir
+@spec add_auth_headers(map() | keyword(), keyword()) :: 
+  {:ok, map() | keyword()} | {:error, any()}
+
+{:ok, auth_request} = Interceptor.add_auth_headers(
+  request, 
+  token_manager: manager
+)
+```
+
+#### `wrap_request_fn/2`
+Creates an authorization-aware request function.
+
+```elixir
+@spec wrap_request_fn(
+  (map() -> {:ok, any()} | {:error, any()}),
+  keyword()
+) :: (map() -> {:ok, any()} | {:error, any()})
+
+auth_request_fn = Interceptor.wrap_request_fn(
+  original_request_fn,
+  token_manager: manager
+)
+
+# Now auth_request_fn will:
+# 1. Add auth headers automatically
+# 2. Handle 401/403 responses
+# 3. Retry with refreshed token if needed
+```
+
+---
+
 ## Examples
 
 See the [examples](examples/) directory for complete working examples:
@@ -1123,6 +1276,7 @@ See the [examples](examples/) directory for complete working examples:
 - `batch_requests.exs` - Batch request functionality
 - `bidirectional_communication.exs` - Server-to-client requests
 - `human_in_the_loop.exs` - Approval flows for sensitive operations
+- `oauth_authorization_example.exs` - OAuth 2.1 authorization example
 - `beam_transport/` - BEAM transport examples
 - `roots_example.exs` - Roots capability example
 - `resource_subscription_example.exs` - Subscription example

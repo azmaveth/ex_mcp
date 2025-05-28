@@ -145,7 +145,10 @@ defmodule ExMCP.Transport.HTTP do
         case :httpc.request(:post, request, http_opts, []) do
           {:ok, {{_, 200, _}, response_headers, _response_body}} ->
             # Validate CORS if configured
-            validate_cors_response(response_headers, state)
+            case validate_cors_response(response_headers, state) do
+              :ok -> {:ok, state}
+              error -> error
+            end
 
           {:ok, {{_, status, _}, _, body}} ->
             {:error, {:http_error, status, body}}
