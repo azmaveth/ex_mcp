@@ -391,6 +391,17 @@ defmodule ExMCP.Server.Handler do
   """
   @callback terminate(reason :: any(), state()) :: any()
 
+  @doc """
+  Handles setting the log level for the server.
+
+  This callback is called when the client sends a logging/setLevel request.
+  The level parameter will be one of: "debug", "info", "warning", "error".
+
+  The implementation should adjust the server's logging verbosity accordingly.
+  """
+  @callback handle_set_log_level(level :: String.t(), state()) ::
+              {:ok, state()} | {:error, any(), state()}
+
   # Optional callbacks with defaults
   @optional_callbacks [
     handle_list_resources: 2,
@@ -403,6 +414,7 @@ defmodule ExMCP.Server.Handler do
     handle_subscribe_resource: 2,
     handle_unsubscribe_resource: 2,
     handle_list_resource_templates: 2,
+    handle_set_log_level: 2,
     terminate: 2
   ]
 
@@ -464,6 +476,12 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl true
+      def handle_set_log_level(_level, state) do
+        # Default implementation just returns ok without changing anything
+        {:ok, state}
+      end
+
+      @impl true
       def terminate(_reason, _state), do: :ok
 
       defoverridable init: 1,
@@ -477,6 +495,7 @@ defmodule ExMCP.Server.Handler do
                      handle_subscribe_resource: 2,
                      handle_unsubscribe_resource: 2,
                      handle_list_resource_templates: 2,
+                     handle_set_log_level: 2,
                      terminate: 2
     end
   end

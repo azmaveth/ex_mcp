@@ -31,7 +31,7 @@ defmodule ExMCP.Client do
   - **Batch Operations** - `batch_request/3` for efficient multi-request handling
   - **Process Monitoring** - Integration with OTP supervision trees
   - **Request Tracking** - `get_pending_requests/1` for debugging
-  - **Connection Management** - `disconnect/1`, `reconnect/1`
+  - **Connection Management** - `disconnect/1`
 
   ## Basic Example
 
@@ -343,6 +343,21 @@ defmodule ExMCP.Client do
   end
 
   @doc """
+  Sets the server's log level.
+
+  Valid levels are: "debug", "info", "warning", "error".
+
+  ## Examples
+
+      {:ok, %{}} = ExMCP.Client.set_log_level(client, "debug")
+      {:ok, %{}} = ExMCP.Client.set_log_level(client, "error")
+  """
+  @spec set_log_level(GenServer.server(), String.t(), timeout()) :: {:ok, map()} | {:error, any()}
+  def set_log_level(client, level, timeout \\ @request_timeout) do
+    GenServer.call(client, {:set_log_level, level}, timeout)
+  end
+
+  @doc """
   Sends a completion request.
   """
   @spec complete(
@@ -448,6 +463,26 @@ defmodule ExMCP.Client do
   def batch_request(client, requests, timeout \\ nil) do
     actual_timeout = timeout || @request_timeout * length(requests)
     GenServer.call(client, {:batch_request, requests}, actual_timeout)
+  end
+
+  @doc """
+  Disconnects from the MCP server gracefully.
+
+  > #### Extension Feature {: .warning}
+  > This is an ExMCP extension for clean disconnection, following draft specification guidelines.
+
+  Performs a clean shutdown by:
+  1. Stopping message reception
+  2. Closing the transport connection
+  3. Cleaning up resources
+
+  ## Example
+
+      :ok = ExMCP.Client.disconnect(client)
+  """
+  @spec disconnect(GenServer.server()) :: :ok
+  def disconnect(client) do
+    GenServer.call(client, :disconnect)
   end
 
   # GenServer callbacks
@@ -593,8 +628,29 @@ defmodule ExMCP.Client do
     send_request(Protocol.encode_ping(), from, state)
   end
 
+  def handle_call({:set_log_level, level}, from, state) do
+    send_request(Protocol.encode_set_log_level(level), from, state)
+  end
+
   def handle_call({:complete, ref, argument}, from, state) do
     send_request(Protocol.encode_complete(ref, argument), from, state)
+  end
+
+  def handle_call(:disconnect, _from, state) do
+    # Perform clean shutdown
+    if state.transport_state && state.transport_mod do
+      # Close the transport connection
+      case state.transport_mod.close(state.transport_state) do
+        :ok ->
+          {:reply, :ok, %{state | transport_state: nil, initialized: false}}
+
+        {:error, reason} ->
+          Logger.warning("Error closing transport: #{inspect(reason)}")
+          {:reply, :ok, %{state | transport_state: nil, initialized: false}}
+      end
+    else
+      {:reply, :ok, state}
+    end
   end
 
   def handle_call({:batch_request, requests}, from, state) do

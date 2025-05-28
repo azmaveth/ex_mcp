@@ -275,7 +275,16 @@ defmodule ExMCP.Server do
 
   def handle_info({:transport_closed, reason}, state) do
     Logger.info("Transport closed: #{inspect(reason)}")
-    {:stop, :normal, state}
+
+    # For BEAM transport, we can accept new connections after a client disconnects
+    # Reset the transport state to allow new connections
+    if state.transport_mod == ExMCP.Transport.Beam do
+      # Keep the server running but reset initialization state
+      {:noreply, %{state | initialized: false}}
+    else
+      # For other transports (stdio, SSE), stop the server
+      {:stop, :normal, state}
+    end
   end
 
   def handle_info({:beam_connect, client_mailbox}, state) do
@@ -648,6 +657,50 @@ defmodule ExMCP.Server do
           send_message(error, %{state | handler_state: new_handler_state})
       end
     end
+  end
+
+  defp handle_request("logging/setLevel", %{"level" => level}, id, state) do
+    if not state.initialized do
+      error =
+        Protocol.encode_error(
+          Protocol.invalid_request(),
+          "Not initialized",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+    else
+      case state.handler.handle_set_log_level(level, state.handler_state) do
+        {:ok, new_handler_state} ->
+          response = Protocol.encode_response(%{}, id)
+          send_message(response, %{state | handler_state: new_handler_state})
+
+        {:error, reason, new_handler_state} ->
+          error =
+            Protocol.encode_error(
+              Protocol.internal_error(),
+              format_error(reason),
+              nil,
+              id
+            )
+
+          send_message(error, %{state | handler_state: new_handler_state})
+      end
+    end
+  end
+
+  defp handle_request("logging/setLevel", _params, id, state) do
+    # Missing required "level" parameter
+    error =
+      Protocol.encode_error(
+        Protocol.invalid_params(),
+        "Missing required parameter: level",
+        nil,
+        id
+      )
+
+    send_message(error, state)
   end
 
   defp handle_request("roots/list", _params, id, state) do

@@ -415,6 +415,19 @@ defmodule ExMCP.Protocol do
     encode_notification("notifications/log", params)
   end
 
+  @doc """
+  Encodes a logging/setLevel request.
+  """
+  @spec encode_set_log_level(String.t()) :: map()
+  def encode_set_log_level(level) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "logging/setLevel",
+      "params" => %{"level" => level},
+      "id" => generate_id()
+    }
+  end
+
   # Batch Request Support
 
   @doc """
