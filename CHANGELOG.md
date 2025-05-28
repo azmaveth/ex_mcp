@@ -8,6 +8,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Client Roots Tests and Examples** (MCP specification compliance)
+  - Comprehensive tests for client roots functionality
+  - Root demo showing client-server root exchange
+  - Server tools for requesting and analyzing client roots
+  - Default handler providing current directory as root
+  - Protocol compliance verification for roots/list requests
+  - Note: Client roots functionality already fully implemented
+- **Progress Notifications Tests and Examples** (MCP specification compliance)
+  - Integration tests for progress tracking in long-running operations
+  - Progress demo server showing various progress patterns
+  - Support for string and integer progress tokens
+  - Progress updates with current/total values
+  - Note: Progress notifications already fully implemented
+- **Server Utilities Tests** (MCP specification compliance)
+  - Comprehensive test coverage for pagination across all list operations
+  - Completion utility tests for prompt and resource references
+  - Logging utility verification with all severity levels
+  - Cursor-based pagination with proper error handling
+  - Note: All utilities (completion, logging, pagination) already fully implemented
+- **Tools Feature Tests** (MCP specification compliance)
+  - Comprehensive test coverage for existing tools functionality
+  - Tests for tool discovery, invocation, and error handling
+  - Verification of isError flag support for tool execution errors
+  - Batch tool request testing
+  - Multiple content type support (text, image)
+  - Progress token support verification
+  - Note: Tools functionality including isError support already fully implemented
+- **Resources Feature Tests and Examples** (MCP specification compliance)
+  - Comprehensive test coverage for existing resources functionality
+  - Example server demonstrating various resource types (text, JSON, binary)
+  - Support for resource subscriptions and update notifications
+  - Resource templates for dynamic URI patterns
+  - Pagination support for resource listing
+  - Multiple URI schemes (file://, config://, data://, db://)
+  - Note: Resources functionality was already fully implemented
+- **Prompts Feature Tests and Examples** (MCP specification compliance)
+  - Comprehensive test coverage for existing prompts functionality
+  - Example server demonstrating various prompt patterns
+  - Support for parameterized prompts with required/optional arguments
+  - Pagination support for prompt listing
+  - Dynamic prompt list changes with notifications
+  - Note: Prompts functionality was already fully implemented
+- **Ping Utility Tests and Examples** (MCP specification compliance)
+  - Comprehensive test coverage for existing ping functionality
+  - Health check pattern examples and best practices
+  - Bidirectional ping demonstration
+  - Connection monitoring and verification patterns
+  - Performance measurement examples
+  - Note: Ping functionality was already fully implemented
+- **Request Cancellation Support** (MCP specification compliance)
+  - Complete implementation of `notifications/cancelled` method
+  - Client and server can cancel in-progress requests
+  - Automatic request tracking and resource cleanup
+  - Initialize request cannot be cancelled (as per spec)
+  - Graceful handling of unknown/completed requests
+  - Malformed cancellation notification validation
+  - Comprehensive test coverage and example implementation
+- **OAuth 2.1 Authorization Support** (MCP specification compliance)
+  - Complete OAuth 2.1 implementation with PKCE support
+  - Authorization code flow with mandatory PKCE for security
+  - Client credentials flow for application-to-application communication
+  - Server metadata discovery (RFC 8414)
+  - Dynamic client registration (RFC 7591)
+  - Token validation and introspection
+  - HTTPS enforcement with localhost development support
+  - Comprehensive test coverage for all authorization flows
+- Enhanced protocol version negotiation (MCP specification compliance)
+  - Handlers now receive client's protocol version in params
+  - Servers can check client version and propose alternatives
+  - Comprehensive documentation and examples for version negotiation
+  - Full test coverage for various negotiation scenarios
+
+### Changed
+- **BREAKING:** Renamed SSE transport to HTTP transport (MCP specification update)
+  - `ExMCP.Transport.SSE` is now `ExMCP.Transport.HTTP`
+  - Transport identifier `:sse` is now `:http` (`:sse` still works for compatibility)
+  - Updated documentation to reflect "Streamable HTTP" terminology from MCP spec 2025-03-26
+  - All tests and examples updated to use new naming
+
+## [0.4.0] - 2025-01-27
+
+### Added
+- Tool execution error reporting with `isError` flag (MCP specification compliance)
+  - Handlers can return `{:ok, %{content: [...], isError: true}, state}` for tool errors
+  - Distinguishes between protocol errors and tool execution errors
+  - Full test coverage demonstrating proper error handling
+- Pagination support for list methods (MCP specification compliance)
+  - Added cursor parameter to `list_tools`, `list_resources`, and `list_prompts`
+  - Server handlers now return optional `nextCursor` for paginated results
+  - Client API changed to accept options keyword list for cursor and timeout
+  - Full test coverage for pagination functionality
 - JSON-RPC batch request support (MCP specification compliance)
   - `batch_request/3` client method for sending multiple requests as a batch
   - Server automatically handles batch requests and returns batch responses
@@ -50,6 +141,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Proper SSE event streaming with keep-alive
 
 ### Changed
+- **BREAKING:** Client list methods now take options keyword list instead of timeout
+  - `list_tools(client, timeout)` → `list_tools(client, opts \\ [])`
+  - `list_resources(client, timeout)` → `list_resources(client, opts \\ [])`
+  - `list_prompts(client, timeout)` → `list_prompts(client, opts \\ [])`
+  - Options include `:timeout` and `:cursor` for pagination
+- **BREAKING:** Server handler callbacks for list methods now include cursor parameter
+  - `handle_list_tools(state)` → `handle_list_tools(cursor, state)`
+  - `handle_list_resources(state)` → `handle_list_resources(cursor, state)`
+  - `handle_list_prompts(state)` → `handle_list_prompts(cursor, state)`
+  - All must return 4-tuple with optional `next_cursor`
 - SSE transport endpoint is now configurable (was hardcoded to /mcp/v1)
 - BEAM transport now supports both JSON and native Elixir term formats
 

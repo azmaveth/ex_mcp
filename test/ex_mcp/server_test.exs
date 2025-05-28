@@ -66,15 +66,15 @@ defmodule ExMCP.ServerTest do
     end
 
     @impl true
-    def handle_list_tools(state), do: {:ok, [], state}
+    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
     @impl true
     def handle_call_tool(_name, _params, state), do: {:error, "Not implemented", state}
     @impl true
-    def handle_list_resources(state), do: {:ok, [], state}
+    def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
     @impl true
     def handle_read_resource(_uri, state), do: {:error, "Not implemented", state}
     @impl true
-    def handle_list_prompts(state), do: {:ok, [], state}
+    def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
     @impl true
     def handle_get_prompt(_name, _args, state), do: {:error, "Not implemented", state}
   end

@@ -326,6 +326,19 @@ defmodule ExMCP.Server do
     send_notification(Protocol.encode_progress(progress_token, progress, total), state)
   end
 
+  # Handle manual message injection for testing
+  def handle_cast({:handle_message, message}, state) do
+    json_message = Jason.encode!(message)
+    case Protocol.parse_message(json_message) do
+      {:notification, method, params} ->
+        handle_notification(method, params, state)
+      {:request, method, params, id} ->
+        handle_request(method, params, id, state)
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   @impl true
   def handle_call(:ping, from, state) do
     send_request(Protocol.encode_ping(), from, state)
@@ -388,7 +401,7 @@ defmodule ExMCP.Server do
     end
   end
 
-  defp handle_request("tools/list", _params, id, state) do
+  defp handle_request("tools/list", params, id, state) do
     if not state.initialized do
       error =
         Protocol.encode_error(
@@ -400,15 +413,20 @@ defmodule ExMCP.Server do
 
       send_message(error, state)
     else
-      case state.handler.handle_list_tools(state.handler_state) do
-        {:ok, tools, new_handler_state} ->
-          response = Protocol.encode_response(%{tools: tools}, id)
+      cursor = Map.get(params || %{}, "cursor")
+
+      case state.handler.handle_list_tools(cursor, state.handler_state) do
+        {:ok, tools, next_cursor, new_handler_state} ->
+          result = %{tools: tools}
+          result = if next_cursor, do: Map.put(result, :nextCursor, next_cursor), else: result
+          response = Protocol.encode_response(result, id)
           send_message(response, %{state | handler_state: new_handler_state})
 
         {:error, reason, new_handler_state} ->
+          error_code = get_error_code_for_reason(reason)
           error =
             Protocol.encode_error(
-              Protocol.internal_error(),
+              error_code,
               format_error(reason),
               nil,
               id
@@ -433,7 +451,16 @@ defmodule ExMCP.Server do
     else
       case state.handler.handle_call_tool(name, args, state.handler_state) do
         {:ok, result, new_handler_state} ->
-          response = Protocol.encode_response(%{content: result}, id)
+          # Check if result is already a map with content key (for isError support)
+          response_body =
+            if is_map(result) and Map.has_key?(result, :content) do
+              result
+            else
+              # Legacy format - just content array
+              %{content: result}
+            end
+
+          response = Protocol.encode_response(response_body, id)
           send_message(response, %{state | handler_state: new_handler_state})
 
         {:error, reason, new_handler_state} ->
@@ -450,7 +477,7 @@ defmodule ExMCP.Server do
     end
   end
 
-  defp handle_request("resources/list", _params, id, state) do
+  defp handle_request("resources/list", params, id, state) do
     if not state.initialized do
       error =
         Protocol.encode_error(
@@ -462,15 +489,20 @@ defmodule ExMCP.Server do
 
       send_message(error, state)
     else
-      case state.handler.handle_list_resources(state.handler_state) do
-        {:ok, resources, new_handler_state} ->
-          response = Protocol.encode_response(%{resources: resources}, id)
+      cursor = Map.get(params || %{}, "cursor")
+
+      case state.handler.handle_list_resources(cursor, state.handler_state) do
+        {:ok, resources, next_cursor, new_handler_state} ->
+          result = %{resources: resources}
+          result = if next_cursor, do: Map.put(result, :nextCursor, next_cursor), else: result
+          response = Protocol.encode_response(result, id)
           send_message(response, %{state | handler_state: new_handler_state})
 
         {:error, reason, new_handler_state} ->
+          error_code = get_error_code_for_reason(reason)
           error =
             Protocol.encode_error(
-              Protocol.internal_error(),
+              error_code,
               format_error(reason),
               nil,
               id
@@ -512,7 +544,7 @@ defmodule ExMCP.Server do
     end
   end
 
-  defp handle_request("prompts/list", _params, id, state) do
+  defp handle_request("prompts/list", params, id, state) do
     if not state.initialized do
       error =
         Protocol.encode_error(
@@ -524,15 +556,20 @@ defmodule ExMCP.Server do
 
       send_message(error, state)
     else
-      case state.handler.handle_list_prompts(state.handler_state) do
-        {:ok, prompts, new_handler_state} ->
-          response = Protocol.encode_response(%{prompts: prompts}, id)
+      cursor = Map.get(params || %{}, "cursor")
+
+      case state.handler.handle_list_prompts(cursor, state.handler_state) do
+        {:ok, prompts, next_cursor, new_handler_state} ->
+          result = %{prompts: prompts}
+          result = if next_cursor, do: Map.put(result, :nextCursor, next_cursor), else: result
+          response = Protocol.encode_response(result, id)
           send_message(response, %{state | handler_state: new_handler_state})
 
         {:error, reason, new_handler_state} ->
+          error_code = get_error_code_for_reason(reason)
           error =
             Protocol.encode_error(
-              Protocol.internal_error(),
+              error_code,
               format_error(reason),
               nil,
               id
@@ -700,7 +737,7 @@ defmodule ExMCP.Server do
     end
   end
 
-  defp handle_request("resources/templates/list", _params, id, state) do
+  defp handle_request("resources/templates/list", params, id, state) do
     if not state.initialized do
       error =
         Protocol.encode_error(
@@ -712,15 +749,20 @@ defmodule ExMCP.Server do
 
       send_message(error, state)
     else
-      case state.handler.handle_list_resource_templates(state.handler_state) do
-        {:ok, templates, new_handler_state} ->
-          response = Protocol.encode_response(%{resourceTemplates: templates}, id)
+      cursor = Map.get(params || %{}, "cursor")
+
+      case state.handler.handle_list_resource_templates(cursor, state.handler_state) do
+        {:ok, templates, next_cursor, new_handler_state} ->
+          result = %{resourceTemplates: templates}
+          result = if next_cursor, do: Map.put(result, :nextCursor, next_cursor), else: result
+          response = Protocol.encode_response(result, id)
           send_message(response, %{state | handler_state: new_handler_state})
 
         {:error, reason, new_handler_state} ->
+          error_code = get_error_code_for_reason(reason)
           error =
             Protocol.encode_error(
-              Protocol.internal_error(),
+              error_code,
               format_error(reason),
               nil,
               id
@@ -794,10 +836,36 @@ defmodule ExMCP.Server do
          "notifications/cancelled",
          %{"requestId" => request_id} = params,
          state
-       ) do
+       ) when is_binary(request_id) do
     reason = Map.get(params, "reason")
     Logger.info("Request #{request_id} cancelled: #{reason || "no reason given"}")
-    # TODO: Actually cancel the request if it's still running
+    
+    # Check if this is a valid in-progress request
+    case Map.get(state.pending_requests, request_id) do
+      nil ->
+        # Request not found or already completed - ignore as per spec
+        Logger.debug("Ignoring cancellation for unknown request #{request_id}")
+        {:noreply, state}
+        
+      _from ->
+        # Request is in progress - cancel it
+        Logger.debug("Cancelling in-progress request #{request_id}")
+        
+        # Remove from pending requests
+        new_pending = Map.delete(state.pending_requests, request_id)
+        new_state = %{state | pending_requests: new_pending}
+        
+        # Per MCP spec: SHOULD not send a response for cancelled request
+        # The GenServer caller will get no response (which times out)
+        # This is intentional behavior for cancellation
+        
+        {:noreply, new_state}
+    end
+  end
+
+  defp handle_notification("notifications/cancelled", params, state) do
+    # Handle malformed cancellation notifications (missing requestId)
+    Logger.warning("Ignoring malformed cancellation notification: #{inspect(params)}")
     {:noreply, state}
   end
 
@@ -994,4 +1062,15 @@ defmodule ExMCP.Server do
       transport_mod.connect(opts)
     end
   end
+
+  # Helper function to determine the appropriate error code based on the error reason
+  defp get_error_code_for_reason(reason) when is_binary(reason) do
+    cond do
+      String.contains?(reason, "Invalid cursor") -> Protocol.invalid_params()
+      String.contains?(reason, "cursor") -> Protocol.invalid_params()
+      true -> Protocol.internal_error()
+    end
+  end
+
+  defp get_error_code_for_reason(_reason), do: Protocol.internal_error()
 end

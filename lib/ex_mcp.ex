@@ -42,8 +42,8 @@ defmodule ExMCP do
   - Cross-language integration
   - Command-line tools
 
-  ### SSE Transport (`@mcp_spec`)
-  Server-Sent Events over HTTP. Best for:
+  ### Streamable HTTP Transport (`@mcp_spec`)
+  HTTP with Server-Sent Events streaming. Best for:
   - Web integration
   - Firewall-friendly communication
   - RESTful architectures

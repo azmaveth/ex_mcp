@@ -27,7 +27,7 @@ defmodule ExMCP.Transport.BeamTest do
     end
 
     @impl true
-    def handle_list_tools(state) do
+    def handle_list_tools(_cursor, state) do
       tools = [
         %{
           name: "echo",
@@ -35,7 +35,7 @@ defmodule ExMCP.Transport.BeamTest do
         }
       ]
 
-      {:ok, tools, state}
+      {:ok, tools, nil, state}
     end
 
     @impl true
@@ -51,7 +51,7 @@ defmodule ExMCP.Transport.BeamTest do
     end
 
     @impl true
-    def handle_list_resources(state) do
+    def handle_list_resources(_cursor, state) do
       resources = [
         %{
           uri: "test://resource",
@@ -60,7 +60,7 @@ defmodule ExMCP.Transport.BeamTest do
         }
       ]
 
-      {:ok, resources, state}
+      {:ok, resources, nil, state}
     end
 
     @impl true
@@ -120,13 +120,13 @@ defmodule ExMCP.Transport.BeamTest do
         )
 
       # List tools
-      {:ok, %{"tools" => tools}} = Client.list_tools(client)
+      {:ok, %{tools: tools}} = Client.list_tools(client)
       assert length(tools) == 1
-      assert hd(tools)["name"] == "echo"
+      assert hd(tools).name == "echo"
 
       # Call tool
       {:ok, result} = Client.call_tool(client, "echo", %{"message" => "Hello"})
-      assert result == %{"content" => [%{"type" => "text", "text" => "Echo: Hello"}]}
+      assert result == %{content: [%{type: "text", text: "Echo: Hello"}]}
 
       GenServer.stop(client)
       GenServer.stop(server)
@@ -320,7 +320,7 @@ defmodule ExMCP.Transport.BeamTest do
         )
 
       # Try to make a request, which should fail since we're not connected
-      assert {:error, :not_connected} = Client.list_tools(client, 1000)
+      assert {:error, :not_connected} = Client.list_tools(client, timeout: 1000)
 
       GenServer.stop(client)
     end

@@ -16,10 +16,23 @@ defmodule ExMCP.Server.Handler do
         use ExMCP.Server.Handler
         
         @impl true
-        def handle_initialize(_params, state) do
+        def handle_initialize(params, state) do
+          # Check client's protocol version
+          client_version = params["protocolVersion"]
+          
+          # Accept 2025-03-26 or propose 2024-11-05 as fallback
+          negotiated_version = case client_version do
+            "2025-03-26" -> "2025-03-26"
+            "2024-11-05" -> "2024-11-05"
+            _ -> "2025-03-26"  # Propose latest as default
+          end
+          
           {:ok, %{
-            name: "my-server",
-            version: "1.0.0",
+            protocolVersion: negotiated_version,
+            serverInfo: %{
+              name: "my-server",
+              version: "1.0.0"
+            },
             capabilities: %{
               tools: %{},
               resources: %{},
@@ -53,14 +66,23 @@ defmodule ExMCP.Server.Handler do
           progress_token = get_in(params, ["_meta", "progressToken"])
           
           # Your tool implementation
-          result = eval_expression(params["expression"])
-          
-          # Send progress updates if token provided
-          if progress_token do
-            ExMCP.Server.notify_progress(self(), progress_token, 100, 100)
+          case eval_expression(params["expression"]) do
+            {:ok, result} ->
+              # Send progress updates if token provided
+              if progress_token do
+                ExMCP.Server.notify_progress(self(), progress_token, 100, 100)
+              end
+              
+              {:ok, [%{type: "text", text: "Result: \#{result}"}], state}
+              
+            {:error, reason} ->
+              # Return tool execution error with isError flag
+              error_result = %{
+                content: [%{type: "text", text: "Calculation failed: \#{reason}"}],
+                isError: true
+              }
+              {:ok, error_result, state}
           end
-          
-          {:ok, [%{type: "text", text: "Result: \#{result}"}], state}
         end
       end
 
@@ -142,28 +164,76 @@ defmodule ExMCP.Server.Handler do
   @doc """
   Handles the initialize request from a client.
 
-  Should return server information and capabilities.
+  The params map contains:
+  - `"protocolVersion"` - The client's requested protocol version
+  - `"capabilities"` - The client's declared capabilities
+  - `"clientInfo"` - Information about the client implementation
+
+  ## Version Negotiation
+
+  The server should check the client's protocol version and either:
+  1. Accept it by returning the same version
+  2. Propose an alternative supported version
+  3. Return an error if no compatible version exists
+
+  ## Example
+
+      def handle_initialize(params, state) do
+        client_version = params["protocolVersion"]
+        
+        # Accept supported versions or propose latest
+        negotiated_version = case client_version do
+          "2025-03-26" -> "2025-03-26"
+          "2024-11-05" -> "2024-11-05"
+          _ -> "2025-03-26"  # Propose latest for unknown versions
+        end
+        
+        {:ok, %{
+          protocolVersion: negotiated_version,
+          serverInfo: %{name: "my-server", version: "1.0.0"},
+          capabilities: %{tools: %{}, resources: %{}}
+        }, state}
+      end
   """
   @callback handle_initialize(params :: map(), state()) ::
               {:ok, initialize_result(), state()} | {:error, any(), state()}
 
   @doc """
   Handles listing available tools.
+
+  Supports pagination via optional cursor parameter.
+  Should return tools and optional nextCursor for pagination.
   """
-  @callback handle_list_tools(state()) ::
-              {:ok, [tool()], state()} | {:error, any(), state()}
+  @callback handle_list_tools(cursor :: String.t() | nil, state()) ::
+              {:ok, tools :: [tool()], next_cursor :: String.t() | nil, state()}
+              | {:error, any(), state()}
 
   @doc """
   Handles a tool call.
+
+  The result can be returned in two formats:
+
+  1. Simple format (array of content items):
+      {:ok, [%{type: "text", text: "Success"}], state}
+      
+  2. Extended format (with isError flag):
+      {:ok, %{content: [%{type: "text", text: "Error occurred"}], isError: true}, state}
+      
+  Use the extended format with `isError: true` to indicate tool execution errors
+  that should be reported to the client as part of the result (not protocol errors).
   """
   @callback handle_call_tool(name :: String.t(), arguments :: map(), state()) ::
-              {:ok, ExMCP.Types.tool_result(), state()} | {:error, any(), state()}
+              {:ok, ExMCP.Types.tool_result() | list(map()), state()} | {:error, any(), state()}
 
   @doc """
   Handles listing available resources.
+
+  Supports pagination via optional cursor parameter.
+  Should return resources and optional nextCursor for pagination.
   """
-  @callback handle_list_resources(state()) ::
-              {:ok, [resource()], state()} | {:error, any(), state()}
+  @callback handle_list_resources(cursor :: String.t() | nil, state()) ::
+              {:ok, resources :: [resource()], next_cursor :: String.t() | nil, state()}
+              | {:error, any(), state()}
 
   @doc """
   Handles reading a resource.
@@ -173,9 +243,13 @@ defmodule ExMCP.Server.Handler do
 
   @doc """
   Handles listing available prompts.
+
+  Supports pagination via optional cursor parameter.
+  Should return prompts and optional nextCursor for pagination.
   """
-  @callback handle_list_prompts(state()) ::
-              {:ok, [prompt()], state()} | {:error, any(), state()}
+  @callback handle_list_prompts(cursor :: String.t() | nil, state()) ::
+              {:ok, prompts :: [prompt()], next_cursor :: String.t() | nil, state()}
+              | {:error, any(), state()}
 
   @doc """
   Handles getting a prompt.
@@ -215,9 +289,13 @@ defmodule ExMCP.Server.Handler do
 
   @doc """
   Handles listing resource templates.
+
+  Supports pagination via optional cursor parameter.
+  Should return resource templates and optional nextCursor for pagination.
   """
-  @callback handle_list_resource_templates(state()) ::
-              {:ok, [ExMCP.Types.resource_template()], state()} | {:error, any(), state()}
+  @callback handle_list_resource_templates(cursor :: String.t() | nil, state()) ::
+              {:ok, resource_templates :: [ExMCP.Types.resource_template()], next_cursor :: String.t() | nil, state()}
+              | {:error, any(), state()}
 
   @doc """
   Called when the handler process is started.
@@ -231,15 +309,16 @@ defmodule ExMCP.Server.Handler do
 
   # Optional callbacks with defaults
   @optional_callbacks [
-    handle_list_resources: 1,
+    handle_list_resources: 2,
     handle_read_resource: 2,
-    handle_list_prompts: 1,
+    handle_list_prompts: 2,
     handle_get_prompt: 3,
     handle_complete: 3,
     handle_create_message: 2,
     handle_list_roots: 1,
     handle_subscribe_resource: 2,
     handle_unsubscribe_resource: 2,
+    handle_list_resource_templates: 2,
     terminate: 2
   ]
 
@@ -251,7 +330,7 @@ defmodule ExMCP.Server.Handler do
       def init(_args), do: {:ok, %{}}
 
       @impl true
-      def handle_list_resources(state) do
+      def handle_list_resources(_cursor, state) do
         {:error, "Resources not implemented", state}
       end
 
@@ -261,7 +340,7 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl true
-      def handle_list_prompts(state) do
+      def handle_list_prompts(_cursor, state) do
         {:error, "Prompts not implemented", state}
       end
 
@@ -296,7 +375,7 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl true
-      def handle_list_resource_templates(state) do
+      def handle_list_resource_templates(_cursor, state) do
         {:error, "Resource templates not implemented", state}
       end
 
@@ -304,16 +383,16 @@ defmodule ExMCP.Server.Handler do
       def terminate(_reason, _state), do: :ok
 
       defoverridable init: 1,
-                     handle_list_resources: 1,
+                     handle_list_resources: 2,
                      handle_read_resource: 2,
-                     handle_list_prompts: 1,
+                     handle_list_prompts: 2,
                      handle_get_prompt: 3,
                      handle_complete: 3,
                      handle_create_message: 2,
                      handle_list_roots: 1,
                      handle_subscribe_resource: 2,
                      handle_unsubscribe_resource: 2,
-                     handle_list_resource_templates: 1,
+                     handle_list_resource_templates: 2,
                      terminate: 2
     end
   end

@@ -1,11 +1,11 @@
-defmodule ExMCP.Transport.SSETest do
+defmodule ExMCP.Transport.HTTPTest do
   use ExUnit.Case
 
-  alias ExMCP.Transport.SSE
+  alias ExMCP.Transport.HTTP
 
-  describe "SSE transport" do
+  describe "HTTP transport" do
     test "builds correct URLs" do
-      state = %SSE{
+      state = %HTTP{
         base_url: "http://localhost:3000",
         endpoint: "/mcp/v1"
       }
@@ -13,7 +13,7 @@ defmodule ExMCP.Transport.SSETest do
       # For now, we'll test the public interface instead
 
       # We can test the URLs indirectly through the connection process
-      assert %SSE{base_url: "http://localhost:3000"} = state
+      assert %HTTP{base_url: "http://localhost:3000"} = state
     end
 
     test "parses SSE events correctly" do
@@ -26,9 +26,9 @@ defmodule ExMCP.Transport.SSETest do
       # Test with invalid URL
       config = [url: "http://invalid.local:99999"]
 
-      # SSE transport starts asynchronously, so connection attempts return ok initially
+      # HTTP transport starts asynchronously, so connection attempts return ok initially
       # The actual connection failure happens asynchronously
-      assert {:ok, _state} = SSE.connect(config)
+      assert {:ok, _state} = HTTP.connect(config)
     end
   end
 end

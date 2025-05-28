@@ -57,12 +57,14 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a request to list available tools.
   """
-  @spec encode_list_tools() :: map()
-  def encode_list_tools do
+  @spec encode_list_tools(String.t() | nil) :: map()
+  def encode_list_tools(cursor \\ nil) do
+    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+
     %{
       "jsonrpc" => "2.0",
       "method" => "tools/list",
-      "params" => %{},
+      "params" => params,
       "id" => generate_id()
     }
   end
@@ -95,12 +97,14 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a request to list available resources.
   """
-  @spec encode_list_resources() :: map()
-  def encode_list_resources do
+  @spec encode_list_resources(String.t() | nil) :: map()
+  def encode_list_resources(cursor \\ nil) do
+    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+
     %{
       "jsonrpc" => "2.0",
       "method" => "resources/list",
-      "params" => %{},
+      "params" => params,
       "id" => generate_id()
     }
   end
@@ -123,12 +127,14 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a request to list available prompts.
   """
-  @spec encode_list_prompts() :: map()
-  def encode_list_prompts do
+  @spec encode_list_prompts(String.t() | nil) :: map()
+  def encode_list_prompts(cursor \\ nil) do
+    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+
     %{
       "jsonrpc" => "2.0",
       "method" => "prompts/list",
-      "params" => %{},
+      "params" => params,
       "id" => generate_id()
     }
   end
@@ -318,9 +324,42 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Encodes a cancelled notification.
+
+  Per MCP specification, the "initialize" request cannot be cancelled.
+  This function will validate the request ID and return an error for
+  invalid cancellation attempts.
+
+  ## Examples
+
+      # Valid cancellation
+      {:ok, notification} = Protocol.encode_cancelled("req_123", "User cancelled")
+
+      # Invalid - initialize cannot be cancelled  
+      {:error, :cannot_cancel_initialize} = Protocol.encode_cancelled("initialize", "reason")
+
   """
-  @spec encode_cancelled(ExMCP.Types.request_id(), String.t() | nil) :: map()
+  @spec encode_cancelled(ExMCP.Types.request_id(), String.t() | nil) :: 
+          {:ok, map()} | {:error, :cannot_cancel_initialize}
   def encode_cancelled(request_id, reason \\ nil) do
+    # Per MCP spec: The "initialize" request CANNOT be cancelled
+    if request_id == "initialize" do
+      {:error, :cannot_cancel_initialize}
+    else
+      params = %{"requestId" => request_id}
+      params = if reason, do: Map.put(params, "reason", reason), else: params
+      notification = encode_notification("notifications/cancelled", params)
+      {:ok, notification}
+    end
+  end
+
+  @doc """
+  Encodes a cancelled notification (legacy version).
+
+  This version maintains backward compatibility but does not validate
+  against cancelling the initialize request.
+  """
+  @spec encode_cancelled!(ExMCP.Types.request_id(), String.t() | nil) :: map()
+  def encode_cancelled!(request_id, reason \\ nil) do
     params = %{"requestId" => request_id}
     params = if reason, do: Map.put(params, "reason", reason), else: params
     encode_notification("notifications/cancelled", params)
@@ -350,12 +389,14 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a request to list resource templates.
   """
-  @spec encode_list_resource_templates() :: map()
-  def encode_list_resource_templates do
+  @spec encode_list_resource_templates(String.t() | nil) :: map()
+  def encode_list_resource_templates(cursor \\ nil) do
+    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    
     %{
       "jsonrpc" => "2.0",
       "method" => "resources/templates/list",
-      "params" => %{},
+      "params" => params,
       "id" => generate_id()
     }
   end
@@ -382,8 +423,8 @@ defmodule ExMCP.Protocol do
   ## Example
 
       batch = [
-        ExMCP.Protocol.encode_list_tools(1),
-        ExMCP.Protocol.encode_list_resources(2),
+        ExMCP.Protocol.encode_list_tools(),
+        ExMCP.Protocol.encode_list_resources(),
         ExMCP.Protocol.encode_notification("initialized", %{})
       ]
       

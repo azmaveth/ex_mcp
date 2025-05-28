@@ -116,7 +116,7 @@ defmodule ExMCP.Client do
 
   ## Options
 
-  - `:transport` - Transport type (:stdio, :sse, or module)
+  - `:transport` - Transport type (:stdio, :http, or module)
   - `:name` - GenServer name (optional)
   - `:client_info` - Client information map with :name and :version
   - `:handler` - Module implementing `ExMCP.Client.Handler` behaviour (optional)
@@ -148,10 +148,25 @@ defmodule ExMCP.Client do
 
   @doc """
   Lists available tools from the server.
+
+  ## Options
+  - `:cursor` - Optional cursor for pagination
+  - `:timeout` - Request timeout (default: 30 seconds)
+
+  ## Return value
+  Returns a tuple with:
+  - `:ok` tuple containing tools list and optional nextCursor
+  - `:error` tuple with error reason
+
+  ## Example
+      {:ok, %{tools: tools, nextCursor: cursor}} = Client.list_tools(client, cursor: "page2")
   """
-  @spec list_tools(GenServer.server(), timeout()) :: {:ok, [ExMCP.Types.tool()]} | {:error, any()}
-  def list_tools(client, timeout \\ @request_timeout) do
-    GenServer.call(client, :list_tools, timeout)
+  @spec list_tools(GenServer.server(), keyword()) ::
+          {:ok, %{tools: [ExMCP.Types.tool()], nextCursor: String.t() | nil}} | {:error, any()}
+  def list_tools(client, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, @request_timeout)
+    cursor = Keyword.get(opts, :cursor)
+    GenServer.call(client, {:list_tools, cursor}, timeout)
   end
 
   @doc """
@@ -176,11 +191,26 @@ defmodule ExMCP.Client do
 
   @doc """
   Lists available resources from the server.
+
+  ## Options
+  - `:cursor` - Optional cursor for pagination
+  - `:timeout` - Request timeout (default: 30 seconds)
+
+  ## Return value
+  Returns a tuple with:
+  - `:ok` tuple containing resources list and optional nextCursor
+  - `:error` tuple with error reason
+
+  ## Example
+      {:ok, %{resources: resources, nextCursor: cursor}} = Client.list_resources(client, cursor: "page2")
   """
-  @spec list_resources(GenServer.server(), timeout()) ::
-          {:ok, [ExMCP.Types.resource()]} | {:error, any()}
-  def list_resources(client, timeout \\ @request_timeout) do
-    GenServer.call(client, :list_resources, timeout)
+  @spec list_resources(GenServer.server(), keyword()) ::
+          {:ok, %{resources: [ExMCP.Types.resource()], nextCursor: String.t() | nil}}
+          | {:error, any()}
+  def list_resources(client, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, @request_timeout)
+    cursor = Keyword.get(opts, :cursor)
+    GenServer.call(client, {:list_resources, cursor}, timeout)
   end
 
   @doc """
@@ -194,11 +224,26 @@ defmodule ExMCP.Client do
 
   @doc """
   Lists available prompts from the server.
+
+  ## Options
+  - `:cursor` - Optional cursor for pagination
+  - `:timeout` - Request timeout (default: 30 seconds)
+
+  ## Return value
+  Returns a tuple with:
+  - `:ok` tuple containing prompts list and optional nextCursor
+  - `:error` tuple with error reason
+
+  ## Example
+      {:ok, %{prompts: prompts, nextCursor: cursor}} = Client.list_prompts(client, cursor: "page2")
   """
-  @spec list_prompts(GenServer.server(), timeout()) ::
-          {:ok, [ExMCP.Types.prompt()]} | {:error, any()}
-  def list_prompts(client, timeout \\ @request_timeout) do
-    GenServer.call(client, :list_prompts, timeout)
+  @spec list_prompts(GenServer.server(), keyword()) ::
+          {:ok, %{prompts: [ExMCP.Types.prompt()], nextCursor: String.t() | nil}}
+          | {:error, any()}
+  def list_prompts(client, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, @request_timeout)
+    cursor = Keyword.get(opts, :cursor)
+    GenServer.call(client, {:list_prompts, cursor}, timeout)
   end
 
   @doc """
@@ -267,10 +312,12 @@ defmodule ExMCP.Client do
   @doc """
   Lists available resource templates.
   """
-  @spec list_resource_templates(GenServer.server(), timeout()) ::
-          {:ok, %{resourceTemplates: [ExMCP.Types.resource_template()]}} | {:error, any()}
-  def list_resource_templates(client, timeout \\ @request_timeout) do
-    GenServer.call(client, :list_resource_templates, timeout)
+  @spec list_resource_templates(GenServer.server(), keyword()) ::
+          {:ok, %{resourceTemplates: [ExMCP.Types.resource_template()], nextCursor: String.t() | nil}} | {:error, any()}
+  def list_resource_templates(client, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, @request_timeout)
+    cursor = Keyword.get(opts, :cursor)
+    GenServer.call(client, {:list_resource_templates, cursor}, timeout)
   end
 
   @doc """
@@ -297,10 +344,44 @@ defmodule ExMCP.Client do
 
   @doc """
   Sends a cancellation notification for a request.
+
+  The request ID should be from a currently in-progress request.
+  Cancellation notifications can only be sent in the same direction
+  as the original request (e.g., if client made request, client can cancel).
+
+  ## Examples
+
+      # Cancel a specific request
+      :ok = ExMCP.Client.send_cancelled(client, "req_123", "User cancelled")
+
+      # Cancel without reason
+      :ok = ExMCP.Client.send_cancelled(client, "req_123")
+
   """
   @spec send_cancelled(GenServer.server(), ExMCP.Types.request_id(), String.t() | nil) :: :ok
   def send_cancelled(client, request_id, reason \\ nil) do
     GenServer.cast(client, {:send_cancelled, request_id, reason})
+  end
+
+  @doc """
+  Gets the list of currently pending request IDs.
+
+  This can be useful for debugging or implementing cancellation UIs.
+
+  ## Examples
+
+      pending_ids = ExMCP.Client.get_pending_requests(client)
+      # => ["req_123", "req_124"]
+
+      # Cancel all pending requests
+      Enum.each(pending_ids, fn id ->
+        ExMCP.Client.send_cancelled(client, id, "Shutdown")
+      end)
+
+  """
+  @spec get_pending_requests(GenServer.server()) :: [ExMCP.Types.request_id()]
+  def get_pending_requests(client) do
+    GenServer.call(client, :get_pending_requests)
   end
 
   @doc """
@@ -338,7 +419,7 @@ defmodule ExMCP.Client do
   - `{:get_prompt, [name, arguments]}`
   - `{:create_message, [messages, options]}`
   - `{:list_roots, []}`
-  - `{:list_resource_templates, []}`
+  - `{:list_resource_templates, [cursor]}`
   - `{:ping, []}`
   - `{:complete, [ref, argument]}`
   """
@@ -419,8 +500,8 @@ defmodule ExMCP.Client do
   end
 
   @impl true
-  def handle_call(:list_tools, from, state) do
-    send_request(Protocol.encode_list_tools(), from, state)
+  def handle_call({:list_tools, cursor}, from, state) do
+    send_request(Protocol.encode_list_tools(cursor), from, state)
   end
 
   def handle_call({:call_tool, name, arguments}, from, state) do
@@ -431,16 +512,16 @@ defmodule ExMCP.Client do
     send_request(Protocol.encode_call_tool(name, arguments, progress_token), from, state)
   end
 
-  def handle_call(:list_resources, from, state) do
-    send_request(Protocol.encode_list_resources(), from, state)
+  def handle_call({:list_resources, cursor}, from, state) do
+    send_request(Protocol.encode_list_resources(cursor), from, state)
   end
 
   def handle_call({:read_resource, uri}, from, state) do
     send_request(Protocol.encode_read_resource(uri), from, state)
   end
 
-  def handle_call(:list_prompts, from, state) do
-    send_request(Protocol.encode_list_prompts(), from, state)
+  def handle_call({:list_prompts, cursor}, from, state) do
+    send_request(Protocol.encode_list_prompts(cursor), from, state)
   end
 
   def handle_call({:get_prompt, name, arguments}, from, state) do
@@ -467,6 +548,11 @@ defmodule ExMCP.Client do
     end
   end
 
+  def handle_call(:get_pending_requests, _from, state) do
+    pending_ids = Map.keys(state.pending_requests)
+    {:reply, pending_ids, state}
+  end
+
   def handle_call(:list_roots, from, state) do
     send_request(Protocol.encode_list_roots(), from, state)
   end
@@ -479,8 +565,8 @@ defmodule ExMCP.Client do
     send_request(Protocol.encode_unsubscribe_resource(uri), from, state)
   end
 
-  def handle_call(:list_resource_templates, from, state) do
-    send_request(Protocol.encode_list_resource_templates(), from, state)
+  def handle_call({:list_resource_templates, cursor}, from, state) do
+    send_request(Protocol.encode_list_resource_templates(cursor), from, state)
   end
 
   def handle_call(:ping, from, state) do
@@ -523,7 +609,26 @@ defmodule ExMCP.Client do
 
   @impl true
   def handle_cast({:send_cancelled, request_id, reason}, state) do
-    send_notification(Protocol.encode_cancelled(request_id, reason), state)
+    case Protocol.encode_cancelled(request_id, reason) do
+      {:ok, notification} ->
+        # Send cancellation notification
+        send_notification(notification, state)
+        
+        # Remove the request from pending if it exists
+        case Map.pop(state.pending_requests, request_id) do
+          {nil, _pending} ->
+            # Request not found in pending - that's okay
+            {:noreply, state}
+          {from, new_pending} ->
+            # Request was pending, reply with cancellation error and remove it
+            GenServer.reply(from, {:error, :cancelled})
+            {:noreply, %{state | pending_requests: new_pending}}
+        end
+        
+      {:error, :cannot_cancel_initialize} ->
+        Logger.warning("Cannot cancel initialize request as per MCP specification")
+        {:noreply, state}
+    end
   end
 
   def handle_cast({:log_message, level, message, data}, state) do
@@ -705,7 +810,9 @@ defmodule ExMCP.Client do
         {:noreply, state}
 
       {from, pending} ->
-        GenServer.reply(from, {:ok, result})
+        # Atomize keys in result for consistent API
+        atomized_result = atomize_keys(result)
+        GenServer.reply(from, {:ok, atomized_result})
         {:noreply, %{state | pending_requests: pending}}
     end
   end
@@ -731,7 +838,9 @@ defmodule ExMCP.Client do
       Enum.reduce(parsed_responses, {%{}, state}, fn parsed, {results_acc, state_acc} ->
         case parsed do
           {:result, result, id} ->
-            {Map.put(results_acc, id, {:ok, result}), state_acc}
+            # Atomize keys in result for consistent API
+            atomized_result = atomize_keys(result)
+            {Map.put(results_acc, id, {:ok, atomized_result}), state_acc}
 
           {:error, error, id} ->
             {Map.put(results_acc, id, {:error, error}), state_acc}
@@ -813,6 +922,47 @@ defmodule ExMCP.Client do
         Logger.info("Roots list changed")
         {:noreply, state}
 
+      "notifications/cancelled" ->
+        case Map.get(params, "requestId") do
+          nil ->
+            # Malformed cancellation notification (missing requestId)
+            Logger.warning("Ignoring malformed cancellation notification: #{inspect(params)}")
+            {:noreply, state}
+            
+          request_id when is_binary(request_id) or is_integer(request_id) ->
+            # Convert to string for consistent handling
+            request_id_str = to_string(request_id)
+            reason = Map.get(params, "reason")
+            Logger.info("Request #{request_id_str} cancelled: #{reason || "no reason given"}")
+            
+            # Check if this is a valid in-progress request (try both formats)
+            cond do
+              Map.has_key?(state.pending_requests, request_id) ->
+                from = Map.get(state.pending_requests, request_id)
+                Logger.debug("Cancelling in-progress request #{request_id}")
+                new_pending = Map.delete(state.pending_requests, request_id)
+                GenServer.reply(from, {:error, :cancelled})
+                {:noreply, %{state | pending_requests: new_pending}}
+                
+              Map.has_key?(state.pending_requests, request_id_str) ->
+                from = Map.get(state.pending_requests, request_id_str)
+                Logger.debug("Cancelling in-progress request #{request_id_str}")
+                new_pending = Map.delete(state.pending_requests, request_id_str)
+                GenServer.reply(from, {:error, :cancelled})
+                {:noreply, %{state | pending_requests: new_pending}}
+                
+              true ->
+                # Request not found or already completed - ignore as per spec
+                Logger.debug("Ignoring cancellation for unknown request #{request_id_str}")
+                {:noreply, state}
+            end
+            
+          _ ->
+            # Invalid requestId type
+            Logger.warning("Ignoring cancellation with invalid requestId type: #{inspect(params)}")
+            {:noreply, state}
+        end
+
       _ ->
         Logger.debug("Received notification: #{method} #{inspect(params)}")
         {:noreply, state}
@@ -866,14 +1016,8 @@ defmodule ExMCP.Client do
     {request, request["id"]}
   end
 
-  defp encode_request_spec({:list_resource_templates, []}, _state) do
-    # list_resource_templates is not implemented in Protocol yet
-    request = %{
-      "jsonrpc" => "2.0",
-      "method" => "resources/templates/list",
-      "id" => Protocol.generate_id()
-    }
-
+  defp encode_request_spec({:list_resource_templates, [cursor]}, _state) do
+    request = Protocol.encode_list_resource_templates(cursor)
     {request, request["id"]}
   end
 
@@ -1024,4 +1168,22 @@ defmodule ExMCP.Client do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
+
+  # Helper to atomize keys in response maps
+  defp atomize_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_binary(k) -> {String.to_existing_atom(k), atomize_keys(v)}
+      {k, v} -> {k, atomize_keys(v)}
+    end)
+  rescue
+    ArgumentError ->
+      # If atom doesn't exist, keep string keys
+      Map.new(map, fn {k, v} -> {k, atomize_keys(v)} end)
+  end
+
+  defp atomize_keys(list) when is_list(list) do
+    Enum.map(list, &atomize_keys/1)
+  end
+
+  defp atomize_keys(value), do: value
 end

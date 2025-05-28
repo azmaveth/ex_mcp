@@ -1,16 +1,16 @@
-defmodule ExMCP.Transport.SSE do
+defmodule ExMCP.Transport.HTTP do
   @moduledoc """
   @mcp_spec
 
-  Server-Sent Events (SSE) transport for MCP.
+  Streamable HTTP transport for MCP.
 
-  This transport uses HTTP SSE for server-to-client messages
-  and HTTP POST for client-to-server messages. This is one of the two
+  This transport uses HTTP POST and GET requests with Server-Sent Events (SSE)
+  for streaming server-to-client messages. This is one of the two
   official MCP transports defined in the specification.
 
   ## Security Features
 
-  The SSE transport supports comprehensive security features:
+  The Streamable HTTP transport supports comprehensive security features:
 
   - **Authentication**: Bearer tokens, API keys, basic auth
   - **Origin Validation**: Prevent DNS rebinding attacks
@@ -21,7 +21,7 @@ defmodule ExMCP.Transport.SSE do
   ## Example with Security
 
       {:ok, client} = ExMCP.Client.start_link(
-        transport: :sse,
+        transport: :http,
         url: "https://api.example.com",
         security: %{
           auth: {:bearer, "your-token"},
@@ -35,7 +35,7 @@ defmodule ExMCP.Transport.SSE do
       )
 
   > #### Security Warning {: .warning}
-  > When implementing SSE servers, always validate Origin headers,
+  > When implementing Streamable HTTP servers, always validate Origin headers,
   > bind to localhost only, and implement proper authentication.
   """
 

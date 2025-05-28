@@ -3,9 +3,9 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
 
   alias ExMCP.Test.HTTPServer
   alias ExMCP.Transport.Beam, as: BEAM
-  alias ExMCP.Transport.{SSE, WebSocket}
+  alias ExMCP.Transport.{HTTP, WebSocket}
 
-  describe "SSE transport security" do
+  describe "HTTP transport security" do
     setup do
       # Start test HTTP server
       {:ok, server} = HTTPServer.start_link()
@@ -31,7 +31,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       ]
 
       # Connect to the test server
-      assert {:ok, state} = SSE.connect(config)
+      assert {:ok, state} = HTTP.connect(config)
 
       # Wait a bit for the connection to establish
       Process.sleep(100)
@@ -44,7 +44,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         "id" => 1
       }
 
-      result = SSE.send_message(test_message, state)
+      result = HTTP.send_message(test_message, state)
       assert result == :ok
 
       # Give the request time to complete
@@ -57,7 +57,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       assert request.headers["x-custom"] == "value"
 
       # Clean up
-      :ok = SSE.close(state)
+      :ok = HTTP.close(state)
     end
 
     test "validates security configuration" do
@@ -68,7 +68,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: invalid_security
       ]
 
-      assert {:error, :invalid_auth_config} = SSE.connect(config)
+      assert {:error, :invalid_auth_config} = HTTP.connect(config)
     end
 
     test "extracts origin from URL", %{url: base_url} do
@@ -79,7 +79,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: %{}
       ]
 
-      assert {:ok, state} = SSE.connect(config)
+      assert {:ok, state} = HTTP.connect(config)
 
       # The origin should be extracted without the path
       # Parse to get just the origin
@@ -88,7 +88,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       assert state.origin == expected_origin
 
       # Clean up
-      :ok = SSE.close(state)
+      :ok = HTTP.close(state)
     end
 
     test "includes standard security headers when configured", %{url: url} do
@@ -103,16 +103,16 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: security
       ]
 
-      assert {:ok, state} = SSE.connect(config)
+      assert {:ok, state} = HTTP.connect(config)
 
       # Verify the security config is stored
       assert state.security.include_security_headers == true
 
-      # TODO: Verify actual security headers are sent when SSE connects
-      # This would require checking the SSE connection headers
+      # TODO: Verify actual security headers are sent when HTTP connects
+      # This would require checking the HTTP connection headers
 
       # Clean up
-      :ok = SSE.close(state)
+      :ok = HTTP.close(state)
     end
   end
 
@@ -264,7 +264,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
           security: invalid_config
         ]
 
-        assert {:error, _} = SSE.connect(config)
+        assert {:error, _} = HTTP.connect(config)
         assert {:error, _} = WebSocket.connect(config)
       end
     end
@@ -296,7 +296,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         ]
 
         # These will fail to connect but security validation should pass
-        assert {:error, _} = SSE.connect(sse_config)
+        assert {:error, _} = HTTP.connect(sse_config)
         assert {:error, _} = WebSocket.connect(ws_config)
         assert {:error, :server_not_found} = BEAM.connect(beam_config)
       end
@@ -314,7 +314,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
 
       # Test with each transport type
       transport_configs = [
-        {SSE, [url: "https://sse.example.com", security: security]},
+        {HTTP, [url: "https://sse.example.com", security: security]},
         {WebSocket, [url: "wss://ws.example.com", security: security]},
         {BEAM, [server: :test_server, security: security]}
       ]
@@ -357,7 +357,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       ]
 
       # These will fail to connect but TLS configuration should be applied
-      assert {:error, _} = SSE.connect(https_config)
+      assert {:error, _} = HTTP.connect(https_config)
       assert {:error, _} = WebSocket.connect(wss_config)
     end
 
@@ -376,7 +376,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       ]
 
       # Should use default TLS settings
-      assert {:error, _} = SSE.connect(https_config)
+      assert {:error, _} = HTTP.connect(https_config)
       assert {:error, _} = WebSocket.connect(wss_config)
     end
   end

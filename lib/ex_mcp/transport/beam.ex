@@ -306,7 +306,7 @@ defmodule ExMCP.Transport.Beam do
     security = Keyword.get(opts, :security)
     format = Keyword.get(opts, :format, :json)
 
-    unless format in [:json, :native] do
+    if format not in [:json, :native] do
       raise ArgumentError, "format must be :json or :native, got: #{inspect(format)}"
     end
 
@@ -389,7 +389,7 @@ defmodule ExMCP.Transport.Beam do
     security = Keyword.get(opts, :security)
     format = Keyword.get(opts, :format, :json)
 
-    unless format in [:json, :native] do
+    if format not in [:json, :native] do
       raise ArgumentError, "format must be :json or :native, got: #{inspect(format)}"
     end
 

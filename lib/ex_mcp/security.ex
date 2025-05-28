@@ -29,9 +29,24 @@ defmodule ExMCP.Security do
         }
       )
 
+      # OAuth 2.1 authentication
+      {:ok, token_response} = ExMCP.Authorization.client_credentials_flow(%{
+        client_id: "my-client",
+        client_secret: "my-secret",
+        token_endpoint: "https://auth.example.com/token"
+      })
+      
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :http,
+        url: "https://api.example.com",
+        security: %{
+          auth: {:oauth2, token_response}
+        }
+      )
+
       # Custom headers
       {:ok, client} = ExMCP.Client.start_link(
-        transport: :sse,
+        transport: :http,
         url: "https://api.example.com",
         security: %{
           headers: [
@@ -43,9 +58,10 @@ defmodule ExMCP.Security do
 
   ## Security Features by Transport
 
-  | Feature | SSE | WebSocket | BEAM | stdio |
-  |---------|-----|-----------|------|-------|
+  | Feature | HTTP | WebSocket | BEAM | stdio |
+  |---------|------|-----------|------|-------|
   | Bearer Auth | ✓ | ✓ | ✓ | - |
+  | OAuth 2.1 | ✓ | ✓ | ✓ | - |
   | API Key | ✓ | ✓ | ✓ | - |
   | Custom Headers | ✓ | ✓ | - | - |
   | Origin Validation | ✓ | ✓ | - | - |
@@ -61,6 +77,7 @@ defmodule ExMCP.Security do
           | {:api_key, key :: String.t(), opts :: keyword()}
           | {:basic, username :: String.t(), password :: String.t()}
           | {:custom, headers :: [{String.t(), String.t()}]}
+          | {:oauth2, ExMCP.Authorization.token_response()}
 
   @type security_config :: %{
           optional(:auth) => auth_method(),
@@ -116,6 +133,9 @@ defmodule ExMCP.Security do
 
       {:custom, headers} ->
         headers
+
+      {:oauth2, %{access_token: token, token_type: token_type}} ->
+        [{"Authorization", "#{token_type} #{token}"}]
 
       _ ->
         []
@@ -252,6 +272,7 @@ defmodule ExMCP.Security do
   defp validate_auth({:basic, user, pass}) when is_binary(user) and is_binary(pass), do: :ok
   defp validate_auth({:custom, headers}) when is_list(headers), do: :ok
   defp validate_auth({:node_cookie, cookie}) when is_atom(cookie), do: :ok
+  defp validate_auth({:oauth2, %{access_token: token}}) when is_binary(token), do: :ok
   defp validate_auth(_), do: {:error, :invalid_auth_config}
 
   defp validate_cors(nil), do: :ok

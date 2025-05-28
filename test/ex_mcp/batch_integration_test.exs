@@ -17,8 +17,8 @@ defmodule ExMCP.BatchIntegrationTest do
     end
 
     @impl true
-    def handle_list_tools(state) do
-      {:ok, [%{name: "test_tool", description: "A test tool"}], state}
+    def handle_list_tools(_cursor, state) do
+      {:ok, [%{name: "test_tool", description: "A test tool"}], nil, state}
     end
 
     @impl true
@@ -27,8 +27,8 @@ defmodule ExMCP.BatchIntegrationTest do
     end
 
     @impl true
-    def handle_list_resources(state) do
-      {:ok, [%{uri: "test://resource", name: "Test Resource"}], state}
+    def handle_list_resources(_cursor, state) do
+      {:ok, [%{uri: "test://resource", name: "Test Resource"}], nil, state}
     end
 
     @impl true
@@ -37,8 +37,8 @@ defmodule ExMCP.BatchIntegrationTest do
     end
 
     @impl true
-    def handle_list_prompts(state) do
-      {:ok, %{prompts: []}, state}
+    def handle_list_prompts(_cursor, state) do
+      {:ok, %{prompts: []}, nil, state}
     end
 
     @impl true
@@ -62,8 +62,8 @@ defmodule ExMCP.BatchIntegrationTest do
     end
 
     @impl true
-    def handle_list_resource_templates(state) do
-      {:ok, %{resourceTemplates: []}, state}
+    def handle_list_resource_templates(_cursor, state) do
+      {:ok, [], nil, state}
     end
 
     @impl true
@@ -119,15 +119,15 @@ defmodule ExMCP.BatchIntegrationTest do
       assert length(results) == 4
       assert [tools_result, call_result, resources_result, read_result] = results
 
-      assert {:ok, %{"tools" => [%{"name" => "test_tool", "description" => "A test tool"}]}} =
+      assert {:ok, %{tools: [%{name: "test_tool", description: "A test tool"}]}} =
                tools_result
 
-      assert {:ok, %{"content" => %{"result" => "Called test_tool"}}} = call_result
+      assert {:ok, %{content: %{result: "Called test_tool"}}} = call_result
 
-      assert {:ok, %{"resources" => [%{"uri" => "test://resource", "name" => "Test Resource"}]}} =
+      assert {:ok, %{resources: [%{uri: "test://resource", name: "Test Resource"}]}} =
                resources_result
 
-      assert {:ok, %{"contents" => [%{"contents" => %{"text" => "Contents of test://resource"}}]}} =
+      assert {:ok, %{contents: [%{contents: %{text: "Contents of test://resource"}}]}} =
                read_result
 
       # Clean up
@@ -171,9 +171,9 @@ defmodule ExMCP.BatchIntegrationTest do
       assert length(results) == 3
       assert [tools_result, prompt_result, resources_result] = results
 
-      assert {:ok, %{"tools" => _}} = tools_result
+      assert {:ok, %{tools: _}} = tools_result
       assert {:error, %{"code" => -32603, "message" => "Prompt not found"}} = prompt_result
-      assert {:ok, %{"resources" => _}} = resources_result
+      assert {:ok, %{resources: _}} = resources_result
 
       # Clean up
       :ok = GenServer.stop(client)

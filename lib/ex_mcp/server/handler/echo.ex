@@ -16,7 +16,7 @@ defmodule ExMCP.Server.Handler.Echo do
   end
 
   @impl true
-  def handle_list_tools(state) do
+  def handle_list_tools(_cursor, state) do
     tools = [
       %{
         "name" => "echo",
@@ -31,7 +31,7 @@ defmodule ExMCP.Server.Handler.Echo do
       }
     ]
 
-    {:ok, tools, state}
+    {:ok, tools, nil, state}
   end
 
   @impl true
@@ -52,8 +52,8 @@ defmodule ExMCP.Server.Handler.Echo do
   end
 
   @impl true
-  def handle_list_resources(state) do
-    {:ok, [], state}
+  def handle_list_resources(_cursor, state) do
+    {:ok, [], nil, state}
   end
 
   @impl true
@@ -62,8 +62,8 @@ defmodule ExMCP.Server.Handler.Echo do
   end
 
   @impl true
-  def handle_list_prompts(state) do
-    {:ok, [], state}
+  def handle_list_prompts(_cursor, state) do
+    {:ok, [], nil, state}
   end
 
   @impl true
@@ -72,8 +72,8 @@ defmodule ExMCP.Server.Handler.Echo do
   end
 
   @impl true
-  def handle_list_resource_templates(state) do
-    {:ok, [], state}
+  def handle_list_resource_templates(_cursor, state) do
+    {:ok, [], nil, state}
   end
 
   @impl true
