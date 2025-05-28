@@ -103,6 +103,7 @@ defmodule ExMCP.Client do
   require Logger
 
   alias ExMCP.{Protocol, Transport}
+  alias ExMCP.Authorization.{ErrorHandler, TokenManager}
 
   @reconnect_interval 5_000
   @request_timeout 30_000
@@ -556,7 +557,7 @@ defmodule ExMCP.Client do
 
     # Initialize authorization if configured
     {auth_config, token_manager} = init_authorization(opts)
-    
+
     state = %__MODULE__{
       transport_mod: transport_mod,
       transport_opts: opts,
@@ -1349,49 +1350,50 @@ defmodule ExMCP.Client do
     case Keyword.get(opts, :auth_config) do
       nil ->
         {nil, nil}
-        
+
       auth_config ->
         # Start token manager
-        {:ok, token_manager} = ExMCP.Authorization.TokenManager.start_link(
-          auth_config: auth_config,
-          initial_token: auth_config[:initial_token]
-        )
-        
+        {:ok, token_manager} =
+          TokenManager.start_link(
+            auth_config: auth_config,
+            initial_token: auth_config[:initial_token]
+          )
+
         {auth_config, token_manager}
     end
   end
-  
+
   defp send_with_auth(json, state) do
     # Check if we have authorization configured
     if state.token_manager && state.transport_mod == ExMCP.Transport.HTTP do
       # Get current token
-      case ExMCP.Authorization.TokenManager.get_token(state.token_manager) do
+      case TokenManager.get_token(state.token_manager) do
         {:ok, token} ->
           # Add authorization header to transport state
           enhanced_transport_state = add_auth_to_transport(state.transport_state, token)
-          
+
           # Send with enhanced transport state
           case state.transport_mod.send_message(json, enhanced_transport_state) do
             {:ok, new_transport_state} ->
               # Extract the base transport state without auth header for storage
               {:ok, restore_transport_state(new_transport_state)}
-              
+
             {:error, {:http_error, 401, body}} ->
               # Token might be expired, try refreshing
               handle_auth_error_with_retry({:error, {:http_error, 401, body}}, json, state)
-              
+
             {:error, {:http_error, 403, body}} ->
               # Forbidden - check if we need different permissions
               handle_auth_error_with_retry({:error, {:http_error, 403, body}}, json, state)
-              
+
             error ->
               error
           end
-          
+
         {:error, :no_token} ->
           # No token available, proceed without auth
           state.transport_mod.send_message(json, state.transport_state)
-          
+
         {:error, reason} ->
           {:error, {:auth_error, reason}}
       end
@@ -1400,52 +1402,57 @@ defmodule ExMCP.Client do
       state.transport_mod.send_message(json, state.transport_state)
     end
   end
-  
+
   defp add_auth_to_transport(%ExMCP.Transport.HTTP{headers: headers} = transport_state, token) do
     # Add or update Authorization header
     auth_header = {"Authorization", "Bearer #{token}"}
     updated_headers = update_header(headers, "Authorization", auth_header)
     %{transport_state | headers: updated_headers}
   end
-  
+
   defp restore_transport_state(%ExMCP.Transport.HTTP{headers: headers} = transport_state) do
     # Remove Authorization header to avoid storing it in state
-    filtered_headers = Enum.reject(headers, fn {name, _} -> 
-      String.downcase(name) == "authorization"
-    end)
+    filtered_headers =
+      Enum.reject(headers, fn {name, _} ->
+        String.downcase(name) == "authorization"
+      end)
+
     %{transport_state | headers: filtered_headers}
   end
-  
+
   defp update_header(headers, header_name, new_header) do
     # Remove existing header (case-insensitive) and add new one
-    filtered = Enum.reject(headers, fn {name, _} -> 
-      String.downcase(name) == String.downcase(header_name)
-    end)
+    filtered =
+      Enum.reject(headers, fn {name, _} ->
+        String.downcase(name) == String.downcase(header_name)
+      end)
+
     [new_header | filtered]
   end
-  
+
   defp handle_auth_error_with_retry({:error, {:http_error, status, body}}, json, state) do
     # Use the error handler to determine what to do
-    case ExMCP.Authorization.ErrorHandler.handle_auth_error(
-      status, 
-      [], # We don't have response headers here
-      body,
-      %{token_manager: state.token_manager}
-    ) do
+    case ErrorHandler.handle_auth_error(
+           status,
+           # We don't have response headers here
+           [],
+           body,
+           %{token_manager: state.token_manager}
+         ) do
       {:retry, %{action: :refresh_token}} ->
         # Try to refresh token
-        case ExMCP.Authorization.TokenManager.refresh_now(state.token_manager) do
+        case TokenManager.refresh_now(state.token_manager) do
           {:ok, _new_token} ->
             # Retry the request with new token
             send_with_auth(json, state)
-            
+
           error ->
             error
         end
-        
+
       {:error, reason} ->
         {:error, {:auth_error, reason}}
-        
+
       _ ->
         {:error, {:http_error, status, body}}
     end

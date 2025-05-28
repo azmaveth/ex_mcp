@@ -54,6 +54,7 @@ defmodule ExMCP.Transport.HTTP do
   @behaviour ExMCP.Transport
 
   alias ExMCP.Security
+  alias ExMCP.Transport.SSEClient
 
   defstruct [
     :base_url,
@@ -205,7 +206,7 @@ defmodule ExMCP.Transport.HTTP do
       parent: self()
     ]
 
-    case ExMCP.Transport.SSEClient.start_link(opts) do
+    case SSEClient.start_link(opts) do
       {:ok, sse_pid} ->
         # Wait for connection confirmation
         receive do

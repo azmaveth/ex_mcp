@@ -15,6 +15,10 @@
 - [`ExMCP.Authorization.TokenManager`](#exmcpauthorizationtokenmanager) - OAuth token management
 - [`ExMCP.Authorization.ErrorHandler`](#exmcpauthorizationerrorhandler) - Authorization error handling
 - [`ExMCP.Authorization.Interceptor`](#exmcpauthorizationinterceptor) - Request authorization middleware
+- [`ExMCP.SecureServer`](#exmcpsecureserver) - Security-enhanced MCP server
+- [`ExMCP.Security.TokenValidator`](#exmcpsecuritytokenvalidator) - Token validation and audience checking
+- [`ExMCP.Security.ConsentManager`](#exmcpsecurityconsentmanager) - Dynamic client consent management
+- [`ExMCP.Security.ClientRegistry`](#exmcpsecurityclientregistry) - Client accountability and audit trails
 - [`ExMCP.ServerManager`](#exmcpservermanager) - Multiple server management
 - [`ExMCP.Discovery`](#exmcpdiscovery) - Server discovery utilities
 - [`ExMCP.Types`](#exmcptypes) - Type definitions
@@ -1267,6 +1271,140 @@ auth_request_fn = Interceptor.wrap_request_fn(
 
 ---
 
+## ExMCP.SecureServer
+
+Security-enhanced MCP server with built-in security best practices.
+
+### Usage
+
+```elixir
+{:ok, server} = ExMCP.SecureServer.start_link(
+  handler: MyHandler,
+  transport: :stdio,
+  server_id: "my-secure-server",
+  security: %{
+    require_auth: true,
+    trusted_issuers: ["https://auth.example.com"],
+    introspection_endpoint: "https://auth.example.com/introspect",
+    approval_handler: MyApprovalHandler
+  }
+)
+```
+
+### Security Features
+
+- **Token Validation**: Validates all tokens were issued for this specific server
+- **Client Registration**: Tracks all clients with audit trails
+- **Consent Management**: Requires user consent for dynamic clients
+- **Trust Boundaries**: Enforces token audience separation
+
+---
+
+## ExMCP.Security.TokenValidator
+
+Implements strict token validation per MCP security requirements.
+
+### Functions
+
+#### `validate_token_for_server/2`
+Validates a token was explicitly issued for this MCP server.
+
+```elixir
+@spec validate_token_for_server(String.t(), keyword()) :: 
+  {:ok, map()} | {:error, atom()}
+
+{:ok, token_info} = TokenValidator.validate_token_for_server(
+  token,
+  server_id: "my-server",
+  trusted_issuers: ["https://auth.example.com"],
+  required_scopes: ["mcp:read"]
+)
+```
+
+#### `validate_dynamic_client_consent/2`
+Ensures user consent for dynamic client registration.
+
+```elixir
+{:ok, :approved} = TokenValidator.validate_dynamic_client_consent(
+  client_metadata,
+  approval_handler
+)
+```
+
+---
+
+## ExMCP.Security.ConsentManager
+
+Manages user consent for dynamic client registrations.
+
+### Functions
+
+#### `request_consent/2`
+Requests user consent for a dynamic client.
+
+```elixir
+@spec request_consent(map(), String.t()) :: 
+  {:ok, consent_record()} | {:error, atom()}
+
+{:ok, consent} = ConsentManager.request_consent(
+  %{
+    client_id: "dynamic-client",
+    client_name: "Third Party App",
+    scope: ["mcp:read", "mcp:write"]
+  },
+  "user-123"
+)
+```
+
+#### `check_consent/3`
+Verifies valid consent exists.
+
+```elixir
+{:ok, :valid} = ConsentManager.check_consent(
+  "client-id",
+  "user-id", 
+  ["mcp:read"]
+)
+```
+
+---
+
+## ExMCP.Security.ClientRegistry
+
+Maintains client accountability and audit trails.
+
+### Functions
+
+#### `register_client/2`
+Registers a client with the MCP server.
+
+```elixir
+@spec register_client(map(), :static | :dynamic) :: 
+  {:ok, client_info()} | {:error, atom()}
+
+{:ok, client} = ClientRegistry.register_client(
+  %{
+    client_id: "my-client",
+    name: "My Application",
+    version: "1.0.0"
+  },
+  :static
+)
+```
+
+#### `record_request/3`
+Records client requests for audit trail.
+
+```elixir
+ClientRegistry.record_request(
+  "client-id",
+  "tools/call",
+  "request-123"
+)
+```
+
+---
+
 ## Examples
 
 See the [examples](examples/) directory for complete working examples:
@@ -1277,6 +1415,7 @@ See the [examples](examples/) directory for complete working examples:
 - `bidirectional_communication.exs` - Server-to-client requests
 - `human_in_the_loop.exs` - Approval flows for sensitive operations
 - `oauth_authorization_example.exs` - OAuth 2.1 authorization example
+- `secure_server_example.exs` - Security best practices implementation
 - `beam_transport/` - BEAM transport examples
 - `roots_example.exs` - Roots capability example
 - `resource_subscription_example.exs` - Subscription example

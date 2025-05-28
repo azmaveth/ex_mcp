@@ -242,30 +242,30 @@ defmodule ExMCP.Authorization do
       end
     end
   end
-  
+
   @doc """
   Makes a token request to the authorization server.
-  
+
   Used internally by TokenManager for refresh operations.
   """
   @spec token_request(map()) :: {:ok, map()} | {:error, any()}
   def token_request(config) do
     endpoint = config[:token_endpoint] || raise "Missing token_endpoint"
-    
+
     # Build request body based on grant type
     body = build_refresh_token_request_body(config)
-    
+
     # Make the request
     make_token_request(endpoint, body)
   end
 
   # Private functions
-  
+
   defp build_refresh_token_request_body(config) do
     base_params = %{
       "client_id" => config[:client_id]
     }
-    
+
     # Add grant-specific parameters
     cond do
       config[:refresh_token] ->
@@ -273,7 +273,7 @@ defmodule ExMCP.Authorization do
           "grant_type" => "refresh_token",
           "refresh_token" => config[:refresh_token]
         })
-        
+
       config[:code] ->
         Map.merge(base_params, %{
           "grant_type" => "authorization_code",
@@ -281,14 +281,14 @@ defmodule ExMCP.Authorization do
           "redirect_uri" => config[:redirect_uri],
           "code_verifier" => config[:code_verifier]
         })
-        
+
       config[:client_secret] && !config[:refresh_token] ->
         Map.merge(base_params, %{
           "grant_type" => "client_credentials",
           "client_secret" => config[:client_secret],
           "scope" => config[:scope] || ""
         })
-        
+
       true ->
         raise "Invalid token request configuration"
     end
