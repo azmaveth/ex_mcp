@@ -788,11 +788,18 @@ defmodule ExMCP.Client do
         {:transport_message, message} ->
           case Protocol.parse_message(message) do
             {:result, result, _id} ->
-              # Send initialized notification
-              notif = Protocol.encode_initialized()
-              {:ok, json} = Protocol.encode_to_string(notif)
-              state.transport_mod.send_message(json, transport_state)
-              {:ok, result}
+              # Validate protocol version
+              server_version = result["protocolVersion"]
+
+              if validate_protocol_version(server_version) do
+                # Send initialized notification
+                notif = Protocol.encode_initialized()
+                {:ok, json} = Protocol.encode_to_string(notif)
+                state.transport_mod.send_message(json, transport_state)
+                {:ok, result}
+              else
+                {:error, {:incompatible_version, server_version}}
+              end
 
             {:error, error, _id} ->
               {:error, error}
@@ -1121,11 +1128,48 @@ defmodule ExMCP.Client do
 
   defp build_client_capabilities(nil), do: %{}
 
-  defp build_client_capabilities(_handler) do
-    %{
-      "roots" => %{},
-      "sampling" => %{}
-    }
+  defp build_client_capabilities(handler) do
+    base = %{}
+
+    # Add roots capability if handler implements list_roots
+    base =
+      if function_exported?(handler, :handle_list_roots, 1) do
+        Map.put(base, "roots", %{})
+      else
+        base
+      end
+
+    # Add sampling capability if handler implements create_message
+    base =
+      if function_exported?(handler, :handle_create_message, 2) do
+        Map.put(base, "sampling", %{})
+      else
+        base
+      end
+
+    # Always include experimental capabilities for future extensions
+    Map.put(base, "experimental", %{})
+  end
+
+  defp validate_protocol_version(server_version) do
+    # Currently we support these protocol versions
+    supported_versions = ["2025-03-26", "2024-11-05"]
+
+    cond do
+      server_version in supported_versions ->
+        true
+
+      is_nil(server_version) or server_version == "" ->
+        Logger.warning("Server returned empty protocol version")
+        # Accept for backwards compatibility
+        true
+
+      true ->
+        Logger.warning("Server returned unsupported protocol version: #{server_version}")
+        # For now, we'll be lenient and accept unknown versions
+        # In production, you might want to be more strict
+        true
+    end
   end
 
   defp handle_server_request(method, params, id, state) do

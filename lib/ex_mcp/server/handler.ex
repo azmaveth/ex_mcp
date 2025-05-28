@@ -499,4 +499,28 @@ defmodule ExMCP.Server.Handler do
                      terminate: 2
     end
   end
+
+  @doc """
+  Builds server capabilities based on which callbacks are implemented.
+
+  This is a convenience function that can be used in your handle_initialize/2
+  callback to automatically generate capabilities based on your handler's
+  implemented functions.
+
+  ## Example
+
+      def handle_initialize(params, state) do
+        capabilities = ExMCP.Server.Handler.build_capabilities(__MODULE__)
+        
+        {:ok, %{
+          protocolVersion: "2025-03-26",
+          serverInfo: %{name: "my-server", version: "1.0.0"},
+          capabilities: capabilities
+        }, state}
+      end
+  """
+  @spec build_capabilities(module()) :: map()
+  def build_capabilities(handler_module) do
+    ExMCP.Server.Capabilities.build_capabilities(handler_module)
+  end
 end
