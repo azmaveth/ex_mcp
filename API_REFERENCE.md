@@ -84,9 +84,9 @@ Starts a new MCP client process.
   cd: "/path/to/dir"
 )
 
-# SSE transport
+# Streamable HTTP transport (with SSE)
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :sse,
+  transport: :http,
   url: "http://localhost:8080/mcp",
   headers: [{"Authorization", "Bearer token"}]
 )
@@ -303,6 +303,37 @@ requests = [
 # - {:complete, [ref, argument]}
 ```
 
+#### `send_cancelled/3`
+Sends a cancellation notification for an in-flight request.
+
+```elixir
+@spec send_cancelled(GenServer.server(), request_id(), String.t() | nil) :: :ok
+
+# Example - Cancel with reason
+:ok = ExMCP.Client.send_cancelled(client, "req_123", "User cancelled")
+
+# Example - Cancel without reason
+:ok = ExMCP.Client.send_cancelled(client, "req_123")
+
+# Note: Per MCP spec, initialize requests cannot be cancelled
+```
+
+#### `get_pending_requests/1`
+Returns a list of currently pending request IDs.
+
+```elixir
+@spec get_pending_requests(GenServer.server()) :: [request_id()]
+
+# Example
+pending_ids = ExMCP.Client.get_pending_requests(client)
+# => ["req_123", "req_124"]
+
+# Cancel all pending requests during shutdown
+for id <- pending_ids do
+  ExMCP.Client.send_cancelled(client, id, "Shutdown")
+end
+```
+
 #### `stop/1`
 Stops the client gracefully.
 
@@ -312,6 +343,26 @@ Stops the client gracefully.
 # Example
 :ok = ExMCP.Client.stop(client)
 ```
+
+### Cancellation Support
+
+ExMCP implements the MCP cancellation protocol, allowing either party to cancel in-flight requests:
+
+**Client-side cancellation:**
+- Use `send_cancelled/3` to cancel a pending request
+- The client will receive `{:error, :cancelled}` for cancelled requests
+- Track pending requests with `get_pending_requests/1`
+
+**Server-side cancellation:**
+- Servers automatically handle incoming cancellation notifications
+- Cancelled requests are removed from processing
+- No response is sent for cancelled requests (as per MCP spec)
+
+**Behavior notes:**
+- The `initialize` request cannot be cancelled (per MCP spec)
+- Unknown or completed requests are ignored when cancelled
+- Cancellation notifications may arrive after processing completes due to network latency
+- Both parties handle race conditions gracefully
 
 ---
 
@@ -392,17 +443,20 @@ Notifies clients that the roots list has changed.
 ExMCP.Server.notify_roots_changed(server)
 ```
 
-#### `notify_progress/3` and `notify_progress/4`
+#### `notify_progress/4` and `notify_progress/5`
 Sends progress notifications for long-running operations.
 
 ```elixir
-@spec notify_progress(GenServer.server(), String.t(), number(), number() | nil) :: :ok
+@spec notify_progress(GenServer.server(), String.t(), number(), number() | nil, String.t() | nil) :: :ok
 
 # Example with percentage
 ExMCP.Server.notify_progress(server, "task-123", 50, 100)
 
-# Example without total
-ExMCP.Server.notify_progress(server, "task-123", 1024)
+# Example with message
+ExMCP.Server.notify_progress(server, "task-123", 50, 100, "Processing batch 1 of 2")
+
+# Example without total but with message
+ExMCP.Server.notify_progress(server, "task-123", 1024, nil, "Processed 1024 records")
 ```
 
 #### `ping/2`
@@ -968,9 +1022,9 @@ Custom MCP errors use codes in the `-32000` to `-32099` range.
 - `:env` - Environment variables (default: [])
 - `:cd` - Working directory
 
-### SSE Transport
+### Streamable HTTP Transport
 
-- `:url` (required) - SSE endpoint URL
+- `:url` (required) - HTTP endpoint URL for Streamable HTTP with SSE
 - `:headers` - HTTP headers (default: [])
 - `:timeout` - Connection timeout in ms (default: 5000)
 

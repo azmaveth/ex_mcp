@@ -52,6 +52,35 @@ defmodule ExMCP.ProtocolProgressTest do
       assert notification["params"]["progress"] == 33.33
       assert notification["params"]["total"] == 100.0
     end
+
+    test "encodes progress notification with message" do
+      token = "operation-001"
+      progress = 25
+      total = 100
+      message = "Processing batch 1 of 4"
+
+      notification = Protocol.encode_progress(token, progress, total, message)
+
+      assert notification["jsonrpc"] == "2.0"
+      assert notification["method"] == "notifications/progress"
+      assert notification["params"]["progressToken"] == token
+      assert notification["params"]["progress"] == progress
+      assert notification["params"]["total"] == total
+      assert notification["params"]["message"] == message
+    end
+
+    test "encodes progress notification with message but no total" do
+      token = "stream-processing"
+      progress = 1024
+      message = "Processed 1024 records"
+
+      notification = Protocol.encode_progress(token, progress, nil, message)
+
+      assert notification["params"]["progressToken"] == token
+      assert notification["params"]["progress"] == progress
+      assert notification["params"]["message"] == message
+      refute Map.has_key?(notification["params"], "total")
+    end
   end
 
   describe "request with progress token" do

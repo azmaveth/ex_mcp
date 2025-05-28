@@ -398,6 +398,11 @@ defmodule ExMCP.Server.Handler do
   The level parameter will be one of: "debug", "info", "warning", "error".
 
   The implementation should adjust the server's logging verbosity accordingly.
+
+  > #### Draft Feature {: .info}
+  > This implements a draft MCP specification feature (`logging/setLevel`) that may change.
+
+  @doc api: :draft
   """
   @callback handle_set_log_level(level :: String.t(), state()) ::
               {:ok, state()} | {:error, any(), state()}

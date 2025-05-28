@@ -8,7 +8,7 @@ ExMCP provides comprehensive security features across all transports to ensure s
 
 ## Security Features by Transport
 
-| Feature | SSE | WebSocket | BEAM | stdio |
+| Feature | Streamable HTTP | WebSocket | BEAM | stdio |
 |---------|-----|-----------|------|-------|
 | Bearer Authentication | ✅ | ✅ | ✅ | ❌ |
 | API Key Authentication | ✅ | ✅ | ✅ | ❌ |
@@ -91,9 +91,9 @@ security = %{
 
 ## Transport-Specific Security
 
-### SSE Transport Security
+### Streamable HTTP Transport Security
 
-The SSE transport supports the most comprehensive security features:
+The Streamable HTTP transport (with SSE) supports the most comprehensive security features:
 
 ```elixir
 security = %{

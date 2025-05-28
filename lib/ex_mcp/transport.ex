@@ -5,10 +5,10 @@ defmodule ExMCP.Transport do
   Behaviour for MCP transport implementations.
 
   A transport is responsible for sending and receiving MCP protocol
-  messages over a specific communication channel (stdio, SSE, WebSocket, etc).
+  messages over a specific communication channel (stdio, Streamable HTTP, WebSocket, etc).
 
   While the behaviour itself is an implementation detail, it enables the
-  official MCP transports (stdio and SSE) as well as custom transports.
+  official MCP transports (stdio and Streamable HTTP) as well as custom transports.
 
   ## Implementing a Transport
 
@@ -89,11 +89,16 @@ defmodule ExMCP.Transport do
 
   @doc """
   Helper to get the appropriate transport module for an atom identifier.
+
+  ## Transport identifiers:
+  - `:stdio` - Standard I/O transport (official MCP transport)
+  - `:http` - Streamable HTTP transport with SSE (official MCP transport)
+  - `:websocket` - WebSocket transport (ExMCP extension)
+  - `:beam` - BEAM native transport (ExMCP extension)
   """
   @spec get_transport(:stdio | :http | :websocket | :beam | module()) :: module()
   def get_transport(:stdio), do: ExMCP.Transport.Stdio
   def get_transport(:http), do: ExMCP.Transport.HTTP
-  def get_transport(:sse), do: ExMCP.Transport.HTTP
   def get_transport(:websocket), do: ExMCP.Transport.WebSocket
   def get_transport(:beam), do: ExMCP.Transport.Beam
   def get_transport(module) when is_atom(module), do: module

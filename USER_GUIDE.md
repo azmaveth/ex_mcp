@@ -26,7 +26,7 @@ ExMCP is a complete Elixir implementation of the Model Context Protocol (MCP), e
 ### Key Features
 
 - **Full Protocol Support**: Implements MCP specification version 2025-03-26
-- **Multiple Transports**: stdio, SSE (Server-Sent Events), and native BEAM
+- **Multiple Transports**: stdio, Streamable HTTP (with SSE), and native BEAM
 - **Both Client and Server**: Build MCP servers or connect to existing ones
 - **OTP Integration**: Built on Elixir's OTP principles for reliability
 - **Type Safety**: Comprehensive type specifications throughout
@@ -445,9 +445,9 @@ Servers can make requests back to clients:
   args: ["--config", "prod.json"]
 )
 
-# Connect to an SSE server
+# Connect to a Streamable HTTP server
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :sse,
+  transport: :http,
   url: "http://localhost:8080/mcp"
 )
 
@@ -734,9 +734,9 @@ Best for local process communication:
 )
 ```
 
-### SSE Transport
+### Streamable HTTP Transport
 
-For HTTP-based streaming:
+For HTTP-based communication with optional Server-Sent Events (SSE) streaming:
 
 ```elixir
 # Server

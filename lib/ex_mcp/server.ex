@@ -163,9 +163,10 @@ defmodule ExMCP.Server do
   - `progress_token` - Token identifying the operation
   - `progress` - Current progress value (0-100 for percentage, or any positive number)
   - `total` - Optional total value for the operation
+  - `message` - Optional human-readable progress message
   """
-  def notify_progress(server, progress_token, progress, total \\ nil) do
-    GenServer.cast(server, {:notify_progress, progress_token, progress, total})
+  def notify_progress(server, progress_token, progress, total \\ nil, message \\ nil) do
+    GenServer.cast(server, {:notify_progress, progress_token, progress, total, message})
   end
 
   @doc """
@@ -331,8 +332,8 @@ defmodule ExMCP.Server do
     send_notification(Protocol.encode_roots_changed(), state)
   end
 
-  def handle_cast({:notify_progress, progress_token, progress, total}, state) do
-    send_notification(Protocol.encode_progress(progress_token, progress, total), state)
+  def handle_cast({:notify_progress, progress_token, progress, total, message}, state) do
+    send_notification(Protocol.encode_progress(progress_token, progress, total, message), state)
   end
 
   # Handle manual message injection for testing
@@ -1003,7 +1004,7 @@ defmodule ExMCP.Server do
     {:noreply, state}
   end
 
-  defp handle_notification("notifications/log", params, state) do
+  defp handle_notification("notifications/message", params, state) do
     level = Map.get(params, "level", "info")
     message = Map.get(params, "message", "")
     data = Map.get(params, "data")

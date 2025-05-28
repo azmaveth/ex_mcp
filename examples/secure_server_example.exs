@@ -70,6 +70,7 @@ defmodule SecureServerExample do
   def handle_list_prompts(_cursor, state), do: {:ok, [], state}
   def handle_get_prompt(_name, _args, state), do: {:error, :not_found, state}
   def handle_complete(_ref, _arg, state), do: {:ok, %{completion: %{values: []}}, state}
+  # Draft feature: logging/setLevel
   def handle_set_log_level(_level, state), do: {:ok, %{}, state}
   
   @impl true

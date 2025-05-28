@@ -7,16 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-05-28
+
+### Breaking Changes
+- **Removed `:sse` transport identifier** - Use `:http` instead for Streamable HTTP transport
+- **Renamed SSE references** - All documentation and APIs now use "Streamable HTTP" terminology
+
+### Fixed
+- **Logging Notification Method Name** - Changed from `notifications/log` to `notifications/message` to match MCP specification exactly
+
 ### Added
-- **Security Best Practices Implementation** (MCP draft specification compliance)
-  - Token validation with audience checking (prevents confused deputy)
-  - Client registration and accountability system
-  - Consent management for dynamic client registration
-  - Request audit trail maintenance
-  - Trust boundary enforcement
-  - SecureServer module with built-in security features
-  - Security supervisor for managing security components
-- **OAuth 2.1 Authorization Support** (MCP draft specification compliance)
+
+#### Current MCP Specification (2025-03-26) Features
+- **OAuth 2.1 Authorization Support**
   - Full OAuth 2.1 implementation with PKCE support
   - Automatic token refresh before expiration
   - TokenManager GenServer for token lifecycle management
@@ -24,13 +27,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Request interceptor for automatic header injection
   - Integration with HTTP transport for seamless auth
   - Example demonstrating OAuth-protected MCP servers
-- **Enhanced SSE Transport** (MCP specification compliance)
+- **Enhanced Streamable HTTP Transport**
   - Automatic reconnection with exponential backoff
   - Built-in keep-alive mechanism (30-second heartbeat)
-  - Support for Last-Event-ID header for event resumption
+  - Support for Last-Event-ID header for event resumption with SSE
   - Improved connection stability and error recovery
-- **Lifecycle Management Enhancements** (MCP draft specification compliance)
-  - Added logging/setLevel handler implementation
+
+#### Draft MCP Specification Features (Experimental)
+- **Structured Tool Output** (Draft feature - not in MCP 2025-03-26)
+  - Tools can define `outputSchema` in their schema
+  - Tool results can include `structuredContent` alongside regular content
+  - Marked with "Draft feature" comments in code
+- **Logging Level Control** (Draft feature - not in MCP 2025-03-26)
+  - Added `logging/setLevel` handler implementation
+  - `Client.set_log_level/3` for adjusting server log verbosity
+  - `handle_set_log_level/2` callback in server handlers
+- **Security Best Practices Implementation** (Draft specification)
+  - Token validation with audience checking (prevents confused deputy)
+  - Client registration and accountability system
+  - Consent management for dynamic client registration
+  - Request audit trail maintenance
+  - Trust boundary enforcement
+  - SecureServer module with built-in security features
+  - Security supervisor for managing security components
+
+#### Other Enhancements
+- **Lifecycle Management Improvements**
   - Improved BEAM transport server lifecycle (supports reconnections)
   - Dynamic client capability building based on handler
   - Protocol version validation and negotiation

@@ -509,7 +509,7 @@ defmodule ExMCP.LoggingComplianceTest do
       log_notification = Protocol.encode_log_message("info", "Test message")
 
       assert log_notification["jsonrpc"] == "2.0"
-      assert log_notification["method"] == "notifications/log"
+      assert log_notification["method"] == "notifications/message"
       assert log_notification["params"]["level"] == "info"
       assert log_notification["params"]["message"] == "Test message"
       # Notifications don't have IDs
@@ -521,7 +521,7 @@ defmodule ExMCP.LoggingComplianceTest do
       log_notification = Protocol.encode_log_message("error", "Error occurred", data)
 
       assert log_notification["jsonrpc"] == "2.0"
-      assert log_notification["method"] == "notifications/log"
+      assert log_notification["method"] == "notifications/message"
       assert log_notification["params"]["level"] == "error"
       assert log_notification["params"]["message"] == "Error occurred"
       assert log_notification["params"]["data"] == data
@@ -531,7 +531,7 @@ defmodule ExMCP.LoggingComplianceTest do
       log_notification = Protocol.encode_log_message("warning", "Warning message", nil)
 
       assert log_notification["jsonrpc"] == "2.0"
-      assert log_notification["method"] == "notifications/log"
+      assert log_notification["method"] == "notifications/message"
       assert log_notification["params"]["level"] == "warning"
       assert log_notification["params"]["message"] == "Warning message"
       refute Map.has_key?(log_notification["params"], "data")

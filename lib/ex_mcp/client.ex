@@ -375,10 +375,15 @@ defmodule ExMCP.Client do
 
   Valid levels are: "debug", "info", "warning", "error".
 
+  > #### Draft Feature {: .info}
+  > This implements a draft MCP specification feature (`logging/setLevel`) that may change.
+
   ## Examples
 
       {:ok, %{}} = ExMCP.Client.set_log_level(client, "debug")
       {:ok, %{}} = ExMCP.Client.set_log_level(client, "error")
+
+  @doc api: :draft
   """
   @spec set_log_level(GenServer.server(), String.t(), timeout()) :: {:ok, map()} | {:error, any()}
   def set_log_level(client, level, timeout \\ @request_timeout) do
@@ -1026,13 +1031,17 @@ defmodule ExMCP.Client do
         token = Map.get(params, "progressToken", "unknown")
         progress = Map.get(params, "progress", 0)
         total = Map.get(params, "total")
+        message = Map.get(params, "message")
 
-        if total do
-          Logger.info("Progress [#{token}]: #{progress}/#{total}")
-        else
-          Logger.info("Progress [#{token}]: #{progress}")
-        end
+        log_message =
+          cond do
+            total && message -> "Progress [#{token}]: #{progress}/#{total} - #{message}"
+            total -> "Progress [#{token}]: #{progress}/#{total}"
+            message -> "Progress [#{token}]: #{progress} - #{message}"
+            true -> "Progress [#{token}]: #{progress}"
+          end
 
+        Logger.info(log_message)
         {:noreply, state}
 
       "notifications/roots/list_changed" ->

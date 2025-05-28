@@ -85,6 +85,16 @@ Description...
 """
 ```
 
+**Current Draft Features:**
+- **Structured Tool Output**:
+  - Tools can define `outputSchema` in their schema
+  - Tool results can include `structuredContent` alongside regular content
+  - See `ExMCP.Types` for field definitions marked as "Draft feature"
+- **Logging Level Control**:
+  - `ExMCP.Client.set_log_level/3` - Set server log verbosity
+  - `handle_set_log_level/2` callback in server handlers
+  - Uses `logging/setLevel` protocol method
+
 ## Mixed Modules
 
 Some modules contain both specification features and extensions:

@@ -1,15 +1,18 @@
 defmodule ExMCP.Transport.SSEClient do
   @moduledoc """
-  Enhanced Server-Sent Events client with keep-alive, reconnection, and retry logic.
+  Server-Sent Events client for the Streamable HTTP transport.
 
-  This module provides a more robust SSE implementation that follows
-  the MCP specification recommendations for connection resilience.
+  This internal module implements the SSE portion of the Streamable HTTP
+  transport as defined in the MCP specification. It provides robust connection
+  handling with keep-alive, reconnection, and retry logic.
 
   Features:
   - Automatic reconnection with exponential backoff
   - Keep-alive/heartbeat mechanism
   - Proper handling of SSE retry suggestions
   - Connection health monitoring
+
+  Note: This is an internal implementation detail of the Streamable HTTP transport.
   """
 
   use GenServer

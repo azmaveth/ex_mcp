@@ -38,9 +38,9 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 
 ### Transport Layers
 - 📝 **stdio** - Process communication via standard I/O
-- 🌐 **SSE** - HTTP Server-Sent Events for web integration
-- ⚡ **BEAM** - Native Erlang/Elixir process communication
-- 🔌 **WebSocket** - WebSocket client for real-time communication
+- 🌐 **Streamable HTTP** - HTTP with optional Server-Sent Events (SSE) for streaming
+- ⚡ **BEAM** - Native Erlang/Elixir process communication (ExMCP extension)
+- 🔌 **WebSocket** - WebSocket client for real-time communication (ExMCP extension)
 
 ### Advanced Features
 - 🔄 **Auto-Reconnection** - Built-in reconnection with exponential backoff
@@ -59,7 +59,7 @@ ExMCP provides three categories of APIs:
 ### MCP Specification Features (Portable)
 These implement the official MCP specification and work with any MCP implementation:
 - Core client/server operations (list_tools, call_tool, etc.)
-- Standard transports (stdio, SSE)
+- Standard transports (stdio, Streamable HTTP)
 - Protocol encoding/decoding
 - OAuth 2.1 authorization
 
@@ -72,7 +72,13 @@ Enhanced features unique to ExMCP:
 - Auto-reconnection
 
 ### Draft Features (Experimental)
-Features from the draft MCP specification (currently none implemented).
+
+These features are from the draft MCP specification and may not be compatible with all MCP implementations:
+
+- **Structured Tool Output** - Tools can define `outputSchema` and return `structuredContent` alongside regular content
+- **Logging Level Control** - Clients can use `logging/setLevel` to adjust server log verbosity
+
+⚠️ **Note**: These features are not part of the official MCP 2025-03-26 specification and should only be used when connecting to servers that explicitly support draft features.
 
 See the [API Categories Guide](guides/api-categories.md) for detailed information on writing portable code.
 
@@ -105,9 +111,9 @@ mix deps.get
   command: ["node", "my-mcp-server.js"]
 )
 
-# Connect with authentication (SSE/WebSocket)
+# Connect with authentication (Streamable HTTP)
 {:ok, secure_client} = ExMCP.Client.start_link(
-  transport: :sse,
+  transport: :http,
   url: "https://api.example.com",
   security: %{
     auth: {:bearer, "your-token"},
@@ -206,22 +212,22 @@ Best for subprocess communication:
 )
 ```
 
-### SSE Transport
+### Streamable HTTP Transport
 
-For HTTP-based streaming:
+For HTTP-based communication with optional Server-Sent Events (SSE) streaming:
 
 ```elixir
 # Server
 {:ok, server} = ExMCP.Server.start_link(
   handler: MyHandler,
-  transport: :sse,
+  transport: :http,  # Streamable HTTP transport
   port: 8080,
   path: "/mcp"
 )
 
 # Client
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :sse,
+  transport: :http,
   url: "http://localhost:8080/mcp",
   headers: [{"Authorization", "Bearer token"}]
 )

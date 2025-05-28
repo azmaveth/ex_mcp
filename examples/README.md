@@ -25,6 +25,15 @@ Examples demonstrating the latest MCP protocol features:
 
 [View Advanced Features Examples](advanced_features/README.md)
 
+### 3. Draft Specification Features (`draft_features_example.exs`)
+
+⚠️ **Experimental**: Example demonstrating features from the draft MCP specification that are not part of the official 2025-03-26 release:
+
+- **Structured Tool Output**: Tools with `outputSchema` and `structuredContent`
+- **Logging Level Control**: Dynamic log level adjustment with `logging/setLevel`
+
+Run with: `./examples/draft_features_example.exs`
+
 ## Quick Start
 
 To run any example:
@@ -134,9 +143,10 @@ ExMCP supports three transport types:
    - For external process communication
    - Compatible with any MCP server
 
-3. **SSE**: Server-Sent Events
+3. **Streamable HTTP**: HTTP with optional Server-Sent Events
    - For HTTP-based communication
    - Good for web integrations
+   - Use `:http` transport identifier
 
 ## Learn More
 

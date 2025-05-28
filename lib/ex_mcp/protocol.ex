@@ -302,17 +302,31 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Encodes a progress notification.
+
+  ## Parameters
+  - `progress_token` - Token identifying the operation
+  - `progress` - Current progress value
+  - `total` - Optional total value for calculating percentage
+  - `message` - Optional human-readable progress message
   """
-  @spec encode_progress(ExMCP.Types.progress_token(), number(), number() | nil) :: map()
-  def encode_progress(progress_token, progress, total \\ nil) do
+  @spec encode_progress(ExMCP.Types.progress_token(), number(), number() | nil, String.t() | nil) ::
+          map()
+  def encode_progress(progress_token, progress, total \\ nil, message \\ nil) do
     params = %{
       "progressToken" => progress_token,
       "progress" => progress
     }
 
-    params = if total, do: Map.put(params, "total", total), else: params
+    params =
+      params
+      |> maybe_put("total", total)
+      |> maybe_put("message", message)
+
     encode_notification("notifications/progress", params)
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   @doc """
   Encodes a roots list changed notification.
@@ -412,7 +426,7 @@ defmodule ExMCP.Protocol do
     }
 
     params = if data, do: Map.put(params, "data", data), else: params
-    encode_notification("notifications/log", params)
+    encode_notification("notifications/message", params)
   end
 
   @doc """
