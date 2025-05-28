@@ -329,11 +329,14 @@ defmodule ExMCP.Server do
   # Handle manual message injection for testing
   def handle_cast({:handle_message, message}, state) do
     json_message = Jason.encode!(message)
+
     case Protocol.parse_message(json_message) do
       {:notification, method, params} ->
         handle_notification(method, params, state)
+
       {:request, method, params, id} ->
         handle_request(method, params, id, state)
+
       _ ->
         {:noreply, state}
     end
@@ -424,6 +427,7 @@ defmodule ExMCP.Server do
 
         {:error, reason, new_handler_state} ->
           error_code = get_error_code_for_reason(reason)
+
           error =
             Protocol.encode_error(
               error_code,
@@ -500,6 +504,7 @@ defmodule ExMCP.Server do
 
         {:error, reason, new_handler_state} ->
           error_code = get_error_code_for_reason(reason)
+
           error =
             Protocol.encode_error(
               error_code,
@@ -567,6 +572,7 @@ defmodule ExMCP.Server do
 
         {:error, reason, new_handler_state} ->
           error_code = get_error_code_for_reason(reason)
+
           error =
             Protocol.encode_error(
               error_code,
@@ -760,6 +766,7 @@ defmodule ExMCP.Server do
 
         {:error, reason, new_handler_state} ->
           error_code = get_error_code_for_reason(reason)
+
           error =
             Protocol.encode_error(
               error_code,
@@ -815,6 +822,79 @@ defmodule ExMCP.Server do
     end
   end
 
+  # Handle missing required parameters for known methods
+  defp handle_request("tools/call", _params, id, state) do
+    error =
+      Protocol.encode_error(
+        Protocol.invalid_params(),
+        "Missing required parameters: name and arguments",
+        nil,
+        id
+      )
+
+    send_message(error, state)
+  end
+
+  defp handle_request("resources/read", _params, id, state) do
+    error =
+      Protocol.encode_error(
+        Protocol.invalid_params(),
+        "Missing required parameter: uri",
+        nil,
+        id
+      )
+
+    send_message(error, state)
+  end
+
+  defp handle_request("prompts/get", _params, id, state) do
+    error =
+      Protocol.encode_error(
+        Protocol.invalid_params(),
+        "Missing required parameter: name",
+        nil,
+        id
+      )
+
+    send_message(error, state)
+  end
+
+  defp handle_request("resources/subscribe", _params, id, state) do
+    error =
+      Protocol.encode_error(
+        Protocol.invalid_params(),
+        "Missing required parameter: uri",
+        nil,
+        id
+      )
+
+    send_message(error, state)
+  end
+
+  defp handle_request("resources/unsubscribe", _params, id, state) do
+    error =
+      Protocol.encode_error(
+        Protocol.invalid_params(),
+        "Missing required parameter: uri",
+        nil,
+        id
+      )
+
+    send_message(error, state)
+  end
+
+  defp handle_request("completion/complete", _params, id, state) do
+    error =
+      Protocol.encode_error(
+        Protocol.invalid_params(),
+        "Missing required parameters: ref and argument",
+        nil,
+        id
+      )
+
+    send_message(error, state)
+  end
+
   defp handle_request(method, _params, id, state) do
     error =
       Protocol.encode_error(
@@ -836,29 +916,30 @@ defmodule ExMCP.Server do
          "notifications/cancelled",
          %{"requestId" => request_id} = params,
          state
-       ) when is_binary(request_id) do
+       )
+       when is_binary(request_id) do
     reason = Map.get(params, "reason")
     Logger.info("Request #{request_id} cancelled: #{reason || "no reason given"}")
-    
+
     # Check if this is a valid in-progress request
     case Map.get(state.pending_requests, request_id) do
       nil ->
         # Request not found or already completed - ignore as per spec
         Logger.debug("Ignoring cancellation for unknown request #{request_id}")
         {:noreply, state}
-        
+
       _from ->
         # Request is in progress - cancel it
         Logger.debug("Cancelling in-progress request #{request_id}")
-        
+
         # Remove from pending requests
         new_pending = Map.delete(state.pending_requests, request_id)
         new_state = %{state | pending_requests: new_pending}
-        
+
         # Per MCP spec: SHOULD not send a response for cancelled request
         # The GenServer caller will get no response (which times out)
         # This is intentional behavior for cancellation
-        
+
         {:noreply, new_state}
     end
   end
@@ -897,7 +978,7 @@ defmodule ExMCP.Server do
   end
 
   defp handle_batch(messages, state) do
-    # Process each message in the batch and collect responses
+    # Process each message in the batch and collect responses in order
     {responses, final_state} =
       Enum.reduce(messages, {[], state}, fn message, {responses_acc, state_acc} ->
         case message do
@@ -905,10 +986,10 @@ defmodule ExMCP.Server do
             # Process request and collect response
             case handle_request_for_batch(method, params, id, state_acc) do
               {:response, response_msg, newer_state} ->
-                {[response_msg | responses_acc], newer_state}
+                {responses_acc ++ [response_msg], newer_state}
 
               {:error, error_msg, newer_state} ->
-                {[error_msg | responses_acc], newer_state}
+                {responses_acc ++ [error_msg], newer_state}
             end
 
           %{"method" => method, "params" => params} ->
@@ -926,13 +1007,12 @@ defmodule ExMCP.Server do
                 nil
               )
 
-            {[error | responses_acc], state_acc}
+            {responses_acc ++ [error], state_acc}
         end
       end)
 
-    # Send batch response
-    batch_response = Enum.reverse(responses)
-    send_message(batch_response, final_state)
+    # Send batch response (responses are already in correct order)
+    send_message(responses, final_state)
   end
 
   # Helper function to handle requests for batch processing
