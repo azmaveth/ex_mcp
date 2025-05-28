@@ -52,24 +52,29 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - ✅ **Approval Handlers** - Implement custom approval flows for HITL
 - 🔐 **Security** - Comprehensive authentication, TLS/SSL, CORS, and origin validation
 
-## 🎯 MCP Specification vs ExMCP Extensions
+## 🎯 API Categories
 
-ExMCP provides both MCP specification features and Elixir-specific extensions:
+ExMCP provides three categories of APIs:
 
-**MCP Specification Features** (`@mcp_spec`):
-- Protocol implementation (JSON-RPC 2.0)
+### MCP Specification Features (Portable)
+These implement the official MCP specification and work with any MCP implementation:
+- Core client/server operations (list_tools, call_tool, etc.)
 - Standard transports (stdio, SSE)
-- All core operations (tools, resources, prompts, sampling)
-- Standard types and message formats
+- Protocol encoding/decoding
+- OAuth 2.1 authorization
 
-**ExMCP Extensions** (`@exmcp_extension`):
+### ExMCP Extensions (Elixir-specific)
+Enhanced features unique to ExMCP:
 - BEAM transport for native Erlang communication
 - Automatic server discovery
-- Multi-server management (ServerManager)
-- Auto-reconnection with backoff
-- OTP supervision integration
+- Multi-server management
+- Batch operations
+- Auto-reconnection
 
-See [EXTENSIONS.md](EXTENSIONS.md) for detailed breakdown.
+### Draft Features (Experimental)
+Features from the draft MCP specification (currently none implemented).
+
+See the [API Categories Guide](guides/api-categories.md) for detailed information on writing portable code.
 
 ## 📦 Installation
 
@@ -314,12 +319,12 @@ def handle_call_tool("process", %{"_progressToken" => token}, state) do
 end
 ```
 
-### Batch Requests
+### Batch Requests (ExMCP Extension)
 
-Send multiple requests in a single call:
+Send multiple requests in a single call for improved efficiency:
 
 ```elixir
-# Send multiple requests as a batch
+# Note: This is an ExMCP extension, not part of the MCP specification
 requests = [
   {:list_tools, []},
   {:list_resources, []},

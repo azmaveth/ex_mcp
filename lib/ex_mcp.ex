@@ -1,25 +1,43 @@
 defmodule ExMCP do
   @moduledoc """
-  @mcp_spec with @exmcp_extension features
-
   ExMCP - Complete Elixir implementation of the Model Context Protocol.
 
   ExMCP enables AI models to securely interact with local and remote resources through
   a standardized protocol. It provides both client and server implementations with
   multiple transport options.
 
-  ## Main Components
+  ## API Categories
 
-  **MCP Specification Components:**
-  - `ExMCP.Client` - Connect to MCP servers
-  - `ExMCP.Server` - Implement MCP servers
+  This library provides three categories of APIs:
+
+  ### MCP Specification Features (Portable)
+
+  These APIs implement the official MCP specification and are portable across all
+  MCP implementations:
+
+  - `ExMCP.Client` - Core client operations (list_tools, call_tool, etc.)
+  - `ExMCP.Server` - Core server functionality
   - `ExMCP.Protocol` - Message encoding/decoding
-  - `ExMCP.Types` - Type definitions
+  - `ExMCP.Types` - Standard MCP types
 
-  **ExMCP Extensions:**
+  ### ExMCP Extensions (Elixir-specific)
+
+  > #### Extension Feature {: .warning}
+  > These features are specific to ExMCP and not part of the official MCP specification.
+
   - `ExMCP.ServerManager` - Manage multiple server connections
   - `ExMCP.Discovery` - Discover available MCP servers
-  - `ExMCP.Transport.Beam` - Native Erlang transport
+  - `ExMCP.Transport.Beam` - Native Erlang process transport
+  - Automatic reconnection in `ExMCP.Client`
+  - Batch operations in `ExMCP.Client`
+
+  ### Draft Specification Features (Experimental)
+
+  > #### Draft Feature {: .info}
+  > These features implement the draft MCP specification and may change.
+
+  Currently no draft features are implemented. When implemented, they will be marked
+  with `@doc api: :draft` in the function documentation.
 
   ## Protocol Features
 

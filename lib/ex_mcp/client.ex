@@ -1,25 +1,37 @@
 defmodule ExMCP.Client do
   @moduledoc """
-  @mcp_spec with @exmcp_extension features
-
   MCP client for connecting to Model Context Protocol servers.
+
+  This module provides both MCP specification features and ExMCP extensions.
 
   ## MCP Specification Features
 
-  Core protocol operations (all `@mcp_spec`):
-  - Request/response correlation  
-  - Protocol message encoding/decoding
-  - Progress notifications for long operations
-  - Server-initiated change notifications
-  - Sampling/LLM integration
+  Core protocol operations that are portable across all MCP implementations:
+
+  - `initialize/2` - Initialize connection with server
+  - `list_tools/2` - List available tools
+  - `call_tool/4` - Execute a tool
+  - `list_resources/2` - List available resources  
+  - `read_resource/3` - Read resource content
+  - `list_prompts/2` - List available prompts
+  - `get_prompt/3` - Get a specific prompt
+  - `list_roots/2` - List server roots
+  - `subscribe/3` - Subscribe to resource changes
+  - `unsubscribe/3` - Unsubscribe from resources
+  - `create_message/3` - Request LLM sampling
+  - `send_cancelled/3` - Cancel an in-flight request
+  - `ping/2` - Keep-alive ping
 
   ## ExMCP Extensions
 
-  Enhanced features (all `@exmcp_extension`):
-  - Connection management with automatic reconnection
-  - Concurrent request handling with request multiplexing
-  - Built-in exponential backoff for failed connections
-  - Process monitoring and supervision tree integration
+  > #### Extension Features {: .warning}
+  > These features are specific to ExMCP and not part of the official MCP specification.
+
+  - **Automatic Reconnection** - Reconnects on connection failure
+  - **Batch Operations** - `batch_request/3` for efficient multi-request handling
+  - **Process Monitoring** - Integration with OTP supervision trees
+  - **Request Tracking** - `get_pending_requests/1` for debugging
+  - **Connection Management** - `disconnect/1`, `reconnect/1`
 
   ## Basic Example
 
@@ -313,7 +325,9 @@ defmodule ExMCP.Client do
   Lists available resource templates.
   """
   @spec list_resource_templates(GenServer.server(), keyword()) ::
-          {:ok, %{resourceTemplates: [ExMCP.Types.resource_template()], nextCursor: String.t() | nil}} | {:error, any()}
+          {:ok,
+           %{resourceTemplates: [ExMCP.Types.resource_template()], nextCursor: String.t() | nil}}
+          | {:error, any()}
   def list_resource_templates(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @request_timeout)
     cursor = Keyword.get(opts, :cursor)
@@ -366,6 +380,9 @@ defmodule ExMCP.Client do
   @doc """
   Gets the list of currently pending request IDs.
 
+  > #### Extension Feature {: .warning}
+  > This is an ExMCP extension for debugging and monitoring, not part of the MCP specification.
+
   This can be useful for debugging or implementing cancellation UIs.
 
   ## Examples
@@ -394,6 +411,9 @@ defmodule ExMCP.Client do
 
   @doc """
   Sends a batch of requests to the server.
+
+  > #### Extension Feature {: .warning}
+  > This is an ExMCP extension for efficient request batching, not part of the MCP specification.
 
   Takes a list of request specifications and returns a list of results
   in the same order. Each request spec is a tuple of the function name
@@ -613,18 +633,19 @@ defmodule ExMCP.Client do
       {:ok, notification} ->
         # Send cancellation notification
         send_notification(notification, state)
-        
+
         # Remove the request from pending if it exists
         case Map.pop(state.pending_requests, request_id) do
           {nil, _pending} ->
             # Request not found in pending - that's okay
             {:noreply, state}
+
           {from, new_pending} ->
             # Request was pending, reply with cancellation error and remove it
             GenServer.reply(from, {:error, :cancelled})
             {:noreply, %{state | pending_requests: new_pending}}
         end
-        
+
       {:error, :cannot_cancel_initialize} ->
         Logger.warning("Cannot cancel initialize request as per MCP specification")
         {:noreply, state}
@@ -928,13 +949,13 @@ defmodule ExMCP.Client do
             # Malformed cancellation notification (missing requestId)
             Logger.warning("Ignoring malformed cancellation notification: #{inspect(params)}")
             {:noreply, state}
-            
+
           request_id when is_binary(request_id) or is_integer(request_id) ->
             # Convert to string for consistent handling
             request_id_str = to_string(request_id)
             reason = Map.get(params, "reason")
             Logger.info("Request #{request_id_str} cancelled: #{reason || "no reason given"}")
-            
+
             # Check if this is a valid in-progress request (try both formats)
             cond do
               Map.has_key?(state.pending_requests, request_id) ->
@@ -943,23 +964,26 @@ defmodule ExMCP.Client do
                 new_pending = Map.delete(state.pending_requests, request_id)
                 GenServer.reply(from, {:error, :cancelled})
                 {:noreply, %{state | pending_requests: new_pending}}
-                
+
               Map.has_key?(state.pending_requests, request_id_str) ->
                 from = Map.get(state.pending_requests, request_id_str)
                 Logger.debug("Cancelling in-progress request #{request_id_str}")
                 new_pending = Map.delete(state.pending_requests, request_id_str)
                 GenServer.reply(from, {:error, :cancelled})
                 {:noreply, %{state | pending_requests: new_pending}}
-                
+
               true ->
                 # Request not found or already completed - ignore as per spec
                 Logger.debug("Ignoring cancellation for unknown request #{request_id_str}")
                 {:noreply, state}
             end
-            
+
           _ ->
             # Invalid requestId type
-            Logger.warning("Ignoring cancellation with invalid requestId type: #{inspect(params)}")
+            Logger.warning(
+              "Ignoring cancellation with invalid requestId type: #{inspect(params)}"
+            )
+
             {:noreply, state}
         end
 
