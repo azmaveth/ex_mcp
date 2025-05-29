@@ -1,6 +1,6 @@
 defmodule ExMCP.Client.Handler do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   Behaviour for handling server-to-client requests in MCP.
 

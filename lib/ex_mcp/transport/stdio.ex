@@ -1,6 +1,6 @@
 defmodule ExMCP.Transport.Stdio do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   stdio transport implementation for MCP.
 

@@ -1,6 +1,6 @@
 defmodule ExMCP.Authorization.ClientRegistration do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   Dynamic Client Registration for OAuth 2.1.
 

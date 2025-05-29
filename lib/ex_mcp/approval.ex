@@ -1,6 +1,6 @@
 defmodule ExMCP.Approval do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   Behaviour for implementing human-in-the-loop approval flows.
 

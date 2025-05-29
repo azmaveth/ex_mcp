@@ -56,20 +56,20 @@ defmodule ExMCP do
 
   ## Transport Options
 
-  ### stdio Transport (`@mcp_spec`)
-  Process communication via standard input/output. Best for:
+  ### stdio Transport
+  Process communication via standard input/output (standard MCP specification). Best for:
   - Subprocess communication
   - Cross-language integration
   - Command-line tools
 
-  ### Streamable HTTP Transport (`@mcp_spec`)
-  HTTP with Server-Sent Events streaming. Best for:
+  ### Streamable HTTP Transport
+  HTTP with Server-Sent Events streaming (standard MCP specification). Best for:
   - Web integration
   - Firewall-friendly communication
   - RESTful architectures
 
-  ### BEAM Transport (`@exmcp_extension`)
-  Native Erlang/Elixir message passing. Best for:
+  ### BEAM Transport
+  Native Erlang/Elixir message passing (ExMCP extension). Best for:
   - Elixir-to-Elixir communication
   - High-performance local tools
   - Distributed Erlang clusters

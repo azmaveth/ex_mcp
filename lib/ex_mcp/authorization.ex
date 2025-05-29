@@ -1,6 +1,6 @@
 defmodule ExMCP.Authorization do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   MCP Authorization implementation supporting OAuth 2.1.
 

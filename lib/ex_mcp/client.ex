@@ -257,7 +257,7 @@ defmodule ExMCP.Client do
   Reads a resource by URI.
   """
   @spec read_resource(GenServer.server(), String.t(), timeout()) ::
-          {:ok, ExMCP.Types.resource_content()} | {:error, any()}
+          {:ok, ExMCP.Types.read_resource_result()} | {:error, any()}
   def read_resource(client, uri, timeout \\ @request_timeout) do
     GenServer.call(client, {:read_resource, uri}, timeout)
   end
@@ -317,7 +317,7 @@ defmodule ExMCP.Client do
   Gets server capabilities.
   """
   @spec server_capabilities(GenServer.server()) ::
-          {:ok, ExMCP.Types.capabilities()} | {:error, :not_initialized}
+          {:ok, ExMCP.Types.server_capabilities()} | {:error, :not_initialized}
   def server_capabilities(client) do
     GenServer.call(client, :server_capabilities)
   end

@@ -108,8 +108,7 @@ defmodule ExMCP.MixProject do
         "ExMCP Extensions": [
           ExMCP.Transport.Beam,
           ExMCP.ServerManager,
-          ExMCP.Discovery,
-          ExMCP.Specification
+          ExMCP.Discovery
         ],
         Internal: [ExMCP.Transport, ExMCP.Application]
       ],

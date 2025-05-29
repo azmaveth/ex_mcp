@@ -1,6 +1,6 @@
 defmodule ExMCP.Authorization.PKCE do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   PKCE (Proof Key for Code Exchange) implementation for OAuth 2.1.
 

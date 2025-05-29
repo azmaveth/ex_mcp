@@ -1,6 +1,6 @@
 defmodule ExMCP.Server do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   MCP server implementation.
 
@@ -10,7 +10,7 @@ defmodule ExMCP.Server do
 
   ## Features
 
-  - Multiple transport support (stdio, SSE, BEAM*)
+  - Multiple transport support (stdio, HTTP, BEAM*)
   - Tool, resource, and prompt management
   - Progress notifications for long operations
   - Change notifications for dynamic content
@@ -23,11 +23,11 @@ defmodule ExMCP.Server do
 
       defmodule MyHandler do
         use ExMCP.Server.Handler
-        
+
         @impl true
         def handle_initialize(_params, state) do
           {:ok, %{
-            name: "my-server", 
+            name: "my-server",
             version: "1.0.0",
             capabilities: %{
               tools: %{},
@@ -37,7 +37,7 @@ defmodule ExMCP.Server do
             }
           }, state}
         end
-        
+
         @impl true
         def handle_call_tool("process", params, state) do
           # Use progress notifications for long operations
@@ -49,10 +49,10 @@ defmodule ExMCP.Server do
               end
             end)
           end
-          
+
           {:ok, [%{type: "text", text: "Processing..."}], state}
         end
-        
+
         # Implement sampling for LLM integration
         @impl true
         def handle_create_message(params, state) do
@@ -60,7 +60,7 @@ defmodule ExMCP.Server do
           {:ok, %{content: %{type: "text", text: "Response"}}, state}
         end
       end
-      
+
       # Start server
       {:ok, server} = ExMCP.Server.start_link(
         handler: MyHandler,
@@ -74,16 +74,16 @@ defmodule ExMCP.Server do
       # Notify about resource changes
       ExMCP.Server.notify_resources_changed(server)
       ExMCP.Server.notify_resource_updated(server, "file:///path")
-      
+
       # Notify about tool changes
       ExMCP.Server.notify_tools_changed(server)
-      
-      # Notify about prompt changes  
+
+      # Notify about prompt changes
       ExMCP.Server.notify_prompts_changed(server)
-      
+
       # Notify about roots changes
       ExMCP.Server.notify_roots_changed(server)
-      
+
       # Send progress updates
       ExMCP.Server.notify_progress(server, "token", 50, 100)
   """
@@ -170,8 +170,6 @@ defmodule ExMCP.Server do
   end
 
   @doc """
-  @mcp_spec
-
   Sends a ping request to the client.
 
   The client must respond promptly or may be disconnected.
@@ -182,8 +180,6 @@ defmodule ExMCP.Server do
   end
 
   @doc """
-  @mcp_spec
-
   Requests the list of roots from the client.
 
   This is used when the server needs to understand what file system
@@ -195,8 +191,6 @@ defmodule ExMCP.Server do
   end
 
   @doc """
-  @mcp_spec
-
   Requests the client to sample an LLM.
 
   The client has full discretion over model selection and should

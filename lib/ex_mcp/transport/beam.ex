@@ -1,6 +1,6 @@
 defmodule ExMCP.Transport.Beam do
   @moduledoc """
-  @exmcp_extension
+  This module provides ExMCP extensions beyond the standard MCP specification.
 
   BEAM transport implementation for ExMCP.
 

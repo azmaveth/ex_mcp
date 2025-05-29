@@ -26,7 +26,7 @@ ExMCP is a complete Elixir implementation of the Model Context Protocol (MCP), e
 ### Key Features
 
 - **Full Protocol Support**: Implements MCP specification version 2025-03-26
-- **Multiple Transports**: stdio, Streamable HTTP (with SSE), and native BEAM
+- **Multiple Transports**: stdio, Streamable HTTP (with SSE), Websocket, and native BEAM
 - **Both Client and Server**: Build MCP servers or connect to existing ones
 - **OTP Integration**: Built on Elixir's OTP principles for reliability
 - **Type Safety**: Comprehensive type specifications throughout
@@ -39,7 +39,7 @@ Add `ex_mcp` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.2.0"}
+    {:ex_mcp, "~> 0.5.0"}
   ]
 end
 ```

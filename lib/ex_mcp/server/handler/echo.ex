@@ -1,6 +1,6 @@
 defmodule ExMCP.Server.Handler.Echo do
   @moduledoc """
-  @exmcp_extension
+  This module provides ExMCP extensions beyond the standard MCP specification.
 
   Simple echo handler for testing purposes.
 

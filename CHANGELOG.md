@@ -135,7 +135,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated documentation to reflect "Streamable HTTP" terminology from MCP spec 2025-03-26
   - All tests and examples updated to use new naming
 
-## [0.4.0] - 2025-01-27
+## [0.4.0] - 2025-05-27
 
 ### Added
 - Tool execution error reporting with `isError` flag (MCP specification compliance)
@@ -271,7 +271,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **BREAKING**: Redesigned BEAM transport to use mailbox process pairs
   - Removed `ExMCP.Transport.Beam.Server` module
-  - Transport now supports bidirectional communication like stdio/SSE
+  - Transport now supports bidirectional communication like stdio/HTTP+SSE
   - Improved fault tolerance and connection handling
   - Note: Public API remains unchanged - users of `ExMCP.Client` and `ExMCP.Server` are not affected
 
@@ -303,7 +303,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 - Full MCP specification compliance
-- Multiple transport layer support (stdio, SSE, BEAM)
+- Multiple transport layer support (stdio, Streamable HTTP with optional SSE, BEAM)
 - Both client and server implementations
 - Extensible architecture
 - Supervision tree integration

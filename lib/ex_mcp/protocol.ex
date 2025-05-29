@@ -1,6 +1,6 @@
 defmodule ExMCP.Protocol do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   MCP protocol message encoding and decoding.
 

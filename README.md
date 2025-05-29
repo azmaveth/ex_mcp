@@ -16,7 +16,7 @@
 
 ---
 
-> ⚠️ **Alpha Software**: This project is currently in alpha stage (v0.2.x). The API is unstable and may change significantly before v1.0 release.
+> ⚠️ **Alpha Software**: This project is currently in alpha stage (v0.5.x). The API is unstable and may change significantly before v1.0 release.
 
 ## Overview
 
@@ -66,7 +66,7 @@ These implement the official MCP specification and work with any MCP implementat
 ### ExMCP Extensions (Elixir-specific)
 Enhanced features unique to ExMCP:
 - BEAM transport for native Erlang communication
-- Automatic server discovery
+- Automatic MCP server discovery
 - Multi-server management
 - Batch operations
 - Auto-reconnection

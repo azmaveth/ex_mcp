@@ -376,3 +376,247 @@ The ExMCP library has:
 - ⚠️  Context inclusion for sampling (types exist but implementation incomplete)
 - ❌ Transport-level security features (auth, CORS, Origin validation)
 - ❌ Advanced protocol features (cancellation, logging control, debug mode)
+
+## Improvements from Hermes MCP Analysis
+
+After analyzing the Hermes MCP implementation, the following improvements should be considered:
+
+### High Priority - Enhanced Developer Experience
+
+1. **Telemetry Integration**
+   - [ ] Add comprehensive telemetry events using `:telemetry` library
+   - [ ] Emit events for: client init/terminate, request/response, transport connect/disconnect
+   - [ ] Include timing metrics, error tracking, and progress updates
+   - [ ] Follow Hermes pattern: `[:ex_mcp, component, action]` namespace
+
+2. **Interactive CLI Tool**
+   - [ ] Create an interactive shell for testing MCP servers (like Hermes' `mix sse.interactive`)
+   - [ ] Support all transports with unified interface
+   - [ ] Add command completion and history
+   - [ ] Include pretty-printed output with colors
+   - [ ] Build standalone binary with Burrito for non-Elixir users
+
+3. **Structured Error Handling**
+   - [ ] Create dedicated error module with standardized error types
+   - [ ] Implement error categorization (transport, client, server, domain errors)
+   - [ ] Add custom inspect implementation for better error messages
+   - [ ] Use structured error codes following JSON-RPC conventions
+
+4. **Schema Validation with Peri**
+   - [ ] Use Peri library for runtime schema validation (like Hermes)
+   - [ ] Validate client options, transport configs, and protocol messages
+   - [ ] Provide clear error messages for invalid configurations
+   - [ ] Add compile-time validation where possible
+
+### Medium Priority - Architectural Improvements
+
+5. **State Management Separation**
+   - [ ] Extract client state into dedicated module (like Hermes.Client.State)
+   - [ ] Separate operation tracking into Operation module
+   - [ ] Implement request queue management module
+   - [ ] Add clear state transition documentation
+
+6. **Protocol Version Management**
+   - [ ] Support multiple protocol versions (2024-11-05 and 2025-03-26)
+   - [ ] Add version negotiation layer
+   - [ ] Implement backward compatibility handling
+   - [ ] Plan migration path for new protocol features
+
+7. **Enhanced Mix Tasks**
+   - [ ] Add `mix ex_mcp.test` for testing MCP servers
+   - [ ] Create `mix ex_mcp.validate` for protocol compliance checking
+   - [ ] Implement `mix ex_mcp.gen.server` for scaffolding new servers
+   - [ ] Add `mix ex_mcp.gen.handler` for creating handlers
+
+### Low Priority - Future Enhancements
+
+8. **Documentation Generation**
+   - [ ] Auto-generate capability documentation from server metadata
+   - [ ] Create protocol flow diagrams
+   - [ ] Add interactive examples in documentation
+   - [ ] Generate OpenAPI/AsyncAPI specs for HTTP transports
+
+9. **Testing Utilities**
+   - [ ] Create mock transport for easier testing (like Hermes.MockTransport)
+   - [ ] Add protocol compliance test suite
+   - [ ] Implement property-based testing for protocol messages
+   - [ ] Create test fixtures and factories
+
+10. **Performance Monitoring**
+    - [ ] Add request/response timing metrics via telemetry
+    - [ ] Implement connection pool statistics
+    - [ ] Track resource usage per client/server
+    - [ ] Add performance benchmarking suite
+
+### Implementation Notes
+
+- Hermes uses Peri for schema validation which provides better runtime safety
+- Their telemetry integration enables excellent observability
+- The interactive CLI significantly improves developer experience
+- Structured error handling makes debugging much easier
+- Clear separation of concerns in their module structure
+
+## Improvements from mcp_ex Analysis
+
+After analyzing the mcp_ex implementation, the following additional improvements should be considered:
+
+### High Priority - Testing Infrastructure
+
+1. **In-Memory Test Transport**
+   - [ ] Create a test transport that operates fully in memory (like mcp_ex's Transport.Test)
+   - [ ] Implement a TestServer that simulates server responses
+   - [ ] Allow controllable message flow and timing for deterministic tests
+   - [ ] Enable observable message exchange for test assertions
+   - [ ] Support configurable error scenarios
+
+2. **Schema-Based Validation**
+   - [ ] Load and cache the official MCP JSON schema
+   - [ ] Validate all incoming and outgoing messages against schema
+   - [ ] Provide detailed validation error messages
+   - [ ] Support multiple schema versions for protocol evolution
+   - [ ] Create mix task to update/verify schema files
+
+3. **Shell Environment Integration**
+   - [ ] Detect shell type (interactive, login, plain) for stdio transport
+   - [ ] Handle shell initialization delays properly
+   - [ ] Support CommandUtils for enhanced shell environment setup
+   - [ ] Add wrapper script support for complex command execution
+
+### Medium Priority - Protocol Enhancements
+
+4. **Standardized Error Codes**
+   - [ ] Define MCP-specific error codes (-32800 to -32899)
+   - [ ] Add request_cancelled (-32800) and content_too_large (-32801)
+   - [ ] Create specialized error constructors for common cases
+   - [ ] Implement error_response_json helper for quick formatting
+
+5. **HTTP Transport Improvements**
+   - [ ] Follow MCP HTTP transport spec with endpoint discovery
+   - [ ] Support dynamic message endpoint configuration via SSE
+   - [ ] Add comprehensive Req.new options passthrough
+   - [ ] Implement proper origin construction for message endpoints
+   - [ ] Add custom HTTP client injection for testing
+
+6. **Transport Abstraction Layer**
+   - [ ] Create unified transport behavior with standard callbacks
+   - [ ] Implement transport type detection from process info
+   - [ ] Add transport-agnostic send/receive interface
+   - [ ] Support graceful transport switching/fallback
+
+### Low Priority - Developer Tools
+
+7. **Protocol Type System**
+   - [ ] Generate type specs from JSON schema
+   - [ ] Create comprehensive type definitions for all protocol messages
+   - [ ] Add @type annotations for better dialyzer support
+   - [ ] Document type relationships and constraints
+
+8. **Enhanced Logging**
+   - [ ] Add structured logging for protocol messages
+   - [ ] Implement configurable log levels per component
+   - [ ] Create protocol trace mode for debugging
+   - [ ] Add performance metrics to log entries
+
+9. **Configuration Management**
+   - [ ] Support environment-specific configs (dev, test, prod)
+   - [ ] Add configuration validation on startup
+   - [ ] Implement config reloading without restart
+   - [ ] Create config generators for common scenarios
+
+### Implementation Insights from mcp_ex
+
+- **Test-First Design**: mcp_ex's test transport shows the value of building testing infrastructure alongside features
+- **Schema Validation**: Using the official JSON schema provides strong guarantees about protocol compliance
+- **Shell Integration**: Proper handling of shell environments is crucial for stdio transport reliability
+- **HTTP Spec Compliance**: Following the exact MCP HTTP transport specification (with endpoint discovery) ensures compatibility
+- **Error Standardization**: Using consistent error codes across the library improves debuggability
+
+## Improvements from ash_ai MCP Analysis
+
+After analyzing the ash_ai MCP implementation, the following additional improvements should be considered:
+
+### High Priority - Server Integration Improvements
+
+1. **Plug.Router Wrapper for HTTP Transport**
+   - [ ] Create a Plug.Router wrapper around ExMCP.Server for easier web integration
+   - [ ] Enable simple `forward "/mcp", ExMCP.Plug` pattern in Phoenix
+   - [ ] Support inline tool configuration in router options
+   - [ ] Handle HTTP-specific concerns (headers, SSE formatting) at Plug level
+   - [ ] Provide simplified API for common use cases
+
+2. **Framework Integration Patterns**
+   - [ ] Create generic integration patterns for Phoenix applications
+   - [ ] Support forward routing with configurable paths
+   - [ ] Enable middleware integration (auth, logging, etc.)
+   - [ ] Provide mix tasks for generating MCP server setup
+   - [ ] Add Igniter support for automated installation
+
+3. **Tool Registration System**
+   - [ ] Create a declarative tool definition system
+   - [ ] Support tool discovery and listing
+   - [ ] Enable dynamic tool registration
+   - [ ] Add tool metadata (descriptions, schemas)
+   - [ ] Support filtering tools by capabilities or tags
+
+### Medium Priority - Protocol Features
+
+4. **SSE Event Streaming**
+   - [ ] Implement proper SSE event formatting
+   - [ ] Support endpoint events for dynamic configuration
+   - [ ] Add event ID support for resumability
+   - [ ] Enable chunked transfer encoding
+   - [ ] Support keep-alive ping events
+
+5. **Session Management**
+   - [ ] Implement lightweight session tracking
+   - [ ] Support session IDs without full GenServer processes
+   - [ ] Add session context propagation
+   - [ ] Enable session-based state management
+   - [ ] Support session termination via DELETE
+
+6. **Flexible Protocol Versioning**
+   - [ ] Support configurable protocol version statements
+   - [ ] Enable backward compatibility modes
+   - [ ] Add version negotiation helpers
+   - [ ] Support version-specific feature flags
+
+### Low Priority - Advanced Features
+
+7. **Resource Integration**
+   - [ ] Create patterns for exposing database resources
+   - [ ] Support resource listing with pagination
+   - [ ] Enable resource subscriptions
+   - [ ] Add resource change notifications
+   - [ ] Implement resource templates
+
+8. **Authentication Integration**
+   - [ ] Add API key authentication support
+   - [ ] Create OAuth flow helpers
+   - [ ] Support token-based authentication
+   - [ ] Enable role-based access control
+   - [ ] Add authentication middleware
+
+9. **Development Tools**
+   - [ ] Create MCP server generator (mix task)
+   - [ ] Add live reload for tool definitions
+   - [ ] Implement request/response logging
+   - [ ] Create debugging middleware
+   - [ ] Add performance monitoring
+
+### Implementation Insights from ash_ai
+
+- **Simplicity First**: ash_ai shows that a minimal MCP server can be very effective
+- **Plug Integration**: Using Plug.Router makes it easy to integrate into existing web apps
+- **Tool-Centric**: Focusing on tools as the primary integration point simplifies adoption
+- **Framework Agnostic**: The implementation works with any Plug-compatible framework
+- **Session Optional**: Session management can be added later without breaking compatibility
+
+### Key Differences from ExMCP's Current Server Implementation
+
+While ExMCP already has comprehensive server support, ash_ai demonstrates some additional patterns that could enhance ExMCP:
+
+1. **Plug.Router Integration** - ash_ai shows how to expose MCP as a simple Plug that can be forwarded to in Phoenix/other web apps
+2. **Lightweight HTTP Handling** - Direct HTTP/SSE handling without full transport abstraction
+3. **Tool-First Configuration** - Simple tool list configuration in the router
+4. **Mix Task Generators** - Automated setup for common integration patterns
+5. **Framework-Specific Helpers** - Phoenix-specific forward routing patterns

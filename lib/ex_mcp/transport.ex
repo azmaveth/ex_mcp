@@ -1,6 +1,6 @@
 defmodule ExMCP.Transport do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   Behaviour for MCP transport implementations.
 

@@ -1,6 +1,6 @@
 defmodule ExMCP.Server.Handler do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   Behaviour for implementing MCP server handlers.
 
@@ -322,7 +322,7 @@ defmodule ExMCP.Server.Handler do
   Handles reading a resource.
   """
   @callback handle_read_resource(uri :: String.t(), state()) ::
-              {:ok, ExMCP.Types.resource_content(), state()} | {:error, any(), state()}
+              {:ok, ExMCP.Types.resource_contents(), state()} | {:error, any(), state()}
 
   @doc """
   Handles listing available prompts.

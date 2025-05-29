@@ -27,7 +27,7 @@ These modules and features are part of the official Model Context Protocol speci
 
 ### Transports
 - `ExMCP.Transport.Stdio` - Standard I/O transport (primary MCP transport)
-- `ExMCP.Transport.SSE` - Server-Sent Events transport (MCP-specified alternative)
+- `ExMCP.Transport.HTTP` - Streamable HTTP with optional Server-Sent Events transport (MCP-specified alternative)
 
 ## ExMCP Extensions
 

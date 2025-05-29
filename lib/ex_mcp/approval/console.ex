@@ -1,6 +1,6 @@
 defmodule ExMCP.Approval.Console do
   @moduledoc """
-  @exmcp_extension
+  This module provides ExMCP extensions beyond the standard MCP specification.
 
   Console-based approval handler for human-in-the-loop interactions.
 

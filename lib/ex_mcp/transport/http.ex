@@ -1,6 +1,6 @@
 defmodule ExMCP.Transport.HTTP do
   @moduledoc """
-  @mcp_spec
+  This module implements the standard MCP specification.
 
   Streamable HTTP transport for MCP with enhanced SSE support.
 

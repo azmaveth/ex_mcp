@@ -1,6 +1,6 @@
 defmodule ExMCP.Transport.WebSocket do
   @moduledoc """
-  @exmcp_extension
+  This module provides ExMCP extensions beyond the standard MCP specification.
 
   WebSocket transport implementation for ExMCP.
 

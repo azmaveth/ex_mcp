@@ -1,6 +1,6 @@
 defmodule ExMCP.ServerManager do
   @moduledoc """
-  @exmcp_extension
+  This module provides ExMCP extensions beyond the standard MCP specification.
 
   Manages multiple MCP server connections.
 

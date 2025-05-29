@@ -1,6 +1,6 @@
 defmodule ExMCP.Client.DefaultHandler do
   @moduledoc """
-  @exmcp_extension
+  This module provides ExMCP extensions beyond the standard MCP specification.
 
   Default implementation of the ExMCP.Client.Handler behaviour.
 

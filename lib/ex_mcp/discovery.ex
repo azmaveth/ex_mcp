@@ -1,6 +1,6 @@
 defmodule ExMCP.Discovery do
   @moduledoc """
-  @exmcp_extension
+  This module provides ExMCP extensions beyond the standard MCP specification.
 
   MCP server discovery functionality.
 
