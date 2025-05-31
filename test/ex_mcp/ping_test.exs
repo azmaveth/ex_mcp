@@ -1,9 +1,9 @@
 defmodule ExMCP.PingTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Server, Protocol}
-  alias ExMCP.Server.Handler
+  alias ExMCP.{Client, Protocol, Server}
   alias ExMCP.Client.Handler, as: ClientHandler
+  alias ExMCP.Server.Handler
 
   defmodule TestServerHandler do
     @behaviour Handler

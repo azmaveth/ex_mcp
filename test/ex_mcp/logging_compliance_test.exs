@@ -1,7 +1,7 @@
 defmodule ExMCP.LoggingComplianceTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Server, Protocol}
+  alias ExMCP.{Client, Protocol, Server}
 
   defmodule TestLoggingServer do
     use ExMCP.Server.Handler

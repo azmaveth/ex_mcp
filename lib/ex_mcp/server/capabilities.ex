@@ -34,9 +34,9 @@ defmodule ExMCP.Server.Capabilities do
   @spec build_capabilities(module(), String.t() | nil) :: map()
   def build_capabilities(_handler_module, version \\ nil) do
     version = version || VersionRegistry.latest_version()
-    
+
     capabilities = VersionRegistry.capabilities_for_version(version)
-    
+
     # Convert atom keys to string keys for JSON compatibility
     capabilities
     |> Enum.map(fn {key, value} ->
@@ -60,10 +60,9 @@ defmodule ExMCP.Server.Capabilities do
     |> to_string()
     |> String.split("_")
     |> Enum.with_index()
-    |> Enum.map(fn {part, index} ->
+    |> Enum.map_join("", fn {part, index} ->
       if index == 0, do: part, else: String.capitalize(part)
     end)
-    |> Enum.join()
   end
 
   defp convert_key(key), do: to_string(key)

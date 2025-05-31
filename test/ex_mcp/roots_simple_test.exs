@@ -87,7 +87,7 @@ defmodule ExMCP.RootsSimpleTest do
     end
 
     test "server can use list_roots API" do
-      # Start server 
+      # Start server
       {:ok, server} =
         Server.start_link(
           transport: :beam,

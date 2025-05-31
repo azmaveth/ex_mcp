@@ -1,7 +1,7 @@
 defmodule ExMCP.CompletionComplianceTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Server, Protocol}
+  alias ExMCP.{Client, Protocol, Server}
 
   defmodule TestCompletionServer do
     use ExMCP.Server.Handler

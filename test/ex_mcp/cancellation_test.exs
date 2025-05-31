@@ -1,7 +1,7 @@
 defmodule ExMCP.CancellationTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Protocol, Client, Server}
+  alias ExMCP.{Client, Protocol, Server}
   alias ExMCP.Server.Handler
 
   defmodule TestHandler do

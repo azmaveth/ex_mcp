@@ -144,24 +144,24 @@ defmodule ExMCP.Client.Handler do
 
   @doc """
   Handles an elicitation request from the server.
-  
+
   This is a draft protocol feature and is only called when the negotiated
   protocol version is "draft". The server is requesting additional information
   from the user through a structured form.
-  
+
   ## Parameters
-  
+
   - `message` - Human-readable message explaining what information is needed
   - `requested_schema` - JSON schema defining the expected response structure
-  
+
   ## Response
-  
+
   The result should contain:
   - `action` - One of "accept", "decline", or "cancel"
   - `content` (optional) - The user's response data (only for "accept")
-  
+
   ## Example
-  
+
       def handle_elicitation_create(message, requested_schema, state) do
         # Present the elicitation to the user
         case present_elicitation_to_user(message, requested_schema) do

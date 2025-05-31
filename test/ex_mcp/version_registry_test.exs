@@ -137,7 +137,10 @@ defmodule ExMCP.VersionRegistryTest do
 
       # Invalid methods for version
       assert {:error, msg} =
-               Protocol.validate_message_version(%{"method" => "elicitation/create"}, "2025-03-26")
+               Protocol.validate_message_version(
+                 %{"method" => "elicitation/create"},
+                 "2025-03-26"
+               )
 
       assert msg =~ "not available"
       assert msg =~ "2025-03-26"
@@ -167,4 +170,3 @@ defmodule ExMCP.VersionRegistryTest do
     end
   end
 end
-

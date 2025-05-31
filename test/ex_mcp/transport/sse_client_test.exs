@@ -276,8 +276,7 @@ defmodule ExMCP.Transport.SSEClientTest do
   defp send_sse_event(server, event) do
     data =
       event
-      |> Enum.map(fn {k, v} -> "#{k}: #{v}" end)
-      |> Enum.join("\n")
+      |> Enum.map_join("\n", fn {k, v} -> "#{k}: #{v}" end)
 
     send_raw_sse(server, data <> "\n\n")
   end

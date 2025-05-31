@@ -257,8 +257,7 @@ defmodule ExMCP.Transport.SSEClient do
       if map_size(current_event) > 0 do
         # Reconstruct incomplete event
         current_event
-        |> Enum.map(fn {k, v} -> "#{k}: #{v}" end)
-        |> Enum.join("\n")
+        |> Enum.map_join("\n", fn {k, v} -> "#{k}: #{v}" end)
       else
         Enum.join(acc, "\n")
       end

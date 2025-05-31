@@ -186,4 +186,3 @@ defmodule ExMCP.Types.Draft do
           required(:id) => request_id() | nil
         }
 end
-

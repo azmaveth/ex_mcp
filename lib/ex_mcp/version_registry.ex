@@ -100,28 +100,25 @@ defmodule ExMCP.VersionRegistry do
   """
   @spec feature_available?(version(), feature()) :: boolean()
   def feature_available?(version, feature) do
-    case feature do
-      # Version-specific features
-      :resource_subscription -> version in ["2025-03-26", "draft"]
-      :prompts_list_changed -> version in ["2025-03-26", "draft"]
-      :resources_list_changed -> version in ["2025-03-26", "draft"]
-      :logging_set_level -> version in ["2025-03-26", "draft"]
-      :completion -> version in ["2025-03-26", "draft"]
-      # Version-specific features
-      :batch_processing -> version == "2025-03-26"
-      
-      # Draft-only features
-      :elicitation -> version == "draft"
-      :structured_content -> version == "draft"
-      :tool_output_schema -> version == "draft"
-      # Base features available in all versions
-      :prompts -> true
-      :resources -> true
-      :tools -> true
-      :logging -> true
-      _ -> false
+    cond do
+      feature in base_features() -> true
+      feature in v2025_features() -> version in ["2025-03-26", "draft"]
+      feature in batch_features() -> version == "2025-03-26"
+      feature in draft_features() -> version == "draft"
+      true -> false
     end
   end
+
+  # Helper functions for feature categorization
+  defp base_features, do: [:prompts, :resources, :tools, :logging]
+
+  defp v2025_features do
+    [:resource_subscription, :prompts_list_changed, :resources_list_changed, :logging_set_level, :completion]
+  end
+
+  defp batch_features, do: [:batch_processing]
+
+  defp draft_features, do: [:elicitation, :structured_content, :tool_output_schema]
 
   @doc """
   Get the message format differences for a version.
@@ -235,4 +232,3 @@ defmodule ExMCP.VersionRegistry do
   def types_module("draft"), do: ExMCP.Types.Draft
   def types_module(_), do: ExMCP.Types
 end
-

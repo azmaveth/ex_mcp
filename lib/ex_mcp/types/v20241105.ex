@@ -101,4 +101,3 @@ defmodule ExMCP.Types.V20241105 do
           optional(:name) => String.t()
         }
 end
-

@@ -721,7 +721,10 @@ defmodule ExMCP.Client do
   def handle_call({:batch_request, requests}, from, state) do
     # Check if batch requests are supported in negotiated version
     if state.negotiated_version != "2025-03-26" do
-      {:reply, {:error, "Batch requests only supported in protocol version 2025-03-26, current: #{state.negotiated_version}"}, state}
+      {:reply,
+       {:error,
+        "Batch requests only supported in protocol version 2025-03-26, current: #{state.negotiated_version}"},
+       state}
     else
       # Build batch of encoded requests
       {batch_messages, request_map} =
@@ -741,7 +744,9 @@ defmodule ExMCP.Client do
             {:ok, new_transport_state} ->
               # Store the batch request
               pending = Map.put(state.pending_requests, batch_id, {from, :batch, request_map})
-              {:noreply, %{state | transport_state: new_transport_state, pending_requests: pending}}
+
+              {:noreply,
+               %{state | transport_state: new_transport_state, pending_requests: pending}}
 
             {:error, reason} ->
               {:reply, {:error, reason}, state}
@@ -1045,91 +1050,119 @@ defmodule ExMCP.Client do
   defp handle_notification(method, params, state) do
     case method do
       "notifications/resources/list_changed" ->
-        Logger.info("Resources list changed")
-        # Could emit a telemetry event or update a cache here
-        {:noreply, state}
+        handle_resources_list_changed_notification(state)
 
       "notifications/resources/updated" ->
-        uri = Map.get(params, "uri", "unknown")
-        Logger.info("Resource updated: #{uri}")
-        {:noreply, state}
+        handle_resource_updated_notification(params, state)
 
       "notifications/tools/list_changed" ->
-        Logger.info("Tools list changed")
-        {:noreply, state}
+        handle_tools_list_changed_notification(state)
 
       "notifications/prompts/list_changed" ->
-        Logger.info("Prompts list changed")
-        {:noreply, state}
+        handle_prompts_list_changed_notification(state)
 
       "notifications/progress" ->
-        token = Map.get(params, "progressToken", "unknown")
-        progress = Map.get(params, "progress", 0)
-        total = Map.get(params, "total")
-        message = Map.get(params, "message")
-
-        log_message =
-          cond do
-            total && message -> "Progress [#{token}]: #{progress}/#{total} - #{message}"
-            total -> "Progress [#{token}]: #{progress}/#{total}"
-            message -> "Progress [#{token}]: #{progress} - #{message}"
-            true -> "Progress [#{token}]: #{progress}"
-          end
-
-        Logger.info(log_message)
-        {:noreply, state}
+        handle_progress_notification(params, state)
 
       "notifications/roots/list_changed" ->
-        Logger.info("Roots list changed")
-        {:noreply, state}
+        handle_roots_list_changed_notification(state)
 
       "notifications/cancelled" ->
-        case Map.get(params, "requestId") do
-          nil ->
-            # Malformed cancellation notification (missing requestId)
-            Logger.warning("Ignoring malformed cancellation notification: #{inspect(params)}")
-            {:noreply, state}
-
-          request_id when is_binary(request_id) or is_integer(request_id) ->
-            # Convert to string for consistent handling
-            request_id_str = to_string(request_id)
-            reason = Map.get(params, "reason")
-            Logger.info("Request #{request_id_str} cancelled: #{reason || "no reason given"}")
-
-            # Check if this is a valid in-progress request (try both formats)
-            cond do
-              Map.has_key?(state.pending_requests, request_id) ->
-                from = Map.get(state.pending_requests, request_id)
-                Logger.debug("Cancelling in-progress request #{request_id}")
-                new_pending = Map.delete(state.pending_requests, request_id)
-                GenServer.reply(from, {:error, :cancelled})
-                {:noreply, %{state | pending_requests: new_pending}}
-
-              Map.has_key?(state.pending_requests, request_id_str) ->
-                from = Map.get(state.pending_requests, request_id_str)
-                Logger.debug("Cancelling in-progress request #{request_id_str}")
-                new_pending = Map.delete(state.pending_requests, request_id_str)
-                GenServer.reply(from, {:error, :cancelled})
-                {:noreply, %{state | pending_requests: new_pending}}
-
-              true ->
-                # Request not found or already completed - ignore as per spec
-                Logger.debug("Ignoring cancellation for unknown request #{request_id_str}")
-                {:noreply, state}
-            end
-
-          _ ->
-            # Invalid requestId type
-            Logger.warning(
-              "Ignoring cancellation with invalid requestId type: #{inspect(params)}"
-            )
-
-            {:noreply, state}
-        end
+        handle_cancellation_notification(params, state)
 
       _ ->
         Logger.debug("Received notification: #{method} #{inspect(params)}")
         {:noreply, state}
+    end
+  end
+
+  # Individual notification handlers
+  defp handle_resources_list_changed_notification(state) do
+    Logger.info("Resources list changed")
+    # Could emit a telemetry event or update a cache here
+    {:noreply, state}
+  end
+
+  defp handle_resource_updated_notification(params, state) do
+    uri = Map.get(params, "uri", "unknown")
+    Logger.info("Resource updated: #{uri}")
+    {:noreply, state}
+  end
+
+  defp handle_tools_list_changed_notification(state) do
+    Logger.info("Tools list changed")
+    {:noreply, state}
+  end
+
+  defp handle_prompts_list_changed_notification(state) do
+    Logger.info("Prompts list changed")
+    {:noreply, state}
+  end
+
+  defp handle_progress_notification(params, state) do
+    token = Map.get(params, "progressToken", "unknown")
+    progress = Map.get(params, "progress", 0)
+    total = Map.get(params, "total")
+    message = Map.get(params, "message")
+
+    log_message = format_progress_message(token, progress, total, message)
+    Logger.info(log_message)
+    {:noreply, state}
+  end
+
+  defp handle_roots_list_changed_notification(state) do
+    Logger.info("Roots list changed")
+    {:noreply, state}
+  end
+
+  defp handle_cancellation_notification(params, state) do
+    case Map.get(params, "requestId") do
+      nil ->
+        Logger.warning("Ignoring malformed cancellation notification: #{inspect(params)}")
+        {:noreply, state}
+
+      request_id when is_binary(request_id) or is_integer(request_id) ->
+        handle_valid_cancellation(request_id, params, state)
+
+      _ ->
+        Logger.warning("Ignoring cancellation with invalid requestId type: #{inspect(params)}")
+        {:noreply, state}
+    end
+  end
+
+  defp handle_valid_cancellation(request_id, params, state) do
+    request_id_str = to_string(request_id)
+    reason = Map.get(params, "reason")
+    Logger.info("Request #{request_id_str} cancelled: #{reason || "no reason given"}")
+
+    # Check if this is a valid in-progress request (try both formats)
+    cond do
+      Map.has_key?(state.pending_requests, request_id) ->
+        cancel_pending_request(request_id, state)
+
+      Map.has_key?(state.pending_requests, request_id_str) ->
+        cancel_pending_request(request_id_str, state)
+
+      true ->
+        Logger.debug("Ignoring cancellation for unknown request #{request_id_str}")
+        {:noreply, state}
+    end
+  end
+
+  defp cancel_pending_request(request_id, state) do
+    from = Map.get(state.pending_requests, request_id)
+    Logger.debug("Cancelling in-progress request #{request_id}")
+    new_pending = Map.delete(state.pending_requests, request_id)
+    GenServer.reply(from, {:error, :cancelled})
+    {:noreply, %{state | pending_requests: new_pending}}
+  end
+
+  defp format_progress_message(token, progress, total, message) do
+    cond do
+      total && message -> "Progress [#{token}]: #{progress}/#{total} - #{message}"
+      total -> "Progress [#{token}]: #{progress}/#{total}"
+      message -> "Progress [#{token}]: #{progress} - #{message}"
+      true -> "Progress [#{token}]: #{progress}"
     end
   end
 
@@ -1203,7 +1236,6 @@ defmodule ExMCP.Client do
 
   # Helper functions for server requests
 
-
   defp build_client_capabilities(nil, _version), do: %{}
 
   defp build_client_capabilities(handler, version) do
@@ -1222,15 +1254,15 @@ defmodule ExMCP.Client do
     base =
       if function_exported?(handler, :handle_create_message, 2) do
         sampling_caps = %{}
-        
+
         # Add elicitation support for draft version
-        sampling_caps = 
+        sampling_caps =
           if version == "draft" && function_exported?(handler, :handle_elicitation_create, 3) do
             Map.put(sampling_caps, "elicitation", %{})
           else
             sampling_caps
           end
-        
+
         Map.put(base, "sampling", sampling_caps)
       else
         base
@@ -1360,7 +1392,11 @@ defmodule ExMCP.Client do
   end
 
   defp handle_elicitation_create_request(params, id, state) do
-    case state.handler.handle_elicitation_create(params["message"], params["requestedSchema"], state.handler_state) do
+    case state.handler.handle_elicitation_create(
+           params["message"],
+           params["requestedSchema"],
+           state.handler_state
+         ) do
       {:ok, result, new_handler_state} ->
         response = Protocol.encode_response(result, id)
         send_message(response, %{state | handler_state: new_handler_state})

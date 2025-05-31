@@ -134,21 +134,21 @@ defmodule ExMCP.SamplingTest do
         }
       }
 
-      assert is_valid_message?(valid_message)
+      assert valid_message?(valid_message)
 
       # Missing role
       invalid_message = %{
         "content" => %{"type" => "text", "text" => "Hello"}
       }
 
-      refute is_valid_message?(invalid_message)
+      refute valid_message?(invalid_message)
 
       # Missing content
       invalid_message2 = %{
         "role" => "user"
       }
 
-      refute is_valid_message?(invalid_message2)
+      refute valid_message?(invalid_message2)
     end
 
     test "validates model preferences structure" do
@@ -160,21 +160,21 @@ defmodule ExMCP.SamplingTest do
         "intelligencePriority" => 0.8
       }
 
-      assert is_valid_model_preferences?(valid_prefs)
+      assert valid_model_preferences?(valid_prefs)
 
       # Invalid priority value (> 1.0)
       invalid_prefs = %{
         "costPriority" => 1.5
       }
 
-      refute is_valid_model_preferences?(invalid_prefs)
+      refute valid_model_preferences?(invalid_prefs)
 
       # Invalid priority value (< 0.0)
       invalid_prefs2 = %{
         "speedPriority" => -0.1
       }
 
-      refute is_valid_model_preferences?(invalid_prefs2)
+      refute valid_model_preferences?(invalid_prefs2)
     end
 
     test "validates sampling parameters" do
@@ -188,14 +188,14 @@ defmodule ExMCP.SamplingTest do
         "temperature" => 0.7
       }
 
-      assert is_valid_sampling_params?(valid_params)
+      assert valid_sampling_params?(valid_params)
 
       # Missing messages
       invalid_params = %{
         "modelPreferences" => %{}
       }
 
-      refute is_valid_sampling_params?(invalid_params)
+      refute valid_sampling_params?(invalid_params)
 
       # Invalid temperature
       invalid_params2 = %{
@@ -206,7 +206,7 @@ defmodule ExMCP.SamplingTest do
         "temperature" => 3.0
       }
 
-      refute is_valid_sampling_params?(invalid_params2)
+      refute valid_sampling_params?(invalid_params2)
     end
   end
 
@@ -303,14 +303,14 @@ defmodule ExMCP.SamplingTest do
   end
 
   # Helper functions for validation
-  defp is_valid_message?(%{"role" => role, "content" => content})
+  defp valid_message?(%{"role" => role, "content" => content})
        when role in ["user", "assistant", "system"] and is_map(content) do
     Map.has_key?(content, "type") and Map.has_key?(content, "text")
   end
 
-  defp is_valid_message?(_), do: false
+  defp valid_message?(_), do: false
 
-  defp is_valid_model_preferences?(prefs) when is_map(prefs) do
+  defp valid_model_preferences?(prefs) when is_map(prefs) do
     Enum.all?(prefs, fn
       {"hints", hints} when is_list(hints) -> true
       {"costPriority", p} when is_number(p) and p >= 0.0 and p <= 1.0 -> true
@@ -320,16 +320,16 @@ defmodule ExMCP.SamplingTest do
     end)
   end
 
-  defp is_valid_model_preferences?(_), do: false
+  defp valid_model_preferences?(_), do: false
 
-  defp is_valid_sampling_params?(%{"messages" => messages} = params)
+  defp valid_sampling_params?(%{"messages" => messages} = params)
        when is_list(messages) and length(messages) > 0 do
-    valid_messages = Enum.all?(messages, &is_valid_message?/1)
+    valid_messages = Enum.all?(messages, &valid_message?/1)
 
     valid_prefs =
       case Map.get(params, "modelPreferences") do
         nil -> true
-        prefs -> is_valid_model_preferences?(prefs)
+        prefs -> valid_model_preferences?(prefs)
       end
 
     valid_temp =
@@ -349,5 +349,5 @@ defmodule ExMCP.SamplingTest do
     valid_messages and valid_prefs and valid_temp and valid_tokens
   end
 
-  defp is_valid_sampling_params?(_), do: false
+  defp valid_sampling_params?(_), do: false
 end

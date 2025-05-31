@@ -322,7 +322,7 @@ defmodule ExMCP.ProgressIntegrationTest do
           progress_token: "string-token"
         )
 
-      # Integer token  
+      # Integer token
       {:ok, _} =
         Client.call_tool(client, "long_operation", %{"steps" => 2}, progress_token: 12345)
 

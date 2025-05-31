@@ -445,7 +445,7 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Encodes an elicitation/create request.
-  
+
   This is a draft protocol feature and requires protocol version "draft".
   """
   @spec encode_elicitation_create(String.t(), map()) :: map()
@@ -462,7 +462,6 @@ defmodule ExMCP.Protocol do
   end
 
   # Batch Request Support
-
 
   @doc """
   Encodes a batch of requests and/or notifications.

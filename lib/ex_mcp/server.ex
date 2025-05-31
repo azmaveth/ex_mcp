@@ -204,15 +204,15 @@ defmodule ExMCP.Server do
 
   @doc """
   Requests information from the user via elicitation.
-  
+
   This is a draft protocol feature and requires protocol version "draft".
-  
+
   ## Parameters
   - message: Human-readable message explaining what information is needed
   - requested_schema: JSON schema defining the expected response structure
   """
-  @spec elicit_information(GenServer.server(), String.t(), map(), timeout()) :: 
-    {:ok, %{action: String.t(), content: map() | nil}} | {:error, any()}
+  @spec elicit_information(GenServer.server(), String.t(), map(), timeout()) ::
+          {:ok, %{action: String.t(), content: map() | nil}} | {:error, any()}
   def elicit_information(server, message, requested_schema, timeout \\ 30_000) do
     GenServer.call(server, {:elicit_information, message, requested_schema}, timeout)
   end
@@ -295,6 +295,7 @@ defmodule ExMCP.Server do
           Logger.warning(
             "Batch requests require protocol version '2025-03-26', current: #{state.negotiated_version}"
           )
+
           {:noreply, state}
         end
 
@@ -402,7 +403,10 @@ defmodule ExMCP.Server do
   def handle_call({:elicit_information, message, requested_schema}, from, state) do
     # Check if elicitation is supported in negotiated version
     if state.negotiated_version != "draft" do
-      {:reply, {:error, "Elicitation only supported in draft protocol version, current: #{state.negotiated_version}"}, state}
+      {:reply,
+       {:error,
+        "Elicitation only supported in draft protocol version, current: #{state.negotiated_version}"},
+       state}
     else
       request = Protocol.encode_elicitation_create(message, requested_schema)
       send_request(request, from, state)
