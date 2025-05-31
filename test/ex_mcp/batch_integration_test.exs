@@ -13,7 +13,7 @@ defmodule ExMCP.BatchIntegrationTest do
 
     @impl true
     def handle_initialize(_params, state) do
-      {:ok, %{capabilities: %{}}, state}
+      {:ok, %{protocolVersion: "2025-03-26", capabilities: %{}}, state}
     end
 
     @impl true

@@ -143,9 +143,45 @@ defmodule ExMCP.Client.Handler do
               | {:error, error_info, state}
 
   @doc """
+  Handles an elicitation request from the server.
+  
+  This is a draft protocol feature and is only called when the negotiated
+  protocol version is "draft". The server is requesting additional information
+  from the user through a structured form.
+  
+  ## Parameters
+  
+  - `message` - Human-readable message explaining what information is needed
+  - `requested_schema` - JSON schema defining the expected response structure
+  
+  ## Response
+  
+  The result should contain:
+  - `action` - One of "accept", "decline", or "cancel"
+  - `content` (optional) - The user's response data (only for "accept")
+  
+  ## Example
+  
+      def handle_elicitation_create(message, requested_schema, state) do
+        # Present the elicitation to the user
+        case present_elicitation_to_user(message, requested_schema) do
+          {:accept, data} ->
+            {:ok, %{action: "accept", content: data}, state}
+          :decline ->
+            {:ok, %{action: "decline"}, state}
+          :cancel ->
+            {:ok, %{action: "cancel"}, state}
+        end
+      end
+  """
+  @callback handle_elicitation_create(message :: String.t(), requested_schema :: map(), state) ::
+              {:ok, map(), state}
+              | {:error, error_info, state}
+
+  @doc """
   Called when the handler process is about to terminate.
   """
   @callback terminate(reason :: term(), state) :: :ok
 
-  @optional_callbacks terminate: 2
+  @optional_callbacks terminate: 2, handle_elicitation_create: 3
 end

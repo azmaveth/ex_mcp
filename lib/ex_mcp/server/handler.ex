@@ -254,10 +254,13 @@ defmodule ExMCP.Server.Handler do
           _ -> "2025-03-26"  # Propose latest for unknown versions
         end
         
+        # Use version-aware capabilities
+        capabilities = ExMCP.Server.Capabilities.build_capabilities(__MODULE__, negotiated_version)
+        
         {:ok, %{
           protocolVersion: negotiated_version,
           serverInfo: %{name: "my-server", version: "1.0.0"},
-          capabilities: %{tools: %{}, resources: %{}}
+          capabilities: capabilities
         }, state}
       end
   """

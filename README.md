@@ -409,6 +409,23 @@ defmodule MyApprovalHandler do
 end
 ```
 
+## ⚙️ Configuration
+
+### Protocol Version
+
+ExMCP supports multiple MCP protocol versions. Configure the preferred version in your `config/config.exs`:
+
+```elixir
+config :ex_mcp,
+  # Options: "2024-11-05", "2025-03-26", "draft"
+  protocol_version: "2025-03-26"  # Default: latest stable
+```
+
+Version capabilities:
+- **2024-11-05**: Base MCP features
+- **2025-03-26**: Adds resource subscriptions, logging control
+- **draft**: Experimental features (batch requests, elicitation)
+
 ## 📚 Documentation
 
 - 📖 **[User Guide](USER_GUIDE.md)** - Comprehensive guide with examples

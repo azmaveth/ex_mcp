@@ -2,29 +2,69 @@ defmodule ExMCP.Server.Capabilities do
   @moduledoc """
   Helper module to build server capabilities.
 
-  For now, this returns a standard set of capabilities.
-  In the future, this could be enhanced to dynamically detect
-  which callbacks are truly implemented vs using defaults.
+  Uses the VersionRegistry to return appropriate capabilities
+  based on the negotiated protocol version.
   """
+
+  alias ExMCP.VersionRegistry
 
   @doc """
-  Builds server capabilities object.
+  Builds server capabilities object based on protocol version.
 
-  Currently returns a standard capability set. Handlers should
-  override this in their handle_initialize/2 if they want to
-  advertise specific capabilities.
+  Returns version-specific capabilities from the VersionRegistry.
+  Handlers can still override this in their handle_initialize/2 
+  if they want to advertise different capabilities.
 
-  Returns a map with:
-  - tools: empty object (details provided by tools/list)
-  - experimental: always included for future extensions
+  ## Parameters
+  - handler_module: The handler module (reserved for future use)
+  - version: The negotiated protocol version (defaults to latest)
+
+  ## Examples
+      
+      iex> ExMCP.Server.Capabilities.build_capabilities(MyHandler, "2025-03-26")
+      %{
+        "prompts" => %{"listChanged" => true},
+        "resources" => %{"subscribe" => true, "listChanged" => true},
+        "tools" => %{},
+        "logging" => %{"setLevel" => true},
+        "completion" => %{},
+        "experimental" => %{}
+      }
   """
-  @spec build_capabilities(module()) :: map()
-  def build_capabilities(_handler_module) do
-    # For now, just return standard capabilities
-    # Handlers can customize this in their handle_initialize
-    %{
-      "tools" => %{},
-      "experimental" => %{}
-    }
+  @spec build_capabilities(module(), String.t() | nil) :: map()
+  def build_capabilities(_handler_module, version \\ nil) do
+    version = version || VersionRegistry.latest_version()
+    
+    capabilities = VersionRegistry.capabilities_for_version(version)
+    
+    # Convert atom keys to string keys for JSON compatibility
+    capabilities
+    |> Enum.map(fn {key, value} ->
+      {to_string(key), convert_capability_value(value)}
+    end)
+    |> Enum.into(%{})
   end
+
+  defp convert_capability_value(value) when is_map(value) do
+    value
+    |> Enum.map(fn {k, v} ->
+      {convert_key(k), v}
+    end)
+    |> Enum.into(%{})
+  end
+
+  defp convert_capability_value(value), do: value
+
+  defp convert_key(key) when is_atom(key) do
+    key
+    |> to_string()
+    |> String.split("_")
+    |> Enum.with_index()
+    |> Enum.map(fn {part, index} ->
+      if index == 0, do: part, else: String.capitalize(part)
+    end)
+    |> Enum.join()
+  end
+
+  defp convert_key(key), do: to_string(key)
 end

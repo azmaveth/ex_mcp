@@ -102,7 +102,7 @@ defmodule ExMCP.Client do
   use GenServer
   require Logger
 
-  alias ExMCP.{Protocol, Transport}
+  alias ExMCP.{Protocol, Transport, VersionRegistry}
   alias ExMCP.Authorization.{ErrorHandler, TokenManager}
 
   @reconnect_interval 5_000
@@ -115,6 +115,7 @@ defmodule ExMCP.Client do
     :transport_state,
     :server_info,
     :server_capabilities,
+    :negotiated_version,
     :pending_requests,
     :initialized,
     :client_info,
@@ -323,6 +324,23 @@ defmodule ExMCP.Client do
   end
 
   @doc """
+  Gets the negotiated protocol version.
+
+  Returns the protocol version that was negotiated during initialization.
+  This is the version that both client and server agreed to use.
+
+  ## Examples
+
+      {:ok, "2025-03-26"} = ExMCP.Client.negotiated_version(client)
+
+  """
+  @spec negotiated_version(GenServer.server()) ::
+          {:ok, String.t()} | {:error, :not_initialized}
+  def negotiated_version(client) do
+    GenServer.call(client, :negotiated_version)
+  end
+
+  @doc """
   Lists available roots from the server.
   """
   @spec list_roots(GenServer.server(), timeout()) ::
@@ -460,8 +478,9 @@ defmodule ExMCP.Client do
   @doc """
   Sends a batch of requests to the server.
 
-  > #### Extension Feature {: .warning}
-  > This is an ExMCP extension for efficient request batching, not part of the MCP specification.
+  This uses standard JSON-RPC batch processing which is only available
+  in protocol version 2025-03-26. The server must support this version
+  for batch requests to work.
 
   Takes a list of request specifications and returns a list of results
   in the same order. Each request spec is a tuple of the function name
@@ -641,6 +660,14 @@ defmodule ExMCP.Client do
     end
   end
 
+  def handle_call(:negotiated_version, _from, state) do
+    if state.initialized do
+      {:reply, {:ok, state.negotiated_version}, state}
+    else
+      {:reply, {:error, :not_initialized}, state}
+    end
+  end
+
   def handle_call(:get_pending_requests, _from, state) do
     pending_ids = Map.keys(state.pending_requests)
     {:reply, pending_ids, state}
@@ -692,32 +719,37 @@ defmodule ExMCP.Client do
   end
 
   def handle_call({:batch_request, requests}, from, state) do
-    # Build batch of encoded requests
-    {batch_messages, request_map} =
-      Enum.reduce(requests, {[], %{}}, fn request_spec, {messages, req_map} ->
-        {message, id} = encode_request_spec(request_spec, state)
-        {[message | messages], Map.put(req_map, id, request_spec)}
-      end)
+    # Check if batch requests are supported in negotiated version
+    if state.negotiated_version != "2025-03-26" do
+      {:reply, {:error, "Batch requests only supported in protocol version 2025-03-26, current: #{state.negotiated_version}"}, state}
+    else
+      # Build batch of encoded requests
+      {batch_messages, request_map} =
+        Enum.reduce(requests, {[], %{}}, fn request_spec, {messages, req_map} ->
+          {message, id} = encode_request_spec(request_spec, state)
+          {[message | messages], Map.put(req_map, id, request_spec)}
+        end)
 
-    batch = Protocol.encode_batch(Enum.reverse(batch_messages))
+      batch = Protocol.encode_batch(Enum.reverse(batch_messages))
 
-    # Generate a batch ID to track this batch request
-    batch_id = Protocol.generate_id()
+      # Generate a batch ID to track this batch request
+      batch_id = Protocol.generate_id()
 
-    case Protocol.encode_to_string(batch) do
-      {:ok, json} ->
-        case state.transport_mod.send_message(json, state.transport_state) do
-          {:ok, new_transport_state} ->
-            # Store the batch request
-            pending = Map.put(state.pending_requests, batch_id, {from, :batch, request_map})
-            {:noreply, %{state | transport_state: new_transport_state, pending_requests: pending}}
+      case Protocol.encode_to_string(batch) do
+        {:ok, json} ->
+          case send_with_auth(json, state) do
+            {:ok, new_transport_state} ->
+              # Store the batch request
+              pending = Map.put(state.pending_requests, batch_id, {from, :batch, request_map})
+              {:noreply, %{state | transport_state: new_transport_state, pending_requests: pending}}
 
-          {:error, reason} ->
-            {:reply, {:error, reason}, state}
-        end
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
     end
   end
 
@@ -807,6 +839,7 @@ defmodule ExMCP.Client do
         | transport_state: transport_state,
           server_info: init_result["serverInfo"],
           server_capabilities: init_result["capabilities"],
+          negotiated_version: init_result["protocolVersion"],
           initialized: true
       }
 
@@ -815,9 +848,11 @@ defmodule ExMCP.Client do
   end
 
   defp initialize_connection(transport_state, state) do
-    # Build capabilities based on handler
-    capabilities = build_client_capabilities(state.handler)
-    init_msg = Protocol.encode_initialize(state.client_info, capabilities)
+    # Get the preferred protocol version
+    preferred_version = ExMCP.VersionRegistry.preferred_version()
+    # Build capabilities based on handler and version
+    capabilities = build_client_capabilities(state.handler, preferred_version)
+    init_msg = Protocol.encode_initialize(state.client_info, capabilities, preferred_version)
 
     with {:ok, json} <- Protocol.encode_to_string(init_msg),
          {:ok, _} <- state.transport_mod.send_message(json, transport_state) do
@@ -1168,9 +1203,11 @@ defmodule ExMCP.Client do
 
   # Helper functions for server requests
 
-  defp build_client_capabilities(nil), do: %{}
 
-  defp build_client_capabilities(handler) do
+  defp build_client_capabilities(nil, _version), do: %{}
+
+  defp build_client_capabilities(handler, version) do
+    version = version || VersionRegistry.preferred_version()
     base = %{}
 
     # Add roots capability if handler implements list_roots
@@ -1184,7 +1221,17 @@ defmodule ExMCP.Client do
     # Add sampling capability if handler implements create_message
     base =
       if function_exported?(handler, :handle_create_message, 2) do
-        Map.put(base, "sampling", %{})
+        sampling_caps = %{}
+        
+        # Add elicitation support for draft version
+        sampling_caps = 
+          if version == "draft" && function_exported?(handler, :handle_elicitation_create, 3) do
+            Map.put(sampling_caps, "elicitation", %{})
+          else
+            sampling_caps
+          end
+        
+        Map.put(base, "sampling", sampling_caps)
       else
         base
       end
@@ -1225,6 +1272,9 @@ defmodule ExMCP.Client do
 
         "sampling/createMessage" ->
           handle_create_message_request(params, id, state)
+
+        "elicitation/create" ->
+          handle_elicitation_create_request(params, id, state)
 
         _ ->
           # Unknown method
@@ -1292,6 +1342,25 @@ defmodule ExMCP.Client do
 
   defp handle_create_message_request(params, id, state) do
     case state.handler.handle_create_message(params, state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = Protocol.encode_response(result, id)
+        send_message(response, %{state | handler_state: new_handler_state})
+
+      {:error, reason, new_handler_state} ->
+        error =
+          Protocol.encode_error(
+            Protocol.internal_error(),
+            format_error(reason),
+            nil,
+            id
+          )
+
+        send_message(error, %{state | handler_state: new_handler_state})
+    end
+  end
+
+  defp handle_elicitation_create_request(params, id, state) do
+    case state.handler.handle_elicitation_create(params["message"], params["requestedSchema"], state.handler_state) do
       {:ok, result, new_handler_state} ->
         response = Protocol.encode_response(result, id)
         send_message(response, %{state | handler_state: new_handler_state})

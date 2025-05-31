@@ -12,7 +12,7 @@ defmodule ExMCP.Protocol do
 
   """
 
-  @protocol_version "2025-03-26"
+  alias ExMCP.VersionRegistry
 
   @type json_rpc_id :: String.t() | integer()
   @type method :: String.t()
@@ -25,16 +25,17 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes an initialize request from client to server.
   """
-  @spec encode_initialize(map(), map() | nil) :: map()
-  def encode_initialize(client_info, capabilities \\ nil) do
+  @spec encode_initialize(map(), map() | nil, String.t() | nil) :: map()
+  def encode_initialize(client_info, capabilities \\ nil, version \\ nil) do
     # Use provided capabilities or defaults
     caps = capabilities || %{"roots" => %{}, "sampling" => %{}}
+    protocol_version = version || VersionRegistry.preferred_version()
 
     %{
       "jsonrpc" => "2.0",
       "method" => "initialize",
       "params" => %{
-        "protocolVersion" => @protocol_version,
+        "protocolVersion" => protocol_version,
         "capabilities" => caps,
         "clientInfo" => client_info
       },
@@ -442,7 +443,26 @@ defmodule ExMCP.Protocol do
     }
   end
 
+  @doc """
+  Encodes an elicitation/create request.
+  
+  This is a draft protocol feature and requires protocol version "draft".
+  """
+  @spec encode_elicitation_create(String.t(), map()) :: map()
+  def encode_elicitation_create(message, requested_schema) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "elicitation/create",
+      "params" => %{
+        "message" => message,
+        "requestedSchema" => requested_schema
+      },
+      "id" => generate_id()
+    }
+  end
+
   # Batch Request Support
+
 
   @doc """
   Encodes a batch of requests and/or notifications.
@@ -520,6 +540,37 @@ defmodule ExMCP.Protocol do
   end
 
   def parse_message(_), do: {:error, :invalid_message}
+
+  # Version-specific utilities
+
+  @doc """
+  Checks if a method is available in the given protocol version.
+  """
+  @spec method_available?(String.t(), String.t()) :: boolean()
+  def method_available?(method, version) do
+    case method do
+      "resources/subscribe" -> version in ["2025-03-26", "draft"]
+      "resources/unsubscribe" -> version in ["2025-03-26", "draft"]
+      "logging/setLevel" -> version in ["2025-03-26", "draft"]
+      "notifications/resources/updated" -> version in ["2025-03-26", "draft"]
+      "elicitation/create" -> version == "draft"
+      _ -> true
+    end
+  end
+
+  @doc """
+  Validates that a message is compatible with the given protocol version.
+  """
+  @spec validate_message_version(map(), String.t()) :: :ok | {:error, String.t()}
+  def validate_message_version(%{"method" => method}, version) do
+    if method_available?(method, version) do
+      :ok
+    else
+      {:error, "Method #{method} is not available in protocol version #{version}"}
+    end
+  end
+
+  def validate_message_version(_, _), do: :ok
 
   # Utilities
 

@@ -91,7 +91,7 @@ defmodule ExMCP.Server do
   use GenServer
   require Logger
 
-  alias ExMCP.{Protocol, Transport}
+  alias ExMCP.{Protocol, Transport, VersionRegistry}
   alias ExMCP.Transport.Beam, as: BeamTransport
 
   defstruct [
@@ -100,7 +100,8 @@ defmodule ExMCP.Server do
     :transport_mod,
     :transport_state,
     :initialized,
-    :pending_requests
+    :pending_requests,
+    :negotiated_version
   ]
 
   @doc """
@@ -191,6 +192,32 @@ defmodule ExMCP.Server do
   end
 
   @doc """
+  Gets the negotiated protocol version.
+
+  Returns the protocol version that was negotiated during initialization.
+  """
+  @spec negotiated_version(GenServer.server()) ::
+          {:ok, String.t() | nil} | {:error, :not_initialized}
+  def negotiated_version(server) do
+    GenServer.call(server, :negotiated_version)
+  end
+
+  @doc """
+  Requests information from the user via elicitation.
+  
+  This is a draft protocol feature and requires protocol version "draft".
+  
+  ## Parameters
+  - message: Human-readable message explaining what information is needed
+  - requested_schema: JSON schema defining the expected response structure
+  """
+  @spec elicit_information(GenServer.server(), String.t(), map(), timeout()) :: 
+    {:ok, %{action: String.t(), content: map() | nil}} | {:error, any()}
+  def elicit_information(server, message, requested_schema, timeout \\ 30_000) do
+    GenServer.call(server, {:elicit_information, message, requested_schema}, timeout)
+  end
+
+  @doc """
   Requests the client to sample an LLM.
 
   The client has full discretion over model selection and should
@@ -260,7 +287,16 @@ defmodule ExMCP.Server do
         handle_notification(method, params, state)
 
       {:batch, messages} ->
-        handle_batch(messages, state)
+        # Standard JSON-RPC batch (array of requests)
+        # Only supported in 2025-03-26 version
+        if state.negotiated_version == "2025-03-26" do
+          handle_batch(messages, state)
+        else
+          Logger.warning(
+            "Batch requests require protocol version '2025-03-26', current: #{state.negotiated_version}"
+          )
+          {:noreply, state}
+        end
 
       _ ->
         Logger.warning("Invalid message received: #{inspect(message)}")
@@ -347,12 +383,30 @@ defmodule ExMCP.Server do
   end
 
   @impl true
+  def handle_call(:negotiated_version, _from, state) do
+    if state.initialized do
+      {:reply, {:ok, state.negotiated_version}, state}
+    else
+      {:reply, {:error, :not_initialized}, state}
+    end
+  end
+
   def handle_call(:ping, from, state) do
     send_request(Protocol.encode_ping(), from, state)
   end
 
   def handle_call(:list_roots, from, state) do
     send_request(Protocol.encode_list_roots(), from, state)
+  end
+
+  def handle_call({:elicit_information, message, requested_schema}, from, state) do
+    # Check if elicitation is supported in negotiated version
+    if state.negotiated_version != "draft" do
+      {:reply, {:error, "Elicitation only supported in draft protocol version, current: #{state.negotiated_version}"}, state}
+    else
+      request = Protocol.encode_elicitation_create(message, requested_schema)
+      send_request(request, from, state)
+    end
   end
 
   def handle_call({:create_message, params}, from, state) do
@@ -392,8 +446,17 @@ defmodule ExMCP.Server do
   defp handle_request("initialize", params, id, state) do
     case state.handler.handle_initialize(params, state.handler_state) do
       {:ok, result, new_handler_state} ->
+        # Extract negotiated version from result
+        negotiated_version = result[:protocolVersion] || result["protocolVersion"]
+
         response = Protocol.encode_response(result, id)
-        send_message(response, %{state | handler_state: new_handler_state, initialized: true})
+
+        send_message(response, %{
+          state
+          | handler_state: new_handler_state,
+            initialized: true,
+            negotiated_version: negotiated_version
+        })
 
       {:error, reason, new_handler_state} ->
         error =
@@ -666,21 +729,27 @@ defmodule ExMCP.Server do
 
       send_message(error, state)
     else
-      case state.handler.handle_set_log_level(level, state.handler_state) do
-        {:ok, new_handler_state} ->
-          response = Protocol.encode_response(%{}, id)
-          send_message(response, %{state | handler_state: new_handler_state})
+      case validate_method_version("logging/setLevel", id, state) do
+        :ok ->
+          case state.handler.handle_set_log_level(level, state.handler_state) do
+            {:ok, new_handler_state} ->
+              response = Protocol.encode_response(%{}, id)
+              send_message(response, %{state | handler_state: new_handler_state})
 
-        {:error, reason, new_handler_state} ->
-          error =
-            Protocol.encode_error(
-              Protocol.internal_error(),
-              format_error(reason),
-              nil,
-              id
-            )
+            {:error, reason, new_handler_state} ->
+              error =
+                Protocol.encode_error(
+                  Protocol.internal_error(),
+                  format_error(reason),
+                  nil,
+                  id
+                )
 
-          send_message(error, %{state | handler_state: new_handler_state})
+              send_message(error, %{state | handler_state: new_handler_state})
+          end
+
+        :version_error ->
+          {:noreply, state}
       end
     end
   end
@@ -741,21 +810,27 @@ defmodule ExMCP.Server do
 
       send_message(error, state)
     else
-      case state.handler.handle_subscribe_resource(uri, state.handler_state) do
-        {:ok, result, new_handler_state} ->
-          response = Protocol.encode_response(result, id)
-          send_message(response, %{state | handler_state: new_handler_state})
+      case validate_method_version("resources/subscribe", id, state) do
+        :ok ->
+          case state.handler.handle_subscribe_resource(uri, state.handler_state) do
+            {:ok, result, new_handler_state} ->
+              response = Protocol.encode_response(result, id)
+              send_message(response, %{state | handler_state: new_handler_state})
 
-        {:error, reason, new_handler_state} ->
-          error =
-            Protocol.encode_error(
-              Protocol.internal_error(),
-              format_error(reason),
-              nil,
-              id
-            )
+            {:error, reason, new_handler_state} ->
+              error =
+                Protocol.encode_error(
+                  Protocol.internal_error(),
+                  format_error(reason),
+                  nil,
+                  id
+                )
 
-          send_message(error, %{state | handler_state: new_handler_state})
+              send_message(error, %{state | handler_state: new_handler_state})
+          end
+
+        :version_error ->
+          {:noreply, state}
       end
     end
   end
@@ -772,21 +847,27 @@ defmodule ExMCP.Server do
 
       send_message(error, state)
     else
-      case state.handler.handle_unsubscribe_resource(uri, state.handler_state) do
-        {:ok, result, new_handler_state} ->
-          response = Protocol.encode_response(result, id)
-          send_message(response, %{state | handler_state: new_handler_state})
+      case validate_method_version("resources/unsubscribe", id, state) do
+        :ok ->
+          case state.handler.handle_unsubscribe_resource(uri, state.handler_state) do
+            {:ok, result, new_handler_state} ->
+              response = Protocol.encode_response(result, id)
+              send_message(response, %{state | handler_state: new_handler_state})
 
-        {:error, reason, new_handler_state} ->
-          error =
-            Protocol.encode_error(
-              Protocol.internal_error(),
-              format_error(reason),
-              nil,
-              id
-            )
+            {:error, reason, new_handler_state} ->
+              error =
+                Protocol.encode_error(
+                  Protocol.internal_error(),
+                  format_error(reason),
+                  nil,
+                  id
+                )
 
-          send_message(error, %{state | handler_state: new_handler_state})
+              send_message(error, %{state | handler_state: new_handler_state})
+          end
+
+        :version_error ->
+          {:noreply, state}
       end
     end
   end
@@ -1127,6 +1208,30 @@ defmodule ExMCP.Server do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
+
+  # Check if a method is available in the negotiated protocol version
+  defp method_available?(method, state) do
+    version = state.negotiated_version || VersionRegistry.latest_version()
+    Protocol.method_available?(method, version)
+  end
+
+  # Validate and potentially reject version-specific methods
+  defp validate_method_version(method, id, state) do
+    if method_available?(method, state) do
+      :ok
+    else
+      error =
+        Protocol.encode_error(
+          Protocol.method_not_found(),
+          "Method #{method} is not available in protocol version #{state.negotiated_version}",
+          nil,
+          id
+        )
+
+      send_message(error, state)
+      :version_error
+    end
+  end
 
   defp send_request(message, from, state) do
     if state.initialized && state.transport_state do

@@ -119,8 +119,11 @@ defmodule ExMCP.VersionNegotiationTest do
       assert server_info["name"] == "test-version-server"
 
       # Both should be using 2025-03-26 (latest)
-      # We can't directly access the negotiated version from public API,
-      # but we can verify the connection works
+      # Now we can access the negotiated version from public API
+      {:ok, negotiated_version} = Client.negotiated_version(client)
+      assert negotiated_version == "2025-03-26"
+
+      # And verify the connection works
       {:ok, %{tools: tools}} = Client.list_tools(client)
       assert length(tools) == 1
       assert hd(tools).name == "test"
@@ -197,6 +200,77 @@ defmodule ExMCP.VersionNegotiationTest do
 
       {:ok, result_older, _} = handler.handle_initialize(init_params_older, handler_state)
       assert result_older.protocolVersion == "2024-11-05"
+    end
+
+    test "client stores the negotiated version correctly" do
+      # Test with a server that returns a specific version
+      defmodule OldVersionHandler do
+        use ExMCP.Server.Handler
+
+        @impl true
+        def handle_initialize(_params, state) do
+          result = %{
+            # Older version
+            protocolVersion: "2024-11-05",
+            serverInfo: %{
+              name: "old-version-server",
+              version: "1.0.0"
+            },
+            capabilities: %{}
+          }
+
+          {:ok, result, state}
+        end
+
+        # Required callbacks with minimal implementation
+        @impl true
+        def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+        @impl true
+        def handle_call_tool(_name, _args, state), do: {:error, "Not implemented", state}
+        @impl true
+        def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
+        @impl true
+        def handle_read_resource(_uri, state), do: {:error, "Not found", state}
+        @impl true
+        def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
+        @impl true
+        def handle_get_prompt(_name, _args, state), do: {:error, "Not found", state}
+        @impl true
+        def handle_complete(_ref, _arg, state), do: {:ok, %{completion: []}, state}
+        @impl true
+        def handle_list_resource_templates(_cursor, state), do: {:ok, [], nil, state}
+        @impl true
+        def handle_subscribe_resource(_uri, state), do: {:ok, %{}, state}
+        @impl true
+        def handle_unsubscribe_resource(_uri, state), do: {:ok, %{}, state}
+        @impl true
+        def handle_create_message(_params, state), do: {:error, "Not supported", state}
+        @impl true
+        def handle_list_roots(state), do: {:ok, [], state}
+      end
+
+      {:ok, server} =
+        Server.start_link(
+          handler: OldVersionHandler,
+          transport: :beam,
+          name: :old_version_server
+        )
+
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: :old_version_server
+        )
+
+      # Wait for initialization
+      Process.sleep(100)
+
+      # Client should have stored the older version
+      {:ok, negotiated_version} = Client.negotiated_version(client)
+      assert negotiated_version == "2024-11-05"
+
+      GenServer.stop(client)
+      GenServer.stop(server)
     end
   end
 

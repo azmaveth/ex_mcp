@@ -98,7 +98,8 @@ defmodule ExMCP.LifecycleEnhancementsTest do
       capabilities = Capabilities.build_capabilities(FullFeaturedHandler)
 
       assert capabilities["tools"] == %{}
-      assert capabilities["experimental"] == %{}
+      # In 2025-03-26 (default latest), experimental includes batch processing
+      assert capabilities["experimental"]["batchProcessing"] == true
     end
 
     test "handlers can customize capabilities in handle_initialize" do
