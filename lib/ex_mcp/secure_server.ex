@@ -318,12 +318,19 @@ defmodule ExMCP.SecureServer.SecureHandlerWrapper do
 
   defp register_client(client_info, auth_token, state) do
     client_id = client_info["clientId"] || generate_client_id()
+    registration_type = determine_registration_type(auth_token)
 
-    # Determine registration type
-    registration_type = if auth_token, do: :static, else: :dynamic
+    with :ok <- check_consent_if_required(registration_type, client_info, state) do
+      perform_client_registration(client_info, client_id, registration_type)
+    end
+  end
 
-    # Check consent for dynamic clients
-    if registration_type == :dynamic && state.security_config[:approval_handler] do
+  defp determine_registration_type(auth_token) do
+    if auth_token, do: :static, else: :dynamic
+  end
+
+  defp check_consent_if_required(:dynamic, client_info, %{security_config: security_config}) do
+    if security_config[:approval_handler] do
       case ConsentManager.request_consent(client_info, get_user_id()) do
         {:ok, _consent} -> :ok
         {:error, _} -> {:error, :consent_required}
@@ -331,26 +338,31 @@ defmodule ExMCP.SecureServer.SecureHandlerWrapper do
     else
       :ok
     end
+  end
 
-    # Register client
-    case ClientRegistry.register_client(
-           Map.put(client_info, :client_id, client_id),
-           registration_type
-         ) do
+  defp check_consent_if_required(_registration_type, _client_info, _state), do: :ok
+
+  defp perform_client_registration(client_info, client_id, registration_type) do
+    client_info_with_id = Map.put(client_info, :client_id, client_id)
+
+    case ClientRegistry.register_client(client_info_with_id, registration_type) do
       {:ok, registered_client} ->
         Process.put(:mcp_client_info, registered_client)
         :ok
 
       {:error, :client_already_registered} ->
-        # Client already registered, validate it
-        case ClientRegistry.validate_client(client_id) do
-          {:ok, client} ->
-            Process.put(:mcp_client_info, client)
-            :ok
+        handle_existing_client(client_id)
 
-          error ->
-            error
-        end
+      error ->
+        error
+    end
+  end
+
+  defp handle_existing_client(client_id) do
+    case ClientRegistry.validate_client(client_id) do
+      {:ok, client} ->
+        Process.put(:mcp_client_info, client)
+        :ok
 
       error ->
         error

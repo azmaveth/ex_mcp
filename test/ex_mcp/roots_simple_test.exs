@@ -2,6 +2,7 @@ defmodule ExMCP.RootsSimpleTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.{Client, Server}
+  alias ExMCP.Client.DefaultHandler
 
   defmodule SimpleServerHandler do
     use ExMCP.Server.Handler
@@ -154,8 +155,8 @@ defmodule ExMCP.RootsSimpleTest do
 
     test "default handler provides current directory as root" do
       # Test the default handler
-      {:ok, state} = ExMCP.Client.DefaultHandler.init([])
-      {:ok, roots, _} = ExMCP.Client.DefaultHandler.handle_list_roots(state)
+      {:ok, state} = DefaultHandler.init([])
+      {:ok, roots, _} = DefaultHandler.handle_list_roots(state)
 
       assert length(roots) == 1
       root = hd(roots)

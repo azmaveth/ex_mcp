@@ -7,6 +7,10 @@ config :ex_mcp,
   # Default: "2025-03-26" (latest stable)
   protocol_version: "2025-03-26"
 
+# Logger Configuration for security metadata
+# Note: Logger metadata warnings are acceptable for development
+# In production, configure these keys in your logger backend
+
 if Mix.env() == :dev do
   config :git_hooks,
     auto_install: true,

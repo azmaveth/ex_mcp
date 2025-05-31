@@ -324,30 +324,38 @@ defmodule ExMCP.SamplingTest do
 
   defp valid_sampling_params?(%{"messages" => messages} = params)
        when is_list(messages) and length(messages) > 0 do
-    valid_messages = Enum.all?(messages, &valid_message?/1)
-
-    valid_prefs =
-      case Map.get(params, "modelPreferences") do
-        nil -> true
-        prefs -> valid_model_preferences?(prefs)
-      end
-
-    valid_temp =
-      case Map.get(params, "temperature") do
-        nil -> true
-        temp when is_number(temp) and temp >= 0.0 and temp <= 2.0 -> true
-        _ -> false
-      end
-
-    valid_tokens =
-      case Map.get(params, "maxTokens") do
-        nil -> true
-        tokens when is_integer(tokens) and tokens > 0 -> true
-        _ -> false
-      end
-
-    valid_messages and valid_prefs and valid_temp and valid_tokens
+    valid_messages?(messages) and
+      valid_model_preferences_param?(params) and
+      valid_temperature_param?(params) and
+      valid_max_tokens_param?(params)
   end
 
   defp valid_sampling_params?(_), do: false
+
+  defp valid_messages?(messages) do
+    Enum.all?(messages, &valid_message?/1)
+  end
+
+  defp valid_model_preferences_param?(params) do
+    case Map.get(params, "modelPreferences") do
+      nil -> true
+      prefs -> valid_model_preferences?(prefs)
+    end
+  end
+
+  defp valid_temperature_param?(params) do
+    case Map.get(params, "temperature") do
+      nil -> true
+      temp when is_number(temp) and temp >= 0.0 and temp <= 2.0 -> true
+      _ -> false
+    end
+  end
+
+  defp valid_max_tokens_param?(params) do
+    case Map.get(params, "maxTokens") do
+      nil -> true
+      tokens when is_integer(tokens) and tokens > 0 -> true
+      _ -> false
+    end
+  end
 end
