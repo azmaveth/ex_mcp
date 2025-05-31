@@ -426,6 +426,78 @@ Version capabilities:
 - **2025-03-26**: Adds resource subscriptions, logging control
 - **draft**: Experimental features (batch requests, elicitation)
 
+### Production Logger Configuration
+
+ExMCP includes security audit logging with structured metadata. Configure logging appropriately for your environment:
+
+#### Development Configuration
+
+```elixir
+# config/dev.exs
+config :logger, :console,
+  metadata: [:request_id, :tag, :audit, :client_id, :reason, :registration_type]
+```
+
+#### Production Configuration Options
+
+**Option 1: JSON Structured Logging (Recommended)**
+
+```elixir
+# In mix.exs
+{:logger_json, "~> 5.1"}
+
+# In config/prod.exs
+config :logger,
+  backends: [LoggerJSON]
+
+config :logger_json, :backend,
+  metadata: :all,  # Captures ALL metadata automatically
+  json_encoder: Jason,
+  formatter: LoggerJSON.Formatters.GoogleCloudLogger
+```
+
+**Option 2: Separate Security Audit Logs**
+
+```elixir
+# config/prod.exs
+config :logger,
+  backends: [:console, {LoggerFileBackend, :security_audit}]
+
+config :logger, :security_audit,
+  path: "/var/log/ex_mcp/security_audit.log",
+  level: :info,
+  format: "$date $time [$level] $metadata $message\n",
+  metadata: [:tag, :audit, :client_id, :reason, :registration_type],
+  metadata_filter: [tag: :security_audit]  # Only security logs
+```
+
+**Option 3: External Log Aggregation**
+
+```elixir
+# For ELK Stack, Datadog, etc.
+{:logstash_logger_backend, "~> 3.0"}
+
+config :logger,
+  backends: [{LogstashLoggerBackend, :logstash}]
+
+config :logger, :logstash,
+  host: "logstash.example.com",
+  port: 5514,
+  metadata: :all,
+  type: "ex_mcp_security"
+```
+
+#### Logger Metadata Fields
+
+ExMCP uses the following metadata fields for security and debugging:
+
+- **`:tag`** - Log categorization (e.g., `:security_audit`, `:client_registration`)
+- **`:audit`** - Detailed audit log entries with timestamps and actions
+- **`:client_id`** - Client identification for request tracking
+- **`:reason`** - Failure reasons and error details
+- **`:registration_type`** - Client registration type (`:static` or `:dynamic`)
+- **`:request_id`** - Correlation ID for distributed tracing
+
 ## 📚 Documentation
 
 - 📖 **[User Guide](USER_GUIDE.md)** - Comprehensive guide with examples
