@@ -113,7 +113,13 @@ defmodule ExMCP.VersionRegistry do
   defp base_features, do: [:prompts, :resources, :tools, :logging]
 
   defp v2025_features do
-    [:resource_subscription, :prompts_list_changed, :resources_list_changed, :logging_set_level, :completion]
+    [
+      :resource_subscription,
+      :prompts_list_changed,
+      :resources_list_changed,
+      :logging_set_level,
+      :completion
+    ]
   end
 
   defp batch_features, do: [:batch_processing]
