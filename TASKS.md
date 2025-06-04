@@ -94,6 +94,79 @@
 - [ ] Logging integration
 - [ ] Metrics and monitoring
 
+### Example Application
+- [ ] Create unified example app demonstrating all ExMCP features
+  - [ ] Setup project structure (examples/example_app/)
+  - [ ] Implement MCP server with all protocol features
+    - [ ] Tools (calculator, file operations, data processing)
+    - [ ] Resources (config files, logs, data streams)
+    - [ ] Prompts (templates with parameters)
+    - [ ] Sampling/LLM integration with Ollama
+    - [ ] Progress tracking for long operations
+    - [ ] Subscriptions and notifications
+  - [ ] Implement MCP client showcasing all capabilities
+    - [ ] Tool invocation examples
+    - [ ] Resource reading and subscription
+    - [ ] Prompt usage
+    - [ ] Batch operations
+    - [ ] Cancellation examples
+    - [ ] Human-in-the-loop approvals
+  - [ ] Ollama integration
+    - [ ] Configure both client and server to use Ollama
+    - [ ] Use Qwen2.5-Coder:3b or similar small, fast model
+    - [ ] Demonstrate sampling/createMessage with local LLM
+    - [ ] Show model preference hints
+  - [ ] Transport demonstrations
+    - [ ] BEAM transport for local development
+    - [ ] stdio transport for CLI usage
+    - [ ] SSE transport for web integration
+    - [ ] WebSocket client example
+  - [ ] Security features
+    - [ ] OAuth authorization flow
+    - [ ] Token validation
+    - [ ] Client consent management
+    - [ ] Audit logging
+  - [ ] Advanced patterns
+    - [ ] Bidirectional communication
+    - [ ] Server requesting from client
+    - [ ] Health monitoring with pings
+    - [ ] Distributed BEAM setup
+    - [ ] OTP supervision integration
+  - [ ] Developer experience
+    - [ ] Configuration management
+    - [ ] Error handling examples
+    - [ ] Debug mode with tracing
+    - [ ] Performance monitoring
+    - [ ] Graceful shutdown
+  - [ ] Documentation
+    - [ ] README with setup instructions
+    - [ ] Architecture overview
+    - [ ] Feature walkthrough
+    - [ ] Configuration guide
+    - [ ] Troubleshooting section
+  - [ ] Testing
+    - [ ] Integration tests
+    - [ ] Example test patterns
+    - [ ] Mock server/client examples
+  - [ ] Migration of existing examples
+    - [ ] Consolidate batch_requests.exs
+    - [ ] Consolidate bidirectional_communication.exs
+    - [ ] Consolidate cancellation_example.exs
+    - [ ] Consolidate comprehensive_example.exs (merge features)
+    - [ ] Consolidate ping_health_check.exs
+    - [ ] Consolidate progress_demo.exs
+    - [ ] Consolidate prompts_server.exs
+    - [ ] Consolidate resources_server.exs
+    - [ ] Consolidate roots_demo.exs
+    - [ ] Consolidate human_in_the_loop.exs
+    - [ ] Consolidate oauth_authorization.exs
+    - [ ] Consolidate secure_server_example.exs
+    - [ ] Consolidate draft_features_example.exs
+    - [ ] Consolidate resource_subscription_example.exs
+    - [ ] Consolidate beam_transport examples
+    - [ ] Consolidate advanced_features examples
+    - [ ] Remove old example files after migration
+
 ### Testing
 - [x] Integration tests with mock servers (implemented via transport tests)
 - [x] Transport-specific tests (beam_test.exs, sse_test.exs, stdio mock tests)
