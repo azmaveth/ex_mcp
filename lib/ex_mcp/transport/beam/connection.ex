@@ -39,7 +39,6 @@ defmodule ExMCP.Transport.Beam.Connection do
 
       {:ok, connection} = Connection.new(%{max_concurrent_streams: 5})
   """
-  @spec new(map()) :: {:ok, t()}
   def new(opts \\ %{}) do
     connection = %__MODULE__{
       id: generate_connection_id(),

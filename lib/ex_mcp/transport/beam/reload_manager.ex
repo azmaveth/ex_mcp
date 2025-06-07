@@ -572,8 +572,14 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   end
 
   defp test_mode? do
-    Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) and Mix.env() == :test
-  rescue
-    UndefinedFunctionError -> false
+    if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
+      try do
+        Mix.env() == :test
+      rescue
+        UndefinedFunctionError -> false
+      end
+    else
+      false
+    end
   end
 end
