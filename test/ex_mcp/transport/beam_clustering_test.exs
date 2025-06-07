@@ -33,7 +33,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
         pid: self()
       }
 
-      {:ok, _service_id} = Cluster.register_service(cluster, service_info)
+      {:ok, service_id} = Cluster.register_service(cluster, service_info)
 
       # Should be able to discover the service
       {:ok, services} = Cluster.discover_services(cluster, %{name: "calculator"})
@@ -111,7 +111,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
         metadata: %{load: 0.1}
       }
 
-      {:ok, _service_id} = Cluster.register_service(cluster, service_info)
+      {:ok, service_id} = Cluster.register_service(cluster, service_info)
 
       # Update service metadata
       updated_info = %{service_info | metadata: %{load: 0.8, clients: 5}}
@@ -412,7 +412,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
         }
       }
 
-      {:ok, _service_id} = Cluster.register_service(cluster, service_info)
+      {:ok, service_id} = Cluster.register_service(cluster, service_info)
 
       # Record failures
       for _i <- 1..3 do
@@ -540,7 +540,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
             metadata: %{instance: i}
           }
 
-          {:ok, _service_id} = Cluster.register_service(cluster, service_info)
+          {:ok, service_id} = Cluster.register_service(cluster, service_info)
 
           server
         end
