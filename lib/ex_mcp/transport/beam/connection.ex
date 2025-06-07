@@ -22,7 +22,7 @@ defmodule ExMCP.Transport.Beam.Connection do
           id: String.t(),
           max_concurrent_streams: pos_integer(),
           active_streams: map(),
-          completed_streams: MapSet.t(String.t()),
+          completed_streams: MapSet.t(),
           created_at: integer()
         }
 

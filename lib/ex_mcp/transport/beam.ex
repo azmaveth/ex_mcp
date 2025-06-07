@@ -543,24 +543,20 @@ defmodule ExMCP.Transport.Beam do
         case Jason.encode(message) do
           {:ok, json_data} ->
             # Chunk the data
-            case Stream.chunk_data(stream, json_data) do
-              {:ok, chunks} ->
-                # Send stream start notification
-                _stream_start = %{
-                  "type" => "stream_start",
-                  "stream_id" => stream.id,
-                  "content_type" => stream.content_type,
-                  "total_chunks" => length(chunks)
-                }
+            {:ok, chunks} = Stream.chunk_data(stream, json_data)
 
-                # Send all chunks
-                case send_stream_chunks(chunks, state) do
-                  :ok -> {:ok, %{"streaming" => true, "stream_id" => stream.id}, state}
-                  error -> error
-                end
+            # Send stream start notification
+            _stream_start = %{
+              "type" => "stream_start",
+              "stream_id" => stream.id,
+              "content_type" => stream.content_type,
+              "total_chunks" => length(chunks)
+            }
 
-              error ->
-                error
+            # Send all chunks
+            case send_stream_chunks(chunks, state) do
+              :ok -> {:ok, %{"streaming" => true, "stream_id" => stream.id}, state}
+              error -> error
             end
 
           {:error, reason} ->

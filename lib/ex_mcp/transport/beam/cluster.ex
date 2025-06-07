@@ -290,7 +290,10 @@ defmodule ExMCP.Transport.Beam.Cluster do
           PartitionDetector.start_link(%{
             cluster: self(),
             registry: registry_pid,
-            merge_strategy: full_config.merge_strategy
+            detection_interval: Map.get(full_config, :detection_interval, 10000),
+            merge_strategy: full_config.merge_strategy,
+            partition_threshold: Map.get(full_config, :partition_threshold, 3),
+            heartbeat_timeout: Map.get(full_config, :heartbeat_timeout, 5000)
           })
 
         pid

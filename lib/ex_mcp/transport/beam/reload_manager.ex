@@ -236,15 +236,21 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
 
   defp start_filesystem_watching(state) do
     if Code.ensure_loaded?(FileSystem) do
-      case FileSystem.start_link(dirs: state.watch_paths) do
-        {:ok, watcher_pid} ->
-          FileSystem.subscribe(watcher_pid)
-          Process.monitor(watcher_pid)
-          {:ok, %{state | watcher_pid: watcher_pid}}
+      try do
+        case FileSystem.start_link(dirs: state.watch_paths) do
+          {:ok, watcher_pid} ->
+            FileSystem.subscribe(watcher_pid)
+            Process.monitor(watcher_pid)
+            {:ok, %{state | watcher_pid: watcher_pid}}
 
-        {:error, reason} ->
-          Logger.error("Failed to start filesystem watcher: #{inspect(reason)}")
-          # Fallback to polling
+          {:error, reason} ->
+            Logger.error("Failed to start filesystem watcher: #{inspect(reason)}")
+            # Fallback to polling
+            start_polling_watching(%{state | watch_strategy: :polling})
+        end
+      rescue
+        UndefinedFunctionError ->
+          Logger.warning("FileSystem dependency not available, falling back to polling")
           start_polling_watching(%{state | watch_strategy: :polling})
       end
     else
@@ -277,7 +283,13 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
       case state.watch_strategy do
         :filesystem ->
           if Code.ensure_loaded?(FileSystem) do
-            GenServer.stop(state.watcher_pid)
+            try do
+              GenServer.stop(state.watcher_pid)
+            rescue
+              UndefinedFunctionError ->
+                # FileSystem module not available
+                :ok
+            end
           end
 
         _ ->

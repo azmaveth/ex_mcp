@@ -70,7 +70,7 @@ defmodule ExMCP.Authorization.Interceptor do
     fn request ->
       with {:ok, auth_request} <- add_auth_headers(request, opts),
            response <- request_fn.(auth_request),
-           {:ok, _} = ok_response <- handle_response(response, opts) do
+           {:ok, _} = ok_response <- handle_response(response, %{}) do
         ok_response
       else
         error ->

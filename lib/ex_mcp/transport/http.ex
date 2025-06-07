@@ -171,7 +171,7 @@ defmodule ExMCP.Transport.HTTP do
       {:error, %Jason.EncodeError{} = reason} ->
         {:error, {:encoding_error, reason}}
 
-      {:error, reason} when is_atom(reason) ->
+      {:error, reason} ->
         {:error, {:encoding_error, reason}}
 
       error ->
