@@ -161,12 +161,15 @@ security = %{
 
 ### BEAM Transport Security
 
-BEAM transport provides process-level security:
+BEAM transport focuses on Erlang/Elixir-native security mechanisms rather than TLS:
 
 ```elixir
-# Client security
+# Native BEAM security with node cookies
 security = %{
-  auth: {:bearer, "beam-token"}
+  node_cookie: :secret_production_cookie,
+  hidden: true,                    # Hidden node for topology security
+  max_connections: 10,             # Connection limits
+  auth: {:bearer, "beam-token"}    # Process-level authentication
 }
 
 {:ok, client} = ExMCP.Client.start_link(
@@ -175,16 +178,44 @@ security = %{
   security: security
 )
 
-# Server security
+# Server security with process isolation
 {:ok, server} = ExMCP.Server.start_link(
   transport: :beam,
   name: :secure_server,
   handler: MyHandler,
   security: %{
+    node_cookie: :secret_production_cookie,
     auth: {:bearer, "expected-token"}
   }
 )
 ```
+
+#### Advanced: VM-Level TLS Distribution
+
+For high-security deployments requiring TLS over Erlang distribution:
+
+```elixir
+# Configure at VM startup with -proto_dist inet_tls
+# This is typically done in sys.config, not per-connection
+
+tls_config = %{
+  verify: :verify_peer,
+  cert: "/path/to/node.pem",
+  key: "/path/to/node.key", 
+  cacerts: "/path/to/ca.pem"
+}
+
+# This configures the options but requires VM-level setup
+{:ok, ssl_opts} = ExMCP.Transport.Beam.configure_distribution_tls(tls_config)
+```
+
+#### BEAM Security Best Practices
+
+1. **Use Strong Node Cookies**: Never use `:nocookie` or weak cookies
+2. **Hidden Nodes**: Use `hidden: true` for production services
+3. **Network Isolation**: Deploy on private networks when possible
+4. **Process Supervision**: Leverage OTP supervision for fault tolerance
+5. **Capability-Based Security**: Only expose necessary functions
 
 ## Security Best Practices
 

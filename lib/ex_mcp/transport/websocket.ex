@@ -454,6 +454,75 @@ defmodule ExMCP.Transport.WebSocket do
   defp scheme_to_atom("https"), do: :https
   defp scheme_to_atom(_), do: nil
 
+  @doc """
+  Validates security configuration.
+  """
+  @spec validate_config(keyword()) :: {:ok, keyword()} | {:error, term()}
+  def validate_config(config) do
+    case Keyword.get(config, :security) do
+      nil ->
+        {:ok, config}
+
+      security ->
+        case Security.validate_config(security) do
+          :ok -> {:ok, config}
+          error -> error
+        end
+    end
+  end
+
+  @doc """
+  Builds SSL options from TLS configuration for WebSocket connections.
+  """
+  def build_ssl_options(tls_config) when is_map(tls_config) do
+    base_ssl_opts = [
+      verify: Map.get(tls_config, :verify, :verify_peer),
+      cacerts: Map.get(tls_config, :cacerts, :public_key.cacerts_get()),
+      versions: Map.get(tls_config, :versions, [:"tlsv1.2", :"tlsv1.3"])
+    ]
+
+    # Add client certificate if provided
+    ssl_opts =
+      case Map.get(tls_config, :cert) do
+        nil -> base_ssl_opts
+        cert -> Keyword.put(base_ssl_opts, :cert, cert)
+      end
+
+    # Add private key if provided
+    ssl_opts =
+      case Map.get(tls_config, :key) do
+        nil -> ssl_opts
+        key -> Keyword.put(ssl_opts, :key, key)
+      end
+
+    # Add cipher suites if provided
+    ssl_opts =
+      case Map.get(tls_config, :ciphers) do
+        nil -> ssl_opts
+        ciphers -> Keyword.put(ssl_opts, :ciphers, ciphers)
+      end
+
+    # Add verify function if provided
+    ssl_opts =
+      case Map.get(tls_config, :verify_fun) do
+        nil -> ssl_opts
+        verify_fun -> Keyword.put(ssl_opts, :verify_fun, verify_fun)
+      end
+
+    [ssl: ssl_opts]
+  end
+
+  def build_ssl_options(_) do
+    # Default secure SSL options for WSS
+    [
+      ssl: [
+        verify: :verify_peer,
+        cacerts: :public_key.cacerts_get(),
+        versions: [:"tlsv1.2", :"tlsv1.3"]
+      ]
+    ]
+  end
+
   defp build_tls_options(%{security: %{tls: tls_config}}) when is_map(tls_config) do
     [
       transport_opts:

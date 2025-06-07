@@ -101,16 +101,11 @@ defmodule ExMCP.Transport.SSEClient do
   def handle_continue(:connect, state) do
     case connect_sse(state) do
       {:ok, ref} ->
-        # Start heartbeat monitoring
-        heartbeat_ref = Process.send_after(self(), :check_heartbeat, @heartbeat_interval)
-
-        # Notify parent of successful connection
-        send(state.parent, {:sse_connected, self()})
-
+        # Store the reference but don't send connected message yet
+        # We'll send it when we receive :stream_start
         new_state = %{
           state
           | ref: ref,
-            heartbeat_ref: heartbeat_ref,
             retry_count: 0,
             retry_delay: @initial_retry_delay
         }
@@ -125,14 +120,20 @@ defmodule ExMCP.Transport.SSEClient do
 
   @impl true
   def handle_info({:http, {ref, :stream_start, headers}}, %{ref: ref} = state) do
+    # Connection is now established, send notification
+    send(state.parent, {:sse_connected, self()})
+
+    # Start heartbeat monitoring
+    heartbeat_ref = Process.send_after(self(), :check_heartbeat, @heartbeat_interval)
+
     # Process headers for retry suggestions
     retry_after = get_retry_after(headers)
 
     new_state =
       if retry_after do
-        %{state | retry_delay: retry_after * 1000}
+        %{state | retry_delay: retry_after * 1000, heartbeat_ref: heartbeat_ref}
       else
-        state
+        %{state | heartbeat_ref: heartbeat_ref}
       end
 
     {:noreply, new_state}

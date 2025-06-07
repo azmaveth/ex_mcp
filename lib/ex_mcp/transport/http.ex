@@ -162,8 +162,11 @@ defmodule ExMCP.Transport.HTTP do
   @impl true
   def send_message(message, %__MODULE__{} = state) do
     with {:ok, body} <- Jason.encode(message),
-         {:ok, response} <- perform_http_request(body, state) do
-      handle_http_response(response, state)
+         result <- perform_http_request(body, state) do
+      case result do
+        {:ok, response} -> handle_http_response(response, state)
+        {:error, reason} -> {:error, reason}
+      end
     else
       {:error, reason} when is_atom(reason) ->
         {:error, {:encoding_error, reason}}
@@ -186,25 +189,30 @@ defmodule ExMCP.Transport.HTTP do
 
     http_opts =
       case URI.parse(url).scheme do
-        "https" -> build_ssl_options(state)
+        "https" -> build_ssl_options_from_state(state)
         _ -> []
       end
 
     :httpc.request(:post, request, http_opts, [])
   end
 
-  defp handle_http_response({:ok, {{_, 200, _}, headers, body}}, state) do
-    if state.use_sse do
-      # SSE mode - responses come via SSE
-      validate_cors_response(headers, state)
-    else
-      # Non-SSE mode - response in HTTP body
-      handle_non_sse_response(body, state)
-    end
-  end
+  defp handle_http_response({status_line, headers, body}, state) do
+    case status_line do
+      {_, 200, _} ->
+        if state.use_sse do
+          # SSE mode - responses come via SSE
+          case validate_cors_response(headers, state) do
+            :ok -> {:ok, state}
+            error -> error
+          end
+        else
+          # Non-SSE mode - response in HTTP body
+          handle_non_sse_response(body, state)
+        end
 
-  defp handle_http_response({:ok, {{_, status, _}, _, body}}, _state) do
-    {:error, {:http_error, status, body}}
+      {_, status, _} ->
+        {:error, {:http_error, status, body}}
+    end
   end
 
   defp handle_http_response({:error, reason}, _state) do
@@ -273,7 +281,7 @@ defmodule ExMCP.Transport.HTTP do
 
   defp start_sse(state) do
     url = build_url(state, "/sse")
-    ssl_opts = build_ssl_options(state)
+    ssl_opts = build_ssl_options_from_state(state)
 
     # Build headers including session
     sse_headers = [
@@ -385,30 +393,60 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp build_ssl_options(%{security: %{tls: tls_config}}) when is_map(tls_config) do
-    ssl_opts = [
-      ssl: [
-        verify: Map.get(tls_config, :verify, :verify_peer),
-        cacerts: Map.get(tls_config, :cacerts, :public_key.cacerts_get()),
-        versions: Map.get(tls_config, :versions, [:"tlsv1.2", :"tlsv1.3"])
-      ]
+  @doc """
+  Builds SSL options from TLS configuration.
+
+  ## Examples
+
+      tls_config = %{
+        verify: :verify_peer,
+        versions: [:"tlsv1.2", :"tlsv1.3"],
+        cert: "client.pem",
+        key: "client.key"
+      }
+      
+      ssl_opts = ExMCP.Transport.HTTP.build_ssl_options(tls_config)
+  """
+  def build_ssl_options(tls_config) when is_map(tls_config) do
+    base_ssl_opts = [
+      verify: Map.get(tls_config, :verify, :verify_peer),
+      cacerts: Map.get(tls_config, :cacerts, :public_key.cacerts_get()),
+      versions: Map.get(tls_config, :versions, [:"tlsv1.2", :"tlsv1.3"])
     ]
 
-    # Add client cert if provided
+    # Add client certificate if provided
     ssl_opts =
       case Map.get(tls_config, :cert) do
-        nil -> ssl_opts
-        cert -> put_in(ssl_opts, [:ssl, :cert], cert)
+        nil -> base_ssl_opts
+        cert -> Keyword.put(base_ssl_opts, :cert, cert)
       end
 
-    case Map.get(tls_config, :key) do
-      nil -> ssl_opts
-      key -> put_in(ssl_opts, [:ssl, :key], key)
-    end
+    # Add private key if provided
+    ssl_opts =
+      case Map.get(tls_config, :key) do
+        nil -> ssl_opts
+        key -> Keyword.put(ssl_opts, :key, key)
+      end
+
+    # Add cipher suites if provided
+    ssl_opts =
+      case Map.get(tls_config, :ciphers) do
+        nil -> ssl_opts
+        ciphers -> Keyword.put(ssl_opts, :ciphers, ciphers)
+      end
+
+    # Add verify function if provided
+    ssl_opts =
+      case Map.get(tls_config, :verify_fun) do
+        nil -> ssl_opts
+        verify_fun -> Keyword.put(ssl_opts, :verify_fun, verify_fun)
+      end
+
+    [ssl: ssl_opts]
   end
 
-  defp build_ssl_options(_state) do
-    # Default SSL options
+  def build_ssl_options(_) do
+    # Default secure SSL options
     [
       ssl: [
         verify: :verify_peer,
@@ -416,6 +454,14 @@ defmodule ExMCP.Transport.HTTP do
         versions: [:"tlsv1.2", :"tlsv1.3"]
       ]
     ]
+  end
+
+  defp build_ssl_options_from_state(%{security: %{tls: tls_config}}) when is_map(tls_config) do
+    build_ssl_options(tls_config)
+  end
+
+  defp build_ssl_options_from_state(_state) do
+    build_ssl_options(%{})
   end
 
   defp validate_cors_response(

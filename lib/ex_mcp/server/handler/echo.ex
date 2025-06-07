@@ -16,6 +16,20 @@ defmodule ExMCP.Server.Handler.Echo do
   end
 
   @impl true
+  def handle_initialize(_params, state) do
+    {:ok,
+     %{
+       name: "echo-server",
+       version: "1.0.0",
+       capabilities: %{
+         tools: %{},
+         resources: %{},
+         prompts: %{}
+       }
+     }, state}
+  end
+
+  @impl true
   def handle_list_tools(_cursor, state) do
     tools = [
       %{
@@ -79,22 +93,6 @@ defmodule ExMCP.Server.Handler.Echo do
   @impl true
   def handle_complete(_ref, _argument, state) do
     {:ok, %{completion: []}, state}
-  end
-
-  @impl true
-  def handle_initialize(_params, state) do
-    result = %{
-      protocolVersion: "2025-03-26",
-      serverInfo: %{
-        name: "echo-server",
-        version: "1.0.0"
-      },
-      capabilities: %{
-        tools: %{}
-      }
-    }
-
-    {:ok, result, state}
   end
 
   @impl true

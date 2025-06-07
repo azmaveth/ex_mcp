@@ -360,6 +360,15 @@ defmodule ExMCP.Client do
   end
 
   @doc """
+  Alias for subscribe_resource/3 for backward compatibility.
+  """
+  @spec subscribe(GenServer.server(), String.t(), timeout()) ::
+          {:ok, map()} | {:error, any()}
+  def subscribe(client, uri, timeout \\ @request_timeout) do
+    subscribe_resource(client, uri, timeout)
+  end
+
+  @doc """
   Unsubscribes from resource updates.
   """
   @spec unsubscribe_resource(GenServer.server(), String.t(), timeout()) ::

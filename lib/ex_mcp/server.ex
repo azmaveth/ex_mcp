@@ -237,6 +237,29 @@ defmodule ExMCP.Server do
     GenServer.call(server, {:create_message, params}, timeout)
   end
 
+  @doc """
+  Sends a log message to the client.
+
+  ## Parameters
+  - server: The server process
+  - level: Log level ("debug", "info", "warning", "error")
+  - message: The log message content
+  """
+  @spec send_log_message(GenServer.server(), String.t(), String.t()) :: :ok
+  def send_log_message(server, level, message) do
+    GenServer.cast(server, {:send_log_message, level, message})
+  end
+
+  @doc """
+  Stops the server process.
+
+  This is a wrapper around GenServer.stop/1 for API consistency.
+  """
+  @spec stop(GenServer.server()) :: :ok
+  def stop(server) do
+    GenServer.stop(server)
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -367,6 +390,17 @@ defmodule ExMCP.Server do
     send_notification(Protocol.encode_progress(progress_token, progress, total, message), state)
   end
 
+  def handle_cast({:send_log_message, level, message}, state) do
+    notification =
+      Protocol.encode_notification("notifications/message", %{
+        "level" => level,
+        "logger" => "ExMCP.Server",
+        "data" => message
+      })
+
+    send_message(notification, state)
+  end
+
   # Handle manual message injection for testing
   def handle_cast({:handle_message, message}, state) do
     json_message = Jason.encode!(message)
@@ -415,6 +449,30 @@ defmodule ExMCP.Server do
 
   def handle_call({:create_message, params}, from, state) do
     send_request(Protocol.encode_create_message(params), from, state)
+  end
+
+  # Hot reload support callbacks
+  def handle_call(:get_handler_info, _from, state) do
+    {:reply, {:ok, %{handler: state.handler}}, state}
+  end
+
+  def handle_call(:get_handler_state, _from, state) do
+    {:reply, {:ok, state.handler_state}, state}
+  end
+
+  def handle_call({:update_handler_state, new_handler_state}, _from, state) do
+    {:reply, :ok, %{state | handler_state: new_handler_state}}
+  end
+
+  def handle_call({:reload_handler, new_handler_module}, _from, state) do
+    # Perform complete handler reload with state migration
+    case reload_handler_with_migration(state, new_handler_module) do
+      {:ok, new_state} ->
+        {:reply, :ok, new_state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -672,8 +730,9 @@ defmodule ExMCP.Server do
       arguments = Map.get(params, "arguments", %{})
 
       case state.handler.handle_get_prompt(name, arguments, state.handler_state) do
-        {:ok, messages, new_handler_state} ->
-          response = Protocol.encode_response(%{messages: messages}, id)
+        {:ok, prompt_data, new_handler_state} ->
+          # prompt_data should contain both messages and description
+          response = Protocol.encode_response(prompt_data, id)
           send_message(response, %{state | handler_state: new_handler_state})
 
         {:error, reason, new_handler_state} ->
@@ -1323,4 +1382,34 @@ defmodule ExMCP.Server do
   end
 
   defp get_error_code_for_reason(_reason), do: Protocol.internal_error()
+
+  # Hot reload helper function
+  defp reload_handler_with_migration(state, new_handler_module) do
+    try do
+      # Initialize new handler with existing state structure
+      case new_handler_module.init([]) do
+        {:ok, new_default_state} ->
+          # For now, use simple state preservation
+          # In a production system, you might want more sophisticated migration
+          migrated_state =
+            if is_map(state.handler_state) and is_map(new_default_state) do
+              Map.merge(new_default_state, state.handler_state)
+            else
+              new_default_state
+            end
+
+          new_state = %{state | handler: new_handler_module, handler_state: migrated_state}
+
+          {:ok, new_state}
+
+        {:error, reason} ->
+          {:error, {:handler_init_failed, reason}}
+      end
+    rescue
+      error -> {:error, {:handler_init_exception, error}}
+    catch
+      :exit, reason -> {:error, {:handler_init_exit, reason}}
+      :throw, value -> {:error, {:handler_init_throw, value}}
+    end
+  end
 end

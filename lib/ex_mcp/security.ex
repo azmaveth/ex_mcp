@@ -156,6 +156,32 @@ defmodule ExMCP.Security do
   end
 
   @doc """
+  Validates that a server binding is localhost-only for security.
+
+  ## Examples
+
+      iex> ExMCP.Security.validate_localhost_binding(%{binding: "127.0.0.1"})
+      :ok
+      
+      iex> ExMCP.Security.validate_localhost_binding(%{binding: "localhost"})
+      :ok
+      
+      iex> ExMCP.Security.validate_localhost_binding(%{binding: "0.0.0.0"})
+      {:error, :public_binding_requires_security}
+  """
+  @spec validate_localhost_binding(map()) :: :ok | {:error, :public_binding_requires_security}
+  def validate_localhost_binding(%{binding: binding}) when is_binary(binding) do
+    case binding do
+      "127.0.0.1" -> :ok
+      "localhost" -> :ok
+      "::1" -> :ok
+      _ -> {:error, :public_binding_requires_security}
+    end
+  end
+
+  def validate_localhost_binding(_), do: :ok
+
+  @doc """
   Validates origin header against allowed origins.
 
   ## Examples
@@ -251,9 +277,329 @@ defmodule ExMCP.Security do
       {"X-Content-Type-Options", "nosniff"},
       {"X-Frame-Options", "DENY"},
       {"X-XSS-Protection", "1; mode=block"},
-      {"Strict-Transport-Security", "max-age=31536000; includeSubDomains"}
+      {"Strict-Transport-Security", "max-age=31536000; includeSubDomains"},
+      {"Referrer-Policy", "strict-origin-when-cross-origin"},
+      {"X-Permitted-Cross-Domain-Policies", "none"}
     ]
   end
+
+  @doc """
+  Validates an HTTP request for security compliance.
+
+  This function implements comprehensive security validation including:
+  - Origin header validation (DNS rebinding protection)
+  - Required security headers validation
+  - HTTPS enforcement for non-localhost
+
+  ## Examples
+
+      headers = [{"origin", "https://example.com"}, {"host", "api.example.com"}]
+      config = %{validate_origin: true, allowed_origins: ["https://example.com"]}
+      
+      :ok = ExMCP.Security.validate_request(headers, config)
+  """
+  @spec validate_request([{String.t(), String.t()}], security_config()) ::
+          :ok | {:error, atom()}
+  def validate_request(headers, config \\ %{}) do
+    with :ok <- validate_request_origin_header(headers, config),
+         :ok <- validate_host_header(headers, config) do
+      validate_https_requirement(headers, config)
+    end
+  end
+
+  defp validate_request_origin_header(headers, %{validate_origin: true} = config) do
+    case find_header(headers, "origin") do
+      nil ->
+        # Origin header is required when origin validation is enabled
+        {:error, :origin_header_required}
+
+      origin ->
+        allowed = Map.get(config, :allowed_origins, [])
+        validate_origin(origin, allowed)
+    end
+  end
+
+  defp validate_request_origin_header(_headers, _config), do: :ok
+
+  defp validate_host_header(headers, config) do
+    case find_header(headers, "host") do
+      nil ->
+        {:error, :host_header_required}
+
+      host ->
+        validate_host_against_policy(host, config)
+    end
+  end
+
+  defp validate_host_against_policy(host, config) do
+    # Basic validation - could be enhanced based on security policy
+    if String.contains?(host, ["localhost", "127.0.0.1", "[::1]"]) do
+      :ok
+    else
+      # For non-localhost hosts, ensure they match expected patterns
+      allowed_hosts = Map.get(config, :allowed_hosts, [])
+
+      if allowed_hosts == [] or host in allowed_hosts do
+        :ok
+      else
+        {:error, :host_not_allowed}
+      end
+    end
+  end
+
+  defp validate_https_requirement(headers, %{enforce_https: true}) do
+    # Check if this is an HTTPS request
+    case find_header(headers, "x-forwarded-proto") do
+      "https" ->
+        :ok
+
+      nil ->
+        # If no x-forwarded-proto, check if this is localhost
+        case find_header(headers, "host") do
+          host when host in ["localhost", "127.0.0.1", "[::1]"] -> :ok
+          _ -> {:error, :https_required}
+        end
+
+      _ ->
+        {:error, :https_required}
+    end
+  end
+
+  defp validate_https_requirement(_headers, _config), do: :ok
+
+  defp find_header(headers, name) do
+    name_lower = String.downcase(name)
+
+    Enum.find_value(headers, fn
+      {key, value} when is_binary(key) ->
+        if String.downcase(key) == name_lower do
+          value
+        end
+
+      {key, value} when is_list(key) ->
+        if String.downcase(to_string(key)) == name_lower do
+          to_string(value)
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  @doc """
+  Validates TLS/SSL configuration.
+
+  ## Examples
+
+      config = %{
+        verify: :verify_peer,
+        versions: [:"tlsv1.2", :"tlsv1.3"],
+        ciphers: ["ECDHE-RSA-AES256-GCM-SHA384"]
+      }
+      
+      :ok = ExMCP.Security.validate_tls_config(config)
+  """
+  @spec validate_tls_config(map()) :: :ok | {:error, atom()}
+  def validate_tls_config(config) when is_map(config) do
+    with :ok <- validate_verify_mode(Map.get(config, :verify)),
+         :ok <- validate_tls_versions(Map.get(config, :versions)),
+         :ok <- validate_cipher_suites(Map.get(config, :ciphers)) do
+      validate_certificates(config)
+    end
+  end
+
+  def validate_tls_config(_), do: {:error, :invalid_tls_config}
+
+  defp validate_verify_mode(nil), do: :ok
+  defp validate_verify_mode(:verify_peer), do: :ok
+  defp validate_verify_mode(:verify_none), do: :ok
+  defp validate_verify_mode(_), do: {:error, :invalid_verify_mode}
+
+  defp validate_tls_versions(nil), do: :ok
+
+  defp validate_tls_versions(versions) when is_list(versions) do
+    insecure_versions = [:"tlsv1.0", :"tlsv1.1", :sslv3, :sslv2]
+
+    if Enum.any?(versions, &(&1 in insecure_versions)) do
+      {:error, :insecure_tls_versions}
+    else
+      :ok
+    end
+  end
+
+  defp validate_tls_versions(_), do: {:error, :invalid_tls_versions}
+
+  @doc """
+  Validates cipher suite configuration.
+  """
+  @spec validate_cipher_suites(map() | nil) :: :ok | {:error, atom()}
+  def validate_cipher_suites(nil), do: :ok
+  def validate_cipher_suites(%{ciphers: ciphers}), do: validate_cipher_suites(ciphers)
+
+  def validate_cipher_suites(ciphers) when is_list(ciphers) do
+    weak_ciphers = [
+      # 3DES
+      "DES-CBC3-SHA",
+      # RC4
+      "RC4-SHA",
+      # NULL encryption
+      "NULL-SHA",
+      # Anonymous DH
+      "ADH-",
+      # Anonymous ECDH
+      "AECDH-",
+      # MD5 hash
+      "MD5"
+    ]
+
+    has_weak =
+      Enum.any?(ciphers, fn cipher ->
+        Enum.any?(weak_ciphers, &String.contains?(cipher, &1))
+      end)
+
+    if has_weak do
+      {:error, :weak_cipher_suites}
+    else
+      :ok
+    end
+  end
+
+  def validate_cipher_suites(_), do: {:error, :invalid_cipher_config}
+
+  defp validate_certificates(config) do
+    # Basic validation - could be enhanced
+    case {Map.get(config, :cert), Map.get(config, :key)} do
+      {nil, nil} -> :ok
+      {cert, key} when is_binary(cert) and is_binary(key) -> :ok
+      {cert, nil} when is_binary(cert) -> {:error, :cert_without_key}
+      {nil, key} when is_binary(key) -> {:error, :key_without_cert}
+      _ -> {:error, :invalid_certificate_config}
+    end
+  end
+
+  @doc """
+  Validates mutual TLS configuration.
+  """
+  @spec validate_mtls_config(map()) :: :ok | {:error, atom()}
+  def validate_mtls_config(config) do
+    required_fields = [:cert, :key, :cacerts]
+
+    missing_fields = Enum.reject(required_fields, &Map.has_key?(config, &1))
+
+    if missing_fields == [] do
+      :ok
+    else
+      {:error, :incomplete_mtls_config}
+    end
+  end
+
+  @doc """
+  Validates certificate pinning configuration.
+  """
+  @spec validate_certificate_pinning_config(map()) :: :ok | {:error, atom()}
+  def validate_certificate_pinning_config(%{certificate_pinning: pins}) when is_list(pins) do
+    valid_pins =
+      Enum.all?(pins, fn pin ->
+        String.starts_with?(pin, "sha256:") and byte_size(pin) > 7
+      end)
+
+    if valid_pins do
+      :ok
+    else
+      {:error, :invalid_certificate_pins}
+    end
+  end
+
+  def validate_certificate_pinning_config(_), do: :ok
+
+  @doc """
+  Returns the preferred TLS version from a list.
+  """
+  @spec preferred_tls_version([atom()]) :: atom()
+  def preferred_tls_version(versions) do
+    cond do
+      :"tlsv1.3" in versions -> :"tlsv1.3"
+      :"tlsv1.2" in versions -> :"tlsv1.2"
+      true -> hd(versions)
+    end
+  end
+
+  @doc """
+  Returns recommended cipher suites in order of preference.
+  """
+  @spec recommended_cipher_suites() :: [String.t()]
+  def recommended_cipher_suites do
+    [
+      # TLS 1.3 cipher suites (AEAD only)
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_CHACHA20_POLY1305_SHA256",
+
+      # TLS 1.2 ECDHE cipher suites (forward secrecy)
+      "ECDHE-RSA-AES256-GCM-SHA384",
+      "ECDHE-RSA-AES128-GCM-SHA256",
+      "ECDHE-RSA-CHACHA20-POLY1305",
+      "ECDHE-RSA-AES256-SHA384",
+      "ECDHE-RSA-AES128-SHA256"
+    ]
+  end
+
+  @doc """
+  Builds mutual TLS options.
+  """
+  @spec build_mtls_options(map()) :: keyword()
+  def build_mtls_options(config) do
+    base_opts = [
+      verify: Map.get(config, :verify, :verify_peer),
+      cert: Map.get(config, :cert),
+      key: Map.get(config, :key),
+      cacerts: Map.get(config, :cacerts),
+      versions: Map.get(config, :versions, [:"tlsv1.2", :"tlsv1.3"])
+    ]
+
+    # Add fail_if_no_peer_cert for server-side mTLS
+    if Map.get(config, :fail_if_no_peer_cert) do
+      Keyword.put(base_opts, :fail_if_no_peer_cert, true)
+    else
+      base_opts
+    end
+  end
+
+  @doc """
+  Validates hostname verification function.
+  """
+  def verify_hostname(_cert, :valid_peer, _hostname) do
+    # This would implement proper hostname verification
+    # For now, just return valid
+    :valid_peer
+  end
+
+  def verify_hostname(_cert, {:bad_cert, reason}, _hostname) do
+    {:fail, reason}
+  end
+
+  def verify_hostname(_cert, {:extension, _ext}, _hostname) do
+    :unknown
+  end
+
+  @doc """
+  Validates transport security configuration.
+  """
+  @spec validate_transport_security(map()) :: :ok | {:error, atom()}
+  def validate_transport_security(config) do
+    url = Map.get(config, :url, "")
+    security = Map.get(config, :security, %{})
+
+    with :ok <- validate_url_security(url, security) do
+      validate_tls_config(Map.get(security, :tls, %{}))
+    end
+  end
+
+  defp validate_url_security(url, %{enforce_https: true}) do
+    enforce_https_requirement(url)
+  end
+
+  defp validate_url_security(_url, _security), do: :ok
 
   @doc """
   Validates security configuration.
@@ -338,18 +684,6 @@ defmodule ExMCP.Security do
 
   defp validate_origin_requirements(_), do: :ok
 
-  defp validate_localhost_binding(%{binding: binding}) when is_binary(binding) do
-    case :inet.parse_address(String.to_charlist(binding)) do
-      {:ok, {127, 0, 0, 1}} -> :ok
-      # IPv6 localhost
-      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> :ok
-      {:ok, _} -> {:error, :non_localhost_binding_requires_security}
-      _ -> {:error, :invalid_binding_address}
-    end
-  end
-
-  defp validate_localhost_binding(_), do: :ok
-
   @doc """
   Enforces HTTPS requirement for non-localhost URLs.
   """
@@ -360,6 +694,9 @@ defmodule ExMCP.Security do
     case {uri.scheme, uri.host} do
       {"http", "localhost"} -> :ok
       {"http", "127.0.0.1"} -> :ok
+      # IPv6 localhost without brackets
+      {"http", "::1"} -> :ok
+      # IPv6 localhost with brackets
       {"http", "[::1]"} -> :ok
       {"http", _} -> {:error, :https_required}
       {"https", _} -> :ok

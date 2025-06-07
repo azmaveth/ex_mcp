@@ -302,7 +302,25 @@ defmodule ExMCP.Transport.Beam do
 
   @impl true
   def connect(opts) do
-    server = Keyword.fetch!(opts, :server)
+    # Support both direct server connection and cluster-based discovery
+    server =
+      case {Keyword.get(opts, :server), Keyword.get(opts, :cluster),
+            Keyword.get(opts, :service_name)} do
+        {server_pid, nil, nil} when server_pid != nil ->
+          # Direct server connection
+          server_pid
+
+        {nil, cluster_pid, service_name} when cluster_pid != nil and service_name != nil ->
+          # Cluster-based discovery
+          discover_server_from_cluster(cluster_pid, service_name, opts)
+
+        {nil, nil, nil} ->
+          raise ArgumentError, "must provide either :server or both :cluster and :service_name"
+
+        _ ->
+          raise ArgumentError, "cannot provide both :server and :cluster options"
+      end
+
     security = Keyword.get(opts, :security)
     format = Keyword.get(opts, :format, :json)
 
@@ -375,6 +393,58 @@ defmodule ExMCP.Transport.Beam do
     Process.alive?(mailbox)
   end
 
+  # Streaming support functions
+
+  @doc """
+  Sends a message with streaming support for large payloads.
+
+  If streaming is enabled and the message is large, it will be streamed
+  in chunks with backpressure control.
+  """
+  @spec send_message_streaming(map(), State.t(), map()) ::
+          {:ok, State.t()} | {:ok, map(), State.t()} | {:error, term()}
+  def send_message_streaming(message, %State{} = state, streaming_opts \\ %{}) do
+    if should_stream_message?(message, streaming_opts) do
+      send_message_with_streaming(message, state, streaming_opts)
+    else
+      case send_message(message, state) do
+        {:ok, new_state} -> {:ok, new_state}
+        error -> error
+      end
+    end
+  end
+
+  @doc """
+  Receives messages with streaming support.
+
+  Handles both regular messages and streaming chunks.
+  """
+  @spec receive_message_streaming(State.t()) ::
+          {:ok, binary() | map(), State.t()}
+          | {:stream_chunk, map(), State.t()}
+          | {:error, term()}
+  def receive_message_streaming(%State{format: format} = state) do
+    receive do
+      {:transport_message, message} ->
+        formatted_message = format_incoming_message(message, format)
+
+        # Check if this is a streaming message
+        case detect_streaming_message(formatted_message) do
+          {:stream_chunk, chunk_data} ->
+            {:stream_chunk, chunk_data, state}
+
+          {:stream_start, stream_info} ->
+            {:stream_start, stream_info, state}
+
+          {:regular_message, msg} ->
+            {:ok, msg, state}
+        end
+
+      {:transport_closed, reason} ->
+        {:error, reason}
+    end
+  end
+
   # Server Implementation
 
   @doc """
@@ -432,6 +502,104 @@ defmodule ExMCP.Transport.Beam do
 
     {:ok, state}
   end
+
+  # Streaming helper functions
+
+  defp should_stream_message?(message, streaming_opts) do
+    enabled = Map.get(streaming_opts, :enabled, false)
+
+    if enabled do
+      message_size = estimate_message_size(message)
+      threshold = Map.get(streaming_opts, :threshold, 1024)
+      message_size > threshold
+    else
+      false
+    end
+  end
+
+  defp send_message_with_streaming(message, state, streaming_opts) do
+    alias ExMCP.Transport.Beam.Stream
+
+    # Create a stream for this message
+    stream_opts = %{
+      content_type: "application/json",
+      chunk_size: Map.get(streaming_opts, :chunk_size, 1024),
+      window_size: Map.get(streaming_opts, :window_size, 5)
+    }
+
+    case Stream.new(stream_opts) do
+      {:ok, stream} ->
+        # Encode message to JSON
+        case Jason.encode(message) do
+          {:ok, json_data} ->
+            # Chunk the data
+            case Stream.chunk_data(stream, json_data) do
+              {:ok, chunks} ->
+                # Send stream start notification
+                _stream_start = %{
+                  "type" => "stream_start",
+                  "stream_id" => stream.id,
+                  "content_type" => stream.content_type,
+                  "total_chunks" => length(chunks)
+                }
+
+                # Send all chunks
+                case send_stream_chunks(chunks, state) do
+                  :ok -> {:ok, %{"streaming" => true, "stream_id" => stream.id}, state}
+                  error -> error
+                end
+
+              error ->
+                error
+            end
+
+          {:error, reason} ->
+            {:error, {:json_encode_error, reason}}
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp send_stream_chunks(chunks, state) do
+    alias ExMCP.Transport.Beam.StreamChunk
+
+    Enum.reduce_while(chunks, :ok, fn chunk, :ok ->
+      chunk_message = StreamChunk.to_message(chunk)
+
+      case send_message(chunk_message, state) do
+        {:ok, _state} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp detect_streaming_message(message) do
+    case message do
+      %{"type" => "stream_chunk"} = chunk ->
+        {:stream_chunk, chunk}
+
+      %{"type" => "stream_start"} = stream_info ->
+        {:stream_start, stream_info}
+
+      regular_msg ->
+        {:regular_message, regular_msg}
+    end
+  end
+
+  defp estimate_message_size(message) when is_map(message) do
+    case Jason.encode(message) do
+      {:ok, json} -> byte_size(json)
+      _ -> 0
+    end
+  end
+
+  defp estimate_message_size(message) when is_binary(message) do
+    byte_size(message)
+  end
+
+  defp estimate_message_size(_), do: 0
 
   # Private Functions
 
@@ -630,6 +798,117 @@ defmodule ExMCP.Transport.Beam do
 
       _ ->
         {:error, :unsupported_auth_challenge}
+    end
+  end
+
+  @doc """
+  Builds native BEAM security options for distributed connections.
+
+  This function focuses on Erlang/Elixir-native security mechanisms rather than TLS:
+  - Node cookies for node authentication
+  - Hidden nodes for network topology security  
+  - Process isolation and supervision
+  - Connection limits for resource protection
+  """
+  def build_distribution_options(security_config) when is_map(security_config) do
+    base_opts = []
+
+    # Add node cookie authentication
+    opts =
+      case Map.get(security_config, :node_cookie) do
+        nil -> base_opts
+        cookie -> Keyword.put(base_opts, :cookie, cookie)
+      end
+
+    # Add hidden node option for security
+    opts =
+      case Map.get(security_config, :hidden) do
+        true -> Keyword.put(opts, :hidden, true)
+        _ -> opts
+      end
+
+    # Add connection limits
+    opts =
+      case Map.get(security_config, :max_connections) do
+        nil -> opts
+        max -> Keyword.put(opts, :max_connections, max)
+      end
+
+    opts
+  end
+
+  def build_distribution_options(_), do: []
+
+  @doc """
+  Prepares secure connection options for BEAM transport using native security.
+
+  Focuses on BEAM-native security patterns:
+  - Process-level authentication and authorization
+  - Node cookie validation
+  - Connection rate limiting
+  - Capability-based security
+  """
+  def prepare_secure_connection(config) when is_map(config) do
+    security_opts = build_distribution_options(config)
+
+    # Validate node cookie if specified
+    case Map.get(config, :node_cookie) do
+      nil ->
+        {:ok, security_opts}
+
+      :nocookie ->
+        # Reject the default insecure cookie
+        {:error, :invalid_node_cookie}
+
+      cookie when is_atom(cookie) ->
+        {:ok, security_opts}
+
+      _ ->
+        {:error, :invalid_node_cookie}
+    end
+  end
+
+  def prepare_secure_connection(_), do: {:ok, []}
+
+  @doc """
+  Configures Erlang distribution with TLS (for advanced deployments).
+
+  This is for cases where TLS over Erlang distribution is actually needed,
+  typically configured at the VM level rather than per-connection.
+
+  Note: This requires starting the Erlang VM with -proto_dist inet_tls
+  and proper SSL distribution configuration in sys.config
+  """
+  def configure_distribution_tls(tls_config) when is_map(tls_config) do
+    ssl_opts =
+      [
+        verify: Map.get(tls_config, :verify, :verify_peer),
+        cacertfile: Map.get(tls_config, :cacerts),
+        certfile: Map.get(tls_config, :cert),
+        keyfile: Map.get(tls_config, :key)
+      ]
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+
+    # This would typically be configured in sys.config or vm.args
+    # :ssl.start()
+    # :net_kernel.start([node_name, :longnames])
+
+    {:ok, ssl_opts}
+  end
+
+  # Cluster-based service discovery
+  defp discover_server_from_cluster(cluster_pid, service_name, _opts) do
+    case GenServer.call(cluster_pid, {:discover_services, %{name: service_name}}) do
+      {:ok, []} ->
+        raise "No services found for name: #{service_name}"
+
+      {:ok, [service | _]} ->
+        # For now, just return the first available service
+        # Future enhancements can add load balancing here
+        service.pid
+
+      {:error, reason} ->
+        raise "Failed to discover services: #{inspect(reason)}"
     end
   end
 end

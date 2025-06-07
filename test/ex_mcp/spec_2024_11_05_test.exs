@@ -308,7 +308,7 @@ defmodule ExMCP.Spec20241105Test do
 
     test "pagination works correctly", %{client: client} do
       # Even in 2024-11-05, pagination via cursor is supported
-      {:ok, result} = Client.list_tools(client, nil)
+      {:ok, result} = Client.list_tools(client)
 
       # Our test handler returns nil cursor (no more pages)
       assert result.nextCursor == nil

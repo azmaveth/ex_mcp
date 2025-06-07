@@ -5,6 +5,7 @@ defmodule ExMCP.Transport.SSEClientTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Transport.SSEClient
+  alias ExMCP.Test.HTTPServer
 
   @moduletag :capture_log
 
@@ -16,7 +17,7 @@ defmodule ExMCP.Transport.SSEClientTest do
       # Start SSE client
       {:ok, client} =
         SSEClient.start_link(
-          url: "http://localhost:#{server.port}/sse",
+          url: "http://localhost:#{server.port}/mcp/v1/sse",
           parent: self()
         )
 
@@ -57,7 +58,7 @@ defmodule ExMCP.Transport.SSEClientTest do
       # Start SSE client
       {:ok, client} =
         SSEClient.start_link(
-          url: "http://localhost:#{server.port}/sse",
+          url: "http://localhost:#{server.port}/mcp/v1/sse",
           parent: self()
         )
 
@@ -114,7 +115,7 @@ defmodule ExMCP.Transport.SSEClientTest do
 
       {:ok, client} =
         SSEClient.start_link(
-          url: "http://localhost:#{server.port}/sse",
+          url: "http://localhost:#{server.port}/mcp/v1/sse",
           parent: self()
         )
 
@@ -141,7 +142,7 @@ defmodule ExMCP.Transport.SSEClientTest do
 
       {:ok, client} =
         SSEClient.start_link(
-          url: "http://localhost:#{server.port}/sse",
+          url: "http://localhost:#{server.port}/mcp/v1/sse",
           parent: self()
         )
 
@@ -169,7 +170,7 @@ defmodule ExMCP.Transport.SSEClientTest do
 
       {:ok, client} =
         SSEClient.start_link(
-          url: "http://localhost:#{server.port}/sse",
+          url: "http://localhost:#{server.port}/mcp/v1/sse",
           parent: self()
         )
 
@@ -199,7 +200,7 @@ defmodule ExMCP.Transport.SSEClientTest do
 
       {:ok, client} =
         SSEClient.start_link(
-          url: "http://localhost:#{server.port}/sse",
+          url: "http://localhost:#{server.port}/mcp/v1/sse",
           headers: [{"Authorization", "Bearer test-token"}],
           parent: self()
         )
@@ -237,7 +238,7 @@ defmodule ExMCP.Transport.SSEClientTest do
 
       {:ok, client} =
         SSEClient.start_link(
-          url: "http://localhost:#{server.port}/sse",
+          url: "http://localhost:#{server.port}/mcp/v1/sse",
           parent: self()
         )
 
@@ -257,20 +258,26 @@ defmodule ExMCP.Transport.SSEClientTest do
 
   # Helper functions for mocking SSE server
 
-  defp start_mock_sse_server(opts \\ []) do
-    port = opts[:port] || 0
+  defp start_mock_sse_server(_opts \\ []) do
+    {:ok, server} = HTTPServer.start_link()
+    url = HTTPServer.get_url(server)
+    port = URI.parse(url).port
 
-    # This is a simplified mock - in real tests you'd use a proper HTTP server
     {:ok,
      %{
-       port: port || :rand.uniform(10000) + 40000,
+       pid: server,
+       port: port,
        connections: [],
        last_headers: %{}
      }}
   end
 
-  defp stop_mock_server(_server) do
-    :ok
+  defp stop_mock_server(server) do
+    if server[:pid] do
+      HTTPServer.stop(server.pid)
+    else
+      :ok
+    end
   end
 
   defp send_sse_event(server, event) do
