@@ -407,7 +407,7 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
 
   defp backup_current_state(state) do
     # Skip server interaction in test mode
-    if Code.ensure_loaded?(Mix) and Mix.env() == :test do
+    if test_mode?() do
       {:ok, %{}}
     else
       try do
@@ -445,7 +445,7 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
     case HotReload.migrate_state(old_state, migration_strategy, state.config[:migration_callback]) do
       {:ok, migrated_state} ->
         # Skip server interaction in test mode
-        if Code.ensure_loaded?(Mix) and Mix.env() == :test do
+        if test_mode?() do
           {:ok, state}
         else
           # Update the server with new state (if it's a real server)
@@ -569,5 +569,11 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
     end
 
     Logger.debug("Hot reload notification: #{inspect(message)}")
+  end
+
+  defp test_mode? do
+    Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) and Mix.env() == :test
+  rescue
+    UndefinedFunctionError -> false
   end
 end
