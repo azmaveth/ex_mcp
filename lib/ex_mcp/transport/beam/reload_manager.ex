@@ -23,6 +23,9 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
 
   alias ExMCP.Transport.Beam.HotReload
 
+  @has_file_system Code.ensure_loaded?(FileSystem)
+  @has_mix Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0)
+
   defstruct [
     :handler_module,
     :server,
@@ -234,26 +237,24 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
     end
   end
 
-  if Code.ensure_loaded?(FileSystem) do
-    defp start_filesystem_watching(state) do
-      case FileSystem.start_link(dirs: state.watch_paths) do
-        {:ok, watcher_pid} ->
-          FileSystem.subscribe(watcher_pid)
-          Process.monitor(watcher_pid)
-          {:ok, %{state | watcher_pid: watcher_pid}}
+  defp start_filesystem_watching(state) do
+    if @has_file_system do
+      try do
+        {:ok, watcher_pid} = apply(FileSystem, :start_link, [[dirs: state.watch_paths]])
+        apply(FileSystem, :subscribe, [watcher_pid])
+        Process.monitor(watcher_pid)
+        {:ok, %{state | watcher_pid: watcher_pid}}
+      catch
+        :error, :undef ->
+          Logger.warning("FileSystem dependency not available, falling back to polling")
+          start_polling_watching(%{state | watch_strategy: :polling})
 
-        {:error, reason} ->
-          Logger.error("Failed to start filesystem watcher: #{inspect(reason)}")
+        error ->
+          Logger.error("Failed to start filesystem watcher: #{inspect(error)}")
           # Fallback to polling
           start_polling_watching(%{state | watch_strategy: :polling})
       end
-    rescue
-      UndefinedFunctionError ->
-        Logger.warning("FileSystem dependency not available, falling back to polling")
-        start_polling_watching(%{state | watch_strategy: :polling})
-    end
-  else
-    defp start_filesystem_watching(state) do
+    else
       Logger.warning("FileSystem dependency not available, falling back to polling")
       start_polling_watching(%{state | watch_strategy: :polling})
     end
@@ -278,37 +279,21 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
     start_watching(%{state | watcher_pid: nil})
   end
 
-  if Code.ensure_loaded?(FileSystem) do
-    defp stop_watching(state) do
-      if state.watcher_pid && Process.alive?(state.watcher_pid) do
-        case state.watch_strategy do
-          :filesystem ->
-            GenServer.stop(state.watcher_pid)
+  defp stop_watching(state) do
+    if state.watcher_pid && Process.alive?(state.watcher_pid) do
+      case state.watch_strategy do
+        :filesystem when @has_file_system ->
+          GenServer.stop(state.watcher_pid)
 
-          _ ->
-            # Nothing special needed for other strategies
-            :ok
-        end
-      end
-    rescue
-      UndefinedFunctionError ->
-        # FileSystem module not available
-        :ok
-    end
-  else
-    defp stop_watching(state) do
-      if state.watcher_pid && Process.alive?(state.watcher_pid) do
-        case state.watch_strategy do
-          :filesystem ->
-            # FileSystem not available, nothing to stop
-            :ok
-
-          _ ->
-            # Nothing special needed for other strategies
-            :ok
-        end
+        _ ->
+          # Nothing special needed for other strategies
+          :ok
       end
     end
+  catch
+    :error, :undef ->
+      # FileSystem module not available
+      :ok
   end
 
   defp schedule_poll(interval) do
@@ -583,13 +568,15 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
     Logger.debug("Hot reload notification: #{inspect(message)}")
   end
 
-  if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
-    defp test_mode? do
-      Mix.env() == :test
-    rescue
-      UndefinedFunctionError -> false
+  defp test_mode? do
+    if @has_mix do
+      try do
+        apply(Mix, :env, []) == :test
+      catch
+        :error, :undef -> false
+      end
+    else
+      false
     end
-  else
-    defp test_mode?, do: false
   end
 end
