@@ -18,6 +18,7 @@ defmodule ExMCP.Types.V20250326 do
   @type content_type :: ExMCP.Types.content_type()
   @type text_content :: ExMCP.Types.text_content()
   @type image_content :: ExMCP.Types.image_content()
+  @type audio_content :: ExMCP.Types.audio_content()
   @type resource_content :: ExMCP.Types.resource_content()
 
   # Version-specific protocol version

@@ -344,7 +344,29 @@ defmodule ExMCP.Server.Handler do
               {:ok, ExMCP.Types.prompt_message(), state()} | {:error, any(), state()}
 
   @doc """
-  Handles a completion request.
+  Handles a completion request for argument autocompletion.
+
+  This callback is invoked when a client requests completion suggestions
+  for tool arguments, resource URIs, or prompt arguments.
+
+  ## Parameters
+    - ref: Reference type (e.g., "argument")
+    - params: Map containing:
+      - name: The argument/parameter name to complete
+      - value: The partial value to complete
+
+  ## Return Value
+    Should return a map with:
+    - completion: List of completion suggestion strings
+
+  ## Example
+
+      def handle_complete("argument", %{"name" => "file_path", "value" => "/home/"}, state) do
+        completions = ["/home/user/", "/home/documents/", "/home/downloads/"]
+        {:ok, %{completion: completions}, state}
+      end
+
+  Note: Servers should declare the `completion` capability to advertise support.
   """
   @callback handle_complete(ref :: String.t(), params :: map(), state()) ::
               {:ok, result :: map(), state()} | {:error, any(), state()}

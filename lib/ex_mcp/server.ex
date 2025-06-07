@@ -1150,31 +1150,44 @@ defmodule ExMCP.Server do
 
   # Helper function to handle requests for batch processing
   defp handle_request_for_batch(method, params, id, state) do
-    # Call the regular handle_request but capture the response
-    # We need to intercept the send_message call
-
-    # Create a temporary state that captures messages instead of sending them
-    capture_state = Map.put(state, :capture_mode, true)
-    capture_state = Map.put(capture_state, :captured_message, nil)
-
-    # Process the request
-    {:noreply, result_state} = handle_request(method, params, id, capture_state)
-
-    # Extract the captured message
-    if captured = Map.get(result_state, :captured_message) do
-      # Remove capture fields and return the response
-      new_state =
-        result_state
-        |> Map.delete(:capture_mode)
-        |> Map.delete(:captured_message)
-
-      {:response, captured, new_state}
-    else
-      # No message was captured, return an error
+    # The initialize request MUST NOT be part of a JSON-RPC batch per MCP spec
+    if method == "initialize" do
       error =
-        Protocol.encode_error(Protocol.internal_error(), "Failed to process request", nil, id)
+        Protocol.encode_error(
+          Protocol.invalid_request(),
+          "The initialize request must not be part of a JSON-RPC batch",
+          nil,
+          id
+        )
 
       {:error, error, state}
+    else
+      # Call the regular handle_request but capture the response
+      # We need to intercept the send_message call
+
+      # Create a temporary state that captures messages instead of sending them
+      capture_state = Map.put(state, :capture_mode, true)
+      capture_state = Map.put(capture_state, :captured_message, nil)
+
+      # Process the request
+      {:noreply, result_state} = handle_request(method, params, id, capture_state)
+
+      # Extract the captured message
+      if captured = Map.get(result_state, :captured_message) do
+        # Remove capture fields and return the response
+        new_state =
+          result_state
+          |> Map.delete(:capture_mode)
+          |> Map.delete(:captured_message)
+
+        {:response, captured, new_state}
+      else
+        # No message was captured, return an error
+        error =
+          Protocol.encode_error(Protocol.internal_error(), "Failed to process request", nil, id)
+
+        {:error, error, state}
+      end
     end
   end
 

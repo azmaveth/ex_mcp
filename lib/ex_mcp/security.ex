@@ -261,8 +261,9 @@ defmodule ExMCP.Security do
   @spec validate_config(security_config()) :: :ok | {:error, term()}
   def validate_config(config) do
     with :ok <- validate_auth(Map.get(config, :auth)),
-         :ok <- validate_cors(Map.get(config, :cors)) do
-      validate_tls(Map.get(config, :tls))
+         :ok <- validate_cors(Map.get(config, :cors)),
+         :ok <- validate_tls(Map.get(config, :tls)) do
+      validate_security_requirements(config)
     end
   end
 
@@ -312,5 +313,96 @@ defmodule ExMCP.Security do
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
 
     Keyword.put(opts, :ssl_options, ssl_opts)
+  end
+
+  # MCP Specification Security Requirements
+
+  @doc """
+  Validates that security configuration meets MCP specification requirements.
+  """
+  @spec validate_security_requirements(security_config()) :: :ok | {:error, term()}
+  def validate_security_requirements(config) do
+    with :ok <- validate_origin_requirements(config),
+         :ok <- validate_localhost_binding(config) do
+      :ok
+    end
+  end
+
+  defp validate_origin_requirements(%{validate_origin: true, allowed_origins: origins})
+       when is_list(origins) and length(origins) > 0 do
+    :ok
+  end
+
+  defp validate_origin_requirements(%{validate_origin: true}) do
+    {:error, :allowed_origins_required_when_origin_validation_enabled}
+  end
+
+  defp validate_origin_requirements(_), do: :ok
+
+  defp validate_localhost_binding(%{binding: binding}) when is_binary(binding) do
+    case :inet.parse_address(String.to_charlist(binding)) do
+      {:ok, {127, 0, 0, 1}} -> :ok
+      # IPv6 localhost
+      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> :ok
+      {:ok, _} -> {:error, :non_localhost_binding_requires_security}
+      _ -> {:error, :invalid_binding_address}
+    end
+  end
+
+  defp validate_localhost_binding(_), do: :ok
+
+  @doc """
+  Enforces HTTPS requirement for non-localhost URLs.
+  """
+  @spec enforce_https_requirement(String.t()) :: :ok | {:error, :https_required}
+  def enforce_https_requirement(url) do
+    uri = URI.parse(url)
+
+    case {uri.scheme, uri.host} do
+      {"http", "localhost"} -> :ok
+      {"http", "127.0.0.1"} -> :ok
+      {"http", "[::1]"} -> :ok
+      {"http", _} -> {:error, :https_required}
+      {"https", _} -> :ok
+      # Other schemes like ws/wss handled elsewhere
+      _ -> :ok
+    end
+  end
+
+  @doc """
+  Validates request origin against security policy.
+
+  This implements DNS rebinding attack protection as required by the MCP spec.
+  """
+  @spec validate_request_origin(String.t() | nil, security_config()) ::
+          :ok | {:error, :origin_validation_failed}
+  def validate_request_origin(origin, %{validate_origin: true} = config) do
+    allowed = Map.get(config, :allowed_origins, [])
+    validate_origin(origin, allowed)
+  end
+
+  def validate_request_origin(_, _), do: :ok
+
+  @doc """
+  Builds secure default configuration based on deployment context.
+  """
+  @spec secure_defaults(String.t()) :: security_config()
+  def secure_defaults(url) do
+    uri = URI.parse(url)
+
+    base_config = %{
+      validate_origin: true,
+      tls: %{
+        verify: :verify_peer,
+        versions: [:"tlsv1.2", :"tlsv1.3"]
+      }
+    }
+
+    # Add localhost-specific relaxations
+    if uri.host in ["localhost", "127.0.0.1", "[::1]"] do
+      Map.put(base_config, :allowed_origins, ["http://localhost", "https://localhost"])
+    else
+      base_config
+    end
   end
 end

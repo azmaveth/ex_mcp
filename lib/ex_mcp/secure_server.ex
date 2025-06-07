@@ -8,6 +8,9 @@ defmodule ExMCP.SecureServer do
   - Consent management for dynamic clients
   - Audit trail maintenance
   - Trust boundary enforcement
+  - Origin validation for DNS rebinding protection
+  - HTTPS enforcement for non-localhost deployments
+  - Localhost binding security
 
   Use this instead of ExMCP.Server when security features are required.
   """
@@ -22,7 +25,9 @@ defmodule ExMCP.SecureServer do
     :server_id,
     :server_pid,
     :security_config,
-    :client_info_cache
+    :client_info_cache,
+    :binding_address,
+    :allowed_origins
   ]
 
   @doc """
@@ -33,12 +38,16 @@ defmodule ExMCP.SecureServer do
   All ExMCP.Server options plus:
 
   - `:server_id` - Unique server identifier for token validation (required)
+  - `:binding` - IP address to bind to (default: "127.0.0.1" for security)
   - `:security` - Security configuration map:
     - `:require_auth` - Require authentication (default: true)
     - `:trusted_issuers` - List of trusted token issuers
     - `:introspection_endpoint` - Token introspection endpoint
     - `:approval_handler` - Module for consent approval
     - `:trust_boundaries` - List of supported trust boundaries
+    - `:validate_origin` - Enable origin validation (default: true)
+    - `:allowed_origins` - List of allowed origins
+    - `:enforce_https` - Require HTTPS for non-localhost (default: true)
   """
   def start_link(opts) do
     {name, opts} = Keyword.pop(opts, :name)
@@ -59,42 +68,59 @@ defmodule ExMCP.SecureServer do
   @impl true
   def init(opts) do
     server_id = Keyword.fetch!(opts, :server_id)
-    security_config = Keyword.get(opts, :security, %{})
+    security_config = build_security_config(opts)
+    binding = Keyword.get(opts, :binding, "127.0.0.1")
+    transport_opts = Keyword.get(opts, :transport_options, [])
 
-    # Ensure security components are started
-    {:ok, _} =
-      ExMCP.Security.Supervisor.ensure_started(
-        approval_handler: security_config[:approval_handler]
-      )
+    # Validate security requirements
+    with :ok <- validate_binding_security(binding, security_config),
+         :ok <- validate_transport_security(opts[:transport], transport_opts, security_config) do
+      # Ensure security components are started
+      {:ok, _} =
+        ExMCP.Security.Supervisor.ensure_started(
+          approval_handler: security_config[:approval_handler]
+        )
 
-    # Create a wrapped handler that adds security
-    wrapped_handler =
-      create_secure_handler(
-        Keyword.fetch!(opts, :handler),
-        server_id,
-        security_config
-      )
+      # Create a wrapped handler that adds security
+      wrapped_handler =
+        create_secure_handler(
+          Keyword.fetch!(opts, :handler),
+          server_id,
+          security_config
+        )
 
-    # Start the underlying server with wrapped handler
-    server_opts =
-      opts
-      |> Keyword.put(:handler, wrapped_handler)
-      |> Keyword.delete(:server_id)
-      |> Keyword.delete(:security)
+      # Add security to transport options
+      enhanced_transport_opts =
+        enhance_transport_security(transport_opts, binding, security_config)
 
-    case Server.start_link(server_opts) do
-      {:ok, server_pid} ->
-        state = %__MODULE__{
-          server_id: server_id,
-          server_pid: server_pid,
-          security_config: security_config,
-          client_info_cache: %{}
-        }
+      # Start the underlying server with wrapped handler
+      server_opts =
+        opts
+        |> Keyword.put(:handler, wrapped_handler)
+        |> Keyword.put(:transport_options, enhanced_transport_opts)
+        |> Keyword.delete(:server_id)
+        |> Keyword.delete(:security)
+        |> Keyword.delete(:binding)
 
-        {:ok, state}
+      case Server.start_link(server_opts) do
+        {:ok, server_pid} ->
+          state = %__MODULE__{
+            server_id: server_id,
+            server_pid: server_pid,
+            security_config: security_config,
+            client_info_cache: %{},
+            binding_address: binding,
+            allowed_origins: security_config[:allowed_origins] || []
+          }
 
+          {:ok, state}
+
+        {:error, reason} ->
+          {:stop, reason}
+      end
+    else
       {:error, reason} ->
-        {:stop, reason}
+        {:stop, {:security_validation_failed, reason}}
     end
   end
 
@@ -115,12 +141,54 @@ defmodule ExMCP.SecureServer do
 
   # Create a secure handler wrapper
   defp create_secure_handler(handler, server_id, security_config) do
-    %{
-      __struct__: SecureHandlerWrapper,
-      wrapped_handler: handler,
-      server_id: server_id,
-      security_config: security_config
+    ExMCP.SecureServer.SecureHandlerWrapper.create(handler, server_id, security_config)
+  end
+
+  defp build_security_config(opts) do
+    base_config = %{
+      require_auth: true,
+      validate_origin: true,
+      enforce_https: true
     }
+
+    user_config = Keyword.get(opts, :security, %{})
+    Map.merge(base_config, user_config)
+  end
+
+  defp validate_binding_security(binding, security_config) do
+    # Check if binding to non-localhost requires security
+    case :inet.parse_address(String.to_charlist(binding)) do
+      {:ok, {127, 0, 0, 1}} ->
+        :ok
+
+      # IPv6 localhost
+      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} ->
+        :ok
+
+      {:ok, _} ->
+        # Non-localhost binding requires authentication
+        if security_config[:require_auth] do
+          :ok
+        else
+          {:error, :authentication_required_for_non_localhost_binding}
+        end
+
+      {:error, _} ->
+        {:error, :invalid_binding_address}
+    end
+  end
+
+  defp validate_transport_security(:http, opts, %{enforce_https: true}) do
+    url = Keyword.get(opts, :url, "")
+    ExMCP.Security.enforce_https_requirement(url)
+  end
+
+  defp validate_transport_security(_, _, _), do: :ok
+
+  defp enhance_transport_security(opts, binding, security_config) do
+    opts
+    |> Keyword.put(:binding, binding)
+    |> Keyword.update(:security, security_config, &Map.merge(security_config, &1))
   end
 end
 
@@ -140,6 +208,14 @@ defmodule ExMCP.SecureServer.SecureHandlerWrapper do
     :handler_state
   ]
 
+  def create(handler, server_id, security_config) do
+    %__MODULE__{
+      wrapped_handler: handler,
+      server_id: server_id,
+      security_config: security_config
+    }
+  end
+
   @impl true
   def init(args) do
     %{wrapped_handler: handler} = args
@@ -158,16 +234,24 @@ defmodule ExMCP.SecureServer.SecureHandlerWrapper do
     # Extract client info and auth token
     client_info = params["clientInfo"]
     auth_token = extract_auth_token(params)
+    request_origin = extract_origin(params)
 
-    # Validate authentication if required
-    with :ok <- validate_authentication(auth_token, client_info, state),
+    # Validate security requirements
+    with :ok <- validate_origin_if_required(request_origin, state),
+         :ok <- validate_authentication(auth_token, client_info, state),
          :ok <- register_client(client_info, auth_token, state),
          {:ok, result} <- state.wrapped_handler.handle_initialize(params, state.handler_state) do
       # Audit successful initialization
       audit_request(client_info["clientId"], "initialize", params["id"], state)
 
+      # Store origin for future validation
+      Process.put(:mcp_request_origin, request_origin)
+
       {:ok, result, %{state | handler_state: state.handler_state}}
     else
+      {:error, :origin_not_allowed} ->
+        {:error, -32001, "Origin validation failed - DNS rebinding protection", state}
+
       {:error, :unauthorized} ->
         {:error, -32001, "Authentication required", state}
 
@@ -287,10 +371,29 @@ defmodule ExMCP.SecureServer.SecureHandlerWrapper do
 
   defp extract_auth_token(params) do
     # Check for token in various places
-    params["_meta"]["authToken"] ||
+    get_in(params, ["_meta", "authToken"]) ||
       params["authToken"] ||
       nil
   end
+
+  defp extract_origin(params) do
+    get_in(params, ["_meta", "origin"]) ||
+      params["origin"] ||
+      nil
+  end
+
+  defp validate_origin_if_required(origin, %{security_config: %{validate_origin: true}} = state) do
+    allowed_origins = state.security_config[:allowed_origins] || []
+
+    if origin in allowed_origins do
+      :ok
+    else
+      Logger.warning("Origin validation failed: #{origin} not in allowed list")
+      {:error, :origin_not_allowed}
+    end
+  end
+
+  defp validate_origin_if_required(_, _), do: :ok
 
   defp validate_authentication(nil, _client_info, %{security_config: %{require_auth: false}}),
     do: :ok

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **MCP Specification Compliance Updates**
+  - Initialize request batch validation - prevents `initialize` from being part of JSON-RPC batch per spec
+  - Audio content type support with `ExMCP.Content` module and examples
+  - Completions capability declaration with `hasArguments` and `values` fields
+  - Enhanced HTTP transport flexibility:
+    - Session management with `Mcp-Session-Id` header
+    - Non-SSE mode for single JSON responses
+    - Configurable endpoint (defaults to `/mcp/v1`)
+    - Resumability support with Last-Event-ID
+  - Security requirements enforcement:
+    - Origin validation for DNS rebinding protection
+    - HTTPS enforcement for non-localhost deployments
+    - Localhost binding security checks
+    - Enhanced `SecureServer` module with all security features
+
+### Fixed
+- All Credo code quality issues resolved (0 issues)
+- Logger metadata warnings fixed with proper configuration
+
 ## [0.5.0] - 2025-05-28
 
 ### Breaking Changes

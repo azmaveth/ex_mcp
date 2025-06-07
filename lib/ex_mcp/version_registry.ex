@@ -70,7 +70,11 @@ defmodule ExMCP.VersionRegistry do
       resources: %{subscribe: true, listChanged: true},
       tools: %{},
       logging: %{setLevel: true},
-      completion: %{},
+      completion: %{
+        # Indicates support for argument completion
+        hasArguments: true,
+        values: true
+      },
       # Batch processing available in 2025-03-26
       experimental: %{batchProcessing: true}
     }
@@ -83,7 +87,11 @@ defmodule ExMCP.VersionRegistry do
       resources: %{subscribe: true, listChanged: true},
       tools: %{outputSchema: true},
       logging: %{setLevel: true},
-      completion: %{},
+      completion: %{
+        # Indicates support for argument completion
+        hasArguments: true,
+        values: true
+      },
       # Draft-specific experimental features
       experimental: %{
         elicitation: true,

@@ -4,7 +4,7 @@ defmodule ExMCP.Transport.HTTP do
 
   Streamable HTTP transport for MCP with enhanced SSE support.
 
-  This transport uses HTTP POST and GET requests with Server-Sent Events (SSE)
+  This transport uses HTTP POST and GET requests with optional Server-Sent Events (SSE)
   for streaming server-to-client messages. This is one of the two
   official MCP transports defined in the specification.
 
@@ -13,7 +13,9 @@ defmodule ExMCP.Transport.HTTP do
   - **Auto-reconnection**: Automatic reconnection with exponential backoff
   - **Keep-alive**: Built-in heartbeat mechanism for connection health
   - **Event resumption**: Supports Last-Event-ID for event replay
+  - **Session management**: Automatic session ID generation and tracking
   - **Configurable endpoint**: Customize the MCP endpoint path
+  - **Single response mode**: Option to use HTTP responses instead of SSE
 
   ## Security Features
 
@@ -31,6 +33,8 @@ defmodule ExMCP.Transport.HTTP do
         transport: :http,
         url: "https://api.example.com",
         endpoint: "/mcp/v1",  # Configurable endpoint
+        use_sse: true,         # Use SSE for responses (default: true)
+        session_id: "existing-session",  # Resume existing session
         security: %{
           auth: {:bearer, "your-token"},
           validate_origin: true,
@@ -40,6 +44,24 @@ defmodule ExMCP.Transport.HTTP do
             allow_credentials: true
           }
         }
+      )
+
+  ## Session Management
+
+  The HTTP transport automatically manages sessions using the `Mcp-Session-Id` header.
+  Sessions enable:
+  - Request/response correlation
+  - Resumability after connection loss
+  - Server-side state management
+
+  ## Non-SSE Mode
+
+  For simpler deployments, the HTTP transport can operate without SSE:
+
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :http,
+        url: "https://api.example.com",
+        use_sse: false  # Responses come in HTTP response body
       )
 
   > #### Security Best Practices {: .warning}
@@ -63,7 +85,10 @@ defmodule ExMCP.Transport.HTTP do
     :sse_pid,
     :endpoint,
     :security,
-    :origin
+    :origin,
+    :session_id,
+    :use_sse,
+    :last_event_id
   ]
 
   @type t :: %__MODULE__{
@@ -73,10 +98,14 @@ defmodule ExMCP.Transport.HTTP do
           sse_pid: pid() | nil,
           endpoint: String.t(),
           security: Security.security_config() | nil,
-          origin: String.t() | nil
+          origin: String.t() | nil,
+          session_id: String.t() | nil,
+          use_sse: boolean(),
+          last_event_id: String.t() | nil
         }
 
   @default_endpoint "/mcp/v1"
+  @session_header "Mcp-Session-Id"
 
   @impl true
   def connect(config) do
@@ -85,6 +114,8 @@ defmodule ExMCP.Transport.HTTP do
     http_client = Keyword.get(config, :http_client, :httpc)
     endpoint = Keyword.get(config, :endpoint, @default_endpoint)
     security = Keyword.get(config, :security)
+    use_sse = Keyword.get(config, :use_sse, true)
+    session_id = Keyword.get(config, :session_id)
 
     # Extract origin if provided
     origin =
@@ -110,13 +141,21 @@ defmodule ExMCP.Transport.HTTP do
       http_client: http_client,
       endpoint: endpoint,
       security: security,
-      origin: origin
+      origin: origin,
+      use_sse: use_sse,
+      session_id: session_id || generate_session_id()
     }
 
     # Validate security configuration
-    with :ok <- validate_security(state),
-         {:ok, sse_pid} <- start_sse(state) do
-      {:ok, %{state | sse_pid: sse_pid}}
+    with :ok <- validate_security(state) do
+      if use_sse do
+        case start_sse(state) do
+          {:ok, sse_pid} -> {:ok, %{state | sse_pid: sse_pid}}
+          error -> error
+        end
+      else
+        {:ok, state}
+      end
     end
   end
 
@@ -124,7 +163,7 @@ defmodule ExMCP.Transport.HTTP do
   def send_message(message, %__MODULE__{} = state) do
     url = build_url(state, "/messages")
 
-    # Build headers with security
+    # Build headers with security and session
     headers = build_request_headers(state)
 
     case Jason.encode(message) do
@@ -144,11 +183,25 @@ defmodule ExMCP.Transport.HTTP do
           end
 
         case :httpc.request(:post, request, http_opts, []) do
-          {:ok, {{_, 200, _}, response_headers, _response_body}} ->
-            # Validate CORS if configured
-            case validate_cors_response(response_headers, state) do
-              :ok -> {:ok, state}
-              error -> error
+          {:ok, {{_, 200, _}, response_headers, response_body}} ->
+            # For non-SSE mode, parse the response body as JSON-RPC
+            if state.use_sse do
+              # SSE mode - messages sent, responses come via SSE
+              case validate_cors_response(response_headers, state) do
+                :ok -> {:ok, state}
+                error -> error
+              end
+            else
+              # Non-SSE mode - response comes in HTTP body
+              case Jason.decode(response_body) do
+                {:ok, response} ->
+                  # Store response for receive_message
+                  send(self(), {:http_response, response})
+                  {:ok, state}
+
+                {:error, reason} ->
+                  {:error, {:json_decode_error, reason}}
+              end
             end
 
           {:ok, {{_, status, _}, _, body}} ->
@@ -164,13 +217,16 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   @impl true
-  def receive_message(%__MODULE__{sse_pid: sse_pid} = state) do
+  def receive_message(%__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
+      when is_pid(sse_pid) do
     receive do
-      {:sse_event, ^sse_pid, %{data: data}} ->
+      {:sse_event, ^sse_pid, %{data: data, id: event_id}} ->
         # The enhanced SSE client sends structured events
+        new_state = if event_id, do: %{state | last_event_id: event_id}, else: state
+
         case Jason.decode(data) do
           {:ok, message} ->
-            {:ok, message, state}
+            {:ok, message, new_state}
 
           {:error, reason} ->
             {:error, {:json_decode_error, reason}}
@@ -182,6 +238,21 @@ defmodule ExMCP.Transport.HTTP do
       {:sse_closed, ^sse_pid} ->
         {:error, :connection_closed}
     end
+  end
+
+  def receive_message(%__MODULE__{use_sse: false} = state) do
+    # Non-SSE mode - responses come from send_message
+    receive do
+      {:http_response, response} ->
+        {:ok, response, state}
+    after
+      5000 ->
+        {:error, :timeout}
+    end
+  end
+
+  def receive_message(%__MODULE__{}) do
+    {:error, :not_connected}
   end
 
   @impl true
@@ -198,10 +269,23 @@ defmodule ExMCP.Transport.HTTP do
     url = build_url(state, "/sse")
     ssl_opts = build_ssl_options(state)
 
+    # Build headers including session
+    sse_headers = [
+      {@session_header, state.session_id} | state.headers
+    ]
+
+    # Add Last-Event-ID if we have one for resumability
+    sse_headers =
+      if state.last_event_id do
+        [{"Last-Event-ID", state.last_event_id} | sse_headers]
+      else
+        sse_headers
+      end
+
     # Use the enhanced SSE client with keep-alive and reconnection
     opts = [
       url: url,
-      headers: state.headers,
+      headers: sse_headers,
       ssl_opts: ssl_opts,
       parent: self()
     ]
@@ -224,6 +308,10 @@ defmodule ExMCP.Transport.HTTP do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp generate_session_id do
+    :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
   end
 
   defp build_url(%__MODULE__{base_url: base_url, endpoint: endpoint}, path) do
@@ -255,15 +343,32 @@ defmodule ExMCP.Transport.HTTP do
   defp default_port("https"), do: 443
   defp default_port(_), do: nil
 
-  defp build_request_headers(%{headers: headers, security: security, origin: origin}) do
+  defp build_request_headers(%{
+         headers: headers,
+         security: security,
+         origin: origin,
+         session_id: session_id,
+         last_event_id: last_event_id
+       }) do
     base_headers = [{"content-type", "application/json"} | headers]
+
+    # Add session header
+    headers_with_session = [{@session_header, session_id} | base_headers]
+
+    # Add Last-Event-ID for resumability if available
+    headers_with_event_id =
+      if last_event_id do
+        [{"Last-Event-ID", last_event_id} | headers_with_session]
+      else
+        headers_with_session
+      end
 
     # Add Origin header if we have one
     headers_with_origin =
       if origin do
-        [{"Origin", origin} | base_headers]
+        [{"Origin", origin} | headers_with_event_id]
       else
-        base_headers
+        headers_with_event_id
       end
 
     # Add security headers if configured

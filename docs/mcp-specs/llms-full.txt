@@ -53,10 +53,13 @@ This page provides an overview of applications that support the Model Context Pr
   | [Sourcegraph Cody][Cody]                         | ✅           | ❌         | ❌       | ❓                      | ❌          | ❌     | Supports resources through OpenCTX                                                              |
   | [SpinAI][SpinAI]                                 | ❌           | ❌         | ✅       | ❓                      | ❌          | ❌     | Supports tools for Typescript AI Agents                                                         |
   | [Superinterface][Superinterface]                 | ❌           | ❌         | ✅       | ❓                      | ❌          | ❌     | Supports tools                                                                                  |
+  | [Superjoin][Superjoin]                           | ❌           | ❌         | ✅       | ❓                      | ❌          | ❌     | Supports tools and multiple servers.                                                            |
   | [TheiaAI/TheiaIDE][TheiaAI/TheiaIDE]             | ❌           | ❌         | ✅       | ❓                      | ❌          | ❌     | Supports tools for Agents in Theia AI and the AI-powered Theia IDE                              |
   | [Tome][Tome]                                     | ❌           | ❌         | ✅       | ❓                      | ❌          | ❌     | Supports tools, manages MCP servers.                                                            |
   | [TypingMind App][TypingMind App]                 | ❌           | ❌         | ✅       | ❓                      | ❌          | ❌     | Supports tools at app-level (appear as plugins) or when assigned to Agents                      |
   | [VS Code GitHub Copilot][VS Code]                | ❌           | ❌         | ✅       | ✅                      | ❌          | ✅     | Supports dynamic tool/roots discovery, secure secret configuration, and explicit tool prompting |
+  | [Warp][Warp]                                     | ✅           | ❌         | ✅       | ✅                      | ❌          | ❌     | Supports tools, resources, and most of the discovery criteria                                   |
+  | [WhatsMPC][WhatsMPC]                             | ❌           | ❌         | ✅       | ❌                      | ❌          | ❌     | Supports tools for Remote MCP Servers in WhatsApp                                               |
   | [Windsurf Editor][Windsurf]                      | ❌           | ❌         | ✅       | ✅                      | ❌          | ❌     | Supports tools with AI Flow for collaborative development.                                      |
   | [Witsy][Witsy]                                   | ❌           | ❌         | ✅       | ❓                      | ❌          | ❌     | Supports tools in Witsy.                                                                        |
   | [Zed][Zed]                                       | ❌           | ✅         | ❌       | ❌                      | ❌          | ❌     | Prompts appear as slash commands                                                                |
@@ -143,6 +146,8 @@ This page provides an overview of applications that support the Model Context Pr
 
   [Superinterface]: https://superinterface.ai
 
+  [Superjoin]: https://superjoin.ai
+
   [TheiaAI/TheiaIDE]: https://eclipsesource.com/blogs/2024/12/19/theia-ide-and-theia-ai-support-mcp/
 
   [Tome]: https://github.com/runebookai/tome
@@ -154,6 +159,10 @@ This page provides an overview of applications that support the Model Context Pr
   [Windsurf]: https://codeium.com/windsurf
 
   [gptme]: https://github.com/gptme/gptme
+
+  [Warp]: https://www.warp.dev/
+
+  [WhatsMPC]: https://wassist.app/mcp/
 
   [Witsy]: https://github.com/nbonamy/witsy
 
@@ -281,6 +290,17 @@ Claude Code is an interactive agentic coding tool from Anthropic that helps you 
 * Tool and prompt support for MCP servers
 * Offers its own tools through an MCP server for integrating with other MCP clients
 
+### Claude.ai
+
+[Claude.ai](https://claude.ai) is Anthropic's web-based AI assistant that provides MCP support for remote servers.
+
+**Key features:**
+
+* Support for remote MCP servers via integrations UI in settings
+* Access to tools, prompts, and resources from configured MCP servers
+* Seamless integration with Claude's conversational interface
+* Enterprise-grade security and compliance features
+
 ### Claude Desktop App
 
 The Claude desktop application provides comprehensive support for MCP, enabling deep integration with local tools and data sources.
@@ -291,8 +311,6 @@ The Claude desktop application provides comprehensive support for MCP, enabling 
 * Support for prompt templates
 * Tool integration for executing commands and scripts
 * Local server connections for enhanced privacy and security
-
-> ⓘ Note: The Claude.ai web application does not currently support MCP. MCP features are only available in the desktop application.
 
 ### Cline
 
@@ -533,7 +551,7 @@ Programmatically assemble prompts for LLMs using [GenAIScript](https://microsoft
 
 ### Microsoft Copilot Studio
 
-[Microsoft Copilot Studio]  is a robust SaaS platform designed for building custom AI-driven applications and intelligent agents, empowering developers to create, deploy, and manage sophisticated AI solutions.
+[Microsoft Copilot Studio] is a robust SaaS platform designed for building custom AI-driven applications and intelligent agents, empowering developers to create, deploy, and manage sophisticated AI solutions.
 
 **Key features:**
 
@@ -669,6 +687,17 @@ Programmatically assemble prompts for LLMs using [GenAIScript](https://microsoft
 * SSE transport support
 * Use any AI model from any AI provider (OpenAI, Anthropic, Ollama, others)
 
+### Superjoin
+
+[Superjoin](https://superjoin.ai) brings the power of MCP directly into Google Sheets extension. With Superjoin, users can access and invoke MCP tools and agents without leaving their spreadsheets, enabling powerful AI workflows and automation right where their data lives.
+
+**Key features:**
+
+* Native Google Sheets add-on providing effortless access to MCP capabilities
+* Supports OAuth 2.1 and header-based authentication for secure and flexible connections
+* Compatible with both SSE and Streamable HTTP transport for efficient, real-time streaming communication
+* Fully web-based, cross-platform client requiring no additional software installation
+
 ### TheiaAI/TheiaIDE
 
 [Theia AI](https://eclipsesource.com/blogs/2024/10/07/introducing-theia-ai/) is a framework for building AI-enhanced tools and IDEs. The [AI-powered Theia IDE](https://eclipsesource.com/blogs/2024/10/08/introducting-ai-theia-ide/) is an open and flexible development environment built on Theia AI.
@@ -722,6 +751,30 @@ Theia AI and Theia IDE's MCP integration provide users with flexibility, making 
 * Easy server debugging with restart commands and output logging
 * Tool calls with editable inputs and always-allow toggle
 * Integration with existing VS Code extension system to register MCP servers from extensions
+
+### Warp
+
+[Warp](https://www.warp.dev/) is the intelligent terminal with AI and your dev team's knowledge built-in. With natural language capabilities integrated directly into an agentic command line, Warp enables developers to code, automate, and collaborate more efficiently -- all within a terminal that features a modern UX.
+
+**Key features:**
+
+* **Agent Mode with MCP support**: invoke tools and access data from MCP servers using natural language prompts
+* **Flexible server management**: add and manage CLI or SSE-based MCP servers via Warp's built-in UI
+* **Live tool/resource discovery**: view tools and resources from each running MCP server
+* **Configurable startup**: set MCP servers to start automatically with Warp or launch them manually as needed
+
+### WhatsMPC
+
+[WhatsMPC](https://wassist.app/mcp/) is an MCP client for WhatsApp. WhatsMCP lets you interact with your AI stack from the comfort of a WhatsApp chat.
+
+**Key features:**
+
+* Supports MCP tools
+* SSE transport, full OAuth2 support
+* Chat flow management for WhatsApp messages
+* One click setup for connecting to your MCP servers
+* In chat management of MCP servers
+* Oauth flow natively supported in WhatsApp
 
 ### Windsurf Editor
 
@@ -795,7 +848,9 @@ Our plans for evolving Model Context Protocol
 
 The Model Context Protocol is rapidly evolving. This page outlines our current thinking on key priorities and direction for approximately **the next six months**, though these may change significantly as the project develops. To see what's changed recently, check out the **[specification changelog](/specification/2025-03-26/changelog/)**.
 
-<Note>The ideas presented here are not commitments—we may solve these challenges differently than described, or some may not materialize at all. This is also not an *exhaustive* list; we may incorporate work that isn't mentioned here.</Note>
+<Note>
+  The ideas presented here are not commitments—we may solve these challenges differently than described, or some may not materialize at all. This is also not an *exhaustive* list; we may incorporate work that isn't mentioned here.
+</Note>
 
 We value community participation! Each section links to relevant discussions where you can learn more and contribute your thoughts.
 
@@ -840,79 +895,6 @@ We're implementing governance structures that prioritize:
 ## Get Involved
 
 We welcome your contributions to MCP's future! Join our [GitHub Discussions](https://github.com/orgs/modelcontextprotocol/discussions) to share ideas, provide feedback, or participate in the development process.
-
-
-# What's New
-Source: https://modelcontextprotocol.io/development/updates
-
-The latest updates and improvements to MCP
-
-<Update label="2025-04-10" description="Java SDK 0.9.0 released">
-  * Version [0.9.0](https://github.com/modelcontextprotocol/java-sdk/releases/tag/v0.9.0) of the MCP Java SDK has been released.
-  * Refactored logging system to use exchange mechanism
-  * Custom Context Paths
-  * Server Instructions
-  * CallToolResult Enhancement
-</Update>
-
-<Update label="2025-03-26" description="Kotlin SDK 0.4.0 released">
-  * Fix issues and cleanup API
-  * Added binary compatibility tracking to avoid breaking changes
-  * Drop jdk requirements to JDK8
-  * Added Claude Desktop integration with sample
-  * The full changelog can be found here: [https://github.com/modelcontextprotocol/kotlin-sdk/releases/tag/0.4.0](https://github.com/modelcontextprotocol/kotlin-sdk/releases/tag/0.4.0)
-</Update>
-
-<Update label="2025-03-26" description="Java SDK 0.8.1 released">
-  * Version [0.8.1](https://github.com/modelcontextprotocol/java-sdk/releases/tag/v0.8.1) of the MCP Java SDK has been released,
-    providing important bug fixes.
-</Update>
-
-<Update label="2025-03-24" description="C# SDK released">
-  * We are exited to announce the availability of the MCP
-    [C# SDK](https://github.com/modelcontextprotocol/csharp-sdk/) developed by
-    [Peder Holdgaard Pedersen](http://github.com/PederHP) and Microsoft. This joins our growing
-    list of supported languages. The C# SDK is also available as
-    [NuGet package](https://www.nuget.org/packages/ModelContextProtocol)
-  * Python SDK 1.5.0 was released with multiple fixes and improvements.
-</Update>
-
-<Update label="2025-03-21" description="Java SDK 0.8.0 released">
-  * Version [0.8.0](https://github.com/modelcontextprotocol/java-sdk/releases/tag/v0.8.0) of the MCP Java SDK has been released,
-    delivering important session management improvements and bug fixes.
-</Update>
-
-<Update label="2025-03-10" description="Typescript SDK release">
-  * Typescript SDK 1.7.0 was released with multiple fixes and improvements.
-</Update>
-
-<Update label="2025-02-14" description="Java SDK released">
-  * We're excited to announce that the Java SDK developed by Spring AI at VMware Tanzu is now
-    the official [Java SDK](https://github.com/modelcontextprotocol/java-sdk) for MCP.
-    This joins our existing Kotlin SDK in our growing list of supported languages.
-    The Spring AI team will maintain the SDK as an integral part of the Model Context Protocol
-    organization. We're thrilled to welcome them to the MCP community!
-</Update>
-
-<Update label="2025-01-27" description="Python SDK 1.2.1">
-  * Version [1.2.1](https://github.com/modelcontextprotocol/python-sdk/releases/tag/v1.2.1) of the MCP Python SDK has been released,
-    delivering important stability improvements and bug fixes.
-</Update>
-
-<Update label="2025-01-18" description="SDK and Server Improvements">
-  * Simplified, express-like API in the [TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
-  * Added 8 new clients to the [clients page](https://modelcontextprotocol.io/clients)
-</Update>
-
-<Update label="2025-01-03" description="SDK and Server Improvements">
-  * FastMCP API in the [Python SDK](https://github.com/modelcontextprotocol/python-sdk)
-  * Dockerized MCP servers in the [servers repo](https://github.com/modelcontextprotocol/servers)
-</Update>
-
-<Update label="2024-12-21" description="Kotlin SDK released">
-  * Jetbrains released a Kotlin SDK for MCP!
-  * For a sample MCP Kotlin server, check out [this repository](https://github.com/modelcontextprotocol/kotlin-sdk/tree/main/samples/kotlin-mcp-server)
-</Update>
 
 
 # Core architecture
@@ -1018,6 +1000,7 @@ Key classes include:
 The transport layer handles the actual communication between clients and servers. MCP supports multiple transport mechanisms:
 
 1. **Stdio transport**
+
    * Uses standard input/output for communication
    * Ideal for local processes
 
@@ -1032,6 +1015,7 @@ All transports use [JSON-RPC](https://www.jsonrpc.org/) 2.0 to exchange messages
 MCP has these main types of messages:
 
 1. **Requests** expect a response from the other side:
+
    ```typescript
    interface Request {
      method: string;
@@ -1040,6 +1024,7 @@ MCP has these main types of messages:
    ```
 
 2. **Results** are successful responses to requests:
+
    ```typescript
    interface Result {
      [key: string]: unknown;
@@ -1047,6 +1032,7 @@ MCP has these main types of messages:
    ```
 
 3. **Errors** indicate that a request failed:
+
    ```typescript
    interface Error {
      code: number;
@@ -1110,7 +1096,7 @@ enum ErrorCode {
   InvalidRequest = -32600,
   MethodNotFound = -32601,
   InvalidParams = -32602,
-  InternalError = -32603
+  InternalError = -32603,
 }
 ```
 
@@ -1196,6 +1182,7 @@ Here's a basic example of implementing an MCP server:
 ### Transport selection
 
 1. **Local communication**
+
    * Use stdio transport for local processes
    * Efficient for same-machine communication
    * Simple process management
@@ -1207,12 +1194,14 @@ Here's a basic example of implementing an MCP server:
 ### Message handling
 
 1. **Request processing**
+
    * Validate inputs thoroughly
    * Use type-safe schemas
    * Handle errors gracefully
    * Implement timeouts
 
 2. **Progress reporting**
+
    * Use progress tokens for long operations
    * Report progress incrementally
    * Include total progress when known
@@ -1225,17 +1214,20 @@ Here's a basic example of implementing an MCP server:
 ## Security considerations
 
 1. **Transport security**
+
    * Use TLS for remote connections
    * Validate connection origins
    * Implement authentication when needed
 
 2. **Message validation**
+
    * Validate all incoming messages
    * Sanitize inputs
    * Check message size limits
    * Verify JSON-RPC format
 
 3. **Resource protection**
+
    * Implement access controls
    * Validate resource paths
    * Monitor resource usage
@@ -1250,12 +1242,14 @@ Here's a basic example of implementing an MCP server:
 ## Debugging and monitoring
 
 1. **Logging**
+
    * Log protocol events
    * Track message flow
    * Monitor performance
    * Record errors
 
 2. **Diagnostics**
+
    * Implement health checks
    * Monitor connection state
    * Track resource usage
@@ -1314,7 +1308,7 @@ Clients can discover available prompts through the `prompts/list` endpoint:
 ```typescript
 // Request
 {
-  method: "prompts/list"
+  method: "prompts/list";
 }
 
 // Response
@@ -1327,11 +1321,11 @@ Clients can discover available prompts through the `prompts/list` endpoint:
         {
           name: "language",
           description: "Programming language",
-          required: true
-        }
-      ]
-    }
-  ]
+          required: true,
+        },
+      ],
+    },
+  ];
 }
 ```
 
@@ -1440,25 +1434,25 @@ const debugWorkflow = {
         role: "user",
         content: {
           type: "text",
-          text: `Here's an error I'm seeing: ${error}`
-        }
+          text: `Here's an error I'm seeing: ${error}`,
+        },
       },
       {
         role: "assistant",
         content: {
           type: "text",
-          text: "I'll help analyze this error. What have you tried so far?"
-        }
+          text: "I'll help analyze this error. What have you tried so far?",
+        },
       },
       {
         role: "user",
         content: {
           type: "text",
-          text: "I've tried restarting the service, but the error persists."
-        }
-      }
+          text: "I've tried restarting the service, but the error persists.",
+        },
+      },
     ];
-  }
+  },
 };
 ```
 
@@ -1783,6 +1777,7 @@ Servers expose a list of concrete resources via the `resources/list` endpoint. E
   name: string;          // Human-readable name
   description?: string;  // Optional description
   mimeType?: string;     // Optional MIME type
+  size?: number;         // Optional size in bytes
 }
 ```
 
@@ -2114,6 +2109,7 @@ The `messages` array contains the conversation history to send to the LLM. Each 
 The `modelPreferences` object allows servers to specify their model selection preferences:
 
 * `hints`: Array of model name suggestions that clients can use to select an appropriate model:
+
   * `name`: String that can match full or partial model names (e.g. "claude-3", "sonnet")
   * Clients may map hints to equivalent models from different providers
   * Multiple hints are evaluated in preference order
@@ -2732,7 +2728,7 @@ Here's how to define tools with annotations for different scenarios:
     )
     async def calculate_sum(a: float, b: float) -> str:
         """Add two numbers together.
-        
+
         Args:
             a: First number to add
             b: Second number to add
@@ -2890,6 +2886,12 @@ Use stdio when:
 </Tabs>
 
 ### Server-Sent Events (SSE)
+
+<Warning>
+  The SSE Transport has been [**replaced**](http://modelcontextprotocol.io/specification/2025-03-26/changelog#major-changes) with a more
+  flexible [Streamable HTTP](http://modelcontextprotocol.io/specification/2025-03-26/basic/transports) transport. Refer to the [Specification](http://modelcontextprotocol.io/specification/2025-03-26/basic/transports)
+  and latest SDKs for the most recent information.
+</Warning>
 
 SSE transport enables server-to-client streaming with HTTP POST requests for client-to-server communication.
 
@@ -3213,11 +3215,13 @@ Effective debugging is essential when developing MCP servers or integrating them
 MCP provides several tools for debugging at different levels:
 
 1. **MCP Inspector**
+
    * Interactive debugging interface
    * Direct server testing
    * See the [Inspector guide](/docs/tools/inspector) for details
 
 2. **Claude Desktop Developer Tools**
+
    * Integration testing
    * Log collection
    * Chrome DevTools integration
@@ -3234,6 +3238,7 @@ MCP provides several tools for debugging at different levels:
 The Claude.app interface provides basic server status information:
 
 1. Click the <img src="https://mintlify.s3.us-west-1.amazonaws.com/mcp/images/claude-desktop-mcp-plug-icon.svg" style={{display: 'inline', margin: 0, height: '1.3em'}} /> icon to view:
+
    * Connected servers
    * Available prompts and resources
 
@@ -3295,7 +3300,11 @@ For example in `claude_desktop_config.json`, use:
 ```json
 {
   "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/username/data"]
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-filesystem",
+    "/Users/username/data"
+  ]
 }
 ```
 
@@ -3312,7 +3321,7 @@ To override the default variables or provide your own, you can specify an `env` 
   "myserver": {
     "command": "mcp-server-myapp",
     "env": {
-      "MYAPP_API_KEY": "some_key",
+      "MYAPP_API_KEY": "some_key"
     }
   }
 }
@@ -3323,12 +3332,14 @@ To override the default variables or provide your own, you can specify an `env` 
 Common initialization problems:
 
 1. **Path Issues**
+
    * Incorrect server executable path
    * Missing required files
    * Permission problems
    * Try using an absolute path for `command`
 
 2. **Configuration Errors**
+
    * Invalid JSON syntax
    * Missing required fields
    * Type mismatches
@@ -3401,6 +3412,7 @@ In client applications:
 ### Development cycle
 
 1. Initial Development
+
    * Use [Inspector](/docs/tools/inspector) for basic testing
    * Implement core functionality
    * Add logging points
@@ -3423,12 +3435,14 @@ To test changes efficiently:
 ### Logging strategy
 
 1. **Structured Logging**
+
    * Use consistent formats
    * Include context
    * Add timestamps
    * Track request IDs
 
 2. **Error Handling**
+
    * Log stack traces
    * Include error context
    * Track error patterns
@@ -3445,6 +3459,7 @@ To test changes efficiently:
 When debugging:
 
 1. **Sensitive Data**
+
    * Sanitize logs
    * Protect credentials
    * Mask personal information
@@ -3459,12 +3474,14 @@ When debugging:
 When encountering issues:
 
 1. **First Steps**
+
    * Check server logs
    * Test with [Inspector](/docs/tools/inspector)
    * Review configuration
    * Verify environment
 
 2. **Support Channels**
+
    * GitHub issues
    * GitHub discussions
 
@@ -3596,11 +3613,13 @@ The Inspector provides several features for interacting with your MCP server:
 ### Development workflow
 
 1. Start Development
+
    * Launch Inspector with your server
    * Verify basic connectivity
    * Check capability negotiation
 
 2. Iterative testing
+
    * Make server changes
    * Rebuild the server
    * Reconnect the Inspector
@@ -3637,37 +3656,44 @@ This page showcases various Model Context Protocol (MCP) servers that demonstrat
 
 These official reference servers demonstrate core MCP features and SDK usage:
 
-### Data and file systems
+### Current reference servers
 
 * **[Filesystem](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)** - Secure file operations with configurable access controls
-* **[PostgreSQL](https://github.com/modelcontextprotocol/servers/tree/main/src/postgres)** - Read-only database access with schema inspection capabilities
-* **[SQLite](https://github.com/modelcontextprotocol/servers/tree/main/src/sqlite)** - Database interaction and business intelligence features
-* **[Google Drive](https://github.com/modelcontextprotocol/servers/tree/main/src/gdrive)** - File access and search capabilities for Google Drive
-
-### Development tools
-
-* **[Git](https://github.com/modelcontextprotocol/servers/tree/main/src/git)** - Tools to read, search, and manipulate Git repositories
-* **[GitHub](https://github.com/modelcontextprotocol/servers/tree/main/src/github)** - Repository management, file operations, and GitHub API integration
-* **[GitLab](https://github.com/modelcontextprotocol/servers/tree/main/src/gitlab)** - GitLab API integration enabling project management
-* **[Sentry](https://github.com/modelcontextprotocol/servers/tree/main/src/sentry)** - Retrieving and analyzing issues from Sentry.io
-
-### Web and browser automation
-
-* **[Brave Search](https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search)** - Web and local search using Brave's Search API
 * **[Fetch](https://github.com/modelcontextprotocol/servers/tree/main/src/fetch)** - Web content fetching and conversion optimized for LLM usage
-* **[Puppeteer](https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer)** - Browser automation and web scraping capabilities
-
-### Productivity and communication
-
-* **[Slack](https://github.com/modelcontextprotocol/servers/tree/main/src/slack)** - Channel management and messaging capabilities
-* **[Google Maps](https://github.com/modelcontextprotocol/servers/tree/main/src/google-maps)** - Location services, directions, and place details
 * **[Memory](https://github.com/modelcontextprotocol/servers/tree/main/src/memory)** - Knowledge graph-based persistent memory system
-
-### AI and specialized tools
-
-* **[EverArt](https://github.com/modelcontextprotocol/servers/tree/main/src/everart)** - AI image generation using various models
 * **[Sequential Thinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)** - Dynamic problem-solving through thought sequences
-* **[AWS KB Retrieval](https://github.com/modelcontextprotocol/servers/tree/main/src/aws-kb-retrieval-server)** - Retrieval from AWS Knowledge Base using Bedrock Agent Runtime
+
+### Archived servers (historical reference)
+
+⚠️ **Note**: The following servers have been moved to the [servers-archived repository](https://github.com/modelcontextprotocol/servers-archived) and are no longer actively maintained. They are provided for historical reference only.
+
+#### Data and file systems
+
+* **[PostgreSQL](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres)** - Read-only database access with schema inspection capabilities
+* **[SQLite](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sqlite)** - Database interaction and business intelligence features
+* **[Google Drive](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gdrive)** - File access and search capabilities for Google Drive
+
+#### Development tools
+
+* **[Git](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/git)** - Tools to read, search, and manipulate Git repositories
+* **[GitHub](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/github)** - Repository management, file operations, and GitHub API integration
+* **[GitLab](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gitlab)** - GitLab API integration enabling project management
+* **[Sentry](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sentry)** - Retrieving and analyzing issues from Sentry.io
+
+#### Web and browser automation
+
+* **[Brave Search](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/brave-search)** - Web and local search using Brave's Search API
+* **[Puppeteer](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/puppeteer)** - Browser automation and web scraping capabilities
+
+#### Productivity and communication
+
+* **[Slack](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/slack)** - Channel management and messaging capabilities
+* **[Google Maps](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/google-maps)** - Location services, directions, and place details
+
+#### AI and specialized tools
+
+* **[EverArt](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/everart)** - AI image generation using various models
+* **[AWS KB Retrieval](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/aws-kb-retrieval-server)** - Retrieval from AWS Knowledge Base using Bedrock Agent Runtime
 
 ## Official integrations
 
@@ -3711,7 +3737,11 @@ To use an MCP server with Claude, add it to your configuration:
     },
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/files"]
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/path/to/allowed/files"
+      ]
     },
     "github": {
       "command": "npx",
@@ -3802,8 +3832,6 @@ Source: https://modelcontextprotocol.io/introduction
 
 Get started with the Model Context Protocol (MCP)
 
-<Note>C# SDK released! Check out [what else is new.](/development/updates)</Note>
-
 MCP is an open protocol that standardizes how applications provide context to LLMs. Think of MCP like a USB-C port for AI applications. Just as USB-C provides a standardized way to connect your devices to various peripherals and accessories, MCP provides a standardized way to connect AI models to different data sources and tools.
 
 ## Why MCP?
@@ -3850,7 +3878,8 @@ Choose the path that best fits your needs:
 
 <CardGroup cols={2}>
   <Card title="For Server Developers" icon="bolt" href="/quickstart/server">
-    Get started building your own server to use in Claude for Desktop and other clients
+    Get started building your own server to use in Claude for Desktop and other
+    clients
   </Card>
 
   <Card title="For Client Developers" icon="bolt" href="/quickstart/client">
@@ -4242,11 +4271,13 @@ In this tutorial, you'll learn how to build a LLM-powered chatbot client that co
     ## Common Customization Points
 
     1. **Tool Handling**
+
        * Modify `process_query()` to handle specific tool types
        * Add custom error handling for tool calls
        * Implement tool-specific response formatting
 
     2. **Response Processing**
+
        * Customize how tool results are formatted
        * Add response filtering or transformation
        * Implement custom logging
@@ -4299,11 +4330,13 @@ In this tutorial, you'll learn how to build a LLM-powered chatbot client that co
     ## Best practices
 
     1. **Error Handling**
+
        * Always wrap tool calls in try-catch blocks
        * Provide meaningful error messages
        * Gracefully handle connection issues
 
     2. **Resource Management**
+
        * Use `AsyncExitStack` for proper cleanup
        * Close connections when done
        * Handle server disconnections
@@ -4701,6 +4734,7 @@ In this tutorial, you'll learn how to build a LLM-powered chatbot client that co
     ## Best practices
 
     1. **Error Handling**
+
        * Use TypeScript's type system for better error detection
        * Wrap tool calls in try-catch blocks
        * Provide meaningful error messages
@@ -4761,7 +4795,7 @@ In this tutorial, you'll learn how to build a LLM-powered chatbot client that co
       To learn how to create sync and async MCP Clients manually, consult the [Java SDK Client](/sdk/java/mcp-client) documentation
     </Note>
 
-    This example demonstrates how to build an interactive chatbot that combines Spring AI's Model Context Protocol (MCP) with the [Brave Search MCP Server](https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search). The application creates a conversational interface powered by Anthropic's Claude AI model that can perform internet searches through Brave Search, enabling natural language interactions with real-time web data.
+    This example demonstrates how to build an interactive chatbot that combines Spring AI's Model Context Protocol (MCP) with the [Brave Search MCP Server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/brave-search). The application creates a conversational interface powered by Anthropic's Claude AI model that can perform internet searches through Brave Search, enabling natural language interactions with real-time web data.
     [You can find the complete code for this tutorial here.](https://github.com/spring-projects/spring-ai-examples/tree/main/model-context-protocol/web-search/brave-chatbot)
 
     ## System Requirements
@@ -4779,23 +4813,27 @@ In this tutorial, you'll learn how to build a LLM-powered chatbot client that co
     1. Install npx (Node Package eXecute):
        First, make sure to install [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm)
        and then run:
+
        ```bash
        npm install -g npx
        ```
 
     2. Clone the repository:
+
        ```bash
        git clone https://github.com/spring-projects/spring-ai-examples.git
        cd model-context-protocol/brave-chatbot
        ```
 
     3. Set up your API keys:
+
        ```bash
        export ANTHROPIC_API_KEY='your-anthropic-api-key-here'
        export BRAVE_API_KEY='your-brave-api-key-here'
        ```
 
     4. Build the application:
+
        ```bash
        ./mvnw clean install
        ```
@@ -4860,10 +4898,7 @@ In this tutorial, you'll learn how to build a LLM-powered chatbot client that co
       "mcpServers": {
         "brave-search": {
           "command": "npx",
-          "args": [
-            "-y",
-            "@modelcontextprotocol/server-brave-search"
-          ],
+          "args": ["-y", "@modelcontextprotocol/server-brave-search"],
           "env": {
             "BRAVE_API_KEY": "<PUT YOUR BRAVE API KEY>"
           }
@@ -5293,6 +5328,7 @@ In this tutorial, you'll learn how to build a LLM-powered chatbot client that co
     ## Best practices
 
     1. **Error Handling**
+
        * Leverage Kotlin's type system to model errors explicitly
        * Wrap external tool and API calls in `try-catch` blocks when exceptions are possible
        * Provide clear and meaningful error messages
@@ -5838,17 +5874,17 @@ This tutorial will primarily focus on tools.
       <Tab title="MacOS/Linux">
         ```json Python
         {
-            "mcpServers": {
-                "weather": {
-                    "command": "uv",
-                    "args": [
-                        "--directory",
-                        "/ABSOLUTE/PATH/TO/PARENT/FOLDER/weather",
-                        "run",
-                        "weather.py"
-                    ]
-                }
+          "mcpServers": {
+            "weather": {
+              "command": "uv",
+              "args": [
+                "--directory",
+                "/ABSOLUTE/PATH/TO/PARENT/FOLDER/weather",
+                "run",
+                "weather.py"
+              ]
             }
+          }
         }
         ```
       </Tab>
@@ -5856,17 +5892,17 @@ This tutorial will primarily focus on tools.
       <Tab title="Windows">
         ```json Python
         {
-            "mcpServers": {
-                "weather": {
-                    "command": "uv",
-                    "args": [
-                        "--directory",
-                        "C:\\ABSOLUTE\\PATH\\TO\\PARENT\\FOLDER\\weather",
-                        "run",
-                        "weather.py"
-                    ]
-                }
+          "mcpServers": {
+            "weather": {
+              "command": "uv",
+              "args": [
+                "--directory",
+                "C:\\ABSOLUTE\\PATH\\TO\\PARENT\\FOLDER\\weather",
+                "run",
+                "weather.py"
+              ]
             }
+          }
         }
         ```
       </Tab>
@@ -5963,9 +5999,7 @@ This tutorial will primarily focus on tools.
       "scripts": {
         "build": "tsc && chmod 755 build/index.js"
       },
-      "files": [
-        "build"
-      ],
+      "files": ["build"]
     }
     ```
 
@@ -6148,7 +6182,11 @@ This tutorial will primarily focus on tools.
       "Get weather forecast for a location",
       {
         latitude: z.number().min(-90).max(90).describe("Latitude of the location"),
-        longitude: z.number().min(-180).max(180).describe("Longitude of the location"),
+        longitude: z
+          .number()
+          .min(-180)
+          .max(180)
+          .describe("Longitude of the location"),
       },
       async ({ latitude, longitude }) => {
         // Get grid point data
@@ -6285,14 +6323,12 @@ This tutorial will primarily focus on tools.
         <CodeGroup>
           ```json Node
           {
-              "mcpServers": {
-                  "weather": {
-                      "command": "node",
-                      "args": [
-                          "/ABSOLUTE/PATH/TO/PARENT/FOLDER/weather/build/index.js"
-                      ]
-                  }
+            "mcpServers": {
+              "weather": {
+                "command": "node",
+                "args": ["/ABSOLUTE/PATH/TO/PARENT/FOLDER/weather/build/index.js"]
               }
+            }
           }
           ```
         </CodeGroup>
@@ -6302,14 +6338,12 @@ This tutorial will primarily focus on tools.
         <CodeGroup>
           ```json Node
           {
-              "mcpServers": {
-                  "weather": {
-                      "command": "node",
-                      "args": [
-                          "C:\\PATH\\TO\\PARENT\\FOLDER\\weather\\build\\index.js"
-                      ]
-                  }
+            "mcpServers": {
+              "weather": {
+                "command": "node",
+                "args": ["C:\\PATH\\TO\\PARENT\\FOLDER\\weather\\build\\index.js"]
               }
+            }
           }
           ```
         </CodeGroup>
@@ -6368,7 +6402,7 @@ This tutorial will primarily focus on tools.
         ```groovy
         dependencies {
           implementation platform("org.springframework.ai:spring-ai-starter-mcp-server")
-          implementation platform("org.springframework:spring-web")   
+          implementation platform("org.springframework:spring-web")
         }
         ```
       </Tab>
@@ -6426,7 +6460,7 @@ This tutorial will primarily focus on tools.
           // - Wind speed and direction
           // - Detailed forecast description
       }
-    	
+
       @Tool(description = "Get weather alerts for a US state")
       public String getAlerts(
           @ToolParam(description = "Two-letter US state code (e.g. CA, NY)" String state
@@ -6950,29 +6984,29 @@ This tutorial will primarily focus on tools.
     <CodeGroup>
       ```json MacOS/Linux
       {
-          "mcpServers": {
-              "weather": {
-                  "command": "java",
-                  "args": [
-                      "-jar",
-                      "/ABSOLUTE/PATH/TO/PARENT/FOLDER/weather/build/libs/weather-0.1.0-all.jar"
-                  ]
-              }
+        "mcpServers": {
+          "weather": {
+            "command": "java",
+            "args": [
+              "-jar",
+              "/ABSOLUTE/PATH/TO/PARENT/FOLDER/weather/build/libs/weather-0.1.0-all.jar"
+            ]
           }
+        }
       }
       ```
 
       ```json Windows
       {
-          "mcpServers": {
-              "weather": {
-                  "command": "java",
-                  "args": [
-                      "-jar",
-                      "C:\\PATH\\TO\\PARENT\\FOLDER\\weather\\build\\libs\\weather-0.1.0-all.jar"
-                  ]
-              }
+        "mcpServers": {
+          "weather": {
+            "command": "java",
+            "args": [
+              "-jar",
+              "C:\\PATH\\TO\\PARENT\\FOLDER\\weather\\build\\libs\\weather-0.1.0-all.jar"
+            ]
           }
+        }
       }
       ```
     </CodeGroup>
@@ -7078,12 +7112,28 @@ This tutorial will primarily focus on tools.
 
     ### Weather API helper functions
 
+    Create an extension class for `HttpClient` which helps simplify JSON request handling:
+
+    ```csharp
+    using System.Text.Json;
+
+    internal static class HttpClientExt
+    {
+        public static async Task<JsonDocument> ReadJsonDocumentAsync(this HttpClient client, string requestUri)
+        {
+            using var response = await client.GetAsync(requestUri);
+            response.EnsureSuccessStatusCode();
+            return await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        }
+    }
+    ```
+
     Next, define a class with the tool execution handlers for querying and converting responses from the National Weather Service API:
 
     ```csharp
     using ModelContextProtocol.Server;
     using System.ComponentModel;
-    using System.Net.Http.Json;
+    using System.Globalization;
     using System.Text.Json;
 
     namespace QuickstartWeatherServer.Tools;
@@ -7096,7 +7146,8 @@ This tutorial will primarily focus on tools.
             HttpClient client,
             [Description("The US state to get alerts for.")] string state)
         {
-            var jsonElement = await client.GetFromJsonAsync<JsonElement>($"/alerts/active/area/{state}");
+            using var jsonDocument = await client.ReadJsonDocumentAsync($"/alerts/active/area/{state}");
+            var jsonElement = jsonDocument.RootElement;
             var alerts = jsonElement.GetProperty("features").EnumerateArray();
 
             if (!alerts.Any())
@@ -7123,8 +7174,13 @@ This tutorial will primarily focus on tools.
             [Description("Latitude of the location.")] double latitude,
             [Description("Longitude of the location.")] double longitude)
         {
-            var jsonElement = await client.GetFromJsonAsync<JsonElement>($"/points/{latitude},{longitude}");
-            var periods = jsonElement.GetProperty("properties").GetProperty("periods").EnumerateArray();
+            var pointUrl = string.Create(CultureInfo.InvariantCulture, $"/points/{latitude},{longitude}");
+            using var jsonDocument = await client.ReadJsonDocumentAsync(pointUrl);
+            var forecastUrl = jsonDocument.RootElement.GetProperty("properties").GetProperty("forecast").GetString()
+                ?? throw new Exception($"No forecast URL provided by {client.BaseAddress}points/{latitude},{longitude}");
+
+            using var forecastDocument = await client.ReadJsonDocumentAsync(forecastUrl);
+            var periods = forecastDocument.RootElement.GetProperty("properties").GetProperty("periods").EnumerateArray();
 
             return string.Join("\n---\n", periods.Select(period => $"""
                     {period.GetProperty("name").GetString()}
@@ -7178,17 +7234,12 @@ This tutorial will primarily focus on tools.
       <Tab title="MacOS/Linux">
         ```json
         {
-            "mcpServers": {
-                "weather": {
-                    "command": "dotnet",
-                    "args": [
-                        "run",
-                        "--project",
-                        "/ABSOLUTE/PATH/TO/PROJECT",
-                        "--no-build"
-                    ]
-                }
+          "mcpServers": {
+            "weather": {
+              "command": "dotnet",
+              "args": ["run", "--project", "/ABSOLUTE/PATH/TO/PROJECT", "--no-build"]
             }
+          }
         }
         ```
       </Tab>
@@ -7196,17 +7247,17 @@ This tutorial will primarily focus on tools.
       <Tab title="Windows">
         ```json
         {
-            "mcpServers": {
-                "weather": {
-                    "command": "dotnet",
-                    "args": [
-                        "run",
-                        "--project",
-                        "C:\\ABSOLUTE\\PATH\\TO\\PROJECT",
-                        "--no-build"
-                    ]
-                }
+          "mcpServers": {
+            "weather": {
+              "command": "dotnet",
+              "args": [
+                "run",
+                "--project",
+                "C:\\ABSOLUTE\\PATH\\TO\\PROJECT",
+                "--no-build"
+              ]
             }
+          }
         }
         ```
       </Tab>
@@ -7374,13 +7425,13 @@ If you already have Claude for Desktop, make sure it's on the latest version by 
 
 ## 2. Add the Filesystem MCP Server
 
-To add this filesystem functionality, we will be installing a pre-built [Filesystem MCP Server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) to Claude for Desktop. This is one of dozens of [servers](https://github.com/modelcontextprotocol/servers/tree/main) created by Anthropic and the community.
+To add this filesystem functionality, we will be installing a pre-built [Filesystem MCP Server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) to Claude for Desktop. This is one of several current [reference servers](https://github.com/modelcontextprotocol/servers/tree/main) and many community-created servers.
 
 Get started by opening up the Claude menu on your computer and select "Settings..." Please note that these are not the Claude Account Settings found in the app window itself.
 
 This is what it should look like on a Mac:
 
-<Frame style={{ textAlign: 'center' }}>
+<Frame style={{ textAlign: "center" }}>
   <img src="https://mintlify.s3.us-west-1.amazonaws.com/mcp/images/quickstart-menu.png" width="400" />
 </Frame>
 
@@ -7476,7 +7527,7 @@ Upon restarting, you should see a slider <img src="https://mintlify.s3.us-west-1
 
 After clicking on the slider icon, you should see the tools that come with the Filesystem MCP Server:
 
-<Frame style={{ textAlign: 'center' }}>
+<Frame style={{ textAlign: "center" }}>
   <img src="https://mintlify.s3.us-west-1.amazonaws.com/mcp/images/quickstart-tools.png" width="400" />
 </Frame>
 
@@ -7494,7 +7545,7 @@ Things you might try asking Claude:
 
 As needed, Claude will call the relevant tools and seek your approval before taking an action:
 
-<Frame style={{ textAlign: 'center' }}>
+<Frame style={{ textAlign: "center" }}>
   <img src="https://mintlify.s3.us-west-1.amazonaws.com/mcp/images/quickstart-approve.png" width="500" />
 </Frame>
 
@@ -7602,7 +7653,8 @@ As needed, Claude will call the relevant tools and seek your approval before tak
   </Card>
 
   <Card title="Build your own server" icon="code" href="/quickstart/server">
-    Now build your own custom server to use in Claude for Desktop and other clients
+    Now build your own custom server to use in Claude for Desktop and other
+    clients
   </Card>
 </CardGroup>
 
@@ -7625,7 +7677,7 @@ The MCP Client is a key component in the Model Context Protocol (MCP) architectu
 * Optional features like roots management and sampling support
 
 <Tip>
-  The core `io.modelcontextprotocol.sdk:mcp` module provides STDIO and SSE client transport implementations  without requiring external web frameworks.
+  The core `io.modelcontextprotocol.sdk:mcp` module provides STDIO and SSE client transport implementations without requiring external web frameworks.
 
   Spring-specific transport implementations are available as an **optional** dependency `io.modelcontextprotocol.sdk:mcp-spring-webflux` for [Spring Framework](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-client-boot-starter-docs.html) users.
 </Tip>
@@ -7653,7 +7705,7 @@ The client provides both synchronous and asynchronous APIs for flexibility in di
 
     // Call a tool
     CallToolResult result = client.callTool(
-        new CallToolRequest("calculator", 
+        new CallToolRequest("calculator",
             Map.of("operation", "add", "a", 2, "b", 3))
     );
 
@@ -7704,13 +7756,13 @@ The client provides both synchronous and asynchronous APIs for flexibility in di
         .flatMap(initResult -> client.listTools())
         .flatMap(tools -> {
             return client.callTool(new CallToolRequest(
-                "calculator", 
+                "calculator",
                 Map.of("operation", "add", "a", 2, "b", 3)
             ));
         })
         .flatMap(result -> {
             return client.listResources()
-                .flatMap(resources -> 
+                .flatMap(resources ->
                     client.readResource(new ReadResourceRequest("resource://uri"))
                 );
         })
@@ -7718,14 +7770,14 @@ The client provides both synchronous and asynchronous APIs for flexibility in di
             return client.listPrompts()
                 .flatMap(prompts ->
                     client.getPrompt(new GetPromptRequest(
-                        "greeting", 
+                        "greeting",
                         Map.of("name", "Spring")
                     ))
                 );
         })
         .flatMap(prompt -> {
             return client.addRoot(new Root("file:///path", "description"))
-                .then(client.removeRoot("file:///path"));            
+                .then(client.removeRoot("file:///path"));
         })
         .doFinally(signalType -> {
             client.closeGracefully().subscribe();
@@ -7877,7 +7929,7 @@ Tools are server-side functions that clients can discover and execute. The MCP c
     ```java
     // List available tools asynchronously
     client.listTools()
-        .doOnNext(tools -> tools.forEach(tool -> 
+        .doOnNext(tools -> tools.forEach(tool ->
             System.out.println(tool.getName())))
         .subscribe();
 
@@ -7914,7 +7966,7 @@ Resources represent server-side data sources that clients can access using URI t
     ```java
     // List available resources asynchronously
     client.listResources()
-        .doOnNext(resources -> resources.forEach(resource -> 
+        .doOnNext(resources -> resources.forEach(resource ->
             System.out.println(resource.getName())))
         .subscribe();
 
@@ -7949,7 +8001,7 @@ The prompt system enables interaction with server-side prompt templates. These t
     ```java
     // List available prompt templates asynchronously
     client.listPrompts()
-        .doOnNext(prompts -> prompts.forEach(prompt -> 
+        .doOnNext(prompts -> prompts.forEach(prompt ->
             System.out.println(prompt.getName())))
         .subscribe();
 
@@ -8208,7 +8260,7 @@ The MCP Server is a foundational component in the Model Context Protocol (MCP) a
 * Providing structured logging and notifications
 
 <Tip>
-  The core `io.modelcontextprotocol.sdk:mcp` module provides STDIO and SSE server transport implementations  without requiring external web frameworks.
+  The core `io.modelcontextprotocol.sdk:mcp` module provides STDIO and SSE server transport implementations without requiring external web frameworks.
 
   Spring-specific transport implementations are available as an **optional** dependencies `io.modelcontextprotocol.sdk:mcp-spring-webflux`, `io.modelcontextprotocol.sdk:mcp-spring-webmvc` for [Spring Framework](https://docs.spring.io/spring-ai/reference/api/mcp/mcp-client-boot-starter-docs.html) users.
 </Tip>
@@ -8603,12 +8655,12 @@ As part of the [Completion capabilities](/specification/2025-03-26/server/utilit
     // Sync completion specification
     var syncCompletionSpecification = new McpServerFeatures.SyncCompletionSpecification(
     			new McpSchema.PromptReference("code_review"), (exchange, request) -> {
-            
+
             // completion implementation ...
-            
+
             return new McpSchema.CompleteResult(
                 new CompleteResult.CompleteCompletion(
-                  List.of("python", "pytorch", "pyside"), 
+                  List.of("python", "pytorch", "pyside"),
                   10, // total
                   false // hasMore
                 ));
@@ -8639,7 +8691,7 @@ As part of the [Completion capabilities](/specification/2025-03-26/server/utilit
 
             return Mono.just(new McpSchema.CompleteResult(
                 new CompleteResult.CompleteCompletion(
-                  List.of("python", "pytorch", "pyside"), 
+                  List.of("python", "pytorch", "pyside"),
                   10, // total
                   false // hasMore
                 )));
@@ -8691,7 +8743,7 @@ Once connected to a compatible client, the server can request language model gen
             if (exchange.getClientCapabilities().sampling() == null) {
                 return new CallToolResult("Client does not support AI capabilities", false);
             }
-            
+
             // Create a sampling request
             McpSchema.CreateMessageRequest request = McpSchema.CreateMessageRequest.builder()
                 .messages(List.of(new McpSchema.SamplingMessage(McpSchema.Role.USER,
@@ -8707,10 +8759,10 @@ Once connected to a compatible client, the server can request language model gen
                 .systemPrompt("You are a helpful calculator assistant. Provide only the numerical answer.")
                 .maxTokens(100)
                 .build();
-            
+
             // Request sampling from the client
             McpSchema.CreateMessageResult result = exchange.createMessage(request);
-            
+
             // Process the result
             String answer = result.content().text();
             return new CallToolResult(answer, false);
@@ -8737,7 +8789,7 @@ Once connected to a compatible client, the server can request language model gen
             if (exchange.getClientCapabilities().sampling() == null) {
                 return Mono.just(new CallToolResult("Client does not support AI capabilities", false));
             }
-            
+
             // Create a sampling request
             McpSchema.CreateMessageRequest request = McpSchema.CreateMessageRequest.builder()
                 .content(new McpSchema.TextContent("Calculate: " + arguments.get("expression")))
@@ -8752,7 +8804,7 @@ Once connected to a compatible client, the server can request language model gen
                 .systemPrompt("You are a helpful calculator assistant. Provide only the numerical answer.")
                 .maxTokens(100)
                 .build();
-            
+
             // Request sampling from the client
             return exchange.createMessage(request)
                 .map(result -> {
@@ -8802,7 +8854,7 @@ The server can send log messages using the `McpAsyncServerExchange`/`McpSyncServ
 ```java
 var tool = new McpServerFeatures.AsyncToolSpecification(
     new McpSchema.Tool("logging-test", "Test logging notifications", emptyJsonSchema),
-    (exchange, request) -> {  
+    (exchange, request) -> {
 
       exchange.loggingNotification( // Use the exchange to send log messages
           McpSchema.LoggingMessageNotification.builder()
@@ -10290,15 +10342,15 @@ implementors **SHOULD**:
 Explore the detailed specification for each protocol component:
 
 <CardGroup cols={5}>
-  <Card title="Architecture" icon="sitemap" href="architecture" />
+  <Card title="Architecture" icon="sitemap" href="/specification/2024-11-05/architecture" />
 
-  <Card title="Base Protocol" icon="code" href="basic" />
+  <Card title="Base Protocol" icon="code" href="/specification/2024-11-05/basic" />
 
-  <Card title="Server Features" icon="server" href="server" />
+  <Card title="Server Features" icon="server" href="/specification/2024-11-05/server" />
 
-  <Card title="Client Features" icon="user" href="client" />
+  <Card title="Client Features" icon="user" href="/specification/2024-11-05/client" />
 
-  <Card title="Contributing" icon="pencil" href="contributing" />
+  <Card title="Contributing" icon="pencil" href="/specification/contributing" />
 </CardGroup>
 
 
@@ -10330,11 +10382,11 @@ Each primitive can be summarized in the following control hierarchy:
 Explore these key primitives in more detail below:
 
 <CardGroup cols={3}>
-  <Card title="Prompts" icon="message" href="prompts" />
+  <Card title="Prompts" icon="message" href="/specification/2024-11-05/server/prompts" />
 
-  <Card title="Resources" icon="file-lines" href="resources" />
+  <Card title="Resources" icon="file-lines" href="/specification/2024-11-05/server/resources" />
 
-  <Card title="Tools" icon="wrench" href="tools" />
+  <Card title="Tools" icon="wrench" href="/specification/2024-11-05/server/tools" />
 </CardGroup>
 
 
@@ -12406,7 +12458,7 @@ The client **MUST** initiate this phase by sending an `initialize` request conta
   "id": 1,
   "method": "initialize",
   "params": {
-    "protocolVersion": "2024-11-05",
+    "protocolVersion": "2025-03-26",
     "capabilities": {
       "roots": {
         "listChanged": true
@@ -12434,7 +12486,7 @@ The server **MUST** respond with its own capabilities and information:
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "protocolVersion": "2024-11-05",
+    "protocolVersion": "2025-03-26",
     "capabilities": {
       "logging": {},
       "prompts": {
@@ -12642,10 +12694,12 @@ sequenceDiagram
 
 ## Streamable HTTP
 
-<Info>This replaces the [HTTP+SSE
-transport](/specification/2024-11-05/basic/transports#http-with-sse) from
-protocol version 2024-11-05. See the [backwards compatibility](#backwards-compatibility)
-guide below.</Info>
+<Info>
+  This replaces the [HTTP+SSE
+  transport](/specification/2024-11-05/basic/transports#http-with-sse) from
+  protocol version 2024-11-05. See the [backwards compatibility](#backwards-compatibility)
+  guide below.
+</Info>
 
 In the **Streamable HTTP** transport, the server operates as an independent process that
 can handle multiple client connections. This transport uses HTTP POST and GET requests.
@@ -13726,15 +13780,15 @@ implementors **SHOULD**:
 Explore the detailed specification for each protocol component:
 
 <CardGroup cols={5}>
-  <Card title="Architecture" icon="sitemap" href="architecture" />
+  <Card title="Architecture" icon="sitemap" href="/specification/2025-03-26/architecture" />
 
-  <Card title="Base Protocol" icon="code" href="basic" />
+  <Card title="Base Protocol" icon="code" href="/specification/2025-03-26/basic" />
 
-  <Card title="Server Features" icon="server" href="server" />
+  <Card title="Server Features" icon="server" href="/specification/2025-03-26/server" />
 
-  <Card title="Client Features" icon="user" href="client" />
+  <Card title="Client Features" icon="user" href="/specification/2025-03-26/client" />
 
-  <Card title="Contributing" icon="pencil" href="contributing" />
+  <Card title="Contributing" icon="pencil" href="/specification/contributing" />
 </CardGroup>
 
 
@@ -13766,11 +13820,11 @@ Each primitive can be summarized in the following control hierarchy:
 Explore these key primitives in more detail below:
 
 <CardGroup cols={3}>
-  <Card title="Prompts" icon="message" href="prompts" />
+  <Card title="Prompts" icon="message" href="/specification/2025-03-26/server/prompts" />
 
-  <Card title="Resources" icon="file-lines" href="resources" />
+  <Card title="Resources" icon="file-lines" href="/specification/2025-03-26/server/resources" />
 
-  <Card title="Tools" icon="wrench" href="tools" />
+  <Card title="Tools" icon="wrench" href="/specification/2025-03-26/server/tools" />
 </CardGroup>
 
 
@@ -14591,8 +14645,10 @@ A tool definition includes:
 * `inputSchema`: JSON Schema defining expected parameters
 * `annotations`: optional properties describing tool behavior
 
-<Warning>For trust & safety and security, clients **MUST** consider
-tool annotations to be untrusted unless they come from trusted servers.</Warning>
+<Warning>
+  For trust & safety and security, clients **MUST** consider
+  tool annotations to be untrusted unless they come from trusted servers.
+</Warning>
 
 ### Tool Result
 
@@ -15824,7 +15880,8 @@ The client **MUST** initiate this phase by sending an `initialize` request conta
       "roots": {
         "listChanged": true
       },
-      "sampling": {}
+      "sampling": {},
+      "elicitation": {}
     },
     "clientInfo": {
       "name": "ExampleClient",
@@ -15900,6 +15957,12 @@ supports. This **SHOULD** be the *latest* version supported by the server.
 If the client does not support the version in the server's response, it **SHOULD**
 disconnect.
 
+<Note>
+  If using HTTP, the client **MUST** include the `MCP-Protocol-Version: <protocol-version>` HTTP header on all subsequent requests to the MCP
+  server.
+  For details, see [the Protocol Version Header section in Transports](/specification/draft/basic/transports#protocol-version-header).
+</Note>
+
 #### Capability Negotiation
 
 Client and server capabilities establish which optional protocol features will be
@@ -15907,16 +15970,17 @@ available during the session.
 
 Key capabilities include:
 
-| Category | Capability     | Description                                                                    |
-| -------- | -------------- | ------------------------------------------------------------------------------ |
-| Client   | `roots`        | Ability to provide filesystem [roots](/specification/draft/client/roots)       |
-| Client   | `sampling`     | Support for LLM [sampling](/specification/draft/client/sampling) requests      |
-| Client   | `experimental` | Describes support for non-standard experimental features                       |
-| Server   | `prompts`      | Offers [prompt templates](/specification/draft/server/prompts)                 |
-| Server   | `resources`    | Provides readable [resources](/specification/draft/server/resources)           |
-| Server   | `tools`        | Exposes callable [tools](/specification/draft/server/tools)                    |
-| Server   | `logging`      | Emits structured [log messages](/specification/draft/server/utilities/logging) |
-| Server   | `experimental` | Describes support for non-standard experimental features                       |
+| Category | Capability     | Description                                                                        |
+| -------- | -------------- | ---------------------------------------------------------------------------------- |
+| Client   | `roots`        | Ability to provide filesystem [roots](/specification/draft/client/roots)           |
+| Client   | `sampling`     | Support for LLM [sampling](/specification/draft/client/sampling) requests          |
+| Client   | `elicitation`  | Support for server [elicitation](/specification/draft/client/elicitation) requests |
+| Client   | `experimental` | Describes support for non-standard experimental features                           |
+| Server   | `prompts`      | Offers [prompt templates](/specification/draft/server/prompts)                     |
+| Server   | `resources`    | Provides readable [resources](/specification/draft/server/resources)               |
+| Server   | `tools`        | Exposes callable [tools](/specification/draft/server/tools)                        |
+| Server   | `logging`      | Emits structured [log messages](/specification/draft/server/utilities/logging)     |
+| Server   | `experimental` | Describes support for non-standard experimental features                           |
 
 Capability objects can describe sub-capabilities like:
 
@@ -16046,7 +16110,7 @@ which MCP client initiated the request.
 
 ```mermaid
 sequenceDiagram
-    participant UA as User-Agent (Browser)  
+    participant UA as User-Agent (Browser)
     participant MC as MCP Client
     participant M as MCP Proxy Server
     participant TAS as Third-Party Authorization Server
@@ -16197,10 +16261,12 @@ sequenceDiagram
 
 ## Streamable HTTP
 
-<Info>This replaces the [HTTP+SSE
-transport](/specification/2024-11-05/basic/transports#http-with-sse) from
-protocol version 2024-11-05. See the [backwards compatibility](#backwards-compatibility)
-guide below.</Info>
+<Info>
+  This replaces the [HTTP+SSE
+  transport](/specification/2024-11-05/basic/transports#http-with-sse) from
+  protocol version 2024-11-05. See the [backwards compatibility](#backwards-compatibility)
+  guide below.
+</Info>
 
 In the **Streamable HTTP** transport, the server operates as an independent process that
 can handle multiple client connections. This transport uses HTTP POST and GET requests.
@@ -16380,6 +16446,24 @@ sequenceDiagram
     deactivate Server
 
 ```
+
+### Protocol Version Header
+
+If using HTTP, the client **MUST** include the `MCP-Protocol-Version: <protocol-version>` HTTP header on all subsequent requests to the MCP
+server, allowing the MCP server to respond based on the MCP protocol version.
+
+For example: `MCP-Protocol-Version: 2025-03-26`
+
+The protocol version sent by the client **SHOULD** be the one [negotiated during
+initialization](/specification/draft/basic/lifecycle#version-negotiation).
+
+For backwards compatibility, if the server does *not* receive an `MCP-Protocol-Version`
+header, and has no other way to identify the version - for example, by relying on the
+protocol version negotiated during initialization - the server **SHOULD** assume protocol
+version `2025-03-26`.
+
+If the server receives a request with an invalid or unsupported
+`MCP-Protocol-Version`, it **MUST** respond with `400 Bad Request`.
 
 ### Backwards Compatibility
 
@@ -16687,16 +16771,346 @@ the previous revision, [2025-03-26](/specification/2025-03-26).
    (PR [#416](https://github.com/modelcontextprotocol/specification/pull/416))
 2. Added support for [structured tool output](https://modelcontextprotocol.io/specification/draft/server/tools#structured-content)
    (PR [#371](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/371))
-3. TODO
+3. Classified MCP servers as [OAuth Resource Servers](https://modelcontextprotocol.io/specification/draft/basic/authorization#2-3-authorization-server-discovery), adding protected resource metadata to discover the corresponding Authorization server. (PR [#338](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/338))
+4. Clarified [security considerations](https://modelcontextprotocol.io/specification/draft/basic/authorization#3-security-considerations) and best practices in the authorization spec and in a new [security best practices page](https://modelcontextprotocol.io/specification/draft/basic/security_best_practices).
+5. Added support for **[elicitation](/specification/draft/client/elicitation)**, enabling
+   servers to request additional information from users during interactions. (PR [#382](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/382))
 
 ## Other schema changes
-
-* TODO
 
 ## Full changelog
 
 For a complete list of all changes that have been made since the last protocol revision,
 [see GitHub](https://github.com/modelcontextprotocol/specification/compare/2025-03-26...draft).
+
+
+# Elicitation
+Source: https://modelcontextprotocol.io/specification/draft/client/elicitation
+
+
+
+<Info>**Protocol Revision**: draft</Info>
+
+<Note>
+  Elicitation is newly introduced in this version of the MCP specification and its design may evolve in future protocol versions.
+</Note>
+
+The Model Context Protocol (MCP) provides a standardized way for servers to request additional
+information from users through the client during interactions. This flow allows clients to
+maintain control over user interactions and data sharing while enabling servers to gather
+necessary information dynamically.
+Servers request structured data from users with JSON schemas to validate responses.
+
+## User Interaction Model
+
+Elicitation in MCP allows servers to implement interactive workflows by enabling user input
+requests to occur *nested* inside other MCP server features.
+
+Implementations are free to expose elicitation through any interface pattern that suits
+their needs—the protocol itself does not mandate any specific user interaction
+model.
+
+<Warning>
+  For trust & safety and security:
+
+  * Servers **MUST NOT** use elicitation to request sensitive information.
+
+  Applications **SHOULD**:
+
+  * Provide UI that makes it clear which server is requesting information
+  * Allow users to review and modify their responses before sending
+  * Respect user privacy and provide clear decline and cancel options
+</Warning>
+
+## Capabilities
+
+Clients that support elicitation **MUST** declare the `elicitation` capability during
+[initialization](/specification/draft/basic/lifecycle#initialization):
+
+```json
+{
+  "capabilities": {
+    "elicitation": {}
+  }
+}
+```
+
+## Protocol Messages
+
+### Creating Elicitation Requests
+
+To request information from a user, servers send an `elicitation/create` request:
+
+#### Simple Text Request
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "elicitation/create",
+  "params": {
+    "message": "Please provide your GitHub username",
+    "requestedSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": ["name"]
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "action": "accept",
+    "content": {
+      "name": "octocat"
+    }
+  }
+}
+```
+
+#### Structured Data Request
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "elicitation/create",
+  "params": {
+    "message": "Please provide your contact information",
+    "requestedSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Your full name"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Your email address"
+        },
+        "age": {
+          "type": "number",
+          "minimum": 18,
+          "description": "Your age"
+        }
+      },
+      "required": ["name", "email"]
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "action": "accept",
+    "content": {
+      "name": "Monalisa Octocat",
+      "email": "octocat@github.com",
+      "age": 30
+    }
+  }
+}
+```
+
+**Decline Response Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "action": "decline"
+  }
+}
+```
+
+**Cancel Response Example:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "action": "cancel"
+  }
+}
+```
+
+## Message Flow
+
+```mermaid
+sequenceDiagram
+    participant Server
+    participant Client
+    participant User
+
+    Note over Server,Client: Server initiates elicitation
+    Server->>Client: elicitation/create
+
+    Note over Client,User: Human interaction
+    Client->>User: Present elicitation UI
+    User-->>Client: Provide requested information
+
+    Note over Server,Client: Complete request
+    Client-->>Server: Return user response
+
+    Note over Server: Continue processing with new information
+```
+
+## Request Schema
+
+The `requestedSchema` field allows servers to define the structure of the expected response using a restricted subset of JSON Schema. To simplify implementation for clients, elicitation schemas are limited to flat objects with primitive properties only:
+
+```json
+"requestedSchema": {
+  "type": "object",
+  "properties": {
+    "propertyName": {
+      "type": "string",
+      "title": "Display Name",
+      "description": "Description of the property"
+    },
+    "anotherProperty": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    }
+  },
+  "required": ["propertyName"]
+}
+```
+
+### Supported Schema Types
+
+The schema is restricted to these primitive types:
+
+1. **String Schema**
+
+   ```json
+   {
+     "type": "string",
+     "title": "Display Name",
+     "description": "Description text",
+     "minLength": 3,
+     "maxLength": 50,
+     "pattern": "^[A-Za-z]+$",
+     "format": "email"
+   }
+   ```
+
+   Supported formats: `email`, `uri`, `date`, `date-time`
+
+2. **Number Schema**
+
+   ```json
+   {
+     "type": "number", // or "integer"
+     "title": "Display Name",
+     "description": "Description text",
+     "minimum": 0,
+     "maximum": 100
+   }
+   ```
+
+3. **Boolean Schema**
+
+   ```json
+   {
+     "type": "boolean",
+     "title": "Display Name",
+     "description": "Description text",
+     "default": false
+   }
+   ```
+
+4. **Enum Schema**
+   ```json
+   {
+     "type": "string",
+     "title": "Display Name",
+     "description": "Description text",
+     "enum": ["option1", "option2", "option3"],
+     "enumNames": ["Option 1", "Option 2", "Option 3"]
+   }
+   ```
+
+Clients can use this schema to:
+
+1. Generate appropriate input forms
+2. Validate user input before sending
+3. Provide better guidance to users
+
+Note that complex nested structures, arrays of objects, and other advanced JSON Schema features are intentionally not supported to simplify client implementation.
+
+## Response Actions
+
+Elicitation responses use a three-action model to clearly distinguish between different user actions:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "action": "accept", // or "decline" or "cancel"
+    "content": {
+      "propertyName": "value",
+      "anotherProperty": 42
+    }
+  }
+}
+```
+
+The three response actions are:
+
+1. **Accept** (`action: "accept"`): User explicitly approved and submitted with data
+
+   * The `content` field contains the submitted data matching the requested schema
+   * Example: User clicked "Submit", "OK", "Confirm", etc.
+
+2. **Decline** (`action: "decline"`): User explicitly rejected the request
+
+   * The `content` field is typically omitted
+   * Example: User clicked "Decline", "Reject", "No", etc.
+
+3. **Cancel** (`action: "cancel"`): User dismissed without making an explicit choice
+   * The `content` field is typically omitted
+   * Example: User closed the dialog, clicked outside, pressed Escape, etc.
+
+Servers should handle each state appropriately:
+
+* **Accept**: Process the submitted data
+* **Decline**: Handle explicit rejection (e.g., offer alternatives)
+* **Cancel**: Handle dismissal (e.g., prompt again later)
+
+## Security Considerations
+
+1. Servers **MUST NOT** request sensitive information through elicitation
+2. Clients **SHOULD** implement user approval controls
+3. Both parties **SHOULD** validate elicitation content against the provided schema
+4. Clients **SHOULD** provide clear indication of which server is requesting information
+5. Clients **SHOULD** allow users to reject elicitation requests at any time
+6. Clients **SHOULD** implement rate limiting
+7. Clients **SHOULD** present elicitation requests in a way that makes it clear what information is being requested and why
 
 
 # Roots
@@ -17193,9 +17607,10 @@ Servers offer any of the following features to clients:
 * **Prompts**: Templated messages and workflows for users
 * **Tools**: Functions for the AI model to execute
 
-Clients may offer the following feature to servers:
+Clients may offer the following features to servers:
 
 * **Sampling**: Server-initiated agentic behaviors and recursive LLM interactions
+* **Elicitation**: Server-initiated requests for additional information from users
 
 ### Additional Utilities
 
@@ -17258,15 +17673,15 @@ implementors **SHOULD**:
 Explore the detailed specification for each protocol component:
 
 <CardGroup cols={5}>
-  <Card title="Architecture" icon="sitemap" href="architecture" />
+  <Card title="Architecture" icon="sitemap" href="/specification/draft/architecture" />
 
-  <Card title="Base Protocol" icon="code" href="basic" />
+  <Card title="Base Protocol" icon="code" href="/specification/draft/basic" />
 
-  <Card title="Server Features" icon="server" href="server" />
+  <Card title="Server Features" icon="server" href="/specification/draft/server" />
 
-  <Card title="Client Features" icon="user" href="client" />
+  <Card title="Client Features" icon="user" href="/specification/draft/client" />
 
-  <Card title="Contributing" icon="pencil" href="contributing" />
+  <Card title="Contributing" icon="pencil" href="/specification/contributing" />
 </CardGroup>
 
 
@@ -17298,11 +17713,11 @@ Each primitive can be summarized in the following control hierarchy:
 Explore these key primitives in more detail below:
 
 <CardGroup cols={3}>
-  <Card title="Prompts" icon="message" href="prompts" />
+  <Card title="Prompts" icon="message" href="/specification/draft/server/prompts" />
 
-  <Card title="Resources" icon="file-lines" href="resources" />
+  <Card title="Resources" icon="file-lines" href="/specification/draft/server/resources" />
 
-  <Card title="Tools" icon="wrench" href="tools" />
+  <Card title="Tools" icon="wrench" href="/specification/draft/server/tools" />
 </CardGroup>
 
 
@@ -18124,8 +18539,10 @@ A tool definition includes:
 * `outputSchema`: Optional JSON Schema defining expected output structure
 * `annotations`: optional properties describing tool behavior
 
-<Warning>For trust & safety and security, clients **MUST** consider
-tool annotations to be untrusted unless they come from trusted servers.</Warning>
+<Warning>
+  For trust & safety and security, clients **MUST** consider
+  tool annotations to be untrusted unless they come from trusted servers.
+</Warning>
 
 ### Tool Result
 
@@ -18402,6 +18819,49 @@ what is being completed through a reference type:
 }
 ```
 
+For prompts or URI templates with multiple arguments, clients should resolve them in the order they are presented by the server, and include each previous completion in the `context.arguments` object to provide context for subsequent requests.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "completion/complete",
+  "params": {
+    "ref": {
+      "type": "ref/prompt",
+      "name": "code_review"
+    },
+    "argument": {
+      "name": "framework",
+      "value": "fla"
+    },
+    "context": {
+      "arguments": {
+        "language": "python"
+      }
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "completion": {
+      "values": ["flask"],
+      "total": 1,
+      "hasMore": false
+    }
+  }
+}
+```
+
 ### Reference Types
 
 The protocol supports two types of completion references:
@@ -18443,6 +18903,8 @@ sequenceDiagram
 * `argument`: Object containing:
   * `name`: Argument name
   * `value`: Current value
+* `context`: Object containing:
+  * `arguments`: A mapping of already-resolved argument names to their values.
 
 ### CompleteResult
 
@@ -18738,9 +19200,11 @@ Source: https://modelcontextprotocol.io/specification/versioning
 The Model Context Protocol uses string-based version identifiers following the format
 `YYYY-MM-DD`, to indicate the last date backwards incompatible changes were made.
 
-<Info>The protocol version will *not* be incremented when the
-protocol is updated, as long as the changes maintain backwards compatibility. This allows
-for incremental improvements while preserving interoperability.</Info>
+<Info>
+  The protocol version will *not* be incremented when the
+  protocol is updated, as long as the changes maintain backwards compatibility. This allows
+  for incremental improvements while preserving interoperability.
+</Info>
 
 ## Revisions
 
