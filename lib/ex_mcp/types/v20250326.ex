@@ -13,13 +13,21 @@ defmodule ExMCP.Types.V20250326 do
   @type request_id :: ExMCP.Types.request_id()
   @type error_code :: ExMCP.Types.error_code()
   @type cursor :: ExMCP.Types.cursor()
-  @type message :: ExMCP.Types.message()
+  # Message types
+  @type message :: %{
+          role: :user | :assistant,
+          content: content() | [content()]
+        }
   @type content :: ExMCP.Types.content()
   @type content_type :: ExMCP.Types.content_type()
   @type text_content :: ExMCP.Types.text_content()
   @type image_content :: ExMCP.Types.image_content()
   @type audio_content :: ExMCP.Types.audio_content()
-  @type resource_content :: ExMCP.Types.resource_content()
+  # Resource content
+  @type resource_content :: %{
+          required(:uri) => String.t(),
+          optional(atom()) => any()
+        }
 
   # Version-specific protocol version
   @protocol_version "2025-03-26"

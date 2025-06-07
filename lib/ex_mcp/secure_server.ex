@@ -251,19 +251,19 @@ defmodule ExMCP.SecureServer.SecureHandlerWrapper do
       {:ok, result, %{state | handler_state: state.handler_state}}
     else
       {:error, :origin_not_allowed} ->
-        {:error, -32001, "Origin validation failed - DNS rebinding protection", state}
+        {:error, "Origin validation failed - DNS rebinding protection", state}
 
       {:error, :unauthorized} ->
-        {:error, -32001, "Authentication required", state}
+        {:error, "Authentication required", state}
 
       {:error, :invalid_token} ->
-        {:error, -32001, "Invalid authentication token", state}
+        {:error, "Invalid authentication token", state}
 
       {:error, :consent_required} ->
-        {:error, -32002, "Dynamic client registration requires consent", state}
+        {:error, "Dynamic client registration requires consent", state}
 
       {:error, reason} ->
-        {:error, -32603, "Security validation failed: #{inspect(reason)}", state}
+        {:error, "Security validation failed: #{inspect(reason)}", state}
     end
   end
 
@@ -490,7 +490,7 @@ defmodule ExMCP.SecureServer.SecureHandlerWrapper do
   end
 
   defp audit_request(client_id, method, details, _state) do
-    request_id = ExMCP.Protocol.generate_id()
+    request_id = to_string(ExMCP.Protocol.generate_id())
     ClientRegistry.record_request(client_id || "unknown", method, request_id)
 
     # Also use TokenValidator for audit trail
