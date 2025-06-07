@@ -23,9 +23,6 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
 
   alias ExMCP.Transport.Beam.HotReload
 
-  @has_file_system Code.ensure_loaded?(FileSystem)
-  @has_mix Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0)
-
   defstruct [
     :handler_module,
     :server,
@@ -238,27 +235,22 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   end
 
   defp start_filesystem_watching(state) do
-    if @has_file_system do
-      try do
-        # credo:disable-for-next-line Credo.Check.Refactor.Apply
-        {:ok, watcher_pid} = apply(FileSystem, :start_link, [[dirs: state.watch_paths]])
-        # credo:disable-for-next-line Credo.Check.Refactor.Apply
-        apply(FileSystem, :subscribe, [watcher_pid])
-        Process.monitor(watcher_pid)
-        {:ok, %{state | watcher_pid: watcher_pid}}
-      catch
-        :error, :undef ->
-          Logger.warning("FileSystem dependency not available, falling back to polling")
-          start_polling_watching(%{state | watch_strategy: :polling})
+    try do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      {:ok, watcher_pid} = apply(FileSystem, :start_link, [[dirs: state.watch_paths]])
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(FileSystem, :subscribe, [watcher_pid])
+      Process.monitor(watcher_pid)
+      {:ok, %{state | watcher_pid: watcher_pid}}
+    catch
+      :error, :undef ->
+        Logger.warning("FileSystem dependency not available, falling back to polling")
+        start_polling_watching(%{state | watch_strategy: :polling})
 
-        error ->
-          Logger.error("Failed to start filesystem watcher: #{inspect(error)}")
-          # Fallback to polling
-          start_polling_watching(%{state | watch_strategy: :polling})
-      end
-    else
-      Logger.warning("FileSystem dependency not available, falling back to polling")
-      start_polling_watching(%{state | watch_strategy: :polling})
+      error ->
+        Logger.error("Failed to start filesystem watcher: #{inspect(error)}")
+        # Fallback to polling
+        start_polling_watching(%{state | watch_strategy: :polling})
     end
   end
 
@@ -284,7 +276,7 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   defp stop_watching(state) do
     if state.watcher_pid && Process.alive?(state.watcher_pid) do
       case state.watch_strategy do
-        :filesystem when @has_file_system ->
+        :filesystem ->
           GenServer.stop(state.watcher_pid)
 
         _ ->
@@ -571,15 +563,11 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   end
 
   defp test_mode? do
-    if @has_mix do
-      try do
-        # credo:disable-for-next-line Credo.Check.Refactor.Apply
-        apply(Mix, :env, []) == :test
-      catch
-        :error, :undef -> false
-      end
-    else
-      false
+    try do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(Mix, :env, []) == :test
+    catch
+      :error, :undef -> false
     end
   end
 end
