@@ -116,6 +116,7 @@ defmodule ExMCP.Client do
     :server_info,
     :server_capabilities,
     :negotiated_version,
+    :protocol_version,
     :pending_requests,
     :initialized,
     :client_info,
@@ -423,6 +424,29 @@ defmodule ExMCP.Client do
   end
 
   @doc """
+  Sends a batch of requests to the server.
+
+  JSON-RPC batching is available in 2025-03-26 and removed in draft.
+  The initialize request MUST NOT be included in a batch.
+
+  ## Examples
+
+      # Create batch requests
+      batch = [
+        ExMCP.Protocol.encode_request("tools/list", %{}),
+        ExMCP.Protocol.encode_request("resources/list", %{})
+      ]
+      
+      {:ok, responses} = ExMCP.Client.send_batch(client, batch)
+
+  """
+  @spec send_batch(GenServer.server(), [map()], timeout()) ::
+          {:ok, [map()]} | {:error, any()}
+  def send_batch(client, batch, timeout \\ @request_timeout) do
+    GenServer.call(client, {:send_batch, batch}, timeout)
+  end
+
+  @doc """
   Sends a cancellation notification for a request.
 
   The request ID should be from a currently in-progress request.
@@ -550,6 +574,10 @@ defmodule ExMCP.Client do
         version: ExMCP.version()
       })
 
+    # Get protocol version from options or use preferred
+    protocol_version =
+      Keyword.get(opts, :protocol_version, ExMCP.VersionRegistry.preferred_version())
+
     # Initialize handler if provided
     {handler, handler_state} =
       case Keyword.get(opts, :handler) do
@@ -589,6 +617,7 @@ defmodule ExMCP.Client do
       pending_requests: %{},
       initialized: false,
       client_info: client_info,
+      protocol_version: protocol_version,
       handler: handler,
       handler_state: handler_state,
       auth_config: auth_config,
@@ -699,6 +728,38 @@ defmodule ExMCP.Client do
 
   def handle_call({:complete, ref, argument}, from, state) do
     send_request(Protocol.encode_complete(ref, argument), from, state)
+  end
+
+  def handle_call({:send_batch, batch}, from, state) do
+    # Check if batch requests are supported in negotiated version
+    if state.negotiated_version == "draft" do
+      {:reply, {:error, "JSON-RPC batching not supported in draft version"}, state}
+    else
+      if state.initialized && state.transport_state do
+        case Protocol.encode_to_string(batch) do
+          {:ok, json} ->
+            case send_with_auth(json, state) do
+              {:ok, new_transport_state} ->
+                # Generate a batch ID to track this batch request
+                batch_id = Protocol.generate_id()
+                # Store the batch request with a special marker
+                pending =
+                  Map.put(state.pending_requests, batch_id, {from, :batch_simple, length(batch)})
+
+                {:noreply,
+                 %{state | transport_state: new_transport_state, pending_requests: pending}}
+
+              {:error, reason} ->
+                {:reply, {:error, reason}, state}
+            end
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+      else
+        {:reply, {:error, :not_connected}, state}
+      end
+    end
   end
 
   def handle_call(:disconnect, _from, state) do
@@ -853,11 +914,10 @@ defmodule ExMCP.Client do
   end
 
   defp initialize_connection(transport_state, state) do
-    # Get the preferred protocol version
-    preferred_version = ExMCP.VersionRegistry.preferred_version()
+    # Use the protocol version from client state
     # Build capabilities based on handler and version
-    capabilities = build_client_capabilities(state.handler, preferred_version)
-    init_msg = Protocol.encode_initialize(state.client_info, capabilities, preferred_version)
+    capabilities = build_client_capabilities(state.handler, state.protocol_version)
+    init_msg = Protocol.encode_initialize(state.client_info, capabilities, state.protocol_version)
 
     with {:ok, json} <- Protocol.encode_to_string(init_msg),
          {:ok, _} <- state.transport_mod.send_message(json, transport_state) do
@@ -992,59 +1052,81 @@ defmodule ExMCP.Client do
   end
 
   defp handle_batch_response(messages, state) do
-    # Process batch responses
     parsed_responses = Protocol.parse_batch_response(messages)
+    {results, state} = process_batch_responses(parsed_responses, state)
 
-    # Group responses by ID
-    {results, state} =
-      Enum.reduce(parsed_responses, {%{}, state}, fn parsed, {results_acc, state_acc} ->
-        case parsed do
-          {:result, result, id} ->
-            # Atomize keys in result for consistent API
-            atomized_result = atomize_keys(result)
-            {Map.put(results_acc, id, {:ok, atomized_result}), state_acc}
-
-          {:error, error, id} ->
-            {Map.put(results_acc, id, {:error, error}), state_acc}
-
-          {:notification, method, params} ->
-            # Handle notifications that come in batch responses
-            {:noreply, new_state} = handle_notification(method, params, state_acc)
-            {results_acc, new_state}
-
-          _ ->
-            {results_acc, state_acc}
-        end
-      end)
-
-    # Find any batch request waiting for these responses
-    {batch_requests, _remaining_pending} =
-      Enum.split_with(state.pending_requests, fn {_id, req} ->
-        match?({_from, :batch, _map}, req)
-      end)
-
-    # Check if we have a complete batch response
-    state =
-      Enum.reduce(batch_requests, state, fn {batch_id, {from, :batch, request_map}}, acc_state ->
-        # Check if all requests in the batch have responses
-        all_responses =
-          Enum.map(request_map, fn {id, _spec} ->
-            Map.get(results, id)
-          end)
-
-        if Enum.all?(all_responses, &(&1 != nil)) do
-          # All responses received, reply to caller
-          GenServer.reply(from, {:ok, all_responses})
-
-          # Remove from pending
-          %{acc_state | pending_requests: Map.delete(acc_state.pending_requests, batch_id)}
-        else
-          # Still waiting for some responses
-          acc_state
-        end
-      end)
+    {batch_requests, simple_batch_requests} = split_pending_batches(state.pending_requests)
+    state = handle_complex_batch_requests(batch_requests, results, state)
+    state = handle_simple_batch_requests(simple_batch_requests, parsed_responses, state)
 
     {:noreply, state}
+  end
+
+  defp process_batch_responses(parsed_responses, state) do
+    Enum.reduce(parsed_responses, {%{}, state}, fn parsed, {results_acc, state_acc} ->
+      case parsed do
+        {:result, result, id} ->
+          atomized_result = atomize_keys(result)
+          {Map.put(results_acc, id, {:ok, atomized_result}), state_acc}
+
+        {:error, error, id} ->
+          {Map.put(results_acc, id, {:error, error}), state_acc}
+
+        {:notification, method, params} ->
+          {:noreply, new_state} = handle_notification(method, params, state_acc)
+          {results_acc, new_state}
+
+        _ ->
+          {results_acc, state_acc}
+      end
+    end)
+  end
+
+  defp split_pending_batches(pending_requests) do
+    Enum.split_with(pending_requests, fn {_id, req} ->
+      match?({_from, :batch, _map}, req)
+    end)
+  end
+
+  defp handle_complex_batch_requests(batch_requests, results, state) do
+    Enum.reduce(batch_requests, state, fn {batch_id, {from, :batch, request_map}}, acc_state ->
+      all_responses = Enum.map(request_map, fn {id, _spec} -> Map.get(results, id) end)
+
+      if Enum.all?(all_responses, &(&1 != nil)) do
+        GenServer.reply(from, {:ok, all_responses})
+        %{acc_state | pending_requests: Map.delete(acc_state.pending_requests, batch_id)}
+      else
+        acc_state
+      end
+    end)
+  end
+
+  defp handle_simple_batch_requests(simple_batch_requests, parsed_responses, state) do
+    Enum.reduce(simple_batch_requests, state, fn {batch_id, req}, acc_state ->
+      case req do
+        {from, :batch_simple, expected_count} ->
+          if length(parsed_responses) == expected_count do
+            response_list = convert_simple_batch_responses(parsed_responses)
+            GenServer.reply(from, {:ok, response_list})
+            %{acc_state | pending_requests: Map.delete(acc_state.pending_requests, batch_id)}
+          else
+            acc_state
+          end
+
+        _ ->
+          acc_state
+      end
+    end)
+  end
+
+  defp convert_simple_batch_responses(parsed_responses) do
+    Enum.map(parsed_responses, fn parsed ->
+      case parsed do
+        {:result, result, _id} -> atomize_keys(result)
+        {:error, error, _id} -> %{"error" => error}
+        _ -> %{}
+      end
+    end)
   end
 
   defp handle_notification(method, params, state) do
