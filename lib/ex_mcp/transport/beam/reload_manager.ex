@@ -108,16 +108,16 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   @impl true
   def init(manager_config) do
     state = %__MODULE__{
-      handler_module: manager_config.handler_module,
-      server: manager_config.server,
-      config: manager_config.config,
-      watch_strategy: manager_config.watch_strategy,
-      watch_paths: manager_config.watch_paths || [],
-      poll_interval: manager_config.poll_interval,
-      throttle_ms: manager_config.throttle_ms,
+      handler_module: Map.fetch!(manager_config, :handler_module),
+      server: Map.fetch!(manager_config, :server),
+      config: Map.get(manager_config, :config, %{}),
+      watch_strategy: Map.get(manager_config, :watch_strategy, :polling),
+      watch_paths: Map.get(manager_config, :watch_paths, []),
+      poll_interval: Map.get(manager_config, :poll_interval, 2000),
+      throttle_ms: Map.get(manager_config, :throttle_ms, 1000),
       watcher_pid: nil,
       last_reload_time: nil,
-      module_timestamp: get_module_timestamp(manager_config.handler_module),
+      module_timestamp: get_module_timestamp(Map.fetch!(manager_config, :handler_module)),
       reload_count: 0,
       last_error: nil,
       backup_state: nil

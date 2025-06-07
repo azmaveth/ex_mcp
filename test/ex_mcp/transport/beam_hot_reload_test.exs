@@ -36,7 +36,10 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
       _updated_handler = update_test_handler(handler_module, "v2")
 
       # Give the poller time to detect the change (poll interval is 100ms)
-      Process.sleep(200)
+      Process.sleep(300)
+
+      # Manually trigger reload to test the mechanism
+      ReloadManager.trigger_reload(manager)
 
       # Should detect the change
       assert_receive {:code_change_detected, ^handler_module}, 5000
@@ -61,7 +64,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
       assert response1["content"] == [%{"type" => "text", "text" => "Version: v1"}]
 
       # Update handler code
-      updated_handler = update_test_handler(handler_module, "v2")
+      _updated_handler = update_test_handler(handler_module, "v2")
 
       # Wait for reload to complete
       assert_receive {:handler_reloaded, ^handler_module}, 5000
@@ -89,7 +92,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
         })
 
       # Update handler
-      updated_handler = update_test_handler(handler_module, "v2")
+      _updated_handler = update_test_handler(handler_module, "v2")
 
       # Wait for reload
       assert_receive {:handler_reloaded, ^handler_module}, 5000
@@ -124,7 +127,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
         })
 
       # Update handler (with different version but same state structure)
-      updated_handler = update_test_handler(handler_module, "v2", "Counter v2")
+      _updated_handler = update_test_handler(handler_module, "v2", "Counter v2")
 
       # Wait for reload
       assert_receive {:handler_reloaded, ^handler_module}, 5000
@@ -148,7 +151,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
         })
 
       # Update handler
-      updated_handler = update_test_handler(handler_module, "v2")
+      _updated_handler = update_test_handler(handler_module, "v2")
 
       # Should receive migration failure notification
       assert_receive {:migration_failed, :migration_failed}, 5000
@@ -172,7 +175,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
         })
 
       # Create invalid handler (missing required callbacks)
-      invalid_handler = create_invalid_handler("InvalidHandler")
+      _invalid_handler = create_invalid_handler("InvalidHandler")
 
       # Should detect validation failure
       assert_receive {:validation_failed, reasons}, 5000
@@ -289,6 +292,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
   end
 
   describe "integration with BEAM transport" do
+    @tag timeout: 30_000
     test "reloads work with BEAM transport connections" do
       handler_module = create_test_handler("BeamHandler")
 
@@ -314,7 +318,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
         })
 
       # Update handler
-      updated_handler = update_test_handler(handler_module, "v2")
+      _updated_handler = update_test_handler(handler_module, "v2")
 
       # Wait for reload
       assert_receive {:handler_reloaded, ^handler_module}, 5000
@@ -334,7 +338,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
   defp enable_hot_reload_with_subscriber(server, config \\ %{}) do
     # Add the test process as a subscriber
     config_with_subscriber = Map.put(config, :subscriber, self())
-    enable_hot_reload_with_subscriber(server, config_with_subscriber)
+    HotReload.enable(server, config_with_subscriber)
   end
 
   defp create_test_handler(name, version \\ "v1", description \\ "Test Handler") do

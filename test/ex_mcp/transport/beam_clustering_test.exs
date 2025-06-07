@@ -12,7 +12,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
   # Clustering tests can't be async
   use ExUnit.Case, async: false
 
-  alias ExMCP.Transport.Beam.{Cluster, LoadBalancer, ServiceRegistry}
+  alias ExMCP.Transport.Beam.{Cluster, LoadBalancer}
   alias ExMCP.{Client, Server}
 
   describe "service discovery and registration" do
@@ -33,7 +33,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
         pid: self()
       }
 
-      {:ok, service_id} = Cluster.register_service(cluster, service_info)
+      {:ok, _service_id} = Cluster.register_service(cluster, service_info)
 
       # Should be able to discover the service
       {:ok, services} = Cluster.discover_services(cluster, %{name: "calculator"})
@@ -111,7 +111,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
         metadata: %{load: 0.1}
       }
 
-      {:ok, service_id} = Cluster.register_service(cluster, service_info)
+      {:ok, _service_id} = Cluster.register_service(cluster, service_info)
 
       # Update service metadata
       updated_info = %{service_info | metadata: %{load: 0.8, clients: 5}}
@@ -147,7 +147,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
         pid: service_pid
       }
 
-      {:ok, service_id} = Cluster.register_service(cluster, service_info)
+      {:ok, _service_id} = Cluster.register_service(cluster, service_info)
 
       # Service should be initially available
       {:ok, services} = Cluster.discover_services(cluster, %{name: "failing-service"})
@@ -383,7 +383,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
         health_check: %{ref: health_ref, timeout: 30}
       }
 
-      {:ok, service_id} = Cluster.register_service(cluster, service_info)
+      {:ok, _service_id} = Cluster.register_service(cluster, service_info)
 
       # Initially healthy
       {:ok, services} = Cluster.discover_services(cluster, %{name: "health-checked-service"})
@@ -412,7 +412,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
         }
       }
 
-      {:ok, service_id} = Cluster.register_service(cluster, service_info)
+      {:ok, _service_id} = Cluster.register_service(cluster, service_info)
 
       # Record failures
       for _i <- 1..3 do
@@ -649,13 +649,4 @@ defmodule ExMCP.Transport.BeamClusteringTest do
   end
 
   # Helper functions for testing
-
-  defp create_test_cluster(opts \\ %{}) do
-    default_opts = %{
-      node_name: :test_cluster,
-      discovery_strategy: :local_registry
-    }
-
-    Cluster.start_link(Map.merge(default_opts, opts))
-  end
 end

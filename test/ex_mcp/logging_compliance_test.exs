@@ -128,7 +128,7 @@ defmodule ExMCP.LoggingComplianceTest do
     end
 
     # Logging helper functions that demonstrate proper usage
-    defp log_debug(message, data \\ nil) do
+    defp log_debug(message, data) do
       send_log("debug", message, data)
     end
 
@@ -136,28 +136,20 @@ defmodule ExMCP.LoggingComplianceTest do
       send_log("info", message, data)
     end
 
-    defp log_notice(message, data \\ nil) do
+    defp log_notice(message, data) do
       send_log("notice", message, data)
     end
 
-    defp log_warning(message, data \\ nil) do
+    defp log_warning(message, data) do
       send_log("warning", message, data)
     end
 
-    defp log_error(message, data \\ nil) do
+    defp log_error(message, data) do
       send_log("error", message, data)
     end
 
-    defp log_critical(message, data \\ nil) do
+    defp log_critical(message, data) do
       send_log("critical", message, data)
-    end
-
-    defp log_alert(message, data \\ nil) do
-      send_log("alert", message, data)
-    end
-
-    defp log_emergency(message, data \\ nil) do
-      send_log("emergency", message, data)
     end
 
     # Simulate sending log to a connected client
