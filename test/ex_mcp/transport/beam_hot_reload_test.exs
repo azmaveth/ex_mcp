@@ -198,7 +198,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
         })
 
       # Update to a handler that will crash during init
-      crashing_handler = create_crashing_handler("CrashingHandler")
+      _crashing_handler = create_crashing_handler("CrashingHandler")
 
       # Should detect failure and rollback
       assert_receive {:reload_failed, _reason}, 5000
@@ -335,7 +335,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
 
   # Helper functions for creating test handlers and modules
 
-  defp enable_hot_reload_with_subscriber(server, config \\ %{}) do
+  defp enable_hot_reload_with_subscriber(server, config) do
     # Add the test process as a subscriber
     config_with_subscriber = Map.put(config, :subscriber, self())
     HotReload.enable(server, config_with_subscriber)
@@ -364,7 +364,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
       end
 
       @impl true
-      def handle_list_tools(state) do
+      def handle_list_tools(_params, state) do
         tools = [
           %{name: "version", description: "Get version"},
           %{name: "increment", description: "Increment counter"},
@@ -488,12 +488,11 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
   end
 
   defp call_test_tool(server, tool_name, params \\ %{}) do
-    # For now, simulate tool calls directly via server
-    # In a real implementation, this would go through a proper client
-    case GenServer.call(server, {:call_tool, tool_name, params}) do
-      {:ok, result} -> {:ok, %{"content" => result}}
-      error -> error
-    end
+    # Connect a client and make the call properly
+    {:ok, client} = connect_test_client(server)
+    result = Client.call_tool(client, tool_name, params)
+    Client.disconnect(client)
+    result
   end
 
   defp code_path_for_module(module_name) do
