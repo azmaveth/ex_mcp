@@ -141,7 +141,8 @@ defmodule ExMCP.SecureServer do
 
   # Create a secure handler wrapper
   defp create_secure_handler(handler, server_id, security_config) do
-    ExMCP.SecureServer.SecureHandlerWrapper.create(handler, server_id, security_config)
+    alias ExMCP.SecureServer.SecureHandlerWrapper
+    SecureHandlerWrapper.create(handler, server_id, security_config)
   end
 
   defp build_security_config(opts) do

@@ -126,8 +126,8 @@ defmodule ExMCP.Content do
   @doc """
   Checks if content is of a specific type.
   """
-  @spec is_type?(Types.content(), Types.content_type()) :: boolean()
-  def is_type?(%{type: type}, expected_type), do: type == expected_type
+  @spec type?(Types.content(), Types.content_type()) :: boolean()
+  def type?(%{type: type}, expected_type), do: type == expected_type
 
   # Private helpers
 

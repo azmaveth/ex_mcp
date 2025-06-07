@@ -161,58 +161,64 @@ defmodule ExMCP.Transport.HTTP do
 
   @impl true
   def send_message(message, %__MODULE__{} = state) do
-    url = build_url(state, "/messages")
+    with {:ok, body} <- Jason.encode(message),
+         {:ok, response} <- perform_http_request(body, state) do
+      handle_http_response(response, state)
+    else
+      {:error, reason} when is_atom(reason) ->
+        {:error, {:encoding_error, reason}}
 
-    # Build headers with security and session
+      error ->
+        error
+    end
+  end
+
+  defp perform_http_request(body, state) do
+    url = build_url(state, "/messages")
     headers = build_request_headers(state)
 
-    case Jason.encode(message) do
-      {:ok, body} ->
-        request = {
-          String.to_charlist(url),
-          Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end),
-          String.to_charlist("application/json"),
-          body
-        }
+    request = {
+      String.to_charlist(url),
+      Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end),
+      String.to_charlist("application/json"),
+      body
+    }
 
-        # Add SSL options if using HTTPS
-        http_opts =
-          case URI.parse(url).scheme do
-            "https" -> build_ssl_options(state)
-            _ -> []
-          end
+    http_opts =
+      case URI.parse(url).scheme do
+        "https" -> build_ssl_options(state)
+        _ -> []
+      end
 
-        case :httpc.request(:post, request, http_opts, []) do
-          {:ok, {{_, 200, _}, response_headers, response_body}} ->
-            # For non-SSE mode, parse the response body as JSON-RPC
-            if state.use_sse do
-              # SSE mode - messages sent, responses come via SSE
-              case validate_cors_response(response_headers, state) do
-                :ok -> {:ok, state}
-                error -> error
-              end
-            else
-              # Non-SSE mode - response comes in HTTP body
-              case Jason.decode(response_body) do
-                {:ok, response} ->
-                  # Store response for receive_message
-                  send(self(), {:http_response, response})
-                  {:ok, state}
+    :httpc.request(:post, request, http_opts, [])
+  end
 
-                {:error, reason} ->
-                  {:error, {:json_decode_error, reason}}
-              end
-            end
+  defp handle_http_response({:ok, {{_, 200, _}, headers, body}}, state) do
+    if state.use_sse do
+      # SSE mode - responses come via SSE
+      validate_cors_response(headers, state)
+    else
+      # Non-SSE mode - response in HTTP body
+      handle_non_sse_response(body, state)
+    end
+  end
 
-          {:ok, {{_, status, _}, _, body}} ->
-            {:error, {:http_error, status, body}}
+  defp handle_http_response({:ok, {{_, status, _}, _, body}}, _state) do
+    {:error, {:http_error, status, body}}
+  end
 
-          {:error, reason} ->
-            {:error, reason}
-        end
+  defp handle_http_response({:error, reason}, _state) do
+    {:error, reason}
+  end
+
+  defp handle_non_sse_response(body, state) do
+    case Jason.decode(body) do
+      {:ok, response} ->
+        send(self(), {:http_response, response})
+        {:ok, state}
 
       {:error, reason} ->
-        {:error, {:encoding_error, reason}}
+        {:error, {:json_decode_error, reason}}
     end
   end
 

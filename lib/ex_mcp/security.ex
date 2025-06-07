@@ -322,9 +322,8 @@ defmodule ExMCP.Security do
   """
   @spec validate_security_requirements(security_config()) :: :ok | {:error, term()}
   def validate_security_requirements(config) do
-    with :ok <- validate_origin_requirements(config),
-         :ok <- validate_localhost_binding(config) do
-      :ok
+    with :ok <- validate_origin_requirements(config) do
+      validate_localhost_binding(config)
     end
   end
 
