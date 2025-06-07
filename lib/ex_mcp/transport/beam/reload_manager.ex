@@ -234,8 +234,8 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
     end
   end
 
-  defp start_filesystem_watching(state) do
-    if Code.ensure_loaded?(FileSystem) do
+  if Code.ensure_loaded?(FileSystem) do
+    defp start_filesystem_watching(state) do
       try do
         case FileSystem.start_link(dirs: state.watch_paths) do
           {:ok, watcher_pid} ->
@@ -253,7 +253,9 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
           Logger.warning("FileSystem dependency not available, falling back to polling")
           start_polling_watching(%{state | watch_strategy: :polling})
       end
-    else
+    end
+  else
+    defp start_filesystem_watching(state) do
       Logger.warning("FileSystem dependency not available, falling back to polling")
       start_polling_watching(%{state | watch_strategy: :polling})
     end
@@ -278,11 +280,11 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
     start_watching(%{state | watcher_pid: nil})
   end
 
-  defp stop_watching(state) do
-    if state.watcher_pid && Process.alive?(state.watcher_pid) do
-      case state.watch_strategy do
-        :filesystem ->
-          if Code.ensure_loaded?(FileSystem) do
+  if Code.ensure_loaded?(FileSystem) do
+    defp stop_watching(state) do
+      if state.watcher_pid && Process.alive?(state.watcher_pid) do
+        case state.watch_strategy do
+          :filesystem ->
             try do
               GenServer.stop(state.watcher_pid)
             rescue
@@ -290,11 +292,25 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
                 # FileSystem module not available
                 :ok
             end
-          end
 
-        _ ->
-          # Nothing special needed for other strategies
-          :ok
+          _ ->
+            # Nothing special needed for other strategies
+            :ok
+        end
+      end
+    end
+  else
+    defp stop_watching(state) do
+      if state.watcher_pid && Process.alive?(state.watcher_pid) do
+        case state.watch_strategy do
+          :filesystem ->
+            # FileSystem not available, nothing to stop
+            :ok
+
+          _ ->
+            # Nothing special needed for other strategies
+            :ok
+        end
       end
     end
   end
@@ -571,15 +587,15 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
     Logger.debug("Hot reload notification: #{inspect(message)}")
   end
 
-  defp test_mode? do
-    if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
+  if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
+    defp test_mode? do
       try do
         Mix.env() == :test
       rescue
         UndefinedFunctionError -> false
       end
-    else
-      false
     end
+  else
+    defp test_mode?, do: false
   end
 end
