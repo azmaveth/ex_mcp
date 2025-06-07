@@ -240,7 +240,9 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   defp start_filesystem_watching(state) do
     if @has_file_system do
       try do
+        # credo:disable-for-next-line Credo.Check.Refactor.Apply
         {:ok, watcher_pid} = apply(FileSystem, :start_link, [[dirs: state.watch_paths]])
+        # credo:disable-for-next-line Credo.Check.Refactor.Apply
         apply(FileSystem, :subscribe, [watcher_pid])
         Process.monitor(watcher_pid)
         {:ok, %{state | watcher_pid: watcher_pid}}
@@ -571,6 +573,7 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   defp test_mode? do
     if @has_mix do
       try do
+        # credo:disable-for-next-line Credo.Check.Refactor.Apply
         apply(Mix, :env, []) == :test
       catch
         :error, :undef -> false
