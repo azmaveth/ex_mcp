@@ -55,7 +55,7 @@ defmodule ExMCP.Transport.Beam.Cluster do
   use GenServer
   require Logger
 
-  alias ExMCP.Transport.Beam.{ServiceRegistry, HealthMonitor, PartitionDetector}
+  alias ExMCP.Transport.Beam.{HealthMonitor, PartitionDetector, ServiceRegistry}
 
   defstruct [
     :node_name,

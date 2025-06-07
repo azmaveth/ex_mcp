@@ -1385,31 +1385,29 @@ defmodule ExMCP.Server do
 
   # Hot reload helper function
   defp reload_handler_with_migration(state, new_handler_module) do
-    try do
-      # Initialize new handler with existing state structure
-      case new_handler_module.init([]) do
-        {:ok, new_default_state} ->
-          # For now, use simple state preservation
-          # In a production system, you might want more sophisticated migration
-          migrated_state =
-            if is_map(state.handler_state) and is_map(new_default_state) do
-              Map.merge(new_default_state, state.handler_state)
-            else
-              new_default_state
-            end
+    # Initialize new handler with existing state structure
+    case new_handler_module.init([]) do
+      {:ok, new_default_state} ->
+        # For now, use simple state preservation
+        # In a production system, you might want more sophisticated migration
+        migrated_state =
+          if is_map(state.handler_state) and is_map(new_default_state) do
+            Map.merge(new_default_state, state.handler_state)
+          else
+            new_default_state
+          end
 
-          new_state = %{state | handler: new_handler_module, handler_state: migrated_state}
+        new_state = %{state | handler: new_handler_module, handler_state: migrated_state}
 
-          {:ok, new_state}
+        {:ok, new_state}
 
-        {:error, reason} ->
-          {:error, {:handler_init_failed, reason}}
-      end
-    rescue
-      error -> {:error, {:handler_init_exception, error}}
-    catch
-      :exit, reason -> {:error, {:handler_init_exit, reason}}
-      :throw, value -> {:error, {:handler_init_throw, value}}
+      {:error, reason} ->
+        {:error, {:handler_init_failed, reason}}
     end
+  rescue
+    error -> {:error, {:handler_init_exception, error}}
+  catch
+    :exit, reason -> {:error, {:handler_init_exit, reason}}
+    :throw, value -> {:error, {:handler_init_throw, value}}
   end
 end

@@ -12,8 +12,8 @@ defmodule ExMCP.Transport.BeamClusteringTest do
   # Clustering tests can't be async
   use ExUnit.Case, async: false
 
-  alias ExMCP.Transport.Beam.{Cluster, ServiceRegistry, LoadBalancer}
-  alias ExMCP.{Server, Client}
+  alias ExMCP.Transport.Beam.{Cluster, LoadBalancer, ServiceRegistry}
+  alias ExMCP.{Client, Server}
 
   describe "service discovery and registration" do
     test "registers MCP server in cluster registry" do
@@ -158,7 +158,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
 
       # Service should be removed from registry
       {:ok, services} = Cluster.discover_services(cluster, %{name: "failing-service"})
-      assert length(services) == 0
+      assert Enum.empty?(services)
 
       Cluster.stop(cluster)
     end
@@ -394,7 +394,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
 
       # Should be removed due to health check failure
       {:ok, services} = Cluster.discover_services(cluster, %{name: "health-checked-service"})
-      assert length(services) == 0
+      assert Enum.empty?(services)
 
       Cluster.stop(cluster)
     end
@@ -430,7 +430,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
           exclude_circuit_broken: true
         })
 
-      assert length(services) == 0
+      assert Enum.empty?(services)
 
       Cluster.stop(cluster)
     end

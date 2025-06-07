@@ -147,44 +147,40 @@ defmodule ExMCP.Transport.BeamHotReloadSimpleTest do
 
   # Helper function from the reload manager (duplicated for testing)
   defp get_module_timestamp(module) do
-    try do
-      case :code.is_loaded(module) do
-        false ->
-          # Force load the module first
-          case Code.ensure_loaded(module) do
-            {:module, _} -> get_loaded_module_timestamp(module)
-            # Return non-zero for unloadable modules
-            _ -> 1
-          end
+    case :code.is_loaded(module) do
+      false ->
+        # Force load the module first
+        case Code.ensure_loaded(module) do
+          {:module, _} -> get_loaded_module_timestamp(module)
+          # Return non-zero for unloadable modules
+          _ -> 1
+        end
 
-        {:file, _} ->
-          get_loaded_module_timestamp(module)
-      end
-    rescue
-      _ -> 1
+      {:file, _} ->
+        get_loaded_module_timestamp(module)
     end
+  rescue
+    _ -> 1
   end
 
   defp get_loaded_module_timestamp(module) do
-    try do
-      case :code.get_object_code(module) do
-        {^module, binary, _filename} ->
-          :erlang.phash2(binary)
+    case :code.get_object_code(module) do
+      {^module, binary, _filename} ->
+        :erlang.phash2(binary)
 
-        :error ->
-          # Try alternative method
-          case module.module_info(:compile) do
-            info when is_list(info) ->
-              # Use compilation time or other info
-              time = Keyword.get(info, :time, {0, 0, 0})
-              :erlang.phash2(time)
+      :error ->
+        # Try alternative method
+        case module.module_info(:compile) do
+          info when is_list(info) ->
+            # Use compilation time or other info
+            time = Keyword.get(info, :time, {0, 0, 0})
+            :erlang.phash2(time)
 
-            _ ->
-              System.system_time(:second)
-          end
-      end
-    rescue
-      _ -> System.system_time(:second)
+          _ ->
+            System.system_time(:second)
+        end
     end
+  rescue
+    _ -> System.system_time(:second)
   end
 end

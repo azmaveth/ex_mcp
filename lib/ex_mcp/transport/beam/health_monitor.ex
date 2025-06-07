@@ -342,17 +342,15 @@ defmodule ExMCP.Transport.Beam.HealthMonitor do
   end
 
   defp check_ping_health(service, timeout) do
-    try do
-      # Send a simple ping message to the service process
-      case GenServer.call(service.pid, :health_ping, timeout) do
-        :pong -> :healthy
-        _ -> :unhealthy
-      end
-    rescue
+    # Send a simple ping message to the service process
+    case GenServer.call(service.pid, :health_ping, timeout) do
+      :pong -> :healthy
       _ -> :unhealthy
-    catch
-      :exit, _ -> :unhealthy
     end
+  rescue
+    _ -> :unhealthy
+  catch
+    :exit, _ -> :unhealthy
   end
 
   defp check_custom_health(service, timeout) do

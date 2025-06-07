@@ -356,21 +356,21 @@ defmodule ExMCP.Transport.Beam.ServiceRegistry do
   end
 
   defp insert_service(state, service_entry) do
-    try do
-      :ets.insert(state.registry_table, {service_entry.id, service_entry})
-      :ok
-    rescue
-      error -> {:error, error}
+    case :ets.insert(state.registry_table, {service_entry.id, service_entry}) do
+      true -> :ok
+      false -> {:error, :insert_failed}
     end
+  rescue
+    error -> {:error, error}
   end
 
   defp update_service_entry(state, service_id, service_entry) do
-    try do
-      :ets.insert(state.registry_table, {service_id, service_entry})
-      :ok
-    rescue
-      error -> {:error, error}
+    case :ets.insert(state.registry_table, {service_id, service_entry}) do
+      true -> :ok
+      false -> {:error, :update_failed}
     end
+  rescue
+    error -> {:error, error}
   end
 
   defp get_service_entry(state, service_id) do

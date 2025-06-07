@@ -59,8 +59,8 @@ defmodule ExMCP.Transport.Beam.HotReload do
 
   require Logger
 
-  alias ExMCP.Transport.Beam.ReloadManager
   alias ExMCP.Server.Handler
+  alias ExMCP.Transport.Beam.ReloadManager
 
   @type reload_config :: %{
           auto_reload: boolean(),
@@ -258,22 +258,20 @@ defmodule ExMCP.Transport.Beam.HotReload do
   # Private functions
 
   defp get_handler_module(server) do
-    try do
-      case GenServer.call(server, :get_handler_info) do
-        {:ok, %{handler: handler_module}} ->
-          {:ok, handler_module}
+    case GenServer.call(server, :get_handler_info) do
+      {:ok, %{handler: handler_module}} ->
+        {:ok, handler_module}
 
-        {:ok, handler_module} when is_atom(handler_module) ->
-          {:ok, handler_module}
+      {:ok, handler_module} when is_atom(handler_module) ->
+        {:ok, handler_module}
 
-        error ->
-          {:error, {:invalid_handler_info, error}}
-      end
-    rescue
-      error -> {:error, {:server_call_failed, error}}
-    catch
-      :exit, reason -> {:error, {:server_exit, reason}}
+      error ->
+        {:error, {:invalid_handler_info, error}}
     end
+  rescue
+    error -> {:error, {:server_call_failed, error}}
+  catch
+    :exit, reason -> {:error, {:server_exit, reason}}
   end
 
   defp build_manager_config(handler_module, server, config) do
@@ -385,15 +383,13 @@ defmodule ExMCP.Transport.Beam.HotReload do
   end
 
   defp uses_handler_behaviour?(module) do
-    try do
-      behaviours =
-        module.module_info(:attributes)
-        |> Keyword.get(:behaviour, [])
+    behaviours =
+      module.module_info(:attributes)
+      |> Keyword.get(:behaviour, [])
 
-      Handler in behaviours
-    rescue
-      _ -> false
-    end
+    Handler in behaviours
+  rescue
+    _ -> false
   end
 
   defp migrate_state_automatic(old_state) when is_map(old_state) do

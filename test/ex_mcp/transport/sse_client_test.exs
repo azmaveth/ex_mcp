@@ -4,8 +4,8 @@ defmodule ExMCP.Transport.SSEClientTest do
   """
   use ExUnit.Case, async: true
 
-  alias ExMCP.Transport.SSEClient
   alias ExMCP.Test.HTTPServer
+  alias ExMCP.Transport.SSEClient
 
   @moduletag :capture_log
 

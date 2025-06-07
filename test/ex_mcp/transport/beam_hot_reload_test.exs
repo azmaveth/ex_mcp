@@ -11,8 +11,8 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
   # Hot reloading tests can't be async
   use ExUnit.Case, async: false
 
+  alias ExMCP.{Client, Server}
   alias ExMCP.Transport.Beam.{HotReload, ReloadManager}
-  alias ExMCP.{Server, Client}
 
   describe "handler module reloading" do
     test "detects when handler module code changes" do
@@ -60,7 +60,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
       {:ok, response1} = call_test_tool(server, "version")
       assert response1["content"] == [%{"type" => "text", "text" => "Version: v1"}]
 
-      # Update handler code  
+      # Update handler code
       updated_handler = update_test_handler(handler_module, "v2")
 
       # Wait for reload to complete
@@ -225,7 +225,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
           throttle_ms: 0
         })
 
-      # Polling-based watching  
+      # Polling-based watching
       {:ok, poll_manager} =
         ReloadManager.start_link(%{
           handler_module: handler_module,
@@ -344,12 +344,12 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
     code = """
     defmodule #{name} do
       use ExMCP.Server.Handler
-      
+
       @impl true
       def init(_args) do
         {:ok, %{counter: 0, version: "#{version}", description: "#{description}"}}
       end
-      
+
       @impl true
       def handle_initialize(_params, state) do
         {:ok, %{
@@ -358,7 +358,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
           capabilities: %{tools: %{}}
         }, state}
       end
-      
+
       @impl true
       def handle_list_tools(state) do
         tools = [
@@ -368,7 +368,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
         ]
         {:ok, tools, state}
       end
-      
+
       @impl true
       def handle_call_tool("version", _params, state) do
         text = if state.description == "Test Handler" do
@@ -378,12 +378,12 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
         end
         {:ok, [%{type: "text", text: text}], state}
       end
-      
+
       def handle_call_tool("increment", _params, state) do
         new_state = %{state | counter: state.counter + 1}
         {:ok, [%{type: "text", text: "Incremented"}], new_state}
       end
-      
+
       def handle_call_tool("get_count", _params, state) do
         text = if state.description == "Test Handler" do
           "Count: \#{state.counter}"
@@ -421,7 +421,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
     code = """
     defmodule #{name} do
       # Missing use ExMCP.Server.Handler
-      
+
       def some_function do
         :ok
       end
@@ -438,17 +438,17 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
     code = """
     defmodule #{name} do
       use ExMCP.Server.Handler
-      
+
       @impl true
       def init(_args) do
         raise "Intentional crash during init"
       end
-      
+
       @impl true
       def handle_initialize(_params, state) do
         {:ok, %{name: "#{name}", version: "1.0.0"}, state}
       end
-      
+
       @impl true
       def handle_list_tools(state) do
         {:ok, [], state}
