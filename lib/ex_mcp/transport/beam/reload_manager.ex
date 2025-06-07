@@ -235,23 +235,21 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   end
 
   defp start_filesystem_watching(state) do
-    try do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      {:ok, watcher_pid} = apply(FileSystem, :start_link, [[dirs: state.watch_paths]])
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(FileSystem, :subscribe, [watcher_pid])
-      Process.monitor(watcher_pid)
-      {:ok, %{state | watcher_pid: watcher_pid}}
-    catch
-      :error, :undef ->
-        Logger.warning("FileSystem dependency not available, falling back to polling")
-        start_polling_watching(%{state | watch_strategy: :polling})
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    {:ok, watcher_pid} = apply(FileSystem, :start_link, [[dirs: state.watch_paths]])
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    apply(FileSystem, :subscribe, [watcher_pid])
+    Process.monitor(watcher_pid)
+    {:ok, %{state | watcher_pid: watcher_pid}}
+  catch
+    :error, :undef ->
+      Logger.warning("FileSystem dependency not available, falling back to polling")
+      start_polling_watching(%{state | watch_strategy: :polling})
 
-      error ->
-        Logger.error("Failed to start filesystem watcher: #{inspect(error)}")
-        # Fallback to polling
-        start_polling_watching(%{state | watch_strategy: :polling})
-    end
+    error ->
+      Logger.error("Failed to start filesystem watcher: #{inspect(error)}")
+      # Fallback to polling
+      start_polling_watching(%{state | watch_strategy: :polling})
   end
 
   defp start_polling_watching(state) do
@@ -563,11 +561,9 @@ defmodule ExMCP.Transport.Beam.ReloadManager do
   end
 
   defp test_mode? do
-    try do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(Mix, :env, []) == :test
-    catch
-      :error, :undef -> false
-    end
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    apply(Mix, :env, []) == :test
+  catch
+    :error, :undef -> false
   end
 end
