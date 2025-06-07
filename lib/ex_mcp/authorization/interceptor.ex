@@ -43,7 +43,7 @@ defmodule ExMCP.Authorization.Interceptor do
   """
   @spec handle_response({:ok, any()} | {:error, any()}, map()) ::
           {:ok, any()} | {:retry, map()} | {:error, any()}
-  def handle_response({:ok, {{_, status, _}, headers, body}} = response, state)
+  def handle_response({:ok, {{_, status, _}, headers, body}} = _response, state)
       when status in [401, 403] do
     case ErrorHandler.handle_auth_error(status, headers, body, state) do
       {:retry, auth_params} ->
@@ -51,13 +51,10 @@ defmodule ExMCP.Authorization.Interceptor do
 
       {:error, reason} ->
         {:error, reason}
-
-      :ok ->
-        response
     end
   end
 
-  def handle_response(response, _state), do: response
+  def handle_response(response, _opts), do: {:ok, response}
 
   @doc """
   Creates an authorization-aware request function.
@@ -76,9 +73,6 @@ defmodule ExMCP.Authorization.Interceptor do
            {:ok, _} = ok_response <- handle_response(response, opts) do
         ok_response
       else
-        {:retry, auth_params} ->
-          handle_auth_retry(request, request_fn, auth_params, opts)
-
         error ->
           error
       end
@@ -119,32 +113,5 @@ defmodule ExMCP.Authorization.Interceptor do
 
   defp add_authorization_header(request, token, type) when is_map(request) do
     Map.put(request, :headers, [{"Authorization", "#{type} #{token}"}])
-  end
-
-  defp handle_auth_retry(request, request_fn, %{action: :refresh_token} = auth_params, opts) do
-    # Attempt to refresh token
-    case refresh_token(auth_params, opts) do
-      {:ok, _new_token} ->
-        # Retry request with new token
-        wrap_request_fn(request_fn, opts).(request)
-
-      error ->
-        error
-    end
-  end
-
-  defp handle_auth_retry(_request, _request_fn, %{action: :authorize} = auth_params, _opts) do
-    # Can't automatically handle authorization flow
-    {:error, {:authorization_required, auth_params}}
-  end
-
-  defp refresh_token(%{refresh_token: _refresh_token}, opts) do
-    case opts[:token_manager] do
-      nil ->
-        {:error, :no_token_manager}
-
-      manager ->
-        TokenManager.refresh_now(manager)
-    end
   end
 end

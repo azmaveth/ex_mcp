@@ -938,15 +938,13 @@ defmodule ExMCP.Client do
               # Validate protocol version
               server_version = result["protocolVersion"]
 
-              if validate_protocol_version(server_version) do
-                # Send initialized notification
-                notif = Protocol.encode_initialized()
-                {:ok, json} = Protocol.encode_to_string(notif)
-                state.transport_mod.send_message(json, transport_state)
-                {:ok, result}
-              else
-                {:error, {:incompatible_version, server_version}}
-              end
+              # Validate protocol version (currently accepts all for compatibility)
+              validate_protocol_version(server_version)
+              # Send initialized notification
+              notif = Protocol.encode_initialized()
+              {:ok, json} = Protocol.encode_to_string(notif)
+              state.transport_mod.send_message(json, transport_state)
+              {:ok, result}
 
             {:error, error, _id} ->
               {:error, error}

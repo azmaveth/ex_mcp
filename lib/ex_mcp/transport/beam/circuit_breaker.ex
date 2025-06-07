@@ -84,7 +84,7 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
   @doc """
   Creates a new circuit breaker with the given configuration.
   """
-  @spec new(config()) :: t()
+  @spec new(config() | map()) :: t()
   def new(config \\ %{}) do
     full_config = Map.merge(@default_config, config)
 

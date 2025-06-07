@@ -172,6 +172,16 @@ defmodule ExMCP.Transport.Beam do
 
   defmodule State do
     @moduledoc false
+
+    @type t :: %__MODULE__{
+            mailbox_pid: pid() | nil,
+            mode: :client | :server,
+            peer_ref: term() | nil,
+            security: map() | nil,
+            authenticated: boolean(),
+            format: :json | :native
+          }
+
     defstruct [:mailbox_pid, :mode, :peer_ref, :security, :authenticated, :format]
   end
 

@@ -19,12 +19,18 @@ defmodule ExMCP.Server.Handler.Echo do
   def handle_initialize(_params, state) do
     {:ok,
      %{
-       name: "echo-server",
-       version: "1.0.0",
+       protocolVersion: "2025-03-26",
+       serverInfo: %{
+         name: "echo-server",
+         version: "1.0.0"
+       },
        capabilities: %{
-         tools: %{},
-         resources: %{},
-         prompts: %{}
+         tools: %{listChanged: false},
+         resources: %{listChanged: false, subscribe: false},
+         prompts: %{listChanged: false},
+         logging: %{},
+         completions: %{},
+         experimental: %{}
        }
      }, state}
   end

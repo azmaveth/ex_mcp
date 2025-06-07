@@ -110,7 +110,7 @@ defmodule ExMCP.Transport.Beam.Cluster do
   @doc """
   Starts a cluster coordinator with the given configuration.
   """
-  @spec start_link(cluster_config()) :: GenServer.on_start()
+  @spec start_link(cluster_config() | map()) :: GenServer.on_start()
   def start_link(config \\ %{}) do
     GenServer.start_link(__MODULE__, config)
   end

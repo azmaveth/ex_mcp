@@ -96,7 +96,8 @@ defmodule ExMCP.Transport.Beam.HotReload do
   Returns a reload manager process that monitors the handler module
   and manages reloads according to the configuration.
   """
-  @spec enable(GenServer.server(), reload_config()) ::
+  @spec enable(GenServer.server()) :: {:ok, pid()} | {:error, term()}
+  @spec enable(GenServer.server(), reload_config() | map()) ::
           {:ok, pid()} | {:error, term()}
   def enable(server, config \\ %{}) when is_pid(server) or is_atom(server) do
     full_config = Map.merge(@default_config, config)

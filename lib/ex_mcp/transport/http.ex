@@ -168,6 +168,9 @@ defmodule ExMCP.Transport.HTTP do
         {:error, reason} -> {:error, reason}
       end
     else
+      {:error, %Jason.EncodeError{} = reason} ->
+        {:error, {:encoding_error, reason}}
+
       {:error, reason} when is_atom(reason) ->
         {:error, {:encoding_error, reason}}
 

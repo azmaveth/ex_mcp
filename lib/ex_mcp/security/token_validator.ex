@@ -164,14 +164,14 @@ defmodule ExMCP.Security.TokenValidator do
         # No issuer restrictions
         :ok
 
-      %{iss: issuer} ->
+      %{iss: issuer} when is_list(trusted_issuers) and length(trusted_issuers) > 0 ->
         if issuer in trusted_issuers do
           :ok
         else
           {:error, :untrusted_issuer}
         end
 
-      _ ->
+      %{} ->
         {:error, :missing_issuer}
     end
   end

@@ -51,6 +51,7 @@ defmodule ExMCP.Transport.Beam.PartitionDetector do
 
   @type config :: %{
           cluster: GenServer.server(),
+          registry: GenServer.server(),
           detection_interval: non_neg_integer(),
           merge_strategy: merge_strategy(),
           partition_threshold: non_neg_integer(),
