@@ -416,7 +416,7 @@ defmodule ExMCP.Spec20250326Test do
     test "pagination with cursors works", %{client: client} do
       # First page
       {:ok, page1} = Client.list_tools(client)
-      # Our test returns all in one page  
+      # Our test returns all in one page
       assert Map.get(page1, :nextCursor) == nil
 
       # If there was a cursor, we'd use it

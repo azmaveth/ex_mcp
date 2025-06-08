@@ -97,7 +97,7 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
 
       # To properly test connection preservation during hot reload:
       # 1. Server must be initialized before accepting client connections
-      # 2. Clients must complete initialization handshake before making tool calls  
+      # 2. Clients must complete initialization handshake before making tool calls
       # 3. Hot reload should preserve the transport layer connections
 
       # This is a valuable test that should be fixed when the BEAM transport

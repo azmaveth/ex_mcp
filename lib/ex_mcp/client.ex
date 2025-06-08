@@ -1600,11 +1600,9 @@ defmodule ExMCP.Client do
   end
 
   defp safe_string_to_atom(key) do
-    try do
-      String.to_existing_atom(key)
-    rescue
-      ArgumentError -> key
-    end
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> key
   end
 
   # Authorization helpers

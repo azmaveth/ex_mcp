@@ -317,10 +317,10 @@ defmodule ExMCP.Transport.SSEClientTest do
   end
 
   defp send_raw_sse(server, data) do
-    ExMCP.Test.HTTPServer.send_sse_event(server.pid, data)
+    HTTPServer.send_sse_event(server.pid, data)
   end
 
   defp close_connection(server) do
-    ExMCP.Test.HTTPServer.close_sse_connections(server.pid)
+    HTTPServer.close_sse_connections(server.pid)
   end
 end
