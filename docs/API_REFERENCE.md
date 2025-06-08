@@ -21,6 +21,7 @@
 - [`ExMCP.Security.ClientRegistry`](#exmcpsecurityclientregistry) - Client accountability and audit trails
 - [`ExMCP.ServerManager`](#exmcpservermanager) - Multiple server management
 - [`ExMCP.Discovery`](#exmcpdiscovery) - Server discovery utilities
+- [`ExMCP.Logging`](#exmcplogging) - Structured logging with security sanitization
 - [`ExMCP.Types`](#exmcptypes) - Type definitions
 
 ---
@@ -303,6 +304,20 @@ requests = [
 # - {:complete, [ref, argument]}
 ```
 
+#### `set_log_level/3`
+Sets the minimum log level for the server.
+
+```elixir
+@spec set_log_level(GenServer.server(), String.t(), timeout()) :: 
+  {:ok, map()} | {:error, term()}
+
+# Example
+{:ok, _} = ExMCP.Client.set_log_level(client, "debug")
+{:ok, _} = ExMCP.Client.set_log_level(client, "warning")
+
+# Valid levels: "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"
+```
+
 #### `send_cancelled/3`
 Sends a cancellation notification for an in-flight request.
 
@@ -457,6 +472,25 @@ ExMCP.Server.notify_progress(server, "task-123", 50, 100, "Processing batch 1 of
 
 # Example without total but with message
 ExMCP.Server.notify_progress(server, "task-123", 1024, nil, "Processed 1024 records")
+```
+
+#### `send_log_message/4`
+Sends a structured log message to connected clients.
+
+```elixir
+@spec send_log_message(GenServer.server(), String.t(), String.t(), any()) :: :ok
+
+# Example - Simple message
+ExMCP.Server.send_log_message(server, "info", "Operation completed")
+
+# Example - With structured data
+ExMCP.Server.send_log_message(server, "error", "Database connection failed", %{
+  error: "timeout",
+  host: "localhost",
+  duration_ms: 5000
+})
+
+# Valid levels: "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"
 ```
 
 #### `ping/2`
@@ -1455,6 +1489,150 @@ ClientRegistry.record_request(
   "tools/call",
   "request-123"
 )
+```
+
+---
+
+## ExMCP.Logging
+
+Structured logging utilities with security sanitization and dual output to both MCP clients and Elixir Logger.
+
+### Functions
+
+#### `set_global_level/1`
+Sets the global minimum log level for all MCP servers.
+
+```elixir
+@spec set_global_level(String.t()) :: :ok | {:error, String.t()}
+
+# Example
+:ok = ExMCP.Logging.set_global_level("debug")
+{:error, "Invalid log level: verbose"} = ExMCP.Logging.set_global_level("verbose")
+
+# Valid levels: "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"
+```
+
+#### `get_global_level/0`
+Gets the current global minimum log level.
+
+```elixir
+@spec get_global_level() :: String.t()
+
+# Example
+level = ExMCP.Logging.get_global_level()
+# => "info" (default)
+```
+
+#### `level_enabled?/1`
+Checks if a given log level is enabled based on the global configuration.
+
+```elixir
+@spec level_enabled?(String.t()) :: boolean()
+
+# Example
+ExMCP.Logging.set_global_level("warning")
+ExMCP.Logging.level_enabled?("debug")   # => false
+ExMCP.Logging.level_enabled?("error")   # => true
+```
+
+#### `log/4`
+Logs a message at the specified level to both MCP clients and Elixir Logger.
+
+```elixir
+@spec log(GenServer.server() | nil, String.t(), String.t(), map() | nil) :: :ok
+
+# Example - Simple message
+ExMCP.Logging.log(server, "info", "Operation completed")
+
+# Example - With structured data (sensitive data automatically sanitized)
+ExMCP.Logging.log(server, "warning", "Login attempt", %{
+  username: "alice",
+  password: "secret123",  # Will be sanitized to remove sensitive data
+  ip_address: "192.168.1.1"
+})
+
+# Example - Without server (logs only to Elixir Logger)
+ExMCP.Logging.log(nil, "error", "System error", %{error_code: "E001"})
+```
+
+#### Convenience Functions
+
+```elixir
+@spec debug(GenServer.server() | nil, String.t(), map() | nil) :: :ok
+@spec info(GenServer.server() | nil, String.t(), map() | nil) :: :ok
+@spec warning(GenServer.server() | nil, String.t(), map() | nil) :: :ok
+@spec error(GenServer.server() | nil, String.t(), map() | nil) :: :ok
+@spec critical(GenServer.server() | nil, String.t(), map() | nil) :: :ok
+
+# Examples
+ExMCP.Logging.debug(server, "Debug information", %{step: "validation"})
+ExMCP.Logging.info(server, "Process started")
+ExMCP.Logging.warning(server, "Deprecated API used", %{endpoint: "/v1/old"})
+ExMCP.Logging.error(server, "Connection failed", %{host: "database.local"})
+ExMCP.Logging.critical(server, "System component down", %{component: "database"})
+```
+
+#### `valid_level?/1`
+Validates if a log level string is valid according to MCP specification.
+
+```elixir
+@spec valid_level?(String.t()) :: boolean()
+
+# Example
+ExMCP.Logging.valid_level?("info")     # => true
+ExMCP.Logging.valid_level?("verbose")  # => false
+```
+
+#### `valid_levels/0`
+Returns a list of all valid MCP log levels.
+
+```elixir
+@spec valid_levels() :: [String.t()]
+
+# Example
+levels = ExMCP.Logging.valid_levels()
+# => ["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]
+```
+
+### Security Features
+
+ExMCP.Logging automatically sanitizes sensitive data:
+
+- **Data Sanitization**: Removes fields containing "password", "secret", "token", "key", "auth", or "credential"
+- **Message Sanitization**: Replaces sensitive patterns in log messages with "***"
+- **Dual Output**: Logs to both MCP clients (via `notifications/message`) and Elixir Logger
+- **Level Filtering**: Only processes/sends messages that meet the minimum log level
+
+### Integration with Server Handlers
+
+The default server handler automatically integrates with ExMCP.Logging:
+
+```elixir
+defmodule MyServer do
+  use ExMCP.Server.Handler
+
+  @impl true
+  def handle_initialize(_params, state) do
+    {:ok, %{
+      name: "my-server",
+      version: "1.0.0",
+      capabilities: %{
+        tools: %{},
+        logging: %{}  # Declare logging capability
+      }
+    }, state}
+  end
+
+  # Default implementation uses ExMCP.Logging.set_global_level/1
+  # Override if you need custom behavior
+  @impl true
+  def handle_set_log_level(level, state) do
+    case ExMCP.Logging.set_global_level(level) do
+      :ok -> {:ok, state}
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+end
 ```
 
 ---

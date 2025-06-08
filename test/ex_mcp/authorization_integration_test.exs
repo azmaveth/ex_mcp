@@ -4,12 +4,15 @@ defmodule ExMCP.AuthorizationIntegrationTest do
   import Mox
 
   alias ExMCP.Authorization.TokenManager
-  alias ExMCP.Transport.MockTransport
+  alias ExMCP.Transport.Mock, as: MockTransport
 
   setup :verify_on_exit!
 
   describe "authorization integration" do
     setup do
+      # Set Mox to global mode for cross-process mocking
+      Mox.set_mox_global()
+
       # Set up mock transport
       Application.put_env(:ex_mcp, :transport_modules, %{
         mock: MockTransport
@@ -87,10 +90,49 @@ defmodule ExMCP.AuthorizationIntegrationTest do
     end
 
     test "client handles 403 forbidden responses" do
+      # Mock transport to connect successfully, handle initialization, then return 403 on API calls
+      MockTransport
+      |> expect(:connect, fn _opts -> {:ok, :mock_state} end)
+      |> stub(:receive_message, fn _state ->
+        # Block forever to simulate waiting for messages
+        Process.sleep(:infinity)
+        {:ok, nil, :mock_state}
+      end)
+      |> expect(:send_message, 3, fn json, state ->
+        # Parse the message to see what type it is
+        message = Jason.decode!(json)
+
+        case message do
+          %{"method" => "initialize", "id" => id} ->
+            # Send back a successful initialize response
+            response = %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => %{
+                "protocolVersion" => "2025-03-26",
+                "serverInfo" => %{"name" => "mock-server", "version" => "1.0.0"},
+                "capabilities" => %{"tools" => %{}}
+              }
+            }
+
+            # Simulate sending the response back to the client
+            send(self(), {:transport_message, Jason.encode!(response)})
+            {:ok, state}
+
+          %{"method" => "tools/list"} ->
+            # Return 403 for actual API calls
+            {:error, {:http_error, 403, "Forbidden: Insufficient permissions"}}
+
+          _ ->
+            # Handle other messages like notifications/initialized
+            {:ok, state}
+        end
+      end)
+
       # Start client with auth config
       {:ok, client} =
         ExMCP.Client.start_link(
-          transport: :http,
+          transport: MockTransport,
           url: "https://api.example.com",
           auth_config: %{
             client_id: "test-client",
@@ -102,14 +144,9 @@ defmodule ExMCP.AuthorizationIntegrationTest do
           }
         )
 
-      # Mock transport to return 403
-      MockTransport
-      |> expect(:send_message, fn _json, _state ->
-        {:error, {:http_error, 403, "Forbidden: Insufficient permissions"}}
-      end)
-
-      # Request should fail with permission error
-      assert {:error, {:auth_error, _}} = ExMCP.Client.list_tools(client)
+      # Request should fail with HTTP 403 error
+      assert {:error, {:http_error, 403, "Forbidden: Insufficient permissions"}} =
+               ExMCP.Client.list_tools(client)
     end
   end
 

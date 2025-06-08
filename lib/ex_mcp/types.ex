@@ -31,6 +31,8 @@ defmodule ExMCP.Types do
   @invalid_params -32602
   @internal_error -32603
 
+  # Common protocol atoms are now safely created in Client.atomize_keys/1
+
   # Core JSON-RPC types
   @type request_id :: String.t() | integer()
   @type progress_token :: String.t() | integer()

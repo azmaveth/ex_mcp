@@ -35,6 +35,8 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - 📦 **Batch Requests** - Send multiple requests in a single call
 - 🔁 **Bi-directional Communication** - Servers can make requests to clients
 - 👤 **Human-in-the-Loop** - Approval flows for sensitive operations
+- ❌ **Request Cancellation** - Cancel in-flight requests with `notifications/cancelled`
+- 📋 **Structured Logging** - RFC 5424 compliant logging with `logging/setLevel` control
 
 ### Transport Layers
 - 📝 **stdio** - Process communication via standard I/O
@@ -76,7 +78,6 @@ Enhanced features unique to ExMCP:
 These features are from the draft MCP specification and may not be compatible with all MCP implementations:
 
 - **Structured Tool Output** - Tools can define `outputSchema` and return `structuredContent` alongside regular content
-- **Logging Level Control** - Clients can use `logging/setLevel` to adjust server log verbosity
 
 ⚠️ **Note**: These features are not part of the official MCP 2025-03-26 specification and should only be used when connecting to servers that explicitly support draft features.
 
@@ -407,6 +408,68 @@ defmodule MyApprovalHandler do
     end
   end
 end
+```
+
+### Request Cancellation
+
+Cancel in-flight requests to improve responsiveness:
+
+```elixir
+# Start a slow operation
+task = Task.async(fn ->
+  ExMCP.Client.call_tool(client, "slow_operation", %{})
+end)
+
+# Get pending requests
+pending = ExMCP.Client.get_pending_requests(client)
+#=> [12345]
+
+# Cancel the request
+:ok = ExMCP.Client.send_cancelled(client, 12345, "User clicked cancel")
+
+# The task will return {:error, :cancelled}
+result = Task.await(task)
+#=> {:error, :cancelled}
+```
+
+### Structured Logging
+
+Comprehensive logging with automatic sanitization and dual output:
+
+```elixir
+# Configure global log level
+ExMCP.Logging.set_global_level("debug")
+
+# Client can control server log level
+{:ok, _} = ExMCP.Client.set_log_level(client, "warning")
+
+# Server logging with automatic security sanitization
+defmodule MyServer do
+  use ExMCP.Server.Handler
+
+  @impl true
+  def handle_call_tool("login", params, state) do
+    server = self()
+    
+    # This logs to both MCP clients AND Elixir Logger
+    # Sensitive data is automatically sanitized
+    ExMCP.Logging.info(server, "User login attempt", %{
+      username: params["username"],
+      password: params["password"],  # Will be sanitized to "***"
+      timestamp: DateTime.utc_now()
+    })
+    
+    # ... handle login logic
+    {:ok, result, state}
+  end
+end
+
+# All RFC 5424 log levels supported
+ExMCP.Logging.debug(server, "Debug info", %{details: "..."})
+ExMCP.Logging.info(server, "Operation completed") 
+ExMCP.Logging.warning(server, "Deprecated feature used")
+ExMCP.Logging.error(server, "Operation failed", %{error: "connection_timeout"})
+ExMCP.Logging.critical(server, "System component failure")
 ```
 
 ## ⚙️ Configuration

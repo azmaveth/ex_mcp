@@ -506,9 +506,15 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl true
-      def handle_set_log_level(_level, state) do
-        # Default implementation just returns ok without changing anything
-        {:ok, state}
+      def handle_set_log_level(level, state) do
+        # Default implementation integrates with ExMCP.Logging
+        case ExMCP.Logging.set_global_level(level) do
+          :ok ->
+            {:ok, state}
+
+          {:error, reason} ->
+            {:error, reason, state}
+        end
       end
 
       @impl true

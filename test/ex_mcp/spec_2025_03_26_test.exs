@@ -171,7 +171,7 @@ defmodule ExMCP.Spec20250326Test do
             text: Jason.encode!(%{debug: true, version: "2.0"})
           }
 
-          {:ok, %{contents: [content]}, state}
+          {:ok, content, state}
       end
     end
 
@@ -328,10 +328,10 @@ defmodule ExMCP.Spec20250326Test do
         })
 
       # Should return both text and audio content
-      assert length(result) == 2
+      assert length(result.content) == 2
 
-      text_content = Enum.find(result, &(&1.type == "text"))
-      audio_content = Enum.find(result, &(&1.type == "audio"))
+      text_content = Enum.find(result.content, &(&1.type == "text"))
+      audio_content = Enum.find(result.content, &(&1.type == "audio"))
 
       assert text_content != nil
       assert audio_content != nil
@@ -360,14 +360,14 @@ defmodule ExMCP.Spec20250326Test do
           "value" => "/home/"
         })
 
-      assert is_list(result["completion"])
-      assert length(result["completion"]) > 0
-      assert Enum.all?(result["completion"], &String.starts_with?(&1, "/home/"))
+      assert is_list(result[:completion])
+      assert length(result[:completion]) > 0
+      assert Enum.all?(result[:completion], &String.starts_with?(&1, "/home/"))
     end
 
     test "log level control works", %{client: client} do
       # Set log level (new in 2025-03-26)
-      :ok = Client.set_log_level(client, "debug")
+      {:ok, %{}} = Client.set_log_level(client, "debug")
       Process.sleep(50)
 
       # Server should have updated its log level
@@ -416,12 +416,12 @@ defmodule ExMCP.Spec20250326Test do
     test "pagination with cursors works", %{client: client} do
       # First page
       {:ok, page1} = Client.list_tools(client)
-      # Our test returns all in one page
-      assert page1.nextCursor == nil
+      # Our test returns all in one page  
+      assert Map.get(page1, :nextCursor) == nil
 
       # If there was a cursor, we'd use it
-      if page1.nextCursor do
-        {:ok, page2} = Client.list_tools(client, cursor: page1.nextCursor)
+      if Map.get(page1, :nextCursor) do
+        {:ok, page2} = Client.list_tools(client, cursor: Map.get(page1, :nextCursor))
         assert is_list(page2.tools)
       end
     end
@@ -530,9 +530,9 @@ defmodule ExMCP.Spec20250326Test do
     test "structured error responses" do
       error =
         Protocol.encode_error(
-          %{code: -32602, message: "Invalid params"},
+          -32602,
+          "Invalid params",
           "Missing required field: path",
-          %{field: "path", type: "string"},
           123
         )
 

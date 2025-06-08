@@ -258,19 +258,17 @@ defmodule ExMCP.SpecDraftTest do
     end
 
     @impl true
-    def handle_elicitation_create(params, state) do
+    def handle_elicitation_create(message, requested_schema, state) do
       # Draft feature: Handle elicitation request from server
       elicitation = %{
-        id: params["id"],
-        type: params["type"],
-        prompt: params["prompt"],
-        options: params["options"]
+        message: message,
+        schema: requested_schema
       }
 
       # Auto-approve for testing
       response = %{
-        approved: true,
-        selectedOption: hd(params["options"] || [])
+        action: "accept",
+        content: %{approved: true}
       }
 
       new_state = %{state | elicitations: [elicitation | state.elicitations]}
@@ -347,11 +345,11 @@ defmodule ExMCP.SpecDraftTest do
       structured = Map.get(result, :structuredContent) || Map.get(result, "structuredContent")
 
       # Verify it matches the output schema
-      assert is_number(structured["temperature"])
-      assert is_binary(structured["conditions"])
-      assert is_number(structured["humidity"])
-      assert is_map(structured["wind"])
-      assert is_number(structured["wind"]["speed"])
+      assert is_number(structured[:temperature])
+      assert is_binary(structured[:conditions])
+      assert is_number(structured[:humidity])
+      assert is_map(structured[:wind])
+      assert is_number(structured[:wind][:speed])
     end
 
     test "OAuth Resource Server metadata is included", %{client: client} do
@@ -372,8 +370,8 @@ defmodule ExMCP.SpecDraftTest do
 
       # Result should indicate pending elicitation
       meta = Map.get(result, :meta) || Map.get(result, "meta")
-      assert meta["status"] == "pending_confirmation"
-      assert meta["elicitationId"]
+      assert meta[:status] == "pending_confirmation"
+      assert meta[:elicitationId]
 
       # Client handler would have received elicitation request
       # and auto-approved it in our test
@@ -438,8 +436,8 @@ defmodule ExMCP.SpecDraftTest do
 
       # Draft feature: security annotations on resources
       annotations = Map.get(resource, :annotations) || Map.get(resource, "annotations")
-      assert annotations["requiresAuth"] == true
-      assert "mcp:read" in annotations["scopes"]
+      assert annotations[:requiresAuth] == true
+      assert "mcp:read" in annotations[:scopes]
     end
 
     test "error results can use isError flag", %{client: _client} do

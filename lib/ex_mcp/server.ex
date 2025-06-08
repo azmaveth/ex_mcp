@@ -244,10 +244,11 @@ defmodule ExMCP.Server do
   - server: The server process
   - level: Log level ("debug", "info", "warning", "error")
   - message: The log message content
+  - data: Optional structured data (map or any JSON-serializable data)
   """
-  @spec send_log_message(GenServer.server(), String.t(), String.t()) :: :ok
-  def send_log_message(server, level, message) do
-    GenServer.cast(server, {:send_log_message, level, message})
+  @spec send_log_message(GenServer.server(), String.t(), String.t(), any()) :: :ok
+  def send_log_message(server, level, message, data \\ nil) do
+    GenServer.cast(server, {:send_log_message, level, message, data})
   end
 
   @doc """
@@ -390,15 +391,23 @@ defmodule ExMCP.Server do
     send_notification(Protocol.encode_progress(progress_token, progress, total, message), state)
   end
 
-  def handle_cast({:send_log_message, level, message}, state) do
-    notification =
-      Protocol.encode_notification("notifications/message", %{
-        "level" => level,
-        "logger" => "ExMCP.Server",
-        "data" => message
-      })
+  def handle_cast({:send_log_message, level, message, data}, state) do
+    params = %{
+      "level" => level,
+      "logger" => "ExMCP.Server",
+      "message" => message
+    }
 
+    # Add data field if provided
+    params = if data, do: Map.put(params, "data", data), else: params
+
+    notification = Protocol.encode_notification("notifications/message", params)
     send_message(notification, state)
+  end
+
+  # Legacy handler for backward compatibility (without data parameter)
+  def handle_cast({:send_log_message, level, message}, state) do
+    handle_cast({:send_log_message, level, message, nil}, state)
   end
 
   # Handle manual message injection for testing
@@ -1109,12 +1118,30 @@ defmodule ExMCP.Server do
          %{"requestId" => request_id} = params,
          state
        )
-       when is_binary(request_id) do
+       when is_binary(request_id) or is_integer(request_id) do
     reason = Map.get(params, "reason")
     Logger.info("Request #{request_id} cancelled: #{reason || "no reason given"}")
 
+    # Normalize request_id to match what's stored in pending_requests
+    # Server stores integer IDs internally but may receive string IDs from client
+    normalized_id =
+      cond do
+        is_integer(request_id) ->
+          request_id
+
+        is_binary(request_id) ->
+          case Integer.parse(request_id) do
+            {id, ""} -> id
+            # Keep as string if not parseable
+            _ -> request_id
+          end
+
+        true ->
+          request_id
+      end
+
     # Check if this is a valid in-progress request
-    case Map.get(state.pending_requests, request_id) do
+    case Map.get(state.pending_requests, normalized_id) do
       nil ->
         # Request not found or already completed - ignore as per spec
         Logger.debug("Ignoring cancellation for unknown request #{request_id}")
@@ -1125,7 +1152,7 @@ defmodule ExMCP.Server do
         Logger.debug("Cancelling in-progress request #{request_id}")
 
         # Remove from pending requests
-        new_pending = Map.delete(state.pending_requests, request_id)
+        new_pending = Map.delete(state.pending_requests, normalized_id)
         new_state = %{state | pending_requests: new_pending}
 
         # Per MCP spec: SHOULD not send a response for cancelled request
@@ -1388,11 +1415,16 @@ defmodule ExMCP.Server do
     # Initialize new handler with existing state structure
     case new_handler_module.init([]) do
       {:ok, new_default_state} ->
-        # For now, use simple state preservation
-        # In a production system, you might want more sophisticated migration
+        # Smart state migration for hot reloading
+        # Preserve data fields but update code-related fields from new handler
         migrated_state =
           if is_map(state.handler_state) and is_map(new_default_state) do
-            Map.merge(new_default_state, state.handler_state)
+            # Code-related fields that should come from new handler
+            code_fields = [:version, :description, :name]
+
+            # Start with new state, then merge old state excluding code fields
+            old_data_only = Map.drop(state.handler_state, code_fields)
+            Map.merge(new_default_state, old_data_only)
           else
             new_default_state
           end

@@ -303,18 +303,8 @@ defmodule ExMCP.Transport.HTTP do
 
     case SSEClient.start_link(opts) do
       {:ok, sse_pid} ->
-        # Wait for connection confirmation
-        receive do
-          {:sse_connected, ^sse_pid} ->
-            {:ok, sse_pid}
-
-          {:sse_error, ^sse_pid, reason} ->
-            {:error, reason}
-        after
-          10_000 ->
-            Process.exit(sse_pid, :kill)
-            {:error, :connection_timeout}
-        end
+        # Return immediately, connection happens asynchronously
+        {:ok, sse_pid}
 
       {:error, reason} ->
         {:error, reason}

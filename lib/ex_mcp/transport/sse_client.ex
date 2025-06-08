@@ -103,11 +103,10 @@ defmodule ExMCP.Transport.SSEClient do
       {:ok, ref} ->
         # Store the reference but don't send connected message yet
         # We'll send it when we receive :stream_start
+        # Don't reset retry_delay here - only reset when stream actually starts
         new_state = %{
           state
-          | ref: ref,
-            retry_count: 0,
-            retry_delay: @initial_retry_delay
+          | ref: ref
         }
 
         {:noreply, new_state}
@@ -131,9 +130,9 @@ defmodule ExMCP.Transport.SSEClient do
 
     new_state =
       if retry_after do
-        %{state | retry_delay: retry_after * 1000, heartbeat_ref: heartbeat_ref}
+        %{state | retry_delay: retry_after * 1000, heartbeat_ref: heartbeat_ref, retry_count: 0}
       else
-        %{state | heartbeat_ref: heartbeat_ref}
+        %{state | retry_delay: @initial_retry_delay, heartbeat_ref: heartbeat_ref, retry_count: 0}
       end
 
     {:noreply, new_state}
@@ -339,7 +338,7 @@ defmodule ExMCP.Transport.SSEClient do
     end
 
     # Calculate delay with exponential backoff
-    delay = min(state.retry_delay, @max_retry_delay)
+    delay = state.retry_delay
     new_delay = min(delay * 2, @max_retry_delay)
 
     Logger.info("Scheduling SSE reconnection in #{delay}ms")

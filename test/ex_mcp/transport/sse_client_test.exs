@@ -2,7 +2,7 @@ defmodule ExMCP.Transport.SSEClientTest do
   @moduledoc """
   Tests for the enhanced SSE client with keep-alive and reconnection.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ExMCP.Test.HTTPServer
   alias ExMCP.Transport.SSEClient
@@ -24,10 +24,13 @@ defmodule ExMCP.Transport.SSEClientTest do
       # Should receive connection confirmation
       assert_receive {:sse_connected, ^client}, 5000
 
+      # Consume the initial "connected" event
+      assert_receive {:sse_event, ^client, %{data: _}}, 1000
+
       # Send a test event from server
       send_sse_event(server, %{data: ~s({"type": "test", "message": "hello"})})
 
-      # Should receive the event
+      # Should receive the test event
       assert_receive {:sse_event, ^client, %{data: data}}, 1000
       assert data =~ "hello"
 
@@ -69,8 +72,15 @@ defmodule ExMCP.Transport.SSEClientTest do
       close_connection(server)
       assert_receive {:sse_closed, ^client}, 5000
 
+      # Stop server to free the port
+      port = server.port
+      stop_mock_server(server)
+
+      # Wait a bit for port to be freed
+      Process.sleep(100)
+
       # Restart server on same port
-      {:ok, server} = start_mock_sse_server(port: server.port)
+      {:ok, server} = start_mock_sse_server(port: port)
 
       # Should reconnect automatically
       assert_receive {:sse_connected, ^client}, 10000
@@ -88,21 +98,27 @@ defmodule ExMCP.Transport.SSEClientTest do
           parent: self()
         )
 
-      # Track reconnection attempts
-      start_time = System.monotonic_time(:millisecond)
+      # Collect first few error messages to verify exponential backoff
+      assert_receive {:sse_error, ^client, _}, 1000
+      t1 = System.monotonic_time(:millisecond)
 
-      # Start server after some delay
-      spawn(fn ->
-        Process.sleep(3000)
-        start_mock_sse_server(port: 9999)
-      end)
+      assert_receive {:sse_error, ^client, _}, 2000
+      t2 = System.monotonic_time(:millisecond)
 
-      # Should eventually connect
-      assert_receive {:sse_connected, ^client}, 15000
+      assert_receive {:sse_error, ^client, _}, 5000
+      t3 = System.monotonic_time(:millisecond)
 
-      # Connection should have taken at least 3 seconds due to backoff
-      elapsed = System.monotonic_time(:millisecond) - start_time
-      assert elapsed >= 3000
+      # Verify exponential backoff timing
+      # First interval should be ~1000ms, second should be ~2000ms
+      interval1 = t2 - t1
+      interval2 = t3 - t2
+
+      # Allow some tolerance for timing
+      assert interval1 >= 900 and interval1 <= 1100,
+             "First interval was #{interval1}ms, expected ~1000ms"
+
+      assert interval2 >= 1800 and interval2 <= 2200,
+             "Second interval was #{interval2}ms, expected ~2000ms"
 
       # Clean up
       SSEClient.stop(client)
@@ -120,6 +136,9 @@ defmodule ExMCP.Transport.SSEClientTest do
         )
 
       assert_receive {:sse_connected, ^client}, 5000
+
+      # Consume the initial "connected" event
+      assert_receive {:sse_event, ^client, %{type: "connected"}}, 1000
 
       # Send various event formats
       send_sse_event(server, %{
@@ -147,6 +166,9 @@ defmodule ExMCP.Transport.SSEClientTest do
         )
 
       assert_receive {:sse_connected, ^client}, 5000
+
+      # Consume the initial "connected" event
+      assert_receive {:sse_event, ^client, %{type: "connected"}}, 1000
 
       # Send multiline data
       send_raw_sse(server, """
@@ -208,7 +230,8 @@ defmodule ExMCP.Transport.SSEClientTest do
       assert_receive {:sse_connected, ^client}, 5000
 
       # Verify headers were sent
-      assert server.last_headers["authorization"] == "Bearer test-token"
+      last_headers = ExMCP.Test.HTTPServer.get_last_headers(server.pid)
+      assert last_headers["authorization"] == "Bearer test-token"
 
       SSEClient.stop(client)
       stop_mock_server(server)
@@ -258,8 +281,8 @@ defmodule ExMCP.Transport.SSEClientTest do
 
   # Helper functions for mocking SSE server
 
-  defp start_mock_sse_server(_opts \\ []) do
-    {:ok, server} = HTTPServer.start_link()
+  defp start_mock_sse_server(opts \\ []) do
+    {:ok, server} = HTTPServer.start_link(opts)
     url = HTTPServer.get_url(server)
     port = URI.parse(url).port
 
@@ -273,7 +296,12 @@ defmodule ExMCP.Transport.SSEClientTest do
   end
 
   defp stop_mock_server(server) do
-    if server[:pid] do
+    if server[:pid] && Process.alive?(server.pid) do
+      # Close all SSE connections first to prevent race conditions
+      HTTPServer.close_sse_connections(server.pid)
+      # Give connections time to close
+      Process.sleep(10)
+      # Now stop the server
       HTTPServer.stop(server.pid)
     else
       :ok
@@ -288,13 +316,11 @@ defmodule ExMCP.Transport.SSEClientTest do
     send_raw_sse(server, data <> "\n\n")
   end
 
-  defp send_raw_sse(_server, _data) do
-    # Mock implementation
-    :ok
+  defp send_raw_sse(server, data) do
+    ExMCP.Test.HTTPServer.send_sse_event(server.pid, data)
   end
 
-  defp close_connection(_server) do
-    # Mock implementation
-    :ok
+  defp close_connection(server) do
+    ExMCP.Test.HTTPServer.close_sse_connections(server.pid)
   end
 end

@@ -326,7 +326,9 @@ defmodule ExMCP.Transport.Beam.HotReload do
       {:init, 1},
       {:handle_initialize, 2},
       # Takes cursor and state
-      {:handle_list_tools, 2}
+      {:handle_list_tools, 2},
+      # Required by Handler behaviour
+      {:terminate, 2}
     ]
 
     errors =

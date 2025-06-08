@@ -1532,13 +1532,13 @@ defmodule ExMCP.Client do
   # Helper to atomize keys in response maps
   defp atomize_keys(map) when is_map(map) do
     Map.new(map, fn
-      {k, v} when is_binary(k) -> {String.to_existing_atom(k), atomize_keys(v)}
-      {k, v} -> {k, atomize_keys(v)}
+      {k, v} when is_binary(k) ->
+        atom_key = safe_string_to_atom(k)
+        {atom_key, atomize_keys(v)}
+
+      {k, v} ->
+        {k, atomize_keys(v)}
     end)
-  rescue
-    ArgumentError ->
-      # If atom doesn't exist, keep string keys
-      Map.new(map, fn {k, v} -> {k, atomize_keys(v)} end)
   end
 
   defp atomize_keys(list) when is_list(list) do
@@ -1546,6 +1546,66 @@ defmodule ExMCP.Client do
   end
 
   defp atomize_keys(value), do: value
+
+  # Safe string to atom conversion for known MCP protocol keys
+  defp safe_string_to_atom(key)
+       when key in [
+              "mimeType",
+              "nextCursor",
+              "tools",
+              "resources",
+              "prompts",
+              "contents",
+              "uri",
+              "text",
+              "blob",
+              "name",
+              "description",
+              "version",
+              "capabilities",
+              "protocolVersion",
+              "serverInfo",
+              "clientInfo",
+              "messages",
+              "role",
+              "content",
+              "type",
+              "inputSchema",
+              "outputSchema",
+              "annotations",
+              "arguments",
+              "required",
+              "listChanged",
+              "subscribe",
+              "hasArguments",
+              "values",
+              "experimental",
+              "batchProcessing",
+              "completion",
+              "temperature",
+              "conditions",
+              "humidity",
+              "wind",
+              "speed",
+              "direction",
+              "structuredContent",
+              "isError",
+              "meta",
+              "status",
+              "elicitationId",
+              "requiresAuth",
+              "scopes"
+            ] do
+    String.to_atom(key)
+  end
+
+  defp safe_string_to_atom(key) do
+    try do
+      String.to_existing_atom(key)
+    rescue
+      ArgumentError -> key
+    end
+  end
 
   # Authorization helpers
 

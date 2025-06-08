@@ -96,7 +96,9 @@ defmodule ExMCP.VersionRegistry do
       experimental: %{
         elicitation: true,
         structuredContent: true,
-        toolOutputSchema: true
+        toolOutputSchema: true,
+        # Draft removes batch processing
+        batchProcessing: false
       }
     }
   end

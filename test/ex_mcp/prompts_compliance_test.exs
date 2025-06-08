@@ -56,7 +56,7 @@ defmodule ExMCP.PromptsComplianceTest do
           case validate_arguments(prompt, arguments) do
             :ok ->
               messages = generate_messages(prompt, arguments)
-              {:ok, messages, state}
+              {:ok, %{messages: messages}, state}
 
             {:error, reason} ->
               {:error, reason, state}

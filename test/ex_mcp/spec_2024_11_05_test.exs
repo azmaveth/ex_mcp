@@ -100,6 +100,11 @@ defmodule ExMCP.Spec20241105Test do
     end
 
     @impl true
+    def handle_call_tool(name, _arguments, state) do
+      {:error, "Tool not found: #{name}", state}
+    end
+
+    @impl true
     def handle_list_resources(_cursor, state) do
       {:ok, state.resources, nil, state}
     end
@@ -116,13 +121,9 @@ defmodule ExMCP.Spec20241105Test do
 
       {:ok,
        %{
-         contents: [
-           %{
-             uri: "file:///config.json",
-             mimeType: "application/json",
-             text: Jason.encode!(content)
-           }
-         ]
+         uri: "file:///config.json",
+         mimeType: "application/json",
+         text: Jason.encode!(content)
        }, state}
     end
 
@@ -231,8 +232,8 @@ defmodule ExMCP.Spec20241105Test do
           "b" => 3
         })
 
-      assert length(calc_result) == 1
-      assert hd(calc_result).text == "Result: 8"
+      assert length(calc_result.content) == 1
+      assert hd(calc_result.content).text == "Result: 8"
     end
 
     test "resources feature works correctly", %{client: client} do
@@ -311,7 +312,7 @@ defmodule ExMCP.Spec20241105Test do
       {:ok, result} = Client.list_tools(client)
 
       # Our test handler returns nil cursor (no more pages)
-      assert result.nextCursor == nil
+      assert Map.get(result, :nextCursor) == nil
     end
 
     test "2025-03-26 features are not available", %{client: client} do

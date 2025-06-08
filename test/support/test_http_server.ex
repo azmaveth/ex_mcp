@@ -40,6 +40,21 @@ defmodule ExMCP.Test.HTTPServer do
     GenServer.call(server, :clear_requests)
   end
 
+  def send_sse_event(server, data) do
+    GenServer.call(server, {:send_sse_event, data})
+  end
+
+  def get_last_headers(server) do
+    case get_last_request(server) do
+      %{headers: headers} -> headers
+      _ -> %{}
+    end
+  end
+
+  def close_sse_connections(server) do
+    GenServer.call(server, :close_sse_connections)
+  end
+
   # Server callbacks
 
   @impl true
@@ -109,8 +124,28 @@ defmodule ExMCP.Test.HTTPServer do
   end
 
   @impl true
-  def handle_call({:add_sse_client, client_id}, _from, state) do
-    {:reply, :ok, %{state | sse_clients: [client_id | state.sse_clients]}}
+  def handle_call({:add_sse_client, client_pid}, _from, state) do
+    {:reply, :ok, %{state | sse_clients: [client_pid | state.sse_clients]}}
+  end
+
+  @impl true
+  def handle_call({:send_sse_event, data}, _from, state) do
+    # Send event to all connected SSE clients
+    for client_pid <- state.sse_clients do
+      send(client_pid, {:send_event, data})
+    end
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:close_sse_connections, _from, state) do
+    # Close all SSE connections
+    for client_pid <- state.sse_clients do
+      send(client_pid, :close)
+    end
+
+    {:reply, :ok, %{state | sse_clients: []}}
   end
 end
 
@@ -230,7 +265,7 @@ defmodule ExMCP.Test.HTTPServer.SSEHandler do
     }
 
     GenServer.call(server, {:add_request, request})
-    GenServer.call(server, {:add_sse_client, client_id})
+    GenServer.call(server, {:add_sse_client, self()})
 
     # Send SSE headers
     req2 =
@@ -245,12 +280,8 @@ defmodule ExMCP.Test.HTTPServer.SSEHandler do
         req
       )
 
-    # Send initial event
-    :cowboy_req.stream_body(
-      ~s(event: connected\ndata: {"clientId":"#{client_id}"}\n\n),
-      :nofin,
-      req2
-    )
+    # Send initial event after a small delay to ensure client is ready
+    Process.send_after(self(), :send_initial_event, 50)
 
     # Keep connection alive
     sse_loop(req2, client_id)
@@ -258,6 +289,15 @@ defmodule ExMCP.Test.HTTPServer.SSEHandler do
 
   defp sse_loop(req, client_id) do
     receive do
+      :send_initial_event ->
+        :cowboy_req.stream_body(
+          ~s(event: connected\ndata: {"clientId":"#{client_id}"}\n\n),
+          :nofin,
+          req
+        )
+
+        sse_loop(req, client_id)
+
       {:send_event, event} ->
         :cowboy_req.stream_body(event, :nofin, req)
         sse_loop(req, client_id)

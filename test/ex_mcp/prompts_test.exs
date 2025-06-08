@@ -63,7 +63,7 @@ defmodule ExMCP.PromptsTest do
 
         prompt ->
           messages = generate_prompt_messages(prompt, arguments)
-          {:ok, messages, state}
+          {:ok, %{messages: messages}, state}
       end
     end
 
