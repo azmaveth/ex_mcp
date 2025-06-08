@@ -269,10 +269,17 @@ defmodule ExMCP.Authorization do
     # Add grant-specific parameters
     cond do
       config[:refresh_token] ->
-        Map.merge(base_params, %{
+        params = Map.merge(base_params, %{
           "grant_type" => "refresh_token",
           "refresh_token" => config[:refresh_token]
         })
+        
+        # Add client_secret if provided (for confidential clients)
+        if config[:client_secret] do
+          Map.put(params, "client_secret", config[:client_secret])
+        else
+          params
+        end
 
       config[:code] ->
         Map.merge(base_params, %{
@@ -282,7 +289,7 @@ defmodule ExMCP.Authorization do
           "code_verifier" => config[:code_verifier]
         })
 
-      config[:client_secret] && !config[:refresh_token] ->
+      config[:client_secret] ->
         Map.merge(base_params, %{
           "grant_type" => "client_credentials",
           "client_secret" => config[:client_secret],

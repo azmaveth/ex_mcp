@@ -95,22 +95,35 @@
   - [x] Add TLS/SSL configuration options for all transports
   - [x] Implement certificate validation options
   - [ ] Add mutual TLS support
-- [ ] OAuth 2.1 Authorization Framework (2025-03-26 feature)
-  - [ ] Implement client credentials flow
-  - [ ] Add authorization code flow with PKCE
-  - [ ] Token refresh mechanism
+- [x] OAuth 2.1 Authorization Framework (2025-03-26 feature) ✅
+  - [x] Implement client credentials flow
+  - [x] Add authorization code flow with PKCE
+  - [x] Token refresh mechanism
   - [x] Bearer token authentication for HTTP transport
+  - [x] Authorization server metadata discovery (RFC 8414)
+  - [x] Dynamic client registration (RFC 7591)
+  - [x] Protected resource metadata (RFC 9728 draft)
+  - [x] PKCE S256 code challenge method (RFC 7636)
+  - [x] Token rotation for public clients
+  - [x] Automatic token refresh with configurable window
 
 ### Protocol Compliance Gaps (High)
 **Priority: HIGH - Required for full MCP spec compliance**
-- [ ] Cancellation Protocol
-  - [ ] Implement notifications/cancelled message handling
-  - [ ] Add request cancellation API in client
-  - [ ] Handle cancelled requests in server
-- [ ] Logging Control
-  - [ ] Implement logging/setLevel request handler
-  - [ ] Add configurable logging levels
-  - [ ] Integrate with Elixir Logger properly
+- [x] Cancellation Protocol ✅
+  - [x] Implement notifications/cancelled message handling
+  - [x] Add request cancellation API in client (`Client.send_cancelled/3`)
+  - [x] Handle cancelled requests in server
+  - [x] Track pending requests (`Client.get_pending_requests/1`)
+  - [x] Validate that initialize request cannot be cancelled
+  - [x] Handle race conditions and late cancellations gracefully
+- [x] Logging Control ✅
+  - [x] Implement logging/setLevel request handler
+  - [x] Add configurable logging levels (RFC 5424 syslog levels)
+  - [x] Integrate with Elixir Logger properly
+  - [x] Automatic log level conversion between MCP and Elixir Logger
+  - [x] Structured logging with `notifications/message`
+  - [x] Security: automatic sanitization of sensitive data
+  - [x] `ExMCP.Logging` module for centralized logging management
 - [ ] Missing Protocol Methods
   - [ ] Add full progress token support across all methods
   - [ ] Support _meta field in all request types

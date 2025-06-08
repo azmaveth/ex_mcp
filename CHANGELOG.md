@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **OAuth 2.1 Authorization Framework** (MCP 2025-03-26 specification)
+  - Full OAuth 2.1 implementation with:
+    - Authorization Code Flow with mandatory PKCE (RFC 7636)
+    - Client Credentials Flow for service-to-service authentication
+    - Authorization Server Metadata Discovery (RFC 8414)
+    - Dynamic Client Registration (RFC 7591)
+    - Protected Resource Metadata Discovery (RFC 9728 draft)
+  - Token Management:
+    - Automatic token refresh with configurable window
+    - Token rotation for public clients
+    - Token validation and introspection support
+    - Secure token storage in GenServer state
+  - Security Features:
+    - PKCE S256 code challenge method required for all authorization code flows
+    - HTTPS enforcement for all OAuth endpoints (except localhost)
+    - No tokens in URLs - all tokens in headers
+    - Bearer token authentication for HTTP transports
+  - Integration:
+    - `ExMCP.Authorization` module for OAuth flows
+    - `ExMCP.Authorization.TokenManager` for automatic token lifecycle
+    - `ExMCP.Authorization.PKCE` for code challenge generation/verification
+    - Transport-level OAuth support for SSE, HTTP, and WebSocket
+  - Comprehensive test coverage: 217+ passing OAuth tests
+
+- **Cancellation Protocol Implementation** (MCP specification compliance)
+  - Full support for `notifications/cancelled` messages
+  - Client-side cancellation API: `ExMCP.Client.send_cancelled/3`
+  - Request tracking: `ExMCP.Client.get_pending_requests/1` 
+  - Automatic cleanup of cancelled in-progress requests
+  - Validation that initialize request cannot be cancelled per spec
+  - Proper handling of race conditions and late cancellations
+  - Comprehensive test coverage with 12 passing tests
+
+- **Logging Control Implementation** (MCP specification compliance)
+  - `logging/setLevel` request handler with RFC 5424 syslog levels
+  - Full integration with Elixir's Logger system
+  - `ExMCP.Logging` module for centralized logging management
+  - Automatic log level conversion between MCP and Elixir formats
+  - Structured logging via `notifications/message`
+  - Security features:
+    - Automatic sanitization of sensitive data (passwords, tokens, keys)
+    - Rate limiting support
+    - Configurable logger names
+  - Comprehensive test coverage with 33 passing tests
+
 - **MCP Specification Compliance Updates**
   - Initialize request batch validation - prevents `initialize` from being part of JSON-RPC batch per spec
   - Audio content type support with `ExMCP.Content` module and examples
