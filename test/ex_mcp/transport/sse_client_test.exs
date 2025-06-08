@@ -230,7 +230,7 @@ defmodule ExMCP.Transport.SSEClientTest do
       assert_receive {:sse_connected, ^client}, 5000
 
       # Verify headers were sent
-      last_headers = ExMCP.Test.HTTPServer.get_last_headers(server.pid)
+      last_headers = HTTPServer.get_last_headers(server.pid)
       assert last_headers["authorization"] == "Bearer test-token"
 
       SSEClient.stop(client)
