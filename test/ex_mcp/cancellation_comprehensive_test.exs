@@ -326,7 +326,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          server: :cancel_race_test)
+          server: :cancel_race_test
         )
       
       Process.sleep(100)
@@ -381,14 +381,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
       {:ok, server} =
         Server.start_link(
           transport: :beam,
-          name: :bidir_cancel_test},
+          name: :bidir_cancel_test,
           handler: SlowHandler
         )
       
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          server: :bidir_cancel_test}
+          server: :bidir_cancel_test
         )
       
       Process.sleep(100)
@@ -420,14 +420,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
       {:ok, server} =
         Server.start_link(
           transport: :beam,
-          name: :cancel_error_test},
+          name: :cancel_error_test,
           handler: SlowHandler
         )
       
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          server: :cancel_error_test}
+          server: :cancel_error_test
         )
       
       Process.sleep(100)
@@ -481,14 +481,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
       {:ok, server} =
         Server.start_link(
           transport: :beam,
-          name: :impl_req_test},
+          name: :impl_req_test,
           handler: SlowHandler
         )
       
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          server: :impl_req_test}
+          server: :impl_req_test
         )
       
       Process.sleep(100)

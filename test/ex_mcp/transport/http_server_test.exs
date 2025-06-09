@@ -62,7 +62,7 @@ defmodule ExMCP.Transport.HTTPServerTest do
     def handle_set_log_level(_level, state), do: {:ok, state}
   end
 
-  defp create_plug(security_opts \\ %{}) do
+  defp create_plug(security_opts) do
     # Add test-friendly defaults
     default_security = %{
       validate_origin: false,

@@ -885,3 +885,137 @@ While ExMCP already has comprehensive server support, ash_ai demonstrates some a
 3. **Tool-First Configuration** - Simple tool list configuration in the router
 4. **Mix Task Generators** - Automated setup for common integration patterns
 5. **Framework-Specific Helpers** - Phoenix-specific forward routing patterns
+
+## Tool Implementation Improvements
+
+Based on analysis of other MCP libraries, the following improvements would enhance ExMCP's developer experience:
+
+### High Priority - Tool DSL Module (ExMCP.Server.Tools)
+
+Create a DSL that provides both simple and advanced APIs:
+
+```elixir
+defmodule MyServer do
+  use ExMCP.Server.Handler
+  use ExMCP.Server.Tools
+
+  # Simple API - for common cases
+  tool "echo", "Echo back the input" do
+    param :message, :string, required: true
+
+    handle fn %{message: message}, _state ->
+      {:ok, text: message}
+    end
+  end
+
+  # Advanced API - full control
+  tool "calculate" do
+    description "Perform mathematical calculations"
+
+    input_schema %{
+      type: "object",
+      properties: %{
+        expression: %{type: "string", pattern: "^[0-9+\\-*/().\\s]+$"}
+      }
+    }
+
+    output_schema %{
+      type: "object",
+      properties: %{
+        result: %{type: "number"},
+        expression: %{type: "string"}
+      }
+    }
+
+    annotations %{
+      readOnlyHint: true
+    }
+
+    handle fn %{expression: expr}, state ->
+      result = evaluate_expression(expr)
+      {:ok, %{
+        content: [%{type: "text", text: "Result: #{result}"}],
+        structuredContent: %{result: result, expression: expr}
+      }, state}
+    end
+  end
+end
+```
+
+**Tasks:**
+- [ ] Create ExMCP.Server.Tools module with DSL macros
+- [ ] Implement simple tool API with automatic schema generation
+- [ ] Implement advanced tool API with full control
+- [ ] Add compile-time validation of tool definitions
+- [ ] Support annotations (readOnlyHint, destructiveHint, etc.)
+- [ ] Generate proper MCP tool definitions from DSL
+- [ ] Maintain backward compatibility with existing handlers
+
+### High Priority - Helper Functions (ExMCP.Server.Tools.Helpers)
+
+```elixir
+defmodule ExMCP.Server.Tools.Helpers do
+  # Convert function specs to tool definitions
+  def function_to_tool(module, function, description)
+
+  # Validate arguments against schema
+  def validate_arguments(arguments, schema)
+
+  # Common response builders
+  def text_response(text)
+  def error_response(message)
+  def structured_response(text, data)
+end
+```
+
+**Tasks:**
+- [ ] Create ExMCP.Server.Tools.Helpers module
+- [ ] Implement function spec to JSON schema converter
+- [ ] Add argument validation using existing JSON schema libs
+- [ ] Create response builder helpers
+- [ ] Add documentation and examples
+
+### Medium Priority - Standard Tool Library
+
+```elixir
+defmodule ExMCP.Server.Tools.Standard do
+  use ExMCP.Server.Tools
+
+  include_standard_tool :echo
+  include_standard_tool :timestamp
+  include_standard_tool :random
+  include_standard_tool :http_request, only: [:get, :post]
+  include_standard_tool :file_operations, except: [:delete]
+end
+```
+
+**Tasks:**
+- [ ] Create standard tool library module
+- [ ] Implement common tools (echo, timestamp, random, etc.)
+- [ ] Add configurable inclusion/exclusion
+- [ ] Create comprehensive tests for each tool
+- [ ] Document usage patterns
+
+### Low Priority - Tool Registry (Optional Future Enhancement)
+
+```elixir
+defmodule ExMCP.Server.ToolRegistry do
+  use GenServer
+
+  # Register tools at runtime
+  def register_tool(server_name, tool_definition)
+
+  # Load tools from external files
+  def load_tools_from_file(server_name, path)
+
+  # Discover tools via module attributes
+  def discover_tools(module)
+end
+```
+
+**Tasks:**
+- [ ] Design tool registry architecture
+- [ ] Implement runtime tool registration
+- [ ] Add file-based tool loading (JSON/YAML)
+- [ ] Create tool discovery mechanism
+- [ ] Support hot code reloading for tools

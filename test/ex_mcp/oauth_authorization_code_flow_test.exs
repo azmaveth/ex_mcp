@@ -133,7 +133,7 @@ defmodule ExMCP.OAuthAuthorizationCodeFlowTest do
       }
 
       # Mock HTTP response for token exchange
-      mock_token_response = %{
+      _mock_token_response = %{
         "access_token" => "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
         "token_type" => "Bearer",
         "expires_in" => 3600,
@@ -392,7 +392,7 @@ defmodule ExMCP.OAuthAuthorizationCodeFlowTest do
       # Step 2: Simulate user authorization (normally done in browser)
       # Parse the auth URL to extract parameters
       uri = URI.parse(auth_url)
-      query_params = URI.decode_query(uri.query)
+      _query_params = URI.decode_query(uri.query)
 
       # Step 3: Simulate authorization server response with code
       mock_auth_code = "mock_authorization_code_12345"
