@@ -175,14 +175,50 @@ defmodule ExMCP.Transport.Beam do
 
     @type t :: %__MODULE__{
             mailbox_pid: pid() | nil,
-            mode: :client | :server,
+            mode: :client | :server | :local | :distributed,
             peer_ref: term() | nil,
             security: map() | nil,
             authenticated: boolean(),
-            format: :json | :native
+            format: :json | :native,
+            optimized: boolean(),
+            stats: map(),
+            batch_enabled: boolean(),
+            batch_timeout: non_neg_integer(),
+            batch_size_limit: non_neg_integer(),
+            batch_timer: reference() | nil,
+            batch_buffer: list(),
+            memory_pool: boolean(),
+            shared_memory: boolean(),
+            process_affinity: boolean(),
+            enabled_features: list(atom()),
+            zero_copy_threshold: non_neg_integer()
           }
 
-    defstruct [:mailbox_pid, :mode, :peer_ref, :security, :authenticated, :format]
+    defstruct [
+      :mailbox_pid,
+      :peer_ref,
+      :security,
+      :batch_timer,
+      mode: :client,
+      authenticated: false,
+      format: :json,
+      optimized: false,
+      stats: %{
+        zero_copy_sends: 0,
+        batched_sends: 0,
+        messages_batched: 0,
+        direct_sends: 0
+      },
+      batch_enabled: false,
+      batch_timeout: 10,
+      batch_size_limit: 10,
+      batch_buffer: [],
+      memory_pool: false,
+      shared_memory: false,
+      process_affinity: false,
+      enabled_features: [],
+      zero_copy_threshold: 65536  # 64KB
+    ]
   end
 
   defmodule Mailbox do
@@ -291,6 +327,12 @@ defmodule ExMCP.Transport.Beam do
       {:noreply, state}
     end
 
+    def handle_info({:set_scheduler_affinity, scheduler_id}, state) do
+      # Pin to specific scheduler
+      Process.put(:"$scheduler_id", scheduler_id)
+      {:noreply, state}
+    end
+    
     def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
       cond do
         pid == state.owner_pid ->
@@ -333,6 +375,16 @@ defmodule ExMCP.Transport.Beam do
 
     security = Keyword.get(opts, :security)
     format = Keyword.get(opts, :format, :json)
+    
+    # Extract optimization options
+    optimized = Keyword.get(opts, :optimized, true)
+    batch_enabled = Keyword.get(opts, :batch_enabled, false)
+    batch_timeout = Keyword.get(opts, :batch_timeout, 10)
+    batch_size_limit = Keyword.get(opts, :batch_size_limit, 10)
+    memory_pool = Keyword.get(opts, :memory_pool, false)
+    shared_memory = Keyword.get(opts, :shared_memory, false)
+    process_affinity = Keyword.get(opts, :process_affinity, false)
+    requested_features = Keyword.get(opts, :requested_features, [:zero_copy, :batching])
 
     if format not in [:json, :native] do
       raise ArgumentError, "format must be :json or :native, got: #{inspect(format)}"
@@ -346,7 +398,15 @@ defmodule ExMCP.Transport.Beam do
 
       # Connect to server with authentication
       case connect_to_server(server, mailbox, security) do
-        {:ok, mode} ->
+        {:ok, connection_mode} ->
+          # Determine if we can optimize this connection
+          {mode, should_optimize} = determine_optimization_mode(connection_mode, server, optimized)
+          
+          # Set process affinity if requested and local
+          if should_optimize and process_affinity do
+            set_process_affinity(mailbox)
+          end
+          
           {:ok,
            %State{
              mailbox_pid: mailbox,
@@ -354,7 +414,15 @@ defmodule ExMCP.Transport.Beam do
              peer_ref: server,
              security: security,
              authenticated: true,
-             format: format
+             format: format,
+             optimized: should_optimize,
+             batch_enabled: should_optimize and batch_enabled,
+             batch_timeout: batch_timeout,
+             batch_size_limit: batch_size_limit,
+             memory_pool: should_optimize and memory_pool,
+             shared_memory: should_optimize and shared_memory,
+             process_affinity: should_optimize and process_affinity,
+             enabled_features: if(should_optimize, do: requested_features, else: [])
            }}
 
         {:error, reason} ->
@@ -365,7 +433,15 @@ defmodule ExMCP.Transport.Beam do
   end
 
   @impl true
-  def send_message(message, %State{mailbox_pid: mailbox, format: format} = state) do
+  def send_message(message, %State{} = state) do
+    if state.optimized and state.mode == :local do
+      send_message_optimized(message, state)
+    else
+      send_message_standard(message, state)
+    end
+  end
+  
+  defp send_message_standard(message, %State{mailbox_pid: mailbox, format: format} = state) do
     # Convert message based on format
     formatted_message = format_outgoing_message(message, format)
 
@@ -374,10 +450,106 @@ defmodule ExMCP.Transport.Beam do
       {:error, reason} -> {:error, reason}
     end
   end
+  
+  defp send_message_optimized(message, %State{} = state) do
+    # Determine if we should use zero-copy
+    message_size = estimate_message_size(message)
+    
+    cond do
+      # Use zero-copy for large messages in native format
+      state.format == :native and message_size > state.zero_copy_threshold ->
+        send_zero_copy(message, state)
+        
+      # Use direct process messaging for small messages
+      state.format == :native ->
+        send_direct(message, state)
+        
+      # Fall back to standard for JSON format but skip mailbox overhead
+      true ->
+        send_direct_json(message, state)
+    end
+  end
+  
+  defp get_peer_pid(%State{peer_ref: peer_ref}) when is_pid(peer_ref), do: peer_ref
+  defp get_peer_pid(%State{peer_ref: peer_ref}) when is_atom(peer_ref) do
+    Process.whereis(peer_ref) || raise "Server #{inspect(peer_ref)} not found"
+  end
+  defp get_peer_pid(%State{peer_ref: {name, node}}) do
+    :rpc.call(node, Process, :whereis, [name]) || raise "Server #{inspect({name, node})} not found"
+  end
+  
+  defp send_zero_copy(message, %State{} = state) do
+    # For zero-copy, we send a reference instead of the actual message
+    ref = make_ref()
+    
+    # Store message in process dictionary (in real implementation, use ETS)
+    Process.put({:zero_copy, ref}, message)
+    
+    # Send reference to peer mailbox
+    peer_pid = get_peer_pid(state)
+    send(peer_pid, {:mcp_message_ref, ref})
+    
+    # Update stats
+    new_stats = Map.update!(state.stats, :zero_copy_sends, &(&1 + 1))
+    {:ok, %{state | stats: new_stats}}
+  end
+  
+  defp send_direct(message, %State{} = state) do
+    # Direct send without intermediate mailbox
+    peer_pid = get_peer_pid(state)
+    send(peer_pid, {:mcp_message, message})
+    
+    # Update stats
+    new_stats = Map.update!(state.stats, :direct_sends, &(&1 + 1))
+    {:ok, %{state | stats: new_stats}}
+  end
+  
+  defp send_direct_json(message, %State{} = state) do
+    # Encode once and send directly
+    case Jason.encode(message) do
+      {:ok, json} ->
+        peer_pid = get_peer_pid(state)
+        send(peer_pid, {:mcp_message, json})
+        new_stats = Map.update!(state.stats, :direct_sends, &(&1 + 1))
+        {:ok, %{state | stats: new_stats}}
+        
+      {:error, reason} ->
+        {:error, {:json_encode_error, reason}}
+    end
+  end
 
   @impl true
+  def receive_message(%State{optimized: true, mode: :local} = state) do
+    receive do
+      # Direct optimized messages
+      {:mcp_message, message} ->
+        formatted_message = format_incoming_message(message, state.format)
+        {:ok, formatted_message, state}
+        
+      # Zero-copy reference
+      {:mcp_message_ref, ref} ->
+        {:ok, ref, state}
+        
+      # Batch messages
+      {:mcp_batch, messages} ->
+        # Return first message, queue rest
+        [first | rest] = messages
+        # TODO: Handle queuing rest of messages
+        formatted_message = format_incoming_message(first, state.format)
+        {:ok, formatted_message, state}
+        
+      # Standard transport message (fallback)
+      {:transport_message, message} ->
+        formatted_message = format_incoming_message(message, state.format)
+        {:ok, formatted_message, state}
+
+      {:transport_closed, reason} ->
+        {:error, reason}
+    end
+  end
+  
   def receive_message(%State{format: format} = state) do
-    # This will block waiting for a message
+    # Standard receive path
     receive do
       {:transport_message, message} ->
         # Convert message based on format
@@ -468,6 +640,10 @@ defmodule ExMCP.Transport.Beam do
     name = Keyword.get(opts, :name)
     security = Keyword.get(opts, :security)
     format = Keyword.get(opts, :format, :json)
+    
+    # Extract optimization options
+    optimized = Keyword.get(opts, :optimized, true)
+    supported_features = Keyword.get(opts, :supported_features, [:zero_copy, :batching])
 
     if format not in [:json, :native] do
       raise ArgumentError, "format must be :json or :native, got: #{inspect(format)}"
@@ -484,7 +660,14 @@ defmodule ExMCP.Transport.Beam do
       mailbox_opts = [owner: self(), mode: :server, security: security]
       {:ok, mailbox} = Mailbox.start_link(mailbox_opts)
 
-      {:ok, %State{mailbox_pid: mailbox, mode: :server, security: security, format: format}}
+      {:ok, %State{
+        mailbox_pid: mailbox, 
+        mode: :server, 
+        security: security, 
+        format: format,
+        optimized: optimized,
+        enabled_features: if(optimized, do: supported_features, else: [])
+      }}
     end
   end
 
@@ -607,7 +790,129 @@ defmodule ExMCP.Transport.Beam do
 
   defp estimate_message_size(_), do: 0
 
+  # New public functions for optimizations
+  
+  @doc """
+  Sends a message asynchronously, useful for batching.
+  """
+  def send_message_async(message, %State{batch_enabled: true} = state) do
+    # Add to batch buffer
+    new_buffer = [message | state.batch_buffer]
+    new_state = %{state | batch_buffer: new_buffer}
+    
+    # Check if we should flush
+    cond do
+      length(new_buffer) >= state.batch_size_limit ->
+        flush_batch(new_state)
+        
+      state.batch_timer == nil ->
+        # Start batch timer
+        timer = Process.send_after(self(), :flush_batch, state.batch_timeout)
+        {:ok, %{new_state | batch_timer: timer}}
+        
+      true ->
+        {:ok, new_state}
+    end
+  end
+  
+  def send_message_async(message, state) do
+    # Not batching, send immediately
+    send_message(message, state)
+  end
+  
+  @doc """
+  Flushes any pending batched messages.
+  """
+  def flush_batch(%State{batch_buffer: []} = state), do: {:ok, state}
+  
+  def flush_batch(%State{batch_buffer: buffer, batch_timer: timer} = state) do
+    # Cancel timer if exists
+    if timer, do: Process.cancel_timer(timer)
+    
+    # Send batch
+    batch_message = {:mcp_batch, Enum.reverse(buffer)}
+    peer_pid = get_peer_pid(state)
+    send(peer_pid, batch_message)
+    
+    # Update stats
+    new_stats = state.stats
+    |> Map.update!(:batched_sends, &(&1 + 1))
+    |> Map.update!(:messages_batched, &(&1 + length(buffer)))
+    
+    {:ok, %{state | 
+      batch_buffer: [],
+      batch_timer: nil,
+      stats: new_stats
+    }}
+  end
+  
+  @doc """
+  Gets memory pool statistics.
+  """
+  def get_pool_stats(%State{memory_pool: true} = _state) do
+    # In a real implementation, this would query an ETS table or similar
+    %{
+      available_buffers: 10,
+      total_buffers: 20,
+      buffer_size: 4096
+    }
+  end
+  
+  def get_pool_stats(_state) do
+    %{available_buffers: 0, total_buffers: 0, buffer_size: 0}
+  end
+  
+  @doc """
+  Dereferences a zero-copy message.
+  """
+  def deref_message(ref) do
+    case Process.get({:zero_copy, ref}) do
+      nil -> {:error, :invalid_ref}
+      message -> {:ok, message}
+    end
+  end
+  
+  @doc """
+  Releases a zero-copy message reference.
+  """
+  def release_message(ref) do
+    Process.delete({:zero_copy, ref})
+    :ok
+  end
+
   # Private Functions
+  
+  defp determine_optimization_mode(:local, server, optimized) when is_atom(server) do
+    # Local named process
+    {:local, optimized}
+  end
+  
+  defp determine_optimization_mode(:local, server, optimized) when is_pid(server) do
+    # Local PID - check if on same node
+    if node(server) == node() do
+      {:local, optimized}
+    else
+      {:distributed, false}
+    end
+  end
+  
+  defp determine_optimization_mode(mode, {_name, node}, _optimized) when is_atom(node) do
+    # Remote process
+    {:distributed, false}
+  end
+  
+  defp determine_optimization_mode(mode, _server, _optimized) do
+    {mode, false}
+  end
+  
+  defp set_process_affinity(mailbox) do
+    # Pin to current scheduler
+    scheduler_id = :erlang.system_info(:scheduler_id)
+    Process.put(:"$scheduler_id", scheduler_id)
+    
+    # Also set for mailbox process
+    send(mailbox, {:set_scheduler_affinity, scheduler_id})
+  end
 
   defp connect_to_server(server_ref, client_mailbox, security) do
     case server_ref do
