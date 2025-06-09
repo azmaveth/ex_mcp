@@ -7,6 +7,23 @@ defmodule ExMCP.Protocol do
   Implements the Model Context Protocol JSON-RPC message format.
   This module handles the low-level protocol details for both
   client and server implementations.
+  
+  ## _meta Field Support
+  
+  Most request encoding functions support an optional `meta` parameter that allows
+  passing arbitrary metadata through the `_meta` field. This is useful for:
+  
+  - Progress tokens for long-running operations
+  - Request tracing and debugging
+  - Custom application-specific metadata
+  
+  Example:
+  
+      # With progress token
+      Protocol.encode_call_tool("my_tool", %{}, %{"progressToken" => "op-123"})
+      
+      # With custom metadata
+      Protocol.encode_list_resources(nil, %{"requestId" => "req-456", "userId" => "user-789"})
 
   All methods in this module are part of the official MCP specification.
 
@@ -57,10 +74,15 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Encodes a request to list available tools.
+  
+  ## Parameters
+  - `cursor` - Optional cursor for pagination
+  - `meta` - Optional metadata map to include in _meta field
   """
-  @spec encode_list_tools(String.t() | nil) :: map()
-  def encode_list_tools(cursor \\ nil) do
+  @spec encode_list_tools(String.t() | nil, map() | nil) :: map()
+  def encode_list_tools(cursor \\ nil, meta \\ nil) do
     params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    params = maybe_add_meta(params, meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -72,20 +94,35 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Encodes a tool call request.
+  
+  ## Parameters
+  - `name` - The tool name
+  - `arguments` - Tool arguments map
+  - `meta_or_progress_token` - Either a progress token (string/integer) or full metadata map
+  
+  Supports backward compatibility: if a string/integer is provided, it's treated as a progress token.
   """
-  @spec encode_call_tool(String.t(), map(), ExMCP.Types.progress_token() | nil) :: map()
-  def encode_call_tool(name, arguments, progress_token \\ nil) do
+  @spec encode_call_tool(String.t(), map(), ExMCP.Types.progress_token() | nil | map()) :: map()
+  def encode_call_tool(name, arguments, meta_or_progress_token \\ nil) do
     params = %{
       "name" => name,
       "arguments" => arguments
     }
 
-    params =
-      if progress_token do
-        Map.put(params, "_meta", %{"progressToken" => progress_token})
-      else
-        params
+    # Support both progress_token string/integer and full meta map
+    meta =
+      case meta_or_progress_token do
+        nil ->
+          nil
+
+        token when is_binary(token) or is_integer(token) ->
+          %{"progressToken" => token}
+
+        meta when is_map(meta) ->
+          meta
       end
+
+    params = maybe_add_meta(params, meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -98,9 +135,10 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a request to list available resources.
   """
-  @spec encode_list_resources(String.t() | nil) :: map()
-  def encode_list_resources(cursor \\ nil) do
+  @spec encode_list_resources(String.t() | nil, map() | nil) :: map()
+  def encode_list_resources(cursor \\ nil, meta \\ nil) do
     params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    params = maybe_add_meta(params, meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -128,9 +166,10 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a request to list available prompts.
   """
-  @spec encode_list_prompts(String.t() | nil) :: map()
-  def encode_list_prompts(cursor \\ nil) do
+  @spec encode_list_prompts(String.t() | nil, map() | nil) :: map()
+  def encode_list_prompts(cursor \\ nil, meta \\ nil) do
     params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    params = maybe_add_meta(params, meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -143,15 +182,19 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a prompt get request.
   """
-  @spec encode_get_prompt(String.t(), map()) :: map()
-  def encode_get_prompt(name, arguments \\ %{}) do
+  @spec encode_get_prompt(String.t(), map(), map() | nil) :: map()
+  def encode_get_prompt(name, arguments \\ %{}, meta \\ nil) do
+    params = %{
+      "name" => name,
+      "arguments" => arguments
+    }
+
+    params = maybe_add_meta(params, meta)
+
     %{
       "jsonrpc" => "2.0",
       "method" => "prompts/get",
-      "params" => %{
-        "name" => name,
-        "arguments" => arguments
-      },
+      "params" => params,
       "id" => generate_id()
     }
   end
@@ -159,15 +202,20 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a completion request.
   """
-  @spec encode_complete(ExMCP.Types.complete_ref(), ExMCP.Types.complete_argument()) :: map()
-  def encode_complete(ref, argument) do
+  @spec encode_complete(ExMCP.Types.complete_ref(), ExMCP.Types.complete_argument(), map() | nil) ::
+          map()
+  def encode_complete(ref, argument, meta \\ nil) do
+    params = %{
+      "ref" => ref,
+      "argument" => argument
+    }
+
+    params = maybe_add_meta(params, meta)
+
     %{
       "jsonrpc" => "2.0",
       "method" => "completion/complete",
-      "params" => %{
-        "ref" => ref,
-        "argument" => argument
-      },
+      "params" => params,
       "id" => generate_id()
     }
   end
@@ -175,8 +223,10 @@ defmodule ExMCP.Protocol do
   @doc """
   Encodes a sampling create message request.
   """
-  @spec encode_create_message(ExMCP.Types.create_message_params()) :: map()
-  def encode_create_message(params) do
+  @spec encode_create_message(ExMCP.Types.create_message_params(), map() | nil) :: map()
+  def encode_create_message(params, meta \\ nil) do
+    params = maybe_add_meta(params, meta)
+
     %{
       "jsonrpc" => "2.0",
       "method" => "sampling/createMessage",
@@ -328,6 +378,15 @@ defmodule ExMCP.Protocol do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  # Add _meta field to params if provided
+  defp maybe_add_meta(params, nil), do: params
+
+  defp maybe_add_meta(params, meta) when is_map(meta) and map_size(meta) > 0 do
+    Map.put(params, "_meta", meta)
+  end
+
+  defp maybe_add_meta(params, _), do: params
 
   @doc """
   Encodes a roots list changed notification.

@@ -432,6 +432,42 @@ result = Task.await(task)
 #=> {:error, :cancelled}
 ```
 
+### Progress Tracking and Metadata
+
+Track long-running operations with progress tokens and pass custom metadata:
+
+```elixir
+# Call a tool with progress token
+{:ok, result} = ExMCP.Client.call_tool(
+  client,
+  "long_operation",
+  %{"data" => "..."},
+  meta: %{"progressToken" => "op-123"}
+)
+
+# Pass custom metadata for tracing/debugging
+{:ok, tools} = ExMCP.Client.list_tools(
+  client,
+  meta: %{
+    "requestId" => "req-456",
+    "userId" => "user-789",
+    "trace" => true
+  }
+)
+
+# In your handler, extract metadata
+def handle_call_tool("long_operation", arguments, state) do
+  {meta, args} = Map.pop(arguments, "_meta")
+  
+  if progress_token = meta && meta["progressToken"] do
+    # Report progress
+    ExMCP.Server.notify_progress(self(), progress_token, 50, 100)
+  end
+  
+  # Process operation...
+end
+```
+
 ### Structured Logging
 
 Comprehensive logging with automatic sanitization and dual output:

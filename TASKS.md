@@ -124,9 +124,12 @@
   - [x] Structured logging with `notifications/message`
   - [x] Security: automatic sanitization of sensitive data
   - [x] `ExMCP.Logging` module for centralized logging management
-- [ ] Missing Protocol Methods
-  - [ ] Add full progress token support across all methods
-  - [ ] Support _meta field in all request types
+- [x] Missing Protocol Methods ✅
+  - [x] Add full progress token support across all methods
+  - [x] Support _meta field in all request types
+  - [x] Updated Protocol module to support _meta in all request methods
+  - [x] Updated Client API to accept :meta option for all methods
+  - [x] Backward compatibility maintained for :progress_token option in call_tool
 
 ### BEAM Transport Performance (Medium)
 **Priority: MEDIUM - Performance optimizations**

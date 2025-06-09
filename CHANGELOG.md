@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Progress Token and _meta Field Support**
+  - Added `_meta` field support to all MCP request methods in Protocol module
+  - Extended Client API to accept `:meta` option for all methods
+  - Progress tokens can now be passed via `meta: %{"progressToken" => token}`
+  - Backward compatibility maintained for `:progress_token` option in `call_tool/4`
+  - All protocol methods now support arbitrary metadata passthrough
+  - Server handlers receive _meta in tool arguments (for tools/call) or params (for other methods)
 - **OAuth 2.1 Authorization Framework** (MCP 2025-03-26 specification)
   - Full OAuth 2.1 implementation with:
     - Authorization Code Flow with mandatory PKCE (RFC 7636)

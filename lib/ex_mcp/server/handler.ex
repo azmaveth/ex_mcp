@@ -9,6 +9,27 @@ defmodule ExMCP.Server.Handler do
 
   The handler behaviour pattern is an implementation detail but all callbacks
   correspond to official MCP protocol methods.
+  
+  ## Metadata (_meta) Support
+  
+  Handlers receive metadata passed by clients through the `_meta` field:
+  
+  - For `handle_call_tool/3`: The `_meta` field is included in the arguments map
+  - For list operations: The cursor parameter may be a map containing `_meta`
+  - For other operations: Check the params for `_meta` field
+  
+  Example accessing progress token in a tool:
+  
+      def handle_call_tool("my_tool", arguments, state) do
+        {meta, args} = Map.pop(arguments, "_meta")
+        progress_token = meta && meta["progressToken"]
+        
+        if progress_token do
+          # Report progress via Server.notify_progress/5
+        end
+        
+        # Process args without _meta...
+      end
 
   ## Basic Example
 

@@ -194,21 +194,24 @@ defmodule ExMCP.Client do
   ## Options
   - `:cursor` - Optional cursor for pagination
   - `:timeout` - Request timeout (default: 30 seconds)
+  - `:meta` - Optional metadata to include in the request
 
   ## Return value
   Returns a tuple with:
   - `:ok` tuple containing tools list and optional nextCursor
   - `:error` tuple with error reason
 
-  ## Example
+  ## Examples
       {:ok, %{tools: tools, nextCursor: cursor}} = Client.list_tools(client, cursor: "page2")
+      {:ok, %{tools: tools}} = Client.list_tools(client, meta: %{"requestId" => "123"})
   """
   @spec list_tools(GenServer.server(), keyword()) ::
           {:ok, %{tools: [ExMCP.Types.tool()], nextCursor: String.t() | nil}} | {:error, any()}
   def list_tools(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @request_timeout)
     cursor = Keyword.get(opts, :cursor)
-    GenServer.call(client, {:list_tools, cursor}, timeout)
+    meta = Keyword.get(opts, :meta)
+    GenServer.call(client, {:list_tools, cursor, meta}, timeout)
   end
 
   @doc """
@@ -228,7 +231,17 @@ defmodule ExMCP.Client do
       end
 
     progress_token = Keyword.get(opts, :progress_token)
-    GenServer.call(client, {:call_tool, name, arguments, progress_token}, timeout)
+    meta = Keyword.get(opts, :meta)
+
+    # Support both :progress_token and :meta options
+    meta_to_send =
+      cond do
+        meta != nil -> meta
+        progress_token != nil -> %{"progressToken" => progress_token}
+        true -> nil
+      end
+
+    GenServer.call(client, {:call_tool, name, arguments, meta_to_send}, timeout)
   end
 
   @doc """
@@ -237,6 +250,7 @@ defmodule ExMCP.Client do
   ## Options
   - `:cursor` - Optional cursor for pagination
   - `:timeout` - Request timeout (default: 30 seconds)
+  - `:meta` - Optional metadata to include in the request
 
   ## Return value
   Returns a tuple with:
@@ -252,7 +266,8 @@ defmodule ExMCP.Client do
   def list_resources(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @request_timeout)
     cursor = Keyword.get(opts, :cursor)
-    GenServer.call(client, {:list_resources, cursor}, timeout)
+    meta = Keyword.get(opts, :meta)
+    GenServer.call(client, {:list_resources, cursor, meta}, timeout)
   end
 
   @doc """
@@ -270,14 +285,16 @@ defmodule ExMCP.Client do
   ## Options
   - `:cursor` - Optional cursor for pagination
   - `:timeout` - Request timeout (default: 30 seconds)
+  - `:meta` - Optional metadata to include in the request
 
   ## Return value
   Returns a tuple with:
   - `:ok` tuple containing prompts list and optional nextCursor
   - `:error` tuple with error reason
 
-  ## Example
+  ## Examples
       {:ok, %{prompts: prompts, nextCursor: cursor}} = Client.list_prompts(client, cursor: "page2")
+      {:ok, %{prompts: prompts}} = Client.list_prompts(client, meta: %{"requestId" => "456"})
   """
   @spec list_prompts(GenServer.server(), keyword()) ::
           {:ok, %{prompts: [ExMCP.Types.prompt()], nextCursor: String.t() | nil}}
@@ -285,7 +302,8 @@ defmodule ExMCP.Client do
   def list_prompts(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @request_timeout)
     cursor = Keyword.get(opts, :cursor)
-    GenServer.call(client, {:list_prompts, cursor}, timeout)
+    meta = Keyword.get(opts, :meta)
+    GenServer.call(client, {:list_prompts, cursor, meta}, timeout)
   end
 
   @doc """
@@ -293,8 +311,16 @@ defmodule ExMCP.Client do
   """
   @spec get_prompt(GenServer.server(), String.t(), map(), timeout()) ::
           {:ok, ExMCP.Types.prompt_message()} | {:error, any()}
-  def get_prompt(client, name, arguments \\ %{}, timeout \\ @request_timeout) do
-    GenServer.call(client, {:get_prompt, name, arguments}, timeout)
+  def get_prompt(client, name, arguments \\ %{}, opts \\ []) do
+    {timeout, opts} =
+      if is_integer(opts) or opts == :infinity do
+        {opts, []}
+      else
+        Keyword.pop(opts, :timeout, @request_timeout)
+      end
+
+    meta = Keyword.get(opts, :meta)
+    GenServer.call(client, {:get_prompt, name, arguments, meta}, timeout)
   end
 
   @doc """
@@ -302,8 +328,16 @@ defmodule ExMCP.Client do
   """
   @spec create_message(GenServer.server(), ExMCP.Types.create_message_params(), timeout()) ::
           {:ok, ExMCP.Types.create_message_result()} | {:error, any()}
-  def create_message(client, params, timeout \\ @request_timeout) do
-    GenServer.call(client, {:create_message, params}, timeout)
+  def create_message(client, params, opts \\ []) do
+    {timeout, opts} =
+      if is_integer(opts) or opts == :infinity do
+        {opts, []}
+      else
+        Keyword.pop(opts, :timeout, @request_timeout)
+      end
+
+    meta = Keyword.get(opts, :meta)
+    GenServer.call(client, {:create_message, params, meta}, timeout)
   end
 
   @doc """
@@ -428,8 +462,16 @@ defmodule ExMCP.Client do
           timeout()
         ) ::
           {:ok, ExMCP.Types.complete_result()} | {:error, any()}
-  def complete(client, ref, argument, timeout \\ @request_timeout) do
-    GenServer.call(client, {:complete, ref, argument}, timeout)
+  def complete(client, ref, argument, opts \\ []) do
+    {timeout, opts} =
+      if is_integer(opts) or opts == :infinity do
+        {opts, []}
+      else
+        Keyword.pop(opts, :timeout, @request_timeout)
+      end
+
+    meta = Keyword.get(opts, :meta)
+    GenServer.call(client, {:complete, ref, argument, meta}, timeout)
   end
 
   @doc """
@@ -654,16 +696,24 @@ defmodule ExMCP.Client do
     send_request(Protocol.encode_list_tools(cursor), from, state)
   end
 
+  def handle_call({:list_tools, cursor, meta}, from, state) do
+    send_request(Protocol.encode_list_tools(cursor, meta), from, state)
+  end
+
   def handle_call({:call_tool, name, arguments}, from, state) do
     send_request(Protocol.encode_call_tool(name, arguments), from, state)
   end
 
-  def handle_call({:call_tool, name, arguments, progress_token}, from, state) do
-    send_request(Protocol.encode_call_tool(name, arguments, progress_token), from, state)
+  def handle_call({:call_tool, name, arguments, meta_or_progress_token}, from, state) do
+    send_request(Protocol.encode_call_tool(name, arguments, meta_or_progress_token), from, state)
   end
 
   def handle_call({:list_resources, cursor}, from, state) do
     send_request(Protocol.encode_list_resources(cursor), from, state)
+  end
+
+  def handle_call({:list_resources, cursor, meta}, from, state) do
+    send_request(Protocol.encode_list_resources(cursor, meta), from, state)
   end
 
   def handle_call({:read_resource, uri}, from, state) do
@@ -674,12 +724,24 @@ defmodule ExMCP.Client do
     send_request(Protocol.encode_list_prompts(cursor), from, state)
   end
 
+  def handle_call({:list_prompts, cursor, meta}, from, state) do
+    send_request(Protocol.encode_list_prompts(cursor, meta), from, state)
+  end
+
   def handle_call({:get_prompt, name, arguments}, from, state) do
     send_request(Protocol.encode_get_prompt(name, arguments), from, state)
   end
 
+  def handle_call({:get_prompt, name, arguments, meta}, from, state) do
+    send_request(Protocol.encode_get_prompt(name, arguments, meta), from, state)
+  end
+
   def handle_call({:create_message, params}, from, state) do
     send_request(Protocol.encode_create_message(params), from, state)
+  end
+
+  def handle_call({:create_message, params, meta}, from, state) do
+    send_request(Protocol.encode_create_message(params, meta), from, state)
   end
 
   def handle_call(:server_info, _from, state) do
@@ -737,6 +799,10 @@ defmodule ExMCP.Client do
 
   def handle_call({:complete, ref, argument}, from, state) do
     send_request(Protocol.encode_complete(ref, argument), from, state)
+  end
+
+  def handle_call({:complete, ref, argument, meta}, from, state) do
+    send_request(Protocol.encode_complete(ref, argument, meta), from, state)
   end
 
   def handle_call({:send_batch, batch}, from, state) do

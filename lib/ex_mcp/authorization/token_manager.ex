@@ -242,11 +242,12 @@ defmodule ExMCP.Authorization.TokenManager do
     expires_at = calculate_expiration(token_response)
 
     # Schedule refresh only if we have a refresh token
-    refresh_timer = if token_response["refresh_token"] || state.refresh_token do
-      schedule_refresh(expires_at, state.auth_config.refresh_window)
-    else
-      nil
-    end
+    refresh_timer =
+      if token_response["refresh_token"] || state.refresh_token do
+        schedule_refresh(expires_at, state.auth_config.refresh_window)
+      else
+        nil
+      end
 
     new_state = %{
       state
