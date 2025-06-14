@@ -876,6 +876,9 @@ defmodule ExMCP.Transport.Beam.Observability do
 
     :ets.tab2list(@metrics_table)
     |> Enum.count(fn
+      {key, %{timestamp: timestamp}} when timestamp >= cutoff ->
+        key |> Atom.to_string() |> String.starts_with?("security_event_")
+
       {key, _data, timestamp} when timestamp >= cutoff ->
         key |> Atom.to_string() |> String.starts_with?("security_event_")
 

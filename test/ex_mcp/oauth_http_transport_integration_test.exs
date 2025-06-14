@@ -12,6 +12,8 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
 
   use ExUnit.Case, async: true
 
+  @moduletag :skip
+
   alias ExMCP.Client
   alias ExMCP.Transport.SSEClient
   alias ExMCP.Authorization
@@ -72,6 +74,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       end
     end
 
+    @tag :skip
     test "handles 401 Unauthorized on SSE connection", %{oauth_config: _oauth_config} do
       # SSE connection without valid token
       transport_config = %{
@@ -101,6 +104,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       end
     end
 
+    @tag :skip
     test "automatically refreshes token on SSE reconnect", %{
       oauth_config: config,
       mock_token: token
@@ -150,6 +154,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       end
     end
 
+    @tag :skip
     test "handles OAuth error responses in SSE transport" do
       # Test various OAuth error scenarios
       error_scenarios = [

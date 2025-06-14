@@ -420,17 +420,26 @@ defmodule ExMCP.Transport.Beam.ObservabilityTest do
       {:ok, pid} = Observability.start_link(alert_handler: alert_handler)
 
       # Generate many security events quickly (more than threshold of 5)
-      Enum.each(1..8, fn _ ->
+      Enum.each(1..10, fn _i ->
         Observability.record_security_event(:rate_limit_exceeded)
-        # Small delay to ensure events are properly processed
-        Process.sleep(1)
+        # Ensure each event gets processed
+        Process.sleep(5)
       end)
 
-      # Wait for alert processing
-      Process.sleep(200)
+      # Longer wait for async processing
+      Process.sleep(500)
+
+      # Check if we have enough events recorded
+      stats = Observability.get_comprehensive_stats()
+      security_event_count = stats.security.total_events
+
+      # Debug: show what we actually got
+      if security_event_count < 6 do
+        flunk("Not enough security events recorded: #{security_event_count}, expected > 5")
+      end
 
       # Should receive security alert
-      assert_receive {:alert_received, %{type: :high_security_events}}, 2000
+      assert_receive {:alert_received, %{type: :high_security_events}}, 3000
 
       GenServer.stop(pid)
     end
