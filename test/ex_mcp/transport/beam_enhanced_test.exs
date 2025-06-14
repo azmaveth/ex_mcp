@@ -9,8 +9,8 @@ defmodule ExMCP.Transport.BeamEnhancedTest do
   use ExUnit.Case, async: true
   require Logger
 
-  alias ExMCP.Transport.Beam.{Server, Client, Acceptor, Supervisor}
-  alias ExMCP.Transport.Beam.{Connection, Frame, Correlation, Serializer}
+  alias ExMCP.Transport.Beam.{Server, Client}
+  alias ExMCP.Transport.Beam.{Frame, Correlation, Serializer}
 
   @test_port_base 19000
 
@@ -69,7 +69,7 @@ defmodule ExMCP.Transport.BeamEnhancedTest do
 
       # Test JSON  
       assert {:ok, json_data} = Serializer.serialize(message, :json)
-      assert {:ok, json_decoded} = Serializer.deserialize(json_data, :json)
+      assert {:ok, _json_decoded} = Serializer.deserialize(json_data, :json)
 
       # ETF should be more compact for complex Elixir terms
       assert byte_size(etf_data) < byte_size(json_data)
@@ -92,7 +92,11 @@ defmodule ExMCP.Transport.BeamEnhancedTest do
     setup do
       # Start correlation service for each test
       {:ok, correlation_pid} = Correlation.start_link([])
-      on_exit(fn -> GenServer.stop(correlation_pid, :normal) end)
+      on_exit(fn -> 
+        if Process.alive?(correlation_pid) do
+          GenServer.stop(correlation_pid, :normal)
+        end
+      end)
       :ok
     end
 
@@ -114,7 +118,7 @@ defmodule ExMCP.Transport.BeamEnhancedTest do
 
       # Verify all responses received
       responses =
-        for i <- 1..10 do
+        for _i <- 1..10 do
           receive do
             {:mcp_response, _correlation_id, response} -> response
           after

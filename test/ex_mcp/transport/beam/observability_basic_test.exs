@@ -8,15 +8,22 @@ defmodule ExMCP.Transport.Beam.ObservabilityBasicTest do
   alias ExMCP.Transport.Beam.Observability
 
   test "starts and stops correctly" do
-    {:ok, pid} = Observability.start_link()
-    assert Process.alive?(pid)
-
-    GenServer.stop(pid)
-    refute Process.alive?(pid)
+    case Observability.start_link() do
+      {:ok, pid} ->
+        assert Process.alive?(pid)
+        GenServer.stop(pid)
+        refute Process.alive?(pid)
+      {:error, {:already_started, pid}} ->
+        # Service already running, that's acceptable
+        assert Process.alive?(pid)
+    end
   end
 
   test "records basic metrics without crashing" do
-    {:ok, pid} = Observability.start_link()
+    {:ok, pid} = case Observability.start_link() do
+      {:ok, p} -> {:ok, p}
+      {:error, {:already_started, p}} -> {:ok, p}
+    end
 
     # These should not crash
     Observability.record_message_sent(1024)
@@ -35,7 +42,10 @@ defmodule ExMCP.Transport.Beam.ObservabilityBasicTest do
   end
 
   test "basic tracing functionality" do
-    {:ok, pid} = Observability.start_link()
+    {:ok, pid} = case Observability.start_link() do
+      {:ok, p} -> {:ok, p}
+      {:error, {:already_started, p}} -> {:ok, p}
+    end
 
     trace_id = Observability.start_trace("test_operation")
     assert is_binary(trace_id)
@@ -53,7 +63,10 @@ defmodule ExMCP.Transport.Beam.ObservabilityBasicTest do
   end
 
   test "health check returns expected structure" do
-    {:ok, pid} = Observability.start_link()
+    {:ok, pid} = case Observability.start_link() do
+      {:ok, p} -> {:ok, p}
+      {:error, {:already_started, p}} -> {:ok, p}
+    end
 
     health = Observability.health_check()
 

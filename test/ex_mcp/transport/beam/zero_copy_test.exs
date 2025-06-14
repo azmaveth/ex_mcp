@@ -15,10 +15,10 @@ defmodule ExMCP.Transport.Beam.ZeroCopyTest do
     test "identifies zero-copy references correctly" do
       ref = make_ref()
 
-      assert ZeroCopy.is_zero_copy_ref?({:zero_copy_ref, ref})
-      refute ZeroCopy.is_zero_copy_ref?(ref)
-      refute ZeroCopy.is_zero_copy_ref?("not a ref")
-      refute ZeroCopy.is_zero_copy_ref?(%{data: "map"})
+      assert ZeroCopy.zero_copy_ref?({:zero_copy_ref, ref})
+      refute ZeroCopy.zero_copy_ref?(ref)
+      refute ZeroCopy.zero_copy_ref?("not a ref")
+      refute ZeroCopy.zero_copy_ref?(%{data: "map"})
     end
   end
 
