@@ -1,7 +1,6 @@
 defmodule ExMCP.Server.ToolsTest do
   use ExUnit.Case, async: true
 
-
   describe "Tool DSL" do
     test "defines simple tool with automatic schema generation" do
       defmodule SimpleToolServer do
@@ -9,11 +8,11 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "echo", "Echo back the input" do
-          param :message, :string, required: true
+          param(:message, :string, required: true)
 
-          handle fn %{message: message}, _state ->
+          handle(fn %{message: message}, _state ->
             {:ok, text: message}
-          end
+          end)
         end
       end
 
@@ -35,10 +34,11 @@ defmodule ExMCP.Server.ToolsTest do
              }
 
       # Test tool execution
-      {:ok, result, _state} = SimpleToolServer.handle_call_tool(
-        %{name: "echo", arguments: %{message: "Hello, World!"}},
-        %{}
-      )
+      {:ok, result, _state} =
+        SimpleToolServer.handle_call_tool(
+          %{name: "echo", arguments: %{message: "Hello, World!"}},
+          %{}
+        )
 
       assert result.content == [%{type: "text", text: "Hello, World!"}]
     end
@@ -49,16 +49,16 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "user_info", "Get user information" do
-          param :name, :string, required: true
-          param :age, :integer, required: true
-          param :active, :boolean, default: true
-          param :tags, {:array, :string}
+          param(:name, :string, required: true)
+          param(:age, :integer, required: true)
+          param(:active, :boolean, default: true)
+          param(:tags, {:array, :string})
 
-          handle fn args, _state ->
+          handle(fn args, _state ->
             info = "User: #{args.name}, Age: #{args.age}, Active: #{args.active}"
             info = if args[:tags], do: info <> ", Tags: #{Enum.join(args.tags, ", ")}", else: info
             {:ok, text: info}
-          end
+          end)
         end
       end
 
@@ -83,41 +83,43 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "calculate" do
-          description "Perform mathematical calculations"
+          description("Perform mathematical calculations")
 
-          input_schema %{
+          input_schema(%{
             type: "object",
             properties: %{
               expression: %{type: "string", pattern: "^[0-9+\\-*/().\\s]+$"}
             },
             required: ["expression"]
-          }
+          })
 
-          output_schema %{
+          output_schema(%{
             type: "object",
             properties: %{
               result: %{type: "number"},
               expression: %{type: "string"}
             }
-          }
+          })
 
-          annotations %{
+          annotations(%{
             readOnlyHint: true
-          }
+          })
 
-          handle fn %{expression: expr}, state ->
+          handle(fn %{expression: expr}, state ->
             # Simple calculator implementation for testing
-            result = case expr do
-              "2 + 2" -> 4
-              "10 * 5" -> 50
-              _ -> 0
-            end
+            result =
+              case expr do
+                "2 + 2" -> 4
+                "10 * 5" -> 50
+                _ -> 0
+              end
 
-            {:ok, %{
-              content: [%{type: "text", text: "Result: #{result}"}],
-              structuredContent: %{result: result, expression: expr}
-            }, state}
-          end
+            {:ok,
+             %{
+               content: [%{type: "text", text: "Result: #{result}"}],
+               structuredContent: %{result: result, expression: expr}
+             }, state}
+          end)
         end
       end
 
@@ -129,10 +131,11 @@ defmodule ExMCP.Server.ToolsTest do
       assert tool.readOnlyHint == true
 
       # Test execution
-      {:ok, result, _} = AdvancedToolServer.handle_call_tool(
-        %{name: "calculate", arguments: %{expression: "2 + 2"}},
-        %{}
-      )
+      {:ok, result, _} =
+        AdvancedToolServer.handle_call_tool(
+          %{name: "calculate", arguments: %{expression: "2 + 2"}},
+          %{}
+        )
 
       assert result.content == [%{type: "text", text: "Result: 4"}]
       assert result.structuredContent == %{result: 4, expression: "2 + 2"}
@@ -144,20 +147,20 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "delete_file" do
-          description "Delete a file from the system"
+          description("Delete a file from the system")
 
-          param :path, :string, required: true
+          param(:path, :string, required: true)
 
-          annotations %{
+          annotations(%{
             destructiveHint: true,
             readOnlyHint: false,
             idempotentHint: true,
             openWorldHint: false
-          }
+          })
 
-          handle fn %{path: path}, _state ->
+          handle(fn %{path: path}, _state ->
             {:ok, text: "Deleted #{path}"}
-          end
+          end)
         end
       end
 
@@ -176,30 +179,34 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "failing_tool", "A tool that fails" do
-          param :trigger_error, :boolean, default: false
+          param(:trigger_error, :boolean, default: false)
 
-          handle fn %{trigger_error: trigger_error}, _state ->
+          handle(fn %{trigger_error: trigger_error}, _state ->
             if trigger_error do
               {:error, "Tool execution failed"}
             else
               {:ok, text: "Success"}
             end
-          end
+          end)
         end
       end
 
       # Success case
-      {:ok, result, _} = ErrorToolServer.handle_call_tool(
-        %{name: "failing_tool", arguments: %{trigger_error: false}},
-        %{}
-      )
+      {:ok, result, _} =
+        ErrorToolServer.handle_call_tool(
+          %{name: "failing_tool", arguments: %{trigger_error: false}},
+          %{}
+        )
+
       assert result.content == [%{type: "text", text: "Success"}]
 
       # Error case
-      {:ok, result, _} = ErrorToolServer.handle_call_tool(
-        %{name: "failing_tool", arguments: %{trigger_error: true}},
-        %{}
-      )
+      {:ok, result, _} =
+        ErrorToolServer.handle_call_tool(
+          %{name: "failing_tool", arguments: %{trigger_error: true}},
+          %{}
+        )
+
       assert result.isError == true
       assert result.content == [%{type: "text", text: "Tool execution failed"}]
     end
@@ -211,11 +218,11 @@ defmodule ExMCP.Server.ToolsTest do
 
         # DSL tool
         tool "simple", "Simple tool" do
-          param :input, :string
+          param(:input, :string)
 
-          handle fn %{input: input}, _state ->
+          handle(fn %{input: input}, _state ->
             {:ok, text: input}
-          end
+          end)
         end
 
         # Traditional handler implementation
@@ -228,6 +235,7 @@ defmodule ExMCP.Server.ToolsTest do
               mimeType: "text/plain"
             }
           ]
+
           {:ok, resources, state}
         end
       end
@@ -250,14 +258,14 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "valid", "Valid tool" do
-          param :string_param, :string
-          param :integer_param, :integer
-          param :boolean_param, :boolean
-          param :number_param, :number
-          param :array_param, {:array, :string}
-          param :object_param, :object
+          param(:string_param, :string)
+          param(:integer_param, :integer)
+          param(:boolean_param, :boolean)
+          param(:number_param, :number)
+          param(:array_param, {:array, :string})
+          param(:object_param, :object)
 
-          handle fn _, _state -> {:ok, text: "valid"} end
+          handle(fn _, _state -> {:ok, text: "valid"} end)
         end
       end
 
@@ -270,22 +278,24 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "nested", "Tool with nested types" do
-          param :users, {:array, :object}, schema: %{
-            type: "array",
-            items: %{
-              type: "object",
-              properties: %{
-                name: %{type: "string"},
-                email: %{type: "string", format: "email"}
-              },
-              required: ["name", "email"]
+          param(:users, {:array, :object},
+            schema: %{
+              type: "array",
+              items: %{
+                type: "object",
+                properties: %{
+                  name: %{type: "string"},
+                  email: %{type: "string", format: "email"}
+                },
+                required: ["name", "email"]
+              }
             }
-          }
+          )
 
-          handle fn %{users: users}, _state ->
+          handle(fn %{users: users}, _state ->
             names = Enum.map(users, & &1["name"]) |> Enum.join(", ")
             {:ok, text: "Users: #{names}"}
-          end
+          end)
         end
       end
 
@@ -311,32 +321,36 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "divide", "Divide two numbers" do
-          param :dividend, :number, required: true
-          param :divisor, :number, required: true
+          param(:dividend, :number, required: true)
+          param(:divisor, :number, required: true)
 
-          handle fn %{dividend: dividend, divisor: divisor}, _state ->
+          handle(fn %{dividend: dividend, divisor: divisor}, _state ->
             if divisor == 0 do
               {:error, "Division by zero is not allowed"}
             else
               result = dividend / divisor
               {:ok, text: "#{dividend} / #{divisor} = #{result}"}
             end
-          end
+          end)
         end
       end
 
       # Valid division
-      {:ok, result, _} = ValidationServer.handle_call_tool(
-        %{name: "divide", arguments: %{dividend: 10, divisor: 2}},
-        %{}
-      )
+      {:ok, result, _} =
+        ValidationServer.handle_call_tool(
+          %{name: "divide", arguments: %{dividend: 10, divisor: 2}},
+          %{}
+        )
+
       assert result.content == [%{type: "text", text: "10 / 2 = 5.0"}]
 
       # Division by zero
-      {:ok, result, _} = ValidationServer.handle_call_tool(
-        %{name: "divide", arguments: %{dividend: 10, divisor: 0}},
-        %{}
-      )
+      {:ok, result, _} =
+        ValidationServer.handle_call_tool(
+          %{name: "divide", arguments: %{dividend: 10, divisor: 0}},
+          %{}
+        )
+
       assert result.isError == true
       assert result.content == [%{type: "text", text: "Division by zero is not allowed"}]
     end
@@ -347,36 +361,45 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "greet", "Greet a user" do
-          param :name, :string, required: true
-          param :title, :string
+          param(:name, :string, required: true)
+          param(:title, :string)
 
-          handle fn args, _state ->
+          handle(fn args, _state ->
             name = args[:name] || "Guest"
-            greeting = if args[:title], do: "Hello, #{args.title} #{name}!", else: "Hello, #{name}!"
+
+            greeting =
+              if args[:title], do: "Hello, #{args.title} #{name}!", else: "Hello, #{name}!"
+
             {:ok, text: greeting}
-          end
+          end)
         end
       end
 
       # With all parameters
-      {:ok, result, _} = RequiredParamServer.handle_call_tool(
-        %{name: "greet", arguments: %{name: "Alice", title: "Dr."}},
-        %{}
-      )
+      {:ok, result, _} =
+        RequiredParamServer.handle_call_tool(
+          %{name: "greet", arguments: %{name: "Alice", title: "Dr."}},
+          %{}
+        )
+
       assert result.content == [%{type: "text", text: "Hello, Dr. Alice!"}]
 
       # Missing optional parameter
-      {:ok, result, _} = RequiredParamServer.handle_call_tool(
-        %{name: "greet", arguments: %{name: "Bob"}},
-        %{}
-      )
+      {:ok, result, _} =
+        RequiredParamServer.handle_call_tool(
+          %{name: "greet", arguments: %{name: "Bob"}},
+          %{}
+        )
+
       assert result.content == [%{type: "text", text: "Hello, Bob!"}]
 
       # Missing required parameter - handler should handle gracefully
-      {:ok, result, _} = RequiredParamServer.handle_call_tool(
-        %{name: "greet", arguments: %{title: "Mr."}},
-        %{}
-      )
+      {:ok, result, _} =
+        RequiredParamServer.handle_call_tool(
+          %{name: "greet", arguments: %{title: "Mr."}},
+          %{}
+        )
+
       # Without validation, the handler uses default value
       assert result.content == [%{type: "text", text: "Hello, Mr. Guest!"}]
     end
@@ -387,43 +410,47 @@ defmodule ExMCP.Server.ToolsTest do
         use ExMCP.Server.Tools
 
         tool "fetch_data", "Fetch data from source" do
-          param :source, :string
+          param(:source, :string)
 
-          handle fn %{source: source}, state ->
+          handle(fn %{source: source}, state ->
             # Simulate fetching data
             data = %{source: source, items: ["item1", "item2", "item3"]}
-            {:ok, %{
-              content: [%{type: "text", text: "Fetched 3 items"}],
-              structuredContent: data
-            }, state}
-          end
+
+            {:ok,
+             %{
+               content: [%{type: "text", text: "Fetched 3 items"}],
+               structuredContent: data
+             }, state}
+          end)
         end
 
         tool "process_data", "Process fetched data" do
-          param :data, :object
+          param(:data, :object)
 
-          handle fn %{data: data}, _state ->
+          handle(fn %{data: data}, _state ->
             count = length(data[:items] || data["items"] || [])
             source = data[:source] || data["source"] || ""
             {:ok, text: "Processed #{count} items from #{source}"}
-          end
+          end)
         end
       end
 
       # First tool execution
-      {:ok, fetch_result, state} = CompositeServer.handle_call_tool(
-        %{name: "fetch_data", arguments: %{source: "database"}},
-        %{}
-      )
+      {:ok, fetch_result, state} =
+        CompositeServer.handle_call_tool(
+          %{name: "fetch_data", arguments: %{source: "database"}},
+          %{}
+        )
 
       # Extract data for second tool
       data = fetch_result.structuredContent
 
       # Second tool execution
-      {:ok, process_result, _} = CompositeServer.handle_call_tool(
-        %{name: "process_data", arguments: %{data: data}},
-        state
-      )
+      {:ok, process_result, _} =
+        CompositeServer.handle_call_tool(
+          %{name: "process_data", arguments: %{data: data}},
+          state
+        )
 
       assert process_result.content == [%{type: "text", text: "Processed 3 items from database"}]
     end

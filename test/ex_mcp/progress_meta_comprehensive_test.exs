@@ -513,7 +513,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
       # Call the tool with meta
       {:ok, result} = Client.call_tool(client, "meta_echo", %{}, meta: meta)
-      
+
       # The response should indicate meta was received
       assert result.content |> hd |> Map.get(:text) =~ "progressToken"
     end

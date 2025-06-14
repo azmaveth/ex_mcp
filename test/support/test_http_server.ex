@@ -67,8 +67,20 @@ defmodule ExMCP.Test.HTTPServer do
       :cowboy_router.compile([
         {:_,
          [
+           # Standard endpoints
            {"/mcp/v1/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
            {"/mcp/v1/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           # Support custom endpoints for testing
+           {"/custom/api/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/custom/api/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/v2/mcp/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/v2/mcp/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/api/mcp/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/api/mcp/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/api/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/api/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
+           {"/messages", ExMCP.Test.HTTPServer.MessageHandler, [server: self()]},
+           {"/sse", ExMCP.Test.HTTPServer.SSEHandler, [server: self()]},
            {:_, ExMCP.Test.HTTPServer.NotFoundHandler, []}
          ]}
       ])
@@ -261,6 +273,7 @@ defmodule ExMCP.Test.HTTPServer.SSEHandler do
       type: :sse_connect,
       client_id: client_id,
       headers: headers,
+      path: :cowboy_req.path(req),
       timestamp: System.system_time(:millisecond)
     }
 

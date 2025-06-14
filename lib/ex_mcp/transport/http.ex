@@ -316,11 +316,25 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp build_url(%__MODULE__{base_url: base_url, endpoint: endpoint}, path) do
+    # Normalize endpoint - ensure it starts with / and doesn't end with /
+    normalized_endpoint = normalize_endpoint(endpoint)
+
     base_url
     |> URI.parse()
-    |> Map.put(:path, endpoint <> path)
+    |> Map.put(:path, normalized_endpoint <> path)
     |> URI.to_string()
   end
+
+  defp normalize_endpoint(""), do: ""
+
+  defp normalize_endpoint(endpoint) do
+    endpoint
+    |> ensure_leading_slash()
+    |> String.trim_trailing("/")
+  end
+
+  defp ensure_leading_slash("/" <> _ = endpoint), do: endpoint
+  defp ensure_leading_slash(endpoint), do: "/" <> endpoint
 
   # Security-related helper functions
 

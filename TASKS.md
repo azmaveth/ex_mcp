@@ -193,7 +193,7 @@
 ### Transport Enhancements (Medium)
 **Priority: MEDIUM - Improve transport reliability and features**
 - [x] SSE Transport Improvements
-  - [ ] Make SSE endpoint configurable (not hardcoded /mcp/v1)
+  - [x] Make SSE endpoint configurable (not hardcoded /mcp/v1)
   - [ ] Add comprehensive HTTP status code handling
   - [x] Implement keep-alive/heartbeat mechanism
   - [x] Add automatic retry with exponential backoff
