@@ -376,7 +376,7 @@ defmodule ExMCP.Transport.Beam.EnhancedTest do
 
       {:ok, call_json} = Jason.encode(tool_call)
 
-      # Server responds with tool result  
+      # Server responds with tool result
       tool_result =
         Protocol.encode_response(
           %{

@@ -458,46 +458,42 @@ defmodule ExMCP.Transport.Beam.Security do
 
   defp validate_frame_content(frame_data, config) do
     # Decode and validate frame content
-    try do
-      <<length::32, _version::8, type::8, payload::binary>> = frame_data
+    <<length::32, _version::8, type::8, payload::binary>> = frame_data
 
-      # Validate length field matches actual payload
-      expected_payload_size = length - 2
+    # Validate length field matches actual payload
+    expected_payload_size = length - 2
 
-      if byte_size(payload) != expected_payload_size do
-        {:error, :frame_length_mismatch}
-      else
-        # Additional content validation based on config
-        validate_payload_content(payload, type, config)
-      end
-    rescue
-      _ -> {:error, :frame_decode_error}
+    if byte_size(payload) != expected_payload_size do
+      {:error, :frame_length_mismatch}
+    else
+      # Additional content validation based on config
+      validate_payload_content(payload, type, config)
     end
+  rescue
+    _ -> {:error, :frame_decode_error}
   end
 
   defp validate_payload_content(payload, message_type, config) do
-    try do
-      # Deserialize to check for malicious content
-      term = :erlang.binary_to_term(payload, [:safe])
+    # Deserialize to check for malicious content
+    term = :erlang.binary_to_term(payload, [:safe])
 
-      cond do
-        # Batch message
-        message_type == 5 ->
-          validate_batch_content(term, config)
+    cond do
+      # Batch message
+      message_type == 5 ->
+        validate_batch_content(term, config)
 
-        is_map(term) ->
-          # When validating within frame context, convert message errors to frame errors
-          case validate_message_content(term, config) do
-            {:error, :message_too_large} -> {:error, :frame_too_large}
-            other -> other
-          end
+      is_map(term) ->
+        # When validating within frame context, convert message errors to frame errors
+        case validate_message_content(term, config) do
+          {:error, :message_too_large} -> {:error, :frame_too_large}
+          other -> other
+        end
 
-        true ->
-          {:error, :invalid_payload_type}
-      end
-    rescue
-      _ -> {:error, :payload_decode_error}
+      true ->
+        {:error, :invalid_payload_type}
     end
+  rescue
+    _ -> {:error, :payload_decode_error}
   end
 
   defp validate_batch_content(batch_term, config) when is_map(batch_term) do
