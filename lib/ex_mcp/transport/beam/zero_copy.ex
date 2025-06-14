@@ -225,9 +225,9 @@ defmodule ExMCP.Transport.Beam.ZeroCopy do
   @doc """
   Checks if a value is a zero-copy reference.
   """
-  @spec is_zero_copy_ref?(term()) :: boolean()
-  def is_zero_copy_ref?({:zero_copy_ref, ref}) when is_reference(ref), do: true
-  def is_zero_copy_ref?(_), do: false
+  @spec zero_copy_ref?(term()) :: boolean()
+  def zero_copy_ref?({:zero_copy_ref, ref}) when is_reference(ref), do: true
+  def zero_copy_ref?(_), do: false
 
   # GenServer callbacks
 

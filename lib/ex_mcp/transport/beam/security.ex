@@ -205,6 +205,8 @@ defmodule ExMCP.Transport.Beam.Security do
          :ok <- validate_message_structure(message),
          :ok <- sanitize_message_content(message, config) do
       :ok
+    else
+      error -> error
     end
   end
 
@@ -662,10 +664,10 @@ defmodule ExMCP.Transport.Beam.Security do
     # Simple heuristics for anomaly detection
     cond do
       # Check for suspicious patterns in connection info
-      is_suspicious_user_agent(Map.get(connection_info, :user_agent)) ->
+      suspicious_user_agent?(Map.get(connection_info, :user_agent)) ->
         {:anomaly, :suspicious_user_agent}
 
-      is_suspicious_ip(Map.get(connection_info, :remote_ip)) ->
+      suspicious_ip?(Map.get(connection_info, :remote_ip)) ->
         {:anomaly, :suspicious_ip}
 
       true ->
@@ -673,9 +675,9 @@ defmodule ExMCP.Transport.Beam.Security do
     end
   end
 
-  defp is_suspicious_user_agent(nil), do: false
+  defp suspicious_user_agent?(nil), do: false
 
-  defp is_suspicious_user_agent(user_agent) when is_binary(user_agent) do
+  defp suspicious_user_agent?(user_agent) when is_binary(user_agent) do
     # Check for known malicious patterns
     suspicious_patterns = ["bot", "scanner", "exploit"]
     user_agent_lower = String.downcase(user_agent)
@@ -685,11 +687,11 @@ defmodule ExMCP.Transport.Beam.Security do
     end)
   end
 
-  defp is_suspicious_user_agent(_), do: true
+  defp suspicious_user_agent?(_), do: true
 
-  defp is_suspicious_ip(nil), do: false
+  defp suspicious_ip?(nil), do: false
 
-  defp is_suspicious_ip(ip) when is_binary(ip) do
+  defp suspicious_ip?(ip) when is_binary(ip) do
     # Basic IP validation and blacklist check
     case :inet.parse_address(String.to_charlist(ip)) do
       # Valid IP
@@ -699,7 +701,7 @@ defmodule ExMCP.Transport.Beam.Security do
     end
   end
 
-  defp is_suspicious_ip(_), do: true
+  defp suspicious_ip?(_), do: true
 
   defp validate_message_structure(message) when is_map(message) do
     # Check for required fields and valid structure
@@ -735,7 +737,7 @@ defmodule ExMCP.Transport.Beam.Security do
       byte_size(method) > 100 ->
         {:error, :method_too_long}
 
-      not is_valid_request_id(id) ->
+      not valid_request_id?(id) ->
         {:error, :invalid_request_id}
 
       true ->
@@ -746,7 +748,7 @@ defmodule ExMCP.Transport.Beam.Security do
   defp validate_rpc_response(message) do
     id = Map.get(message, "id")
 
-    if is_valid_request_id(id) do
+    if valid_request_id?(id) do
       :ok
     else
       {:error, :invalid_request_id}
@@ -768,10 +770,10 @@ defmodule ExMCP.Transport.Beam.Security do
     end
   end
 
-  defp is_valid_request_id(id) when is_binary(id), do: byte_size(id) <= 100
-  defp is_valid_request_id(id) when is_integer(id), do: id >= 0
-  defp is_valid_request_id(id) when is_reference(id), do: true
-  defp is_valid_request_id(_), do: false
+  defp valid_request_id?(id) when is_binary(id), do: byte_size(id) <= 100
+  defp valid_request_id?(id) when is_integer(id), do: id >= 0
+  defp valid_request_id?(id) when is_reference(id), do: true
+  defp valid_request_id?(_), do: false
 
   defp validate_message_size(message, config) do
     estimated_size = estimate_serialized_size(message)

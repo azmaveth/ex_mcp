@@ -215,7 +215,7 @@ defmodule ExMCP.Transport.Beam.Observability do
   Gets comprehensive statistics for all components.
   """
   @spec get_comprehensive_stats() :: map()
-  def get_comprehensive_stats() do
+  def get_comprehensive_stats do
     GenServer.call(__MODULE__, :get_comprehensive_stats)
   end
 
@@ -223,7 +223,7 @@ defmodule ExMCP.Transport.Beam.Observability do
   Performs a comprehensive health check.
   """
   @spec health_check() :: map()
-  def health_check() do
+  def health_check do
     GenServer.call(__MODULE__, :health_check)
   end
 
@@ -231,7 +231,7 @@ defmodule ExMCP.Transport.Beam.Observability do
   Gets real-time performance metrics.
   """
   @spec get_performance_metrics() :: map()
-  def get_performance_metrics() do
+  def get_performance_metrics do
     GenServer.call(__MODULE__, :get_performance_metrics)
   end
 
@@ -239,7 +239,7 @@ defmodule ExMCP.Transport.Beam.Observability do
   Gets active traces for debugging.
   """
   @spec get_active_traces() :: [map()]
-  def get_active_traces() do
+  def get_active_traces do
     GenServer.call(__MODULE__, :get_active_traces)
   end
 
@@ -466,7 +466,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp collect_all_metrics() do
+  defp collect_all_metrics do
     :ets.tab2list(@metrics_table)
     |> Enum.reduce(%{}, fn
       {key, value, timestamp}, acc -> Map.put(acc, key, %{value: value, timestamp: timestamp})
@@ -474,7 +474,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end)
   end
 
-  defp collect_health_status() do
+  defp collect_health_status do
     try do
       %{
         security_service: get_service_health(fn -> Security.get_security_stats() end),
@@ -490,7 +490,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp calculate_performance_metrics() do
+  defp calculate_performance_metrics do
     # 1 minute window
     window_ms = 60_000
 
@@ -503,7 +503,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     }
   end
 
-  defp collect_security_metrics() do
+  defp collect_security_metrics do
     security_events =
       :ets.tab2list(@metrics_table)
       |> Enum.filter(fn

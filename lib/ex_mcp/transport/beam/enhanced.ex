@@ -39,7 +39,7 @@ defmodule ExMCP.Transport.Beam.Enhanced do
   @behaviour ExMCP.Transport
 
   require Logger
-  alias ExMCP.Transport.Beam.{Connection, Security, Batch, ZeroCopy, Observability}
+  alias ExMCP.Transport.Beam.{Batch, Connection, Observability, Security, ZeroCopy}
 
   @type state :: %{
           connection: pid() | nil,

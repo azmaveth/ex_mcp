@@ -207,7 +207,7 @@ defmodule ExMCP.Transport.Beam.Acceptor do
   def handle_info({:incoming_request, request, connection_pid}, state)
       when connection_pid == state.connection_pid do
     # Handle incoming MCP request through the handler
-    case apply(state.handler_module, :handle_request, [request, state.handler_state]) do
+    case state.handler_module.handle_request(request, state.handler_state) do
       {:ok, response, new_handler_state} ->
         # Send response back through connection
         Connection.send_notification(connection_pid, response)
@@ -225,7 +225,7 @@ defmodule ExMCP.Transport.Beam.Acceptor do
 
   def handle_info({:incoming_notification, notification}, state) do
     # Handle incoming notification through the handler
-    case apply(state.handler_module, :handle_notification, [notification, state.handler_state]) do
+    case state.handler_module.handle_notification(notification, state.handler_state) do
       {:ok, new_handler_state} ->
         {:noreply, %{state | handler_state: new_handler_state}}
 
