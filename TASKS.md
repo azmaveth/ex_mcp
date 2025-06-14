@@ -85,6 +85,31 @@
 
 ## High Priority Tasks (Next Sprint)
 
+### BEAM Transport Redesign (Critical for Performance & Scalability)
+**Priority: URGENT - Major architectural improvement**
+- [ ] **Phase 1: Core Architecture Redesign** (Weeks 1-2)
+  - [ ] Replace mailbox processes with direct gen_statem communication
+  - [ ] Implement ranch acceptor pool for connection handling
+  - [ ] Add proper frame protocol with length prefixes
+  - [ ] Replace synchronous GenServer.call with async notifications
+  - [ ] Use Registry for request correlation instead of manual tracking
+- [ ] **Phase 2: Enhanced Features** (Weeks 3-4)
+  - [ ] Implement ETF serialization for maximum BEAM performance
+  - [ ] Add zero-copy optimization for large payloads (>64KB) using references
+  - [ ] Add message batching for high-throughput scenarios
+  - [ ] Add comprehensive security validation (max frame size, etc.)
+  - [ ] Integrate with existing Protocol module for MCP compatibility
+  - [ ] Add observability and metrics collection
+- [ ] **Phase 3: Production Readiness** (Weeks 5-6)
+  - [ ] Comprehensive testing across all scenarios  
+  - [ ] Performance benchmarking vs current implementation (use feature branch methodology)
+  - [ ] Documentation and migration guide
+  - [ ] Backward compatibility layer for existing code
+- [ ] **Future Enhancement: Decide on Feature Branch**
+  - [ ] Evaluate if feature branch optimizations should be backported to legacy mailbox mode
+  - [ ] Consider archiving feature branch after redesign completion
+  - [ ] Document optimization techniques for future reference
+
 ### Security & Authentication (Critical for Production)
 **Priority: URGENT - Required for safe production use**
 - [x] SSE Security Headers
