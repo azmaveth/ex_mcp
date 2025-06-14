@@ -23,7 +23,7 @@ defmodule ExMCP.Transport.Beam.Supervisor do
   use Supervisor
   require Logger
 
-  alias ExMCP.Transport.Beam.{Acceptor, Correlation}
+  alias ExMCP.Transport.Beam.{Acceptor, Correlation, ZeroCopy}
 
   @default_ref :beam_transport_listener
   @default_port 9999
@@ -84,7 +84,15 @@ defmodule ExMCP.Transport.Beam.Supervisor do
         _pid -> Correlation.get_stats()
       end
 
-    Map.merge(listener_info, correlation_stats)
+    zero_copy_stats =
+      case Process.whereis(ZeroCopy) do
+        nil -> %{zero_copy_service: :not_running}
+        _pid -> ZeroCopy.get_stats()
+      end
+
+    listener_info
+    |> Map.merge(correlation_stats)
+    |> Map.merge(zero_copy_stats)
   end
 
   @doc """
@@ -115,7 +123,10 @@ defmodule ExMCP.Transport.Beam.Supervisor do
   def init(_opts) do
     children = [
       # Start the correlation service
-      {Correlation, []}
+      {Correlation, []},
+
+      # Start the zero-copy optimization service
+      {ZeroCopy, []}
 
       # Note: Ranch listeners are started separately via start_listener/1
       # to allow for dynamic configuration

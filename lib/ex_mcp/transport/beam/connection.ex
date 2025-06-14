@@ -23,7 +23,7 @@ defmodule ExMCP.Transport.Beam.Connection do
   use GenServer
   require Logger
 
-  alias ExMCP.Transport.Beam.{Frame, Correlation}
+  alias ExMCP.Transport.Beam.{Correlation, Frame, ZeroCopy}
 
   # 30 seconds
   @heartbeat_interval 30_000
@@ -183,6 +183,28 @@ defmodule ExMCP.Transport.Beam.Connection do
 
   def handle_call(:get_stats, _from, state) do
     {:reply, state.stats, state}
+  end
+
+  def handle_call({:send_raw_frame, frame_data}, _from, state) do
+    case state.state do
+      :ready ->
+        case :gen_tcp.send(state.socket, frame_data) do
+          :ok ->
+            new_stats = %{
+              state.stats
+              | bytes_sent: state.stats.bytes_sent + byte_size(frame_data),
+                messages_sent: state.stats.messages_sent + 1
+            }
+
+            {:reply, :ok, %{state | stats: new_stats}}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+
+      other_state ->
+        {:reply, {:error, {:invalid_state, other_state}}, state}
+    end
   end
 
   def handle_call(:close, _from, state) do
@@ -409,24 +431,31 @@ defmodule ExMCP.Transport.Beam.Connection do
         message
       end
 
-    case Frame.encode(final_message, 1, msg_type) do
-      {:ok, frame_data} ->
-        case :gen_tcp.send(state.socket, frame_data) do
-          :ok ->
-            new_stats = %{
-              state.stats
-              | bytes_sent: state.stats.bytes_sent + byte_size(frame_data),
-                messages_sent: state.stats.messages_sent + 1
-            }
+    # Apply zero-copy optimization for large payloads
+    case ZeroCopy.prepare_message(final_message) do
+      {:ok, prepared_message} ->
+        case Frame.encode(prepared_message, 1, msg_type) do
+          {:ok, frame_data} ->
+            case :gen_tcp.send(state.socket, frame_data) do
+              :ok ->
+                new_stats = %{
+                  state.stats
+                  | bytes_sent: state.stats.bytes_sent + byte_size(frame_data),
+                    messages_sent: state.stats.messages_sent + 1
+                }
 
-            {:ok, %{state | stats: new_stats}}
+                {:ok, %{state | stats: new_stats}}
+
+              {:error, reason} ->
+                {:error, reason}
+            end
 
           {:error, reason} ->
-            {:error, reason}
+            {:error, {:frame_encode_error, reason}}
         end
 
       {:error, reason} ->
-        {:error, {:frame_encode_error, reason}}
+        {:error, {:zero_copy_error, reason}}
     end
   end
 
@@ -440,11 +469,21 @@ defmodule ExMCP.Transport.Beam.Connection do
             messages_received: state.stats.messages_received + 1
         }
 
-        # Handle the message based on type
-        handle_decoded_message(msg_type, payload, state)
+        # Process zero-copy references if present
+        case ZeroCopy.process_message(payload) do
+          {:ok, processed_payload} ->
+            # Handle the message based on type
+            handle_decoded_message(msg_type, processed_payload, state)
 
-        # Clear buffer (assuming single message per buffer for now)
-        {:ok, %{state | buffer: <<>>, stats: new_stats}}
+            # Clear buffer (assuming single message per buffer for now)
+            {:ok, %{state | buffer: <<>>, stats: new_stats}}
+
+          {:error, reason} ->
+            Logger.warning("Failed to process zero-copy message: #{inspect(reason)}")
+            # Handle the message as-is if zero-copy processing fails
+            handle_decoded_message(msg_type, payload, state)
+            {:ok, %{state | buffer: <<>>, stats: new_stats}}
+        end
 
       {:error, :incomplete_frame} ->
         # Need more data, keep current state
@@ -492,8 +531,50 @@ defmodule ExMCP.Transport.Beam.Connection do
     :ok
   end
 
+  defp handle_decoded_message(:batch, payload, state) when is_map(payload) do
+    # Handle batch of messages
+    case Map.get(payload, "messages") do
+      messages when is_list(messages) ->
+        Logger.debug("Received batch with #{length(messages)} messages")
+
+        # Process each message in the batch
+        Enum.each(messages, fn message ->
+          handle_batch_message(message, state)
+        end)
+
+        :ok
+
+      _ ->
+        Logger.warning("Invalid batch format: missing or invalid messages field")
+        :ok
+    end
+  end
+
   defp handle_decoded_message(msg_type, payload, _state) do
     Logger.warning("Unknown message type: #{inspect(msg_type)}, payload: #{inspect(payload)}")
+    :ok
+  end
+
+  defp handle_batch_message(message, state) when is_map(message) do
+    # Determine message type based on structure
+    cond do
+      Map.has_key?(message, "id") and Map.has_key?(message, "result") ->
+        handle_decoded_message(:rpc_response, message, state)
+
+      Map.has_key?(message, "id") and Map.has_key?(message, "method") ->
+        handle_decoded_message(:rpc_request, message, state)
+
+      Map.has_key?(message, "method") ->
+        handle_decoded_message(:notification, message, state)
+
+      true ->
+        Logger.warning("Unknown message format in batch: #{inspect(message)}")
+        :ok
+    end
+  end
+
+  defp handle_batch_message(message, _state) do
+    Logger.warning("Invalid message in batch: #{inspect(message)}")
     :ok
   end
 
