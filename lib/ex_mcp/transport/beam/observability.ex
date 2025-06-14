@@ -433,19 +433,19 @@ defmodule ExMCP.Transport.Beam.Observability do
 
   # Private helper functions
 
-  defp is_counter_metric(:total_errors), do: true
-  defp is_counter_metric(:security_events), do: true
-  defp is_counter_metric(:messages_sent), do: true
-  defp is_counter_metric(:messages_received), do: true
+  defp counter_metric?(:total_errors), do: true
+  defp counter_metric?(:security_events), do: true
+  defp counter_metric?(:messages_sent), do: true
+  defp counter_metric?(:messages_received), do: true
 
-  defp is_counter_metric(name) when is_atom(name) do
+  defp counter_metric?(name) when is_atom(name) do
     name_str = Atom.to_string(name)
 
     String.starts_with?(name_str, "error_") or
       String.starts_with?(name_str, "security_")
   end
 
-  defp is_counter_metric(_), do: false
+  defp counter_metric?(_), do: false
 
   defp record_metric(name, value) do
     timestamp = System.system_time(:millisecond)
@@ -455,7 +455,7 @@ defmodule ExMCP.Transport.Beam.Observability do
       # For counter metrics, accumulate the values
       case :ets.lookup(@metrics_table, name) do
         [{^name, existing_value, _}] ->
-          if is_counter_metric(name) do
+          if counter_metric?(name) do
             :ets.insert(@metrics_table, {name, existing_value + value, timestamp})
           else
             :ets.insert(@metrics_table, {name, value, timestamp})
@@ -560,7 +560,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp check_connection_pool_health() do
+  defp check_connection_pool_health do
     try do
       active = get_metric_value(:connections_active, 0)
       failed = get_metric_value(:connections_failed, 0)
@@ -575,7 +575,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp check_memory_usage() do
+  defp check_memory_usage do
     memory_mb = :erlang.memory(:total) / (1024 * 1024)
 
     cond do
@@ -585,7 +585,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp check_system_load() do
+  defp check_system_load do
     # Skip CPU monitoring in test environment since :cpu_sup might not be available
     :healthy
   end
@@ -608,7 +608,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     }
   end
 
-  defp calculate_latency_percentiles() do
+  defp calculate_latency_percentiles do
     case :ets.lookup(@metrics_table, :message_latency_latencies) do
       [{_, latencies}] when is_list(latencies) ->
         values = Enum.map(latencies, fn {latency, _} -> latency end)
@@ -649,7 +649,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp calculate_efficiency_metrics() do
+  defp calculate_efficiency_metrics do
     %{
       zero_copy: %{
         usage_count: get_metric_value(:zero_copy_uses, 0),
