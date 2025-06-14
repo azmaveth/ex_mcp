@@ -1,14 +1,14 @@
 defmodule ExMCP.Transport.Beam.Supervisor do
   @moduledoc """
   Supervisor for the enhanced BEAM transport with ranch integration.
-  
+
   This supervisor manages the entire BEAM transport stack including:
   - Ranch listener for TCP connections
   - Registry for request correlation
   - Connection pools and supervision
-  
+
   ## Usage
-  
+
       # Start the BEAM transport supervisor
       {:ok, pid} = ExMCP.Transport.Beam.Supervisor.start_link([
         port: 9999,
@@ -72,15 +72,17 @@ defmodule ExMCP.Transport.Beam.Supervisor do
   """
   @spec get_stats(atom()) :: map()
   def get_stats(ref \\ @default_ref) do
-    listener_info = case Acceptor.get_info(ref) do
-      {:error, :not_found} -> %{status: :not_running}
-      info when is_map(info) -> info
-    end
+    listener_info =
+      case Acceptor.get_info(ref) do
+        {:error, :not_found} -> %{status: :not_running}
+        info when is_map(info) -> info
+      end
 
-    correlation_stats = case Process.whereis(Correlation) do
-      nil -> %{correlation_service: :not_running}
-      _pid -> Correlation.get_stats()
-    end
+    correlation_stats =
+      case Process.whereis(Correlation) do
+        nil -> %{correlation_service: :not_running}
+        _pid -> Correlation.get_stats()
+      end
 
     Map.merge(listener_info, correlation_stats)
   end
@@ -113,8 +115,8 @@ defmodule ExMCP.Transport.Beam.Supervisor do
   def init(_opts) do
     children = [
       # Start the correlation service
-      {Correlation, []},
-      
+      {Correlation, []}
+
       # Note: Ranch listeners are started separately via start_listener/1
       # to allow for dynamic configuration
     ]
@@ -124,7 +126,7 @@ defmodule ExMCP.Transport.Beam.Supervisor do
 
   @doc """
   Adds a ranch listener child to the supervisor dynamically.
-  
+
   This is used internally when start_listener/1 is called to ensure
   proper supervision of the ranch processes.
   """

@@ -217,7 +217,8 @@ defmodule ExMCP.Transport.BeamTest do
       log =
         capture_log([level: :info], fn ->
           Server.notify_progress(server, "test-op", 50, 100)
-          Process.sleep(100)  # Increased from 50ms to ensure notification is processed
+          # Increased from 50ms to ensure notification is processed
+          Process.sleep(100)
         end)
 
       assert log =~ "Progress [test-op]: 50/100"

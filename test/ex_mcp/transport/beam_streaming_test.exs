@@ -9,7 +9,7 @@ defmodule ExMCP.Transport.BeamStreamingTest do
   - Memory-efficient processing
   """
   use ExUnit.Case, async: true
-  
+
   @moduletag :streaming
 
   alias ExMCP.Transport.Beam.{Connection, Stream, StreamChunk}

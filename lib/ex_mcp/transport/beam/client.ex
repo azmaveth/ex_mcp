@@ -1,20 +1,20 @@
 defmodule ExMCP.Transport.Beam.Client do
   @moduledoc """
   Enhanced BEAM transport client with ranch integration.
-  
+
   This module provides a high-level client interface for connecting to
   BEAM transport servers using the new architecture with Connection processes.
-  
+
   ## Features
-  
+
   - Automatic connection management and reconnection
   - Registry-based request correlation for high performance
   - ETF serialization for maximum BEAM efficiency
   - Built-in authentication and security
   - Connection pooling and load balancing
-  
+
   ## Usage
-  
+
       # Connect to a BEAM transport server
       {:ok, client} = ExMCP.Transport.Beam.Client.connect([
         host: "localhost",
@@ -58,12 +58,12 @@ defmodule ExMCP.Transport.Beam.Client do
 
   @type t :: %__MODULE__{}
   @type client_opts :: [
-    host: charlist() | binary(),
-    port: non_neg_integer(),
-    auth_config: map() | nil,
-    timeout: non_neg_integer(),
-    auto_reconnect: boolean()
-  ]
+          host: charlist() | binary(),
+          port: non_neg_integer(),
+          auth_config: map() | nil,
+          timeout: non_neg_integer(),
+          auto_reconnect: boolean()
+        ]
 
   # Client API
 
@@ -137,7 +137,7 @@ defmodule ExMCP.Transport.Beam.Client do
 
     # Start connection immediately
     send(self(), :connect)
-    
+
     {:ok, state}
   end
 
@@ -145,11 +145,11 @@ defmodule ExMCP.Transport.Beam.Client do
   def handle_call({:call, message, opts}, _from, state) do
     if state.connected and state.connection_pid do
       timeout = Keyword.get(opts, :timeout, @default_timeout)
-      
+
       case Connection.send_message(state.connection_pid, message, timeout: timeout) do
         {:ok, response} ->
           {:reply, {:ok, response}, state}
-        
+
         {:error, reason} ->
           {:reply, {:error, reason}, state}
       end
@@ -163,7 +163,7 @@ defmodule ExMCP.Transport.Beam.Client do
       case Connection.send_notification(state.connection_pid, message) do
         :ok ->
           {:reply, :ok, state}
-        
+
         {:error, reason} ->
           {:reply, {:error, reason}, state}
       end
@@ -173,31 +173,33 @@ defmodule ExMCP.Transport.Beam.Client do
   end
 
   def handle_call(:status, _from, state) do
-    status = cond do
-      state.connected -> :connected
-      state.connection_pid -> :connecting
-      true -> :disconnected
-    end
-    
+    status =
+      cond do
+        state.connected -> :connected
+        state.connection_pid -> :connecting
+        true -> :disconnected
+      end
+
     {:reply, status, state}
   end
 
   def handle_call(:get_stats, _from, state) do
-    stats = if state.connected and state.connection_pid do
-      case Connection.get_stats(state.connection_pid) do
-        stats when is_map(stats) ->
-          Map.merge(stats, %{
-            client_connected: true,
-            reconnect_attempts: state.reconnect_attempts
-          })
-        
-        _error ->
-          %{client_connected: false, reconnect_attempts: state.reconnect_attempts}
+    stats =
+      if state.connected and state.connection_pid do
+        case Connection.get_stats(state.connection_pid) do
+          stats when is_map(stats) ->
+            Map.merge(stats, %{
+              client_connected: true,
+              reconnect_attempts: state.reconnect_attempts
+            })
+
+          _error ->
+            %{client_connected: false, reconnect_attempts: state.reconnect_attempts}
+        end
+      else
+        %{client_connected: false, reconnect_attempts: state.reconnect_attempts}
       end
-    else
-      %{client_connected: false, reconnect_attempts: state.reconnect_attempts}
-    end
-    
+
     {:reply, stats, state}
   end
 
@@ -211,27 +213,33 @@ defmodule ExMCP.Transport.Beam.Client do
     case establish_connection(state) do
       {:ok, connection_pid} ->
         Logger.info("BEAM client connected to #{state.host}:#{state.port}")
-        new_state = %{state | 
-          connection_pid: connection_pid, 
-          connected: false,  # Will be set true when connection_ready is received
-          reconnect_attempts: 0
+
+        new_state = %{
+          state
+          | connection_pid: connection_pid,
+            # Will be set true when connection_ready is received
+            connected: false,
+            reconnect_attempts: 0
         }
-        
+
         # Monitor the connection process
         Process.monitor(connection_pid)
-        
+
         {:noreply, new_state}
-      
+
       {:error, reason} ->
         Logger.warning("Failed to connect to #{state.host}:#{state.port}: #{inspect(reason)}")
-        
+
         if state.options.auto_reconnect do
           # Schedule reconnection
           timer = Process.send_after(self(), :connect, @reconnect_interval)
-          new_state = %{state | 
-            reconnect_timer: timer,
-            reconnect_attempts: state.reconnect_attempts + 1
+
+          new_state = %{
+            state
+            | reconnect_timer: timer,
+              reconnect_attempts: state.reconnect_attempts + 1
           }
+
           {:noreply, new_state}
         else
           {:noreply, state}
@@ -239,12 +247,14 @@ defmodule ExMCP.Transport.Beam.Client do
     end
   end
 
-  def handle_info({:connection_ready, connection_pid}, state) when connection_pid == state.connection_pid do
+  def handle_info({:connection_ready, connection_pid}, state)
+      when connection_pid == state.connection_pid do
     Logger.debug("BEAM client connection ready")
     {:noreply, %{state | connected: true}}
   end
 
-  def handle_info({:connection_closed, connection_pid}, state) when connection_pid == state.connection_pid do
+  def handle_info({:connection_closed, connection_pid}, state)
+      when connection_pid == state.connection_pid do
     Logger.warning("BEAM client connection closed")
     new_state = handle_disconnection(state)
     {:noreply, new_state}
@@ -288,14 +298,11 @@ defmodule ExMCP.Transport.Beam.Client do
 
   defp handle_disconnection(state) do
     new_state = %{state | connected: false, connection_pid: nil}
-    
+
     if state.options.auto_reconnect do
       # Schedule reconnection
       timer = Process.send_after(self(), :connect, @reconnect_interval)
-      %{new_state | 
-        reconnect_timer: timer,
-        reconnect_attempts: state.reconnect_attempts + 1
-      }
+      %{new_state | reconnect_timer: timer, reconnect_attempts: state.reconnect_attempts + 1}
     else
       new_state
     end
@@ -306,17 +313,13 @@ defmodule ExMCP.Transport.Beam.Client do
     if state.reconnect_timer do
       Process.cancel_timer(state.reconnect_timer)
     end
-    
+
     # Close connection if active
     if state.connection_pid && Process.alive?(state.connection_pid) do
       Connection.close(state.connection_pid)
     end
-    
-    %{state | 
-      connected: false, 
-      connection_pid: nil, 
-      reconnect_timer: nil
-    }
+
+    %{state | connected: false, connection_pid: nil, reconnect_timer: nil}
   end
 
   defp normalize_host(host) when is_binary(host) do

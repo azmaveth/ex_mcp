@@ -1,20 +1,20 @@
 defmodule ExMCP.Transport.Beam.Acceptor do
   @moduledoc """
   Ranch-based TCP acceptor for the enhanced BEAM transport.
-  
+
   This module implements the ranch_protocol behaviour to handle incoming
   TCP connections for the BEAM transport. It creates Connection processes
   for each accepted socket and manages the connection lifecycle.
-  
+
   ## Architecture
-  
+
   - Uses ranch for efficient connection pooling and supervision
   - Creates Connection GenServer processes for each socket
   - Handles authentication and security validation
   - Provides backpressure control and connection limits
-  
+
   ## Performance Benefits
-  
+
   - Scalable connection handling with configurable pools
   - Efficient socket management with ranch optimizations
   - Process isolation prevents connection failures from affecting others
@@ -43,12 +43,12 @@ defmodule ExMCP.Transport.Beam.Acceptor do
 
   @type t :: %__MODULE__{}
   @type acceptor_opts :: [
-    port: non_neg_integer(),
-    max_connections: pos_integer(),
-    handler: module(),
-    auth_config: map() | nil,
-    transport_opts: keyword()
-  ]
+          port: non_neg_integer(),
+          max_connections: pos_integer(),
+          handler: module(),
+          auth_config: map() | nil,
+          transport_opts: keyword()
+        ]
 
   # Ranch Protocol API
 
@@ -77,9 +77,12 @@ defmodule ExMCP.Transport.Beam.Acceptor do
 
     case :ranch.start_listener(ref, :ranch_tcp, ranch_opts, __MODULE__, protocol_opts) do
       {:ok, listener_pid} ->
-        Logger.info("BEAM transport acceptor started on port #{port} (max_connections: #{max_connections})")
+        Logger.info(
+          "BEAM transport acceptor started on port #{port} (max_connections: #{max_connections})"
+        )
+
         {:ok, listener_pid}
-      
+
       {:error, reason} ->
         Logger.error("Failed to start BEAM transport acceptor: #{inspect(reason)}")
         {:error, reason}
@@ -95,7 +98,7 @@ defmodule ExMCP.Transport.Beam.Acceptor do
       :ok ->
         Logger.info("BEAM transport acceptor #{ref} stopped")
         :ok
-      
+
       {:error, :not_found} = error ->
         Logger.warning("Acceptor #{ref} not found")
         error
@@ -109,6 +112,7 @@ defmodule ExMCP.Transport.Beam.Acceptor do
   def get_info(ref) do
     try do
       info = :ranch.info(ref)
+
       %{
         ref: ref,
         status: Map.get(info, :status),
@@ -136,7 +140,7 @@ defmodule ExMCP.Transport.Beam.Acceptor do
   def init({ref, transport, opts}) do
     # Get the socket from ranch
     {:ok, socket} = :ranch.handshake(ref)
-    
+
     handler = Keyword.fetch!(opts, :handler)
     auth_config = Keyword.get(opts, :auth_config)
 
@@ -165,24 +169,28 @@ defmodule ExMCP.Transport.Beam.Acceptor do
             # Initialize handler state
             case handler.init([]) do
               {:ok, handler_state} ->
-                final_state = %{state | 
-                  connection_pid: connection_pid,
-                  handler_state: handler_state
+                final_state = %{
+                  state
+                  | connection_pid: connection_pid,
+                    handler_state: handler_state
                 }
-                
-                Logger.debug("BEAM transport connection established from #{inspect(state.socket)}")
+
+                Logger.debug(
+                  "BEAM transport connection established from #{inspect(state.socket)}"
+                )
+
                 {:ok, final_state}
-              
+
               {:error, reason} ->
                 Logger.error("Handler initialization failed: #{inspect(reason)}")
                 {:stop, {:handler_init_failed, reason}}
             end
-          
+
           {:error, reason} ->
             Logger.error("Failed to transfer socket control: #{inspect(reason)}")
             {:stop, {:socket_transfer_failed, reason}}
         end
-      
+
       {:error, reason} ->
         Logger.error("Failed to start connection process: #{inspect(reason)}")
         {:stop, {:connection_start_failed, reason}}
@@ -190,24 +198,26 @@ defmodule ExMCP.Transport.Beam.Acceptor do
   end
 
   @impl true
-  def handle_info({:connection_ready, connection_pid}, state) when connection_pid == state.connection_pid do
+  def handle_info({:connection_ready, connection_pid}, state)
+      when connection_pid == state.connection_pid do
     Logger.debug("Connection ready, starting message handling")
     {:noreply, state}
   end
 
-  def handle_info({:incoming_request, request, connection_pid}, state) when connection_pid == state.connection_pid do
+  def handle_info({:incoming_request, request, connection_pid}, state)
+      when connection_pid == state.connection_pid do
     # Handle incoming MCP request through the handler
     case apply(state.handler_module, :handle_request, [request, state.handler_state]) do
       {:ok, response, new_handler_state} ->
         # Send response back through connection
         Connection.send_notification(connection_pid, response)
         {:noreply, %{state | handler_state: new_handler_state}}
-      
+
       {:error, error_response, new_handler_state} ->
         # Send error response
         Connection.send_notification(connection_pid, error_response)
         {:noreply, %{state | handler_state: new_handler_state}}
-      
+
       {:stop, reason, new_handler_state} ->
         {:stop, reason, %{state | handler_state: new_handler_state}}
     end
@@ -218,13 +228,14 @@ defmodule ExMCP.Transport.Beam.Acceptor do
     case apply(state.handler_module, :handle_notification, [notification, state.handler_state]) do
       {:ok, new_handler_state} ->
         {:noreply, %{state | handler_state: new_handler_state}}
-      
+
       {:stop, reason, new_handler_state} ->
         {:stop, reason, %{state | handler_state: new_handler_state}}
     end
   end
 
-  def handle_info({:connection_closed, connection_pid}, state) when connection_pid == state.connection_pid do
+  def handle_info({:connection_closed, connection_pid}, state)
+      when connection_pid == state.connection_pid do
     Logger.debug("Connection closed")
     {:stop, :normal, state}
   end
@@ -242,17 +253,17 @@ defmodule ExMCP.Transport.Beam.Acceptor do
   @impl true
   def terminate(reason, state) do
     Logger.debug("Acceptor terminating: #{inspect(reason)}")
-    
+
     # Cleanup connection process if still alive
     if state.connection_pid && Process.alive?(state.connection_pid) do
       Connection.close(state.connection_pid)
     end
-    
+
     # Cleanup handler state if applicable
     if state.handler_module && function_exported?(state.handler_module, :terminate, 2) do
       state.handler_module.terminate(reason, state.handler_state)
     end
-    
+
     :ok
   end
 
@@ -266,7 +277,7 @@ defmodule ExMCP.Transport.Beam.Acceptor do
           port: port,
           ip_string: :inet.ntoa(ip) |> to_string()
         }
-      
+
       {:error, _reason} ->
         %{ip: :unknown, port: :unknown, ip_string: "unknown"}
     end

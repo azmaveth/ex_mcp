@@ -1,13 +1,13 @@
 defmodule ExMCP.Transport.Beam.Server do
   @moduledoc """
   High-level server API for the enhanced BEAM transport.
-  
+
   This module provides a simple interface for starting BEAM transport servers
   with the new ranch-based architecture. It handles all the complexity of
   setting up the supervision tree, ranch listeners, and connection management.
-  
+
   ## Usage
-  
+
       defmodule MyMCPHandler do
         @behaviour ExMCP.Server.Handler
         
@@ -50,13 +50,13 @@ defmodule ExMCP.Transport.Beam.Server do
 
   @type t :: %__MODULE__{}
   @type server_opts :: [
-    ref: atom(),
-    port: non_neg_integer(),
-    handler: module(),
-    max_connections: pos_integer(),
-    auth_config: map() | nil,
-    transport_opts: keyword()
-  ]
+          ref: atom(),
+          port: non_neg_integer(),
+          handler: module(),
+          max_connections: pos_integer(),
+          auth_config: map() | nil,
+          transport_opts: keyword()
+        ]
 
   # Public API
 
@@ -116,12 +116,13 @@ defmodule ExMCP.Transport.Beam.Server do
     # Use a random available port for testing
     port = Keyword.get(opts, :port, 0)
     handler = Keyword.get(opts, :handler, __MODULE__.TestHandler)
-    
-    server_opts = [
-      port: port,
-      handler: handler,
-      max_connections: 10
-    ] ++ opts
+
+    server_opts =
+      [
+        port: port,
+        handler: handler,
+        max_connections: 10
+      ] ++ opts
 
     case start_link(server_opts) do
       {:ok, pid} ->
@@ -129,8 +130,9 @@ defmodule ExMCP.Transport.Beam.Server do
           {:ok, actual_port} -> {:ok, pid, actual_port}
           error -> error
         end
-      
-      error -> error
+
+      error ->
+        error
     end
   end
 
@@ -147,7 +149,8 @@ defmodule ExMCP.Transport.Beam.Server do
 
     # Start the supervisor with unique name
     supervisor_name = :"beam_supervisor_#{:erlang.unique_integer([:positive])}"
-    case Supervisor.start_link([name: supervisor_name]) do
+
+    case Supervisor.start_link(name: supervisor_name) do
       {:ok, supervisor_pid} ->
         # Start the listener
         listener_opts = [
@@ -201,10 +204,11 @@ defmodule ExMCP.Transport.Beam.Server do
     }
 
     # Add listener statistics
-    listener_stats = case Acceptor.get_info(state.ref) do
-      {:error, _} -> %{}
-      stats -> stats
-    end
+    listener_stats =
+      case Acceptor.get_info(state.ref) do
+        {:error, _} -> %{}
+        stats -> stats
+      end
 
     full_info = Map.merge(info, listener_stats)
     {:reply, full_info, state}
@@ -212,6 +216,7 @@ defmodule ExMCP.Transport.Beam.Server do
 
   def handle_call(:get_port, _from, state) do
     result = Acceptor.get_info(state.ref)
+
     case result do
       {:error, reason} -> {:reply, {:error, reason}, state}
       %{port: port} -> {:reply, {:ok, port}, state}
@@ -220,6 +225,7 @@ defmodule ExMCP.Transport.Beam.Server do
 
   def handle_call(:get_connection_count, _from, state) do
     result = Acceptor.get_info(state.ref)
+
     case result do
       {:error, reason} -> {:reply, {:error, reason}, state}
       %{active_connections: count} -> {:reply, {:ok, count}, state}
@@ -229,12 +235,12 @@ defmodule ExMCP.Transport.Beam.Server do
   @impl true
   def terminate(reason, state) do
     Logger.debug("BEAM transport server terminating: #{inspect(reason)}")
-    
+
     # Stop the listener
     if state.ref do
       Acceptor.stop_listener(state.ref)
     end
-    
+
     :ok
   end
 
@@ -242,7 +248,7 @@ defmodule ExMCP.Transport.Beam.Server do
   defmodule TestHandler do
     @moduledoc """
     Simple test handler for the BEAM transport server.
-    
+
     Responds to ping requests and logs notifications.
     """
 
@@ -258,7 +264,7 @@ defmodule ExMCP.Transport.Beam.Server do
           "requests_handled" => state.requests_handled + 1
         }
       }
-      
+
       new_state = %{state | requests_handled: state.requests_handled + 1}
       {:ok, response, new_state}
     end
@@ -270,7 +276,7 @@ defmodule ExMCP.Transport.Beam.Server do
           "timestamp" => System.system_time(:millisecond)
         }
       }
-      
+
       new_state = %{state | requests_handled: state.requests_handled + 1}
       {:ok, response, new_state}
     end
@@ -282,7 +288,7 @@ defmodule ExMCP.Transport.Beam.Server do
           "notifications_received" => state.notifications_received
         }
       }
-      
+
       new_state = %{state | requests_handled: state.requests_handled + 1}
       {:ok, response, new_state}
     end
@@ -295,7 +301,7 @@ defmodule ExMCP.Transport.Beam.Server do
           "data" => %{"method" => Map.get(request, "method", "unknown")}
         }
       }
-      
+
       {:error, error_response, state}
     end
 

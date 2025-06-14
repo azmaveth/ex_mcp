@@ -375,15 +375,16 @@ defmodule ExMCP.Transport.Beam.Connection do
       {:ok, %{type: :rpc_response, payload: response_data}} when is_map(response_data) ->
         case Map.get(response_data, "result") do
           "authenticated" ->
-            remaining = <<>>  # For now, assume single frame
+            # For now, assume single frame
+            remaining = <<>>
             {:ok, :authenticated, remaining}
-          
+
           nil ->
             case Map.get(response_data, "error") do
               nil -> {:error, :invalid_auth_response}
               reason -> {:ok, :auth_failed, reason}
             end
-            
+
           _other ->
             {:error, :invalid_auth_response}
         end
@@ -393,7 +394,7 @@ defmodule ExMCP.Transport.Beam.Connection do
 
       {:error, reason} ->
         {:error, reason}
-        
+
       _other ->
         {:error, :invalid_auth_response}
     end

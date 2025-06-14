@@ -3,7 +3,7 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
   Compatibility tests ensuring the enhanced BEAM transport works with
   existing MCP protocol implementations and maintains full spec compliance.
   """
-  
+
   use ExUnit.Case, async: true
   require Logger
 
@@ -16,50 +16,54 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
     @behaviour ExMCP.Server.Handler
 
     def init(_opts) do
-      {:ok, %{
-        capabilities: %{
-          "tools" => %{"listChanged" => true},
-          "resources" => %{"subscribe" => true, "listChanged" => true},
-          "prompts" => %{"listChanged" => true},
-          "sampling" => %{}
-        },
-        tools: [
-          %{
-            "name" => "calculator",
-            "description" => "Performs basic arithmetic operations",
-            "inputSchema" => %{
-              "type" => "object",
-              "properties" => %{
-                "operation" => %{"type" => "string", "enum" => ["add", "subtract", "multiply", "divide"]},
-                "a" => %{"type" => "number"},
-                "b" => %{"type" => "number"}
-              },
-              "required" => ["operation", "a", "b"]
-            }
-          }
-        ],
-        resources: [
-          %{
-            "uri" => "file:///test/data.txt",
-            "name" => "Test Data",
-            "description" => "Sample test data",
-            "mimeType" => "text/plain"
-          }
-        ],
-        prompts: [
-          %{
-            "name" => "summarize",
-            "description" => "Summarizes the given text",
-            "arguments" => [
-              %{
-                "name" => "text",
-                "description" => "Text to summarize",
-                "required" => true
-              }
-            ]
-          }
-        ]
-      }}
+      {:ok,
+       %{
+         capabilities: %{
+           "tools" => %{"listChanged" => true},
+           "resources" => %{"subscribe" => true, "listChanged" => true},
+           "prompts" => %{"listChanged" => true},
+           "sampling" => %{}
+         },
+         tools: [
+           %{
+             "name" => "calculator",
+             "description" => "Performs basic arithmetic operations",
+             "inputSchema" => %{
+               "type" => "object",
+               "properties" => %{
+                 "operation" => %{
+                   "type" => "string",
+                   "enum" => ["add", "subtract", "multiply", "divide"]
+                 },
+                 "a" => %{"type" => "number"},
+                 "b" => %{"type" => "number"}
+               },
+               "required" => ["operation", "a", "b"]
+             }
+           }
+         ],
+         resources: [
+           %{
+             "uri" => "file:///test/data.txt",
+             "name" => "Test Data",
+             "description" => "Sample test data",
+             "mimeType" => "text/plain"
+           }
+         ],
+         prompts: [
+           %{
+             "name" => "summarize",
+             "description" => "Summarizes the given text",
+             "arguments" => [
+               %{
+                 "name" => "text",
+                 "description" => "Text to summarize",
+                 "required" => true
+               }
+             ]
+           }
+         ]
+       }}
     end
 
     def handle_initialize(_params, state) do
@@ -70,6 +74,7 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
           "version" => "1.0.0"
         }
       }
+
       {:ok, capabilities, state}
     end
 
@@ -78,24 +83,28 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
     end
 
     def handle_call_tool("calculator", %{"operation" => op, "a" => a, "b" => b}, state) do
-      result = case op do
-        "add" -> a + b
-        "subtract" -> a - b
-        "multiply" -> a * b
-        "divide" when b != 0 -> a / b
-        "divide" -> {:error, "Division by zero"}
-        _ -> {:error, "Unknown operation"}
-      end
+      result =
+        case op do
+          "add" -> a + b
+          "subtract" -> a - b
+          "multiply" -> a * b
+          "divide" when b != 0 -> a / b
+          "divide" -> {:error, "Division by zero"}
+          _ -> {:error, "Unknown operation"}
+        end
 
       case result do
         {:error, message} ->
           {:error, %{"code" => -1, "message" => message}, state}
-        
+
         value ->
-          content = [%{
-            "type" => "text",
-            "text" => "Result: #{value}"
-          }]
+          content = [
+            %{
+              "type" => "text",
+              "text" => "Result: #{value}"
+            }
+          ]
+
           {:ok, content, state}
       end
     end
@@ -109,11 +118,14 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
     end
 
     def handle_read_resource("file:///test/data.txt", state) do
-      contents = [%{
-        "uri" => "file:///test/data.txt",
-        "mimeType" => "text/plain",
-        "text" => "This is test data content."
-      }]
+      contents = [
+        %{
+          "uri" => "file:///test/data.txt",
+          "mimeType" => "text/plain",
+          "text" => "This is test data content."
+        }
+      ]
+
       {:ok, contents, state}
     end
 
@@ -138,6 +150,7 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
           }
         ]
       }
+
       {:ok, prompt, state}
     end
 
@@ -150,7 +163,8 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
     end
 
     def handle_complete(params, state) do
-      {:error, %{"code" => -32602, "message" => "Invalid completion params: #{inspect(params)}"}, state}
+      {:error, %{"code" => -32602, "message" => "Invalid completion params: #{inspect(params)}"},
+       state}
     end
 
     # Handle generic requests
@@ -159,6 +173,7 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
         {:ok, result, new_state} ->
           response = %{"result" => result}
           {:ok, response, new_state}
+
         {:error, error, new_state} ->
           response = %{"error" => error}
           {:error, response, new_state}
@@ -170,17 +185,22 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
         {:ok, tools, _cursor, new_state} ->
           response = %{"result" => %{"tools" => tools}}
           {:ok, response, new_state}
+
         {:error, error, new_state} ->
           response = %{"error" => error}
           {:error, response, new_state}
       end
     end
 
-    def handle_request(%{"method" => "tools/call", "params" => %{"name" => name, "arguments" => args}}, state) do
+    def handle_request(
+          %{"method" => "tools/call", "params" => %{"name" => name, "arguments" => args}},
+          state
+        ) do
       case handle_call_tool(name, args, state) do
         {:ok, content, new_state} ->
           response = %{"result" => %{"content" => content}}
           {:ok, response, new_state}
+
         {:error, error, new_state} ->
           response = %{"error" => error}
           {:error, response, new_state}
@@ -192,6 +212,7 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
         {:ok, resources, _cursor, new_state} ->
           response = %{"result" => %{"resources" => resources}}
           {:ok, response, new_state}
+
         {:error, error, new_state} ->
           response = %{"error" => error}
           {:error, response, new_state}
@@ -203,6 +224,7 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
         {:ok, contents, new_state} ->
           response = %{"result" => %{"contents" => contents}}
           {:ok, response, new_state}
+
         {:error, error, new_state} ->
           response = %{"error" => error}
           {:error, response, new_state}
@@ -214,17 +236,22 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
         {:ok, prompts, _cursor, new_state} ->
           response = %{"result" => %{"prompts" => prompts}}
           {:ok, response, new_state}
+
         {:error, error, new_state} ->
           response = %{"error" => error}
           {:error, response, new_state}
       end
     end
 
-    def handle_request(%{"method" => "prompts/get", "params" => %{"name" => name, "arguments" => args}}, state) do
+    def handle_request(
+          %{"method" => "prompts/get", "params" => %{"name" => name, "arguments" => args}},
+          state
+        ) do
       case handle_get_prompt(name, args, state) do
         {:ok, prompt, new_state} ->
           response = %{"result" => prompt}
           {:ok, response, new_state}
+
         {:error, error, new_state} ->
           response = %{"error" => error}
           {:error, response, new_state}
@@ -236,6 +263,7 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
         {:ok, new_state} ->
           response = %{"result" => %{}}
           {:ok, response, new_state}
+
         {:error, error, new_state} ->
           response = %{"error" => error}
           {:error, response, new_state}
@@ -269,17 +297,19 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
   describe "MCP Protocol Compatibility" do
     test "initialization handshake" do
       # Start server using standard MCP Server
-      {:ok, server_pid} = Server.start_link(
-        transport: :beam,
-        name: :mcp_compat_test_1,
-        handler: TestMCPHandler
-      )
-      
+      {:ok, server_pid} =
+        Server.start_link(
+          transport: :beam,
+          name: :mcp_compat_test_1,
+          handler: TestMCPHandler
+        )
+
       # Start client using standard MCP Client
-      {:ok, client_pid} = Client.start_link(
-        transport: :beam,
-        server: :mcp_compat_test_1
-      )
+      {:ok, client_pid} =
+        Client.start_link(
+          transport: :beam,
+          server: :mcp_compat_test_1
+        )
 
       # Wait for connection (BEAM transport connects immediately)
       Process.sleep(50)
@@ -288,7 +318,7 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
       assert {:ok, server_info} = Client.server_info(client_pid)
       assert server_info["name"] == "test-mcp-server"
       assert server_info["version"] == "1.0.0"
-      
+
       # Verify capabilities are available
       assert {:ok, tools_result} = Client.list_tools(client_pid)
       assert Map.has_key?(tools_result, :tools)
@@ -299,17 +329,19 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
 
     test "tools/list and tools/call" do
       # Start server and client using standard MCP APIs
-      {:ok, server_pid} = Server.start_link(
-        transport: :beam,
-        name: :mcp_compat_test_2,
-        handler: TestMCPHandler
-      )
-      
-      {:ok, client_pid} = Client.start_link(
-        transport: :beam,
-        server: :mcp_compat_test_2
-      )
-      
+      {:ok, server_pid} =
+        Server.start_link(
+          transport: :beam,
+          name: :mcp_compat_test_2,
+          handler: TestMCPHandler
+        )
+
+      {:ok, client_pid} =
+        Client.start_link(
+          transport: :beam,
+          server: :mcp_compat_test_2
+        )
+
       Process.sleep(50)
 
       # List tools using standard MCP API
@@ -318,12 +350,13 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
       assert %{"name" => "calculator"} = List.first(tools)
 
       # Call calculator tool using standard MCP API
-      assert {:ok, %{content: content}} = Client.call_tool(client_pid, "calculator", %{
-        "operation" => "add",
-        "a" => 5,
-        "b" => 3
-      })
-      
+      assert {:ok, %{content: content}} =
+               Client.call_tool(client_pid, "calculator", %{
+                 "operation" => "add",
+                 "a" => 5,
+                 "b" => 3
+               })
+
       assert [%{"type" => "text", "text" => "Result: 8"}] = content
 
       GenServer.stop(client_pid)
@@ -332,13 +365,14 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
 
     test "resources/list and resources/read" do
       port = @test_port_base + 3
-      
-      {:ok, server_pid, actual_port} = Server.start_test_server([
-        port: port,
-        handler: TestMCPHandler
-      ])
-      
-      {:ok, client_pid} = Client.connect([host: "localhost", port: actual_port])
+
+      {:ok, server_pid, actual_port} =
+        Server.start_test_server(
+          port: port,
+          handler: TestMCPHandler
+        )
+
+      {:ok, client_pid} = Client.connect(host: "localhost", port: actual_port)
       eventually(fn -> Client.status(client_pid) == :connected end)
 
       # List resources
@@ -348,10 +382,11 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
       assert %{"uri" => "file:///test/data.txt"} = List.first(resources)
 
       # Read resource
-      assert {:ok, response} = Client.call(client_pid, %{
-        "method" => "resources/read",
-        "params" => %{"uri" => "file:///test/data.txt"}
-      })
+      assert {:ok, response} =
+               Client.call(client_pid, %{
+                 "method" => "resources/read",
+                 "params" => %{"uri" => "file:///test/data.txt"}
+               })
 
       assert %{"result" => %{"contents" => contents}} = response
       assert [%{"uri" => "file:///test/data.txt", "text" => text}] = contents
@@ -363,13 +398,14 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
 
     test "prompts/list and prompts/get" do
       port = @test_port_base + 4
-      
-      {:ok, server_pid, actual_port} = Server.start_test_server([
-        port: port,
-        handler: TestMCPHandler
-      ])
-      
-      {:ok, client_pid} = Client.connect([host: "localhost", port: actual_port])
+
+      {:ok, server_pid, actual_port} =
+        Server.start_test_server(
+          port: port,
+          handler: TestMCPHandler
+        )
+
+      {:ok, client_pid} = Client.connect(host: "localhost", port: actual_port)
       eventually(fn -> Client.status(client_pid) == :connected end)
 
       # List prompts
@@ -379,13 +415,14 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
       assert %{"name" => "summarize"} = List.first(prompts)
 
       # Get prompt
-      assert {:ok, response} = Client.call(client_pid, %{
-        "method" => "prompts/get",
-        "params" => %{
-          "name" => "summarize",
-          "arguments" => %{"text" => "This is sample text to summarize."}
-        }
-      })
+      assert {:ok, response} =
+               Client.call(client_pid, %{
+                 "method" => "prompts/get",
+                 "params" => %{
+                   "name" => "summarize",
+                   "arguments" => %{"text" => "This is sample text to summarize."}
+                 }
+               })
 
       assert %{"result" => prompt} = response
       assert %{"description" => _, "messages" => messages} = prompt
@@ -397,32 +434,35 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
 
     test "error handling with proper MCP error codes" do
       port = @test_port_base + 5
-      
-      {:ok, server_pid, actual_port} = Server.start_test_server([
-        port: port,
-        handler: TestMCPHandler
-      ])
-      
-      {:ok, client_pid} = Client.connect([host: "localhost", port: actual_port])
+
+      {:ok, server_pid, actual_port} =
+        Server.start_test_server(
+          port: port,
+          handler: TestMCPHandler
+        )
+
+      {:ok, client_pid} = Client.connect(host: "localhost", port: actual_port)
       eventually(fn -> Client.status(client_pid) == :connected end)
 
       # Call non-existent tool
-      assert {:ok, response} = Client.call(client_pid, %{
-        "method" => "tools/call",
-        "params" => %{
-          "name" => "nonexistent",
-          "arguments" => %{}
-        }
-      })
+      assert {:ok, response} =
+               Client.call(client_pid, %{
+                 "method" => "tools/call",
+                 "params" => %{
+                   "name" => "nonexistent",
+                   "arguments" => %{}
+                 }
+               })
 
       assert %{"error" => error} = response
       assert %{"code" => -32601, "message" => message} = error
       assert String.contains?(message, "not found")
 
       # Call non-existent method
-      assert {:ok, response} = Client.call(client_pid, %{
-        "method" => "nonexistent/method"
-      })
+      assert {:ok, response} =
+               Client.call(client_pid, %{
+                 "method" => "nonexistent/method"
+               })
 
       assert %{"error" => %{"code" => -32601}} = response
 
@@ -432,29 +472,32 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
 
     test "notification handling" do
       port = @test_port_base + 6
-      
-      {:ok, server_pid, actual_port} = Server.start_test_server([
-        port: port,
-        handler: TestMCPHandler
-      ])
-      
-      {:ok, client_pid} = Client.connect([host: "localhost", port: actual_port])
+
+      {:ok, server_pid, actual_port} =
+        Server.start_test_server(
+          port: port,
+          handler: TestMCPHandler
+        )
+
+      {:ok, client_pid} = Client.connect(host: "localhost", port: actual_port)
       eventually(fn -> Client.status(client_pid) == :connected end)
 
       # Send progress notification
-      assert :ok = Client.notify(client_pid, %{
-        "method" => "notifications/progress",
-        "params" => %{
-          "progressToken" => "task_123",
-          "progress" => 50,
-          "total" => 100
-        }
-      })
+      assert :ok =
+               Client.notify(client_pid, %{
+                 "method" => "notifications/progress",
+                 "params" => %{
+                   "progressToken" => "task_123",
+                   "progress" => 50,
+                   "total" => 100
+                 }
+               })
 
       # Send cancellation notification
-      assert :ok = Client.notify(client_pid, %{
-        "method" => "notifications/cancelled"
-      })
+      assert :ok =
+               Client.notify(client_pid, %{
+                 "method" => "notifications/cancelled"
+               })
 
       # Give server time to process notifications
       Process.sleep(100)
@@ -465,23 +508,25 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
 
     test "completion/complete for sampling" do
       port = @test_port_base + 7
-      
-      {:ok, server_pid, actual_port} = Server.start_test_server([
-        port: port,
-        handler: TestMCPHandler
-      ])
-      
-      {:ok, client_pid} = Client.connect([host: "localhost", port: actual_port])
+
+      {:ok, server_pid, actual_port} =
+        Server.start_test_server(
+          port: port,
+          handler: TestMCPHandler
+        )
+
+      {:ok, client_pid} = Client.connect(host: "localhost", port: actual_port)
       eventually(fn -> Client.status(client_pid) == :connected end)
 
       # Send completion request
-      assert {:ok, response} = Client.call(client_pid, %{
-        "method" => "completion/complete",
-        "params" => %{
-          "ref" => "sampling_ref_123",
-          "reason" => "cancelled"
-        }
-      })
+      assert {:ok, response} =
+               Client.call(client_pid, %{
+                 "method" => "completion/complete",
+                 "params" => %{
+                   "ref" => "sampling_ref_123",
+                   "reason" => "cancelled"
+                 }
+               })
 
       assert %{"result" => %{}} = response
 
@@ -493,13 +538,14 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
   describe "Performance with MCP Protocol" do
     test "MCP request performance is within targets" do
       port = @test_port_base + 8
-      
-      {:ok, server_pid, actual_port} = Server.start_test_server([
-        port: port,
-        handler: TestMCPHandler
-      ])
-      
-      {:ok, client_pid} = Client.connect([host: "localhost", port: actual_port])
+
+      {:ok, server_pid, actual_port} =
+        Server.start_test_server(
+          port: port,
+          handler: TestMCPHandler
+        )
+
+      {:ok, client_pid} = Client.connect(host: "localhost", port: actual_port)
       eventually(fn -> Client.status(client_pid) == :connected end)
 
       # Warm up
@@ -522,16 +568,17 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
       ]
 
       for operation <- operations do
-        latencies = for _ <- 1..20 do
-          start_time = System.monotonic_time(:microsecond)
-          {:ok, _response} = Client.call(client_pid, operation)
-          end_time = System.monotonic_time(:microsecond)
-          end_time - start_time
-        end
+        latencies =
+          for _ <- 1..20 do
+            start_time = System.monotonic_time(:microsecond)
+            {:ok, _response} = Client.call(client_pid, operation)
+            end_time = System.monotonic_time(:microsecond)
+            end_time - start_time
+          end
 
         avg_latency = Enum.sum(latencies) / length(latencies)
         Logger.info("#{operation["method"]} avg latency: #{Float.round(avg_latency, 1)}μs")
-        
+
         # All MCP operations should be fast
         assert avg_latency < 100, "#{operation["method"]} too slow: #{avg_latency}μs"
       end
