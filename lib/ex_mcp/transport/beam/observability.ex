@@ -433,12 +433,37 @@ defmodule ExMCP.Transport.Beam.Observability do
 
   # Private helper functions
 
+  defp is_counter_metric(:total_errors), do: true
+  defp is_counter_metric(:security_events), do: true
+  defp is_counter_metric(:messages_sent), do: true
+  defp is_counter_metric(:messages_received), do: true
+
+  defp is_counter_metric(name) when is_atom(name) do
+    name_str = Atom.to_string(name)
+
+    String.starts_with?(name_str, "error_") or
+      String.starts_with?(name_str, "security_")
+  end
+
+  defp is_counter_metric(_), do: false
+
   defp record_metric(name, value) do
     timestamp = System.system_time(:millisecond)
 
     # Handle case where ETS table doesn't exist
     try do
-      :ets.insert(@metrics_table, {name, value, timestamp})
+      # For counter metrics, accumulate the values
+      case :ets.lookup(@metrics_table, name) do
+        [{^name, existing_value, _}] ->
+          if is_counter_metric(name) do
+            :ets.insert(@metrics_table, {name, existing_value + value, timestamp})
+          else
+            :ets.insert(@metrics_table, {name, value, timestamp})
+          end
+
+        _ ->
+          :ets.insert(@metrics_table, {name, value, timestamp})
+      end
     catch
       # Table doesn't exist, ignore
       :error, :badarg -> :ok
@@ -513,10 +538,9 @@ defmodule ExMCP.Transport.Beam.Observability do
         {key, _, _} ->
           key |> Atom.to_string() |> String.starts_with?("security_")
       end)
-      |> Enum.into(%{})
 
     %{
-      total_events: map_size(security_events),
+      total_events: Enum.count(security_events),
       events_by_type: group_security_events_by_type(security_events),
       last_event_time: get_last_security_event_time(security_events)
     }
@@ -877,7 +901,7 @@ defmodule ExMCP.Transport.Beam.Observability do
       {key, _, _} ->
         key |> Atom.to_string() |> String.replace_prefix("security_", "")
     end)
-    |> Map.new(fn {type, events} -> {type, length(events)} end)
+    |> Map.new(fn {type, events} -> {type, Enum.count(events)} end)
   end
 
   defp get_last_security_event_time(events) do
