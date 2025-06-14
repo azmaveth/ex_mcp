@@ -147,12 +147,10 @@ defmodule ExMCP.Transport.Beam.ZeroCopy do
   """
   @spec process_message(map()) :: {:ok, map()} | {:error, term()}
   def process_message(message) when is_map(message) do
-    try do
-      processed = deep_process_message(message)
-      {:ok, processed}
-    rescue
-      error -> {:error, {:processing_failed, error}}
-    end
+    processed = deep_process_message(message)
+    {:ok, processed}
+  rescue
+    error -> {:error, {:processing_failed, error}}
   end
 
   def process_message(_message) do
@@ -172,12 +170,10 @@ defmodule ExMCP.Transport.Beam.ZeroCopy do
   """
   @spec prepare_message(map()) :: {:ok, map()} | {:error, term()}
   def prepare_message(message) when is_map(message) do
-    try do
-      prepared = deep_prepare_message(message)
-      {:ok, prepared}
-    rescue
-      error -> {:error, {:preparation_failed, error}}
-    end
+    prepared = deep_prepare_message(message)
+    {:ok, prepared}
+  rescue
+    error -> {:error, {:preparation_failed, error}}
   end
 
   def prepare_message(_message) do

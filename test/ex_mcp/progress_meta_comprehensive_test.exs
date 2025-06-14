@@ -369,7 +369,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     end
 
     test "resources/list can include progress token", %{client: client} do
-      # Progress notifications are sent through the transport  
+      # Progress notifications are sent through the transport
       # No need to explicitly subscribe
 
       # Similar limitation - API doesn't expose _meta for list operations yet
