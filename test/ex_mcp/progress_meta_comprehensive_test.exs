@@ -11,7 +11,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Server, Protocol}
+  alias ExMCP.{Client, Server}
 
   defmodule ComprehensiveHandler do
     use ExMCP.Server.Handler
@@ -246,7 +246,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     end
 
     # Helper to get handler state for testing
-    def get_received_meta(server_pid) do
+    def get_received_meta(_server_pid) do
       # Since we can't directly get handler state, return empty map
       # In a real test, we would verify behavior through other means
       %{}
@@ -463,7 +463,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       {:ok, client: client, server: server}
     end
 
-    test "tools/call passes _meta to handler", %{client: client, server: server} do
+    test "tools/call passes _meta to handler", %{client: client, server: _server} do
       # Call tool with custom _meta fields
       meta = %{
         "progressToken" => "test-123",
@@ -499,7 +499,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       assert text =~ "token"
     end
 
-    test "_meta supports arbitrary fields", %{client: client, server: server} do
+    test "_meta supports arbitrary fields", %{client: client, server: _server} do
       # Test that any fields can be passed in _meta
       meta = %{
         "progressToken" => "abc",

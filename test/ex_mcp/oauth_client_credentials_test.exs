@@ -59,7 +59,7 @@ defmodule ExMCP.OAuthClientCredentialsTest do
       # Accept network failure as expected
       case result do
         {:error, {:request_failed, _}} -> assert true
-        other -> flunk("Expected network failure, got: #{inspect(other)}")
+        unexpected -> flunk("Expected network failure, got: #{inspect(unexpected)}")
       end
     end
 
@@ -76,7 +76,7 @@ defmodule ExMCP.OAuthClientCredentialsTest do
 
       case result do
         {:error, {:request_failed, _}} -> assert true
-        other -> flunk("Expected network failure, got: #{inspect(other)}")
+        unexpected -> flunk("Expected network failure, got: #{inspect(unexpected)}")
       end
     end
 
@@ -250,8 +250,8 @@ defmodule ExMCP.OAuthClientCredentialsTest do
           assert is_map(error_data)
           assert Map.has_key?(error_data, "error")
 
-        other ->
-          flunk("Expected error response, got: #{inspect(other)}")
+        unexpected ->
+          flunk("Expected error response, got: #{inspect(unexpected)}")
       end
     end
 
@@ -272,8 +272,8 @@ defmodule ExMCP.OAuthClientCredentialsTest do
         {:error, {:oauth_error, 401, error_data}} ->
           assert error_data["error"] == "invalid_client"
 
-        other ->
-          flunk("Expected client error, got: #{inspect(other)}")
+        unexpected ->
+          flunk("Expected client error, got: #{inspect(unexpected)}")
       end
     end
 
@@ -295,7 +295,7 @@ defmodule ExMCP.OAuthClientCredentialsTest do
           assert error_data["error"] in ["unsupported_grant_type", "invalid_grant"]
 
         # Allow other errors for now
-        other ->
+        _unexpected ->
           assert true
       end
     end
@@ -317,8 +317,8 @@ defmodule ExMCP.OAuthClientCredentialsTest do
           # Server error handling
           assert true
 
-        other ->
-          flunk("Expected server error handling, got: #{inspect(other)}")
+        unexpected ->
+          flunk("Expected server error handling, got: #{inspect(unexpected)}")
       end
     end
 
@@ -384,8 +384,8 @@ defmodule ExMCP.OAuthClientCredentialsTest do
           error_string = inspect(reason)
           refute String.contains?(error_string, "super-secret-dont-log-this")
 
-        other ->
-          error_string = inspect(other)
+        unexpected ->
+          error_string = inspect(unexpected)
           refute String.contains?(error_string, "super-secret-dont-log-this")
       end
     end
@@ -440,8 +440,8 @@ defmodule ExMCP.OAuthClientCredentialsTest do
           # Expected for no real server
           assert true
 
-        other ->
-          flunk("Unexpected response format: #{inspect(other)}")
+        unexpected ->
+          flunk("Unexpected response format: #{inspect(unexpected)}")
       end
     end
 
@@ -494,8 +494,8 @@ defmodule ExMCP.OAuthClientCredentialsTest do
           # Expected failure - no real server available
           assert true
 
-        other ->
-          flunk("Unexpected result: #{inspect(other)}")
+        unexpected ->
+          flunk("Unexpected result: #{inspect(unexpected)}")
       end
     end
 
@@ -553,8 +553,8 @@ defmodule ExMCP.OAuthClientCredentialsTest do
           # Expected for no real server
           assert true
 
-        other ->
-          flunk("Unexpected result: #{inspect(other)}")
+        unexpected ->
+          flunk("Unexpected result: #{inspect(unexpected)}")
       end
     end
   end

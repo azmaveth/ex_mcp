@@ -540,7 +540,7 @@ defmodule ExMCP.Transport.BeamClusteringTest do
             metadata: %{instance: i}
           }
 
-          {:ok, service_id} = Cluster.register_service(cluster, service_info)
+          {:ok, _service_id} = Cluster.register_service(cluster, service_info)
 
           server
         end
