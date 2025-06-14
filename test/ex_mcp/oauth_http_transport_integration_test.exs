@@ -18,6 +18,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
   alias ExMCP.Authorization.TokenManager
 
   @moduletag :capture_log
+  @moduletag :oauth_integration
 
   setup do
     # Mock OAuth configuration
