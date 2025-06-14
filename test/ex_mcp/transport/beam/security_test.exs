@@ -8,7 +8,7 @@ defmodule ExMCP.Transport.Beam.SecurityTest do
 
   use ExUnit.Case, async: true
 
-  alias ExMCP.Transport.Beam.{Security, Frame}
+  alias ExMCP.Transport.Beam.{Frame, Security}
 
   describe "frame validation" do
     setup do

@@ -500,19 +500,17 @@ defmodule ExMCP.Transport.Beam.Observability do
   end
 
   defp collect_health_status do
-    try do
-      %{
-        security_service: get_service_health(fn -> Security.get_security_stats() end),
-        zero_copy_service: get_service_health(fn -> ZeroCopy.get_stats() end),
-        connection_pool: check_connection_pool_health(),
-        memory_usage: check_memory_usage(),
-        system_load: check_system_load()
-      }
-    catch
-      error ->
-        Logger.warning("Error collecting health status: #{inspect(error)}")
-        %{error: "Failed to collect health status"}
-    end
+    %{
+      security_service: get_service_health(fn -> Security.get_security_stats() end),
+      zero_copy_service: get_service_health(fn -> ZeroCopy.get_stats() end),
+      connection_pool: check_connection_pool_health(),
+      memory_usage: check_memory_usage(),
+      system_load: check_system_load()
+    }
+  catch
+    error ->
+      Logger.warning("Error collecting health status: #{inspect(error)}")
+      %{error: "Failed to collect health status"}
   end
 
   defp calculate_performance_metrics do
@@ -547,32 +545,28 @@ defmodule ExMCP.Transport.Beam.Observability do
   end
 
   defp get_service_health(health_func) do
-    try do
-      health_func.()
-      :healthy
-    catch
-      :exit, _ ->
-        :unhealthy
+    health_func.()
+    :healthy
+  catch
+    :exit, _ ->
+      :unhealthy
 
-      error ->
-        Logger.warning("Service health check failed: #{inspect(error)}")
-        :degraded
-    end
+    error ->
+      Logger.warning("Service health check failed: #{inspect(error)}")
+      :degraded
   end
 
   defp check_connection_pool_health do
-    try do
-      active = get_metric_value(:connections_active, 0)
-      failed = get_metric_value(:connections_failed, 0)
+    active = get_metric_value(:connections_active, 0)
+    failed = get_metric_value(:connections_failed, 0)
 
-      cond do
-        failed > active * 0.5 -> :unhealthy
-        failed > active * 0.2 -> :degraded
-        true -> :healthy
-      end
-    catch
-      _ -> :unknown
+    cond do
+      failed > active * 0.5 -> :unhealthy
+      failed > active * 0.2 -> :degraded
+      true -> :healthy
     end
+  catch
+    _ -> :unknown
   end
 
   defp check_memory_usage do
@@ -663,7 +657,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     }
   end
 
-  defp calculate_resource_utilization() do
+  defp calculate_resource_utilization do
     %{
       memory_mb: :erlang.memory(:total) / (1024 * 1024),
       process_count: :erlang.system_info(:process_count),
@@ -673,7 +667,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     }
   end
 
-  defp perform_comprehensive_health_check() do
+  defp perform_comprehensive_health_check do
     components = [
       {:security, &check_security_health/0},
       {:connections, &check_connections_health/0},
@@ -701,7 +695,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     }
   end
 
-  defp check_security_health() do
+  defp check_security_health do
     # 1 minute
     recent_violations = count_recent_security_events(60_000)
 
@@ -712,7 +706,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp check_connections_health() do
+  defp check_connections_health do
     active = get_metric_value(:connections_active, 0)
     failed = get_metric_value(:connections_failed, 0)
 
@@ -729,7 +723,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp check_performance_health() do
+  defp check_performance_health do
     # 1 minute window
     error_rate = calculate_error_rate(60_000)
 
@@ -740,7 +734,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end
   end
 
-  defp check_resource_health() do
+  defp check_resource_health do
     memory_mb = :erlang.memory(:total) / (1024 * 1024)
     process_count = :erlang.system_info(:process_count)
 
@@ -838,7 +832,7 @@ defmodule ExMCP.Transport.Beam.Observability do
   defp determine_alert_severity(:high_latency), do: :medium
   defp determine_alert_severity(:high_security_events), do: :high
 
-  defp collect_component_stats() do
+  defp collect_component_stats do
     # Collect stats from Security service
     try do
       security_stats = Security.get_security_stats()
@@ -922,7 +916,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     |> Enum.max(fn -> 0 end)
   end
 
-  defp count_completed_traces_today() do
+  defp count_completed_traces_today do
     # 24 hours ago
     today_start = System.system_time(:millisecond) - 86_400_000
 
@@ -938,7 +932,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     end)
   end
 
-  defp cleanup_old_traces() do
+  defp cleanup_old_traces do
     # 1 hour in microseconds
     one_hour_ago = System.system_time(:microsecond) - 3_600_000_000
 
@@ -958,7 +952,7 @@ defmodule ExMCP.Transport.Beam.Observability do
     Enum.at(sorted_list, min(index, count - 1))
   end
 
-  defp generate_trace_id() do
+  defp generate_trace_id do
     :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
   end
 end

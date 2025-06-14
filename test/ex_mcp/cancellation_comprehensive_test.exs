@@ -199,7 +199,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
 
     test "client ignores responses after cancellation", %{client: client} do
       # This tests the spec requirement:
-      # "The sender of the cancellation notification SHOULD ignore any 
+      # "The sender of the cancellation notification SHOULD ignore any
       #  response to the request that arrives afterward"
 
       # Start multiple slow requests
@@ -347,7 +347,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
     end
 
     test "handles cancellation arriving after completion", %{client: client} do
-      # Per spec: "Due to network latency, cancellation notifications may 
+      # Per spec: "Due to network latency, cancellation notifications may
       # arrive after request processing has completed"
 
       # Make a request that completes quickly

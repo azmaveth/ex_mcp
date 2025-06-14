@@ -9,7 +9,7 @@ defmodule ExMCP.OAuthIntegrationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Authorization
-  alias ExMCP.Authorization.{TokenManager, PKCE}
+  alias ExMCP.Authorization.{PKCE, TokenManager}
 
   @moduletag :capture_log
 

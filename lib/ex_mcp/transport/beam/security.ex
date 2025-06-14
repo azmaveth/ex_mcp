@@ -41,7 +41,7 @@ defmodule ExMCP.Transport.Beam.Security do
   ## Security Features
 
   - **DoS Protection**: Frame size limits, connection throttling
-  - **Rate Limiting**: Per-connection and global rate limits  
+  - **Rate Limiting**: Per-connection and global rate limits
   - **Input Validation**: Message structure and content validation
   - **Authentication**: Multiple authentication methods
   - **Anomaly Detection**: Behavioral pattern analysis
@@ -138,7 +138,7 @@ defmodule ExMCP.Transport.Beam.Security do
   """
   @spec validate_frame(binary(), security_config()) :: validation_result()
   def validate_frame(frame_data, config) when is_binary(frame_data) and is_map(config) do
-    # Quick check for obviously invalid data (printable strings that aren't frame data)  
+    # Quick check for obviously invalid data (printable strings that aren't frame data)
     if String.printable?(frame_data) and not_frame_like?(frame_data) do
       {:error, :invalid_input}
     else
@@ -710,7 +710,7 @@ defmodule ExMCP.Transport.Beam.Security do
       Map.has_key?(message, "method") and Map.has_key?(message, "id") ->
         validate_rpc_request(message)
 
-      # RPC response  
+      # RPC response
       Map.has_key?(message, "id") and
           (Map.has_key?(message, "result") or Map.has_key?(message, "error")) ->
         validate_rpc_response(message)

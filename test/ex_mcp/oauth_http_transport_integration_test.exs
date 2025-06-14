@@ -14,10 +14,10 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
 
   @moduletag :skip
 
-  alias ExMCP.Client
-  alias ExMCP.Transport.SSEClient
   alias ExMCP.Authorization
   alias ExMCP.Authorization.TokenManager
+  alias ExMCP.Client
+  alias ExMCP.Transport.SSEClient
 
   @moduletag :capture_log
   @moduletag :oauth_integration

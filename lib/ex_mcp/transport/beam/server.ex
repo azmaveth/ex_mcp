@@ -36,7 +36,7 @@ defmodule ExMCP.Transport.Beam.Server do
   use GenServer
   require Logger
 
-  alias ExMCP.Transport.Beam.{Supervisor, Acceptor}
+  alias ExMCP.Transport.Beam.{Acceptor, Supervisor}
 
   @default_port 9999
   @default_max_connections 1000

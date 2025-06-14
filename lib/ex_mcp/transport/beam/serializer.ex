@@ -36,12 +36,10 @@ defmodule ExMCP.Transport.Beam.Serializer do
   """
   @spec serialize(term(), format()) :: serialization_result()
   def serialize(message, :etf) do
-    try do
-      binary = :erlang.term_to_binary(message, [:compressed])
-      {:ok, binary}
-    rescue
-      error -> {:error, {:etf_serialization_failed, error}}
-    end
+    binary = :erlang.term_to_binary(message, [:compressed])
+    {:ok, binary}
+  rescue
+    error -> {:error, {:etf_serialization_failed, error}}
   end
 
   def serialize(message, :json) do
@@ -69,13 +67,11 @@ defmodule ExMCP.Transport.Beam.Serializer do
   """
   @spec deserialize(binary(), format()) :: deserialization_result()
   def deserialize(binary, :etf) when is_binary(binary) do
-    try do
-      # Use :safe option to prevent code injection attacks
-      term = :erlang.binary_to_term(binary, [:safe])
-      {:ok, term}
-    rescue
-      error -> {:error, {:etf_deserialization_failed, error}}
-    end
+    # Use :safe option to prevent code injection attacks
+    term = :erlang.binary_to_term(binary, [:safe])
+    {:ok, term}
+  rescue
+    error -> {:error, {:etf_deserialization_failed, error}}
   end
 
   def deserialize(json, :json) when is_binary(json) do
