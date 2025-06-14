@@ -23,7 +23,7 @@ defmodule ExMCP.OAuthPKCETest do
       assert String.length(verifier) >= 43
       assert String.length(verifier) <= 128
 
-      # Verify challenge properties  
+      # Verify challenge properties
       assert is_binary(challenge)
       assert String.length(challenge) > 0
 
