@@ -8,8 +8,8 @@ defmodule ExMCP.Transport.Beam.EnhancedTest do
 
   use ExUnit.Case, async: true
 
-  alias ExMCP.Transport.Beam.Enhanced
   alias ExMCP.Protocol
+  alias ExMCP.Transport.Beam.Enhanced
 
   # Mock socket for server-side tests
   defmodule MockSocket do

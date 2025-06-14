@@ -6,8 +6,8 @@ defmodule ExMCP.Transport.Beam.EnhancedIntegrationTest do
 
   use ExUnit.Case, async: true
 
-  alias ExMCP.Transport.Beam.Enhanced
   alias ExMCP.Protocol
+  alias ExMCP.Transport.Beam.Enhanced
 
   describe "enhanced transport integration" do
     test "protocol encoding compatibility" do
