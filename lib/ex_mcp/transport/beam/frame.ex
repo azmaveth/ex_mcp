@@ -123,12 +123,10 @@ defmodule ExMCP.Transport.Beam.Frame do
   end
 
   defp deserialize_message(binary) when is_binary(binary) do
-    try do
-      term = :erlang.binary_to_term(binary, [:safe])
-      {:ok, term}
-    rescue
-      error -> {:error, {:deserialization_exception, error}}
-    end
+    term = :erlang.binary_to_term(binary, [:safe])
+    {:ok, term}
+  rescue
+    error -> {:error, {:deserialization_exception, error}}
   end
 
   defp encode_message_type(:rpc_request), do: 1

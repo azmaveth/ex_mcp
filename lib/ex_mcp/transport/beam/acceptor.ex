@@ -110,21 +110,19 @@ defmodule ExMCP.Transport.Beam.Acceptor do
   """
   @spec get_info(atom()) :: map() | {:error, :not_found}
   def get_info(ref) do
-    try do
-      info = :ranch.info(ref)
+    info = :ranch.info(ref)
 
-      %{
-        ref: ref,
-        status: Map.get(info, :status),
-        ip: Map.get(info, :ip),
-        port: Map.get(info, :port),
-        max_connections: Map.get(info, :max_connections),
-        active_connections: Map.get(info, :active_connections),
-        all_connections: Map.get(info, :all_connections)
-      }
-    rescue
-      _ -> {:error, :not_found}
-    end
+    %{
+      ref: ref,
+      status: Map.get(info, :status),
+      ip: Map.get(info, :ip),
+      port: Map.get(info, :port),
+      max_connections: Map.get(info, :max_connections),
+      active_connections: Map.get(info, :active_connections),
+      all_connections: Map.get(info, :all_connections)
+    }
+  rescue
+    _ -> {:error, :not_found}
   end
 
   # Ranch protocol behaviour implementation
