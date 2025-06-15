@@ -94,6 +94,7 @@ defmodule ExMCP.Server.Tools do
       end)
 
     quote do
+      alias ExMCP.Server.Tools
       unquote_splicing(handler_funcs)
 
       @impl ExMCP.Server.Handler
@@ -108,7 +109,7 @@ defmodule ExMCP.Server.Tools do
         case List.keyfind(tool_mapping, params.name, 0) do
           {_, handler_func} ->
             result = apply(__MODULE__, handler_func, [params.arguments, state])
-            ExMCP.Server.Tools.__normalize_response__(result, state)
+            Tools.__normalize_response__(result, state)
 
           nil ->
             {:ok,
@@ -173,7 +174,9 @@ defmodule ExMCP.Server.Tools do
   """
   defmacro tool(name, description \\ nil, do: block) do
     quote do
-      ExMCP.Server.Tools.__tool__(
+      alias ExMCP.Server.Tools
+
+      Tools.__tool__(
         __MODULE__,
         unquote(name),
         unquote(description),
