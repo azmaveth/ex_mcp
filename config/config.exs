@@ -23,6 +23,8 @@ if Mix.env() == :dev do
           {:cmd, "mix compile --warnings-as-errors"},
           {:cmd, "mix credo --strict"},
           {:cmd, "mix dialyzer"}
+          # To enable unit tests in pre-commit, uncomment the following line:
+          # {:cmd, "mix test --exclude oauth_integration --exclude streaming --max-cases 4 --seed 0"}
         ]
       ],
       pre_push: [
