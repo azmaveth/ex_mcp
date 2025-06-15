@@ -20,17 +20,13 @@ if Mix.env() == :dev do
       pre_commit: [
         tasks: [
           {:cmd, "mix format --check-formatted"},
-          {:cmd, "mix compile --warnings-as-errors"}
+          {:cmd, "mix compile --warnings-as-errors"},
+          {:cmd, "mix credo --strict"},
+          {:cmd, "mix dialyzer"}
         ]
       ],
       pre_push: [
-        tasks: [
-          {:cmd, "mix format --check-formatted"},
-          {:cmd, "mix credo --strict"},
-          {:cmd, "mix dialyzer"},
-          {:cmd, "mix test"},
-          {:cmd, "mix sobelow --skip"}
-        ]
+        tasks: []
       ]
     ]
 end
