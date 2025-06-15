@@ -263,6 +263,10 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Encodes a resource unsubscribe request.
+
+  > #### ExMCP Extension {: .info}
+  > This encodes the resources/unsubscribe method which is an ExMCP extension.
+  > The MCP specification does not define this method.
   """
   @spec encode_unsubscribe_resource(String.t()) :: map()
   def encode_unsubscribe_resource(uri) do
@@ -608,6 +612,7 @@ defmodule ExMCP.Protocol do
   def method_available?(method, version) do
     case method do
       "resources/subscribe" -> version in ["2025-03-26", "draft"]
+      # ExMCP extension - not in spec but we allow it for these versions
       "resources/unsubscribe" -> version in ["2025-03-26", "draft"]
       "logging/setLevel" -> version in ["2025-03-26", "draft"]
       "notifications/resources/updated" -> version in ["2025-03-26", "draft"]

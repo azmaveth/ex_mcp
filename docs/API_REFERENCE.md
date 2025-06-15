@@ -244,8 +244,10 @@ Subscribes to resource change notifications.
 {:ok, _} = ExMCP.Client.subscribe_resource(client, "file:///config.json")
 ```
 
-#### `unsubscribe_resource/3`
+#### `unsubscribe_resource/3` (ExMCP Extension)
 Unsubscribes from resource change notifications.
+
+> **Note:** This is an ExMCP extension. The MCP specification does not define `resources/unsubscribe`.
 
 ```elixir
 @spec unsubscribe_resource(GenServer.server(), String.t(), timeout()) :: 

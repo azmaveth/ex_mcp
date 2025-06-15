@@ -16,8 +16,7 @@ defmodule ExMCP.Client do
   - `list_prompts/2` - List available prompts
   - `get_prompt/3` - Get a specific prompt
   - `list_roots/2` - List server roots
-  - `subscribe/3` - Subscribe to resource changes
-  - `unsubscribe/3` - Unsubscribe from resources
+  - `subscribe_resource/3` - Subscribe to resource changes
   - `create_message/3` - Request LLM sampling
   - `send_cancelled/3` - Cancel an in-flight request
   - `ping/2` - Keep-alive ping
@@ -27,6 +26,7 @@ defmodule ExMCP.Client do
   > #### Extension Features {: .warning}
   > These features are specific to ExMCP and not part of the official MCP specification.
 
+  - **Resource Unsubscribe** - `unsubscribe_resource/3` to cancel subscriptions (not in MCP spec)
   - **Automatic Reconnection** - Reconnects on connection failure
   - **Batch Operations** - `batch_request/3` for efficient multi-request handling
   - **Process Monitoring** - Integration with OTP supervision trees
@@ -414,6 +414,10 @@ defmodule ExMCP.Client do
 
   @doc """
   Unsubscribes from resource updates.
+
+  > #### ExMCP Extension {: .info}
+  > This is an ExMCP extension. The MCP specification does not define a resources/unsubscribe method.
+  > This will only work with ExMCP servers or servers that have implemented this extension.
   """
   @spec unsubscribe_resource(GenServer.server(), String.t(), timeout()) ::
           {:ok, map()} | {:error, any()}

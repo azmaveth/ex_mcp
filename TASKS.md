@@ -187,8 +187,8 @@
   - [x] Updated Client API to accept :meta option for all methods
   - [x] Backward compatibility maintained for :progress_token option in call_tool
   - [ ] Fix server-side _meta field extraction for tools/list, resources/list, prompts/list
-- [x] Resource Subscriptions ✅ *(Note: Missing integration test verification)*
-  - [x] Implement resources/subscribe and resources/unsubscribe
+- [x] Resource Subscriptions ✅ *(Note: Missing integration test verification; resources/unsubscribe is an ExMCP extension not in MCP spec)*
+  - [x] Implement resources/subscribe (MCP spec) and resources/unsubscribe (ExMCP extension)
   - [x] Add subscription state management
   - [x] Resource update notifications
   - [ ] Integration tests for subscription flows

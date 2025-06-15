@@ -412,6 +412,10 @@ defmodule ExMCP.Server.Handler do
 
   @doc """
   Handles resource unsubscription.
+
+  > #### ExMCP Extension {: .info}
+  > This callback handles the resources/unsubscribe method which is an ExMCP extension.
+  > The MCP specification does not define this method.
   """
   @callback handle_unsubscribe_resource(uri :: String.t(), state()) ::
               {:ok, map(), state()} | {:error, any(), state()}

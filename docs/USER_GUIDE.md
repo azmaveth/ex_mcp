@@ -534,8 +534,10 @@ end)
 
 ### Resource Subscriptions
 
+> **Note:** The MCP specification only defines `resources/subscribe`. The `unsubscribe_resource` function is an ExMCP extension.
+
 ```elixir
-# Subscribe to resource changes
+# Subscribe to resource changes (MCP standard)
 {:ok, _} = ExMCP.Client.subscribe_resource(client, "file:///config.json")
 
 # Handle notifications in your client process
@@ -547,7 +549,7 @@ def handle_info({:mcp_notification, "resource/updated", %{"uri" => uri}}, state)
   {:noreply, state}
 end
 
-# Unsubscribe when done
+# Unsubscribe when done (ExMCP extension - not in MCP spec)
 {:ok, _} = ExMCP.Client.unsubscribe_resource(client, "file:///config.json")
 ```
 

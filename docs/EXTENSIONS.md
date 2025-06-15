@@ -17,7 +17,8 @@ These modules and features are part of the official Model Context Protocol speci
   - `list_resources/2`, `read_resource/3` - Resource operations
   - `list_prompts/2`, `get_prompt/4` - Prompt operations
   - `create_message/4` - Sampling operations
-  - `subscribe_resource/3`, `unsubscribe_resource/3` - Subscriptions
+  - `subscribe_resource/3` - Resource subscriptions (MCP standard)
+  - `unsubscribe_resource/3` - Resource unsubscribe (ExMCP extension)
   - `list_resource_templates/2` - Resource templates
   - `ping/2`, `complete/4` - Utility operations
   - `send_cancelled/3`, `log_message/4` - Notifications
@@ -132,6 +133,37 @@ MCP client for connecting to Model Context Protocol servers.
 These modules combine spec features with extensions:
 - `ExMCP.Client` - Core MCP operations plus auto-reconnection
 - `ExMCP` - Main module with overview
+
+## Specific Extensions
+
+### Resource Management
+
+#### `resources/unsubscribe` Method
+The MCP specification defines `resources/subscribe` for subscribing to resource changes but does not provide a way to unsubscribe. ExMCP adds:
+
+- **Method**: `resources/unsubscribe`
+- **Client API**: `ExMCP.Client.unsubscribe_resource/3`
+- **Handler Callback**: `handle_unsubscribe_resource/2`
+- **Rationale**: Allows clients to stop receiving notifications for resources they no longer need to monitor
+
+This extension won't work with non-ExMCP servers as they won't recognize the `resources/unsubscribe` method.
+
+### Transport Features
+
+#### BEAM Transport
+A complete transport implementation using Erlang/Elixir's native message passing:
+
+- Supports both local (same node) and distributed (different nodes) communication
+- Zero-copy message passing for large payloads
+- Native supervision tree integration
+- No serialization overhead for local connections when using `:native` format
+
+#### WebSocket Transport (Client Only)
+WebSocket client implementation for browser-based MCP connections.
+
+### Batch Operations
+
+The `ExMCP.Client.batch_request/3` function allows sending multiple requests in a single call, improving efficiency for bulk operations.
 
 ## Contributing
 

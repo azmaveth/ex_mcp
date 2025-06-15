@@ -72,6 +72,7 @@ Enhanced features unique to ExMCP:
 - Multi-server management
 - Batch operations
 - Auto-reconnection
+- Resource unsubscribe (`resources/unsubscribe` - not in MCP spec)
 
 ### Draft Features (Experimental)
 
