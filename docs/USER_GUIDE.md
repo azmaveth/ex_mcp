@@ -26,7 +26,7 @@ ExMCP is a complete Elixir implementation of the Model Context Protocol (MCP), e
 ### Key Features
 
 - **Full Protocol Support**: Implements MCP specification version 2025-03-26
-- **Multiple Transports**: stdio, Streamable HTTP (with SSE), Websocket, and native BEAM
+- **Multiple Transports**: stdio, Streamable HTTP (with Server-Sent Events), WebSocket, and native BEAM
 - **Both Client and Server**: Build MCP servers or connect to existing ones
 - **OTP Integration**: Built on Elixir's OTP principles for reliability
 - **Type Safety**: Comprehensive type specifications throughout
@@ -449,7 +449,7 @@ Servers can make requests back to clients:
 {:ok, client} = ExMCP.Client.start_link(
   transport: :http,
   url: "http://localhost:8080",
-  endpoint: "/mcp/v1"  # Optional, defaults to "/mcp/v1"
+  endpoint: "/mcp/v1"  # Optional: specify custom endpoint (defaults to "/mcp/v1")
 )
 
 # Connect to a BEAM server
@@ -737,21 +737,32 @@ Best for local process communication:
 
 ### Streamable HTTP Transport
 
-For HTTP-based communication with optional Server-Sent Events (SSE) streaming:
+For HTTP-based communication with optional Server-Sent Events (SSE) streaming.
+
+> **Note:** Use `transport: :http` for the HTTP transport with Server-Sent Events support. The `:sse` transport name is deprecated.
 
 ```elixir
 # Server
 {:ok, server} = ExMCP.Server.start_link(
   handler: MyHandler,
-  transport: :sse,
+  transport: :http,
   port: 8080,
   path: "/mcp"
 )
 
 # Client
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :sse,
-  url: "http://localhost:8080/mcp",
+  transport: :http,
+  url: "http://localhost:8080",
+  endpoint: "/mcp/v1",  # Optional: defaults to "/mcp/v1"
+  headers: [{"Authorization", "Bearer token"}]
+)
+
+# Client with custom endpoint
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://api.example.com",
+  endpoint: "/ai/mcp",  # Custom endpoint path
   headers: [{"Authorization", "Bearer token"}]
 )
 ```
@@ -818,7 +829,7 @@ Manage multiple server connections:
 
 {:ok, client2} = ExMCP.ServerManager.add_server(manager, %{
   name: "data-server",
-  transport: :sse,
+  transport: :http,
   url: "http://localhost:9000"
 })
 
@@ -1041,11 +1052,12 @@ end
   env: [{"DEBUG", "true"}]
 )
 
-# SSE: Connection refused
+# HTTP streaming: Connection refused
 # Ensure server is listening
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :sse,
-  url: "http://localhost:8080/mcp"
+  transport: :http,
+  url: "http://localhost:8080",
+  endpoint: "/mcp/v1"  # Ensure endpoint matches server configuration
 )
 
 # BEAM: Node not connected

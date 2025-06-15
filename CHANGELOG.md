@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `ExMCP.Authorization` module for OAuth flows
     - `ExMCP.Authorization.TokenManager` for automatic token lifecycle
     - `ExMCP.Authorization.PKCE` for code challenge generation/verification
-    - Transport-level OAuth support for SSE, HTTP, and WebSocket
+    - Transport-level OAuth support for HTTP streaming and WebSocket
   - Comprehensive test coverage: 217+ passing OAuth tests
 
 - **Cancellation Protocol Implementation** (MCP specification compliance)
@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Completions capability declaration with `hasArguments` and `values` fields
   - Enhanced HTTP transport flexibility:
     - Session management with `Mcp-Session-Id` header
-    - Non-SSE mode for single JSON responses
+    - Non-streaming mode for single JSON responses
     - Configurable endpoint (defaults to `/mcp/v1`)
     - Resumability support with Last-Event-ID
   - Security requirements enforcement:
@@ -88,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 - **Removed `:sse` transport identifier** - Use `:http` instead for Streamable HTTP transport
-- **Renamed SSE references** - All documentation and APIs now use "Streamable HTTP" terminology
+- **Renamed SSE references** - All documentation and APIs now use "HTTP streaming" or "Streamable HTTP" terminology
 
 ### Fixed
 - **Logging Notification Method Name** - Changed from `notifications/log` to `notifications/message` to match MCP specification exactly
@@ -107,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Enhanced Streamable HTTP Transport**
   - Automatic reconnection with exponential backoff
   - Built-in keep-alive mechanism (30-second heartbeat)
-  - Support for Last-Event-ID header for event resumption with SSE
+  - Support for Last-Event-ID header for event resumption with HTTP streaming
   - Improved connection stability and error recovery
 
 #### Draft MCP Specification Features (Experimental)
@@ -208,6 +208,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **BREAKING:** Renamed SSE transport to HTTP transport (MCP specification update)
   - `ExMCP.Transport.SSE` is now `ExMCP.Transport.HTTP`
+  - Use `transport: :http` instead of `transport: :sse`
   - Transport identifier `:sse` is now `:http` (`:sse` still works for compatibility)
   - Updated documentation to reflect "Streamable HTTP" terminology from MCP spec 2025-03-26
   - All tests and examples updated to use new naming
@@ -249,21 +250,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive security features across all transports
   - New `ExMCP.Security` module for unified security configuration
   - Authentication support: Bearer tokens, API keys, Basic auth, custom headers, node cookies
-  - SSE transport: Origin validation, CORS headers, security headers
+  - HTTP streaming transport: Origin validation, CORS headers, security headers
   - WebSocket transport: Authentication headers, TLS configuration
   - BEAM transport: Process-level authentication, node cookie support
   - TLS/SSL configuration with certificate validation
-  - Mutual TLS support for SSE and WebSocket transports
+  - Mutual TLS support for HTTP streaming and WebSocket transports
   - Comprehensive security documentation in docs/SECURITY.md
 - Native format support for BEAM transport
   - `:json` format (default) maintains MCP compatibility
   - `:native` format for direct Elixir term passing between processes
   - Configurable via `:format` option in connect/accept
-- HTTP test server for SSE testing
+- HTTP test server for streaming testing
   - Implemented with Plug and Cowboy
-  - Supports SSE connections and message endpoints
+  - Supports Server-Sent Events connections and message endpoints
   - Request tracking for test assertions
-  - Proper SSE event streaming with keep-alive
+  - Proper Server-Sent Events streaming with keep-alive
 
 ### Changed
 - **BREAKING:** Client list methods now take options keyword list instead of timeout

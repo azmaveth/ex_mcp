@@ -93,7 +93,7 @@ security = %{
 
 ### Streamable HTTP Transport Security
 
-The Streamable HTTP transport (with SSE) supports the most comprehensive security features:
+The Streamable HTTP transport (with Server-Sent Events) supports the most comprehensive security features:
 
 ```elixir
 security = %{
