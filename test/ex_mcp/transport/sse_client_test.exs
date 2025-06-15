@@ -9,7 +9,7 @@ defmodule ExMCP.Transport.SSEClientTest do
 
   @moduletag :capture_log
   @moduletag :transport
-  @moduletag :sse
+  @moduletag :http
   @moduletag :requires_http
   @moduletag :slow
 

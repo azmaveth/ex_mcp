@@ -9,7 +9,7 @@ defmodule ExMCP.Transport.HTTPConfigurableEndpointTest do
 
   @moduletag :capture_log
   @moduletag :transport
-  @moduletag :sse
+  @moduletag :http
   @moduletag :requires_http
 
   describe "configurable endpoint" do

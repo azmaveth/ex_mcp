@@ -17,7 +17,7 @@ defmodule TestTagger do
     # Transport tests
     {~r/transport.*_test\.exs$/, [:transport]},
     {~r/stdio.*_test\.exs$/, [:transport, :stdio, :requires_stdio]},
-    {~r/sse.*_test\.exs$/, [:transport, :sse, :requires_http]},
+    {~r/sse.*_test\.exs$/, [:transport, :http, :requires_http]},
     {~r/beam.*_test\.exs$/, [:transport, :beam, :requires_beam]},
     {~r/http.*_test\.exs$/, [:transport, :requires_http]},
     
@@ -46,7 +46,7 @@ defmodule TestTagger do
     [
     # Integration indicators
     {~r/Server\.start_link.*Client\.start_link/s, [:integration]},
-    {~r/MockSSEServer|TestHTTPServer/, [:integration, :requires_http]},
+    {~r/TestHTTPServer/, [:integration, :requires_http]},
     {~r/Process\.sleep\(\d{4,}\)/, [:slow]},
     {~r/Enum\.each.*1\.\.1000/, [:performance, :slow]},
     {~r/@tag\s+:capture_log/, [:capture_log]},

@@ -7,7 +7,7 @@ defmodule ExMCP.Transport.HTTPServerTest do
   import Plug.Conn
 
   @moduletag :transport
-  @moduletag :sse
+  @moduletag :http
   @moduletag :requires_http
 
   alias ExMCP.Transport.HTTPServer

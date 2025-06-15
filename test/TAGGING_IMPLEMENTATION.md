@@ -50,7 +50,7 @@ Files ending in `*_integration_test.exs` or containing real server/client setup:
 #### Transport Tests (25+ files)
 Files in `test/ex_mcp/transport/`:
 - `@moduletag :transport`
-- Transport-specific: `:beam`, `:sse`, `:stdio`
+- Transport-specific: `:beam`, `:http`, `:stdio`
 - Requirements: `:requires_beam`, `:requires_http`, `:requires_stdio`
 
 #### Unit Tests (5 files)

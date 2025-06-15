@@ -57,7 +57,7 @@ defmodule Mix.Tasks.Test.Suite do
       exclude: [:skip, :wip]
     ],
     "transport" => [
-      include: [:transport, :stdio, :sse, :beam],
+      include: [:transport, :stdio, :http, :beam],
       exclude: [:skip, :wip]
     ],
     "security" => [

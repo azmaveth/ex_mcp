@@ -38,7 +38,7 @@ Tests are tagged to categorize them by:
 
 - **`:transport`** - General transport tests
 - **`:stdio`** - stdio transport specific tests
-- **`:sse`** - Server-Sent Events transport tests
+- **`:http`** - Streamable HTTP transport tests
 - **`:beam`** - BEAM/Erlang process transport tests
 
 ### Feature-Specific
@@ -145,16 +145,16 @@ Tests can have multiple tags for fine-grained control:
 ```elixir
 @moduletag :integration
 @moduletag :transport
-@moduletag :sse
+@moduletag :http
 
-test "SSE transport with real server" do
-  # This test is: integration + transport + sse
+test "Streamable HTTP transport with real server" do
+  # This test is: integration + transport + http
 end
 
 @tag :slow
 @tag :stress
-test "SSE transport under load" do
-  # This test is: integration + transport + sse + slow + stress
+test "Streamable HTTP transport under load" do
+  # This test is: integration + transport + http + slow + stress
 end
 ```
 
@@ -218,12 +218,12 @@ end
 
 ### Integration Test
 ```elixir
-defmodule ExMCP.Integration.SSETransportTest do
+defmodule ExMCP.Integration.StreamableHTTPTransportTest do
   use ExUnit.Case
   
   @moduletag :integration
   @moduletag :transport
-  @moduletag :sse
+  @moduletag :http
   @moduletag :requires_http
   
   @tag :slow

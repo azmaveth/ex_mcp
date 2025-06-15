@@ -15,10 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added 100+ test files with appropriate module tags for categorization
   - Default exclusions for fast development: integration, external, slow, performance tests excluded by default
   - Test categories: `:unit`, `:integration`, `:compliance`, `:security`, `:performance`, `:transport`, feature-specific tags
-  - Transport-specific tags: `:beam`, `:sse`, `:stdio` with requirement tags `:requires_beam`, `:requires_http`, `:requires_stdio`
+  - Transport-specific tags: `:beam`, `:http`, `:stdio` with requirement tags `:requires_beam`, `:requires_http`, `:requires_stdio`
   - Feature tags: `:progress`, `:roots`, `:resources`, `:prompts`, `:protocol`, `:cancellation`, `:batch`, `:logging`
   - Development tags: `:slow`, `:wip`, `:skip`, `:manual_only` for test lifecycle management
   - Reduced default test run time from ~30s to ~5s while maintaining full test coverage
+  - Updated test tags from `:sse` to `:http` to align with MCP "Streamable HTTP transport" naming convention
+  - Removed unused `ExMCP.Test.MockSSEServer` module and cleaned up references
 - **Enhanced Compliance Test Organization**
   - Extracted MCP protocol compliance tests from implementation-specific test files
   - Created 7 new compliance test files by extracting tests from non-compliance files:

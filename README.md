@@ -641,7 +641,7 @@ mix test.suite integration
 
 # Transport-specific tests
 mix test --only beam              # BEAM transport tests
-mix test --only sse               # SSE transport tests
+mix test --only http              # Streamable HTTP transport tests
 mix test --only stdio             # stdio transport tests
 
 # Feature-specific tests

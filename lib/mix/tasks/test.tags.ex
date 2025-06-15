@@ -37,7 +37,7 @@ defmodule Mix.Tasks.Test.Tags do
     # Transport-specific
     transport: "General transport tests",
     stdio: "stdio transport specific tests",
-    sse: "Server-Sent Events transport tests",
+    http: "Streamable HTTP transport tests",
     beam: "BEAM/Erlang process transport tests",
 
     # Development tags
@@ -77,7 +77,7 @@ defmodule Mix.Tasks.Test.Tags do
       {"Test Categories", [:unit, :integration, :compliance, :security, :performance]},
       {"Test Requirements", [:requires_http, :requires_stdio, :requires_beam, :external]},
       {"Test Characteristics", [:slow, :stress, :flaky, :capture_log]},
-      {"Transport Tests", [:transport, :stdio, :sse, :beam]},
+      {"Transport Tests", [:transport, :stdio, :http, :beam]},
       {"Feature Tests",
        [
          :protocol,
