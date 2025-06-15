@@ -293,7 +293,7 @@ defmodule ExMCP.Server.ToolsTest do
           )
 
           handle(fn %{users: users}, _state ->
-            names = Enum.map(users, & &1["name"]) |> Enum.join(", ")
+            names = Enum.map_join(users, ", ", & &1["name"])
             {:ok, text: "Users: #{names}"}
           end)
         end

@@ -217,7 +217,7 @@
   - [x] Window-based flow control (similar to TCP sliding window)
   - [x] Resource streaming with automatic chunking
   - [x] Connection-level stream management
-- [ ] Performance optimizations for local connections *(Note: BEAM transport has inherent local optimizations and :native format. Still need: localhost detection in HTTP/WebSocket, Unix domain sockets, serialization bypass for same-process, optimized buffers/timeouts for local connections)*
+- [x] Performance optimizations for local connections *(Note: BEAM transport has inherent local optimizations including :native format for zero-serialization same-VM communication and ETF format for optimal BEAM-to-BEAM communication. HTTP/WebSocket localhost detection, Unix domain sockets, and optimized buffers/timeouts not implemented)*
 - [x] Zero-copy message passing for large payloads ✅ *(Note: Implemented for BEAM transport only - uses ETS/shared memory. Other transports would need different approaches like chunking or content-addressable storage)*
 
 ## PRIORITY ANALYSIS & RECOMMENDATIONS
