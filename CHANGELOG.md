@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Configurable SSE Endpoint**
+  - HTTP transport now supports custom endpoint configuration via `:endpoint` option
+  - Defaults to "/mcp/v1" for backward compatibility
+  - Handles trailing slashes and empty endpoints properly
+  - Example: `ExMCP.Client.start_link(transport: :http, url: "http://localhost", endpoint: "/custom/api")`
 - **Progress Token and _meta Field Support**
   - Added `_meta` field support to all MCP request methods in Protocol module
   - Extended Client API to accept `:meta` option for all methods

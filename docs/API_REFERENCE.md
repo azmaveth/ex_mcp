@@ -88,7 +88,8 @@ Starts a new MCP client process.
 # Streamable HTTP transport (with SSE)
 {:ok, client} = ExMCP.Client.start_link(
   transport: :http,
-  url: "http://localhost:8080/mcp",
+  url: "http://localhost:8080",
+  endpoint: "/mcp/v1",  # Optional, defaults to "/mcp/v1"
   headers: [{"Authorization", "Bearer token"}]
 )
 
@@ -1058,9 +1059,11 @@ Custom MCP errors use codes in the `-32000` to `-32099` range.
 
 ### Streamable HTTP Transport
 
-- `:url` (required) - HTTP endpoint URL for Streamable HTTP with SSE
+- `:url` (required) - HTTP base URL
+- `:endpoint` - MCP endpoint path (default: "/mcp/v1")
 - `:headers` - HTTP headers (default: [])
 - `:timeout` - Connection timeout in ms (default: 5000)
+- `:use_sse` - Use Server-Sent Events for responses (default: true)
 
 ### BEAM Transport
 

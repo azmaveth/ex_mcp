@@ -229,7 +229,8 @@ For HTTP-based communication with optional Server-Sent Events (SSE) streaming:
 # Client
 {:ok, client} = ExMCP.Client.start_link(
   transport: :http,
-  url: "http://localhost:8080/mcp",
+  url: "http://localhost:8080",
+  endpoint: "/mcp/v1",  # Optional, defaults to "/mcp/v1"
   headers: [{"Authorization", "Bearer token"}]
 )
 ```

@@ -448,7 +448,8 @@ Servers can make requests back to clients:
 # Connect to a Streamable HTTP server
 {:ok, client} = ExMCP.Client.start_link(
   transport: :http,
-  url: "http://localhost:8080/mcp"
+  url: "http://localhost:8080",
+  endpoint: "/mcp/v1"  # Optional, defaults to "/mcp/v1"
 )
 
 # Connect to a BEAM server
