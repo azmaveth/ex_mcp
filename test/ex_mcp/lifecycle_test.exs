@@ -4,6 +4,7 @@ defmodule ExMCP.LifecycleTest do
   version negotiation, and shutdown procedures.
   """
   use ExUnit.Case, async: true
+  @moduletag :integration
 
   alias ExMCP.Client
   alias ExMCP.Server

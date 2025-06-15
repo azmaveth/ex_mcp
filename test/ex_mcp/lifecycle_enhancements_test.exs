@@ -4,6 +4,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
   dynamic capability building and version validation.
   """
   use ExUnit.Case, async: true
+  @moduletag :integration
 
   alias ExMCP.Client
   alias ExMCP.Server

@@ -11,6 +11,9 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
   use ExUnit.Case, async: true
 
+  @moduletag :progress
+  @moduletag :slow
+
   alias ExMCP.{Client, Protocol, Server}
 
   defmodule ComprehensiveHandler do

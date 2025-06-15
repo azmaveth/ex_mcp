@@ -4,6 +4,8 @@ defmodule ExMCP.Authorization.ErrorHandlerTest do
   """
   use ExUnit.Case, async: true
 
+  @moduletag :unit
+
   alias ExMCP.Authorization.ErrorHandler
 
   describe "handle_auth_error/4" do

@@ -1,5 +1,8 @@
 defmodule ExMCP.ProtocolNotificationsTest do
   use ExUnit.Case
+
+  @moduletag :compliance
+
   alias ExMCP.Protocol
 
   describe "change notification encoding" do

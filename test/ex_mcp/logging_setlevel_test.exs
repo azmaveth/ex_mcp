@@ -3,6 +3,8 @@ defmodule ExMCP.LoggingSetLevelTest do
   Tests for the logging/setLevel request handler.
   """
   use ExUnit.Case, async: true
+  @moduletag :integration
+  @moduletag :logging
 
   alias ExMCP.Client
   alias ExMCP.Server

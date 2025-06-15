@@ -1,6 +1,9 @@
 defmodule ExMCP.ProtocolTest do
   use ExUnit.Case
 
+  @moduletag :protocol
+  @moduletag :unit
+
   alias ExMCP.Protocol
 
   describe "client request encoding" do

@@ -8,6 +8,10 @@ defmodule ExMCP.Transport.Beam.BatchTest do
 
   use ExUnit.Case, async: true
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+
   alias ExMCP.Transport.Beam.Batch
 
   # Mock connection process for testing

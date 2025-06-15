@@ -1,6 +1,10 @@
 defmodule ExMCP.Transport.HTTPTest do
   use ExUnit.Case
 
+  @moduletag :transport
+  @moduletag :sse
+  @moduletag :requires_http
+
   alias ExMCP.Transport.HTTP
 
   describe "HTTP transport" do

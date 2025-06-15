@@ -11,6 +11,10 @@ defmodule ExMCP.Transport.BeamHotReloadTest do
   # Hot reloading tests can't be async
   use ExUnit.Case, async: false
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+
   alias ExMCP.{Client, Server}
   alias ExMCP.Transport.Beam.{HotReload, ReloadManager}
 

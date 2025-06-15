@@ -11,6 +11,8 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :integration
+  @moduletag :security
 
   @moduletag :skip
 

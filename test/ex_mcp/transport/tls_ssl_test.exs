@@ -13,6 +13,8 @@ defmodule ExMCP.Transport.TLSSSLTest do
   """
   use ExUnit.Case, async: true
 
+  @moduletag :transport
+
   alias ExMCP.{Security, Transport}
 
   describe "TLS configuration validation" do

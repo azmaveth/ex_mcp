@@ -2,6 +2,8 @@ defmodule ExMCP.ProtocolSamplingTest do
   use ExUnit.Case
   alias ExMCP.Protocol
 
+  @moduletag :protocol
+
   describe "sampling/createMessage encoding" do
     test "encodes create_message request correctly" do
       params = %{

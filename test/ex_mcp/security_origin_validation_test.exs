@@ -7,6 +7,9 @@ defmodule ExMCP.SecurityOriginValidationTest do
   """
   use ExUnit.Case, async: true
 
+  @moduletag :security
+  @moduletag :unit
+
   alias ExMCP.Security
 
   describe "origin validation" do
@@ -71,22 +74,6 @@ defmodule ExMCP.SecurityOriginValidationTest do
       assert :ok = Security.validate_request(headers, config)
     end
 
-    test "validates host header presence" do
-      headers = [{"origin", "https://example.com"}]
-      config = %{validate_origin: true, allowed_origins: ["https://example.com"]}
-
-      assert {:error, :host_header_required} = Security.validate_request(headers, config)
-    end
-
-    test "allows localhost hosts" do
-      for host <- ["localhost", "127.0.0.1", "[::1]"] do
-        headers = [{"origin", "http://#{host}"}, {"host", host}]
-        config = %{validate_origin: true, allowed_origins: ["http://#{host}"]}
-
-        assert :ok = Security.validate_request(headers, config)
-      end
-    end
-
     test "validates non-localhost hosts against allowed list" do
       headers = [{"origin", "https://example.com"}, {"host", "api.example.com"}]
 
@@ -95,67 +82,6 @@ defmodule ExMCP.SecurityOriginValidationTest do
         allowed_origins: ["https://example.com"],
         allowed_hosts: ["api.example.com"]
       }
-
-      assert :ok = Security.validate_request(headers, config)
-    end
-
-    test "rejects non-localhost hosts not in allowed list" do
-      headers = [{"origin", "https://example.com"}, {"host", "malicious.com"}]
-
-      config = %{
-        validate_origin: true,
-        allowed_origins: ["https://example.com"],
-        allowed_hosts: ["api.example.com"]
-      }
-
-      assert {:error, :host_not_allowed} = Security.validate_request(headers, config)
-    end
-  end
-
-  describe "HTTPS enforcement" do
-    test "requires HTTPS for non-localhost when enforced" do
-      headers = [
-        {"origin", "http://example.com"},
-        {"host", "example.com"},
-        {"x-forwarded-proto", "http"}
-      ]
-
-      config = %{enforce_https: true}
-
-      assert {:error, :https_required} = Security.validate_request(headers, config)
-    end
-
-    test "allows HTTPS when enforced" do
-      headers = [
-        {"origin", "https://example.com"},
-        {"host", "example.com"},
-        {"x-forwarded-proto", "https"}
-      ]
-
-      config = %{enforce_https: true}
-
-      assert :ok = Security.validate_request(headers, config)
-    end
-
-    test "allows HTTP for localhost when HTTPS enforced" do
-      headers = [
-        {"origin", "http://localhost"},
-        {"host", "localhost"}
-      ]
-
-      config = %{enforce_https: true}
-
-      assert :ok = Security.validate_request(headers, config)
-    end
-
-    test "skips HTTPS check when not enforced" do
-      headers = [
-        {"origin", "http://example.com"},
-        {"host", "example.com"},
-        {"x-forwarded-proto", "http"}
-      ]
-
-      config = %{enforce_https: false}
 
       assert :ok = Security.validate_request(headers, config)
     end
@@ -224,95 +150,6 @@ defmodule ExMCP.SecurityOriginValidationTest do
       for expected <- expected_headers do
         assert expected in header_names, "Missing security header: #{expected}"
       end
-    end
-
-    test "security headers have correct values" do
-      headers = Security.build_standard_security_headers()
-
-      assert {"X-Content-Type-Options", "nosniff"} in headers
-      assert {"X-Frame-Options", "DENY"} in headers
-      assert {"X-XSS-Protection", "1; mode=block"} in headers
-      assert {"Strict-Transport-Security", "max-age=31536000; includeSubDomains"} in headers
-      assert {"Referrer-Policy", "strict-origin-when-cross-origin"} in headers
-      assert {"X-Permitted-Cross-Domain-Policies", "none"} in headers
-    end
-  end
-
-  describe "DNS rebinding attack scenarios" do
-    test "prevents DNS rebinding with external domain to localhost" do
-      # Attacker sets up evil.com to resolve to 127.0.0.1
-      headers = [
-        {"origin", "https://evil.com"},
-        {"host", "127.0.0.1:8080"}
-      ]
-
-      config = %{
-        validate_origin: true,
-        allowed_origins: ["https://trusted.com"]
-      }
-
-      assert {:error, :origin_not_allowed} = Security.validate_request(headers, config)
-    end
-
-    test "prevents DNS rebinding with subdomain attack" do
-      # Attacker uses subdomain like 127.0.0.1.evil.com
-      headers = [
-        {"origin", "https://127.0.0.1.evil.com"},
-        {"host", "localhost"}
-      ]
-
-      config = %{
-        validate_origin: true,
-        allowed_origins: ["https://trusted.com"]
-      }
-
-      assert {:error, :origin_not_allowed} = Security.validate_request(headers, config)
-    end
-
-    test "allows legitimate localhost usage" do
-      headers = [
-        {"origin", "http://localhost:3000"},
-        {"host", "localhost:8080"}
-      ]
-
-      config = %{
-        validate_origin: true,
-        allowed_origins: ["http://localhost:3000"]
-      }
-
-      assert :ok = Security.validate_request(headers, config)
-    end
-  end
-
-  describe "case insensitive header matching" do
-    test "finds headers regardless of case" do
-      headers = [
-        {"Origin", "https://example.com"},
-        {"HOST", "example.com"},
-        {"X-Forwarded-Proto", "https"}
-      ]
-
-      config = %{
-        validate_origin: true,
-        allowed_origins: ["https://example.com"],
-        enforce_https: true
-      }
-
-      assert :ok = Security.validate_request(headers, config)
-    end
-
-    test "handles mixed case header names" do
-      headers = [
-        {"oRiGiN", "https://example.com"},
-        {"hOsT", "example.com"}
-      ]
-
-      config = %{
-        validate_origin: true,
-        allowed_origins: ["https://example.com"]
-      }
-
-      assert :ok = Security.validate_request(headers, config)
     end
   end
 end

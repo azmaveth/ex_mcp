@@ -5,6 +5,10 @@ defmodule ExMCP.Transport.Beam.ObservabilityBasicTest do
 
   use ExUnit.Case, async: true
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+
   alias ExMCP.Transport.Beam.Observability
 
   test "starts and stops correctly" do

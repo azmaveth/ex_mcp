@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Comprehensive Test Tagging Strategy**
+  - Implemented test tagging system based on ex_llm approach for efficient test execution
+  - Created `mix test.suite` task with predefined test suites: unit, compliance, integration, transport, security, performance, all, ci
+  - Created `mix test.tags` task to list all available tags and descriptions
+  - Added 100+ test files with appropriate module tags for categorization
+  - Default exclusions for fast development: integration, external, slow, performance tests excluded by default
+  - Test categories: `:unit`, `:integration`, `:compliance`, `:security`, `:performance`, `:transport`, feature-specific tags
+  - Transport-specific tags: `:beam`, `:sse`, `:stdio` with requirement tags `:requires_beam`, `:requires_http`, `:requires_stdio`
+  - Feature tags: `:progress`, `:roots`, `:resources`, `:prompts`, `:protocol`, `:cancellation`, `:batch`, `:logging`
+  - Development tags: `:slow`, `:wip`, `:skip`, `:manual_only` for test lifecycle management
+  - Reduced default test run time from ~30s to ~5s while maintaining full test coverage
+- **Enhanced Compliance Test Organization**
+  - Extracted MCP protocol compliance tests from implementation-specific test files
+  - Created 7 new compliance test files by extracting tests from non-compliance files:
+    - `cancellation_compliance_test.exs` - Cancellation protocol validation
+    - `version_negotiation_compliance_test.exs` - Version negotiation compliance  
+    - `roots_compliance_test.exs` - Roots functionality protocol compliance
+    - `security_compliance_test.exs` - MCP security requirements
+  - All 241 compliance tests now centralized in `test/ex_mcp/compliance/` directory
+  - Updated compliance test statistics: 218 passing, 0 failing, 23 skipped
+  - Created comprehensive documentation: `TAGGING_STRATEGY.md`, `TAGGING_IMPLEMENTATION.md`, `EXTRACTION_LOG.md`
 - **Configurable SSE Endpoint**
   - HTTP transport now supports custom endpoint configuration via `:endpoint` option
   - Defaults to "/mcp/v1" for backward compatibility

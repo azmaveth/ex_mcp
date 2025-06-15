@@ -1,6 +1,8 @@
 defmodule ExMCP.Security.ClientRegistryTest do
   use ExUnit.Case
 
+  @moduletag :security
+
   alias ExMCP.Security.ClientRegistry
 
   setup do

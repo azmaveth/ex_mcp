@@ -1,6 +1,8 @@
 defmodule ExMCP.Security.ConsentManagerTest do
   use ExUnit.Case
 
+  @moduletag :security
+
   alias ExMCP.Security.ConsentManager
 
   defmodule TestApprovalHandler do

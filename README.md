@@ -625,6 +625,44 @@ make coverage
 make docs
 ```
 
+### Test Suites
+
+ExMCP uses a comprehensive test tagging strategy for efficient test execution:
+
+```bash
+# Fast unit tests (default, ~5s)
+mix test.suite unit
+
+# MCP specification compliance tests
+mix test.suite compliance
+
+# Integration tests with real components
+mix test.suite integration
+
+# Transport-specific tests
+mix test --only beam              # BEAM transport tests
+mix test --only sse               # SSE transport tests
+mix test --only stdio             # stdio transport tests
+
+# Feature-specific tests
+mix test --only security          # Security tests
+mix test --only progress          # Progress notification tests
+mix test --only resources         # Resource management tests
+
+# Development workflows
+mix test --include slow           # Include slow tests
+mix test --exclude integration    # Skip integration tests
+
+# CI/comprehensive testing
+mix test.suite ci                 # CI-appropriate tests
+mix test.suite all               # All tests including slow ones
+
+# List all available tags
+mix test.tags
+```
+
+See [test/TAGGING_STRATEGY.md](test/TAGGING_STRATEGY.md) for complete documentation.
+
 ### Code Quality Tools
 
 - **Formatter** - Elixir's built-in code formatter
@@ -633,6 +671,7 @@ make docs
 - **Sobelow** - Security analysis
 - **ExCoveralls** - Test coverage
 - **Git Hooks** - Pre-commit and pre-push checks
+- **Test Tagging** - Organized test execution with 8 predefined suites
 
 ## 🤝 Contributing
 

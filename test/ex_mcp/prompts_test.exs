@@ -1,6 +1,8 @@
 defmodule ExMCP.PromptsTest do
   use ExUnit.Case, async: true
 
+  @moduletag :prompts
+
   alias ExMCP.{Client, Server}
 
   defmodule TestPromptsHandler do

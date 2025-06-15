@@ -1,6 +1,8 @@
 defmodule ExMCP.Server.Tools.HelpersTest do
   use ExUnit.Case, async: true
 
+  @moduletag :unit
+
   alias ExMCP.Server.Tools.Helpers
 
   describe "text_response/1" do

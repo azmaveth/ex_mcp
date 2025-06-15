@@ -12,6 +12,11 @@ defmodule ExMCP.Transport.BeamClusteringTest do
   # Clustering tests can't be async
   use ExUnit.Case, async: false
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+  @moduletag :slow
+
   alias ExMCP.Transport.Beam.{Cluster, LoadBalancer}
   alias ExMCP.{Client, Server}
 

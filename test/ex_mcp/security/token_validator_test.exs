@@ -1,6 +1,9 @@
 defmodule ExMCP.Security.TokenValidatorTest do
   use ExUnit.Case, async: true
 
+  @moduletag :security
+  @moduletag :unit
+
   alias ExMCP.Security.TokenValidator
 
   describe "validate_token_for_server/2" do

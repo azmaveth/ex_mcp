@@ -6,6 +6,10 @@ defmodule ExMCP.Transport.Beam.EnhancedIntegrationTest do
 
   use ExUnit.Case, async: true
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+
   alias ExMCP.Protocol
   alias ExMCP.Transport.Beam.Enhanced
 

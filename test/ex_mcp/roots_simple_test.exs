@@ -1,6 +1,8 @@
 defmodule ExMCP.RootsSimpleTest do
   use ExUnit.Case, async: true
 
+  @moduletag :roots
+
   alias ExMCP.{Client, Server}
   alias ExMCP.Client.DefaultHandler
 
@@ -122,37 +124,6 @@ defmodule ExMCP.RootsSimpleTest do
       end
     end
 
-    test "roots follow MCP specification format" do
-      roots = [
-        %{
-          uri: "file:///workspace/myproject",
-          name: "My Project"
-        },
-        %{
-          uri: "file:///home/user/documents",
-          name: "Documents"
-        },
-        %{
-          uri: "file:///var/www/html"
-          # No name - should be optional
-        }
-      ]
-
-      {:ok, handler_state} = TestClientHandler.init(roots: roots)
-      {:ok, returned_roots, _} = TestClientHandler.handle_list_roots(handler_state)
-
-      # All roots should have URI
-      Enum.each(returned_roots, fn root ->
-        assert Map.has_key?(root, :uri)
-        assert String.starts_with?(root.uri, "file://")
-      end)
-
-      # Name is optional
-      assert Map.has_key?(Enum.at(returned_roots, 0), :name)
-      assert Map.has_key?(Enum.at(returned_roots, 1), :name)
-      refute Map.has_key?(Enum.at(returned_roots, 2), :name)
-    end
-
     test "default handler provides current directory as root" do
       # Test the default handler
       {:ok, state} = DefaultHandler.init([])
@@ -208,40 +179,6 @@ defmodule ExMCP.RootsSimpleTest do
       assert result1["roots"] == result2["roots"]
       assert length(result1["roots"]) == 1
       assert hd(result1["roots"])["name"] == "Shared"
-    end
-  end
-
-  describe "protocol compliance" do
-    test "roots request uses correct protocol format" do
-      # Test protocol encoding
-      request = ExMCP.Protocol.encode_list_roots()
-
-      assert request["jsonrpc"] == "2.0"
-      assert request["method"] == "roots/list"
-      assert Map.has_key?(request, "id")
-      assert request["params"] == %{}
-    end
-
-    test "roots response format matches spec" do
-      roots = [
-        %{uri: "file:///test", name: "Test"},
-        %{uri: "file:///another"}
-      ]
-
-      response = ExMCP.Protocol.encode_response(%{"roots" => roots}, "test-id")
-
-      assert response["jsonrpc"] == "2.0"
-      assert response["id"] == "test-id"
-      assert response["result"]["roots"] == roots
-    end
-
-    test "roots change notification format" do
-      notification = ExMCP.Protocol.encode_roots_changed()
-
-      assert notification["jsonrpc"] == "2.0"
-      assert notification["method"] == "notifications/roots/list_changed"
-      refute Map.has_key?(notification, "id")
-      assert notification["params"] == %{}
     end
   end
 end

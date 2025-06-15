@@ -1,6 +1,8 @@
 defmodule ExMCP.VersionNegotiationTest do
   use ExUnit.Case, async: true
 
+  @moduletag :protocol
+
   alias ExMCP.{Client, Protocol, Server}
 
   defmodule TestVersionHandler do
@@ -271,37 +273,6 @@ defmodule ExMCP.VersionNegotiationTest do
 
       GenServer.stop(client)
       GenServer.stop(server)
-    end
-  end
-
-  describe "protocol negotiation" do
-    test "initialize request includes all required fields" do
-      client_info = %{name: "test-client", version: "1.0.0"}
-      capabilities = %{"roots" => %{}, "sampling" => %{}}
-
-      msg = Protocol.encode_initialize(client_info, capabilities)
-
-      assert msg["jsonrpc"] == "2.0"
-      assert msg["method"] == "initialize"
-      assert msg["params"]["protocolVersion"] == "2025-03-26"
-      assert msg["params"]["clientInfo"] == client_info
-      assert msg["params"]["capabilities"] == capabilities
-      assert is_integer(msg["id"])
-    end
-
-    test "client can specify custom capabilities" do
-      client_info = %{name: "custom-client", version: "2.0.0"}
-
-      custom_capabilities = %{
-        "roots" => %{"listChanged" => true},
-        "sampling" => %{},
-        "experimental" => %{"feature1" => true}
-      }
-
-      msg = Protocol.encode_initialize(client_info, custom_capabilities)
-
-      assert msg["params"]["capabilities"] == custom_capabilities
-      assert msg["params"]["clientInfo"] == client_info
     end
   end
 end

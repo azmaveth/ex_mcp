@@ -1,6 +1,10 @@
 defmodule ExMCP.Transport.BeamTest do
   use ExUnit.Case, async: true
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+
   import ExUnit.CaptureLog
 
   alias ExMCP.{Client, Server}

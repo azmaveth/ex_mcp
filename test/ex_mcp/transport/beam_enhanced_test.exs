@@ -9,6 +9,11 @@ defmodule ExMCP.Transport.BeamEnhancedTest do
   use ExUnit.Case, async: true
   require Logger
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+  @moduletag :slow
+
   alias ExMCP.Transport.Beam.{Client, Server}
   alias ExMCP.Transport.Beam.{Correlation, Frame, Serializer}
 

@@ -1,6 +1,8 @@
 defmodule ExMCP.ProgressMetaBasicTest do
   use ExUnit.Case, async: true
 
+  @moduletag :progress
+
   alias ExMCP.Protocol
 
   describe "Protocol _meta support" do

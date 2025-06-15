@@ -7,6 +7,9 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
   """
   use ExUnit.Case, async: true
 
+  @moduletag :protocol
+  @moduletag :slow
+
   alias ExMCP.{Client, Protocol, Server, VersionRegistry}
 
   defmodule MultiVersionHandler do

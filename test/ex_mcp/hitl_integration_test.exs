@@ -1,5 +1,6 @@
 defmodule ExMCP.HITLIntegrationTest do
   use ExUnit.Case, async: true
+  @moduletag :integration
 
   defmodule MockApprovalHandler do
     @behaviour ExMCP.Approval

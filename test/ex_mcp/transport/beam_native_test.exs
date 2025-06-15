@@ -1,6 +1,10 @@
 defmodule ExMCP.Transport.BeamNativeTest do
   use ExUnit.Case, async: true
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+
   alias ExMCP.Transport.Beam
 
   describe "native format" do

@@ -7,6 +7,10 @@ defmodule ExMCP.Transport.BeamMcpCompatibilityTest do
   use ExUnit.Case, async: true
   require Logger
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+
   alias ExMCP.{Client, Server}
 
   # Create a real MCP handler that implements the full protocol

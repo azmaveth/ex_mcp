@@ -9,6 +9,10 @@ defmodule ExMCP.Transport.Beam.ZeroCopyTest do
 
   use ExUnit.Case, async: true
 
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
+
   alias ExMCP.Transport.Beam.ZeroCopy
 
   describe "reference identification" do

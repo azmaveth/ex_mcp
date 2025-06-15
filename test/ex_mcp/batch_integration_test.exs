@@ -1,5 +1,7 @@
 defmodule ExMCP.BatchIntegrationTest do
   use ExUnit.Case
+  @moduletag :integration
+  @moduletag :batch
 
   alias ExMCP.{Client, Server}
 

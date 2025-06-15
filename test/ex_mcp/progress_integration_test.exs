@@ -1,6 +1,8 @@
 defmodule ExMCP.ProgressIntegrationTest do
   use ExUnit.Case, async: true
 
+  @moduletag :progress
+
   alias ExMCP.{Client, Server}
 
   defmodule TestProgressHandler do

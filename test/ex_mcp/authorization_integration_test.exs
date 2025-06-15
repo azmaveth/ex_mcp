@@ -1,5 +1,7 @@
 defmodule ExMCP.AuthorizationIntegrationTest do
   use ExUnit.Case, async: true
+  @moduletag :integration
+  @moduletag :security
 
   import Mox
 

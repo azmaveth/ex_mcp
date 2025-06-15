@@ -1,5 +1,8 @@
 defmodule ExMCP.ProtocolBatchTest do
   use ExUnit.Case
+
+  @moduletag :compliance
+
   alias ExMCP.Protocol
 
   describe "batch request encoding" do

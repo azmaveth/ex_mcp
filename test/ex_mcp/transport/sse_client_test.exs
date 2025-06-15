@@ -8,6 +8,10 @@ defmodule ExMCP.Transport.SSEClientTest do
   alias ExMCP.Transport.SSEClient
 
   @moduletag :capture_log
+  @moduletag :transport
+  @moduletag :sse
+  @moduletag :requires_http
+  @moduletag :slow
 
   describe "SSE client connection" do
     test "connects successfully to SSE endpoint" do

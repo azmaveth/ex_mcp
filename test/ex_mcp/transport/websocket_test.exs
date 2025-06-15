@@ -1,6 +1,8 @@
 defmodule ExMCP.Transport.WebSocketTest do
   use ExUnit.Case, async: true
 
+  @moduletag :transport
+
   alias ExMCP.Transport.WebSocket
 
   describe "connect/1" do

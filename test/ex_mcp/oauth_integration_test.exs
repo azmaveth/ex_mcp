@@ -7,6 +7,8 @@ defmodule ExMCP.OAuthIntegrationTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :integration
+  @moduletag :security
 
   alias ExMCP.Authorization
   alias ExMCP.Authorization.{ClientRegistration, PKCE, ProtectedResourceMetadata, TokenManager}

@@ -2,6 +2,8 @@ defmodule ExMCP.SecurityTest do
   use ExUnit.Case
   doctest ExMCP.Security
 
+  @moduletag :security
+
   alias ExMCP.Security
 
   describe "build_auth_headers/1" do

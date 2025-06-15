@@ -8,6 +8,9 @@ defmodule ExMCP.Transport.HTTPConfigurableEndpointTest do
   alias ExMCP.Transport.HTTP
 
   @moduletag :capture_log
+  @moduletag :transport
+  @moduletag :sse
+  @moduletag :requires_http
 
   describe "configurable endpoint" do
     test "uses default endpoint when not specified" do

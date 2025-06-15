@@ -11,6 +11,9 @@ defmodule ExMCP.Transport.BeamStreamingTest do
   use ExUnit.Case, async: true
 
   @moduletag :streaming
+  @moduletag :transport
+  @moduletag :beam
+  @moduletag :requires_beam
 
   alias ExMCP.Transport.Beam.{Connection, Stream, StreamChunk}
 

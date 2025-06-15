@@ -1,5 +1,7 @@
 defmodule ExMCP.CancellationTest do
   use ExUnit.Case, async: true
+  @moduletag :integration
+  @moduletag :cancellation
 
   alias ExMCP.{Client, Protocol, Server}
   alias ExMCP.Server.Handler

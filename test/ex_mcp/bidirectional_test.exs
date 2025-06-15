@@ -1,5 +1,6 @@
 defmodule ExMCP.BidirectionalTest do
   use ExUnit.Case
+  @moduletag :integration
 
   alias ExMCP.{Client, Server}
 
