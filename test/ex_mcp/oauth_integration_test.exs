@@ -9,7 +9,7 @@ defmodule ExMCP.OAuthIntegrationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Authorization
-  alias ExMCP.Authorization.{TokenManager, PKCE}
+  alias ExMCP.Authorization.{ClientRegistration, PKCE, ProtectedResourceMetadata, TokenManager}
 
   @moduletag :capture_log
 
@@ -268,7 +268,7 @@ defmodule ExMCP.OAuthIntegrationTest do
     test "discovers authorization servers for protected resources" do
       resource_url = "https://api.example.com/mcp"
 
-      result = ExMCP.Authorization.ProtectedResourceMetadata.discover(resource_url)
+      result = ProtectedResourceMetadata.discover(resource_url)
 
       # Expect network failure in test environment
       assert match?({:error, {:request_failed, _}}, result)
@@ -283,7 +283,7 @@ defmodule ExMCP.OAuthIntegrationTest do
       ]
 
       for header <- headers do
-        result = ExMCP.Authorization.ProtectedResourceMetadata.parse_www_authenticate(header)
+        result = ProtectedResourceMetadata.parse_www_authenticate(header)
 
         assert match?({:ok, %{realm: _}}, result)
       end
@@ -300,7 +300,7 @@ defmodule ExMCP.OAuthIntegrationTest do
         response_types: ["code"]
       }
 
-      result = ExMCP.Authorization.ClientRegistration.register_client(request)
+      result = ClientRegistration.register_client(request)
 
       # Expect network failure in test environment
       assert match?({:error, {:request_failed, _}}, result)

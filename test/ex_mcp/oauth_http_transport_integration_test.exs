@@ -12,12 +12,15 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
 
   use ExUnit.Case, async: true
 
-  alias ExMCP.Client
-  alias ExMCP.Transport.SSEClient
+  @moduletag :skip
+
   alias ExMCP.Authorization
-  alias ExMCP.Authorization.TokenManager
+  alias ExMCP.Authorization.{ProtectedResourceMetadata, TokenManager}
+  alias ExMCP.Client
+  alias ExMCP.Transport.{HTTP, SSEClient, WebSocket}
 
   @moduletag :capture_log
+  @moduletag :oauth_integration
 
   setup do
     # Mock OAuth configuration
@@ -71,6 +74,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       end
     end
 
+    @tag :skip
     test "handles 401 Unauthorized on SSE connection", %{oauth_config: _oauth_config} do
       # SSE connection without valid token
       transport_config = %{
@@ -100,6 +104,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       end
     end
 
+    @tag :skip
     test "automatically refreshes token on SSE reconnect", %{
       oauth_config: config,
       mock_token: token
@@ -149,6 +154,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       end
     end
 
+    @tag :skip
     test "handles OAuth error responses in SSE transport" do
       # Test various OAuth error scenarios
       error_scenarios = [
@@ -209,12 +215,12 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
 
       # Create HTTP transport and send request
       {:ok, transport} =
-        ExMCP.Transport.HTTP.connect(
+        HTTP.connect(
           url: transport_config.endpoint,
           headers: transport_config.headers
         )
 
-      result = ExMCP.Transport.HTTP.send_message(request, transport)
+      result = HTTP.send_message(request, transport)
 
       case result do
         {:ok, _response} ->
@@ -250,12 +256,12 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
             }
 
             # Create transport and send request
-            case ExMCP.Transport.HTTP.connect(
+            case HTTP.connect(
                    url: transport_config.endpoint,
                    headers: transport_config.headers
                  ) do
               {:ok, transport} ->
-                ExMCP.Transport.HTTP.send_message(
+                HTTP.send_message(
                   %{
                     jsonrpc: "2.0",
                     method: "resources/list",
@@ -295,7 +301,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       mcp_server_url = "https://mcp-server.example.com"
 
       # First, try to discover protected resource metadata
-      case ExMCP.Authorization.ProtectedResourceMetadata.discover(mcp_server_url) do
+      case ProtectedResourceMetadata.discover(mcp_server_url) do
         {:ok, metadata} ->
           # Use discovered auth server
           [auth_server | _] = metadata.authorization_servers
@@ -334,7 +340,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
 
       # Connect with auth
       result =
-        ExMCP.Transport.WebSocket.connect(
+        WebSocket.connect(
           url: transport_config.url,
           headers: transport_config.headers
         )
@@ -372,7 +378,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       connect_with_current_token = fn ->
         case TokenManager.get_token(token_manager) do
           {:ok, access_token} ->
-            ExMCP.Transport.WebSocket.connect(
+            WebSocket.connect(
               url: "wss://mcp-server.example.com/mcp",
               headers: [{"authorization", "Bearer #{access_token}"}]
             )

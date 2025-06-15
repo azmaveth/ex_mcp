@@ -309,7 +309,11 @@ defmodule ExMCP.Client do
   @doc """
   Gets a prompt with the given arguments.
   """
-  @spec get_prompt(GenServer.server(), String.t(), map(), timeout()) ::
+  @spec get_prompt(GenServer.server(), String.t()) ::
+          {:ok, ExMCP.Types.prompt_message()} | {:error, any()}
+  @spec get_prompt(GenServer.server(), String.t(), map()) ::
+          {:ok, ExMCP.Types.prompt_message()} | {:error, any()}
+  @spec get_prompt(GenServer.server(), String.t(), map(), timeout() | keyword()) ::
           {:ok, ExMCP.Types.prompt_message()} | {:error, any()}
   def get_prompt(client, name, arguments \\ %{}, opts \\ []) do
     {timeout, opts} =
@@ -326,7 +330,13 @@ defmodule ExMCP.Client do
   @doc """
   Creates a message using the server's LLM sampling capability.
   """
-  @spec create_message(GenServer.server(), ExMCP.Types.create_message_params(), timeout()) ::
+  @spec create_message(GenServer.server(), ExMCP.Types.create_message_params()) ::
+          {:ok, ExMCP.Types.create_message_result()} | {:error, any()}
+  @spec create_message(
+          GenServer.server(),
+          ExMCP.Types.create_message_params(),
+          timeout() | keyword()
+        ) ::
           {:ok, ExMCP.Types.create_message_result()} | {:error, any()}
   def create_message(client, params, opts \\ []) do
     {timeout, opts} =
@@ -458,8 +468,14 @@ defmodule ExMCP.Client do
   @spec complete(
           GenServer.server(),
           ExMCP.Types.complete_ref(),
+          ExMCP.Types.complete_argument()
+        ) ::
+          {:ok, ExMCP.Types.complete_result()} | {:error, any()}
+  @spec complete(
+          GenServer.server(),
+          ExMCP.Types.complete_ref(),
           ExMCP.Types.complete_argument(),
-          timeout()
+          timeout() | keyword()
         ) ::
           {:ok, ExMCP.Types.complete_result()} | {:error, any()}
   def complete(client, ref, argument, opts \\ []) do

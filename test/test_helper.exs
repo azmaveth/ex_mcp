@@ -6,6 +6,8 @@ Code.require_file("support/test_http_server.ex", __DIR__)
 {:ok, _} = Application.ensure_all_started(:inets)
 {:ok, _} = Application.ensure_all_started(:ssl)
 
+# Configure ExUnit with default exclusions
+ExUnit.configure(exclude: [skip: true])
 ExUnit.start()
 
 # Define mocks

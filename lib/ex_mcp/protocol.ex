@@ -7,18 +7,18 @@ defmodule ExMCP.Protocol do
   Implements the Model Context Protocol JSON-RPC message format.
   This module handles the low-level protocol details for both
   client and server implementations.
-  
+
   ## _meta Field Support
-  
+
   Most request encoding functions support an optional `meta` parameter that allows
   passing arbitrary metadata through the `_meta` field. This is useful for:
-  
+
   - Progress tokens for long-running operations
   - Request tracing and debugging
   - Custom application-specific metadata
-  
+
   Example:
-  
+
       # With progress token
       Protocol.encode_call_tool("my_tool", %{}, %{"progressToken" => "op-123"})
       
@@ -74,7 +74,7 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Encodes a request to list available tools.
-  
+
   ## Parameters
   - `cursor` - Optional cursor for pagination
   - `meta` - Optional metadata map to include in _meta field
@@ -94,12 +94,12 @@ defmodule ExMCP.Protocol do
 
   @doc """
   Encodes a tool call request.
-  
+
   ## Parameters
   - `name` - The tool name
   - `arguments` - Tool arguments map
   - `meta_or_progress_token` - Either a progress token (string/integer) or full metadata map
-  
+
   Supports backward compatibility: if a string/integer is provided, it's treated as a progress token.
   """
   @spec encode_call_tool(String.t(), map(), ExMCP.Types.progress_token() | nil | map()) :: map()

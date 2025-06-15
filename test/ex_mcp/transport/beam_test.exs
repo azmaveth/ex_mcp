@@ -211,10 +211,14 @@ defmodule ExMCP.Transport.BeamTest do
           server: :test_beam_server_5
         )
 
+      # Wait for client to be fully initialized
+      Process.sleep(50)
+
       log =
         capture_log([level: :info], fn ->
           Server.notify_progress(server, "test-op", 50, 100)
-          Process.sleep(50)
+          # Increased from 50ms to ensure notification is processed
+          Process.sleep(100)
         end)
 
       assert log =~ "Progress [test-op]: 50/100"

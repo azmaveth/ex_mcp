@@ -343,7 +343,7 @@ defmodule ExMCP.OAuthServerMetadataDiscoveryTest do
           # Should support authorization_code for user flows
           assert "authorization_code" in metadata.grant_types_supported
 
-          # Should support client_credentials for service flows  
+          # Should support client_credentials for service flows
           assert "client_credentials" in metadata.grant_types_supported
 
         {:error, {:request_failed, _}} ->

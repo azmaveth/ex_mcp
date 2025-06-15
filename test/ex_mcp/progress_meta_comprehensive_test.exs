@@ -11,7 +11,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.{Client, Protocol, Server}
 
   defmodule ComprehensiveHandler do
     use ExMCP.Server.Handler
@@ -369,7 +369,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     end
 
     test "resources/list can include progress token", %{client: client} do
-      # Progress notifications are sent through the transport  
+      # Progress notifications are sent through the transport
       # No need to explicitly subscribe
 
       # Similar limitation - API doesn't expose _meta for list operations yet
@@ -513,7 +513,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
       # Call the tool with meta
       {:ok, result} = Client.call_tool(client, "meta_echo", %{}, meta: meta)
-      
+
       # The response should indicate meta was received
       assert result.content |> hd |> Map.get(:text) =~ "progressToken"
     end

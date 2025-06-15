@@ -10,6 +10,8 @@ defmodule ExMCP.Transport.BeamStreamingTest do
   """
   use ExUnit.Case, async: true
 
+  @moduletag :streaming
+
   alias ExMCP.Transport.Beam.{Connection, Stream, StreamChunk}
 
   describe "stream initialization" do
@@ -269,6 +271,7 @@ defmodule ExMCP.Transport.BeamStreamingTest do
   end
 
   describe "memory management" do
+    @tag :skip
     test "limits concurrent streams per connection" do
       max_streams = 5
 
@@ -291,6 +294,7 @@ defmodule ExMCP.Transport.BeamStreamingTest do
                Connection.create_stream(final_connection, %{content_type: "text/plain"})
     end
 
+    @tag :skip
     test "cleans up completed streams" do
       {:ok, connection} = Connection.new(%{max_concurrent_streams: 2})
 

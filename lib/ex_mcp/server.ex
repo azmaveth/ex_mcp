@@ -579,7 +579,18 @@ defmodule ExMCP.Server do
     end
   end
 
-  defp handle_request("tools/call", %{"name" => name, "arguments" => args}, id, state) do
+  defp handle_request("tools/call", params, id, state)
+       when is_map(params) and is_map_key(params, "name") do
+    name = params["name"]
+    args = params["arguments"] || %{}
+
+    # If _meta is present in params, add it to arguments for the handler
+    args_with_meta =
+      case params["_meta"] do
+        nil -> args
+        meta -> Map.put(args, "_meta", meta)
+      end
+
     if not state.initialized do
       error =
         Protocol.encode_error(
@@ -591,7 +602,7 @@ defmodule ExMCP.Server do
 
       send_message(error, state)
     else
-      case state.handler.handle_call_tool(name, args, state.handler_state) do
+      case state.handler.handle_call_tool(name, args_with_meta, state.handler_state) do
         {:ok, result, new_handler_state} ->
           # Check if result is already a map with content key (for isError support)
           response_body =
