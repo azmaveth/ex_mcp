@@ -1,6 +1,8 @@
 defmodule ExMCP.ResourcesComplianceTest do
   use ExUnit.Case, async: true
 
+  @moduletag :compliance
+
   alias ExMCP.{Client, Protocol, Server}
 
   defmodule TestResourcesServer do

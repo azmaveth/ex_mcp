@@ -14,6 +14,8 @@ defmodule ExMCP.Spec20250326Test do
   """
   use ExUnit.Case, async: true
 
+  @moduletag :compliance
+
   alias ExMCP.{Authorization, Client, Protocol, Server}
 
   defmodule Handler20250326 do

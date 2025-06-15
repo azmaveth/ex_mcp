@@ -1,6 +1,8 @@
 defmodule ExMCP.PaginationComplianceTest do
   use ExUnit.Case, async: true
 
+  @moduletag :compliance
+
   alias ExMCP.{Client, Protocol, Server}
 
   defmodule TestPaginationServer do

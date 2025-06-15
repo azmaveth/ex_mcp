@@ -6,6 +6,8 @@ defmodule ExMCP.Spec20241105Test do
   """
   use ExUnit.Case, async: true
 
+  @moduletag :compliance
+
   alias ExMCP.{Client, Protocol, Server}
 
   defmodule Handler20241105 do
