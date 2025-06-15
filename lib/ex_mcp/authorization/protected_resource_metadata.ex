@@ -108,34 +108,28 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
   defp build_metadata_url(resource_url) do
     uri = URI.parse(resource_url)
 
-    # Build base URL (scheme + host + port)
-    base_url =
-      %URI{
-        scheme: uri.scheme,
-        host: uri.host,
-        port: uri.port
-      }
-      |> URI.to_string()
-      |> String.trim_trailing("/")
+    # Build base URL (scheme + host + port) - construct manually to avoid URI type issues
+    scheme = uri.scheme || "https"
+    host = uri.host || "localhost"
+    port = uri.port
+
+    base_url = if port && port != URI.default_port(scheme) do
+      "#{scheme}://#{host}:#{port}"
+    else
+      "#{scheme}://#{host}"
+    end
 
     base_url <> "/.well-known/oauth-protected-resource"
   end
 
-  defp make_http_request(method, url, headers, body) do
+  defp make_http_request(:get, url, headers, _body) do
     # Convert headers to charlist format for httpc
     httpc_headers =
       Enum.map(headers, fn {k, v} ->
         {String.to_charlist(k), String.to_charlist(v)}
       end)
 
-    request =
-      case method do
-        :get ->
-          {String.to_charlist(url), httpc_headers}
-
-        :post ->
-          {String.to_charlist(url), httpc_headers, ~c"application/json", String.to_charlist(body)}
-      end
+    request = {String.to_charlist(url), httpc_headers}
 
     # SSL options for HTTPS
     ssl_opts = [
@@ -146,7 +140,7 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
       ]
     ]
 
-    :httpc.request(method, request, ssl_opts, [])
+    :httpc.request(:get, request, ssl_opts, [])
   end
 
   defp parse_metadata_response(body) do

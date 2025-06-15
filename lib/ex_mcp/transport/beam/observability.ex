@@ -163,7 +163,7 @@ defmodule ExMCP.Transport.Beam.Observability do
   @doc """
   Records connection pool statistics.
   """
-  @spec record_connection_stats(pos_integer(), pos_integer(), pos_integer()) :: :ok
+  @spec record_connection_stats(pos_integer(), pos_integer(), pos_integer()) :: true
   def record_connection_stats(active, idle, failed) do
     :ets.insert(@metrics_table, {:connections_active, active, System.system_time(:millisecond)})
     :ets.insert(@metrics_table, {:connections_idle, idle, System.system_time(:millisecond)})
@@ -444,8 +444,6 @@ defmodule ExMCP.Transport.Beam.Observability do
     String.starts_with?(name_str, "error_") or
       String.starts_with?(name_str, "security_")
   end
-
-  defp counter_metric?(_), do: false
 
   defp record_metric(name, value) do
     timestamp = System.system_time(:millisecond)

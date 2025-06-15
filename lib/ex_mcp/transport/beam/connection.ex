@@ -279,16 +279,6 @@ defmodule ExMCP.Transport.Beam.Connection do
         new_state = %{state | buffer: state.buffer <> data}
 
         case parse_auth_response(new_state.buffer) do
-          {:ok, :authenticated, remaining_buffer} ->
-            cancel_timer(state.auth_timer)
-            send(self(), :connection_ready)
-            final_state = %{new_state | buffer: remaining_buffer, auth_timer: nil, state: :ready}
-            {:noreply, final_state}
-
-          {:ok, :auth_failed, reason} ->
-            Logger.error("Authentication rejected: #{inspect(reason)}")
-            {:stop, {:auth_rejected, reason}, state}
-
           {:error, :incomplete} ->
             # Need more data
             {:noreply, new_state}
@@ -394,20 +384,27 @@ defmodule ExMCP.Transport.Beam.Connection do
 
   defp parse_auth_response(buffer) do
     case Frame.decode(buffer) do
-      {:ok, %{type: :rpc_response, payload: response_data}} when is_map(response_data) ->
-        case Map.get(response_data, "result") do
-          "authenticated" ->
-            # For now, assume single frame
-            remaining = <<>>
-            {:ok, :authenticated, remaining}
+      {:ok, %{type: :rpc_response, payload: response_data}} when is_binary(response_data) ->
+        # Try to decode JSON payload
+        case Jason.decode(response_data) do
+          {:ok, decoded_data} when is_map(decoded_data) ->
+            case Map.get(decoded_data, "result") do
+              "authenticated" ->
+                # For now, assume single frame
+                remaining = <<>>
+                {:ok, :authenticated, remaining}
 
-          nil ->
-            case Map.get(response_data, "error") do
-              nil -> {:error, :invalid_auth_response}
-              reason -> {:ok, :auth_failed, reason}
+              nil ->
+                case Map.get(decoded_data, "error") do
+                  nil -> {:error, :invalid_auth_response}
+                  reason -> {:ok, :auth_failed, reason}
+                end
+
+              _other ->
+                {:error, :invalid_auth_response}
             end
 
-          _other ->
+          _ ->
             {:error, :invalid_auth_response}
         end
 
@@ -469,21 +466,33 @@ defmodule ExMCP.Transport.Beam.Connection do
             messages_received: state.stats.messages_received + 1
         }
 
-        # Process zero-copy references if present
-        case ZeroCopy.process_message(payload) do
-          {:ok, processed_payload} ->
-            # Handle the message based on type
-            handle_decoded_message(msg_type, processed_payload, state)
+        # Forward message to owner process (simplified)
+        case msg_type do
+          :rpc_response ->
+            # Extract correlation ID and send response
+            if is_map(payload) do
+              case Map.get(payload, "id") do
+                nil ->
+                  Logger.warning("Received response without correlation ID")
+                correlation_id ->
+                  Correlation.send_response(correlation_id, payload)
+              end
+            end
 
-            # Clear buffer (assuming single message per buffer for now)
-            {:ok, %{state | buffer: <<>>, stats: new_stats}}
+          :rpc_request ->
+            # Forward request to owner
+            send(state.owner_pid, {:incoming_request, payload, self()})
 
-          {:error, reason} ->
-            Logger.warning("Failed to process zero-copy message: #{inspect(reason)}")
-            # Handle the message as-is if zero-copy processing fails
-            handle_decoded_message(msg_type, payload, state)
-            {:ok, %{state | buffer: <<>>, stats: new_stats}}
+          :notification ->
+            # Forward notification to owner
+            send(state.owner_pid, {:incoming_notification, payload})
+
+          _ ->
+            Logger.debug("Received message type: #{inspect(msg_type)}")
         end
+
+        # Clear buffer (assuming single message per buffer for now)
+        {:ok, %{state | buffer: <<>>, stats: new_stats}}
 
       {:error, :incomplete_frame} ->
         # Need more data, keep current state
@@ -494,89 +503,7 @@ defmodule ExMCP.Transport.Beam.Connection do
     end
   end
 
-  defp handle_decoded_message(:rpc_response, payload, _state) when is_map(payload) do
-    # Extract correlation ID and send response
-    case Map.get(payload, "id") do
-      nil ->
-        Logger.warning("Received response without correlation ID")
 
-      correlation_id ->
-        Correlation.send_response(correlation_id, payload)
-    end
-
-    :ok
-  end
-
-  defp handle_decoded_message(:rpc_response, payload, _state) do
-    # Handle non-map payload (shouldn't happen with proper framing)
-    Logger.warning("Received non-map RPC response payload: #{inspect(payload)}")
-    :ok
-  end
-
-  defp handle_decoded_message(:rpc_request, payload, state) do
-    # Forward request to owner
-    send(state.owner_pid, {:incoming_request, payload, self()})
-    :ok
-  end
-
-  defp handle_decoded_message(:notification, payload, state) do
-    # Forward notification to owner
-    send(state.owner_pid, {:incoming_notification, payload})
-    :ok
-  end
-
-  defp handle_decoded_message(:heartbeat, _payload, _state) do
-    # Heartbeat received, connection is alive
-    Logger.debug("Heartbeat received")
-    :ok
-  end
-
-  defp handle_decoded_message(:batch, payload, state) when is_map(payload) do
-    # Handle batch of messages
-    case Map.get(payload, "messages") do
-      messages when is_list(messages) ->
-        Logger.debug("Received batch with #{length(messages)} messages")
-
-        # Process each message in the batch
-        Enum.each(messages, fn message ->
-          handle_batch_message(message, state)
-        end)
-
-        :ok
-
-      _ ->
-        Logger.warning("Invalid batch format: missing or invalid messages field")
-        :ok
-    end
-  end
-
-  defp handle_decoded_message(msg_type, payload, _state) do
-    Logger.warning("Unknown message type: #{inspect(msg_type)}, payload: #{inspect(payload)}")
-    :ok
-  end
-
-  defp handle_batch_message(message, state) when is_map(message) do
-    # Determine message type based on structure
-    cond do
-      Map.has_key?(message, "id") and Map.has_key?(message, "result") ->
-        handle_decoded_message(:rpc_response, message, state)
-
-      Map.has_key?(message, "id") and Map.has_key?(message, "method") ->
-        handle_decoded_message(:rpc_request, message, state)
-
-      Map.has_key?(message, "method") ->
-        handle_decoded_message(:notification, message, state)
-
-      true ->
-        Logger.warning("Unknown message format in batch: #{inspect(message)}")
-        :ok
-    end
-  end
-
-  defp handle_batch_message(message, _state) do
-    Logger.warning("Invalid message in batch: #{inspect(message)}")
-    :ok
-  end
 
   defp send_heartbeat(state) do
     heartbeat_message = %{"type" => "heartbeat", "timestamp" => System.system_time(:millisecond)}
@@ -624,5 +551,4 @@ defmodule ExMCP.Transport.Beam.Connection do
   end
 
   defp cancel_timer(timer_ref) when is_reference(timer_ref), do: Process.cancel_timer(timer_ref)
-  defp cancel_timer(_), do: :ok
 end

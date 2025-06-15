@@ -720,7 +720,6 @@ defmodule ExMCP.Transport.Beam.Security do
     end
   end
 
-  defp validate_message_structure(_), do: {:error, :invalid_message_type}
 
   defp validate_rpc_request(message) do
     method = Map.get(message, "method")

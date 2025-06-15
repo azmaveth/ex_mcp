@@ -186,16 +186,11 @@ defmodule ExMCP.Transport.Beam.Client do
   def handle_call(:get_stats, _from, state) do
     stats =
       if state.connected and state.connection_pid do
-        case Connection.get_stats(state.connection_pid) do
-          stats when is_map(stats) ->
-            Map.merge(stats, %{
-              client_connected: true,
-              reconnect_attempts: state.reconnect_attempts
-            })
-
-          _error ->
-            %{client_connected: false, reconnect_attempts: state.reconnect_attempts}
-        end
+        stats = Connection.get_stats(state.connection_pid)
+        Map.merge(stats, %{
+          client_connected: true,
+          reconnect_attempts: state.reconnect_attempts
+        })
       else
         %{client_connected: false, reconnect_attempts: state.reconnect_attempts}
       end
