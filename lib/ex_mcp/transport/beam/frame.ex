@@ -114,12 +114,10 @@ defmodule ExMCP.Transport.Beam.Frame do
   # Private functions
 
   defp serialize_message(message) do
-    try do
-      binary = :erlang.term_to_binary(message, [:compressed])
-      {:ok, binary}
-    rescue
-      error -> {:error, {:serialization_exception, error}}
-    end
+    binary = :erlang.term_to_binary(message, [:compressed])
+    {:ok, binary}
+  rescue
+    error -> {:error, {:serialization_exception, error}}
   end
 
   defp deserialize_message(binary) when is_binary(binary) do

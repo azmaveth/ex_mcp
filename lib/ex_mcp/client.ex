@@ -332,7 +332,11 @@ defmodule ExMCP.Client do
   """
   @spec create_message(GenServer.server(), ExMCP.Types.create_message_params()) ::
           {:ok, ExMCP.Types.create_message_result()} | {:error, any()}
-  @spec create_message(GenServer.server(), ExMCP.Types.create_message_params(), timeout() | keyword()) ::
+  @spec create_message(
+          GenServer.server(),
+          ExMCP.Types.create_message_params(),
+          timeout() | keyword()
+        ) ::
           {:ok, ExMCP.Types.create_message_result()} | {:error, any()}
   def create_message(client, params, opts \\ []) do
     {timeout, opts} =

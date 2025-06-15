@@ -187,6 +187,7 @@ defmodule ExMCP.Transport.Beam.Client do
     stats =
       if state.connected and state.connection_pid do
         stats = Connection.get_stats(state.connection_pid)
+
         Map.merge(stats, %{
           client_connected: true,
           reconnect_attempts: state.reconnect_attempts

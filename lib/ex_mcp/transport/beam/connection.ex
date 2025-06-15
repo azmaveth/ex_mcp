@@ -385,34 +385,40 @@ defmodule ExMCP.Transport.Beam.Connection do
   defp parse_auth_response(buffer) do
     case Frame.decode(buffer) do
       {:ok, %{type: :rpc_response, payload: response_data}} when is_binary(response_data) ->
-        # Try to decode JSON payload
-        case Jason.decode(response_data) do
-          {:ok, decoded_data} when is_map(decoded_data) ->
-            case Map.get(decoded_data, "result") do
-              "authenticated" ->
-                # For now, assume single frame
-                remaining = <<>>
-                {:ok, :authenticated, remaining}
-
-              nil ->
-                case Map.get(decoded_data, "error") do
-                  nil -> {:error, :invalid_auth_response}
-                  reason -> {:ok, :auth_failed, reason}
-                end
-
-              _other ->
-                {:error, :invalid_auth_response}
-            end
-
-          _ ->
-            {:error, :invalid_auth_response}
-        end
+        process_auth_json(response_data)
 
       {:error, :incomplete_frame} ->
         {:error, :incomplete}
 
       {:error, reason} ->
         {:error, reason}
+
+      _other ->
+        {:error, :invalid_auth_response}
+    end
+  end
+
+  defp process_auth_json(response_data) do
+    case Jason.decode(response_data) do
+      {:ok, decoded_data} when is_map(decoded_data) ->
+        handle_auth_result(decoded_data)
+
+      _ ->
+        {:error, :invalid_auth_response}
+    end
+  end
+
+  defp handle_auth_result(decoded_data) do
+    case Map.get(decoded_data, "result") do
+      "authenticated" ->
+        remaining = <<>>
+        {:ok, :authenticated, remaining}
+
+      nil ->
+        case Map.get(decoded_data, "error") do
+          nil -> {:error, :invalid_auth_response}
+          reason -> {:ok, :auth_failed, reason}
+        end
 
       _other ->
         {:error, :invalid_auth_response}
@@ -474,6 +480,7 @@ defmodule ExMCP.Transport.Beam.Connection do
               case Map.get(payload, "id") do
                 nil ->
                   Logger.warning("Received response without correlation ID")
+
                 correlation_id ->
                   Correlation.send_response(correlation_id, payload)
               end
@@ -502,8 +509,6 @@ defmodule ExMCP.Transport.Beam.Connection do
         {:error, {:decode_error, reason}}
     end
   end
-
-
 
   defp send_heartbeat(state) do
     heartbeat_message = %{"type" => "heartbeat", "timestamp" => System.system_time(:millisecond)}

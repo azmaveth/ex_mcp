@@ -720,7 +720,6 @@ defmodule ExMCP.Transport.Beam.Security do
     end
   end
 
-
   defp validate_rpc_request(message) do
     method = Map.get(message, "method")
     id = Map.get(message, "id")

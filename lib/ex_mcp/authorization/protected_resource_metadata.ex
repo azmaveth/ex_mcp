@@ -113,11 +113,12 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
     host = uri.host || "localhost"
     port = uri.port
 
-    base_url = if port && port != URI.default_port(scheme) do
-      "#{scheme}://#{host}:#{port}"
-    else
-      "#{scheme}://#{host}"
-    end
+    base_url =
+      if port && port != URI.default_port(scheme) do
+        "#{scheme}://#{host}:#{port}"
+      else
+        "#{scheme}://#{host}"
+      end
 
     base_url <> "/.well-known/oauth-protected-resource"
   end
