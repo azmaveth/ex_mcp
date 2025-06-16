@@ -6,9 +6,10 @@ defmodule ExMCP.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Start any global services here
-      # For example, a registry for MCP connections:
-      {Registry, keys: :unique, name: ExMCP.Registry},
+      # Start Horde cluster for distributed services
+      {Horde.Registry, keys: :unique, name: ExMCP.ServiceRegistry, members: :auto},
+      {Horde.DynamicSupervisor,
+       strategy: :one_for_one, name: ExMCP.ServiceSupervisor, members: :auto},
       # Dynamic supervisor for runtime components
       {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
       # Start observability service for metrics and monitoring

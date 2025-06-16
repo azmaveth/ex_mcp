@@ -94,12 +94,13 @@ defmodule ExMCP.Transport do
   - `:stdio` - Standard I/O transport (official MCP transport)
   - `:http` - Streamable HTTP transport with SSE (official MCP transport)
   - `:websocket` - WebSocket transport (ExMCP extension)
-  - `:beam` - Native BEAM transport for direct process communication (ExMCP extension)
+
+  Note: The `:beam` identifier previously pointed to a transport implementation
+  but has been replaced with ExMCP.Native for direct service dispatch.
   """
-  @spec get_transport(:stdio | :http | :websocket | :beam | module()) :: module()
+  @spec get_transport(:stdio | :http | :websocket | module()) :: module()
   def get_transport(:stdio), do: ExMCP.Transport.Stdio
   def get_transport(:http), do: ExMCP.Transport.HTTP
   def get_transport(:websocket), do: ExMCP.Transport.WebSocket
-  def get_transport(:beam), do: ExMCP.Transport.Native
   def get_transport(module) when is_atom(module), do: module
 end
