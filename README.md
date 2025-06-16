@@ -10,7 +10,7 @@
 
 **A complete Elixir implementation of the Model Context Protocol (MCP)**
 
-[User Guide](USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](examples/) | [Changelog](CHANGELOG.md)
+[User Guide](docs/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](examples/) | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -780,11 +780,10 @@ ExMCP uses the following metadata fields for security and debugging:
 
 ## 📚 Documentation
 
-- 📖 **[User Guide](USER_GUIDE.md)** - Comprehensive guide with examples
+- 📖 **[User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples
 - 🔧 **[API Documentation](https://hexdocs.pm/ex_mcp)** - Detailed API reference
 - 🔐 **[Security Guide](docs/SECURITY.md)** - Authentication, TLS, and security best practices
 - 📂 **[Examples](examples/)** - Complete working examples
-- 📋 **[TASKS.md](TASKS.md)** - Development roadmap and status
 
 ## 🛠️ Development
 
@@ -856,7 +855,6 @@ See [test/TAGGING_STRATEGY.md](test/TAGGING_STRATEGY.md) for complete documentat
 
 We welcome contributions! Please see:
 
-- [TASKS.md](TASKS.md) for current development priorities
 - [CHANGELOG.md](CHANGELOG.md) for version history
 - [GitHub Issues](https://github.com/azmaveth/ex_mcp/issues) for bug reports and feature requests
 
