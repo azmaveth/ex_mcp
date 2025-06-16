@@ -127,7 +127,6 @@ config :ex_mcp,
 - **Compatibility**: Use `"2024-11-05"` for maximum compatibility
 - **Experimental**: Use `"draft"` only for testing new features
 
-See the [API Categories Guide](guides/api-categories.md) for detailed information on writing portable code.
 
 ## 📦 Installation
 
