@@ -161,23 +161,19 @@ defmodule ExMCP.Transport.Beam.Observability do
   @doc """
   Gets comprehensive statistics including derived metrics.
   """
-  @spec get_comprehensive_stats() :: {:ok, map()} | {:error, term()}
+  @spec get_comprehensive_stats() :: {:ok, map()}
   def get_comprehensive_stats do
-    case get_metrics() do
-      {:ok, metrics} ->
-        # Add additional derived stats
-        enhanced_metrics =
-          Map.merge(metrics, %{
-            requests_per_second: calculate_rps(metrics),
-            error_percentage: calculate_error_percentage(metrics),
-            average_message_size: calculate_avg_message_size(metrics)
-          })
+    {:ok, metrics} = get_metrics()
 
-        {:ok, enhanced_metrics}
+    # Add additional derived stats
+    enhanced_metrics =
+      Map.merge(metrics, %{
+        requests_per_second: calculate_rps(metrics),
+        error_percentage: calculate_error_percentage(metrics),
+        average_message_size: calculate_avg_message_size(metrics)
+      })
 
-      {:error, reason} ->
-        {:error, reason}
-    end
+    {:ok, enhanced_metrics}
   end
 
   @doc """
