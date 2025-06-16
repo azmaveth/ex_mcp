@@ -2,18 +2,18 @@
 
 ## Overview
 
-ExMCP implements a simplified two-transport architecture designed for optimal performance and universal interoperability:
+ExMCP implements a simplified two-pattern architecture designed for optimal performance and universal interoperability:
 
-1. **Native BEAM Transport** - For trusted Elixir services within the same cluster
-2. **HTTP/SSE Transport** - For all external clients and untrusted services
+1. **Native BEAM Service Dispatcher** - For trusted Elixir services within the same cluster
+2. **Traditional MCP Transports** - For external clients and MCP protocol compliance (stdio, HTTP/SSE)
 
 This design eliminates the complexity of custom TCP protocols while maximizing performance for each use case.
 
 ## Design Principles
 
 ### 1. **Use the Right Tool for Each Job**
-- **Native BEAM**: Maximum performance for trusted Elixir-to-Elixir communication
-- **HTTP/SSE**: Universal standard for everything else
+- **Native BEAM Service Dispatcher**: Maximum performance for trusted Elixir-to-Elixir communication
+- **Traditional MCP Transports**: Universal standard for external clients and MCP compliance
 
 ### 2. **Leverage OTP Primitives**
 - No custom queues, buffers, or connection pools
@@ -25,61 +25,75 @@ This design eliminates the complexity of custom TCP protocols while maximizing p
 - Standard web infrastructure for HTTP transport
 - Simple, direct communication patterns
 
-## Transport Comparison
+## Architecture Comparison
 
-| Aspect | Native BEAM | HTTP/SSE | Custom TCP (Removed) |
-|--------|-------------|----------|---------------------|
-| **Performance** | Highest (direct calls) | Standard (HTTP overhead) | ~~Medium (custom framing)~~ |
+| Aspect | Native BEAM Dispatcher | Traditional MCP | Custom TCP (Removed) |
+|--------|----------------------|----------------|---------------------|
+| **Performance** | Highest (~15μs direct calls) | Standard (~1-5ms HTTP) | ~~Medium (custom framing)~~ |
 | **Interoperability** | Elixir only | Universal | ~~Elixir only~~ |
-| **Complexity** | Minimal (OTP primitives) | Standard (HTTP/JSON) | ~~High (custom protocol)~~ |
+| **Complexity** | Minimal (Horde.Registry) | Standard (HTTP/JSON) | ~~High (custom protocol)~~ |
 | **Security** | Erlang cookies + clustering | TLS + OAuth + CORS | ~~Custom auth~~ |
 | **Operations** | OTP monitoring | Standard HTTP tools | ~~Custom monitoring~~ |
-| **Use Case** | Trusted internal services | Public APIs, external clients | ~~None~~ |
+| **MCP Compliance** | ExMCP extension | Full MCP protocol | ~~Custom~~ |
+| **Discovery** | Horde.Registry gossip | Manual configuration | ~~Custom~~ |
+| **Use Case** | Trusted internal services | External clients, AI models | ~~None~~ |
 
-## Native BEAM Transport
+## Native BEAM Service Dispatcher
 
 ### Architecture
 
 ```mermaid
 graph TB
     subgraph "Trusted Elixir Cluster"
-        A[Service A] --> R[ExMCP.Registry]
-        B[Service B] --> R
-        C[Service C] --> R
+        A[Service A] --> HR[Horde.Registry]
+        B[Service B] --> HR
+        C[Service C] --> HR
         
-        A -.->|GenServer.call| B
-        B -.->|GenServer.call| C
-        C -.->|GenServer.call| A
+        A -.->|ExMCP.Native.call| B
+        B -.->|ExMCP.Native.call| C
+        C -.->|ExMCP.Native.call| A
+        
+        HR -.->|gossip protocol| HR2
+        HR -.->|gossip protocol| HR3
     end
     
     subgraph "Node 2"
-        D[Service D] -.-> R
+        D[Service D] --> HR2[Horde.Registry]
     end
     
     subgraph "Node 3" 
-        E[Service E] -.-> R
+        E[Service E] --> HR3[Horde.Registry]
     end
 ```
 
 ### Key Features
 
-- **Direct Communication**: `GenServer.call` between services
-- **Global Registry**: `Registry` with `:unique` keys for service discovery
+- **Direct Communication**: `GenServer.call` via `ExMCP.Native`
+- **Horde.Registry**: Distributed service discovery with gossip protocol
 - **Automatic Distribution**: Works across BEAM nodes transparently
 - **OTP Supervision**: Built-in fault tolerance and process monitoring
 - **Zero Serialization**: Pure Elixir terms (no JSON/ETF conversion)
+- **Service Macro**: `use ExMCP.Service` for automatic lifecycle management
 
 ### Implementation
 
 ```elixir
-# Service registration
-ExMCP.Server.register_service(:my_tool_service)
+# Service definition with automatic registration
+defmodule MyToolService do
+  use ExMCP.Service, name: :my_tools
+  
+  @impl true
+  def handle_mcp_request("list_tools", _params, state) do
+    tools = [%{"name" => "ping", "description" => "Test tool"}]
+    {:ok, %{"tools" => tools}, state}
+  end
+end
 
 # Direct service calls
-{:ok, result} = ExMCP.Transport.Native.call(:my_tool_service, "list_tools", %{})
+{:ok, result} = ExMCP.Native.call(:my_tools, "list_tools", %{})
 
-# Cross-node communication (automatic)
-{:ok, result} = ExMCP.Transport.Native.call({:my_service, :"node@host"}, "call_tool", params)
+# Cross-node communication (automatic via Horde)
+{:ok, result} = ExMCP.Native.call({:my_service, :"node@host"}, "tools/call", params)
 ```
 
 ### Performance Characteristics
@@ -89,17 +103,33 @@ ExMCP.Server.register_service(:my_tool_service)
 - **Memory**: Minimal overhead (single Registry entry per service)
 - **Scalability**: Handles thousands of concurrent services
 
-## HTTP/SSE Transport
+## Traditional MCP Transports
 
-### Architecture
+### stdio Transport Architecture
+
+```mermaid
+graph TB
+    subgraph "ExMCP Client"
+        A[Client Process] --> B[stdio Transport]
+        B --> C[JSON-RPC Encoder]
+    end
+    
+    subgraph "External Process"
+        D[MCP Server] --> E[stdin/stdout]
+    end
+    
+    C -.->|JSON messages| E
+    E -.->|JSON responses| C
+```
+
+### HTTP/SSE Transport Architecture
 
 ```mermaid
 graph TB
     subgraph "ExMCP Server"
         A[HTTP Endpoint] --> B[Request Handler]
         B --> C[Service Router] 
-        C --> D[ExMCP.Registry]
-        D --> E[Target Service]
+        C --> D[Server Handler]
         
         F[SSE Connection] --> G[Notification Handler]
         G --> H[PubSub]
@@ -115,19 +145,21 @@ graph TB
 
 ### Key Features
 
-- **Standard HTTP**: POST for requests, SSE for server-to-client streaming
-- **Universal Compatibility**: Any language with HTTP client support
-- **JSON Protocol**: MCP-compliant message format
+- **stdio Transport**: Process communication via standard I/O (official MCP)
+- **HTTP/SSE Transport**: POST for requests, SSE for server-to-client streaming (official MCP)
+- **Universal Compatibility**: Any language with transport support
+- **JSON-RPC Protocol**: Full MCP specification compliance
 - **Production Ready**: TLS, OAuth, CORS, rate limiting
 - **Web Infrastructure**: Load balancers, API gateways, monitoring tools
 
 ### Use Cases
 
-- Public MCP APIs
+- External AI model integration
 - Cross-language service communication
-- Untrusted or external Elixir services
+- Public MCP APIs
 - Browser-based clients
-- Third-party integrations
+- Third-party MCP tool providers
+- Untrusted or external Elixir services
 
 ## Architectural Evolution
 
@@ -164,22 +196,28 @@ Client -> TCP Socket -> ETF Frame -> Custom Protocol -> Server
 
 ## Implementation Guide
 
-### Starting Services
+### Starting Traditional MCP Servers
 
 ```elixir
 # Application supervisor
 defmodule MyApp.Application do
   def start(_type, _args) do
     children = [
-      # Start ExMCP registry and supervisors
+      # Traditional MCP server with stdio transport
       {ExMCP.Server, [
-        transports: [
-          {ExMCP.Transport.HTTP, port: 8080, path: "/mcp"},
-          ExMCP.Transport.Native
-        ]
+        handler: MyApp.MCPHandler,
+        transport: :stdio
       ]},
       
-      # Start your MCP services
+      # HTTP server for external clients
+      {ExMCP.Server, [
+        handler: MyApp.MCPHandler,
+        transport: :http,
+        port: 8080,
+        path: "/mcp"
+      ]},
+      
+      # Native BEAM services
       MyApp.ToolService,
       MyApp.ResourceService
     ]
@@ -189,26 +227,42 @@ defmodule MyApp.Application do
 end
 ```
 
-### Service Implementation
+### Traditional MCP Server Implementation
+
+```elixir
+defmodule MyApp.MCPHandler do
+  use ExMCP.Server.Handler
+  
+  @impl true
+  def init(_args), do: {:ok, %{}}
+  
+  @impl true
+  def handle_initialize(_params, state) do
+    {:ok, %{
+      protocolVersion: "2025-03-26",
+      serverInfo: %{name: "my-server", version: "1.0.0"},
+      capabilities: %{tools: %{}}
+    }, state}
+  end
+  
+  @impl true
+  def handle_list_tools(_cursor, state) do
+    tools = [%{name: "calculator", description: "Math operations"}]
+    {:ok, tools, nil, state}
+  end
+end
+```
+
+### Native BEAM Service Implementation
 
 ```elixir
 defmodule MyApp.ToolService do
-  use GenServer
+  use ExMCP.Service, name: :tool_service
   
-  def start_link(_) do
-    GenServer.start_link(__MODULE__, [], name: __MODULE__)
-  end
-  
-  def init(_) do
-    # Register with ExMCP
-    ExMCP.Server.register_service(:tool_service)
-    {:ok, %{}}
-  end
-  
-  # Handle MCP requests
-  def handle_call({:mcp_request, %{"method" => "list_tools"}}, _from, state) do
-    tools = [%{name: "calculator", description: "Math operations"}]
-    {:reply, {:ok, %{"tools" => tools}}, state}
+  @impl true
+  def handle_mcp_request("list_tools", _params, state) do
+    tools = [%{"name" => "calculator", "description" => "Math operations"}]
+    {:ok, %{"tools" => tools}, state}
   end
 end
 ```
@@ -216,42 +270,47 @@ end
 ### Client Usage
 
 ```elixir
-# Native BEAM (same cluster)
-{:ok, tools} = ExMCP.Transport.Native.call(:tool_service, "list_tools", %{})
+# Native BEAM (same cluster) - Ultra-fast
+{:ok, tools} = ExMCP.Native.call(:tool_service, "list_tools", %{})
 
-# HTTP (external clients)
-{:ok, client} = ExMCP.Client.start_link(transport: :http, url: "http://localhost:8080/mcp")
-{:ok, tools} = ExMCP.Client.list_tools(client)
+# Traditional MCP clients
+{:ok, stdio_client} = ExMCP.Client.start_link(transport: :stdio, command: ["mcp-server"])
+{:ok, http_client} = ExMCP.Client.start_link(transport: :http, url: "http://localhost:8080/mcp")
+{:ok, tools} = ExMCP.Client.list_tools(http_client)
 ```
 
 ## Security Model
 
-### Native BEAM Transport
+### Native BEAM Service Dispatcher
 - **Erlang Cookie Authentication**: Shared secret for node joining
 - **Network Security**: Private cluster networks, VPNs
 - **Process Isolation**: OTP process boundaries
+- **Horde Security**: Distributed consensus and conflict resolution
 - **Trust Model**: All services in cluster are trusted
 
-### HTTP Transport
+### Traditional MCP Transports
 - **TLS Encryption**: HTTPS for all production traffic
 - **OAuth 2.1**: Standard authentication flows
 - **CORS Protection**: Origin validation for browser clients
 - **Rate Limiting**: DoS protection and abuse prevention
 - **Trust Model**: Zero trust, authenticate every request
+- **stdio Security**: Process isolation and controlled execution
 
 ## Operational Considerations
 
-### Native BEAM
-- **Monitoring**: OTP observer, process trees, message queues
+### Native BEAM Service Dispatcher
+- **Monitoring**: OTP observer, Horde cluster status, service registry
 - **Debugging**: Standard Elixir/OTP tools (observer, :sys.trace)
 - **Deployment**: Elixir releases, cluster formation
-- **Scaling**: Add nodes to cluster, automatic service discovery
+- **Scaling**: Add nodes to cluster, automatic service discovery via Horde
+- **Performance**: `:timer.tc/1` for call latency measurement
 
-### HTTP
+### Traditional MCP Transports
 - **Monitoring**: Standard HTTP metrics (response times, status codes)
-- **Debugging**: HTTP request/response logging, curl testing
+- **Debugging**: HTTP request/response logging, curl testing, stdio logs
 - **Deployment**: Standard web application deployment
 - **Scaling**: Load balancers, multiple instances, API gateways
+- **MCP Compliance**: Protocol validation and conformance testing
 
 ## Future Considerations
 
@@ -268,7 +327,8 @@ Only consider additional transports if they provide clear value:
 
 - **gRPC**: For high-performance cross-language RPC (HTTP/2 based)
 - **GraphQL**: For flexible query APIs (HTTP based)
-- **WebSocket**: For browser real-time communication (standardized)
+- **Message Queues**: For async communication (AMQP, Kafka)
+- **Unix Domain Sockets**: For high-performance local IPC
 
 ### Examples of Invalid Transports
 
@@ -278,11 +338,12 @@ Only consider additional transports if they provide clear value:
 
 ## Conclusion
 
-The simplified two-transport architecture provides:
+The simplified two-pattern architecture provides:
 
-1. **Maximum Performance**: Native BEAM for trusted internal communication
-2. **Universal Compatibility**: HTTP for external and cross-language communication  
-3. **Operational Simplicity**: Standard tools and well-understood patterns
-4. **Clear Guidelines**: Obvious choice for each use case
+1. **Maximum Performance**: Native BEAM Service Dispatcher for trusted internal communication (~15μs)
+2. **Universal Compatibility**: Traditional MCP transports for external and cross-language communication
+3. **Protocol Compliance**: Full MCP specification support for interoperability
+4. **Operational Simplicity**: Standard tools and well-understood patterns
+5. **Clear Guidelines**: Obvious choice for each use case
 
 This design leverages the strengths of both the BEAM ecosystem and web standards while avoiding the pitfalls of over-engineering and proprietary protocols.

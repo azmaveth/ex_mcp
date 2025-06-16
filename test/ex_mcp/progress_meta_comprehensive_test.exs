@@ -313,15 +313,14 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          handler: ComprehensiveHandler,
-          name: :progress_test_server
+          transport: :test,
+          handler: ComprehensiveHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :progress_test_server
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -445,15 +444,14 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          handler: ComprehensiveHandler,
-          name: :meta_test_server
+          transport: :test,
+          handler: ComprehensiveHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :meta_test_server
+          transport: :test,
+          server: server
         )
 
       Process.sleep(100)
@@ -538,15 +536,14 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          handler: ComprehensiveHandler,
-          name: :error_test_server
+          transport: :test,
+          handler: ComprehensiveHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :error_test_server
+          transport: :test,
+          server: server
         )
 
       Process.sleep(100)
@@ -624,15 +621,14 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          handler: ComprehensiveHandler,
-          name: :integration_test_server
+          transport: :test,
+          handler: ComprehensiveHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :integration_test_server
+          transport: :test,
+          server: server
         )
 
       Process.sleep(100)

@@ -26,7 +26,7 @@ ExMCP is a complete Elixir implementation of the Model Context Protocol (MCP), e
 ### Key Features
 
 - **Full Protocol Support**: Implements MCP specification version 2025-03-26
-- **Multiple Transports**: stdio, Streamable HTTP (with Server-Sent Events), WebSocket, and native BEAM
+- **Multiple Transports**: stdio, Streamable HTTP (with Server-Sent Events), and native BEAM
 - **Both Client and Server**: Build MCP servers or connect to existing ones
 - **OTP Integration**: Built on Elixir's OTP principles for reliability
 - **Type Safety**: Comprehensive type specifications throughout
@@ -431,6 +431,256 @@ Servers can make requests back to clients:
 })
 
 # The client must have a handler implemented to respond to these requests
+```
+
+## Building Native BEAM Services
+
+Native BEAM services provide ultra-fast communication for trusted Elixir clusters using the `ExMCP.Service` behaviour.
+
+### Service Behaviour
+
+All Native BEAM services implement the `ExMCP.Service` behaviour:
+
+```elixir
+defmodule MyToolService do
+  use ExMCP.Service, name: :my_tools
+
+  @impl true
+  def init(_args) do
+    {:ok, %{cache: %{}, stats: %{calls: 0}}}
+  end
+
+  @impl true
+  def handle_mcp_request("list_tools", _params, state) do
+    tools = [
+      %{
+        "name" => "calculator",
+        "description" => "Perform mathematical calculations",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "expression" => %{"type" => "string", "description" => "Math expression"}
+          },
+          "required" => ["expression"]
+        }
+      }
+    ]
+    {:ok, %{"tools" => tools}, state}
+  end
+
+  @impl true  
+  def handle_mcp_request("tools/call", %{"name" => "calculator", "arguments" => args}, state) do
+    expression = args["expression"]
+    
+    try do
+      # Safe expression evaluation (implement your own)
+      result = safe_eval(expression)
+      content = [%{"type" => "text", "text" => "Result: #{result}"}]
+      
+      new_state = update_in(state.stats.calls, &(&1 + 1))
+      {:ok, %{"content" => content}, new_state}
+    rescue
+      error ->
+        {:error, %{"code" => -32603, "message" => "Calculation error: #{inspect(error)}"}, state}
+    end
+  end
+
+  def handle_mcp_request(method, _params, state) do
+    {:error, %{"code" => -32601, "message" => "Method not found: #{method}"}, state}
+  end
+
+  # Optional: Handle notifications (fire-and-forget)
+  @impl true
+  def handle_mcp_notification("clear_cache", _params, state) do
+    {:noreply, %{state | cache: %{}}}
+  end
+
+  # Optional: Custom lifecycle management
+  @impl true
+  def terminate(_reason, _state) do
+    # Cleanup resources
+    :ok
+  end
+end
+```
+
+### Service Registration and Discovery
+
+Services automatically register when started and can be discovered across the cluster:
+
+```elixir
+# Start your service (automatically registers with ExMCP.Native)
+{:ok, pid} = MyToolService.start_link()
+
+# Check if service is available
+ExMCP.Native.service_available?(:my_tools)
+#=> true
+
+# List all services across the cluster
+services = ExMCP.Native.list_services()
+#=> [
+#=>   {:my_tools, #PID<0.123.0>, %{registered_at: ~U[2024-01-01 10:00:00Z]}},
+#=>   {:data_processor, #PID<0.124.0>, %{registered_at: ~U[2024-01-01 10:01:00Z]}}
+#=> ]
+```
+
+### Direct Service Communication
+
+Call services directly without MCP client overhead:
+
+```elixir
+# Simple call
+{:ok, tools} = ExMCP.Native.call(:my_tools, "list_tools", %{})
+
+# Call with metadata and progress tracking
+{:ok, result} = ExMCP.Native.call(
+  :my_tools,
+  "tools/call",
+  %{"name" => "calculator", "arguments" => %{"expression" => "2 + 2"}},
+  timeout: 10_000,
+  meta: %{"user_id" => "user123", "trace_id" => "abc"},
+  progress_token: "calc-001"
+)
+
+# Fire-and-forget notifications
+:ok = ExMCP.Native.notify(:my_tools, "clear_cache", %{})
+```
+
+### Cross-Node Communication
+
+Services work seamlessly across BEAM cluster nodes:
+
+```elixir
+# Connect nodes (if not already connected)
+Node.connect(:"worker@cluster.local")
+
+# Call service on specific node
+{:ok, result} = ExMCP.Native.call(
+  {:data_processor, :"worker@cluster.local"},
+  "tools/call",
+  %{"name" => "process_dataset", "arguments" => %{"dataset_id" => "abc123"}}
+)
+
+# Horde automatically discovers services across nodes
+available? = ExMCP.Native.service_available?(:data_processor)
+#=> true (even if on remote node)
+```
+
+### Resilience Patterns
+
+Add optional resilience for unreliable services:
+
+```elixir
+# Retry with exponential backoff
+{:ok, result} = ExMCP.Resilience.call_with_retry(
+  :flaky_service,
+  "process_data",
+  %{"input" => "data"},
+  max_attempts: 3,
+  backoff: :exponential,
+  initial_delay: 100
+)
+
+# Fallback for unavailable services
+result = ExMCP.Resilience.call_with_fallback(
+  :primary_service,
+  "get_data",
+  %{},
+  fallback: fn -> 
+    {:ok, %{"data" => "cached_value", "source" => "cache"}} 
+  end
+)
+
+# Circuit breaker for failing services
+{:ok, result} = ExMCP.Resilience.call_with_circuit_breaker(
+  :unstable_service,
+  "risky_operation",
+  %{},
+  failure_threshold: 5,
+  timeout: 60_000
+)
+```
+
+### Performance Optimization
+
+Native BEAM services are optimized for performance:
+
+```elixir
+# Measure performance
+:timer.tc(fn -> 
+  ExMCP.Native.call(:my_service, "fast_operation", %{}) 
+end)
+#=> {15, {:ok, result}}  # ~15 microseconds!
+
+# Batch operations for efficiency
+results = Enum.map(1..1000, fn i ->
+  ExMCP.Native.call(:calculator, "tools/call", %{
+    "name" => "add",
+    "arguments" => %{"a" => i, "b" => i * 2}
+  })
+end)
+# Completes in milliseconds due to zero serialization overhead
+```
+
+### Advanced Service Patterns
+
+#### Resource-like Services
+
+Services can expose resource-like interfaces:
+
+```elixir
+defmodule DatabaseService do
+  use ExMCP.Service, name: :database
+
+  @impl true
+  def handle_mcp_request("list_resources", _params, state) do
+    resources = [
+      %{
+        "uri" => "db://users/table",
+        "name" => "Users Table",
+        "description" => "User data",
+        "mimeType" => "application/json"
+      }
+    ]
+    {:ok, %{"resources" => resources}, state}
+  end
+
+  @impl true
+  def handle_mcp_request("resources/read", %{"uri" => "db://users/table"}, state) do
+    users = Database.all_users()
+    content = %{
+      "uri" => "db://users/table",
+      "mimeType" => "application/json",
+      "text" => Jason.encode!(users)
+    }
+    {:ok, %{"contents" => [content]}, state}
+  end
+end
+```
+
+#### Event-Driven Services
+
+Services can publish and subscribe to events:
+
+```elixir
+defmodule EventService do
+  use ExMCP.Service, name: :events
+
+  @impl true
+  def handle_mcp_request("resources/subscribe", %{"uri" => uri}, state) do
+    # Track subscription
+    subscriptions = MapSet.put(state.subscriptions, uri)
+    {:ok, %{}, %{state | subscriptions: subscriptions}}
+  end
+
+  # Publish events to subscribers
+  def publish_event(uri, event_data) do
+    ExMCP.Native.notify(:events, "resource_updated", %{
+      "uri" => uri,
+      "data" => event_data
+    })
+  end
+end
 ```
 
 ## Building MCP Clients
@@ -1062,13 +1312,19 @@ end
   endpoint: "/mcp/v1"  # Ensure endpoint matches server configuration
 )
 
-# BEAM: Node not connected
-# Connect nodes first
-Node.connect(:"server@host")
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :beam,
-  server: {:"server@host", :mcp_server}
-)
+# Native BEAM: Service not found
+# Check if service is registered
+ExMCP.Native.service_available?(:my_service)
+
+# List all services
+ExMCP.Native.list_services()
+
+# Cross-node communication
+# Ensure nodes are connected
+Node.connect(:"worker@cluster.local")
+
+# Check Horde cluster members
+Horde.Cluster.members(ExMCP.ServiceRegistry)
 ```
 
 ### Debugging

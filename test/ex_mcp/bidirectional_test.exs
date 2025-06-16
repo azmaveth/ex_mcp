@@ -129,17 +129,16 @@ defmodule ExMCP.BidirectionalTest do
       # Start server
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: TestServerHandler,
-          handler_state: %{},
-          name: :test_bidi_server_1
+          handler_state: %{}
         )
 
       # Start client with handler
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_bidi_server_1,
+          transport: :test,
+          server: server,
           handler: TestClientHandler,
           handler_state: %{},
           client_info: %{name: "test_client", version: "1.0"}
@@ -160,17 +159,16 @@ defmodule ExMCP.BidirectionalTest do
       # Start server
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: TestServerHandler,
-          handler_state: %{},
-          name: :test_bidi_server_2
+          handler_state: %{}
         )
 
       # Start client with handler
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_bidi_server_2,
+          transport: :test,
+          server: server,
           handler: TestClientHandler,
           handler_state: %{},
           client_info: %{name: "test_client", version: "1.0"}
@@ -197,17 +195,16 @@ defmodule ExMCP.BidirectionalTest do
       # Start server
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: TestServerHandler,
-          handler_state: %{},
-          name: :test_bidi_server_3
+          handler_state: %{}
         )
 
       # Start client with handler
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_bidi_server_3,
+          transport: :test,
+          server: server,
           handler: TestClientHandler,
           handler_state: %{},
           client_info: %{name: "test_client", version: "1.0"}
@@ -238,17 +235,16 @@ defmodule ExMCP.BidirectionalTest do
       # Start server
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: TestServerHandler,
-          handler_state: %{},
-          name: :test_bidi_server_4
+          handler_state: %{}
         )
 
       # Start client WITHOUT handler
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_bidi_server_4,
+          transport: :test,
+          server: server,
           client_info: %{name: "test_client", version: "1.0"}
         )
 

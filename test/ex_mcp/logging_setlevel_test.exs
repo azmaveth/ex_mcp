@@ -49,14 +49,14 @@ defmodule ExMCP.LoggingSetLevelTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: TestHandler,
           handler_args: []
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server
         )
 
@@ -113,14 +113,14 @@ defmodule ExMCP.LoggingSetLevelTest do
 
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: MinimalHandler,
           handler_args: []
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server
         )
 

@@ -102,14 +102,13 @@ defmodule ExMCP.VersionNegotiationTest do
       {:ok, server} =
         Server.start_link(
           handler: TestVersionHandler,
-          transport: :beam,
-          name: :test_version_server
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_version_server,
+          transport: :test,
+          server: server,
           client_info: %{name: "test-client", version: "1.0.0"}
         )
 
@@ -254,14 +253,13 @@ defmodule ExMCP.VersionNegotiationTest do
       {:ok, server} =
         Server.start_link(
           handler: OldVersionHandler,
-          transport: :beam,
-          name: :old_version_server
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :old_version_server
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization

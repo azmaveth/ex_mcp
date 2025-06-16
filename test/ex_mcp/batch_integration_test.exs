@@ -89,17 +89,16 @@ defmodule ExMCP.BatchIntegrationTest do
       # Start server
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: TestHandler,
-          handler_state: %{},
-          name: :test_batch_server_1
+          handler_state: %{}
         )
 
       # Start client
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_batch_server_1,
+          transport: :test,
+          server: server,
           client_info: %{name: "test_client", version: "1.0"}
         )
 
@@ -141,17 +140,16 @@ defmodule ExMCP.BatchIntegrationTest do
       # Start server
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: TestHandler,
-          handler_state: %{},
-          name: :test_batch_server_2
+          handler_state: %{}
         )
 
       # Start client
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_batch_server_2,
+          transport: :test,
+          server: server,
           client_info: %{name: "test_client", version: "1.0"}
         )
 

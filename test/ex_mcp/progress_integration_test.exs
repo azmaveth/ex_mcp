@@ -210,14 +210,14 @@ defmodule ExMCP.ProgressIntegrationTest do
     # Start server with progress handler
     {:ok, server} =
       Server.start_link(
-        transport: :beam,
+        transport: :test,
         handler: TestProgressHandler
       )
 
     # Start client
     {:ok, client} =
       Client.start_link(
-        transport: :beam,
+        transport: :test,
         server: server
       )
 

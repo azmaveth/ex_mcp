@@ -2,6 +2,7 @@
 
 ## Module Index
 
+### Core Modules
 - [`ExMCP`](#exmcp) - Main module and version information
 - [`ExMCP.Client`](#exmcpclient) - MCP client implementation
 - [`ExMCP.Client.Handler`](#exmcpclienthandler) - Client handler behaviour
@@ -10,6 +11,13 @@
 - [`ExMCP.Server.Handler`](#exmcpserverhandler) - Server handler behaviour
 - [`ExMCP.Protocol`](#exmcpprotocol) - Protocol encoding/decoding
 - [`ExMCP.Transport`](#exmcptransport) - Transport behaviour
+
+### Native BEAM Service Dispatcher
+- [`ExMCP.Native`](#exmcpnative) - Ultra-fast service dispatcher with Horde.Registry
+- [`ExMCP.Service`](#exmcpservice) - Service behaviour and macro for automatic registration
+- [`ExMCP.Resilience`](#exmcpresilience) - Optional resilience patterns (retry, fallback, circuit breaker)
+
+### Security & Authorization  
 - [`ExMCP.Approval`](#exmcpapproval) - Human-in-the-loop approval behaviour
 - [`ExMCP.Approval.Console`](#exmcpapprovalconsole) - Console-based approval handler
 - [`ExMCP.Authorization.TokenManager`](#exmcpauthorizationtokenmanager) - OAuth token management
@@ -19,6 +27,8 @@
 - [`ExMCP.Security.TokenValidator`](#exmcpsecuritytokenvalidator) - Token validation and audience checking
 - [`ExMCP.Security.ConsentManager`](#exmcpsecurityconsentmanager) - Dynamic client consent management
 - [`ExMCP.Security.ClientRegistry`](#exmcpsecurityclientregistry) - Client accountability and audit trails
+
+### Utilities
 - [`ExMCP.ServerManager`](#exmcpservermanager) - Multiple server management
 - [`ExMCP.Discovery`](#exmcpdiscovery) - Server discovery utilities
 - [`ExMCP.Logging`](#exmcplogging) - Structured logging with security sanitization
@@ -69,7 +79,7 @@ Starts a new MCP client process.
 @spec start_link(keyword()) :: GenServer.on_start()
 
 # Options:
-# - transport: atom() - Transport type (:stdio, :http, :beam)
+# - transport: atom() - Transport type (:stdio, :http)
 # - handler: module() | {module(), args} - Optional client handler
 # - handler_state: map() - Initial handler state (deprecated, use tuple form)
 # - auth_config: map() - Authorization configuration (optional)
@@ -398,7 +408,7 @@ Starts a new MCP server process.
 
 # Options:
 # - handler: module() - Module implementing Server.Handler behaviour
-# - transport: atom() - Transport type (:stdio, :sse, :beam)
+# - transport: atom() - Transport type (:stdio, :http)
 # - handler_args: term() - Arguments passed to handler init/1
 # - Transport-specific options
 # - name: term() - Optional GenServer name
@@ -1639,6 +1649,237 @@ defmodule MyServer do
   end
 end
 ```
+
+---
+
+## ExMCP.Native
+
+Ultra-fast service dispatcher for direct process communication within Elixir clusters using Horde.Registry for distributed service discovery.
+
+### Functions
+
+#### `register_service/1`
+Registers a service with the distributed registry.
+
+```elixir
+@spec register_service(atom()) :: :ok | {:error, term()}
+
+# Example
+ExMCP.Native.register_service(:my_tools)
+# => :ok
+```
+
+#### `unregister_service/1`
+Unregisters a service from the distributed registry.
+
+```elixir
+@spec unregister_service(atom()) :: :ok
+
+# Example
+ExMCP.Native.unregister_service(:my_tools)
+# => :ok
+```
+
+#### `call/4`
+Calls a service method with the given parameters.
+
+```elixir
+@spec call(service_id(), method(), params(), keyword()) :: {:ok, result()} | {:error, term()}
+
+# Examples
+{:ok, tools} = ExMCP.Native.call(:my_tools, "list_tools", %{})
+
+{:ok, result} = ExMCP.Native.call(
+  :calculator,
+  "add", 
+  %{"a" => 1, "b" => 2},
+  timeout: 10_000,
+  meta: %{"trace_id" => "abc123"}
+)
+
+# Cross-node call
+{:ok, result} = ExMCP.Native.call(
+  {:data_service, :"worker@cluster.local"},
+  "process_data",
+  %{"dataset" => "large_data"}
+)
+```
+
+#### `notify/3`
+Sends a notification to a service (fire-and-forget).
+
+```elixir
+@spec notify(service_id(), method(), params()) :: :ok | {:error, term()}
+
+# Example
+:ok = ExMCP.Native.notify(:event_service, "resource_updated", %{
+  "uri" => "file:///config.json",
+  "type" => "modified"
+})
+```
+
+#### `list_services/0`
+Lists all services registered in the distributed registry.
+
+```elixir
+@spec list_services() :: [{atom(), pid(), map()}]
+
+# Example
+services = ExMCP.Native.list_services()
+# => [{:calculator, #PID<0.123.0>, %{registered_at: ~U[...]}}, ...]
+```
+
+#### `service_available?/1`
+Checks if a service is available in the distributed registry.
+
+```elixir
+@spec service_available?(atom()) :: boolean()
+
+# Example
+if ExMCP.Native.service_available?(:calculator) do
+  {:ok, result} = ExMCP.Native.call(:calculator, "add", %{"a" => 1, "b" => 2})
+end
+```
+
+### Types
+
+```elixir
+@type service_id :: atom() | {atom(), node()}
+@type method :: String.t()
+@type params :: map()
+@type result :: term()
+```
+
+### Performance
+
+- **Local calls**: ~15μs latency
+- **Cross-node calls**: ~50μs latency
+- **Memory overhead**: Single Horde.Registry entry per service
+- **Scalability**: Distributed across cluster nodes automatically
+
+---
+
+## ExMCP.Service
+
+Behaviour and macro for creating MCP services with automatic registration.
+
+### Macro Usage
+
+```elixir
+defmodule MyToolService do
+  use ExMCP.Service, name: :my_tools
+
+  @impl true
+  def handle_mcp_request(method, params, state) do
+    # Handle MCP requests
+    {:ok, result, new_state} | {:error, error, new_state}
+  end
+end
+```
+
+### Callbacks
+
+#### `handle_mcp_request/3`
+Handles an MCP request.
+
+```elixir
+@callback handle_mcp_request(method :: String.t(), params :: map(), state :: term()) ::
+            {:ok, result :: term(), new_state :: term()}
+            | {:error, error :: term(), new_state :: term()}
+```
+
+### Generated Functions
+
+When you `use ExMCP.Service`, the following functions are automatically generated:
+
+#### `start_link/1`
+Starts the service GenServer.
+
+```elixir
+# Example
+{:ok, pid} = MyToolService.start_link([])
+```
+
+### Automatic Features
+
+- **Service Registration**: Automatically registers with `ExMCP.Native` on startup
+- **Service Unregistration**: Automatically unregisters on termination
+- **GenServer Integration**: Full GenServer callbacks available
+- **MCP Request Handling**: Handles `{:mcp_request, message}` calls and `{:mcp_notification, message}` casts
+
+---
+
+## ExMCP.Resilience
+
+Optional resilience patterns for ExMCP.Native service calls.
+
+### Functions
+
+#### `call_with_retry/4`
+Calls a service with retry logic and exponential backoff.
+
+```elixir
+@spec call_with_retry(atom(), String.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
+
+# Example
+{:ok, result} = ExMCP.Resilience.call_with_retry(
+  :flaky_service,
+  "process_data",
+  %{"input" => "data"},
+  max_attempts: 3,
+  backoff: :exponential,
+  base_delay: 100,
+  max_delay: 5000,
+  retry_on: [:timeout, :service_unavailable]
+)
+```
+
+#### `call_with_fallback/4`
+Calls a service with a fallback function if the call fails.
+
+```elixir
+@spec call_with_fallback(atom(), String.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
+
+# Example
+result = ExMCP.Resilience.call_with_fallback(
+  :unreliable_service,
+  "get_data",
+  %{},
+  fallback: fn -> {:ok, %{"data" => "cached_value"}} end
+)
+```
+
+#### `call_with_breaker/4`
+Calls a service through a circuit breaker pattern.
+
+```elixir
+@spec call_with_breaker(atom(), String.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
+
+# Example (requires :fuse dependency)
+{:ok, result} = ExMCP.Resilience.call_with_breaker(
+  :my_service,
+  "method",
+  %{},
+  circuit_name: :my_service_circuit
+)
+```
+
+### Options
+
+#### Retry Options
+- `:max_attempts` - Maximum number of attempts (default: 3)
+- `:backoff` - `:linear` or `:exponential` (default: :exponential)
+- `:base_delay` - Base delay in milliseconds (default: 100)
+- `:max_delay` - Maximum delay in milliseconds (default: 5000)
+- `:retry_on` - List of error reasons to retry on (default: [:timeout, :service_unavailable])
+
+#### Circuit Breaker Options
+- `:circuit_name` - Name for the circuit breaker (default: service_id)
+- `:fuse_options` - Options passed to :fuse.install/2
+
+### Trade-offs
+
+Using resilience patterns adds latency and complexity to service calls. In trusted Elixir clusters, OTP supervision typically provides better fault tolerance. Use these patterns only when you need specific resilience behaviors.
 
 ---
 

@@ -2,7 +2,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
   @moduledoc """
   Comprehensive integration test suite for OAuth flows across all HTTP transports.
 
-  Tests OAuth 2.1 integration with SSE, HTTP, and WebSocket transports according to
+  Tests OAuth 2.1 integration with SSE and HTTP transports according to
   MCP specification requirements. Verifies that authorization works correctly with
   all transport types.
 
@@ -19,7 +19,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
   alias ExMCP.Authorization
   alias ExMCP.Authorization.{ProtectedResourceMetadata, TokenManager}
   alias ExMCP.Client
-  alias ExMCP.Transport.{HTTP, SSEClient, WebSocket}
+  alias ExMCP.Transport.{HTTP, SSEClient}
 
   @moduletag :capture_log
   @moduletag :oauth_integration
@@ -48,7 +48,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
     test "includes Bearer token in SSE connection headers", %{mock_token: token} do
       # SSE transport configuration with OAuth
       transport_config = %{
-        type: :sse,
+        type: :http,
         url: "https://mcp-server.example.com/sse",
         headers: [
           {"authorization", "Bearer #{token["access_token"]}"}
@@ -329,115 +329,6 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
     end
   end
 
-  describe "OAuth with WebSocket Transport" do
-    test "includes Bearer token in WebSocket connection headers", %{mock_token: token} do
-      # WebSocket client configuration with OAuth
-      transport_config = %{
-        type: :websocket,
-        url: "wss://mcp-server.example.com/mcp/websocket",
-        headers: [
-          {"authorization", "Bearer #{token["access_token"]}"}
-        ]
-      }
-
-      # Connect with auth
-      result =
-        WebSocket.connect(
-          url: transport_config.url,
-          headers: transport_config.headers
-        )
-
-      case result do
-        {:ok, _ws_client} ->
-          # Connected with auth
-          assert true
-
-        {:error, {:upgrade_failure, 401}} ->
-          # Proper 401 handling during WebSocket upgrade
-          assert true
-
-        {:error, {:request_failed, _}} ->
-          # Expected without server
-          assert true
-
-        other ->
-          flunk("Unexpected WebSocket result: #{inspect(other)}")
-      end
-    end
-
-    test "handles WebSocket reconnection with refreshed token", %{
-      oauth_config: config,
-      mock_token: token
-    } do
-      # Token manager for WebSocket client
-      {:ok, token_manager} =
-        TokenManager.start_link(
-          auth_config: config,
-          initial_token: token
-        )
-
-      # WebSocket reconnection logic
-      connect_with_current_token = fn ->
-        case TokenManager.get_token(token_manager) do
-          {:ok, access_token} ->
-            WebSocket.connect(
-              url: "wss://mcp-server.example.com/mcp",
-              headers: [{"authorization", "Bearer #{access_token}"}]
-            )
-
-          {:error, _} ->
-            {:error, :no_valid_token}
-        end
-      end
-
-      # Attempt connection
-      result = connect_with_current_token.()
-
-      case result do
-        {:error, {:request_failed, _}} ->
-          assert true
-
-        {:error, :no_valid_token} ->
-          assert true
-
-        other ->
-          flunk("Unexpected result: #{inspect(other)}")
-      end
-    end
-
-    test "supports OAuth flow for WebSocket authentication" do
-      # Full OAuth flow for WebSocket
-      config = %{
-        client_id: "websocket-client",
-        client_secret: "ws-secret",
-        token_endpoint: "https://auth.example.com/token",
-        scopes: ["mcp:websocket"]
-      }
-
-      # Get token via client credentials
-      case Authorization.client_credentials_flow(config) do
-        {:ok, token_response} ->
-          # Use token for WebSocket
-          _ws_config = %{
-            url: "wss://mcp-server.example.com/mcp",
-            headers: [
-              {"authorization", "Bearer #{token_response.access_token}"}
-            ]
-          }
-
-          # Would connect with OAuth token
-          assert is_binary(token_response.access_token)
-
-        {:error, {:request_failed, _}} ->
-          # Expected without server
-          assert true
-
-        other ->
-          flunk("Unexpected OAuth result: #{inspect(other)}")
-      end
-    end
-  end
-
   describe "OAuth Integration with MCP Client" do
     test "MCP client uses OAuth token across transport types", %{
       oauth_config: config,
@@ -445,7 +336,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
     } do
       # Create MCP client with OAuth
       client_config = [
-        transport: :sse,
+        transport: :http,
         url: "https://mcp-server.example.com",
         auth_config: config,
         initial_token: token
@@ -517,7 +408,7 @@ defmodule ExMCP.OAuthHTTPTransportIntegrationTest do
       }
 
       client_config = [
-        transport: :sse,
+        transport: :http,
         url: "https://mcp-server.example.com",
         auth_config: config,
         initial_token: short_token,

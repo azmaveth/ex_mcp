@@ -163,7 +163,7 @@ defmodule ExMCP.OAuthIntegrationTest do
       # Client configuration
       client_opts = [
         # Use stdio to avoid network issues
-        transport: :stdio,
+        transport: :test,
         security: %{
           auth_config: oauth_config,
           initial_token: initial_token

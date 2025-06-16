@@ -19,7 +19,7 @@
 - **Removed**: TCP-based BEAM transport (`ExMCP.Transport.Beam.Server`, `Client`, etc.)
 - **Implemented**: `ExMCP.Transport.Native` - Direct GenServer call-based transport (330 lines)
 - **Preserved**: Valuable BEAM features (clustering, hot reload, service registry, observability) - 10 modules
-- **Simplified**: From 3 transports → 2 transports (Native BEAM + HTTP)
+- **Simplified**: Native BEAM transport provides optimal local performance
 - **Documentation**: New transport architecture guide and migration documentation
 
 **Key improvements:**
@@ -107,7 +107,6 @@
   - [x] Created ExMCP.Client.DefaultHandler with approval support
   - [x] Created ExMCP.Approval.Console for terminal-based approvals
   - [x] Full test coverage with approval_test.exs and hitl_integration_test.exs
-- [x] WebSocket transport *(Note: Client-only implementation, server mode not implemented)*
 
 ### Advanced Transport Features
 - [x] Basic BEAM transport implementation completed
@@ -228,7 +227,7 @@
   - [x] Window-based flow control (similar to TCP sliding window)
   - [x] Resource streaming with automatic chunking
   - [x] Connection-level stream management
-- [x] Performance optimizations for local connections *(Note: BEAM transport has inherent local optimizations including :native format for zero-serialization same-VM communication and ETF format for optimal BEAM-to-BEAM communication. HTTP/WebSocket localhost detection, Unix domain sockets, and optimized buffers/timeouts not implemented)*
+- [x] Performance optimizations for local connections *(Note: BEAM transport has inherent local optimizations including :native format for zero-serialization same-VM communication and ETF format for optimal BEAM-to-BEAM communication. Unix domain sockets and optimized buffers/timeouts not implemented)*
 - [x] Zero-copy message passing for large payloads ✅ *(Note: Implemented for BEAM transport only - uses ETS/shared memory. Other transports would need different approaches like chunking or content-addressable storage)*
 
 ## PRIORITY ANALYSIS & RECOMMENDATIONS
@@ -306,9 +305,6 @@
 - [ ] Message compression
 - [ ] Circuit breaker for failed connections
 - [ ] Graceful shutdown procedures
-- [ ] WebSocket server mode implementation (requires HTTP server with upgrade support)
-- [ ] WebSocket reconnection support
-- [ ] WebSocket connection pooling
 
 ---
 
@@ -394,7 +390,6 @@
 - [x] Comprehensive BEAM transport tests - all 35 tests passing
 - [x] HTTP streaming transport implementation (with Server-Sent Events)
 - [x] HTTP streaming transport tests
-- [x] WebSocket transport *(Note: Client-only implementation, server mode not implemented)*
 
 ### MCP Specification Compliance ✅ **MAJOR ACHIEVEMENT**
 - [x] Comprehensive test coverage for all MCP specification versions
@@ -577,10 +572,9 @@
     - [ ] Demonstrate sampling/createMessage with local LLM
     - [ ] Show model preference hints
   - [ ] Transport demonstrations
-    - [ ] BEAM transport for local development
+    - [ ] Native BEAM transport for local development
     - [ ] stdio transport for CLI usage
     - [ ] HTTP streaming transport for web integration
-    - [ ] WebSocket client example
   - [ ] Security features
     - [ ] OAuth authorization flow
     - [ ] Token validation
@@ -700,9 +694,6 @@
 - [ ] Message compression
 - [ ] Circuit breaker for failed connections
 - [ ] Graceful shutdown procedures
-- [ ] WebSocket server mode implementation (requires HTTP server with upgrade support)
-- [ ] WebSocket reconnection support
-- [ ] WebSocket connection pooling
 
 ### Phase 16 Features (from mcp_chat)
 - [ ] Health Monitoring Infrastructure
@@ -740,7 +731,7 @@
 ## Notes
 
 - The library implements the Model Context Protocol specification version 2025-03-26
-- Four transports are implemented: stdio (primary), BEAM (native Elixir), HTTP streaming, and WebSocket (client-only)
+- Three transports are implemented: stdio (primary), Native BEAM (direct process communication), and HTTP streaming
 - The client includes automatic reconnection with exponential backoff
 - Server handlers can be implemented using the ExMCP.Server.Handler behaviour
 - All protocol messages use string keys for JSON compatibility
@@ -792,7 +783,7 @@ Based on thorough review of the MCP specification (docs/mcp-llms-full.txt), the 
   - [x] Add request cancellation API in client
   - [x] Handle cancelled requests in server
   - [x] Fixed request ID type handling (integer/string compatibility)
-  - [x] Verified cancellation works across all transports (BEAM, HTTP streaming, WebSocket, stdio)
+  - [x] Verified cancellation works across all transports (Native BEAM, HTTP streaming, stdio)
   - [x] Comprehensive example in examples/cancellation_example.exs
 - [x] Logging Control ✅ **COMPLETED**
   - [x] Implement logging/setLevel request handler
@@ -913,7 +904,7 @@ The ExMCP library has:
 - ✅ Bi-directional communication and server-initiated requests
 - ✅ Human-in-the-loop support with approval flows
 - ✅ Comprehensive server discovery (extension feature)
-- ✅ Multi-transport support (stdio, HTTP streaming, BEAM, WebSocket client)
+- ✅ Multi-transport support (stdio, HTTP streaming, Native BEAM)
 - ✅ Automatic reconnection with exponential backoff
 - ✅ Progress notifications and subscriptions
 - ✅ Server manager for multi-server support

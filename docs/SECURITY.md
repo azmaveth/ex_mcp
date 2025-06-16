@@ -8,17 +8,17 @@ ExMCP provides comprehensive security features across all transports to ensure s
 
 ## Security Features by Transport
 
-| Feature | Streamable HTTP | WebSocket | BEAM | stdio |
-|---------|-----|-----------|------|-------|
-| Bearer Authentication | ✅ | ✅ | ✅ | ❌ |
-| API Key Authentication | ✅ | ✅ | ✅ | ❌ |
-| Basic Authentication | ✅ | ✅ | ❌ | ❌ |
-| Custom Headers | ✅ | ✅ | ❌ | ❌ |
-| Origin Validation | ✅ | ✅ | ❌ | ❌ |
-| CORS Headers | ✅ | ❌ | ❌ | ❌ |
-| TLS/SSL | ✅ | ✅ | ✅* | ❌ |
-| Mutual TLS | ✅ | ✅ | ❌ | ❌ |
-| Node Cookie Auth | ❌ | ❌ | ✅ | ❌ |
+| Feature | Streamable HTTP | BEAM | stdio |
+|---------|-----|------|-------|
+| Bearer Authentication | ✅ | ✅ | ❌ |
+| API Key Authentication | ✅ | ✅ | ❌ |
+| Basic Authentication | ✅ | ❌ | ❌ |
+| Custom Headers | ✅ | ❌ | ❌ |
+| Origin Validation | ✅ | ❌ | ❌ |
+| CORS Headers | ✅ | ❌ | ❌ |
+| TLS/SSL | ✅ | ✅* | ❌ |
+| Mutual TLS | ✅ | ❌ | ❌ |
+| Node Cookie Auth | ❌ | ✅ | ❌ |
 
 *BEAM transport uses Erlang distribution security
 
@@ -34,7 +34,7 @@ security = %{
 }
 
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :sse,
+  transport: :http,
   url: "https://api.example.com",
   security: security
 )
@@ -133,31 +133,6 @@ security = %{
 }
 ```
 
-### WebSocket Transport Security
-
-WebSocket transport supports authentication and TLS:
-
-```elixir
-security = %{
-  # Authentication
-  auth: {:bearer, "ws-token"},
-  
-  # Custom headers for handshake
-  headers: [{"X-Client-ID", "client123"}],
-  
-  # TLS for WSS connections
-  tls: %{
-    verify: :verify_peer,
-    versions: [:"tlsv1.3"]
-  }
-}
-
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :websocket,
-  url: "wss://secure.example.com/mcp",
-  security: security
-)
-```
 
 ### BEAM Transport Security
 
@@ -224,14 +199,14 @@ tls_config = %{
 ```elixir
 # Good - uses HTTPS/WSS
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :sse,
+  transport: :http,
   url: "https://api.example.com",
   security: %{auth: {:bearer, token}}
 )
 
 # Bad - unencrypted HTTP
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :sse,
+  transport: :http,
   url: "http://api.example.com",  # Insecure!
   security: %{auth: {:bearer, token}}
 )
@@ -301,7 +276,7 @@ tls = %{
 Security-related errors are returned with descriptive error tuples:
 
 ```elixir
-case ExMCP.Client.start_link(transport: :sse, url: url, security: security) do
+case ExMCP.Client.start_link(transport: :http, url: url, security: security) do
   {:ok, client} ->
     # Success
     client
@@ -424,7 +399,7 @@ defmodule SecureMCPClient do
     case ExMCP.Security.validate_config(security) do
       :ok ->
         ExMCP.Client.start_link(
-          transport: :sse,
+          transport: :http,
           url: server_url,
           security: security
         )
@@ -492,11 +467,11 @@ IO.inspect(ExMCP.Security.build_security_headers(security))
 1. **Add authentication**:
    ```elixir
    # Before
-   {:ok, client} = ExMCP.Client.start_link(transport: :sse, url: url)
+   {:ok, client} = ExMCP.Client.start_link(transport: :http, url: url)
    
    # After
    {:ok, client} = ExMCP.Client.start_link(
-     transport: :sse, 
+     transport: :http, 
      url: url, 
      security: %{auth: {:bearer, token}}
    )

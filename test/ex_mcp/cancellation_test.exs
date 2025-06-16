@@ -86,18 +86,16 @@ defmodule ExMCP.CancellationTest do
 
   describe "client cancellation functionality" do
     test "client tracks pending requests" do
-      {:ok, _server} =
+      {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :test_server_cancel_1,
+          transport: :test,
           handler: TestHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_server_cancel_1,
-          name: :test_client_cancel_1
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -136,18 +134,16 @@ defmodule ExMCP.CancellationTest do
     end
 
     test "client validates cancellation of initialize request" do
-      {:ok, _server} =
+      {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :test_server_cancel_2,
+          transport: :test,
           handler: TestHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_server_cancel_2,
-          name: :test_client_cancel_2
+          transport: :test,
+          server: server
         )
 
       # Try to cancel initialize request - should be ignored
@@ -162,18 +158,16 @@ defmodule ExMCP.CancellationTest do
     end
 
     test "client ignores cancellation for unknown requests" do
-      {:ok, _server} =
+      {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :test_server_cancel_3,
+          transport: :test,
           handler: TestHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_server_cancel_3,
-          name: :test_client_cancel_3
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -195,16 +189,14 @@ defmodule ExMCP.CancellationTest do
     test "server cancels in-progress requests" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :test_server_cancel_4,
+          transport: :test,
           handler: TestHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_server_cancel_4,
-          name: :test_client_cancel_4
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -249,16 +241,14 @@ defmodule ExMCP.CancellationTest do
     test "server ignores cancellation for unknown requests" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :test_server_cancel_5,
+          transport: :test,
           handler: TestHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_server_cancel_5,
-          name: :test_client_cancel_5
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -291,16 +281,14 @@ defmodule ExMCP.CancellationTest do
     test "cancellation notification without reason parameter" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :test_server_cancel_6,
+          transport: :test,
           handler: TestHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_server_cancel_6,
-          name: :test_client_cancel_6
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -339,16 +327,14 @@ defmodule ExMCP.CancellationTest do
     test "malformed cancellation notification is ignored" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :test_server_cancel_7,
+          transport: :test,
           handler: TestHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_server_cancel_7,
-          name: :test_client_cancel_7
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -378,18 +364,16 @@ defmodule ExMCP.CancellationTest do
 
   describe "bidirectional cancellation" do
     test "both client and server can send cancellation notifications" do
-      {:ok, _server} =
+      {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :test_server_cancel_8,
+          transport: :test,
           handler: TestHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_server_cancel_8,
-          name: :test_client_cancel_8
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization

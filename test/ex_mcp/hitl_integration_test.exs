@@ -24,16 +24,15 @@ defmodule ExMCP.HITLIntegrationTest do
       # Start server
       {:ok, server} =
         ExMCP.Server.start_link(
-          name: :test_hitl_server,
-          transport: :beam,
+          transport: :test,
           handler: ExMCP.Server.Handler.Echo
         )
 
       # Start client with default handler and mock approval
       {:ok, _client} =
         ExMCP.Client.start_link(
-          transport: :beam,
-          server: :test_hitl_server,
+          transport: :test,
+          server: server,
           handler:
             {ExMCP.Client.DefaultHandler,
              [
@@ -102,16 +101,15 @@ defmodule ExMCP.HITLIntegrationTest do
       # Start server
       {:ok, server} =
         ExMCP.Server.start_link(
-          name: :test_hitl_deny_server,
-          transport: :beam,
+          transport: :test,
           handler: ExMCP.Server.Handler.Echo
         )
 
       # Start client with denying handler
       {:ok, _client} =
         ExMCP.Client.start_link(
-          transport: :beam,
-          server: :test_hitl_deny_server,
+          transport: :test,
+          server: server,
           handler: DenyingHandler
         )
 
@@ -164,16 +162,15 @@ defmodule ExMCP.HITLIntegrationTest do
       # Start server
       {:ok, server} =
         ExMCP.Server.start_link(
-          name: :test_hitl_tracking_server,
-          transport: :beam,
+          transport: :test,
           handler: ExMCP.Server.Handler.Echo
         )
 
       # Start client with tracking handler
       {:ok, _client} =
         ExMCP.Client.start_link(
-          transport: :beam,
-          server: :test_hitl_tracking_server,
+          transport: :test,
+          server: server,
           handler:
             {ExMCP.Client.DefaultHandler,
              [

@@ -293,14 +293,13 @@ defmodule ExMCP.SpecDraftTest do
       {:ok, server} =
         Server.start_link(
           handler: HandlerDraft,
-          transport: :beam,
-          name: :server_draft
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :server_draft,
+          transport: :test,
+          server: server,
           client_info: %{name: "test-client-draft", version: "3.0.0"},
           protocol_version: "draft",
           handler: ClientHandlerDraft

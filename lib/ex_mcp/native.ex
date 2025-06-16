@@ -72,7 +72,7 @@ defmodule ExMCP.Native do
         {:ok, %{}}
       end
   """
-  @spec register_service(atom()) :: :ok | {:error, term()}
+  @spec register_service(atom()) :: :ok
   def register_service(name) when is_atom(name) do
     case Horde.Registry.register(@registry_name, name, %{registered_at: DateTime.utc_now()}) do
       {:ok, _pid} ->
@@ -82,10 +82,6 @@ defmodule ExMCP.Native do
       {:error, {:already_registered, _pid}} ->
         Logger.warning("Service already registered: #{name}")
         :ok
-
-      {:error, reason} ->
-        Logger.error("Failed to register service #{name}: #{inspect(reason)}")
-        {:error, reason}
     end
   end
 
@@ -139,9 +135,6 @@ defmodule ExMCP.Native do
 
       {:error, :not_found} ->
         {:error, {:service_not_found, service_id}}
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
@@ -242,17 +235,20 @@ defmodule ExMCP.Native do
   end
 
   defp make_service_call(pid, message, timeout) do
-    try do
-      case GenServer.call(pid, {:mcp_request, message}, timeout) do
-        {:ok, result} -> {:ok, result}
-        {:error, reason} -> {:error, reason}
-        result -> {:ok, result}
-      end
-    catch
-      :exit, {:timeout, _} -> {:error, :timeout}
-      :exit, {:noproc, _} -> {:error, :service_unavailable}
-      :exit, {:normal, _} -> {:error, :service_terminated}
-      :exit, reason -> {:error, {:service_exit, reason}}
+    case safe_genserver_call(pid, {:mcp_request, message}, timeout) do
+      {:ok, {:ok, result}} -> {:ok, result}
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:ok, result} -> {:ok, result}
+      {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp safe_genserver_call(pid, message, timeout) do
+    {:ok, GenServer.call(pid, message, timeout)}
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, {:noproc, _} -> {:error, :service_unavailable}
+    :exit, {:normal, _} -> {:error, :service_terminated}
+    :exit, reason -> {:error, {:service_exit, reason}}
   end
 end

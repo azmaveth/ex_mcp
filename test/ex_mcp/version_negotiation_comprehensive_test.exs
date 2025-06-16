@@ -208,14 +208,13 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Server.start_link(
           handler: MultiVersionHandler,
           handler_args: [supported_versions: ["2025-03-26", "2024-11-05"]],
-          transport: :beam,
-          name: :exact_match_server
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :exact_match_server,
+          transport: :test,
+          server: server,
           protocol_version: "2025-03-26"
         )
 
@@ -233,14 +232,13 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Server.start_link(
           handler: MultiVersionHandler,
           handler_args: [supported_versions: ["2025-03-26", "2024-11-05"]],
-          transport: :beam,
-          name: :older_version_server
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :older_version_server,
+          transport: :test,
+          server: server,
           protocol_version: "2024-11-05"
         )
 
@@ -261,14 +259,13 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
             supported_versions: ["2024-11-05"],
             version_strategy: :latest
           ],
-          transport: :beam,
-          name: :old_server
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :old_server,
+          transport: :test,
+          server: server,
           protocol_version: "2025-03-26"
         )
 
@@ -292,15 +289,14 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
             supported_versions: ["2025-03-26", "2024-11-05"],
             version_strategy: :latest
           ],
-          transport: :beam,
-          name: :unknown_version_server
+          transport: :test
         )
 
       # Client with made-up version
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :unknown_version_server,
+          transport: :test,
+          server: server,
           protocol_version: "99.99.99"
         )
 
@@ -322,15 +318,14 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
             supported_versions: ["2025-03-26"],
             version_strategy: :reject_unknown
           ],
-          transport: :beam,
-          name: :strict_server
+          transport: :test
         )
 
       # This should fail during initialization
       result =
         Client.start_link(
-          transport: :beam,
-          server: :strict_server,
+          transport: :test,
+          server: server,
           protocol_version: "unknown-version"
         )
 
@@ -359,14 +354,13 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
             supported_versions: ["2025-03-26", "2024-11-05"],
             version_strategy: :fallback
           ],
-          transport: :beam,
-          name: :no_draft_server
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :no_draft_server,
+          transport: :test,
+          server: server,
           protocol_version: "draft"
         )
 
@@ -388,15 +382,14 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
             supported_versions: ["draft"],
             version_strategy: :exact
           ],
-          transport: :beam,
-          name: :draft_only_server
+          transport: :test
         )
 
       # Client requesting stable version
       result =
         Client.start_link(
-          transport: :beam,
-          server: :draft_only_server,
+          transport: :test,
+          server: server,
           protocol_version: "2025-03-26"
         )
 
@@ -422,8 +415,7 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Server.start_link(
           handler: MultiVersionHandler,
           handler_args: [supported_versions: ["2025-03-26", "2024-11-05", "draft"]],
-          transport: :beam,
-          name: :capability_server
+          transport: :test
         )
 
       # Test each version
@@ -432,8 +424,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
       for version <- versions do
         {:ok, client} =
           Client.start_link(
-            transport: :beam,
-            server: :capability_server,
+            transport: :test,
+            server: server,
             protocol_version: version
           )
 
@@ -480,15 +472,14 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
             supported_versions: ["2024-11-05"],
             version_strategy: :exact
           ],
-          transport: :beam,
-          name: :incompatible_server
+          transport: :test
         )
 
       # Client only supports newer versions
       result =
         Client.start_link(
-          transport: :beam,
-          server: :incompatible_server,
+          transport: :test,
+          server: server,
           protocol_version: "2025-03-26"
         )
 

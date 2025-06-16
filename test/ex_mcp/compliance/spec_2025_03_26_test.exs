@@ -262,14 +262,13 @@ defmodule ExMCP.Spec20250326Test do
       {:ok, server} =
         Server.start_link(
           handler: Handler20250326,
-          transport: :beam,
-          name: :server_2025_03_26
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :server_2025_03_26,
+          transport: :test,
+          server: server,
           client_info: %{name: "test-client-2025-03-26", version: "2.0.0"},
           protocol_version: "2025-03-26"
         )

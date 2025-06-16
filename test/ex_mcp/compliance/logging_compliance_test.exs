@@ -292,14 +292,14 @@ defmodule ExMCP.LoggingComplianceTest do
     # Start server
     {:ok, server} =
       Server.start_link(
-        transport: :beam,
+        transport: :test,
         handler: TestLoggingServer
       )
 
     # Start client with custom handler to capture logs
     {:ok, client} =
       Client.start_link(
-        transport: :beam,
+        transport: :test,
         server: server,
         handler: TestLoggingClient,
         handler_state: [log_collector: log_collector]

@@ -194,36 +194,6 @@ defmodule ExMCP.Transport.TLSSSLTest do
     end
   end
 
-  describe "WebSocket transport TLS configuration" do
-    test "applies TLS configuration to WebSocket connections" do
-      tls_config = %{
-        verify: :verify_peer,
-        versions: [:"tlsv1.3"]
-      }
-
-      ws_opts = Transport.WebSocket.build_ssl_options(tls_config)
-
-      assert ws_opts[:ssl][:verify] == :verify_peer
-      assert ws_opts[:ssl][:versions] == [:"tlsv1.3"]
-    end
-
-    test "supports WebSocket over TLS (WSS)" do
-      config = [
-        transport: :websocket,
-        url: "wss://api.example.com/mcp",
-        security: %{
-          tls: %{
-            verify: :verify_peer,
-            versions: [:"tlsv1.2", :"tlsv1.3"]
-          }
-        }
-      ]
-
-      # Should not raise an error during configuration validation
-      assert {:ok, _validated_config} = Transport.WebSocket.validate_config(config)
-    end
-  end
-
   describe "BEAM transport native security" do
     @describetag :skip
     test "supports distributed Erlang with node cookies" do

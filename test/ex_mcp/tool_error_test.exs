@@ -156,14 +156,13 @@ defmodule ExMCP.ToolErrorTest do
       {:ok, server} =
         Server.start_link(
           handler: TestErrorHandler,
-          transport: :beam,
-          name: :test_error_server
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_error_server
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization

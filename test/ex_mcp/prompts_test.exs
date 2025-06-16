@@ -185,14 +185,14 @@ defmodule ExMCP.PromptsTest do
     # Start server with prompts handler using BEAM transport
     {:ok, server} =
       Server.start_link(
-        transport: :beam,
+        transport: :test,
         handler: TestPromptsHandler
       )
 
     # Start client connecting to the server
     {:ok, client} =
       Client.start_link(
-        transport: :beam,
+        transport: :test,
         server: server
       )
 

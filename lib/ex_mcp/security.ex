@@ -11,7 +11,7 @@ defmodule ExMCP.Security do
 
       # Bearer token authentication
       {:ok, client} = ExMCP.Client.start_link(
-        transport: :sse,
+        transport: :http,
         url: "https://api.example.com",
         security: %{
           auth: {:bearer, "your-token-here"},
@@ -22,8 +22,8 @@ defmodule ExMCP.Security do
 
       # API key authentication
       {:ok, client} = ExMCP.Client.start_link(
-        transport: :websocket,
-        url: "wss://api.example.com",
+        transport: :http,
+        url: "https://api.example.com",
         security: %{
           auth: {:api_key, "your-api-key", header: "X-API-Key"}
         }
@@ -58,10 +58,10 @@ defmodule ExMCP.Security do
 
   ## Security Features by Transport
 
-  | Feature | HTTP | WebSocket | BEAM | stdio |
-  |---------|------|-----------|------|-------|
-  | Bearer Auth | ✓ | ✓ | ✓ | - |
-  | OAuth 2.1 | ✓ | ✓ | ✓ | - |
+  | Feature | HTTP | BEAM | stdio |
+  |---------|------|------|-------|
+  | Bearer Auth | ✓ | ✓ | - |
+  | OAuth 2.1 | ✓ | ✓ | - |
   | API Key | ✓ | ✓ | ✓ | - |
   | Custom Headers | ✓ | ✓ | - | - |
   | Origin Validation | ✓ | ✓ | - | - |

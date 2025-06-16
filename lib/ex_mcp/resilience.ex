@@ -42,6 +42,32 @@ defmodule ExMCP.Resilience do
 
   require Logger
 
+  defstruct [
+    :service_id,
+    :method,
+    :params,
+    :opts,
+    attempt: 1,
+    max_attempts: 3,
+    backoff: :exponential,
+    base_delay: 100,
+    max_delay: 5000,
+    retry_on: [:timeout, :service_unavailable]
+  ]
+
+  @type t :: %__MODULE__{
+          service_id: atom(),
+          method: String.t(),
+          params: map(),
+          opts: keyword(),
+          attempt: non_neg_integer(),
+          max_attempts: non_neg_integer(),
+          backoff: :linear | :exponential,
+          base_delay: non_neg_integer(),
+          max_delay: non_neg_integer(),
+          retry_on: [atom()]
+        }
+
   @doc """
   Calls a service with retry logic and exponential backoff.
 
@@ -66,27 +92,19 @@ defmodule ExMCP.Resilience do
   @spec call_with_retry(atom(), String.t(), map(), keyword()) ::
           {:ok, term()} | {:error, term()}
   def call_with_retry(service_id, method, params, opts \\ []) do
-    max_attempts = Keyword.get(opts, :max_attempts, 3)
-    backoff = Keyword.get(opts, :backoff, :exponential)
-    base_delay = Keyword.get(opts, :base_delay, 100)
-    max_delay = Keyword.get(opts, :max_delay, 5000)
-    retry_on = Keyword.get(opts, :retry_on, [:timeout, :service_unavailable])
+    retry_config = %__MODULE__{
+      service_id: service_id,
+      method: method,
+      params: params,
+      opts: Keyword.drop(opts, [:max_attempts, :backoff, :base_delay, :max_delay, :retry_on]),
+      max_attempts: Keyword.get(opts, :max_attempts, 3),
+      backoff: Keyword.get(opts, :backoff, :exponential),
+      base_delay: Keyword.get(opts, :base_delay, 100),
+      max_delay: Keyword.get(opts, :max_delay, 5000),
+      retry_on: Keyword.get(opts, :retry_on, [:timeout, :service_unavailable])
+    }
 
-    native_opts =
-      Keyword.drop(opts, [:max_attempts, :backoff, :base_delay, :max_delay, :retry_on])
-
-    do_retry(
-      service_id,
-      method,
-      params,
-      native_opts,
-      1,
-      max_attempts,
-      backoff,
-      base_delay,
-      max_delay,
-      retry_on
-    )
+    do_retry(retry_config)
   end
 
   @doc """
@@ -148,6 +166,7 @@ defmodule ExMCP.Resilience do
         circuit_name: :my_service_circuit
       )
   """
+  @dialyzer {:nowarn_function, call_with_breaker: 4}
   @spec call_with_breaker(atom(), String.t(), map(), keyword()) ::
           {:ok, term()} | {:error, term()}
   def call_with_breaker(service_id, method, params, opts \\ []) do
@@ -184,68 +203,38 @@ defmodule ExMCP.Resilience do
 
   # Private functions
 
-  defp do_retry(
-         _service_id,
-         _method,
-         _params,
-         _opts,
-         attempt,
-         max_attempts,
-         _backoff,
-         _base_delay,
-         _max_delay,
-         _retry_on
-       )
+  defp do_retry(%__MODULE__{attempt: attempt, max_attempts: max_attempts})
        when attempt > max_attempts do
     {:error, :max_retries_exceeded}
   end
 
-  defp do_retry(
-         service_id,
-         method,
-         params,
-         opts,
-         attempt,
-         max_attempts,
-         backoff,
-         base_delay,
-         max_delay,
-         retry_on
-       ) do
-    case ExMCP.Native.call(service_id, method, params, opts) do
+  defp do_retry(%__MODULE__{} = config) do
+    case ExMCP.Native.call(config.service_id, config.method, config.params, config.opts) do
       {:ok, result} ->
-        if attempt > 1 do
-          Logger.info("Service call succeeded after #{attempt} attempts: #{service_id}.#{method}")
+        if config.attempt > 1 do
+          Logger.info(
+            "Service call succeeded after #{config.attempt} attempts: #{config.service_id}.#{config.method}"
+          )
         end
 
         {:ok, result}
 
-      {:error, reason} when attempt < max_attempts ->
-        if reason in retry_on do
-          delay = calculate_delay(attempt, backoff, base_delay, max_delay)
+      {:error, reason} when config.attempt < config.max_attempts ->
+        if reason in config.retry_on do
+          delay =
+            calculate_delay(config.attempt, config.backoff, config.base_delay, config.max_delay)
 
           Logger.warning(
-            "Service call failed (attempt #{attempt}/#{max_attempts}), retrying in #{delay}ms: #{service_id}.#{method} - #{inspect(reason)}"
+            "Service call failed (attempt #{config.attempt}/#{config.max_attempts}), retrying in #{delay}ms: #{config.service_id}.#{config.method} - #{inspect(reason)}"
           )
 
           Process.sleep(delay)
 
-          do_retry(
-            service_id,
-            method,
-            params,
-            opts,
-            attempt + 1,
-            max_attempts,
-            backoff,
-            base_delay,
-            max_delay,
-            retry_on
-          )
+          do_retry(%{config | attempt: config.attempt + 1})
         else
-          if attempt > 1 do
+          if config.attempt > 1 do
             Logger.error(
-              "Service call failed after #{attempt} attempts: #{service_id}.#{method} - #{inspect(reason)}"
+              "Service call failed after #{config.attempt} attempts: #{config.service_id}.#{config.method} - #{inspect(reason)}"
             )
           end
 
@@ -253,9 +242,9 @@ defmodule ExMCP.Resilience do
         end
 
       {:error, reason} ->
-        if attempt > 1 do
+        if config.attempt > 1 do
           Logger.error(
-            "Service call failed after #{attempt} attempts: #{service_id}.#{method} - #{inspect(reason)}"
+            "Service call failed after #{config.attempt} attempts: #{config.service_id}.#{config.method} - #{inspect(reason)}"
           )
         end
 

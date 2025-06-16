@@ -41,13 +41,16 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 ### Transport Layers
 - 📝 **stdio** - Process communication via standard I/O (official MCP transport)
 - 🌐 **HTTP/SSE** - HTTP with optional Server-Sent Events for streaming (official MCP transport)
-- ⚡ **Native BEAM** - Direct process communication within Elixir clusters (ExMCP extension)
-  - 🚀 **Zero Serialization** - Direct process-to-process communication with no JSON overhead
-  - 📊 **Registry Discovery** - Built-in service discovery using Erlang Registry
+
+### Native BEAM Service Dispatcher (ExMCP Extension)
+- ⚡ **ExMCP.Native** - Ultra-fast service dispatcher for trusted Elixir clusters
+  - 🚀 **Zero Serialization** - Direct GenServer.call() with no JSON overhead
+  - 🌐 **Horde.Registry** - Distributed service discovery via gossip protocol
   - 🔄 **OTP Integration** - Full supervision tree and fault tolerance support
-  - 🌐 **Node Distribution** - Automatic cross-node communication support
-  - ⚡ **Performance** - ~15μs local calls, ~50μs cross-node calls
-- 🔌 **WebSocket** - WebSocket client for real-time communication (ExMCP extension)
+  - 📡 **Cross-Node** - Automatic distributed communication (~50μs latency)
+  - ⚡ **Performance** - ~15μs local calls vs 1-5ms HTTP equivalent
+  - 🛠️ **Service Macro** - `use ExMCP.Service` for automatic registration
+  - 🔧 **Optional Resilience** - `ExMCP.Resilience` for retry/fallback patterns
 
 ### Advanced Features
 - 🔄 **Auto-Reconnection** - Built-in reconnection with exponential backoff
@@ -72,7 +75,9 @@ These implement the official MCP specification and work with any MCP implementat
 
 ### ExMCP Extensions (Elixir-specific)
 Features unique to ExMCP:
-- Native BEAM transport for direct process communication
+- **ExMCP.Native** - High-performance service dispatcher with Horde.Registry
+- **ExMCP.Service** - `use` macro for automatic service registration
+- **ExMCP.Resilience** - Optional resilience patterns (retry, fallback, circuit breaker)
 - Automatic MCP server discovery
 - Multi-server management
 - Batch operations
@@ -241,92 +246,128 @@ For HTTP-based communication with optional Server-Sent Events (SSE) streaming:
 )
 ```
 
-### Native BEAM Transport
+### Native BEAM Service Dispatcher
 
-For direct Elixir/Erlang process communication within trusted clusters:
+For ultra-fast service communication within trusted Elixir clusters:
 
 ```elixir
-# Register a service (typically in your GenServer's init/1)
+# Create a service using the ExMCP.Service macro
 defmodule MyToolService do
-  use GenServer
+  use ExMCP.Service, name: :my_tools
 
-  def init(_) do
-    ExMCP.Transport.Native.register_service(:my_tool_service)
-    {:ok, %{}}
+  @impl true
+  def handle_mcp_request("list_tools", _params, state) do
+    tools = [
+      %{
+        "name" => "ping",
+        "description" => "Test tool",
+        "inputSchema" => %{"type" => "object", "properties" => %{}}
+      }
+    ]
+    {:ok, %{"tools" => tools}, state}
   end
 
-  def handle_call({:mcp_request, %{"method" => "list_tools"}}, _from, state) do
-    tools = [%{"name" => "ping", "description" => "Test tool"}]
-    {:reply, {:ok, %{"tools" => tools}}, state}
+  @impl true
+  def handle_mcp_request("tools/call", %{"name" => "ping"}, state) do
+    {:ok, %{"content" => [%{"type" => "text", "text" => "Pong!"}]}, state}
+  end
+
+  def handle_mcp_request(method, _params, state) do
+    {:error, %{"code" => -32601, "message" => "Method not found: #{method}"}, state}
   end
 end
 
-# Start your service
-{:ok, _} = MyToolService.start_link([])
+# Start your service (automatically registers with ExMCP.Native)
+{:ok, _} = MyToolService.start_link()
 
 # Direct service calls
-{:ok, tools} = ExMCP.Transport.Native.call(:my_tool_service, "list_tools", %{})
+{:ok, tools} = ExMCP.Native.call(:my_tools, "list_tools", %{})
 
-# Cross-node communication (automatic)
-{:ok, result} = ExMCP.Transport.Native.call(
+# Cross-node communication (automatic via Horde.Registry)
+{:ok, result} = ExMCP.Native.call(
   {:my_service, :"node@host"}, 
-  "call_tool", 
-  %{"name" => "calculator", "arguments" => %{"operation" => "add", "a" => 1, "b" => 2}}
+  "tools/call", 
+  %{"name" => "calculator", "arguments" => %{"a" => 1, "b" => 2}}
 )
 
 # Fire-and-forget notifications
-:ok = ExMCP.Transport.Native.notify(:event_service, "resource_updated", %{
+:ok = ExMCP.Native.notify(:event_service, "resource_updated", %{
   "uri" => "file:///config.json",
   "type" => "modified"
 })
 
-# Service discovery
-services = ExMCP.Transport.Native.list_services()
-available? = ExMCP.Transport.Native.service_available?(:my_service)
+# Service discovery (distributed via Horde)
+services = ExMCP.Native.list_services()
+available? = ExMCP.Native.service_available?(:my_service)
 ```
 
 ## 🎯 Key Features
 
-### Native BEAM Transport Advantages
+### Native BEAM Service Dispatcher Advantages
 
-ExMCP's Native BEAM transport leverages OTP's built-in features for maximum performance and reliability:
+ExMCP.Native leverages OTP and Horde for maximum performance and reliability:
 
 #### 🚀 Zero Serialization Overhead
 
-Direct process-to-process communication with no JSON encoding/decoding for local calls:
+Direct GenServer.call() with no JSON encoding/decoding for local calls:
 
 ```elixir
 # Data passed directly as Elixir terms between processes
 large_data = File.read!("large_dataset.json")  # 10MB file
 
 # No serialization overhead - data passed by reference
-{:ok, result} = ExMCP.Transport.Native.call(:data_service, "process_data", %{
+{:ok, result} = ExMCP.Native.call(:data_service, "process_data", %{
   "data" => large_data
 })
 
 # Performance characteristics:
 # - Local calls: ~15μs latency
 # - Cross-node calls: ~50μs latency  
-# - Memory overhead: Single Registry entry per service
+# - Memory overhead: Single Horde.Registry entry per service
 ```
 
-#### 📊 Built-in Service Discovery
+#### 📊 Distributed Service Discovery
 
-Uses Erlang's Registry for automatic service discovery across the cluster:
+Uses Horde.Registry for automatic service discovery across the cluster:
 
 ```elixir
-# Register services
-ExMCP.Transport.Native.register_service(:calculator)
-ExMCP.Transport.Native.register_service(:file_manager)
+# Services automatically register when using ExMCP.Service macro
+defmodule CalculatorService do
+  use ExMCP.Service, name: :calculator
+  # Service automatically registered on startup
+end
 
-# Discover all available services
-services = ExMCP.Transport.Native.list_services()
+# Discover all available services (across all nodes)
+services = ExMCP.Native.list_services()
 #=> [{:calculator, #PID<0.123.0>, %{registered_at: ~U[...]}}, ...]
 
 # Check service availability
-if ExMCP.Transport.Native.service_available?(:calculator) do
-  {:ok, result} = ExMCP.Transport.Native.call(:calculator, "add", %{"a" => 1, "b" => 2})
+if ExMCP.Native.service_available?(:calculator) do
+  {:ok, result} = ExMCP.Native.call(:calculator, "add", %{"a" => 1, "b" => 2})
 end
+```
+
+#### 🔧 Optional Resilience Patterns
+
+Add resilience when needed without compromising core performance:
+
+```elixir
+# Retry with exponential backoff
+{:ok, result} = ExMCP.Resilience.call_with_retry(
+  :flaky_service,
+  "process_data",
+  %{"input" => "data"},
+  max_attempts: 3,
+  backoff: :exponential
+)
+
+# Fallback for unavailable services
+result = ExMCP.Resilience.call_with_fallback(
+  :unreliable_service,
+  "get_data",
+  %{},
+  fallback: fn -> {:ok, %{"data" => "cached_value"}} end
+)
 ```
 
 #### 🔄 OTP Fault Tolerance
@@ -334,23 +375,18 @@ end
 Leverages OTP's proven fault tolerance and supervision patterns:
 
 ```elixir
-# Services are normal GenServers with full OTP supervision
+# Services use ExMCP.Service macro for automatic lifecycle management
 defmodule MyToolService do
-  use GenServer
+  use ExMCP.Service, name: :my_tools
 
-  def init(_) do
-    # Register with native transport
-    ExMCP.Transport.Native.register_service(:my_tools)
-    {:ok, %{}}
-  end
-
-  def handle_call({:mcp_request, message}, _from, state) do
-    # Handle MCP requests with normal GenServer patterns
-    {:reply, {:ok, result}, state}
+  @impl true
+  def handle_mcp_request("list_tools", _params, state) do
+    # Handle MCP requests with normal patterns
+    {:ok, %{"tools" => []}, state}
   end
 end
 
-# Add to supervision tree
+# Add to supervision tree - registration/unregistration is automatic
 children = [
   {MyToolService, []}
 ]
@@ -360,11 +396,11 @@ Supervisor.start_link(children, strategy: :one_for_one)
 
 #### 🌐 Cross-Node Distribution
 
-Automatic support for distributed Elixir clusters:
+Automatic support for distributed Elixir clusters via Horde:
 
 ```elixir
 # Call services on remote nodes transparently
-{:ok, result} = ExMCP.Transport.Native.call(
+{:ok, result} = ExMCP.Native.call(
   {:data_service, :"worker@cluster.local"},
   "process_dataset",
   %{"dataset_id" => "abc123"}
@@ -372,7 +408,7 @@ Automatic support for distributed Elixir clusters:
 
 # Works seamlessly with Elixir clustering
 Node.connect(:"worker@cluster.local")
-# Services on remote nodes are now available
+# Services on remote nodes are automatically discovered via Horde gossip
 ```
 
 ### Tools with Annotations

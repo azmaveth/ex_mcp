@@ -5,7 +5,7 @@ defmodule ExMCP.Transport do
   Behaviour for MCP transport implementations.
 
   A transport is responsible for sending and receiving MCP protocol
-  messages over a specific communication channel (stdio, Streamable HTTP, WebSocket, etc).
+  messages over a specific communication channel (stdio, Streamable HTTP, etc).
 
   While the behaviour itself is an implementation detail, it enables the
   official MCP transports (stdio and Streamable HTTP) as well as custom transports.
@@ -93,14 +93,13 @@ defmodule ExMCP.Transport do
   ## Transport identifiers:
   - `:stdio` - Standard I/O transport (official MCP transport)
   - `:http` - Streamable HTTP transport with SSE (official MCP transport)
-  - `:websocket` - WebSocket transport (ExMCP extension)
+  - `:test` - In-memory transport for testing (non-standard)
 
-  Note: The `:beam` identifier previously pointed to a transport implementation
-  but has been replaced with ExMCP.Native for direct service dispatch.
+  Note: For direct Elixir service communication, use ExMCP.Native instead of transports.
   """
-  @spec get_transport(:stdio | :http | :websocket | module()) :: module()
+  @spec get_transport(:stdio | :http | :test | module()) :: module()
   def get_transport(:stdio), do: ExMCP.Transport.Stdio
   def get_transport(:http), do: ExMCP.Transport.HTTP
-  def get_transport(:websocket), do: ExMCP.Transport.WebSocket
+  def get_transport(:test), do: ExMCP.Transport.Test
   def get_transport(module) when is_atom(module), do: module
 end

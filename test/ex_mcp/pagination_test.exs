@@ -161,14 +161,13 @@ defmodule ExMCP.PaginationTest do
       {:ok, server} =
         Server.start_link(
           handler: TestPaginationHandler,
-          transport: :beam,
-          name: :test_pagination_server
+          transport: :test
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :test_pagination_server
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization

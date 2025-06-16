@@ -64,7 +64,7 @@ defmodule ExMCP.Server do
       # Start server
       {:ok, server} = ExMCP.Server.start_link(
         handler: MyHandler,
-        transport: :stdio  # or :beam, :sse
+        transport: :stdio  # or :http
       )
 
   ## Notifications
@@ -109,7 +109,7 @@ defmodule ExMCP.Server do
   ## Options
 
   - `:handler` - Module implementing `ExMCP.Server.Handler` behaviour (required)
-  - `:transport` - Transport type (:stdio, :sse, or module)
+  - `:transport` - Transport type (:stdio, :http, or module)
   - `:handler_args` - Arguments passed to handler's init/1 callback
   - `:name` - GenServer name (optional)
 
@@ -292,6 +292,18 @@ defmodule ExMCP.Server do
   def handle_continue(:start_receiver, state) do
     start_receiver(state.transport_state, state.transport_mod)
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:test_transport_connect, client_pid}, state) do
+    # Update the test transport state with the connected client
+    if state.transport_mod == ExMCP.Transport.Test do
+      new_transport_state = %{state.transport_state | peer_pid: client_pid}
+      new_state = %{state | transport_state: new_transport_state}
+      {:noreply, new_state}
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -1377,13 +1389,8 @@ defmodule ExMCP.Server do
     end
   end
 
-  defp init_transport(transport_mod, transport_type, opts) do
-    # Special handling for BEAM transport on server side
-    if transport_type == :beam do
-      transport_mod.accept(opts)
-    else
-      transport_mod.connect(opts)
-    end
+  defp init_transport(transport_mod, _transport_type, opts) do
+    transport_mod.connect(opts)
   end
 
   # Helper function to determine the appropriate error code based on the error reason

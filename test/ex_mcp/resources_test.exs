@@ -168,14 +168,14 @@ defmodule ExMCP.ResourcesTest do
     # Start server with resources handler using BEAM transport
     {:ok, server} =
       Server.start_link(
-        transport: :beam,
+        transport: :test,
         handler: TestResourcesHandler
       )
 
     # Start client connecting to the server
     {:ok, client} =
       Client.start_link(
-        transport: :beam,
+        transport: :test,
         server: server
       )
 

@@ -60,7 +60,7 @@ defmodule ExMCP.Discovery do
   Looks for:
   - MCP_SERVERS environment variable containing a JSON array
   - Variables matching *_MCP_SERVER pattern (command-based servers)
-  - Variables matching *_SERVER_URL pattern (SSE/WebSocket servers)
+  - Variables matching *_SERVER_URL pattern (SSE servers)
   """
   @spec discover_from_env(list()) :: [map()]
   def discover_from_env(servers \\ []) do
@@ -500,7 +500,6 @@ defmodule ExMCP.Discovery do
     case transport do
       "stdio" -> true
       "sse" -> true
-      "websocket" -> true
       _ -> false
     end
   end

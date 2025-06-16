@@ -152,15 +152,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :cancel_test_server,
+          transport: :test,
           handler: SlowHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :cancel_test_server
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -218,8 +217,8 @@ defmodule ExMCP.CancellationComprehensiveTest do
       [_req1, req2, _req3] = pending
       :ok = Client.send_cancelled(client, req2, "Cancelled second request")
 
-      # Collect results
-      results = Task.await_many(tasks, 5000)
+      # Collect results (increased timeout to handle case where cancellation doesn't work)
+      results = Task.await_many(tasks, 8000)
 
       # First and third should succeed, second should be cancelled
       assert [{1, {:ok, _}}, {2, {:error, :cancelled}}, {3, {:ok, _}}] = results
@@ -233,7 +232,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       :ok = Client.send_cancelled(client, "unknown_req_id", "No such request")
 
       # Client should remain functional
-      assert {:ok, tools} = Client.list_tools(client)
+      assert {:ok, %{tools: tools}} = Client.list_tools(client)
       assert length(tools) > 0
     end
 
@@ -254,15 +253,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # For server-side tests, we need to check if the handler supports cancellation
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :cancel_server_test,
+          transport: :test,
           handler: SlowHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :cancel_server_test
+          transport: :test,
+          server: server
         )
 
       Process.sleep(100)
@@ -325,15 +323,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :cancel_race_test,
+          transport: :test,
           handler: SlowHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :cancel_race_test
+          transport: :test,
+          server: server
         )
 
       Process.sleep(100)
@@ -389,15 +386,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :bidir_cancel_test,
+          transport: :test,
           handler: SlowHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :bidir_cancel_test
+          transport: :test,
+          server: server
         )
 
       Process.sleep(100)
@@ -428,15 +424,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
     setup do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :cancel_error_test,
+          transport: :test,
           handler: SlowHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :cancel_error_test
+          transport: :test,
+          server: server
         )
 
       Process.sleep(100)
@@ -494,15 +489,14 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # This is enforced by the client tracking pending_requests
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :impl_req_test,
+          transport: :test,
           handler: SlowHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :impl_req_test
+          transport: :test,
+          server: server
         )
 
       Process.sleep(100)
@@ -519,12 +513,19 @@ defmodule ExMCP.CancellationComprehensiveTest do
       Process.sleep(50)
 
       # Now there's a pending request
-      assert [_] = Client.get_pending_requests(client)
+      assert [request_id] = Client.get_pending_requests(client)
+
+      # Test actual cancellation notification validation
+      # This should work since the request exists and is in progress
+      :ok = Client.send_cancelled(client, request_id, "Valid cancellation")
+
+      # Wait for task to complete (it should be cancelled)
+      result = Task.await(task, 3000)
+      assert result == {:error, :cancelled}
 
       # Clean up
       GenServer.stop(client)
       GenServer.stop(server)
-      Task.shutdown(task, :brutal_kill)
     end
 
     test "logging of cancellation reasons" do

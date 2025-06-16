@@ -4,7 +4,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
   @moduletag :transport
 
   alias ExMCP.Test.HTTPServer
-  alias ExMCP.Transport.{HTTP, WebSocket}
+  alias ExMCP.Transport.HTTP
 
   describe "HTTP transport security" do
     setup do
@@ -116,72 +116,6 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
     end
   end
 
-  describe "WebSocket transport security" do
-    test "includes authentication headers" do
-      security = %{
-        auth: {:bearer, "test-token"},
-        headers: [{"X-Custom", "value"}]
-      }
-
-      config = [
-        url: "wss://example.com",
-        security: security
-      ]
-
-      # This will fail to connect but we can verify the security config is applied
-      assert {:error, _} = WebSocket.connect(config)
-    end
-
-    test "validates WebSocket security configuration" do
-      invalid_security = %{auth: :invalid}
-
-      config = [
-        url: "wss://example.com",
-        security: invalid_security
-      ]
-
-      assert {:error, :invalid_auth_config} = WebSocket.connect(config)
-    end
-
-    test "handles WSS with TLS configuration" do
-      security = %{
-        auth: {:bearer, "token"},
-        tls: %{
-          verify: :verify_peer,
-          versions: [:"tlsv1.3"]
-        }
-      }
-
-      config = [
-        url: "wss://secure.example.com",
-        security: security
-      ]
-
-      # This will fail to connect but TLS options should be built
-      assert {:error, _} = WebSocket.connect(config)
-    end
-
-    test "extracts correct origin for WebSocket URLs" do
-      security = %{}
-
-      # ws:// should extract as http://
-      config_ws = [
-        url: "ws://localhost:8080/path",
-        security: security
-      ]
-
-      assert {:error, _} = WebSocket.connect(config_ws)
-
-      # wss:// should extract as https://
-      config_wss = [
-        url: "wss://secure.example.com:443/path",
-        security: security
-      ]
-
-      assert {:error, _} = WebSocket.connect(config_wss)
-    end
-  end
-
   describe "security configuration validation" do
     @tag :skip
     test "rejects invalid auth methods" do
@@ -200,7 +134,6 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         ]
 
         assert {:error, _} = HTTP.connect(config)
-        assert {:error, _} = WebSocket.connect(config)
       end
     end
 
@@ -220,19 +153,8 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
           security: valid_config
         ]
 
-        ws_config = [
-          url: "wss://example.com",
-          security: valid_config
-        ]
-
-        beam_config = [
-          server: :test,
-          security: valid_config
-        ]
-
         # These will fail to connect but security validation should pass
         assert {:error, _} = HTTP.connect(sse_config)
-        assert {:error, _} = WebSocket.connect(ws_config)
       end
     end
   end
@@ -246,16 +168,11 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         include_security_headers: true
       }
 
-      # Test with each transport type
-      transport_configs = [
-        {HTTP, [url: "https://sse.example.com", security: security]},
-        {WebSocket, [url: "wss://ws.example.com", security: security]}
-      ]
+      # Test with HTTP transport
+      http_config = [url: "https://sse.example.com", security: security]
 
-      for {transport_module, config} <- transport_configs do
-        # All should fail to connect but build security headers correctly
-        assert {:error, _} = transport_module.connect(config)
-      end
+      # Should fail to connect but build security headers correctly
+      assert {:error, _} = HTTP.connect(http_config)
     end
   end
 
@@ -278,14 +195,8 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: tls_security
       ]
 
-      wss_config = [
-        url: "wss://secure.example.com",
-        security: tls_security
-      ]
-
       # These will fail to connect but TLS configuration should be applied
       assert {:error, _} = HTTP.connect(https_config)
-      assert {:error, _} = WebSocket.connect(wss_config)
     end
 
     @tag :skip
@@ -297,14 +208,8 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         security: security
       ]
 
-      wss_config = [
-        url: "wss://example.com",
-        security: security
-      ]
-
       # Should use default TLS settings
       assert {:error, _} = HTTP.connect(https_config)
-      assert {:error, _} = WebSocket.connect(wss_config)
     end
   end
 end

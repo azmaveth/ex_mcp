@@ -136,7 +136,7 @@ defmodule ExMCP.StructuredOutputTest do
     # Start server
     {:ok, server} =
       Server.start_link(
-        transport: :beam,
+        transport: :test,
         handler: TestHandler,
         handler_args: []
       )
@@ -144,7 +144,7 @@ defmodule ExMCP.StructuredOutputTest do
     # Start client with BEAM transport
     {:ok, client} =
       Client.start_link(
-        transport: :beam,
+        transport: :test,
         server: server
       )
 

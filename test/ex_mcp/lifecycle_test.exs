@@ -52,7 +52,7 @@ defmodule ExMCP.LifecycleTest do
       # Start server
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: TestHandler,
           handler_args: []
         )
@@ -68,7 +68,7 @@ defmodule ExMCP.LifecycleTest do
       # Start client
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server
         )
 
@@ -83,7 +83,7 @@ defmodule ExMCP.LifecycleTest do
       # Start client with specific version
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server,
           client_info: %{
             name: "test-client",
@@ -100,7 +100,7 @@ defmodule ExMCP.LifecycleTest do
     test "disconnect performs clean shutdown", %{server: server} do
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server
         )
 
@@ -117,7 +117,7 @@ defmodule ExMCP.LifecycleTest do
     test "server handles client disconnection gracefully", %{server: server} do
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server
         )
 
@@ -134,7 +134,7 @@ defmodule ExMCP.LifecycleTest do
       # Server should be able to accept new connections
       {:ok, new_client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server
         )
 
@@ -177,7 +177,7 @@ defmodule ExMCP.LifecycleTest do
     test "initialization fails with incompatible version" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: StrictVersionHandler,
           handler_args: []
         )
@@ -186,7 +186,7 @@ defmodule ExMCP.LifecycleTest do
       # and StrictVersionHandler only accepts that exact version
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server
         )
 

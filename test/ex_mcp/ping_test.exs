@@ -94,15 +94,14 @@ defmodule ExMCP.PingTest do
     test "client can ping server successfully" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :ping_test_server_1,
+          transport: :test,
           handler: TestServerHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :ping_test_server_1
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -123,15 +122,14 @@ defmodule ExMCP.PingTest do
     test "client ping respects timeout" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :ping_test_server_2,
+          transport: :test,
           handler: TestServerHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :ping_test_server_2
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -150,15 +148,14 @@ defmodule ExMCP.PingTest do
     test "server can ping client successfully" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :ping_test_server_3,
+          transport: :test,
           handler: TestServerHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :ping_test_server_3,
+          transport: :test,
+          server: server,
           handler: TestClientHandler,
           handler_state: %{ping_count: 0}
         )
@@ -181,15 +178,14 @@ defmodule ExMCP.PingTest do
     test "server ping fails when client doesn't have handler" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :ping_test_server_4,
+          transport: :test,
           handler: TestServerHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :ping_test_server_4
+          transport: :test,
+          server: server
           # No handler specified - uses DefaultHandler which doesn't support server requests
         )
 
@@ -209,15 +205,14 @@ defmodule ExMCP.PingTest do
     test "both client and server can ping each other" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :ping_test_server_5,
+          transport: :test,
           handler: TestServerHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :ping_test_server_5,
+          transport: :test,
+          server: server,
           handler: TestClientHandler,
           handler_state: %{}
         )
@@ -247,7 +242,7 @@ defmodule ExMCP.PingTest do
       # Create a client without a server
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: :non_existent_server
         )
 
@@ -284,16 +279,15 @@ defmodule ExMCP.PingTest do
 
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :slow_ping_server,
+          transport: :test,
           handler: SlowPingHandler
         )
 
       # Start client with custom transport that delays responses
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :slow_ping_server
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization
@@ -312,15 +306,14 @@ defmodule ExMCP.PingTest do
     test "periodic pings can detect connection health" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
-          name: :health_check_server,
+          transport: :test,
           handler: TestServerHandler
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
-          server: :health_check_server
+          transport: :test,
+          server: server
         )
 
       # Wait for initialization

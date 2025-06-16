@@ -111,14 +111,14 @@ defmodule ExMCP.LifecycleEnhancementsTest do
     test "server returns dynamic capabilities in initialization" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: FullFeaturedHandler,
           handler_args: []
         )
 
       {:ok, client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server
         )
 
@@ -222,14 +222,14 @@ defmodule ExMCP.LifecycleEnhancementsTest do
       for version <- ["2025-03-26", "2024-11-05"] do
         {:ok, server} =
           Server.start_link(
-            transport: :beam,
+            transport: :test,
             handler: VersionTestHandler,
             handler_args: %{version: version}
           )
 
         {:ok, client} =
           Client.start_link(
-            transport: :beam,
+            transport: :test,
             server: server
           )
 
@@ -244,7 +244,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
     test "client logs warning for unsupported versions but still connects" do
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: VersionTestHandler,
           handler_args: %{version: "9999-12-31"}
         )
@@ -256,7 +256,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
         capture_log(fn ->
           {:ok, client} =
             Client.start_link(
-              transport: :beam,
+              transport: :test,
               server: server
             )
 

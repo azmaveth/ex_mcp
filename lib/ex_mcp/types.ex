@@ -371,7 +371,7 @@ defmodule ExMCP.Types do
   @type list_changed_notification :: %{}
 
   # Transport types
-  @type transport :: :stdio | :http | :beam | :sse | :websocket | module()
+  @type transport :: :stdio | :http | module()
 
   # Request parameter types
   @type paginated_request :: %{

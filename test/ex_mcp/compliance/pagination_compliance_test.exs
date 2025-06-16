@@ -197,14 +197,14 @@ defmodule ExMCP.PaginationComplianceTest do
     # Start server
     {:ok, server} =
       Server.start_link(
-        transport: :beam,
+        transport: :test,
         handler: TestPaginationServer
       )
 
     # Start client
     {:ok, client} =
       Client.start_link(
-        transport: :beam,
+        transport: :test,
         server: server
       )
 

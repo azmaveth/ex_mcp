@@ -232,14 +232,14 @@ defmodule ExMCP.UtilitiesTest do
     # Start server with utilities handler using BEAM transport
     {:ok, server} =
       Server.start_link(
-        transport: :beam,
+        transport: :test,
         handler: TestUtilitiesHandler
       )
 
     # Start client connecting to the server
     {:ok, client} =
       Client.start_link(
-        transport: :beam,
+        transport: :test,
         server: server
       )
 

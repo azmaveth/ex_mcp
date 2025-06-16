@@ -93,7 +93,7 @@ defmodule ExMCP.RootsSimpleTest do
       # Start server
       {:ok, server} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: SimpleServerHandler
         )
 
@@ -102,7 +102,7 @@ defmodule ExMCP.RootsSimpleTest do
 
       {:ok, _client} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server,
           handler: TestClientHandler,
           handler_state: [roots: roots]
@@ -141,13 +141,13 @@ defmodule ExMCP.RootsSimpleTest do
       # Start two servers
       {:ok, server1} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: SimpleServerHandler
         )
 
       {:ok, server2} =
         Server.start_link(
-          transport: :beam,
+          transport: :test,
           handler: SimpleServerHandler
         )
 
@@ -156,7 +156,7 @@ defmodule ExMCP.RootsSimpleTest do
 
       {:ok, _client1} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server1,
           handler: TestClientHandler,
           handler_state: [roots: roots]
@@ -164,7 +164,7 @@ defmodule ExMCP.RootsSimpleTest do
 
       {:ok, _client2} =
         Client.start_link(
-          transport: :beam,
+          transport: :test,
           server: server2,
           handler: TestClientHandler,
           handler_state: [roots: roots]
