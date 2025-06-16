@@ -30,7 +30,7 @@ ExMCP implements the MCP specification version 2025-03-26 with high compliance. 
 - ✅ **Capability negotiation** - Both client and server
 - ✅ **Graceful shutdown** - Transport-specific implementations
 - ✅ **Initialize cannot be cancelled** - Enforced in protocol
-- ✅ **Initialize cannot be batched** - Properly enforced in `handle_request_for_batch`
+- ✅ **Initialize cannot be batched** - Properly enforced in `handle_request_for_batch/4`
 
 ### Transport Support
 
@@ -44,8 +44,7 @@ ExMCP implements the MCP specification version 2025-03-26 with high compliance. 
   - ✅ Security features (origin validation, CORS)
 
 #### Additional Transports (ExMCP Extensions)
-- ✅ **BEAM** - Native Erlang process transport
-- ✅ **WebSocket** - For browser compatibility
+- ✅ **Native BEAM Service Dispatcher** - High-performance service communication via Horde.Registry
 - ❌ **Custom transports** - Framework exists but not documented
 
 ### Security & Authorization
@@ -153,12 +152,11 @@ ExMCP implements several features from the draft specification:
 
 These are non-standard features that don't conflict with the specification:
 
-- ✅ **BEAM transport** - Native Erlang process communication
-- ✅ **resources/unsubscribe** - Explicit unsubscription
+- ✅ **Native BEAM Service Dispatcher** - Ultra-fast service communication via Horde.Registry
+- ✅ **resources/unsubscribe** - Explicit unsubscription  
 - ✅ **Server discovery** - Via application supervision
-- ✅ **Resilience features** - Auto-reconnection, circuit breakers
-- ✅ **Hot code reloading** - For BEAM transport
-- ✅ **Zero-copy optimization** - For large payloads
+- ✅ **Resilience features** - Auto-reconnection, optional circuit breakers
+- ✅ **Zero-copy optimization** - For BEAM transport (direct term passing)
 
 ## Known Gaps
 
@@ -211,7 +209,7 @@ MCP_VERSION=2025-03-26 mix test
 
 ### Verified Compliance Points
 
-1. **Batch Initialize Rejection** - Properly implemented in `ExMCP.Server.handle_request_for_batch/4`
+1. **Batch Initialize Rejection** ✅ - Properly implemented in `ExMCP.Server.handle_request_for_batch/4`
    - Returns error: "The initialize request must not be part of a JSON-RPC batch"
    - Compliant with MCP specification requirement
 
@@ -230,11 +228,12 @@ MCP_VERSION=2025-03-26 mix test
 ExMCP demonstrates **excellent compliance** with the MCP specification version 2025-03-26:
 
 - ✅ All required protocol features implemented
-- ✅ All standard transports supported
+- ✅ All standard transports supported (stdio, HTTP/SSE)
 - ✅ Comprehensive security implementation
-- ✅ Strong type safety and error handling
+- ✅ Strong type safety and error handling  
 - ✅ Batch initialization rejection properly enforced
-- ⚠️ Minor gaps: configurable HTTP binding, some test coverage
+- ✅ Native BEAM Service Dispatcher for high-performance Elixir-to-Elixir communication
+- ⚠️ Minor gaps: configurable HTTP binding, custom transport documentation
 - 🚀 Additional features that enhance but don't break compatibility
 
-The implementation is production-ready for MCP 2025-03-26 with only minor compliance gaps that don't affect core functionality.
+The implementation is production-ready for MCP 2025-03-26 with excellent compliance and innovative performance optimizations for Elixir environments.
