@@ -4,16 +4,16 @@ This directory contains comprehensive examples demonstrating various features an
 
 ## Example Categories
 
-### 1. BEAM Transport Examples (`beam_transport/`)
+### 1. Native BEAM Transport Examples (`beam_transport/`)
 
-Examples specific to the BEAM transport for Elixir-to-Elixir MCP communication:
+Examples specific to the Native BEAM transport for direct Elixir service communication:
 
-- **Calculator Server**: Basic MCP server with tools, state management, and progress tracking
-- **Distributed Example**: Cross-node communication using BEAM transport
-- **Supervisor Integration**: Building fault-tolerant MCP services with OTP
-- **Calculator Client**: Client usage patterns and best practices
+- **Calculator Service**: Basic MCP service with tools, state management, and progress tracking
+- **Distributed Example**: Cross-node communication using Native BEAM transport
+- **Supervisor Integration**: Building fault-tolerant MCP services with OTP supervision
+- **Service Communication**: Direct service-to-service call patterns and best practices
 
-[View BEAM Transport Examples](beam_transport/README.md)
+[View Native BEAM Transport Examples](beam_transport/README.md)
 
 ### 2. Advanced Features Examples (`advanced_features/`)
 
@@ -83,15 +83,24 @@ end
 ### Client Usage
 
 ```elixir
-# Connect to server
+# For HTTP transport
 {:ok, client} = ExMCP.Client.start_link(
-  transport: :beam,  # or :stdio, :sse
-  server: :my_server
+  transport: :http,
+  url: "http://localhost:8080"
 )
 
-# Use the server
-{:ok, tools} = ExMCP.Client.list_tools(client)
-{:ok, result} = ExMCP.Client.call_tool(client, "tool_name", %{})
+# For stdio transport
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: ["node", "mcp-server.js"]
+)
+
+# For Native BEAM transport (direct service calls)
+{:ok, tools} = ExMCP.Transport.Native.call(:my_service, "list_tools", %{})
+{:ok, result} = ExMCP.Transport.Native.call(:my_service, "tools/call", %{
+  "name" => "tool_name",
+  "arguments" => %{}
+})
 ```
 
 ### Progress Tracking

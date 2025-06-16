@@ -1,9 +1,9 @@
-defmodule Examples.BeamTransport.CalculatorClient do
+defmodule Examples.NativeBeam.CalculatorClient do
   @moduledoc """
-  Example of using ExMCP.Client with BEAM transport to connect to a calculator server.
+  Example of using ExMCP's Native BEAM transport to connect to a calculator service.
   
   This demonstrates:
-  - Connecting to a BEAM transport server
+  - Direct service-to-service communication
   - Calling tools with parameters
   - Handling responses and errors
   - Working with progress notifications
@@ -14,30 +14,29 @@ defmodule Examples.BeamTransport.CalculatorClient do
   def run_example do
     Logger.info("Starting calculator client example...")
     
-    # Start the calculator server
-    {:ok, server} = ExMCP.Server.start_link(
-      transport: :beam,
-      name: :calculator_server,
-      handler: Examples.BeamTransport.CalculatorServer
-    )
+    # Start the calculator service
+    {:ok, server_pid} = Examples.NativeBeam.CalculatorServer.start_link([])
     
-    # Connect a client
-    {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
-      server: :calculator_server
-    )
-    
-    # Wait for initialization
+    # Wait for service registration
     Process.sleep(100)
     
-    # Get server info
-    {:ok, info} = ExMCP.Client.server_info(client)
-    Logger.info("Connected to server: #{info["name"]} v#{info["version"]}")
+    # Verify service is available
+    unless ExMCP.Transport.Native.service_available?(:calculator_server) do
+      raise "Calculator service not available"
+    end
+    
+    # Initialize the connection with the service
+    {:ok, init_result} = ExMCP.Transport.Native.call(:calculator_server, "initialize", %{
+      "protocolVersion" => "2025-03-26",
+      "capabilities" => %{},
+      "clientInfo" => %{"name" => "calculator-client", "version" => "1.0.0"}
+    })
+    Logger.info("Connected to server: #{init_result["serverInfo"]["name"]} v#{init_result["serverInfo"]["version"]}")
     
     # List available tools
-    {:ok, %{"tools" => tools}} = ExMCP.Client.list_tools(client)
+    {:ok, tools} = ExMCP.Transport.Native.call(:calculator_server, "tools/list", %{})
     Logger.info("Available tools:")
-    for tool <- tools do
+    for tool <- tools["tools"] do
       Logger.info("  - #{tool["name"]}: #{tool["description"]}")
     end
     
@@ -53,7 +52,10 @@ defmodule Examples.BeamTransport.CalculatorClient do
     for {tool, params} <- examples do
       Logger.info("\nCalling #{tool} with #{inspect(params)}")
       
-      case ExMCP.Client.call_tool(client, tool, params) do
+      case ExMCP.Transport.Native.call(:calculator_server, "tools/call", %{
+        "name" => tool,
+        "arguments" => params
+      }) do
         {:ok, %{"content" => content}} ->
           text = content |> List.first() |> Map.get("text")
           Logger.info("Result: #{text}")
@@ -65,11 +67,10 @@ defmodule Examples.BeamTransport.CalculatorClient do
     
     # Get calculation history
     Logger.info("\nGetting calculation history...")
-    {:ok, %{"content" => content}} = ExMCP.Client.call_tool(
-      client, 
-      "history", 
-      %{"limit" => 5}
-    )
+    {:ok, %{"content" => content}} = ExMCP.Transport.Native.call(:calculator_server, "tools/call", %{
+      "name" => "history",
+      "arguments" => %{"limit" => 5}
+    })
     
     history_text = content |> List.first() |> Map.get("text")
     Logger.info("Recent calculations:\n#{history_text}")
@@ -77,44 +78,30 @@ defmodule Examples.BeamTransport.CalculatorClient do
     # Calculate factorial with progress
     Logger.info("\nCalculating 10! with progress tracking...")
     
-    # Spawn a task to monitor progress (in a real app, you'd handle this differently)
-    task = Task.async(fn ->
-      # In a real application, you would implement a custom client
-      # that handles progress notifications properly
-      calculate_with_progress(client, 10)
-    end)
+    # Call with progress token
+    {:ok, %{"content" => content}} = ExMCP.Transport.Native.call(
+      :calculator_server, 
+      "tools/call", 
+      %{
+        "name" => "factorial",
+        "arguments" => %{"n" => 10}
+      },
+      progress_token: "factorial-10"
+    )
     
-    result = Task.await(task, 5000)
+    result = content |> List.first() |> Map.get("text")
     Logger.info("Final result: #{result}")
     
     # Cleanup
-    GenServer.stop(client)
-    GenServer.stop(server)
+    GenServer.stop(server_pid)
     
     Logger.info("\nExample completed!")
-  end
-  
-  defp calculate_with_progress(client, n) do
-    # Note: This is a simplified example. In a real application,
-    # you would implement proper progress handling in the client
-    case ExMCP.Client.call_tool(
-      client, 
-      "factorial", 
-      %{"n" => n},
-      progress_token: "factorial-#{n}"
-    ) do
-      {:ok, %{"content" => content}} ->
-        content |> List.first() |> Map.get("text")
-        
-      {:error, reason} ->
-        "Error: #{inspect(reason)}"
-    end
   end
   
   @doc """
   Run the example from iex:
   
-      iex> Examples.BeamTransport.CalculatorClient.run_example()
+      iex> Examples.NativeBeam.CalculatorClient.run_example()
   """
   def demo do
     run_example()

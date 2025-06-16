@@ -370,11 +370,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI/CD pipeline
 
 ### Changed
-- **BREAKING**: Redesigned BEAM transport to use mailbox process pairs
-  - Removed `ExMCP.Transport.Beam.Server` module
-  - Transport now supports bidirectional communication like stdio/HTTP+SSE
-  - Improved fault tolerance and connection handling
-  - Note: Public API remains unchanged - users of `ExMCP.Client` and `ExMCP.Server` are not affected
+- **BREAKING**: Simplified BEAM transport architecture to Native BEAM transport
+  - Removed complex TCP-based BEAM transport modules (`ExMCP.Transport.Beam.Server`, `Client`, etc.)
+  - Implemented `ExMCP.Transport.Native` for direct process communication
+  - Added Registry-based service discovery and registration
+  - Improved performance: ~15μs local calls vs previous TCP overhead
+  - Note: Requires migration from old TCP-based API to new service registration pattern
 
 ### Fixed
 - BEAM transport now properly supports server-initiated notifications

@@ -2,6 +2,7 @@ defmodule ExMCP.ToolsTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.{Client, Server}
+  alias ExMCP.Test.BeamHelpers
 
   defmodule TestToolsHandler do
     use ExMCP.Server.Handler
@@ -261,22 +262,16 @@ defmodule ExMCP.ToolsTest do
   end
 
   setup do
-    # Start server with tools handler using BEAM transport
-    {:ok, server} =
-      Server.start_link(
-        transport: :beam,
-        handler: TestToolsHandler
-      )
+    # Start BEAM transport server with tools handler
+    {:ok, server} = BeamHelpers.start_beam_server(TestToolsHandler)
 
-    # Start client connecting to the server
-    {:ok, client} =
-      Client.start_link(
-        transport: :beam,
-        server: server
-      )
+    # Start BEAM transport client
+    {:ok, client} = BeamHelpers.start_beam_client(server)
 
-    # Wait for initialization
-    Process.sleep(100)
+    on_exit(fn ->
+      BeamHelpers.stop_beam_client(client)
+      BeamHelpers.stop_beam_server(server)
+    end)
 
     %{server: server, client: client}
   end
@@ -284,7 +279,7 @@ defmodule ExMCP.ToolsTest do
   describe "tools functionality" do
     test "client can list tools with pagination", %{client: client} do
       # First page
-      {:ok, %{tools: page1, nextCursor: cursor}} = Client.list_tools(client)
+      {:ok, %{tools: page1, nextCursor: cursor}} = BeamHelpers.list_tools(client)
       assert length(page1) == 3
       assert cursor == "page2"
 
@@ -295,7 +290,7 @@ defmodule ExMCP.ToolsTest do
       assert calculate_tool.inputSchema.required == ["operation", "a", "b"]
 
       # Second page
-      {:ok, result2} = Client.list_tools(client, cursor: cursor)
+      {:ok, result2} = BeamHelpers.list_tools(client, cursor: cursor)
       page2 = result2.tools
       assert is_nil(result2[:nextCursor])
       assert length(page2) == 2
@@ -304,7 +299,7 @@ defmodule ExMCP.ToolsTest do
     test "client can call calculation tool", %{client: client} do
       # Addition
       {:ok, result} =
-        Client.call_tool(client, "calculate", %{
+        BeamHelpers.call_tool(client, "calculate", %{
           "operation" => "add",
           "a" => 10,
           "b" => 5
@@ -316,7 +311,7 @@ defmodule ExMCP.ToolsTest do
 
       # Multiplication
       {:ok, result2} =
-        Client.call_tool(client, "calculate", %{
+        BeamHelpers.call_tool(client, "calculate", %{
           "operation" => "multiply",
           "a" => 7,
           "b" => 8
@@ -327,7 +322,7 @@ defmodule ExMCP.ToolsTest do
 
     test "tool returns error with isError flag for division by zero", %{client: client} do
       {:ok, result} =
-        Client.call_tool(client, "calculate", %{
+        BeamHelpers.call_tool(client, "calculate", %{
           "operation" => "divide",
           "a" => 10,
           "b" => 0
@@ -341,7 +336,7 @@ defmodule ExMCP.ToolsTest do
 
     test "client can call string manipulation tool", %{client: client} do
       {:ok, result} =
-        Client.call_tool(client, "string_tools", %{
+        BeamHelpers.call_tool(client, "string_tools", %{
           "operation" => "uppercase",
           "text" => "hello world"
         })
@@ -349,7 +344,7 @@ defmodule ExMCP.ToolsTest do
       assert hd(result.content).text == "HELLO WORLD"
 
       {:ok, result2} =
-        Client.call_tool(client, "string_tools", %{
+        BeamHelpers.call_tool(client, "string_tools", %{
           "operation" => "reverse",
           "text" => "MCP"
         })
@@ -362,7 +357,7 @@ defmodule ExMCP.ToolsTest do
 
       # Image content
       {:ok, result} =
-        Client.call_tool(client, "image_process", %{
+        BeamHelpers.call_tool(client, "image_process", %{
           "operation" => "resize",
           "imageData" => "base64encodeddata"
         })
@@ -376,7 +371,7 @@ defmodule ExMCP.ToolsTest do
     test "tool handles optional parameters with defaults", %{client: client} do
       # Call without format parameter (should use default "json")
       {:ok, result} =
-        Client.call_tool(client, "data_fetch", %{
+        BeamHelpers.call_tool(client, "data_fetch", %{
           "source" => "database",
           "query" => "SELECT * FROM users"
         })
@@ -387,7 +382,7 @@ defmodule ExMCP.ToolsTest do
 
       # Call with explicit format
       {:ok, result2} =
-        Client.call_tool(client, "data_fetch", %{
+        BeamHelpers.call_tool(client, "data_fetch", %{
           "source" => "api",
           "query" => "users",
           "format" => "csv"
@@ -401,7 +396,7 @@ defmodule ExMCP.ToolsTest do
       progress_token = "test-progress-123"
 
       {:ok, result} =
-        Client.call_tool(
+        BeamHelpers.call_tool(
           client,
           "async_task",
           %{
@@ -418,7 +413,7 @@ defmodule ExMCP.ToolsTest do
     end
 
     test "unknown tool returns error", %{client: client} do
-      {:error, error} = Client.call_tool(client, "unknown_tool", %{})
+      {:error, error} = BeamHelpers.call_tool(client, "unknown_tool", %{})
       assert error["message"] =~ "Unknown tool"
     end
 
@@ -430,7 +425,7 @@ defmodule ExMCP.ToolsTest do
         {:call_tool, ["calculate", %{"operation" => "multiply", "a" => 4, "b" => 7}]}
       ]
 
-      {:ok, results} = Client.batch_request(client, requests)
+      {:ok, results} = BeamHelpers.batch_request(client, requests)
 
       assert length(results) == 3
 

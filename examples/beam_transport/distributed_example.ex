@@ -1,258 +1,258 @@
-defmodule Examples.BeamTransport.DistributedExample do
+defmodule Examples.NativeBeam.DistributedExample do
   @moduledoc """
-  Example of using BEAM transport across distributed Erlang nodes.
+  Example of using Native BEAM transport for distributed MCP services across Elixir nodes.
   
   This demonstrates:
-  - Starting a server on one node
-  - Connecting from another node
-  - Transparent cross-node communication
-  - Handling network partitions
+  - Starting services on different nodes
+  - Cross-node service discovery
+  - Transparent distributed communication
+  - Node clustering and fault tolerance
   
   To run this example:
   
-  1. Start node1 (server node):
+  1. Start the first node:
      ```
      iex --name node1@localhost --cookie democookie -S mix
-     iex> Examples.BeamTransport.DistributedExample.start_server()
+     iex> Examples.NativeBeam.DistributedExample.start_server_node()
      ```
   
-  2. Start node2 (client node):
+  2. Start the second node and connect:
      ```
      iex --name node2@localhost --cookie democookie -S mix
-     iex> Examples.BeamTransport.DistributedExample.start_client()
+     iex> Examples.NativeBeam.DistributedExample.start_client_node()
+     ```
+  
+  Or run a single-node demo:
+     ```
+     iex> Examples.NativeBeam.DistributedExample.demo_single_node()
      ```
   """
   
   require Logger
   
-  # Simple handler for demonstration
-  defmodule WeatherHandler do
-    use ExMCP.Server.Handler
+  def start_server_node do
+    Logger.info("Starting server node with calculator service...")
     
-    @impl true
-    def handle_initialize(_params, state) do
-      {:ok, %{name: "weather-service", version: "1.0.0"}, state}
+    # Start the calculator service on this node
+    {:ok, _server_pid} = Examples.NativeBeam.CalculatorServer.start_link([])
+    
+    # Wait for service registration
+    Process.sleep(100)
+    
+    Logger.info("Server node ready!")
+    Logger.info("Calculator service available at: #{Node.self()}")
+    
+    # List services on this node
+    services = ExMCP.Transport.Native.list_services()
+    Logger.info("Services on this node:")
+    for {service_name, _pid, _meta} <- services do
+      Logger.info("  - #{service_name}")
     end
     
-    @impl true
-    def handle_list_tools(state) do
-      tools = [
-        %{
-          name: "get_weather",
-          description: "Get current weather for a city",
-          inputSchema: %{
-            type: "object",
-            properties: %{
-              city: %{type: "string", description: "City name"}
-            },
-            required: ["city"]
-          }
-        },
-        %{
-          name: "get_forecast",
-          description: "Get weather forecast",
-          inputSchema: %{
-            type: "object",
-            properties: %{
-              city: %{type: "string"},
-              days: %{type: "integer", default: 7}
-            },
-            required: ["city"]
-          }
-        }
-      ]
-      
-      {:ok, tools, state}
-    end
-    
-    @impl true
-    def handle_call_tool("get_weather", %{"city" => city}, state) do
-      # Simulate weather data
-      weather = %{
-        city: city,
-        temperature: Enum.random(15..30),
-        conditions: Enum.random(["Sunny", "Cloudy", "Rainy", "Partly Cloudy"]),
-        humidity: Enum.random(40..80),
-        wind_speed: Enum.random(5..25)
-      }
-      
-      content = [%{
-        type: "text",
-        text: """
-        Current weather in #{city}:
-        Temperature: #{weather.temperature}°C
-        Conditions: #{weather.conditions}
-        Humidity: #{weather.humidity}%
-        Wind: #{weather.wind_speed} km/h
-        """
-      }]
-      
-      {:ok, content, state}
-    end
-    
-    def handle_call_tool("get_forecast", %{"city" => city} = params, state) do
-      days = Map.get(params, "days", 7)
-      
-      forecast = for day <- 1..days do
-        temp = Enum.random(15..30)
-        conditions = Enum.random(["Sunny", "Cloudy", "Rainy", "Partly Cloudy"])
-        "Day #{day}: #{temp}°C, #{conditions}"
-      end
-      
-      content = [%{
-        type: "text",
-        text: """
-        #{days}-day forecast for #{city}:
-        #{Enum.join(forecast, "\n")}
-        """
-      }]
-      
-      {:ok, content, state}
-    end
+    Logger.info("Waiting for client connections...")
+    :ok
   end
   
-  @doc """
-  Start the weather service on the current node.
-  Run this on node1.
-  """
-  def start_server do
-    Logger.info("Starting weather service on #{Node.self()}")
+  def start_client_node do
+    Logger.info("Starting client node...")
     
-    {:ok, server} = ExMCP.Server.start_link(
-      transport: :beam,
-      name: :weather_service,
-      handler: WeatherHandler
-    )
+    # Connect to the server node
+    server_node = :"node1@localhost"
     
-    Logger.info("Weather service started and registered as :weather_service")
-    Logger.info("Other nodes can connect using: {:weather_service, :\"#{Node.self()}\"}")
-    
-    # Keep the server running and periodically send notifications
-    spawn(fn ->
-      weather_monitor_loop(server)
-    end)
-    
-    {:ok, server}
-  end
-  
-  @doc """
-  Connect to the weather service from another node.
-  Run this on node2.
-  """
-  def start_client(server_node \\ :"node1@localhost") do
-    Logger.info("Connecting to weather service on #{server_node} from #{Node.self()}")
-    
-    # First, ensure we're connected to the server node
     case Node.connect(server_node) do
       true ->
-        Logger.info("Connected to #{server_node}")
+        Logger.info("Connected to server node: #{server_node}")
+        
+        # Wait a moment for node sync
+        Process.sleep(200)
+        
+        # Try to call the remote calculator service
+        remote_service_id = {:calculator_server, server_node}
+        
+        Logger.info("Testing cross-node service call...")
+        
+        case ExMCP.Transport.Native.call(remote_service_id, "tools/call", %{
+          "name" => "add",
+          "arguments" => %{"a" => 15, "b" => 25}
+        }) do
+          {:ok, result} ->
+            text = result["content"] |> List.first() |> Map.get("text")
+            Logger.info("Remote calculation result: #{text}")
+            
+          {:error, reason} ->
+            Logger.error("Remote call failed: #{inspect(reason)}")
+        end
+        
+        # Test with multiple operations
+        operations = [
+          {"multiply", %{"a" => 6, "b" => 7}},
+          {"divide", %{"a" => 100, "b" => 4}},
+          {"factorial", %{"n" => 6}}
+        ]
+        
+        Logger.info("\nPerforming multiple remote operations...")
+        for {op, params} <- operations do
+          case ExMCP.Transport.Native.call(remote_service_id, "tools/call", %{
+            "name" => op,
+            "arguments" => params
+          }) do
+            {:ok, result} ->
+              text = result["content"] |> List.first() |> Map.get("text")
+              Logger.info("#{op}: #{text}")
+              
+            {:error, reason} ->
+              Logger.error("#{op} failed: #{inspect(reason)}")
+          end
+        end
+        
+        Logger.info("\nClient node demo completed!")
+        
       false ->
-        Logger.error("Failed to connect to #{server_node}")
-        Logger.info("Make sure the server node is running with:")
-        Logger.info("  iex --name node1@localhost --cookie democookie -S mix")
-        return {:error, :node_not_reachable}
-      result ->
-        Logger.info("Already connected to #{server_node}: #{result}")
+        Logger.error("Failed to connect to server node: #{server_node}")
+        Logger.info("Make sure the server node is running with the same cookie")
     end
-    
-    # Connect to the weather service
-    {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
-      server: {:weather_service, server_node}
-    )
-    
-    Logger.info("Connected to weather service!")
-    
-    # Get server info
-    {:ok, info} = ExMCP.Client.server_info(client)
-    Logger.info("Server info: #{inspect(info)}")
-    
-    # Make some weather queries
-    cities = ["London", "New York", "Tokyo", "Sydney"]
-    
-    for city <- cities do
-      Logger.info("\nGetting weather for #{city}...")
-      
-      {:ok, %{"content" => content}} = ExMCP.Client.call_tool(
-        client,
-        "get_weather",
-        %{"city" => city}
-      )
-      
-      text = content |> List.first() |> Map.get("text")
-      Logger.info(text)
-    end
-    
-    # Get a forecast
-    Logger.info("\nGetting 5-day forecast for Paris...")
-    {:ok, %{"content" => content}} = ExMCP.Client.call_tool(
-      client,
-      "get_forecast",
-      %{"city" => "Paris", "days" => 5}
-    )
-    
-    text = content |> List.first() |> Map.get("text")
-    Logger.info(text)
-    
-    {:ok, client}
   end
   
-  @doc """
-  Simulate network partition by disconnecting nodes.
-  """
-  def simulate_partition(node) do
-    Logger.warning("Simulating network partition with #{node}")
-    Node.disconnect(node)
-    
-    # Wait a bit
-    Process.sleep(5000)
-    
-    Logger.info("Reconnecting to #{node}")
-    Node.connect(node)
-  end
-  
-  # Helper function to simulate weather updates
-  defp weather_monitor_loop(server) do
-    Process.sleep(30_000)  # Every 30 seconds
-    
-    # Simulate a weather alert
-    if Enum.random(1..3) == 1 do
-      Logger.info("Weather alert! Sending notification...")
-      ExMCP.Server.notify_resources_changed(server)
-    end
-    
-    weather_monitor_loop(server)
-  end
-  
-  @doc """
-  Full demonstration that can be run on a single node for testing.
-  """
   def demo_single_node do
-    Logger.info("Running distributed example on a single node (for demonstration)")
+    Logger.info("Starting single-node distributed demo...")
     
-    # Start server
-    {:ok, server} = start_server()
+    # Simulate distributed services on the same node
+    # Start multiple services
+    {:ok, calc_pid} = Examples.NativeBeam.CalculatorServer.start_link([])
+    {:ok, file_pid} = Examples.NativeBeam.SupervisorExample.FileService.start_link([])
+    {:ok, proc_pid} = Examples.NativeBeam.SupervisorExample.DataProcessor.start_link([])
     
-    # Start client on same node (normally would be different node)
-    {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
-      server: :weather_service
-    )
+    # Wait for all services to register
+    Process.sleep(200)
     
-    # Make a query
-    {:ok, %{"content" => content}} = ExMCP.Client.call_tool(
-      client,
-      "get_weather",
-      %{"city" => "London"}
-    )
+    # Discover all services
+    services = ExMCP.Transport.Native.list_services()
+    Logger.info("Discovered services:")
+    for {service_name, pid, meta} <- services do
+      node_name = if node(pid) == node(), do: "local", else: inspect(node(pid))
+      registered_at = meta[:registered_at] || "unknown"
+      Logger.info("  - #{service_name} (#{node_name}) - registered: #{registered_at}")
+    end
     
-    text = content |> List.first() |> Map.get("text")
-    Logger.info("Weather result:\n#{text}")
+    # Test service availability
+    Logger.info("\nTesting service availability:")
+    service_names = [:calculator_server, :file_service, :data_processor]
+    for service <- service_names do
+      available = ExMCP.Transport.Native.service_available?(service)
+      Logger.info("  - #{service}: #{if available, do: "✓ available", else: "✗ unavailable"}")
+    end
+    
+    # Test inter-service communication
+    Logger.info("\n--- Testing Inter-service Communication ---")
+    
+    # File service creates some files
+    Logger.info("Creating files...")
+    files_to_create = [
+      {"data1.txt", "1,2,3,4,5"},
+      {"data2.txt", "10,20,30"},
+      {"config.json", "{\"setting\": \"value\"}"}
+    ]
+    
+    for {filename, content} <- files_to_create do
+      {:ok, _} = ExMCP.Transport.Native.call(:file_service, "tools/call", %{
+        "name" => "create_file",
+        "arguments" => %{"name" => filename, "content" => content}
+      })
+    end
+    
+    # List files
+    {:ok, result} = ExMCP.Transport.Native.call(:file_service, "tools/call", %{
+      "name" => "list_files",
+      "arguments" => %{}
+    })
+    Logger.info("Files created: #{result["content"] |> List.first() |> Map.get("text")}")
+    
+    # Data processor processes some numbers using calculator
+    Logger.info("\nProcessing data using multiple services...")
+    {:ok, result} = ExMCP.Transport.Native.call(:data_processor, "tools/call", %{
+      "name" => "process_data",
+      "arguments" => %{"numbers" => [10, 20, 30, 40, 50]}
+    })
+    Logger.info("Processing result: #{result["content"] |> List.first() |> Map.get("text")}")
+    
+    # Get stats
+    {:ok, result} = ExMCP.Transport.Native.call(:data_processor, "tools/call", %{
+      "name" => "get_stats",
+      "arguments" => %{}
+    })
+    Logger.info("Processing stats: #{result["content"] |> List.first() |> Map.get("text")}")
+    
+    # Test notifications (fire-and-forget)
+    Logger.info("\n--- Testing Notifications ---")
+    
+    # Send notifications to services (they won't handle them, but this shows the API)
+    :ok = ExMCP.Transport.Native.notify(:calculator_server, "resource_updated", %{
+      "uri" => "file:///config.json",
+      "type" => "modified"
+    })
+    
+    :ok = ExMCP.Transport.Native.notify(:file_service, "system_event", %{
+      "event" => "backup_completed",
+      "timestamp" => DateTime.utc_now()
+    })
+    
+    Logger.info("Notifications sent successfully")
     
     # Cleanup
-    GenServer.stop(client)
-    GenServer.stop(server)
+    GenServer.stop(calc_pid)
+    GenServer.stop(file_pid) 
+    GenServer.stop(proc_pid)
     
-    :ok
+    Logger.info("\nSingle-node distributed demo completed!")
+  end
+  
+  def demo_cluster_communication do
+    Logger.info("Testing cluster communication features...")
+    
+    # Show current node info
+    Logger.info("Current node: #{Node.self()}")
+    Logger.info("Connected nodes: #{inspect(Node.list())}")
+    
+    # Start a service on this node
+    {:ok, calc_pid} = Examples.NativeBeam.CalculatorServer.start_link([])
+    Process.sleep(100)
+    
+    # Test local service call
+    Logger.info("\nTesting local service call...")
+    {:ok, result} = ExMCP.Transport.Native.call(:calculator_server, "tools/call", %{
+      "name" => "add",
+      "arguments" => %{"a" => 100, "b" => 200}
+    })
+    Logger.info("Local result: #{result["content"] |> List.first() |> Map.get("text")}")
+    
+    # If there are other nodes, test remote calls
+    case Node.list() do
+      [] ->
+        Logger.info("No remote nodes connected for cross-node testing")
+        
+      remote_nodes ->
+        Logger.info("Testing cross-node calls to: #{inspect(remote_nodes)}")
+        
+        for remote_node <- remote_nodes do
+          remote_service_id = {:calculator_server, remote_node}
+          
+          case ExMCP.Transport.Native.call(remote_service_id, "tools/call", %{
+            "name" => "multiply",
+            "arguments" => %{"a" => 7, "b" => 8}
+          }) do
+            {:ok, result} ->
+              text = result["content"] |> List.first() |> Map.get("text")
+              Logger.info("Remote result from #{remote_node}: #{text}")
+              
+            {:error, reason} ->
+              Logger.info("Remote call to #{remote_node} failed: #{inspect(reason)}")
+          end
+        end
+    end
+    
+    # Cleanup
+    GenServer.stop(calc_pid)
+    
+    Logger.info("Cluster communication demo completed!")
   end
 end

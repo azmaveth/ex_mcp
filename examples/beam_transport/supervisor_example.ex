@@ -1,291 +1,258 @@
-defmodule Examples.BeamTransport.SupervisorExample do
+defmodule Examples.NativeBeam.SupervisorExample do
   @moduledoc """
-  Example of integrating BEAM transport MCP servers and clients with OTP supervisors.
+  Example demonstrating OTP supervision with Native BEAM transport services.
   
-  This demonstrates:
-  - Starting MCP components under supervision
-  - Automatic restart on crashes
-  - Building fault-tolerant MCP services
-  - Managing multiple MCP connections
+  This shows:
+  - Running multiple MCP services under supervision
+  - Service discovery and availability
+  - Fault tolerance and automatic restart
+  - Inter-service communication
   """
   
-  defmodule MCPSupervisor do
+  require Logger
+  
+  defmodule ServiceSupervisor do
+    @moduledoc """
+    Supervisor for multiple MCP services using Native BEAM transport.
+    """
     use Supervisor
-    require Logger
     
-    def start_link(opts) do
-      Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
+    def start_link(init_arg) do
+      Supervisor.start_link(__MODULE__, init_arg, name: __MODULE__)
     end
     
-    @impl true
-    def init(_opts) do
-      Logger.info("Starting MCP Supervisor...")
-      
+    def init(_init_arg) do
       children = [
-        # Start multiple MCP servers
-        {ExMCP.Server, 
-         id: :calc_server,
-         transport: :beam,
-         name: :calc_server,
-         handler: Examples.BeamTransport.CalculatorServer},
-        
-        {ExMCP.Server,
-         id: :weather_server,
-         transport: :beam,
-         name: :weather_server,
-         handler: Examples.BeamTransport.DistributedExample.WeatherHandler},
-        
-        # Start a monitoring client
-        {MonitoringClient,
-         servers: [:calc_server, :weather_server]}
+        {Examples.NativeBeam.CalculatorServer, []},
+        {Examples.NativeBeam.FileService, []},
+        {Examples.NativeBeam.DataProcessor, []}
       ]
       
       Supervisor.init(children, strategy: :one_for_one)
     end
   end
   
-  defmodule MonitoringClient do
+  defmodule FileService do
     @moduledoc """
-    A GenServer that monitors multiple MCP servers and logs their status.
+    Simple file service for demonstration.
     """
     use GenServer
     require Logger
     
-    defmodule State do
-      defstruct clients: %{}, check_interval: 5000
+    def start_link(args) do
+      GenServer.start_link(__MODULE__, args, name: __MODULE__)
     end
     
-    def start_link(opts) do
-      GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def init(_args) do
+      Logger.info("File service starting...")
+      :ok = ExMCP.Transport.Native.register_service(:file_service)
+      Logger.info("File service registered as :file_service")
+      {:ok, %{files: []}}
     end
     
-    @impl true
-    def init(opts) do
-      servers = Keyword.get(opts, :servers, [])
-      check_interval = Keyword.get(opts, :check_interval, 5000)
+    def handle_call({:mcp_request, %{"method" => "tools/list"}}, _from, state) do
+      tools = [
+        %{
+          "name" => "list_files",
+          "description" => "List available files",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{}
+          }
+        },
+        %{
+          "name" => "create_file",
+          "description" => "Create a new file",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "name" => %{"type" => "string", "description" => "File name"},
+              "content" => %{"type" => "string", "description" => "File content"}
+            },
+            "required" => ["name", "content"]
+          }
+        }
+      ]
       
-      # Schedule first check
-      Process.send_after(self(), :check_servers, 1000)
-      
-      {:ok, %State{clients: %{}, check_interval: check_interval}, {:continue, {:connect_servers, servers}}}
+      {:reply, {:ok, %{"tools" => tools}}, state}
     end
     
-    @impl true
-    def handle_continue({:connect_servers, servers}, state) do
-      clients = Enum.reduce(servers, %{}, fn server, acc ->
-        case connect_to_server(server) do
-          {:ok, client} ->
-            Logger.info("Connected to #{server}")
-            Map.put(acc, server, client)
-          {:error, reason} ->
-            Logger.error("Failed to connect to #{server}: #{reason}")
-            acc
-        end
-      end)
+    def handle_call({:mcp_request, %{"method" => "tools/call", "params" => %{"name" => "list_files"}}}, _from, state) do
+      file_list = Enum.map(state.files, fn {name, _content} -> name end)
+      content = [%{
+        "type" => "text",
+        "text" => "Files: #{Enum.join(file_list, ", ")}"
+      }]
       
-      {:noreply, %{state | clients: clients}}
+      {:reply, {:ok, %{"content" => content}}, state}
     end
     
-    @impl true
-    def handle_info(:check_servers, state) do
-      Logger.debug("Checking MCP servers...")
+    def handle_call({:mcp_request, %{"method" => "tools/call", "params" => %{"name" => "create_file", "arguments" => %{"name" => name, "content" => content}}}}, _from, state) do
+      new_files = [{name, content} | state.files]
+      new_state = %{state | files: new_files}
       
-      Enum.each(state.clients, fn {server, client} ->
-        case check_server_status(client) do
-          :ok ->
-            Logger.debug("#{server} is healthy")
-          {:error, reason} ->
-            Logger.warning("#{server} health check failed: #{reason}")
-            # Try to reconnect
-            handle_reconnect(server, state)
-        end
-      end)
+      response_content = [%{
+        "type" => "text",
+        "text" => "Created file: #{name}"
+      }]
       
-      # Schedule next check
-      Process.send_after(self(), :check_servers, state.check_interval)
-      
-      {:noreply, state}
-    end
-    
-    defp connect_to_server(server) do
-      ExMCP.Client.start_link(
-        transport: :beam,
-        server: server
-      )
-    end
-    
-    defp check_server_status(client) do
-      case ExMCP.Client.server_info(client, 1000) do
-        {:ok, _info} -> :ok
-        error -> error
-      end
-    end
-    
-    defp handle_reconnect(server, state) do
-      # In a real system, you might want more sophisticated reconnection logic
-      Logger.info("Attempting to reconnect to #{server}...")
-      
-      # Close old client if it exists
-      if client = Map.get(state.clients, server) do
-        GenServer.stop(client, :normal)
-      end
-      
-      # Try to reconnect
-      case connect_to_server(server) do
-        {:ok, new_client} ->
-          Logger.info("Reconnected to #{server}")
-          put_in(state.clients[server], new_client)
-        {:error, reason} ->
-          Logger.error("Reconnection to #{server} failed: #{reason}")
-          Map.delete(state.clients, server)
-      end
+      {:reply, {:ok, %{"content" => response_content}}, new_state}
     end
   end
   
-  defmodule ResilientApp do
+  defmodule DataProcessor do
     @moduledoc """
-    Example application that uses MCP services with fault tolerance.
+    Data processing service that can communicate with other services.
     """
     use GenServer
     require Logger
     
-    def start_link(opts) do
-      GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    def start_link(args) do
+      GenServer.start_link(__MODULE__, args, name: __MODULE__)
     end
     
-    def calculate(expression) do
-      GenServer.call(__MODULE__, {:calculate, expression})
+    def init(_args) do
+      Logger.info("Data processor starting...")
+      :ok = ExMCP.Transport.Native.register_service(:data_processor)
+      Logger.info("Data processor registered as :data_processor")
+      {:ok, %{processed_count: 0}}
     end
     
-    def get_weather(city) do
-      GenServer.call(__MODULE__, {:weather, city})
+    def handle_call({:mcp_request, %{"method" => "tools/list"}}, _from, state) do
+      tools = [
+        %{
+          "name" => "process_data",
+          "description" => "Process data using other services",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "numbers" => %{"type" => "array", "description" => "Numbers to process"}
+            },
+            "required" => ["numbers"]
+          }
+        },
+        %{
+          "name" => "get_stats",
+          "description" => "Get processing statistics",
+          "inputSchema" => %{"type" => "object", "properties" => %{}}
+        }
+      ]
+      
+      {:reply, {:ok, %{"tools" => tools}}, state}
     end
     
-    @impl true
-    def init(_opts) do
-      # The app will connect to services lazily
-      {:ok, %{}}
-    end
-    
-    @impl true
-    def handle_call({:calculate, expression}, _from, state) do
-      result = with_service(:calc_server, fn client ->
-        # Parse a simple expression like "5 + 3"
-        case parse_expression(expression) do
-          {:ok, {op, a, b}} ->
-            ExMCP.Client.call_tool(client, op, %{"a" => a, "b" => b})
-          error ->
-            error
+    def handle_call({:mcp_request, %{"method" => "tools/call", "params" => %{"name" => "process_data", "arguments" => %{"numbers" => numbers}}}}, _from, state) do
+      # Use the calculator service to sum the numbers
+      results = for num <- numbers do
+        case ExMCP.Transport.Native.call(:calculator_server, "tools/call", %{
+          "name" => "add",
+          "arguments" => %{"a" => num, "b" => 1}
+        }) do
+          {:ok, %{"content" => content}} ->
+            # Extract result from content
+            content |> List.first() |> Map.get("text")
+          {:error, _} ->
+            "Error processing #{num}"
         end
-      end)
-      
-      {:reply, result, state}
-    end
-    
-    def handle_call({:weather, city}, _from, state) do
-      result = with_service(:weather_server, fn client ->
-        ExMCP.Client.call_tool(client, "get_weather", %{"city" => city})
-      end)
-      
-      {:reply, result, state}
-    end
-    
-    defp with_service(server, fun) do
-      # Try to use existing client or create new one
-      case get_or_create_client(server) do
-        {:ok, client} ->
-          fun.(client)
-        error ->
-          error
       end
+      
+      new_state = %{state | processed_count: state.processed_count + length(numbers)}
+      
+      content = [%{
+        "type" => "text",
+        "text" => "Processed #{length(numbers)} numbers: #{Enum.join(results, ", ")}"
+      }]
+      
+      {:reply, {:ok, %{"content" => content}}, new_state}
     end
     
-    defp get_or_create_client(server) do
-      # In a real app, you'd cache these connections
-      ExMCP.Client.start_link(
-        transport: :beam,
-        server: server
-      )
-    end
-    
-    defp parse_expression(expr) do
-      # Simple expression parser for demo
-      cond do
-        String.contains?(expr, "+") ->
-          [a, b] = String.split(expr, "+") |> Enum.map(&String.trim/1) |> Enum.map(&String.to_integer/1)
-          {:ok, {"add", a, b}}
-        String.contains?(expr, "*") ->
-          [a, b] = String.split(expr, "*") |> Enum.map(&String.trim/1) |> Enum.map(&String.to_integer/1)
-          {:ok, {"multiply", a, b}}
-        true ->
-          {:error, "Unsupported expression"}
-      end
-    rescue
-      _ -> {:error, "Invalid expression"}
+    def handle_call({:mcp_request, %{"method" => "tools/call", "params" => %{"name" => "get_stats"}}}, _from, state) do
+      content = [%{
+        "type" => "text",
+        "text" => "Total items processed: #{state.processed_count}"
+      }]
+      
+      {:reply, {:ok, %{"content" => content}}, state}
     end
   end
   
-  @doc """
-  Start the complete supervised system.
-  """
-  def start do
-    # Start the supervisor tree
-    {:ok, sup} = MCPSupervisor.start_link([])
-    
-    # Start the resilient app
-    {:ok, app} = ResilientApp.start_link([])
-    
-    # Give everything time to initialize
-    Process.sleep(1000)
-    
-    {:ok, sup, app}
-  end
-  
-  @doc """
-  Demonstrate the supervised system with automatic recovery.
-  """
   def demo do
-    Logger.info("Starting supervised MCP system...")
+    Logger.info("Starting Native BEAM transport supervisor example...")
     
-    {:ok, _sup, app} = start()
+    # Start the service supervisor
+    {:ok, supervisor_pid} = ServiceSupervisor.start_link([])
     
-    # Use the services
-    Logger.info("\nTesting calculation service...")
-    case ResilientApp.calculate("10 + 20") do
-      {:ok, %{"content" => content}} ->
-        text = content |> List.first() |> Map.get("text")
-        Logger.info("Result: #{text}")
-      error ->
-        Logger.error("Calculation failed: #{inspect(error)}")
+    # Wait for all services to register
+    Process.sleep(200)
+    
+    # Discover available services
+    services = ExMCP.Transport.Native.list_services()
+    Logger.info("Discovered services:")
+    for {service_name, _pid, _meta} <- services do
+      Logger.info("  - #{service_name}")
     end
     
-    Logger.info("\nTesting weather service...")
-    case ResilientApp.get_weather("Berlin") do
-      {:ok, %{"content" => content}} ->
-        text = content |> List.first() |> Map.get("text")
-        Logger.info("Weather: #{text}")
-      error ->
-        Logger.error("Weather query failed: #{inspect(error)}")
+    # Test calculator service
+    Logger.info("\n--- Testing Calculator Service ---")
+    {:ok, result} = ExMCP.Transport.Native.call(:calculator_server, "tools/call", %{
+      "name" => "add",
+      "arguments" => %{"a" => 10, "b" => 5}
+    })
+    Logger.info("Calculator result: #{result["content"] |> List.first() |> Map.get("text")}")
+    
+    # Test file service
+    Logger.info("\n--- Testing File Service ---")
+    {:ok, _} = ExMCP.Transport.Native.call(:file_service, "tools/call", %{
+      "name" => "create_file",
+      "arguments" => %{"name" => "test.txt", "content" => "Hello World"}
+    })
+    
+    {:ok, result} = ExMCP.Transport.Native.call(:file_service, "tools/call", %{
+      "name" => "list_files",
+      "arguments" => %{}
+    })
+    Logger.info("File service result: #{result["content"] |> List.first() |> Map.get("text")}")
+    
+    # Test data processor (inter-service communication)
+    Logger.info("\n--- Testing Data Processor (Inter-service Communication) ---")
+    {:ok, result} = ExMCP.Transport.Native.call(:data_processor, "tools/call", %{
+      "name" => "process_data",
+      "arguments" => %{"numbers" => [1, 2, 3, 4, 5]}
+    })
+    Logger.info("Data processor result: #{result["content"] |> List.first() |> Map.get("text")}")
+    
+    # Get processing stats
+    {:ok, result} = ExMCP.Transport.Native.call(:data_processor, "tools/call", %{
+      "name" => "get_stats",
+      "arguments" => %{}
+    })
+    Logger.info("Processing stats: #{result["content"] |> List.first() |> Map.get("text")}")
+    
+    # Demonstrate fault tolerance by crashing a service
+    Logger.info("\n--- Testing Fault Tolerance ---")
+    [data_processor_pid] = Registry.lookup(ExMCP.Registry, :data_processor) |> Enum.map(fn {pid, _} -> pid end)
+    Process.exit(data_processor_pid, :kill)
+    
+    Logger.info("Killed data processor, waiting for restart...")
+    Process.sleep(100)
+    
+    # Service should be restarted automatically
+    if ExMCP.Transport.Native.service_available?(:data_processor) do
+      Logger.info("Data processor restarted successfully!")
+      
+      # Test that it still works
+      {:ok, result} = ExMCP.Transport.Native.call(:data_processor, "tools/call", %{
+        "name" => "get_stats",
+        "arguments" => %{}
+      })
+      Logger.info("Stats after restart: #{result["content"] |> List.first() |> Map.get("text")}")
+    else
+      Logger.warning("Data processor not available after restart")
     end
     
-    # Simulate a crash
-    Logger.info("\nSimulating calculator server crash...")
-    Process.whereis(:calc_server) |> Process.exit(:kill)
+    # Cleanup
+    Supervisor.stop(supervisor_pid)
     
-    # Wait for supervisor to restart it
-    Process.sleep(1000)
-    
-    # Try using it again
-    Logger.info("\nTrying calculation after crash...")
-    case ResilientApp.calculate("15 + 25") do
-      {:ok, %{"content" => content}} ->
-        text = content |> List.first() |> Map.get("text")
-        Logger.info("Result after recovery: #{text}")
-      error ->
-        Logger.error("Still failing: #{inspect(error)}")
-    end
-    
-    Logger.info("\nSupervised MCP system demonstration complete!")
-    :ok
+    Logger.info("\nSupervisor example completed!")
   end
 end

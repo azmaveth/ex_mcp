@@ -126,6 +126,15 @@ defmodule ExMCP.Transport.Beam.Security do
   end
 
   @doc """
+  Gets the maximum allowed frame size.
+  Returns default if service is not running.
+  """
+  @spec max_frame_size() :: non_neg_integer()
+  def max_frame_size do
+    @default_max_frame_size
+  end
+
+  @doc """
   Validates an incoming frame for security compliance.
 
   ## Examples

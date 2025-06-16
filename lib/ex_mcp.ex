@@ -27,7 +27,7 @@ defmodule ExMCP do
 
   - `ExMCP.ServerManager` - Manage multiple server connections
   - `ExMCP.Discovery` - Discover available MCP servers
-  - `ExMCP.Transport.Beam` - Native Erlang process transport
+  - `ExMCP.Transport.Beam.Enhanced` - Production-ready BEAM transport with advanced features
   - Automatic reconnection in `ExMCP.Client`
   - Batch operations in `ExMCP.Client`
 

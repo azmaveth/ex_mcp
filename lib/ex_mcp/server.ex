@@ -92,7 +92,6 @@ defmodule ExMCP.Server do
   require Logger
 
   alias ExMCP.{Protocol, Transport, VersionRegistry}
-  alias ExMCP.Transport.Beam, as: BeamTransport
 
   defstruct [
     :handler,
@@ -332,37 +331,14 @@ defmodule ExMCP.Server do
   def handle_info({:transport_closed, reason}, state) do
     Logger.info("Transport closed: #{inspect(reason)}")
 
-    # For BEAM transport, we can accept new connections after a client disconnects
+    # For enhanced BEAM transport, we can accept new connections after a client disconnects
     # Reset the transport state to allow new connections
-    if state.transport_mod == ExMCP.Transport.Beam do
+    if state.transport_mod == ExMCP.Transport.Beam.Enhanced do
       # Keep the server running but reset initialization state
       {:noreply, %{state | initialized: false}}
     else
       # For other transports (stdio, SSE), stop the server
       {:stop, :normal, state}
-    end
-  end
-
-  def handle_info({:beam_connect, client_mailbox}, state) do
-    # Handle BEAM transport connection (legacy format without security)
-    handle_beam_connect(client_mailbox, nil, state)
-  end
-
-  def handle_info({:beam_connect, client_mailbox, security}, state) do
-    # Handle BEAM transport connection with security
-    handle_beam_connect(client_mailbox, security, state)
-  end
-
-  defp handle_beam_connect(client_mailbox, security, state) do
-    # Handle BEAM transport connection
-    if state.transport_mod == BeamTransport do
-      {:ok, new_transport_state} =
-        BeamTransport.handle_connection_request(client_mailbox, state.transport_state, security)
-
-      {:noreply, %{state | transport_state: new_transport_state}}
-    else
-      Logger.warning("Received BEAM connection request but not using BEAM transport")
-      {:noreply, state}
     end
   end
 

@@ -1,8 +1,9 @@
-defmodule Examples.BeamTransport.CalculatorServer do
+defmodule Examples.NativeBeam.CalculatorServer do
   @moduledoc """
-  Example MCP server using BEAM transport that provides calculator tools.
+  Example MCP service using Native BEAM transport that provides calculator tools.
   
   This demonstrates:
+  - Service registration with Native BEAM transport
   - Basic tool implementation
   - Error handling
   - Server state management
@@ -16,21 +17,60 @@ defmodule Examples.BeamTransport.CalculatorServer do
     defstruct history: [], operation_count: 0
   end
   
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args, name: __MODULE__)
+  end
+
   @impl true
   def init(_args) do
     Logger.info("Calculator server starting...")
+    # Register with the Native BEAM transport
+    :ok = ExMCP.Transport.Native.register_service(:calculator_server)
+    Logger.info("Calculator service registered as :calculator_server")
     {:ok, %State{}}
   end
   
+  # Handle MCP requests through Native BEAM transport
+  def handle_call({:mcp_request, %{"method" => "initialize", "params" => _params}}, _from, state) do
+    server_info = %{
+      "serverInfo" => %{
+        "name" => "calculator-server",
+        "version" => "1.0.0",
+        "capabilities" => %{
+          "tools" => %{},
+          "resources" => %{},
+          "prompts" => %{}
+        }
+      }
+    }
+    
+    {:reply, {:ok, server_info}, state}
+  end
+
+  def handle_call({:mcp_request, %{"method" => "tools/list"}}, _from, state) do
+    {:ok, tools, new_state} = handle_list_tools(state)
+    {:reply, {:ok, %{"tools" => tools}}, new_state}
+  end
+
+  def handle_call({:mcp_request, %{"method" => "tools/call", "params" => %{"name" => tool_name, "arguments" => arguments}}}, _from, state) do
+    case handle_call_tool(tool_name, arguments, state) do
+      {:ok, content, new_state} ->
+        {:reply, {:ok, %{"content" => content}}, new_state}
+      {:error, message, new_state} ->
+        {:reply, {:error, %{"code" => -32001, "message" => message}}, new_state}
+    end
+  end
+
+  # Legacy MCP handler methods for compatibility
   @impl true
   def handle_initialize(_params, state) do
     server_info = %{
-      name: "calculator-server",
-      version: "1.0.0",
-      capabilities: %{
-        tools: %{},
-        resources: %{},
-        prompts: %{}
+      "name" => "calculator-server",
+      "version" => "1.0.0",
+      "capabilities" => %{
+        "tools" => %{},
+        "resources" => %{},
+        "prompts" => %{}
       }
     }
     

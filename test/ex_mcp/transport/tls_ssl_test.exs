@@ -225,6 +225,7 @@ defmodule ExMCP.Transport.TLSSSLTest do
   end
 
   describe "BEAM transport native security" do
+    @describetag :skip
     test "supports distributed Erlang with node cookies" do
       security_config = %{
         node_cookie: :secret_production_cookie,

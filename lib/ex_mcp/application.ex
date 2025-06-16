@@ -10,7 +10,11 @@ defmodule ExMCP.Application do
       # For example, a registry for MCP connections:
       {Registry, keys: :unique, name: ExMCP.Registry},
       # Dynamic supervisor for runtime components
-      {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor}
+      {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
+      # Start observability service for metrics and monitoring
+      ExMCP.Transport.Beam.Observability,
+      # Start zero-copy manager for large payload optimization
+      ExMCP.Transport.Beam.ZeroCopy
     ]
 
     # Optionally start security supervisor if configured
