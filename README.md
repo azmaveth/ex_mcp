@@ -875,18 +875,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - The Elixir community for excellent tooling and libraries
 - Contributors and early adopters providing feedback
 
-### Projects That Influenced Our Design
-
-ExMCP's design has been influenced by several excellent MCP implementations:
-
-- **[Hermes MCP](https://github.com/deepcodeai/hermes_mcp)** - Inspired our telemetry integration and structured error handling approaches
-- **[MCP SSE](https://github.com/example/mcp-sse)** - Influenced our SSE transport implementation and HTTP handling patterns
-- **[Ash AI](https://github.com/ash-project/ash_ai)** - Inspired our tool DSL design for minimal boilerplate
-- **[MCPhoenix](https://github.com/example/mcphoenix)** - Influenced our multi-server architecture and dynamic tool loading concepts
-- **[mcp_ex](https://github.com/example/mcp_ex)** - Provided insights on test transport design and schema validation approaches
-
-We're grateful to these projects for pushing the boundaries of MCP implementations and sharing their innovations with the community.
-
 ---
 
 <div align="center">
