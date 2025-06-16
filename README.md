@@ -25,13 +25,13 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 ## ✨ Features
 
 ### Core Protocol Support
-- 🚀 **Full MCP Specification** - Implements protocol version 2025-03-26
+- 🚀 **Multiple MCP Versions** - Supports protocol versions 2024-11-05, 2025-03-26, and draft
 - 🛠️ **Tools** - Register and execute functions with type-safe parameters
 - 📚 **Resources** - List and read data from various sources
 - 🎯 **Prompts** - Manage reusable prompt templates
 - 🤖 **Sampling** - Direct LLM integration for response generation
-- 🌳 **Roots** - URI-based resource boundaries (new in 2025-03-26)
-- 🔔 **Subscriptions** - Monitor resources for changes (new in 2025-03-26)
+- 🌳 **Roots** - URI-based resource boundaries
+- 🔔 **Subscriptions** - Monitor resources for changes
 - 📦 **Batch Requests** - Send multiple requests in a single call
 - 🔁 **Bi-directional Communication** - Servers can make requests to clients
 - 👤 **Human-in-the-Loop** - Approval flows for sensitive operations
@@ -84,13 +84,48 @@ Features unique to ExMCP:
 - Auto-reconnection
 - Resource unsubscribe (`resources/unsubscribe` - not in MCP spec)
 
-### Draft Features (Experimental)
+## 📋 Protocol Version Support
 
-These features are from the draft MCP specification and may not be compatible with all MCP implementations:
+ExMCP implements three versions of the Model Context Protocol, each with different feature sets:
 
-- **Structured Tool Output** - Tools can define `outputSchema` and return `structuredContent` alongside regular content
+| Feature | 2024-11-05 | 2025-03-26 | draft |
+|---------|:----------:|:----------:|:-----:|
+| **Core Features** | | | |
+| Tools (`tools/list`, `tools/call`) | ✅ | ✅ | ✅ |
+| Resources (`resources/list`, `resources/read`) | ✅ | ✅ | ✅ |
+| Prompts (`prompts/list`, `prompts/get`) | ✅ | ✅ | ✅ |
+| Completion (`completion/complete`) | ✅ | ✅ | ✅ |
+| **Communication** | | | |
+| Bi-directional requests | ✅ | ✅ | ✅ |
+| Request cancellation | ✅ | ✅ | ✅ |
+| Progress notifications | ✅ | ✅ | ✅ |
+| **2025-03-26 Features** | | | |
+| Resource subscriptions (`resources/subscribe`) | ❌ | ✅ | ✅ |
+| Roots (`roots/list`) | ❌ | ✅ | ✅ |
+| Structured logging (`logging/setLevel`) | ❌ | ✅ | ✅ |
+| Tool annotations (`readOnlyHint`, `destructiveHint`) | ❌ | ✅ | ✅ |
+| **Draft Features** | | | |
+| Structured tool output (`outputSchema`) | ❌ | ❌ | ✅ |
+| Enhanced sampling features | ❌ | ❌ | ✅ |
+| **ExMCP Extensions** | | | |
+| Native BEAM dispatcher | ✅ | ✅ | ✅ |
+| Batch requests | ✅ | ✅ | ✅ |
+| Resource unsubscribe | ✅ | ✅ | ✅ |
+| Auto-reconnection | ✅ | ✅ | ✅ |
 
-⚠️ **Note**: These features are not part of the official MCP 2025-03-26 specification and should only be used when connecting to servers that explicitly support draft features.
+### Version Selection
+
+Configure your preferred version in `config/config.exs`:
+
+```elixir
+config :ex_mcp,
+  protocol_version: "2025-03-26"  # Options: "2024-11-05", "2025-03-26", "draft"
+```
+
+**Recommendations:**
+- **Production**: Use `"2025-03-26"` for the latest stable features
+- **Compatibility**: Use `"2024-11-05"` for maximum compatibility
+- **Experimental**: Use `"draft"` only for testing new features
 
 See the [API Categories Guide](guides/api-categories.md) for detailed information on writing portable code.
 
@@ -670,10 +705,7 @@ config :ex_mcp,
   protocol_version: "2025-03-26"  # Default: latest stable
 ```
 
-Version capabilities:
-- **2024-11-05**: Base MCP features
-- **2025-03-26**: Adds resource subscriptions, logging control
-- **draft**: Experimental features (batch requests, elicitation)
+See the [Protocol Version Support](#-protocol-version-support) section above for detailed feature comparison across versions.
 
 ### Production Logger Configuration
 
