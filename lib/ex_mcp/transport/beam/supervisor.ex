@@ -121,16 +121,28 @@ defmodule ExMCP.Transport.Beam.Supervisor do
 
   @impl true
   def init(_opts) do
-    children = [
-      # Start the correlation service
-      {Correlation, []},
+    # Check if services are already running globally and share them
+    # This allows multiple BEAM servers to coexist in test environments
+    children = []
 
-      # Start the zero-copy optimization service
-      {ZeroCopy, []}
+    # Only start Correlation if not already running
+    children =
+      if Process.whereis(Correlation) do
+        children
+      else
+        children ++ [{Correlation, []}]
+      end
 
-      # Note: Ranch listeners are started separately via start_listener/1
-      # to allow for dynamic configuration
-    ]
+    # Only start ZeroCopy if not already running
+    children =
+      if Process.whereis(ZeroCopy) do
+        children
+      else
+        children ++ [{ZeroCopy, []}]
+      end
+
+    # Note: Ranch listeners are started separately via start_listener/1
+    # to allow for dynamic configuration
 
     Supervisor.init(children, strategy: :one_for_one)
   end

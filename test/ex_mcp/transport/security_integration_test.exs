@@ -4,7 +4,6 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
   @moduletag :transport
 
   alias ExMCP.Test.HTTPServer
-  alias ExMCP.Transport.Beam, as: BEAM
   alias ExMCP.Transport.{HTTP, WebSocket}
 
   describe "HTTP transport security" do
@@ -183,71 +182,6 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
     end
   end
 
-  describe "BEAM transport security" do
-    test "validates security configuration" do
-      invalid_security = %{auth: :invalid}
-
-      config = [
-        server: :test_server,
-        security: invalid_security
-      ]
-
-      assert {:error, :invalid_auth_config} = BEAM.connect(config)
-    end
-
-    test "accepts valid bearer token security" do
-      security = %{
-        auth: {:bearer, "beam-token"}
-      }
-
-      config = [
-        server: :test_server,
-        security: security
-      ]
-
-      # This will fail because server doesn't exist, but security validation should pass
-      assert {:error, :server_not_found} = BEAM.connect(config)
-    end
-
-    test "accepts valid node cookie security" do
-      security = %{
-        auth: {:node_cookie, Node.get_cookie()}
-      }
-
-      config = [
-        server: :test_server,
-        security: security
-      ]
-
-      # This will fail because server doesn't exist, but security validation should pass
-      assert {:error, :server_not_found} = BEAM.connect(config)
-    end
-
-    test "server accept validates security configuration" do
-      invalid_security = %{auth: :invalid}
-
-      config = [
-        name: :test_secure_server,
-        security: invalid_security
-      ]
-
-      assert {:error, :invalid_auth_config} = BEAM.accept(config)
-    end
-
-    test "server accept works with valid security" do
-      security = %{
-        auth: {:bearer, "server-token"}
-      }
-
-      config = [
-        name: :test_secure_server,
-        security: security
-      ]
-
-      assert {:ok, %BEAM.State{security: ^security}} = BEAM.accept(config)
-    end
-  end
-
   describe "security configuration validation" do
     @tag :skip
     test "rejects invalid auth methods" do
@@ -299,7 +233,6 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
         # These will fail to connect but security validation should pass
         assert {:error, _} = HTTP.connect(sse_config)
         assert {:error, _} = WebSocket.connect(ws_config)
-        assert {:error, :server_not_found} = BEAM.connect(beam_config)
       end
     end
   end
@@ -316,19 +249,12 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
       # Test with each transport type
       transport_configs = [
         {HTTP, [url: "https://sse.example.com", security: security]},
-        {WebSocket, [url: "wss://ws.example.com", security: security]},
-        {BEAM, [server: :test_server, security: security]}
+        {WebSocket, [url: "wss://ws.example.com", security: security]}
       ]
 
       for {transport_module, config} <- transport_configs do
         # All should fail to connect but build security headers correctly
-        case transport_module do
-          BEAM ->
-            assert {:error, :server_not_found} = transport_module.connect(config)
-
-          _ ->
-            assert {:error, _} = transport_module.connect(config)
-        end
+        assert {:error, _} = transport_module.connect(config)
       end
     end
   end

@@ -151,6 +151,15 @@
   - [x] Add TLS/SSL configuration options for all transports
   - [x] Implement certificate validation options
   - [ ] Add mutual TLS support *(Note: 80% complete - client certs work but hostname verification broken, needs security fix)*
+- [ ] **BEAM Transport TLS Support** *(Critical security gap)*
+  - [ ] Add TLS configuration options to BEAM transport server
+  - [ ] Implement SSL upgrade after TCP connection establishment
+  - [ ] Support client certificate validation for mTLS
+  - [ ] Add Ranch SSL listener configuration
+  - [ ] Update Connection module to handle SSL sockets
+  - [ ] Add TLS options to client connect method
+  - [ ] Test TLS with self-signed and CA certificates
+  - [ ] Document TLS configuration for production deployments
 - [x] OAuth 2.1 Authorization Framework (2025-03-26 feature) ✅ *(Note: Core flows complete, advanced features need production testing)*
   - [x] Implement client credentials flow
   - [x] Add authorization code flow with PKCE

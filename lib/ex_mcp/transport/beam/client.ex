@@ -1,6 +1,6 @@
 defmodule ExMCP.Transport.Beam.Client do
   @moduledoc """
-  Enhanced BEAM transport client with ranch integration.
+  BEAM transport client with ranch integration.
 
   This module provides a high-level client interface for connecting to
   BEAM transport servers using the new architecture with Connection processes.
@@ -38,7 +38,7 @@ defmodule ExMCP.Transport.Beam.Client do
   use GenServer
   require Logger
 
-  alias ExMCP.Transport.Beam.Connection
+  alias ExMCP.Transport.Beam.{Connection, Observability, Batch}
 
   @default_host ~c"localhost"
   @default_port 9999
@@ -52,8 +52,11 @@ defmodule ExMCP.Transport.Beam.Client do
     :auth_config,
     :reconnect_timer,
     :options,
+    :batch_manager,
+    :batching_config,
     connected: false,
-    reconnect_attempts: 0
+    reconnect_attempts: 0,
+    batching_enabled: false
   ]
 
   @type t :: %__MODULE__{}
@@ -62,7 +65,9 @@ defmodule ExMCP.Transport.Beam.Client do
           port: non_neg_integer(),
           auth_config: map() | nil,
           timeout: non_neg_integer(),
-          auto_reconnect: boolean()
+          auto_reconnect: boolean(),
+          batching: map() | nil,
+          zero_copy: boolean()
         ]
 
   # Client API
@@ -124,11 +129,22 @@ defmodule ExMCP.Transport.Beam.Client do
     port = Keyword.get(opts, :port, @default_port)
     auth_config = Keyword.get(opts, :auth_config)
     auto_reconnect = Keyword.get(opts, :auto_reconnect, true)
+    batching_config = Keyword.get(opts, :batching, %{enabled: false})
+
+    # Check if batching is enabled
+    batching_enabled =
+      case batching_config do
+        %{enabled: true} -> true
+        %{"enabled" => true} -> true
+        _ -> false
+      end
 
     state = %__MODULE__{
       host: host,
       port: port,
       auth_config: auth_config,
+      batching_config: batching_config,
+      batching_enabled: batching_enabled,
       options: %{
         auto_reconnect: auto_reconnect,
         timeout: Keyword.get(opts, :timeout, @default_timeout)
@@ -146,14 +162,27 @@ defmodule ExMCP.Transport.Beam.Client do
     if state.connected and state.connection_pid do
       timeout = Keyword.get(opts, :timeout, @default_timeout)
 
-      case Connection.send_message(state.connection_pid, message, timeout: timeout) do
+      # Record start time for latency measurement
+      start_time = System.monotonic_time(:millisecond)
+
+      # Send directly through connection for now
+      # Batching optimization will be handled at the transport layer
+      result = Connection.send_message(state.connection_pid, message, timeout: timeout)
+
+      case result do
         {:ok, response} ->
+          # Calculate and record latency
+          latency_ms = System.monotonic_time(:millisecond) - start_time
+          Observability.record_metric(:successful_requests, 1)
+          Observability.record_metric(:average_latency, latency_ms)
           {:reply, {:ok, response}, state}
 
         {:error, reason} ->
+          Observability.record_error(:request_failed)
           {:reply, {:error, reason}, state}
       end
     else
+      Observability.record_error(:not_connected)
       {:reply, {:error, :not_connected}, state}
     end
   end
@@ -206,9 +235,15 @@ defmodule ExMCP.Transport.Beam.Client do
 
   @impl true
   def handle_info(:connect, state) do
+    Logger.info(
+      "BEAM client attempting to connect to #{state.host}:#{state.port} (attempt #{state.reconnect_attempts + 1})"
+    )
+
     case establish_connection(state) do
       {:ok, connection_pid} ->
-        Logger.info("BEAM client connected to #{state.host}:#{state.port}")
+        Logger.info(
+          "BEAM client established connection to #{state.host}:#{state.port} (pid: #{inspect(connection_pid)})"
+        )
 
         new_state = %{
           state
@@ -219,7 +254,11 @@ defmodule ExMCP.Transport.Beam.Client do
         }
 
         # Monitor the connection process
-        Process.monitor(connection_pid)
+        monitor_ref = Process.monitor(connection_pid)
+
+        Logger.debug(
+          "BEAM client monitoring connection #{inspect(connection_pid)} with ref #{inspect(monitor_ref)}"
+        )
 
         {:noreply, new_state}
 
@@ -245,21 +284,69 @@ defmodule ExMCP.Transport.Beam.Client do
 
   def handle_info({:connection_ready, connection_pid}, state)
       when connection_pid == state.connection_pid do
-    Logger.debug("BEAM client connection ready")
-    {:noreply, %{state | connected: true}}
+    Logger.debug(
+      "BEAM client connection ready from #{inspect(connection_pid)} (matches current: #{connection_pid == state.connection_pid})"
+    )
+
+    # Start batch manager if batching is enabled
+    new_state =
+      if state.batching_enabled do
+        case start_batch_manager(connection_pid, state.batching_config) do
+          {:ok, batch_manager} ->
+            Logger.debug("Started batch manager: #{inspect(batch_manager)}")
+            %{state | batch_manager: batch_manager, connected: true}
+
+          {:error, reason} ->
+            Logger.warning("Failed to start batch manager: #{inspect(reason)}")
+            %{state | connected: true}
+        end
+      else
+        %{state | connected: true}
+      end
+
+    {:noreply, new_state}
   end
 
-  def handle_info({:connection_closed, connection_pid}, state)
-      when connection_pid == state.connection_pid do
-    Logger.warning("BEAM client connection closed")
-    new_state = handle_disconnection(state)
-    {:noreply, new_state}
+  def handle_info({:connection_ready, connection_pid}, state) do
+    Logger.warning(
+      "BEAM client received connection_ready from unexpected PID #{inspect(connection_pid)} (current: #{inspect(state.connection_pid)})"
+    )
+
+    {:noreply, state}
+  end
+
+  def handle_info({:connection_closed, connection_pid}, state) do
+    Logger.warning(
+      "BEAM client received connection_closed from #{inspect(connection_pid)} (current: #{inspect(state.connection_pid)})"
+    )
+
+    # Only handle disconnection if this is from our current connection
+    if connection_pid == state.connection_pid do
+      Logger.warning("BEAM client connection closed - handling disconnection")
+      new_state = handle_disconnection(state)
+      {:noreply, new_state}
+    else
+      # This is from an old connection, ignore it
+      Logger.debug("Ignoring connection_closed from old connection #{inspect(connection_pid)}")
+      {:noreply, state}
+    end
   end
 
   def handle_info({:DOWN, _ref, :process, pid, reason}, state) when pid == state.connection_pid do
-    Logger.warning("BEAM client connection process died: #{inspect(reason)}")
+    Logger.warning(
+      "BEAM client connection process #{inspect(pid)} died: #{inspect(reason)} (current connection: #{inspect(state.connection_pid)})"
+    )
+
     new_state = handle_disconnection(state)
     {:noreply, new_state}
+  end
+
+  def handle_info({:DOWN, _ref, :process, pid, reason}, state) do
+    Logger.debug(
+      "BEAM client received DOWN for unrelated process #{inspect(pid)}: #{inspect(reason)}"
+    )
+
+    {:noreply, state}
   end
 
   def handle_info(msg, state) do
@@ -293,13 +380,19 @@ defmodule ExMCP.Transport.Beam.Client do
   end
 
   defp handle_disconnection(state) do
+    Logger.info("Handling disconnection - auto_reconnect: #{state.options.auto_reconnect}")
     new_state = %{state | connected: false, connection_pid: nil}
 
     if state.options.auto_reconnect do
       # Schedule reconnection
+      Logger.info(
+        "Scheduling reconnection in #{@reconnect_interval}ms (attempt #{state.reconnect_attempts + 1})"
+      )
+
       timer = Process.send_after(self(), :connect, @reconnect_interval)
       %{new_state | reconnect_timer: timer, reconnect_attempts: state.reconnect_attempts + 1}
     else
+      Logger.info("Auto-reconnect disabled, not scheduling reconnection")
       new_state
     end
   end
@@ -310,12 +403,17 @@ defmodule ExMCP.Transport.Beam.Client do
       Process.cancel_timer(state.reconnect_timer)
     end
 
+    # Stop batch manager if active
+    if state.batch_manager && Process.alive?(state.batch_manager) do
+      GenServer.stop(state.batch_manager, :normal)
+    end
+
     # Close connection if active
     if state.connection_pid && Process.alive?(state.connection_pid) do
       Connection.close(state.connection_pid)
     end
 
-    %{state | connected: false, connection_pid: nil, reconnect_timer: nil}
+    %{state | connected: false, connection_pid: nil, reconnect_timer: nil, batch_manager: nil}
   end
 
   defp normalize_host(host) when is_binary(host) do
@@ -328,5 +426,29 @@ defmodule ExMCP.Transport.Beam.Client do
 
   defp normalize_host(host) do
     host
+  end
+
+  defp start_batch_manager(connection_pid, batching_config) do
+    # Handle both atom and string keys
+    max_batch_size =
+      Map.get(batching_config, :max_batch_size) ||
+        Map.get(batching_config, "max_batch_size", 50)
+
+    max_batch_bytes =
+      Map.get(batching_config, :max_batch_bytes) ||
+        Map.get(batching_config, "max_batch_bytes", 32_768)
+
+    batch_timeout =
+      Map.get(batching_config, :batch_timeout) ||
+        Map.get(batching_config, "batch_timeout", 10)
+
+    batch_opts = [
+      connection: connection_pid,
+      max_batch_size: max_batch_size,
+      max_batch_bytes: max_batch_bytes,
+      batch_timeout: batch_timeout
+    ]
+
+    Batch.start_link(batch_opts)
   end
 end
