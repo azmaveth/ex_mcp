@@ -120,6 +120,17 @@ defmodule StdioServer do
     IO.puts(Jason.encode!(response))
   end
   
+  # Handle notifications (no id field)
+  defp handle_message(%{"method" => "notifications/initialized"}) do
+    # This is a notification from the client, no response needed
+    IO.puts(:stderr, "Client initialized successfully")
+  end
+  
+  defp handle_message(%{"method" => method}) when is_binary(method) do
+    # Other notifications - just log them
+    IO.puts(:stderr, "Received notification: #{method}")
+  end
+  
   defp handle_message(message) do
     IO.puts(:stderr, "Unhandled message: #{inspect(message)}")
   end

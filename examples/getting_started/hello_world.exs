@@ -151,11 +151,19 @@ defmodule HelloWorldDemo do
       url: "http://localhost:8080"
     ) do
       {:ok, client} ->
-        # Wait for connection
-        Process.sleep(500)
+        # Wait for connection and initialization
+        Process.sleep(1000)
         
-        # Call the tool
-        case ExMCP.Client.call_tool(client, "say_hello", %{"name" => "Developer"}) do
+        # Check if client is connected before calling
+        case Process.info(client, :dictionary) do
+          nil ->
+            IO.puts("   Error: Client process died")
+            IO.puts("   Note: HTTP server not running on port 8080")
+            IO.puts("   To see this demo, run in another terminal:")
+            IO.puts("   $ elixir examples/getting_started/simple_http_server.exs")
+          _ ->
+            # Call the tool
+            case ExMCP.Client.call_tool(client, "say_hello", %{"name" => "Developer"}) do
           {:ok, result} ->
             # Handle both possible response formats
             content = result["content"] || result[:content]
@@ -167,16 +175,22 @@ defmodule HelloWorldDemo do
             else
               IO.puts("   Response: #{inspect(result)}")
             end
+          {:error, :not_connected} ->
+            IO.puts("   Error: Failed to connect to HTTP server")
+            IO.puts("   Make sure the server is running on port 8080")
           {:error, reason} ->
             IO.puts("   Error: #{inspect(reason)}")
+            end
         end
         
-        # Stop the client
-        GenServer.stop(client)
+        # Stop the client if it's still alive
+        if Process.alive?(client), do: GenServer.stop(client)
         
-      {:error, _} ->
-        IO.puts("   Note: Run simple_http_server.exs first to see this demo")
-        IO.puts("   Command: elixir examples/getting_started/simple_http_server.exs")
+      {:error, reason} ->
+        IO.puts("   Note: HTTP server not running on port 8080")
+        IO.puts("   To see this demo, run in another terminal:")
+        IO.puts("   $ elixir examples/getting_started/simple_http_server.exs")
+        IO.puts("   Error details: #{inspect(reason)}")
     end
   end
 end
