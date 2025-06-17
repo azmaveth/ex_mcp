@@ -1,72 +1,185 @@
 #!/usr/bin/env elixir
 
-# Hello World Example - The simplest MCP service using the Native Service Dispatcher
+# Hello World Example - Demonstrates all three transport types in ExMCP
 
 Mix.install([
   {:ex_mcp, path: "../.."}
 ])
 
-# For this demo, we'll use the Native Service Dispatcher for simplicity
-# In a real-world scenario, you'd typically use stdio or HTTP transport for cross-language compatibility
+# This example shows how to connect to MCP servers using different transports:
+# 1. Native Service Dispatcher - Ultra-fast Elixir-to-Elixir communication
+# 2. stdio - Standard MCP communication via stdin/stdout
+# 3. HTTP - Network communication with Server-Sent Events
 
-defmodule HelloWorldService do
-  use ExMCP.Service, name: :hello_world_service
-
-  @impl true
-  def handle_mcp_request("list_tools", _params, state) do
-    tools = [
-      %{
-        "name" => "say_hello",
-        "description" => "Say hello to someone",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "name" => %{"type" => "string", "description" => "Name to greet"}
-          },
-          "required" => ["name"]
-        }
-      }
-    ]
+defmodule HelloWorldDemo do
+  def run do
+    IO.puts("""
+    ========================================
+    ExMCP Hello World - All Transport Types
+    ========================================
+    """)
     
-    {:ok, %{"tools" => tools}, state}
+    # 1. Native Service Dispatcher Demo
+    demo_native_service()
+    
+    # 2. stdio Transport Demo
+    demo_stdio_transport()
+    
+    # 3. HTTP Transport Demo
+    demo_http_transport()
+    
+    IO.puts("""
+    
+    ========================================
+    Demo Complete!
+    
+    You've seen all three transport types:
+    - Native: Direct Elixir process communication
+    - stdio: JSON-RPC over stdin/stdout
+    - HTTP: REST with Server-Sent Events
+    
+    Choose the right transport for your use case!
+    ========================================
+    """)
   end
+  
+  defp demo_native_service do
+    IO.puts("\n1. Native Service Dispatcher Demo")
+    IO.puts("   (Ultra-fast Elixir-to-Elixir communication)")
+    IO.puts("   " <> String.duplicate("-", 40))
+    
+    # Define and start a native service
+    defmodule NativeHelloService do
+      use ExMCP.Service, name: :native_hello_service
 
-  @impl true
-  def handle_mcp_request("tools/call", %{"name" => "say_hello", "arguments" => params}, state) do
-    name = params["name"]
-    content = [%{"type" => "text", "text" => "Hello, #{name}! Welcome to ExMCP! 👋"}]
-    {:ok, %{"content" => content}, state}
+      @impl true
+      def handle_mcp_request("list_tools", _params, state) do
+        tools = [
+          %{
+            "name" => "say_hello",
+            "description" => "Say hello via Native Service Dispatcher",
+            "inputSchema" => %{
+              "type" => "object",
+              "properties" => %{
+                "name" => %{"type" => "string", "description" => "Name to greet"}
+              },
+              "required" => ["name"]
+            }
+          }
+        ]
+        
+        {:ok, %{"tools" => tools}, state}
+      end
+
+      @impl true
+      def handle_mcp_request("tools/call", %{"name" => "say_hello", "arguments" => params}, state) do
+        name = params["name"]
+        content = [%{"type" => "text", "text" => "Hello, #{name}! Welcome to ExMCP via Native Service Dispatcher! ⚡"}]
+        {:ok, %{"content" => content}, state}
+      end
+
+      def handle_mcp_request(_method, _params, state) do
+        {:error, %{"code" => -32601, "message" => "Method not found"}, state}
+      end
+    end
+
+    {:ok, _service} = NativeHelloService.start_link()
+    Process.sleep(100)
+    
+    # Call the service
+    {:ok, %{"content" => content}} = ExMCP.Native.call(:native_hello_service, "tools/call", %{
+      "name" => "say_hello",
+      "arguments" => %{"name" => "Developer"}
+    })
+    
+    for %{"text" => text} <- content do
+      IO.puts("   Response: #{text}")
+    end
   end
-
-  def handle_mcp_request(_method, _params, state) do
-    {:error, %{"code" => -32601, "message" => "Method not found"}, state}
+  
+  defp demo_stdio_transport do
+    IO.puts("\n2. stdio Transport Demo")
+    IO.puts("   (Standard MCP communication via subprocess)")
+    IO.puts("   " <> String.duplicate("-", 40))
+    
+    # Check if stdio server script exists
+    stdio_server_path = Path.join([__DIR__, "stdio_server.exs"])
+    
+    if File.exists?(stdio_server_path) do
+      # Start a client that connects to the stdio server
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :stdio,
+        command: ["elixir", stdio_server_path]
+      )
+      
+      # Wait for initialization
+      Process.sleep(500)
+      
+      # Call the tool
+      case ExMCP.Client.call_tool(client, "say_hello", %{"name" => "Developer"}) do
+        {:ok, result} ->
+          # Handle both possible response formats
+          content = result["content"] || result[:content]
+          if content do
+            for item <- content do
+              text = item["text"] || item[:text]
+              if text, do: IO.puts("   Response: #{text}")
+            end
+          else
+            IO.puts("   Response: #{inspect(result)}")
+          end
+        {:error, reason} ->
+          IO.puts("   Error: #{inspect(reason)}")
+      end
+      
+      # Stop the client
+      GenServer.stop(client)
+    else
+      IO.puts("   Note: Run stdio_server.exs first to see this demo")
+      IO.puts("   Command: elixir examples/getting_started/stdio_server.exs")
+    end
+  end
+  
+  defp demo_http_transport do
+    IO.puts("\n3. HTTP Transport Demo")
+    IO.puts("   (Network communication)")
+    IO.puts("   " <> String.duplicate("-", 40))
+    
+    # Try to connect to HTTP server on port 8080
+    case ExMCP.Client.start_link(
+      transport: :http,
+      url: "http://localhost:8080"
+    ) do
+      {:ok, client} ->
+        # Wait for connection
+        Process.sleep(500)
+        
+        # Call the tool
+        case ExMCP.Client.call_tool(client, "say_hello", %{"name" => "Developer"}) do
+          {:ok, result} ->
+            # Handle both possible response formats
+            content = result["content"] || result[:content]
+            if content do
+              for item <- content do
+                text = item["text"] || item[:text]
+                if text, do: IO.puts("   Response: #{text}")
+              end
+            else
+              IO.puts("   Response: #{inspect(result)}")
+            end
+          {:error, reason} ->
+            IO.puts("   Error: #{inspect(reason)}")
+        end
+        
+        # Stop the client
+        GenServer.stop(client)
+        
+      {:error, _} ->
+        IO.puts("   Note: Run simple_http_server.exs first to see this demo")
+        IO.puts("   Command: elixir examples/getting_started/simple_http_server.exs")
+    end
   end
 end
 
-# Start the service
-{:ok, _service} = HelloWorldService.start_link()
-
-# Wait for initialization
-Process.sleep(100)
-
-# List available tools using Native dispatcher
-{:ok, %{"tools" => tools}} = ExMCP.Native.call(:hello_world_service, "list_tools", %{})
-IO.puts("\nAvailable tools:")
-for tool <- tools do
-  IO.puts("  • #{tool["name"]}: #{tool["description"]}")
-end
-
-# Call the tool
-IO.puts("\nCalling say_hello tool...")
-{:ok, %{"content" => content}} = ExMCP.Native.call(:hello_world_service, "tools/call", %{
-  "name" => "say_hello",
-  "arguments" => %{"name" => "ExMCP User"}
-})
-
-# Display the result
-for %{"text" => text} <- content do
-  IO.puts("Service says: #{text}")
-end
-
-IO.puts("\nThat's it! You've successfully created your first MCP service using the Native dispatcher!")
-IO.puts("\nFor standard MCP communication, see the stdio and HTTP examples in transports/")
+# Run the demo
+HelloWorldDemo.run()
