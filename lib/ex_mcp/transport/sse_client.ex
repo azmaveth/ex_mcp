@@ -21,7 +21,7 @@ defmodule ExMCP.Transport.SSEClient do
   @initial_retry_delay 1_000
   @max_retry_delay 60_000
   @heartbeat_interval 30_000
-  @connection_timeout 10_000
+  @connection_timeout 30_000
 
   defstruct [
     :url,
@@ -183,6 +183,10 @@ defmodule ExMCP.Transport.SSEClient do
 
   def handle_info(:reconnect, state) do
     {:noreply, state, {:continue, :connect}}
+  end
+
+  def handle_info({:change_parent, new_parent}, state) do
+    {:noreply, %{state | parent: new_parent}}
   end
 
   def handle_info(_msg, state) do

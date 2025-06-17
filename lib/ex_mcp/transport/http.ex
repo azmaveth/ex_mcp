@@ -74,6 +74,7 @@ defmodule ExMCP.Transport.HTTP do
   """
 
   @behaviour ExMCP.Transport
+  require Logger
 
   alias ExMCP.Internal.Security
   alias ExMCP.Transport.SSEClient
@@ -88,7 +89,8 @@ defmodule ExMCP.Transport.HTTP do
     :origin,
     :session_id,
     :use_sse,
-    :last_event_id
+    :last_event_id,
+    :last_response
   ]
 
   @type t :: %__MODULE__{
@@ -101,7 +103,8 @@ defmodule ExMCP.Transport.HTTP do
           origin: String.t() | nil,
           session_id: String.t() | nil,
           use_sse: boolean(),
-          last_event_id: String.t() | nil
+          last_event_id: String.t() | nil,
+          last_response: map() | nil
         }
 
   @default_endpoint "/mcp/v1"
@@ -116,6 +119,8 @@ defmodule ExMCP.Transport.HTTP do
     security = Keyword.get(config, :security)
     use_sse = Keyword.get(config, :use_sse, true)
     session_id = Keyword.get(config, :session_id)
+    
+    Logger.debug("HTTP transport connecting with use_sse: #{use_sse}, endpoint: #{endpoint}")
 
     # Extract origin if provided
     origin =
@@ -149,11 +154,29 @@ defmodule ExMCP.Transport.HTTP do
     # Validate security configuration
     with :ok <- validate_security(state) do
       if use_sse do
+        Logger.debug("Starting SSE for HTTP transport")
         case start_sse(state) do
-          {:ok, sse_pid} -> {:ok, %{state | sse_pid: sse_pid}}
-          error -> error
+          {:ok, sse_pid} -> 
+            Logger.debug("SSE started successfully with pid: #{inspect(sse_pid)}")
+            # Wait for SSE connection to be fully established
+            receive do
+              {:sse_connected, ^sse_pid} ->
+                Logger.debug("SSE connection fully established")
+                {:ok, %{state | sse_pid: sse_pid}}
+              {:sse_error, ^sse_pid, reason} ->
+                Logger.debug("SSE connection failed: #{inspect(reason)}")
+                {:error, {:sse_connection_failed, reason}}
+            after
+              5_000 ->
+                Logger.debug("SSE connection timeout")
+                {:error, :sse_connection_timeout}
+            end
+          error -> 
+            Logger.debug("SSE start failed: #{inspect(error)}")
+            error
         end
       else
+        Logger.debug("SSE disabled, using synchronous HTTP responses")
         {:ok, state}
       end
     end
@@ -161,20 +184,21 @@ defmodule ExMCP.Transport.HTTP do
 
   @impl true
   def send_message(message, %__MODULE__{} = state) do
-    with {:ok, body} <- Jason.encode(message),
-         result <- perform_http_request(body, state) do
-      case result do
-        {:ok, response} -> handle_http_response(response, state)
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      {:error, reason} ->
-        {:error, {:encoding_error, reason}}
+    Logger.debug("HTTP transport sending message: #{inspect(message)}")
+    # Message is already JSON encoded by the client
+    body = message
+    result = perform_http_request(body, state)
+    
+    case result do
+      {:ok, response} -> handle_http_response(response, state)
+      {:error, reason} -> {:error, reason}
     end
   end
 
   defp perform_http_request(body, state) do
-    url = build_url(state, "/messages")
+    # According to MCP spec, POST directly to the MCP endpoint, not /messages
+    url = build_url(state, "")
+    Logger.debug("HTTP request to URL: #{url}")
     headers = build_request_headers(state)
 
     request = {
@@ -207,6 +231,16 @@ defmodule ExMCP.Transport.HTTP do
           handle_non_sse_response(body, state)
         end
 
+      {_, 202, _} ->
+        # 202 Accepted - notification was accepted, no response body expected
+        if state.use_sse do
+          {:ok, state}
+        else
+          # For non-SSE mode, we still need to signal that the request completed
+          # even though there's no JSON response to parse
+          {:ok, state}
+        end
+
       {_, status, _} ->
         {:error, {:http_error, status, body}}
     end
@@ -219,8 +253,8 @@ defmodule ExMCP.Transport.HTTP do
   defp handle_non_sse_response(body, state) do
     case Jason.decode(body) do
       {:ok, response} ->
-        send(self(), {:http_response, response})
-        {:ok, state}
+        # In non-SSE mode, store response in transport state for immediate access
+        {:ok, %{state | last_response: response}}
 
       {:error, reason} ->
         {:error, {:json_decode_error, reason}}
@@ -236,6 +270,10 @@ defmodule ExMCP.Transport.HTTP do
         new_state = if event_id, do: %{state | last_event_id: event_id}, else: state
 
         case Jason.decode(data) do
+          {:ok, %{"type" => "keep-alive"}} ->
+            # Ignore keep-alive messages and continue receiving
+            receive_message(new_state)
+
           {:ok, message} ->
             {:ok, message, new_state}
 
@@ -251,15 +289,15 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  def receive_message(%__MODULE__{use_sse: false} = state) do
-    # Non-SSE mode - responses come from send_message
-    receive do
-      {:http_response, response} ->
-        {:ok, response, state}
-    after
-      5000 ->
-        {:error, :timeout}
-    end
+  def receive_message(%__MODULE__{use_sse: false, last_response: response} = state) 
+      when response != nil do
+    # Non-SSE mode - return the stored response and clear it
+    {:ok, response, %{state | last_response: nil}}
+  end
+  
+  def receive_message(%__MODULE__{use_sse: false} = _state) do
+    # Non-SSE mode with no response available
+    {:error, :no_response}
   end
 
   def receive_message(%__MODULE__{}) do
@@ -272,12 +310,18 @@ defmodule ExMCP.Transport.HTTP do
     :ok
   end
 
+  def close(%__MODULE__{use_sse: false}) do
+    # Non-SSE mode - no special cleanup needed
+    :ok
+  end
+  
   def close(%__MODULE__{}), do: :ok
 
   # Private functions
 
   defp start_sse(state) do
     url = build_url(state, "/sse")
+    Logger.debug("Starting SSE connection to: #{url}")
     ssl_opts = build_ssl_options_from_state(state)
 
     # Build headers including session

@@ -50,64 +50,123 @@ defmodule SimpleMCPPlug do
   
   # Main MCP endpoint
   post "/" do
+    handle_mcp_request(conn)
+  end
+  
+  # SSE endpoint for streaming responses
+  get "/sse" do
+    conn
+    |> put_resp_header("content-type", "text/event-stream")
+    |> put_resp_header("cache-control", "no-cache")
+    |> put_resp_header("connection", "keep-alive")
+    |> put_resp_header("access-control-allow-origin", "*")
+    |> send_chunked(200)
+    |> then(fn conn ->
+      # Send a keep-alive message every 30 seconds
+      # For this demo, we'll just leave the connection open
+      # In a real implementation, this would handle SSE events
+      :timer.sleep(30000)
+      chunk(conn, "data: {\"type\":\"keep-alive\"}\n\n")
+      conn
+    end)
+  end
+  
+  defp handle_mcp_request(conn) do
     {:ok, body, conn} = read_body(conn)
     
+    IO.puts("Received request body: #{body}")
+    IO.puts("Body type: #{inspect(body)}")
+    
     response = 
-      case Jason.decode(body) do
-        {:ok, %{"method" => "initialize", "id" => id}} ->
-          %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "result" => @mcp_handler
-          }
-          
-        {:ok, %{"method" => "tools/list", "id" => id}} ->
-          %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "result" => %{"tools" => @tools}
-          }
-          
-        {:ok, %{"method" => "tools/call", "params" => %{"name" => "say_hello", "arguments" => args}, "id" => id}} ->
-          name = args["name"] || "World"
-          %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "result" => %{
-              "content" => [
-                %{
-                  "type" => "text",
-                  "text" => "Hello, #{name}! Welcome to ExMCP via HTTP! 🌐"
-                }
-              ]
+      try do
+        decoded = Jason.decode(body)
+        IO.puts("Jason.decode result: #{inspect(decoded)}")
+        
+        case decoded do
+          {:ok, %{"method" => "initialize", "id" => id} = _request} ->
+            # Handle initialize regardless of whether params is present
+            %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => @mcp_handler
             }
-          }
           
-        {:ok, %{"method" => method, "id" => id}} ->
-          %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "error" => %{
-              "code" => -32601,
-              "message" => "Method not found: #{method}"
+          {:ok, %{"method" => "notifications/initialized"}} ->
+            # This is a notification - no response needed according to JSON-RPC
+            # But we need to return something for the HTTP response
+            :notification_received
+            
+          {:ok, %{"method" => "tools/list", "id" => id}} ->
+            %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => %{"tools" => @tools}
             }
-          }
-          
-        {:error, _} ->
+            
+          {:ok, %{"method" => "tools/call", "params" => %{"name" => "say_hello", "arguments" => args}, "id" => id}} ->
+            name = args["name"] || "World"
+            %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => %{
+                "content" => [
+                  %{
+                    "type" => "text",
+                    "text" => "Hello, #{name}! Welcome to ExMCP via HTTP! 🌐"
+                  }
+                ]
+              }
+            }
+            
+          {:ok, %{"method" => method, "id" => id}} ->
+            %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "error" => %{
+                "code" => -32601,
+                "message" => "Method not found: #{method}"
+              }
+            }
+            
+          {:error, reason} ->
+            IO.puts("JSON decode error: #{inspect(reason)}")
+            %{
+              "jsonrpc" => "2.0",
+              "id" => nil,
+              "error" => %{
+                "code" => -32700,
+                "message" => "Parse error"
+              }
+            }
+        end
+      rescue
+        e ->
+          IO.puts("Error handling request: #{inspect(e)}")
           %{
             "jsonrpc" => "2.0",
             "id" => nil,
             "error" => %{
-              "code" => -32700,
-              "message" => "Parse error"
+              "code" => -32603,
+              "message" => "Internal error: #{inspect(e)}"
             }
           }
       end
     
-    conn
-    |> put_resp_header("content-type", "application/json")
-    |> put_resp_header("access-control-allow-origin", "*")
-    |> send_resp(200, Jason.encode!(response))
+    IO.puts("Sending response: #{inspect(response)}")
+    
+    case response do
+      :notification_received ->
+        # For notifications, return 202 Accepted with no body as per MCP spec
+        conn
+        |> put_resp_header("access-control-allow-origin", "*")
+        |> send_resp(202, "")
+        
+      _ ->
+        conn
+        |> put_resp_header("content-type", "application/json")
+        |> put_resp_header("access-control-allow-origin", "*")
+        |> send_resp(200, Jason.encode!(response))
+    end
   end
   
   match _ do

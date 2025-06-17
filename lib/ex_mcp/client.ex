@@ -842,6 +842,9 @@ defmodule ExMCP.Client do
                 pending =
                   Map.put(state.pending_requests, batch_id, {from, :batch_simple, length(batch)})
 
+                # Notify receiver loop of transport state update for non-SSE HTTP
+                notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
+
                 {:noreply,
                  %{state | transport_state: new_transport_state, pending_requests: pending}}
 
@@ -902,6 +905,9 @@ defmodule ExMCP.Client do
               # Store the batch request
               pending = Map.put(state.pending_requests, batch_id, {from, :batch, request_map})
 
+              # Notify receiver loop of transport state update for non-SSE HTTP
+              notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
+
               {:noreply,
                %{state | transport_state: new_transport_state, pending_requests: pending}}
 
@@ -949,6 +955,28 @@ defmodule ExMCP.Client do
     handle_continue(:connect, state)
   end
 
+  # Handle SSE connection events
+  def handle_info({:sse_connected, _sse_pid}, state) do
+    Logger.debug("SSE connection established")
+    {:noreply, state}
+  end
+
+  def handle_info({:sse_error, _sse_pid, reason}, state) do
+    Logger.error("SSE error: #{inspect(reason)}")
+    {:noreply, state}
+  end
+
+  def handle_info({:sse_closed, _sse_pid}, state) do
+    Logger.error("SSE connection closed")
+    {:noreply, state}
+  end
+
+  def handle_info({:sse_event, _sse_pid, _event_data}, state) do
+    # SSE events should go directly to receiver loop now
+    # This handler is only for backward compatibility
+    {:noreply, state}
+  end
+
   # Handle port messages that might arrive before ownership transfer
   def handle_info({port, {:data, _data}}, state) when is_port(port) do
     # Ignore port messages - they should be handled by the transport
@@ -993,6 +1021,7 @@ defmodule ExMCP.Client do
   # Private functions
 
   defp connect_and_initialize(state) do
+    Logger.debug("Client connecting with transport: #{inspect(state.transport_mod)}")
     with {:ok, transport_state} <- state.transport_mod.connect(state.transport_opts),
          :ok <- start_receiver(transport_state, state.transport_mod),
          {:ok, init_result} <- initialize_connection(transport_state, state) do
@@ -1016,7 +1045,9 @@ defmodule ExMCP.Client do
     init_msg = Protocol.encode_initialize(state.client_info, capabilities, state.protocol_version)
 
     with {:ok, json} <- Protocol.encode_to_string(init_msg),
-         {:ok, _} <- state.transport_mod.send_message(json, transport_state) do
+         {:ok, new_transport_state} <- state.transport_mod.send_message(json, transport_state) do
+      # Notify receiver loop for non-SSE HTTP transports
+      notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
       # Wait for initialize response
       receive do
         {:transport_message, message} ->
@@ -1030,7 +1061,8 @@ defmodule ExMCP.Client do
               # Send initialized notification
               notif = Protocol.encode_initialized()
               {:ok, json} = Protocol.encode_to_string(notif)
-              state.transport_mod.send_message(json, transport_state)
+              # For the notification, we use the latest transport state
+              state.transport_mod.send_message(json, new_transport_state)
               {:ok, result}
 
             {:error, error, _id} ->
@@ -1049,21 +1081,69 @@ defmodule ExMCP.Client do
   defp start_receiver(transport_state, transport_mod) do
     parent = self()
 
-    spawn_link(fn ->
+    receiver_pid = spawn_link(fn ->
       receive_loop(transport_state, transport_mod, parent)
     end)
 
+    # Store the receiver PID so we can forward messages to it
+    Process.put(:receiver_pid, receiver_pid)
+    
+    # For SSE transports, redirect SSE events to go directly to the receiver loop
+    if transport_mod == ExMCP.Transport.HTTP and transport_state.use_sse and transport_state.sse_pid do
+      # Tell the SSE client to send events to the receiver loop instead of the client process
+      send(transport_state.sse_pid, {:change_parent, receiver_pid})
+    end
+    
     :ok
   end
 
   defp receive_loop(transport_state, transport_mod, parent) do
-    case transport_mod.receive_message(transport_state) do
-      {:ok, message, new_state} ->
-        send(parent, {:transport_message, message})
-        receive_loop(new_state, transport_mod, parent)
+    # For SSE transports, we receive events directly from the SSE client
+    if transport_mod == ExMCP.Transport.HTTP and transport_state.use_sse do
+      receive do
+        {:sse_event, _sse_pid, %{data: data, id: event_id}} ->
+          case Jason.decode(data) do
+            {:ok, %{"type" => "keep-alive"}} ->
+              # Ignore keep-alive messages and continue
+              receive_loop(transport_state, transport_mod, parent)
 
-      {:error, reason} ->
-        send(parent, {:transport_closed, reason})
+            {:ok, message} ->
+              send(parent, {:transport_message, message})
+              new_state = if event_id, do: %{transport_state | last_event_id: event_id}, else: transport_state
+              receive_loop(new_state, transport_mod, parent)
+
+            {:error, _reason} ->
+              # Invalid JSON, continue receiving
+              receive_loop(transport_state, transport_mod, parent)
+          end
+
+        {:sse_error, _sse_pid, reason} ->
+          send(parent, {:transport_closed, {:sse_error, reason}})
+
+        {:sse_closed, _sse_pid} ->
+          send(parent, {:transport_closed, :connection_closed})
+      end
+    else
+      # For non-SSE transports, use the transport's receive_message
+      case transport_mod.receive_message(transport_state) do
+        {:ok, message, new_state} ->
+          send(parent, {:transport_message, message})
+          receive_loop(new_state, transport_mod, parent)
+
+        {:error, :no_response} ->
+          # For HTTP without SSE, wait for updated transport state with responses
+          receive do
+            {:update_transport_state, new_transport_state} ->
+              receive_loop(new_transport_state, transport_mod, parent)
+          after
+            100 ->
+              # Timeout waiting for update, continue polling
+              receive_loop(transport_state, transport_mod, parent)
+          end
+
+        {:error, reason} ->
+          send(parent, {:transport_closed, reason})
+      end
     end
   end
 
@@ -1082,6 +1162,9 @@ defmodule ExMCP.Client do
                 | transport_state: new_transport_state,
                   pending_requests: pending
               }
+
+              # Notify receiver loop of transport state update for non-SSE HTTP
+              notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
 
               {:noreply, new_state}
 
@@ -1103,6 +1186,8 @@ defmodule ExMCP.Client do
         {:ok, json} ->
           case send_with_auth(json, state) do
             {:ok, new_transport_state} ->
+              # Notify receiver loop of transport state update for non-SSE HTTP
+              notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
               {:noreply, %{state | transport_state: new_transport_state}}
 
             {:error, reason} ->
@@ -1803,6 +1888,19 @@ defmodule ExMCP.Client do
 
       _ ->
         {:error, {:http_error, status, body}}
+    end
+  end
+
+  # Helper function to notify receiver loop of transport state updates
+  defp notify_receiver_of_transport_update(transport_state, transport_mod) do
+    # Only notify for non-SSE HTTP transports that need manual state updates
+    if transport_mod == ExMCP.Transport.HTTP and not transport_state.use_sse do
+      case Process.get(:receiver_pid) do
+        pid when is_pid(pid) ->
+          send(pid, {:update_transport_state, transport_state})
+        _ ->
+          :ok
+      end
     end
   end
 end
