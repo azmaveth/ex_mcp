@@ -115,16 +115,17 @@ defmodule SimpleMCPPlug do
   end
 end
 
-# Start the server
-{:ok, _} = Plug.Cowboy.http(SimpleMCPPlug, [], port: 8080)
+# Start the server on port 8321 (uncommon port to avoid conflicts)
+port = 8321
+{:ok, _} = Plug.Cowboy.http(SimpleMCPPlug, [], port: port)
 
 IO.puts("""
-Simple HTTP MCP Server started on port 8080!
+Simple HTTP MCP Server started on port #{port}!
 
 Test with curl:
-curl -X POST http://localhost:8080 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
-curl -X POST http://localhost:8080 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}'
-curl -X POST http://localhost:8080 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"say_hello","arguments":{"name":"Developer"}},"id":3}'
+curl -X POST http://localhost:#{port} -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
+curl -X POST http://localhost:#{port} -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}'
+curl -X POST http://localhost:#{port} -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"say_hello","arguments":{"name":"Developer"}},"id":3}'
 
 Keep this script running to maintain the server.
 Press Ctrl+C to stop.

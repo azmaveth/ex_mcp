@@ -26,13 +26,13 @@ elixir stdio_server.exs
 
 Or use it with the hello_world demo (it will be launched as a subprocess).
 
-### 3. `http_server.exs` - HTTP MCP Server
-An MCP server that communicates over HTTP using Server-Sent Events (SSE) for server-to-client messages.
+### 3. `simple_http_server.exs` - Simple HTTP MCP Server
+A simple HTTP MCP server using Plug that responds to JSON-RPC requests.
 
 Run it:
 ```bash
-elixir http_server.exs
-# Server will start on http://localhost:8080
+elixir simple_http_server.exs
+# Server will start on http://localhost:8321
 ```
 
 Then connect with any MCP client that supports HTTP transport.

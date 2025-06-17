@@ -145,10 +145,10 @@ defmodule HelloWorldDemo do
     IO.puts("   (Network communication)")
     IO.puts("   " <> String.duplicate("-", 40))
     
-    # Try to connect to HTTP server on port 8080
+    # Try to connect to HTTP server on port 8321
     case ExMCP.Client.start_link(
       transport: :http,
-      url: "http://localhost:8080"
+      url: "http://localhost:8321"
     ) do
       {:ok, client} ->
         # Wait for connection and initialization
@@ -158,7 +158,7 @@ defmodule HelloWorldDemo do
         case Process.info(client, :dictionary) do
           nil ->
             IO.puts("   Error: Client process died")
-            IO.puts("   Note: HTTP server not running on port 8080")
+            IO.puts("   Note: HTTP server not running on port 8321")
             IO.puts("   To see this demo, run in another terminal:")
             IO.puts("   $ elixir examples/getting_started/simple_http_server.exs")
           _ ->
@@ -177,7 +177,7 @@ defmodule HelloWorldDemo do
             end
           {:error, :not_connected} ->
             IO.puts("   Error: Failed to connect to HTTP server")
-            IO.puts("   Make sure the server is running on port 8080")
+            IO.puts("   Make sure the server is running on port 8321")
           {:error, reason} ->
             IO.puts("   Error: #{inspect(reason)}")
             end
@@ -187,7 +187,7 @@ defmodule HelloWorldDemo do
         if Process.alive?(client), do: GenServer.stop(client)
         
       {:error, reason} ->
-        IO.puts("   Note: HTTP server not running on port 8080")
+        IO.puts("   Note: HTTP server not running on port 8321")
         IO.puts("   To see this demo, run in another terminal:")
         IO.puts("   $ elixir examples/getting_started/simple_http_server.exs")
         IO.puts("   Error details: #{inspect(reason)}")
