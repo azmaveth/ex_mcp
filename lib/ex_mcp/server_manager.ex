@@ -9,6 +9,25 @@ defmodule ExMCP.ServerManager do
 
   @deprecated "Use ExMCP.Internal.ServerManager instead. Note that internal modules are not part of the public API."
 
+  # Suppress Dialyzer warnings for wrapper delegations
+  @dialyzer {:nowarn_function,
+             [
+               start_link: 0,
+               start_link: 1,
+               start_server: 1,
+               start_server: 2,
+               stop_server: 1,
+               stop_server: 2,
+               list_servers: 0,
+               list_servers: 1,
+               get_server: 1,
+               get_server: 2,
+               route_request: 2,
+               route_request: 3,
+               discover_and_start: 0,
+               discover_and_start: 1
+             ]}
+
   # Delegate all function calls to the new location
   defdelegate start_link(opts \\ []), to: ExMCP.Internal.ServerManager
   defdelegate start_server(server_id, opts \\ []), to: ExMCP.Internal.ServerManager

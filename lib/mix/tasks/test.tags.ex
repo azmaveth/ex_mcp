@@ -1,6 +1,4 @@
 defmodule Mix.Tasks.Test.Tags do
-  @dialyzer [:no_behaviours]
-
   @moduledoc """
   List and describe test tags used in ExMCP.
 

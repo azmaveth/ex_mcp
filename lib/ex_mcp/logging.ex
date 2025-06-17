@@ -9,6 +9,34 @@ defmodule ExMCP.Logging do
 
   @deprecated "Use ExMCP.Internal.Logging instead. Note that internal modules are not part of the public API."
 
+  # Suppress Dialyzer warnings for wrapper delegations
+  @dialyzer {:nowarn_function,
+             [
+               set_global_level: 1,
+               get_global_level: 0,
+               level_enabled?: 1,
+               log: 2,
+               log: 3,
+               log: 4,
+               debug: 1,
+               debug: 2,
+               debug: 3,
+               info: 1,
+               info: 2,
+               info: 3,
+               warning: 1,
+               warning: 2,
+               warning: 3,
+               error: 1,
+               error: 2,
+               error: 3,
+               critical: 1,
+               critical: 2,
+               critical: 3,
+               valid_level?: 1,
+               valid_levels: 0
+             ]}
+
   # Delegate all function calls to the new location
   defdelegate set_global_level(level), to: ExMCP.Internal.Logging
   defdelegate get_global_level(), to: ExMCP.Internal.Logging

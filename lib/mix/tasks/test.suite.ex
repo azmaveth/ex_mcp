@@ -1,6 +1,4 @@
 defmodule Mix.Tasks.Test.Suite do
-  @dialyzer [:no_behaviours]
-
   @moduledoc """
   Run specific test suites for ExMCP.
 
