@@ -1,10 +1,10 @@
 defmodule ExMCP.VersionRegistry do
-  @moduledoc """
-  Registry for MCP protocol versions and their capabilities.
+  @moduledoc false
 
-  This module manages protocol version differences and provides
-  version-specific behavior for the MCP implementation.
-  """
+  # Registry for MCP protocol versions and their capabilities.
+  #
+  # This module manages protocol version differences and provides
+  # version-specific behavior for the MCP implementation.
 
   @type version :: String.t()
   @type capability_key :: atom()

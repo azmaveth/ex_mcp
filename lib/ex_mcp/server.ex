@@ -1,23 +1,53 @@
 defmodule ExMCP.Server do
   @moduledoc """
-  This module implements the standard MCP specification.
+  MCP server implementation that handles connections from MCP clients.
 
-  MCP server implementation.
+  This module implements the Model Context Protocol server specification,
+  providing a GenServer that manages client connections and delegates
+  functionality to a user-provided handler module.
 
-  This module handles the protocol layer for MCP servers, delegating
-  the actual functionality to a handler module that implements the
-  `ExMCP.Server.Handler` behaviour.
+  ## Quick Start
+
+      defmodule MyHandler do
+        use ExMCP.Server.Handler
+        
+        @impl true
+        def handle_list_tools(state) do
+          tools = [%{name: "echo", description: "Echo input"}]
+          {:ok, tools, state}
+        end
+        
+        @impl true  
+        def handle_call_tool("echo", params, state) do
+          {:ok, [%{type: "text", text: params["message"]}], state}
+        end
+      end
+      
+      {:ok, server} = ExMCP.Server.start_link(
+        handler: MyHandler,
+        transport: :stdio
+      )
 
   ## Features
 
-  - Multiple transport support (stdio, HTTP, BEAM*)
-  - Tool, resource, and prompt management
+  **MCP Standard Features:**
+  - Tools execution and listing
+  - Resource management and reading
+  - Prompt templates and generation
   - Progress notifications for long operations
-  - Change notifications for dynamic content
-  - Sampling/LLM integration support
+  - Resource change subscriptions
+  - Roots for URI boundaries
+  - LLM sampling support
 
-  All core functionality is MCP specification compliant.
-  *BEAM transport is an ExMCP extension.
+  **Supported Transports:**
+  - `:stdio` - Standard I/O communication (MCP standard)
+  - `:http` - HTTP with optional SSE streaming (MCP standard)
+  - `:test` - In-memory transport for testing
+
+  ## Handler Implementation
+
+  Your handler module must implement the `ExMCP.Server.Handler` behaviour.
+  See `ExMCP.Server.Handler` documentation for required callbacks and examples.
 
   ## Example
 

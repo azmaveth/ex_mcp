@@ -1,44 +1,44 @@
 defmodule ExMCP.Resilience do
-  @moduledoc """
-  Optional resilience patterns for ExMCP.Native service calls.
+  @moduledoc false
 
-  This module provides composable resilience patterns for services that need 
-  additional fault tolerance beyond OTP's built-in supervision and monitoring.
-
-  ## Trade-offs
-
-  Using these patterns adds latency and complexity to service calls. In trusted
-  Elixir clusters, OTP supervision typically provides better fault tolerance.
-  Use these patterns only when you need specific resilience behaviors.
-
-  ## Examples
-
-      # Simple retry with exponential backoff
-      {:ok, result} = ExMCP.Resilience.call_with_retry(
-        :my_service, 
-        "method", 
-        %{}, 
-        max_attempts: 3,
-        backoff: :exponential
-      )
-
-      # Circuit breaker pattern (requires :fuse dependency)
-      {:ok, result} = ExMCP.Resilience.call_with_breaker(
-        :my_service,
-        "method",
-        %{},
-        circuit_name: :my_service_circuit
-      )
-
-      # Timeout with fallback
-      result = ExMCP.Resilience.call_with_fallback(
-        :my_service,
-        "method", 
-        %{},
-        timeout: 1000,
-        fallback: fn -> {:ok, %{"status" => "unavailable"}} end
-      )
-  """
+  # Optional resilience patterns for ExMCP.Native service calls.
+  #
+  # This module provides composable resilience patterns for services that need 
+  # additional fault tolerance beyond OTP's built-in supervision and monitoring.
+  #
+  # ## Trade-offs
+  #
+  # Using these patterns adds latency and complexity to service calls. In trusted
+  # Elixir clusters, OTP supervision typically provides better fault tolerance.
+  # Use these patterns only when you need specific resilience behaviors.
+  #
+  # ## Examples
+  #
+  #     # Simple retry with exponential backoff
+  #     {:ok, result} = ExMCP.Resilience.call_with_retry(
+  #       :my_service, 
+  #       "method", 
+  #       %{}, 
+  #       max_attempts: 3,
+  #       backoff: :exponential
+  #     )
+  #
+  #     # Circuit breaker pattern (requires :fuse dependency)
+  #     {:ok, result} = ExMCP.Resilience.call_with_breaker(
+  #       :my_service,
+  #       "method",
+  #       %{},
+  #       circuit_name: :my_service_circuit
+  #     )
+  #
+  #     # Timeout with fallback
+  #     result = ExMCP.Resilience.call_with_fallback(
+  #       :my_service,
+  #       "method", 
+  #       %{},
+  #       timeout: 1000,
+  #       fallback: fn -> {:ok, %{"status" => "unavailable"}} end
+  #     )
 
   require Logger
 

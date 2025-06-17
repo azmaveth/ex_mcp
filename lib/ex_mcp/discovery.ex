@@ -1,33 +1,32 @@
 defmodule ExMCP.Discovery do
-  @moduledoc """
-  This module provides ExMCP extensions beyond the standard MCP specification.
+  @moduledoc false
 
-  MCP server discovery functionality.
-
-  Provides mechanisms to discover available MCP servers through:
-  - Environment variables (including pattern matching)
-  - Configuration files
-  - Well-known locations
-  - NPM package discovery
-  - Python package discovery
-  - Executable server detection
-  - Service registration
-
-  > #### Extension Module {: .info}
-  > Server discovery is an ExMCP extension not part of the official MCP specification.
-  > This provides convenient auto-discovery of MCP servers in your environment.
-
-  ## Examples
-
-      # Discover all servers using default methods
-      servers = ExMCP.Discovery.discover_servers()
-      
-      # Discover using specific methods
-      servers = ExMCP.Discovery.discover_servers(methods: [:npm, :env, :config])
-      
-      # Test if a server is reachable
-      ExMCP.Discovery.test_server(server_config)
-  """
+  # This module provides ExMCP extensions beyond the standard MCP specification.
+  #
+  # MCP server discovery functionality.
+  #
+  # Provides mechanisms to discover available MCP servers through:
+  # - Environment variables (including pattern matching)
+  # - Configuration files
+  # - Well-known locations
+  # - NPM package discovery
+  # - Python package discovery
+  # - Executable server detection
+  # - Service registration
+  #
+  # > Extension Module: Server discovery is an ExMCP extension not part of the official MCP specification.
+  # > This provides convenient auto-discovery of MCP servers in your environment.
+  #
+  # ## Examples
+  #
+  #     # Discover all servers using default methods
+  #     servers = ExMCP.Discovery.discover_servers()
+  #     
+  #     # Discover using specific methods
+  #     servers = ExMCP.Discovery.discover_servers(methods: [:npm, :env, :config])
+  #     
+  #     # Test if a server is reachable
+  #     ExMCP.Discovery.test_server(server_config)
 
   import Bitwise
   require Logger

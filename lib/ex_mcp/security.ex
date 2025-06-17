@@ -1,76 +1,73 @@
 defmodule ExMCP.Security do
-  @moduledoc """
-  Security configuration and utilities for MCP transports.
+  @moduledoc false
 
-  Provides a unified API for configuring authentication, authorization,
-  and security headers across all MCP transports.
-
-  ## Security Configuration
-
-  Security can be configured at the transport level:
-
-      # Bearer token authentication
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :http,
-        url: "https://api.example.com",
-        security: %{
-          auth: {:bearer, "your-token-here"},
-          validate_origin: true,
-          allowed_origins: ["https://trusted.example.com"]
-        }
-      )
-
-      # API key authentication
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :http,
-        url: "https://api.example.com",
-        security: %{
-          auth: {:api_key, "your-api-key", header: "X-API-Key"}
-        }
-      )
-
-      # OAuth 2.1 authentication
-      {:ok, token_response} = ExMCP.Authorization.client_credentials_flow(%{
-        client_id: "my-client",
-        client_secret: "my-secret",
-        token_endpoint: "https://auth.example.com/token"
-      })
-      
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :http,
-        url: "https://api.example.com",
-        security: %{
-          auth: {:oauth2, token_response}
-        }
-      )
-
-      # Custom headers
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :http,
-        url: "https://api.example.com",
-        security: %{
-          headers: [
-            {"X-Custom-Header", "value"},
-            {"X-Request-ID", "uuid"}
-          ]
-        }
-      )
-
-  ## Security Features by Transport
-
-  | Feature | HTTP | BEAM | stdio |
-  |---------|------|------|-------|
-  | Bearer Auth | ✓ | ✓ | - |
-  | OAuth 2.1 | ✓ | ✓ | - |
-  | API Key | ✓ | ✓ | ✓ | - |
-  | Custom Headers | ✓ | ✓ | - | - |
-  | Origin Validation | ✓ | ✓ | - | - |
-  | CORS Headers | ✓ | - | - | - |
-  | TLS/SSL | ✓ | ✓ | ✓* | - |
-  | Mutual TLS | ✓ | ✓ | - | - |
-
-  *BEAM transport uses Erlang distribution security
-  """
+  # Provides authentication and security headers across all MCP transports.
+  #
+  # ## Security Configuration
+  #
+  # Security can be configured at the transport level:
+  #
+  #     # Bearer token authentication
+  #     {:ok, client} = ExMCP.Client.start_link(
+  #       transport: :http,
+  #       url: "https://api.example.com",
+  #       security: %{
+  #         auth: {:bearer, "your-token-here"},
+  #         validate_origin: true,
+  #         allowed_origins: ["https://trusted.example.com"]
+  #       }
+  #     )
+  #
+  #     # API key authentication
+  #     {:ok, client} = ExMCP.Client.start_link(
+  #       transport: :http,
+  #       url: "https://api.example.com",
+  #       security: %{
+  #         auth: {:api_key, "your-api-key", header: "X-API-Key"}
+  #       }
+  #     )
+  #
+  #     # OAuth 2.1 authentication
+  #     {:ok, token_response} = ExMCP.Authorization.client_credentials_flow(%{
+  #       client_id: "my-client",
+  #       client_secret: "my-secret",
+  #       token_endpoint: "https://auth.example.com/token"
+  #     })
+  #     
+  #     {:ok, client} = ExMCP.Client.start_link(
+  #       transport: :http,
+  #       url: "https://api.example.com",
+  #       security: %{
+  #         auth: {:oauth2, token_response}
+  #       }
+  #     )
+  #
+  #     # Custom headers
+  #     {:ok, client} = ExMCP.Client.start_link(
+  #       transport: :http,
+  #       url: "https://api.example.com",
+  #       security: %{
+  #         headers: [
+  #           {"X-Custom-Header", "value"},
+  #           {"X-Request-ID", "uuid"}
+  #         ]
+  #       }
+  #     )
+  #
+  # ## Security Features by Transport
+  #
+  # | Feature | HTTP | BEAM | stdio |
+  # |---------|------|------|-------|
+  # | Bearer Auth | ✓ | ✓ | - |
+  # | OAuth 2.1 | ✓ | ✓ | - |
+  # | API Key | ✓ | ✓ | ✓ | - |
+  # | Custom Headers | ✓ | ✓ | - | - |
+  # | Origin Validation | ✓ | ✓ | - | - |
+  # | CORS Headers | ✓ | - | - | - |
+  # | TLS/SSL | ✓ | ✓ | ✓* | - |
+  # | Mutual TLS | ✓ | ✓ | - | - |
+  #
+  # *BEAM transport uses Erlang distribution security
 
   @type auth_method ::
           {:bearer, token :: String.t()}

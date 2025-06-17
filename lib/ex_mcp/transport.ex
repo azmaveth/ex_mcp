@@ -1,16 +1,36 @@
 defmodule ExMCP.Transport do
   @moduledoc """
-  This module implements the standard MCP specification.
+  Behaviour definition for MCP transport implementations.
 
-  Behaviour for MCP transport implementations.
+  A transport is responsible for sending and receiving MCP protocol messages
+  over a specific communication channel. ExMCP includes implementations for
+  the standard MCP transports and provides this behaviour for custom implementations.
 
-  A transport is responsible for sending and receiving MCP protocol
-  messages over a specific communication channel (stdio, Streamable HTTP, etc).
+  ## Built-in Transports
 
-  While the behaviour itself is an implementation detail, it enables the
-  official MCP transports (stdio and Streamable HTTP) as well as custom transports.
+  ExMCP provides these standard transports:
 
-  ## Implementing a Transport
+  - **`:stdio`** - Standard I/O communication (MCP specification)
+  - **`:http`** - HTTP with optional SSE streaming (MCP specification)  
+  - **`:test`** - In-memory transport for testing
+
+  ## Using Transports
+
+  Transports are specified when starting clients or servers:
+
+      # stdio transport
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :stdio,
+        command: ["python", "mcp-server.py"]
+      )
+
+      # HTTP transport
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :http,
+        url: "https://api.example.com"
+      )
+
+  ## Custom Transport Implementation
 
   To implement a custom transport, create a module that implements
   all the callbacks defined in this behaviour:

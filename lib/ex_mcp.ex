@@ -6,44 +6,65 @@ defmodule ExMCP do
   a standardized protocol. It provides both client and server implementations with
   multiple transport options.
 
-  ## API Categories
+  ## Public API
 
-  This library provides three categories of APIs:
+  ExMCP provides a clean, focused public API. Only use these modules in your applications:
 
-  ### MCP Specification Features (Portable)
+  ### Core Modules
+  - `ExMCP` - This module (convenience functions and metadata)
+  - `ExMCP.Client` - MCP client implementation
+  - `ExMCP.Server` - MCP server implementation  
+  - `ExMCP.Native` - High-performance BEAM service dispatcher
+  - `ExMCP.Service` - Macro for automatic service registration
+  - `ExMCP.Transport` - Transport behaviour definition
 
-  These APIs implement the official MCP specification and are portable across all
-  MCP implementations:
+  ### Supporting Modules
+  - `ExMCP.Content` - Content type helpers
+  - `ExMCP.Types` - Type definitions (stable across versions)
 
-  - `ExMCP.Client` - Core client operations (list_tools, call_tool, etc.)
-  - `ExMCP.Server` - Core server functionality
-  - `ExMCP.Protocol` - Message encoding/decoding
-  - `ExMCP.Types` - Standard MCP types
+  > #### Internal Modules {: .warning}
+  > 
+  > All other modules under the `ExMCP` namespace are internal implementation details
+  > and may change without notice. Do not depend on them directly in your applications.
 
-  ### ExMCP Extensions (Elixir-specific)
+  ## Quick Start
 
-  > #### Extension Feature {: .warning}
-  > These features are specific to ExMCP and not part of the official MCP specification.
+  ### Start a Client
 
-  - `ExMCP.ServerManager` - Manage multiple server connections
-  - `ExMCP.Discovery` - Discover available MCP servers
-  - `ExMCP.Transport.Beam.Enhanced` - Production-ready BEAM transport with advanced features
-  - Automatic reconnection in `ExMCP.Client`
-  - Batch operations in `ExMCP.Client`
+      # Connect to stdio server
+      {:ok, client} = ExMCP.start_client(
+        transport: :stdio,
+        command: ["python", "mcp-server.py"]
+      )
 
-  ### Draft Specification Features (Experimental)
+      # Connect with HTTP
+      {:ok, client} = ExMCP.start_client(
+        transport: :http,
+        url: "https://api.example.com"
+      )
 
-  > #### Draft Feature {: .info}
-  > These features implement the draft MCP specification and may change.
+  ### Start a Server
 
-  - **Structured Tool Output** - Tools can return structured data with schema validation
-    - `outputSchema` field in tool definitions
-    - `structuredContent` in tool results
-    - See `ExMCP.Server.Handler` for examples
+      {:ok, server} = ExMCP.start_server(
+        handler: MyApp.MCPHandler,
+        transport: :stdio
+      )
 
-  ## Protocol Features
+  ### Native BEAM Communication
 
-  ExMCP implements the full MCP specification (version 2025-03-26):
+      # High-performance service-to-service calls
+      {:ok, result} = ExMCP.Native.call(:my_service, "method", %{})
+
+  ## Protocol Versions
+
+  ExMCP supports multiple MCP protocol versions:
+  - **2024-11-05** - Base MCP features
+  - **2025-03-26** - Latest stable (subscriptions, roots, logging)
+  - **draft** - Experimental features
+
+  See the README.md for a complete feature comparison chart.
+
+  ## Features
 
   - **Tools** - Register and execute functions with parameters
   - **Resources** - List and read data from various sources
@@ -53,142 +74,114 @@ defmodule ExMCP do
   - **Subscriptions** - Monitor resources for changes
   - **Progress** - Track long-running operations
   - **Notifications** - Real-time updates for changes
+  - **Native BEAM** - High-performance Elixir-to-Elixir communication
 
   ## Transport Options
 
-  ### stdio Transport
-  Process communication via standard input/output (standard MCP specification). Best for:
-  - Subprocess communication
-  - Cross-language integration
-  - Command-line tools
+  - **stdio** - Process communication (standard MCP)
+  - **HTTP/SSE** - Web-friendly transport (standard MCP)
+  - **Native BEAM** - Direct Erlang process communication (ExMCP extension)
 
-  ### Streamable HTTP Transport
-  HTTP with Server-Sent Events streaming (standard MCP specification). Best for:
-  - Web integration
-  - Firewall-friendly communication
-  - RESTful architectures
+  ## Examples
 
-  ### BEAM Transport
-  Native Erlang/Elixir message passing (ExMCP extension). Best for:
-  - Elixir-to-Elixir communication
-  - High-performance local tools
-  - Distributed Erlang clusters
+  ### Basic Client Usage
 
-  ## Quick Start
+      {:ok, client} = ExMCP.start_client(transport: :stdio, command: ["mcp-server"])
+      
+      # List and call tools
+      {:ok, %{tools: tools}} = ExMCP.Client.list_tools(client)
+      {:ok, result} = ExMCP.Client.call_tool(client, "search", %{query: "elixir"})
+      
+      # Read resources
+      {:ok, content} = ExMCP.Client.read_resource(client, "file:///data.json")
 
-  ### Client Example
+  ### Basic Server Usage
 
-      # Connect to a stdio server
-      {:ok, client} = ExMCP.Client.start_link(
+      defmodule MyHandler do
+        use ExMCP.Server.Handler
+        
+        @impl true
+        def handle_list_tools(state) do
+          tools = [%{name: "echo", description: "Echo input"}]
+          {:ok, tools, state}
+        end
+        
+        @impl true
+        def handle_call_tool("echo", params, state) do
+          {:ok, [%{type: "text", text: params["message"]}], state}
+        end
+      end
+      
+      {:ok, server} = ExMCP.start_server(handler: MyHandler, transport: :stdio)
+
+  ### Native BEAM Service
+
+      defmodule MyService do
+        use ExMCP.Service, name: :my_service
+        
+        @impl true
+        def handle_mcp_request("ping", _params, state) do
+          {:ok, %{"response" => "pong"}, state}
+        end
+      end
+      
+      # Automatic registration and discovery
+      {:ok, _} = MyService.start_link()
+      {:ok, result} = ExMCP.Native.call(:my_service, "ping", %{})
+  """
+
+  alias ExMCP.Client
+  alias ExMCP.Server
+
+  @doc """
+  Convenience function to start an MCP client.
+
+  This is equivalent to `ExMCP.Client.start_link/1` but provides a simpler
+  entry point for common use cases.
+
+  ## Examples
+
+      # stdio transport
+      {:ok, client} = ExMCP.start_client(
         transport: :stdio,
         command: ["python", "mcp-server.py"]
       )
 
-      # List available tools
-      {:ok, tools} = ExMCP.Client.list_tools(client)
+      # HTTP transport  
+      {:ok, client} = ExMCP.start_client(
+        transport: :http,
+        url: "https://api.example.com"
+      )
 
-      # Call a tool
-      {:ok, result} = ExMCP.Client.call_tool(client, "search", %{
-        query: "Elixir metaprogramming"
-      })
+  """
+  @spec start_client(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_client(opts) do
+    Client.start_link(opts)
+  end
 
-      # Read a resource
-      {:ok, content} = ExMCP.Client.read_resource(client, "file:///data.json")
+  @doc """
+  Convenience function to start an MCP server.
 
-      # Subscribe to changes
-      {:ok, _} = ExMCP.Client.subscribe_resource(client, "file:///config.json")
+  This is equivalent to `ExMCP.Server.start_link/1` but provides a simpler
+  entry point for common use cases.
 
-  ### Server Example
+  ## Examples
 
-      defmodule MyServer do
-        use ExMCP.Server.Handler
-
-        @impl true
-        def init(_args) do
-          {:ok, %{}}
-        end
-
-        @impl true
-        def handle_initialize(_params, state) do
-          {:ok, %{
-            name: "my-server",
-            version: "1.0.0",
-            capabilities: %{
-              tools: %{},
-              resources: %{subscribe: true},
-              roots: %{}
-            }
-          }, state}
-        end
-
-        @impl true
-        def handle_list_tools(state) do
-          tools = [
-            %{
-              name: "echo",
-              description: "Echoes the input",
-              input_schema: %{
-                type: "object",
-                properties: %{
-                  message: %{type: "string"}
-                },
-                required: ["message"]
-              },
-              # Tool annotations (new in 2025-03-26)
-              readOnlyHint: true,
-              destructiveHint: false,
-              costHint: :low
-            }
-          ]
-          {:ok, tools, state}
-        end
-
-        @impl true
-        def handle_call_tool("echo", %{"message" => msg}, state) do
-          {:ok, [%{type: "text", text: msg}], state}
-        end
-
-        # ... implement other callbacks
-      end
-
-      # Start the server
-      {:ok, server} = ExMCP.Server.start_link(
-        handler: MyServer,
+      {:ok, server} = ExMCP.start_server(
+        handler: MyApp.Handler,
         transport: :stdio
       )
 
-  ### BEAM Transport Example
-
-      # Server on node1
-      {:ok, server} = ExMCP.Server.start_link(
-        handler: ToolServer,
-        transport: :beam,
-        name: {:global, :tool_server}
-      )
-
-      # Client on node2
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :beam,
-        server: {:global, :tool_server}
-      )
-
-      # Works transparently across nodes
-      {:ok, result} = ExMCP.Client.call_tool(client, "process", %{})
-
-  ## Documentation
-
-  - [User Guide](https://github.com/azmaveth/ex_mcp/blob/master/USER_GUIDE.md) - Comprehensive guide
-  - [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) - Working examples
-  - [API Docs](https://hexdocs.pm/ex_mcp) - Full API reference
-
-  ## Protocol Compliance
-
-  ExMCP implements MCP specification version 2025-03-26, including all latest features:
-  roots capability, resource subscriptions, tool annotations, and multimodal content support.
   """
+  @spec start_server(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_server(opts) do
+    Server.start_link(opts)
+  end
 
   @doc """
-  Returns the version of the MCP protocol this library implements.
+  Returns the version of the MCP protocol this library implements by default.
+
+  ExMCP supports multiple protocol versions. This returns the default/latest stable version.
   """
   @spec protocol_version() :: String.t()
   def protocol_version do
@@ -200,6 +193,14 @@ defmodule ExMCP do
   """
   @spec version() :: String.t()
   def version do
-    "0.2.0"
+    Application.spec(:ex_mcp, :vsn) |> to_string()
+  end
+
+  @doc """
+  Returns information about supported protocol versions.
+  """
+  @spec supported_versions() :: [String.t()]
+  def supported_versions do
+    ["2024-11-05", "2025-03-26", "draft"]
   end
 end

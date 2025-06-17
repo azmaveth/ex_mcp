@@ -1,47 +1,47 @@
 defmodule ExMCP.Logging do
-  @moduledoc """
-  Enhanced logging utilities for ExMCP that integrate with Elixir's Logger system.
+  @moduledoc false
 
-  This module provides:
-  1. Automatic conversion between MCP log levels and Elixir Logger levels
-  2. Global log level configuration for MCP servers
-  3. Structured logging with MCP-compliant format
-  4. Integration with Logger configuration
-
-  ## Log Level Mapping
-
-  MCP log levels are mapped to Elixir Logger levels as follows:
-
-  | MCP Level | Elixir Level | Description |
-  |-----------|-------------|-------------|
-  | debug     | :debug      | Detailed debugging information |
-  | info      | :info       | General informational messages |
-  | notice    | :info       | Normal but significant events |
-  | warning   | :warning    | Warning conditions |
-  | error     | :error      | Error conditions |
-  | critical  | :error      | Critical conditions |
-  | alert     | :error      | Action must be taken immediately |
-  | emergency | :error      | System is unusable |
-
-  ## Usage
-
-      # Configure global log level for MCP
-      ExMCP.Logging.set_global_level("debug")
-
-      # Log with MCP format (will also log to Elixir Logger)
-      ExMCP.Logging.log(server, "info", "Operation completed", %{duration: 123})
-
-      # Check if a level is enabled
-      if ExMCP.Logging.level_enabled?("debug") do
-        # Expensive debug computation
-        ExMCP.Logging.debug(server, "Debug info", expensive_data())
-      end
-
-  ## Security
-
-  This module automatically sanitizes log data to remove sensitive information
-  such as passwords, tokens, and keys from log messages.
-  """
+  # Enhanced logging utilities for ExMCP that integrate with Elixir's Logger system.
+  #
+  # This module provides:
+  # 1. Automatic conversion between MCP log levels and Elixir Logger levels
+  # 2. Global log level configuration for MCP servers
+  # 3. Structured logging with MCP-compliant format
+  # 4. Integration with Logger configuration
+  #
+  # ## Log Level Mapping
+  #
+  # MCP log levels are mapped to Elixir Logger levels as follows:
+  #
+  # | MCP Level | Elixir Level | Description |
+  # |-----------|-------------|-------------|
+  # | debug     | :debug      | Detailed debugging information |
+  # | info      | :info       | General informational messages |
+  # | notice    | :info       | Normal but significant events |
+  # | warning   | :warning    | Warning conditions |
+  # | error     | :error      | Error conditions |
+  # | critical  | :error      | Critical conditions |
+  # | alert     | :error      | Action must be taken immediately |
+  # | emergency | :error      | System is unusable |
+  #
+  # ## Usage
+  #
+  #     # Configure global log level for MCP
+  #     ExMCP.Logging.set_global_level("debug")
+  #
+  #     # Log with MCP format (will also log to Elixir Logger)
+  #     ExMCP.Logging.log(server, "info", "Operation completed", %{duration: 123})
+  #
+  #     # Check if a level is enabled
+  #     if ExMCP.Logging.level_enabled?("debug") do
+  #       # Expensive debug computation
+  #       ExMCP.Logging.debug(server, "Debug info", expensive_data())
+  #     end
+  #
+  # ## Security
+  #
+  # This module automatically sanitizes log data to remove sensitive information
+  # such as passwords, tokens, and keys from log messages.
 
   require Logger
 

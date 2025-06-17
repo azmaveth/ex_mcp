@@ -15,6 +15,12 @@ defmodule ExMCP.Native do
   - High-performance internal communication (~15μs local, ~50μs cross-node)
   - Services that need OTP supervision and monitoring
 
+  > #### Future API Direction {: .info}
+  > 
+  > In future versions, native BEAM communication will be available as a transport
+  > option for `ExMCP.Client`, providing a unified API across all communication methods.
+  > The current `ExMCP.Native` API will remain supported but may be superseded.
+
   ## Performance Characteristics
 
   - Local calls: ~15μs latency

@@ -1,67 +1,64 @@
 defmodule ExMCP.Authorization do
-  @moduledoc """
-  This module implements the standard MCP specification.
+  @moduledoc false
 
-  MCP Authorization implementation supporting OAuth 2.1.
-
-  This module implements the MCP authorization specification, providing
-  OAuth 2.1 authorization flows with PKCE support for secure client
-  authentication.
-
-  ## Supported Grant Types
-
-  - **Authorization Code**: For user-based interactions (PKCE required)
-  - **Client Credentials**: For application-to-application communication
-
-  ## Security Features
-
-  - PKCE (Proof Key for Code Exchange) support - required for all clients
-  - HTTPS enforcement for all authorization endpoints  
-  - Secure redirect URI validation
-  - Dynamic client registration
-  - Server metadata discovery
-
-  ## Example: Authorization Code Flow
-
-      # Start authorization flow
-      {:ok, auth_url, state} = ExMCP.Authorization.start_authorization_flow(%{
-        client_id: "my-client",
-        redirect_uri: "https://localhost:8080/callback",
-        authorization_endpoint: "https://auth.example.com/oauth/authorize",
-        scopes: ["mcp:read", "mcp:write"]
-      })
-
-      # User visits auth_url and authorizes
-      # Server redirects to redirect_uri with code
-
-      # Exchange code for token
-      {:ok, token_response} = ExMCP.Authorization.exchange_code_for_token(%{
-        code: "auth_code_from_callback",
-        code_verifier: state.code_verifier,
-        client_id: "my-client",
-        redirect_uri: "https://localhost:8080/callback",
-        token_endpoint: "https://auth.example.com/oauth/token"
-      })
-
-  ## Example: Client Credentials Flow
-
-      {:ok, token_response} = ExMCP.Authorization.client_credentials_flow(%{
-        client_id: "service-client",
-        client_secret: "client-secret",
-        token_endpoint: "https://auth.example.com/oauth/token",
-        scopes: ["mcp:admin"]
-      })
-
-  ## Server Metadata Discovery
-
-      {:ok, metadata} = ExMCP.Authorization.discover_server_metadata(
-        "https://auth.example.com"
-      )
-
-  > #### Security Warning {: .warning}
-  > Always use HTTPS for authorization endpoints. PKCE is required for
-  > all authorization code flows. Validate all redirect URIs.
-  """
+  # MCP Authorization implementation supporting OAuth 2.1.
+  #
+  # This module implements the MCP authorization specification, providing
+  # OAuth 2.1 authorization flows with PKCE support for secure client
+  # authentication.
+  #
+  # ## Supported Grant Types
+  #
+  # - **Authorization Code**: For user-based interactions (PKCE required)
+  # - **Client Credentials**: For application-to-application communication
+  #
+  # ## Security Features
+  #
+  # - PKCE (Proof Key for Code Exchange) support - required for all clients
+  # - HTTPS enforcement for all authorization endpoints  
+  # - Secure redirect URI validation
+  # - Dynamic client registration
+  # - Server metadata discovery
+  #
+  # ## Example: Authorization Code Flow
+  #
+  #     # Start authorization flow
+  #     {:ok, auth_url, state} = ExMCP.Authorization.start_authorization_flow(%{
+  #       client_id: "my-client",
+  #       redirect_uri: "https://localhost:8080/callback",
+  #       authorization_endpoint: "https://auth.example.com/oauth/authorize",
+  #       scopes: ["mcp:read", "mcp:write"]
+  #     })
+  #
+  #     # User visits auth_url and authorizes
+  #     # Server redirects to redirect_uri with code
+  #
+  #     # Exchange code for token
+  #     {:ok, token_response} = ExMCP.Authorization.exchange_code_for_token(%{
+  #       code: "auth_code_from_callback",
+  #       code_verifier: state.code_verifier,
+  #       client_id: "my-client",
+  #       redirect_uri: "https://localhost:8080/callback",
+  #       token_endpoint: "https://auth.example.com/oauth/token"
+  #     })
+  #
+  # ## Example: Client Credentials Flow
+  #
+  #     {:ok, token_response} = ExMCP.Authorization.client_credentials_flow(%{
+  #       client_id: "service-client",
+  #       client_secret: "client-secret",
+  #       token_endpoint: "https://auth.example.com/oauth/token",
+  #       scopes: ["mcp:admin"]
+  #     })
+  #
+  # ## Server Metadata Discovery
+  #
+  #     {:ok, metadata} = ExMCP.Authorization.discover_server_metadata(
+  #       "https://auth.example.com"
+  #     )
+  #
+  # > Security Warning: Always use HTTPS for authorization endpoints. PKCE is required for
+  # > all authorization code flows. Validate all redirect URIs.
 
   alias ExMCP.Authorization.PKCE
 

@@ -1,33 +1,19 @@
 defmodule ExMCP.Protocol do
-  @moduledoc """
-  This module implements the standard MCP specification.
+  @moduledoc false
 
-  MCP protocol message encoding and decoding.
-
-  Implements the Model Context Protocol JSON-RPC message format.
-  This module handles the low-level protocol details for both
-  client and server implementations.
-
-  ## _meta Field Support
-
-  Most request encoding functions support an optional `meta` parameter that allows
-  passing arbitrary metadata through the `_meta` field. This is useful for:
-
-  - Progress tokens for long-running operations
-  - Request tracing and debugging
-  - Custom application-specific metadata
-
-  Example:
-
-      # With progress token
-      Protocol.encode_call_tool("my_tool", %{}, %{"progressToken" => "op-123"})
-      
-      # With custom metadata
-      Protocol.encode_list_resources(nil, %{"requestId" => "req-456", "userId" => "user-789"})
-
-  All methods in this module are part of the official MCP specification.
-
-  """
+  # Implements the Model Context Protocol JSON-RPC message format.
+  # This module handles the low-level protocol details for both
+  # client and server implementations.
+  #
+  # Example:
+  #
+  #     # With progress token
+  #     Protocol.encode_call_tool("my_tool", %{}, %{"progressToken" => "op-123"})
+  #     
+  #     # With custom metadata
+  #     Protocol.encode_list_resources(nil, %{"requestId" => "req-456", "userId" => "user-789"})
+  #
+  # All methods in this module are part of the official MCP specification.
 
   alias ExMCP.VersionRegistry
 
