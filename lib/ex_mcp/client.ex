@@ -1022,6 +1022,7 @@ defmodule ExMCP.Client do
 
   defp connect_and_initialize(state) do
     Logger.debug("Client connecting with transport: #{inspect(state.transport_mod)}")
+
     with {:ok, transport_state} <- state.transport_mod.connect(state.transport_opts),
          :ok <- start_receiver(transport_state, state.transport_mod),
          {:ok, init_result} <- initialize_connection(transport_state, state) do
@@ -1081,19 +1082,21 @@ defmodule ExMCP.Client do
   defp start_receiver(transport_state, transport_mod) do
     parent = self()
 
-    receiver_pid = spawn_link(fn ->
-      receive_loop(transport_state, transport_mod, parent)
-    end)
+    receiver_pid =
+      spawn_link(fn ->
+        receive_loop(transport_state, transport_mod, parent)
+      end)
 
     # Store the receiver PID so we can forward messages to it
     Process.put(:receiver_pid, receiver_pid)
-    
+
     # For SSE transports, redirect SSE events to go directly to the receiver loop
-    if transport_mod == ExMCP.Transport.HTTP and transport_state.use_sse and transport_state.sse_pid do
+    if transport_mod == ExMCP.Transport.HTTP and transport_state.use_sse and
+         transport_state.sse_pid do
       # Tell the SSE client to send events to the receiver loop instead of the client process
       send(transport_state.sse_pid, {:change_parent, receiver_pid})
     end
-    
+
     :ok
   end
 
@@ -1109,7 +1112,12 @@ defmodule ExMCP.Client do
 
             {:ok, message} ->
               send(parent, {:transport_message, message})
-              new_state = if event_id, do: %{transport_state | last_event_id: event_id}, else: transport_state
+
+              new_state =
+                if event_id,
+                  do: %{transport_state | last_event_id: event_id},
+                  else: transport_state
+
               receive_loop(new_state, transport_mod, parent)
 
             {:error, _reason} ->
@@ -1898,6 +1906,7 @@ defmodule ExMCP.Client do
       case Process.get(:receiver_pid) do
         pid when is_pid(pid) ->
           send(pid, {:update_transport_state, transport_state})
+
         _ ->
           :ok
       end

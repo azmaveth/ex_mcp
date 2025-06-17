@@ -1,0 +1,207 @@
+Excellent analysis! Your recommendations align perfectly with Elixir best practices. Let me continue our DSL design discussion with the additional context from the web search.
+
+Based on your feedback and the community insights, here's my refined proposal:
+
+## Refined ExMCP DSL Design
+
+### 1. Elixir-native Schema DSL (Primary approach)
+
+```elixir
+deftool "search_files" do
+  description "Search for files matching a pattern"
+  
+  args do
+    field :pattern, :string, required: true, description: "Search pattern"
+    field :path, :string, default: ".", description: "Search path"
+    field :recursive, :boolean, default: true
+    field :max_results, :integer, min: 1, max: 1000
+    
+    # Support for nested objects
+    field :options, :object do
+      field :case_sensitive, :boolean, default: false
+      field :include_hidden, :boolean, default: false
+    end
+    
+    # Support for arrays
+    field :extensions, {:array, :string}, description: "File extensions to include"
+  end
+end
+
+# Escape hatch for complex JSON Schema
+deftool "complex_tool" do
+  input_schema load_json_schema("priv/schemas/complex_tool.json")
+end
+```
+
+### 2. Unified Server with Composition Support
+
+```elixir
+defmodule MyUnifiedServer do
+  use ExMCP.Server
+  
+  # Can mix all types in one module
+  deftool "hello" do
+    description "Says hello"
+    args do
+      field :name, :string, required: true
+    end
+  end
+  
+  defresource "config://app" do
+    name "App Config"
+    mime_type "application/json"
+  end
+  
+  defprompt "greeting" do
+    name "Greeting Template"
+    arguments do
+      arg :style, description: "Greeting style"
+    end
+  end
+  
+  # Callbacks all in one place
+  @impl true
+  def handle_tool_call("hello", %{"name" => name}, state) do
+    {:ok, %{content: [text("Hello, #{name}!")]}, state}
+  end
+end
+
+# Or compose from multiple modules
+defmodule MyComposedServer do
+  use ExMCP.Server, compose: [MyToolServer, MyResourceServer]
+end
+```
+
+### 3. Resource Subscription Pattern
+
+```elixir
+defmodule MyResourceServer do
+  use ExMCP.Server
+  
+  defresource "db://users/*" do
+    name "User Records"
+    mime_type "application/json"
+    subscribable true  # Enables subscription support
+  end
+  
+  # Called when client subscribes
+  @impl true
+  def handle_resource_subscribe("db://users/" <> user_id, state) do
+    # Framework handles subscription tracking
+    # You just need to say if it's allowed
+    {:ok, state}
+  end
+  
+  # Public API for pushing updates
+  def user_updated(server_pid, user_id) do
+    ExMCP.Server.notify_resource_update(server_pid, "db://users/#{user_id}")
+  end
+end
+```
+
+### 4. Content Type Structs with Builder Functions
+
+```elixir
+# Smart constructors with optional annotations
+text("Hello", audience: ["user"], priority: 0.9)
+
+# Chainable builder pattern for complex content
+image_content()
+|> with_data(base64_data)
+|> with_mime_type("image/png")
+|> with_annotation(:priority, 0.8)
+
+# Resource embedding
+resource("file://docs/guide.md")
+|> with_annotation(:audience, ["assistant"])
+```
+
+### 5. Capability Auto-detection
+
+```elixir
+defmodule MyServer do
+  use ExMCP.Server
+  
+  # Framework detects these and advertises capabilities automatically
+  deftool "my_tool" do ... end        # -> tools capability
+  defresource "my://resource" do ... end  # -> resources capability
+  defprompt "my_prompt" do ... end     # -> prompts capability
+  
+  # Experimental features detected by callback pattern
+  @impl true
+  def handle_request("experimental/custom_feature", params, state) do
+    # Framework advertises experimental.custom_feature capability
+  end
+  
+  # Explicit capability declaration for edge cases
+  use ExMCP.Server, capabilities: %{
+    experimental: %{
+      "advanced_mode" => %{version: "1.0"}
+    }
+  }
+end
+```
+
+### 6. Advanced Patterns
+
+**Pattern Matching in Handlers:**
+```elixir
+@impl true
+def handle_tool_call("process_data", %{"type" => "csv"} = params, state) do
+  # CSV-specific processing
+end
+
+def handle_tool_call("process_data", %{"type" => "json"} = params, state) do
+  # JSON-specific processing
+end
+```
+
+**Resource Templates with URI Patterns:**
+```elixir
+defresource_template "github://repos/{owner}/{repo}/issues/{id}" do
+  name "GitHub Issues"
+  description "Access GitHub issue data"
+  mime_type "application/json"
+end
+```
+
+**Middleware/Interceptors:**
+```elixir
+defmodule MyServer do
+  use ExMCP.Server,
+    middleware: [
+      ExMCP.Middleware.RateLimit,
+      ExMCP.Middleware.Telemetry,
+      MyApp.AuthMiddleware
+    ]
+end
+```
+
+## Key Implementation Details
+
+1. **Compile-time validation** via macros that check:
+   - Tool/resource/prompt names are unique
+   - Callbacks exist for defined items
+   - Schema types are valid
+
+2. **Runtime validation** that:
+   - Validates incoming arguments against schemas
+   - Ensures content types are properly structured
+   - Checks annotation constraints
+
+3. **Testing Support:**
+```elixir
+defmodule MyServerTest do
+  use ExMCP.ServerCase, server: MyServer
+  
+  test "calculate_sum tool" do
+    assert {:ok, result} = call_tool("calculate_sum", %{a: 1, b: 2})
+    assert_content result, [text("Result: 3")]
+  end
+end
+```
+
+What do you think about these refinements? Should we also consider:
+- Telemetry integration for observability?
+- Built-in rate limiting?
+- A registry pattern for dynamic server discovery?
