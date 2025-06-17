@@ -169,7 +169,7 @@ defmodule HITLExample do
 
     # Start server
     {:ok, server} = ExMCP.Server.start_link(
-      transport: :beam,
+      transport: :stdio,
       name: :hitl_server,
       handler: SensitiveToolsServer
     )
@@ -188,7 +188,7 @@ defmodule HITLExample do
 
     # Start client with approval handler
     {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: :hitl_server,
       handler: {ExMCP.Client.DefaultHandler, [
         approval_handler: approval_handler,

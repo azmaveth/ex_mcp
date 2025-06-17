@@ -131,7 +131,7 @@ defmodule SecurityExampleRunner do
     {:ok, server} = ExMCP.SecureServer.start_link(
       server_id: "origin-validation-example",
       handler: SecurityExampleServer,
-      transport: :beam,
+      transport: :stdio,
       name: :origin_validation_server,
       security: %{
         validate_origin: true,
@@ -142,7 +142,7 @@ defmodule SecurityExampleRunner do
     
     # Simulate client with allowed origin
     {:ok, client1} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: :origin_validation_server,
       client_info: %{
         name: "allowed-client",
@@ -205,7 +205,7 @@ defmodule SecurityExampleRunner do
     {:ok, server1} = ExMCP.SecureServer.start_link(
       server_id: "localhost-binding",
       handler: SecurityExampleServer,
-      transport: :beam,
+      transport: :stdio,
       binding: "127.0.0.1",
       name: :localhost_server,
       security: %{
@@ -221,7 +221,7 @@ defmodule SecurityExampleRunner do
     result = ExMCP.SecureServer.start_link(
       server_id: "public-binding",
       handler: SecurityExampleServer,
-      transport: :beam,
+      transport: :stdio,
       binding: "0.0.0.0",
       security: %{
         require_auth: false  # This will be rejected
@@ -244,7 +244,7 @@ defmodule SecurityExampleRunner do
     {:ok, server} = ExMCP.SecureServer.start_link(
       server_id: "auth-required-server",
       handler: SecurityExampleServer,
-      transport: :beam,
+      transport: :stdio,
       name: :auth_server,
       security: %{
         require_auth: true,
@@ -255,7 +255,7 @@ defmodule SecurityExampleRunner do
     
     # Client without authentication
     {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: :auth_server
     )
     

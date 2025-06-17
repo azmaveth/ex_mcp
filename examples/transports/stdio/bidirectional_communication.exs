@@ -173,14 +173,14 @@ defmodule BidirectionalExample do
 
     # Start server
     {:ok, server} = ExMCP.Server.start_link(
-      transport: :beam,
+      transport: :stdio,
       name: :weather_server,
       handler: WeatherServer
     )
 
     # Start client with handler
     {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: :weather_server,
       handler: WeatherClientHandler
     )

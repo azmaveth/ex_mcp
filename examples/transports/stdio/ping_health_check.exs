@@ -114,14 +114,14 @@ IO.puts("=" <> String.duplicate("=", 36))
 # Start the server
 IO.puts("\n1. Starting MCP server with health monitoring...")
 {:ok, server} = Server.start_link(
-  transport: :beam,
+  transport: :stdio,
   name: :health_server,
   handler: HealthMonitorHandler
 )
 
 # Start the client with handler for bidirectional pings
 {:ok, client} = Client.start_link(
-  transport: :beam,
+  transport: :stdio,
   server: :health_server,
   handler: HealthCheckClientHandler,
   handler_state: %{}

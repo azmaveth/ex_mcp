@@ -256,13 +256,13 @@ defmodule CompletionClient do
     # Start the server
     {:ok, server} = ExMCP.Server.start_link(
       handler: CompletionExample,
-      transport: :beam,
+      transport: :stdio,
       name: :completion_server
     )
     
     # Start a client
     {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: :completion_server
     )
     

@@ -77,7 +77,7 @@ defmodule CancellationExample do
 
     # Start server
     {:ok, server} = ExMCP.Server.start_link(
-      transport: :beam,
+      transport: :stdio,
       name: :cancellation_server,
       handler: SlowToolHandler
     )
@@ -86,7 +86,7 @@ defmodule CancellationExample do
 
     # Start client
     {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: :cancellation_server
     )
     

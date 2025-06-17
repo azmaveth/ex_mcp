@@ -1,164 +1,116 @@
 # ExMCP Examples
 
-This directory contains comprehensive examples demonstrating various features and use cases of the ExMCP library.
+This directory contains comprehensive examples demonstrating various features and use cases of ExMCP.
 
-## Example Categories
+## 📚 Directory Structure
 
-### 1. Native BEAM Transport Examples (`beam_transport/`)
+### 🚀 Getting Started
+Start here if you're new to ExMCP:
+- [`getting_started/`](getting_started/) - Basic examples for beginners
+  - `hello_world.exs` - Your first MCP server and client
+  - `comprehensive_example.exs` - Demonstrates all MCP features
 
-Examples specific to the Native BEAM transport for direct Elixir service communication:
+### 🔌 Transports
+Examples for each transport type:
+- [`transports/stdio/`](transports/stdio/) - Standard I/O transport (MCP standard)
+  - Bidirectional communication
+  - Health checks and ping
+- [`transports/http/`](transports/http/) - HTTP with SSE streaming
+- [`transports/native/`](transports/native/) - ExMCP's high-performance Native Service Dispatcher
+  - Calculator services
+  - Clustering and distribution
+  - Hot code reloading
 
-- **Calculator Service**: Basic MCP service with tools, state management, and progress tracking
-- **Distributed Example**: Cross-node communication using Native BEAM transport
-- **Supervisor Integration**: Building fault-tolerant MCP services with OTP supervision
-- **Service Communication**: Direct service-to-service call patterns and best practices
+### 🛠️ Features
+Examples organized by MCP feature:
+- [`features/tools/`](features/tools/) - Tool discovery and execution
+- [`features/resources/`](features/resources/) - Resource management and subscriptions
+- [`features/prompts/`](features/prompts/) - Prompt templates
+- [`features/notifications/`](features/notifications/) - Change notifications and cancellation
+- [`features/progress/`](features/progress/) - Progress tracking for long operations
+- [`features/roots/`](features/roots/) - URI boundaries and roots
+- [`features/batch_requests/`](features/batch_requests/) - Batch request handling
 
-[View Native BEAM Transport Examples](beam_transport/README.md)
+### 🔧 Advanced
+Advanced features and patterns:
+- [`advanced/oauth/`](advanced/oauth/) - OAuth 2.1 authorization flows
+- [`advanced/security/`](advanced/security/) - Security features and secure servers
+- [`advanced/sampling/`](advanced/sampling/) - LLM integration and sampling
+- [`advanced/draft_features/`](advanced/draft_features/) - Experimental MCP features
+- `human_in_the_loop.exs` - Approval flows and HITL patterns
 
-### 2. Advanced Features Examples (`advanced_features/`)
+### 🌐 Interoperability
+Cross-language integration examples:
+- [`interoperability/`](interoperability/) - Python MCP SDK integration
+  - Elixir clients → Python servers
+  - Python clients → Elixir servers
+  - Hybrid architectures
 
-Examples demonstrating the latest MCP protocol features:
+## 🎯 Quick Navigation
 
-- **Sampling/LLM Integration**: Implementing `createMessage` for AI model integration
-- **Notifications**: All notification types (progress, resources, tools, prompts)
-- **Dynamic Content**: Servers that change their capabilities at runtime
+### By Use Case
 
-[View Advanced Features Examples](advanced_features/README.md)
+**"I want to build a simple MCP server"**
+→ Start with [`getting_started/hello_world.exs`](getting_started/hello_world.exs)
 
-### 3. Draft Specification Features (`draft_features_example.exs`)
+**"I need maximum performance for Elixir services"**
+→ See [`transports/native/`](transports/native/)
 
-⚠️ **Experimental**: Example demonstrating features from the draft MCP specification that are not part of the official 2025-03-26 release:
+**"I'm integrating with Python/JavaScript/other languages"**
+→ Check [`interoperability/`](interoperability/) and use stdio or HTTP transport
 
-- **Structured Tool Output**: Tools with `outputSchema` and `structuredContent`
-- **Logging Level Control**: Dynamic log level adjustment with `logging/setLevel`
+**"I need to implement authentication"**
+→ Look at [`advanced/oauth/`](advanced/oauth/) and [`advanced/security/`](advanced/security/)
 
-Run with: `./examples/draft_features_example.exs`
+**"I want to track progress of long operations"**
+→ See [`features/progress/`](features/progress/)
 
-## Quick Start
+**"I need to handle file resources"**
+→ Check [`features/resources/`](features/resources/)
 
-To run any example:
+### By Transport Type
 
-1. Start an IEx session:
-   ```bash
-   iex -S mix
-   ```
+| Transport | When to Use | Examples |
+|-----------|-------------|----------|
+| **stdio** | Standard MCP communication, subprocesses | [`transports/stdio/`](transports/stdio/) |
+| **HTTP** | Network services, web integration | [`transports/http/`](transports/http/) |
+| **Native** | Elixir-only, maximum performance | [`transports/native/`](transports/native/) |
 
-2. Compile the example file:
-   ```elixir
-   iex> c "examples/beam_transport/calculator_server.ex"
-   iex> c "examples/beam_transport/calculator_client.ex"
-   ```
+## 🚦 Running Examples
 
-3. Run the demo:
-   ```elixir
-   iex> Examples.BeamTransport.CalculatorClient.demo()
-   ```
+Most examples are self-contained scripts that can be run directly:
 
-## Common Patterns
+```bash
+# From the examples directory
+elixir getting_started/hello_world.exs
 
-### Server Implementation
-
-```elixir
-defmodule MyServer do
-  use ExMCP.Server.Handler
-  
-  @impl true
-  def handle_initialize(_params, state) do
-    {:ok, %{
-      name: "my-server",
-      version: "1.0.0",
-      capabilities: %{
-        tools: %{},
-        resources: %{},
-        prompts: %{},
-        sampling: %{}
-      }
-    }, state}
-  end
-  
-  # Implement other callbacks as needed
-end
+# Or from the project root
+elixir examples/getting_started/hello_world.exs
 ```
 
-### Client Usage
+Some examples require additional setup:
+- **Python interoperability**: Requires Python 3.8+ and `pip install mcp`
+- **HTTP examples**: May require starting an HTTP server
+- **Distributed examples**: Require multiple Elixir nodes
 
-```elixir
-# For HTTP transport
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :http,
-  url: "http://localhost:8080"
-)
+## 📖 Learning Path
 
-# For stdio transport
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :stdio,
-  command: ["node", "mcp-server.js"]
-)
+1. Start with [`getting_started/hello_world.exs`](getting_started/hello_world.exs)
+2. Explore [`getting_started/comprehensive_example.exs`](getting_started/comprehensive_example.exs)
+3. Try different transports in [`transports/`](transports/)
+4. Dive into specific features in [`features/`](features/)
+5. Explore advanced patterns in [`advanced/`](advanced/)
 
-# For Native BEAM transport (direct service calls)
-{:ok, tools} = ExMCP.Native.call(:my_service, "list_tools", %{})
-{:ok, result} = ExMCP.Native.call(:my_service, "tools/call", %{
-  "name" => "tool_name",
-  "arguments" => %{}
-})
-```
+## 🤝 Contributing
 
-### Progress Tracking
+When adding new examples:
+1. Place them in the appropriate category directory
+2. Include clear comments explaining the concept
+3. Make them self-contained and runnable
+4. Update this README if adding new categories
 
-```elixir
-# Server side
-def handle_call_tool("process", params, state) do
-  if token = get_in(params, ["_meta", "progressToken"]) do
-    Task.start(fn ->
-      for i <- 1..100 do
-        Process.sleep(100)
-        ExMCP.Server.notify_progress(self(), token, i, 100)
-      end
-    end)
-  end
-  {:ok, [%{type: "text", text: "Processing..."}], state}
-end
+## 📝 Notes
 
-# Client side
-{:ok, result} = ExMCP.Client.call_tool(
-  client, 
-  "process", 
-  %{},
-  progress_token: "task-123"
-)
-```
-
-### Notifications
-
-```elixir
-# Server can send various notifications
-ExMCP.Server.notify_resources_changed(server)
-ExMCP.Server.notify_resource_updated(server, "file:///path")
-ExMCP.Server.notify_tools_changed(server)
-ExMCP.Server.notify_prompts_changed(server)
-ExMCP.Server.notify_progress(server, token, current, total)
-```
-
-## Transport Options
-
-ExMCP supports three transport types:
-
-1. **BEAM**: Native Erlang/Elixir message passing
-   - Best for Elixir-to-Elixir communication
-   - Supports distributed nodes
-   - No serialization overhead
-
-2. **stdio**: Standard input/output
-   - For external process communication
-   - Compatible with any MCP server
-
-3. **Streamable HTTP**: HTTP with optional Server-Sent Events
-   - For HTTP-based communication
-   - Good for web integrations
-   - Use `:http` transport identifier
-
-## Learn More
-
-- [ExMCP Documentation](https://hexdocs.pm/ex_mcp)
-- [Model Context Protocol Specification](https://modelcontextprotocol.io)
-- [GitHub Repository](https://github.com/azmaveth/ex_mcp)
+- Examples using `ExMCP.Native` are specific to ExMCP and provide ultra-high performance
+- Examples using `:stdio` or `:http` transports follow the MCP specification
+- The `interoperability/` examples require additional language runtimes

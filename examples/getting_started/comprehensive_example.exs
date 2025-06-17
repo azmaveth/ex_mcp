@@ -539,14 +539,14 @@ defmodule ComprehensiveClient do
     # Start server
     {:ok, server} = ExMCP.Server.start_link(
       handler: ComprehensiveServer,
-      transport: :beam,
+      transport: :stdio,
       name: :comprehensive_server,
       handler_args: []
     )
     
     # Connect client
     {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: :comprehensive_server
     )
     

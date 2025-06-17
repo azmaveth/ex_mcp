@@ -263,14 +263,14 @@ defmodule Examples.AdvancedFeatures.SamplingClient do
     
     # Start the server
     {:ok, server} = ExMCP.Server.start_link(
-      transport: :beam,
+      transport: :stdio,
       name: :sampling_server,
       handler: Examples.AdvancedFeatures.SamplingServer
     )
     
     # Connect client
     {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: :sampling_server
     )
     

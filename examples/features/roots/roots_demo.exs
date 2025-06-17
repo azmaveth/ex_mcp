@@ -375,12 +375,12 @@ case mode do
     # In a real scenario, this would connect to an existing server
     # For demo purposes, we'll start a simple server internally
     {:ok, demo_server} = ExMCP.Server.start_link(
-      transport: :beam,
+      transport: :stdio,
       handler: RootsServer
     )
     
     {:ok, _client} = ExMCP.Client.start_link(
-      transport: :beam,
+      transport: :stdio,
       server: demo_server,
       handler: RootsClient
     )
