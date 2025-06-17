@@ -17,6 +17,8 @@ defmodule ExMCP.Internal.ServerManager do
   use GenServer
   require Logger
 
+  alias ExMCP.Internal.Discovery
+
   defstruct servers: %{}, monitors: %{}
 
   @type server_spec :: %{
@@ -154,7 +156,7 @@ defmodule ExMCP.Internal.ServerManager do
   end
 
   def handle_call(:discover_and_start, _from, state) do
-    servers = ExMCP.Internal.Discovery.discover_servers()
+    servers = Discovery.discover_servers()
 
     results =
       Enum.map(servers, fn server_config ->

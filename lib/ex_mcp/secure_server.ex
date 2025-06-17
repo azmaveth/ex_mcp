@@ -18,8 +18,9 @@ defmodule ExMCP.SecureServer do
   use GenServer
   require Logger
 
-  alias ExMCP.Server
+  alias ExMCP.Internal.Security
   alias ExMCP.Security.{ClientRegistry, ConsentManager, TokenValidator}
+  alias ExMCP.Server
 
   defstruct [
     :server_id,
@@ -181,7 +182,7 @@ defmodule ExMCP.SecureServer do
 
   defp validate_transport_security(:http, opts, %{enforce_https: true}) do
     url = Keyword.get(opts, :url, "")
-    ExMCP.Internal.Security.enforce_https_requirement(url)
+    Security.enforce_https_requirement(url)
   end
 
   defp validate_transport_security(_, _, _), do: :ok

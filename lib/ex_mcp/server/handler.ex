@@ -476,6 +476,7 @@ defmodule ExMCP.Server.Handler do
   defmacro __using__(_opts) do
     quote do
       @behaviour ExMCP.Server.Handler
+      alias ExMCP.Internal.Logging
 
       @impl true
       def init(_args), do: {:ok, %{}}
@@ -533,7 +534,7 @@ defmodule ExMCP.Server.Handler do
       @impl true
       def handle_set_log_level(level, state) do
         # Default implementation integrates with ExMCP.Internal.Logging
-        case ExMCP.Internal.Logging.set_global_level(level) do
+        case Logging.set_global_level(level) do
           :ok ->
             {:ok, state}
 
