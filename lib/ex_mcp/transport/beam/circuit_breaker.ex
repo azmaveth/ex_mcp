@@ -28,11 +28,11 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
         timeout: 60000,
         success_threshold: 3
       })
-      
+
       # Record failures and successes
       updated_cb = CircuitBreaker.record_failure(circuit_breaker)
       updated_cb = CircuitBreaker.record_success(circuit_breaker)
-      
+
       # Check if requests should be allowed
       case CircuitBreaker.allow_request?(updated_cb) do
         true -> # Make request

@@ -10,19 +10,19 @@ defmodule ExMCP.Server do
 
       defmodule MyHandler do
         use ExMCP.Server.Handler
-        
+
         @impl true
         def handle_list_tools(state) do
           tools = [%{name: "echo", description: "Echo input"}]
           {:ok, tools, state}
         end
-        
-        @impl true  
+
+        @impl true
         def handle_call_tool("echo", params, state) do
           {:ok, [%{type: "text", text: params["message"]}], state}
         end
       end
-      
+
       {:ok, server} = ExMCP.Server.start_link(
         handler: MyHandler,
         transport: :stdio
@@ -121,7 +121,8 @@ defmodule ExMCP.Server do
   use GenServer
   require Logger
 
-  alias ExMCP.{Protocol, Transport, VersionRegistry}
+  alias ExMCP.Transport
+  alias ExMCP.Internal.{Protocol, VersionRegistry}
 
   defstruct [
     :handler,

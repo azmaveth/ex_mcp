@@ -13,17 +13,20 @@ defmodule ExMCP do
   ### Core Modules
   - `ExMCP` - This module (convenience functions and metadata)
   - `ExMCP.Client` - MCP client implementation
-  - `ExMCP.Server` - MCP server implementation  
+  - `ExMCP.Server` - MCP server implementation
   - `ExMCP.Native` - High-performance BEAM service dispatcher
   - `ExMCP.Service` - Macro for automatic service registration
   - `ExMCP.Transport` - Transport behaviour definition
+
+  ### Optional Features
+  - `ExMCP.Authorization` - OAuth 2.1 authorization flows (MCP optional feature)
 
   ### Supporting Modules
   - `ExMCP.Content` - Content type helpers
   - `ExMCP.Types` - Type definitions (stable across versions)
 
   > #### Internal Modules {: .warning}
-  > 
+  >
   > All other modules under the `ExMCP` namespace are internal implementation details
   > and may change without notice. Do not depend on them directly in your applications.
 
@@ -87,11 +90,11 @@ defmodule ExMCP do
   ### Basic Client Usage
 
       {:ok, client} = ExMCP.start_client(transport: :stdio, command: ["mcp-server"])
-      
+
       # List and call tools
       {:ok, %{tools: tools}} = ExMCP.Client.list_tools(client)
       {:ok, result} = ExMCP.Client.call_tool(client, "search", %{query: "elixir"})
-      
+
       # Read resources
       {:ok, content} = ExMCP.Client.read_resource(client, "file:///data.json")
 
@@ -99,32 +102,32 @@ defmodule ExMCP do
 
       defmodule MyHandler do
         use ExMCP.Server.Handler
-        
+
         @impl true
         def handle_list_tools(state) do
           tools = [%{name: "echo", description: "Echo input"}]
           {:ok, tools, state}
         end
-        
+
         @impl true
         def handle_call_tool("echo", params, state) do
           {:ok, [%{type: "text", text: params["message"]}], state}
         end
       end
-      
+
       {:ok, server} = ExMCP.start_server(handler: MyHandler, transport: :stdio)
 
   ### Native BEAM Service
 
       defmodule MyService do
         use ExMCP.Service, name: :my_service
-        
+
         @impl true
         def handle_mcp_request("ping", _params, state) do
           {:ok, %{"response" => "pong"}, state}
         end
       end
-      
+
       # Automatic registration and discovery
       {:ok, _} = MyService.start_link()
       {:ok, result} = ExMCP.Native.call(:my_service, "ping", %{})
@@ -147,7 +150,7 @@ defmodule ExMCP do
         command: ["python", "mcp-server.py"]
       )
 
-      # HTTP transport  
+      # HTTP transport
       {:ok, client} = ExMCP.start_client(
         transport: :http,
         url: "https://api.example.com"

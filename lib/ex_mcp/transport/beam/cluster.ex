@@ -33,21 +33,21 @@ defmodule ExMCP.Transport.Beam.Cluster do
         discovery_strategy: :distributed_registry,
         health_check_interval: 5000
       })
-      
+
       # Register an MCP service
       service_info = %{
         name: "calculator",
-        version: "1.0.0", 
+        version: "1.0.0",
         capabilities: ["tools"],
         node: node(),
         pid: server_pid
       }
-      
+
       {:ok, service_id} = Cluster.register_service(cluster, service_info)
-      
+
       # Discover available services
       {:ok, services} = Cluster.discover_services(cluster, %{name: "calculator"})
-      
+
       # Get a service instance with load balancing
       {:ok, service} = Cluster.get_service(cluster, "calculator", strategy: :round_robin)
   """

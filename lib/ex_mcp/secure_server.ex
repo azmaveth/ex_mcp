@@ -181,7 +181,7 @@ defmodule ExMCP.SecureServer do
 
   defp validate_transport_security(:http, opts, %{enforce_https: true}) do
     url = Keyword.get(opts, :url, "")
-    ExMCP.Security.enforce_https_requirement(url)
+    ExMCP.Internal.Security.enforce_https_requirement(url)
   end
 
   defp validate_transport_security(_, _, _), do: :ok
@@ -490,7 +490,7 @@ defmodule ExMCP.SecureServer.SecureHandlerWrapper do
   end
 
   defp audit_request(client_id, method, details, _state) do
-    request_id = to_string(ExMCP.Protocol.generate_id())
+    request_id = to_string(ExMCP.Internal.Protocol.generate_id())
     ClientRegistry.record_request(client_id || "unknown", method, request_id)
 
     # Also use TokenValidator for audit trail

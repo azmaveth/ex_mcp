@@ -3,7 +3,7 @@ defmodule ExMCP.Security.ConsentManager do
   Manages user consent for MCP security operations.
 
   Implements the MCP security requirement:
-  "MCP proxy servers... MUST obtain user consent for each dynamically 
+  "MCP proxy servers... MUST obtain user consent for each dynamically
   registered client before forwarding to third-party authorization servers"
 
   This module provides:

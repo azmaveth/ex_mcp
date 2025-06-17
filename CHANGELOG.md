@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-06-17
+
 ### Added
+- **Comprehensive Python MCP SDK Interoperability Examples**
+  - Complete bidirectional integration between ExMCP (Elixir) and Python MCP SDK
+  - **Elixir → Python Integration:**
+    - `elixir_to_python_stdio.ex` - Elixir clients connecting to Python subprocess servers
+    - `elixir_to_python_http.ex` - Elixir clients connecting to Python HTTP servers with load balancing and failover
+  - **Python → Elixir Integration:**
+    - `python_clients/elixir_client.py` - Python clients connecting to Elixir servers via stdio
+    - `elixir_servers_for_python.ex` - Elixir servers with rich schemas designed for Python clients
+  - **Python MCP Server Examples:**
+    - `python_mcp_servers/calculator_server.py` - Full stdio MCP server with history and statistics
+    - `python_mcp_servers/http_server.py` - FastAPI-based HTTP MCP server with REST endpoints
+  - **Hybrid Architecture Example:**
+    - `hybrid_architecture.ex` - Production-ready architecture combining Native Elixir (~15μs), Python stdio (~1-5ms), and Python HTTP (~5-20ms) services
+    - ServiceRegistry for managing multi-language service types
+    - HybridOrchestrator with intelligent routing and automatic failover
+    - Performance-based service selection and load balancing
+  - **Complete Documentation:**
+    - Comprehensive setup instructions and prerequisites
+    - Performance comparisons across transport types
+    - Cross-language JSON-RPC compatibility examples
+    - Production deployment patterns and best practices
+- **Native Service Dispatcher Migration**
+  - Migrated 30+ example files from non-existent `:beam` transport to Native Service Dispatcher pattern
+  - Updated examples to use `ExMCP.Service` macro for automatic service registration
+  - Enhanced `ExMCP.Native` calls with zero serialization overhead for ultra-high performance
+  - Fixed references to internal modules now in `ExMCP.Internal.*` namespace
+  - Updated all BEAM transport examples to use Horde.Registry for service discovery
 - **Comprehensive Test Tagging Strategy**
   - Implemented test tagging system based on ex_llm approach for efficient test execution
   - Created `mix test.suite` task with predefined test suites: unit, compliance, integration, transport, security, performance, all, ci

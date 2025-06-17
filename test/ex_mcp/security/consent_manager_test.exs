@@ -18,8 +18,11 @@ defmodule ExMCP.Security.ConsentManagerTest do
   end
 
   setup do
-    # Start consent manager for each test
-    {:ok, _pid} = ConsentManager.start_link(approval_handler: TestApprovalHandler)
+    # Start consent manager for each test if not already started
+    case ConsentManager.start_link(approval_handler: TestApprovalHandler) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
 
     :ok
   end

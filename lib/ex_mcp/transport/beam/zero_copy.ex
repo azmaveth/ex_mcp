@@ -26,7 +26,7 @@ defmodule ExMCP.Transport.Beam.ZeroCopy do
       # For senders
       {:ok, ref} = ZeroCopy.store_payload(large_binary)
       message = %{data: {:zero_copy_ref, ref}, other: "fields"}
-      
+
       # For receivers
       case message.data do
         {:zero_copy_ref, ref} ->

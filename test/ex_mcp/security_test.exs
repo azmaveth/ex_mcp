@@ -1,10 +1,10 @@
 defmodule ExMCP.SecurityTest do
   use ExUnit.Case
-  doctest ExMCP.Security
+  doctest ExMCP.Internal.Security
 
   @moduletag :security
 
-  alias ExMCP.Security
+  alias ExMCP.Internal.Security
 
   describe "build_auth_headers/1" do
     test "builds bearer token headers" do

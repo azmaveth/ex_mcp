@@ -4,23 +4,25 @@ This guide covers security features and best practices for the ExMCP library.
 
 ## Overview
 
-ExMCP provides comprehensive security features across all transports to ensure secure communication between MCP clients and servers. The security model is designed to be flexible while maintaining strong defaults.
+ExMCP provides comprehensive security features to ensure secure communication between MCP clients and servers. The security model is designed to be flexible while maintaining strong defaults.
 
-## Security Features by Transport
+## Security Features by Component
 
-| Feature | Streamable HTTP | BEAM | stdio |
-|---------|-----|------|-------|
-| Bearer Authentication | ✅ | ✅ | ❌ |
-| API Key Authentication | ✅ | ✅ | ❌ |
+### Transport Security
+
+| Feature | Streamable HTTP | stdio | Native Service Dispatcher |
+|---------|-----------------|-------|---------------------------|
+| Bearer Authentication | ✅ | ❌ | Via process validation |
+| API Key Authentication | ✅ | ❌ | Via process validation |
 | Basic Authentication | ✅ | ❌ | ❌ |
 | Custom Headers | ✅ | ❌ | ❌ |
-| Origin Validation | ✅ | ❌ | ❌ |
-| CORS Headers | ✅ | ❌ | ❌ |
-| TLS/SSL | ✅ | ✅* | ❌ |
+| Origin Validation | ✅ | ❌ | N/A |
+| CORS Headers | ✅ | ❌ | N/A |
+| TLS/SSL | ✅ | ❌ | Via Erlang distribution* |
 | Mutual TLS | ✅ | ❌ | ❌ |
-| Node Cookie Auth | ❌ | ✅ | ❌ |
+| OAuth 2.1 | ✅ | ❌ | Via process validation |
 
-*BEAM transport uses Erlang distribution security
+*Native Service Dispatcher uses Erlang distribution security between nodes
 
 ## Authentication Methods
 
@@ -79,13 +81,21 @@ security = %{
 }
 ```
 
-### Node Cookie Authentication (BEAM only)
+### OAuth 2.1 Authentication
 
-For Erlang distribution security:
+For OAuth 2.1 authentication flows:
 
 ```elixir
+# First, obtain tokens via OAuth flow
+{:ok, token_response} = ExMCP.Authorization.client_credentials_flow(%{
+  client_id: "my-client",
+  client_secret: "my-secret",
+  token_endpoint: "https://auth.example.com/token"
+})
+
+# Then use the token for authentication
 security = %{
-  auth: {:node_cookie, :secret_cookie}
+  auth: {:oauth2, token_response}
 }
 ```
 
@@ -134,63 +144,71 @@ security = %{
 ```
 
 
-### BEAM Transport Security
+### Native Service Dispatcher Security
 
-BEAM transport focuses on Erlang/Elixir-native security mechanisms rather than TLS:
+The Native Service Dispatcher (ExMCP.Native) provides high-performance communication between Elixir services within the same cluster. Security is handled at the Erlang distribution and process levels:
 
 ```elixir
-# Native BEAM security with node cookies
-security = %{
-  node_cookie: :secret_production_cookie,
-  hidden: true,                    # Hidden node for topology security
-  max_connections: 10,             # Connection limits
-  auth: {:bearer, "beam-token"}    # Process-level authentication
-}
+# Services can implement their own authentication
+defmodule MySecureService do
+  use ExMCP.Service, name: :secure_service
+  
+  def init(args) do
+    # Initialize with expected tokens
+    {:ok, %{authorized_tokens: MapSet.new(args[:tokens] || [])}}
+  end
+  
+  def handle_mcp_request(method, params, state) do
+    # Validate authentication token from metadata
+    case Map.get(params, "_meta", %{}) |> Map.get("auth_token") do
+      nil -> 
+        {:error, %{"code" => -32001, "message" => "Authentication required"}, state}
+      
+      token ->
+        if MapSet.member?(state.authorized_tokens, token) do
+          # Process authenticated request
+          handle_authenticated_request(method, params, state)
+        else
+          {:error, %{"code" => -32002, "message" => "Invalid token"}, state}
+        end
+    end
+  end
+end
 
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :beam,
-  server: {:secure_server, :node@hostname},
-  security: security
-)
-
-# Server security with process isolation
-{:ok, server} = ExMCP.Server.start_link(
-  transport: :beam,
-  name: :secure_server,
-  handler: MyHandler,
-  security: %{
-    node_cookie: :secret_production_cookie,
-    auth: {:bearer, "expected-token"}
-  }
+# Client usage with authentication
+{:ok, result} = ExMCP.Native.call(
+  :secure_service,
+  "method_name",
+  %{"data" => "value"},
+  meta: %{"auth_token" => "secret-token"}
 )
 ```
 
-#### Advanced: VM-Level TLS Distribution
+#### Erlang Distribution Security
 
-For high-security deployments requiring TLS over Erlang distribution:
+For production deployments, secure the Erlang distribution layer:
 
 ```elixir
-# Configure at VM startup with -proto_dist inet_tls
-# This is typically done in sys.config, not per-connection
+# 1. Set a strong cookie in your release configuration
+# config/runtime.exs
+config :my_app,
+  erlang_cookie: System.fetch_env!("ERLANG_COOKIE")
 
-tls_config = %{
-  verify: :verify_peer,
-  cert: "/path/to/node.pem",
-  key: "/path/to/node.key", 
-  cacerts: "/path/to/ca.pem"
-}
+# 2. Use TLS for distribution (in vm.args)
+# -proto_dist inet_tls
+# -ssl_dist_optfile /path/to/ssl_dist.conf
 
-# This configures the options but requires VM-level setup
-{:ok, ssl_opts} = ExMCP.Transport.Beam.configure_distribution_tls(tls_config)
+# 3. Configure node names to use fully qualified domain names
+# -name myapp@secure.internal.network
 ```
 
-#### BEAM Security Best Practices
+#### Native Service Security Best Practices
 
-1. **Use Strong Node Cookies**: Never use `:nocookie` or weak cookies
-2. **Hidden Nodes**: Use `hidden: true` for production services
-3. **Network Isolation**: Deploy on private networks when possible
-4. **Process Supervision**: Leverage OTP supervision for fault tolerance
-5. **Capability-Based Security**: Only expose necessary functions
+1. **Node Security**: Use strong Erlang cookies and consider TLS distribution
+2. **Process Isolation**: Each service runs in its own supervised process
+3. **Network Isolation**: Deploy clusters on private networks
+4. **Authentication**: Implement service-level authentication for sensitive operations
+5. **Monitoring**: Use OTP supervision and monitoring for security events
 
 ## Security Best Practices
 
@@ -492,4 +510,12 @@ IO.inspect(ExMCP.Security.build_security_headers(security))
    }
    ```
 
-This completes the security implementation for ExMCP. The library now provides comprehensive security features across all transports with proper documentation and testing.
+## Summary
+
+ExMCP provides comprehensive security features across all transports:
+
+- **Streamable HTTP Transport**: Full authentication, TLS, CORS, and origin validation support
+- **stdio Transport**: Limited security (process isolation only)
+- **Native Service Dispatcher**: Process-level security with Erlang distribution protection
+
+Choose the appropriate transport based on your security requirements. For maximum security, use the Streamable HTTP transport with TLS and proper authentication.

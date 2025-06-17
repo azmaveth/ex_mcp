@@ -12,10 +12,10 @@ defmodule ExMCP.Server.Tools do
       defmodule MyServer do
         use ExMCP.Server.Handler
         use ExMCP.Server.Tools
-        
+
         tool "echo", "Echo back the input" do
           param :message, :string, required: true
-          
+
           handle fn %{message: message}, _state ->
             {:ok, text: message}
           end
@@ -28,18 +28,18 @@ defmodule ExMCP.Server.Tools do
 
       tool "calculate" do
         description "Perform mathematical calculations"
-        
+
         input_schema %{
           type: "object",
           properties: %{
             expression: %{type: "string", pattern: "^[0-9+\\-*/().\\s]+$"}
           }
         }
-        
+
         annotations %{
           readOnlyHint: true
         }
-        
+
         handle fn %{expression: expr}, state ->
           result = evaluate_expression(expr)
           {:ok, %{

@@ -1,209 +1,155 @@
-defmodule Examples.NativeBeam.CalculatorServer do
+defmodule Examples.Native.CalculatorService do
   @moduledoc """
-  Example MCP service using Native BEAM transport that provides calculator tools.
+  Example MCP service using Native Service Dispatcher that provides calculator tools.
   
   This demonstrates:
-  - Service registration with Native BEAM transport
+  - Service registration with ExMCP.Service macro
   - Basic tool implementation
   - Error handling
-  - Server state management
+  - Service state management
   - Progress notifications for long operations
   """
   
-  use ExMCP.Server.Handler
+  use ExMCP.Service, name: :calculator_service
   require Logger
   
   defmodule State do
     defstruct history: [], operation_count: 0
   end
-  
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args, name: __MODULE__)
-  end
 
   @impl true
   def init(_args) do
-    Logger.info("Calculator server starting...")
-    # Register with the Native BEAM transport
-    :ok = ExMCP.Transport.Native.register_service(:calculator_server)
-    Logger.info("Calculator service registered as :calculator_server")
+    Logger.info("Calculator service starting...")
     {:ok, %State{}}
   end
-  
-  # Handle MCP requests through Native BEAM transport
-  def handle_call({:mcp_request, %{"method" => "initialize", "params" => _params}}, _from, state) do
-    server_info = %{
-      "serverInfo" => %{
-        "name" => "calculator-server",
-        "version" => "1.0.0",
-        "capabilities" => %{
-          "tools" => %{},
-          "resources" => %{},
-          "prompts" => %{}
-        }
-      }
-    }
-    
-    {:reply, {:ok, server_info}, state}
-  end
 
-  def handle_call({:mcp_request, %{"method" => "tools/list"}}, _from, state) do
-    {:ok, tools, new_state} = handle_list_tools(state)
-    {:reply, {:ok, %{"tools" => tools}}, new_state}
-  end
-
-  def handle_call({:mcp_request, %{"method" => "tools/call", "params" => %{"name" => tool_name, "arguments" => arguments}}}, _from, state) do
-    case handle_call_tool(tool_name, arguments, state) do
-      {:ok, content, new_state} ->
-        {:reply, {:ok, %{"content" => content}}, new_state}
-      {:error, message, new_state} ->
-        {:reply, {:error, %{"code" => -32001, "message" => message}}, new_state}
-    end
-  end
-
-  # Legacy MCP handler methods for compatibility
   @impl true
-  def handle_initialize(_params, state) do
-    server_info = %{
-      "name" => "calculator-server",
-      "version" => "1.0.0",
-      "capabilities" => %{
-        "tools" => %{},
-        "resources" => %{},
-        "prompts" => %{}
-      }
-    }
-    
-    {:ok, server_info, state}
-  end
-  
-  @impl true
-  def handle_list_tools(state) do
+  def handle_mcp_request("list_tools", _params, state) do
     tools = [
       %{
-        name: "add",
-        description: "Add two numbers",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            a: %{type: "number", description: "First number"},
-            b: %{type: "number", description: "Second number"}
+        "name" => "add",
+        "description" => "Add two numbers",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "a" => %{"type" => "number", "description" => "First number"},
+            "b" => %{"type" => "number", "description" => "Second number"}
           },
-          required: ["a", "b"]
+          "required" => ["a", "b"]
         }
       },
       %{
-        name: "multiply",
-        description: "Multiply two numbers",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            a: %{type: "number", description: "First number"},
-            b: %{type: "number", description: "Second number"}
+        "name" => "multiply",
+        "description" => "Multiply two numbers",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "a" => %{"type" => "number", "description" => "First number"},
+            "b" => %{"type" => "number", "description" => "Second number"}
           },
-          required: ["a", "b"]
+          "required" => ["a", "b"]
         }
       },
       %{
-        name: "divide",
-        description: "Divide two numbers",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            a: %{type: "number", description: "Dividend"},
-            b: %{type: "number", description: "Divisor (cannot be zero)"}
+        "name" => "divide",
+        "description" => "Divide two numbers",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "a" => %{"type" => "number", "description" => "Dividend"},
+            "b" => %{"type" => "number", "description" => "Divisor (cannot be zero)"}
           },
-          required: ["a", "b"]
+          "required" => ["a", "b"]
         }
       },
       %{
-        name: "factorial",
-        description: "Calculate factorial of a number (with progress)",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            n: %{type: "integer", description: "Non-negative integer"}
+        "name" => "factorial",
+        "description" => "Calculate factorial of a number (with progress)",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "n" => %{"type" => "integer", "description" => "Non-negative integer"}
           },
-          required: ["n"]
+          "required" => ["n"]
         }
       },
       %{
-        name: "history",
-        description: "Get calculation history",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            limit: %{type: "integer", description: "Number of recent operations to return"}
+        "name" => "history",
+        "description" => "Get calculation history",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "limit" => %{"type" => "integer", "description" => "Number of recent operations to return"}
           }
         }
       }
     ]
     
-    {:ok, tools, state}
+    {:ok, %{"tools" => tools}, state}
   end
   
   @impl true
-  def handle_call_tool("add", %{"a" => a, "b" => b}, state) do
+  def handle_mcp_request("tools/call", %{"name" => "add", "arguments" => %{"a" => a, "b" => b}}, state) do
     result = a + b
     new_state = add_to_history(state, "add", {a, b}, result)
     
     content = [%{
-      type: "text",
-      text: "#{a} + #{b} = #{result}"
+      "type" => "text",
+      "text" => "#{a} + #{b} = #{result}"
     }]
     
-    {:ok, content, new_state}
+    {:ok, %{"content" => content}, new_state}
   end
   
-  def handle_call_tool("multiply", %{"a" => a, "b" => b}, state) do
+  def handle_mcp_request("tools/call", %{"name" => "multiply", "arguments" => %{"a" => a, "b" => b}}, state) do
     result = a * b
     new_state = add_to_history(state, "multiply", {a, b}, result)
     
     content = [%{
-      type: "text",
-      text: "#{a} × #{b} = #{result}"
+      "type" => "text",
+      "text" => "#{a} × #{b} = #{result}"
     }]
     
-    {:ok, content, new_state}
+    {:ok, %{"content" => content}, new_state}
   end
   
-  def handle_call_tool("divide", %{"a" => a, "b" => 0}, state) do
-    {:error, "Division by zero", state}
+  def handle_mcp_request("tools/call", %{"name" => "divide", "arguments" => %{"a" => _a, "b" => 0}}, state) do
+    {:error, %{"code" => -32001, "message" => "Division by zero"}, state}
   end
   
-  def handle_call_tool("divide", %{"a" => a, "b" => b}, state) do
+  def handle_mcp_request("tools/call", %{"name" => "divide", "arguments" => %{"a" => a, "b" => b}}, state) do
     result = a / b
     new_state = add_to_history(state, "divide", {a, b}, result)
     
     content = [%{
-      type: "text",
-      text: "#{a} ÷ #{b} = #{result}"
+      "type" => "text",
+      "text" => "#{a} ÷ #{b} = #{result}"
     }]
     
-    {:ok, content, new_state}
+    {:ok, %{"content" => content}, new_state}
   end
   
-  def handle_call_tool("factorial", %{"n" => n}, state) when n < 0 do
-    {:error, "Factorial is not defined for negative numbers", state}
+  def handle_mcp_request("tools/call", %{"name" => "factorial", "arguments" => %{"n" => n}}, state) when n < 0 do
+    {:error, %{"code" => -32001, "message" => "Factorial is not defined for negative numbers"}, state}
   end
   
-  def handle_call_tool("factorial", %{"n" => n} = params, state) do
+  def handle_mcp_request("tools/call", %{"name" => "factorial", "arguments" => %{"n" => n}} = params, state) do
     # Use progress token if provided
-    progress_token = get_in(params, ["_meta", "progressToken"])
+    progress_token = get_in(params, ["meta", "progressToken"])
     
     # Calculate factorial with progress updates
-    result = factorial_with_progress(n, progress_token, self())
+    result = factorial_with_progress(n, progress_token)
     new_state = add_to_history(state, "factorial", n, result)
     
     content = [%{
-      type: "text",
-      text: "#{n}! = #{result}"
+      "type" => "text",
+      "text" => "#{n}! = #{result}"
     }]
     
-    {:ok, content, new_state}
+    {:ok, %{"content" => content}, new_state}
   end
   
-  def handle_call_tool("history", params, state) do
+  def handle_mcp_request("tools/call", %{"name" => "history", "arguments" => params}, state) do
     limit = Map.get(params, "limit", 10)
     
     history = state.history
@@ -214,15 +160,34 @@ defmodule Examples.NativeBeam.CalculatorServer do
     |> Enum.join("\n")
     
     content = [%{
-      type: "text",
-      text: if(history == "", do: "No calculations yet", else: history)
+      "type" => "text",
+      "text" => if(history == "", do: "No calculations yet", else: history)
     }]
     
-    {:ok, content, state}
+    {:ok, %{"content" => content}, state}
   end
   
-  def handle_call_tool(tool, _params, state) do
-    {:error, "Unknown tool: #{tool}", state}
+  def handle_mcp_request("tools/call", %{"name" => tool}, state) do
+    {:error, %{"code" => -32601, "message" => "Unknown tool: #{tool}"}, state}
+  end
+
+  def handle_mcp_request("list_resources", _params, state) do
+    {:ok, %{"resources" => []}, state}
+  end
+
+  def handle_mcp_request("list_prompts", _params, state) do
+    {:ok, %{"prompts" => []}, state}
+  end
+
+  def handle_mcp_request(method, _params, state) do
+    {:error, %{"code" => -32601, "message" => "Method not found: #{method}"}, state}
+  end
+  
+  # Optional: Handle notifications (fire-and-forget)
+  @impl true
+  def handle_mcp_notification("reset_history", _params, state) do
+    Logger.info("Resetting calculation history")
+    {:noreply, %{state | history: [], operation_count: 0}}
   end
   
   # Helper functions
@@ -235,29 +200,19 @@ defmodule Examples.NativeBeam.CalculatorServer do
     }
   end
   
-  defp factorial_with_progress(n, progress_token, server_pid) do
-    # Simulate a long operation with progress updates
-    factorial_with_progress(n, 1, 1, n, progress_token, server_pid)
-  end
-  
-  defp factorial_with_progress(0, _current, acc, _total, _token, _server), do: acc
-  
-  defp factorial_with_progress(n, current, acc, total, token, server) when token != nil do
-    # Send progress update
-    if rem(current, max(1, div(total, 10))) == 0 do
-      ExMCP.Server.notify_progress(server, token, current, total)
+  defp factorial_with_progress(n, progress_token) do
+    # For simplicity in Native service, we calculate directly
+    # In a real implementation, you could send progress notifications
+    # to subscribed clients via ExMCP.Native.notify
+    if progress_token do
+      Logger.info("Calculating factorial with progress token: #{progress_token}")
     end
     
-    # Simulate some work
-    Process.sleep(10)
-    
-    factorial_with_progress(n - 1, current + 1, acc * n, total, token, server)
+    factorial(n)
   end
   
-  defp factorial_with_progress(n, current, acc, total, nil, server) do
-    # No progress token, just calculate
-    factorial_with_progress(n - 1, current + 1, acc * n, total, nil, server)
-  end
+  defp factorial(0), do: 1
+  defp factorial(n) when n > 0, do: n * factorial(n - 1)
   
   defp format_timestamp(datetime) do
     Calendar.strftime(datetime, "%H:%M:%S")
@@ -267,4 +222,52 @@ defmodule Examples.NativeBeam.CalculatorServer do
   defp format_operation("multiply", {a, b}), do: "#{a} × #{b}"
   defp format_operation("divide", {a, b}), do: "#{a} ÷ #{b}"
   defp format_operation("factorial", n), do: "#{n}!"
+end
+
+# Example usage:
+if __FILE__ == Path.absname("#{__DIR__}/calculator_server.ex") do
+  # Start the service
+  {:ok, _} = Examples.Native.CalculatorService.start_link()
+  
+  # Wait for registration
+  Process.sleep(100)
+  
+  # Test some operations
+  IO.puts("Calculator Service Demo")
+  IO.puts("=" |> String.duplicate(30))
+  
+  # List tools
+  {:ok, %{"tools" => tools}} = ExMCP.Native.call(:calculator_service, "list_tools", %{})
+  IO.puts("\nAvailable tools: #{length(tools)}")
+  Enum.each(tools, fn tool ->
+    IO.puts("  - #{tool["name"]}: #{tool["description"]}")
+  end)
+  
+  # Test calculations
+  operations = [
+    {"add", %{"a" => 5, "b" => 3}},
+    {"multiply", %{"a" => 4, "b" => 7}},
+    {"divide", %{"a" => 10, "b" => 2}},
+    {"factorial", %{"n" => 5}}
+  ]
+  
+  IO.puts("\nPerforming calculations:")
+  Enum.each(operations, fn {tool, args} ->
+    case ExMCP.Native.call(:calculator_service, "tools/call", %{"name" => tool, "arguments" => args}) do
+      {:ok, %{"content" => [%{"text" => text}]}} ->
+        IO.puts("  #{text}")
+      {:error, %{"message" => error}} ->
+        IO.puts("  Error: #{error}")
+    end
+  end)
+  
+  # Show history
+  {:ok, %{"content" => [%{"text" => history}]}} = 
+    ExMCP.Native.call(:calculator_service, "tools/call", %{"name" => "history", "arguments" => %{}})
+  
+  IO.puts("\nCalculation history:")
+  IO.puts(history)
+  
+  IO.puts("\nService is running. Press Ctrl+C to stop.")
+  Process.sleep(:infinity)
 end

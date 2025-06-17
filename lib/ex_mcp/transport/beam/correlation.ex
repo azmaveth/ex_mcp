@@ -7,7 +7,7 @@ defmodule ExMCP.Transport.Beam.Correlation do
 
   ## Features
   - Automatic cleanup when processes terminate
-  - Efficient O(1) lookup performance  
+  - Efficient O(1) lookup performance
   - Distributed operation support
   - Timeout handling with automatic cleanup
   - Request tracking and metrics
@@ -16,10 +16,10 @@ defmodule ExMCP.Transport.Beam.Correlation do
 
       # Register a pending request
       correlation_id = Correlation.register_request(self(), %{timeout: 5000})
-      
+
       # Send request with correlation ID
       send_request(message, correlation_id)
-      
+
       # Wait for response
       case Correlation.wait_for_response(correlation_id, 5000) do
         {:ok, response} -> handle_response(response)

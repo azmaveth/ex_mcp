@@ -12,22 +12,22 @@ defmodule ExMCP.Client.Handler do
 
       defmodule MyClientHandler do
         @behaviour ExMCP.Client.Handler
-        
+
         @impl true
         def init(args) do
           {:ok, %{roots: [%{uri: "file:///home/user", name: "Home"}]}}
         end
-        
+
         @impl true
         def handle_ping(state) do
           {:ok, %{}, state}
         end
-        
+
         @impl true
         def handle_list_roots(state) do
           {:ok, state.roots, state}
         end
-        
+
         @impl true
         def handle_create_message(params, state) do
           # Show to user for approval, then sample LLM

@@ -13,7 +13,7 @@ defmodule ExMCP.Transport.Test do
         transport: :test,
         handler: MyHandler
       )
-      
+
       # Start a client connected to that server
       {:ok, client} = ExMCP.Client.start_link(
         transport: :test,

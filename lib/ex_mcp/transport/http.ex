@@ -65,7 +65,7 @@ defmodule ExMCP.Transport.HTTP do
       )
 
   > #### Security Best Practices {: .warning}
-  > 
+  >
   > 1. **Always use HTTPS** in production
   > 2. **Enable origin validation** to prevent DNS rebinding attacks
   > 3. **Bind to localhost** when possible for local servers
@@ -75,7 +75,7 @@ defmodule ExMCP.Transport.HTTP do
 
   @behaviour ExMCP.Transport
 
-  alias ExMCP.Security
+  alias ExMCP.Internal.Security
   alias ExMCP.Transport.SSEClient
 
   defstruct [
@@ -405,7 +405,7 @@ defmodule ExMCP.Transport.HTTP do
         cert: "client.pem",
         key: "client.key"
       }
-      
+
       ssl_opts = ExMCP.Transport.HTTP.build_ssl_options(tls_config)
   """
   def build_ssl_options(tls_config) when is_map(tls_config) do

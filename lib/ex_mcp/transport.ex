@@ -11,7 +11,7 @@ defmodule ExMCP.Transport do
   ExMCP provides these standard transports:
 
   - **`:stdio`** - Standard I/O communication (MCP specification)
-  - **`:http`** - HTTP with optional SSE streaming (MCP specification)  
+  - **`:http`** - HTTP with optional SSE streaming (MCP specification)
   - **`:test`** - In-memory transport for testing
 
   ## Using Transports
@@ -37,25 +37,25 @@ defmodule ExMCP.Transport do
 
       defmodule MyTransport do
         @behaviour ExMCP.Transport
-        
+
         @impl true
         def connect(opts) do
           # Establish connection
           {:ok, state}
         end
-        
+
         @impl true
         def send_message(message, state) do
           # Send the message
           {:ok, state}
         end
-        
+
         @impl true
         def receive_message(state) do
           # Receive a message (blocking)
           {:ok, message, state}
         end
-        
+
         @impl true
         def close(state) do
           # Clean up

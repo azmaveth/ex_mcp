@@ -10,7 +10,7 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
 
       # Discover authorization servers for a protected resource
       {:ok, metadata} = ProtectedResourceMetadata.discover("https://api.example.com/mcp")
-      
+
       # Use discovered authorization server
       [auth_server | _] = metadata.authorization_servers
       {:ok, auth_metadata} = Authorization.discover_server_metadata(auth_server.issuer)

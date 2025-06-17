@@ -11,7 +11,7 @@ defmodule ExMCP.Client do
   - `initialize/2` - Initialize connection with server
   - `list_tools/2` - List available tools
   - `call_tool/4` - Execute a tool
-  - `list_resources/2` - List available resources  
+  - `list_resources/2` - List available resources
   - `read_resource/3` - Read resource content
   - `list_prompts/2` - List available prompts
   - `get_prompt/3` - Get a specific prompt
@@ -41,10 +41,10 @@ defmodule ExMCP.Client do
         command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
         name: :fs_client
       )
-      
+
       # List available tools
       {:ok, %{"tools" => tools}} = ExMCP.Client.list_tools(client)
-      
+
       # Call a tool
       {:ok, result} = ExMCP.Client.call_tool(client, "read_file", %{
         "path" => "/tmp/example.txt"
@@ -61,7 +61,7 @@ defmodule ExMCP.Client do
         %{"path" => "/tmp/large.csv"},
         progress_token: "process-123"
       )
-      
+
       # The server will send progress notifications that are logged
 
   ## Sampling/LLM Integration
@@ -81,7 +81,7 @@ defmodule ExMCP.Client do
           maxTokens: 1000
         }
       })
-      
+
       # Response includes the generated content
       IO.puts(response["content"]["text"])
 
@@ -91,7 +91,7 @@ defmodule ExMCP.Client do
 
   - Resource changes (`notifications/resources/list_changed`)
   - Resource updates (`notifications/resources/updated`)
-  - Tool changes (`notifications/tools/list_changed`) 
+  - Tool changes (`notifications/tools/list_changed`)
   - Prompt changes (`notifications/prompts/list_changed`)
   - Progress updates (`notifications/progress`)
 
@@ -102,7 +102,8 @@ defmodule ExMCP.Client do
   use GenServer
   require Logger
 
-  alias ExMCP.{Protocol, Transport, VersionRegistry}
+  alias ExMCP.Transport
+  alias ExMCP.Internal.{Protocol, VersionRegistry}
   alias ExMCP.Authorization.{ErrorHandler, TokenManager}
 
   @reconnect_interval 5_000
@@ -507,7 +508,7 @@ defmodule ExMCP.Client do
         ExMCP.Protocol.encode_request("tools/list", %{}),
         ExMCP.Protocol.encode_request("resources/list", %{})
       ]
-      
+
       {:ok, responses} = ExMCP.Client.send_batch(client, batch)
 
   """
@@ -588,7 +589,7 @@ defmodule ExMCP.Client do
         {:list_resources, []},
         {:read_resource, ["file:///data.txt"]}
       ]
-      
+
       {:ok, [tools, resources, content]} = ExMCP.Client.batch_request(client, requests)
 
   ## Request Specifications
@@ -647,7 +648,7 @@ defmodule ExMCP.Client do
 
     # Get protocol version from options or use preferred
     protocol_version =
-      Keyword.get(opts, :protocol_version, ExMCP.VersionRegistry.preferred_version())
+      Keyword.get(opts, :protocol_version, VersionRegistry.preferred_version())
 
     # Initialize handler if provided
     {handler, handler_state} =

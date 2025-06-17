@@ -80,7 +80,7 @@ iex> Examples.BeamTransport.SupervisorExample.demo()
 
      def init(_) do
        # Register with the native transport
-       ExMCP.Transport.Native.register_service(:my_tools)
+       ExMCP.Native.register_service(:my_tools)
        {:ok, %{}}
      end
 
@@ -94,10 +94,10 @@ iex> Examples.BeamTransport.SupervisorExample.demo()
 2. **Direct Service Calls**: Call services directly without TCP overhead
    ```elixir
    # Call a local service
-   {:ok, tools} = ExMCP.Transport.Native.call(:my_tools, "list_tools", %{})
+   {:ok, tools} = ExMCP.Native.call(:my_tools, "list_tools", %{})
 
    # Call a service on another node
-   {:ok, result} = ExMCP.Transport.Native.call(
+   {:ok, result} = ExMCP.Native.call(
      {:data_service, :"worker@cluster.local"},
      "process_data",
      %{"dataset_id" => "abc123"}
@@ -148,7 +148,7 @@ end
 {:ok, _} = MyApp.MCPServiceSupervisor.start_link([])
 
 # Services are now available for direct calls
-{:ok, tools} = ExMCP.Transport.Native.call(:calculator, "list_tools", %{})
+{:ok, tools} = ExMCP.Native.call(:calculator, "list_tools", %{})
 ```
 
 ## Running All Examples

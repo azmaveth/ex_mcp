@@ -96,8 +96,8 @@ end
 )
 
 # For Native BEAM transport (direct service calls)
-{:ok, tools} = ExMCP.Transport.Native.call(:my_service, "list_tools", %{})
-{:ok, result} = ExMCP.Transport.Native.call(:my_service, "tools/call", %{
+{:ok, tools} = ExMCP.Native.call(:my_service, "list_tools", %{})
+{:ok, result} = ExMCP.Native.call(:my_service, "tools/call", %{
   "name" => "tool_name",
   "arguments" => %{}
 })

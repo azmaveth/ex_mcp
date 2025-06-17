@@ -58,7 +58,7 @@ defmodule SecureServerExample do
     result = %{
       success: true,
       message: "Operation completed securely",
-      audit_id: ExMCP.Protocol.generate_id()
+      audit_id: "audit_#{System.unique_integer([:positive])}"
     }
     
     {:ok, result, state}

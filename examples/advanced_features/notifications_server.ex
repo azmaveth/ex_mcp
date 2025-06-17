@@ -5,6 +5,9 @@ defmodule Examples.AdvancedFeatures.NotificationsServer do
   - Resource change notifications
   - Tool change notifications
   - Prompt change notifications
+  
+  NOTE: For Native Service Dispatcher examples, see notifications_service.ex
+  which demonstrates the same features with much better performance.
   """
   
   use ExMCP.Server.Handler
@@ -378,20 +381,17 @@ defmodule Examples.AdvancedFeatures.NotificationsClient do
   require Logger
   
   def demo do
-    Logger.info("Starting notifications demo...")
+    Logger.info("Starting notifications demo with stdio transport...")
     
-    # Start server
+    # Start server with stdio transport
     {:ok, server} = ExMCP.Server.start_link(
-      transport: :beam,
-      name: :notifications_server,
+      transport: :stdio,
       handler: Examples.AdvancedFeatures.NotificationsServer
     )
     
-    # Connect client
-    {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
-      server: :notifications_server
-    )
+    # For demonstration purposes, we'll use the server directly
+    # In a real scenario, you'd connect a client via stdio with a command
+    client = server
     
     Process.sleep(100)
     

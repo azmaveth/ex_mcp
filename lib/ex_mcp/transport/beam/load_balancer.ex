@@ -16,10 +16,10 @@ defmodule ExMCP.Transport.Beam.LoadBalancer do
         strategy: :round_robin,
         health_aware: true
       })
-      
+
       # Get a service instance
       {:ok, service} = LoadBalancer.get_service(balancer, "calculator")
-      
+
       # Update service connection count for least-connections strategy
       LoadBalancer.update_connections(balancer, service_id, 5)
   """

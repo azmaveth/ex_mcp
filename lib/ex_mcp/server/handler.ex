@@ -23,11 +23,11 @@ defmodule ExMCP.Server.Handler do
       def handle_call_tool("my_tool", arguments, state) do
         {meta, args} = Map.pop(arguments, "_meta")
         progress_token = meta && meta["progressToken"]
-        
+
         if progress_token do
           # Report progress via Server.notify_progress/5
         end
-        
+
         # Process args without _meta...
       end
 
@@ -35,19 +35,19 @@ defmodule ExMCP.Server.Handler do
 
       defmodule MyServer do
         use ExMCP.Server.Handler
-        
+
         @impl true
         def handle_initialize(params, state) do
           # Check client's protocol version
           client_version = params["protocolVersion"]
-          
+
           # Accept 2025-03-26 or propose 2024-11-05 as fallback
           negotiated_version = case client_version do
             "2025-03-26" -> "2025-03-26"
             "2024-11-05" -> "2024-11-05"
             _ -> "2025-03-26"  # Propose latest as default
           end
-          
+
           {:ok, %{
             protocolVersion: negotiated_version,
             serverInfo: %{
@@ -62,7 +62,7 @@ defmodule ExMCP.Server.Handler do
             }
           }, state}
         end
-        
+
         @impl true
         def handle_list_tools(state) do
           tools = [
@@ -80,12 +80,12 @@ defmodule ExMCP.Server.Handler do
           ]
           {:ok, tools, state}
         end
-        
+
         @impl true
         def handle_call_tool("calculate", params, state) do
           # Access progress token if provided
           progress_token = get_in(params, ["_meta", "progressToken"])
-          
+
           # Your tool implementation
           case eval_expression(params["expression"]) do
             {:ok, result} ->
@@ -93,9 +93,9 @@ defmodule ExMCP.Server.Handler do
               if progress_token do
                 ExMCP.Server.notify_progress(self(), progress_token, 100, 100)
               end
-              
+
               {:ok, [%{type: "text", text: "Result: \#{result}"}], state}
-              
+
             {:error, reason} ->
               # Return tool execution error with isError flag
               error_result = %{
@@ -118,7 +118,7 @@ defmodule ExMCP.Server.Handler do
 
       defmodule WeatherServer do
         use ExMCP.Server.Handler
-        
+
         @impl true
         def handle_list_tools(_cursor, state) do
           tools = [
@@ -146,7 +146,7 @@ defmodule ExMCP.Server.Handler do
           ]
           {:ok, tools, nil, state}
         end
-        
+
         @impl true
         def handle_call_tool("get_weather", %{"location" => location}, state) do
           # Fetch weather data (example implementation)
@@ -154,11 +154,11 @@ defmodule ExMCP.Server.Handler do
           temp = 22.5
           conditions = "Partly cloudy"
           humidity = 65
-          
+
           # Return both unstructured and structured content
           result = %{
             content: [%{
-              type: "text", 
+              type: "text",
               text: "Current weather in \#{location}: \#{temp}°C, \#{conditions}"
             }],
             # Draft feature: structured content matching outputSchema
@@ -168,10 +168,10 @@ defmodule ExMCP.Server.Handler do
               "humidity" => humidity
             }
           }
-          
+
           {:ok, result, state}
         end
-        
+
         # ... other callbacks ...
       end
 
@@ -181,16 +181,16 @@ defmodule ExMCP.Server.Handler do
       def handle_create_message(params, state) do
         messages = params["messages"]
         model_prefs = params["modelPreferences"]
-        
+
         # Integrate with your LLM provider
         response = call_llm_api(messages, model_prefs)
-        
+
         result = %{
           content: %{type: "text", text: response.text},
           model: response.model,
           stopReason: "stop"
         }
-        
+
         {:ok, result, state}
       end
 
@@ -202,15 +202,15 @@ defmodule ExMCP.Server.Handler do
       def handle_call_tool("process_file", params, state) do
         progress_token = get_in(params, ["_meta", "progressToken"])
         file_path = params["path"]
-        
+
         # Start async processing with progress updates
         Task.start(fn ->
           process_with_progress(file_path, progress_token, self())
         end)
-        
+
         {:ok, [%{type: "text", text: "Processing started"}], state}
       end
-      
+
       defp process_with_progress(path, token, server) when token != nil do
         # Send progress updates
         ExMCP.Server.notify_progress(server, token, 0, 100)
@@ -229,7 +229,7 @@ defmodule ExMCP.Server.Handler do
         # Then notify clients
         ExMCP.Server.notify_tools_changed(server)
       end
-      
+
       def update_resource(server, uri) do
         # Update the resource
         # Then notify clients
@@ -267,17 +267,17 @@ defmodule ExMCP.Server.Handler do
 
       def handle_initialize(params, state) do
         client_version = params["protocolVersion"]
-        
+
         # Accept supported versions or propose latest
         negotiated_version = case client_version do
           "2025-03-26" -> "2025-03-26"
           "2024-11-05" -> "2024-11-05"
           _ -> "2025-03-26"  # Propose latest for unknown versions
         end
-        
+
         # Use version-aware capabilities
         capabilities = ExMCP.Server.Capabilities.build_capabilities(__MODULE__, negotiated_version)
-        
+
         {:ok, %{
           protocolVersion: negotiated_version,
           serverInfo: %{name: "my-server", version: "1.0.0"},
@@ -305,10 +305,10 @@ defmodule ExMCP.Server.Handler do
 
   1. Simple format (array of content items):
       {:ok, [%{type: "text", text: "Success"}], state}
-      
+
   2. Extended format (with isError flag):
       {:ok, %{content: [%{type: "text", text: "Error occurred"}], isError: true}, state}
-      
+
   3. Structured output format (draft feature):
       {:ok, %{
         content: [%{type: "text", text: "Weather data"}],
@@ -532,8 +532,8 @@ defmodule ExMCP.Server.Handler do
 
       @impl true
       def handle_set_log_level(level, state) do
-        # Default implementation integrates with ExMCP.Logging
-        case ExMCP.Logging.set_global_level(level) do
+        # Default implementation integrates with ExMCP.Internal.Logging
+        case ExMCP.Internal.Logging.set_global_level(level) do
           :ok ->
             {:ok, state}
 
@@ -572,7 +572,7 @@ defmodule ExMCP.Server.Handler do
 
       def handle_initialize(params, state) do
         capabilities = ExMCP.Server.Handler.build_capabilities(__MODULE__)
-        
+
         {:ok, %{
           protocolVersion: "2025-03-26",
           serverInfo: %{name: "my-server", version: "1.0.0"},

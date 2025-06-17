@@ -10,7 +10,7 @@ Add ExMCP to your `mix.exs` dependencies:
 def deps do
   [
     {:ex_mcp, "~> 0.5.0"},
-    {:horde, "~> 0.8"}  # Required for Native BEAM dispatcher
+    {:horde, "~> 0.8"}  # Required for Native Service Dispatcher
   ]
 end
 ```
@@ -71,7 +71,7 @@ end
 )
 ```
 
-### 2. Native BEAM Service (ultra-fast)
+### 2. Native Service Dispatcher (ultra-fast)
 
 Perfect for high-performance communication within Elixir clusters:
 
@@ -165,7 +165,7 @@ Client <--JSON-RPC--> Transport <--JSON-RPC--> Server
 
 **Performance:** ~1-5ms per call
 
-### Native BEAM Service Dispatcher
+### Native Service Dispatcher
 
 ```
 Service A <--Direct GenServer.call()--> Service B
@@ -188,7 +188,7 @@ Service A <--Direct GenServer.call()--> Service B
 - ✅ Following strict MCP protocol compliance
 - ✅ Network-based communication needed
 
-### Use Native BEAM When:
+### Use Native Service Dispatcher When:
 - ⚡ High-performance internal communication
 - ⚡ Trusted Elixir service clusters
 - ⚡ Real-time or latency-sensitive applications
@@ -261,7 +261,7 @@ end
 
 ## Performance Tips
 
-### Native BEAM Optimization
+### Native Service Dispatcher Optimization
 
 1. **Use Direct Calls**: Skip Client/Server for internal services
 2. **Batch Operations**: Combine multiple calls when possible  

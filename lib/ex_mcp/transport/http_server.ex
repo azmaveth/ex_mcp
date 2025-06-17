@@ -33,10 +33,10 @@ if Code.ensure_loaded?(Plug) do
 
         defmodule MyMCPRouter do
           use Plug.Router
-          
+
           plug :match
           plug :dispatch
-          
+
           forward "/mcp", to: ExMCP.Transport.HTTPServer,
             init_opts: [
               handler: MyMCPHandler,
@@ -59,7 +59,8 @@ if Code.ensure_loaded?(Plug) do
     import Plug.Conn
     require Logger
 
-    alias ExMCP.{Protocol, Security, Server}
+    alias ExMCP.Server
+    alias ExMCP.Internal.{Protocol, Security}
 
     @behaviour Plug
 

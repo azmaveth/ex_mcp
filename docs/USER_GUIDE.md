@@ -26,7 +26,7 @@ ExMCP is a complete Elixir implementation of the Model Context Protocol (MCP), e
 ### Key Features
 
 - **Full Protocol Support**: Implements MCP specification version 2025-03-26
-- **Multiple Transports**: stdio, Streamable HTTP (with Server-Sent Events), and native BEAM
+- **Multiple Transports**: stdio, Streamable HTTP (with Server-Sent Events)
 - **Both Client and Server**: Build MCP servers or connect to existing ones
 - **OTP Integration**: Built on Elixir's OTP principles for reliability
 - **Type Safety**: Comprehensive type specifications throughout
@@ -433,13 +433,13 @@ Servers can make requests back to clients:
 # The client must have a handler implemented to respond to these requests
 ```
 
-## Building Native BEAM Services
+## Using the Native Service Dispatcher
 
-Native BEAM services provide ultra-fast communication for trusted Elixir clusters using the `ExMCP.Service` behaviour.
+The Native Service Dispatcher provides ultra-fast communication for trusted Elixir services within the same cluster using the `ExMCP.Service` macro.
 
-### Service Behaviour
+### Service Implementation
 
-All Native BEAM services implement the `ExMCP.Service` behaviour:
+Services are created using the `ExMCP.Service` macro:
 
 ```elixir
 defmodule MyToolService do
@@ -700,12 +700,6 @@ end
   transport: :http,
   url: "http://localhost:8080",
   endpoint: "/mcp/v1"  # Optional: specify custom endpoint (defaults to "/mcp/v1")
-)
-
-# Connect to a BEAM server
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :beam,
-  server: {:global, :my_mcp_server}
 )
 ```
 
@@ -1019,80 +1013,15 @@ For HTTP-based communication with optional Server-Sent Events (SSE) streaming.
 )
 ```
 
-### BEAM Transport
+### Custom Transports
 
-For native Elixir/Erlang communication:
-
-```elixir
-# Server
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
-  transport: :beam,
-  name: {:global, :my_mcp_server}
-)
-
-# Client (same node)
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :beam,
-  server: server
-)
-
-# Client (different node)
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :beam,
-  server: {:global, :my_mcp_server}
-)
-```
+You can implement custom transports by implementing the `ExMCP.Transport` behaviour. See the API Reference for details.
 
 ## Advanced Features
 
-### Server Discovery
+### Auto-Reconnection
 
-Automatically find available MCP servers:
-
-```elixir
-# Discover all servers
-servers = ExMCP.Discovery.discover_servers()
-
-# Discover specific types
-servers = ExMCP.Discovery.discover_servers(
-  methods: [:env, :npm, :well_known]
-)
-
-# Connect to discovered server
-server_config = List.first(servers)
-{:ok, client} = ExMCP.Client.start_link(server_config)
-```
-
-### Server Manager
-
-Manage multiple server connections:
-
-```elixir
-# Start the server manager
-{:ok, manager} = ExMCP.ServerManager.start_link()
-
-# Add servers
-{:ok, client1} = ExMCP.ServerManager.add_server(manager, %{
-  name: "code-server",
-  transport: :stdio,
-  command: ["code-mcp-server"]
-})
-
-{:ok, client2} = ExMCP.ServerManager.add_server(manager, %{
-  name: "data-server",
-  transport: :http,
-  url: "http://localhost:9000"
-})
-
-# List connected servers
-servers = ExMCP.ServerManager.list_servers(manager)
-
-# Get specific client
-{:ok, client} = ExMCP.ServerManager.get_server(manager, "code-server")
-```
-
-### Error Handling
+ExMCP clients automatically handle reconnection on failure:
 
 ```elixir
 # Client automatically reconnects on failure
@@ -1312,7 +1241,7 @@ end
   endpoint: "/mcp/v1"  # Ensure endpoint matches server configuration
 )
 
-# Native BEAM: Service not found
+# Native Service Dispatcher: Service not found
 # Check if service is registered
 ExMCP.Native.service_available?(:my_service)
 

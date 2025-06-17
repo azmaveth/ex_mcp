@@ -3,7 +3,7 @@ defmodule ExMCP.Transport.Beam.Observability do
   Observability module for BEAM transport providing metrics collection,
   health monitoring, distributed tracing, and alerting capabilities.
 
-  This module implements comprehensive observability features for the enhanced 
+  This module implements comprehensive observability features for the enhanced
   BEAM transport to enable monitoring, debugging, and performance analysis.
 
   ## Features

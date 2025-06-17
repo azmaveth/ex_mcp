@@ -4,7 +4,7 @@ defmodule ExMCP.Native do
 
   This module provides ultra-fast, direct process communication leveraging OTP's built-in features:
   - Direct GenServer.call between processes
-  - Horde.Registry for distributed service discovery 
+  - Horde.Registry for distributed service discovery
   - Automatic distribution across BEAM nodes
   - Built-in fault tolerance and monitoring
   - Zero serialization overhead for local calls
@@ -16,7 +16,7 @@ defmodule ExMCP.Native do
   - Services that need OTP supervision and monitoring
 
   > #### Future API Direction {: .info}
-  > 
+  >
   > In future versions, native BEAM communication will be available as a transport
   > option for `ExMCP.Client`, providing a unified API across all communication methods.
   > The current `ExMCP.Native` API will remain supported but may be superseded.
@@ -24,7 +24,7 @@ defmodule ExMCP.Native do
   ## Performance Characteristics
 
   - Local calls: ~15μs latency
-  - Cross-node calls: ~50μs latency  
+  - Cross-node calls: ~50μs latency
   - Memory overhead: Single Horde.Registry entry per service
   - Throughput: Limited only by service processing speed
 
@@ -122,7 +122,7 @@ defmodule ExMCP.Native do
       # Call with timeout and metadata
       {:ok, result} = ExMCP.Native.call(
         :my_tools,
-        "process_data", 
+        "process_data",
         %{"dataset" => "large_data"},
         timeout: 30_000,
         meta: %{"trace_id" => "abc", "user_id" => "user1"}

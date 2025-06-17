@@ -6,13 +6,13 @@ defmodule ExMCP.Server.Capabilities do
   based on the negotiated protocol version.
   """
 
-  alias ExMCP.VersionRegistry
+  alias ExMCP.Internal.VersionRegistry
 
   @doc """
   Builds server capabilities object based on protocol version.
 
   Returns version-specific capabilities from the VersionRegistry.
-  Handlers can still override this in their handle_initialize/2 
+  Handlers can still override this in their handle_initialize/2
   if they want to advertise different capabilities.
 
   ## Parameters
@@ -20,7 +20,7 @@ defmodule ExMCP.Server.Capabilities do
   - version: The negotiated protocol version (defaults to latest)
 
   ## Examples
-      
+
       iex> ExMCP.Server.Capabilities.build_capabilities(MyHandler, "2025-03-26")
       %{
         "prompts" => %{"listChanged" => true},

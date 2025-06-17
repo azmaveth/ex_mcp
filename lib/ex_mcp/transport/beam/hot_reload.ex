@@ -26,7 +26,7 @@ defmodule ExMCP.Transport.Beam.HotReload do
         handler: MyHandler,
         transport: :beam
       ])
-      
+
       # Enable hot reloading
       {:ok, manager} = HotReload.enable(server, %{
         auto_reload: true,
@@ -34,12 +34,12 @@ defmodule ExMCP.Transport.Beam.HotReload do
         preserve_connections: true,
         validation: :strict
       })
-      
+
       # Server will now automatically reload when MyHandler module changes
-      
+
       # Manually trigger reload if needed
       HotReload.reload_handler(server)
-      
+
       # Disable hot reloading
       HotReload.disable(server)
 

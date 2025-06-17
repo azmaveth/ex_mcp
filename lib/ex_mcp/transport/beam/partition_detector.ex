@@ -9,7 +9,7 @@ defmodule ExMCP.Transport.Beam.PartitionDetector do
   ## Partition Detection Methods
 
   - **Node Monitoring**: Monitor BEAM node connections
-  - **Heartbeat**: Regular heartbeat messages between cluster members  
+  - **Heartbeat**: Regular heartbeat messages between cluster members
   - **Service Registry Comparison**: Compare service states across nodes
   - **Clock Synchronization**: Detect time drift that may indicate partitions
 

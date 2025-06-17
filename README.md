@@ -135,7 +135,7 @@ Add `ex_mcp` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.2.0"}
+    {:ex_mcp, "~> 0.5.0"}
   ]
 end
 ```

@@ -11,23 +11,23 @@ defmodule ExMCP.Approval do
 
       defmodule MyApprovalHandler do
         @behaviour ExMCP.Approval
-        
+
         @impl true
         def request_approval(:sampling_request, params, _opts) do
           IO.puts("Server wants to sample LLM with:")
           IO.inspect(params, pretty: true)
-          
+
           case IO.gets("Approve? (y/n): ") do
             "y\\n" -> {:approved, params}
             _ -> {:denied, "User denied the request"}
           end
         end
-        
+
         @impl true
         def request_approval(:sampling_response, response, _opts) do
           IO.puts("LLM returned:")
           IO.inspect(response, pretty: true)
-          
+
           case IO.gets("Send to server? (y/n): ") do
             "y\\n" -> {:approved, response}
             _ -> {:denied, "User blocked the response"}

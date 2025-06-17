@@ -46,7 +46,7 @@ defmodule ExMCP.Security.TokenValidator do
   @doc """
   Validates client authorization for dynamic registration.
 
-  Per MCP spec: "MCP proxy servers... MUST obtain user consent for each 
+  Per MCP spec: "MCP proxy servers... MUST obtain user consent for each
   dynamically registered client before forwarding to third-party authorization servers"
   """
   @spec validate_dynamic_client_consent(map(), pid() | nil) ::

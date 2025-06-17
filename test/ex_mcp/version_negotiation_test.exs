@@ -3,7 +3,7 @@ defmodule ExMCP.VersionNegotiationTest do
 
   @moduletag :protocol
 
-  alias ExMCP.{Client, Protocol, Server}
+  alias ExMCP.{Client, Server}
 
   defmodule TestVersionHandler do
     use ExMCP.Server.Handler

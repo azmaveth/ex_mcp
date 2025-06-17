@@ -35,7 +35,7 @@ defmodule ExMCP.Compliance.MessageValidationComplianceTest do
     end
 
     @impl true
-    def handle_call_tool(_params, state) do
+    def handle_call_tool(_name, _arguments, state) do
       {:ok, %{content: [%{type: "text", text: "Tool called"}]}, state}
     end
 

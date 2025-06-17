@@ -14,7 +14,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
   @moduletag :progress
   @moduletag :slow
 
-  alias ExMCP.{Client, Protocol, Server}
+  alias ExMCP.{Client, Server}
 
   defmodule ComprehensiveHandler do
     use ExMCP.Server.Handler

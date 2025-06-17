@@ -45,7 +45,7 @@ defmodule Examples.NativeBeam.SupervisorExample do
     
     def init(_args) do
       Logger.info("File service starting...")
-      :ok = ExMCP.Transport.Native.register_service(:file_service)
+      :ok = ExMCP.Native.register_service(:file_service)
       Logger.info("File service registered as :file_service")
       {:ok, %{files: []}}
     end
@@ -113,7 +113,7 @@ defmodule Examples.NativeBeam.SupervisorExample do
     
     def init(_args) do
       Logger.info("Data processor starting...")
-      :ok = ExMCP.Transport.Native.register_service(:data_processor)
+      :ok = ExMCP.Native.register_service(:data_processor)
       Logger.info("Data processor registered as :data_processor")
       {:ok, %{processed_count: 0}}
     end
@@ -144,7 +144,7 @@ defmodule Examples.NativeBeam.SupervisorExample do
     def handle_call({:mcp_request, %{"method" => "tools/call", "params" => %{"name" => "process_data", "arguments" => %{"numbers" => numbers}}}}, _from, state) do
       # Use the calculator service to sum the numbers
       results = for num <- numbers do
-        case ExMCP.Transport.Native.call(:calculator_server, "tools/call", %{
+        case ExMCP.Native.call(:calculator_server, "tools/call", %{
           "name" => "add",
           "arguments" => %{"a" => num, "b" => 1}
         }) do
@@ -186,7 +186,7 @@ defmodule Examples.NativeBeam.SupervisorExample do
     Process.sleep(200)
     
     # Discover available services
-    services = ExMCP.Transport.Native.list_services()
+    services = ExMCP.Native.list_services()
     Logger.info("Discovered services:")
     for {service_name, _pid, _meta} <- services do
       Logger.info("  - #{service_name}")
@@ -194,7 +194,7 @@ defmodule Examples.NativeBeam.SupervisorExample do
     
     # Test calculator service
     Logger.info("\n--- Testing Calculator Service ---")
-    {:ok, result} = ExMCP.Transport.Native.call(:calculator_server, "tools/call", %{
+    {:ok, result} = ExMCP.Native.call(:calculator_server, "tools/call", %{
       "name" => "add",
       "arguments" => %{"a" => 10, "b" => 5}
     })
@@ -202,12 +202,12 @@ defmodule Examples.NativeBeam.SupervisorExample do
     
     # Test file service
     Logger.info("\n--- Testing File Service ---")
-    {:ok, _} = ExMCP.Transport.Native.call(:file_service, "tools/call", %{
+    {:ok, _} = ExMCP.Native.call(:file_service, "tools/call", %{
       "name" => "create_file",
       "arguments" => %{"name" => "test.txt", "content" => "Hello World"}
     })
     
-    {:ok, result} = ExMCP.Transport.Native.call(:file_service, "tools/call", %{
+    {:ok, result} = ExMCP.Native.call(:file_service, "tools/call", %{
       "name" => "list_files",
       "arguments" => %{}
     })
@@ -215,14 +215,14 @@ defmodule Examples.NativeBeam.SupervisorExample do
     
     # Test data processor (inter-service communication)
     Logger.info("\n--- Testing Data Processor (Inter-service Communication) ---")
-    {:ok, result} = ExMCP.Transport.Native.call(:data_processor, "tools/call", %{
+    {:ok, result} = ExMCP.Native.call(:data_processor, "tools/call", %{
       "name" => "process_data",
       "arguments" => %{"numbers" => [1, 2, 3, 4, 5]}
     })
     Logger.info("Data processor result: #{result["content"] |> List.first() |> Map.get("text")}")
     
     # Get processing stats
-    {:ok, result} = ExMCP.Transport.Native.call(:data_processor, "tools/call", %{
+    {:ok, result} = ExMCP.Native.call(:data_processor, "tools/call", %{
       "name" => "get_stats",
       "arguments" => %{}
     })
@@ -230,18 +230,22 @@ defmodule Examples.NativeBeam.SupervisorExample do
     
     # Demonstrate fault tolerance by crashing a service
     Logger.info("\n--- Testing Fault Tolerance ---")
-    [data_processor_pid] = Registry.lookup(ExMCP.Registry, :data_processor) |> Enum.map(fn {pid, _} -> pid end)
+    # Find the data processor service in Horde.Registry
+    case Horde.Registry.lookup(ExMCP.ServiceRegistry, :data_processor) do
+      [{pid, _}] -> data_processor_pid = pid
+      _ -> raise "Data processor not found in registry"
+    end
     Process.exit(data_processor_pid, :kill)
     
     Logger.info("Killed data processor, waiting for restart...")
     Process.sleep(100)
     
     # Service should be restarted automatically
-    if ExMCP.Transport.Native.service_available?(:data_processor) do
+    if ExMCP.Native.service_available?(:data_processor) do
       Logger.info("Data processor restarted successfully!")
       
       # Test that it still works
-      {:ok, result} = ExMCP.Transport.Native.call(:data_processor, "tools/call", %{
+      {:ok, result} = ExMCP.Native.call(:data_processor, "tools/call", %{
         "name" => "get_stats",
         "arguments" => %{}
       })

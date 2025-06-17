@@ -22,7 +22,7 @@ defmodule ExMCP.Service do
           {:ok, %{"tools" => tools}, state}
         end
 
-        @impl true  
+        @impl true
         def handle_mcp_request("tools/call", %{"name" => "ping"} = params, state) do
           {:ok, %{"content" => [%{"type" => "text", "text" => "Pong!"}]}, state}
         end

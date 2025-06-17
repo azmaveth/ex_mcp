@@ -1,20 +1,20 @@
 #!/usr/bin/env elixir
 
-# Audio Content Example
-# Demonstrates how to work with audio content in MCP
+# Audio Content Example with Native Service Dispatcher
+# Demonstrates how to work with audio content using ExMCP.Service
 
-defmodule AudioContentExample do
+defmodule AudioContentService do
   @moduledoc """
-  Example MCP server that demonstrates audio content handling.
+  Example MCP service demonstrating audio content handling with Native Service Dispatcher.
   
-  This server provides tools for:
+  This service provides tools for:
   - Transcribing audio files
   - Generating audio from text (TTS)
   - Audio format conversion
   - Audio analysis
   """
   
-  use ExMCP.Server.Handler
+  use ExMCP.Service, name: :audio_service
   alias ExMCP.Content
   
   @impl true
@@ -23,394 +23,500 @@ defmodule AudioContentExample do
   end
   
   @impl true
-  def handle_initialize(_params, state) do
-    result = %{
-      protocolVersion: "2025-03-26",
-      serverInfo: %{
-        name: "audio-content-server",
-        version: "1.0.0",
-        description: "MCP server demonstrating audio content handling"
-      },
-      capabilities: %{
-        tools: %{},
-        resources: %{}
-      }
-    }
-    
-    {:ok, result, state}
-  end
-  
-  @impl true
-  def handle_list_tools(_cursor, state) do
+  def handle_mcp_request("list_tools", _params, state) do
     tools = [
       %{
-        name: "transcribe_audio",
-        description: "Transcribe audio content to text",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            audio: %{
-              type: "object",
-              properties: %{
-                type: %{type: "string", const: "audio"},
-                data: %{type: "string", description: "Base64-encoded audio data"},
-                mimeType: %{type: "string", description: "Audio MIME type"}
-              },
-              required: ["type", "data", "mimeType"]
+        "name" => "transcribe_audio",
+        "description" => "Transcribe audio content to text",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "audio_data" => %{
+              "type" => "string",
+              "description" => "Base64 encoded audio data"
             },
-            language: %{
-              type: "string",
-              description: "Language code (e.g., 'en', 'es', 'fr')",
-              default: "en"
+            "format" => %{
+              "type" => "string",
+              "enum" => ["mp3", "wav", "flac", "ogg"],
+              "description" => "Audio format"
+            },
+            "language" => %{
+              "type" => "string",
+              "default" => "en",
+              "description" => "Language code for transcription"
             }
           },
-          required: ["audio"]
+          "required" => ["audio_data", "format"]
         }
       },
       %{
-        name: "text_to_speech",
-        description: "Convert text to audio speech",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            text: %{type: "string", description: "Text to convert to speech"},
-            voice: %{
-              type: "string",
-              enum: ["male", "female", "neutral"],
-              default: "neutral"
+        "name" => "text_to_speech",
+        "description" => "Convert text to speech audio",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "text" => %{
+              "type" => "string",
+              "description" => "Text to convert to speech"
             },
-            language: %{type: "string", default: "en"},
-            format: %{
-              type: "string",
-              enum: ["mp3", "wav", "ogg"],
-              default: "mp3"
+            "voice" => %{
+              "type" => "string",
+              "enum" => ["male", "female", "child"],
+              "default" => "female",
+              "description" => "Voice type"
+            },
+            "format" => %{
+              "type" => "string", 
+              "enum" => ["mp3", "wav"],
+              "default" => "mp3",
+              "description" => "Output audio format"
+            },
+            "speed" => %{
+              "type" => "number",
+              "minimum" => 0.5,
+              "maximum" => 2.0,
+              "default" => 1.0,
+              "description" => "Speech speed multiplier"
             }
           },
-          required: ["text"]
+          "required" => ["text"]
         }
       },
       %{
-        name: "analyze_audio",
-        description: "Analyze audio properties",
-        inputSchema: %{
-          type: "object",
-          properties: %{
-            audio: %{
-              type: "object",
-              properties: %{
-                type: %{type: "string", const: "audio"},
-                data: %{type: "string"},
-                mimeType: %{type: "string"}
-              },
-              required: ["type", "data", "mimeType"]
+        "name" => "convert_audio",
+        "description" => "Convert audio between formats",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "audio_data" => %{
+              "type" => "string",
+              "description" => "Base64 encoded audio data"
+            },
+            "from_format" => %{
+              "type" => "string",
+              "enum" => ["mp3", "wav", "flac", "ogg"]
+            },
+            "to_format" => %{
+              "type" => "string",
+              "enum" => ["mp3", "wav", "flac", "ogg"]
             }
           },
-          required: ["audio"]
+          "required" => ["audio_data", "from_format", "to_format"]
+        }
+      },
+      %{
+        "name" => "analyze_audio",
+        "description" => "Analyze audio properties",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "audio_data" => %{
+              "type" => "string",
+              "description" => "Base64 encoded audio data"
+            },
+            "format" => %{
+              "type" => "string",
+              "enum" => ["mp3", "wav", "flac", "ogg"]
+            }
+          },
+          "required" => ["audio_data", "format"]
         }
       }
     ]
     
-    {:ok, tools, nil, state}
+    {:ok, %{"tools" => tools}, state}
   end
   
-  @impl true
-  def handle_call_tool("transcribe_audio", arguments, state) do
-    with {:ok, audio_content} <- validate_audio_content(arguments["audio"]),
-         {:ok, transcript} <- transcribe_audio(audio_content, arguments["language"] || "en") do
-      
-      # Store for resource access
-      id = generate_id()
-      state = put_in(state.processed_audio[id], %{
-        type: :transcript,
-        content: transcript,
-        source: audio_content,
-        timestamp: DateTime.utc_now()
-      })
-      
-      result = %{
-        transcript: transcript,
-        language: arguments["language"] || "en",
-        resourceUri: "transcript://#{id}"
-      }
-      
-      {:ok, result, state}
-    else
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-  
-  @impl true
-  def handle_call_tool("text_to_speech", arguments, state) do
-    text = arguments["text"]
-    voice = arguments["voice"] || "neutral"
-    language = arguments["language"] || "en"
-    format = arguments["format"] || "mp3"
+  def handle_mcp_request("tools/call", %{"name" => "transcribe_audio", "arguments" => args}, state) do
+    %{"audio_data" => audio_data, "format" => format} = args
+    language = Map.get(args, "language", "en")
     
-    # Simulate TTS generation
-    audio_data = simulate_tts(text, voice, language, format)
-    mime_type = get_mime_type(format)
+    # Simulate transcription (in real implementation, use actual speech-to-text service)
+    transcript = simulate_transcription(audio_data, format, language)
     
-    # Create audio content
-    audio_content = Content.audio(audio_data, mime_type)
-    
-    # Store for resource access
-    id = generate_id()
-    state = put_in(state.processed_audio[id], %{
-      type: :generated_audio,
-      content: audio_content,
-      text: text,
-      settings: %{voice: voice, language: language, format: format},
-      timestamp: DateTime.utc_now()
+    # Store processed audio
+    audio_id = "transcription_#{System.unique_integer()}"
+    new_state = put_in(state.processed_audio[audio_id], %{
+      type: "transcription",
+      original_format: format,
+      language: language,
+      transcript: transcript
     })
     
-    result = %{
-      audio: audio_content,
-      resourceUri: "audio://#{id}"
-    }
+    content = [
+      Content.text("Transcription completed for #{format} audio in #{language}"),
+      Content.text("Transcript: #{transcript}")
+    ]
     
-    {:ok, result, state}
+    {:ok, %{"content" => content}, new_state}
   end
   
-  @impl true
-  def handle_call_tool("analyze_audio", arguments, state) do
-    with {:ok, audio_content} <- validate_audio_content(arguments["audio"]) do
-      # Simulate audio analysis
-      analysis = analyze_audio_properties(audio_content)
-      
-      result = %{
-        mimeType: audio_content.mimeType,
-        analysis: analysis
-      }
-      
-      {:ok, result, state}
-    else
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-  
-  @impl true
-  def handle_call_tool(_name, _arguments, state) do
-    {:error, "Unknown tool", state}
-  end
-  
-  @impl true
-  def handle_list_resources(_cursor, state) do
-    resources = 
-      state.processed_audio
-      |> Enum.map(fn {id, data} ->
-        case data.type do
-          :transcript ->
-            %{
-              uri: "transcript://#{id}",
-              name: "Transcript #{id}",
-              description: "Transcribed audio from #{DateTime.to_string(data.timestamp)}",
-              mimeType: "text/plain"
-            }
-          
-          :generated_audio ->
-            %{
-              uri: "audio://#{id}",
-              name: "Generated Audio #{id}",
-              description: "TTS audio: '#{String.slice(data.text, 0, 50)}...'",
-              mimeType: data.content.mimeType
-            }
-        end
-      end)
+  def handle_mcp_request("tools/call", %{"name" => "text_to_speech", "arguments" => args}, state) do
+    %{"text" => text} = args
+    voice = Map.get(args, "voice", "female")
+    format = Map.get(args, "format", "mp3")
+    speed = Map.get(args, "speed", 1.0)
     
-    {:ok, resources, nil, state}
-  end
-  
-  @impl true
-  def handle_read_resource(uri, state) do
-    case String.split(uri, "://") do
-      ["transcript", id] ->
-        case Map.get(state.processed_audio, id) do
-          %{type: :transcript, content: content} ->
-            {:ok, %{contents: [Content.text(content)]}, state}
-          _ ->
-            {:error, "Transcript not found", state}
-        end
-      
-      ["audio", id] ->
-        case Map.get(state.processed_audio, id) do
-          %{type: :generated_audio, content: audio_content} ->
-            {:ok, %{contents: [audio_content]}, state}
-          _ ->
-            {:error, "Audio not found", state}
-        end
-      
-      _ ->
-        {:error, "Unknown resource type", state}
-    end
-  end
-  
-  @impl true
-  def handle_list_prompts(_cursor, state) do
-    {:ok, [], nil, state}
-  end
-  
-  @impl true
-  def handle_get_prompt(_name, _arguments, state) do
-    {:error, "Prompt not found", state}
-  end
-  
-  @impl true
-  def handle_complete(_ref, _argument, state) do
-    {:ok, %{completion: []}, state}
-  end
-  
-  @impl true
-  def handle_list_resource_templates(_cursor, state) do
-    {:ok, [], nil, state}
-  end
-  
-  # Private helpers
-  
-  defp validate_audio_content(%{"type" => "audio", "data" => data, "mimeType" => mime_type} = content) do
-    # Convert string keys to atoms for validation
-    atom_content = %{
-      type: :audio,
-      data: data,
-      mimeType: mime_type
-    }
+    # Simulate TTS generation
+    audio_data = simulate_tts(text, voice, format, speed)
     
-    # Add annotations if present
-    atom_content = 
-      case Map.get(content, "annotations") do
-        nil -> atom_content
-        annotations -> Map.put(atom_content, :annotations, annotations)
-      end
+    # Store generated audio
+    audio_id = "tts_#{System.unique_integer()}"
+    new_state = put_in(state.processed_audio[audio_id], %{
+      type: "generated",
+      text: text,
+      voice: voice,
+      format: format,
+      speed: speed
+    })
     
-    Content.validate(atom_content)
+    content = [
+      Content.text("Generated #{format} audio with #{voice} voice at #{speed}x speed"),
+      # In a real implementation, you'd return the actual audio data
+      Content.text("Audio data: #{String.slice(audio_data, 0, 50)}... (truncated)")
+    ]
+    
+    {:ok, %{"content" => content}, new_state}
   end
   
-  defp validate_audio_content(_), do: {:error, "Invalid audio content"}
-  
-  defp transcribe_audio(audio_content, language) do
-    # In a real implementation, you would:
-    # 1. Decode the base64 audio data
-    # 2. Send to a transcription service (Whisper, Google Speech-to-Text, etc.)
-    # 3. Return the transcript
+  def handle_mcp_request("tools/call", %{"name" => "convert_audio", "arguments" => args}, state) do
+    %{"audio_data" => audio_data, "from_format" => from_format, "to_format" => to_format} = args
     
-    # For demo purposes, simulate transcription
-    {:ok, "This is a simulated transcript of the audio in #{language}. " <>
-          "In a real implementation, this would use a service like OpenAI Whisper " <>
-          "or Google Speech-to-Text to transcribe the actual audio content."}
+    # Simulate format conversion
+    converted_data = simulate_conversion(audio_data, from_format, to_format)
+    
+    # Store conversion result
+    audio_id = "conversion_#{System.unique_integer()}"
+    new_state = put_in(state.processed_audio[audio_id], %{
+      type: "conversion",
+      from_format: from_format,
+      to_format: to_format,
+      original_size: byte_size(audio_data),
+      converted_size: byte_size(converted_data)
+    })
+    
+    content = [
+      Content.text("Converted audio from #{from_format} to #{to_format}"),
+      Content.text("Original size: #{byte_size(audio_data)} bytes"),
+      Content.text("Converted size: #{byte_size(converted_data)} bytes"),
+      Content.text("Converted data: #{String.slice(converted_data, 0, 50)}... (truncated)")
+    ]
+    
+    {:ok, %{"content" => content}, new_state}
   end
   
-  defp simulate_tts(text, voice, language, format) do
-    # In a real implementation, you would:
-    # 1. Send text to a TTS service
-    # 2. Get back audio data
-    # 3. Encode as base64
+  def handle_mcp_request("tools/call", %{"name" => "analyze_audio", "arguments" => args}, state) do
+    %{"audio_data" => audio_data, "format" => format} = args
     
-    # For demo, return dummy base64 data
-    Base.encode64("DUMMY_AUDIO_DATA_#{text}_#{voice}_#{language}_#{format}")
-  end
-  
-  defp analyze_audio_properties(_audio_content) do
     # Simulate audio analysis
-    %{
-      duration: "2:34",
-      bitrate: "128 kbps",
-      sampleRate: "44.1 kHz",
-      channels: "stereo",
-      format: "MP3",
-      estimatedSize: "2.3 MB"
-    }
+    analysis = simulate_analysis(audio_data, format)
+    
+    # Store analysis result
+    audio_id = "analysis_#{System.unique_integer()}"
+    new_state = put_in(state.processed_audio[audio_id], %{
+      type: "analysis",
+      format: format,
+      analysis: analysis
+    })
+    
+    content = [
+      Content.text("Audio Analysis Results:"),
+      Content.text("Format: #{format}"),
+      Content.text("Duration: #{analysis.duration} seconds"),
+      Content.text("Sample Rate: #{analysis.sample_rate} Hz"),
+      Content.text("Channels: #{analysis.channels}"),
+      Content.text("Bitrate: #{analysis.bitrate} kbps"),
+      Content.text("Peak Volume: #{analysis.peak_volume} dB")
+    ]
+    
+    {:ok, %{"content" => content}, new_state}
   end
   
-  defp get_mime_type("mp3"), do: "audio/mp3"
-  defp get_mime_type("wav"), do: "audio/wav"
-  defp get_mime_type("ogg"), do: "audio/ogg"
-  defp get_mime_type(_), do: "audio/mpeg"
+  def handle_mcp_request("list_resources", _params, state) do
+    # Provide access to processed audio as resources
+    resources = state.processed_audio
+    |> Enum.map(fn {id, audio} ->
+      %{
+        "uri" => "audio://processed/#{id}",
+        "name" => "#{String.capitalize(audio.type)} #{id}",
+        "description" => case audio.type do
+          "transcription" -> "Transcribed #{audio.original_format} audio"
+          "generated" -> "Generated #{audio.format} audio from text"
+          "conversion" -> "Converted audio from #{audio.from_format} to #{audio.to_format}"
+          "analysis" -> "Analysis of #{audio.format} audio"
+        end,
+        "mimeType" => "application/json"
+      }
+    end)
+    
+    {:ok, %{"resources" => resources}, state}
+  end
   
-  defp generate_id do
-    :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+  def handle_mcp_request("resources/read", %{"uri" => "audio://processed/" <> id}, state) do
+    case Map.get(state.processed_audio, id) do
+      nil ->
+        {:error, %{"code" => -32602, "message" => "Audio resource not found: #{id}"}, state}
+      
+      audio_data ->
+        content = %{
+          "uri" => "audio://processed/#{id}",
+          "mimeType" => "application/json",
+          "text" => Jason.encode!(audio_data, pretty: true)
+        }
+        {:ok, %{"contents" => [content]}, state}
+    end
+  end
+  
+  def handle_mcp_request("list_prompts", _params, state) do
+    prompts = [
+      %{
+        "name" => "audio_processing_workflow",
+        "description" => "Template for audio processing workflows",
+        "arguments" => [
+          %{
+            "name" => "task_type",
+            "description" => "Type of audio processing task",
+            "required" => true
+          }
+        ]
+      }
+    ]
+    
+    {:ok, %{"prompts" => prompts}, state}
+  end
+  
+  def handle_mcp_request("prompts/get", %{"name" => "audio_processing_workflow", "arguments" => args}, state) do
+    task_type = Map.get(args, "task_type", "general")
+    
+    messages = [
+      %{
+        "role" => "user",
+        "content" => %{
+          "type" => "text",
+          "text" => """
+          I need help with audio processing for: #{task_type}
+
+          Available tools:
+          - transcribe_audio: Convert audio to text
+          - text_to_speech: Convert text to audio 
+          - convert_audio: Change audio formats
+          - analyze_audio: Get audio properties
+
+          Please suggest the best approach for this task.
+          """
+        }
+      }
+    ]
+    
+    {:ok, %{"messages" => messages}, state}
+  end
+  
+  def handle_mcp_request(method, _params, state) do
+    {:error, %{"code" => -32601, "message" => "Method not found: #{method}"}, state}
+  end
+  
+  # Simulation functions (replace with real implementations)
+  
+  defp simulate_transcription(audio_data, format, language) do
+    # Simulate transcription based on audio length and language
+    data_size = byte_size(audio_data)
+    words_count = div(data_size, 1000) + 5  # Rough estimate
+    
+    case language do
+      "en" -> "This is a simulated English transcription with approximately #{words_count} words from #{format} audio."
+      "es" -> "Esta es una transcripción simulada en español con aproximadamente #{words_count} palabras del audio #{format}."
+      "fr" -> "Ceci est une transcription simulée en français avec environ #{words_count} mots de l'audio #{format}."
+      _ -> "Simulated transcription in #{language} with #{words_count} words from #{format} audio."
+    end
+  end
+  
+  defp simulate_tts(text, voice, format, speed) do
+    # Simulate TTS generation - create dummy audio data
+    text_length = String.length(text)
+    audio_duration = text_length / (150 * speed)  # ~150 chars per second at 1x speed
+    
+    # Generate pseudo-audio data (would be actual audio bytes in real implementation)
+    Base.encode64("SIMULATED_#{String.upcase(format)}_AUDIO_#{voice}_#{speed}x_#{audio_duration}s_#{text_length}chars")
+  end
+  
+  defp simulate_conversion(audio_data, from_format, to_format) do
+    # Simulate format conversion with different compression ratios
+    compression_ratios = %{
+      "mp3" => 0.1,
+      "wav" => 1.0,
+      "flac" => 0.6,
+      "ogg" => 0.15
+    }
+    
+    from_ratio = compression_ratios[from_format] || 1.0
+    to_ratio = compression_ratios[to_format] || 1.0
+    
+    # Simulate size change based on format
+    original_size = byte_size(audio_data)
+    new_size = round(original_size * (to_ratio / from_ratio))
+    
+    # Generate converted data
+    converted_data = String.duplicate("X", new_size)
+    Base.encode64("CONVERTED_#{String.upcase(to_format)}_FROM_#{String.upcase(from_format)}_#{converted_data}")
+  end
+  
+  defp simulate_analysis(audio_data, format) do
+    # Simulate audio analysis
+    data_size = byte_size(audio_data)
+    
+    %{
+      duration: Float.round(data_size / 44100 * 2, 2),  # Rough estimate
+      sample_rate: case format do
+        "wav" -> 44100
+        "mp3" -> 44100
+        "flac" -> 96000
+        "ogg" -> 44100
+      end,
+      channels: 2,
+      bitrate: case format do
+        "wav" -> 1411
+        "mp3" -> 320
+        "flac" -> 2000
+        "ogg" -> 256
+      end,
+      peak_volume: -6.2
+    }
   end
 end
 
-# Example client usage
-defmodule AudioContentClient do
-  def demo do
-    # Start the server
-    {:ok, server} = ExMCP.Server.start_link(
-      handler: AudioContentExample,
-      transport: :beam,
-      name: :audio_server
-    )
+# Demo client
+defmodule AudioContentDemo do
+  require Logger
+  
+  def run do
+    Logger.info("Starting Audio Content Service Demo with Native Service Dispatcher")
+    Logger.info("=" |> String.duplicate(70))
     
-    # Start a client
-    {:ok, client} = ExMCP.Client.start_link(
-      transport: :beam,
-      server: :audio_server
-    )
+    # Start the service
+    {:ok, _} = AudioContentService.start_link()
     
-    # Wait for initialization
+    # Wait for registration
     Process.sleep(100)
     
-    # List available tools
-    {:ok, result} = ExMCP.Client.list_tools(client)
-    tools = Map.get(result, "tools") || Map.get(result, :tools, [])
-    IO.puts("\nAvailable audio tools:")
+    # Demo 1: List available tools
+    Logger.info("\n=== Available Audio Tools ===")
+    {:ok, %{"tools" => tools}} = ExMCP.Native.call(:audio_service, "list_tools", %{})
     Enum.each(tools, fn tool ->
-      name = Map.get(tool, "name") || Map.get(tool, :name)
-      desc = Map.get(tool, "description") || Map.get(tool, :description)
-      IO.puts("  - #{name}: #{desc}")
+      IO.puts("• #{tool["name"]}: #{tool["description"]}")
     end)
     
-    # Example 1: Text to Speech
-    IO.puts("\n1. Converting text to speech...")
-    {:ok, tts_result} = ExMCP.Client.call_tool(client, "text_to_speech", %{
-      "text" => "Hello! This is a test of the MCP audio content feature.",
-      "voice" => "female",
-      "language" => "en",
-      "format" => "mp3"
+    # Demo 2: Transcribe audio
+    Logger.info("\n=== Audio Transcription ===")
+    sample_audio = Base.encode64("FAKE_AUDIO_DATA_FOR_DEMO")
+    
+    start_time = System.monotonic_time(:microsecond)
+    {:ok, %{"content" => content}} = ExMCP.Native.call(:audio_service, "tools/call", %{
+      "name" => "transcribe_audio",
+      "arguments" => %{
+        "audio_data" => sample_audio,
+        "format" => "wav",
+        "language" => "en"
+      }
     })
+    transcribe_time = System.monotonic_time(:microsecond) - start_time
     
-    IO.puts("Generated audio:")
-    IO.inspect(tts_result["audio"], pretty: true)
-    IO.puts("Resource URI: #{tts_result["resourceUri"]}")
-    
-    # Example 2: Transcribe the generated audio
-    IO.puts("\n2. Transcribing audio...")
-    {:ok, transcript_result} = ExMCP.Client.call_tool(client, "transcribe_audio", %{
-      "audio" => tts_result["audio"],
-      "language" => "en"
-    })
-    
-    IO.puts("Transcript: #{transcript_result["transcript"]}")
-    
-    # Example 3: Analyze audio
-    IO.puts("\n3. Analyzing audio properties...")
-    {:ok, analysis_result} = ExMCP.Client.call_tool(client, "analyze_audio", %{
-      "audio" => tts_result["audio"]
-    })
-    
-    IO.puts("Audio analysis:")
-    IO.inspect(analysis_result["analysis"], pretty: true)
-    
-    # Example 4: List resources
-    IO.puts("\n4. Listing generated resources...")
-    {:ok, %{"resources" => resources}} = ExMCP.Client.list_resources(client)
-    Enum.each(resources, fn resource ->
-      IO.puts("  - #{resource["name"]} (#{resource["uri"]})")
+    Enum.each(content, fn item ->
+      IO.puts("  #{item["text"]}")
     end)
+    IO.puts("  ⚡ Transcription completed in #{transcribe_time}μs")
     
-    # Example 5: Read a resource
-    if resource_uri = tts_result["resourceUri"] do
-      IO.puts("\n5. Reading audio resource...")
-      {:ok, %{"contents" => contents}} = ExMCP.Client.read_resource(client, resource_uri)
-      IO.puts("Retrieved #{length(contents)} content item(s)")
+    # Demo 3: Text to speech
+    Logger.info("\n=== Text to Speech ===")
+    
+    start_time = System.monotonic_time(:microsecond)
+    {:ok, %{"content" => content}} = ExMCP.Native.call(:audio_service, "tools/call", %{
+      "name" => "text_to_speech",
+      "arguments" => %{
+        "text" => "Hello from ExMCP Native Service Dispatcher!",
+        "voice" => "female",
+        "format" => "mp3",
+        "speed" => 1.2
+      }
+    })
+    tts_time = System.monotonic_time(:microsecond) - start_time
+    
+    Enum.each(content, fn item ->
+      IO.puts("  #{item["text"]}")
+    end)
+    IO.puts("  ⚡ TTS generation completed in #{tts_time}μs")
+    
+    # Demo 4: Audio conversion
+    Logger.info("\n=== Audio Format Conversion ===")
+    
+    start_time = System.monotonic_time(:microsecond)
+    {:ok, %{"content" => content}} = ExMCP.Native.call(:audio_service, "tools/call", %{
+      "name" => "convert_audio",
+      "arguments" => %{
+        "audio_data" => sample_audio,
+        "from_format" => "wav",
+        "to_format" => "mp3"
+      }
+    })
+    convert_time = System.monotonic_time(:microsecond) - start_time
+    
+    Enum.each(content, fn item ->
+      IO.puts("  #{item["text"]}")
+    end)
+    IO.puts("  ⚡ Conversion completed in #{convert_time}μs")
+    
+    # Demo 5: Audio analysis
+    Logger.info("\n=== Audio Analysis ===")
+    
+    start_time = System.monotonic_time(:microsecond)
+    {:ok, %{"content" => content}} = ExMCP.Native.call(:audio_service, "tools/call", %{
+      "name" => "analyze_audio",
+      "arguments" => %{
+        "audio_data" => sample_audio,
+        "format" => "wav"
+      }
+    })
+    analysis_time = System.monotonic_time(:microsecond) - start_time
+    
+    Enum.each(content, fn item ->
+      IO.puts("  #{item["text"]}")
+    end)
+    IO.puts("  ⚡ Analysis completed in #{analysis_time}μs")
+    
+    # Demo 6: List processed audio resources
+    Logger.info("\n=== Processed Audio Resources ===")
+    {:ok, %{"resources" => resources}} = ExMCP.Native.call(:audio_service, "list_resources", %{})
+    if length(resources) > 0 do
+      Enum.each(resources, fn resource ->
+        IO.puts("  • #{resource["name"]}: #{resource["description"]}")
+      end)
+      
+      # Read one resource
+      first_resource = List.first(resources)
+      {:ok, %{"contents" => [content]}} = ExMCP.Native.call(:audio_service, "resources/read", %{
+        "uri" => first_resource["uri"]
+      })
+      IO.puts("  Resource content preview:")
+      IO.puts("  #{String.slice(content["text"], 0, 100)}...")
+    else
+      IO.puts("  No processed audio resources yet")
     end
     
-    # Cleanup
-    GenServer.stop(client)
-    GenServer.stop(server)
+    # Performance summary
+    total_time = transcribe_time + tts_time + convert_time + analysis_time
+    avg_time = div(total_time, 4)
+    
+    Logger.info("\n=== Performance Summary ===")
+    IO.puts("Total processing time: #{total_time}μs")
+    IO.puts("Average operation time: #{avg_time}μs")
+    IO.puts("Native Service Dispatcher provides:")
+    IO.puts("  ✓ Sub-millisecond audio tool calls")
+    IO.puts("  ✓ Zero serialization for large audio data")
+    IO.puts("  ✓ Direct Elixir term passing")
+    IO.puts("  ✓ Perfect for real-time audio processing")
+    
+    :ok
   end
 end
 
 # Run the demo
-AudioContentClient.demo()
+AudioContentDemo.run()
