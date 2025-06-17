@@ -167,13 +167,15 @@ defmodule ExMCP.Internal.Resilience do
       )
   """
   @dialyzer {:nowarn_function, call_with_breaker: 4}
+  @fuse_available Code.ensure_loaded?(:fuse)
+
   @spec call_with_breaker(atom(), String.t(), map(), keyword()) ::
           {:ok, term()} | {:error, term()}
-  def call_with_breaker(service_id, method, params, opts \\ []) do
-    circuit_name = Keyword.get(opts, :circuit_name, service_id)
-    native_opts = Keyword.drop(opts, [:circuit_name, :fuse_options])
+  if @fuse_available do
+    def call_with_breaker(service_id, method, params, opts \\ []) do
+      circuit_name = Keyword.get(opts, :circuit_name, service_id)
+      native_opts = Keyword.drop(opts, [:circuit_name, :fuse_options])
 
-    if Code.ensure_loaded?(:fuse) do
       case :fuse.ask(circuit_name, :sync) do
         :ok ->
           case ExMCP.Native.call(service_id, method, params, native_opts) do
@@ -195,8 +197,11 @@ defmodule ExMCP.Internal.Resilience do
 
           ExMCP.Native.call(service_id, method, params, native_opts)
       end
-    else
+    end
+  else
+    def call_with_breaker(service_id, method, params, opts \\ []) do
       Logger.warning("Circuit breaker requested but :fuse library not available")
+      native_opts = Keyword.drop(opts, [:circuit_name, :fuse_options])
       ExMCP.Native.call(service_id, method, params, native_opts)
     end
   end

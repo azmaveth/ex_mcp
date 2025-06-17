@@ -74,15 +74,9 @@ defmodule ExMCP.Service do
       @impl GenServer
       def init(init_arg) do
         # Register the service with ExMCP.Native
-        case ExMCP.Native.register_service(@service_name) do
-          :ok ->
-            Logger.info("MCP service started: #{@service_name}")
-            {:ok, init_arg}
-
-          {:error, reason} ->
-            Logger.error("Failed to register MCP service #{@service_name}: #{inspect(reason)}")
-            {:stop, reason}
-        end
+        ExMCP.Native.register_service(@service_name)
+        Logger.info("MCP service started: #{@service_name}")
+        {:ok, init_arg}
       end
 
       @impl GenServer
