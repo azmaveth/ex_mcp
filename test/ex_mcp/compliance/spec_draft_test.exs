@@ -13,8 +13,7 @@ defmodule ExMCP.SpecDraftTest do
 
   @moduletag :compliance
 
-  alias ExMCP.{Client, Server}
-  alias ExMCP.Internal.Protocol, as: Protocol
+  alias ExMCP.{Client, Protocol, Server}
 
   defmodule HandlerDraft do
     @moduledoc false

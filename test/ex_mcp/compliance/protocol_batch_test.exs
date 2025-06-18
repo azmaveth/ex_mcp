@@ -3,7 +3,7 @@ defmodule ExMCP.ProtocolBatchTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Internal.Protocol, as: Protocol
+  alias ExMCP.Protocol
 
   describe "batch request encoding" do
     test "encodes a batch of requests" do

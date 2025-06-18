@@ -8,7 +8,7 @@ defmodule ExMCP.Compliance.CancellationComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Internal.Protocol, as: Protocol
+  alias ExMCP.Protocol
 
   describe "Cancellation Protocol Validation" do
     test "encode_cancelled validates initialize request cannot be cancelled" do

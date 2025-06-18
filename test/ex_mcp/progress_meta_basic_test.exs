@@ -3,7 +3,7 @@ defmodule ExMCP.ProgressMetaBasicTest do
 
   @moduletag :progress
 
-  alias ExMCP.Internal.Protocol, as: Protocol
+  alias ExMCP.Protocol
 
   describe "Protocol _meta support" do
     test "encode_list_tools includes _meta when provided" do

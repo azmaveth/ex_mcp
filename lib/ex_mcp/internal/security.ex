@@ -108,10 +108,10 @@ defmodule ExMCP.Internal.Security do
 
   ## Examples
 
-      iex> ExMCP.Internal.Security.build_auth_headers(%{auth: {:bearer, "token123"}})
+      iex> ExMCP.Security.build_auth_headers(%{auth: {:bearer, "token123"}})
       [{"Authorization", "Bearer token123"}]
 
-      iex> ExMCP.Internal.Security.build_auth_headers(%{auth: {:api_key, "key123", header: "X-API-Key"}})
+      iex> ExMCP.Security.build_auth_headers(%{auth: {:api_key, "key123", header: "X-API-Key"}})
       [{"X-API-Key", "key123"}]
   """
   @spec build_auth_headers(security_config()) :: [{String.t(), String.t()}]

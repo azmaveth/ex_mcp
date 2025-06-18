@@ -2,7 +2,7 @@ defmodule ExMCP.ServerTest do
   use ExUnit.Case
   import Mox
 
-  alias ExMCP.Internal.Protocol, as: Protocol
+  alias ExMCP.Protocol
   alias ExMCP.Server
   alias ExMCP.Transport.Mock, as: MockTransport
 

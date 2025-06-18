@@ -9,7 +9,7 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Internal.Protocol, as: Protocol
+  alias ExMCP.Protocol
 
   describe "Initialize Request Protocol Compliance" do
     test "initialize request includes all required fields" do

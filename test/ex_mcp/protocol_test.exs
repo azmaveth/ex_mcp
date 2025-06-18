@@ -4,7 +4,7 @@ defmodule ExMCP.ProtocolTest do
   @moduletag :protocol
   @moduletag :unit
 
-  alias ExMCP.Internal.Protocol, as: Protocol
+  alias ExMCP.Protocol
 
   describe "client request encoding" do
     test "encode_initialize/1" do

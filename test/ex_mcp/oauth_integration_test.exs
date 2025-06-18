@@ -11,8 +11,7 @@ defmodule ExMCP.OAuthIntegrationTest do
   @moduletag :security
 
   alias ExMCP.Authorization
-  alias ExMCP.Authorization.{ClientRegistration, ProtectedResourceMetadata, TokenManager}
-  alias ExMCP.Internal.Authorization.PKCE
+  alias ExMCP.Authorization.{ClientRegistration, PKCE, ProtectedResourceMetadata, TokenManager}
 
   @moduletag :capture_log
 

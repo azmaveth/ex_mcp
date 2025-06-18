@@ -3,7 +3,7 @@ defmodule ExMCP.ProtocolNotificationsTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Internal.Protocol, as: Protocol
+  alias ExMCP.Protocol
 
   describe "change notification encoding" do
     test "encodes resources list changed notification" do

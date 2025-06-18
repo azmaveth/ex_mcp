@@ -12,7 +12,7 @@ defmodule ExMCP.OAuthAuthorizationCodeFlowTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Authorization
-  alias ExMCP.Internal.Authorization.PKCE
+  alias ExMCP.Authorization.PKCE
 
   describe "OAuth 2.1 Authorization Code Flow - Start Authorization" do
     test "starts authorization flow with valid configuration" do

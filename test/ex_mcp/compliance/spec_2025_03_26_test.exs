@@ -455,7 +455,7 @@ defmodule ExMCP.Spec20250326Test do
 
     test "authorization code flow with PKCE" do
       # Test authorization code flow
-      {:ok, verifier, challenge} = ExMCP.Internal.Authorization.PKCE.generate_challenge()
+      {:ok, verifier, challenge} = Authorization.PKCE.generate_challenge()
 
       assert is_binary(verifier)
       assert is_binary(challenge)
