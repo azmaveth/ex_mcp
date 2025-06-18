@@ -1,7 +1,7 @@
 defmodule ExMCP.Integration.FullWorkflowTest do
   use ExUnit.Case, async: false
 
-  alias ExMCP.Testing.{MockServer, Assertions, Builders}
+  alias ExMCP.Testing.{MockServer, Assertions}
   alias ExMCP.Content.Protocol
 
   @moduletag :integration
@@ -162,7 +162,7 @@ defmodule ExMCP.Integration.FullWorkflowTest do
     end
 
     test "error handling and recovery workflow" do
-      MockServer.with_server([error_rate: 0.0], fn client ->
+      MockServer.with_server([error_rate: 0.0], fn _client ->
         # 1. Test invalid tool calls
         # invalid_result = SimpleClient.call_tool(client, "nonexistent_tool", %{})
         # assert_error(invalid_result)
@@ -207,7 +207,7 @@ defmodule ExMCP.Integration.FullWorkflowTest do
     end
 
     test "state consistency across operations" do
-      MockServer.with_server([], fn client ->
+      MockServer.with_server([], fn _client ->
         # Test that multiple operations maintain consistent state
 
         # 1. Multiple tool list calls should return consistent results

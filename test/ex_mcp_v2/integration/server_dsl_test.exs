@@ -185,7 +185,7 @@ defmodule ExMCP.Integration.ServerDSLTest do
       %{server: pid}
     end
 
-    test "executes tool handlers", %{server: server} do
+    test "executes tool handlers", %{server: _server} do
       # Test calculate_sum
       {:ok, result, _state} =
         TestServer.handle_tool_call("calculate_sum", %{"a" => 5, "b" => 3}, %{})
@@ -193,7 +193,7 @@ defmodule ExMCP.Integration.ServerDSLTest do
       assert result.content == [%{"type" => "text", "text" => "Result: 8"}]
     end
 
-    test "executes resource handlers", %{server: server} do
+    test "executes resource handlers", %{server: _server} do
       # Test config resource
       {:ok, content, _state} =
         TestServer.handle_resource_read("config://app/settings", "config://app/settings", %{})
@@ -204,7 +204,7 @@ defmodule ExMCP.Integration.ServerDSLTest do
       assert String.contains?(json_content["text"], "debug")
     end
 
-    test "executes prompt handlers", %{server: server} do
+    test "executes prompt handlers", %{server: _server} do
       args = %{"code" => "def hello, do: :world", "language" => "elixir", "focus" => "syntax"}
       {:ok, result, _state} = TestServer.handle_prompt_get("code_review", args, %{})
 

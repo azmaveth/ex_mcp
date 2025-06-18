@@ -11,10 +11,10 @@ defmodule ExMCP.Stress.LoadTest do
   # Stress test configuration
   @high_concurrency System.schedulers_online() * 4
   @medium_concurrency System.schedulers_online() * 2
-  @operations_per_task 100
-  @large_content_size 10_000
-  # 30 seconds
-  @stress_duration 30_000
+  # Unused but kept for future stress test configuration
+  # @operations_per_task 100
+  # @large_content_size 10_000
+  # @stress_duration 30_000
 
   describe "content protocol stress tests" do
     test "high volume content creation and validation" do
@@ -244,7 +244,7 @@ defmodule ExMCP.Stress.LoadTest do
                 # Make multiple requests, some will fail due to error rate
                 request_results =
                   Enum.map(1..5, fn j ->
-                    request = Builders.request("tools/list", id: i * 100 + j)
+                    _request = Builders.request("tools/list", id: i * 100 + j)
 
                     # In real test, would send request and handle errors
                     # For now, simulate that some requests fail

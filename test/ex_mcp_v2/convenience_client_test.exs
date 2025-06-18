@@ -2,7 +2,7 @@ defmodule ExMCP.ConvenienceClientTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.ConvenienceClient
-  alias ExMCP.Client.{Response, Error}
+  alias ExMCP.Client.Error
 
   # Mock transport for testing convenience features
   defmodule MockTransport do
@@ -31,7 +31,7 @@ defmodule ExMCP.ConvenienceClientTest do
 
       if msg do
         case Jason.decode!(msg) do
-          %{"method" => method, "id" => id} = request ->
+          %{"method" => method, "id" => _id} = request ->
             response = get_mock_response(agent, method, request)
             {:ok, response, agent}
 
@@ -325,7 +325,7 @@ defmodule ExMCP.ConvenienceClientTest do
       assert is_map(status.server_info)
     end
 
-    test "with_error_formatting wraps errors", %{client: client} do
+    test "with_error_formatting wraps errors", %{client: _client} do
       result =
         ConvenienceClient.with_error_formatting(
           fn -> raise "test error" end,

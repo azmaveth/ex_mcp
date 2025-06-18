@@ -13,7 +13,7 @@ defmodule ExMCP.Performance.BenchmarksTest do
   @content_serialization_threshold 200
   @content_deserialization_threshold 300
   @tool_call_threshold 1000
-  @batch_operations_threshold 5000
+  # @batch_operations_threshold 5000  # Unused but kept for future batch operation tests
 
   describe "content protocol performance" do
     test "text content creation performance" do

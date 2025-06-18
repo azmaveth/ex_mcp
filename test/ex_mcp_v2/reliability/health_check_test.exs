@@ -22,6 +22,11 @@ defmodule ExMCP.Reliability.HealthCheckTest.MockTarget do
     {:reply, state, state}
   end
 
+  def handle_call({:update, fun}, _from, state) do
+    new_state = fun.(state)
+    {:reply, :ok, new_state}
+  end
+
   # For toggle functionality
   def handle_cast({:set_state, new_state}, _state) do
     {:noreply, new_state}
@@ -30,11 +35,6 @@ defmodule ExMCP.Reliability.HealthCheckTest.MockTarget do
   # For Agent.update compatibility in toggle tests
   def handle_cast({:update, fun}, state) do
     {:noreply, fun.(state)}
-  end
-
-  def handle_call({:update, fun}, _from, state) do
-    new_state = fun.(state)
-    {:reply, :ok, new_state}
   end
 end
 
@@ -434,28 +434,5 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
   defp get_counter(agent) do
     Agent.get(agent, & &1)
-  end
-end
-
-defmodule ExMCP.Reliability.HealthCheckTest.MockTarget do
-  @moduledoc false
-  use GenServer
-
-  def init(state), do: {:ok, state}
-
-  def handle_call(:ping, _from, state) do
-    case state do
-      :healthy -> {:reply, :pong, state}
-      _ -> {:reply, :error, state}
-    end
-  end
-
-  def handle_call(:get_state, _from, state) do
-    {:reply, state, state}
-  end
-
-  def handle_call({:update, fun}, _from, state) do
-    new_state = fun.(state)
-    {:reply, :ok, new_state}
   end
 end

@@ -4,7 +4,7 @@ defmodule ExMCP.ClientV2Test do
   @moduletag :integration
 
   alias ExMCP.ClientV2
-  alias ExMCP.Internal.Protocol
+  # alias ExMCP.Internal.Protocol  # Unused but kept for potential protocol operations
 
   # Mock transport for testing
   defmodule MockTransport do
