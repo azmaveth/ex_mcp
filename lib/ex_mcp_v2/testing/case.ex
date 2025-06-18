@@ -160,6 +160,8 @@ defmodule ExMCP.TestCase do
       end
   """
   defmacro repeat_test(times, do: block) do
+    caller = __CALLER__
+    
     quote do
       Enum.each(1..unquote(times), fn iteration ->
         try do
@@ -168,8 +170,8 @@ defmodule ExMCP.TestCase do
           error ->
             reraise error, [
               {__MODULE__,
-               :"test #{ExUnit.Case.test_name(__CALLER__.context)} (iteration #{iteration})", 0,
-               [file: __CALLER__.file, line: __CALLER__.line]}
+               :"test iteration #{iteration}", 0,
+               [file: unquote(caller.file), line: unquote(caller.line)]}
               | __STACKTRACE__
             ]
         end

@@ -469,7 +469,7 @@ defmodule ExMCP.Testing.Assertions do
     max_time = Keyword.get(opts, :max_time, 5000)
     message = Keyword.get(opts, :message, "Operation took too long")
 
-    {result, elapsed_time} = :timer.tc(operation)
+    {elapsed_time, result} = :timer.tc(operation)
     elapsed_ms = div(elapsed_time, 1000)
 
     if elapsed_ms > max_time do

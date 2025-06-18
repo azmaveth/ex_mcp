@@ -500,7 +500,7 @@ defmodule ExMCP.Content.Validation do
 
   # Private Implementation
 
-  defp apply_validation_rule(content, rule, opts) do
+  defp apply_validation_rule(content, rule, _opts) do
     case rule do
       :required_fields ->
         validate_required_fields(content)
@@ -751,7 +751,7 @@ defmodule ExMCP.Content.Validation do
 
   defp normalize_unicode(content), do: content
 
-  defp limit_content_size(content, max_size) do
+  defp limit_content_size(content, _max_size) do
     # Implementation would compress or truncate content to fit size limit
     content
   end

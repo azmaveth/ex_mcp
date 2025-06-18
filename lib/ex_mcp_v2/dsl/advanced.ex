@@ -53,7 +53,7 @@ defmodule ExMCP.DSL.Advanced do
         
         output do
           content :number, description: "Calculation result"
-          annotation :operation_info, %{
+          output_annotation :operation_info, %{
             operation: :string,
             input_count: :integer,
             execution_time_ms: :number
@@ -320,7 +320,7 @@ defmodule ExMCP.DSL.Advanced do
         content :image, optional: true,
           description: "Optional chart visualization"
           
-        annotation :metadata, %{
+        output_annotation :metadata, %{
           result_count: :integer,
           execution_time: :number,
           confidence: :number
@@ -373,10 +373,10 @@ defmodule ExMCP.DSL.Advanced do
 
   ## Examples
 
-      annotation :metadata, %{count: :integer, time: :number}
-      annotation :confidence, :number, description: "Confidence score 0-1"
+      output_annotation :metadata, %{count: :integer, time: :number}
+      output_annotation :confidence, :number, description: "Confidence score 0-1"
   """
-  defmacro annotation(name, schema, opts \\ []) do
+  defmacro output_annotation(name, schema, opts \\ []) do
     quote do
       annotation_def = %{
         name: unquote(name),
@@ -609,7 +609,7 @@ defmodule ExMCP.DSL.Advanced do
   Validates input against enhanced schema rules.
   """
   @spec validate_enhanced_input(map(), map()) :: {:ok, map()} | {:error, [String.t()]}
-  def validate_enhanced_input(input, schema) do
+  def validate_enhanced_input(input, _schema) do
     # Implementation would validate against enhanced rules
     {:ok, input}
   end
@@ -618,7 +618,7 @@ defmodule ExMCP.DSL.Advanced do
   Applies middleware pipeline to a request.
   """
   @spec apply_middleware([middleware_spec()], map(), map()) :: {:ok, map()} | {:error, any()}
-  def apply_middleware(middleware_list, request, context) do
+  def apply_middleware(_middleware_list, request, _context) do
     # Implementation would apply middleware in sequence
     {:ok, request}
   end
@@ -627,7 +627,7 @@ defmodule ExMCP.DSL.Advanced do
   Validates output against expected content schema.
   """
   @spec validate_output(any(), map()) :: {:ok, any()} | {:error, String.t()}
-  def validate_output(output, schema) do
+  def validate_output(output, _schema) do
     # Implementation would validate output format
     {:ok, output}
   end

@@ -400,7 +400,7 @@ defmodule ExMCP.Content.Builders do
   def transform(content, transformer) when is_function(transformer, 1) do
     try do
       case transformer.(content) do
-        %{type: _} = new_content -> new_content
+        %{type: _} = new_content -> {:ok, new_content}
         {:error, reason} -> {:error, reason}
         _ -> {:error, "Transformer must return content or error tuple"}
       end

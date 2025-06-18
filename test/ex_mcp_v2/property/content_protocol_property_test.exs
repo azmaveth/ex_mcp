@@ -76,7 +76,14 @@ defmodule ExMCP.Content.ProtocolPropertyTest do
   end
 
   def confidence_gen do
-    such_that(f <- float(), when: f >= 0.0 and f <= 1.0)
+    oneof([
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0,
+      such_that(f <- float(), when: f >= 0.0 and f <= 1.0)
+    ])
   end
 
   def text_content_gen do

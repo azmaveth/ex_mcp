@@ -2,6 +2,7 @@ defmodule ExMCP.Testing.CaseTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.TestCase
+  require ExMCP.TestCase
 
   describe "with_temp_file macro" do
     test "creates temporary file with content" do
@@ -243,9 +244,9 @@ defmodule ExMCP.Testing.CaseTest do
     test "respects length parameter" do
       id = TestCase.unique_id("test", 16)
 
-      # Format: "test_" + 8 hex characters (16/2)
-      # "test_" + 8 chars
-      assert String.length(id) == 5 + 8
+      # Format: "test_" + 16 hex characters
+      # "test_" (5 chars) + 16 hex chars = 21 total
+      assert String.length(id) == 5 + 16
     end
   end
 

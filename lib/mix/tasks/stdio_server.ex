@@ -164,7 +164,7 @@ defmodule Mix.Tasks.StdioServer do
     end
   end
 
-  defp handle_message(server, %{"method" => "initialize", "id" => id}) do
+  defp handle_message(_server, %{"method" => "initialize", "id" => id}) do
     response = %{
       "jsonrpc" => "2.0",
       "id" => id,
@@ -181,7 +181,7 @@ defmodule Mix.Tasks.StdioServer do
     IO.puts(Jason.encode!(response))
   end
 
-  defp handle_message(server, %{"method" => "tools/list", "id" => id}) do
+  defp handle_message(_server, %{"method" => "tools/list", "id" => id}) do
     tools = StdioServerV2.list_tools()
 
     response = %{
@@ -223,7 +223,7 @@ defmodule Mix.Tasks.StdioServer do
     end
   end
 
-  defp handle_message(server, %{"method" => "resources/list", "id" => id}) do
+  defp handle_message(_server, %{"method" => "resources/list", "id" => id}) do
     resources = StdioServerV2.list_resources()
 
     response = %{
@@ -265,7 +265,7 @@ defmodule Mix.Tasks.StdioServer do
     end
   end
 
-  defp handle_message(server, %{"method" => "prompts/list", "id" => id}) do
+  defp handle_message(_server, %{"method" => "prompts/list", "id" => id}) do
     prompts = StdioServerV2.list_prompts()
 
     response = %{

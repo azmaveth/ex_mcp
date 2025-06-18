@@ -1,4 +1,4 @@
-defmodule ExMCP.SimpleClientTest do
+defmodule ExMCP.V1SimpleClientTest do
   use ExUnit.Case
 
   alias ExMCP.Protocol
