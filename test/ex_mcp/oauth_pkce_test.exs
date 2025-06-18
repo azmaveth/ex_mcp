@@ -12,7 +12,7 @@ defmodule ExMCP.OAuthPKCETest do
 
   use ExUnit.Case, async: true
 
-  alias ExMCP.Authorization.PKCE
+  alias ExMCP.Internal.Authorization.PKCE
 
   describe "PKCE Challenge Generation" do
     test "generates code verifier and challenge successfully" do

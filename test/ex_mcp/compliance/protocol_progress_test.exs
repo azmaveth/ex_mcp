@@ -3,7 +3,7 @@ defmodule ExMCP.ProtocolProgressTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol, as: Protocol
 
   describe "progress notification encoding" do
     test "encodes progress notification with token and progress only" do

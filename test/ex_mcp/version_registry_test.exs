@@ -1,7 +1,7 @@
 defmodule ExMCP.VersionRegistryTest do
   use ExUnit.Case
 
-  alias ExMCP.{Protocol, VersionRegistry}
+  alias ExMCP.Internal.{Protocol, VersionRegistry}
 
   describe "version registry" do
     test "lists supported versions in order" do

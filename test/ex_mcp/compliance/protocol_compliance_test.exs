@@ -9,7 +9,7 @@ defmodule ExMCP.Compliance.ProtocolComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol, as: Protocol
 
   describe "JSON-RPC 2.0 Message Format Compliance" do
     test "all requests include jsonrpc version 2.0" do

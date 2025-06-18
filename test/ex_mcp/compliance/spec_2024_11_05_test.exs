@@ -8,7 +8,8 @@ defmodule ExMCP.Spec20241105Test do
 
   @moduletag :compliance
 
-  alias ExMCP.{Client, Protocol, Server}
+  alias ExMCP.{Client, Server}
+  alias ExMCP.Internal.Protocol, as: Protocol
 
   defmodule Handler20241105 do
     @moduledoc false

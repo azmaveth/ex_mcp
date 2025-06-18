@@ -9,7 +9,7 @@ defmodule ExMCP.Compliance.RootsComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol, as: Protocol
 
   describe "Roots Request Protocol Compliance" do
     test "roots request uses correct protocol format" do

@@ -1,6 +1,6 @@
 defmodule ExMCP.ProtocolSamplingTest do
   use ExUnit.Case
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol, as: Protocol
 
   @moduletag :protocol
 

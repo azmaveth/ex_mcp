@@ -1,7 +1,7 @@
 defmodule ExMCP.V1SimpleClientTest do
   use ExUnit.Case
 
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol, as: Protocol
 
   describe "new protocol features" do
     test "protocol version is correct" do

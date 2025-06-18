@@ -1,7 +1,7 @@
 defmodule ExMCP.SamplingTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol, as: Protocol
 
   describe "sampling protocol encoding" do
     test "encodes create_message request correctly" do

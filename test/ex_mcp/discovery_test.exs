@@ -1,10 +1,10 @@
 defmodule ExMCP.DiscoveryTest do
   use ExUnit.Case
-  doctest ExMCP.Discovery
+  doctest ExMCP.Internal.Discovery
 
   describe "discover_servers/1" do
     test "discovers servers using default methods" do
-      servers = ExMCP.Discovery.discover_servers()
+      servers = ExMCP.Internal.Discovery.discover_servers()
       assert is_list(servers)
 
       # Each server should have required fields
@@ -15,7 +15,7 @@ defmodule ExMCP.DiscoveryTest do
     end
 
     test "discovers servers using specific methods" do
-      servers = ExMCP.Discovery.discover_servers(methods: [:env])
+      servers = ExMCP.Internal.Discovery.discover_servers(methods: [:env])
       assert is_list(servers)
     end
   end
