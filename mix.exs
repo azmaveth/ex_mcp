@@ -53,7 +53,11 @@ defmodule ExMCP.MixProject do
       {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
       {:plug_cowboy, "~> 2.7", only: :test},
       {:plug, "~> 1.16", only: :test},
-      {:fuse, "~> 2.4", optional: true}
+      {:fuse, "~> 2.4", optional: true},
+      # ExMCP v2 dependencies
+      {:ex_json_schema, "~> 0.10", only: [:dev, :test]},
+      {:html_entities, "~> 0.5", only: [:dev, :test]},
+      {:propcheck, "~> 1.4", only: :test}
     ]
   end
 

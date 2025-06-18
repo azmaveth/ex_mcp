@@ -131,6 +131,26 @@ defmodule ExMCP.Transport.Stdio do
     Port.info(port) != nil
   end
 
+  # V2 compatibility methods
+  def send(state, message) do
+    send_message(message, state)
+  end
+
+  def recv(state, timeout \\ 5_000) do
+    task = Task.async(fn -> receive_message(state) end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task) do
+      {:ok, {:ok, message, new_state}} ->
+        {:ok, message, new_state}
+
+      {:ok, {:error, reason}} ->
+        {:error, reason}
+
+      nil ->
+        {:error, :timeout}
+    end
+  end
+
   # Private functions
 
   defp receive_loop(state) do
