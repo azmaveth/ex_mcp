@@ -1,15 +1,19 @@
-defmodule ExMCP.Compliance.ProtocolComplianceTest do
+defmodule ExMCP.Internal.ProtocolComplianceTest do
   @moduledoc """
   Tests for JSON-RPC 2.0 protocol compliance as required by MCP specification.
 
   These tests validate that the protocol implementation follows the JSON-RPC 2.0
   standard with MCP-specific requirements.
+
+  This is an internal test that directly tests the protocol implementation
+  to ensure compliance with the JSON-RPC 2.0 specification.
   """
   use ExUnit.Case
 
+  @moduletag :internal
   @moduletag :compliance
 
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol
 
   describe "JSON-RPC 2.0 Message Format Compliance" do
     test "all requests include jsonrpc version 2.0" do

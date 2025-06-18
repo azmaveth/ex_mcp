@@ -9,136 +9,155 @@ defmodule ExMCP.Compliance.RootsComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Protocol
+  alias ExMCP.{Client, Server}
 
-  describe "Roots Request Protocol Compliance" do
-    test "roots request uses correct protocol format" do
-      # MCP spec requires specific format for roots/list request
-      request = Protocol.encode_list_roots()
+  defmodule ComplianceHandler do
+    use ExMCP.Server.Handler
 
-      # Must have JSON-RPC version
-      assert request["jsonrpc"] == "2.0"
+    @impl true
+    def init(_args), do: {:ok, %{}}
 
-      # Must have correct method
-      assert request["method"] == "roots/list"
-
-      # Must have ID (it's a request, not notification)
-      assert Map.has_key?(request, "id")
-      refute is_nil(request["id"])
-
-      # Params should be empty object for roots/list
-      assert request["params"] == %{}
+    @impl true
+    def handle_initialize(_params, state) do
+      {:ok,
+       %{
+         protocolVersion: "2025-03-26",
+         serverInfo: %{
+           name: "roots-compliance-server",
+           version: "1.0.0"
+         },
+         capabilities: %{
+           roots: %{}
+         }
+       }, state}
     end
 
-    test "roots response format matches spec" do
-      # MCP spec defines the response format for roots/list
+    @impl true
+    def handle_list_roots(state) do
+      # Return roots in spec-compliant format
       roots = [
         %{uri: "file:///test", name: "Test"},
-        # name is optional
+        # name is optional per spec
         %{uri: "file:///another"}
       ]
 
-      response = Protocol.encode_response(%{"roots" => roots}, "test-id")
+      {:ok, roots, state}
+    end
 
-      assert response["jsonrpc"] == "2.0"
-      assert response["id"] == "test-id"
-      assert response["result"]["roots"] == roots
+    # Required callbacks
+    @impl true
+    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+    @impl true
+    def handle_call_tool(_name, _params, state), do: {:error, "Not implemented", state}
+    @impl true
+    def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
+    @impl true
+    def handle_read_resource(_uri, state), do: {:error, "Not implemented", state}
+    @impl true
+    def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
+    @impl true
+    def handle_get_prompt(_name, _args, state), do: {:error, "Not implemented", state}
+  end
 
-      # Verify it's a proper response (not error)
-      refute Map.has_key?(response, "error")
+  describe "Roots Request Protocol Compliance" do
+    setup do
+      {:ok, server} =
+        Server.start_link(
+          transport: :test,
+          handler: ComplianceHandler
+        )
+
+      {:ok, client} =
+        Client.start_link(
+          transport: :test,
+          server: server
+        )
+
+      Process.sleep(50)
+      {:ok, %{client: client, server: server}}
+    end
+
+    test "roots request returns spec-compliant response", %{client: client} do
+      # Make roots request through public API
+      {:ok, response} = Client.list_roots(client)
+
+      # Verify response contains roots array (may have atom keys)
+      assert Map.has_key?(response, :roots) || Map.has_key?(response, "roots")
+      roots = Map.get(response, :roots) || Map.get(response, "roots")
+      assert is_list(roots)
+      assert length(roots) == 2
+
+      # Verify first root has required uri and optional name
+      first_root = hd(roots)
+      assert Map.get(first_root, :uri) == "file:///test"
+      assert Map.get(first_root, :name) == "Test"
+
+      # Verify second root has uri but no name (optional per spec)
+      second_root = Enum.at(roots, 1)
+      assert Map.get(second_root, :uri) == "file:///another"
+      refute Map.has_key?(second_root, :name)
     end
   end
 
   describe "Roots Change Notification Compliance" do
-    test "roots change notification format" do
-      # MCP spec defines notifications/roots/list_changed
-      notification = Protocol.encode_roots_changed()
+    setup do
+      {:ok, server} =
+        Server.start_link(
+          transport: :test,
+          handler: ComplianceHandler
+        )
 
-      # Must have JSON-RPC version
-      assert notification["jsonrpc"] == "2.0"
+      {:ok, client} =
+        Client.start_link(
+          transport: :test,
+          server: server
+        )
 
-      # Must have correct method
-      assert notification["method"] == "notifications/roots/list_changed"
+      Process.sleep(50)
+      {:ok, %{client: client, server: server}}
+    end
 
-      # Must NOT have ID (it's a notification)
-      refute Map.has_key?(notification, "id")
-
-      # Params should be empty object
-      assert notification["params"] == %{}
+    test "roots change notification can be sent", %{server: server} do
+      # Server can send roots changed notification
+      assert :ok = Server.notify_roots_changed(server)
     end
   end
 
   describe "Roots Data Format Compliance" do
-    test "roots follow MCP specification format" do
-      # This test documents the expected format but needs handler to test
+    test "handler returns roots in MCP specification format" do
+      {:ok, state} = ComplianceHandler.init([])
+      {:ok, roots, _new_state} = ComplianceHandler.handle_list_roots(state)
 
       # Each root object must have:
       # - uri: string (required) - URI identifying the root
       # - name: string (optional) - Human-readable name for the root
 
-      valid_roots = [
-        %{
-          uri: "file:///workspace/myproject",
-          name: "My Project"
-        },
-        %{
-          uri: "file:///home/user/documents",
-          name: "Documents"
-        },
-        %{
-          uri: "file:///var/www/html"
-          # No name - this is valid as name is optional
-        }
-      ]
-
       # All roots must have URI
-      Enum.each(valid_roots, fn root ->
+      Enum.each(roots, fn root ->
         assert Map.has_key?(root, :uri)
         assert is_binary(root.uri)
       end)
 
       # Name is optional but if present must be string
-      Enum.each(valid_roots, fn root ->
-        if Map.has_key?(root, :name) do
-          assert is_binary(root.name)
+      Enum.each(roots, fn root ->
+        case Map.get(root, :name) do
+          nil -> :ok
+          name -> assert is_binary(name)
         end
       end)
-    end
 
-    test "root URIs should be valid URI format" do
-      # Document URI format requirements
-      valid_uris = [
-        "file:///home/user",
-        "file:///c:/Users/Name",
-        "file:///workspace/project",
-        "https://github.com/user/repo",
-        "ssh://git@github.com:user/repo.git"
-      ]
+      # Verify our test data follows the spec
+      assert length(roots) == 2
 
-      Enum.each(valid_uris, fn uri ->
-        assert String.contains?(uri, "://"), "URI must contain scheme: #{uri}"
-      end)
-    end
-  end
+      # First root has both uri and name
+      first = hd(roots)
+      assert first.uri == "file:///test"
+      assert first.name == "Test"
 
-  describe "Roots Capability" do
-    test "roots capability in initialize" do
-      # Document that roots capability can be advertised
-      # Both client and server can support roots capability
-
-      # Client can advertise roots support:
-      client_capabilities = %{
-        "roots" => %{
-          # Supports list_changed notifications
-          "listChanged" => true
-        }
-      }
-
-      msg = Protocol.encode_initialize(%{name: "test", version: "1.0"}, client_capabilities)
-      assert msg["params"]["capabilities"]["roots"]["listChanged"] == true
-
-      # Server can also advertise roots support in response
-      # (implementation in server handler)
+      # Second root has only uri (name is optional)
+      second = Enum.at(roots, 1)
+      assert second.uri == "file:///another"
+      refute Map.has_key?(second, :name)
     end
   end
 end

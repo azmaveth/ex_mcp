@@ -1,9 +1,10 @@
-defmodule ExMCP.ProtocolBatchTest do
+defmodule ExMCP.Internal.ProtocolBatchTest do
   use ExUnit.Case
 
+  @moduletag :internal
   @moduletag :compliance
 
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol
 
   describe "batch request encoding" do
     test "encodes a batch of requests" do

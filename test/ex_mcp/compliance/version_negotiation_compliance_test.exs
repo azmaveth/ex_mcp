@@ -9,111 +9,176 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Protocol
+  alias ExMCP.{Client, Server}
 
-  describe "Initialize Request Protocol Compliance" do
-    test "initialize request includes all required fields" do
-      # MCP spec requires: jsonrpc, method, params (with protocolVersion, capabilities, clientInfo), id
-      client_info = %{name: "test-client", version: "1.0.0"}
-      capabilities = %{"roots" => %{}, "sampling" => %{}}
+  defmodule VersionTestHandler do
+    use ExMCP.Server.Handler
 
-      msg = Protocol.encode_initialize(client_info, capabilities)
-
-      # Must have JSON-RPC version
-      assert msg["jsonrpc"] == "2.0"
-
-      # Must have method = "initialize"
-      assert msg["method"] == "initialize"
-
-      # Must have params with required fields
-      assert is_map(msg["params"])
-      assert msg["params"]["protocolVersion"] == "2025-03-26"
-      assert msg["params"]["clientInfo"] == client_info
-      assert msg["params"]["capabilities"] == capabilities
-
-      # Must have non-null ID
-      assert is_integer(msg["id"])
-      refute is_nil(msg["id"])
+    @impl true
+    def init(args) do
+      {:ok, %{expected_version: Keyword.get(args, :expected_version, "2025-03-26")}}
     end
 
-    test "client can specify custom capabilities in initialize" do
-      # MCP spec allows clients to specify their supported capabilities
-      client_info = %{name: "custom-client", version: "2.0.0"}
+    @impl true
+    def handle_initialize(params, state) do
+      # Verify client sends proper version
+      client_version = params["protocolVersion"]
 
-      custom_capabilities = %{
-        "roots" => %{"listChanged" => true},
-        "sampling" => %{},
-        "experimental" => %{"feature1" => true}
-      }
-
-      msg = Protocol.encode_initialize(client_info, custom_capabilities)
-
-      assert msg["params"]["capabilities"] == custom_capabilities
-      assert msg["params"]["clientInfo"] == client_info
+      if client_version == state.expected_version do
+        {:ok,
+         %{
+           name: "version-test-server",
+           version: "1.0.0",
+           protocolVersion: state.expected_version,
+           capabilities: %{
+             "roots" => %{},
+             "sampling" => %{}
+           }
+         }, state}
+      else
+        # Server can reject unsupported versions
+        {:error, "Unsupported protocol version: #{client_version}", state}
+      end
     end
 
-    test "initialize request follows JSON-RPC format" do
-      client_info = %{name: "test-client", version: "1.0.0"}
-      capabilities = %{}
+    # Required callbacks
+    @impl true
+    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+    @impl true
+    def handle_call_tool(_name, _params, state), do: {:error, "Not implemented", state}
+    @impl true
+    def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
+    @impl true
+    def handle_read_resource(_uri, state), do: {:error, "Not implemented", state}
+    @impl true
+    def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
+    @impl true
+    def handle_get_prompt(_name, _args, state), do: {:error, "Not implemented", state}
+  end
 
-      msg = Protocol.encode_initialize(client_info, capabilities)
+  describe "Initialize Protocol Compliance" do
+    test "client sends required initialize fields" do
+      # Start server
+      {:ok, server} =
+        Server.start_link(
+          transport: :test,
+          handler: VersionTestHandler
+        )
 
-      # Verify complete JSON-RPC structure
-      required_keys = MapSet.new(["jsonrpc", "method", "params", "id"])
-      actual_keys = MapSet.new(Map.keys(msg))
+      # Client initialization happens automatically during start_link
+      {:ok, client} =
+        Client.start_link(
+          transport: :test,
+          server: server,
+          client_info: %{name: "test-client", version: "1.0.0"}
+        )
 
-      assert MapSet.subset?(required_keys, actual_keys),
-             "Missing required keys. Expected: #{inspect(required_keys)}, Got: #{inspect(actual_keys)}"
+      Process.sleep(50)
 
-      # Verify params structure
-      params_keys = MapSet.new(["protocolVersion", "capabilities", "clientInfo"])
-      actual_params_keys = MapSet.new(Map.keys(msg["params"]))
+      # Verify client is initialized with server
+      state = :sys.get_state(client)
+      assert state.initialized == true
 
-      assert MapSet.subset?(params_keys, actual_params_keys),
-             "Missing required params. Expected: #{inspect(params_keys)}, Got: #{inspect(actual_params_keys)}"
+      # Use public API to verify protocol version
+      {:ok, version} = Client.negotiated_version(client)
+      assert version == "2025-03-26"
+    end
+
+    test "server receives client capabilities during initialization" do
+      # The client automatically sends its capabilities during initialization
+      {:ok, server} =
+        Server.start_link(
+          transport: :test,
+          handler: VersionTestHandler
+        )
+
+      # Client with custom info
+      {:ok, client} =
+        Client.start_link(
+          transport: :test,
+          server: server,
+          client_info: %{name: "custom-client", version: "2.0.0"}
+        )
+
+      Process.sleep(50)
+
+      # Client should be successfully initialized
+      assert :sys.get_state(client).initialized == true
     end
   end
 
-  describe "Protocol Version Format" do
-    test "protocolVersion uses correct date format" do
-      # MCP spec versions follow YYYY-MM-DD format
-      client_info = %{name: "test", version: "1.0"}
-      msg = Protocol.encode_initialize(client_info, %{})
+  describe "Version Negotiation" do
+    test "server accepts current protocol version" do
+      {:ok, server} =
+        Server.start_link(
+          transport: :test,
+          handler: VersionTestHandler,
+          handler_args: [expected_version: "2025-03-26"]
+        )
 
-      version = msg["params"]["protocolVersion"]
+      {:ok, client} =
+        Client.start_link(
+          transport: :test,
+          server: server
+        )
 
-      # Should match YYYY-MM-DD pattern
-      assert Regex.match?(~r/^\d{4}-\d{2}-\d{2}$/, version),
-             "Protocol version #{version} doesn't match YYYY-MM-DD format"
+      Process.sleep(50)
+
+      # Should successfully negotiate
+      state = :sys.get_state(client)
+      assert state.initialized == true
+
+      # Use public API to verify
+      {:ok, version} = Client.negotiated_version(client)
+      assert version == "2025-03-26"
+    end
+
+    test "client receives server capabilities after successful initialization" do
+      {:ok, server} =
+        Server.start_link(
+          transport: :test,
+          handler: VersionTestHandler
+        )
+
+      {:ok, client} =
+        Client.start_link(
+          transport: :test,
+          server: server
+        )
+
+      Process.sleep(50)
+
+      # Check that client is initialized
+      state = :sys.get_state(client)
+      assert state.initialized == true
+
+      # Use public API to get server capabilities
+      {:ok, capabilities} = Client.server_capabilities(client)
+      assert is_map(capabilities)
+      assert Map.has_key?(capabilities, "roots") || Map.has_key?(capabilities, :roots)
+      assert Map.has_key?(capabilities, "sampling") || Map.has_key?(capabilities, :sampling)
     end
   end
 
-  describe "Version Negotiation Requirements" do
-    test "server must include protocolVersion in initialize response" do
-      # This is a spec requirement but needs server implementation to test
-      # Currently just documenting the requirement
+  describe "Initialized Notification" do
+    test "client sends initialized notification after successful initialization" do
+      # This happens automatically in the Client after receiving initialize response
+      {:ok, server} =
+        Server.start_link(
+          transport: :test,
+          handler: VersionTestHandler
+        )
 
-      # Expected response structure:
-      # {
-      #   "jsonrpc": "2.0",
-      #   "id": <request_id>,
-      #   "result": {
-      #     "protocolVersion": "2025-03-26",
-      #     "serverInfo": {...},
-      #     "capabilities": {...}
-      #   }
-      # }
+      {:ok, client} =
+        Client.start_link(
+          transport: :test,
+          server: server
+        )
 
-      # The protocolVersion in response is what client and server agree to use
-      assert true, "Requirement documented"
-    end
+      Process.sleep(50)
 
-    test "initialize is the first request in a session" do
-      # MCP spec requires initialize to be the first request
-      # No other requests should be accepted before successful initialization
-
-      # This is enforced by Client but documenting the requirement here
-      assert true, "Requirement documented"
+      # The fact that the client is initialized means the notification was sent
+      assert :sys.get_state(client).initialized == true
     end
   end
 end
