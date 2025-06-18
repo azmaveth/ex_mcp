@@ -168,7 +168,11 @@ defmodule ExMCP.TestCase do
           unquote(block)
         rescue
           error ->
-            reraise error, [
+            # Enhance the error message and re-raise with original type
+            original_message = Exception.message(error)
+            enhanced_error = Map.put(error, :message, original_message <> " (iteration #{iteration})")
+            
+            reraise enhanced_error, [
               {__MODULE__,
                :"test iteration #{iteration}", 0,
                [file: unquote(caller.file), line: unquote(caller.line)]}
@@ -329,9 +333,13 @@ defmodule ExMCP.TestCase do
   def run_parallel(functions, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 10_000)
 
-    functions
-    |> Enum.map(&Task.async/1)
-    |> Task.await_many(timeout)
+    try do
+      functions
+      |> Enum.map(&Task.async/1)
+      |> Task.await_many(timeout)
+    catch
+      :exit, reason -> raise RuntimeError, "Parallel execution failed: #{inspect(reason)}"
+    end
   end
 
   @doc """

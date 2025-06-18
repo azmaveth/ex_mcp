@@ -470,7 +470,13 @@ defmodule ExMCP.SimpleClient do
          {:ok, response, _new_state} <-
            wait_for_response(transport_mod, transport_state, init_msg["id"], 10_000),
          {:ok, _} <- send_initialized(transport_mod, transport_state) do
-      {:ok, response}
+      # Extract server info from the initialize response
+      server_info = case response do
+        %{"result" => %{"serverInfo" => info}} -> info
+        %{"serverInfo" => info} -> info  # For direct response format
+        _ -> nil
+      end
+      {:ok, server_info}
     end
   end
 

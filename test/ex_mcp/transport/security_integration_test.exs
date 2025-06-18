@@ -2,6 +2,7 @@ defmodule ExMCP.Transport.SecurityIntegrationTest do
   use ExUnit.Case
 
   @moduletag :transport
+  @moduletag :integration
 
   alias ExMCP.Test.HTTPServer
   alias ExMCP.Transport.HTTP

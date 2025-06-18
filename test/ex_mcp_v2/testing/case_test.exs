@@ -87,7 +87,7 @@ defmodule ExMCP.Testing.CaseTest do
 
         TestCase.repeat_test 3 do
           count = Agent.get_and_update(agent, fn c -> {c + 1, c + 1} end)
-          if count == 2, do: raise("test failure")
+          if count == 2, do: flunk("test failure")
         end
       end
     end
