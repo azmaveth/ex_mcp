@@ -161,7 +161,7 @@ defmodule ExMCP.TestCase do
   """
   defmacro repeat_test(times, do: block) do
     caller = __CALLER__
-    
+
     quote do
       Enum.each(1..unquote(times), fn iteration ->
         try do
@@ -170,11 +170,12 @@ defmodule ExMCP.TestCase do
           error ->
             # Enhance the error message and re-raise with original type
             original_message = Exception.message(error)
-            enhanced_error = Map.put(error, :message, original_message <> " (iteration #{iteration})")
-            
+
+            enhanced_error =
+              Map.put(error, :message, original_message <> " (iteration #{iteration})")
+
             reraise enhanced_error, [
-              {__MODULE__,
-               :"test iteration #{iteration}", 0,
+              {__MODULE__, :"test iteration #{iteration}", 0,
                [file: unquote(caller.file), line: unquote(caller.line)]}
               | __STACKTRACE__
             ]

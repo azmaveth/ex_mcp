@@ -9,7 +9,7 @@ defmodule ExMCP.ClientV2Test do
   # Mock transport for testing
   defmodule MockTransport do
     @behaviour ExMCP.Transport
-    
+
     import Kernel, except: [send: 2]
 
     def connect(opts) do
@@ -45,7 +45,8 @@ defmodule ExMCP.ClientV2Test do
               }
             }
           }
-          Agent.update(agent, fn state -> 
+
+          Agent.update(agent, fn state ->
             %{state | responses: [Jason.encode!(response) | state.responses]}
           end)
 
@@ -66,6 +67,7 @@ defmodule ExMCP.ClientV2Test do
               ]
             }
           }
+
           Agent.update(agent, fn state ->
             %{state | responses: [Jason.encode!(response) | state.responses]}
           end)
@@ -89,7 +91,7 @@ defmodule ExMCP.ClientV2Test do
     def recv(%{agent: agent} = state, timeout) do
       # Get the next response with timeout handling
       start_time = System.monotonic_time(:millisecond)
-      
+
       case poll_for_response(agent, timeout, start_time) do
         nil -> {:error, :timeout}
         response -> {:ok, response, state}
@@ -98,14 +100,15 @@ defmodule ExMCP.ClientV2Test do
 
     defp poll_for_response(agent, timeout, start_time) do
       case Agent.get_and_update(agent, fn %{responses: responses} ->
-        case responses do
-          [response | rest] -> {response, %{responses: rest}}
-          [] -> {nil, %{responses: []}}
-        end
-      end) do
+             case responses do
+               [response | rest] -> {response, %{responses: rest}}
+               [] -> {nil, %{responses: []}}
+             end
+           end) do
         nil ->
           # Check if we've exceeded timeout
           elapsed = System.monotonic_time(:millisecond) - start_time
+
           if elapsed >= timeout do
             nil
           else
@@ -113,7 +116,8 @@ defmodule ExMCP.ClientV2Test do
             Process.sleep(10)
             poll_for_response(agent, timeout, start_time)
           end
-        response -> 
+
+        response ->
           response
       end
     end
@@ -122,6 +126,7 @@ defmodule ExMCP.ClientV2Test do
       if Process.alive?(agent) do
         Agent.stop(agent)
       end
+
       {:ok, %{state | connected: false}}
     end
 
@@ -168,12 +173,13 @@ defmodule ExMCP.ClientV2Test do
       # links the calling process to the GenServer, and when init returns {:stop, reason},
       # the GenServer exits and causes the caller to exit too
       Process.flag(:trap_exit, true)
-      
-      result = ClientV2.start_link(
-        transport: MockTransport,
-        fail_connect: true
-      )
-      
+
+      result =
+        ClientV2.start_link(
+          transport: MockTransport,
+          fail_connect: true
+        )
+
       # Should get an error tuple since the GenServer should stop during init
       assert {:error, {:transport_connect_failed, :connection_refused}} = result
     end
@@ -187,7 +193,7 @@ defmodule ExMCP.ClientV2Test do
           name: :test_client_tools
         )
 
-      on_exit(fn -> 
+      on_exit(fn ->
         if Process.alive?(client) do
           GenServer.stop(client)
         end

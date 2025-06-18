@@ -143,14 +143,15 @@ defmodule ExMCP.ConvenienceClientTest do
       # This will fail since we don't have a real HTTP server, but tests URL parsing
       # The process will exit with connection failure, which is expected behavior
       Process.flag(:trap_exit, true)
+
       spawn_link(fn ->
-        ConvenienceClient.connect("http://localhost:8080", 
-          timeout: 100, 
+        ConvenienceClient.connect("http://localhost:8080",
+          timeout: 100,
           max_reconnect_attempts: 0,
           reconnect_interval: 50
         )
       end)
-      
+
       # Wait for exit message
       assert_receive {:EXIT, _pid, _reason}, 3000
     end

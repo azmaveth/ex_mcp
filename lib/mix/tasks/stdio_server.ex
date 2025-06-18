@@ -17,7 +17,8 @@ defmodule Mix.Tasks.StdioServer do
   def run(_args) do
     Mix.Task.run("app.start")
 
-    # Define the server inline to avoid Mix.install issues
+    # Define the server inline to avoid compilation issues
+    Code.eval_string("""
     defmodule StdioServerV2 do
       use ExMCP.ServerV2
 
@@ -56,14 +57,14 @@ defmodule Mix.Tasks.StdioServer do
 
       @impl true
       def handle_tool_call("say_hello", %{"name" => name}, state) do
-        content = [text("Hello, #{name}! Welcome to ExMCP v2 via stdio! 📝✨")]
+        content = [text("Hello, \#{name}! Welcome to ExMCP v2 via stdio! 📝✨")]
         {:ok, %{content: content}, state}
       end
 
       @impl true
       def handle_tool_call("echo", %{"message" => message, "uppercase" => uppercase}, state) do
         result_message = if uppercase, do: String.upcase(message), else: message
-        content = [text("Echo: #{result_message}")]
+        content = [text("Echo: \#{result_message}")]
         {:ok, %{content: content}, state}
       end
 
@@ -94,16 +95,16 @@ defmodule Mix.Tasks.StdioServer do
             "formal" ->
               [
                 system("You are a formal and professional assistant."),
-                user("Please provide a formal greeting for #{name}"),
-                assistant("Good day, #{name}. I hope this message finds you well.")
+                user("Please provide a formal greeting for \#{name}"),
+                assistant("Good day, \#{name}. I hope this message finds you well.")
               ]
 
             "funny" ->
               [
                 system("You are a humorous and playful assistant."),
-                user("Give #{name} a funny greeting"),
+                user("Give \#{name} a funny greeting"),
                 assistant(
-                  "Hey there, #{name}! *tips hat* Ready to conquer the world... or at least this conversation? 😄"
+                  "Hey there, \#{name}! *tips hat* Ready to conquer the world... or at least this conversation? 😄"
                 )
               ]
 
@@ -111,14 +112,15 @@ defmodule Mix.Tasks.StdioServer do
             _ ->
               [
                 system("You are a friendly and casual assistant."),
-                user("Say hi to #{name} in a casual way"),
-                assistant("Hey #{name}! How's it going? Great to see you here! 👋")
+                user("Say hi to \#{name} in a casual way"),
+                assistant("Hey \#{name}! How's it going? Great to see you here! 👋")
               ]
           end
 
         {:ok, %{messages: messages}, state}
       end
     end
+    """)
 
     IO.puts(:stderr, """
     📡 ExMCP v2 stdio Server Ready!
@@ -132,7 +134,7 @@ defmodule Mix.Tasks.StdioServer do
     """)
 
     # Start the v2 server
-    {:ok, server} = StdioServerV2.start_link()
+    {:ok, server} = apply(StdioServerV2, :start_link, [])
 
     # Handle stdio communication manually
     loop(server, "")
@@ -170,7 +172,7 @@ defmodule Mix.Tasks.StdioServer do
       "id" => id,
       "result" => %{
         "protocolVersion" => "2025-03-26",
-        "capabilities" => StdioServerV2.get_capabilities(),
+        "capabilities" => apply(StdioServerV2, :get_capabilities, []),
         "serverInfo" => %{
           "name" => "ExMCP v2 stdio Server",
           "version" => "2.0.0"
@@ -182,7 +184,7 @@ defmodule Mix.Tasks.StdioServer do
   end
 
   defp handle_message(_server, %{"method" => "tools/list", "id" => id}) do
-    tools = StdioServerV2.list_tools()
+    tools = apply(StdioServerV2, :get_tools, [])
 
     response = %{
       "jsonrpc" => "2.0",
@@ -224,7 +226,7 @@ defmodule Mix.Tasks.StdioServer do
   end
 
   defp handle_message(_server, %{"method" => "resources/list", "id" => id}) do
-    resources = StdioServerV2.list_resources()
+    resources = apply(StdioServerV2, :get_resources, [])
 
     response = %{
       "jsonrpc" => "2.0",
@@ -266,7 +268,7 @@ defmodule Mix.Tasks.StdioServer do
   end
 
   defp handle_message(_server, %{"method" => "prompts/list", "id" => id}) do
-    prompts = StdioServerV2.list_prompts()
+    prompts = apply(StdioServerV2, :get_prompts, [])
 
     response = %{
       "jsonrpc" => "2.0",

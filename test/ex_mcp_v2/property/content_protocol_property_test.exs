@@ -33,7 +33,10 @@ defmodule ExMCP.Content.ProtocolPropertyTest do
 
   def metadata_gen do
     # Generate simple, serializable metadata with non-empty keys
-    map(oneof([non_empty_string_gen(), atom()]), oneof([non_empty_string_gen(), integer(), float(), boolean()]))
+    map(
+      oneof([non_empty_string_gen(), atom()]),
+      oneof([non_empty_string_gen(), integer(), float(), boolean()])
+    )
   end
 
   def valid_base64_gen do
@@ -118,6 +121,7 @@ defmodule ExMCP.Content.ProtocolPropertyTest do
           metadata_gen()
         } do
       {width, height} = dimensions
+
       Protocol.image(data, mime_type,
         width: width,
         height: height,
@@ -232,6 +236,7 @@ defmodule ExMCP.Content.ProtocolPropertyTest do
       if map_size(content.metadata) > 0 and serializable_metadata?(content.metadata) do
         try do
           serialized = Protocol.serialize(content, include_metadata: true)
+
           case Protocol.deserialize(serialized) do
             {:ok, deserialized} -> content.metadata == deserialized.metadata
             {:error, _} -> false
