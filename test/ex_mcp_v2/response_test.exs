@@ -8,7 +8,11 @@ defmodule ExMCP.ResponseTest do
       raw = %{
         "content" => [
           %{"type" => "text", "text" => "Hello, World!"},
-          %{"type" => "text", "text" => "Second message", "annotations" => %{"priority" => "high"}}
+          %{
+            "type" => "text",
+            "text" => "Second message",
+            "annotations" => %{"priority" => "high"}
+          }
         ],
         "meta" => %{"timestamp" => "2024-01-01T00:00:00Z"}
       }
@@ -16,9 +20,15 @@ defmodule ExMCP.ResponseTest do
       response = Response.from_raw_response(raw, tool_name: "say_hello", request_id: "123")
 
       assert response.content == [
-        %{type: "text", text: "Hello, World!", data: nil, annotations: nil},
-        %{type: "text", text: "Second message", data: nil, annotations: %{"priority" => "high"}}
-      ]
+               %{type: "text", text: "Hello, World!", data: nil, annotations: nil},
+               %{
+                 type: "text",
+                 text: "Second message",
+                 data: nil,
+                 annotations: %{"priority" => "high"}
+               }
+             ]
+
       assert response.meta == %{"timestamp" => "2024-01-01T00:00:00Z"}
       assert response.tool_name == "say_hello"
       assert response.request_id == "123"
@@ -43,7 +53,10 @@ defmodule ExMCP.ResponseTest do
       response = Response.from_raw_response(raw)
 
       assert response.is_error == true
-      assert response.content == [%{type: "text", text: "Error occurred", data: nil, annotations: nil}]
+
+      assert response.content == [
+               %{type: "text", text: "Error occurred", data: nil, annotations: nil}
+             ]
     end
 
     test "normalizes legacy content format" do
@@ -57,9 +70,9 @@ defmodule ExMCP.ResponseTest do
       response = Response.from_raw_response(raw)
 
       assert response.content == [
-        %{type: "text", text: "Legacy format", data: nil, annotations: nil},
-        %{type: "text", text: nil, data: %{"result" => 42}, annotations: nil}
-      ]
+               %{type: "text", text: "Legacy format", data: nil, annotations: nil},
+               %{type: "text", text: nil, data: %{"result" => 42}, annotations: nil}
+             ]
     end
   end
 
@@ -69,16 +82,18 @@ defmodule ExMCP.ResponseTest do
 
       assert response.is_error == true
       assert response.tool_name == "calculate_sum"
+
       assert response.content == [
-        %{type: "text", text: "Error: Tool execution failed", data: nil, annotations: nil}
-      ]
+               %{type: "text", text: "Error: Tool execution failed", data: nil, annotations: nil}
+             ]
     end
 
     test "creates error response with metadata" do
-      response = Response.error("Failed", "tool", 
-        meta: %{"error_code" => "E001"}, 
-        request_id: "req-123"
-      )
+      response =
+        Response.error("Failed", "tool",
+          meta: %{"error_code" => "E001"},
+          request_id: "req-123"
+        )
 
       assert response.is_error == true
       assert response.meta == %{"error_code" => "E001"}
@@ -92,19 +107,23 @@ defmodule ExMCP.ResponseTest do
 
       assert response.is_error == false
       assert response.tool_name == "say_hello"
+
       assert response.content == [
-        %{type: "text", text: "Hello, World!", data: nil, annotations: nil}
-      ]
+               %{type: "text", text: "Hello, World!", data: nil, annotations: nil}
+             ]
     end
 
     test "creates text response with annotations" do
-      response = Response.text("Important message", "tool", 
-        annotations: %{"priority" => "high"}
-      )
+      response = Response.text("Important message", "tool", annotations: %{"priority" => "high"})
 
       assert response.content == [
-        %{type: "text", text: "Important message", data: nil, annotations: %{"priority" => "high"}}
-      ]
+               %{
+                 type: "text",
+                 text: "Important message",
+                 data: nil,
+                 annotations: %{"priority" => "high"}
+               }
+             ]
     end
   end
 
@@ -115,9 +134,10 @@ defmodule ExMCP.ResponseTest do
 
       assert response.is_error == false
       assert response.tool_name == "calculate"
+
       assert response.content == [
-        %{type: "text", text: nil, data: data, annotations: nil}
-      ]
+               %{type: "text", text: nil, data: data, annotations: nil}
+             ]
     end
   end
 
@@ -131,12 +151,13 @@ defmodule ExMCP.ResponseTest do
     end
 
     test "text_content/1 extracts first text content" do
-      response = Response.from_raw_response(%{
-        "content" => [
-          %{"type" => "text", "text" => "First message"},
-          %{"type" => "text", "text" => "Second message"}
-        ]
-      })
+      response =
+        Response.from_raw_response(%{
+          "content" => [
+            %{"type" => "text", "text" => "First message"},
+            %{"type" => "text", "text" => "Second message"}
+          ]
+        })
 
       assert Response.text_content(response) == "First message"
     end
@@ -148,13 +169,15 @@ defmodule ExMCP.ResponseTest do
     end
 
     test "all_text_content/1 concatenates all text content" do
-      response = Response.from_raw_response(%{
-        "content" => [
-          %{"type" => "text", "text" => "First"},
-          %{"type" => "text", "text" => "Second"},
-          %{"type" => "text", "data" => %{}} # No text
-        ]
-      })
+      response =
+        Response.from_raw_response(%{
+          "content" => [
+            %{"type" => "text", "text" => "First"},
+            %{"type" => "text", "text" => "Second"},
+            # No text
+            %{"type" => "text", "data" => %{}}
+          ]
+        })
 
       assert Response.all_text_content(response) == "First\nSecond"
     end
@@ -187,12 +210,16 @@ defmodule ExMCP.ResponseTest do
       raw = Response.to_raw(response)
 
       assert raw == %{
-        "content" => [
-          %{"type" => "text", "text" => "Hello"},
-          %{"type" => "text", "data" => %{"key" => "value"}, "annotations" => %{"meta" => true}}
-        ],
-        "meta" => %{"timestamp" => "2024-01-01"}
-      }
+               "content" => [
+                 %{"type" => "text", "text" => "Hello"},
+                 %{
+                   "type" => "text",
+                   "data" => %{"key" => "value"},
+                   "annotations" => %{"meta" => true}
+                 }
+               ],
+               "meta" => %{"timestamp" => "2024-01-01"}
+             }
     end
 
     test "includes isError when true" do

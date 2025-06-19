@@ -151,9 +151,19 @@ defmodule ExMCP.DSL.Resource do
   Sets the human-readable name for the current resource (deprecated syntax).
   """
   defmacro resource_name(resource_name) do
+    caller = __CALLER__
+    file = Path.relative_to_cwd(caller.file)
+    line = caller.line
+
     quote do
       require Logger
-      Logger.warning("resource_name/1 is deprecated. Use name/1 instead.")
+
+      Logger.warning(
+        "resource_name/1 is deprecated. Use name/1 instead.",
+        file: unquote(file),
+        line: unquote(line)
+      )
+
       @__resource_name__ unquote(resource_name)
     end
   end
@@ -162,9 +172,19 @@ defmodule ExMCP.DSL.Resource do
   Sets the description for the current resource (deprecated syntax).
   """
   defmacro resource_description(desc) do
+    caller = __CALLER__
+    file = Path.relative_to_cwd(caller.file)
+    line = caller.line
+
     quote do
       require Logger
-      Logger.warning("resource_description/1 is deprecated. Use description/1 instead.")
+
+      Logger.warning(
+        "resource_description/1 is deprecated. Use description/1 instead.",
+        file: unquote(file),
+        line: unquote(line)
+      )
+
       @__resource_description__ unquote(desc)
     end
   end

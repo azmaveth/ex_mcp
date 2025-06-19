@@ -168,7 +168,8 @@ defmodule ExMCP.ConvenienceClient do
       {:ok, %Response{} = response} when normalize? ->
         # Extract useful content from response
         if Response.error?(response) do
-          {:error, Error.tool_error(Response.text_content(response) || "Tool execution failed", tool_name)}
+          {:error,
+           Error.tool_error(Response.text_content(response) || "Tool execution failed", tool_name)}
         else
           # Return the text content for convenience, or the full response if no text
           Response.text_content(response) || response
@@ -247,10 +248,11 @@ defmodule ExMCP.ConvenienceClient do
       {:ok, %Response{} = response} ->
         # Extract content from response
         if Response.error?(response) do
-          {:error, Error.resource_error(Response.text_content(response) || "Resource read failed", uri)}
+          {:error,
+           Error.resource_error(Response.text_content(response) || "Resource read failed", uri)}
         else
           content = Response.text_content(response) || Response.data_content(response)
-          
+
           # Parse JSON if requested and content is a string
           if Keyword.get(opts, :parse_json, false) and is_binary(content) do
             case Jason.decode(content) do
@@ -296,7 +298,11 @@ defmodule ExMCP.ConvenienceClient do
       {:ok, %Response{} = response} ->
         # Extract the messages from the response
         if Response.error?(response) do
-          {:error, Error.prompt_error(Response.text_content(response) || "Prompt execution failed", prompt_name)}
+          {:error,
+           Error.prompt_error(
+             Response.text_content(response) || "Prompt execution failed",
+             prompt_name
+           )}
         else
           # Try to extract data content (should contain messages)
           Response.data_content(response) || response

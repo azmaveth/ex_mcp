@@ -89,9 +89,19 @@ defmodule ExMCP.DSL.Prompt do
   Sets the display name for the current prompt (deprecated syntax).
   """
   defmacro prompt_name(display_name) do
+    caller = __CALLER__
+    file = Path.relative_to_cwd(caller.file)
+    line = caller.line
+
     quote do
       require Logger
-      Logger.warning("prompt_name/1 is deprecated. Use name/1 instead.")
+
+      Logger.warning(
+        "prompt_name/1 is deprecated. Use name/1 instead.",
+        file: unquote(file),
+        line: unquote(line)
+      )
+
       @__prompt_display_name__ unquote(display_name)
     end
   end
@@ -100,9 +110,19 @@ defmodule ExMCP.DSL.Prompt do
   Sets the description for the current prompt (deprecated syntax).
   """
   defmacro prompt_description(desc) do
+    caller = __CALLER__
+    file = Path.relative_to_cwd(caller.file)
+    line = caller.line
+
     quote do
       require Logger
-      Logger.warning("prompt_description/1 is deprecated. Use description/1 instead.")
+
+      Logger.warning(
+        "prompt_description/1 is deprecated. Use description/1 instead.",
+        file: unquote(file),
+        line: unquote(line)
+      )
+
       @__prompt_description__ unquote(desc)
     end
   end

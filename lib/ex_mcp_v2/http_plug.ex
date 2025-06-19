@@ -2,14 +2,14 @@ defmodule ExMCP.HttpPlug do
   @moduledoc """
   HTTP Plug for MCP (Model Context Protocol) requests.
   Compatible with Phoenix and Cowboy servers.
-  
+
   This plug provides HTTP transport for MCP servers, allowing integration
   with standard Elixir web applications. It supports both regular POST
   requests for RPC calls and Server-Sent Events (SSE) for real-time
   communication.
-  
+
   ## Usage
-  
+
       # With Cowboy
       {:ok, _} = Plug.Cowboy.http(ExMCP.HttpPlug, [
         handler: MyApp.MCPServer,
@@ -136,7 +136,7 @@ defmodule ExMCP.HttpPlug do
   # Handle Server-Sent Events connections
   defp handle_sse_connection(conn, opts) do
     session_id = get_session_id(conn)
-    
+
     conn =
       conn
       |> maybe_add_cors_headers(opts)
@@ -145,13 +145,27 @@ defmodule ExMCP.HttpPlug do
       |> put_resp_header("connection", "keep-alive")
       |> send_chunked(200)
 
-    # Only start the loop if not in test environment
+    # Only start the handler if not in test environment
     if Mix.env() == :test do
       # Send a simple connection message and return for testing
       {:ok, conn} = chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
       conn
     else
-      start_sse_loop(conn, session_id, opts)
+      # Use the new SSE handler with backpressure control
+      {:ok, handler} = ExMCP.HttpPlug.SSEHandler.start_link(conn, session_id, opts)
+
+      # Register with session manager if available
+      if function_exported?(opts.session_manager, :register_sse_handler, 2) do
+        opts.session_manager.register_sse_handler(session_id, handler)
+      end
+
+      # Block until handler exits
+      ref = Process.monitor(handler)
+
+      receive do
+        {:DOWN, ^ref, :process, ^handler, _reason} ->
+          conn
+      end
     end
   end
 
@@ -167,20 +181,23 @@ defmodule ExMCP.HttpPlug do
       handler_module when is_atom(handler_module) ->
         # Use ExMCP.MessageProcessor to process the request
         conn = ExMCP.MessageProcessor.new(request, transport: :http)
-        
+
         # Create a simple processor that delegates to the handler
-        processed_conn = ExMCP.MessageProcessor.process(conn, %{
-          handler: handler_module,
-          server_info: server_info
-        })
+        processed_conn =
+          ExMCP.MessageProcessor.process(conn, %{
+            handler: handler_module,
+            server_info: server_info
+          })
 
         case processed_conn.response do
-          nil -> 
+          nil ->
             {:error, :no_response}
-          %{"jsonrpc" => "2.0", "error" => _} = response -> 
+
+          %{"jsonrpc" => "2.0", "error" => _} = response ->
             # JSON-RPC error responses are still valid HTTP responses
             {:ok, response}
-          response -> 
+
+          response ->
             {:ok, response}
         end
 
@@ -214,49 +231,8 @@ defmodule ExMCP.HttpPlug do
 
   # Generate a simple session ID
   defp generate_session_id do
-    "sse_" <> 
-      (:crypto.strong_rand_bytes(16) 
+    "sse_" <>
+      (:crypto.strong_rand_bytes(16)
        |> Base.encode16(case: :lower))
-  end
-
-  # Start SSE event loop
-  defp start_sse_loop(conn, session_id, opts) do
-    # Send initial connection event
-    {:ok, conn} = chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
-    
-    # Register for session events
-    session_manager = opts.session_manager
-    
-    if function_exported?(session_manager, :register_sse_session, 2) do
-      session_manager.register_sse_session(session_id, self())
-    end
-
-    # Start event loop
-    sse_event_loop(conn, session_id, opts)
-  end
-
-  # SSE event loop
-  defp sse_event_loop(conn, session_id, opts) do
-    receive do
-      {:sse_event, event_type, data} ->
-        event_data = Jason.encode!(data)
-        message = "event: #{event_type}\ndata: #{event_data}\n\n"
-        
-        case chunk(conn, message) do
-          {:ok, conn} -> sse_event_loop(conn, session_id, opts)
-          {:error, _reason} -> conn
-        end
-
-      {:close_sse} ->
-        chunk(conn, "event: close\ndata: {}\n\n")
-
-    after
-      30_000 ->
-        # Send heartbeat every 30 seconds
-        case chunk(conn, "event: heartbeat\ndata: {\"timestamp\": #{System.system_time(:second)}}\n\n") do
-          {:ok, conn} -> sse_event_loop(conn, session_id, opts)
-          {:error, _reason} -> conn
-        end
-    end
   end
 end

@@ -7,56 +7,57 @@ defmodule ExMCP.DSL.ComplianceTest do
     use ExMCP.ServerV2
 
     deftool "say_hello" do
-      description "Says hello to a given name"
-      input_schema %{
+      description("Says hello to a given name")
+
+      input_schema(%{
         type: "object",
         properties: %{name: %{type: "string"}},
         required: ["name"]
-      }
+      })
     end
 
     deftool "calculate_sum" do
-      description "Adds two numbers together"
-      
+      description("Adds two numbers together")
+
       args do
-        field :a, :number, required: true, description: "First number"
-        field :b, :number, required: true, description: "Second number"
+        field(:a, :number, required: true, description: "First number")
+        field(:b, :number, required: true, description: "Second number")
       end
     end
 
     defresource "config://app/settings" do
-      resource_name "Application Settings"
-      resource_description "Current application configuration"
-      mime_type "application/json"
-      
-      annotations %{
+      resource_name("Application Settings")
+      resource_description("Current application configuration")
+      mime_type("application/json")
+
+      annotations(%{
         audience: ["admin"],
         priority: 0.8
-      }
+      })
     end
 
     defresource "file://logs/*.log" do
-      resource_name "Log Files"
-      resource_description "Application log files"
-      mime_type "text/plain"
-      list_pattern true
-      subscribable true
+      resource_name("Log Files")
+      resource_description("Application log files")
+      mime_type("text/plain")
+      list_pattern(true)
+      subscribable(true)
     end
 
     defprompt "code_review" do
-      prompt_name "Code Review Assistant"
-      prompt_description "Reviews code with specific focus areas"
-      
+      prompt_name("Code Review Assistant")
+      prompt_description("Reviews code with specific focus areas")
+
       arguments do
-        arg :code, required: true, description: "Code to review"
-        arg :language, description: "Programming language"
-        arg :focus, description: "Review focus"
+        arg(:code, required: true, description: "Code to review")
+        arg(:language, description: "Programming language")
+        arg(:focus, description: "Review focus")
       end
     end
 
     defprompt "simple_greeting" do
-      prompt_name "Simple Greeting"
-      prompt_description "A simple greeting prompt"
+      prompt_name("Simple Greeting")
+      prompt_description("A simple greeting prompt")
     end
 
     # Handler implementations
@@ -91,8 +92,14 @@ defmodule ExMCP.DSL.ComplianceTest do
       focus = Map.get(args, "focus", "general")
 
       messages = [
-        %{"role" => "user", "content" => "Please review this #{language} code focusing on #{focus}:\n\n#{code}"},
-        %{"role" => "assistant", "content" => "I'll review your code with attention to #{focus} aspects."}
+        %{
+          "role" => "user",
+          "content" => "Please review this #{language} code focusing on #{focus}:\n\n#{code}"
+        },
+        %{
+          "role" => "assistant",
+          "content" => "I'll review your code with attention to #{focus} aspects."
+        }
       ]
 
       {:ok, %{messages: messages}, state}
@@ -114,22 +121,27 @@ defmodule ExMCP.DSL.ComplianceTest do
     use ExMCP.ServerV2
 
     deftool "legacy_tool" do
-      tool_description("A legacy tool")  # Should generate warning
-      
+      # Should generate warning
+      tool_description("A legacy tool")
+
       args do
         field(:data, :string, required: true)
       end
     end
 
     defresource "legacy://resource" do
-      resource_name("Legacy Resource")  # Should generate warning
-      resource_description("A legacy resource")  # Should generate warning
+      # Should generate warning
+      resource_name("Legacy Resource")
+      # Should generate warning
+      resource_description("A legacy resource")
       mime_type("text/plain")
     end
 
     defprompt "legacy_prompt" do
-      prompt_name("Legacy Prompt")  # Should generate warning
-      prompt_description("A legacy prompt")  # Should generate warning
+      # Should generate warning
+      prompt_name("Legacy Prompt")
+      # Should generate warning
+      prompt_description("A legacy prompt")
     end
 
     # Handler implementations
@@ -234,29 +246,32 @@ defmodule ExMCP.DSL.ComplianceTest do
 
   describe "Deprecated syntax with warnings" do
     test "tool_description generates deprecation warning" do
-      log_output = capture_log(fn ->
-        # Force compilation by accessing tools
-        _tools = DeprecatedSyntaxServer.get_tools()
-      end)
+      log_output =
+        capture_log(fn ->
+          # Force compilation by accessing tools
+          _tools = DeprecatedSyntaxServer.get_tools()
+        end)
 
       assert log_output =~ "tool_description/1 is deprecated. Use description/1 instead."
     end
 
     test "resource_name and resource_description generate deprecation warnings" do
-      log_output = capture_log(fn ->
-        # Force compilation by accessing resources
-        _resources = DeprecatedSyntaxServer.get_resources()
-      end)
+      log_output =
+        capture_log(fn ->
+          # Force compilation by accessing resources
+          _resources = DeprecatedSyntaxServer.get_resources()
+        end)
 
       assert log_output =~ "resource_name/1 is deprecated. Use name/1 instead."
       assert log_output =~ "resource_description/1 is deprecated. Use description/1 instead."
     end
 
     test "prompt_name and prompt_description generate deprecation warnings" do
-      log_output = capture_log(fn ->
-        # Force compilation by accessing prompts
-        _prompts = DeprecatedSyntaxServer.get_prompts()
-      end)
+      log_output =
+        capture_log(fn ->
+          # Force compilation by accessing prompts
+          _prompts = DeprecatedSyntaxServer.get_prompts()
+        end)
 
       assert log_output =~ "prompt_name/1 is deprecated. Use name/1 instead."
       assert log_output =~ "prompt_description/1 is deprecated. Use description/1 instead."
@@ -308,7 +323,11 @@ defmodule ExMCP.DSL.ComplianceTest do
 
     test "executes resources defined with compliant syntax", %{server: _server} do
       {:ok, content, _state} =
-        DesignCompliantServer.handle_resource_read("config://app/settings", "config://app/settings", %{})
+        DesignCompliantServer.handle_resource_read(
+          "config://app/settings",
+          "config://app/settings",
+          %{}
+        )
 
       assert length(content) == 1
       [json_content] = content

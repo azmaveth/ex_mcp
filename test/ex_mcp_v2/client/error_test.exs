@@ -82,7 +82,8 @@ defmodule ExMCP.Client.ErrorTest do
 
   describe "format/3 - tool errors" do
     test "formats tool_call_failed with timeout" do
-      result = Error.format(:tool_call_failed, :timeout, %{tool: "calculator", args: %{a: 1, b: 2}})
+      result =
+        Error.format(:tool_call_failed, :timeout, %{tool: "calculator", args: %{a: 1, b: 2}})
 
       assert result.type == :tool_call_failed
       assert result.category == :resource
@@ -94,7 +95,8 @@ defmodule ExMCP.Client.ErrorTest do
     end
 
     test "formats tool_call_failed with not_connected" do
-      result = Error.format(:tool_call_failed, {:not_connected, :disconnected}, %{tool: "test_tool"})
+      result =
+        Error.format(:tool_call_failed, {:not_connected, :disconnected}, %{tool: "test_tool"})
 
       assert result.severity == :high
       assert result.details == "Client not connected (status: disconnected)"
@@ -350,7 +352,9 @@ defmodule ExMCP.Client.ErrorTest do
       timeout_error = Error.format(:tool_call_failed, :timeout, %{tool: "test"})
       assert timeout_error.severity == :medium
 
-      not_connected_error = Error.format(:tool_call_failed, {:not_connected, :disconnected}, %{tool: "test"})
+      not_connected_error =
+        Error.format(:tool_call_failed, {:not_connected, :disconnected}, %{tool: "test"})
+
       assert not_connected_error.severity == :high
 
       other_error = Error.format(:tool_call_failed, :other_reason, %{tool: "test"})
@@ -425,10 +429,14 @@ defmodule ExMCP.Client.ErrorTest do
 
     test "handles malformed error structures" do
       malformed_errors = [
-        %{},  # Empty map
-        %{"unknown" => "structure"},  # Unexpected structure
-        %{"error" => "not_a_map"},  # Error field not a map
-        %{"message" => nil}  # Nil message
+        # Empty map
+        %{},
+        # Unexpected structure
+        %{"unknown" => "structure"},
+        # Error field not a map
+        %{"error" => "not_a_map"},
+        # Nil message
+        %{"message" => nil}
       ]
 
       for malformed_error <- malformed_errors do
@@ -442,7 +450,7 @@ defmodule ExMCP.Client.ErrorTest do
     test "handles very long error messages" do
       long_message = String.duplicate("x", 10000)
       result = Error.format(:test_error, long_message, %{})
-      
+
       # Should not crash and should preserve the message
       assert result.details == long_message
     end
@@ -482,7 +490,18 @@ defmodule ExMCP.Client.ErrorTest do
 
         # Verify the structure matches the formatted_error type
         assert is_atom(result.type)
-        assert result.category in [:connection, :protocol, :authentication, :resource, :timeout, :validation, :internal, :unknown]
+
+        assert result.category in [
+                 :connection,
+                 :protocol,
+                 :authentication,
+                 :resource,
+                 :timeout,
+                 :validation,
+                 :internal,
+                 :unknown
+               ]
+
         assert result.severity in [:low, :medium, :high, :critical]
         assert is_binary(result.message)
         assert is_binary(result.details) or is_nil(result.details)

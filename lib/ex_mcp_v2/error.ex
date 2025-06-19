@@ -1,19 +1,60 @@
 defmodule ExMCP.Error do
   @moduledoc """
   Structured error types for MCP operations.
-  
+
   This module provides standardized error handling for MCP operations,
   following JSON-RPC 2.0 error codes and MCP-specific error patterns.
+
+  ## Error Categories
+
+  ### JSON-RPC 2.0 Standard Errors
+  - `-32700` - Parse error
+  - `-32600` - Invalid request
+  - `-32601` - Method not found
+  - `-32602` - Invalid params
+  - `-32603` - Internal error
+
+  ### MCP-Specific Errors
+  - `-32001` - Tool not found
+  - `-32002` - Resource not found
+  - `-32003` - Prompt not found
+  - `-32004` - Tool execution error
+  - `-32005` - Subscription error
+
+  ## Usage
+
+      # Create standard errors
+      error = ExMCP.Error.parse_error("Invalid JSON")
+      error = ExMCP.Error.method_not_found("unknown/method")
+
+      # Create tool-specific errors
+      error = ExMCP.Error.tool_error("Execution failed", "calculator",
+        data: %{input: "1/0", reason: "division by zero"}
+      )
+
+      # Convert to JSON-RPC format
+      json_error = ExMCP.Error.to_json_rpc(error)
+
+      # Categorize errors
+      category = ExMCP.Error.category(error)
+      # => :protocol | :application | :transport
+
+  ## Error Handling Best Practices
+
+  1. Use specific error functions when available
+  2. Include helpful data in error responses
+  3. Maintain error code consistency
+  4. Provide actionable error messages
   """
 
   defexception [:code, :message, :data, :request_id]
 
   @type t :: %__MODULE__{
-    code: integer() | atom(),
-    message: String.t(),
-    data: any(),
-    request_id: String.t() | nil
-  }
+          code: integer() | atom(),
+          message: String.t(),
+          data: any(),
+          request_id: String.t() | nil
+        }
 
   # JSON-RPC 2.0 Error Codes
   @parse_error -32700
@@ -32,9 +73,9 @@ defmodule ExMCP.Error do
 
   @doc """
   Creates an error from a JSON-RPC error response.
-  
+
   ## Examples
-  
+
       iex> json_error = %{"code" => -32601, "message" => "Method not found"}
       iex> ExMCP.Error.from_json_rpc_error(json_error)
       %ExMCP.Error{
@@ -56,9 +97,9 @@ defmodule ExMCP.Error do
 
   @doc """
   Creates a connection error.
-  
+
   ## Examples
-  
+
       iex> ExMCP.Error.connection_error("Connection refused")
       %ExMCP.Error{
         code: :connection_error,
@@ -79,9 +120,9 @@ defmodule ExMCP.Error do
 
   @doc """
   Creates a parse error (JSON-RPC -32700).
-  
+
   ## Examples
-  
+
       iex> ExMCP.Error.parse_error("Invalid JSON")
       %ExMCP.Error{
         code: -32700,
@@ -157,10 +198,11 @@ defmodule ExMCP.Error do
   """
   @spec tool_error(String.t(), String.t() | nil, keyword()) :: t()
   def tool_error(reason, tool_name \\ nil, opts \\ []) do
-    message = case tool_name do
-      nil -> "Tool error: #{reason}"
-      name -> "Tool error in '#{name}': #{reason}"
-    end
+    message =
+      case tool_name do
+        nil -> "Tool error: #{reason}"
+        name -> "Tool error in '#{name}': #{reason}"
+      end
 
     %__MODULE__{
       code: @tool_error,
@@ -175,10 +217,11 @@ defmodule ExMCP.Error do
   """
   @spec resource_error(String.t(), String.t() | nil, keyword()) :: t()
   def resource_error(reason, resource_uri \\ nil, opts \\ []) do
-    message = case resource_uri do
-      nil -> "Resource error: #{reason}"
-      uri -> "Resource error for '#{uri}': #{reason}"
-    end
+    message =
+      case resource_uri do
+        nil -> "Resource error: #{reason}"
+        uri -> "Resource error for '#{uri}': #{reason}"
+      end
 
     %__MODULE__{
       code: @resource_error,
@@ -193,10 +236,11 @@ defmodule ExMCP.Error do
   """
   @spec prompt_error(String.t(), String.t() | nil, keyword()) :: t()
   def prompt_error(reason, prompt_name \\ nil, opts \\ []) do
-    message = case prompt_name do
-      nil -> "Prompt error: #{reason}"
-      name -> "Prompt error in '#{name}': #{reason}"
-    end
+    message =
+      case prompt_name do
+        nil -> "Prompt error: #{reason}"
+        name -> "Prompt error in '#{name}': #{reason}"
+      end
 
     %__MODULE__{
       code: @prompt_error,
@@ -247,9 +291,9 @@ defmodule ExMCP.Error do
 
   @doc """
   Converts the error to JSON-RPC error format.
-  
+
   ## Examples
-  
+
       iex> error = ExMCP.Error.method_not_found("test_method")
       iex> ExMCP.Error.to_json_rpc(error)
       %{
@@ -293,9 +337,9 @@ defmodule ExMCP.Error do
 
   @doc """
   Gets a human-readable error category.
-  
+
   ## Examples
-  
+
       iex> error = ExMCP.Error.tool_error("Execution failed", "calculate")
       iex> ExMCP.Error.category(error)
       "Tool Error"

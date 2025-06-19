@@ -84,9 +84,19 @@ defmodule ExMCP.DSL.Tool do
   Sets the description for the current tool (deprecated syntax).
   """
   defmacro tool_description(desc) do
+    caller = __CALLER__
+    file = Path.relative_to_cwd(caller.file)
+    line = caller.line
+
     quote do
       require Logger
-      Logger.warning("tool_description/1 is deprecated. Use description/1 instead.")
+
+      Logger.warning(
+        "tool_description/1 is deprecated. Use description/1 instead.",
+        file: unquote(file),
+        line: unquote(line)
+      )
+
       @__tool_description__ unquote(desc)
     end
   end

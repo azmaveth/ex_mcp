@@ -14,7 +14,9 @@ defmodule ExMCP.Content.ValidationTest do
 
   @valid_image_content %{
     type: :image,
-    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==", # 1x1 PNG
+    # 1x1 PNG
+    data:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
     mime_type: "image/png",
     width: 1,
     height: 1,
@@ -24,7 +26,9 @@ defmodule ExMCP.Content.ValidationTest do
 
   @valid_audio_content %{
     type: :audio,
-    data: "UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbOCO6dLXgvnr0tz0", # minimal WAV
+    # minimal WAV
+    data:
+      "UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbOCO6dLXgvnr0tz0",
     mime_type: "audio/wav",
     duration: 1.0,
     transcript: "Test audio transcript",
@@ -74,7 +78,7 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "validates required fields for text content" do
       assert Validation.validate(@valid_text_content, [:required_fields]) == :ok
-      
+
       assert {:error, [error]} = Validation.validate(@invalid_text_content, [:required_fields])
       assert error.rule == :required_fields
       assert error.severity == :error
@@ -83,7 +87,7 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "validates required fields for image content" do
       assert Validation.validate(@valid_image_content, [:required_fields]) == :ok
-      
+
       assert {:error, [error]} = Validation.validate(@invalid_image_content, [:required_fields])
       assert error.rule == :required_fields
       assert error.severity == :error
@@ -93,7 +97,7 @@ defmodule ExMCP.Content.ValidationTest do
     test "validates max size rule" do
       # Text content within size limit
       assert Validation.validate(@valid_text_content, [{:max_size, 1000}]) == :ok
-      
+
       # Text content exceeding size limit
       assert {:error, [error]} = Validation.validate(@large_text_content, [{:max_size, 1000}])
       assert error.rule == :max_size
@@ -103,11 +107,16 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "validates MIME types rule" do
       # Valid MIME type
-      assert Validation.validate(@valid_image_content, [{:mime_types, ["image/png", "image/jpeg"]}]) == :ok
-      
+      assert Validation.validate(@valid_image_content, [
+               {:mime_types, ["image/png", "image/jpeg"]}
+             ]) == :ok
+
       # Invalid MIME type
       invalid_content = %{@valid_image_content | mime_type: "image/gif"}
-      assert {:error, [error]} = Validation.validate(invalid_content, [{:mime_types, ["image/png", "image/jpeg"]}])
+
+      assert {:error, [error]} =
+               Validation.validate(invalid_content, [{:mime_types, ["image/png", "image/jpeg"]}])
+
       assert error.rule == :mime_types
       assert error.severity == :error
       assert String.contains?(error.message, "not in allowed list")
@@ -116,7 +125,7 @@ defmodule ExMCP.Content.ValidationTest do
     test "validates content length rule" do
       # Content within length limit
       assert Validation.validate(@valid_text_content, [{:content_length, 100}]) == :ok
-      
+
       # Content exceeding length limit
       long_content = %{@valid_text_content | text: String.duplicate("hello ", 50)}
       assert {:error, [error]} = Validation.validate(long_content, [{:content_length, 100}])
@@ -128,7 +137,7 @@ defmodule ExMCP.Content.ValidationTest do
     test "validates encoding rule" do
       # Valid UTF-8 content
       assert Validation.validate(@valid_text_content, [:validate_encoding]) == :ok
-      
+
       # Invalid UTF-8 content (manually constructed)
       invalid_utf8 = %{@valid_text_content | text: <<0xFF, 0xFE, 0x00, 0x00>>}
       assert {:error, [error]} = Validation.validate(invalid_utf8, [:validate_encoding])
@@ -140,7 +149,7 @@ defmodule ExMCP.Content.ValidationTest do
     test "scans for malware" do
       # Clean content
       assert Validation.validate(@valid_text_content, [:scan_malware]) == :ok
-      
+
       # Malicious content
       assert {:error, [error]} = Validation.validate(@malicious_text_content, [:scan_malware])
       assert error.rule == :scan_malware
@@ -158,7 +167,7 @@ defmodule ExMCP.Content.ValidationTest do
       end
 
       assert Validation.validate(@valid_text_content, [custom_rule]) == :ok
-      
+
       forbidden_content = %{@valid_text_content | text: "This contains forbidden word"}
       assert {:error, [error]} = Validation.validate(forbidden_content, [custom_rule])
       assert error.rule == :custom
@@ -179,9 +188,12 @@ defmodule ExMCP.Content.ValidationTest do
 
       long_text = %{@valid_text_content | text: "This is long enough"}
       assert Validation.validate(long_text, [{TestValidator, :validate_test_rule, []}]) == :ok
-      
+
       short_text = %{@valid_text_content | text: "Hi"}
-      assert {:error, [error]} = Validation.validate(short_text, [{TestValidator, :validate_test_rule, []}])
+
+      assert {:error, [error]} =
+               Validation.validate(short_text, [{TestValidator, :validate_test_rule, []}])
+
       assert error.rule == :too_short
     end
 
@@ -191,9 +203,9 @@ defmodule ExMCP.Content.ValidationTest do
         type: :text,
         text: String.duplicate("<script>alert('xss')</script>", 100)
       }
-      
+
       rules = [:required_fields, :scan_malware, {:max_size, 100}, {:content_length, 50}]
-      
+
       # Should limit to 2 errors
       assert {:error, errors} = Validation.validate(bad_content, rules, max_errors: 2)
       assert length(errors) <= 2
@@ -214,7 +226,7 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "returns errors for batch validation" do
       contents = [@valid_text_content, @invalid_text_content, @valid_image_content]
-      
+
       assert {:error, results} = Validation.validate_batch(contents, [:required_fields])
       assert length(results) == 3
       assert Enum.at(results, 0) == :ok
@@ -230,7 +242,7 @@ defmodule ExMCP.Content.ValidationTest do
   describe "sanitize/2" do
     test "sanitizes HTML content" do
       malicious_content = %{@valid_text_content | text: "<script>alert('xss')</script>Hello"}
-      
+
       sanitized = Validation.sanitize(malicious_content, [:html_escape])
       assert sanitized.text != malicious_content.text
       refute String.contains?(sanitized.text, "<script>")
@@ -238,21 +250,21 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "strips scripts from content" do
       script_content = %{@valid_text_content | text: "Hello <script>alert('xss')</script> World"}
-      
+
       sanitized = Validation.sanitize(script_content, [:strip_scripts])
       assert sanitized.text == "Hello  World"
     end
 
     test "normalizes Unicode content" do
       unicode_content = %{@valid_text_content | text: "Héllo Wörld"}
-      
+
       sanitized = Validation.sanitize(unicode_content, [:normalize_unicode])
       assert String.valid?(sanitized.text)
     end
 
     test "limits content size" do
       large_content = %{@valid_text_content | text: String.duplicate("a", 1000)}
-      
+
       sanitized = Validation.sanitize(large_content, [{:limit_size, 500}])
       # Content should be processed (actual size limiting would be implementation-specific)
       assert is_map(sanitized)
@@ -260,24 +272,26 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "removes metadata" do
       content_with_metadata = Map.merge(@valid_text_content, %{metadata: %{secret: "value"}})
-      
+
       sanitized = Validation.sanitize(content_with_metadata, [:remove_metadata])
       assert sanitized.metadata == %{}
     end
 
     test "applies multiple sanitization operations" do
-      malicious_content = Map.merge(@valid_text_content, %{
-        text: "<script>alert('xss')</script>Hello Wörld",
-        metadata: %{secret: "value"}
-      })
-      
-      sanitized = Validation.sanitize(malicious_content, [
-        :html_escape,
-        :strip_scripts,
-        :normalize_unicode,
-        :remove_metadata
-      ])
-      
+      malicious_content =
+        Map.merge(@valid_text_content, %{
+          text: "<script>alert('xss')</script>Hello Wörld",
+          metadata: %{secret: "value"}
+        })
+
+      sanitized =
+        Validation.sanitize(malicious_content, [
+          :html_escape,
+          :strip_scripts,
+          :normalize_unicode,
+          :remove_metadata
+        ])
+
       refute String.contains?(sanitized.text, "<script>")
       assert sanitized.metadata == %{}
     end
@@ -324,13 +338,17 @@ defmodule ExMCP.Content.ValidationTest do
 
   describe "transform/2" do
     test "transforms content successfully" do
-      assert {:ok, result} = Validation.transform(@valid_image_content, [{:resize, width: 100, height: 100}])
+      assert {:ok, result} =
+               Validation.transform(@valid_image_content, [{:resize, width: 100, height: 100}])
+
       assert result.width == 100
       assert result.height == 100
     end
 
     test "handles compression transformation" do
-      assert {:ok, result} = Validation.transform(@valid_image_content, [{:compress, quality: 0.8}])
+      assert {:ok, result} =
+               Validation.transform(@valid_image_content, [{:compress, quality: 0.8}])
+
       assert is_map(result)
     end
 
@@ -350,10 +368,12 @@ defmodule ExMCP.Content.ValidationTest do
     end
 
     test "handles multiple transformations" do
-      assert {:ok, result} = Validation.transform(@valid_image_content, [
-        {:resize, width: 200, height: 150},
-        {:compress, quality: 0.9}
-      ])
+      assert {:ok, result} =
+               Validation.transform(@valid_image_content, [
+                 {:resize, width: 200, height: 150},
+                 {:compress, quality: 0.9}
+               ])
+
       assert result.width == 200
       assert result.height == 150
     end
@@ -382,9 +402,11 @@ defmodule ExMCP.Content.ValidationTest do
   describe "transform_with_validation/2" do
     test "transforms content with validation at each step" do
       # Use a simpler operation that doesn't require metadata validation
-      result = Validation.transform_with_validation(@valid_text_content, [
-        :normalize_encoding
-      ])
+      result =
+        Validation.transform_with_validation(@valid_text_content, [
+          :normalize_encoding
+        ])
+
       assert {:ok, _transformed_content} = result
     end
 
@@ -397,7 +419,7 @@ defmodule ExMCP.Content.ValidationTest do
   describe "analyze/2" do
     test "analyzes image content" do
       analysis = Validation.analyze(@valid_image_content, [:detect_faces, :extract_colors])
-      
+
       assert Map.has_key?(analysis, :detect_faces)
       assert Map.has_key?(analysis, :extract_colors)
       assert analysis.detect_faces.count == 0
@@ -406,7 +428,7 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "analyzes text content" do
       analysis = Validation.analyze(@valid_text_content, [:scan_text, :measure_complexity])
-      
+
       assert Map.has_key?(analysis, :scan_text)
       assert Map.has_key?(analysis, :measure_complexity)
       assert String.contains?(analysis.scan_text.extracted_text, "Hello")
@@ -428,7 +450,7 @@ defmodule ExMCP.Content.ValidationTest do
   describe "extract_metadata/1" do
     test "extracts text metadata" do
       metadata = Validation.extract_metadata(@valid_text_content)
-      
+
       assert metadata.format == :plain
       assert metadata.language == "en"
       assert metadata.length == String.length(@valid_text_content.text)
@@ -438,7 +460,7 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "extracts image metadata" do
       metadata = Validation.extract_metadata(@valid_image_content)
-      
+
       assert metadata.format == "PNG"
       assert metadata.dimensions == {1, 1}
       assert metadata.mime_type == "image/png"
@@ -447,7 +469,7 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "extracts audio metadata" do
       metadata = Validation.extract_metadata(@valid_audio_content)
-      
+
       assert metadata.mime_type == "audio/wav"
       assert metadata.duration == 1.0
       assert is_integer(metadata.size_bytes)
@@ -470,7 +492,7 @@ defmodule ExMCP.Content.ValidationTest do
           "format" => %{"type" => "string"}
         }
       }
-      
+
       # This is a basic test - real JSON schema validation would require ExJsonSchema
       assert Validation.validate_schema(@valid_text_content, schema) == :ok
     end
@@ -478,19 +500,23 @@ defmodule ExMCP.Content.ValidationTest do
     test "handles schema validation errors" do
       # Test with content that can't be JSON encoded
       # Create a malformed content with invalid data
-      malformed_content = Map.merge(@valid_text_content, %{
-        text: <<0xFF, 0xFE>>  # Invalid UTF-8
-      })
+      malformed_content =
+        Map.merge(@valid_text_content, %{
+          # Invalid UTF-8
+          text: <<0xFF, 0xFE>>
+        })
+
       schema = %{"type" => "object"}
-      
+
       # Should handle serialization/validation errors gracefully
       # The function should either succeed or return an error tuple
-      result = try do
-        Validation.validate_schema(malformed_content, schema)
-      rescue
-        _ -> {:error, ["Serialization failed"]}
-      end
-      
+      result =
+        try do
+          Validation.validate_schema(malformed_content, schema)
+        rescue
+          _ -> {:error, ["Serialization failed"]}
+        end
+
       assert result == :ok || match?({:error, _}, result)
     end
   end
@@ -498,13 +524,15 @@ defmodule ExMCP.Content.ValidationTest do
   describe "scan_security/2" do
     test "scans for malware" do
       assert Validation.scan_security(@valid_text_content, [:malware]) == :safe
-      
+
       # The malicious_text_content should trigger malware detection
       result = Validation.scan_security(@malicious_text_content, [:malware])
+
       case result do
-        :safe -> 
+        :safe ->
           # The current implementation might not detect this pattern, that's ok
           assert true
+
         {:threat, threats} ->
           assert is_list(threats)
           assert length(threats) > 0
@@ -513,7 +541,7 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "scans for XSS" do
       assert Validation.scan_security(@valid_text_content, [:xss]) == :safe
-      
+
       xss_content = %{@valid_text_content | text: "<img onerror='alert(1)' src='x'>"}
       assert {:threat, threats} = Validation.scan_security(xss_content, [:xss])
       assert "Potential XSS attack detected" in threats
@@ -521,7 +549,7 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "scans for SQL injection" do
       assert Validation.scan_security(@valid_text_content, [:sql_injection]) == :safe
-      
+
       sql_content = %{@valid_text_content | text: "'; DROP TABLE users; --"}
       assert {:threat, threats} = Validation.scan_security(sql_content, [:sql_injection])
       assert "Potential SQL injection detected" in threats
@@ -529,11 +557,13 @@ defmodule ExMCP.Content.ValidationTest do
 
     test "handles multiple scan types" do
       malicious_content = %{
-        @valid_text_content | 
-        text: "<script>eval('DROP TABLE users')</script>"
+        @valid_text_content
+        | text: "<script>eval('DROP TABLE users')</script>"
       }
-      
-      assert {:threat, threats} = Validation.scan_security(malicious_content, [:malware, :xss, :sql_injection])
+
+      assert {:threat, threats} =
+               Validation.scan_security(malicious_content, [:malware, :xss, :sql_injection])
+
       assert length(threats) > 0
     end
 
@@ -597,17 +627,18 @@ defmodule ExMCP.Content.ValidationTest do
     end
 
     test "creates custom rule function" do
-      rule = Validation.custom_rule(fn content ->
-        if String.length(content.text) > 5 do
-          :ok
-        else
-          {:error, "Text too short"}
-        end
-      end)
+      rule =
+        Validation.custom_rule(fn content ->
+          if String.length(content.text) > 5 do
+            :ok
+          else
+            {:error, "Text too short"}
+          end
+        end)
 
       assert is_function(rule, 1)
       assert rule.(@valid_text_content) == :ok
-      
+
       short_content = %{@valid_text_content | text: "Hi"}
       assert {:error, "Text too short"} = rule.(short_content)
     end
@@ -620,9 +651,10 @@ defmodule ExMCP.Content.ValidationTest do
       png_content = @valid_image_content
       metadata = Validation.extract_metadata(png_content)
       assert metadata.format == "PNG"
-      
+
       # Test with JPEG data (actual JPEG header bytes)
-      jpeg_data = <<0xFF, 0xD8, 0xFF, 0xE0>>  # JPEG header bytes
+      # JPEG header bytes
+      jpeg_data = <<0xFF, 0xD8, 0xFF, 0xE0>>
       jpeg_content = %{@valid_image_content | data: Base.encode64(jpeg_data)}
       metadata = Validation.extract_metadata(jpeg_content)
       assert metadata.format == "JPEG"

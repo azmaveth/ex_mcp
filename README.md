@@ -10,7 +10,7 @@
 
 **A complete Elixir implementation of the Model Context Protocol (MCP)**
 
-[User Guide](docs/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](examples/) | [Changelog](CHANGELOG.md)
+[User Guide](docs/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [v2 API](docs/API_V2_REFERENCE.md) | [Examples](examples/) | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -782,6 +782,9 @@ ExMCP uses the following metadata fields for security and debugging:
 
 - 📖 **[User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples
 - 🔧 **[API Documentation](https://hexdocs.pm/ex_mcp)** - Detailed API reference
+- 🆕 **[v2 API Reference](docs/API_V2_REFERENCE.md)** - New v2 API with structured responses
+- 🏗️ **[v2 Architecture](docs/V2_ARCHITECTURE.md)** - v2 design and architecture guide
+- 🔄 **[Migration Guide](MIGRATING_V2.md)** - Migrating from v1 to v2
 - 🔐 **[Security Guide](docs/SECURITY.md)** - Authentication, TLS, and security best practices
 - 📂 **[Examples](examples/)** - Complete working examples
 

@@ -136,9 +136,9 @@ defmodule ExMCP.ErrorTest do
       json = Error.to_json_rpc(error)
 
       assert json == %{
-        "code" => -32601,
-        "message" => "Method not found: test_method"
-      }
+               "code" => -32601,
+               "message" => "Method not found: test_method"
+             }
     end
 
     test "includes data when present" do
@@ -181,7 +181,7 @@ defmodule ExMCP.ErrorTest do
   describe "Exception behavior" do
     test "implements Exception.message/1" do
       error = Error.tool_error("Test error", "test_tool")
-      
+
       assert Exception.message(error) == "Tool error in 'test_tool': Test error"
     end
 

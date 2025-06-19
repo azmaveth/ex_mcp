@@ -110,7 +110,7 @@ defmodule ExMCP.MessageProcessor do
 
   @doc """
   Process an MCP request using a handler module.
-  
+
   This is a convenience function that creates a connection, processes it
   through a handler, and returns the response.
   """
@@ -129,6 +129,7 @@ defmodule ExMCP.MessageProcessor do
           },
           "id" => get_request_id(conn.request)
         }
+
         put_response(conn, error_response)
 
       handler_module when is_atom(handler_module) ->
@@ -160,21 +161,24 @@ defmodule ExMCP.MessageProcessor do
           },
           "id" => id
         }
+
         put_response(conn, response)
 
       "tools/list" ->
         tools = handler_module.get_tools() |> Map.values()
+
         response = %{
           "jsonrpc" => "2.0",
           "result" => %{"tools" => tools},
           "id" => id
         }
+
         put_response(conn, response)
 
       "tools/call" ->
         tool_name = Map.get(params, "name")
         arguments = Map.get(params, "arguments", %{})
-        
+
         case handler_module.handle_tool_call(tool_name, arguments, %{}) do
           {:ok, result, _state} ->
             response = %{
@@ -182,6 +186,7 @@ defmodule ExMCP.MessageProcessor do
               "result" => result,
               "id" => id
             }
+
             put_response(conn, response)
 
           {:error, reason, _state} ->
@@ -194,21 +199,24 @@ defmodule ExMCP.MessageProcessor do
               },
               "id" => id
             }
+
             put_response(conn, error_response)
         end
 
       "resources/list" ->
         resources = handler_module.get_resources() |> Map.values()
+
         response = %{
           "jsonrpc" => "2.0",
           "result" => %{"resources" => resources},
           "id" => id
         }
+
         put_response(conn, response)
 
       "resources/read" ->
         uri = Map.get(params, "uri")
-        
+
         case handler_module.handle_resource_read(uri, uri, %{}) do
           {:ok, content, _state} ->
             response = %{
@@ -216,6 +224,7 @@ defmodule ExMCP.MessageProcessor do
               "result" => %{"contents" => content},
               "id" => id
             }
+
             put_response(conn, response)
 
           {:error, reason, _state} ->
@@ -228,22 +237,25 @@ defmodule ExMCP.MessageProcessor do
               },
               "id" => id
             }
+
             put_response(conn, error_response)
         end
 
       "prompts/list" ->
         prompts = handler_module.get_prompts() |> Map.values()
+
         response = %{
           "jsonrpc" => "2.0",
           "result" => %{"prompts" => prompts},
           "id" => id
         }
+
         put_response(conn, response)
 
       "prompts/get" ->
         prompt_name = Map.get(params, "name")
         arguments = Map.get(params, "arguments", %{})
-        
+
         case handler_module.handle_prompt_get(prompt_name, arguments, %{}) do
           {:ok, result, _state} ->
             response = %{
@@ -251,6 +263,7 @@ defmodule ExMCP.MessageProcessor do
               "result" => result,
               "id" => id
             }
+
             put_response(conn, response)
 
           {:error, reason, _state} ->
@@ -263,12 +276,14 @@ defmodule ExMCP.MessageProcessor do
               },
               "id" => id
             }
+
             put_response(conn, error_response)
         end
 
       _ ->
         # Try custom handler if it exists and module is loaded
-        if Code.ensure_loaded?(handler_module) and function_exported?(handler_module, :handle_request, 3) do
+        if Code.ensure_loaded?(handler_module) and
+             function_exported?(handler_module, :handle_request, 3) do
           case handler_module.handle_request(method, params, %{}) do
             {:reply, result, _state} ->
               response = %{
@@ -276,6 +291,7 @@ defmodule ExMCP.MessageProcessor do
                 "result" => result,
                 "id" => id
               }
+
               put_response(conn, response)
 
             {:error, reason, _state} ->
@@ -288,6 +304,7 @@ defmodule ExMCP.MessageProcessor do
                 },
                 "id" => id
               }
+
               put_response(conn, error_response)
 
             {:noreply, _state} ->
@@ -304,6 +321,7 @@ defmodule ExMCP.MessageProcessor do
                 },
                 "id" => id
               }
+
               put_response(conn, error_response)
           end
         else
@@ -316,6 +334,7 @@ defmodule ExMCP.MessageProcessor do
             },
             "id" => id
           }
+
           put_response(conn, error_response)
         end
     end

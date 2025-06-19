@@ -15,15 +15,17 @@ defmodule ExMCP.ClientV2Test do
         {:error, :connection_refused}
       else
         # Start an agent to handle the message queue
-        {:ok, agent} = Agent.start_link(fn -> 
-          %{
-            responses: [],
-            connected: true,
-            fail_handshake: Keyword.get(opts, :fail_handshake, false),
-            fail_send: Keyword.get(opts, :fail_send, false),
-            test_pid: Keyword.get(opts, :test_pid)
-          } 
-        end)
+        {:ok, agent} =
+          Agent.start_link(fn ->
+            %{
+              responses: [],
+              connected: true,
+              fail_handshake: Keyword.get(opts, :fail_handshake, false),
+              fail_send: Keyword.get(opts, :fail_send, false),
+              test_pid: Keyword.get(opts, :test_pid)
+            }
+          end)
+
         {:ok, %{agent: agent, opts: opts, connected: true}}
       end
     end
@@ -35,6 +37,7 @@ defmodule ExMCP.ClientV2Test do
     def send(%{agent: agent} = state, data) do
       # Check if we should fail sending
       fail_send = Agent.get(agent, fn state -> state.fail_send end)
+
       if fail_send do
         {:error, :send_failed}
       else
@@ -42,34 +45,35 @@ defmodule ExMCP.ClientV2Test do
         case Jason.decode!(data) do
           %{"method" => "initialize", "id" => id} ->
             fail_handshake = Agent.get(agent, fn state -> state.fail_handshake end)
-            
-            response = if fail_handshake do
-              %{
-                "jsonrpc" => "2.0",
-                "id" => id,
-                "error" => %{
-                  "code" => -32600,
-                  "message" => "Handshake failed"
-                }
-              }
-            else
-              %{
-                "jsonrpc" => "2.0",
-                "id" => id,
-                "result" => %{
-                  "protocolVersion" => "2024-11-05",
-                  "capabilities" => %{
-                    "tools" => %{"listChanged" => true},
-                    "resources" => %{"listChanged" => true},
-                    "prompts" => %{"listChanged" => true}
-                  },
-                  "serverInfo" => %{
-                    "name" => "MockServer",
-                    "version" => "1.0.0"
+
+            response =
+              if fail_handshake do
+                %{
+                  "jsonrpc" => "2.0",
+                  "id" => id,
+                  "error" => %{
+                    "code" => -32600,
+                    "message" => "Handshake failed"
                   }
                 }
-              }
-            end
+              else
+                %{
+                  "jsonrpc" => "2.0",
+                  "id" => id,
+                  "result" => %{
+                    "protocolVersion" => "2024-11-05",
+                    "capabilities" => %{
+                      "tools" => %{"listChanged" => true},
+                      "resources" => %{"listChanged" => true},
+                      "prompts" => %{"listChanged" => true}
+                    },
+                    "serverInfo" => %{
+                      "name" => "MockServer",
+                      "version" => "1.0.0"
+                    }
+                  }
+                }
+              end
 
             Agent.update(agent, fn state ->
               %{state | responses: [Jason.encode!(response) | state.responses]}
@@ -278,6 +282,7 @@ defmodule ExMCP.ClientV2Test do
            end) do
         nil ->
           elapsed = System.monotonic_time(:millisecond) - start_time
+
           if elapsed >= timeout do
             nil
           else
@@ -294,6 +299,7 @@ defmodule ExMCP.ClientV2Test do
       if Process.alive?(agent) do
         Agent.stop(agent)
       end
+
       {:ok, %{state | connected: false}}
     end
 
@@ -324,20 +330,22 @@ defmodule ExMCP.ClientV2Test do
     import Kernel, except: [send: 2]
 
     def connect(opts) do
-      {:ok, agent} = Agent.start_link(fn -> 
-        %{
-          responses: [],
-          connected: true,
-          test_pid: Keyword.get(opts, :test_pid),
-          disconnect_after: Keyword.get(opts, :disconnect_after, 1)
-        } 
-      end)
+      {:ok, agent} =
+        Agent.start_link(fn ->
+          %{
+            responses: [],
+            connected: true,
+            test_pid: Keyword.get(opts, :test_pid),
+            disconnect_after: Keyword.get(opts, :disconnect_after, 1)
+          }
+        end)
+
       {:ok, %{agent: agent, request_count: 0}}
     end
 
     def send(%{agent: agent, request_count: count} = state, data) do
       disconnect_after = Agent.get(agent, fn s -> s.disconnect_after end)
-      
+
       if count >= disconnect_after do
         {:error, :connection_lost}
       else
@@ -376,6 +384,7 @@ defmodule ExMCP.ClientV2Test do
         nil ->
           Process.sleep(min(timeout, 50))
           {:error, :timeout}
+
         response ->
           {:ok, response, state}
       end
@@ -385,6 +394,7 @@ defmodule ExMCP.ClientV2Test do
       if Process.alive?(agent) do
         Agent.stop(agent)
       end
+
       {:ok, state}
     end
 
@@ -424,25 +434,26 @@ defmodule ExMCP.ClientV2Test do
 
     test "returns error when transport connection fails" do
       Process.flag(:trap_exit, true)
-      
-      assert {:error, {:transport_connect_failed, :connection_refused}} = 
-        ClientV2.start_link(transport: MockTransport, fail_connect: true)
+
+      assert {:error, {:transport_connect_failed, :connection_refused}} =
+               ClientV2.start_link(transport: MockTransport, fail_connect: true)
     end
 
     test "returns error when MCP handshake fails" do
       Process.flag(:trap_exit, true)
-      
-      assert {:error, {:initialize_error, %{"code" => -32600}}} = 
-        ClientV2.start_link(transport: MockTransport, fail_handshake: true)
+
+      assert {:error, {:initialize_error, %{"code" => -32600}}} =
+               ClientV2.start_link(transport: MockTransport, fail_handshake: true)
     end
 
     test "accepts custom timeout and reconnection options" do
-      {:ok, client} = ClientV2.start_link(
-        transport: MockTransport,
-        timeout: 5000,
-        max_reconnect_attempts: 3,
-        reconnect_interval: 500
-      )
+      {:ok, client} =
+        ClientV2.start_link(
+          transport: MockTransport,
+          timeout: 5000,
+          max_reconnect_attempts: 3,
+          reconnect_interval: 500
+        )
 
       {:ok, status} = ClientV2.get_status(client)
       assert status.connection_status == :ready
@@ -454,11 +465,13 @@ defmodule ExMCP.ClientV2Test do
   describe "tool operations" do
     setup do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
-      on_exit(fn -> 
+
+      on_exit(fn ->
         if Process.alive?(client) do
           if Process.alive?(client), do: GenServer.stop(client)
         end
       end)
+
       %{client: client}
     end
 
@@ -466,7 +479,7 @@ defmodule ExMCP.ClientV2Test do
       {:ok, tools} = ClientV2.list_tools(client)
       assert is_list(tools)
       assert length(tools) == 2
-      
+
       hello_tool = Enum.find(tools, &(&1["name"] == "hello"))
       assert hello_tool["description"] == "Say hello"
       assert hello_tool["inputSchema"]["type"] == "object"
@@ -487,7 +500,7 @@ defmodule ExMCP.ClientV2Test do
 
     test "list_tools/2 with custom timeout" do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
-      
+
       {:ok, tools} = ClientV2.list_tools(client, 1000)
       assert is_list(tools)
 
@@ -496,7 +509,7 @@ defmodule ExMCP.ClientV2Test do
 
     test "call_tool/4 with custom timeout" do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
-      
+
       {:ok, %Response{} = response} = ClientV2.call_tool(client, "hello", %{}, 2000)
       assert Response.text_content(response) == "Hello, World!"
 
@@ -507,11 +520,13 @@ defmodule ExMCP.ClientV2Test do
   describe "resource operations" do
     setup do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
-      on_exit(fn -> 
+
+      on_exit(fn ->
         if Process.alive?(client) do
           if Process.alive?(client), do: GenServer.stop(client)
         end
       end)
+
       %{client: client}
     end
 
@@ -519,7 +534,7 @@ defmodule ExMCP.ClientV2Test do
       {:ok, resources} = ClientV2.list_resources(client)
       assert is_list(resources)
       assert length(resources) == 1
-      
+
       resource = hd(resources)
       assert resource["uri"] == "file:///test.txt"
       assert resource["name"] == "Test File"
@@ -534,7 +549,7 @@ defmodule ExMCP.ClientV2Test do
 
     test "read_resource/3 with custom timeout" do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
-      
+
       {:ok, %Response{} = response} = ClientV2.read_resource(client, "file:///test.txt", 1500)
       assert Response.text_content(response) == "Test content from file:///test.txt"
 
@@ -545,11 +560,13 @@ defmodule ExMCP.ClientV2Test do
   describe "prompt operations" do
     setup do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
-      on_exit(fn -> 
+
+      on_exit(fn ->
         if Process.alive?(client) do
           if Process.alive?(client), do: GenServer.stop(client)
         end
       end)
+
       %{client: client}
     end
 
@@ -557,7 +574,7 @@ defmodule ExMCP.ClientV2Test do
       {:ok, prompts} = ClientV2.list_prompts(client)
       assert is_list(prompts)
       assert length(prompts) == 1
-      
+
       prompt = hd(prompts)
       assert prompt["name"] == "greet"
       assert prompt["description"] == "Generate a greeting"
@@ -566,13 +583,13 @@ defmodule ExMCP.ClientV2Test do
 
     test "get_prompt/4 retrieves a prompt successfully", %{client: client} do
       {:ok, %Response{} = response} = ClientV2.get_prompt(client, "greet")
-      
+
       # Extract data content (should contain messages)
       data = Response.data_content(response)
       assert %{"messages" => messages} = data
       assert is_list(messages)
       assert length(messages) == 1
-      
+
       message = hd(messages)
       assert message["role"] == "user"
       assert message["content"]["type"] == "text"
@@ -581,8 +598,10 @@ defmodule ExMCP.ClientV2Test do
 
     test "get_prompt/4 with arguments and custom timeout" do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
-      
-      {:ok, %Response{} = response} = ClientV2.get_prompt(client, "greet", %{"style" => "formal"}, 1500)
+
+      {:ok, %Response{} = response} =
+        ClientV2.get_prompt(client, "greet", %{"style" => "formal"}, 1500)
+
       data = Response.data_content(response)
       assert %{"messages" => _messages} = data
 
@@ -595,7 +614,7 @@ defmodule ExMCP.ClientV2Test do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
 
       {:ok, status} = ClientV2.get_status(client)
-      
+
       assert status.connection_status == :ready
       assert status.server_info["name"] == "MockServer"
       assert is_map(status.server_capabilities)
@@ -627,15 +646,17 @@ defmodule ExMCP.ClientV2Test do
 
       # Make a request for an unknown method directly via GenServer call
       # This tests the error handling path
-      task = Task.async(fn ->
-        GenServer.call(client, {:request, "unknown/method", %{}})
-      end)
+      task =
+        Task.async(fn ->
+          GenServer.call(client, {:request, "unknown/method", %{}})
+        end)
 
       # Should get an error response
       case Task.await(task, 1000) do
         {:error, error} ->
           assert error["code"] == -32601
           assert error["message"] =~ "Method not found"
+
         {:ok, _} ->
           flunk("Expected error response for unknown method")
       end
@@ -656,20 +677,21 @@ defmodule ExMCP.ClientV2Test do
 
     test "handles requests when not connected" do
       # Create a disconnecting transport that fails after initialization
-      {:ok, client} = ClientV2.start_link(
-        transport: DisconnectingTransport,
-        test_pid: self(),
-        disconnect_after: 1,
-        reconnect_interval: 50,
-        max_reconnect_attempts: 1
-      )
+      {:ok, client} =
+        ClientV2.start_link(
+          transport: DisconnectingTransport,
+          test_pid: self(),
+          disconnect_after: 1,
+          reconnect_interval: 50,
+          max_reconnect_attempts: 1
+        )
 
       # Give it time to initialize then disconnect
       Process.sleep(100)
 
       # Try to make a request - should fail with not connected
       {:ok, status} = ClientV2.get_status(client)
-      
+
       # Status should show either disconnected or attempting reconnection
       assert status.connection_status in [:disconnected, :connecting, :error]
 
@@ -682,15 +704,16 @@ defmodule ExMCP.ClientV2Test do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
 
       # Make multiple concurrent requests
-      tasks = for _i <- 1..5 do
-        Task.async(fn ->
-          ClientV2.list_tools(client)
-        end)
-      end
+      tasks =
+        for _i <- 1..5 do
+          Task.async(fn ->
+            ClientV2.list_tools(client)
+          end)
+        end
 
       # All should succeed
       results = Enum.map(tasks, &Task.await(&1, 2000))
-      
+
       for {:ok, tools} <- results do
         assert is_list(tools)
       end
@@ -702,14 +725,16 @@ defmodule ExMCP.ClientV2Test do
       {:ok, client} = ClientV2.start_link(transport: MockTransport)
 
       # Start a request but don't wait for completion
-      _task = Task.async(fn ->
-        ClientV2.list_tools(client, 5000)
-      end)
+      _task =
+        Task.async(fn ->
+          ClientV2.list_tools(client, 5000)
+        end)
 
       # Check status while request is pending
-      Process.sleep(10)  # Give the request time to start
+      # Give the request time to start
+      Process.sleep(10)
       {:ok, status} = ClientV2.get_status(client)
-      
+
       # Should have at least one pending request (or it completed very quickly)
       assert status.pending_requests >= 0
 
@@ -720,11 +745,12 @@ defmodule ExMCP.ClientV2Test do
   describe "transport abstraction" do
     test "works with different transport options" do
       # Test with custom transport options
-      {:ok, client} = ClientV2.start_link(
-        transport: MockTransport,
-        custom_option: "test_value",
-        another_option: 42
-      )
+      {:ok, client} =
+        ClientV2.start_link(
+          transport: MockTransport,
+          custom_option: "test_value",
+          another_option: 42
+        )
 
       {:ok, status} = ClientV2.get_status(client)
       assert status.connection_status == :ready
@@ -733,10 +759,11 @@ defmodule ExMCP.ClientV2Test do
     end
 
     test "supports named clients" do
-      {:ok, _client} = ClientV2.start_link(
-        transport: MockTransport,
-        name: :named_test_client
-      )
+      {:ok, _client} =
+        ClientV2.start_link(
+          transport: MockTransport,
+          name: :named_test_client
+        )
 
       # Should be able to access by name
       {:ok, status} = ClientV2.get_status(:named_test_client)

@@ -96,14 +96,14 @@ defmodule ExMCP.SimpleClient do
     case GenServer.call(client, {:request, "tools/list", %{}}, timeout) do
       {:ok, %{"tools" => tools}} ->
         {:ok, tools}
-      
+
       {:ok, response} ->
         {:error, Error.invalid_request("Expected tools list but got: #{inspect(response)}")}
-      
+
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
         {:error, error}
-      
+
       {:error, reason} ->
         error = Error.connection_error(inspect(reason))
         {:error, error}
@@ -122,11 +122,11 @@ defmodule ExMCP.SimpleClient do
       {:ok, raw_response} ->
         response = Response.from_raw_response(raw_response, tool_name: tool_name)
         {:ok, response}
-      
+
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
         {:error, error}
-      
+
       {:error, reason} ->
         error = Error.connection_error(inspect(reason))
         {:error, error}
@@ -140,14 +140,14 @@ defmodule ExMCP.SimpleClient do
     case GenServer.call(client, {:request, "resources/list", %{}}, timeout) do
       {:ok, %{"resources" => resources}} ->
         {:ok, resources}
-      
+
       {:ok, response} ->
         {:error, Error.invalid_request("Expected resources list but got: #{inspect(response)}")}
-      
+
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
         {:error, error}
-      
+
       {:error, reason} ->
         error = Error.connection_error(inspect(reason))
         {:error, error}
@@ -162,11 +162,11 @@ defmodule ExMCP.SimpleClient do
       {:ok, raw_response} ->
         response = Response.from_raw_response(raw_response, resource_uri: uri)
         {:ok, response}
-      
+
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
         {:error, error}
-      
+
       {:error, reason} ->
         error = Error.connection_error(inspect(reason))
         {:error, error}
@@ -180,14 +180,14 @@ defmodule ExMCP.SimpleClient do
     case GenServer.call(client, {:request, "prompts/list", %{}}, timeout) do
       {:ok, %{"prompts" => prompts}} ->
         {:ok, prompts}
-      
+
       {:ok, response} ->
         {:error, Error.invalid_request("Expected prompts list but got: #{inspect(response)}")}
-      
+
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
         {:error, error}
-      
+
       {:error, reason} ->
         error = Error.connection_error(inspect(reason))
         {:error, error}
@@ -206,11 +206,11 @@ defmodule ExMCP.SimpleClient do
       {:ok, raw_response} ->
         response = Response.from_raw_response(raw_response, prompt_name: prompt_name)
         {:ok, response}
-      
+
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
         {:error, error}
-      
+
       {:error, reason} ->
         error = Error.connection_error(inspect(reason))
         {:error, error}

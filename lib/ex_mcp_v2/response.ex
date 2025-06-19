@@ -1,9 +1,44 @@
 defmodule ExMCP.Response do
   @moduledoc """
   Structured response types for MCP operations.
-  
+
   This module provides structured response handling for MCP tool calls,
-  resource reads, and other operations as specified in the design plan.
+  resource reads, and other operations. It represents a key improvement in v2,
+  providing type-safe responses instead of raw maps.
+
+  ## Response Types
+
+  - `:text` - Simple text responses
+  - `:json` - Structured JSON data
+  - `:error` - Error responses with detailed information
+  - `:tools` - Tool listing responses
+  - `:resources` - Resource listing responses
+  - `:prompts` - Prompt listing responses
+  - `:server_info` - Server information responses
+  - `:mixed` - Responses with multiple content types
+
+  ## Usage
+
+      # Create a text response
+      response = ExMCP.Response.text("Hello, world!", "greeting_tool")
+
+      # Create a JSON response
+      response = ExMCP.Response.json(%{result: 42}, "calculator")
+
+      # Create an error response
+      response = ExMCP.Response.error("Invalid input", "validation_tool")
+
+      # Extract content
+      text = ExMCP.Response.text_content(response)
+      json = ExMCP.Response.json_content(response)
+
+  ## Design Rationale
+
+  The structured response type provides:
+  - Type safety and consistency across all MCP operations
+  - Clear extraction functions for different content types
+  - Metadata support for tracing and debugging
+  - Unified error handling
   """
 
   defstruct [
@@ -16,26 +51,26 @@ defmodule ExMCP.Response do
   ]
 
   @type t :: %__MODULE__{
-    content: [content_item()],
-    meta: map() | nil,
-    tool_name: String.t() | nil,
-    request_id: String.t() | nil,
-    server_info: map() | nil,
-    is_error: boolean()
-  }
+          content: [content_item()],
+          meta: map() | nil,
+          tool_name: String.t() | nil,
+          request_id: String.t() | nil,
+          server_info: map() | nil,
+          is_error: boolean()
+        }
 
   @type content_item :: %{
-    type: String.t(),
-    text: String.t() | nil,
-    data: any() | nil,
-    annotations: map() | nil
-  }
+          type: String.t(),
+          text: String.t() | nil,
+          data: any() | nil,
+          annotations: map() | nil
+        }
 
   @doc """
   Creates a response from a raw MCP response.
-  
+
   ## Examples
-  
+
       iex> raw = %{"content" => [%{"type" => "text", "text" => "Hello"}]}
       iex> ExMCP.Response.from_raw_response(raw)
       %ExMCP.Response{
@@ -50,7 +85,7 @@ defmodule ExMCP.Response do
   @spec from_raw_response(map(), keyword()) :: t()
   def from_raw_response(raw_response, opts \\ []) when is_map(raw_response) do
     content = normalize_content(Map.get(raw_response, "content", []))
-    
+
     %__MODULE__{
       content: content,
       meta: Map.get(raw_response, "meta"),
@@ -63,9 +98,9 @@ defmodule ExMCP.Response do
 
   @doc """
   Creates an error response.
-  
+
   ## Examples
-  
+
       iex> ExMCP.Response.error("Tool execution failed", "calculate_sum")
       %ExMCP.Response{
         content: [%{type: "text", text: "Error: Tool execution failed", data: nil, annotations: nil}],
@@ -78,13 +113,15 @@ defmodule ExMCP.Response do
   """
   @spec error(String.t(), String.t() | nil, keyword()) :: t()
   def error(message, tool_name \\ nil, opts \\ []) do
-    content = [%{
-      type: "text", 
-      text: "Error: #{message}",
-      data: nil,
-      annotations: nil
-    }]
-    
+    content = [
+      %{
+        type: "text",
+        text: "Error: #{message}",
+        data: nil,
+        annotations: nil
+      }
+    ]
+
     %__MODULE__{
       content: content,
       meta: Keyword.get(opts, :meta),
@@ -97,9 +134,9 @@ defmodule ExMCP.Response do
 
   @doc """
   Creates a success response with text content.
-  
+
   ## Examples
-  
+
       iex> ExMCP.Response.text("Hello, World!", "say_hello")
       %ExMCP.Response{
         content: [%{type: "text", text: "Hello, World!", data: nil, annotations: nil}],
@@ -112,13 +149,15 @@ defmodule ExMCP.Response do
   """
   @spec text(String.t(), String.t() | nil, keyword()) :: t()
   def text(text_content, tool_name \\ nil, opts \\ []) do
-    content = [%{
-      type: "text",
-      text: text_content,
-      data: nil,
-      annotations: Keyword.get(opts, :annotations)
-    }]
-    
+    content = [
+      %{
+        type: "text",
+        text: text_content,
+        data: nil,
+        annotations: Keyword.get(opts, :annotations)
+      }
+    ]
+
     %__MODULE__{
       content: content,
       meta: Keyword.get(opts, :meta),
@@ -131,9 +170,9 @@ defmodule ExMCP.Response do
 
   @doc """
   Creates a response with JSON data content.
-  
+
   ## Examples
-  
+
       iex> data = %{"result" => 42}
       iex> ExMCP.Response.json(data, "calculate")
       %ExMCP.Response{
@@ -147,13 +186,15 @@ defmodule ExMCP.Response do
   """
   @spec json(any(), String.t() | nil, keyword()) :: t()
   def json(data, tool_name \\ nil, opts \\ []) do
-    content = [%{
-      type: "text",
-      text: nil,
-      data: data,
-      annotations: Keyword.get(opts, :annotations)
-    }]
-    
+    content = [
+      %{
+        type: "text",
+        text: nil,
+        data: data,
+        annotations: Keyword.get(opts, :annotations)
+      }
+    ]
+
     %__MODULE__{
       content: content,
       meta: Keyword.get(opts, :meta),
@@ -172,7 +213,7 @@ defmodule ExMCP.Response do
 
   @doc """
   Gets the text content from the response.
-  
+
   Returns the first text content item, or nil if none exists.
   """
   @spec text_content(t()) :: String.t() | nil
@@ -198,7 +239,7 @@ defmodule ExMCP.Response do
 
   @doc """
   Gets the data content from the response.
-  
+
   Returns the first data content item, or nil if none exists.
   """
   @spec data_content(t()) :: any()
@@ -217,9 +258,9 @@ defmodule ExMCP.Response do
   @spec to_raw(t()) :: map()
   def to_raw(%__MODULE__{} = response) do
     content = Enum.map(response.content, &content_item_to_raw/1)
-    
+
     base = %{"content" => content}
-    
+
     base
     |> maybe_put("meta", response.meta)
     |> maybe_put("isError", response.is_error && response.is_error)
@@ -256,7 +297,7 @@ defmodule ExMCP.Response do
 
   defp content_item_to_raw(%{type: type} = item) do
     base = %{"type" => type}
-    
+
     base
     |> maybe_put("text", item.text)
     |> maybe_put("data", item.data)

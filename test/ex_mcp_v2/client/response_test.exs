@@ -107,9 +107,10 @@ defmodule ExMCP.Client.ResponseTest do
       normalized = Response.normalize_tool_result(result)
 
       assert normalized.content == [
-        %{type: "text", text: "First item"},
-        %{type: "text", text: "Second item"}
-      ]
+               %{type: "text", text: "First item"},
+               %{type: "text", text: "Second item"}
+             ]
+
       assert normalized.is_error == false
       assert normalized.metadata == %{}
     end
@@ -196,7 +197,7 @@ defmodule ExMCP.Client.ResponseTest do
       }
 
       normalized = Response.normalize_tool_result(result)
-      
+
       # Should return the full content object since no extractable value
       assert normalized.type == "custom"
       assert normalized["customField"] == "custom_value"
@@ -276,14 +277,16 @@ defmodule ExMCP.Client.ResponseTest do
       normalized = Response.normalize_resource_content(result)
 
       assert normalized.contents == [
-        %{type: "text", text: "First content"},
-        %{type: "text", text: "Second content"}
-      ]
+               %{type: "text", text: "First content"},
+               %{type: "text", text: "Second content"}
+             ]
+
       assert normalized.metadata["totalSize"] == 2048
     end
 
     test "normalizes JSON content with parsing" do
       json_text = Jason.encode!(%{key: "value", number: 42})
+
       result = %{
         "contents" => [
           %{
@@ -302,6 +305,7 @@ defmodule ExMCP.Client.ResponseTest do
 
     test "normalizes JSON content without parsing" do
       json_text = Jason.encode!(%{key: "value"})
+
       result = %{
         "contents" => [
           %{
@@ -337,6 +341,7 @@ defmodule ExMCP.Client.ResponseTest do
 
     test "respects max_size limit for JSON parsing" do
       large_json = Jason.encode!(%{data: String.duplicate("x", 1000)})
+
       result = %{
         "contents" => [
           %{
@@ -356,6 +361,7 @@ defmodule ExMCP.Client.ResponseTest do
 
     test "parses JSON from mime type containing json" do
       json_text = Jason.encode!(%{test: true})
+
       result = %{
         "contents" => [
           %{
@@ -426,7 +432,7 @@ defmodule ExMCP.Client.ResponseTest do
       assert result.name == "greeting"
       assert result.description == "Generate a greeting message"
       assert length(result.arguments) == 2
-      
+
       name_arg = Enum.find(result.arguments, &(&1.name == "name"))
       assert name_arg.description == "Person's name"
       assert name_arg.required == true
@@ -476,8 +482,10 @@ defmodule ExMCP.Client.ResponseTest do
       raw_prompt = %{
         "name" => "test",
         "arguments" => [
-          %{"name" => "arg1"},  # No required field
-          %{  # No name field
+          # No required field
+          %{"name" => "arg1"},
+          # No name field
+          %{
             "description" => "unnamed arg",
             "required" => true
           }
@@ -487,10 +495,11 @@ defmodule ExMCP.Client.ResponseTest do
       result = Response.normalize_prompt(raw_prompt)
 
       assert length(result.arguments) == 2
-      
+
       arg1 = Enum.at(result.arguments, 0)
       assert arg1.name == "arg1"
-      assert arg1.required == false  # Default
+      # Default
+      assert arg1.required == false
 
       arg2 = Enum.at(result.arguments, 1)
       # Should preserve the original structure if malformed
@@ -510,7 +519,7 @@ defmodule ExMCP.Client.ResponseTest do
             }
           },
           %{
-            "role" => "assistant", 
+            "role" => "assistant",
             "content" => [
               %{"type" => "text", "text" => "Hi there!"}
             ]
@@ -522,7 +531,7 @@ defmodule ExMCP.Client.ResponseTest do
       normalized = Response.normalize_prompt_result(result)
 
       assert length(normalized.messages) == 2
-      
+
       user_msg = Enum.at(normalized.messages, 0)
       assert user_msg.role == "user"
       assert user_msg.content == "Hello!"
@@ -571,9 +580,12 @@ defmodule ExMCP.Client.ResponseTest do
     test "handles malformed messages" do
       result = %{
         "messages" => [
-          %{},  # Empty message
-          %{"role" => "user"},  # No content
-          %{"content" => "orphaned content"}  # No role
+          # Empty message
+          %{},
+          # No content
+          %{"role" => "user"},
+          # No role
+          %{"content" => "orphaned content"}
         ]
       }
 
@@ -666,8 +678,16 @@ defmodule ExMCP.Client.ResponseTest do
     test "extracts content values in priority order" do
       # text should be preferred over data and uri
       content_with_text = %{
-        "content" => [%{"type" => "mixed", "text" => "text_value", "data" => "data_value", "uri" => "uri_value"}]
+        "content" => [
+          %{
+            "type" => "mixed",
+            "text" => "text_value",
+            "data" => "data_value",
+            "uri" => "uri_value"
+          }
+        ]
       }
+
       result = Response.normalize_tool_result(content_with_text)
       assert result == "text_value"
 
@@ -675,6 +695,7 @@ defmodule ExMCP.Client.ResponseTest do
       content_with_data = %{
         "content" => [%{"type" => "mixed", "data" => "data_value", "uri" => "uri_value"}]
       }
+
       result = Response.normalize_tool_result(content_with_data)
       assert result == "data_value"
 
@@ -682,6 +703,7 @@ defmodule ExMCP.Client.ResponseTest do
       content_with_uri = %{
         "content" => [%{"type" => "resource", "uri" => "uri_value"}]
       }
+
       result = Response.normalize_tool_result(content_with_uri)
       assert result == "uri_value"
     end
@@ -707,7 +729,7 @@ defmodule ExMCP.Client.ResponseTest do
   describe "error message extraction" do
     test "extracts message from different error structures" do
       # Test through tool result normalization which uses get_error_message
-      
+
       # Direct message field
       error1 = %{"isError" => true, "message" => "Direct message"}
       result1 = Response.normalize_tool_result(error1)
@@ -771,7 +793,7 @@ defmodule ExMCP.Client.ResponseTest do
     test "handles non-map inputs gracefully" do
       # This tests the fallback case in extract_metadata
       # We can't easily test this directly, but we can test edge cases
-      
+
       # The public API should handle edge cases gracefully
       assert Response.normalize_tool(%{}) != nil
       assert Response.normalize_resource(%{}) != nil
@@ -782,6 +804,7 @@ defmodule ExMCP.Client.ResponseTest do
   describe "edge cases and robustness" do
     test "handles very large content" do
       large_text = String.duplicate("x", 100_000)
+
       result = %{
         "content" => [
           %{
@@ -797,6 +820,7 @@ defmodule ExMCP.Client.ResponseTest do
 
     test "handles special characters and Unicode" do
       unicode_text = "Hello 🌍! 你好世界! مرحبا بالعالم!"
+
       result = %{
         "content" => [
           %{

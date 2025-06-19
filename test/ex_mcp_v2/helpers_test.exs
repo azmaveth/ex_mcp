@@ -9,7 +9,7 @@ defmodule ExMCP.HelpersTest do
       # Test that a module using ExMCP.Helpers gets the imports
       defmodule TestUsing do
         use ExMCP.Helpers
-        
+
         def test_function do
           # This should compile without errors if imports work
           quote do
@@ -30,10 +30,11 @@ defmodule ExMCP.HelpersTest do
       counter = Agent.start_link(fn -> 0 end)
       {:ok, agent} = counter
 
-      result = retry max_attempts: 3, base_delay: 100 do
-        Agent.update(agent, &(&1 + 1))
-        Agent.get(agent, & &1)
-      end
+      result =
+        retry max_attempts: 3, base_delay: 100 do
+          Agent.update(agent, &(&1 + 1))
+          Agent.get(agent, & &1)
+        end
 
       assert result == 1
       Agent.stop(agent)
@@ -43,11 +44,12 @@ defmodule ExMCP.HelpersTest do
       counter = Agent.start_link(fn -> 0 end)
       {:ok, agent} = counter
 
-      result = retry max_attempts: 3, base_delay: 50 do
-        current = Agent.get_and_update(agent, fn count -> {count + 1, count + 1} end)
-        if current < 3, do: raise("Attempt #{current} failed")
-        current
-      end
+      result =
+        retry max_attempts: 3, base_delay: 50 do
+          current = Agent.get_and_update(agent, fn count -> {count + 1, count + 1} end)
+          if current < 3, do: raise("Attempt #{current} failed")
+          current
+        end
 
       assert result == 3
       Agent.stop(agent)
@@ -65,10 +67,11 @@ defmodule ExMCP.HelpersTest do
       counter = Agent.start_link(fn -> 0 end)
       {:ok, agent} = counter
 
-      result = retry do
-        Agent.update(agent, &(&1 + 1))
-        Agent.get(agent, & &1)
-      end
+      result =
+        retry do
+          Agent.update(agent, &(&1 + 1))
+          Agent.get(agent, & &1)
+        end
 
       assert result == 1
       Agent.stop(agent)
@@ -77,20 +80,23 @@ defmodule ExMCP.HelpersTest do
 
   describe "measure macro" do
     test "measures execution time" do
-      {result, time_ms} = measure do
-        Process.sleep(50)
-        "test_result"
-      end
+      {result, time_ms} =
+        measure do
+          Process.sleep(50)
+          "test_result"
+        end
 
       assert result == "test_result"
       assert time_ms >= 50
-      assert time_ms < 200  # Allow some margin for test execution
+      # Allow some margin for test execution
+      assert time_ms < 200
     end
 
     test "measures fast operations" do
-      {result, time_ms} = measure do
-        1 + 1
-      end
+      {result, time_ms} =
+        measure do
+          1 + 1
+        end
 
       assert result == 2
       assert is_integer(time_ms)
@@ -118,11 +124,16 @@ defmodule ExMCP.HelpersTest do
       {:ok, agent} = attempt_count
 
       try do
-        ExMCP.Helpers.do_retry(fn ->
-          count = Agent.get_and_update(agent, fn c -> {c + 1, c + 1} end)
-          if count < 3, do: raise("Attempt #{count}")
-          count
-        end, max_attempts: 3, base_delay: 50, max_delay: 200)
+        ExMCP.Helpers.do_retry(
+          fn ->
+            count = Agent.get_and_update(agent, fn c -> {c + 1, c + 1} end)
+            if count < 3, do: raise("Attempt #{count}")
+            count
+          end,
+          max_attempts: 3,
+          base_delay: 50,
+          max_delay: 200
+        )
       rescue
         _ -> :ok
       end
@@ -141,10 +152,15 @@ defmodule ExMCP.HelpersTest do
       {:ok, agent} = attempt_count
 
       try do
-        ExMCP.Helpers.do_retry(fn ->
-          count = Agent.get_and_update(agent, fn c -> {c + 1, c + 1} end)
-          raise "Attempt #{count}"
-        end, max_attempts: 4, base_delay: 1000, max_delay: 100)
+        ExMCP.Helpers.do_retry(
+          fn ->
+            count = Agent.get_and_update(agent, fn c -> {c + 1, c + 1} end)
+            raise "Attempt #{count}"
+          end,
+          max_attempts: 4,
+          base_delay: 1000,
+          max_delay: 100
+        )
       rescue
         _ -> :ok
       end
@@ -155,9 +171,12 @@ defmodule ExMCP.HelpersTest do
 
     test "handles different error types" do
       assert_raise ArgumentError, fn ->
-        ExMCP.Helpers.do_retry(fn ->
-          raise ArgumentError, "invalid argument"
-        end, max_attempts: 1)
+        ExMCP.Helpers.do_retry(
+          fn ->
+            raise ArgumentError, "invalid argument"
+          end,
+          max_attempts: 1
+        )
       end
     end
 
@@ -166,10 +185,14 @@ defmodule ExMCP.HelpersTest do
       {:ok, agent} = attempt_count
 
       assert_raise RuntimeError, fn ->
-        ExMCP.Helpers.do_retry(fn ->
-          Agent.update(agent, &(&1 + 1))
-          raise "Always fails"
-        end, max_attempts: 2, base_delay: 10)
+        ExMCP.Helpers.do_retry(
+          fn ->
+            Agent.update(agent, &(&1 + 1))
+            raise "Always fails"
+          end,
+          max_attempts: 2,
+          base_delay: 10
+        )
       end
 
       # Should have tried exactly 2 times
@@ -188,10 +211,10 @@ defmodule ExMCP.HelpersTest do
       }
 
       result = ExMCP.Helpers.format_error_message(error)
-      
+
       # Should contain the base message
       assert String.contains?(result, "Tool 'calculator' not found")
-      
+
       # Should contain suggestion text when suggestions exist
       assert String.contains?(result, "Suggestions:")
     end
@@ -235,7 +258,7 @@ defmodule ExMCP.HelpersTest do
 
       # Test that it doesn't crash and returns a valid result
       result = ExMCP.Helpers.validate_tool_args(args, schema)
-      
+
       case result do
         :ok -> assert true
         {:error, message} when is_binary(message) -> assert true
@@ -252,15 +275,22 @@ defmodule ExMCP.HelpersTest do
         "required" => ["name"]
       }
 
-      args = %{"age" => 30}  # Missing required "name"
+      # Missing required "name"
+      args = %{"age" => 30}
 
       result = ExMCP.Helpers.validate_tool_args(args, schema)
-      
+
       case result do
-        :ok -> assert true  # If ExJsonSchema not available, it returns :ok
-        {:error, message} when is_binary(message) -> 
-          assert String.contains?(message, "name")  # Should mention the missing field
-        _ -> flunk("Unexpected result: #{inspect(result)}")
+        # If ExJsonSchema not available, it returns :ok
+        :ok ->
+          assert true
+
+        {:error, message} when is_binary(message) ->
+          # Should mention the missing field
+          assert String.contains?(message, "name")
+
+        _ ->
+          flunk("Unexpected result: #{inspect(result)}")
       end
     end
 
@@ -278,12 +308,20 @@ defmodule ExMCP.HelpersTest do
 
   describe "safe_execute/2 function" do
     test "executes function within timeout" do
-      fun = fn -> Process.sleep(10); "result" end
+      fun = fn ->
+        Process.sleep(10)
+        "result"
+      end
+
       assert {:ok, "result"} = ExMCP.Helpers.safe_execute(fun, 100)
     end
 
     test "times out for slow functions" do
-      fun = fn -> Process.sleep(200); "result" end
+      fun = fn ->
+        Process.sleep(200)
+        "result"
+      end
+
       assert {:error, :timeout} = ExMCP.Helpers.safe_execute(fun, 50)
     end
 
@@ -305,7 +343,7 @@ defmodule ExMCP.HelpersTest do
 
     test "handles function exceptions gracefully" do
       fun = fn -> raise RuntimeError, "error in function" end
-      
+
       # The function should timeout because the task process crashes
       # We need to catch the EXIT signal from the failing task
       Process.flag(:trap_exit, true)
@@ -316,7 +354,7 @@ defmodule ExMCP.HelpersTest do
 
     test "handles exit signals" do
       fun = fn -> exit(:normal) end
-      
+
       result = ExMCP.Helpers.safe_execute(fun, 100)
       assert result == {:error, :timeout}
     end
@@ -357,7 +395,7 @@ defmodule ExMCP.HelpersTest do
       error = %ConnectionError{message: "connection failed"}
       assert error.message == "connection failed"
 
-      error = %ToolError{message: "tool failed"}  
+      error = %ToolError{message: "tool failed"}
       assert error.message == "tool failed"
 
       error = %ResourceError{message: "resource failed"}
@@ -374,11 +412,12 @@ defmodule ExMCP.HelpersTest do
   describe "macro code generation" do
     test "with_mcp_client macro expands correctly" do
       # Test that the macro expands without syntax errors
-      code = quote do
-        with_mcp_client "http://localhost:8080" do
-          "test_result"
+      code =
+        quote do
+          with_mcp_client "http://localhost:8080" do
+            "test_result"
+          end
         end
-      end
 
       # This should compile without errors
       assert is_tuple(code)
@@ -388,16 +427,18 @@ defmodule ExMCP.HelpersTest do
 
     test "tool operation macros expand correctly" do
       # Test macro expansion for tool operations
-      code = quote do
-        list_tools!(timeout: 5000)
-      end
+      code =
+        quote do
+          list_tools!(timeout: 5000)
+        end
 
       assert is_tuple(code)
       assert elem(code, 0) == :list_tools!
 
-      code = quote do
-        call_tool!("test", %{arg: "value"}, timeout: 1000)
-      end
+      code =
+        quote do
+          call_tool!("test", %{arg: "value"}, timeout: 1000)
+        end
 
       assert is_tuple(code)
       assert elem(code, 0) == :call_tool!
@@ -405,11 +446,12 @@ defmodule ExMCP.HelpersTest do
 
     test "measure macro captures timing properly" do
       # Test that measure macro structure is correct
-      code = quote do
-        measure do
-          expensive_operation()
+      code =
+        quote do
+          measure do
+            expensive_operation()
+          end
         end
-      end
 
       # Should preserve the macro name in quoted form
       assert is_tuple(code)
@@ -417,11 +459,12 @@ defmodule ExMCP.HelpersTest do
     end
 
     test "retry macro structure is correct" do
-      code = quote do
-        retry max_attempts: 3 do
-          risky_operation()
+      code =
+        quote do
+          retry max_attempts: 3 do
+            risky_operation()
+          end
         end
-      end
 
       # Should call do_retry with function and options
       assert is_tuple(code)
@@ -459,7 +502,8 @@ defmodule ExMCP.HelpersTest do
 
     test "validate_tool_args handles malformed schemas" do
       result = ExMCP.Helpers.validate_tool_args(%{}, %{invalid: "schema"})
-      assert result == :ok  # Should handle gracefully
+      # Should handle gracefully
+      assert result == :ok
     end
   end
 end

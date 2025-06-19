@@ -9,6 +9,7 @@ defmodule ExMCP.HttpPlugTest do
 
     deftool "test_tool" do
       tool_description("A test tool")
+
       args do
         field(:message, :string, required: true)
       end
@@ -44,7 +45,7 @@ defmodule ExMCP.HttpPlugTest do
 
   describe "CORS handling" do
     test "handles OPTIONS preflight request" do
-      conn = 
+      conn =
         conn(:options, "/")
         |> HttpPlug.call(HttpPlug.init(cors_enabled: true))
 
@@ -217,12 +218,12 @@ defmodule ExMCP.HttpPlugTest do
       # We can't easily test the full SSE flow in sync tests
       # but we can verify the headers are processed
       opts = HttpPlug.init(sse_enabled: true)
-      
+
       # Create a mock conn to test header extraction
-      conn = 
+      conn =
         conn(:get, "/sse")
         |> put_req_header("x-session-id", "custom-session-123")
-      
+
       # Test that the plug would start SSE (indicated by chunked response)
       result_conn = HttpPlug.call(conn, opts)
       assert result_conn.status == 200
