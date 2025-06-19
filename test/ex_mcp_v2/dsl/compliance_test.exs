@@ -26,8 +26,8 @@ defmodule ExMCP.DSL.ComplianceTest do
     end
 
     defresource "config://app/settings" do
-      resource_name("Application Settings")
-      resource_description("Current application configuration")
+      Resource.name("Application Settings")
+      Resource.description("Current application configuration")
       mime_type("application/json")
 
       annotations(%{
@@ -37,16 +37,16 @@ defmodule ExMCP.DSL.ComplianceTest do
     end
 
     defresource "file://logs/*.log" do
-      resource_name("Log Files")
-      resource_description("Application log files")
+      Resource.name("Log Files")
+      Resource.description("Application log files")
       mime_type("text/plain")
       list_pattern(true)
       subscribable(true)
     end
 
     defprompt "code_review" do
-      prompt_name("Code Review Assistant")
-      prompt_description("Reviews code with specific focus areas")
+      Prompt.name("Code Review Assistant")
+      Prompt.description("Reviews code with specific focus areas")
 
       arguments do
         arg(:code, required: true, description: "Code to review")
@@ -56,8 +56,8 @@ defmodule ExMCP.DSL.ComplianceTest do
     end
 
     defprompt "simple_greeting" do
-      prompt_name("Simple Greeting")
-      prompt_description("A simple greeting prompt")
+      Prompt.name("Simple Greeting")
+      Prompt.description("A simple greeting prompt")
     end
 
     # Handler implementations

@@ -13,7 +13,11 @@ defmodule ExMCP.ServerV2 do
         use ExMCP.ServerV2
         
         deftool "hello" do
-          description "Says hello"
+          meta do
+            name "Hello Tool"
+            description "Says hello to someone"
+          end
+          
           input_schema %{
             type: "object",
             properties: %{name: %{type: "string"}},
@@ -22,14 +26,19 @@ defmodule ExMCP.ServerV2 do
         end
         
         defresource "config://app" do
-          name "App Config"
-          description "Application configuration"
+          meta do
+            name "App Config"
+            description "Application configuration"
+          end
+          
           mime_type "application/json"
         end
         
         defprompt "greeting" do
-          name "Greeting Template"
-          description "A greeting template"
+          meta do
+            name "Greeting Template"
+            description "A greeting template"
+          end
           
           arguments do
             arg :style, description: "Greeting style"
@@ -147,23 +156,11 @@ defmodule ExMCP.ServerV2 do
     quote do
       use GenServer
 
-      # Import DSL macros - Tool DSL can use name/description freely since tools are primary
+      # Import all DSL macros - no more naming conflicts with meta block pattern!
       import ExMCP.DSL.Tool
-      # For resources and prompts, use scoped functions to avoid conflicts  
-      import ExMCP.DSL.Resource,
-        only: [
-          defresource: 2,
-          resource_name: 1,
-          resource_description: 1,
-          mime_type: 1,
-          annotations: 1,
-          resource_annotations: 1,
-          subscribable: 1,
-          list_pattern: 1
-        ]
-
-      import ExMCP.DSL.Prompt,
-        only: [defprompt: 2, prompt_name: 1, prompt_description: 1, arguments: 1, arg: 1, arg: 2]
+      import ExMCP.DSL.Resource
+      import ExMCP.DSL.Prompt
+      import ExMCP.DSL.Handler
 
       # Import content helpers
       import ExMCP.ContentV2,

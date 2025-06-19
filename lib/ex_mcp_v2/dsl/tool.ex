@@ -11,9 +11,14 @@ defmodule ExMCP.DSL.Tool do
 
   ## Examples
 
-      # Design-compliant syntax (recommended)
+      # Meta block syntax (recommended)
       deftool "say_hello" do
-        description "Says hello to a given name"
+        meta do
+          name "Hello Tool"
+          description "Says hello to a given name"
+          version "1.0.0"
+        end
+        
         input_schema %{
           type: "object",
           properties: %{name: %{type: "string"}},
@@ -21,9 +26,12 @@ defmodule ExMCP.DSL.Tool do
         }
       end
 
-      # Alternative with Elixir-native schema (also compliant)
+      # Alternative Elixir-native schema syntax
       deftool "calculate_sum" do
-        description "Adds two numbers together"
+        meta do
+          name "Calculator"
+          description "Adds two numbers together"
+        end
         
         args do
           field :a, :number, required: true, description: "First number"
@@ -33,7 +41,7 @@ defmodule ExMCP.DSL.Tool do
       
       # Legacy syntax (deprecated but supported)
       deftool "legacy_tool" do
-        tool_description "Legacy description syntax"  # Deprecated - use description/1
+        description "Legacy description syntax"  # Deprecated - use meta block
         args do
           field :data, :string, required: true
         end
@@ -41,24 +49,49 @@ defmodule ExMCP.DSL.Tool do
   """
   defmacro deftool(name, do: body) do
     quote do
+      # Import meta DSL functions
+      import ExMCP.DSL.Meta, only: [meta: 1]
+
+      # Clear any previous meta attributes
+      ExMCP.DSL.Meta.clear_meta(__MODULE__)
+
       @__tool_name__ unquote(name)
       @__tool_opts__ []
 
       unquote(body)
 
+      # Get accumulated meta and validate
+      tool_meta = ExMCP.DSL.Meta.get_meta(__MODULE__)
+
+      # Get legacy description for backward compatibility
+      legacy_description = Module.get_attribute(__MODULE__, :__tool_description__)
+
+      # Validate the tool definition before registering
+      ExMCP.DSL.Tool.__validate_tool_definition__(
+        unquote(name),
+        tool_meta,
+        legacy_description,
+        Module.get_attribute(__MODULE__, :__tool_input_schema__),
+        Module.get_attribute(__MODULE__, :__tool_fields__)
+      )
+
       # Register the tool in the module's metadata
+      final_description = tool_meta[:description] || legacy_description
+
       @__tools__ Map.put(
                    Module.get_attribute(__MODULE__, :__tools__) || %{},
                    unquote(name),
                    %{
                      name: unquote(name),
-                     description: Module.get_attribute(__MODULE__, :__tool_description__),
+                     display_name: tool_meta[:name],
+                     description: final_description,
                      input_schema:
                        Module.get_attribute(__MODULE__, :__tool_input_schema__) ||
                          ExMCP.DSL.Tool.__compile_schema__(
                            Module.get_attribute(__MODULE__, :__tool_fields__) || []
                          ),
-                     annotations: Module.get_attribute(__MODULE__, :__tool_annotations__) || %{}
+                     annotations: Module.get_attribute(__MODULE__, :__tool_annotations__) || %{},
+                     meta: tool_meta
                    }
                  )
 
@@ -68,15 +101,6 @@ defmodule ExMCP.DSL.Tool do
       Module.delete_attribute(__MODULE__, :__tool_input_schema__)
       Module.delete_attribute(__MODULE__, :__tool_fields__)
       Module.delete_attribute(__MODULE__, :__tool_annotations__)
-    end
-  end
-
-  @doc """
-  Sets the description for the current tool (design-compliant syntax).
-  """
-  defmacro description(desc) do
-    quote do
-      @__tool_description__ unquote(desc)
     end
   end
 
@@ -106,6 +130,22 @@ defmodule ExMCP.DSL.Tool do
   """
   defmacro input_schema(schema) do
     quote do
+      # Check for duplicate input_schema
+      if Module.get_attribute(__MODULE__, :__tool_input_schema__) do
+        raise CompileError,
+          file: __ENV__.file,
+          line: __ENV__.line,
+          description: "input_schema/1 may only be defined once per tool"
+      end
+
+      # Check for conflicting args block
+      if Module.get_attribute(__MODULE__, :__tool_fields__) do
+        raise CompileError,
+          file: __ENV__.file,
+          line: __ENV__.line,
+          description: "Cannot use both input_schema/1 and args block in the same tool"
+      end
+
       @__tool_input_schema__ unquote(schema)
     end
   end
@@ -124,6 +164,22 @@ defmodule ExMCP.DSL.Tool do
   """
   defmacro args(do: body) do
     quote do
+      # Check for conflicting input_schema
+      if Module.get_attribute(__MODULE__, :__tool_input_schema__) do
+        raise CompileError,
+          file: __ENV__.file,
+          line: __ENV__.line,
+          description: "Cannot use both args block and input_schema/1 in the same tool"
+      end
+
+      # Check for duplicate args block
+      if Module.get_attribute(__MODULE__, :__tool_fields__) do
+        raise CompileError,
+          file: __ENV__.file,
+          line: __ENV__.line,
+          description: "args block may only be defined once per tool"
+      end
+
       @__tool_fields__ []
       unquote(body)
     end
@@ -198,6 +254,55 @@ defmodule ExMCP.DSL.Tool do
         end
     end
   end
+
+  @doc """
+  Validates a tool definition at compile time.
+
+  This function is called during the deftool macro expansion to ensure
+  the tool definition is complete and valid.
+  """
+  def __validate_tool_definition__(name, meta, legacy_description, input_schema, fields) do
+    # Check for description in meta block or legacy location
+    description = meta[:description] || legacy_description
+
+    unless description do
+      raise CompileError,
+        description:
+          "Tool #{inspect(name)} is missing a description. Use meta do description \"...\" end or description/1 to provide one."
+    end
+
+    # Must have either input_schema or fields, but not both (already checked in macros)
+    unless input_schema || fields do
+      raise CompileError,
+        description: "Tool #{inspect(name)} must define either input_schema/1 or an args block."
+    end
+
+    # Validate field types if using args block
+    if fields do
+      validate_field_types!(fields, name)
+    end
+
+    :ok
+  end
+
+  # Validate that all field types are supported
+  @valid_field_types [:string, :number, :integer, :boolean, :object]
+
+  defp validate_field_types!(fields, tool_name) do
+    Enum.each(fields, fn field ->
+      type = field.type
+
+      unless type in @valid_field_types or is_array_type?(type) do
+        raise CompileError,
+          description:
+            "Tool #{inspect(tool_name)}: Invalid field type #{inspect(type)}. " <>
+              "Valid types are: #{inspect(@valid_field_types)} or {:array, type}"
+      end
+    end)
+  end
+
+  defp is_array_type?({:array, inner_type}), do: inner_type in @valid_field_types
+  defp is_array_type?(_), do: false
 
   @doc """
   Compiles Elixir field definitions to JSON Schema.

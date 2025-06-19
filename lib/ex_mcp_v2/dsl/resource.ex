@@ -11,12 +11,15 @@ defmodule ExMCP.DSL.Resource do
 
   ## Examples
 
-      # Design-compliant syntax (recommended)
+      # Meta block syntax (recommended)
       defresource "config://app/settings" do
-        name "Application Settings"
-        description "Current application configuration"
-        mime_type "application/json"
+        meta do
+          name "Application Settings"
+          description "Current application configuration"
+          author "System Team"
+        end
         
+        mime_type "application/json"
         annotations %{
           audience: ["admin"],
           priority: 0.8
@@ -25,8 +28,11 @@ defmodule ExMCP.DSL.Resource do
       
       # Pattern-based resource with subscription support
       defresource "file://logs/*.log" do
-        name "Log Files"
-        description "Application log files"
+        meta do
+          name "Log Files"
+          description "Application log files"
+        end
+        
         mime_type "text/plain"
         list_pattern true
         subscribable true
@@ -34,26 +40,50 @@ defmodule ExMCP.DSL.Resource do
 
       # Legacy syntax (deprecated but supported)
       defresource "legacy://resource" do
-        resource_name "Legacy Resource"  # Deprecated - use name/1
-        resource_description "Legacy description"  # Deprecated - use description/1
+        name "Legacy Resource"  # Deprecated - use meta block
+        description "Legacy description"  # Deprecated - use meta block
         mime_type "text/plain"
       end
   """
   defmacro defresource(uri, do: body) do
     quote do
+      # Import meta DSL functions
+      import ExMCP.DSL.Meta, only: [meta: 1]
+
+      # Clear any previous meta attributes
+      ExMCP.DSL.Meta.clear_meta(__MODULE__)
+
       @__resource_uri__ unquote(uri)
       @__resource_opts__ []
 
       unquote(body)
 
+      # Get accumulated meta and validate
+      resource_meta = ExMCP.DSL.Meta.get_meta(__MODULE__)
+
+      # Get legacy name/description for backward compatibility
+      legacy_name = Module.get_attribute(__MODULE__, :__resource_name__)
+      legacy_description = Module.get_attribute(__MODULE__, :__resource_description__)
+
+      # Validate the resource definition before registering
+      ExMCP.DSL.Resource.__validate_resource_definition__(
+        unquote(uri),
+        resource_meta,
+        legacy_name,
+        legacy_description
+      )
+
       # Register the resource in the module's metadata
+      final_name = resource_meta[:name] || legacy_name
+      final_description = resource_meta[:description] || legacy_description
+
       @__resources__ Map.put(
                        Module.get_attribute(__MODULE__, :__resources__) || %{},
                        unquote(uri),
                        %{
                          uri: unquote(uri),
-                         name: Module.get_attribute(__MODULE__, :__resource_name__),
-                         description: Module.get_attribute(__MODULE__, :__resource_description__),
+                         name: final_name,
+                         description: final_description,
                          mime_type: Module.get_attribute(__MODULE__, :__resource_mime_type__),
                          annotations:
                            Module.get_attribute(__MODULE__, :__resource_annotations__) || %{},
@@ -61,7 +91,8 @@ defmodule ExMCP.DSL.Resource do
                            Module.get_attribute(__MODULE__, :__resource_list_pattern__) || false,
                          subscribable:
                            Module.get_attribute(__MODULE__, :__resource_subscribable__) || false,
-                         size: Module.get_attribute(__MODULE__, :__resource_size__)
+                         size: Module.get_attribute(__MODULE__, :__resource_size__),
+                         meta: resource_meta
                        }
                      )
 
@@ -117,24 +148,6 @@ defmodule ExMCP.DSL.Resource do
       Module.delete_attribute(__MODULE__, :__resource_description__)
       Module.delete_attribute(__MODULE__, :__resource_mime_type__)
       Module.delete_attribute(__MODULE__, :__resource_annotations__)
-    end
-  end
-
-  @doc """
-  Sets the human-readable name for the current resource (design-compliant syntax).
-  """
-  defmacro name(resource_name) do
-    quote do
-      @__resource_name__ unquote(resource_name)
-    end
-  end
-
-  @doc """
-  Sets the description for the current resource (design-compliant syntax).
-  """
-  defmacro description(desc) do
-    quote do
-      @__resource_description__ unquote(desc)
     end
   end
 
@@ -234,6 +247,32 @@ defmodule ExMCP.DSL.Resource do
     quote do
       @__resource_size__ unquote(bytes)
     end
+  end
+
+  @doc """
+  Validates a resource definition at compile time.
+
+  This function is called during the defresource macro expansion to ensure
+  the resource definition is complete and valid.
+  """
+  def __validate_resource_definition__(uri, meta, legacy_name, legacy_description) do
+    # Check for name in meta block or legacy location
+    name = meta[:name] || legacy_name
+    description = meta[:description] || legacy_description
+
+    unless name do
+      raise CompileError,
+        description:
+          "Resource #{inspect(uri)} is missing a name. Use meta do name \"...\" end or name/1 to provide one."
+    end
+
+    unless description do
+      raise CompileError,
+        description:
+          "Resource #{inspect(uri)} is missing a description. Use meta do description \"...\" end or description/1 to provide one."
+    end
+
+    :ok
   end
 
   @doc """

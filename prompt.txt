@@ -1,139 +1,16 @@
-Based on the MCP specification analysis, I want to design a comprehensive DSL for ExMCP that covers tools, resources, and prompts. Here's my initial thinking:
+Now dive deeper into the specific DSL implementation details. Analyze the three DSL modules (Tool, Resource, Prompt) and provide concrete recommendations:
 
-## Proposed DSL Structure
+1. **API Consistency Issues**: Document exact inconsistencies between the three DSL modules
+2. **Implementation Quality**: Review the macro implementations for robustness, error handling, compile-time validation
+3. **Type Safety**: Assess the current type definitions and schema validation
+4. **Error Messages**: Evaluate the quality of error messages and developer feedback
+5. **Performance**: Any compile-time or runtime performance concerns
+6. **Best Practices**: How do these DSLs compare to Phoenix, Ecto, and other well-designed Elixir DSLs?
 
-### Tools DSL
-```elixir
-defmodule MyToolServer do
-  use ExMCP.Server
+For each issue found, provide:
+- Specific code examples showing the problem
+- Concrete implementation suggestions
+- Priority ranking (Critical/High/Medium/Low)
+- Estimated effort (Small/Medium/Large)
 
-  deftool "calculate_sum" do
-    description "Adds two numbers together"
-    
-    # JSON Schema approach (current)
-    input_schema %{
-      type: "object",
-      properties: %{
-        a: %{type: "number", description: "First number"},
-        b: %{type: "number", description: "Second number"}
-      },
-      required: ["a", "b"]
-    }
-    
-    # Alternative: Elixir-native schema DSL?
-    # args do
-    #   field :a, :number, required: true, description: "First number"
-    #   field :b, :number, required: true, description: "Second number"
-    # end
-  end
-
-  @impl true
-  def handle_tool_call("calculate_sum", %{"a" => a, "b" => b}, state) do
-    {:ok, %{content: [text("Result: #{a + b}")]}}
-  end
-end
-```
-
-### Resources DSL
-```elixir
-defmodule MyResourceServer do
-  use ExMCP.Server
-
-  defresource "config://app/settings" do
-    name "Application Settings"
-    description "Current application configuration"
-    mime_type "application/json"
-    
-    # Optional annotations
-    annotations %{
-      audience: ["admin"],
-      priority: 0.8
-    }
-  end
-
-  defresource "file://logs/*.log" do
-    name "Log Files"
-    description "Application log files"
-    mime_type "text/plain"
-    
-    # Pattern-based resources
-    list_pattern true
-  end
-
-  @impl true
-  def handle_resource_read("config://app/settings", _uri, state) do
-    content = json(%{debug: true, port: 8080})
-    {:ok, content, state}
-  end
-
-  @impl true
-  def handle_resource_list(state) do
-    # Return all resources matching patterns
-    {:ok, resources, state}
-  end
-
-  @impl true
-  def handle_resource_subscribe(uri, state) do
-    # Setup subscription
-    {:ok, state}
-  end
-end
-```
-
-### Prompts DSL
-```elixir
-defmodule MyPromptServer do
-  use ExMCP.Server
-
-  defprompt "code_review" do
-    name "Code Review Assistant"
-    description "Reviews code with specific focus areas"
-    
-    # Simpler argument definition than tools
-    arguments do
-      arg :code, required: true, description: "Code to review"
-      arg :language, required: false, description: "Programming language"
-      arg :focus, required: false, description: "Review focus (security, performance, etc.)"
-    end
-  end
-
-  @impl true
-  def handle_prompt_get("code_review", args, state) do
-    messages = [
-      user("Please review this #{args["language"] || "code"}:\n\n#{args["code"]}"),
-      assistant("I'll review your code focusing on #{args["focus"] || "general quality"}...")
-    ]
-    {:ok, %{messages: messages}, state}
-  end
-end
-```
-
-### Content Helpers
-```elixir
-# Built-in content constructors
-text("Hello world")
-image("base64_data", "image/png")
-audio("base64_data", "audio/mp3")
-resource("config://app/settings")
-
-# Message constructors
-user("User message")
-assistant("Assistant response")
-system("System prompt")
-```
-
-## Key Design Questions:
-
-1. **Schema Definition**: Should we stick with raw JSON Schema for tools, or create an Elixir-native DSL that compiles to JSON Schema?
-
-2. **Unified vs Separate**: Should tools, resources, and prompts be in one module or separate? Or should we support both patterns?
-
-3. **Subscription Handling**: How should we handle stateful features like resource subscriptions? GenServer callbacks? Phoenix.PubSub integration?
-
-4. **Content Type Safety**: Should we use structs, tagged tuples, or a protocol for the content union types?
-
-5. **Validation**: Where should validation happen - compile time (macros) or runtime?
-
-6. **Extensibility**: How do we handle `annotations` and `experimental` fields elegantly?
-
-What are your thoughts on this DSL design? What patterns from other successful Elixir libraries (Ecto, Phoenix, Absinthe) should we draw from?
+I want actionable recommendations I can implement immediately to improve the DSL design.

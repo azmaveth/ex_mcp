@@ -781,6 +781,7 @@ ExMCP uses the following metadata fields for security and debugging:
 ## 📚 Documentation
 
 - 📖 **[User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples
+- 🎨 **[DSL Guide](docs/DSL_GUIDE.md)** - Complete DSL reference with meta block design
 - 🔧 **[API Documentation](https://hexdocs.pm/ex_mcp)** - Detailed API reference
 - 🆕 **[v2 API Reference](docs/API_V2_REFERENCE.md)** - New v2 API with structured responses
 - 🏗️ **[v2 Architecture](docs/V2_ARCHITECTURE.md)** - v2 design and architecture guide

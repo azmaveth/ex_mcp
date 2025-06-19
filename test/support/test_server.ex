@@ -44,28 +44,28 @@ defmodule ExMCP.TestServer do
 
   # Define test resources
   defresource "test://config" do
-    resource_name("Test Configuration")
-    resource_description("Test configuration data")
+    Resource.name("Test Configuration")
+    Resource.description("Test configuration data")
     mime_type("application/json")
   end
 
   defresource "test://data.txt" do
-    resource_name("Test Data")
-    resource_description("Simple text data")
+    Resource.name("Test Data")
+    Resource.description("Simple text data")
     mime_type("text/plain")
   end
 
   defresource "test://logs/*" do
-    resource_name("Test Logs")
-    resource_description("Test log files")
+    Resource.name("Test Logs")
+    Resource.description("Test log files")
     mime_type("text/plain")
     list_pattern(true)
   end
 
   # Define test prompts
   defprompt "greeting" do
-    prompt_name("Greeting Template")
-    prompt_description("A template for greetings")
+    Prompt.name("Greeting Template")
+    Prompt.description("A template for greetings")
 
     arguments do
       arg(:style, description: "Greeting style (formal/casual)")
@@ -74,8 +74,8 @@ defmodule ExMCP.TestServer do
   end
 
   defprompt "code_review" do
-    prompt_name("Code Review")
-    prompt_description("Reviews code snippets")
+    Prompt.name("Code Review")
+    Prompt.description("Reviews code snippets")
 
     arguments do
       arg(:code, required: true, description: "Code to review")

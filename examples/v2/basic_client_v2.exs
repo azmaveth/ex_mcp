@@ -6,15 +6,19 @@
 # - Configuration builder pattern
 # - Structured responses
 # - Convenience functions
+#
+# To test this client:
+# 1. Run a DSL server in another terminal:
+#    elixir getting_started/dsl_server.exs
+# 2. Update the command below to connect to your server
 
 Mix.install([
-  {:ex_mcp, path: "../.."}
+  {:ex_mcp, path: Path.expand("../..", __DIR__)}
 ])
 
 # Create client configuration using the builder pattern
-config = ExMCP.client_config()
-         |> ExMCP.put_transport(:stdio)
-         |> ExMCP.put_command(["python", "-m", "mcp.server.example"])
+config = ExMCP.ClientConfig.new()
+         |> ExMCP.ClientConfig.put_transport(:stdio, command: ["elixir", "getting_started/hello_server_stdio.exs"])
 
 IO.puts("Connecting to MCP server...")
 
@@ -28,7 +32,7 @@ case ExMCP.connect(config) do
     {:ok, tools_response} = ExMCP.list_tools(client)
     
     # Extract tools from structured response
-    tools = ExMCP.Response.tools(tools_response)
+    tools = ExMCP.Response.data_content(tools_response)["tools"] || []
     IO.puts("Found #{length(tools)} tools:")
     
     for tool <- tools do
@@ -49,14 +53,14 @@ case ExMCP.connect(config) do
             text = ExMCP.Response.text_content(response) ->
               IO.puts("Text response: #{text}")
               
-            json = ExMCP.Response.json_content(response) ->
+            json = ExMCP.Response.data_content(response) ->
               IO.puts("JSON response: #{inspect(json)}")
               
-            response.type == :error ->
-              IO.puts("Error response: #{response.content.message}")
+            response.is_error ->
+              IO.puts("Error response: #{ExMCP.Response.text_content(response)}")
               
             true ->
-              IO.puts("Other response type: #{response.type}")
+              IO.puts("Other response type: #{inspect(response)}")
           end
           
         {:error, error} ->
@@ -67,7 +71,7 @@ case ExMCP.connect(config) do
     # List resources
     IO.puts("\nListing resources...")
     {:ok, resources_response} = ExMCP.list_resources(client)
-    resources = ExMCP.Response.resources(resources_response)
+    resources = ExMCP.Response.data_content(resources_response)["resources"] || []
     
     IO.puts("Found #{length(resources)} resources:")
     for resource <- resources do
