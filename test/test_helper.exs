@@ -45,4 +45,4 @@ ExUnit.configure(exclude: default_exclusions)
 ExUnit.start()
 
 # Define mocks
-Mox.defmock(ExMCP.Transport.Mock, for: ExMCP.Transport)
+# Note: Transport mocks removed since v1 Transport module was deleted

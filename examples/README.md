@@ -1,116 +1,129 @@
-# ExMCP Examples
+# ExMCP v2 Examples
 
-This directory contains comprehensive examples demonstrating various features and use cases of ExMCP.
+Well-organized examples demonstrating the ExMCP v2 API and DSL.
 
-## 📚 Directory Structure
+## Directory Structure
 
-### 🚀 Getting Started
-Start here if you're new to ExMCP:
-- [`getting_started/`](getting_started/) - Basic examples for beginners
-  - `hello_world.exs` - Your first MCP server and client
-  - `comprehensive_example.exs` - Demonstrates all MCP features
-
-### 🔌 Transports
-Examples for each transport type:
-- [`transports/stdio/`](transports/stdio/) - Standard I/O transport (MCP standard)
-  - Bidirectional communication
-  - Health checks and ping
-- [`transports/http/`](transports/http/) - HTTP with SSE streaming
-- [`transports/native/`](transports/native/) - ExMCP's high-performance Native Service Dispatcher
-  - Calculator services
-  - Clustering and distribution
-  - Hot code reloading
-
-### 🛠️ Features
-Examples organized by MCP feature:
-- [`features/tools/`](features/tools/) - Tool discovery and execution
-- [`features/resources/`](features/resources/) - Resource management and subscriptions
-- [`features/prompts/`](features/prompts/) - Prompt templates
-- [`features/notifications/`](features/notifications/) - Change notifications and cancellation
-- [`features/progress/`](features/progress/) - Progress tracking for long operations
-- [`features/roots/`](features/roots/) - URI boundaries and roots
-- [`features/batch_requests/`](features/batch_requests/) - Batch request handling
-
-### 🔧 Advanced
-Advanced features and patterns:
-- [`advanced/oauth/`](advanced/oauth/) - OAuth 2.1 authorization flows
-- [`advanced/security/`](advanced/security/) - Security features and secure servers
-- [`advanced/sampling/`](advanced/sampling/) - LLM integration and sampling
-- [`advanced/draft_features/`](advanced/draft_features/) - Experimental MCP features
-- `human_in_the_loop.exs` - Approval flows and HITL patterns
-
-### 🌐 Interoperability
-Cross-language integration examples:
-- [`interoperability/`](interoperability/) - Python MCP SDK integration
-  - Elixir clients → Python servers
-  - Python clients → Elixir servers
-  - Hybrid architectures
-
-## 🎯 Quick Navigation
-
-### By Use Case
-
-**"I want to build a simple MCP server"**
-→ Start with [`getting_started/hello_world.exs`](getting_started/hello_world.exs)
-
-**"I need maximum performance for Elixir services"**
-→ See [`transports/native/`](transports/native/)
-
-**"I'm integrating with Python/JavaScript/other languages"**
-→ Check [`interoperability/`](interoperability/) and use stdio or HTTP transport
-
-**"I need to implement authentication"**
-→ Look at [`advanced/oauth/`](advanced/oauth/) and [`advanced/security/`](advanced/security/)
-
-**"I want to track progress of long operations"**
-→ See [`features/progress/`](features/progress/)
-
-**"I need to handle file resources"**
-→ Check [`features/resources/`](features/resources/)
-
-### By Transport Type
-
-| Transport | When to Use | Examples |
-|-----------|-------------|----------|
-| **stdio** | Standard MCP communication, subprocesses | [`transports/stdio/`](transports/stdio/) |
-| **HTTP** | Network services, web integration | [`transports/http/`](transports/http/) |
-| **Native** | Elixir-only, maximum performance | [`transports/native/`](transports/native/) |
-
-## 🚦 Running Examples
-
-Most examples are self-contained scripts that can be run directly:
-
-```bash
-# From the examples directory
-elixir getting_started/hello_world.exs
-
-# Or from the project root
-elixir examples/getting_started/hello_world.exs
+```
+v2/
+├── getting_started/      # Getting started examples and demos
+│   ├── working_demo.exs          # ✅ Interactive v2 features demo
+│   ├── hello_server_simple.exs   # ✅ Basic server with handler callbacks
+│   ├── run_simple_demo.sh        # ✅ Working features demo script
+│   ├── hello_server_stdio.exs    # ⚠️ STDIO server (needs debugging)
+│   ├── hello_client_stdio.exs    # ⚠️ STDIO client (needs debugging)
+│   ├── hello_server_native.exs   # ⚠️ Native BEAM transport (needs debugging)
+│   ├── hello_server_http.exs     # ⚠️ HTTP server (needs debugging)
+│   ├── hello_client_http.exs     # ⚠️ HTTP client (needs debugging)
+│   ├── hello_server_sse.exs      # ⚠️ HTTP with SSE (needs debugging)
+│   ├── hello_client_all.exs      # ⚠️ Universal client (needs debugging)
+│   ├── run_demo.sh               # ⚠️ Transport demo script (experimental)
+│   ├── run_demo.bat              # ⚠️ Windows demo script (experimental)
+│   └── run_demo.exs              # ⚠️ Elixir demo script (experimental)
+│
+├── advanced/            # Complete, production-like examples
+│   ├── complete_server.exs       # Full-featured server with all capabilities
+│   ├── stateful_server.exs       # Server with state management
+│   ├── error_handling_server.exs # Comprehensive error handling
+│   └── weather_service.exs       # Production HTTP/SSE service
+│
+├── utilities/           # Utility examples for specific features
+│   ├── structured_responses.exs  # Response and Error types
+│   ├── error_handling.exs        # Error patterns
+│   └── client_config.exs         # Configuration builder
+│
+├── migration_guide/     # v1 to v2 migration help
+│   └── before_after.exs          # Side-by-side comparison
+│
+├── basic_client_v2.exs  # General purpose client example
+├── simple_test_client.exs # API testing script
+└── test_http_client.exs   # HTTP client testing
 ```
 
-Some examples require additional setup:
-- **Python interoperability**: Requires Python 3.8+ and `pip install mcp`
-- **HTTP examples**: May require starting an HTTP server
-- **Distributed examples**: Require multiple Elixir nodes
+## Quick Start
 
-## 📖 Learning Path
+1. **Start with v2 Features** (`getting_started/`)
+   ```bash
+   # Recommended: Working v2 features demo
+   cd getting_started && ./run_simple_demo.sh
+   
+   # Individual examples:
+   elixir getting_started/working_demo.exs
+   ```
 
-1. Start with [`getting_started/hello_world.exs`](getting_started/hello_world.exs)
-2. Explore [`getting_started/comprehensive_example.exs`](getting_started/comprehensive_example.exs)
-3. Try different transports in [`transports/`](transports/)
-4. Dive into specific features in [`features/`](features/)
-5. Explore advanced patterns in [`advanced/`](advanced/)
+2. **Learn Core Concepts** (`utilities/`)
+   ```bash
+   elixir utilities/structured_responses.exs
+   elixir utilities/client_config.exs
+   ```
 
-## 🤝 Contributing
+3. **Build Complete Servers** (`advanced/`)
+   ```bash
+   elixir advanced/complete_server.exs
+   ```
 
-When adding new examples:
-1. Place them in the appropriate category directory
-2. Include clear comments explaining the concept
-3. Make them self-contained and runnable
-4. Update this README if adding new categories
+## Transport Types
 
-## 📝 Notes
+ExMCP v2 supports multiple transport types:
 
-- Examples using `ExMCP.Native` are specific to ExMCP and provide ultra-high performance
-- Examples using `:stdio` or `:http` transports follow the MCP specification
-- The `interoperability/` examples require additional language runtimes
+- **STDIO** - Subprocess communication (most common)
+- **Native** - In-process BEAM communication
+- **HTTP** - Standard HTTP with JSON-RPC
+- **HTTP+SSE** - HTTP with Server-Sent Events for streaming
+
+## Key v2 Features
+
+### 1. DSL for Server Definition
+```elixir
+use ExMCP.ServerV2
+
+deftool "greet" do
+  description "Greets a user"
+  input_schema %{
+    type: "object",
+    properties: %{name: %{type: "string"}},
+    required: ["name"]
+  }
+  handler fn %{"name" => name} ->
+    ExMCP.Response.text("Hello, #{name}!", "greet")
+  end
+end
+```
+
+### 2. Structured Responses
+```elixir
+ExMCP.Response.text("Hello!", "tool_name")
+ExMCP.Response.json(%{data: "value"}, "tool_name")
+ExMCP.Response.error("Something failed", "tool_name")
+```
+
+### 3. Configuration Builder
+```elixir
+config = ExMCP.ClientConfig.new()
+         |> ExMCP.ClientConfig.put_transport(:stdio, command: ["server"])
+         |> ExMCP.ClientConfig.put_timeout(connect: 5000)
+```
+
+### 4. Simplified Client API
+```elixir
+{:ok, client} = ExMCP.connect(config)
+{:ok, response} = ExMCP.call_tool(client, "tool", %{args: "here"})
+text = ExMCP.Response.text_content(response)
+```
+
+## Learning Path
+
+1. **Beginners**: Start with `getting_started/hello_server_stdio.exs`
+2. **Client Developers**: See `basic_client_v2.exs` and `utilities/client_config.exs`
+3. **Server Developers**: Progress from `getting_started/` to `advanced/complete_server.exs`
+4. **Migrating from v1**: Check `migration_guide/before_after.exs`
+
+## Running Examples
+
+All examples are self-contained with Mix.install:
+
+```bash
+elixir path/to/example.exs
+```
+
+No separate compilation or dependency installation needed!
