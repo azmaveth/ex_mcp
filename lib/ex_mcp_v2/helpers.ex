@@ -274,9 +274,9 @@ defmodule ExMCP.Helpers do
       fun.()
     rescue
       error ->
-        if attempt < max_attempts do
+        if attempt < max_attempts and max_attempts > 0 do
           delay = min(base_delay * :math.pow(2, attempt - 1), max_delay)
-          Process.sleep(round(delay))
+          Process.sleep(round(max(delay, 0)))
           do_retry_attempt(fun, attempt + 1, max_attempts, base_delay, max_delay)
         else
           reraise error, __STACKTRACE__
@@ -291,7 +291,7 @@ defmodule ExMCP.Helpers do
   def format_error_message(%{message: message, suggestions: suggestions}) do
     base = message
 
-    if Enum.any?(suggestions) do
+    if is_list(suggestions) and Enum.any?(suggestions) do
       suggestion_text = ExMCP.Client.Error.format_suggestions(suggestions)
       "#{base}\n\nSuggestions:\n#{suggestion_text}"
     else
@@ -314,14 +314,17 @@ defmodule ExMCP.Helpers do
 
   def validate_tool_args(_, _), do: :ok
 
-  defp format_validation_errors(errors) do
+  defp format_validation_errors(errors) when is_list(errors) do
     errors
     |> Enum.map(fn {path, error} ->
-      path_str = Enum.join(path, ".")
+      path_str = if is_list(path), do: Enum.join(path, "."), else: "#{path}"
       "#{path_str}: #{error}"
     end)
     |> Enum.join(", ")
   end
+
+  defp format_validation_errors(error) when is_binary(error), do: error
+  defp format_validation_errors(errors), do: inspect(errors)
 
   @doc """
   Safely executes an operation with timeout.
@@ -333,6 +336,10 @@ defmodule ExMCP.Helpers do
     case Task.yield(task, timeout) do
       {:ok, result} ->
         {:ok, result}
+
+      {:exit, _reason} ->
+        Task.shutdown(task)
+        {:error, :timeout}
 
       nil ->
         Task.shutdown(task)

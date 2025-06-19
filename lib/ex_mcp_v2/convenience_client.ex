@@ -43,7 +43,7 @@ defmodule ExMCP.ConvenienceClient do
   """
 
   alias ExMCP.SimpleClient
-  alias ExMCP.Client.{Response, Error}
+  alias ExMCP.{Response, Error}
 
   @type client :: pid()
   @type connection_spec :: String.t() | {atom(), keyword()} | [connection_spec()]
@@ -137,14 +137,11 @@ defmodule ExMCP.ConvenienceClient do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     case SimpleClient.list_tools(client, timeout) do
-      {:ok, %{"tools" => tools}} ->
-        Enum.map(tools, &Response.normalize_tool/1)
+      {:ok, tools} when is_list(tools) ->
+        tools
 
-      {:ok, response} ->
-        Error.format(:unexpected_response, "Expected tools list", response)
-
-      {:error, reason} ->
-        Error.format(:tool_list_failed, reason)
+      {:error, %Error{} = error} ->
+        {:error, error}
     end
   end
 
@@ -168,14 +165,20 @@ defmodule ExMCP.ConvenienceClient do
     normalize? = Keyword.get(opts, :normalize, true)
 
     case SimpleClient.call_tool(client, tool_name, args, timeout) do
-      {:ok, response} when normalize? ->
-        Response.normalize_tool_result(response)
+      {:ok, %Response{} = response} when normalize? ->
+        # Extract useful content from response
+        if Response.error?(response) do
+          {:error, Error.tool_error(Response.text_content(response) || "Tool execution failed", tool_name)}
+        else
+          # Return the text content for convenience, or the full response if no text
+          Response.text_content(response) || response
+        end
 
-      {:ok, response} ->
+      {:ok, %Response{} = response} ->
         response
 
-      {:error, reason} ->
-        Error.format(:tool_call_failed, reason, %{tool: tool_name, args: args})
+      {:error, %Error{} = error} ->
+        {:error, error}
     end
   end
 
@@ -214,14 +217,11 @@ defmodule ExMCP.ConvenienceClient do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     case SimpleClient.list_resources(client, timeout) do
-      {:ok, %{"resources" => resources}} ->
-        Enum.map(resources, &Response.normalize_resource/1)
+      {:ok, resources} when is_list(resources) ->
+        resources
 
-      {:ok, response} ->
-        Error.format(:unexpected_response, "Expected resources list", response)
-
-      {:error, reason} ->
-        Error.format(:resource_list_failed, reason)
+      {:error, %Error{} = error} ->
+        {:error, error}
     end
   end
 
@@ -244,11 +244,26 @@ defmodule ExMCP.ConvenienceClient do
     timeout = Keyword.get(opts, :timeout, 10_000)
 
     case SimpleClient.read_resource(client, uri, timeout) do
-      {:ok, response} ->
-        Response.normalize_resource_content(response, opts)
+      {:ok, %Response{} = response} ->
+        # Extract content from response
+        if Response.error?(response) do
+          {:error, Error.resource_error(Response.text_content(response) || "Resource read failed", uri)}
+        else
+          content = Response.text_content(response) || Response.data_content(response)
+          
+          # Parse JSON if requested and content is a string
+          if Keyword.get(opts, :parse_json, false) and is_binary(content) do
+            case Jason.decode(content) do
+              {:ok, parsed} -> parsed
+              {:error, _} -> content
+            end
+          else
+            content
+          end
+        end
 
-      {:error, reason} ->
-        Error.format(:resource_read_failed, reason, %{uri: uri})
+      {:error, %Error{} = error} ->
+        {:error, error}
     end
   end
 
@@ -262,14 +277,11 @@ defmodule ExMCP.ConvenienceClient do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     case SimpleClient.list_prompts(client, timeout) do
-      {:ok, %{"prompts" => prompts}} ->
-        Enum.map(prompts, &Response.normalize_prompt/1)
+      {:ok, prompts} when is_list(prompts) ->
+        prompts
 
-      {:ok, response} ->
-        Error.format(:unexpected_response, "Expected prompts list", response)
-
-      {:error, reason} ->
-        Error.format(:prompt_list_failed, reason)
+      {:error, %Error{} = error} ->
+        {:error, error}
     end
   end
 
@@ -281,11 +293,17 @@ defmodule ExMCP.ConvenienceClient do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     case SimpleClient.get_prompt(client, prompt_name, args, timeout) do
-      {:ok, response} ->
-        Response.normalize_prompt_result(response)
+      {:ok, %Response{} = response} ->
+        # Extract the messages from the response
+        if Response.error?(response) do
+          {:error, Error.prompt_error(Response.text_content(response) || "Prompt execution failed", prompt_name)}
+        else
+          # Try to extract data content (should contain messages)
+          Response.data_content(response) || response
+        end
 
-      {:error, reason} ->
-        Error.format(:prompt_get_failed, reason, %{prompt: prompt_name, args: args})
+      {:error, %Error{} = error} ->
+        {:error, error}
     end
   end
 
@@ -345,8 +363,8 @@ defmodule ExMCP.ConvenienceClient do
   @spec server_info(client()) :: {:ok, map()} | {:error, any()}
   def server_info(client) do
     case status(client) do
-      {:ok, %{server_info: info}} -> {:ok, Response.normalize_server_info(info)}
-      {:ok, _} -> {:error, :no_server_info}
+      {:ok, %{server_info: info}} -> {:ok, info}
+      {:ok, _} -> {:error, Error.invalid_request("No server info available")}
       error -> error
     end
   end
@@ -357,12 +375,12 @@ defmodule ExMCP.ConvenienceClient do
   Useful for wrapping operations that might fail with enhanced error messages.
   """
   @spec with_error_formatting((-> any()), atom(), map()) :: any()
-  def with_error_formatting(fun, error_type, context \\ %{}) do
+  def with_error_formatting(fun, _error_type, _context \\ %{}) do
     try do
       fun.()
     catch
-      :exit, reason -> Error.format(error_type, reason, context)
-      :error, reason -> Error.format(error_type, reason, context)
+      :exit, reason -> {:error, Error.internal_error("Exit: #{inspect(reason)}")}
+      :error, reason -> {:error, Error.internal_error("Error: #{inspect(reason)}")}
     end
   end
 

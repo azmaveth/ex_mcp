@@ -21,6 +21,8 @@ defmodule ExMCP.SimpleClient do
 
   alias ExMCP.Internal.Protocol
   alias ExMCP.TransportManager
+  alias ExMCP.Response
+  alias ExMCP.Error
 
   defstruct [
     :transport_mod,
@@ -91,50 +93,128 @@ defmodule ExMCP.SimpleClient do
   Lists available tools from the server.
   """
   def list_tools(client, timeout \\ 5_000) do
-    GenServer.call(client, {:request, "tools/list", %{}}, timeout)
+    case GenServer.call(client, {:request, "tools/list", %{}}, timeout) do
+      {:ok, %{"tools" => tools}} ->
+        {:ok, tools}
+      
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected tools list but got: #{inspect(response)}")}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Calls a tool with the given arguments.
   """
   def call_tool(client, tool_name, args, timeout \\ 30_000) do
-    GenServer.call(
-      client,
-      {:request, "tools/call", %{"name" => tool_name, "arguments" => args}},
-      timeout
-    )
+    case GenServer.call(
+           client,
+           {:request, "tools/call", %{"name" => tool_name, "arguments" => args}},
+           timeout
+         ) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, tool_name: tool_name)
+        {:ok, response}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Lists available resources from the server.
   """
   def list_resources(client, timeout \\ 5_000) do
-    GenServer.call(client, {:request, "resources/list", %{}}, timeout)
+    case GenServer.call(client, {:request, "resources/list", %{}}, timeout) do
+      {:ok, %{"resources" => resources}} ->
+        {:ok, resources}
+      
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected resources list but got: #{inspect(response)}")}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Reads a resource by URI.
   """
   def read_resource(client, uri, timeout \\ 10_000) do
-    GenServer.call(client, {:request, "resources/read", %{"uri" => uri}}, timeout)
+    case GenServer.call(client, {:request, "resources/read", %{"uri" => uri}}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, resource_uri: uri)
+        {:ok, response}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Lists available prompts from the server.
   """
   def list_prompts(client, timeout \\ 5_000) do
-    GenServer.call(client, {:request, "prompts/list", %{}}, timeout)
+    case GenServer.call(client, {:request, "prompts/list", %{}}, timeout) do
+      {:ok, %{"prompts" => prompts}} ->
+        {:ok, prompts}
+      
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected prompts list but got: #{inspect(response)}")}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Gets a prompt with the given arguments.
   """
   def get_prompt(client, prompt_name, args \\ %{}, timeout \\ 5_000) do
-    GenServer.call(
-      client,
-      {:request, "prompts/get", %{"name" => prompt_name, "arguments" => args}},
-      timeout
-    )
+    case GenServer.call(
+           client,
+           {:request, "prompts/get", %{"name" => prompt_name, "arguments" => args}},
+           timeout
+         ) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, prompt_name: prompt_name)
+        {:ok, response}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """

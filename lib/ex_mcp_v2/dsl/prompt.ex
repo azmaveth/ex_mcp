@@ -11,6 +11,7 @@ defmodule ExMCP.DSL.Prompt do
 
   ## Examples
 
+      # Design-compliant syntax (recommended)
       defprompt "code_review" do
         name "Code Review Assistant"
         description "Reviews code with specific focus areas"
@@ -26,6 +27,16 @@ defmodule ExMCP.DSL.Prompt do
       defprompt "greeting" do
         name "Greeting Template"
         description "A simple greeting prompt"
+      end
+
+      # Legacy syntax (deprecated but supported)
+      defprompt "legacy_prompt" do
+        prompt_name "Legacy Prompt"  # Deprecated - use name/1
+        prompt_description "Legacy description"  # Deprecated - use description/1
+        
+        arguments do
+          arg :data, description: "Some data"
+        end
       end
   """
   defmacro defprompt(prompt_name, do: body) do
@@ -57,19 +68,41 @@ defmodule ExMCP.DSL.Prompt do
   end
 
   @doc """
-  Sets the display name for the current prompt.
+  Sets the display name for the current prompt (design-compliant syntax).
   """
-  defmacro prompt_name(display_name) do
+  defmacro name(display_name) do
     quote do
       @__prompt_display_name__ unquote(display_name)
     end
   end
 
   @doc """
-  Sets the description for the current prompt.
+  Sets the description for the current prompt (design-compliant syntax).
+  """
+  defmacro description(desc) do
+    quote do
+      @__prompt_description__ unquote(desc)
+    end
+  end
+
+  @doc """
+  Sets the display name for the current prompt (deprecated syntax).
+  """
+  defmacro prompt_name(display_name) do
+    quote do
+      require Logger
+      Logger.warning("prompt_name/1 is deprecated. Use name/1 instead.")
+      @__prompt_display_name__ unquote(display_name)
+    end
+  end
+
+  @doc """
+  Sets the description for the current prompt (deprecated syntax).
   """
   defmacro prompt_description(desc) do
     quote do
+      require Logger
+      Logger.warning("prompt_description/1 is deprecated. Use description/1 instead.")
       @__prompt_description__ unquote(desc)
     end
   end

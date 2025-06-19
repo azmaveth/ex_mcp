@@ -11,6 +11,17 @@ defmodule ExMCP.DSL.Tool do
 
   ## Examples
 
+      # Design-compliant syntax (recommended)
+      deftool "say_hello" do
+        description "Says hello to a given name"
+        input_schema %{
+          type: "object",
+          properties: %{name: %{type: "string"}},
+          required: ["name"]
+        }
+      end
+
+      # Alternative with Elixir-native schema (also compliant)
       deftool "calculate_sum" do
         description "Adds two numbers together"
         
@@ -20,13 +31,12 @@ defmodule ExMCP.DSL.Tool do
         end
       end
       
-      # With escape hatch for complex JSON Schema
-      deftool "complex_tool" do
-        description "A complex tool"
-        input_schema %{
-          "type" => "object",
-          "properties" => %{"pattern" => %{"type" => "string", "pattern" => "^[a-z]+$"}}
-        }
+      # Legacy syntax (deprecated but supported)
+      deftool "legacy_tool" do
+        tool_description "Legacy description syntax"  # Deprecated - use description/1
+        args do
+          field :data, :string, required: true
+        end
       end
   """
   defmacro deftool(name, do: body) do
@@ -62,10 +72,21 @@ defmodule ExMCP.DSL.Tool do
   end
 
   @doc """
-  Sets the description for the current tool.
+  Sets the description for the current tool (design-compliant syntax).
+  """
+  defmacro description(desc) do
+    quote do
+      @__tool_description__ unquote(desc)
+    end
+  end
+
+  @doc """
+  Sets the description for the current tool (deprecated syntax).
   """
   defmacro tool_description(desc) do
     quote do
+      require Logger
+      Logger.warning("tool_description/1 is deprecated. Use description/1 instead.")
       @__tool_description__ unquote(desc)
     end
   end

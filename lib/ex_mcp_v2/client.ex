@@ -31,6 +31,8 @@ defmodule ExMCP.ClientV2 do
   require Logger
 
   alias ExMCP.Internal.Protocol
+  alias ExMCP.Response
+  alias ExMCP.Error
 
   # Client state structure
   defmodule State do
@@ -105,55 +107,136 @@ defmodule ExMCP.ClientV2 do
   @doc """
   Lists available tools from the server.
   """
-  @spec list_tools(GenServer.server(), timeout()) :: {:ok, map()} | {:error, term()}
+  @spec list_tools(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, Error.t()}
   def list_tools(client, timeout \\ 5_000) do
-    GenServer.call(client, {:request, "tools/list", %{}}, timeout)
+    case GenServer.call(client, {:request, "tools/list", %{}}, timeout) do
+      {:ok, %{"tools" => tools}} ->
+        {:ok, tools}
+      
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected tools list but got: #{inspect(response)}")}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Calls a tool with the given arguments.
   """
   @spec call_tool(GenServer.server(), String.t(), map(), timeout()) ::
-          {:ok, map()} | {:error, term()}
+          {:ok, Response.t()} | {:error, Error.t()}
   def call_tool(client, tool_name, arguments, timeout \\ 30_000) do
     params = %{"name" => tool_name, "arguments" => arguments}
-    GenServer.call(client, {:request, "tools/call", params}, timeout)
+    
+    case GenServer.call(client, {:request, "tools/call", params}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, tool_name: tool_name)
+        {:ok, response}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Lists available resources from the server.
   """
-  @spec list_resources(GenServer.server(), timeout()) :: {:ok, map()} | {:error, term()}
+  @spec list_resources(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, Error.t()}
   def list_resources(client, timeout \\ 5_000) do
-    GenServer.call(client, {:request, "resources/list", %{}}, timeout)
+    case GenServer.call(client, {:request, "resources/list", %{}}, timeout) do
+      {:ok, %{"resources" => resources}} ->
+        {:ok, resources}
+      
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected resources list but got: #{inspect(response)}")}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Reads a resource by URI.
   """
   @spec read_resource(GenServer.server(), String.t(), timeout()) ::
-          {:ok, map()} | {:error, term()}
+          {:ok, Response.t()} | {:error, Error.t()}
   def read_resource(client, uri, timeout \\ 10_000) do
     params = %{"uri" => uri}
-    GenServer.call(client, {:request, "resources/read", params}, timeout)
+    
+    case GenServer.call(client, {:request, "resources/read", params}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, resource_uri: uri)
+        {:ok, response}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Lists available prompts from the server.
   """
-  @spec list_prompts(GenServer.server(), timeout()) :: {:ok, map()} | {:error, term()}
+  @spec list_prompts(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, Error.t()}
   def list_prompts(client, timeout \\ 5_000) do
-    GenServer.call(client, {:request, "prompts/list", %{}}, timeout)
+    case GenServer.call(client, {:request, "prompts/list", %{}}, timeout) do
+      {:ok, %{"prompts" => prompts}} ->
+        {:ok, prompts}
+      
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected prompts list but got: #{inspect(response)}")}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Gets a prompt with the given arguments.
   """
   @spec get_prompt(GenServer.server(), String.t(), map(), timeout()) ::
-          {:ok, map()} | {:error, term()}
+          {:ok, Response.t()} | {:error, Error.t()}
   def get_prompt(client, prompt_name, arguments \\ %{}, timeout \\ 5_000) do
     params = %{"name" => prompt_name, "arguments" => arguments}
-    GenServer.call(client, {:request, "prompts/get", params}, timeout)
+    
+    case GenServer.call(client, {:request, "prompts/get", params}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, prompt_name: prompt_name)
+        {:ok, response}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
@@ -162,6 +245,43 @@ defmodule ExMCP.ClientV2 do
   @spec get_status(GenServer.server()) :: {:ok, map()}
   def get_status(client) do
     GenServer.call(client, :get_status)
+  end
+
+  @doc """
+  Performs a completion request.
+  """
+  @spec complete(GenServer.server(), map(), timeout()) :: {:ok, Response.t()} | {:error, Error.t()}
+  def complete(client, ref, timeout \\ 5_000) do
+    case GenServer.call(client, {:request, "completion/complete", %{"ref" => ref}}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response)
+        {:ok, response}
+      
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+      
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Sends a notification to the server.
+  """
+  @spec send_notification(GenServer.server(), String.t(), map()) :: :ok | {:error, term()}
+  def send_notification(client, method, params) do
+    GenServer.call(client, {:notification, method, params})
+  end
+
+  @doc """
+  Stops the client gracefully.
+  """
+  @spec stop(GenServer.server()) :: :ok
+  @spec stop(GenServer.server(), term()) :: :ok
+  def stop(client, reason \\ :normal) do
+    GenServer.stop(client, reason)
   end
 
   # GenServer callbacks
@@ -212,6 +332,21 @@ defmodule ExMCP.ClientV2 do
 
       status ->
         {:reply, {:error, {:not_connected, status}}, state}
+    end
+  end
+
+  def handle_call({:notification, method, params}, _from, state) do
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => method,
+      "params" => params
+    }
+
+    case send_message(notification, state) do
+      {:ok, updated_state} ->
+        {:reply, :ok, %{updated_state | last_activity: System.monotonic_time()}}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 

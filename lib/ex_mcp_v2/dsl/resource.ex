@@ -11,6 +11,7 @@ defmodule ExMCP.DSL.Resource do
 
   ## Examples
 
+      # Design-compliant syntax (recommended)
       defresource "config://app/settings" do
         name "Application Settings"
         description "Current application configuration"
@@ -29,6 +30,13 @@ defmodule ExMCP.DSL.Resource do
         mime_type "text/plain"
         list_pattern true
         subscribable true
+      end
+
+      # Legacy syntax (deprecated but supported)
+      defresource "legacy://resource" do
+        resource_name "Legacy Resource"  # Deprecated - use name/1
+        resource_description "Legacy description"  # Deprecated - use description/1
+        mime_type "text/plain"
       end
   """
   defmacro defresource(uri, do: body) do
@@ -113,19 +121,50 @@ defmodule ExMCP.DSL.Resource do
   end
 
   @doc """
-  Sets the human-readable name for the current resource.
+  Sets the human-readable name for the current resource (design-compliant syntax).
   """
-  defmacro resource_name(resource_name) do
+  defmacro name(resource_name) do
     quote do
       @__resource_name__ unquote(resource_name)
     end
   end
 
   @doc """
-  Sets the description for the current resource.
+  Sets the description for the current resource (design-compliant syntax).
+  """
+  defmacro description(desc) do
+    quote do
+      @__resource_description__ unquote(desc)
+    end
+  end
+
+  @doc """
+  Sets annotations for the current resource (design-compliant syntax).
+  """
+  defmacro annotations(annotations) do
+    quote do
+      @__resource_annotations__ unquote(annotations)
+    end
+  end
+
+  @doc """
+  Sets the human-readable name for the current resource (deprecated syntax).
+  """
+  defmacro resource_name(resource_name) do
+    quote do
+      require Logger
+      Logger.warning("resource_name/1 is deprecated. Use name/1 instead.")
+      @__resource_name__ unquote(resource_name)
+    end
+  end
+
+  @doc """
+  Sets the description for the current resource (deprecated syntax).
   """
   defmacro resource_description(desc) do
     quote do
+      require Logger
+      Logger.warning("resource_description/1 is deprecated. Use description/1 instead.")
       @__resource_description__ unquote(desc)
     end
   end
@@ -140,10 +179,12 @@ defmodule ExMCP.DSL.Resource do
   end
 
   @doc """
-  Sets annotations for the current resource.
+  Sets annotations for the current resource (deprecated syntax).
   """
   defmacro resource_annotations(annotations) do
     quote do
+      require Logger
+      Logger.warning("resource_annotations/1 is deprecated. Use annotations/1 instead.")
       @__resource_annotations__ unquote(annotations)
     end
   end

@@ -51,8 +51,8 @@ defmodule ExMCP.MixProject do
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
       {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
-      {:plug_cowboy, "~> 2.7", only: :test},
-      {:plug, "~> 1.16", only: :test},
+      {:plug_cowboy, "~> 2.7"},
+      {:plug, "~> 1.16"},
       {:fuse, "~> 2.4", optional: true},
       # ExMCP v2 dependencies
       {:ex_json_schema, "~> 0.10", only: [:dev, :test]},

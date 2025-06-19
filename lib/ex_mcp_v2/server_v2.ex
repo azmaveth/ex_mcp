@@ -14,19 +14,22 @@ defmodule ExMCP.ServerV2 do
         
         deftool "hello" do
           description "Says hello"
-          
-          args do
-            field :name, :string, required: true, description: "Name to greet"
-          end
+          input_schema %{
+            type: "object",
+            properties: %{name: %{type: "string"}},
+            required: ["name"]
+          }
         end
         
         defresource "config://app" do
           name "App Config"
+          description "Application configuration"
           mime_type "application/json"
         end
         
         defprompt "greeting" do
           name "Greeting Template"
+          description "A greeting template"
           
           arguments do
             arg :style, description: "Greeting style"
@@ -144,10 +147,11 @@ defmodule ExMCP.ServerV2 do
     quote do
       use GenServer
 
-      # Import DSL macros - import all needed macros, conflicts resolved by import order
+      # Import DSL macros - Tool DSL can use name/description freely since tools are primary
       import ExMCP.DSL.Tool
-      import ExMCP.DSL.Resource
-      import ExMCP.DSL.Prompt
+      # For resources and prompts, use scoped functions to avoid conflicts  
+      import ExMCP.DSL.Resource, only: [defresource: 2, resource_name: 1, resource_description: 1, mime_type: 1, annotations: 1, resource_annotations: 1, subscribable: 1, list_pattern: 1]
+      import ExMCP.DSL.Prompt, only: [defprompt: 2, prompt_name: 1, prompt_description: 1, arguments: 1, arg: 1, arg: 2]
 
       # Import content helpers
       import ExMCP.ContentV2,
@@ -189,10 +193,58 @@ defmodule ExMCP.ServerV2 do
       @server_opts unquote(opts)
 
       @doc """
-      Starts the server.
+      Starts the server with optional transport configuration.
+      
+      ## Options
+      
+      * `:transport` - Transport type (`:http`, `:stdio`, `:sse`, `:native`). Default: `:native`
+      * `:port` - Port for HTTP/SSE transports. Default: 4000
+      * `:host` - Host for HTTP transports. Default: "localhost"
+      * Other options are passed to the underlying transport
+      
+      ## Examples
+      
+          # Start with HTTP transport
+          MyServer.start_link(transport: :http, port: 8080)
+          
+          # Start with stdio transport
+          MyServer.start_link(transport: :stdio)
+          
+          # Start with native transport (default)
+          MyServer.start_link()
       """
       def start_link(opts \\ []) do
-        GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+        transport = Keyword.get(opts, :transport, :native)
+        
+        case transport do
+          :native ->
+            # Start as a regular GenServer for native transport
+            GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+            
+          _ ->
+            # Use transport manager for other transports
+            server_info = case @server_opts do
+              nil -> %{name: to_string(__MODULE__), version: "1.0.0"}
+              opts -> Keyword.get(opts, :server_info, %{name: to_string(__MODULE__), version: "1.0.0"})
+            end
+            
+            tools = get_tools() |> Map.values()
+            
+            ExMCP.Server.Transport.start_server(__MODULE__, server_info, tools, opts)
+        end
+      end
+      
+      @doc """
+      Gets the child specification for supervision trees.
+      """
+      def child_spec(opts) do
+        %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, [opts]},
+          type: :worker,
+          restart: :permanent,
+          shutdown: 500
+        }
       end
 
       @doc """
@@ -298,6 +350,21 @@ defmodule ExMCP.ServerV2 do
 
         # Default implementation returns empty map state
         {:ok, Map.new(args)}
+      end
+
+      # Handle server info requests
+      @impl GenServer
+      def handle_call(:get_server_info, _from, state) do
+        server_info = case @server_opts do
+          nil -> %{name: to_string(__MODULE__), version: "1.0.0"}
+          opts -> Keyword.get(opts, :server_info, %{name: to_string(__MODULE__), version: "1.0.0"})
+        end
+        {:reply, server_info, state}
+      end
+      
+      # Default handle_call fallback
+      def handle_call(request, _from, state) do
+        {:reply, {:error, {:unknown_call, request}}, state}
       end
 
       # Register all capabilities with the ExMCP.Registry

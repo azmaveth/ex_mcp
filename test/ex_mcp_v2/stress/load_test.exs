@@ -236,7 +236,7 @@ defmodule ExMCP.Stress.LoadTest do
     test "error recovery under stress" do
       MockServer.with_server([error_rate: 0.3], fn _client ->
         # Test that system remains stable even with 30% error rate
-        {time, results} =
+        {_time, results} =
           :timer.tc(fn ->
             1..200
             |> Task.async_stream(
