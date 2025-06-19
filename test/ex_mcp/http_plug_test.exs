@@ -5,7 +5,7 @@ defmodule ExMCP.HttpPlugTest do
   alias ExMCP.HttpPlug
 
   defmodule TestServer do
-    use ExMCP.ServerV2
+    use ExMCP.Server
 
     deftool "test_tool" do
       tool_description("A test tool")

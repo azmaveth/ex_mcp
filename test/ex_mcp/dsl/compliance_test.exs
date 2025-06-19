@@ -4,7 +4,7 @@ defmodule ExMCP.DSL.ComplianceTest do
 
   # Test server using design-compliant DSL syntax
   defmodule DesignCompliantServer do
-    use ExMCP.ServerV2
+    use ExMCP.Server
 
     deftool "say_hello" do
       description("Says hello to a given name")
@@ -118,7 +118,7 @@ defmodule ExMCP.DSL.ComplianceTest do
 
   # Test server using deprecated syntax (with warnings)
   defmodule DeprecatedSyntaxServer do
-    use ExMCP.ServerV2
+    use ExMCP.Server
 
     deftool "legacy_tool" do
       # Should generate warning

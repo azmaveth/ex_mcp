@@ -1,1915 +1,771 @@
 defmodule ExMCP.Client do
   @moduledoc """
-  MCP client for connecting to Model Context Protocol servers.
+  High-level, synchronous MCP client implementation.
 
-  This module provides both MCP specification features and ExMCP extensions.
+  This client provides a reliable, synchronous interface for MCP communication.
+  It guarantees that the connection is established and the MCP handshake is 
+  complete before `start_link/1` returns, eliminating race conditions.
 
-  ## MCP Specification Features
+  ## Features
 
-  Core protocol operations that are portable across all MCP implementations:
+  - Synchronous initialization - client is ready when `start_link` returns
+  - Automatic reconnection with exponential backoff
+  - Transport abstraction with fallback support
+  - Clear lifecycle management
+  - Type-safe request/response handling
 
-  - `initialize/2` - Initialize connection with server
-  - `list_tools/2` - List available tools
-  - `call_tool/4` - Execute a tool
-  - `list_resources/2` - List available resources
-  - `read_resource/3` - Read resource content
-  - `list_prompts/2` - List available prompts
-  - `get_prompt/3` - Get a specific prompt
-  - `list_roots/2` - List server roots
-  - `subscribe_resource/3` - Subscribe to resource changes
-  - `create_message/3` - Request LLM sampling
-  - `send_cancelled/3` - Cancel an in-flight request
-  - `ping/2` - Keep-alive ping
+  ## Usage
 
-  ## ExMCP Extensions
-
-  > #### Extension Features {: .warning}
-  > These features are specific to ExMCP and not part of the official MCP specification.
-
-  - **Resource Unsubscribe** - `unsubscribe_resource/3` to cancel subscriptions (not in MCP spec)
-  - **Automatic Reconnection** - Reconnects on connection failure
-  - **Batch Operations** - `batch_request/3` for efficient multi-request handling
-  - **Process Monitoring** - Integration with OTP supervision trees
-  - **Request Tracking** - `get_pending_requests/1` for debugging
-  - **Connection Management** - `disconnect/1`
-
-  ## Basic Example
-
-      # Connect to a server
+      # Start a client - blocks until connected
       {:ok, client} = ExMCP.Client.start_link(
-        transport: :stdio,
-        command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-        name: :fs_client
+        transport: :http,
+        url: "http://localhost:8080"
       )
-
-      # List available tools
-      {:ok, %{"tools" => tools}} = ExMCP.Client.list_tools(client)
-
-      # Call a tool
-      {:ok, result} = ExMCP.Client.call_tool(client, "read_file", %{
-        "path" => "/tmp/example.txt"
-      })
-
-  ## Progress Tracking
-
-  For tools that support progress notifications:
-
-      # Call with progress token
-      {:ok, result} = ExMCP.Client.call_tool(
-        client,
-        "process_large_file",
-        %{"path" => "/tmp/large.csv"},
-        progress_token: "process-123"
-      )
-
-      # The server will send progress notifications that are logged
-
-  ## Sampling/LLM Integration
-
-  If the server supports sampling (LLM integration):
-
-      {:ok, response} = ExMCP.Client.create_message(client, %{
-        messages: [
-          %{
-            role: "user",
-            content: %{type: "text", text: "Explain quantum computing"}
-          }
-        ],
-        modelPreferences: %{
-          hints: [%{name: "claude-3-sonnet"}],
-          temperature: 0.7,
-          maxTokens: 1000
-        }
-      })
-
-      # Response includes the generated content
-      IO.puts(response["content"]["text"])
-
-  ## Notifications
-
-  The client automatically handles server notifications:
-
-  - Resource changes (`notifications/resources/list_changed`)
-  - Resource updates (`notifications/resources/updated`)
-  - Tool changes (`notifications/tools/list_changed`)
-  - Prompt changes (`notifications/prompts/list_changed`)
-  - Progress updates (`notifications/progress`)
-
-  These are logged by default. To handle them programmatically,
-  implement a custom client that processes notifications.
+      
+      # Client is guaranteed to be ready
+      {:ok, tools} = ExMCP.Client.list_tools(client)
+      {:ok, result} = ExMCP.Client.call_tool(client, "hello", %{name: "world"})
   """
 
   use GenServer
   require Logger
 
-  alias ExMCP.Transport
-  alias ExMCP.Internal.{Protocol, VersionRegistry}
-  alias ExMCP.Authorization.{ErrorHandler, TokenManager}
+  alias ExMCP.Internal.Protocol
+  alias ExMCP.Response
+  alias ExMCP.Error
 
-  @reconnect_interval 5_000
-  @request_timeout 30_000
+  # Client state structure
+  defmodule State do
+    @moduledoc false
 
-  # Client state
-  defstruct [
-    :transport_mod,
-    :transport_opts,
-    :transport_state,
-    :server_info,
-    :server_capabilities,
-    :negotiated_version,
-    :protocol_version,
-    :pending_requests,
-    :initialized,
-    :client_info,
-    :handler,
-    :handler_state,
-    :auth_config,
-    :token_manager
-  ]
+    defstruct [
+      :transport_mod,
+      :transport_state,
+      :transport_opts,
+      :server_info,
+      :server_capabilities,
+      :connection_status,
+      :pending_requests,
+      :last_activity,
+      :session_id,
+      :receiver_task,
+      :reconnect_timer,
+      :reconnect_attempts,
+      :max_reconnect_attempts,
+      :reconnect_interval
+    ]
+
+    @type connection_status ::
+            :connecting
+            | :connected
+            | :ready
+            | :disconnected
+            | :error
+
+    @type t :: %__MODULE__{
+            transport_mod: module(),
+            transport_state: term(),
+            transport_opts: keyword(),
+            server_info: map() | nil,
+            server_capabilities: map() | nil,
+            connection_status: connection_status(),
+            pending_requests: %{String.t() => {from :: GenServer.from(), started_at :: integer()}},
+            last_activity: integer() | nil,
+            session_id: String.t() | nil,
+            receiver_task: Task.t() | nil,
+            reconnect_timer: reference() | nil,
+            reconnect_attempts: non_neg_integer(),
+            max_reconnect_attempts: non_neg_integer(),
+            reconnect_interval: non_neg_integer()
+          }
+  end
 
   # Public API
 
   @doc """
-  Starts an MCP client.
+  Starts a new MCP client.
+
+  The client will connect to the server and complete the MCP handshake
+  before returning. If the connection fails, `{:error, reason}` is returned.
 
   ## Options
 
-  - `:transport` - Transport type (:stdio, :http, or module)
-  - `:name` - GenServer name (optional)
-  - `:client_info` - Client information map with :name and :version
-  - `:handler` - Module implementing `ExMCP.Client.Handler` behaviour (optional)
-  - `:handler_state` - Initial state for the handler (optional)
-  - `:auth_config` - Authorization configuration (optional)
+  - `:transport` - Transport module (:stdio, :http, :sse, :native)
+  - `:name` - Optional GenServer name
+  - `:timeout` - Connection timeout in ms (default: 10_000)
+  - `:max_reconnect_attempts` - Max reconnection attempts (default: 5)
+  - `:reconnect_interval` - Base reconnection interval in ms (default: 1_000)
 
-  Transport-specific options are passed through.
-
-  ## Authorization
-
-  To enable automatic authorization handling:
-
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :http,
-        url: "https://api.example.com",
-        auth_config: %{
-          client_id: "my-client",
-          client_secret: "secret",
-          token_endpoint: "https://auth.example.com/token",
-          initial_token: %{
-            "access_token" => "...",
-            "refresh_token" => "...",
-            "expires_in" => 3600
-          }
-        }
-      )
-
-  The client will automatically:
-  - Add Authorization headers to all requests
-  - Refresh tokens before expiration
-  - Handle 401/403 responses appropriately
-
-  ## Bi-directional Communication
-
-  If a handler is provided, the client can respond to requests from the server.
-  This enables bi-directional communication where the server can:
-  - Ping the client
-  - Request the client's file system roots
-  - Request the client to sample an LLM
-
-  ## Example
-
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :stdio,
-        handler: MyClientHandler,
-        handler_state: %{roots: [%{uri: "file:///home", name: "Home"}]}
-      )
+  Plus transport-specific options (e.g., `:url` for HTTP, `:command` for stdio)
   """
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    {name, opts} = Keyword.pop(opts, :name)
-    gen_opts = if name, do: [name: name], else: []
-    GenServer.start_link(__MODULE__, opts, gen_opts)
+    {name_opts, init_opts} = Keyword.split(opts, [:name])
+    GenServer.start_link(__MODULE__, init_opts, name_opts)
   end
 
   @doc """
   Lists available tools from the server.
-
-  ## Options
-  - `:cursor` - Optional cursor for pagination
-  - `:timeout` - Request timeout (default: 30 seconds)
-  - `:meta` - Optional metadata to include in the request
-
-  ## Return value
-  Returns a tuple with:
-  - `:ok` tuple containing tools list and optional nextCursor
-  - `:error` tuple with error reason
-
-  ## Examples
-      {:ok, %{tools: tools, nextCursor: cursor}} = Client.list_tools(client, cursor: "page2")
-      {:ok, %{tools: tools}} = Client.list_tools(client, meta: %{"requestId" => "123"})
+  Supports pagination with cursor.
   """
-  @spec list_tools(GenServer.server(), keyword()) ::
-          {:ok, %{tools: [ExMCP.Types.tool()], nextCursor: String.t() | nil}} | {:error, any()}
+  @spec list_tools(GenServer.server(), keyword()) :: {:ok, map()} | {:error, Error.t()}
   def list_tools(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @request_timeout)
+    timeout = Keyword.get(opts, :timeout, 5_000)
     cursor = Keyword.get(opts, :cursor)
-    meta = Keyword.get(opts, :meta)
-    GenServer.call(client, {:list_tools, cursor, meta}, timeout)
+    
+    params = if cursor, do: %{cursor: cursor}, else: %{}
+    
+    case GenServer.call(client, {:request, "tools/list", params}, timeout) do
+      {:ok, %{"tools" => tools} = response} ->
+        result = %{tools: tools}
+        result = if response["nextCursor"], do: Map.put(result, :nextCursor, response["nextCursor"]), else: result
+        {:ok, result}
+
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected tools list but got: #{inspect(response)}")}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Calls a tool with the given arguments.
-
+  
   ## Options
-  - `:progress_token` - Optional token for progress tracking
+  
+  * `:timeout` - Request timeout in milliseconds (default: 30_000)
+  * `:progress_token` - Token for progress notifications
   """
-  @spec call_tool(GenServer.server(), String.t(), map(), keyword() | timeout()) ::
-          {:ok, ExMCP.Types.tool_result()} | {:error, any()}
-  def call_tool(client, name, arguments, opts \\ []) do
-    {timeout, opts} =
-      if is_integer(opts) or opts == :infinity do
-        {opts, []}
-      else
-        Keyword.pop(opts, :timeout, @request_timeout)
-      end
-
+  @spec call_tool(GenServer.server(), String.t(), map(), timeout() | keyword()) ::
+          {:ok, Response.t()} | {:error, Error.t()}
+  def call_tool(client, tool_name, arguments, timeout_or_opts \\ 30_000)
+  
+  def call_tool(client, tool_name, arguments, timeout) when is_integer(timeout) do
+    call_tool(client, tool_name, arguments, timeout: timeout)
+  end
+  
+  def call_tool(client, tool_name, arguments, opts) when is_list(opts) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
     progress_token = Keyword.get(opts, :progress_token)
-    meta = Keyword.get(opts, :meta)
+    
+    # Add progress token to arguments meta if provided
+    arguments = if progress_token do
+      Map.put(arguments, "_meta", %{"progressToken" => progress_token})
+    else
+      arguments
+    end
+    
+    params = %{"name" => tool_name, "arguments" => arguments}
 
-    # Support both :progress_token and :meta options
-    meta_to_send =
-      cond do
-        meta != nil -> meta
-        progress_token != nil -> %{"progressToken" => progress_token}
-        true -> nil
-      end
+    case GenServer.call(client, {:request, "tools/call", params}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, tool_name: tool_name)
+        {:ok, response}
 
-    GenServer.call(client, {:call_tool, name, arguments, meta_to_send}, timeout)
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Lists available resources from the server.
-
-  ## Options
-  - `:cursor` - Optional cursor for pagination
-  - `:timeout` - Request timeout (default: 30 seconds)
-  - `:meta` - Optional metadata to include in the request
-
-  ## Return value
-  Returns a tuple with:
-  - `:ok` tuple containing resources list and optional nextCursor
-  - `:error` tuple with error reason
-
-  ## Example
-      {:ok, %{resources: resources, nextCursor: cursor}} = Client.list_resources(client, cursor: "page2")
   """
-  @spec list_resources(GenServer.server(), keyword()) ::
-          {:ok, %{resources: [ExMCP.Types.resource()], nextCursor: String.t() | nil}}
-          | {:error, any()}
-  def list_resources(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @request_timeout)
-    cursor = Keyword.get(opts, :cursor)
-    meta = Keyword.get(opts, :meta)
-    GenServer.call(client, {:list_resources, cursor, meta}, timeout)
+  @spec list_resources(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, Error.t()}
+  def list_resources(client, timeout \\ 5_000) do
+    case GenServer.call(client, {:request, "resources/list", %{}}, timeout) do
+      {:ok, %{"resources" => resources}} ->
+        {:ok, resources}
+
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected resources list but got: #{inspect(response)}")}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Reads a resource by URI.
   """
   @spec read_resource(GenServer.server(), String.t(), timeout()) ::
-          {:ok, ExMCP.Types.read_resource_result()} | {:error, any()}
-  def read_resource(client, uri, timeout \\ @request_timeout) do
-    GenServer.call(client, {:read_resource, uri}, timeout)
+          {:ok, Response.t()} | {:error, Error.t()}
+  def read_resource(client, uri, timeout \\ 10_000) do
+    params = %{"uri" => uri}
+
+    case GenServer.call(client, {:request, "resources/read", params}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, resource_uri: uri)
+        {:ok, response}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Lists available prompts from the server.
-
-  ## Options
-  - `:cursor` - Optional cursor for pagination
-  - `:timeout` - Request timeout (default: 30 seconds)
-  - `:meta` - Optional metadata to include in the request
-
-  ## Return value
-  Returns a tuple with:
-  - `:ok` tuple containing prompts list and optional nextCursor
-  - `:error` tuple with error reason
-
-  ## Examples
-      {:ok, %{prompts: prompts, nextCursor: cursor}} = Client.list_prompts(client, cursor: "page2")
-      {:ok, %{prompts: prompts}} = Client.list_prompts(client, meta: %{"requestId" => "456"})
   """
-  @spec list_prompts(GenServer.server(), keyword()) ::
-          {:ok, %{prompts: [ExMCP.Types.prompt()], nextCursor: String.t() | nil}}
-          | {:error, any()}
-  def list_prompts(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @request_timeout)
-    cursor = Keyword.get(opts, :cursor)
-    meta = Keyword.get(opts, :meta)
-    GenServer.call(client, {:list_prompts, cursor, meta}, timeout)
+  @spec list_prompts(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, Error.t()}
+  def list_prompts(client, timeout \\ 5_000) do
+    case GenServer.call(client, {:request, "prompts/list", %{}}, timeout) do
+      {:ok, %{"prompts" => prompts}} ->
+        {:ok, prompts}
+
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected prompts list but got: #{inspect(response)}")}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
   Gets a prompt with the given arguments.
   """
-  @spec get_prompt(GenServer.server(), String.t()) ::
-          {:ok, ExMCP.Types.prompt_message()} | {:error, any()}
-  @spec get_prompt(GenServer.server(), String.t(), map()) ::
-          {:ok, ExMCP.Types.prompt_message()} | {:error, any()}
-  @spec get_prompt(GenServer.server(), String.t(), map(), timeout() | keyword()) ::
-          {:ok, ExMCP.Types.prompt_message()} | {:error, any()}
-  def get_prompt(client, name, arguments \\ %{}, opts \\ []) do
-    {timeout, opts} =
-      if is_integer(opts) or opts == :infinity do
-        {opts, []}
-      else
-        Keyword.pop(opts, :timeout, @request_timeout)
-      end
+  @spec get_prompt(GenServer.server(), String.t(), map(), timeout()) ::
+          {:ok, Response.t()} | {:error, Error.t()}
+  def get_prompt(client, prompt_name, arguments \\ %{}, timeout \\ 5_000) do
+    params = %{"name" => prompt_name, "arguments" => arguments}
 
-    meta = Keyword.get(opts, :meta)
-    GenServer.call(client, {:get_prompt, name, arguments, meta}, timeout)
+    case GenServer.call(client, {:request, "prompts/get", params}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response, prompt_name: prompt_name)
+        {:ok, response}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
-  Creates a message using the server's LLM sampling capability.
+  Gets the current connection status.
   """
-  @spec create_message(GenServer.server(), ExMCP.Types.create_message_params()) ::
-          {:ok, ExMCP.Types.create_message_result()} | {:error, any()}
-  @spec create_message(
-          GenServer.server(),
-          ExMCP.Types.create_message_params(),
-          timeout() | keyword()
-        ) ::
-          {:ok, ExMCP.Types.create_message_result()} | {:error, any()}
-  def create_message(client, params, opts \\ []) do
-    {timeout, opts} =
-      if is_integer(opts) or opts == :infinity do
-        {opts, []}
-      else
-        Keyword.pop(opts, :timeout, @request_timeout)
-      end
-
-    meta = Keyword.get(opts, :meta)
-    GenServer.call(client, {:create_message, params, meta}, timeout)
+  @spec get_status(GenServer.server()) :: {:ok, map()}
+  def get_status(client) do
+    GenServer.call(client, :get_status)
   end
 
   @doc """
-  Gets server information.
+  Performs a completion request.
   """
-  @spec server_info(GenServer.server()) ::
-          {:ok, ExMCP.Types.server_info()} | {:error, :not_initialized}
-  def server_info(client) do
-    GenServer.call(client, :server_info)
+  @spec complete(GenServer.server(), map(), timeout()) ::
+          {:ok, Response.t()} | {:error, Error.t()}
+  def complete(client, ref, timeout \\ 5_000) do
+    case GenServer.call(client, {:request, "completion/complete", %{"ref" => ref}}, timeout) do
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response)
+        {:ok, response}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
-  Gets server capabilities.
+  Sends a notification to the server.
   """
-  @spec server_capabilities(GenServer.server()) ::
-          {:ok, ExMCP.Types.server_capabilities()} | {:error, :not_initialized}
-  def server_capabilities(client) do
-    GenServer.call(client, :server_capabilities)
+  @spec send_notification(GenServer.server(), String.t(), map()) :: :ok | {:error, term()}
+  def send_notification(client, method, params) do
+    GenServer.call(client, {:notification, method, params})
   end
 
   @doc """
-  Gets the negotiated protocol version.
-
-  Returns the protocol version that was negotiated during initialization.
-  This is the version that both client and server agreed to use.
-
-  ## Examples
-
-      {:ok, "2025-03-26"} = ExMCP.Client.negotiated_version(client)
-
+  Stops the client gracefully.
   """
-  @spec negotiated_version(GenServer.server()) ::
-          {:ok, String.t()} | {:error, :not_initialized}
-  def negotiated_version(client) do
-    GenServer.call(client, :negotiated_version)
-  end
-
-  @doc """
-  Lists available roots from the server.
-  """
-  @spec list_roots(GenServer.server(), timeout()) ::
-          {:ok, %{roots: [ExMCP.Types.root()]}} | {:error, any()}
-  def list_roots(client, timeout \\ @request_timeout) do
-    GenServer.call(client, :list_roots, timeout)
-  end
-
-  @doc """
-  Subscribes to resource updates.
-  """
-  @spec subscribe_resource(GenServer.server(), String.t(), timeout()) ::
-          {:ok, map()} | {:error, any()}
-  def subscribe_resource(client, uri, timeout \\ @request_timeout) do
-    GenServer.call(client, {:subscribe_resource, uri}, timeout)
-  end
-
-  @doc """
-  Alias for subscribe_resource/3 for backward compatibility.
-  """
-  @spec subscribe(GenServer.server(), String.t(), timeout()) ::
-          {:ok, map()} | {:error, any()}
-  def subscribe(client, uri, timeout \\ @request_timeout) do
-    subscribe_resource(client, uri, timeout)
-  end
-
-  @doc """
-  Unsubscribes from resource updates.
-
-  > #### ExMCP Extension {: .info}
-  > This is an ExMCP extension. The MCP specification does not define a resources/unsubscribe method.
-  > This will only work with ExMCP servers or servers that have implemented this extension.
-  """
-  @spec unsubscribe_resource(GenServer.server(), String.t(), timeout()) ::
-          {:ok, map()} | {:error, any()}
-  def unsubscribe_resource(client, uri, timeout \\ @request_timeout) do
-    GenServer.call(client, {:unsubscribe_resource, uri}, timeout)
-  end
-
-  @doc """
-  Lists available resource templates.
-  """
-  @spec list_resource_templates(GenServer.server(), keyword()) ::
-          {:ok,
-           %{resourceTemplates: [ExMCP.Types.resource_template()], nextCursor: String.t() | nil}}
-          | {:error, any()}
-  def list_resource_templates(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @request_timeout)
-    cursor = Keyword.get(opts, :cursor)
-    GenServer.call(client, {:list_resource_templates, cursor}, timeout)
-  end
-
-  @doc """
-  Sends a ping request to the server.
-  """
-  @spec ping(GenServer.server(), timeout()) :: :ok | {:error, any()}
-  def ping(client, timeout \\ @request_timeout) do
-    GenServer.call(client, :ping, timeout)
-  end
-
-  @doc """
-  Sets the server's log level.
-
-  Valid levels are: "debug", "info", "warning", "error".
-
-  > #### Draft Feature {: .info}
-  > This implements a draft MCP specification feature (`logging/setLevel`) that may change.
-
-  ## Examples
-
-      {:ok, %{}} = ExMCP.Client.set_log_level(client, "debug")
-      {:ok, %{}} = ExMCP.Client.set_log_level(client, "error")
-
-  @doc api: :draft
-  """
-  @spec set_log_level(GenServer.server(), String.t(), timeout()) :: {:ok, map()} | {:error, any()}
-  def set_log_level(client, level, timeout \\ @request_timeout) do
-    GenServer.call(client, {:set_log_level, level}, timeout)
-  end
-
-  @doc """
-  Sends a completion request.
-  """
-  @spec complete(
-          GenServer.server(),
-          ExMCP.Types.complete_ref(),
-          ExMCP.Types.complete_argument()
-        ) ::
-          {:ok, ExMCP.Types.complete_result()} | {:error, any()}
-  @spec complete(
-          GenServer.server(),
-          ExMCP.Types.complete_ref(),
-          ExMCP.Types.complete_argument(),
-          timeout() | keyword()
-        ) ::
-          {:ok, ExMCP.Types.complete_result()} | {:error, any()}
-  def complete(client, ref, argument, opts \\ []) do
-    {timeout, opts} =
-      if is_integer(opts) or opts == :infinity do
-        {opts, []}
-      else
-        Keyword.pop(opts, :timeout, @request_timeout)
-      end
-
-    meta = Keyword.get(opts, :meta)
-    GenServer.call(client, {:complete, ref, argument, meta}, timeout)
-  end
-
-  @doc """
-  Sends a batch of requests to the server.
-
-  JSON-RPC batching is available in 2025-03-26 and removed in draft.
-  The initialize request MUST NOT be included in a batch.
-
-  ## Examples
-
-      # Create batch requests
-      batch = [
-        ExMCP.Protocol.encode_request("tools/list", %{}),
-        ExMCP.Protocol.encode_request("resources/list", %{})
-      ]
-
-      {:ok, responses} = ExMCP.Client.send_batch(client, batch)
-
-  """
-  @spec send_batch(GenServer.server(), [map()], timeout()) ::
-          {:ok, [map()]} | {:error, any()}
-  def send_batch(client, batch, timeout \\ @request_timeout) do
-    GenServer.call(client, {:send_batch, batch}, timeout)
-  end
-
-  @doc """
-  Sends a cancellation notification for a request.
-
-  The request ID should be from a currently in-progress request.
-  Cancellation notifications can only be sent in the same direction
-  as the original request (e.g., if client made request, client can cancel).
-
-  ## Examples
-
-      # Cancel a specific request
-      :ok = ExMCP.Client.send_cancelled(client, "req_123", "User cancelled")
-
-      # Cancel without reason
-      :ok = ExMCP.Client.send_cancelled(client, "req_123")
-
-  """
-  @spec send_cancelled(GenServer.server(), ExMCP.Types.request_id(), String.t() | nil) :: :ok
-  def send_cancelled(client, request_id, reason \\ nil) do
-    GenServer.cast(client, {:send_cancelled, request_id, reason})
-  end
-
-  @doc """
-  Gets the list of currently pending request IDs.
-
-  > #### Extension Feature {: .warning}
-  > This is an ExMCP extension for debugging and monitoring, not part of the MCP specification.
-
-  This can be useful for debugging or implementing cancellation UIs.
-
-  ## Examples
-
-      pending_ids = ExMCP.Client.get_pending_requests(client)
-      # => ["req_123", "req_124"]
-
-      # Cancel all pending requests
-      Enum.each(pending_ids, fn id ->
-        ExMCP.Client.send_cancelled(client, id, "Shutdown")
-      end)
-
-  """
-  @spec get_pending_requests(GenServer.server()) :: [ExMCP.Types.request_id()]
-  def get_pending_requests(client) do
-    GenServer.call(client, :get_pending_requests)
-  end
-
-  @doc """
-  Sends a log message notification.
-  """
-  @spec log_message(GenServer.server(), ExMCP.Types.log_level(), String.t(), any()) :: :ok
-  def log_message(client, level, message, data \\ nil) do
-    GenServer.cast(client, {:log_message, level, message, data})
-  end
-
-  @doc """
-  Sends a batch of requests to the server.
-
-  This uses standard JSON-RPC batch processing which is only available
-  in protocol version 2025-03-26. The server must support this version
-  for batch requests to work.
-
-  Takes a list of request specifications and returns a list of results
-  in the same order. Each request spec is a tuple of the function name
-  and arguments.
-
-  ## Example
-
-      requests = [
-        {:list_tools, []},
-        {:list_resources, []},
-        {:read_resource, ["file:///data.txt"]}
-      ]
-
-      {:ok, [tools, resources, content]} = ExMCP.Client.batch_request(client, requests)
-
-  ## Request Specifications
-
-  - `{:list_tools, []}`
-  - `{:call_tool, [name, arguments]}` or `{:call_tool, [name, arguments, progress_token]}`
-  - `{:list_resources, []}`
-  - `{:read_resource, [uri]}`
-  - `{:list_prompts, []}`
-  - `{:get_prompt, [name, arguments]}`
-  - `{:create_message, [messages, options]}`
-  - `{:list_roots, []}`
-  - `{:list_resource_templates, [cursor]}`
-  - `{:ping, []}`
-  - `{:complete, [ref, argument]}`
-  """
-  @spec batch_request(GenServer.server(), list({atom(), list()}), timeout() | nil) ::
-          {:ok, list(any())} | {:error, any()}
-  def batch_request(client, requests, timeout \\ nil) do
-    actual_timeout = timeout || @request_timeout * length(requests)
-    GenServer.call(client, {:batch_request, requests}, actual_timeout)
-  end
-
-  @doc """
-  Disconnects from the MCP server gracefully.
-
-  > #### Extension Feature {: .warning}
-  > This is an ExMCP extension for clean disconnection, following draft specification guidelines.
-
-  Performs a clean shutdown by:
-  1. Stopping message reception
-  2. Closing the transport connection
-  3. Cleaning up resources
-
-  ## Example
-
-      :ok = ExMCP.Client.disconnect(client)
-  """
-  @spec disconnect(GenServer.server()) :: :ok
-  def disconnect(client) do
-    GenServer.call(client, :disconnect)
+  @spec stop(GenServer.server()) :: :ok
+  @spec stop(GenServer.server(), term()) :: :ok
+  def stop(client, reason \\ :normal) do
+    GenServer.stop(client, reason)
   end
 
   # GenServer callbacks
 
-  @impl true
+  @impl GenServer
   def init(opts) do
-    transport_type = Keyword.fetch!(opts, :transport)
-    transport_mod = Transport.get_transport(transport_type)
-
-    client_info =
-      Keyword.get(opts, :client_info, %{
-        name: "ex_mcp",
-        version: ExMCP.version()
-      })
-
-    # Get protocol version from options or use preferred
-    protocol_version =
-      Keyword.get(opts, :protocol_version, VersionRegistry.preferred_version())
-
-    # Initialize handler if provided
-    {handler, handler_state} =
-      case Keyword.get(opts, :handler) do
-        nil ->
-          {nil, nil}
-
-        {handler_mod, handler_args} when is_atom(handler_mod) ->
-          case handler_mod.init(handler_args) do
-            {:ok, initial_state} ->
-              {handler_mod, initial_state}
-
-            other ->
-              Logger.warning("Handler init returned unexpected value: #{inspect(other)}")
-              {nil, nil}
-          end
-
-        handler_mod when is_atom(handler_mod) ->
-          handler_args = Keyword.get(opts, :handler_state, %{})
-
-          case handler_mod.init(handler_args) do
-            {:ok, initial_state} ->
-              {handler_mod, initial_state}
-
-            other ->
-              Logger.warning("Handler init returned unexpected value: #{inspect(other)}")
-              {nil, nil}
-          end
-      end
-
-    # Initialize authorization if configured
-    {auth_config, token_manager} = init_authorization(opts)
-
-    state = %__MODULE__{
-      transport_mod: transport_mod,
-      transport_opts: opts,
-      transport_state: nil,
-      pending_requests: %{},
-      initialized: false,
-      client_info: client_info,
-      protocol_version: protocol_version,
-      handler: handler,
-      handler_state: handler_state,
-      auth_config: auth_config,
-      token_manager: token_manager
-    }
-
-    {:ok, state, {:continue, :connect}}
-  end
-
-  @impl true
-  def handle_continue(:connect, state) do
-    case connect_and_initialize(state) do
-      {:ok, new_state} ->
-        {:noreply, new_state}
+    # Synchronous initialization - complete connection before returning
+    case connect_and_initialize(opts) do
+      {:ok, state} ->
+        {:ok, state}
 
       {:error, reason} ->
-        Logger.error("Failed to connect to MCP server: #{inspect(reason)}")
-        Process.send_after(self(), :reconnect, @reconnect_interval)
-        {:noreply, state}
+        Logger.error("Failed to initialize MCP client: #{inspect(reason)}")
+        {:stop, reason}
     end
   end
 
-  @impl true
-  def handle_call({:list_tools, cursor}, from, state) do
-    send_request(Protocol.encode_list_tools(cursor), from, state)
-  end
+  @impl GenServer
+  def handle_call({:request, method, params}, from, state) do
+    case state.connection_status do
+      :ready ->
+        # Generate request ID and send
+        request_id = generate_request_id()
 
-  def handle_call({:list_tools, cursor, meta}, from, state) do
-    send_request(Protocol.encode_list_tools(cursor, meta), from, state)
-  end
+        request = %{
+          "jsonrpc" => "2.0",
+          "id" => request_id,
+          "method" => method,
+          "params" => params
+        }
 
-  def handle_call({:call_tool, name, arguments}, from, state) do
-    send_request(Protocol.encode_call_tool(name, arguments), from, state)
-  end
+        case send_message(request, state) do
+          {:ok, updated_state} ->
+            # Track pending request
+            pending = Map.put(state.pending_requests, request_id, {from, System.monotonic_time()})
 
-  def handle_call({:call_tool, name, arguments, meta_or_progress_token}, from, state) do
-    send_request(Protocol.encode_call_tool(name, arguments, meta_or_progress_token), from, state)
-  end
+            new_state = %{
+              updated_state
+              | pending_requests: pending,
+                last_activity: System.monotonic_time()
+            }
 
-  def handle_call({:list_resources, cursor}, from, state) do
-    send_request(Protocol.encode_list_resources(cursor), from, state)
-  end
-
-  def handle_call({:list_resources, cursor, meta}, from, state) do
-    send_request(Protocol.encode_list_resources(cursor, meta), from, state)
-  end
-
-  def handle_call({:read_resource, uri}, from, state) do
-    send_request(Protocol.encode_read_resource(uri), from, state)
-  end
-
-  def handle_call({:list_prompts, cursor}, from, state) do
-    send_request(Protocol.encode_list_prompts(cursor), from, state)
-  end
-
-  def handle_call({:list_prompts, cursor, meta}, from, state) do
-    send_request(Protocol.encode_list_prompts(cursor, meta), from, state)
-  end
-
-  def handle_call({:get_prompt, name, arguments}, from, state) do
-    send_request(Protocol.encode_get_prompt(name, arguments), from, state)
-  end
-
-  def handle_call({:get_prompt, name, arguments, meta}, from, state) do
-    send_request(Protocol.encode_get_prompt(name, arguments, meta), from, state)
-  end
-
-  def handle_call({:create_message, params}, from, state) do
-    send_request(Protocol.encode_create_message(params), from, state)
-  end
-
-  def handle_call({:create_message, params, meta}, from, state) do
-    send_request(Protocol.encode_create_message(params, meta), from, state)
-  end
-
-  def handle_call(:server_info, _from, state) do
-    if state.initialized do
-      {:reply, {:ok, state.server_info}, state}
-    else
-      {:reply, {:error, :not_initialized}, state}
-    end
-  end
-
-  def handle_call(:server_capabilities, _from, state) do
-    if state.initialized do
-      {:reply, {:ok, state.server_capabilities}, state}
-    else
-      {:reply, {:error, :not_initialized}, state}
-    end
-  end
-
-  def handle_call(:negotiated_version, _from, state) do
-    if state.initialized do
-      {:reply, {:ok, state.negotiated_version}, state}
-    else
-      {:reply, {:error, :not_initialized}, state}
-    end
-  end
-
-  def handle_call(:get_pending_requests, _from, state) do
-    pending_ids = Map.keys(state.pending_requests)
-    {:reply, pending_ids, state}
-  end
-
-  def handle_call(:list_roots, from, state) do
-    send_request(Protocol.encode_list_roots(), from, state)
-  end
-
-  def handle_call({:subscribe_resource, uri}, from, state) do
-    send_request(Protocol.encode_subscribe_resource(uri), from, state)
-  end
-
-  def handle_call({:unsubscribe_resource, uri}, from, state) do
-    send_request(Protocol.encode_unsubscribe_resource(uri), from, state)
-  end
-
-  def handle_call({:list_resource_templates, cursor}, from, state) do
-    send_request(Protocol.encode_list_resource_templates(cursor), from, state)
-  end
-
-  def handle_call(:ping, from, state) do
-    send_request(Protocol.encode_ping(), from, state)
-  end
-
-  def handle_call({:set_log_level, level}, from, state) do
-    send_request(Protocol.encode_set_log_level(level), from, state)
-  end
-
-  def handle_call({:complete, ref, argument}, from, state) do
-    send_request(Protocol.encode_complete(ref, argument), from, state)
-  end
-
-  def handle_call({:complete, ref, argument, meta}, from, state) do
-    send_request(Protocol.encode_complete(ref, argument, meta), from, state)
-  end
-
-  def handle_call({:send_batch, batch}, from, state) do
-    # Check if batch requests are supported in negotiated version
-    if state.negotiated_version == "draft" do
-      {:reply, {:error, "JSON-RPC batching not supported in draft version"}, state}
-    else
-      if state.initialized && state.transport_state do
-        case Protocol.encode_to_string(batch) do
-          {:ok, json} ->
-            case send_with_auth(json, state) do
-              {:ok, new_transport_state} ->
-                # Generate a batch ID to track this batch request
-                batch_id = Protocol.generate_id()
-                # Store the batch request with a special marker
-                pending =
-                  Map.put(state.pending_requests, batch_id, {from, :batch_simple, length(batch)})
-
-                # Notify receiver loop of transport state update for non-SSE HTTP
-                notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
-
-                {:noreply,
-                 %{state | transport_state: new_transport_state, pending_requests: pending}}
-
-              {:error, reason} ->
-                {:reply, {:error, reason}, state}
-            end
+            {:noreply, new_state}
 
           {:error, reason} ->
             {:reply, {:error, reason}, state}
         end
-      else
-        {:reply, {:error, :not_connected}, state}
-      end
+
+      status ->
+        {:reply, {:error, {:not_connected, status}}, state}
     end
   end
 
-  def handle_call(:disconnect, _from, state) do
-    # Perform clean shutdown
-    if state.transport_state && state.transport_mod do
-      # Close the transport connection
-      case state.transport_mod.close(state.transport_state) do
-        :ok ->
-          {:reply, :ok, %{state | transport_state: nil, initialized: false}}
+  def handle_call({:notification, method, params}, _from, state) do
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => method,
+      "params" => params
+    }
 
-        {:error, reason} ->
-          Logger.warning("Error closing transport: #{inspect(reason)}")
-          {:reply, :ok, %{state | transport_state: nil, initialized: false}}
-      end
-    else
-      {:reply, :ok, state}
+    case send_message(notification, state) do
+      {:ok, updated_state} ->
+        {:reply, :ok, %{updated_state | last_activity: System.monotonic_time()}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
-  def handle_call({:batch_request, requests}, from, state) do
-    # Check if batch requests are supported in negotiated version
-    if state.negotiated_version != "2025-03-26" do
-      {:reply,
-       {:error,
-        "Batch requests only supported in protocol version 2025-03-26, current: #{state.negotiated_version}"},
-       state}
-    else
-      # Build batch of encoded requests
-      {batch_messages, request_map} =
-        Enum.reduce(requests, {[], %{}}, fn request_spec, {messages, req_map} ->
-          {message, id} = encode_request_spec(request_spec, state)
-          {[message | messages], Map.put(req_map, id, request_spec)}
-        end)
+  def handle_call(:get_status, _from, state) do
+    status = %{
+      connection_status: state.connection_status,
+      server_info: state.server_info,
+      server_capabilities: state.server_capabilities,
+      pending_requests: map_size(state.pending_requests),
+      reconnect_attempts: state.reconnect_attempts
+    }
 
-      batch = Protocol.encode_batch(Enum.reverse(batch_messages))
-
-      # Generate a batch ID to track this batch request
-      batch_id = Protocol.generate_id()
-
-      case Protocol.encode_to_string(batch) do
-        {:ok, json} ->
-          case send_with_auth(json, state) do
-            {:ok, new_transport_state} ->
-              # Store the batch request
-              pending = Map.put(state.pending_requests, batch_id, {from, :batch, request_map})
-
-              # Notify receiver loop of transport state update for non-SSE HTTP
-              notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
-
-              {:noreply,
-               %{state | transport_state: new_transport_state, pending_requests: pending}}
-
-            {:error, reason} ->
-              {:reply, {:error, reason}, state}
-          end
-
-        {:error, reason} ->
-          {:reply, {:error, reason}, state}
-      end
-    end
+    {:reply, {:ok, status}, state}
   end
 
-  @impl true
-  def handle_cast({:send_cancelled, request_id, reason}, state) do
-    case Protocol.encode_cancelled(request_id, reason) do
-      {:ok, notification} ->
-        # Send cancellation notification
-        send_notification(notification, state)
-
-        # Remove the request from pending if it exists
-        case Map.pop(state.pending_requests, request_id) do
-          {nil, _pending} ->
-            # Request not found in pending - that's okay
-            {:noreply, state}
-
-          {from, new_pending} ->
-            # Request was pending, reply with cancellation error and remove it
-            GenServer.reply(from, {:error, :cancelled})
-            {:noreply, %{state | pending_requests: new_pending}}
-        end
-
-      {:error, :cannot_cancel_initialize} ->
-        Logger.warning("Cannot cancel initialize request as per MCP specification")
-        {:noreply, state}
-    end
-  end
-
-  def handle_cast({:log_message, level, message, data}, state) do
-    send_notification(Protocol.encode_log_message(level, message, data), state)
-  end
-
-  @impl true
-  def handle_info(:reconnect, state) do
-    handle_continue(:connect, state)
-  end
-
-  # Handle SSE connection events
-  def handle_info({:sse_connected, _sse_pid}, state) do
-    Logger.debug("SSE connection established")
-    {:noreply, state}
-  end
-
-  def handle_info({:sse_error, _sse_pid, reason}, state) do
-    Logger.error("SSE error: #{inspect(reason)}")
-    {:noreply, state}
-  end
-
-  def handle_info({:sse_closed, _sse_pid}, state) do
-    Logger.error("SSE connection closed")
-    {:noreply, state}
-  end
-
-  def handle_info({:sse_event, _sse_pid, _event_data}, state) do
-    # SSE events should go directly to receiver loop now
-    # This handler is only for backward compatibility
-    {:noreply, state}
-  end
-
-  # Handle port messages that might arrive before ownership transfer
-  def handle_info({port, {:data, _data}}, state) when is_port(port) do
-    # Ignore port messages - they should be handled by the transport
-    {:noreply, state}
-  end
-
-  def handle_info({port, {:exit_status, _status}}, state) when is_port(port) do
-    # Port exited - treat as transport closed
-    {:noreply, state}
-  end
-
+  @impl GenServer
   def handle_info({:transport_message, message}, state) do
+    # Handle incoming messages from transport
     case Protocol.parse_message(message) do
-      {:request, method, params, id} ->
-        # Server is making a request to us
-        handle_server_request(method, params, id, state)
+      {:result, result, id} when is_map_key(state.pending_requests, id) ->
+        # Response to a pending request
+        {{from, _started_at}, pending} = Map.pop(state.pending_requests, id)
 
-      {:result, result, id} ->
-        handle_response(result, id, state)
+        # Send response to waiting caller
+        GenServer.reply(from, {:ok, result})
 
-      {:error, error, id} ->
-        handle_error_response(error, id, state)
+        {:noreply, %{state | pending_requests: pending, last_activity: System.monotonic_time()}}
+
+      {:error, error, id} when is_map_key(state.pending_requests, id) ->
+        # Error response to a pending request
+        {{from, _started_at}, pending} = Map.pop(state.pending_requests, id)
+
+        # Send error to waiting caller
+        GenServer.reply(from, {:error, error})
+
+        {:noreply, %{state | pending_requests: pending, last_activity: System.monotonic_time()}}
 
       {:notification, method, params} ->
-        handle_notification(method, params, state)
+        # Server notification - handle it
+        handle_notification(%{"method" => method, "params" => params}, state)
 
-      {:batch, messages} ->
-        handle_batch_response(messages, state)
+      {:error, :invalid_message} ->
+        Logger.error("Failed to parse transport message: invalid message")
+        {:noreply, state}
 
       _ ->
-        Logger.warning("Unexpected message from server: #{inspect(message)}")
+        # Unknown message type, ignore
         {:noreply, state}
     end
   end
 
   def handle_info({:transport_closed, reason}, state) do
     Logger.warning("Transport closed: #{inspect(reason)}")
-    Process.send_after(self(), :reconnect, @reconnect_interval)
-    {:noreply, %{state | transport_state: nil, initialized: false}}
+    new_state = %{state | connection_status: :disconnected}
+
+    # Cancel pending requests
+    for {_id, {from, _}} <- state.pending_requests do
+      GenServer.reply(from, {:error, :disconnected})
+    end
+
+    # Schedule reconnection
+    {:noreply, schedule_reconnect(new_state)}
+  end
+
+  def handle_info(:reconnect, state) do
+    case attempt_reconnect(state) do
+      {:ok, new_state} ->
+        {:noreply, new_state}
+
+      {:error, _reason} ->
+        {:noreply, schedule_reconnect(state)}
+    end
+  end
+
+  def handle_info({:DOWN, _ref, :process, task_pid, reason}, %{receiver_task: task} = state)
+      when task != nil and task.pid == task_pid do
+    Logger.error("Receiver task crashed: #{inspect(reason)}")
+    new_state = %{state | receiver_task: nil, connection_status: :error}
+    {:noreply, schedule_reconnect(new_state)}
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
   end
 
   # Private functions
 
-  defp connect_and_initialize(state) do
-    Logger.debug("Client connecting with transport: #{inspect(state.transport_mod)}")
+  defp connect_and_initialize(opts) do
+    transport = determine_transport(opts)
+    transport_opts = build_transport_opts(transport, opts)
 
-    with {:ok, transport_state} <- state.transport_mod.connect(state.transport_opts),
-         :ok <- start_receiver(transport_state, state.transport_mod),
-         {:ok, init_result} <- initialize_connection(transport_state, state) do
-      new_state = %{
+    with {:ok, transport_state} <- connect_transport(transport, transport_opts),
+         {:ok, state} <- perform_mcp_handshake(transport, transport_state, opts) do
+      # Start receiver task
+      receiver_task = start_receiver_task(transport, transport_state)
+
+      final_state = %{
         state
-        | transport_state: transport_state,
-          server_info: init_result["serverInfo"],
-          server_capabilities: init_result["capabilities"],
-          negotiated_version: init_result["protocolVersion"],
-          initialized: true
+        | receiver_task: receiver_task,
+          connection_status: :ready,
+          reconnect_attempts: 0
       }
 
-      {:ok, new_state}
+      {:ok, final_state}
     end
   end
 
-  defp initialize_connection(transport_state, state) do
-    # Use the protocol version from client state
-    # Build capabilities based on handler and version
-    capabilities = build_client_capabilities(state.handler, state.protocol_version)
-    init_msg = Protocol.encode_initialize(state.client_info, capabilities, state.protocol_version)
+  defp determine_transport(opts) do
+    case Keyword.get(opts, :transport, :stdio) do
+      :stdio -> ExMCP.Transport.Stdio
+      :http -> ExMCP.Transport.HTTP
+      :sse -> ExMCP.Transport.SSE
+      :native -> ExMCP.Transport.Native
+      :beam -> ExMCP.Transport.Native
+      :test -> ExMCP.Transport.Test
+      module when is_atom(module) -> module
+    end
+  end
 
-    with {:ok, json} <- Protocol.encode_to_string(init_msg),
-         {:ok, new_transport_state} <- state.transport_mod.send_message(json, transport_state) do
-      # Notify receiver loop for non-SSE HTTP transports
-      notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
-      # Wait for initialize response
-      receive do
-        {:transport_message, message} ->
-          case Protocol.parse_message(message) do
-            {:result, result, _id} ->
-              # Validate protocol version
-              server_version = result["protocolVersion"]
+  defp build_transport_opts(_transport, opts) do
+    # Filter out non-transport options
+    Keyword.drop(opts, [:transport, :timeout, :max_reconnect_attempts, :reconnect_interval])
+  end
 
-              # Validate protocol version (currently accepts all for compatibility)
-              validate_protocol_version(server_version)
-              # Send initialized notification
-              notif = Protocol.encode_initialized()
-              {:ok, json} = Protocol.encode_to_string(notif)
-              # For the notification, we use the latest transport state
-              state.transport_mod.send_message(json, new_transport_state)
-              {:ok, result}
+  defp connect_transport(transport_mod, opts) do
+    case transport_mod.connect(opts) do
+      {:ok, transport_state} -> {:ok, transport_state}
+      {:error, reason} -> {:error, {:transport_connect_failed, reason}}
+    end
+  end
 
-            {:error, error, _id} ->
-              {:error, error}
+  defp perform_mcp_handshake(transport_mod, transport_state, opts) do
+    # Build initial state
+    initial_state = %State{
+      transport_mod: transport_mod,
+      transport_state: transport_state,
+      transport_opts: build_transport_opts(transport_mod, opts),
+      connection_status: :connecting,
+      pending_requests: %{},
+      session_id: generate_session_id(),
+      reconnect_attempts: 0,
+      max_reconnect_attempts: Keyword.get(opts, :max_reconnect_attempts, 5),
+      reconnect_interval: Keyword.get(opts, :reconnect_interval, 1_000)
+    }
+
+    # Send initialize request
+    init_request =
+      Protocol.encode_initialize(
+        %{
+          "name" => "ExMCP",
+          "version" => "0.1.0"
+        },
+        %{},
+        "2024-11-05"
+      )
+
+    # Override the generated ID with our session-specific one
+    init_request = Map.put(init_request, "id", "init-#{initial_state.session_id}")
+
+    with {:ok, _} <- transport_mod.send(transport_state, Jason.encode!(init_request)),
+         {:ok, init_response} <-
+           wait_for_response(
+             transport_mod,
+             transport_state,
+             "init-#{initial_state.session_id}",
+             10_000
+           ),
+         :ok <- validate_initialize_response(init_response),
+         {:ok, _} <- send_initialized_notification(transport_mod, transport_state) do
+      updated_state = %{
+        initial_state
+        | server_info: get_in(init_response, ["result", "serverInfo"]),
+          server_capabilities: get_in(init_response, ["result", "capabilities"]),
+          connection_status: :connected
+      }
+
+      {:ok, updated_state}
+    end
+  end
+
+  defp wait_for_response(transport_mod, transport_state, expected_id, timeout) do
+    # Synchronously wait for a specific response
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    do_wait_for_response(transport_mod, transport_state, expected_id, deadline)
+  end
+
+  defp do_wait_for_response(transport_mod, transport_state, expected_id, deadline) do
+    now = System.monotonic_time(:millisecond)
+
+    if now >= deadline do
+      {:error, :timeout}
+    else
+      remaining = deadline - now
+
+      case transport_mod.recv(transport_state, remaining) do
+        {:ok, data, _new_state} ->
+          case Protocol.parse_message(data) do
+            {:result, result, ^expected_id} ->
+              {:ok, %{"result" => result, "id" => expected_id}}
+
+            {:error, error, ^expected_id} ->
+              {:ok, %{"error" => error, "id" => expected_id}}
 
             _ ->
-              {:error, :unexpected_response}
+              # Not our response, keep waiting
+              do_wait_for_response(transport_mod, transport_state, expected_id, deadline)
           end
-      after
-        10_000 ->
-          {:error, :initialize_timeout}
+
+        {:error, :timeout} ->
+          {:error, :timeout}
+
+        {:error, reason} ->
+          {:error, {:transport_error, reason}}
       end
     end
   end
 
-  defp start_receiver(transport_state, transport_mod) do
-    parent = self()
-
-    receiver_pid =
-      spawn_link(fn ->
-        receive_loop(transport_state, transport_mod, parent)
-      end)
-
-    # Store the receiver PID so we can forward messages to it
-    Process.put(:receiver_pid, receiver_pid)
-
-    # For SSE transports, redirect SSE events to go directly to the receiver loop
-    if transport_mod == ExMCP.Transport.HTTP and transport_state.use_sse and
-         transport_state.sse_pid do
-      # Tell the SSE client to send events to the receiver loop instead of the client process
-      send(transport_state.sse_pid, {:change_parent, receiver_pid})
-    end
-
+  defp validate_initialize_response(%{"result" => result}) when is_map(result) do
     :ok
   end
 
-  defp receive_loop(transport_state, transport_mod, parent) do
-    # For SSE transports, we receive events directly from the SSE client
-    if transport_mod == ExMCP.Transport.HTTP and transport_state.use_sse do
-      receive do
-        {:sse_event, _sse_pid, %{data: data, id: event_id}} ->
-          case Jason.decode(data) do
-            {:ok, %{"type" => "keep-alive"}} ->
-              # Ignore keep-alive messages and continue
-              receive_loop(transport_state, transport_mod, parent)
-
-            {:ok, message} ->
-              send(parent, {:transport_message, message})
-
-              new_state =
-                if event_id,
-                  do: %{transport_state | last_event_id: event_id},
-                  else: transport_state
-
-              receive_loop(new_state, transport_mod, parent)
-
-            {:error, _reason} ->
-              # Invalid JSON, continue receiving
-              receive_loop(transport_state, transport_mod, parent)
-          end
-
-        {:sse_error, _sse_pid, reason} ->
-          send(parent, {:transport_closed, {:sse_error, reason}})
-
-        {:sse_closed, _sse_pid} ->
-          send(parent, {:transport_closed, :connection_closed})
-      end
-    else
-      # For non-SSE transports, use the transport's receive_message
-      case transport_mod.receive_message(transport_state) do
-        {:ok, message, new_state} ->
-          send(parent, {:transport_message, message})
-          receive_loop(new_state, transport_mod, parent)
-
-        {:error, :no_response} ->
-          # For HTTP without SSE, wait for updated transport state with responses
-          receive do
-            {:update_transport_state, new_transport_state} ->
-              receive_loop(new_transport_state, transport_mod, parent)
-          after
-            100 ->
-              # Timeout waiting for update, continue polling
-              receive_loop(transport_state, transport_mod, parent)
-          end
-
-        {:error, reason} ->
-          send(parent, {:transport_closed, reason})
-      end
-    end
+  defp validate_initialize_response(%{"error" => error}) do
+    {:error, {:initialize_error, error}}
   end
 
-  defp send_request(message, from, state) do
-    if state.initialized && state.transport_state do
-      id = message["id"]
-
-      case Protocol.encode_to_string(message) do
-        {:ok, json} ->
-          case send_with_auth(json, state) do
-            {:ok, new_transport_state} ->
-              pending = Map.put(state.pending_requests, id, from)
-
-              new_state = %{
-                state
-                | transport_state: new_transport_state,
-                  pending_requests: pending
-              }
-
-              # Notify receiver loop of transport state update for non-SSE HTTP
-              notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
-
-              {:noreply, new_state}
-
-            {:error, reason} ->
-              {:reply, {:error, reason}, state}
-          end
-
-        {:error, reason} ->
-          {:reply, {:error, reason}, state}
-      end
-    else
-      {:reply, {:error, :not_connected}, state}
-    end
+  defp validate_initialize_response(_) do
+    {:error, :invalid_initialize_response}
   end
 
-  defp send_notification(message, state) do
-    if state.initialized && state.transport_state do
-      case Protocol.encode_to_string(message) do
-        {:ok, json} ->
-          case send_with_auth(json, state) do
-            {:ok, new_transport_state} ->
-              # Notify receiver loop of transport state update for non-SSE HTTP
-              notify_receiver_of_transport_update(new_transport_state, state.transport_mod)
-              {:noreply, %{state | transport_state: new_transport_state}}
-
-            {:error, reason} ->
-              Logger.error("Failed to send notification: #{inspect(reason)}")
-              {:noreply, state}
-          end
-
-        {:error, reason} ->
-          Logger.error("Failed to encode notification: #{inspect(reason)}")
-          {:noreply, state}
-      end
-    else
-      {:noreply, state}
-    end
+  defp send_initialized_notification(transport_mod, transport_state) do
+    notification = Protocol.encode_initialized()
+    transport_mod.send(transport_state, Jason.encode!(notification))
   end
 
-  defp handle_response(result, id, state) do
-    case Map.pop(state.pending_requests, id) do
-      {nil, _} ->
-        Logger.warning("Received response for unknown request #{id}")
-        {:noreply, state}
+  defp start_receiver_task(transport_mod, transport_state) do
+    parent = self()
 
-      {from, pending} ->
-        # Atomize keys in result for consistent API
-        atomized_result = atomize_keys(result)
-        GenServer.reply(from, {:ok, atomized_result})
-        {:noreply, %{state | pending_requests: pending}}
-    end
-  end
-
-  defp handle_error_response(error, id, state) do
-    case Map.pop(state.pending_requests, id) do
-      {nil, _} ->
-        Logger.warning("Received error for unknown request #{id}")
-        {:noreply, state}
-
-      {from, pending} ->
-        GenServer.reply(from, {:error, error})
-        {:noreply, %{state | pending_requests: pending}}
-    end
-  end
-
-  defp handle_batch_response(messages, state) do
-    parsed_responses = Protocol.parse_batch_response(messages)
-    {results, state} = process_batch_responses(parsed_responses, state)
-
-    {batch_requests, simple_batch_requests} = split_pending_batches(state.pending_requests)
-    state = handle_complex_batch_requests(batch_requests, results, state)
-    state = handle_simple_batch_requests(simple_batch_requests, parsed_responses, state)
-
-    {:noreply, state}
-  end
-
-  defp process_batch_responses(parsed_responses, state) do
-    Enum.reduce(parsed_responses, {%{}, state}, fn parsed, {results_acc, state_acc} ->
-      case parsed do
-        {:result, result, id} ->
-          atomized_result = atomize_keys(result)
-          {Map.put(results_acc, id, {:ok, atomized_result}), state_acc}
-
-        {:error, error, id} ->
-          {Map.put(results_acc, id, {:error, error}), state_acc}
-
-        {:notification, method, params} ->
-          {:noreply, new_state} = handle_notification(method, params, state_acc)
-          {results_acc, new_state}
-
-        _ ->
-          {results_acc, state_acc}
-      end
+    Task.async(fn ->
+      receive_loop(transport_mod, transport_state, parent)
     end)
   end
 
-  defp split_pending_batches(pending_requests) do
-    Enum.split_with(pending_requests, fn {_id, req} ->
-      match?({_from, :batch, _map}, req)
-    end)
-  end
-
-  defp handle_complex_batch_requests(batch_requests, results, state) do
-    Enum.reduce(batch_requests, state, fn {batch_id, {from, :batch, request_map}}, acc_state ->
-      all_responses = Enum.map(request_map, fn {id, _spec} -> Map.get(results, id) end)
-
-      if Enum.all?(all_responses, &(&1 != nil)) do
-        GenServer.reply(from, {:ok, all_responses})
-        %{acc_state | pending_requests: Map.delete(acc_state.pending_requests, batch_id)}
-      else
-        acc_state
-      end
-    end)
-  end
-
-  defp handle_simple_batch_requests(simple_batch_requests, parsed_responses, state) do
-    Enum.reduce(simple_batch_requests, state, fn {batch_id, req}, acc_state ->
-      case req do
-        {from, :batch_simple, expected_count} ->
-          if length(parsed_responses) == expected_count do
-            response_list = convert_simple_batch_responses(parsed_responses)
-            GenServer.reply(from, {:ok, response_list})
-            %{acc_state | pending_requests: Map.delete(acc_state.pending_requests, batch_id)}
-          else
-            acc_state
-          end
-
-        _ ->
-          acc_state
-      end
-    end)
-  end
-
-  defp convert_simple_batch_responses(parsed_responses) do
-    Enum.map(parsed_responses, fn parsed ->
-      case parsed do
-        {:result, result, _id} -> atomize_keys(result)
-        {:error, error, _id} -> %{"error" => error}
-        _ -> %{}
-      end
-    end)
-  end
-
-  defp handle_notification(method, params, state) do
-    case method do
-      "notifications/resources/list_changed" ->
-        handle_resources_list_changed_notification(state)
-
-      "notifications/resources/updated" ->
-        handle_resource_updated_notification(params, state)
-
-      "notifications/tools/list_changed" ->
-        handle_tools_list_changed_notification(state)
-
-      "notifications/prompts/list_changed" ->
-        handle_prompts_list_changed_notification(state)
-
-      "notifications/progress" ->
-        handle_progress_notification(params, state)
-
-      "notifications/roots/list_changed" ->
-        handle_roots_list_changed_notification(state)
-
-      "notifications/cancelled" ->
-        handle_cancellation_notification(params, state)
-
-      _ ->
-        Logger.debug("Received notification: #{method} #{inspect(params)}")
-        {:noreply, state}
-    end
-  end
-
-  # Individual notification handlers
-  defp handle_resources_list_changed_notification(state) do
-    Logger.info("Resources list changed")
-    # Could emit a telemetry event or update a cache here
-    {:noreply, state}
-  end
-
-  defp handle_resource_updated_notification(params, state) do
-    uri = Map.get(params, "uri", "unknown")
-    Logger.info("Resource updated: #{uri}")
-    {:noreply, state}
-  end
-
-  defp handle_tools_list_changed_notification(state) do
-    Logger.info("Tools list changed")
-    {:noreply, state}
-  end
-
-  defp handle_prompts_list_changed_notification(state) do
-    Logger.info("Prompts list changed")
-    {:noreply, state}
-  end
-
-  defp handle_progress_notification(params, state) do
-    token = Map.get(params, "progressToken", "unknown")
-    progress = Map.get(params, "progress", 0)
-    total = Map.get(params, "total")
-    message = Map.get(params, "message")
-
-    log_message = format_progress_message(token, progress, total, message)
-    Logger.info(log_message)
-    {:noreply, state}
-  end
-
-  defp handle_roots_list_changed_notification(state) do
-    Logger.info("Roots list changed")
-    {:noreply, state}
-  end
-
-  defp handle_cancellation_notification(params, state) do
-    case Map.get(params, "requestId") do
-      nil ->
-        Logger.warning("Ignoring malformed cancellation notification: #{inspect(params)}")
-        {:noreply, state}
-
-      request_id when is_binary(request_id) or is_integer(request_id) ->
-        handle_valid_cancellation(request_id, params, state)
-
-      _ ->
-        Logger.warning("Ignoring cancellation with invalid requestId type: #{inspect(params)}")
-        {:noreply, state}
-    end
-  end
-
-  defp handle_valid_cancellation(request_id, params, state) do
-    request_id_str = to_string(request_id)
-    reason = Map.get(params, "reason")
-    Logger.info("Request #{request_id_str} cancelled: #{reason || "no reason given"}")
-
-    # Check if this is a valid in-progress request (try both formats)
-    cond do
-      Map.has_key?(state.pending_requests, request_id) ->
-        cancel_pending_request(request_id, state)
-
-      Map.has_key?(state.pending_requests, request_id_str) ->
-        cancel_pending_request(request_id_str, state)
-
-      true ->
-        Logger.debug("Ignoring cancellation for unknown request #{request_id_str}")
-        {:noreply, state}
-    end
-  end
-
-  defp cancel_pending_request(request_id, state) do
-    from = Map.get(state.pending_requests, request_id)
-    Logger.debug("Cancelling in-progress request #{request_id}")
-    new_pending = Map.delete(state.pending_requests, request_id)
-    GenServer.reply(from, {:error, :cancelled})
-    {:noreply, %{state | pending_requests: new_pending}}
-  end
-
-  defp format_progress_message(token, progress, total, message) do
-    cond do
-      total && message -> "Progress [#{token}]: #{progress}/#{total} - #{message}"
-      total -> "Progress [#{token}]: #{progress}/#{total}"
-      message -> "Progress [#{token}]: #{progress} - #{message}"
-      true -> "Progress [#{token}]: #{progress}"
-    end
-  end
-
-  # Helper functions for batch requests
-
-  defp encode_request_spec({:list_tools, []}, _state) do
-    request = Protocol.encode_list_tools()
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:call_tool, [name, arguments]}, _state) do
-    request = Protocol.encode_call_tool(name, arguments)
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:call_tool, [name, arguments, progress_token]}, _state) do
-    request = Protocol.encode_call_tool(name, arguments, progress_token)
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:list_resources, []}, _state) do
-    request = Protocol.encode_list_resources()
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:read_resource, [uri]}, _state) do
-    request = Protocol.encode_read_resource(uri)
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:list_prompts, []}, _state) do
-    request = Protocol.encode_list_prompts()
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:get_prompt, [name, arguments]}, _state) do
-    request = Protocol.encode_get_prompt(name, arguments)
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:create_message, [params]}, _state) do
-    request = Protocol.encode_create_message(params)
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:list_roots, []}, _state) do
-    request = Protocol.encode_list_roots()
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:list_resource_templates, [cursor]}, _state) do
-    request = Protocol.encode_list_resource_templates(cursor)
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:ping, []}, _state) do
-    # ping is not implemented in Protocol yet
-    request = %{
-      "jsonrpc" => "2.0",
-      "method" => "ping",
-      "id" => Protocol.generate_id()
-    }
-
-    {request, request["id"]}
-  end
-
-  defp encode_request_spec({:complete, [ref, argument]}, _state) do
-    request = Protocol.encode_complete(ref, argument)
-    {request, request["id"]}
-  end
-
-  # Helper functions for server requests
-
-  defp build_client_capabilities(nil, _version), do: %{}
-
-  defp build_client_capabilities(handler, version) do
-    version = version || VersionRegistry.preferred_version()
-    base = %{}
-
-    # Add roots capability if handler implements list_roots
-    base =
-      if function_exported?(handler, :handle_list_roots, 1) do
-        Map.put(base, "roots", %{})
-      else
-        base
-      end
-
-    # Add sampling capability if handler implements create_message
-    base =
-      if function_exported?(handler, :handle_create_message, 2) do
-        sampling_caps = %{}
-
-        # Add elicitation support for draft version
-        sampling_caps =
-          if version == "draft" && function_exported?(handler, :handle_elicitation_create, 3) do
-            Map.put(sampling_caps, "elicitation", %{})
-          else
-            sampling_caps
-          end
-
-        Map.put(base, "sampling", sampling_caps)
-      else
-        base
-      end
-
-    # Always include experimental capabilities for future extensions
-    Map.put(base, "experimental", %{})
-  end
-
-  defp validate_protocol_version(server_version) do
-    # Currently we support these protocol versions
-    supported_versions = ["2025-03-26", "2024-11-05"]
-
-    cond do
-      server_version in supported_versions ->
-        true
-
-      is_nil(server_version) or server_version == "" ->
-        Logger.warning("Server returned empty protocol version")
-        # Accept for backwards compatibility
-        true
-
-      true ->
-        Logger.warning("Server returned unsupported protocol version: #{server_version}")
-        # For now, we'll be lenient and accept unknown versions
-        # In production, you might want to be more strict
-        true
-    end
-  end
-
-  defp handle_server_request(method, params, id, state) do
-    if state.handler do
-      case method do
-        "ping" ->
-          handle_ping_request(id, state)
-
-        "roots/list" ->
-          handle_list_roots_request(id, state)
-
-        "sampling/createMessage" ->
-          handle_create_message_request(params, id, state)
-
-        "elicitation/create" ->
-          handle_elicitation_create_request(params, id, state)
-
-        _ ->
-          # Unknown method
-          error =
-            Protocol.encode_error(
-              Protocol.method_not_found(),
-              "Method not supported: #{method}",
-              nil,
-              id
-            )
-
-          send_message(error, state)
-      end
-    else
-      # No handler configured, reject all requests
-      error =
-        Protocol.encode_error(
-          Protocol.method_not_found(),
-          "Client does not support server requests",
-          nil,
-          id
-        )
-
-      send_message(error, state)
-    end
-  end
-
-  defp handle_ping_request(id, state) do
-    case state.handler.handle_ping(state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = Protocol.encode_response(result, id)
-        send_message(response, %{state | handler_state: new_handler_state})
-
-      {:error, reason, new_handler_state} ->
-        error =
-          Protocol.encode_error(
-            Protocol.internal_error(),
-            format_error(reason),
-            nil,
-            id
-          )
-
-        send_message(error, %{state | handler_state: new_handler_state})
-    end
-  end
-
-  defp handle_list_roots_request(id, state) do
-    case state.handler.handle_list_roots(state.handler_state) do
-      {:ok, roots, new_handler_state} ->
-        response = Protocol.encode_response(%{"roots" => roots}, id)
-        send_message(response, %{state | handler_state: new_handler_state})
-
-      {:error, reason, new_handler_state} ->
-        error =
-          Protocol.encode_error(
-            Protocol.internal_error(),
-            format_error(reason),
-            nil,
-            id
-          )
-
-        send_message(error, %{state | handler_state: new_handler_state})
-    end
-  end
-
-  defp handle_create_message_request(params, id, state) do
-    case state.handler.handle_create_message(params, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = Protocol.encode_response(result, id)
-        send_message(response, %{state | handler_state: new_handler_state})
-
-      {:error, reason, new_handler_state} ->
-        error =
-          Protocol.encode_error(
-            Protocol.internal_error(),
-            format_error(reason),
-            nil,
-            id
-          )
-
-        send_message(error, %{state | handler_state: new_handler_state})
-    end
-  end
-
-  defp handle_elicitation_create_request(params, id, state) do
-    case state.handler.handle_elicitation_create(
-           params["message"],
-           params["requestedSchema"],
-           state.handler_state
-         ) do
-      {:ok, result, new_handler_state} ->
-        response = Protocol.encode_response(result, id)
-        send_message(response, %{state | handler_state: new_handler_state})
-
-      {:error, reason, new_handler_state} ->
-        error =
-          Protocol.encode_error(
-            Protocol.internal_error(),
-            format_error(reason),
-            nil,
-            id
-          )
-
-        send_message(error, %{state | handler_state: new_handler_state})
+  defp receive_loop(transport_mod, transport_state, parent) do
+    case transport_mod.recv(transport_state, :infinity) do
+      {:ok, data, new_state} ->
+        send(parent, {:transport_message, data})
+        receive_loop(transport_mod, new_state, parent)
+
+      {:error, :closed} ->
+        send(parent, {:transport_closed, :normal})
+
+      {:error, reason} ->
+        send(parent, {:transport_closed, reason})
     end
   end
 
   defp send_message(message, state) do
-    if state.initialized && state.transport_state do
-      case Protocol.encode_to_string(message) do
-        {:ok, json} ->
-          case state.transport_mod.send_message(json, state.transport_state) do
-            {:ok, new_transport_state} ->
-              {:noreply, %{state | transport_state: new_transport_state}}
+    encoded = Jason.encode!(message)
 
-            {:error, reason} ->
-              Logger.error("Failed to send message: #{inspect(reason)}")
-              {:noreply, state}
-          end
-
-        {:error, reason} ->
-          Logger.error("Failed to encode message: #{inspect(reason)}")
-          {:noreply, state}
-      end
-    else
-      Logger.warning("Cannot send message - not connected")
-      {:noreply, state}
-    end
-  end
-
-  defp format_error(reason) when is_binary(reason), do: reason
-  defp format_error(reason), do: inspect(reason)
-
-  # Helper to atomize keys in response maps
-  defp atomize_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {k, v} when is_binary(k) ->
-        atom_key = safe_string_to_atom(k)
-        {atom_key, atomize_keys(v)}
-
-      {k, v} ->
-        {k, atomize_keys(v)}
-    end)
-  end
-
-  defp atomize_keys(list) when is_list(list) do
-    Enum.map(list, &atomize_keys/1)
-  end
-
-  defp atomize_keys(value), do: value
-
-  # Safe string to atom conversion for known MCP protocol keys
-  defp safe_string_to_atom(key)
-       when key in [
-              "mimeType",
-              "nextCursor",
-              "tools",
-              "resources",
-              "prompts",
-              "contents",
-              "uri",
-              "text",
-              "blob",
-              "name",
-              "description",
-              "version",
-              "capabilities",
-              "protocolVersion",
-              "serverInfo",
-              "clientInfo",
-              "messages",
-              "role",
-              "content",
-              "type",
-              "inputSchema",
-              "outputSchema",
-              "annotations",
-              "arguments",
-              "required",
-              "listChanged",
-              "subscribe",
-              "hasArguments",
-              "values",
-              "experimental",
-              "batchProcessing",
-              "completion",
-              "temperature",
-              "conditions",
-              "humidity",
-              "wind",
-              "speed",
-              "direction",
-              "structuredContent",
-              "isError",
-              "meta",
-              "status",
-              "elicitationId",
-              "requiresAuth",
-              "scopes"
-            ] do
-    String.to_atom(key)
-  end
-
-  defp safe_string_to_atom(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> key
-  end
-
-  # Authorization helpers
-
-  defp init_authorization(opts) do
-    case Keyword.get(opts, :auth_config) do
-      nil ->
-        {nil, nil}
-
-      auth_config ->
-        # Start token manager
-        {:ok, token_manager} =
-          TokenManager.start_link(
-            auth_config: auth_config,
-            initial_token: auth_config[:initial_token]
-          )
-
-        {auth_config, token_manager}
-    end
-  end
-
-  defp send_with_auth(json, state) do
-    # Check if we have authorization configured
-    if state.token_manager && state.transport_mod == ExMCP.Transport.HTTP do
-      # Get current token
-      case TokenManager.get_token(state.token_manager) do
-        {:ok, token} ->
-          # Add authorization header to transport state
-          enhanced_transport_state = add_auth_to_transport(state.transport_state, token)
-
-          # Send with enhanced transport state
-          case state.transport_mod.send_message(json, enhanced_transport_state) do
-            {:ok, new_transport_state} ->
-              # Extract the base transport state without auth header for storage
-              {:ok, restore_transport_state(new_transport_state)}
-
-            {:error, {:http_error, 401, body}} ->
-              # Token might be expired, try refreshing
-              handle_auth_error_with_retry({:error, {:http_error, 401, body}}, json, state)
-
-            {:error, {:http_error, 403, body}} ->
-              # Forbidden - check if we need different permissions
-              handle_auth_error_with_retry({:error, {:http_error, 403, body}}, json, state)
-
-            error ->
-              error
-          end
-
-        {:error, :no_token} ->
-          # No token available, proceed without auth
-          state.transport_mod.send_message(json, state.transport_state)
-
-        {:error, reason} ->
-          {:error, {:auth_error, reason}}
-      end
-    else
-      # No auth configured or not HTTP transport
-      state.transport_mod.send_message(json, state.transport_state)
-    end
-  end
-
-  defp add_auth_to_transport(%ExMCP.Transport.HTTP{headers: headers} = transport_state, token) do
-    # Add or update Authorization header
-    auth_header = {"Authorization", "Bearer #{token}"}
-    updated_headers = update_header(headers, "Authorization", auth_header)
-    %{transport_state | headers: updated_headers}
-  end
-
-  defp restore_transport_state(%ExMCP.Transport.HTTP{headers: headers} = transport_state) do
-    # Remove Authorization header to avoid storing it in state
-    filtered_headers =
-      Enum.reject(headers, fn {name, _} ->
-        String.downcase(name) == "authorization"
-      end)
-
-    %{transport_state | headers: filtered_headers}
-  end
-
-  defp update_header(headers, header_name, new_header) do
-    # Remove existing header (case-insensitive) and add new one
-    filtered =
-      Enum.reject(headers, fn {name, _} ->
-        String.downcase(name) == String.downcase(header_name)
-      end)
-
-    [new_header | filtered]
-  end
-
-  defp handle_auth_error_with_retry({:error, {:http_error, status, body}}, json, state) do
-    # Use the error handler to determine what to do
-    case ErrorHandler.handle_auth_error(
-           status,
-           # We don't have response headers here
-           [],
-           body,
-           %{token_manager: state.token_manager}
-         ) do
-      {:retry, %{action: :refresh_token}} ->
-        # Try to refresh token
-        case TokenManager.refresh_now(state.token_manager) do
-          {:ok, _new_token} ->
-            # Retry the request with new token
-            send_with_auth(json, state)
-
-          error ->
-            error
-        end
+    case state.transport_mod.send(state.transport_state, encoded) do
+      {:ok, new_transport_state} ->
+        {:ok, %{state | transport_state: new_transport_state}}
 
       {:error, reason} ->
-        {:error, {:auth_error, reason}}
-
-      _ ->
-        {:error, {:http_error, status, body}}
+        {:error, reason}
     end
   end
 
-  # Helper function to notify receiver loop of transport state updates
-  defp notify_receiver_of_transport_update(transport_state, transport_mod) do
-    # Only notify for non-SSE HTTP transports that need manual state updates
-    if transport_mod == ExMCP.Transport.HTTP and not transport_state.use_sse do
-      case Process.get(:receiver_pid) do
-        pid when is_pid(pid) ->
-          send(pid, {:update_transport_state, transport_state})
+  defp handle_notification(%{"method" => method, "params" => params}, state) do
+    # Log notifications for now
+    Logger.debug("Received notification: #{method} - #{inspect(params)}")
+    {:noreply, state}
+  end
 
-        _ ->
-          :ok
+  defp schedule_reconnect(state) do
+    if state.reconnect_attempts < state.max_reconnect_attempts do
+      # Cancel existing timer
+      if state.reconnect_timer do
+        Process.cancel_timer(state.reconnect_timer)
       end
+
+      # Exponential backoff
+      delay = state.reconnect_interval * 2 ** state.reconnect_attempts
+      timer = Process.send_after(self(), :reconnect, delay)
+
+      %{state | reconnect_timer: timer, reconnect_attempts: state.reconnect_attempts + 1}
+    else
+      Logger.error("Max reconnection attempts reached")
+      %{state | connection_status: :error}
     end
+  end
+
+  defp attempt_reconnect(state) do
+    Logger.info("Attempting to reconnect (attempt #{state.reconnect_attempts})")
+
+    # Clean up old receiver task
+    if state.receiver_task do
+      Task.shutdown(state.receiver_task, :brutal_kill)
+    end
+
+    # Try to reconnect
+    opts =
+      Keyword.merge(state.transport_opts,
+        transport: state.transport_mod,
+        max_reconnect_attempts: state.max_reconnect_attempts,
+        reconnect_interval: state.reconnect_interval
+      )
+
+    case connect_and_initialize(opts) do
+      {:ok, new_state} ->
+        # Preserve some state from before
+        final_state = %{
+          new_state
+          | pending_requests: state.pending_requests,
+            session_id: state.session_id
+        }
+
+        {:ok, final_state}
+
+      {:error, reason} ->
+        Logger.error("Reconnection failed: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp generate_request_id do
+    "req-#{:erlang.unique_integer([:positive, :monotonic])}"
+  end
+
+  defp generate_session_id do
+    "session-#{:erlang.unique_integer([:positive, :monotonic])}"
+  end
+
+  @doc """
+  Sends multiple requests in a batch and waits for all responses.
+
+  Returns a list of results in the same order as the requests.
+  Each result is either `{:ok, response}` or `{:error, reason}`.
+  """
+  @spec batch_request(pid(), [{atom(), [any()]}], keyword()) :: {:ok, [any()]} | {:error, term()}
+  def batch_request(client, requests, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    
+    # Create tasks for all requests
+    tasks = Enum.map(requests, fn {method, args} ->
+      Task.async(fn ->
+        case method do
+          :call_tool -> 
+            case args do
+              [name, arguments] -> call_tool(client, name, arguments)
+              [name, arguments, timeout] when is_integer(timeout) -> call_tool(client, name, arguments, timeout)
+              [name, arguments | rest] -> call_tool(client, name, arguments, Keyword.new(rest))
+            end
+          :list_tools ->
+            case args do
+              [] -> list_tools(client)
+              [opts] when is_list(opts) -> list_tools(client, opts)
+              [timeout] when is_integer(timeout) -> list_tools(client, timeout: timeout)
+            end
+          :list_resources ->
+            list_resources(client)
+          :read_resource ->
+            case args do
+              [uri] -> read_resource(client, uri)
+              [uri, timeout] when is_integer(timeout) -> read_resource(client, uri, timeout)
+              [uri | rest] -> read_resource(client, uri, Keyword.get(Keyword.new(rest), :timeout, 30_000))
+            end
+          _ ->
+            {:error, {:unsupported_batch_method, method}}
+        end
+      end)
+    end)
+    
+    # Wait for all tasks to complete
+    results = Task.yield_many(tasks, timeout)
+    
+    # Convert task results to proper format
+    batch_results = Enum.map(results, fn {task, result} ->
+      case result do
+        {:ok, value} -> value
+        {:exit, reason} -> {:error, reason}
+        nil -> 
+          Task.shutdown(task, :brutal_kill)
+          {:error, :timeout}
+      end
+    end)
+    
+    {:ok, batch_results}
   end
 end

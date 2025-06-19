@@ -6,7 +6,7 @@ defmodule ExMCP.TestServer do
   the convenience functions with real network connections.
   """
 
-  use ExMCP.ServerV2
+  use ExMCP.Server
 
   # Define test tools
   deftool "echo" do

@@ -1,162 +1,152 @@
-defmodule ExMCP.V1SimpleClientTest do
-  use ExUnit.Case, async: true
+defmodule ExMCP.SimpleClientTest do
+  use ExUnit.Case, async: false
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.SimpleClient
 
-  defmodule TestHandler do
-    use ExMCP.Server.Handler
+  # Working test transport
+  defmodule TestTransport do
+    use Agent
 
-    @impl true
-    def init(_args) do
-      {:ok, %{subscriptions: []}}
+    @behaviour ExMCP.Transport
+
+    def connect(opts) do
+      if Keyword.get(opts, :fail) do
+        {:error, :failed}
+      else
+        {:ok, agent} = Agent.start_link(fn -> %{messages: []} end)
+        {:ok, agent}
+      end
     end
 
-    @impl true
-    def handle_initialize(_params, state) do
-      {:ok,
-       %{
-         name: "test-server",
-         version: "1.0.0",
-         protocolVersion: "2025-03-26",
-         capabilities: %{
-           roots: %{},
-           resources: %{subscribe: true},
-           sampling: %{}
-         }
-       }, state}
+    def send(agent, data) do
+      Agent.update(agent, fn state ->
+        %{state | messages: [data | state.messages]}
+      end)
+
+      {:ok, agent}
     end
 
-    @impl true
-    def handle_list_roots(state) do
-      roots = [
-        %{uri: "file:///home", name: "Home"},
-        %{uri: "file:///projects", name: "Projects"}
-      ]
+    def recv(agent, _timeout) do
+      msg =
+        Agent.get_and_update(agent, fn state ->
+          case state.messages do
+            [msg | rest] -> {msg, %{state | messages: rest}}
+            [] -> {nil, state}
+          end
+        end)
 
-      {:ok, roots, state}
+      if msg do
+        # Parse and respond
+        case Jason.decode!(msg) do
+          %{"method" => "initialize", "id" => id} ->
+            response =
+              Jason.encode!(%{
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "result" => %{
+                  "protocolVersion" => "2024-11-05",
+                  "capabilities" => %{},
+                  "serverInfo" => %{"name" => "test", "version" => "1.0"}
+                }
+              })
+
+            {:ok, response, agent}
+
+          %{"method" => "tools/list", "id" => id} ->
+            response =
+              Jason.encode!(%{
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "result" => %{"tools" => [%{"name" => "test_tool"}]}
+              })
+
+            {:ok, response, agent}
+
+          %{"method" => "resources/list", "id" => id} ->
+            response =
+              Jason.encode!(%{
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "result" => %{"resources" => [%{"name" => "test_resource"}]}
+              })
+
+            {:ok, response, agent}
+
+          %{"method" => "prompts/list", "id" => id} ->
+            response =
+              Jason.encode!(%{
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "result" => %{"prompts" => [%{"name" => "test_prompt"}]}
+              })
+
+            {:ok, response, agent}
+
+          _ ->
+            {:error, :unknown_message}
+        end
+      else
+        {:error, :timeout}
+      end
     end
 
-    @impl true
-    def handle_subscribe_resource(uri, state) do
-      subscriptions = [uri | state.subscriptions]
-      {:ok, %{}, %{state | subscriptions: subscriptions}}
+    def close(agent) do
+      Agent.stop(agent)
+      {:ok, nil}
     end
 
-    @impl true
-    def handle_unsubscribe_resource(uri, state) do
-      subscriptions = List.delete(state.subscriptions, uri)
-      {:ok, %{}, %{state | subscriptions: subscriptions}}
-    end
-
-    @impl true
-    def handle_create_message(params, state) do
-      # Echo back the request with a simple response
-      result = %{
-        role: "assistant",
-        content: %{
-          type: "text",
-          text: "Received #{length(params["messages"])} messages"
-        }
-      }
-
-      {:ok, result, state}
-    end
-
-    # Required callbacks
-    @impl true
-    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
-    @impl true
-    def handle_call_tool(_name, _params, state), do: {:error, "Not implemented", state}
-    @impl true
-    def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
-    @impl true
-    def handle_read_resource(_uri, state), do: {:error, "Not implemented", state}
-    @impl true
-    def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
-    @impl true
-    def handle_get_prompt(_name, _args, state), do: {:error, "Not implemented", state}
+    def controlling_process(_agent, _pid), do: :ok
+    def send_message(_agent, _msg), do: {:error, :not_implemented}
+    def receive_message(_agent), do: {:error, :not_implemented}
   end
 
-  describe "new protocol features via public API" do
-    setup do
-      # Start server and client
-      {:ok, server} =
-        Server.start_link(
-          transport: :test,
-          handler: TestHandler
-        )
+  test "synchronous initialization" do
+    # Client should be ready immediately after start_link
+    assert {:ok, client} = SimpleClient.start_link(transport: TestTransport)
 
-      {:ok, client} =
-        Client.start_link(
-          transport: :test,
-          server: server
-        )
+    # Should be able to use immediately
+    assert {:ok, result} = SimpleClient.list_tools(client)
+    assert %{"tools" => [%{"name" => "test_tool"}]} = result
 
-      # Wait for connection
-      Process.sleep(50)
+    GenServer.stop(client)
+  end
 
-      {:ok, %{client: client, server: server}}
-    end
+  test "connection failure" do
+    # Should fail during start_link
+    # Since init fails, the GenServer will exit
+    Process.flag(:trap_exit, true)
 
-    test "protocol version is negotiated correctly", %{client: client} do
-      # The protocol version is negotiated during initialization
-      # We can verify the server capabilities were received
-      state = :sys.get_state(client)
+    assert {:error, :failed} = SimpleClient.start_link(transport: TestTransport, fail: true)
+  end
 
-      # Server info should be stored in the client state
-      assert state.initialized == true
+  test "status reporting" do
+    assert {:ok, client} = SimpleClient.start_link(transport: TestTransport)
 
-      # Use the public API to get the negotiated version
-      {:ok, version} = Client.negotiated_version(client)
-      assert version == "2025-03-26"
-    end
+    assert {:ok, status} = SimpleClient.get_status(client)
+    assert status.connection_status == :connected
+    assert is_integer(status.last_activity)
+    assert status.reconnect_attempts == 0
 
-    test "roots operations work through client API", %{client: client} do
-      # Test list roots
-      {:ok, result} = Client.list_roots(client)
+    GenServer.stop(client)
+  end
 
-      assert length(result.roots) == 2
-      assert hd(result.roots).uri == "file:///home"
-      assert hd(result.roots).name == "Home"
-    end
+  test "health check" do
+    assert {:ok, client} = SimpleClient.start_link(transport: TestTransport)
 
-    test "resource subscription works through client API", %{client: client} do
-      uri = "file:///test.txt"
+    # Health check should succeed
+    assert :ok = SimpleClient.health_check(client)
 
-      # Test subscribe
-      {:ok, _result} = Client.subscribe_resource(client, uri)
+    GenServer.stop(client)
+  end
 
-      # Test unsubscribe
-      {:ok, _result} = Client.unsubscribe_resource(client, uri)
-    end
+  test "comprehensive API coverage" do
+    assert {:ok, client} = SimpleClient.start_link(transport: TestTransport)
 
-    test "sampling/createMessage works through client API", %{client: client} do
-      params = %{
-        messages: [%{role: "user", content: %{type: "text", text: "Hello"}}],
-        max_tokens: 100
-      }
+    # Test all API methods
+    assert {:ok, _} = SimpleClient.list_tools(client)
+    assert {:ok, _} = SimpleClient.list_resources(client)
+    assert {:ok, _} = SimpleClient.list_prompts(client)
 
-      {:ok, result} = Client.create_message(client, params)
-
-      assert result.role == "assistant"
-      assert result.content.type == "text"
-      assert String.contains?(result.content.text, "1 messages")
-    end
-
-    test "client has new methods available" do
-      # Just verify the functions exist and have correct arity
-      # Functions with default args are exported with both arities
-      assert function_exported?(ExMCP.Client, :list_roots, 1) ||
-               function_exported?(ExMCP.Client, :list_roots, 2)
-
-      assert function_exported?(ExMCP.Client, :subscribe_resource, 2) ||
-               function_exported?(ExMCP.Client, :subscribe_resource, 3)
-
-      assert function_exported?(ExMCP.Client, :unsubscribe_resource, 2) ||
-               function_exported?(ExMCP.Client, :unsubscribe_resource, 3)
-
-      assert function_exported?(ExMCP.Client, :create_message, 2) ||
-               function_exported?(ExMCP.Client, :create_message, 3)
-    end
+    GenServer.stop(client)
   end
 end

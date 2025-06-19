@@ -136,8 +136,8 @@ defmodule ExMCP do
   alias ExMCP.Client
   alias ExMCP.Server
 
-  # V2 convenience aliases
-  alias ExMCP.{SimpleClient, ClientV2, ConvenienceClient}
+  # Convenience aliases
+  alias ExMCP.{SimpleClient, ConvenienceClient}
   alias ExMCP.{Response, Error}
 
   @doc """
@@ -214,14 +214,14 @@ defmodule ExMCP do
   # Server Convenience Macros
 
   @doc """
-  Convenience macro that aliases `use ExMCP.ServerV2`.
+  Convenience macro that aliases `use ExMCP.Server`.
 
   This provides backward compatibility and a simpler import path for new users.
 
   ## Examples
 
       defmodule MyServer do
-        use ExMCP.Server  # Same as `use ExMCP.ServerV2`
+        use ExMCP.Server  # Same as `use ExMCP.Server`
         
         deftool "hello" do
           description "Says hello"
@@ -230,7 +230,7 @@ defmodule ExMCP do
   """
   defmacro __using__(opts) do
     quote do
-      use ExMCP.ServerV2, unquote(opts)
+      use ExMCP.Server, unquote(opts)
     end
   end
 
@@ -295,7 +295,7 @@ defmodule ExMCP do
         )
 
       :v2 ->
-        ClientV2.start_link(final_opts)
+        Client.start_link(final_opts)
 
       :simple ->
         SimpleClient.start_link(final_opts)
@@ -315,9 +315,9 @@ defmodule ExMCP do
         ConvenienceClient.connect(connection_spec, opts)
 
       :v2 ->
-        # Convert connection spec to ClientV2 format
+        # Convert connection spec to Client format
         client_opts = normalize_connection_for_v2(connection_spec, opts)
-        ClientV2.start_link(client_opts)
+        Client.start_link(client_opts)
 
       :simple ->
         # Convert connection spec to SimpleClient format  
@@ -362,7 +362,7 @@ defmodule ExMCP do
       # Fallback to other client types
       _ ->
         try do
-          case ClientV2.list_tools(client, timeout) do
+          case Client.list_tools(client, timeout) do
             {:ok, tools} -> tools
             error -> error
           end
@@ -409,7 +409,7 @@ defmodule ExMCP do
       # Fallback to other client types
       _ ->
         try do
-          case ClientV2.call_tool(client, tool_name, args, timeout) do
+          case Client.call_tool(client, tool_name, args, timeout) do
             {:ok, %Response{} = response} ->
               if normalize do
                 Response.text_content(response) || response
@@ -441,7 +441,7 @@ defmodule ExMCP do
     rescue
       _ ->
         try do
-          case ClientV2.list_resources(client, timeout) do
+          case Client.list_resources(client, timeout) do
             {:ok, resources} -> resources
             error -> error
           end
@@ -492,7 +492,7 @@ defmodule ExMCP do
     rescue
       _ ->
         try do
-          case ClientV2.read_resource(client, uri, timeout) do
+          case Client.read_resource(client, uri, timeout) do
             {:ok, %Response{} = response} ->
               content = Response.text_content(response) || Response.data_content(response)
 
@@ -526,7 +526,7 @@ defmodule ExMCP do
   rescue
     _ ->
       try do
-        ClientV2.get_status(client)
+        Client.get_status(client)
       rescue
         _ -> {:error, Error.connection_error("Client not responding")}
       end

@@ -1,4 +1,6 @@
 defmodule ExMCP.Transport.Test do
+  import Kernel, except: [send: 2]
+  
   @moduledoc """
   In-memory transport for testing purposes.
 
@@ -39,7 +41,7 @@ defmodule ExMCP.Transport.Test do
         }
 
         # Tell the server who this client is
-        send(server_pid, {:test_transport_connect, self()})
+        Kernel.send(server_pid, {:test_transport_connect, self()})
 
         {:ok, state}
       else
@@ -84,7 +86,7 @@ defmodule ExMCP.Transport.Test do
   @impl true
   def send_message(message, %__MODULE__{peer_pid: peer_pid} = state) when peer_pid != nil do
     if Process.alive?(peer_pid) do
-      send(peer_pid, {:transport_message, message})
+      Kernel.send(peer_pid, {:transport_message, message})
       {:ok, state}
     else
       {:error, :connection_lost}
@@ -95,5 +97,27 @@ defmodule ExMCP.Transport.Test do
   def send_message(_message, %__MODULE__{peer_pid: nil} = state) do
     # Server doesn't have a peer yet, this will happen during initialization
     {:ok, state}
+  end
+
+  # Compatibility functions for client expectations
+  # Use explicit module reference to avoid conflict with Kernel.send/2
+  def send(state, message) do
+    case __MODULE__.send_message(message, state) do
+      {:ok, new_state} -> {:ok, new_state}
+      error -> error
+    end
+  end
+
+  def recv(state, timeout \\ 5_000) do
+    receive do
+      {:transport_message, message} ->
+        {:ok, message, state}
+
+      {:transport_error, reason} ->
+        {:error, reason}
+    after
+      timeout ->
+        {:error, :timeout}
+    end
   end
 end

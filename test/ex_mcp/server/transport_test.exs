@@ -4,7 +4,7 @@ defmodule ExMCP.Server.TransportTest do
   alias ExMCP.Server.Transport
 
   defmodule TestServer do
-    use ExMCP.ServerV2
+    use ExMCP.Server
 
     deftool "test_tool" do
       tool_description("A test tool")

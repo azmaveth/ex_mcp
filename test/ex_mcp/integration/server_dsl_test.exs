@@ -3,7 +3,7 @@ defmodule ExMCP.Integration.ServerDSLTest do
 
   # Test server using the full DSL
   defmodule TestServer do
-    use ExMCP.ServerV2
+    use ExMCP.Server
 
     deftool "calculate_sum" do
       tool_description("Adds two numbers together")

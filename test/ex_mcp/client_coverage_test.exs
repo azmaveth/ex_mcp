@@ -1,8 +1,8 @@
-defmodule ExMCP.ClientV2CoverageTest do
+defmodule ExMCP.ClientCoverageTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
 
-  alias ExMCP.ClientV2
+  alias ExMCP.Client
 
   # Comprehensive mock transport for testing
   defmodule CompleteMockTransport do

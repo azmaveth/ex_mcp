@@ -1,12 +1,12 @@
-defmodule ExMCP.ClientV2SimpleTest do
+defmodule ExMCP.ClientSimpleTest do
   use ExUnit.Case
 
   test "client module exists and has expected functions" do
     # Basic sanity check that the module exists
-    assert {:module, ExMCP.ClientV2} = Code.ensure_compiled(ExMCP.ClientV2)
+    assert {:module, ExMCP.Client} = Code.ensure_compiled(ExMCP.Client)
 
     # Check that expected functions are exported
-    functions = ExMCP.ClientV2.__info__(:functions)
+    functions = ExMCP.Client.__info__(:functions)
 
     expected_functions = [
       {:start_link, 1},
@@ -33,10 +33,10 @@ defmodule ExMCP.ClientV2SimpleTest do
 
   test "client State struct has expected fields" do
     # Check the State module exists
-    assert {:module, ExMCP.ClientV2.State} = Code.ensure_compiled(ExMCP.ClientV2.State)
+    assert {:module, ExMCP.Client.State} = Code.ensure_compiled(ExMCP.Client.State)
 
     # Create a State struct and verify fields
-    state = %ExMCP.ClientV2.State{}
+    state = %ExMCP.Client.State{}
 
     expected_fields = [
       :transport_mod,

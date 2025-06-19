@@ -1,7 +1,7 @@
-defmodule ExMCP.ClientV2MainTest do
+defmodule ExMCP.ClientMainTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
-  alias ExMCP.ClientV2
+  alias ExMCP.Client
 
   # Mock transport module for testing
   defmodule MockTransport do
