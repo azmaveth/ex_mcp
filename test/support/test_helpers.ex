@@ -148,7 +148,7 @@ defmodule ExMCP.TestHelpers do
     {:ok, http_server, http_port} = start_http_server(opts)
     :ok = wait_for_server_ready(http_port)
 
-    # Start native server for fallback testing  
+    # Start native server for fallback testing
     {:ok, native_server} = start_native_server(opts)
 
     on_exit(fn ->
