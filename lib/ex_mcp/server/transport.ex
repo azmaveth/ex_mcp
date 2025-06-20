@@ -9,15 +9,17 @@ defmodule ExMCP.Server.Transport do
 
       # Start with HTTP transport
       {:ok, _pid} = ExMCP.Server.Transport.start_server(MyServer, server_info, tools, transport: :http, port: 4000)
-      
+
       # Start with stdio transport
       {:ok, _pid} = ExMCP.Server.Transport.start_server(MyServer, server_info, tools, transport: :stdio)
-      
+
       # Start with SSE-enabled HTTP transport
       {:ok, _pid} = ExMCP.Server.Transport.start_server(MyServer, server_info, tools, transport: :sse, port: 8080)
   """
 
   require Logger
+
+  alias ExMCP.Internal.StdioLoggerConfig
 
   @doc """
   Starts a server with the specified transport configuration.
@@ -33,11 +35,11 @@ defmodule ExMCP.Server.Transport do
   ## Examples
 
       # HTTP server
-      ExMCP.Server.Transport.start_server(MyServer, %{name: "my-server", version: "1.0.0"}, [], 
+      ExMCP.Server.Transport.start_server(MyServer, %{name: "my-server", version: "1.0.0"}, [],
         transport: :http, port: 4000)
-      
+
       # Stdio server
-      ExMCP.Server.Transport.start_server(MyServer, %{name: "my-server", version: "1.0.0"}, [], 
+      ExMCP.Server.Transport.start_server(MyServer, %{name: "my-server", version: "1.0.0"}, [],
         transport: :stdio)
   """
   @spec start_server(module(), map(), list(), keyword()) ::
@@ -74,16 +76,12 @@ defmodule ExMCP.Server.Transport do
   def start_stdio_server(module, _server_info, _tools, opts) do
     # CRITICAL: Configure logging for STDIO transport before starting server
     configure_stdio_logging()
-    
+
     # Use ExMCP v1 StdioServer for now - this provides stdio transport
     # In the future, this could be replaced with a v2-specific implementation
     case Code.ensure_loaded(ExMCP.Server.StdioServer) do
-      {:module, server_module} ->
-        apply(server_module, :start_link, [
-          [
-            module: module
-          ] ++ opts
-        ])
+      {:module, ExMCP.Server.StdioServer} ->
+        ExMCP.Server.StdioServer.start_link([module: module] ++ opts)
 
       {:error, _} ->
         Logger.warning("ExMCP.Server.StdioServer not available, starting basic GenServer")
@@ -224,7 +222,7 @@ defmodule ExMCP.Server.Transport do
 
   # Configure logging for STDIO transport to prevent stdout contamination
   defp configure_stdio_logging do
-    ExMCP.Internal.StdioLoggerConfig.configure()
+    StdioLoggerConfig.configure()
   end
 
   # Parse host string to IP tuple

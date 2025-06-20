@@ -25,7 +25,7 @@ defmodule ExMCP.TransportManager do
         fallback_strategy: :sequential,
         health_check_timeout: 5_000
       ]
-      
+
       {:ok, {transport_mod, transport_state}} = TransportManager.connect(opts)
   """
 

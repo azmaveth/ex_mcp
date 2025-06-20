@@ -5,7 +5,7 @@ defmodule Mix.Tasks.StdioServer do
   ## Usage
 
       mix stdio_server
-      
+
   This will start a v2 stdio server that can be used for testing
   with MCP clients via stdin/stdout communication.
   """

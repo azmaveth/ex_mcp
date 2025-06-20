@@ -23,7 +23,7 @@ defmodule ExMCP.Testing.MockServer do
         {:ok, result} = ExMCP.SimpleClient.list_tools(client)
         assert length(result["tools"]) == 0
       end)
-      
+
       # Server with predefined tools
       MockServer.with_server([
         tools: [MockServer.sample_tool()],
@@ -31,7 +31,7 @@ defmodule ExMCP.Testing.MockServer do
       ], fn client ->
         # Test with mock data
       end)
-      
+
       # Server with custom behavior
       MockServer.with_server([
         handler: MyCustomHandler,
@@ -93,7 +93,7 @@ defmodule ExMCP.Testing.MockServer do
         result = ExMCP.SimpleClient.list_tools(client)
         assert {:ok, %{"tools" => []}} = result
       end)
-      
+
       with_server([
         tools: [sample_tool()],
         latency: 100
@@ -138,7 +138,7 @@ defmodule ExMCP.Testing.MockServer do
 
       tool = sample_tool()
       # %{"name" => "sample_tool", "description" => "...", "inputSchema" => %{...}}
-      
+
       tool = sample_tool(name: "custom_tool", description: "Custom tool")
   """
   @spec sample_tool(keyword()) :: map()
@@ -169,7 +169,7 @@ defmodule ExMCP.Testing.MockServer do
 
       resource = sample_resource()
       # %{"uri" => "file://sample.txt", "name" => "Sample", ...}
-      
+
       resource = sample_resource(uri: "https://api.example.com", name: "API")
   """
   @spec sample_resource(keyword()) :: map()
@@ -190,7 +190,7 @@ defmodule ExMCP.Testing.MockServer do
 
       prompt = sample_prompt()
       # %{"name" => "sample_prompt", "description" => "...", "arguments" => [...]}
-      
+
       prompt = sample_prompt(name: "custom_prompt")
   """
   @spec sample_prompt(keyword()) :: map()
@@ -492,7 +492,7 @@ defmodule ExMCP.Testing.MockServer do
       with_server([], fn client ->
         ExMCP.SimpleClient.list_tools(client)
         ExMCP.SimpleClient.list_tools(client)
-        
+
         count = MockServer.get_call_count(server_pid)
         assert count["tools/list"] == 2
       end)

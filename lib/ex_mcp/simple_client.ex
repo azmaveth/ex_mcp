@@ -62,7 +62,7 @@ defmodule ExMCP.SimpleClient do
   - `:transports` - List of transport specs for fallback: `[{module, opts}, ...]`
   - `:fallback_strategy` - Strategy for transport fallback (`:sequential`, `:parallel`, `:fastest`)
 
-  ### Connection Settings  
+  ### Connection Settings
   - `:max_reconnect_attempts` - Max reconnection attempts (default: #{@default_max_reconnect_attempts})
   - `:reconnect_interval` - Base reconnection interval in ms (default: #{@default_reconnect_interval})
   - `:health_check_interval` - Health check interval in ms (default: #{@default_health_check_interval})
@@ -74,7 +74,7 @@ defmodule ExMCP.SimpleClient do
 
       # Single transport
       {:ok, client} = SimpleClient.start_link(transport: :http, url: "http://localhost:8080")
-      
+
       # Multiple transports with fallback
       {:ok, client} = SimpleClient.start_link(
         transports: [

@@ -11,52 +11,52 @@ defmodule ExMCP.Server do
 
       defmodule MyServer do
         use ExMCP.Server
-        
+
         deftool "hello" do
           meta do
             name "Hello Tool"
             description "Says hello to someone"
           end
-          
+
           input_schema %{
             type: "object",
             properties: %{name: %{type: "string"}},
             required: ["name"]
           }
         end
-        
+
         defresource "config://app" do
           meta do
             name "App Config"
             description "Application configuration"
           end
-          
+
           mime_type "application/json"
         end
-        
+
         defprompt "greeting" do
           meta do
             name "Greeting Template"
             description "A greeting template"
           end
-          
+
           arguments do
             arg :style, description: "Greeting style"
           end
         end
-        
+
         # Handler callbacks
         @impl true
         def handle_tool_call("hello", %{"name" => name}, state) do
           {:ok, %{content: [text("Hello, \#{name}!")]}, state}
         end
-        
+
         @impl true
         def handle_resource_read("config://app", _uri, state) do
           content = json(%{debug: true, port: 8080})
           {:ok, content, state}
         end
-        
+
         @impl true
         def handle_prompt_get("greeting", args, state) do
           style = Map.get(args, "style", "friendly")
@@ -67,6 +67,9 @@ defmodule ExMCP.Server do
         end
       end
   """
+
+  alias ExMCP.Internal.StdioLoggerConfig
+  alias ExMCP.Server.{Legacy, Transport}
 
   @type state :: term()
   @type content :: map()
@@ -215,10 +218,10 @@ defmodule ExMCP.Server do
 
           # Start with HTTP transport
           MyServer.start_link(transport: :http, port: 8080)
-          
+
           # Start with stdio transport
           MyServer.start_link(transport: :stdio)
-          
+
           # Start with native transport (default)
           MyServer.start_link()
       """
@@ -245,7 +248,7 @@ defmodule ExMCP.Server do
               end
 
             tools = get_tools() |> Map.values()
-            ExMCP.Server.Transport.start_server(__MODULE__, server_info, tools, opts)
+            Transport.start_server(__MODULE__, server_info, tools, opts)
 
           _ ->
             # Use transport manager for other transports
@@ -260,13 +263,13 @@ defmodule ExMCP.Server do
 
             tools = get_tools() |> Map.values()
 
-            ExMCP.Server.Transport.start_server(__MODULE__, server_info, tools, opts)
+            Transport.start_server(__MODULE__, server_info, tools, opts)
         end
       end
 
       # Configure logging for STDIO transport to prevent stdout contamination
       defp configure_stdio_logging do
-        ExMCP.Internal.StdioLoggerConfig.configure()
+        StdioLoggerConfig.configure()
       end
 
       @doc """
@@ -454,7 +457,7 @@ defmodule ExMCP.Server do
 
       _handler_module ->
         # Use the legacy server implementation for handler-based servers
-        ExMCP.Server.Legacy.start_link(opts)
+        Legacy.start_link(opts)
     end
   end
 

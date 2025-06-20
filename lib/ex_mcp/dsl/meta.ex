@@ -10,25 +10,25 @@ defmodule ExMCP.DSL.Meta do
           description "Says hello to someone"
           version "1.0.0"
         end
-        
+
         input_schema %{...}
       end
-      
+
       defresource "config://app" do
         meta do
           name "App Config"
           description "Application configuration"
         end
-        
+
         mime_type "application/json"
       end
-      
+
       defprompt "greeting" do
         meta do
           name "Greeting Template"
           description "A greeting template"
         end
-        
+
         arguments do
           arg :style, description: "Greeting style"
         end

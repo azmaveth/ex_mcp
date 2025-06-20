@@ -222,7 +222,7 @@ defmodule ExMCP do
 
       defmodule MyServer do
         use ExMCP.Server  # Same as `use ExMCP.Server`
-        
+
         deftool "hello" do
           description "Says hello"
         end
@@ -256,19 +256,19 @@ defmodule ExMCP do
 
       # HTTP connection using convenience client
       {:ok, client} = ExMCP.connect("http://localhost:8080")
-      
+
       # Stdio connection using simple client
       {:ok, client} = ExMCP.connect({:stdio, command: "my-server"})
-      
+
       # Multiple transports with fallback
       {:ok, client} = ExMCP.connect([
         "http://primary:8080",
         "http://backup:8080"
       ])
-      
+
       # Force specific client type
       {:ok, client} = ExMCP.connect("http://localhost:8080", client_type: :v2)
-      
+
       # Using ClientConfig for advanced configuration
       config = ExMCP.ClientConfig.new(:production)
       |> ExMCP.ClientConfig.put_transport(:http, url: "https://api.example.com")
@@ -320,7 +320,7 @@ defmodule ExMCP do
         Client.start_link(client_opts)
 
       :simple ->
-        # Convert connection spec to SimpleClient format  
+        # Convert connection spec to SimpleClient format
         client_opts = normalize_connection_for_simple(connection_spec, opts)
         SimpleClient.start_link(client_opts)
     end
@@ -384,7 +384,7 @@ defmodule ExMCP do
 
       # Simple call
       result = ExMCP.call(client, "calculator", %{op: "add", a: 1, b: 2})
-      
+
       # With options
       result = ExMCP.call(client, "slow_tool", %{data: "..."}, timeout: 60_000)
   """
@@ -456,14 +456,14 @@ defmodule ExMCP do
 
   ## Options
 
-  - `:timeout` - Request timeout in milliseconds (default: 10_000)  
+  - `:timeout` - Request timeout in milliseconds (default: 10_000)
   - `:parse_json` - Automatically parse JSON content (default: false)
 
   ## Examples
 
       # Read text content
       content = ExMCP.read(client, "file://data.txt")
-      
+
       # Read and parse JSON
       data = ExMCP.read(client, "file://config.json", parse_json: true)
   """

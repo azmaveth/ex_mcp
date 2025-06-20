@@ -3,7 +3,7 @@ defmodule ExMCP.Client do
   High-level, synchronous MCP client implementation.
 
   This client provides a reliable, synchronous interface for MCP communication.
-  It guarantees that the connection is established and the MCP handshake is 
+  It guarantees that the connection is established and the MCP handshake is
   complete before `start_link/1` returns, eliminating race conditions.
 
   ## Features
@@ -21,7 +21,7 @@ defmodule ExMCP.Client do
         transport: :http,
         url: "http://localhost:8080"
       )
-      
+
       # Client is guaranteed to be ready
       {:ok, tools} = ExMCP.Client.list_tools(client)
       {:ok, result} = ExMCP.Client.call_tool(client, "hello", %{name: "world"})
@@ -300,7 +300,7 @@ defmodule ExMCP.Client do
 
   ## Breaking Change
 
-  As of version 2025-06-18, this function signature changed from 
+  As of version 2025-06-18, this function signature changed from
   `complete(client, ref, timeout)` to `complete(client, ref, params, timeout)`
   to support the new completion parameter structure.
   """

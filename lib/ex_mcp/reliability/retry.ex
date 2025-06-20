@@ -12,7 +12,7 @@ defmodule ExMCP.Reliability.Retry do
       Retry.with_retry(fn ->
         ExMCP.SimpleClient.call_tool(client, "tool", %{})
       end)
-      
+
       # Custom configuration
       Retry.with_retry(
         fn -> risky_operation() end,
@@ -22,7 +22,7 @@ defmodule ExMCP.Reliability.Retry do
         backoff_factor: 2,
         jitter: true
       )
-      
+
       # With custom retry condition
       Retry.with_retry(
         fn -> http_request() end,
@@ -114,7 +114,7 @@ defmodule ExMCP.Reliability.Retry do
   ## Example
 
       retryable_call = Retry.wrap(fn -> unstable_api_call() end, max_attempts: 5)
-      
+
       # Later...
       result = retryable_call.()
   """

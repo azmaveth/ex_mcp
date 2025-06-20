@@ -19,15 +19,15 @@ defmodule ExMCP.Testing.Builders do
   ## Usage
 
       alias ExMCP.Testing.Builders
-      
+
       # Create test content
       text_content = Builders.text_content("Hello world")
       image_content = Builders.image_content()
-      
+
       # Create test tools
       tool = Builders.tool("sample_tool")
       tool_with_schema = Builders.tool("complex_tool", schema: Builders.object_schema())
-      
+
       # Create test messages
       request = Builders.request("list_tools", id: 1)
       response = Builders.success_response(1, %{"tools" => []})
@@ -53,13 +53,13 @@ defmodule ExMCP.Testing.Builders do
 
       # Fixed content
       text_content("Hello world")
-      
+
       # Random content
       text_content(random: true)
-      
+
       # Markdown content
       text_content("# Header", format: :markdown)
-      
+
       # With metadata
       text_content("Test", metadata: %{author: "test"})
   """
@@ -90,13 +90,13 @@ defmodule ExMCP.Testing.Builders do
 
       # Default test image
       image_content()
-      
+
       # Custom MIME type
       image_content(mime_type: "image/jpeg")
-      
+
       # With dimensions
       image_content(width: 800, height: 600)
-      
+
       # Random image data
       image_content(random: true, size: 1024)
   """
@@ -128,13 +128,13 @@ defmodule ExMCP.Testing.Builders do
 
       # Default test audio
       audio_content()
-      
+
       # With transcript
       audio_content(transcript: "Hello world")
-      
+
       # With duration
       audio_content(duration: 10.5)
-      
+
       # Random audio data
       audio_content(random: true, size: 2048)
   """
@@ -167,13 +167,13 @@ defmodule ExMCP.Testing.Builders do
 
       # File resource
       resource_content("file://data.txt")
-      
+
       # HTTP resource with metadata
-      resource_content("https://example.com/api", 
-        text: "API endpoint", 
+      resource_content("https://example.com/api",
+        text: "API endpoint",
         mime_type: "application/json"
       )
-      
+
       # Random resource
       resource_content(random: true)
   """
@@ -208,10 +208,10 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple annotation
       annotation_content("sentiment")
-      
+
       # With confidence and text
       annotation_content("sentiment", confidence: 0.95, text: "positive")
-      
+
       # Random annotation
       annotation_content(random: true)
   """
@@ -247,16 +247,16 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple tool
       tool("sample_tool")
-      
+
       # Tool with custom description
       tool("sample_tool", description: "Custom description")
-      
+
       # Tool with complex schema
       tool("complex_tool", schema: object_schema(%{
         "name" => string_schema(),
         "age" => integer_schema()
       }))
-      
+
       # Random tool
       tool(random: true)
   """
@@ -292,13 +292,13 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple text result
       tool_result("Operation completed")
-      
+
       # Multiple content items
       tool_result([
         text_content("Result 1"),
         text_content("Result 2")
       ])
-      
+
       # Error result
       tool_result(error: "Something went wrong")
   """
@@ -337,13 +337,13 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple resource
       resource("file://data.txt", "Test Data")
-      
+
       # Resource with metadata
-      resource("https://api.example.com", "API", 
+      resource("https://api.example.com", "API",
         description: "REST API endpoint",
         mime_type: "application/json"
       )
-      
+
       # Random resource
       resource(random: true)
   """
@@ -380,7 +380,7 @@ defmodule ExMCP.Testing.Builders do
 
       # Text resource data
       resource_data("Hello world", "text/plain")
-      
+
       # Binary resource data
       resource_data(random: true, mime_type: "application/octet-stream", size: 1024)
   """
@@ -418,13 +418,13 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple prompt
       prompt("sample_prompt", "A test prompt")
-      
+
       # Prompt with arguments
       prompt("complex_prompt", "Complex prompt", arguments: [
         prompt_argument("topic", "The topic to discuss", required: true),
         prompt_argument("style", "Writing style", required: false)
       ])
-      
+
       # Random prompt
       prompt(random: true)
   """
@@ -460,7 +460,7 @@ defmodule ExMCP.Testing.Builders do
 
       # Required argument
       prompt_argument("topic", "The topic to discuss", required: true)
-      
+
       # Optional argument
       prompt_argument("style", "Writing style", required: false)
   """
@@ -484,7 +484,7 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple prompt result
       prompt_data("Write about: space exploration")
-      
+
       # Prompt with multiple messages
       prompt_data([
         %{"role" => "system", "content" => "You are a helpful assistant"},
@@ -525,7 +525,7 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple request
       request("list_tools", id: 1)
-      
+
       # Request with parameters
       request("call_tool", id: 2, params: %{
         "name" => "sample_tool",
@@ -556,7 +556,7 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple success response
       success_response(1, %{"tools" => []})
-      
+
       # Tool call response
       success_response(2, tool_result("Success"))
   """
@@ -576,7 +576,7 @@ defmodule ExMCP.Testing.Builders do
 
       # Method not found error
       error_response(1, -32601, "Method not found")
-      
+
       # Custom error with data
       error_response(2, -1, "Tool error", %{"details" => "Something went wrong"})
   """
@@ -607,7 +607,7 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple notification
       notification("notifications/message", %{"level" => "info", "text" => "Hello"})
-      
+
       # Progress notification
       notification("notifications/progress", %{
         "progressToken" => "task_1",
@@ -633,14 +633,14 @@ defmodule ExMCP.Testing.Builders do
 
       # Simple object schema
       object_schema()
-      
+
       # Object with properties
       object_schema(%{
         "name" => string_schema(),
         "age" => integer_schema(minimum: 0),
         "email" => string_schema(format: "email")
       })
-      
+
       # Required properties
       object_schema(%{"name" => string_schema()}, required: ["name"])
   """

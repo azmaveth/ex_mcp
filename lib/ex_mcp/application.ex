@@ -3,6 +3,8 @@ defmodule ExMCP.Application do
 
   use Application
 
+  alias ExMCP.Internal.StdioLoggerConfig
+
   @impl true
   def start(_type, _args) do
     # Check if STDIO transport is being used and configure logging appropriately
@@ -10,7 +12,7 @@ defmodule ExMCP.Application do
     if Application.get_env(:ex_mcp, :stdio_mode, false) do
       configure_stdio_logging()
     end
-    
+
     # Now define children - Horde won't log during startup
     children = [
       # Start Horde cluster for distributed services
@@ -27,6 +29,6 @@ defmodule ExMCP.Application do
 
   # Configure logging for STDIO transport to prevent stdout contamination
   defp configure_stdio_logging do
-    ExMCP.Internal.StdioLoggerConfig.configure()
+    StdioLoggerConfig.configure()
   end
 end

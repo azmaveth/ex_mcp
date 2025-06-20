@@ -16,7 +16,7 @@ defmodule ExMCP.Helpers do
   ## Usage
 
       use ExMCP.Helpers
-      
+
       # Use helper macros
       with_mcp_client "http://localhost:8080" do
         tools = list_tools!()
@@ -43,12 +43,12 @@ defmodule ExMCP.Helpers do
         tools = list_tools!()
         IO.inspect(tools)
       end
-      
+
       # With options
       with_mcp_client "http://localhost:8080", timeout: 10_000 do
         result = call_tool!("slow_operation", %{})
       end
-      
+
       # With fallback
       with_mcp_client ["http://primary:8080", "http://backup:8080"] do
         status = get_status!()
@@ -91,7 +91,7 @@ defmodule ExMCP.Helpers do
   ## Examples
 
       result = call_tool!("calculator", %{op: "add", a: 1, b: 2})
-      
+
       # With timeout
       result = call_tool!("slow_tool", %{data: "..."}, timeout: 30_000)
   """
@@ -127,7 +127,7 @@ defmodule ExMCP.Helpers do
   ## Examples
 
       content = read_resource!("file://data.txt")
-      
+
       # With JSON parsing
       data = read_resource!("file://config.json", parse_json: true)
   """
@@ -224,7 +224,7 @@ defmodule ExMCP.Helpers do
       {result, time_ms} = measure do
         call_tool!("slow_operation", %{})
       end
-      
+
       IO.puts("Operation took \#{time_ms}ms")
   """
   defmacro measure(do: block) do

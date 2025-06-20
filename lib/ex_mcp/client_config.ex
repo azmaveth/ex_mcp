@@ -345,7 +345,7 @@ defmodule ExMCP.ClientConfig do
         stream: [handshake: 15_000, idle: 60_000],
         pool: [checkout: 5_000, idle: 300_000]
       )
-      
+
   ## Timeout Types
 
   - `total`: Maximum time for entire operation including retries (ms)

@@ -15,7 +15,7 @@ defmodule ExMCP.Internal.AtomUtils do
 
       iex> ExMCP.Internal.AtomUtils.safe_string_to_atom("name")
       :name  # if :name already exists
-      
+
       iex> ExMCP.Internal.AtomUtils.safe_string_to_atom("unknown_key_12345")
       :__unknown_key__  # returns generic atom for unknown keys
   """

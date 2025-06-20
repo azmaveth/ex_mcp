@@ -6,7 +6,7 @@ defmodule ExMCP.ConvenienceClient do
   ExMCP.SimpleClient with enhanced convenience features:
 
   - Simplified API calls with sensible defaults
-  - Automatic response normalization 
+  - Automatic response normalization
   - Enhanced error messages with actionable guidance
   - Batch operations and concurrent processing
   - Helper functions for common patterns
@@ -16,11 +16,11 @@ defmodule ExMCP.ConvenienceClient do
 
       # Simple connection
       {:ok, client} = ExMCP.ConvenienceClient.connect("http://localhost:8080")
-      
+
       # List and call tools
       tools = ExMCP.ConvenienceClient.tools(client)
       result = ExMCP.ConvenienceClient.call(client, "calculator", %{operation: "add", a: 1, b: 2})
-      
+
       # Work with resources
       resources = ExMCP.ConvenienceClient.resources(client)
       content = ExMCP.ConvenienceClient.read(client, "file://data.txt")
@@ -30,10 +30,10 @@ defmodule ExMCP.ConvenienceClient do
       # Connection with fallback
       {:ok, client} = ExMCP.ConvenienceClient.connect([
         "http://primary:8080",
-        "http://backup:8080", 
+        "http://backup:8080",
         {:stdio, command: "local-server"}
       ])
-      
+
       # Batch operations
       results = ExMCP.ConvenienceClient.batch(client, [
         {:call_tool, "greet", %{name: "Alice"}},
@@ -64,19 +64,19 @@ defmodule ExMCP.ConvenienceClient do
 
       # HTTP connection
       {:ok, client} = ExMCP.ConvenienceClient.connect("http://localhost:8080")
-      
-      # Stdio connection  
+
+      # Stdio connection
       {:ok, client} = ExMCP.ConvenienceClient.connect({:stdio, command: "my-server"})
-      
+
       # Multiple transports with fallback
       {:ok, client} = ExMCP.ConvenienceClient.connect([
         "http://primary:8080",
         "http://backup:8080",
         {:stdio, command: "fallback-server"}
       ])
-      
+
       # With options
-      {:ok, client} = ExMCP.ConvenienceClient.connect("http://localhost:8080", 
+      {:ok, client} = ExMCP.ConvenienceClient.connect("http://localhost:8080",
         timeout: 10_000,
         retry_attempts: 3
       )
@@ -152,9 +152,9 @@ defmodule ExMCP.ConvenienceClient do
 
       # Simple call
       result = ExMCP.ConvenienceClient.call(client, "calculator", %{op: "add", a: 1, b: 2})
-      
+
       # With options
-      result = ExMCP.ConvenienceClient.call(client, "slow_operation", %{data: "..."}, 
+      result = ExMCP.ConvenienceClient.call(client, "slow_operation", %{data: "..."},
         timeout: 30_000,
         normalize: false  # Return raw response
       )
@@ -190,10 +190,10 @@ defmodule ExMCP.ConvenienceClient do
 
       # Exact match
       tool = ExMCP.ConvenienceClient.find_tool(client, "calculator")
-      
+
       # Fuzzy search
       tool = ExMCP.ConvenienceClient.find_tool(client, "calc", fuzzy: true)
-      
+
       # Filter by capability
       tools = ExMCP.ConvenienceClient.find_tool(client, nil, has_schema: true)
   """
@@ -233,9 +233,9 @@ defmodule ExMCP.ConvenienceClient do
 
       # Read text content
       content = ExMCP.ConvenienceClient.read(client, "file://data.txt")
-      
+
       # Read with options
-      content = ExMCP.ConvenienceClient.read(client, "file://large.json", 
+      content = ExMCP.ConvenienceClient.read(client, "file://large.json",
         timeout: 10_000,
         parse_json: true
       )

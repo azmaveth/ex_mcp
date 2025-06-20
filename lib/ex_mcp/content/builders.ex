@@ -17,20 +17,20 @@ defmodule ExMCP.Content.Builders do
   ## Usage
 
       use ExMCP.Content.Builders
-      
+
       # Simple text content
       content = text("Hello, world!")
-      
+
       # Chainable building
       content = text("# Header")
       |> as_markdown()
       |> with_metadata(%{author: "user"})
-      
+
       # File-based content
       content = from_file("image.png")
       |> with_alt_text("Product screenshot")
       |> resize(800, 600)
-      
+
       # Batch creation
       contents = batch([
         text("First message"),
@@ -72,7 +72,7 @@ defmodule ExMCP.Content.Builders do
 
       iex> text("Hello")
       %{type: :text, text: "Hello", format: :plain, language: nil, metadata: %{}}
-      
+
       iex> text("console.log('hi')", format: :code, language: "javascript")
       %{type: :text, text: "console.log('hi')", format: :code, language: "javascript", metadata: %{}}
   """
@@ -127,10 +127,10 @@ defmodule ExMCP.Content.Builders do
 
       # Image file
       content = from_file("screenshot.png")
-      
+
       # Text file
       content = from_file("README.md")
-      
+
       # With options
       content = from_file("large_image.jpg", max_size: 1_000_000, auto_resize: {800, 600})
   """

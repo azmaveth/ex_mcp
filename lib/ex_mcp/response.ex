@@ -58,7 +58,6 @@ defmodule ExMCP.Response do
   - Protection against atom exhaustion attacks
   """
 
-
   defstruct [
     :content,
     :meta,
@@ -435,5 +434,6 @@ defmodule ExMCP.Response do
   def schema_property(%{"properties" => props}, key) when is_map(props) do
     Map.get(props, key)
   end
+
   def schema_property(_, _), do: nil
 end

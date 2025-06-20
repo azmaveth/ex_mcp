@@ -57,12 +57,12 @@ defmodule ExMCP.Client.Response do
         "description" => "Performs calculations",
         "inputSchema" => %{"type" => "object", "properties" => %{...}}
       }
-      
+
       # Normalized response
       tool = Response.normalize_tool(raw)
       # => %{
       #   name: "calculator",
-      #   description: "Performs calculations", 
+      #   description: "Performs calculations",
       #   input_schema: %{type: "object", properties: %{...}},
       #   metadata: %{}
       # }

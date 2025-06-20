@@ -24,14 +24,14 @@ defmodule ExMCP.Reliability.HealthCheck do
         failure_threshold: 3,
         recovery_threshold: 2
       )
-      
+
       # Get current health status
       HealthCheck.get_status(checker)
       #=> {:healthy, %{last_check: ~U[...], consecutive_successes: 5}}
-      
+
       # Subscribe to health events
       HealthCheck.subscribe(checker)
-      
+
       # Manual health check
       HealthCheck.check_now(checker)
   """

@@ -18,10 +18,10 @@ defmodule ExMCP.Testing.Assertions do
   ## Usage
 
       use ExMCP.TestCase
-      
+
       test "tool call returns valid content" do
         result = call_tool(client, "sample_tool", %{input: "test"})
-        
+
         assert_success(result)
         assert_valid_tool_result(result)
         assert_content_type(result, :text)
@@ -64,7 +64,7 @@ defmodule ExMCP.Testing.Assertions do
 
       assert_success({:ok, result})
       assert_success(%{"status" => "success"})
-      
+
       # With custom message
       assert_success(result, "Tool call should succeed")
   """
@@ -92,9 +92,9 @@ defmodule ExMCP.Testing.Assertions do
 
       assert_error({:error, :timeout})
       assert_error(%{"error" => %{"code" => -1}})
-      
+
       # With specific error checking
-      assert_error(result, fn error -> 
+      assert_error(result, fn error ->
         assert error.code == -32601
         assert error.message =~ "Method not found"
       end)
@@ -459,7 +459,7 @@ defmodule ExMCP.Testing.Assertions do
       assert_performance fn ->
         slow_operation()
       end, max_time: 1000
-      
+
       assert_performance fn ->
         call_tool(client, "tool", %{})
       end, max_time: 500, message: "Tool call should be fast"
@@ -578,7 +578,7 @@ defmodule ExMCP.Testing.Assertions do
       assert_eventually fn ->
         Process.alive?(pid)
       end, timeout: 1000
-      
+
       assert_eventually fn ->
         GenServer.call(server, :is_ready)
       end, timeout: 5000, interval: 100
@@ -618,7 +618,7 @@ defmodule ExMCP.Testing.Assertions do
         fn -> send(self(), :event3) end
       ]) do
         assert_received :event1
-        assert_received :event2  
+        assert_received :event2
         assert_received :event3
       end
   """

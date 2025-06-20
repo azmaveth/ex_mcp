@@ -18,20 +18,20 @@ defmodule ExMCP.Content.Validation do
   ## Usage
 
       alias ExMCP.Content.Validation
-      
+
       # Basic validation
       case Validation.validate(content, rules) do
         :ok -> process_content(content)
         {:error, reasons} -> handle_validation_errors(reasons)
       end
-      
+
       # Sanitization
       safe_content = Validation.sanitize(content, [
         :html_escape,
         :strip_scripts,
         :limit_size
       ])
-      
+
       # Transformation
       {:ok, normalized} = Validation.transform(content, [
         :normalize_whitespace,
@@ -102,9 +102,9 @@ defmodule ExMCP.Content.Validation do
         {:mime_types, ["image/png", "image/jpeg"]},
         :scan_malware
       ]
-      
+
       case Validation.validate(content, rules) do
-        :ok -> 
+        :ok ->
           IO.puts("Content is valid")
         {:error, errors} ->
           Enum.each(errors, fn validation_error ->
@@ -163,7 +163,7 @@ defmodule ExMCP.Content.Validation do
 
       contents = [text_content, image_content, audio_content]
       rules = [:required_fields, {:max_size, 5_000_000}]
-      
+
       case validate_batch(contents, rules) do
         :ok -> process_all_contents(contents)
         {:error, results} ->
@@ -205,7 +205,7 @@ defmodule ExMCP.Content.Validation do
 
       # Basic HTML sanitization
       safe_content = sanitize(content, [:html_escape, :strip_scripts])
-      
+
       # Comprehensive sanitization
       safe_content = sanitize(content, [
         :html_escape,
@@ -307,7 +307,7 @@ defmodule ExMCP.Content.Validation do
         :scan_text,
         :measure_complexity
       ])
-      
+
       %{
         faces: 2,
         dominant_colors: ["#FF5733", "#33FF57"],
@@ -332,7 +332,7 @@ defmodule ExMCP.Content.Validation do
   ## Examples
 
       metadata = extract_metadata(image_content)
-      
+
       %{
         format: "PNG",
         dimensions: {800, 600},
@@ -366,7 +366,7 @@ defmodule ExMCP.Content.Validation do
         },
         "required" => ["text"]
       }
-      
+
       case validate_schema(content, schema) do
         :ok -> IO.puts("Schema valid")
         {:error, schema_errors} -> IO.puts("Schema errors: \#{inspect(schema_errors)}")
@@ -393,7 +393,7 @@ defmodule ExMCP.Content.Validation do
 
       case scan_security(content, [:malware, :xss, :sql_injection]) do
         :safe -> process_content(content)
-        {:threat, detected_threats} -> 
+        {:threat, detected_threats} ->
           IO.puts("Security threats detected: \#{inspect(detected_threats)}")
           reject_content(content)
       end
@@ -467,7 +467,7 @@ defmodule ExMCP.Content.Validation do
           end
         end
       end
-      
+
       register_validator(:business_rules, &CustomValidators.validate_business_rules/1)
   """
   @spec register_validator(atom(), (Protocol.content() -> validation_result())) :: :ok
@@ -490,7 +490,7 @@ defmodule ExMCP.Content.Validation do
           :ok
         end
       end)
-      
+
       validate(content, [rule])
   """
   @spec custom_rule((Protocol.content() -> :ok | {:error, String.t()})) :: validation_rule()

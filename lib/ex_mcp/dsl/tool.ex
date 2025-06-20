@@ -18,7 +18,7 @@ defmodule ExMCP.DSL.Tool do
           description "Says hello to a given name"
           version "1.0.0"
         end
-        
+
         input_schema %{
           type: "object",
           properties: %{name: %{type: "string"}},
@@ -32,13 +32,13 @@ defmodule ExMCP.DSL.Tool do
           name "Calculator"
           description "Adds two numbers together"
         end
-        
+
         args do
           field :a, :number, required: true, description: "First number"
           field :b, :number, required: true, description: "Second number"
         end
       end
-      
+
       # Legacy syntax (deprecated but supported)
       deftool "legacy_tool" do
         description "Legacy description syntax"  # Deprecated - use meta block
@@ -292,7 +292,7 @@ defmodule ExMCP.DSL.Tool do
     Enum.each(fields, fn field ->
       type = field.type
 
-      unless type in @valid_field_types or is_array_type?(type) do
+      unless type in @valid_field_types or array_type?(type) do
         raise CompileError,
           description:
             "Tool #{inspect(tool_name)}: Invalid field type #{inspect(type)}. " <>
@@ -301,8 +301,8 @@ defmodule ExMCP.DSL.Tool do
     end)
   end
 
-  defp is_array_type?({:array, inner_type}), do: inner_type in @valid_field_types
-  defp is_array_type?(_), do: false
+  defp array_type?({:array, inner_type}), do: inner_type in @valid_field_types
+  defp array_type?(_), do: false
 
   @doc """
   Compiles Elixir field definitions to JSON Schema.

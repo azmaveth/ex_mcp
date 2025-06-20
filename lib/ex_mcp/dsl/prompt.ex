@@ -18,14 +18,14 @@ defmodule ExMCP.DSL.Prompt do
           description "Reviews code with specific focus areas"
           version "2.0.0"
         end
-        
+
         arguments do
           arg :code, required: true, description: "Code to review"
           arg :language, required: false, description: "Programming language"
           arg :focus, required: false, description: "Review focus areas"
         end
       end
-      
+
       # Simple prompt without arguments
       defprompt "greeting" do
         meta do
@@ -38,7 +38,7 @@ defmodule ExMCP.DSL.Prompt do
       defprompt "legacy_prompt" do
         name "Legacy Prompt"  # Deprecated - use meta block
         description "Legacy description"  # Deprecated - use meta block
-        
+
         arguments do
           arg :data, description: "Some data"
         end
@@ -210,11 +210,11 @@ defmodule ExMCP.DSL.Prompt do
         %{name: "code", required: true, description: "Code to review"},
         %{name: "language", required: false, description: "Programming language"}
       ]
-      
+
       # Valid arguments
       ExMCP.DSL.Prompt.validate_arguments(%{"code" => "def hello, do: :world"}, arguments)
       # => :ok
-      
+
       # Missing required argument
       ExMCP.DSL.Prompt.validate_arguments(%{"language" => "elixir"}, arguments)
       # => {:error, "Missing required argument: code"}

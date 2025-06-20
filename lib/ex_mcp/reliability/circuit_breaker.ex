@@ -19,7 +19,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
         timeout: 30_000,
         reset_timeout: 60_000
       )
-      
+
       # Use with a function
       CircuitBreaker.call(breaker, fn ->
         # Your potentially failing operation

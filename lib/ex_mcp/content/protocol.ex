@@ -10,7 +10,7 @@ defmodule ExMCP.Content.Protocol do
 
   - **Text**: Plain text, markdown, code, etc.
   - **Image**: Base64-encoded images with metadata
-  - **Audio**: Base64-encoded audio with metadata  
+  - **Audio**: Base64-encoded audio with metadata
   - **Resource**: Embedded resource references
   - **Annotation**: Metadata annotations for content
 
@@ -95,10 +95,10 @@ defmodule ExMCP.Content.Protocol do
 
       iex> ExMCP.Content.Protocol.text("Hello, world!")
       %{type: :text, text: "Hello, world!", format: :plain, language: nil, metadata: %{}}
-      
+
       iex> ExMCP.Content.Protocol.text("# Header", format: :markdown)
       %{type: :text, text: "# Header", format: :markdown, language: nil, metadata: %{}}
-      
+
       iex> ExMCP.Content.Protocol.text("console.log('hi')", format: :code, language: "javascript")
       %{type: :text, text: "console.log('hi')", format: :code, language: "javascript", metadata: %{}}
   """
@@ -165,7 +165,7 @@ defmodule ExMCP.Content.Protocol do
 
       iex> ExMCP.Content.Protocol.resource("file://data.txt")
       %{type: :resource, resource: %{uri: "file://data.txt", text: nil, mime_type: nil}, metadata: %{}}
-      
+
       iex> ExMCP.Content.Protocol.resource("file://doc.pdf", text: "Important document", mime_type: "application/pdf")
       %{type: :resource, resource: %{uri: "file://doc.pdf", text: "Important document", mime_type: "application/pdf"}, metadata: %{}}
   """
@@ -211,7 +211,7 @@ defmodule ExMCP.Content.Protocol do
       iex> content = ExMCP.Content.Protocol.text("Hello")
       iex> ExMCP.Content.Protocol.validate(content)
       :ok
-      
+
       iex> invalid = %{type: :text, text: nil}
       iex> ExMCP.Content.Protocol.validate(invalid)
       {:error, "Text content must have non-nil text field"}
@@ -292,7 +292,7 @@ defmodule ExMCP.Content.Protocol do
       iex> content = ExMCP.Content.Protocol.text("Hello")
       iex> ExMCP.Content.Protocol.serialize(content)
       %{"type" => "text", "text" => "Hello"}
-      
+
       iex> content2 = ExMCP.Content.Protocol.text("Hello")
       iex> ExMCP.Content.Protocol.serialize(content2, format: :compact)
       %{"type" => "text", "text" => "Hello"}

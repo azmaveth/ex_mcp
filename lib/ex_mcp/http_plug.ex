@@ -15,7 +15,7 @@ defmodule ExMCP.HttpPlug do
         handler: MyApp.MCPServer,
         server_info: %{name: "my-app", version: "1.0.0"}
       ], port: 4000)
-      
+
       # With Phoenix
       plug ExMCP.HttpPlug,
         handler: MyApp.MCPServer,

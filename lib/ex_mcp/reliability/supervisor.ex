@@ -11,10 +11,10 @@ defmodule ExMCP.Reliability.Supervisor do
       children = [
         {ExMCP.Reliability.Supervisor, name: MyApp.Reliability}
       ]
-      
+
       # Or start manually
       {:ok, sup} = ExMCP.Reliability.Supervisor.start_link()
-      
+
       # Create reliability-enhanced client
       {:ok, client} = ExMCP.Reliability.Supervisor.create_reliable_client(
         sup,
@@ -306,12 +306,12 @@ defmodule ExMCP.Reliability do
       ExMCP.Reliability.with_retry(fn ->
         ExMCP.SimpleClient.call_tool(client, "risky_tool", %{})
       end)
-      
+
       # Create a circuit-breaker protected function
       protected_call = ExMCP.Reliability.protect(fn ->
         external_service_call()
       end, failure_threshold: 5)
-      
+
       # Use the protected function
       protected_call.()
   """

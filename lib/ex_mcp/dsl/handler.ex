@@ -13,7 +13,7 @@ defmodule ExMCP.DSL.Handler do
         response = text("Hello, \#{name}!")
         {:ok, [response], state}
       end
-      
+
       # Resource handler with pattern matching
       defhandler :resource, "file://" <> path, _uri, state do
         case File.read(path) do
@@ -21,7 +21,7 @@ defmodule ExMCP.DSL.Handler do
           {:error, reason} -> {:error, reason, state}
         end
       end
-      
+
       # Prompt handler with guards
       defhandler :prompt, "greeting", %{"style" => style}, state when style in ["formal", "casual"] do
         template = if style == "formal", do: "Good day", else: "Hey"
@@ -55,12 +55,12 @@ defmodule ExMCP.DSL.Handler do
         msg = args["message"] || "No message"
         {:ok, [text(msg)], state}
       end
-      
+
       # Multiple clauses with pattern matching
       defhandler :tool, "divide", %{"a" => a, "b" => b}, state when b != 0 do
         {:ok, [text("Result: \#{a / b}")], state}
       end
-      
+
       defhandler :tool, "divide", %{"a" => _a, "b" => 0}, state do
         {:error, "Division by zero", state}
       end

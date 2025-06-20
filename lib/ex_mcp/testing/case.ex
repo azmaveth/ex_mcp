@@ -16,17 +16,17 @@ defmodule ExMCP.TestCase do
 
       defmodule MyMCPTest do
         use ExMCP.TestCase, async: true
-        
+
         test "tool call validation" do
           tool_result = %{
             "content" => [%{"type" => "text", "text" => "Hello"}]
           }
-          
+
           assert_valid_tool_result(tool_result)
           assert_content_type(tool_result, :text)
           assert_content_contains(tool_result, "Hello")
         end
-        
+
         test "server integration" do
           with_mock_server(tools: [sample_tool()]) do |client|
             result = call_tool(client, "sample_tool", %{input: "test"})
@@ -113,7 +113,7 @@ defmodule ExMCP.TestCase do
       {result, time_ms} = measure_time do
         heavy_computation()
       end
-      
+
       assert time_ms < 1000  # Should complete in under 1 second
   """
   defmacro measure_time(do: block) do
@@ -219,7 +219,7 @@ defmodule ExMCP.TestCase do
         Logger.info("Test message")
         some_operation()
       end
-      
+
       assert logs =~ "Test message"
   """
   defmacro capture_logs(do: block) do
@@ -326,7 +326,7 @@ defmodule ExMCP.TestCase do
         fn -> test_operation_2() end,
         fn -> test_operation_3() end
       ])
-      
+
       assert length(results) == 3
       assert Enum.all?(results, &(&1 == :ok))
   """
@@ -352,7 +352,7 @@ defmodule ExMCP.TestCase do
         {MyWorker, [name: :test_worker]},
         {MyServer, [port: 0]}
       ])
-      
+
       # Test with supervised processes
       assert Process.alive?(Process.whereis(:test_worker))
   """
@@ -396,10 +396,10 @@ defmodule ExMCP.TestCase do
         server_port: 8080,
         temp_dir: "/tmp/test"
       })
-      
+
       # Use context in tests
       assert context.server_port == 8080
-      
+
       # Cleanup is automatic
   """
   @spec create_test_context(map()) :: map()

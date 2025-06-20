@@ -18,21 +18,21 @@ defmodule ExMCP.DSL.Resource do
           description "Current application configuration"
           author "System Team"
         end
-        
+
         mime_type "application/json"
         annotations %{
           audience: ["admin"],
           priority: 0.8
         }
       end
-      
+
       # Pattern-based resource with subscription support
       defresource "file://logs/*.log" do
         meta do
           name "Log Files"
           description "Application log files"
         end
-        
+
         mime_type "text/plain"
         list_pattern true
         subscribable true
@@ -284,7 +284,7 @@ defmodule ExMCP.DSL.Resource do
 
       iex> ExMCP.DSL.Resource.uri_matches?("file://logs/app.log", "file://logs/*.log")
       true
-      
+
       iex> ExMCP.DSL.Resource.uri_matches?("file://data/config.json", "file://logs/*.log")
       false
   """

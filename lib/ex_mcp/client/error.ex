@@ -17,7 +17,7 @@ defmodule ExMCP.Client.Error do
 
   - **Connection**: Transport and connectivity issues
   - **Protocol**: MCP protocol violations or mismatches
-  - **Authentication**: Auth and permission problems  
+  - **Authentication**: Auth and permission problems
   - **Resource**: Tool/resource/prompt related errors
   - **Timeout**: Request timeout and performance issues
   - **Validation**: Input validation and schema errors

@@ -18,39 +18,39 @@ defmodule ExMCP.DSL.Advanced do
   ## Usage
 
       use ExMCP.DSL.Advanced
-      
+
       @middleware [
         {ExMCP.Middleware.RateLimit, max: 100, window: :minute},
         {ExMCP.Middleware.Auth, required: true},
         ExMCP.Middleware.Telemetry
       ]
-      
+
       deftool "advanced_calculator" do
         description "Advanced calculator with validation and caching"
-        
+
         @annotation :category, "math"
         @annotation :complexity, "low"
         @annotation :cache_ttl, 300
-        
+
         middleware [
           {ExMCP.Middleware.Validate, strict: true},
           {ExMCP.Middleware.Cache, ttl: 300}
         ]
-        
+
         input do
-          field :operation, :string, required: true, 
+          field :operation, :string, required: true,
             enum: ["add", "subtract", "multiply", "divide"],
             description: "Mathematical operation to perform"
-            
+
           field :operands, {:array, :number}, required: true,
             min_items: 2, max_items: 10,
             description: "Numbers to operate on"
-            
+
           field :precision, :integer, default: 2,
             min: 0, max: 10,
             description: "Decimal precision for result"
         end
-        
+
         output do
           content :number, description: "Calculation result"
           output_annotation :operation_info, %{
@@ -59,7 +59,7 @@ defmodule ExMCP.DSL.Advanced do
             execution_time_ms: :number
           }
         end
-        
+
         examples [
           %{
             name: "Basic addition",
@@ -72,18 +72,18 @@ defmodule ExMCP.DSL.Advanced do
             output: 3.3333
           }
         ]
-        
+
         def handle(args, context) do
           # Implementation with context access
           result = perform_calculation(args.operation, args.operands, args.precision)
-          
+
           content = ExMCP.Content.number(result)
           annotation = ExMCP.Content.annotation("operation_info", %{
             operation: args.operation,
             input_count: length(args.operands),
             execution_time_ms: context.execution_time
           })
-          
+
           [content, annotation]
         end
       end
@@ -290,12 +290,12 @@ defmodule ExMCP.DSL.Advanced do
         field :query, :string, required: true,
           min_length: 1, max_length: 1000,
           sanitize: :html_escape
-          
+
         field :options, :object do
           field :case_sensitive, :boolean, default: false
           field :max_results, :integer, default: 10, min: 1, max: 100
         end
-        
+
         field :attachments, {:array, :file},
           max_items: 5,
           allowed_types: ["image/*", "application/pdf"]
@@ -316,10 +316,10 @@ defmodule ExMCP.DSL.Advanced do
       output do
         content :text, required: true,
           description: "Search results as formatted text"
-          
+
         content :image, optional: true,
           description: "Optional chart visualization"
-          
+
         output_annotation :metadata, %{
           result_count: :integer,
           execution_time: :number,
@@ -518,7 +518,7 @@ defmodule ExMCP.DSL.Advanced do
         type :image
         mime_types ["image/svg+xml", "image/png"]
         metadata [:title, :data_source, :chart_type]
-        
+
         def build(data, opts \\ []) do
           # Custom chart building logic
         end
