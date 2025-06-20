@@ -29,7 +29,8 @@ defmodule ExMCP.Testing.Assertions do
       end
   """
 
-  import ExUnit.Assertions
+  # Import ExUnit.Assertions - this module is only meant for test environment
+  import ExUnit.Assertions, only: [assert: 2, refute: 2, flunk: 1]
 
   alias ExMCP.Content.Protocol
 
@@ -309,8 +310,7 @@ defmodule ExMCP.Testing.Assertions do
     text_items =
       content_list
       |> Enum.filter(fn item -> Map.get(item, "type") == "text" end)
-      |> Enum.map(fn item -> Map.get(item, "text", "") end)
-      |> Enum.join(" ")
+      |> Enum.map_join(" ", fn item -> Map.get(item, "text", "") end)
 
     assert String.contains?(text_items, expected),
            "Expected content to contain '#{expected}', got: #{text_items}"
@@ -337,8 +337,7 @@ defmodule ExMCP.Testing.Assertions do
     text_items =
       content_list
       |> Enum.filter(fn item -> Map.get(item, "type") == "text" end)
-      |> Enum.map(fn item -> Map.get(item, "text", "") end)
-      |> Enum.join(" ")
+      |> Enum.map_join(" ", fn item -> Map.get(item, "text", "") end)
 
     assert Regex.match?(pattern, text_items),
            "Expected content to match #{inspect(pattern)}, got: #{text_items}"

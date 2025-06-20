@@ -409,7 +409,7 @@ defmodule ExMCP.DSL.Advanced do
     enhanced_opts = enhance_field_options(opts)
 
     quote do
-      ExMCP.DSL.Tool.field(unquote(name), unquote(type), unquote(enhanced_opts))
+      Tool.field(unquote(name), unquote(type), unquote(enhanced_opts))
     end
   end
 

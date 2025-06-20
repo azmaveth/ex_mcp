@@ -279,7 +279,6 @@ defmodule ExMCP.Client do
     case get_status(client) do
       {:ok, %{protocol_version: version}} when is_binary(version) -> {:ok, version}
       {:ok, _} -> {:error, :not_negotiated}
-      error -> error
     end
   end
 
@@ -291,7 +290,6 @@ defmodule ExMCP.Client do
     case get_status(client) do
       {:ok, %{server_capabilities: caps}} when is_map(caps) -> {:ok, caps}
       {:ok, _} -> {:error, :not_available}
-      error -> error
     end
   end
 
@@ -885,8 +883,10 @@ defmodule ExMCP.Client do
     case args do
       [name, arguments] ->
         call_tool(client, name, arguments)
+
       [name, arguments, timeout] when is_integer(timeout) ->
         call_tool(client, name, arguments, timeout)
+
       [name, arguments | rest] ->
         call_tool(client, name, arguments, Keyword.new(rest))
     end
@@ -904,8 +904,10 @@ defmodule ExMCP.Client do
     case args do
       [uri] ->
         read_resource(client, uri)
+
       [uri, timeout] when is_integer(timeout) ->
         read_resource(client, uri, timeout)
+
       [uri | rest] ->
         timeout = Keyword.get(Keyword.new(rest), :timeout, 30_000)
         read_resource(client, uri, timeout)
@@ -914,8 +916,12 @@ defmodule ExMCP.Client do
 
   defp process_task_result({task, result}) do
     case result do
-      {:ok, value} -> value
-      {:exit, reason} -> {:error, reason}
+      {:ok, value} ->
+        value
+
+      {:exit, reason} ->
+        {:error, reason}
+
       nil ->
         Task.shutdown(task, :brutal_kill)
         {:error, :timeout}

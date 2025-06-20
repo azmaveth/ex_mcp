@@ -6,6 +6,8 @@ defmodule ExMCP.DSL.Prompt do
   that can be used by MCP clients.
   """
 
+  alias ExMCP.DSL.Meta
+
   @doc """
   Defines a prompt template with its arguments and metadata.
 
@@ -47,24 +49,24 @@ defmodule ExMCP.DSL.Prompt do
   defmacro defprompt(prompt_name, do: body) do
     quote do
       # Import meta DSL functions
-      import ExMCP.DSL.Meta, only: [meta: 1]
+      import Meta, only: [meta: 1]
 
       # Clear any previous meta attributes
-      ExMCP.DSL.Meta.clear_meta(__MODULE__)
+      Meta.clear_meta(__MODULE__)
 
       @__prompt_name__ unquote(prompt_name)
 
       unquote(body)
 
       # Get accumulated meta and validate
-      prompt_meta = ExMCP.DSL.Meta.get_meta(__MODULE__)
+      prompt_meta = Meta.get_meta(__MODULE__)
 
       # Get legacy name/description for backward compatibility
       legacy_name = Module.get_attribute(__MODULE__, :__prompt_display_name__)
       legacy_description = Module.get_attribute(__MODULE__, :__prompt_description__)
 
       # Validate the prompt definition before registering
-      ExMCP.DSL.Prompt.__validate_prompt_definition__(
+      __validate_prompt_definition__(
         unquote(prompt_name),
         prompt_meta,
         legacy_name,

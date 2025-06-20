@@ -1,7 +1,7 @@
 defmodule ExMCP.StructuredResponseIntegrationTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Response, Error}
+  alias ExMCP.{Error, Response}
 
   describe "Response integration" do
     test "from_raw_response creates structured response" do

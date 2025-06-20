@@ -23,6 +23,13 @@ defmodule ExMCP.MixProject do
         "coveralls.post": :test,
         "coveralls.html": :test,
         "coveralls.github": :test
+      ],
+      dialyzer: [
+        plt_add_apps: [:mix, :ex_unit],
+        ignore_warnings: ".dialyzer_ignore.exs",
+        list_unused_filters: true,
+        plt_local_path: "priv/plts",
+        plt_core_path: "priv/plts"
       ]
     ]
   end

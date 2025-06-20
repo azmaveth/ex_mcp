@@ -128,7 +128,7 @@ defmodule ExMCP.Types.V20250618 do
           optional(:name) => String.t(),
           optional(:description) => String.t(),
           optional(:mimeType) => String.t(),
-          optional(:annotations) => ExMCP.Types.resource_annotations(),
+          optional(:annotations) => ExMCP.Types.annotations(),
           optional(:_meta) => meta()
         }
 
@@ -141,7 +141,7 @@ defmodule ExMCP.Types.V20250618 do
           optional(:title) => String.t(),
           optional(:description) => String.t(),
           optional(:arguments) => [ExMCP.Types.prompt_argument()],
-          optional(:annotations) => ExMCP.Types.prompt_annotations(),
+          optional(:annotations) => ExMCP.Types.annotations(),
           optional(:_meta) => meta()
         }
 

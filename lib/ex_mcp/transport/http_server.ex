@@ -237,9 +237,9 @@ if Code.ensure_loaded?(Plug) do
         {:error, error} ->
           response =
             Protocol.encode_error(
-              %{code: -32603, message: "Internal error"},
+              -32603,
+              "Internal error",
               to_string(error),
-              nil,
               id
             )
 
@@ -264,9 +264,9 @@ if Code.ensure_loaded?(Plug) do
 
                 {:error, error} ->
                   Protocol.encode_error(
-                    %{code: -32603, message: "Internal error"},
+                    -32603,
+                    "Internal error",
                     to_string(error),
-                    nil,
                     id
                   )
               end

@@ -1,8 +1,8 @@
 defmodule ExMCP.Testing.BuildersTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.Testing.Builders
   alias ExMCP.Content.Protocol
+  alias ExMCP.Testing.Builders
 
   describe "text_content/2" do
     test "creates basic text content" do

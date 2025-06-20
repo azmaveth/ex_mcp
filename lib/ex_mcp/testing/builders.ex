@@ -760,10 +760,9 @@ defmodule ExMCP.Testing.Builders do
     chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 
     1..length
-    |> Enum.map(fn _ ->
+    |> Enum.map_join("", fn _ ->
       String.at(chars, :rand.uniform(String.length(chars)) - 1)
     end)
-    |> Enum.join()
   end
 
   @doc """

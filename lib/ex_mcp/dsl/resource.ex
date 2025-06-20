@@ -6,6 +6,8 @@ defmodule ExMCP.DSL.Resource do
   defining resources that can be read by MCP clients.
   """
 
+  alias ExMCP.DSL.Meta
+
   @doc """
   Defines a resource with its URI and metadata.
 
@@ -48,10 +50,10 @@ defmodule ExMCP.DSL.Resource do
   defmacro defresource(uri, do: body) do
     quote do
       # Import meta DSL functions
-      import ExMCP.DSL.Meta, only: [meta: 1]
+      import Meta, only: [meta: 1]
 
       # Clear any previous meta attributes
-      ExMCP.DSL.Meta.clear_meta(__MODULE__)
+      Meta.clear_meta(__MODULE__)
 
       @__resource_uri__ unquote(uri)
       @__resource_opts__ []
@@ -59,14 +61,14 @@ defmodule ExMCP.DSL.Resource do
       unquote(body)
 
       # Get accumulated meta and validate
-      resource_meta = ExMCP.DSL.Meta.get_meta(__MODULE__)
+      resource_meta = Meta.get_meta(__MODULE__)
 
       # Get legacy name/description for backward compatibility
       legacy_name = Module.get_attribute(__MODULE__, :__resource_name__)
       legacy_description = Module.get_attribute(__MODULE__, :__resource_description__)
 
       # Validate the resource definition before registering
-      ExMCP.DSL.Resource.__validate_resource_definition__(
+      __validate_resource_definition__(
         unquote(uri),
         resource_meta,
         legacy_name,

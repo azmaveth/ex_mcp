@@ -289,8 +289,7 @@ defmodule ExMCP.Response do
   def all_text_content(%__MODULE__{content: content}) do
     content
     |> Enum.filter(&(&1.type == "text" && &1.text))
-    |> Enum.map(& &1.text)
-    |> Enum.join("\n")
+    |> Enum.map_join("\n", & &1.text)
   end
 
   @doc """

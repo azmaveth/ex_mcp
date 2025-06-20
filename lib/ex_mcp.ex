@@ -504,8 +504,8 @@ defmodule ExMCP do
 
   defp extract_response_content(response) do
     Response.resource_content(response) ||
-    Response.text_content(response) ||
-    Response.data_content(response)
+      Response.text_content(response) ||
+      Response.data_content(response)
   end
 
   defp parse_json_content(content) do

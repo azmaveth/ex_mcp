@@ -6,7 +6,7 @@ defmodule Mix.Tasks.StdioServer do
 
       mix stdio_server
 
-  This will start a v2 stdio server that can be used for testing
+  This will start a stdio server that can be used for testing
   with MCP clients via stdin/stdout communication.
   """
 
@@ -17,13 +17,20 @@ defmodule Mix.Tasks.StdioServer do
   def run(_args) do
     Mix.Task.run("app.start")
 
+    # Configure for STDIO mode
+    Application.put_env(:ex_mcp, :stdio_mode, true)
+    Application.put_env(:ex_mcp, :stdio_startup_delay, 10)
+    Logger.configure(level: :emergency)
+
     # Define the server inline to avoid compilation issues
     Code.eval_string("""
-    defmodule StdioServerV2 do
-      use ExMCP.ServerV2
+    defmodule ExampleStdioServer do
+      use ExMCP.Server
 
       deftool "say_hello" do
-        tool_description("Say hello to someone via stdio")
+        meta do
+          description "Say hello to someone via stdio"
+        end
 
         args do
           field(:name, :string, required: true, description: "Name to greet")
@@ -31,7 +38,9 @@ defmodule Mix.Tasks.StdioServer do
       end
 
       deftool "echo" do
-        tool_description("Echo back the input message")
+        meta do
+          description "Echo back the input message"
+        end
 
         args do
           field(:message, :string, required: true, description: "Message to echo")
@@ -40,14 +49,18 @@ defmodule Mix.Tasks.StdioServer do
       end
 
       defresource "config://server/info" do
-        resource_name("Server Information")
-        resource_description("Information about this stdio server")
-        mime_type("application/json")
+        meta do
+          name "Server Information"
+          description "Information about this stdio server"
+        end
+        mime_type "application/json"
       end
 
       defprompt "greeting_style" do
-        prompt_name("Greeting Style Prompt")
-        prompt_description("Generate greetings in different styles")
+        meta do
+          name "Greeting Style Prompt"
+          description "Generate greetings in different styles"
+        end
 
         arguments do
           arg(:style, required: true, description: "Greeting style (formal, casual, funny)")
@@ -57,7 +70,7 @@ defmodule Mix.Tasks.StdioServer do
 
       @impl true
       def handle_tool_call("say_hello", %{"name" => name}, state) do
-        content = [text("Hello, \#{name}! Welcome to ExMCP v2 via stdio! 📝✨")]
+        content = [text("Hello, \#{name}! Welcome to ExMCP via stdio! 📝✨")]
         {:ok, %{content: content}, state}
       end
 
@@ -75,9 +88,8 @@ defmodule Mix.Tasks.StdioServer do
       @impl true
       def handle_resource_read("config://server/info", _uri, state) do
         server_info = %{
-          name: "StdioServerV2",
-          version: "2.0.0",
-          dsl_version: "v2",
+          name: "ExampleStdioServer",
+          version: "1.0.0",
           capabilities: get_capabilities()
         }
 
@@ -122,198 +134,26 @@ defmodule Mix.Tasks.StdioServer do
     end
     """)
 
+    # Get the configured protocol version
+    protocol_version = Application.get_env(:ex_mcp, :protocol_version, "2025-03-26")
+
     IO.puts(:stderr, """
-    📡 ExMCP v2 stdio Server Ready!
+    📡 ExMCP stdio Server Ready!
 
     Example usage with ExMCP client:
-    {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}
+    {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"#{protocol_version}","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}
     {"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}
     {"jsonrpc":"2.0","method":"tools/call","params":{"name":"say_hello","arguments":{"name":"World"}},"id":3}
 
     Press Ctrl+D to exit.
     """)
 
-    # Start the v2 server
-    {:ok, server} = StdioServerV2.start_link()
+    # Start the server using the standard STDIO transport
+    # The module is defined dynamically above, so we need to call it dynamically
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    {:ok, _server} = apply(ExampleStdioServer, :start_link, [[transport: :stdio]])
 
-    # Handle stdio communication manually
-    loop(server, "")
-  end
-
-  defp loop(server, buffer) do
-    case IO.read(:stdio, :line) do
-      :eof ->
-        IO.puts(:stderr, "EOF received, shutting down")
-        GenServer.stop(server)
-        :ok
-
-      {:error, reason} ->
-        IO.puts(:stderr, "Read error: #{inspect(reason)}")
-        GenServer.stop(server)
-        :ok
-
-      data ->
-        buffer = buffer <> data
-
-        case Jason.decode(buffer) do
-          {:ok, message} ->
-            handle_message(server, message)
-            loop(server, "")
-
-          {:error, _} ->
-            loop(server, buffer)
-        end
-    end
-  end
-
-  defp handle_message(_server, %{"method" => "initialize", "id" => id}) do
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "result" => %{
-        "protocolVersion" => "2025-03-26",
-        "capabilities" => StdioServerV2.get_capabilities(),
-        "serverInfo" => %{
-          "name" => "ExMCP v2 stdio Server",
-          "version" => "2.0.0"
-        }
-      }
-    }
-
-    IO.puts(Jason.encode!(response))
-  end
-
-  defp handle_message(_server, %{"method" => "tools/list", "id" => id}) do
-    tools = StdioServerV2.get_tools()
-
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "result" => %{"tools" => tools}
-    }
-
-    IO.puts(Jason.encode!(response))
-  end
-
-  defp handle_message(server, %{
-         "method" => "tools/call",
-         "params" => %{"name" => tool_name, "arguments" => args},
-         "id" => id
-       }) do
-    case GenServer.call(server, {:call_tool, tool_name, args}) do
-      {:ok, result} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "result" => result
-        }
-
-        IO.puts(Jason.encode!(response))
-
-      {:error, reason} ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{
-            "code" => -32603,
-            "message" => "Internal error",
-            "data" => inspect(reason)
-          }
-        }
-
-        IO.puts(Jason.encode!(error_response))
-    end
-  end
-
-  defp handle_message(_server, %{"method" => "resources/list", "id" => id}) do
-    resources = StdioServerV2.get_resources()
-
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "result" => %{"resources" => resources}
-    }
-
-    IO.puts(Jason.encode!(response))
-  end
-
-  defp handle_message(server, %{
-         "method" => "resources/read",
-         "params" => %{"uri" => uri},
-         "id" => id
-       }) do
-    case GenServer.call(server, {:read_resource, uri}) do
-      {:ok, contents} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "result" => %{"contents" => contents}
-        }
-
-        IO.puts(Jason.encode!(response))
-
-      {:error, reason} ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{
-            "code" => -32603,
-            "message" => "Internal error",
-            "data" => inspect(reason)
-          }
-        }
-
-        IO.puts(Jason.encode!(error_response))
-    end
-  end
-
-  defp handle_message(_server, %{"method" => "prompts/list", "id" => id}) do
-    prompts = StdioServerV2.get_prompts()
-
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "result" => %{"prompts" => prompts}
-    }
-
-    IO.puts(Jason.encode!(response))
-  end
-
-  defp handle_message(server, %{
-         "method" => "prompts/get",
-         "params" => %{"name" => prompt_name, "arguments" => args},
-         "id" => id
-       }) do
-    case GenServer.call(server, {:get_prompt, prompt_name, args}) do
-      {:ok, result} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "result" => result
-        }
-
-        IO.puts(Jason.encode!(response))
-
-      {:error, reason} ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{
-            "code" => -32603,
-            "message" => "Internal error",
-            "data" => inspect(reason)
-          }
-        }
-
-        IO.puts(Jason.encode!(error_response))
-    end
-  end
-
-  defp handle_message(_server, %{"method" => "initialized"}) do
-    # No response needed for initialized notification
-  end
-
-  defp handle_message(_server, message) do
-    IO.puts(:stderr, "Unhandled message: #{inspect(message)}")
+    # Keep the process alive
+    Process.sleep(:infinity)
   end
 end

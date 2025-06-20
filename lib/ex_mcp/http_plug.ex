@@ -27,6 +27,8 @@ defmodule ExMCP.HttpPlug do
   import Plug.Conn
   require Logger
 
+  alias ExMCP.HttpPlug.SSEHandler
+
   @doc """
   Initializes the plug with configuration options.
   """
@@ -157,14 +159,14 @@ defmodule ExMCP.HttpPlug do
       |> put_resp_header("connection", "keep-alive")
       |> send_chunked(200)
 
-    # Only start the handler if not in test environment
-    if Mix.env() == :test do
+    # Check if we're in test mode via application environment
+    if Application.get_env(:ex_mcp, :test_mode, false) do
       # Send a simple connection message and return for testing
       {:ok, conn} = chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
       conn
     else
       # Use the new SSE handler with backpressure control
-      {:ok, handler} = ExMCP.HttpPlug.SSEHandler.start_link(conn, session_id, opts)
+      {:ok, handler} = SSEHandler.start_link(conn, session_id, opts)
 
       # Register with session manager if available
       if function_exported?(opts.session_manager, :register_sse_handler, 2) do

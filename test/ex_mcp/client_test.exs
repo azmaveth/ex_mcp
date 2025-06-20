@@ -42,222 +42,260 @@ defmodule ExMCP.ClientTest do
         {:error, :send_failed}
       else
         # Parse the request and queue the appropriate response
-        case Jason.decode!(data) do
-          %{"method" => "initialize", "id" => id} ->
-            fail_handshake = Agent.get(agent, fn state -> state.fail_handshake end)
-
-            response =
-              if fail_handshake do
-                %{
-                  "jsonrpc" => "2.0",
-                  "id" => id,
-                  "error" => %{
-                    "code" => -32600,
-                    "message" => "Handshake failed"
-                  }
-                }
-              else
-                %{
-                  "jsonrpc" => "2.0",
-                  "id" => id,
-                  "result" => %{
-                    "protocolVersion" => "2025-06-18",
-                    "capabilities" => %{
-                      "tools" => %{"listChanged" => true},
-                      "resources" => %{"listChanged" => true},
-                      "prompts" => %{"listChanged" => true}
-                    },
-                    "serverInfo" => %{
-                      "name" => "MockServer",
-                      "version" => "1.0.0"
-                    }
-                  }
-                }
-              end
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          %{"method" => "tools/list", "id" => id} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => %{
-                "tools" => [
-                  %{
-                    "name" => "hello",
-                    "description" => "Say hello",
-                    "inputSchema" => %{
-                      "type" => "object",
-                      "properties" => %{
-                        "name" => %{"type" => "string"}
-                      }
-                    }
-                  },
-                  %{
-                    "name" => "error_tool",
-                    "description" => "Tool that errors",
-                    "inputSchema" => %{"type" => "object", "properties" => %{}}
-                  }
-                ]
-              }
-            }
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          %{"method" => "tools/call", "id" => id, "params" => %{"name" => "hello"}} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => %{
-                "content" => [
-                  %{
-                    "type" => "text",
-                    "text" => "Hello, World!"
-                  }
-                ]
-              }
-            }
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          %{"method" => "tools/call", "id" => id, "params" => %{"name" => "error_tool"}} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{
-                "code" => -32601,
-                "message" => "Tool execution failed"
-              }
-            }
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          %{"method" => "resources/list", "id" => id} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => %{
-                "resources" => [
-                  %{
-                    "uri" => "file:///test.txt",
-                    "name" => "Test File",
-                    "mimeType" => "text/plain"
-                  }
-                ]
-              }
-            }
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          %{"method" => "resources/read", "id" => id, "params" => %{"uri" => uri}} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => %{
-                "content" => [
-                  %{
-                    "type" => "text",
-                    "uri" => uri,
-                    "text" => "Test content from #{uri}"
-                  }
-                ]
-              }
-            }
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          %{"method" => "prompts/list", "id" => id} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => %{
-                "prompts" => [
-                  %{
-                    "name" => "greet",
-                    "description" => "Generate a greeting",
-                    "arguments" => [
-                      %{
-                        "name" => "style",
-                        "description" => "Greeting style",
-                        "required" => false
-                      }
-                    ]
-                  }
-                ]
-              }
-            }
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          %{"method" => "prompts/get", "id" => id, "params" => %{"name" => "greet"}} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => %{
-                "content" => [
-                  %{
-                    "type" => "text",
-                    "text" => nil,
-                    "data" => %{
-                      "messages" => [
-                        %{
-                          "role" => "user",
-                          "content" => %{
-                            "type" => "text",
-                            "text" => "Generate a friendly greeting"
-                          }
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            }
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          %{"method" => "notifications/initialized"} ->
-            # No response needed for notifications
-            :ok
-
-          %{"method" => method, "id" => id} ->
-            # Unknown method
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{
-                "code" => -32601,
-                "message" => "Method not found: #{method}"
-              }
-            }
-
-            Agent.update(agent, fn state ->
-              %{state | responses: [Jason.encode!(response) | state.responses]}
-            end)
-
-          _ ->
-            # Ignore other messages
-            :ok
-        end
-
-        {:ok, state}
+        request = Jason.decode!(data)
+        handle_request(agent, request)
       end
+
+      {:ok, state}
+    end
+
+    defp handle_request(agent, %{"method" => "initialize", "id" => id}) do
+      fail_handshake = Agent.get(agent, fn state -> state.fail_handshake end)
+      response = build_initialize_response(id, fail_handshake)
+      queue_response(agent, response)
+    end
+
+    defp handle_request(agent, %{"method" => "tools/list", "id" => id}) do
+      response = build_tools_list_response(id)
+      queue_response(agent, response)
+    end
+
+    defp handle_request(agent, %{
+           "method" => "tools/call",
+           "id" => id,
+           "params" => %{"name" => "hello"}
+         }) do
+      response = build_hello_tool_response(id)
+      queue_response(agent, response)
+    end
+
+    defp handle_request(agent, %{
+           "method" => "tools/call",
+           "id" => id,
+           "params" => %{"name" => "error_tool"}
+         }) do
+      response = build_error_tool_response(id)
+      queue_response(agent, response)
+    end
+
+    defp handle_request(agent, %{"method" => "resources/list", "id" => id}) do
+      response = build_resources_list_response(id)
+      queue_response(agent, response)
+    end
+
+    defp handle_request(agent, %{
+           "method" => "resources/read",
+           "id" => id,
+           "params" => %{"uri" => uri}
+         }) do
+      response = build_resource_read_response(id, uri)
+      queue_response(agent, response)
+    end
+
+    defp handle_request(agent, request) do
+      # Handle other requests that were in the original function
+      handle_remaining_requests(agent, request)
+    end
+
+    defp build_initialize_response(id, fail_handshake) do
+      if fail_handshake do
+        %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "error" => %{
+            "code" => -32600,
+            "message" => "Handshake failed"
+          }
+        }
+      else
+        %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => %{
+            "protocolVersion" => "2025-06-18",
+            "capabilities" => %{
+              "tools" => %{"listChanged" => true},
+              "resources" => %{"listChanged" => true},
+              "prompts" => %{"listChanged" => true}
+            },
+            "serverInfo" => %{
+              "name" => "MockServer",
+              "version" => "1.0.0"
+            }
+          }
+        }
+      end
+    end
+
+    defp build_tools_list_response(id) do
+      %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "result" => %{
+          "tools" => [
+            %{
+              "name" => "hello",
+              "description" => "Say hello",
+              "inputSchema" => %{
+                "type" => "object",
+                "properties" => %{
+                  "name" => %{"type" => "string"}
+                }
+              }
+            },
+            %{
+              "name" => "error_tool",
+              "description" => "Tool that errors",
+              "inputSchema" => %{"type" => "object", "properties" => %{}}
+            }
+          ]
+        }
+      }
+    end
+
+    defp build_hello_tool_response(id) do
+      %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "result" => %{
+          "content" => [
+            %{
+              "type" => "text",
+              "text" => "Hello, World!"
+            }
+          ]
+        }
+      }
+    end
+
+    defp build_error_tool_response(id) do
+      %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "error" => %{
+          "code" => -32601,
+          "message" => "Tool execution failed"
+        }
+      }
+    end
+
+    defp build_resources_list_response(id) do
+      %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "result" => %{
+          "resources" => [
+            %{
+              "uri" => "file:///test.txt",
+              "name" => "Test File",
+              "mimeType" => "text/plain"
+            }
+          ]
+        }
+      }
+    end
+
+    defp build_resource_read_response(id, uri) do
+      %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "result" => %{
+          "content" => [
+            %{
+              "type" => "text",
+              "uri" => uri,
+              "text" => "Test content from #{uri}"
+            }
+          ]
+        }
+      }
+    end
+
+    defp queue_response(agent, response) do
+      Agent.update(agent, fn state ->
+        %{state | responses: [Jason.encode!(response) | state.responses]}
+      end)
+    end
+
+    defp handle_remaining_requests(agent, request) do
+      case request do
+        %{"method" => "prompts/list", "id" => id} ->
+          response = build_prompts_list_response(id)
+          queue_response(agent, response)
+
+        %{"method" => "prompts/get", "id" => id, "params" => %{"name" => "greet"}} ->
+          response = build_prompt_get_response(id)
+          queue_response(agent, response)
+
+        %{"method" => "notifications/initialized"} ->
+          # No response needed for notifications
+          :ok
+
+        %{"method" => method, "id" => id} ->
+          # Unknown method
+          response = %{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{
+              "code" => -32601,
+              "message" => "Method not found: #{method}"
+            }
+          }
+
+          queue_response(agent, response)
+
+        _ ->
+          # Ignore other messages
+          :ok
+      end
+    end
+
+    defp build_prompts_list_response(id) do
+      %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "result" => %{
+          "prompts" => [
+            %{
+              "name" => "greet",
+              "description" => "Generate a greeting",
+              "arguments" => [
+                %{
+                  "name" => "style",
+                  "description" => "Greeting style",
+                  "required" => false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    end
+
+    defp build_prompt_get_response(id) do
+      %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "result" => %{
+          "content" => [
+            %{
+              "type" => "text",
+              "text" => nil,
+              "data" => %{
+                "messages" => [
+                  %{
+                    "role" => "user",
+                    "content" => %{
+                      "type" => "text",
+                      "text" => "Generate a friendly greeting"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
     end
 
     def recv(%{connected: false}, _timeout) do

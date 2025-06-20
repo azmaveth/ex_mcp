@@ -52,8 +52,12 @@ defmodule ExMCP.StdioLauncher do
     configure_stdio_environment()
 
     # Install dependencies with minimal output
-    mix_opts = Keyword.get(opts, :mix_install_opts, [])
-    Mix.install(deps, Keyword.put(mix_opts, :verbose, false))
+    if function_exported?(Mix, :install, 2) do
+      mix_opts = Keyword.get(opts, :mix_install_opts, [])
+      Mix.install(deps, Keyword.put(mix_opts, :verbose, false))
+    else
+      raise "Mix.install/2 is not available. This module is intended for use in Elixir scripts."
+    end
 
     # Ensure logging is still suppressed after Mix.install
     configure_stdio_environment()

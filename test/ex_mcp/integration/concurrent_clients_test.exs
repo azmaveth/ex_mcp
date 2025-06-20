@@ -2,8 +2,8 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
 
-  alias ExMCP.HttpPlug
   alias ExMCP.Client
+  alias ExMCP.HttpPlug
   alias ExMCP.Server
 
   @moduletag :integration

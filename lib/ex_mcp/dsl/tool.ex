@@ -6,6 +6,8 @@ defmodule ExMCP.DSL.Tool do
   while offering a clean Elixir syntax for defining tool schemas.
   """
 
+  alias ExMCP.DSL.Meta
+
   @doc """
   Defines a tool with its schema and metadata.
 
@@ -50,10 +52,10 @@ defmodule ExMCP.DSL.Tool do
   defmacro deftool(name, do: body) do
     quote do
       # Import meta DSL functions
-      import ExMCP.DSL.Meta, only: [meta: 1]
+      import Meta, only: [meta: 1]
 
       # Clear any previous meta attributes
-      ExMCP.DSL.Meta.clear_meta(__MODULE__)
+      Meta.clear_meta(__MODULE__)
 
       @__tool_name__ unquote(name)
       @__tool_opts__ []
@@ -61,13 +63,13 @@ defmodule ExMCP.DSL.Tool do
       unquote(body)
 
       # Get accumulated meta and validate
-      tool_meta = ExMCP.DSL.Meta.get_meta(__MODULE__)
+      tool_meta = Meta.get_meta(__MODULE__)
 
       # Get legacy description for backward compatibility
       legacy_description = Module.get_attribute(__MODULE__, :__tool_description__)
 
       # Validate the tool definition before registering
-      ExMCP.DSL.Tool.__validate_tool_definition__(
+      __validate_tool_definition__(
         unquote(name),
         tool_meta,
         legacy_description,
@@ -87,7 +89,7 @@ defmodule ExMCP.DSL.Tool do
                      description: final_description,
                      input_schema:
                        Module.get_attribute(__MODULE__, :__tool_input_schema__) ||
-                         ExMCP.DSL.Tool.__compile_schema__(
+                         __compile_schema__(
                            Module.get_attribute(__MODULE__, :__tool_fields__) || []
                          ),
                      annotations: Module.get_attribute(__MODULE__, :__tool_annotations__) || %{},

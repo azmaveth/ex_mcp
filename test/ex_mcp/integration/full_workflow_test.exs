@@ -1,8 +1,8 @@
 defmodule ExMCP.Integration.FullWorkflowTest do
   use ExUnit.Case, async: false
 
-  alias ExMCP.Testing.{MockServer, Assertions}
   alias ExMCP.Content.Protocol
+  alias ExMCP.Testing.{Assertions, MockServer}
 
   @moduletag :integration
   @moduletag timeout: 30_000

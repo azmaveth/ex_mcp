@@ -24,6 +24,8 @@ defmodule ExMCP.Helpers do
       end
   """
 
+  alias ExMCP.Client.Error
+
   @doc """
   Imports helper macros into the calling module.
   """
@@ -290,7 +292,7 @@ defmodule ExMCP.Helpers do
     base = message
 
     if is_list(suggestions) and Enum.any?(suggestions) do
-      suggestion_text = ExMCP.Client.Error.format_suggestions(suggestions)
+      suggestion_text = Error.format_suggestions(suggestions)
       "#{base}\n\nSuggestions:\n#{suggestion_text}"
     else
       base
@@ -314,11 +316,10 @@ defmodule ExMCP.Helpers do
 
   defp format_validation_errors(errors) when is_list(errors) do
     errors
-    |> Enum.map(fn {path, error} ->
+    |> Enum.map_join(", ", fn {path, error} ->
       path_str = if is_list(path), do: Enum.join(path, "."), else: "#{path}"
       "#{path_str}: #{error}"
     end)
-    |> Enum.join(", ")
   end
 
   defp format_validation_errors(error) when is_binary(error), do: error

@@ -20,6 +20,7 @@ defmodule ExMCP.Server.Transport do
   require Logger
 
   alias ExMCP.Internal.StdioLoggerConfig
+  alias ExMCP.Server.StdioServer
 
   @doc """
   Starts a server with the specified transport configuration.
@@ -79,12 +80,12 @@ defmodule ExMCP.Server.Transport do
 
     # Use ExMCP v1 StdioServer for now - this provides stdio transport
     # In the future, this could be replaced with a v2-specific implementation
-    case Code.ensure_loaded(ExMCP.Server.StdioServer) do
-      {:module, ExMCP.Server.StdioServer} ->
-        ExMCP.Server.StdioServer.start_link([module: module] ++ opts)
+    case Code.ensure_loaded(StdioServer) do
+      {:module, StdioServer} ->
+        StdioServer.start_link([module: module] ++ opts)
 
       {:error, _} ->
-        Logger.warning("ExMCP.Server.StdioServer not available, starting basic GenServer")
+        Logger.warning("StdioServer not available, starting basic GenServer")
         # Fallback to basic server startup
         module.start_link(opts)
     end
@@ -200,7 +201,7 @@ defmodule ExMCP.Server.Transport do
   def list_transports do
     %{
       stdio: %{
-        available: Code.ensure_loaded?(ExMCP.Server.StdioServer),
+        available: Code.ensure_loaded?(StdioServer),
         description: "Standard input/output transport for CLI tools"
       },
       http: %{

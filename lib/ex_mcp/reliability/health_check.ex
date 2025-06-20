@@ -313,8 +313,10 @@ defmodule ExMCP.Reliability.HealthCheck do
         :unhealthy ->
           handle_failed_check(state)
 
-        :degraded ->
-          handle_degraded_check(state)
+          # Note: :degraded status was intentionally removed to simplify health check logic.
+          # The system now uses a binary healthy/unhealthy model for clearer operational status.
+          # Any partially functional states are treated as :unhealthy to ensure conservative
+          # load balancing and monitoring decisions.
       end
 
     # Update history (keep last 100 entries)
@@ -355,15 +357,6 @@ defmodule ExMCP.Reliability.HealthCheck do
     end
 
     %{state | status: new_status, consecutive_failures: new_failures, consecutive_successes: 0}
-  end
-
-  defp handle_degraded_check(state) do
-    # Degraded doesn't reset counters but updates status
-    if state.status != :degraded do
-      notify_status_change(state, state.status, :degraded)
-    end
-
-    %{state | status: :degraded}
   end
 
   defp notify_status_change(state, old_status, new_status) do

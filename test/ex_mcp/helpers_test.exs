@@ -2,7 +2,7 @@ defmodule ExMCP.HelpersTest do
   use ExUnit.Case, async: true
 
   import ExMCP.Helpers
-  alias ExMCP.{ConnectionError, ToolError, ResourceError, PromptError, ClientError}
+  alias ExMCP.{ClientError, ConnectionError, PromptError, ResourceError, ToolError}
 
   describe "__using__ macro" do
     test "imports helpers and creates alias" do

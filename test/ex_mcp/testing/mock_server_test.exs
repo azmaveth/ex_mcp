@@ -1,7 +1,7 @@
 defmodule ExMCP.Testing.MockServerTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.Testing.{MockServer, Builders}
+  alias ExMCP.Testing.{Builders, MockServer}
 
   describe "sample data builders" do
     test "sample_tool/1 creates valid tool" do

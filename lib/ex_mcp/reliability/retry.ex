@@ -263,27 +263,38 @@ defmodule ExMCP.Reliability.Retry do
   end
 
   defp mcp_should_retry?(error) do
-    case error do
-      # Network errors
-      :timeout -> true
-      :closed -> true
-      {:error, :closed} -> true
-      {:error, :timeout} -> true
-      {:error, :econnrefused} -> true
-      {:error, :ehostunreach} -> true
-      {:error, :enetunreach} -> true
-      # Transport errors
-      {:transport_error, _} -> true
-      # Server errors (5xx equivalent)
-      %{"error" => %{"code" => code}} when code in -32099..-32000 -> true
-      # Rate limiting
-      {:error, :rate_limited} -> true
-      # Too many requests
-      %{"error" => %{"code" => -32029}} -> true
-      # Don't retry client errors
-      %{"error" => %{"code" => code}} when code in -32700..-32600 -> false
-      # Default: don't retry
-      _ -> false
+    cond do
+      network_error?(error) -> true
+      transport_error?(error) -> true
+      server_error?(error) -> true
+      rate_limit_error?(error) -> true
+      client_error?(error) -> false
+      true -> false
     end
   end
+
+  defp network_error?(error) do
+    error in [
+      :timeout,
+      :closed,
+      {:error, :closed},
+      {:error, :timeout},
+      {:error, :econnrefused},
+      {:error, :ehostunreach},
+      {:error, :enetunreach}
+    ]
+  end
+
+  defp transport_error?({:transport_error, _}), do: true
+  defp transport_error?(_), do: false
+
+  defp server_error?(%{"error" => %{"code" => code}}) when code in -32099..-32000, do: true
+  defp server_error?(_), do: false
+
+  defp rate_limit_error?({:error, :rate_limited}), do: true
+  defp rate_limit_error?(%{"error" => %{"code" => -32029}}), do: true
+  defp rate_limit_error?(_), do: false
+
+  defp client_error?(%{"error" => %{"code" => code}}) when code in -32700..-32600, do: true
+  defp client_error?(_), do: false
 end

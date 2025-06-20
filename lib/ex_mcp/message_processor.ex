@@ -160,7 +160,7 @@ defmodule ExMCP.MessageProcessor do
   end
 
   defp log_method_processing(method, handler_module) do
-    if Mix.env() == :test do
+    if Application.get_env(:ex_mcp, :debug_logging, false) do
       require Logger
       Logger.debug("Processing method: #{method} with handler: #{handler_module}")
     end

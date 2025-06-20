@@ -46,7 +46,7 @@ defmodule ExMCP.TestCase do
       import ExMCP.Testing.MockServer
 
       alias ExMCP.Content.{Builders, Protocol}
-      alias ExMCP.Testing.{Fixtures, Generators}
+      alias ExMCP.Testing.{Fixtures, Generators, TestServer}
 
       # Set up test environment
       setup do
@@ -79,7 +79,7 @@ defmodule ExMCP.TestCase do
   """
   defmacro with_mock_server(opts \\ [], do: block) do
     quote do
-      ExMCP.Testing.MockServer.with_server(unquote(opts), fn client ->
+      MockServer.with_server(unquote(opts), fn client ->
         var!(client) = client
         unquote(block)
       end)
@@ -98,7 +98,7 @@ defmodule ExMCP.TestCase do
   """
   defmacro with_test_server(server_module, opts \\ [], do: block) do
     quote do
-      ExMCP.Testing.TestServer.with_server(unquote(server_module), unquote(opts), fn client ->
+      TestServer.with_server(unquote(server_module), unquote(opts), fn client ->
         var!(client) = client
         unquote(block)
       end)

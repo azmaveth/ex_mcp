@@ -482,20 +482,24 @@ defmodule ExMCP.Content.Builders do
     # Simple MIME type detection based on file extension and magic bytes
     extension = Path.extname(file_path) |> String.downcase()
 
-    case extension do
-      ".png" -> {:ok, "image/png"}
-      ".jpg" -> {:ok, "image/jpeg"}
-      ".jpeg" -> {:ok, "image/jpeg"}
-      ".gif" -> {:ok, "image/gif"}
-      ".webp" -> {:ok, "image/webp"}
-      ".wav" -> {:ok, "audio/wav"}
-      ".mp3" -> {:ok, "audio/mpeg"}
-      ".ogg" -> {:ok, "audio/ogg"}
-      ".txt" -> {:ok, "text/plain"}
-      ".md" -> {:ok, "text/markdown"}
-      ".html" -> {:ok, "text/html"}
-      ".json" -> {:ok, "application/json"}
-      _ -> detect_mime_from_content(data)
+    mime_map = %{
+      ".png" => "image/png",
+      ".jpg" => "image/jpeg",
+      ".jpeg" => "image/jpeg",
+      ".gif" => "image/gif",
+      ".webp" => "image/webp",
+      ".wav" => "audio/wav",
+      ".mp3" => "audio/mpeg",
+      ".ogg" => "audio/ogg",
+      ".txt" => "text/plain",
+      ".md" => "text/markdown",
+      ".html" => "text/html",
+      ".json" => "application/json"
+    }
+
+    case Map.get(mime_map, extension) do
+      nil -> detect_mime_from_content(data)
+      mime_type -> {:ok, mime_type}
     end
   end
 
@@ -528,21 +532,24 @@ defmodule ExMCP.Content.Builders do
   end
 
   defp detect_language(file_path) do
-    case Path.extname(file_path) |> String.downcase() do
-      ".js" -> "javascript"
-      ".py" -> "python"
-      ".ex" -> "elixir"
-      ".exs" -> "elixir"
-      ".rb" -> "ruby"
-      ".go" -> "go"
-      ".rs" -> "rust"
-      ".c" -> "c"
-      ".cpp" -> "cpp"
-      ".java" -> "java"
-      ".sql" -> "sql"
-      ".sh" -> "bash"
-      _ -> nil
-    end
+    extension = Path.extname(file_path) |> String.downcase()
+
+    language_map = %{
+      ".js" => "javascript",
+      ".py" => "python",
+      ".ex" => "elixir",
+      ".exs" => "elixir",
+      ".rb" => "ruby",
+      ".go" => "go",
+      ".rs" => "rust",
+      ".c" => "c",
+      ".cpp" => "cpp",
+      ".java" => "java",
+      ".sql" => "sql",
+      ".sh" => "bash"
+    }
+
+    Map.get(language_map, extension)
   end
 
   defp validate_file_size(data, opts) do

@@ -1,8 +1,8 @@
 defmodule ExMCP.Reliability.SupervisorTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.Reliability.Supervisor, as: ReliabilitySupervisor
   alias ExMCP.Reliability
+  alias ExMCP.Reliability.Supervisor, as: ReliabilitySupervisor
 
   describe "start_link/1" do
     test "starts supervisor with default options" do

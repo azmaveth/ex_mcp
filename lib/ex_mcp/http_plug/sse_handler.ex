@@ -278,19 +278,17 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   defp extract_last_event_id(conn) do
     # For testing or other conn implementations
-    cond do
-      is_struct(conn) and Map.has_key?(conn, :get_req_header) and
-          is_function(Map.get(conn, :get_req_header), 2) ->
-        get_req_header = Map.get(conn, :get_req_header)
+    if is_struct(conn) and Map.has_key?(conn, :get_req_header) and
+         is_function(Map.get(conn, :get_req_header), 2) do
+      get_req_header = Map.get(conn, :get_req_header)
 
-        case get_req_header.(conn, "last-event-id") do
-          [id | _] -> id
-          [] -> nil
-          nil -> nil
-        end
-
-      true ->
-        nil
+      case get_req_header.(conn, "last-event-id") do
+        [id | _] -> id
+        [] -> nil
+        nil -> nil
+      end
+    else
+      nil
     end
   end
 

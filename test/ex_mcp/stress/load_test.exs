@@ -1,8 +1,8 @@
 defmodule ExMCP.Stress.LoadTest do
   use ExUnit.Case, async: false
 
-  alias ExMCP.Testing.{MockServer, Builders}
   alias ExMCP.Content.Protocol
+  alias ExMCP.Testing.{Builders, MockServer}
 
   @moduletag :stress
   # 2 minutes for stress tests

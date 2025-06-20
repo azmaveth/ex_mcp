@@ -156,16 +156,25 @@ defmodule ExMCP.Server do
   ]
 
   defmacro __using__(opts \\ []) do
+    imports = generate_imports()
+    setup = generate_setup(opts)
+    functions = generate_functions()
+
+    quote do
+      unquote(imports)
+      unquote(setup)
+      unquote(functions)
+    end
+  end
+
+  defp generate_imports do
     quote do
       use GenServer
-
-      # Import all DSL macros - no more naming conflicts with meta block pattern!
       import ExMCP.DSL.Tool
       import ExMCP.DSL.Resource
       import ExMCP.DSL.Prompt
       import ExMCP.DSL.Handler
 
-      # Import content helpers
       import ExMCP.ContentV2,
         only: [
           text: 1,
@@ -182,10 +191,12 @@ defmodule ExMCP.Server do
           json: 1,
           json: 2
         ]
+    end
+  end
 
+  defp generate_setup(opts) do
+    quote do
       @behaviour ExMCP.Server
-
-      # Initialize module attributes for collecting DSL definitions
       Module.register_attribute(__MODULE__, :__tools__, accumulate: false, persist: true)
       Module.register_attribute(__MODULE__, :__resources__, accumulate: false, persist: true)
 
@@ -195,15 +206,29 @@ defmodule ExMCP.Server do
       )
 
       Module.register_attribute(__MODULE__, :__prompts__, accumulate: false, persist: true)
-
       @__tools__ %{}
       @__resources__ %{}
       @__resource_templates__ %{}
       @__prompts__ %{}
-
-      # Configuration options
       @server_opts unquote(opts)
+    end
+  end
 
+  defp generate_functions do
+    quote do
+      unquote(generate_start_link_function())
+      unquote(generate_child_spec_function())
+      unquote(generate_capabilities_function())
+      unquote(generate_getter_functions())
+      unquote(generate_default_callbacks())
+      unquote(generate_genserver_callbacks())
+      unquote(generate_helper_functions())
+      unquote(generate_overridable_list())
+    end
+  end
+
+  defp generate_start_link_function do
+    quote do
       @doc """
       Starts the server with optional transport configuration.
 
@@ -227,51 +252,47 @@ defmodule ExMCP.Server do
       """
       def start_link(opts \\ []) do
         transport = Keyword.get(opts, :transport, :native)
+        do_start_link(transport, opts)
+      end
 
-        case transport do
-          :native ->
-            # Start as a regular GenServer for native transport
-            GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+      defp do_start_link(:native, opts) do
+        GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+      end
 
-          :stdio ->
-            # Configure logging early for STDIO transport
-            Application.put_env(:ex_mcp, :stdio_mode, true)
-            configure_stdio_logging()
-            # Use transport manager for STDIO transport
-            server_info =
-              case @server_opts do
-                nil ->
-                  %{name: to_string(__MODULE__), version: "1.0.0"}
+      defp do_start_link(:stdio, opts) do
+        Application.put_env(:ex_mcp, :stdio_mode, true)
+        configure_stdio_logging()
+        start_transport_server(opts)
+      end
 
-                opts ->
-                  Keyword.get(opts, :server_info, %{name: to_string(__MODULE__), version: "1.0.0"})
-              end
+      defp do_start_link(_transport, opts) do
+        start_transport_server(opts)
+      end
 
-            tools = get_tools() |> Map.values()
-            Transport.start_server(__MODULE__, server_info, tools, opts)
+      defp start_transport_server(opts) do
+        server_info = get_server_info_from_opts()
+        tools = get_tools() |> Map.values()
+        Transport.start_server(__MODULE__, server_info, tools, opts)
+      end
 
-          _ ->
-            # Use transport manager for other transports
-            server_info =
-              case @server_opts do
-                nil ->
-                  %{name: to_string(__MODULE__), version: "1.0.0"}
+      defp get_server_info_from_opts do
+        case @server_opts do
+          nil ->
+            %{name: to_string(__MODULE__), version: "1.0.0"}
 
-                opts ->
-                  Keyword.get(opts, :server_info, %{name: to_string(__MODULE__), version: "1.0.0"})
-              end
-
-            tools = get_tools() |> Map.values()
-
-            Transport.start_server(__MODULE__, server_info, tools, opts)
+          opts ->
+            Keyword.get(opts, :server_info, %{name: to_string(__MODULE__), version: "1.0.0"})
         end
       end
 
-      # Configure logging for STDIO transport to prevent stdout contamination
       defp configure_stdio_logging do
         StdioLoggerConfig.configure()
       end
+    end
+  end
 
+  defp generate_child_spec_function do
+    quote do
       @doc """
       Gets the child specification for supervision trees.
       """
@@ -284,124 +305,122 @@ defmodule ExMCP.Server do
           shutdown: 500
         }
       end
+    end
+  end
 
+  defp generate_capabilities_function do
+    quote do
       @doc """
       Gets the server's capabilities based on defined tools, resources, and prompts.
       """
       def get_capabilities do
-        capabilities = %{}
-
-        # Add tools capability if any tools are defined
-        capabilities =
-          case get_tools() do
-            tools when map_size(tools) > 0 ->
-              Map.put(capabilities, "tools", %{"listChanged" => true})
-
-            _ ->
-              capabilities
-          end
-
-        # Add resources capability if any resources are defined
-        capabilities =
-          case get_resources() do
-            resources when map_size(resources) > 0 ->
-              subscribable = Enum.any?(Map.values(resources), & &1.subscribable)
-
-              Map.put(capabilities, "resources", %{
-                "subscribe" => subscribable,
-                "listChanged" => true
-              })
-
-            _ ->
-              capabilities
-          end
-
-        # Add prompts capability if any prompts are defined
-        capabilities =
-          case get_prompts() do
-            prompts when map_size(prompts) > 0 ->
-              Map.put(capabilities, "prompts", %{"listChanged" => true})
-
-            _ ->
-              capabilities
-          end
-
-        capabilities
+        %{}
+        |> maybe_add_tools_capability()
+        |> maybe_add_resources_capability()
+        |> maybe_add_prompts_capability()
       end
 
+      defp maybe_add_tools_capability(capabilities) do
+        case get_tools() do
+          tools when map_size(tools) > 0 ->
+            Map.put(capabilities, "tools", %{"listChanged" => true})
+
+          _ ->
+            capabilities
+        end
+      end
+
+      defp maybe_add_resources_capability(capabilities) do
+        case get_resources() do
+          resources when map_size(resources) > 0 ->
+            subscribable = Enum.any?(Map.values(resources), & &1.subscribable)
+
+            Map.put(capabilities, "resources", %{
+              "subscribe" => subscribable,
+              "listChanged" => true
+            })
+
+          _ ->
+            capabilities
+        end
+      end
+
+      defp maybe_add_prompts_capability(capabilities) do
+        case get_prompts() do
+          prompts when map_size(prompts) > 0 ->
+            Map.put(capabilities, "prompts", %{"listChanged" => true})
+
+          _ ->
+            capabilities
+        end
+      end
+    end
+  end
+
+  defp generate_getter_functions do
+    quote do
       @doc """
       Gets all defined tools.
       """
       def get_tools do
-        case __MODULE__.__info__(:attributes)[:__tools__] do
-          [map] when is_map(map) -> map
-          map when is_map(map) -> map
-          _ -> %{}
-        end
+        get_attribute_map(:__tools__)
       end
 
       @doc """
       Gets all defined resources.
       """
       def get_resources do
-        case __MODULE__.__info__(:attributes)[:__resources__] do
-          [map] when is_map(map) -> map
-          map when is_map(map) -> map
-          _ -> %{}
-        end
+        get_attribute_map(:__resources__)
       end
 
       @doc """
       Gets all defined resource templates.
       """
       def get_resource_templates do
-        case __MODULE__.__info__(:attributes)[:__resource_templates__] do
-          [map] when is_map(map) -> map
-          map when is_map(map) -> map
-          _ -> %{}
-        end
+        get_attribute_map(:__resource_templates__)
       end
 
       @doc """
       Gets all defined prompts.
       """
       def get_prompts do
-        case __MODULE__.__info__(:attributes)[:__prompts__] do
+        get_attribute_map(:__prompts__)
+      end
+
+      defp get_attribute_map(attribute) do
+        case __MODULE__.__info__(:attributes)[attribute] do
           [map] when is_map(map) -> map
           map when is_map(map) -> map
           _ -> %{}
         end
       end
+    end
+  end
 
+  defp generate_default_callbacks do
+    quote do
       # Default implementations for optional callbacks
       def handle_resource_list(state), do: {:ok, [], state}
       def handle_resource_subscribe(_uri, state), do: {:ok, state}
       def handle_resource_unsubscribe(_uri, state), do: {:ok, state}
       def handle_prompt_list(state), do: {:ok, [], state}
       def handle_request(_method, _params, state), do: {:noreply, state}
+    end
+  end
 
+  defp generate_genserver_callbacks do
+    quote do
       # Default GenServer init callback
       @impl GenServer
       def init(args) do
-        # Register capabilities with the registry
         register_capabilities()
-
-        # Default implementation returns empty map state
         {:ok, Map.new(args)}
       end
 
       # Handle server info requests
       @impl GenServer
       def handle_call(:get_server_info, _from, state) do
-        server_info =
-          case @server_opts do
-            nil ->
-              %{name: to_string(__MODULE__), version: "1.0.0"}
-
-            opts ->
-              Keyword.get(opts, :server_info, %{name: to_string(__MODULE__), version: "1.0.0"})
-          end
-
+        server_info = get_server_info_from_opts()
         {:reply, server_info, state}
       end
 
@@ -409,25 +428,28 @@ defmodule ExMCP.Server do
       def handle_call(request, _from, state) do
         {:reply, {:error, {:unknown_call, request}}, state}
       end
+    end
+  end
 
+  defp generate_helper_functions do
+    quote do
       # Register all capabilities with the ExMCP.Registry
       defp register_capabilities do
-        # Register tools
-        Enum.each(@__tools__, fn {name, tool} ->
-          ExMCP.Registry.register(ExMCP.Registry, :tool, name, __MODULE__, tool)
-        end)
-
-        # Register resources
-        Enum.each(@__resources__, fn {uri, resource} ->
-          ExMCP.Registry.register(ExMCP.Registry, :resource, uri, __MODULE__, resource)
-        end)
-
-        # Register prompts
-        Enum.each(@__prompts__, fn {name, prompt} ->
-          ExMCP.Registry.register(ExMCP.Registry, :prompt, name, __MODULE__, prompt)
-        end)
+        register_items(@__tools__, :tool)
+        register_items(@__resources__, :resource)
+        register_items(@__prompts__, :prompt)
       end
 
+      defp register_items(items, type) do
+        Enum.each(items, fn {key, value} ->
+          ExMCP.Registry.register(ExMCP.Registry, type, key, __MODULE__, value)
+        end)
+      end
+    end
+  end
+
+  defp generate_overridable_list do
+    quote do
       defoverridable init: 1,
                      handle_resource_list: 1,
                      handle_resource_subscribe: 2,

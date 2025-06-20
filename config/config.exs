@@ -9,8 +9,17 @@ config :ex_mcp,
 
 # Logger Configuration
 # Configure metadata fields to avoid warnings
+# Note: :file and :line are performance-intensive and should only be used in dev/test
 config :logger, :console,
   metadata: [:request_id, :tag, :audit, :client_id, :reason, :registration_type]
+
+# Environment-specific configuration
+if Mix.env() in [:dev, :test] do
+  # Note: This configuration overwrites the default metadata for dev/test environments,
+  # adding :file and :line for detailed logging (performance-intensive operations).
+  config :logger, :console,
+    metadata: [:request_id, :tag, :audit, :client_id, :reason, :registration_type, :file, :line]
+end
 
 if Mix.env() == :dev do
   config :git_hooks,

@@ -498,12 +498,16 @@ defmodule ExMCP.Content.Validation do
 
   defp apply_validation_rule(content, rule, _opts) do
     case rule do
-      :required_fields ->
-        validate_required_fields(content)
+      :required_fields -> validate_required_fields(content)
+      :protocol_compliance -> Protocol.validate(content)
+      :scan_malware -> scan_malware(content)
+      :validate_encoding -> validate_encoding(content)
+      _ -> apply_parameterized_rule(content, rule)
+    end
+  end
 
-      :protocol_compliance ->
-        Protocol.validate(content)
-
+  defp apply_parameterized_rule(content, rule) do
+    case rule do
       {:max_size, size} ->
         validate_max_size(content, size)
 
@@ -512,12 +516,6 @@ defmodule ExMCP.Content.Validation do
 
       {:content_length, max_length} ->
         validate_content_length(content, max_length)
-
-      :scan_malware ->
-        scan_malware(content)
-
-      :validate_encoding ->
-        validate_encoding(content)
 
       {module, function, args} when is_atom(module) and is_atom(function) ->
         apply(module, function, [content | args])

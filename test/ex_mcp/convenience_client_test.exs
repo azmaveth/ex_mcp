@@ -1,8 +1,8 @@
 defmodule ExMCP.ConvenienceClientTest do
   use ExUnit.Case, async: false
 
-  alias ExMCP.ConvenienceClient
   alias ExMCP.Client.Error
+  alias ExMCP.ConvenienceClient
 
   # Mock transport for testing convenience features
   defmodule MockTransport do
