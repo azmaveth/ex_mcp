@@ -111,13 +111,21 @@ if System.get_env("MCP_ENV") != "test" do
   IO.puts("  - hello://world")
   IO.puts("  - hello://stats")
   
-  {:ok, _server} = HttpHelloServer.start_link(
+  case HttpHelloServer.start_link(
     transport: :http,
     port: port,
     use_sse: false,  # Explicitly disable SSE
     name: :http_hello_server
-  )
-  
-  # Keep the server running
-  Process.sleep(:infinity)
+  ) do
+    {:ok, _server} ->
+      IO.puts("HTTP server started successfully on port #{port}")
+      # Keep the server running
+      Process.sleep(:infinity)
+    {:error, :eaddrinuse} ->
+      IO.puts("Port #{port} is already in use. Please free the port and try again.")
+      System.halt(1)
+    {:error, error} ->
+      IO.puts("Failed to start HTTP server: #{inspect(error)}")
+      System.halt(1)
+  end
 end

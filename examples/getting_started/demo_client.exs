@@ -152,47 +152,70 @@ defmodule DemoClient do
       System.cmd("elixir", [server_path], env: [{"HTTP_PORT", "#{port}"}])
     end)
     
-    Process.sleep(1000)  # Give server time to start
+    Process.sleep(2000)  # Give server time to start
     
-    # Connect client  
+    # Connect client (explicitly disable SSE)
     case ExMCP.Client.start_link(
       transport: :http,
       url: "http://localhost:#{port}",
+      use_sse: false,
       name: :http_client
     ) do
       {:ok, client} -> 
         run_http_demo(client, server_pid)
-      {:error, _error} ->
-        IO.puts("⚠️ HTTP server demo skipped - server implementation not ready")
-        IO.puts("   This transport will be available in a future version")
-        IO.puts("✓ HTTP demo completed (skipped)")
+      {:error, error} ->
+        IO.puts("⚠️ HTTP server demo failed: #{inspect(error)}")
+        IO.puts("   Server may need more time to start or there might be a port conflict")
+        IO.puts("✓ HTTP demo completed (failed)")
         Process.exit(server_pid, :kill)
     end
   end
   
   defp run_http_demo(client, server_pid) do
-    
-    # List resources
-    {:ok, resources_response} = ExMCP.Client.list_resources(client)
-    IO.puts("Available resources:")
-    for resource <- resources_response.resources do
-      IO.puts("  - #{resource["uri"]} (#{resource["name"]})")
+    try do
+      IO.puts("✓ Connected to HTTP server")
+      
+      # List resources
+      case ExMCP.Client.list_resources(client) do
+        {:ok, resources_response} ->
+          IO.puts("Available resources:")
+          for resource <- resources_response.resources do
+            IO.puts("  - #{resource["uri"]} (#{resource["name"]})")
+          end
+          
+          # Read the hello world resource
+          IO.puts("\nReading hello://world resource:")
+          case ExMCP.Client.read_resource(client, "hello://world") do
+            {:ok, hello_response} ->
+              IO.puts(ExMCP.Response.text_content(hello_response))
+              
+              # Read stats to see the counter increased
+              case ExMCP.Client.read_resource(client, "hello://stats") do
+                {:ok, stats_response} ->
+                  stats = ExMCP.Response.data_content(stats_response)
+                  IO.puts("\nServer stats: #{inspect(stats, pretty: true)}")
+                  IO.puts("✓ HTTP demo completed")
+                {:error, error} ->
+                  IO.puts("Failed to read stats: #{inspect(error)}")
+                  IO.puts("✓ HTTP demo completed (partial)")
+              end
+            {:error, error} ->
+              IO.puts("Failed to read resource: #{inspect(error)}")
+              IO.puts("✓ HTTP demo completed (partial)")
+          end
+        {:error, error} ->
+          IO.puts("Failed to list resources: #{inspect(error)}")
+          IO.puts("✓ HTTP demo completed (partial)")
+      end
+    rescue
+      error ->
+        IO.puts("HTTP demo error: #{inspect(error)}")
+        IO.puts("✓ HTTP demo completed (with error)")
+    after
+      # Clean up
+      ExMCP.Client.stop(client)
+      Process.exit(server_pid, :kill)
     end
-    
-    # Read the hello world resource
-    IO.puts("\nReading hello://world resource:")
-    {:ok, hello_response} = ExMCP.Client.read_resource(client, "hello://world")
-    IO.puts(ExMCP.Response.text_content(hello_response))
-    
-    # Read stats to see the counter increased
-    {:ok, stats_response} = ExMCP.Client.read_resource(client, "hello://stats")
-    stats = ExMCP.Response.data_content(stats_response)
-    IO.puts("\nServer stats: #{inspect(stats, pretty: true)}")
-    
-    # Clean up
-    ExMCP.Client.stop(client)
-    Process.exit(server_pid, :kill)
-    IO.puts("✓ HTTP demo completed")
   end
   
   defp demo_http_sse_server do
