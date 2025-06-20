@@ -3,7 +3,7 @@ import Config
 # ExMCP Configuration
 config :ex_mcp,
   # Protocol version to use when initiating connections
-  # Options: "2024-11-05", "2025-03-26", "draft"
+  # Options: "2024-11-05", "2025-03-26", "2025-06-18"
   # Default: "2025-03-26" (latest stable)
   protocol_version: "2025-03-26"
 

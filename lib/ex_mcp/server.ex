@@ -442,7 +442,17 @@ defmodule ExMCP.Server do
   Compatibility function for the logging system.
   """
   def send_log_message(server, level, message, data) do
-    GenServer.cast(server, {:log_message, level, message, data})
+    GenServer.cast(server, {:send_log_message, level, message, data})
+  end
+
+  @doc """
+  Sends a ping request to the client.
+
+  The client must respond promptly or may be disconnected.
+  """
+  @spec ping(GenServer.server(), timeout()) :: {:ok, map()} | {:error, any()}
+  def ping(server, timeout \\ 5000) do
+    GenServer.call(server, :ping, timeout)
   end
 
   @doc """

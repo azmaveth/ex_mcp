@@ -495,7 +495,7 @@ defmodule ExMCP.Internal.Protocol do
   @doc """
   Encodes an elicitation/create request.
 
-  This is a draft protocol feature and requires protocol version "draft".
+  This feature is available in protocol version 2025-06-18 and later.
   """
   @spec encode_elicitation_create(String.t(), map()) :: map()
   def encode_elicitation_create(message, requested_schema) do
@@ -597,12 +597,12 @@ defmodule ExMCP.Internal.Protocol do
   @spec method_available?(String.t(), String.t()) :: boolean()
   def method_available?(method, version) do
     case method do
-      "resources/subscribe" -> version in ["2025-03-26", "draft"]
+      "resources/subscribe" -> version in ["2025-03-26", "2025-06-18"]
       # ExMCP extension - not in spec but we allow it for these versions
-      "resources/unsubscribe" -> version in ["2025-03-26", "draft"]
-      "logging/setLevel" -> version in ["2025-03-26", "draft"]
-      "notifications/resources/updated" -> version in ["2025-03-26", "draft"]
-      "elicitation/create" -> version == "draft"
+      "resources/unsubscribe" -> version in ["2025-03-26", "2025-06-18"]
+      "logging/setLevel" -> version in ["2025-03-26", "2025-06-18"]
+      "notifications/resources/updated" -> version in ["2025-03-26", "2025-06-18"]
+      "elicitation/create" -> version == "2025-06-18"
       _ -> true
     end
   end

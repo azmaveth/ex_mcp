@@ -36,6 +36,18 @@ defmodule ExMCP.SimpleClientCoverageTest do
       {:ok, nil}
     end
 
+    # New transport API
+    def send_message(message, transport_pid) do
+      GenServer.call(transport_pid, {:send, message})
+    end
+
+    def receive_message(transport_pid) do
+      case GenServer.call(transport_pid, {:recv, 5000}, 5100) do
+        {:ok, response, pid} -> {:ok, Jason.decode!(response), pid}
+        error -> error
+      end
+    end
+
     # Server callbacks
     def init(opts) do
       state = %{

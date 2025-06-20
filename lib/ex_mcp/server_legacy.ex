@@ -235,7 +235,7 @@ defmodule ExMCP.Server.Legacy do
   @doc """
   Requests information from the user via elicitation.
 
-  This is a draft protocol feature and requires protocol version "draft".
+  This feature is available in protocol version 2025-06-18 and later.
 
   ## Parameters
   - message: Human-readable message explaining what information is needed
@@ -464,10 +464,10 @@ defmodule ExMCP.Server.Legacy do
 
   def handle_call({:elicit_information, message, requested_schema}, from, state) do
     # Check if elicitation is supported in negotiated version
-    if state.negotiated_version != "draft" do
+    if state.negotiated_version != "2025-06-18" do
       {:reply,
        {:error,
-        "Elicitation only supported in draft protocol version, current: #{state.negotiated_version}"},
+        "Elicitation only supported in protocol version 2025-06-18 or later, current: #{state.negotiated_version}"},
        state}
     else
       request = Protocol.encode_elicitation_create(message, requested_schema)

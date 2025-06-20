@@ -85,11 +85,23 @@ defmodule ExMCP.HttpPlug do
   defp handle_mcp_request(conn, opts) do
     with {:ok, body, conn} <- read_body(conn),
          {:ok, request} <- parse_json(body),
-         {:ok, response} <- process_mcp_request(request, opts) do
-      conn
-      |> maybe_add_cors_headers(opts)
-      |> put_resp_content_type("application/json")
-      |> send_resp(200, Jason.encode!(response))
+         result <- process_mcp_request(request, opts) do
+      case result do
+        {:ok, response} ->
+          conn
+          |> maybe_add_cors_headers(opts)
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, Jason.encode!(response))
+
+        {:notification, _} ->
+          # Notifications get 202 Accepted with no body
+          conn
+          |> maybe_add_cors_headers(opts)
+          |> send_resp(202, "")
+
+        error ->
+          error
+      end
     else
       {:error, :parse_error} ->
         error_response = %{
@@ -191,7 +203,13 @@ defmodule ExMCP.HttpPlug do
 
         case processed_conn.response do
           nil ->
-            {:error, :no_response}
+            # Check if this was a notification (no id field)
+            if Map.get(request, "id") == nil do
+              # Notifications don't get responses - return special marker
+              {:notification, nil}
+            else
+              {:error, :no_response}
+            end
 
           %{"jsonrpc" => "2.0", "error" => _} = response ->
             # JSON-RPC error responses are still valid HTTP responses

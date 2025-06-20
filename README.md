@@ -25,7 +25,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 ## ✨ Features
 
 ### Core Protocol Support
-- 🚀 **Multiple MCP Versions** - Supports protocol versions 2024-11-05, 2025-03-26, and draft
+- 🚀 **Multiple MCP Versions** - Supports protocol versions 2024-11-05, 2025-03-26, and 2025-06-18
 - 🛠️ **Tools** - Register and execute functions with type-safe parameters
 - 📚 **Resources** - List and read data from various sources
 - 🎯 **Prompts** - Manage reusable prompt templates
@@ -88,8 +88,8 @@ Features unique to ExMCP:
 
 ExMCP implements three versions of the Model Context Protocol, each with different feature sets:
 
-| Feature | 2024-11-05 | 2025-03-26 | draft |
-|---------|:----------:|:----------:|:-----:|
+| Feature | 2024-11-05 | 2025-03-26 | 2025-06-18 |
+|---------|:----------:|:----------:|:----------:|
 | **Core Features** | | | |
 | Tools (`tools/list`, `tools/call`) | ✅ | ✅ | ✅ |
 | Resources (`resources/list`, `resources/read`) | ✅ | ✅ | ✅ |
@@ -104,12 +104,14 @@ ExMCP implements three versions of the Model Context Protocol, each with differe
 | Roots (`roots/list`) | ❌ | ✅ | ✅ |
 | Structured logging (`logging/setLevel`) | ❌ | ✅ | ✅ |
 | Tool annotations (`readOnlyHint`, `destructiveHint`) | ❌ | ✅ | ✅ |
-| **Draft Features** | | | |
+| **2025-06-18 Features** | | | |
 | Structured tool output (`outputSchema`) | ❌ | ❌ | ✅ |
-| Enhanced sampling features | ❌ | ❌ | ✅ |
+| Elicitation support | ❌ | ❌ | ✅ |
+| Resource links in tool results | ❌ | ❌ | ✅ |
+| OAuth 2.1 Resource Server | ❌ | ❌ | ✅ |
 | **ExMCP Extensions** | | | |
 | Native BEAM dispatcher | ✅ | ✅ | ✅ |
-| Batch requests | ✅ | ✅ | ✅ |
+| Batch requests | ✅ | ✅ | ❌ |
 | Resource unsubscribe | ✅ | ✅ | ✅ |
 | Auto-reconnection | ✅ | ✅ | ✅ |
 
@@ -119,13 +121,13 @@ Configure your preferred version in `config/config.exs`:
 
 ```elixir
 config :ex_mcp,
-  protocol_version: "2025-03-26"  # Options: "2024-11-05", "2025-03-26", "draft"
+  protocol_version: "2025-03-26"  # Options: "2024-11-05", "2025-03-26", "2025-06-18"
 ```
 
 **Recommendations:**
 - **Production**: Use `"2025-03-26"` for the latest stable features
 - **Compatibility**: Use `"2024-11-05"` for maximum compatibility
-- **Experimental**: Use `"draft"` only for testing new features
+- **Latest**: Use `"2025-06-18"` for the newest stable features
 
 
 ## 📦 Installation
@@ -700,7 +702,7 @@ ExMCP supports multiple MCP protocol versions. Configure the preferred version i
 
 ```elixir
 config :ex_mcp,
-  # Options: "2024-11-05", "2025-03-26", "draft"
+  # Options: "2024-11-05", "2025-03-26", "2025-06-18"
   protocol_version: "2025-03-26"  # Default: latest stable
 ```
 

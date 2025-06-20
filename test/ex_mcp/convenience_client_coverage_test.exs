@@ -2,18 +2,21 @@ defmodule ExMCP.ConvenienceClientCoverageTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.ConvenienceClient
+  alias ExMCP.TestHelpers
 
   # Reuse the mock transport from SimpleClient tests
   alias ExMCP.SimpleClientCoverageTest.WorkingMockTransport
 
   describe "connection management" do
-    test "connects with URL string parsing" do
-      # Mock HTTP URL parsing
-      assert {:error, _} =
-               ConvenienceClient.connect("http://localhost:8080",
-                 timeout: 100,
-                 max_reconnect_attempts: 0
-               )
+    setup do
+      TestHelpers.setup_test_servers()
+    end
+
+    test "connects with URL string parsing", %{http_url: http_url} do
+      # Test actual HTTP URL connection to local test server (SSE disabled for simpler testing)
+      assert {:ok, client} = ConvenienceClient.connect(http_url, timeout: 5000, use_sse: false)
+      assert is_pid(client)
+      ConvenienceClient.disconnect(client)
     end
 
     test "connects with stdio URL" do
@@ -33,9 +36,10 @@ defmodule ExMCP.ConvenienceClientCoverageTest do
     end
 
     test "connects with HTTPS URL" do
+      # Test that HTTPS URLs are properly parsed but fail when no HTTPS server is available
       assert {:error, _} =
-               ConvenienceClient.connect("https://secure.example.com",
-                 timeout: 100,
+               ConvenienceClient.connect("https://localhost:9999",
+                 timeout: 1000,
                  max_reconnect_attempts: 0
                )
     end
@@ -48,20 +52,23 @@ defmodule ExMCP.ConvenienceClientCoverageTest do
       ConvenienceClient.disconnect(client)
     end
 
-    test "connects with connection list for fallback" do
+    test "connects with connection list for fallback", %{http_url: http_url} do
+      # Use the real test server URL as the first connection
       connections = [
-        "http://primary:8080",
-        "http://backup:8080",
+        http_url,
+        "http://nonexistent:8080",
         {:stdio, command: "fallback-server"}
       ]
 
-      # This will fail but tests the connection parsing
-      assert {:error, _} =
+      # Should succeed by connecting to the first working URL (our test server)
+      assert {:ok, client} =
                ConvenienceClient.connect(connections,
-                 timeout: 100,
+                 timeout: 5000,
                  max_reconnect_attempts: 0,
-                 fallback_strategy: :parallel
+                 use_sse: false
                )
+
+      ConvenienceClient.disconnect(client)
     end
 
     test "disconnect stops the client" do
@@ -263,9 +270,13 @@ defmodule ExMCP.ConvenienceClientCoverageTest do
   end
 
   describe "utility functions" do
-    test "ping tests connectivity" do
-      # Should fail quickly since we can't actually connect
-      assert {:error, _} = ConvenienceClient.ping("http://localhost:8080", timeout: 100)
+    setup do
+      TestHelpers.setup_test_servers()
+    end
+
+    test "ping tests connectivity", %{http_url: http_url} do
+      # Should succeed with our test server (SSE disabled for simpler testing)
+      assert :ok = ConvenienceClient.ping(http_url, timeout: 5000, use_sse: false)
     end
 
     test "ping with working connection" do
@@ -343,23 +354,36 @@ defmodule ExMCP.ConvenienceClientCoverageTest do
   end
 
   describe "private helper functions coverage" do
-    test "connection spec parsing" do
+    setup do
+      TestHelpers.setup_test_servers()
+    end
+
+    test "connection spec parsing", %{http_url: http_url} do
       # Test various URL formats are handled
       urls = [
-        "http://example.com",
-        "https://secure.example.com:8443",
+        # This should succeed
+        http_url,
+        # This should fail (no HTTPS server)
+        "https://localhost:9999",
+        # This should fail (no command)
         "stdio://my-command",
+        # This should fail (invalid scheme)
         "file:///usr/local/bin/server"
       ]
 
-      for url <- urls do
-        # Just verify no crashes during parsing
-        assert {:error, _} =
-                 ConvenienceClient.connect(url,
-                   timeout: 100,
-                   max_reconnect_attempts: 0
-                 )
-      end
+      results =
+        for url <- urls do
+          ConvenienceClient.connect(url, timeout: 1000, max_reconnect_attempts: 0, use_sse: false)
+        end
+
+      # First connection (our test server) should succeed
+      assert {:ok, client} = Enum.at(results, 0)
+      ConvenienceClient.disconnect(client)
+
+      # Others should fail for various reasons
+      assert {:error, _} = Enum.at(results, 1)
+      assert {:error, _} = Enum.at(results, 2)
+      assert {:error, _} = Enum.at(results, 3)
     end
 
     test "fuzzy search with description matching" do

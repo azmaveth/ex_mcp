@@ -112,7 +112,7 @@ defmodule ExMCP.Server.Handler do
   ### Structured Tool Output (Draft Feature)
 
   > #### Draft Feature {: .info}
-  > This implements a draft MCP specification feature that may change.
+  > This implements the MCP specification feature from version 2025-06-18.
 
   Example implementation:
 
@@ -309,7 +309,7 @@ defmodule ExMCP.Server.Handler do
   2. Extended format (with isError flag):
       {:ok, %{content: [%{type: "text", text: "Error occurred"}], isError: true}, state}
 
-  3. Structured output format (draft feature):
+  3. Structured output format (2025-06-18 feature):
       {:ok, %{
         content: [%{type: "text", text: "Weather data"}],
         structuredContent: %{
@@ -320,7 +320,7 @@ defmodule ExMCP.Server.Handler do
       }, state}
 
   > #### Draft Feature {: .info}
-  > Structured tool output is a draft MCP specification feature that may change.
+  > Structured tool output is available in MCP specification 2025-06-18.
 
   Use the extended format with `isError: true` to indicate tool execution errors
   that should be reported to the client as part of the result (not protocol errors).
@@ -450,9 +450,9 @@ defmodule ExMCP.Server.Handler do
   The implementation should adjust the server's logging verbosity accordingly.
 
   > #### Draft Feature {: .info}
-  > This implements a draft MCP specification feature (`logging/setLevel`) that may change.
+  > This implements the MCP specification feature (`logging/setLevel`) from version 2025-03-26.
 
-  @doc api: :draft
+  @doc api: :public
   """
   @callback handle_set_log_level(level :: String.t(), state()) ::
               {:ok, state()} | {:error, any(), state()}

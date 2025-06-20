@@ -41,13 +41,27 @@ defmodule ExMCP.Response do
   - Unified error handling
   """
 
+  alias ExMCP.Internal.AtomUtils
+
   defstruct [
     :content,
     :meta,
     :tool_name,
     :request_id,
     :server_info,
-    :is_error
+    :is_error,
+    # 2025-06-18 features
+    :structuredOutput,
+    :resourceLinks,
+    # List response fields
+    :tools,
+    :resources,
+    :prompts,
+    :messages,
+    # Resource read response
+    :contents,
+    # Prompt get response
+    :description
   ]
 
   @type t :: %__MODULE__{
@@ -56,7 +70,19 @@ defmodule ExMCP.Response do
           tool_name: String.t() | nil,
           request_id: String.t() | nil,
           server_info: map() | nil,
-          is_error: boolean()
+          is_error: boolean(),
+          # 2025-06-18 features
+          structuredOutput: any() | nil,
+          resourceLinks: [map()] | nil,
+          # List response fields
+          tools: [map()] | nil,
+          resources: [map()] | nil,
+          prompts: [map()] | nil,
+          messages: [map()] | nil,
+          # Resource read response
+          contents: [map()] | nil,
+          # Prompt get response
+          description: String.t() | nil
         }
 
   @type content_item :: %{
@@ -84,6 +110,7 @@ defmodule ExMCP.Response do
   """
   @spec from_raw_response(map(), keyword()) :: t()
   def from_raw_response(raw_response, opts \\ []) when is_map(raw_response) do
+    # Handle tool content
     content = normalize_content(Map.get(raw_response, "content", []))
 
     %__MODULE__{
@@ -92,7 +119,21 @@ defmodule ExMCP.Response do
       tool_name: Keyword.get(opts, :tool_name),
       request_id: Keyword.get(opts, :request_id),
       server_info: Keyword.get(opts, :server_info),
-      is_error: Map.get(raw_response, "is_error", Map.get(raw_response, "isError", false))
+      is_error: Map.get(raw_response, "is_error", Map.get(raw_response, "isError", false)),
+      # 2025-06-18 features
+      structuredOutput:
+        Map.get(raw_response, "structuredOutput") || Map.get(raw_response, "structuredContent") ||
+          if(Map.has_key?(raw_response, "completion"), do: raw_response, else: nil),
+      resourceLinks: atomize_list_data(Map.get(raw_response, "resourceLinks")),
+      # List response fields - atomized for better Elixir ergonomics
+      tools: atomize_list_data(Map.get(raw_response, "tools")),
+      resources: atomize_list_data(Map.get(raw_response, "resources")),
+      prompts: atomize_list_data(Map.get(raw_response, "prompts")),
+      messages: atomize_list_data(Map.get(raw_response, "messages")),
+      # Resource read response - also atomized
+      contents: atomize_list_data(Map.get(raw_response, "contents")),
+      # Prompt get response
+      description: Map.get(raw_response, "description")
     }
   end
 
@@ -253,6 +294,25 @@ defmodule ExMCP.Response do
   end
 
   @doc """
+  Gets the resource content from the response.
+
+  Returns the text from the first resource content item, or nil if none exists.
+  This is used for resource read responses that have a `contents` field.
+  """
+  @spec resource_content(t()) :: String.t() | nil
+  def resource_content(%__MODULE__{contents: nil}), do: nil
+
+  def resource_content(%__MODULE__{contents: contents}) do
+    contents
+    |> Enum.find(&(Map.get(&1, :text) || Map.get(&1, "text")))
+    |> case do
+      %{text: text} -> text
+      %{"text" => text} -> text
+      _ -> nil
+    end
+  end
+
+  @doc """
   Converts the response back to raw MCP format.
   """
   @spec to_raw(t()) :: map()
@@ -263,7 +323,7 @@ defmodule ExMCP.Response do
 
     base
     |> maybe_put("meta", response.meta)
-    |> maybe_put("isError", response.is_error && response.is_error)
+    |> maybe_put("isError", response.is_error)
   end
 
   # Private helper functions
@@ -307,4 +367,31 @@ defmodule ExMCP.Response do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, false), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  # Helper to atomize list data for better Elixir ergonomics
+  defp atomize_list_data(nil), do: nil
+
+  defp atomize_list_data(data) when is_list(data) do
+    Enum.map(data, &atomize_keys/1)
+  end
+
+  defp atomize_list_data(data), do: data
+
+  # Atomize keys in maps/lists - safe version that doesn't create new atoms
+  defp atomize_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_binary(k) ->
+        atom_key = AtomUtils.safe_string_to_atom(k)
+        {atom_key, atomize_keys(v)}
+
+      {k, v} ->
+        {k, atomize_keys(v)}
+    end)
+  end
+
+  defp atomize_keys(list) when is_list(list) do
+    Enum.map(list, &atomize_keys/1)
+  end
+
+  defp atomize_keys(value), do: value
 end

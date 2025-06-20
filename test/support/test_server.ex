@@ -119,6 +119,11 @@ defmodule ExMCP.TestServer do
     {:ok, result, state}
   end
 
+  # Handle unknown tools
+  def handle_tool_call(_name, _args, state) do
+    {:error, "Unknown tool", state}
+  end
+
   # Resource implementations
   @impl true
   def handle_resource_read("test://config", _uri, state) do
@@ -143,6 +148,11 @@ defmodule ExMCP.TestServer do
   def handle_resource_read("test://logs/" <> filename, _uri, state) do
     content = [text("Log file: #{filename}\n[INFO] Test log entry 1\n[WARN] Test log entry 2")]
     {:ok, content, state}
+  end
+
+  # Handle unknown resources
+  def handle_resource_read(_uri, _original_uri, state) do
+    {:error, "Resource not found", state}
   end
 
   # Prompt implementations

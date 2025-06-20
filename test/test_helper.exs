@@ -6,6 +6,8 @@ Code.require_file("support/test_helpers.ex", __DIR__)
 # Start required applications for HTTP tests
 {:ok, _} = Application.ensure_all_started(:inets)
 {:ok, _} = Application.ensure_all_started(:ssl)
+{:ok, _} = Application.ensure_all_started(:ranch)
+{:ok, _} = Application.ensure_all_started(:cowboy)
 
 # Configure default exclusions for fast local development
 # These can be overridden with --include flags

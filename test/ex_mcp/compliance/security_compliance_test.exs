@@ -9,7 +9,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.Security
+  alias ExMCP.Internal.Security
 
   describe "MCP Security Requirements - DNS Rebinding Protection" do
     test "prevents DNS rebinding with external domain to localhost" do

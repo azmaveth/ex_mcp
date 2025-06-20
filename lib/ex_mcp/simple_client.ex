@@ -546,10 +546,11 @@ defmodule ExMCP.SimpleClient do
         "2024-11-05"
       )
 
-    with {:ok, _} <- transport_mod.send(transport_state, Jason.encode!(init_msg)),
-         {:ok, response, _new_state} <-
-           wait_for_response(transport_mod, transport_state, init_msg["id"], 10_000),
-         {:ok, _} <- send_initialized(transport_mod, transport_state) do
+    with {:ok, state_after_send} <-
+           transport_mod.send_message(Jason.encode!(init_msg), transport_state),
+         {:ok, response, state_after_response} <-
+           wait_for_response(transport_mod, state_after_send, init_msg["id"], 10_000),
+         {:ok, _} <- send_initialized(transport_mod, state_after_response) do
       # Extract server info from the initialize response
       server_info =
         case response do
@@ -565,7 +566,7 @@ defmodule ExMCP.SimpleClient do
 
   defp send_initialized(transport_mod, transport_state) do
     msg = Protocol.encode_initialized()
-    transport_mod.send(transport_state, Jason.encode!(msg))
+    transport_mod.send_message(Jason.encode!(msg), transport_state)
   end
 
   defp send_request_with_retry(method, params, state) do
@@ -578,7 +579,7 @@ defmodule ExMCP.SimpleClient do
       "params" => params
     }
 
-    case state.transport_mod.send(state.transport_state, Jason.encode!(request)) do
+    case state.transport_mod.send_message(Jason.encode!(request), state.transport_state) do
       {:ok, new_transport_state} ->
         # Wait for response synchronously
         case wait_for_response(state.transport_mod, new_transport_state, request_id, 10_000) do
@@ -617,9 +618,9 @@ defmodule ExMCP.SimpleClient do
     if now > deadline do
       {:error, :timeout}
     else
-      remaining = deadline - now
+      _remaining = deadline - now
 
-      case transport_mod.recv(transport_state, remaining) do
+      case transport_mod.receive_message(transport_state) do
         {:ok, data, new_state} ->
           case Protocol.parse_message(data) do
             {:result, result, ^expected_id} ->
@@ -657,7 +658,8 @@ defmodule ExMCP.SimpleClient do
       "params" => params
     }
 
-    with {:ok, _} <- state.transport_mod.send(state.transport_state, Jason.encode!(request)),
+    with {:ok, _} <-
+           state.transport_mod.send_message(Jason.encode!(request), state.transport_state),
          {:ok, result, _} <-
            wait_for_response(state.transport_mod, state.transport_state, request_id, 5_000) do
       {:ok, result}

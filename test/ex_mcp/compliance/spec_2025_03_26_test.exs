@@ -69,7 +69,7 @@ defmodule ExMCP.Spec20250326Test do
              uri: "config://app",
              name: "Application Config",
              description: "Application configuration",
-             mime_type: "application/json"
+             mimeType: "application/json"
            }
          },
          subscriptions: MapSet.new(),
@@ -136,7 +136,7 @@ defmodule ExMCP.Spec20250326Test do
         %{
           type: "audio",
           data: Base.encode64("fake-audio-data"),
-          mime_type: "audio/mp3"
+          mimeType: "audio/mp3"
         }
       ]
 
@@ -169,7 +169,7 @@ defmodule ExMCP.Spec20250326Test do
         resource ->
           content = %{
             uri: uri,
-            mime_type: resource.mime_type,
+            mimeType: resource.mimeType,
             text: Jason.encode!(%{debug: true, version: "2.0"})
           }
 
@@ -336,7 +336,7 @@ defmodule ExMCP.Spec20250326Test do
 
       assert text_content != nil
       assert audio_content != nil
-      assert audio_content.mime_type == "audio/mp3"
+      assert audio_content.mimeType == "audio/mp3"
       assert is_binary(audio_content.data)
     end
 

@@ -108,10 +108,10 @@ defmodule ExMCP.Internal.Security do
 
   ## Examples
 
-      iex> ExMCP.Security.build_auth_headers(%{auth: {:bearer, "token123"}})
+      iex> ExMCP.Internal.Security.build_auth_headers(%{auth: {:bearer, "token123"}})
       [{"Authorization", "Bearer token123"}]
 
-      iex> ExMCP.Security.build_auth_headers(%{auth: {:api_key, "key123", header: "X-API-Key"}})
+      iex> ExMCP.Internal.Security.build_auth_headers(%{auth: {:api_key, "key123", header: "X-API-Key"}})
       [{"X-API-Key", "key123"}]
   """
   @spec build_auth_headers(security_config()) :: [{String.t(), String.t()}]
@@ -157,13 +157,13 @@ defmodule ExMCP.Internal.Security do
 
   ## Examples
 
-      iex> ExMCP.Security.validate_localhost_binding(%{binding: "127.0.0.1"})
+      iex> ExMCP.Internal.Security.validate_localhost_binding(%{binding: "127.0.0.1"})
       :ok
 
-      iex> ExMCP.Security.validate_localhost_binding(%{binding: "localhost"})
+      iex> ExMCP.Internal.Security.validate_localhost_binding(%{binding: "localhost"})
       :ok
 
-      iex> ExMCP.Security.validate_localhost_binding(%{binding: "0.0.0.0"})
+      iex> ExMCP.Internal.Security.validate_localhost_binding(%{binding: "0.0.0.0"})
       {:error, :public_binding_requires_security}
   """
   @spec validate_localhost_binding(map()) :: :ok | {:error, :public_binding_requires_security}
@@ -183,10 +183,10 @@ defmodule ExMCP.Internal.Security do
 
   ## Examples
 
-      iex> ExMCP.Security.validate_origin("https://example.com", ["https://example.com"])
+      iex> ExMCP.Internal.Security.validate_origin("https://example.com", ["https://example.com"])
       :ok
 
-      iex> ExMCP.Security.validate_origin("https://evil.com", ["https://example.com"])
+      iex> ExMCP.Internal.Security.validate_origin("https://evil.com", ["https://example.com"])
       {:error, :origin_not_allowed}
   """
   @spec validate_origin(String.t() | nil, [String.t()] | :any) ::
@@ -293,7 +293,7 @@ defmodule ExMCP.Internal.Security do
       headers = [{"origin", "https://example.com"}, {"host", "api.example.com"}]
       config = %{validate_origin: true, allowed_origins: ["https://example.com"]}
 
-      :ok = ExMCP.Security.validate_request(headers, config)
+      :ok = ExMCP.Internal.Security.validate_request(headers, config)
   """
   @spec validate_request([{String.t(), String.t()}], security_config()) ::
           :ok | {:error, atom()}
@@ -394,7 +394,7 @@ defmodule ExMCP.Internal.Security do
         ciphers: ["ECDHE-RSA-AES256-GCM-SHA384"]
       }
 
-      :ok = ExMCP.Security.validate_tls_config(config)
+      :ok = ExMCP.Internal.Security.validate_tls_config(config)
   """
   @spec validate_tls_config(map()) :: :ok | {:error, atom()}
   def validate_tls_config(config) when is_map(config) do

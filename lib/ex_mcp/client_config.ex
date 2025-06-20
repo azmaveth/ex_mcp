@@ -102,11 +102,31 @@ defmodule ExMCP.ClientConfig do
           jitter: boolean()
         }
 
+  @doc """
+  Timeout configuration for ExMCP operations.
+
+  - `total`: Maximum time for an entire logical operation, including all retries (ms)
+  - `connect`: Time to establish initial TCP/TLS connection (ms)
+  - `request`: Time for a single request-response cycle (ms)
+  - `stream`: Timeouts specific to persistent streams like SSE
+    - `handshake`: Time to wait for stream handshake after connection (ms)
+    - `idle`: Time a stream can be idle before being considered dead (ms)
+  - `pool`: Connection pool related timeouts
+    - `checkout`: Time to wait for a connection from the pool (ms)
+    - `idle`: Time a connection can sit idle in the pool (ms)
+  """
   @type timeout_config :: %{
+          total: pos_integer(),
           connect: pos_integer(),
           request: pos_integer(),
-          idle: pos_integer(),
-          total: pos_integer()
+          stream: %{
+            handshake: pos_integer(),
+            idle: pos_integer()
+          },
+          pool: %{
+            checkout: pos_integer(),
+            idle: pos_integer()
+          }
         }
 
   @type auth_config :: %{
@@ -121,6 +141,9 @@ defmodule ExMCP.ClientConfig do
           custom_handler: {module(), atom(), [any()]} | nil
         }
 
+  # Connection pool configuration.
+  # Note: `checkout_timeout` and `idle_timeout` are deprecated in favor of
+  # `timeouts.pool.checkout` and `timeouts.pool.idle` respectively.
   @type pool_config :: %{
           enabled: boolean(),
           size: pos_integer(),
@@ -305,17 +328,63 @@ defmodule ExMCP.ClientConfig do
 
   ## Examples
 
+      # Basic timeouts
       config = ExMCP.ClientConfig.new()
       |> ExMCP.ClientConfig.put_timeout(
+        total: 120_000,
+        connect: 10_000,
+        request: 30_000
+      )
+
+      # Advanced timeouts with stream and pool settings
+      config = ExMCP.ClientConfig.new()
+      |> ExMCP.ClientConfig.put_timeout(
+        total: 120_000,
         connect: 10_000,
         request: 30_000,
-        idle: 60_000
+        stream: [handshake: 15_000, idle: 60_000],
+        pool: [checkout: 5_000, idle: 300_000]
       )
+      
+  ## Timeout Types
+
+  - `total`: Maximum time for entire operation including retries (ms)
+  - `connect`: Time to establish TCP/TLS connection (ms)
+  - `request`: Time for single request-response cycle (ms)
+  - `stream.handshake`: Time to wait for SSE handshake completion (ms)
+  - `stream.idle`: Time stream can be idle before considered dead (ms)
+  - `pool.checkout`: Time to wait for connection from pool (ms)
+  - `pool.idle`: Time connection can idle in pool before cleanup (ms)
   """
   @spec put_timeout(t(), keyword()) :: t()
   def put_timeout(config, opts) do
-    timeouts = Map.merge(config.timeouts, Map.new(opts))
+    timeouts = deep_merge_timeouts(config.timeouts, Map.new(opts))
     %{config | timeouts: timeouts}
+  end
+
+  # Helper to merge nested timeout configuration
+  defp deep_merge_timeouts(base, updates) do
+    # Normalize keyword lists to maps for nested structures
+    normalized_updates = normalize_timeout_updates(updates)
+
+    Map.merge(base, normalized_updates, fn
+      _key, base_value, update_value when is_map(base_value) and is_map(update_value) ->
+        Map.merge(base_value, update_value)
+
+      _key, _base_value, update_value ->
+        update_value
+    end)
+  end
+
+  # Convert keyword lists to maps for nested timeout structures
+  defp normalize_timeout_updates(updates) do
+    Enum.reduce(updates, %{}, fn
+      {key, value}, acc when key in [:stream, :pool] and is_list(value) ->
+        Map.put(acc, key, Map.new(value))
+
+      {key, value}, acc ->
+        Map.put(acc, key, value)
+    end)
   end
 
   @doc """
@@ -461,8 +530,17 @@ defmodule ExMCP.ClientConfig do
       command: config.transport.command,
       host: config.transport.host,
       port: config.transport.port,
+      # Connection timeouts
       timeout: config.timeouts.connect,
       request_timeout: config.timeouts.request,
+      total_timeout: config.timeouts.total,
+      # Stream timeouts
+      stream_handshake_timeout: config.timeouts.stream.handshake,
+      stream_idle_timeout: config.timeouts.stream.idle,
+      # Pool timeouts
+      pool_checkout_timeout: config.timeouts.pool.checkout,
+      pool_idle_timeout: config.timeouts.pool.idle,
+      # Retry settings
       retry_attempts: config.retry_policy.max_attempts,
       retry_interval: config.retry_policy.base_interval
     ]
@@ -510,7 +588,13 @@ defmodule ExMCP.ClientConfig do
 
   defp apply_development_profile(config) do
     config
-    |> put_timeout(connect: 5_000, request: 10_000, idle: 30_000, total: 60_000)
+    |> put_timeout(
+      total: 60_000,
+      connect: 5_000,
+      request: 10_000,
+      stream: [handshake: 10_000, idle: 30_000],
+      pool: [checkout: 3_000, idle: 30_000]
+    )
     |> put_retry_policy(enabled: true, max_attempts: 3, base_interval: 500, backoff_type: :linear)
     |> put_observability(
       logging: [enabled: true, level: :debug, include_metadata: true],
@@ -521,7 +605,13 @@ defmodule ExMCP.ClientConfig do
 
   defp apply_test_profile(config) do
     config
-    |> put_timeout(connect: 1_000, request: 5_000, idle: 10_000, total: 15_000)
+    |> put_timeout(
+      total: 15_000,
+      connect: 1_000,
+      request: 5_000,
+      stream: [handshake: 3_000, idle: 10_000],
+      pool: [checkout: 1_000, idle: 10_000]
+    )
     |> put_retry_policy(enabled: false)
     |> put_observability(
       logging: [enabled: false],
@@ -533,7 +623,13 @@ defmodule ExMCP.ClientConfig do
 
   defp apply_production_profile(config) do
     config
-    |> put_timeout(connect: 10_000, request: 30_000, idle: 300_000, total: 600_000)
+    |> put_timeout(
+      total: 600_000,
+      connect: 10_000,
+      request: 30_000,
+      stream: [handshake: 20_000, idle: 300_000],
+      pool: [checkout: 5_000, idle: 300_000]
+    )
     |> put_retry_policy(
       enabled: true,
       max_attempts: 5,
@@ -600,10 +696,21 @@ defmodule ExMCP.ClientConfig do
 
   defp default_timeout_config do
     %{
+      total: 300_000,
       connect: 5_000,
       request: 30_000,
-      idle: 60_000,
-      total: 300_000
+      stream: %{
+        # 15 seconds for SSE handshake
+        handshake: 15_000,
+        # 60 seconds for stream idle
+        idle: 60_000
+      },
+      pool: %{
+        # 5 seconds to get connection from pool
+        checkout: 5_000,
+        # 60 seconds for connection to idle in pool
+        idle: 60_000
+      }
     }
   end
 

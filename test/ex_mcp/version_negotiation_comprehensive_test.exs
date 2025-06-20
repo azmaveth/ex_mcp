@@ -103,8 +103,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         client_version in state.supported_versions ->
           client_version
 
-        client_version == "draft" && "2025-03-26" in state.supported_versions ->
-          "2025-03-26"
+        client_version == "2025-06-18" && "2025-06-18" in state.supported_versions ->
+          "2025-06-18"
 
         client_version == "1.0.0" && "2025-06-18" in state.supported_versions ->
           "2025-06-18"
@@ -150,11 +150,11 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
       # Return tools appropriate for negotiated version
       tools =
         case state.negotiated_version do
-          "draft" ->
+          "2025-06-18" ->
             [
               %{
-                name: "draft_tool",
-                description: "Only in draft",
+                name: "structured_tool",
+                description: "Tool with structured output",
                 outputSchema: %{type: "object"}
               }
             ]
@@ -345,8 +345,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
     end
   end
 
-  describe "draft version negotiation" do
-    test "draft client with server that doesn't support draft" do
+  describe "version fallback negotiation" do
+    test "client with unsupported version falls back to latest" do
       {:ok, server} =
         Server.start_link(
           handler: MultiVersionHandler,
@@ -361,7 +361,7 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "draft"
+          protocol_version: "unknown-future-version"
         )
 
       Process.sleep(100)
@@ -374,12 +374,12 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
       GenServer.stop(server)
     end
 
-    test "server supporting only draft with older client" do
+    test "server supporting only newer version with older client" do
       {:ok, server} =
         Server.start_link(
           handler: MultiVersionHandler,
           handler_args: [
-            supported_versions: ["draft"],
+            supported_versions: ["2025-06-18"],
             version_strategy: :exact
           ],
           transport: :test
@@ -414,12 +414,12 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
       {:ok, server} =
         Server.start_link(
           handler: MultiVersionHandler,
-          handler_args: [supported_versions: ["2025-03-26", "2025-06-18", "draft"]],
+          handler_args: [supported_versions: ["2025-03-26", "2025-06-18", "2024-11-05"]],
           transport: :test
         )
 
       # Test each version
-      versions = ["2025-06-18", "2025-03-26", "draft"]
+      versions = ["2025-06-18", "2025-03-26", "2024-11-05"]
 
       for version <- versions do
         {:ok, client} =
@@ -448,12 +448,11 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
             assert get_in(caps, ["completion", "hasArguments"]) == true
             assert get_in(caps, ["experimental", "batchProcessing"]) == true
 
-          "draft" ->
-            # Has draft features
-            assert get_in(caps, ["experimental", "elicitation"]) == true
-            assert get_in(caps, ["experimental", "structuredContent"]) == true
-            # No batch processing in draft
-            assert get_in(caps, ["experimental", "batchProcessing"]) == false
+          "2024-11-05" ->
+            # Basic features only
+            refute get_in(caps, ["resources", "subscribe"])
+            refute get_in(caps, ["completion", "hasArguments"])
+            refute get_in(caps, ["experimental", "elicitation"])
         end
 
         GenServer.stop(client)
@@ -528,20 +527,20 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
     test "registry correctly identifies feature availability" do
       # Test that version-specific features are properly gated
 
-      # Draft features
-      assert VersionRegistry.feature_available?("draft", :elicitation)
+      # 2025-06-18 features
+      assert VersionRegistry.feature_available?("2025-06-18", :elicitation)
       refute VersionRegistry.feature_available?("2025-03-26", :elicitation)
-      refute VersionRegistry.feature_available?("2025-06-18", :elicitation)
+      refute VersionRegistry.feature_available?("2024-11-05", :elicitation)
 
       # 2025-03-26 features
       assert VersionRegistry.feature_available?("2025-03-26", :resource_subscription)
-      assert VersionRegistry.feature_available?("draft", :resource_subscription)
+      assert VersionRegistry.feature_available?("2025-06-18", :resource_subscription)
       refute VersionRegistry.feature_available?("2025-06-18", :resource_subscription)
 
       # Base features available in all
       assert VersionRegistry.feature_available?("2025-06-18", :tools)
       assert VersionRegistry.feature_available?("2025-03-26", :tools)
-      assert VersionRegistry.feature_available?("draft", :tools)
+      assert VersionRegistry.feature_available?("2025-06-18", :tools)
     end
 
     test "message validation respects version" do
@@ -569,11 +568,11 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
 
       assert msg =~ "not available"
 
-      # Draft-only method
+      # 2025-06-18-only method
       assert :ok =
                Protocol.validate_message_version(
                  %{"method" => "elicitation/create"},
-                 "draft"
+                 "2025-06-18"
                )
 
       assert {:error, _} =

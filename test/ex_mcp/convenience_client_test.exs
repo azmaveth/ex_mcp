@@ -49,8 +49,37 @@ defmodule ExMCP.ConvenienceClientTest do
     end
 
     def controlling_process(_agent, _pid), do: :ok
-    def send_message(_agent, _msg), do: {:error, :not_implemented}
-    def receive_message(_agent), do: {:error, :not_implemented}
+
+    def send_message(msg, agent) do
+      Agent.update(agent, fn state ->
+        %{state | messages: [msg | state.messages]}
+      end)
+
+      {:ok, agent}
+    end
+
+    def receive_message(agent) do
+      msg =
+        Agent.get_and_update(agent, fn state ->
+          case state.messages do
+            [msg | rest] -> {msg, %{state | messages: rest}}
+            [] -> {nil, state}
+          end
+        end)
+
+      if msg do
+        case Jason.decode!(msg) do
+          %{"method" => method, "id" => _id} = request ->
+            response = get_mock_response(agent, method, request)
+            {:ok, Jason.decode!(response), agent}
+
+          _ ->
+            {:error, :unknown_message}
+        end
+      else
+        {:error, :no_data}
+      end
+    end
 
     defp default_responses do
       %{
@@ -139,21 +168,15 @@ defmodule ExMCP.ConvenienceClientTest do
   end
 
   describe "connection management" do
-    test "connect with URL string" do
-      # This will fail since we don't have a real HTTP server, but tests URL parsing
-      # The process will exit with connection failure, which is expected behavior
-      Process.flag(:trap_exit, true)
+    setup do
+      ExMCP.TestHelpers.setup_test_servers()
+    end
 
-      spawn_link(fn ->
-        ConvenienceClient.connect("http://localhost:8080",
-          timeout: 100,
-          max_reconnect_attempts: 0,
-          reconnect_interval: 50
-        )
-      end)
-
-      # Wait for exit message
-      assert_receive {:EXIT, _pid, _reason}, 3000
+    test "connect with URL string", %{http_url: http_url} do
+      # Test actual HTTP URL connection to local test server (SSE disabled for simpler testing)
+      assert {:ok, client} = ConvenienceClient.connect(http_url, timeout: 5000, use_sse: false)
+      assert is_pid(client)
+      ConvenienceClient.disconnect(client)
     end
 
     test "connect with transport tuple", %{client: client} do

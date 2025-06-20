@@ -453,14 +453,14 @@ defmodule ExMCP.Client.Legacy do
   Valid levels are: "debug", "info", "warning", "error".
 
   > #### Draft Feature {: .info}
-  > This implements a draft MCP specification feature (`logging/setLevel`) that may change.
+  > This implements the MCP specification feature (`logging/setLevel`) from version 2025-03-26.
 
   ## Examples
 
       {:ok, %{}} = ExMCP.Client.set_log_level(client, "debug")
       {:ok, %{}} = ExMCP.Client.set_log_level(client, "error")
 
-  @doc api: :draft
+  @doc api: :public
   """
   @spec set_log_level(GenServer.server(), String.t(), timeout()) :: {:ok, map()} | {:error, any()}
   def set_log_level(client, level, timeout \\ @request_timeout) do
@@ -498,7 +498,7 @@ defmodule ExMCP.Client.Legacy do
   @doc """
   Sends a batch of requests to the server.
 
-  JSON-RPC batching is available in 2025-03-26 and removed in draft.
+  JSON-RPC batching is available in 2025-03-26 and removed in 2025-06-18.
   The initialize request MUST NOT be included in a batch.
 
   ## Examples
@@ -617,7 +617,7 @@ defmodule ExMCP.Client.Legacy do
   Disconnects from the MCP server gracefully.
 
   > #### Extension Feature {: .warning}
-  > This is an ExMCP extension for clean disconnection, following draft specification guidelines.
+  > This is an ExMCP extension for clean disconnection.
 
   Performs a clean shutdown by:
   1. Stopping message reception
@@ -828,8 +828,8 @@ defmodule ExMCP.Client.Legacy do
 
   def handle_call({:send_batch, batch}, from, state) do
     # Check if batch requests are supported in negotiated version
-    if state.negotiated_version == "draft" do
-      {:reply, {:error, "JSON-RPC batching not supported in draft version"}, state}
+    if state.negotiated_version == "2025-06-18" do
+      {:reply, {:error, "JSON-RPC batching not supported in version 2025-06-18"}, state}
     else
       if state.initialized && state.transport_state do
         case Protocol.encode_to_string(batch) do
@@ -1524,7 +1524,7 @@ defmodule ExMCP.Client.Legacy do
       if function_exported?(handler, :handle_create_message, 2) do
         sampling_caps = %{}
 
-        # Add elicitation support for draft version
+        # Add elicitation support for version 2025-06-18
         sampling_caps =
           if version == "draft" && function_exported?(handler, :handle_elicitation_create, 3) do
             Map.put(sampling_caps, "elicitation", %{})

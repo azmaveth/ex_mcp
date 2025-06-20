@@ -9,7 +9,7 @@ defmodule ExMCP.Types.V20250618 do
   - Removed JSON-RPC batching support
   - Added structured tool output (structuredOutput field)
   - OAuth 2.1 Resource Server classification
-  - Elicitation support (now stable, not draft)
+  - Elicitation support (now stable)
   - Resource links in tool results
   - MCP-Protocol-Version header requirement for HTTP
   - _meta fields for extensibility
@@ -36,7 +36,7 @@ defmodule ExMCP.Types.V20250618 do
 
   @typedoc """
   Client capabilities for 2025-06-18.
-  Elicitation is now a stable feature (not draft).
+  Elicitation is now a stable feature.
   """
   @type client_capabilities :: %{
           optional(:experimental) => %{String.t() => any()},
@@ -170,7 +170,7 @@ defmodule ExMCP.Types.V20250618 do
           optional(:_meta) => meta()
         }
 
-  # Elicitation types (stable in 2025-06-18, moved from draft)
+  # Elicitation types (stable in 2025-06-18)
   @typedoc """
   Primitive schema for elicitation fields.
   """

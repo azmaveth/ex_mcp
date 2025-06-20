@@ -1,6 +1,6 @@
 defmodule ExMCP.StructuredOutputTest do
   @moduledoc """
-  Tests for the structured tool output feature (draft specification).
+  Tests for the structured tool output feature (2025-06-18 specification).
   """
   use ExUnit.Case, async: true
 
@@ -16,7 +16,7 @@ defmodule ExMCP.StructuredOutputTest do
     @impl true
     def handle_initialize(_params, state) do
       result = %{
-        protocolVersion: "2025-03-26",
+        protocolVersion: "2025-06-18",
         serverInfo: %{name: "test-server", version: "1.0.0"},
         capabilities: %{
           tools: %{}
@@ -39,7 +39,7 @@ defmodule ExMCP.StructuredOutputTest do
             },
             required: ["location"]
           },
-          # Draft feature: outputSchema
+          # 2025-06-18 feature: outputSchema
           outputSchema: %{
             type: "object",
             properties: %{
@@ -78,7 +78,7 @@ defmodule ExMCP.StructuredOutputTest do
             text: "Weather in #{location}: 22.5°C, Partly cloudy, 65% humidity"
           }
         ],
-        # Draft feature: structuredContent
+        # 2025-06-18 feature: structuredContent
         structuredContent: %{
           "temperature" => 22.5,
           "conditions" => "Partly cloudy",

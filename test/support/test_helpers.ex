@@ -32,6 +32,20 @@ defmodule ExMCP.TestHelpers do
         :ok = wait_for_server_ready(port)
         {:ok, pid, port}
 
+      {:error, {:transport_error, {:start_server_failed, _reason}}} ->
+        # Ranch might be down, try to restart it
+        :ok = restart_ranch()
+
+        case TestServer.start_link(server_opts) do
+          {:ok, pid} ->
+            Process.sleep(200)
+            :ok = wait_for_server_ready(port)
+            {:ok, pid, port}
+
+          error ->
+            error
+        end
+
       error ->
         error
     end
@@ -127,6 +141,9 @@ defmodule ExMCP.TestHelpers do
       end
   """
   def setup_test_servers(opts \\ []) do
+    # Always restart ranch to ensure clean state
+    restart_ranch()
+
     # Start HTTP server
     {:ok, http_server, http_port} = start_http_server(opts)
     :ok = wait_for_server_ready(http_port)
@@ -137,6 +154,7 @@ defmodule ExMCP.TestHelpers do
     on_exit(fn ->
       stop_server(http_server)
       stop_server(native_server)
+      # Keep ranch running for subsequent tests
     end)
 
     %{
@@ -175,9 +193,41 @@ defmodule ExMCP.TestHelpers do
   Ensures ranch is started for HTTP server tests.
   """
   def ensure_ranch_started do
+    # First check if ranch is loaded
+    case Application.load(:ranch) do
+      :ok -> :ok
+      {:error, {:already_loaded, :ranch}} -> :ok
+      error -> error
+    end
+
+    # Then ensure it's started
     case Application.ensure_all_started(:ranch) do
       {:ok, _} -> :ok
+      {:error, {:ranch, {:already_started, :ranch}}} -> :ok
+      {:error, {:already_started, :ranch}} -> :ok
       error -> error
+    end
+  end
+
+  @doc """
+  Restarts ranch if it has stopped.
+  """
+  def restart_ranch do
+    # Stop ranch if it's running
+    case Application.stop(:ranch) do
+      :ok -> :ok
+      {:error, {:not_started, :ranch}} -> :ok
+      _ -> :ok
+    end
+
+    # Give it a moment to fully stop
+    Process.sleep(100)
+
+    # Restart ranch
+    case ensure_ranch_started() do
+      :ok -> :ok
+      # Continue even if restart fails - test might work anyway
+      _ -> :ok
     end
   end
 end

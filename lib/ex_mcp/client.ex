@@ -44,6 +44,7 @@ defmodule ExMCP.Client do
       :transport_opts,
       :server_info,
       :server_capabilities,
+      :protocol_version,
       :connection_status,
       :pending_requests,
       :last_activity,
@@ -68,6 +69,7 @@ defmodule ExMCP.Client do
             transport_opts: keyword(),
             server_info: map() | nil,
             server_capabilities: map() | nil,
+            protocol_version: String.t() | nil,
             connection_status: connection_status(),
             pending_requests: %{String.t() => {from :: GenServer.from(), started_at :: integer()}},
             last_activity: integer() | nil,
@@ -108,7 +110,7 @@ defmodule ExMCP.Client do
   Lists available tools from the server.
   Supports pagination with cursor.
   """
-  @spec list_tools(GenServer.server(), keyword()) :: {:ok, map()} | {:error, Error.t()}
+  @spec list_tools(GenServer.server(), keyword()) :: {:ok, Response.t()} | {:error, Error.t()}
   def list_tools(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
     cursor = Keyword.get(opts, :cursor)
@@ -116,18 +118,9 @@ defmodule ExMCP.Client do
     params = if cursor, do: %{cursor: cursor}, else: %{}
 
     case GenServer.call(client, {:request, "tools/list", params}, timeout) do
-      {:ok, %{"tools" => tools} = response} ->
-        result = %{tools: tools}
-
-        result =
-          if response["nextCursor"],
-            do: Map.put(result, :nextCursor, response["nextCursor"]),
-            else: result
-
-        {:ok, result}
-
-      {:ok, response} ->
-        {:error, Error.invalid_request("Expected tools list but got: #{inspect(response)}")}
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response)
+        {:ok, response}
 
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
@@ -187,14 +180,12 @@ defmodule ExMCP.Client do
   @doc """
   Lists available resources from the server.
   """
-  @spec list_resources(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, Error.t()}
+  @spec list_resources(GenServer.server(), timeout()) :: {:ok, Response.t()} | {:error, Error.t()}
   def list_resources(client, timeout \\ 5_000) do
     case GenServer.call(client, {:request, "resources/list", %{}}, timeout) do
-      {:ok, %{"resources" => resources}} ->
-        {:ok, resources}
-
-      {:ok, response} ->
-        {:error, Error.invalid_request("Expected resources list but got: #{inspect(response)}")}
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response)
+        {:ok, response}
 
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
@@ -232,14 +223,12 @@ defmodule ExMCP.Client do
   @doc """
   Lists available prompts from the server.
   """
-  @spec list_prompts(GenServer.server(), timeout()) :: {:ok, [map()]} | {:error, Error.t()}
+  @spec list_prompts(GenServer.server(), timeout()) :: {:ok, Response.t()} | {:error, Error.t()}
   def list_prompts(client, timeout \\ 5_000) do
     case GenServer.call(client, {:request, "prompts/list", %{}}, timeout) do
-      {:ok, %{"prompts" => prompts}} ->
-        {:ok, prompts}
-
-      {:ok, response} ->
-        {:error, Error.invalid_request("Expected prompts list but got: #{inspect(response)}")}
+      {:ok, raw_response} ->
+        response = Response.from_raw_response(raw_response)
+        {:ok, response}
 
       {:error, error_data} when is_map(error_data) ->
         error = Error.from_json_rpc_error(error_data)
@@ -283,12 +272,52 @@ defmodule ExMCP.Client do
   end
 
   @doc """
-  Performs a completion request.
+  Gets the negotiated protocol version.
   """
-  @spec complete(GenServer.server(), map(), timeout()) ::
+  @spec negotiated_version(GenServer.server()) :: {:ok, String.t()} | {:error, term()}
+  def negotiated_version(client) do
+    case get_status(client) do
+      {:ok, %{protocol_version: version}} when is_binary(version) -> {:ok, version}
+      {:ok, _} -> {:error, :not_negotiated}
+      error -> error
+    end
+  end
+
+  @doc """
+  Gets the server capabilities.
+  """
+  @spec server_capabilities(GenServer.server()) :: {:ok, map()} | {:error, term()}
+  def server_capabilities(client) do
+    case get_status(client) do
+      {:ok, %{server_capabilities: caps}} when is_map(caps) -> {:ok, caps}
+      {:ok, _} -> {:error, :not_available}
+      error -> error
+    end
+  end
+
+  @doc """
+  Performs a completion request.
+
+  ## Breaking Change
+
+  As of version 2025-06-18, this function signature changed from 
+  `complete(client, ref, timeout)` to `complete(client, ref, params, timeout)`
+  to support the new completion parameter structure.
+  """
+  @spec complete(GenServer.server(), String.t(), map(), timeout()) ::
           {:ok, Response.t()} | {:error, Error.t()}
-  def complete(client, ref, timeout \\ 5_000) do
-    case GenServer.call(client, {:request, "completion/complete", %{"ref" => ref}}, timeout) do
+  def complete(client, ref, params, timeout \\ 5_000) do
+    # Extract _meta and build proper request format
+    {meta, argument_params} = Map.pop(params, "_meta")
+
+    request_params = %{
+      "ref" => ref,
+      "argument" => argument_params
+    }
+
+    request_params = if meta, do: Map.put(request_params, "_meta", meta), else: request_params
+
+    case GenServer.call(client, {:request, "completion/complete", request_params}, timeout) do
       {:ok, raw_response} ->
         response = Response.from_raw_response(raw_response)
         {:ok, response}
@@ -309,6 +338,89 @@ defmodule ExMCP.Client do
   @spec send_notification(GenServer.server(), String.t(), map()) :: :ok | {:error, term()}
   def send_notification(client, method, params) do
     GenServer.call(client, {:notification, method, params})
+  end
+
+  @doc """
+  Sends a ping request to the server.
+  """
+  @spec ping(GenServer.server(), timeout()) :: {:ok, map()} | {:error, any()}
+  def ping(client, timeout \\ 5_000) do
+    case GenServer.call(client, {:request, "ping", %{}}, timeout) do
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Sends a cancellation notification to the server.
+
+  ## Examples
+
+      # Cancel with reason
+      :ok = ExMCP.Client.send_cancelled(client, "req_123", "Operation cancelled by user")
+
+      # Cancel without reason
+      :ok = ExMCP.Client.send_cancelled(client, "req_123")
+
+  """
+  @spec send_cancelled(GenServer.server(), String.t(), String.t() | nil) :: :ok
+  def send_cancelled(client, request_id, reason \\ nil) do
+    params = %{"requestId" => request_id}
+    params = if reason, do: Map.put(params, "reason", reason), else: params
+
+    send_notification(client, "notifications/cancelled", params)
+  end
+
+  @doc """
+  Lists available roots from the server.
+  """
+  @spec list_roots(GenServer.server(), timeout()) ::
+          {:ok, %{roots: [ExMCP.Types.root()]}} | {:error, any()}
+  def list_roots(client, timeout \\ 5_000) do
+    case GenServer.call(client, {:request, "roots/list", %{}}, timeout) do
+      {:ok, %{"roots" => roots}} ->
+        {:ok, %{roots: roots}}
+
+      {:ok, response} ->
+        {:error, Error.invalid_request("Expected roots list but got: #{inspect(response)}")}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Sets the log level for the server.
+  """
+  @spec set_log_level(GenServer.server(), String.t(), timeout()) :: {:ok, map()} | {:error, any()}
+  def set_log_level(client, level, timeout \\ 5_000) do
+    params = %{"level" => level}
+
+    case GenServer.call(client, {:request, "logging/setLevel", params}, timeout) do
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, error_data} when is_map(error_data) ->
+        error = Error.from_json_rpc_error(error_data)
+        {:error, error}
+
+      {:error, reason} ->
+        error = Error.connection_error(inspect(reason))
+        {:error, error}
+    end
   end
 
   @doc """
@@ -392,6 +504,7 @@ defmodule ExMCP.Client do
       connection_status: state.connection_status,
       server_info: state.server_info,
       server_capabilities: state.server_capabilities,
+      protocol_version: state.protocol_version,
       pending_requests: map_size(state.pending_requests),
       reconnect_attempts: state.reconnect_attempts
     }
@@ -505,7 +618,13 @@ defmodule ExMCP.Client do
 
   defp build_transport_opts(_transport, opts) do
     # Filter out non-transport options
-    Keyword.drop(opts, [:transport, :timeout, :max_reconnect_attempts, :reconnect_interval])
+    Keyword.drop(opts, [
+      :transport,
+      :timeout,
+      :max_reconnect_attempts,
+      :reconnect_interval,
+      :protocol_version
+    ])
   end
 
   defp connect_transport(transport_mod, opts) do
@@ -530,6 +649,8 @@ defmodule ExMCP.Client do
     }
 
     # Send initialize request
+    protocol_version = Keyword.get(opts, :protocol_version, "2025-06-18")
+
     init_request =
       Protocol.encode_initialize(
         %{
@@ -537,26 +658,28 @@ defmodule ExMCP.Client do
           "version" => "0.1.0"
         },
         %{},
-        "2025-06-18"
+        protocol_version
       )
 
     # Override the generated ID with our session-specific one
     init_request = Map.put(init_request, "id", "init-#{initial_state.session_id}")
 
-    with {:ok, _} <- transport_mod.send(transport_state, Jason.encode!(init_request)),
+    with {:ok, state_after_send} <-
+           transport_mod.send_message(Jason.encode!(init_request), transport_state),
          {:ok, init_response} <-
            wait_for_response(
              transport_mod,
-             transport_state,
+             state_after_send,
              "init-#{initial_state.session_id}",
              10_000
            ),
          :ok <- validate_initialize_response(init_response),
-         {:ok, _} <- send_initialized_notification(transport_mod, transport_state) do
+         {:ok, _} <- send_initialized_notification(transport_mod, state_after_send) do
       updated_state = %{
         initial_state
         | server_info: get_in(init_response, ["result", "serverInfo"]),
           server_capabilities: get_in(init_response, ["result", "capabilities"]),
+          protocol_version: get_in(init_response, ["result", "protocolVersion"]),
           connection_status: :connected
       }
 
@@ -577,9 +700,9 @@ defmodule ExMCP.Client do
     if now >= deadline do
       {:error, :timeout}
     else
-      remaining = deadline - now
+      _remaining = deadline - now
 
-      case transport_mod.recv(transport_state, remaining) do
+      case transport_mod.receive_message(transport_state) do
         {:ok, data, _new_state} ->
           case Protocol.parse_message(data) do
             {:result, result, ^expected_id} ->
@@ -616,7 +739,7 @@ defmodule ExMCP.Client do
 
   defp send_initialized_notification(transport_mod, transport_state) do
     notification = Protocol.encode_initialized()
-    transport_mod.send(transport_state, Jason.encode!(notification))
+    transport_mod.send_message(Jason.encode!(notification), transport_state)
   end
 
   defp start_receiver_task(transport_mod, transport_state) do
@@ -628,7 +751,7 @@ defmodule ExMCP.Client do
   end
 
   defp receive_loop(transport_mod, transport_state, parent) do
-    case transport_mod.recv(transport_state, :infinity) do
+    case transport_mod.receive_message(transport_state) do
       {:ok, data, new_state} ->
         send(parent, {:transport_message, data})
         receive_loop(transport_mod, new_state, parent)
@@ -644,7 +767,7 @@ defmodule ExMCP.Client do
   defp send_message(message, state) do
     encoded = Jason.encode!(message)
 
-    case state.transport_mod.send(state.transport_state, encoded) do
+    case state.transport_mod.send_message(encoded, state.transport_state) do
       {:ok, new_transport_state} ->
         {:ok, %{state | transport_state: new_transport_state}}
 

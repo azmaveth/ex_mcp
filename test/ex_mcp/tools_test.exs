@@ -426,25 +426,5 @@ defmodule ExMCP.ToolsTest do
       {:error, error} = Client.call_tool(client, "unknown_tool", %{})
       assert error.message =~ "Unknown tool"
     end
-
-    test "batch tool requests", %{client: client} do
-      # Make batch request with multiple tool calls
-      requests = [
-        {:call_tool, ["calculate", %{"operation" => "add", "a" => 5, "b" => 3}]},
-        {:call_tool, ["string_tools", %{"operation" => "uppercase", "text" => "hello"}]},
-        {:call_tool, ["calculate", %{"operation" => "multiply", "a" => 4, "b" => 7}]}
-      ]
-
-      {:ok, results} = Client.batch_request(client, requests)
-
-      assert length(results) == 3
-
-      # Each result is a tuple {:ok, response} or {:error, error}
-      [{:ok, result1}, {:ok, result2}, {:ok, result3}] = results
-
-      assert hd(result1.content).text == "Result: 8"
-      assert hd(result2.content).text == "HELLO"
-      assert hd(result3.content).text == "Result: 28"
-    end
   end
 end

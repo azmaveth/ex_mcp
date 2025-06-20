@@ -208,7 +208,7 @@ defmodule ExMCP do
   """
   @spec supported_versions() :: [String.t()]
   def supported_versions do
-    ["2024-11-05", "2025-03-26", "draft"]
+    ["2024-11-05", "2025-03-26", "2025-06-18"]
   end
 
   # Server Convenience Macros
@@ -475,7 +475,9 @@ defmodule ExMCP do
     try do
       case SimpleClient.read_resource(client, uri, timeout) do
         {:ok, %Response{} = response} ->
-          content = Response.text_content(response) || Response.data_content(response)
+          content =
+            Response.resource_content(response) || Response.text_content(response) ||
+              Response.data_content(response)
 
           if parse_json and is_binary(content) do
             case Jason.decode(content) do
@@ -494,7 +496,9 @@ defmodule ExMCP do
         try do
           case Client.read_resource(client, uri, timeout) do
             {:ok, %Response{} = response} ->
-              content = Response.text_content(response) || Response.data_content(response)
+              content =
+                Response.resource_content(response) || Response.text_content(response) ||
+                  Response.data_content(response)
 
               if parse_json and is_binary(content) do
                 case Jason.decode(content) do

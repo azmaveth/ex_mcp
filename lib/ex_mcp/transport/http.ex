@@ -90,7 +90,8 @@ defmodule ExMCP.Transport.HTTP do
     :session_id,
     :use_sse,
     :last_event_id,
-    :last_response
+    :last_response,
+    :timeouts
   ]
 
   @type t :: %__MODULE__{
@@ -104,7 +105,8 @@ defmodule ExMCP.Transport.HTTP do
           session_id: String.t() | nil,
           use_sse: boolean(),
           last_event_id: String.t() | nil,
-          last_response: map() | nil
+          last_response: map() | nil,
+          timeouts: map()
         }
 
   @default_endpoint "/mcp/v1"
@@ -119,6 +121,11 @@ defmodule ExMCP.Transport.HTTP do
     security = Keyword.get(config, :security)
     use_sse = Keyword.get(config, :use_sse, true)
     session_id = Keyword.get(config, :session_id)
+    # Extract timeout configurations with backwards compatibility
+    connect_timeout = Keyword.get(config, :timeout, 5_000)
+    request_timeout = Keyword.get(config, :request_timeout, 30_000)
+    stream_handshake_timeout = Keyword.get(config, :stream_handshake_timeout, 15_000)
+    stream_idle_timeout = Keyword.get(config, :stream_idle_timeout, 60_000)
 
     Logger.debug("HTTP transport connecting with use_sse: #{use_sse}, endpoint: #{endpoint}")
 
@@ -140,6 +147,14 @@ defmodule ExMCP.Transport.HTTP do
     # Merge all headers
     all_headers = Enum.uniq_by(headers ++ security_headers, fn {name, _} -> name end)
 
+    # Create timeout configuration
+    timeouts = %{
+      connect: connect_timeout,
+      request: request_timeout,
+      stream_handshake: stream_handshake_timeout,
+      stream_idle: stream_idle_timeout
+    }
+
     state = %__MODULE__{
       base_url: base_url,
       headers: all_headers,
@@ -148,7 +163,8 @@ defmodule ExMCP.Transport.HTTP do
       security: security,
       origin: origin,
       use_sse: use_sse,
-      session_id: session_id || generate_session_id()
+      session_id: session_id || generate_session_id(),
+      timeouts: timeouts
     }
 
     # Validate security configuration
@@ -159,7 +175,10 @@ defmodule ExMCP.Transport.HTTP do
         case start_sse(state) do
           {:ok, sse_pid} ->
             Logger.debug("SSE started successfully with pid: #{inspect(sse_pid)}")
-            # Wait for SSE connection to be fully established
+            # Wait for SSE connection to be fully established using configurable timeout
+            handshake_timeout = state.timeouts.stream_handshake
+            Logger.debug("Waiting for SSE handshake, timeout: #{handshake_timeout}ms")
+
             receive do
               {:sse_connected, ^sse_pid} ->
                 Logger.debug("SSE connection fully established")
@@ -169,8 +188,8 @@ defmodule ExMCP.Transport.HTTP do
                 Logger.debug("SSE connection failed: #{inspect(reason)}")
                 {:error, {:sse_connection_failed, reason}}
             after
-              5_000 ->
-                Logger.debug("SSE connection timeout")
+              handshake_timeout ->
+                Logger.debug("SSE connection timeout after #{handshake_timeout}ms")
                 {:error, :sse_connection_timeout}
             end
 
@@ -211,10 +230,13 @@ defmodule ExMCP.Transport.HTTP do
       body
     }
 
+    # Add request timeout to HTTP options
+    base_http_opts = [{:timeout, state.timeouts.request}]
+
     http_opts =
       case URI.parse(url).scheme do
-        "https" -> build_ssl_options_from_state(state)
-        _ -> []
+        "https" -> build_ssl_options_from_state(state) ++ base_http_opts
+        _ -> base_http_opts
       end
 
     :httpc.request(:post, request, http_opts, [])
@@ -345,7 +367,9 @@ defmodule ExMCP.Transport.HTTP do
       url: url,
       headers: sse_headers,
       ssl_opts: ssl_opts,
-      parent: self()
+      parent: self(),
+      connect_timeout: state.timeouts.connect,
+      idle_timeout: state.timeouts.stream_idle
     ]
 
     case SSEClient.start_link(opts) do

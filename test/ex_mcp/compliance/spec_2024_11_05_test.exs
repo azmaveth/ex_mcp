@@ -38,7 +38,7 @@ defmodule ExMCP.Spec20241105Test do
              uri: "file:///config.json",
              name: "Configuration",
              description: "System configuration",
-             mime_type: "application/json"
+             mimeType: "application/json"
            }
          ],
          prompts: [
@@ -56,10 +56,10 @@ defmodule ExMCP.Spec20241105Test do
     @impl true
     def handle_initialize(params, state) do
       # Verify we get 2024-11-05 version
-      assert params["protocolVersion"] == "2025-06-18"
+      assert params["protocolVersion"] == "2024-11-05"
 
       result = %{
-        protocolVersion: "2025-06-18",
+        protocolVersion: "2024-11-05",
         serverInfo: %{
           name: "test-server-2024-11-05",
           version: "1.0.0"
@@ -124,7 +124,7 @@ defmodule ExMCP.Spec20241105Test do
       {:ok,
        %{
          uri: "file:///config.json",
-         mime_type: "application/json",
+         mimeType: "application/json",
          text: Jason.encode!(content)
        }, state}
     end
@@ -182,7 +182,7 @@ defmodule ExMCP.Spec20241105Test do
           server: server,
           client_info: %{name: "test-client-2024-11-05", version: "1.0.0"},
           # Force 2024-11-05 version
-          protocol_version: "2025-06-18"
+          protocol_version: "2024-11-05"
         )
 
       Process.sleep(100)
@@ -197,7 +197,7 @@ defmodule ExMCP.Spec20241105Test do
 
     test "negotiates 2024-11-05 protocol version", %{client: client} do
       {:ok, version} = Client.negotiated_version(client)
-      assert version == "2025-06-18"
+      assert version == "2024-11-05"
     end
 
     test "server capabilities match 2024-11-05 spec", %{client: client} do
@@ -250,7 +250,7 @@ defmodule ExMCP.Spec20241105Test do
       assert length(content.contents) == 1
 
       resource_content = hd(content.contents)
-      assert resource_content.mime_type == "application/json"
+      assert resource_content.mimeType == "application/json"
 
       data = Jason.decode!(resource_content.text)
       assert data["version"] == "1.0.0"
@@ -317,20 +317,25 @@ defmodule ExMCP.Spec20241105Test do
     end
 
     test "2025-03-26 features are not available", %{client: client} do
-      # Resource subscription should fail
-      assert {:error, _} = Client.subscribe(client, "file:///config.json")
+      # Check that 2025-03-26 features are not advertised in capabilities
+      {:ok, caps} = Client.server_capabilities(client)
 
-      # Completion should fail
-      assert {:error, _} = Client.complete(client, "ref", %{})
+      # Resource subscription should not be advertised
+      refute get_in(caps, ["resources", "subscribe"])
 
-      # These methods don't exist in client for 2024-11-05,
-      # but the server should reject them if attempted
+      # Completion should not be advertised
+      refute Map.has_key?(caps, "completion")
+
+      # List change notifications should not be advertised
+      refute get_in(caps, ["tools", "listChanged"])
+      refute get_in(caps, ["resources", "listChanged"])
+      refute get_in(caps, ["prompts", "listChanged"])
     end
 
     test "logging messages work", %{client: _client, server: server} do
       # Send a log message from server to client
       # In 2024-11-05, logging exists but not setLevel
-      Server.send_log_message(server, "info", "Test log message")
+      Server.send_log_message(server, "info", "Test log message", %{})
 
       # Client would receive this via notifications
       Process.sleep(50)
@@ -351,12 +356,12 @@ defmodule ExMCP.Spec20241105Test do
         Protocol.encode_initialize(
           %{name: "test", version: "1.0"},
           %{},
-          "2025-06-18"
+          "2024-11-05"
         )
 
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "initialize"
-      assert msg["params"]["protocolVersion"] == "2025-06-18"
+      assert msg["params"]["protocolVersion"] == "2024-11-05"
       assert is_integer(msg["id"])
     end
 

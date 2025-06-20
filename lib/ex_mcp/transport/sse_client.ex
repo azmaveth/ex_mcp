@@ -34,7 +34,9 @@ defmodule ExMCP.Transport.SSEClient do
     :retry_count,
     :heartbeat_ref,
     :last_event_id,
-    :reconnect_timer
+    :reconnect_timer,
+    :connect_timeout,
+    :idle_timeout
   ]
 
   @type t :: %__MODULE__{
@@ -48,7 +50,9 @@ defmodule ExMCP.Transport.SSEClient do
           retry_count: non_neg_integer(),
           heartbeat_ref: reference() | nil,
           last_event_id: String.t() | nil,
-          reconnect_timer: reference() | nil
+          reconnect_timer: reference() | nil,
+          connect_timeout: non_neg_integer(),
+          idle_timeout: non_neg_integer()
         }
 
   # Client API
@@ -83,6 +87,9 @@ defmodule ExMCP.Transport.SSEClient do
     headers = Keyword.get(opts, :headers, [])
     ssl_opts = Keyword.get(opts, :ssl_opts, [])
     parent = Keyword.get(opts, :parent, self())
+    # Accept configurable timeouts with fallback to defaults
+    connect_timeout = Keyword.get(opts, :connect_timeout, @connection_timeout)
+    idle_timeout = Keyword.get(opts, :idle_timeout, @heartbeat_interval)
 
     state = %__MODULE__{
       url: url,
@@ -91,7 +98,9 @@ defmodule ExMCP.Transport.SSEClient do
       parent: parent,
       buffer: "",
       retry_delay: @initial_retry_delay,
-      retry_count: 0
+      retry_count: 0,
+      connect_timeout: connect_timeout,
+      idle_timeout: idle_timeout
     }
 
     {:ok, state, {:continue, :connect}}
@@ -122,8 +131,8 @@ defmodule ExMCP.Transport.SSEClient do
     # Connection is now established, send notification
     send(state.parent, {:sse_connected, self()})
 
-    # Start heartbeat monitoring
-    heartbeat_ref = Process.send_after(self(), :check_heartbeat, @heartbeat_interval)
+    # Start heartbeat monitoring using configurable idle timeout
+    heartbeat_ref = Process.send_after(self(), :check_heartbeat, state.idle_timeout)
 
     # Process headers for retry suggestions
     retry_after = get_retry_after(headers)
@@ -144,7 +153,7 @@ defmodule ExMCP.Transport.SSEClient do
       Process.cancel_timer(state.heartbeat_ref)
     end
 
-    heartbeat_ref = Process.send_after(self(), :check_heartbeat, @heartbeat_interval)
+    heartbeat_ref = Process.send_after(self(), :check_heartbeat, state.idle_timeout)
 
     # Process the chunk
     buffer = state.buffer <> chunk
@@ -224,8 +233,8 @@ defmodule ExMCP.Transport.SSEClient do
 
     http_opts =
       case URI.parse(state.url).scheme do
-        "https" -> [{:ssl, state.ssl_opts} | [{:timeout, @connection_timeout}]]
-        _ -> [{:timeout, @connection_timeout}]
+        "https" -> [{:ssl, state.ssl_opts} | [{:timeout, state.connect_timeout}]]
+        _ -> [{:timeout, state.connect_timeout}]
       end
 
     :httpc.request(:get, request, http_opts, [{:sync, false}, {:stream, :self}])

@@ -47,13 +47,13 @@ defmodule ExMCP.Test.FlexibleMockServer do
 
   def handle_initialize(client_pid, data) do
     request = Jason.decode!(data)
-    
+
     if request["method"] == "initialize" do
       client_version = get_in(request, ["params", "protocolVersion"])
-      
+
       # Negotiate version
       negotiated_version = negotiate_version(client_version)
-      
+
       response = %{
         "jsonrpc" => "2.0",
         "id" => request["id"],
@@ -66,7 +66,7 @@ defmodule ExMCP.Test.FlexibleMockServer do
           "capabilities" => capabilities_for_version(negotiated_version)
         }
       }
-      
+
       send(client_pid, {:mock_response, Jason.encode!(response)})
     end
   end
