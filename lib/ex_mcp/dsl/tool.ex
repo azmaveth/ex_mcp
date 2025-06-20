@@ -69,7 +69,8 @@ defmodule ExMCP.DSL.Tool do
       legacy_description = Module.get_attribute(__MODULE__, :__tool_description__)
 
       # Validate the tool definition before registering
-      __validate_tool_definition__(
+      # credo:disable-for-next-line Credo.Check.Design.AliasUsage
+      ExMCP.DSL.Tool.__validate_tool_definition__(
         unquote(name),
         tool_meta,
         legacy_description,
@@ -89,7 +90,7 @@ defmodule ExMCP.DSL.Tool do
                      description: final_description,
                      input_schema:
                        Module.get_attribute(__MODULE__, :__tool_input_schema__) ||
-                         __compile_schema__(
+                         ExMCP.DSL.Tool.__compile_schema__(
                            Module.get_attribute(__MODULE__, :__tool_fields__) || []
                          ),
                      annotations: Module.get_attribute(__MODULE__, :__tool_annotations__) || %{},

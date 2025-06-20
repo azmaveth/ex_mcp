@@ -66,7 +66,8 @@ defmodule ExMCP.DSL.Prompt do
       legacy_description = Module.get_attribute(__MODULE__, :__prompt_description__)
 
       # Validate the prompt definition before registering
-      __validate_prompt_definition__(
+      # credo:disable-for-next-line Credo.Check.Design.AliasUsage
+      ExMCP.DSL.Prompt.__validate_prompt_definition__(
         unquote(prompt_name),
         prompt_meta,
         legacy_name,

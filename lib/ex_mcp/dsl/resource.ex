@@ -68,7 +68,8 @@ defmodule ExMCP.DSL.Resource do
       legacy_description = Module.get_attribute(__MODULE__, :__resource_description__)
 
       # Validate the resource definition before registering
-      __validate_resource_definition__(
+      # credo:disable-for-next-line Credo.Check.Design.AliasUsage
+      ExMCP.DSL.Resource.__validate_resource_definition__(
         unquote(uri),
         resource_meta,
         legacy_name,
