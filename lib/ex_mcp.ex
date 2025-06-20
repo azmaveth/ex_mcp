@@ -503,8 +503,8 @@ defmodule ExMCP do
   end
 
   defp extract_response_content(response) do
-    Response.resource_content(response) || 
-    Response.text_content(response) || 
+    Response.resource_content(response) ||
+    Response.text_content(response) ||
     Response.data_content(response)
   end
 

@@ -411,7 +411,7 @@ defmodule ExMCP.Reliability.HealthCheck do
   This function attempts to list tools as a health check.
   """
   @spec mcp_client_check_fn() :: (pid() -> {:ok, map()} | {:error, any()})
-  def mcp_client_check_fn() do
+  def mcp_client_check_fn do
     fn client ->
       case ExMCP.SimpleClient.list_tools(client) do
         {:ok, result} ->
@@ -430,7 +430,7 @@ defmodule ExMCP.Reliability.HealthCheck do
   This function sends an initialize request to check server health.
   """
   @spec mcp_server_check_fn() :: (pid() -> {:ok, map()} | {:error, any()})
-  def mcp_server_check_fn() do
+  def mcp_server_check_fn do
     fn server ->
       request = %{
         "jsonrpc" => "2.0",

@@ -135,7 +135,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
     end
 
     test "handles transport start failure gracefully", %{supervisor: supervisor} do
-      # Use stdio transport with invalid path to simulate failure  
+      # Use stdio transport with invalid path to simulate failure
       assert {:error, _reason} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
@@ -500,7 +500,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
       retry_result = Reliability.with_retry(fn -> {:ok, "retry_success"} end)
       assert retry_result == {:ok, "retry_success"}
 
-      # Use convenience protect function  
+      # Use convenience protect function
       protected_fn =
         Reliability.protect(fn -> {:ok, "protect_success"} end,
           name: String.to_atom("test_convenience_#{:erlang.unique_integer()}")

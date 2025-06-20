@@ -172,7 +172,7 @@ defmodule ExMCP.Helpers do
   @doc """
   Gets client status with error handling. Raises on failure.
   """
-  defmacro get_status!() do
+  defmacro get_status! do
     quote do
       case ExMCP.ConvenienceClient.status(var!(client)) do
         {:ok, status} -> status

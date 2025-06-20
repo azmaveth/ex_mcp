@@ -299,7 +299,7 @@ defmodule ExMCP.Client.ResponseTest do
 
       normalized = Response.normalize_resource_content(result, parse_json: true)
 
-      # Single JSON content returns the JSON text directly 
+      # Single JSON content returns the JSON text directly
       assert normalized == json_text
     end
 

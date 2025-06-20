@@ -156,7 +156,7 @@ defmodule ExMCP.VersionRegistryTest do
                  "2025-06-18"
                )
 
-      # Should fail for older version  
+      # Should fail for older version
       assert {:error, msg2} =
                Protocol.validate_message_version(
                  %{"method" => "resources/subscribe"},

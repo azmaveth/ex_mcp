@@ -1,6 +1,6 @@
 defmodule ExMCP.LifecycleTest do
   @moduledoc """
-  Tests for MCP lifecycle management including initialization, 
+  Tests for MCP lifecycle management including initialization,
   version negotiation, and shutdown procedures.
   """
   use ExUnit.Case, async: true

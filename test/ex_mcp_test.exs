@@ -218,24 +218,24 @@ defmodule ExMCPTest do
       code = """
       defmodule TestServerAlias do
         use ExMCP.Server
-        
+
         deftool "test" do
           meta do
             description "Test tool"
           end
           input_schema %{type: "object"}
         end
-        
+
         @impl true
         def handle_tool_call("test", _args, state) do
           {:ok, %{content: []}, state}
         end
-        
+
         @impl true
         def handle_resource_read(_uri, _original_uri, state) do
           {:error, "Not implemented", state}
         end
-        
+
         @impl true
         def handle_prompt_get(_name, _args, state) do
           {:error, "Not implemented", state}
