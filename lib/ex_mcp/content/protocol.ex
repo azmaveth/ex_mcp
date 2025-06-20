@@ -219,9 +219,8 @@ defmodule ExMCP.Content.Protocol do
   @spec validate(content()) :: validation_result()
   def validate(%{type: :text, text: text} = content) when is_binary(text) do
     with :ok <- validate_format(content.format),
-         :ok <- validate_language(content.language),
-         :ok <- validate_metadata(content.metadata) do
-      :ok
+         :ok <- validate_language(content.language) do
+      validate_metadata(content.metadata)
     end
   end
 
@@ -233,9 +232,8 @@ defmodule ExMCP.Content.Protocol do
       when is_binary(data) and is_binary(mime_type) do
     with :ok <- validate_base64(data),
          :ok <- validate_image_mime_type(mime_type),
-         :ok <- validate_image_dimensions(content),
-         :ok <- validate_metadata(content.metadata) do
-      :ok
+         :ok <- validate_image_dimensions(content) do
+      validate_metadata(content.metadata)
     end
   end
 
@@ -247,9 +245,8 @@ defmodule ExMCP.Content.Protocol do
       when is_binary(data) and is_binary(mime_type) do
     with :ok <- validate_base64(data),
          :ok <- validate_audio_mime_type(mime_type),
-         :ok <- validate_audio_duration(content.duration),
-         :ok <- validate_metadata(content.metadata) do
-      :ok
+         :ok <- validate_audio_duration(content.duration) do
+      validate_metadata(content.metadata)
     end
   end
 
@@ -258,9 +255,8 @@ defmodule ExMCP.Content.Protocol do
   end
 
   def validate(%{type: :resource, resource: %{uri: uri}} = content) when is_binary(uri) do
-    with :ok <- validate_uri(uri),
-         :ok <- validate_metadata(content.metadata) do
-      :ok
+    with :ok <- validate_uri(uri) do
+      validate_metadata(content.metadata)
     end
   end
 
@@ -270,9 +266,8 @@ defmodule ExMCP.Content.Protocol do
 
   def validate(%{type: :annotation, annotation: %{type: annotation_type}} = content)
       when is_binary(annotation_type) do
-    with :ok <- validate_annotation_confidence(content.annotation.confidence),
-         :ok <- validate_metadata(content.metadata) do
-      :ok
+    with :ok <- validate_annotation_confidence(content.annotation.confidence) do
+      validate_metadata(content.metadata)
     end
   end
 

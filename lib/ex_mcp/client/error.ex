@@ -292,8 +292,7 @@ defmodule ExMCP.Client.Error do
   def format_suggestions(suggestions) do
     suggestions
     |> Enum.with_index(1)
-    |> Enum.map(fn {suggestion, index} -> "#{index}. #{suggestion}" end)
-    |> Enum.join("\n")
+    |> Enum.map_join("\n", fn {suggestion, index} -> "#{index}. #{suggestion}" end)
   end
 
   # Private Implementation
