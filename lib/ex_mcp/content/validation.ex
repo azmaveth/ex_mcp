@@ -543,7 +543,18 @@ defmodule ExMCP.Content.Validation do
   defp apply_text_sanitization(operation, text) do
     case operation do
       :html_escape ->
-        HtmlEntities.encode(text)
+        if Code.ensure_loaded?(HtmlEntities) do
+          # credo:disable-for-next-line Credo.Check.Refactor.Apply
+          apply(HtmlEntities, :encode, [text])
+        else
+          # HtmlEntities not available - use basic HTML escaping
+          text
+          |> String.replace("&", "&amp;")
+          |> String.replace("<", "&lt;")
+          |> String.replace(">", "&gt;")
+          |> String.replace("\"", "&quot;")
+          |> String.replace("'", "&#39;")
+        end
 
       :strip_scripts ->
         Regex.replace(~r/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/mi, text, "")

@@ -306,9 +306,15 @@ defmodule ExMCP.Helpers do
   """
   @spec validate_tool_args(map(), map()) :: :ok | {:error, String.t()}
   def validate_tool_args(args, schema) when is_map(args) and is_map(schema) do
-    case ExJsonSchema.Validator.validate(schema, args) do
-      :ok -> :ok
-      {:error, errors} -> {:error, format_validation_errors(errors)}
+    if Code.ensure_loaded?(ExJsonSchema.Validator) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      case apply(ExJsonSchema.Validator, :validate, [schema, args]) do
+        :ok -> :ok
+        {:error, errors} -> {:error, format_validation_errors(errors)}
+      end
+    else
+      # ExJsonSchema not available - skip validation
+      :ok
     end
   end
 
@@ -316,13 +322,18 @@ defmodule ExMCP.Helpers do
 
   defp format_validation_errors(errors) when is_list(errors) do
     errors
-    |> Enum.map_join(", ", fn {path, error} ->
-      path_str = if is_list(path), do: Enum.join(path, "."), else: "#{path}"
-      "#{path_str}: #{error}"
+    |> Enum.map_join(", ", fn
+      {path, error} when is_list(path) ->
+        "#{Enum.join(path, ".")}: #{error}"
+
+      {path, error} ->
+        "#{path}: #{error}"
+
+      error ->
+        "#{error}"
     end)
   end
 
-  defp format_validation_errors(error) when is_binary(error), do: error
   defp format_validation_errors(errors), do: inspect(errors)
 
   @doc """
