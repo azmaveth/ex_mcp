@@ -30,9 +30,9 @@ defmodule ExMCP.Client do
   use GenServer
   require Logger
 
+  alias ExMCP.Error
   alias ExMCP.Internal.Protocol
   alias ExMCP.Response
-  alias ExMCP.Error
 
   # Client state structure
   defmodule State do

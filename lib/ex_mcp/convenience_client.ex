@@ -43,7 +43,7 @@ defmodule ExMCP.ConvenienceClient do
   """
 
   alias ExMCP.SimpleClient
-  alias ExMCP.{Response, Error}
+  alias ExMCP.{Error, Response}
 
   @type client :: pid()
   @type connection_spec :: String.t() | {atom(), keyword()} | [connection_spec()]
@@ -382,12 +382,10 @@ defmodule ExMCP.ConvenienceClient do
   """
   @spec with_error_formatting((-> any()), atom(), map()) :: any()
   def with_error_formatting(fun, _error_type, _context \\ %{}) do
-    try do
-      fun.()
-    catch
-      :exit, reason -> {:error, Error.internal_error("Exit: #{inspect(reason)}")}
-      :error, reason -> {:error, Error.internal_error("Error: #{inspect(reason)}")}
-    end
+    fun.()
+  catch
+    :exit, reason -> {:error, Error.internal_error("Exit: #{inspect(reason)}")}
+    :error, reason -> {:error, Error.internal_error("Error: #{inspect(reason)}")}
   end
 
   # Private Implementation

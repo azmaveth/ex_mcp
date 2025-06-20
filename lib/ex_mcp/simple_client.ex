@@ -19,10 +19,10 @@ defmodule ExMCP.SimpleClient do
   use GenServer
   require Logger
 
-  alias ExMCP.Internal.Protocol
-  alias ExMCP.TransportManager
-  alias ExMCP.Response
   alias ExMCP.Error
+  alias ExMCP.Internal.Protocol
+  alias ExMCP.Response
+  alias ExMCP.TransportManager
 
   defstruct [
     :transport_mod,

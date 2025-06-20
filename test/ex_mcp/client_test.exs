@@ -2,7 +2,7 @@ defmodule ExMCP.ClientTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.Client
-  alias ExMCP.{Response, Error}
+  alias ExMCP.{Error, Response}
 
   # Mock transport for testing
   defmodule MockTransport do

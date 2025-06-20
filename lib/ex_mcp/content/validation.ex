@@ -253,12 +253,10 @@ defmodule ExMCP.Content.Validation do
   @spec transform(Protocol.content(), [transformation_op()]) ::
           {:ok, Protocol.content() | [Protocol.content()]} | {:error, String.t()}
   def transform(content, operations) when is_list(operations) do
-    try do
-      result = Enum.reduce(operations, content, &apply_transformation/2)
-      {:ok, result}
-    rescue
-      error -> {:error, "Transformation failed: #{inspect(error)}"}
-    end
+    result = Enum.reduce(operations, content, &apply_transformation/2)
+    {:ok, result}
+  rescue
+    error -> {:error, "Transformation failed: #{inspect(error)}"}
   end
 
   @doc """
@@ -276,22 +274,20 @@ defmodule ExMCP.Content.Validation do
   @spec transform_with_validation(Protocol.content(), [transformation_op() | validation_rule()]) ::
           {:ok, Protocol.content()} | {:error, String.t()}
   def transform_with_validation(content, operations) when is_list(operations) do
-    try do
-      result =
-        Enum.reduce_while(operations, content, fn op, acc ->
-          case apply_operation_with_validation(acc, op) do
-            {:ok, new_content} -> {:cont, new_content}
-            {:error, reason} -> {:halt, {:error, reason}}
-          end
-        end)
+    result =
+      Enum.reduce_while(operations, content, fn op, acc ->
+        case apply_operation_with_validation(acc, op) do
+          {:ok, new_content} -> {:cont, new_content}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
 
-      case result do
-        {:error, _} = error -> error
-        content -> {:ok, content}
-      end
-    rescue
-      error -> {:error, "Transformation failed: #{inspect(error)}"}
+    case result do
+      {:error, _} = error -> error
+      content -> {:ok, content}
     end
+  rescue
+    error -> {:error, "Transformation failed: #{inspect(error)}"}
   end
 
   # Content Analysis

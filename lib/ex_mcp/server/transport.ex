@@ -183,16 +183,14 @@ defmodule ExMCP.Server.Transport do
   """
   @spec server_info(pid() | atom()) :: {:ok, map()} | {:error, term()}
   def server_info(server) do
-    try do
-      case GenServer.call(server, :get_server_info, 5000) do
-        info when is_map(info) -> {:ok, info}
-        _ -> {:error, :no_server_info}
-      end
-    rescue
-      e -> {:error, e}
-    catch
-      :exit, reason -> {:error, reason}
+    case GenServer.call(server, :get_server_info, 5000) do
+      info when is_map(info) -> {:ok, info}
+      _ -> {:error, :no_server_info}
     end
+  rescue
+    e -> {:error, e}
+  catch
+    :exit, reason -> {:error, reason}
   end
 
   @doc """

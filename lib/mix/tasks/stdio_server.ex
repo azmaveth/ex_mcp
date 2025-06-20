@@ -134,7 +134,7 @@ defmodule Mix.Tasks.StdioServer do
     """)
 
     # Start the v2 server
-    {:ok, server} = apply(StdioServerV2, :start_link, [])
+    {:ok, server} = StdioServerV2.start_link()
 
     # Handle stdio communication manually
     loop(server, "")
@@ -172,7 +172,7 @@ defmodule Mix.Tasks.StdioServer do
       "id" => id,
       "result" => %{
         "protocolVersion" => "2025-03-26",
-        "capabilities" => apply(StdioServerV2, :get_capabilities, []),
+        "capabilities" => StdioServerV2.get_capabilities(),
         "serverInfo" => %{
           "name" => "ExMCP v2 stdio Server",
           "version" => "2.0.0"
@@ -184,7 +184,7 @@ defmodule Mix.Tasks.StdioServer do
   end
 
   defp handle_message(_server, %{"method" => "tools/list", "id" => id}) do
-    tools = apply(StdioServerV2, :get_tools, [])
+    tools = StdioServerV2.get_tools()
 
     response = %{
       "jsonrpc" => "2.0",
@@ -226,7 +226,7 @@ defmodule Mix.Tasks.StdioServer do
   end
 
   defp handle_message(_server, %{"method" => "resources/list", "id" => id}) do
-    resources = apply(StdioServerV2, :get_resources, [])
+    resources = StdioServerV2.get_resources()
 
     response = %{
       "jsonrpc" => "2.0",
@@ -268,7 +268,7 @@ defmodule Mix.Tasks.StdioServer do
   end
 
   defp handle_message(_server, %{"method" => "prompts/list", "id" => id}) do
-    prompts = apply(StdioServerV2, :get_prompts, [])
+    prompts = StdioServerV2.get_prompts()
 
     response = %{
       "jsonrpc" => "2.0",

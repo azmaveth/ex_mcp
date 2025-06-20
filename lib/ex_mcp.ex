@@ -137,8 +137,8 @@ defmodule ExMCP do
   alias ExMCP.Server
 
   # Convenience aliases
-  alias ExMCP.{SimpleClient, ConvenienceClient}
-  alias ExMCP.{Response, Error}
+  alias ExMCP.{ConvenienceClient, SimpleClient}
+  alias ExMCP.{Error, Response}
 
   @doc """
   Convenience function to start an MCP client.
@@ -332,16 +332,14 @@ defmodule ExMCP do
   @spec disconnect(v2_client()) :: :ok
   def disconnect(client) do
     # Try to gracefully stop the client
-    try do
-      if function_exported?(ConvenienceClient, :disconnect, 1) do
-        ConvenienceClient.disconnect(client)
-      else
-        GenServer.stop(client, :normal)
-      end
-    catch
-      # Already stopped
-      :exit, _ -> :ok
+    if function_exported?(ConvenienceClient, :disconnect, 1) do
+      ConvenienceClient.disconnect(client)
+    else
+      GenServer.stop(client, :normal)
     end
+  catch
+    # Already stopped
+    :exit, _ -> :ok
   end
 
   @doc """

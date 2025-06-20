@@ -300,7 +300,7 @@ defmodule ExMCP.Testing.MockServer do
   defp handle_mcp_request(%{"method" => "tools/list"} = request, state) do
     tools =
       if state.handler do
-        apply(state.handler, :list_tools, [state.custom_state])
+        state.handler.list_tools(state.custom_state)
       else
         state.tools
       end
@@ -316,7 +316,7 @@ defmodule ExMCP.Testing.MockServer do
 
     result =
       if state.handler do
-        apply(state.handler, :call_tool, [tool_name, arguments, state.custom_state])
+        state.handler.call_tool(tool_name, arguments, state.custom_state)
       else
         default_tool_call(tool_name, arguments, state)
       end
@@ -329,7 +329,7 @@ defmodule ExMCP.Testing.MockServer do
   defp handle_mcp_request(%{"method" => "resources/list"} = request, state) do
     resources =
       if state.handler do
-        apply(state.handler, :list_resources, [state.custom_state])
+        state.handler.list_resources(state.custom_state)
       else
         state.resources
       end
@@ -344,7 +344,7 @@ defmodule ExMCP.Testing.MockServer do
 
     result =
       if state.handler do
-        apply(state.handler, :read_resource, [uri, state.custom_state])
+        state.handler.read_resource(uri, state.custom_state)
       else
         default_resource_read(uri, state)
       end
@@ -357,7 +357,7 @@ defmodule ExMCP.Testing.MockServer do
   defp handle_mcp_request(%{"method" => "prompts/list"} = request, state) do
     prompts =
       if state.handler do
-        apply(state.handler, :list_prompts, [state.custom_state])
+        state.handler.list_prompts(state.custom_state)
       else
         state.prompts
       end
@@ -373,7 +373,7 @@ defmodule ExMCP.Testing.MockServer do
 
     result =
       if state.handler do
-        apply(state.handler, :get_prompt, [prompt_name, arguments, state.custom_state])
+        state.handler.get_prompt(prompt_name, arguments, state.custom_state)
       else
         default_prompt_get(prompt_name, arguments, state)
       end
@@ -556,14 +556,12 @@ defmodule ExMCP.Testing.MockTransport do
 
   @impl ExMCP.Transport
   def send_message(message, transport) do
-    try do
-      case GenServer.call(transport.server_pid, {:mcp_request, message}, transport.timeout) do
-        {:error, error_response} -> {:error, error_response}
-        _response -> {:ok, transport}
-      end
-    rescue
-      error -> {:error, %{"error" => %{"code" => -1, "message" => inspect(error)}}}
+    case GenServer.call(transport.server_pid, {:mcp_request, message}, transport.timeout) do
+      {:error, error_response} -> {:error, error_response}
+      _response -> {:ok, transport}
     end
+  rescue
+    error -> {:error, %{"error" => %{"code" => -1, "message" => inspect(error)}}}
   end
 
   # Compatibility method for SimpleClient

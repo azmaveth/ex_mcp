@@ -59,7 +59,7 @@ defmodule ExMCP.Content.Builders do
   defmacro __using__(_opts) do
     quote do
       import ExMCP.Content.Builders
-      alias ExMCP.Content.{Protocol, Builders}
+      alias ExMCP.Content.{Builders, Protocol}
     end
   end
 
@@ -398,15 +398,13 @@ defmodule ExMCP.Content.Builders do
                                          Protocol.content() | {:error, String.t()})) ::
           Protocol.content() | {:error, String.t()}
   def transform(content, transformer) when is_function(transformer, 1) do
-    try do
-      case transformer.(content) do
-        %{type: _} = new_content -> {:ok, new_content}
-        {:error, reason} -> {:error, reason}
-        _ -> {:error, "Transformer must return content or error tuple"}
-      end
-    rescue
-      error -> {:error, "Transform failed: #{inspect(error)}"}
+    case transformer.(content) do
+      %{type: _} = new_content -> {:ok, new_content}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, "Transformer must return content or error tuple"}
     end
+  rescue
+    error -> {:error, "Transform failed: #{inspect(error)}"}
   end
 
   @doc """
@@ -473,11 +471,9 @@ defmodule ExMCP.Content.Builders do
   # Private Implementation
 
   defp evaluate_content_spec(fun) when is_function(fun, 0) do
-    try do
-      fun.()
-    rescue
-      error -> {:error, "Content creation failed: #{inspect(error)}"}
-    end
+    fun.()
+  rescue
+    error -> {:error, "Content creation failed: #{inspect(error)}"}
   end
 
   defp evaluate_content_spec(content), do: content

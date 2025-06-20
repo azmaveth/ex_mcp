@@ -270,18 +270,16 @@ defmodule ExMCP.Helpers do
   end
 
   defp do_retry_attempt(fun, attempt, max_attempts, base_delay, max_delay) do
-    try do
-      fun.()
-    rescue
-      error ->
-        if attempt < max_attempts and max_attempts > 0 do
-          delay = min(base_delay * :math.pow(2, attempt - 1), max_delay)
-          Process.sleep(round(max(delay, 0)))
-          do_retry_attempt(fun, attempt + 1, max_attempts, base_delay, max_delay)
-        else
-          reraise error, __STACKTRACE__
-        end
-    end
+    fun.()
+  rescue
+    error ->
+      if attempt < max_attempts and max_attempts > 0 do
+        delay = min(base_delay * :math.pow(2, attempt - 1), max_delay)
+        Process.sleep(round(max(delay, 0)))
+        do_retry_attempt(fun, attempt + 1, max_attempts, base_delay, max_delay)
+      else
+        reraise error, __STACKTRACE__
+      end
   end
 
   @doc """

@@ -21,19 +21,17 @@ defmodule ExMCP.Internal.AtomUtils do
   """
   @spec safe_string_to_atom(String.t() | atom()) :: atom()
   def safe_string_to_atom(key) when is_binary(key) do
-    try do
-      String.to_existing_atom(key)
-    rescue
-      ArgumentError ->
-        require Logger
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError ->
+      require Logger
 
-        Logger.warning(
-          "Received unexpected key '#{key}' that cannot be atomized to an existing atom. Mapping to :__unknown_key__."
-        )
+      Logger.warning(
+        "Received unexpected key '#{key}' that cannot be atomized to an existing atom. Mapping to :__unknown_key__."
+      )
 
-        # Return a generic atom to maintain consistent map key types
-        :__unknown_key__
-    end
+      # Return a generic atom to maintain consistent map key types
+      :__unknown_key__
   end
 
   def safe_string_to_atom(key), do: key

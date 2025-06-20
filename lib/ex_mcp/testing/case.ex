@@ -45,8 +45,8 @@ defmodule ExMCP.TestCase do
       import ExMCP.Testing.Builders
       import ExMCP.Testing.MockServer
 
-      alias ExMCP.Content.{Protocol, Builders}
-      alias ExMCP.Testing.{Generators, Fixtures}
+      alias ExMCP.Content.{Builders, Protocol}
+      alias ExMCP.Testing.{Fixtures, Generators}
 
       # Set up test environment
       setup do

@@ -63,30 +63,28 @@ defmodule ExMCP.TransportManager do
   """
   @spec health_check(module(), keyword(), timeout()) :: :ok | {:error, any()}
   def health_check(transport_mod, transport_opts, timeout \\ 5_000) do
-    try do
-      case transport_mod.connect(transport_opts) do
-        {:ok, state} ->
-          # Try a simple operation to verify health
-          case transport_mod.send(state, "ping") do
-            {:ok, _new_state} ->
-              transport_mod.close(state)
-              :ok
+    case transport_mod.connect(transport_opts) do
+      {:ok, state} ->
+        # Try a simple operation to verify health
+        case transport_mod.send(state, "ping") do
+          {:ok, _new_state} ->
+            transport_mod.close(state)
+            :ok
 
-            {:error, reason} ->
-              transport_mod.close(state)
-              {:error, {:health_check_failed, reason}}
-          end
+          {:error, reason} ->
+            transport_mod.close(state)
+            {:error, {:health_check_failed, reason}}
+        end
 
-        {:error, reason} ->
-          {:error, {:connect_failed, reason}}
-      end
-    catch
-      kind, reason ->
-        {:error, {:health_check_exception, {kind, reason}}}
-    after
-      # Brief pause
-      :timer.sleep(min(timeout, 100))
+      {:error, reason} ->
+        {:error, {:connect_failed, reason}}
     end
+  catch
+    kind, reason ->
+      {:error, {:health_check_exception, {kind, reason}}}
+  after
+    # Brief pause
+    :timer.sleep(min(timeout, 100))
   end
 
   @doc """
@@ -218,35 +216,33 @@ defmodule ExMCP.TransportManager do
          retry_interval,
          attempts
        ) do
-    try do
-      case transport_mod.connect(transport_opts) do
-        {:ok, state} ->
-          {:ok, state}
+    case transport_mod.connect(transport_opts) do
+      {:ok, state} ->
+        {:ok, state}
 
-        {:error, _reason} when attempts < max_retries - 1 ->
-          if retry_interval > 0 do
-            Process.sleep(retry_interval)
-          end
+      {:error, _reason} when attempts < max_retries - 1 ->
+        if retry_interval > 0 do
+          Process.sleep(retry_interval)
+        end
 
-          do_connect_with_retries(
-            transport_mod,
-            transport_opts,
-            max_retries,
-            retry_interval,
-            attempts + 1
-          )
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    catch
-      kind, reason ->
-        Logger.warning(
-          "Transport #{inspect(transport_mod)} raised exception: #{inspect({kind, reason})}"
+        do_connect_with_retries(
+          transport_mod,
+          transport_opts,
+          max_retries,
+          retry_interval,
+          attempts + 1
         )
 
-        {:error, {:transport_exception, {kind, reason}}}
+      {:error, reason} ->
+        {:error, reason}
     end
+  catch
+    kind, reason ->
+      Logger.warning(
+        "Transport #{inspect(transport_mod)} raised exception: #{inspect({kind, reason})}"
+      )
+
+      {:error, {:transport_exception, {kind, reason}}}
   end
 
   defp find_successful_result(results) do

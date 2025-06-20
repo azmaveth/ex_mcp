@@ -89,7 +89,7 @@ defmodule ExMCP.DSL.Advanced do
       end
   """
 
-  alias ExMCP.DSL.{Tool, Resource, Prompt}
+  alias ExMCP.DSL.{Prompt, Resource, Tool}
 
   @type annotation_key :: atom() | String.t()
   @type annotation_value :: any()
