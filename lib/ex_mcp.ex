@@ -62,8 +62,8 @@ defmodule ExMCP do
 
   ExMCP supports multiple MCP protocol versions:
   - **2024-11-05** - Base MCP features
-  - **2025-03-26** - Latest stable (subscriptions, roots, logging)
-  - **draft** - Experimental features
+  - **2025-03-26** - Previous stable (subscriptions, roots, logging, batch support)
+  - **2025-06-18** - Current stable (structured output, OAuth 2.1, elicitation, no batch)
 
   See the README.md for a complete feature comparison chart.
 

@@ -12,9 +12,9 @@ defmodule ExMCP.Internal.VersionRegistry do
 
   # Protocol versions in order of preference (newest first)
   @versions [
-    {"draft", "Draft specification with experimental features"},
-    {"2025-03-26", "Current stable specification"},
-    {"2024-11-05", "Previous stable specification"}
+    {"2025-06-18", "Current stable specification"},
+    {"2025-03-26", "Previous stable specification with batch support"},
+    {"2024-11-05", "Initial stable specification"}
   ]
 
   @doc """
@@ -29,7 +29,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   Get the latest stable protocol version.
   """
   @spec latest_version() :: version()
-  def latest_version, do: "2025-03-26"
+  def latest_version, do: "2025-06-18"
 
   @doc """
   Get the preferred protocol version from configuration or default.
@@ -80,9 +80,9 @@ defmodule ExMCP.Internal.VersionRegistry do
     }
   end
 
-  def capabilities_for_version("draft") do
+  def capabilities_for_version("2025-06-18") do
     %{
-      # All capabilities from 2025-03-26
+      # Enhanced capabilities in 2025-06-18
       prompts: %{listChanged: true},
       resources: %{subscribe: true, listChanged: true},
       tools: %{outputSchema: true},
@@ -92,12 +92,11 @@ defmodule ExMCP.Internal.VersionRegistry do
         hasArguments: true,
         values: true
       },
-      # Draft-specific experimental features
+      # 2025-06-18 features (no batch processing)
       experimental: %{
         elicitation: true,
         structuredContent: true,
         toolOutputSchema: true,
-        # Draft removes batch processing
         batchProcessing: false
       }
     }
@@ -112,9 +111,9 @@ defmodule ExMCP.Internal.VersionRegistry do
   def feature_available?(version, feature) do
     cond do
       feature in base_features() -> true
-      feature in v2025_features() -> version in ["2025-03-26", "draft"]
+      feature in v2025_features() -> version in ["2025-03-26", "2025-06-18"]
       feature in batch_features() -> version == "2025-03-26"
-      feature in draft_features() -> version == "draft"
+      feature in v20250618_features() -> version == "2025-06-18"
       true -> false
     end
   end
@@ -134,7 +133,7 @@ defmodule ExMCP.Internal.VersionRegistry do
 
   defp batch_features, do: [:batch_processing]
 
-  defp draft_features, do: [:elicitation, :structured_content, :tool_output_schema]
+  defp v20250618_features, do: [:elicitation, :structured_content, :tool_output_schema]
 
   @doc """
   Get the message format differences for a version.
@@ -160,8 +159,8 @@ defmodule ExMCP.Internal.VersionRegistry do
 
   def message_format("2025-03-26") do
     %{
-      # Enhanced message format
-      supports_batch: false,
+      # Enhanced message format with batch support
+      supports_batch: true,
       supports_progress: true,
       supports_cancellation: true,
       notification_methods: [
@@ -178,10 +177,10 @@ defmodule ExMCP.Internal.VersionRegistry do
     }
   end
 
-  def message_format("draft") do
+  def message_format("2025-06-18") do
     %{
-      # Full draft format with batch support
-      supports_batch: true,
+      # 2025-06-18 format (no batch support)
+      supports_batch: false,
       supports_progress: true,
       supports_cancellation: true,
       notification_methods: [
@@ -245,6 +244,6 @@ defmodule ExMCP.Internal.VersionRegistry do
   @spec types_module(version()) :: module()
   def types_module("2024-11-05"), do: ExMCP.Types.V20241105
   def types_module("2025-03-26"), do: ExMCP.Types.V20250326
-  def types_module("draft"), do: ExMCP.Types.Draft
+  def types_module("2025-06-18"), do: ExMCP.Types.V20250618
   def types_module(_), do: ExMCP.Types
 end

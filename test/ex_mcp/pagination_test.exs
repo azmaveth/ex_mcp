@@ -18,7 +18,7 @@ defmodule ExMCP.PaginationTest do
       negotiated_version =
         case client_version do
           "2025-03-26" -> "2025-03-26"
-          "2024-11-05" -> "2024-11-05"
+          "2025-06-18" -> "2025-06-18"
           # Default to latest
           _ -> "2025-03-26"
         end

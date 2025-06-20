@@ -8,7 +8,7 @@ defmodule ExMCP.VersionRegistryTest do
       versions = VersionRegistry.supported_versions()
       assert "draft" in versions
       assert "2025-03-26" in versions
-      assert "2024-11-05" in versions
+      assert "2025-06-18" in versions
     end
 
     test "identifies latest stable version" do
@@ -20,14 +20,14 @@ defmodule ExMCP.VersionRegistryTest do
       assert VersionRegistry.preferred_version() == "2025-03-26"
 
       # Can be overridden by config
-      Application.put_env(:ex_mcp, :protocol_version, "2024-11-05")
-      assert VersionRegistry.preferred_version() == "2024-11-05"
+      Application.put_env(:ex_mcp, :protocol_version, "2025-06-18")
+      assert VersionRegistry.preferred_version() == "2025-06-18"
       Application.delete_env(:ex_mcp, :protocol_version)
     end
 
     test "checks if versions are supported" do
       assert VersionRegistry.supported?("2025-03-26")
-      assert VersionRegistry.supported?("2024-11-05")
+      assert VersionRegistry.supported?("2025-06-18")
       assert VersionRegistry.supported?("draft")
       refute VersionRegistry.supported?("1.0.0")
       refute VersionRegistry.supported?("unknown")
@@ -35,7 +35,7 @@ defmodule ExMCP.VersionRegistryTest do
 
     test "returns version-specific capabilities" do
       # 2024-11-05 capabilities
-      caps_2024 = VersionRegistry.capabilities_for_version("2024-11-05")
+      caps_2024 = VersionRegistry.capabilities_for_version("2025-06-18")
       refute caps_2024.resources.subscribe
       refute caps_2024.resources.listChanged
       assert caps_2024.experimental == %{}
@@ -58,16 +58,16 @@ defmodule ExMCP.VersionRegistryTest do
 
     test "checks feature availability by version" do
       # Base features available in all versions
-      assert VersionRegistry.feature_available?("2024-11-05", :prompts)
-      assert VersionRegistry.feature_available?("2024-11-05", :resources)
-      assert VersionRegistry.feature_available?("2024-11-05", :tools)
+      assert VersionRegistry.feature_available?("2025-06-18", :prompts)
+      assert VersionRegistry.feature_available?("2025-06-18", :resources)
+      assert VersionRegistry.feature_available?("2025-06-18", :tools)
 
       # 2025-03-26 features
       assert VersionRegistry.feature_available?("2025-03-26", :resource_subscription)
       assert VersionRegistry.feature_available?("2025-03-26", :prompts_list_changed)
       assert VersionRegistry.feature_available?("2025-03-26", :logging_set_level)
       assert VersionRegistry.feature_available?("2025-03-26", :batch_processing)
-      refute VersionRegistry.feature_available?("2024-11-05", :resource_subscription)
+      refute VersionRegistry.feature_available?("2025-06-18", :resource_subscription)
 
       # Draft-only features
       assert VersionRegistry.feature_available?("draft", :elicitation)
@@ -78,15 +78,15 @@ defmodule ExMCP.VersionRegistryTest do
     test "negotiates protocol versions" do
       # Exact match
       assert {:ok, "2025-03-26"} =
-               VersionRegistry.negotiate_version("2025-03-26", ["2025-03-26", "2024-11-05"])
+               VersionRegistry.negotiate_version("2025-03-26", ["2025-03-26", "2025-06-18"])
 
       # Client version supported, find best common
       assert {:ok, "2025-03-26"} =
-               VersionRegistry.negotiate_version("draft", ["2025-03-26", "2024-11-05"])
+               VersionRegistry.negotiate_version("draft", ["2025-03-26", "2025-06-18"])
 
       # Unknown client version, propose best server supports
-      assert {:ok, "2024-11-05"} =
-               VersionRegistry.negotiate_version("unknown", ["2024-11-05"])
+      assert {:ok, "2025-06-18"} =
+               VersionRegistry.negotiate_version("unknown", ["2025-06-18"])
 
       # No common version
       assert {:error, :version_mismatch} =
@@ -94,7 +94,7 @@ defmodule ExMCP.VersionRegistryTest do
     end
 
     test "returns appropriate type module for version" do
-      assert VersionRegistry.types_module("2024-11-05") == ExMCP.Types.V20241105
+      assert VersionRegistry.types_module("2025-06-18") == ExMCP.Types.V20241105
       assert VersionRegistry.types_module("2025-03-26") == ExMCP.Types.V20250326
       assert VersionRegistry.types_module("draft") == ExMCP.Types.Draft
       assert VersionRegistry.types_module("unknown") == ExMCP.Types
@@ -106,26 +106,26 @@ defmodule ExMCP.VersionRegistryTest do
       # Draft-only
       assert Protocol.method_available?("elicitation/create", "draft")
       refute Protocol.method_available?("elicitation/create", "2025-03-26")
-      refute Protocol.method_available?("elicitation/create", "2024-11-05")
+      refute Protocol.method_available?("elicitation/create", "2025-06-18")
 
       # 2025-03-26 and draft
       assert Protocol.method_available?("resources/subscribe", "2025-03-26")
       assert Protocol.method_available?("resources/subscribe", "draft")
-      refute Protocol.method_available?("resources/subscribe", "2024-11-05")
+      refute Protocol.method_available?("resources/subscribe", "2025-06-18")
 
       assert Protocol.method_available?("logging/setLevel", "2025-03-26")
       assert Protocol.method_available?("logging/setLevel", "draft")
-      refute Protocol.method_available?("logging/setLevel", "2024-11-05")
+      refute Protocol.method_available?("logging/setLevel", "2025-06-18")
 
       # Available in all versions
-      assert Protocol.method_available?("tools/list", "2024-11-05")
-      assert Protocol.method_available?("resources/list", "2024-11-05")
-      assert Protocol.method_available?("prompts/list", "2024-11-05")
+      assert Protocol.method_available?("tools/list", "2025-06-18")
+      assert Protocol.method_available?("resources/list", "2025-06-18")
+      assert Protocol.method_available?("prompts/list", "2025-06-18")
     end
 
     test "validates message version compatibility" do
       # Valid methods
-      assert :ok = Protocol.validate_message_version(%{"method" => "tools/list"}, "2024-11-05")
+      assert :ok = Protocol.validate_message_version(%{"method" => "tools/list"}, "2025-06-18")
 
       assert :ok =
                Protocol.validate_message_version(
@@ -148,11 +148,11 @@ defmodule ExMCP.VersionRegistryTest do
       assert {:error, msg} =
                Protocol.validate_message_version(
                  %{"method" => "resources/subscribe"},
-                 "2024-11-05"
+                 "2025-06-18"
                )
 
       assert msg =~ "not available"
-      assert msg =~ "2024-11-05"
+      assert msg =~ "2025-06-18"
     end
 
     test "encodes initialize with preferred version" do
@@ -161,8 +161,8 @@ defmodule ExMCP.VersionRegistryTest do
       assert request["params"]["protocolVersion"] == VersionRegistry.preferred_version()
 
       # Can override version
-      request = Protocol.encode_initialize(%{name: "test", version: "1.0"}, %{}, "2024-11-05")
-      assert request["params"]["protocolVersion"] == "2024-11-05"
+      request = Protocol.encode_initialize(%{name: "test", version: "1.0"}, %{}, "2025-06-18")
+      assert request["params"]["protocolVersion"] == "2025-06-18"
 
       # Falls back to preferred if nil
       request = Protocol.encode_initialize(%{name: "test", version: "1.0"}, %{}, nil)

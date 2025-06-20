@@ -8,7 +8,7 @@ defmodule ExMCP.VersionNegotiationTest do
   defmodule TestVersionHandler do
     use ExMCP.Server.Handler
 
-    @supported_versions ["2025-03-26", "2024-11-05"]
+    @supported_versions ["2025-03-26", "2025-06-18"]
 
     @impl true
     def handle_initialize(params, state) do
@@ -194,13 +194,13 @@ defmodule ExMCP.VersionNegotiationTest do
 
       # Test 2024-11-05
       init_params_older = %{
-        "protocolVersion" => "2024-11-05",
+        "protocolVersion" => "2025-06-18",
         "capabilities" => capabilities,
         "clientInfo" => client_info
       }
 
       {:ok, result_older, _} = handler.handle_initialize(init_params_older, handler_state)
-      assert result_older.protocolVersion == "2024-11-05"
+      assert result_older.protocolVersion == "2025-06-18"
     end
 
     test "client stores the negotiated version correctly" do
@@ -212,7 +212,7 @@ defmodule ExMCP.VersionNegotiationTest do
         def handle_initialize(_params, state) do
           result = %{
             # Older version
-            protocolVersion: "2024-11-05",
+            protocolVersion: "2025-06-18",
             serverInfo: %{
               name: "old-version-server",
               version: "1.0.0"
@@ -267,7 +267,7 @@ defmodule ExMCP.VersionNegotiationTest do
 
       # Client should have stored the older version
       {:ok, negotiated_version} = Client.negotiated_version(client)
-      assert negotiated_version == "2024-11-05"
+      assert negotiated_version == "2025-06-18"
 
       GenServer.stop(client)
       GenServer.stop(server)

@@ -537,7 +537,7 @@ defmodule ExMCP.Client do
           "version" => "0.1.0"
         },
         %{},
-        "2024-11-05"
+        "2025-06-18"
       )
 
     # Override the generated ID with our session-specific one
@@ -723,7 +723,11 @@ defmodule ExMCP.Client do
 
   Returns a list of results in the same order as the requests.
   Each result is either `{:ok, response}` or `{:error, reason}`.
+
+  **DEPRECATED**: Batch processing was removed in MCP specification 2025-06-18.
+  This function now executes requests sequentially for compatibility.
   """
+  @deprecated "Batch processing removed in MCP 2025-06-18. Use individual requests instead."
   @spec batch_request(pid(), [{atom(), [any()]}], keyword()) :: {:ok, [any()]} | {:error, term()}
   def batch_request(client, requests, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)

@@ -61,7 +61,7 @@ defmodule ExMCP.ClientTest do
                   "jsonrpc" => "2.0",
                   "id" => id,
                   "result" => %{
-                    "protocolVersion" => "2024-11-05",
+                    "protocolVersion" => "2025-06-18",
                     "capabilities" => %{
                       "tools" => %{"listChanged" => true},
                       "resources" => %{"listChanged" => true},
@@ -356,7 +356,7 @@ defmodule ExMCP.ClientTest do
               "jsonrpc" => "2.0",
               "id" => id,
               "result" => %{
-                "protocolVersion" => "2024-11-05",
+                "protocolVersion" => "2025-06-18",
                 "capabilities" => %{},
                 "serverInfo" => %{"name" => "DisconnectingServer", "version" => "1.0.0"}
               }

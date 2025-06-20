@@ -65,7 +65,7 @@ defmodule ExMCP.ClientCoverageTest do
             "jsonrpc" => "2.0",
             "id" => id,
             "result" => %{
-              "protocolVersion" => "2024-11-05",
+              "protocolVersion" => "2025-06-18",
               "serverInfo" => %{"name" => "Test Server", "version" => "1.0.0"},
               "capabilities" => %{
                 "tools" => %{"listChanged" => true},

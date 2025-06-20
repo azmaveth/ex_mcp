@@ -87,7 +87,7 @@ defmodule ExMCP.Testing.MockServerTest do
         Builders.request("initialize",
           id: 1,
           params: %{
-            "protocolVersion" => "2024-11-05",
+            "protocolVersion" => "2025-06-18",
             "capabilities" => %{},
             "clientInfo" => %{"name" => "test", "version" => "1.0.0"}
           }
@@ -98,7 +98,7 @@ defmodule ExMCP.Testing.MockServerTest do
       assert response["jsonrpc"] == "2.0"
       assert response["id"] == 1
       assert is_map(response["result"])
-      assert response["result"]["protocolVersion"] == "2024-11-05"
+      assert response["result"]["protocolVersion"] == "2025-06-18"
       assert is_map(response["result"]["capabilities"])
 
       GenServer.stop(server_pid)

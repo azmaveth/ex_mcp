@@ -117,7 +117,7 @@ defmodule ExMCP.Authorization do
   - `400 Bad Request` - Malformed authorization request
 
   > #### MCP Specification {: .info}
-  > This module implements the MCP Authorization specification (2025-03-26 revision).
+  > This module implements the MCP Authorization specification (2025-06-18 revision).
   > See [MCP Authorization docs](https://modelcontextprotocol.io/docs/specification/server/authorization)
   > for the complete specification.
   """

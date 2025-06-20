@@ -3,25 +3,22 @@ defmodule ExMCP.Types do
   Type definitions for the Model Context Protocol.
 
   This module defines the core types used throughout ExMCP,
-  matching the MCP specification version 2025-03-26.
+  matching the MCP specification version 2025-06-18.
 
   ## MCP Specification Types
-  All core types are from the official MCP specification 2025-03-26.
+  All core types are from the official MCP specification 2025-06-18.
 
-  ## Draft Specification Types
-  Types marked with "Draft feature" comments implement features from the
-  draft MCP specification and should not be used in production.
+  ## Version-Specific Types
+  Types that vary between protocol versions are defined in separate modules:
+  - ExMCP.Types.V20241105 - Initial stable version
+  - ExMCP.Types.V20250326 - Added subscription support
+  - ExMCP.Types.V20250618 - Current version (removed batching, added structured output)
 
-  ### Draft features included:
-  - Elicitation (elicit_request, elicit_result, elicitation field in ClientCapabilities)
-  - Tool output schemas (outputSchema field in Tool)
-  - Structured tool output (structuredContent field in CallToolResult)
-  - Logging level control (logging/setLevel method)
-  - Batch processing (JSONRPCBatchRequest, JSONRPCBatchResponse)
+  For version-specific features, use the appropriate version module.
   """
 
   # Protocol version constants
-  @latest_protocol_version "2025-03-26"
+  @latest_protocol_version "2025-06-18"
   @jsonrpc_version "2.0"
 
   # Error code constants
@@ -65,7 +62,7 @@ defmodule ExMCP.Types do
             optional(:listChanged) => boolean()
           },
           optional(:sampling) => %{},
-          # Draft feature: elicitation capability
+          # Elicitation capability (stable in 2025-06-18)
           optional(:elicitation) => %{}
         }
 
@@ -113,7 +110,7 @@ defmodule ExMCP.Types do
           required(:name) => String.t(),
           optional(:description) => String.t(),
           required(:inputSchema) => json_schema(),
-          # Draft feature: outputSchema
+          # Output schema (stable in 2025-06-18)
           optional(:outputSchema) => json_schema(),
           optional(:annotations) => tool_annotations()
         }
@@ -154,7 +151,7 @@ defmodule ExMCP.Types do
   @type tool_result :: %{
           required(:content) => [content()],
           optional(:isError) => boolean(),
-          # Draft feature: structuredContent
+          # Structured content (stable in 2025-06-18)
           optional(:structuredContent) => %{String.t() => any()}
         }
 
@@ -408,7 +405,7 @@ defmodule ExMCP.Types do
           required(:uri) => String.t()
         }
 
-  # Draft feature: logging/setLevel
+  # Logging setLevel (stable in 2025-06-18)
   @type set_level_request :: %{
           required(:level) => log_level_string()
         }
@@ -439,7 +436,7 @@ defmodule ExMCP.Types do
           | list_roots_request()
           | elicit_request()
 
-  # Draft feature: Elicitation types
+  # Elicitation types (stable in 2025-06-18)
   @type primitive_schema ::
           %{
             required(:type) => String.t(),
@@ -505,17 +502,14 @@ defmodule ExMCP.Types do
           required(:error) => jsonrpc_error()
         }
 
-  # Draft feature: Batch processing types
-  @type jsonrpc_batch_request :: [jsonrpc_request() | jsonrpc_notification()]
-  @type jsonrpc_batch_response :: [jsonrpc_response() | jsonrpc_error_response()]
+  # Note: Batch processing types removed in 2025-06-18
+  # Use ExMCP.Types.V20250326 if you need batch support
 
   @type jsonrpc_message ::
           jsonrpc_request()
           | jsonrpc_notification()
           | jsonrpc_response()
           | jsonrpc_error_response()
-          | jsonrpc_batch_request()
-          | jsonrpc_batch_response()
 
   # Accessor functions for constants
   def latest_protocol_version, do: @latest_protocol_version

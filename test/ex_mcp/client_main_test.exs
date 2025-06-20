@@ -49,7 +49,7 @@ defmodule ExMCP.ClientMainTest do
               "jsonrpc" => "2.0",
               "id" => request["id"],
               "result" => %{
-                "protocolVersion" => "2024-11-05",
+                "protocolVersion" => "2025-06-18",
                 "serverInfo" => %{
                   "name" => "TestServer",
                   "version" => "1.0.0"
@@ -146,7 +146,7 @@ defmodule ExMCP.ClientMainTest do
               "jsonrpc" => "2.0",
               "id" => request["id"],
               "result" => %{
-                "protocolVersion" => "2024-11-05",
+                "protocolVersion" => "2025-06-18",
                 "serverInfo" => %{"name" => "Test", "version" => "1.0"},
                 "capabilities" => %{}
               }
@@ -600,7 +600,7 @@ defmodule ExMCP.ClientMainTest do
               "jsonrpc" => "2.0",
               "id" => request["id"],
               "result" => %{
-                "protocolVersion" => "2024-11-05",
+                "protocolVersion" => "2025-06-18",
                 "serverInfo" => %{"name" => "Test", "version" => "1.0"},
                 "capabilities" => %{}
               }
@@ -635,7 +635,7 @@ defmodule ExMCP.ClientMainTest do
             "jsonrpc" => "2.0",
             "id" => request["id"],
             "result" => %{
-              "protocolVersion" => "2024-11-05",
+              "protocolVersion" => "2025-06-18",
               "serverInfo" => %{
                 "name" => "TestServer",
                 "version" => "1.0.0"

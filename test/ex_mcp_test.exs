@@ -19,7 +19,7 @@ defmodule ExMCPTest do
     test "supported_versions/0 returns list of supported versions" do
       versions = ExMCP.supported_versions()
       assert is_list(versions)
-      assert "2024-11-05" in versions
+      assert "2025-06-18" in versions
       assert "2025-03-26" in versions
     end
 

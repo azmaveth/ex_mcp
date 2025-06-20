@@ -219,7 +219,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
     end
 
     test "client accepts supported protocol versions" do
-      for version <- ["2025-03-26", "2024-11-05"] do
+      for version <- ["2025-03-26", "2025-06-18"] do
         {:ok, server} =
           Server.start_link(
             transport: :test,

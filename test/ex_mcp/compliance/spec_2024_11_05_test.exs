@@ -56,10 +56,10 @@ defmodule ExMCP.Spec20241105Test do
     @impl true
     def handle_initialize(params, state) do
       # Verify we get 2024-11-05 version
-      assert params["protocolVersion"] == "2024-11-05"
+      assert params["protocolVersion"] == "2025-06-18"
 
       result = %{
-        protocolVersion: "2024-11-05",
+        protocolVersion: "2025-06-18",
         serverInfo: %{
           name: "test-server-2024-11-05",
           version: "1.0.0"
@@ -182,7 +182,7 @@ defmodule ExMCP.Spec20241105Test do
           server: server,
           client_info: %{name: "test-client-2024-11-05", version: "1.0.0"},
           # Force 2024-11-05 version
-          protocol_version: "2024-11-05"
+          protocol_version: "2025-06-18"
         )
 
       Process.sleep(100)
@@ -197,7 +197,7 @@ defmodule ExMCP.Spec20241105Test do
 
     test "negotiates 2024-11-05 protocol version", %{client: client} do
       {:ok, version} = Client.negotiated_version(client)
-      assert version == "2024-11-05"
+      assert version == "2025-06-18"
     end
 
     test "server capabilities match 2024-11-05 spec", %{client: client} do
@@ -351,12 +351,12 @@ defmodule ExMCP.Spec20241105Test do
         Protocol.encode_initialize(
           %{name: "test", version: "1.0"},
           %{},
-          "2024-11-05"
+          "2025-06-18"
         )
 
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "initialize"
-      assert msg["params"]["protocolVersion"] == "2024-11-05"
+      assert msg["params"]["protocolVersion"] == "2025-06-18"
       assert is_integer(msg["id"])
     end
 

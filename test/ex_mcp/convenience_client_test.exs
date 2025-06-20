@@ -55,7 +55,7 @@ defmodule ExMCP.ConvenienceClientTest do
     defp default_responses do
       %{
         "initialize" => %{
-          "protocolVersion" => "2024-11-05",
+          "protocolVersion" => "2025-06-18",
           "capabilities" => %{"tools" => %{}, "resources" => %{}, "prompts" => %{}},
           "serverInfo" => %{"name" => "MockServer", "version" => "1.0.0"}
         },
