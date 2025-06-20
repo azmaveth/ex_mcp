@@ -662,27 +662,45 @@ defmodule ExMCP.Client do
     # Override the generated ID with our session-specific one
     init_request = Map.put(init_request, "id", "init-#{initial_state.session_id}")
 
-    with {:ok, state_after_send} <-
-           transport_mod.send_message(Jason.encode!(init_request), transport_state),
-         {:ok, init_response} <-
-           wait_for_response(
-             transport_mod,
-             state_after_send,
-             "init-#{initial_state.session_id}",
-             10_000
-           ),
-         :ok <- validate_initialize_response(init_response),
-         {:ok, _} <- send_initialized_notification(transport_mod, state_after_send) do
-      updated_state = %{
-        initial_state
-        | server_info: get_in(init_response, ["result", "serverInfo"]),
-          server_capabilities: get_in(init_response, ["result", "capabilities"]),
-          protocol_version: get_in(init_response, ["result", "protocolVersion"]),
-          connection_status: :connected
-      }
+    # Send the initialize request and handle both sync and async response patterns
+    case transport_mod.send_message(Jason.encode!(init_request), transport_state) do
+      {:ok, state_after_send} ->
+        # SSE mode - wait for response asynchronously
+        with {:ok, init_response} <-
+               wait_for_response(
+                 transport_mod,
+                 state_after_send,
+                 "init-#{initial_state.session_id}",
+                 10_000
+               ),
+             :ok <- validate_initialize_response(init_response),
+             {:ok, _} <- send_initialized_notification(transport_mod, state_after_send) do
+          handle_successful_initialization(initial_state, init_response, state_after_send)
+        end
 
-      {:ok, updated_state}
+      {:ok, state_after_send, init_response} ->
+        # Non-SSE HTTP mode - immediate response
+        with :ok <- validate_initialize_response(init_response),
+             {:ok, _} <- send_initialized_notification(transport_mod, state_after_send) do
+          handle_successful_initialization(initial_state, init_response, state_after_send)
+        end
+
+      error ->
+        error
     end
+  end
+
+  defp handle_successful_initialization(initial_state, init_response, state_after_send) do
+    updated_state = %{
+      initial_state
+      | server_info: get_in(init_response, ["result", "serverInfo"]),
+        server_capabilities: get_in(init_response, ["result", "capabilities"]),
+        protocol_version: get_in(init_response, ["result", "protocolVersion"]),
+        connection_status: :connected,
+        transport_state: state_after_send
+    }
+
+    {:ok, updated_state}
   end
 
   defp wait_for_response(transport_mod, transport_state, expected_id, timeout) do
@@ -737,7 +755,13 @@ defmodule ExMCP.Client do
 
   defp send_initialized_notification(transport_mod, transport_state) do
     notification = Protocol.encode_initialized()
-    transport_mod.send_message(Jason.encode!(notification), transport_state)
+
+    case transport_mod.send_message(Jason.encode!(notification), transport_state) do
+      {:ok, new_state} -> {:ok, new_state}
+      # Ignore response for notifications
+      {:ok, new_state, _response} -> {:ok, new_state}
+      error -> error
+    end
   end
 
   defp start_receiver_task(transport_mod, transport_state) do
@@ -754,6 +778,11 @@ defmodule ExMCP.Client do
         send(parent, {:transport_message, data})
         receive_loop(transport_mod, new_state, parent)
 
+      {:error, :no_response} ->
+        # Non-SSE HTTP mode - no response available, wait briefly and try again
+        Process.sleep(10)
+        receive_loop(transport_mod, transport_state, parent)
+
       {:error, :closed} ->
         send(parent, {:transport_closed, :normal})
 
@@ -767,6 +796,12 @@ defmodule ExMCP.Client do
 
     case state.transport_mod.send_message(encoded, state.transport_state) do
       {:ok, new_transport_state} ->
+        {:ok, %{state | transport_state: new_transport_state}}
+
+      {:ok, new_transport_state, response_data} ->
+        # Non-SSE HTTP mode with immediate response
+        # Send the response directly to ourselves as if it came from the receiver task
+        send(self(), {:transport_message, response_data})
         {:ok, %{state | transport_state: new_transport_state}}
 
       {:error, reason} ->

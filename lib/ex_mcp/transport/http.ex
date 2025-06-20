@@ -205,8 +205,36 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   @impl true
+  def send_message(message, %__MODULE__{use_sse: false} = state) do
+    # For non-SSE mode, we handle the request-response synchronously
+    body = message
+    result = perform_http_request(body, state)
+
+    case result do
+      {:ok, response} ->
+        case handle_http_response(response, state) do
+          {:ok, new_state} ->
+            # Return both the response data and the updated state for immediate consumption
+            case new_state.last_response do
+              # No response body (e.g., 202 notifications)
+              nil ->
+                {:ok, new_state}
+
+              response_data ->
+                # Return the response data and clear it from state to prevent reuse
+                {:ok, %{new_state | last_response: nil}, response_data}
+            end
+
+          error ->
+            error
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   def send_message(message, %__MODULE__{} = state) do
-    Logger.debug("HTTP transport sending message: #{inspect(message)}")
     # Message is already JSON encoded by the client
     body = message
     result = perform_http_request(body, state)
@@ -243,6 +271,9 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp handle_http_response({status_line, headers, body}, state) do
+    # Convert charlist to binary if needed (httpc returns charlists by default)
+    body_binary = if is_list(body), do: List.to_string(body), else: body
+
     case status_line do
       {_, 200, _} ->
         if state.use_sse do
@@ -253,7 +284,7 @@ defmodule ExMCP.Transport.HTTP do
           end
         else
           # Non-SSE mode - response in HTTP body
-          handle_non_sse_response(body, state)
+          handle_non_sse_response(body_binary, state)
         end
 
       {_, 202, _} ->
@@ -267,7 +298,7 @@ defmodule ExMCP.Transport.HTTP do
         end
 
       {_, status, _} ->
-        {:error, {:http_error, status, body}}
+        {:error, {:http_error, status, body_binary}}
     end
   end
 
@@ -325,7 +356,7 @@ defmodule ExMCP.Transport.HTTP do
     {:error, :no_response}
   end
 
-  def receive_message(%__MODULE__{}) do
+  def receive_message(%__MODULE__{} = _state) do
     {:error, :not_connected}
   end
 
