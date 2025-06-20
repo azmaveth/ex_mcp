@@ -145,199 +145,184 @@ defmodule ExMCP.MessageProcessor do
     id = get_request_id(request)
 
     # Debug logging for tests
+    log_method_processing(method, handler_module)
+
+    case method do
+      "initialize" -> handle_initialize(conn, handler_module, server_info, id)
+      "tools/list" -> handle_tools_list(conn, handler_module, id)
+      "tools/call" -> handle_tools_call(conn, handler_module, params, id)
+      "resources/list" -> handle_resources_list(conn, handler_module, id)
+      "resources/read" -> handle_resources_read(conn, handler_module, params, id)
+      "prompts/list" -> handle_prompts_list(conn, handler_module, id)
+      "prompts/get" -> handle_prompts_get(conn, handler_module, params, id)
+      _ -> handle_custom_method(conn, handler_module, method, params, id)
+    end
+  end
+
+  defp log_method_processing(method, handler_module) do
     if Mix.env() == :test do
       require Logger
       Logger.debug("Processing method: #{method} with handler: #{handler_module}")
     end
+  end
 
-    case method do
-      "initialize" ->
+  defp handle_initialize(conn, handler_module, server_info, id) do
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => %{
+        "protocolVersion" => "2024-11-05",
+        "capabilities" => handler_module.get_capabilities(),
+        "serverInfo" => server_info
+      },
+      "id" => id
+    }
+
+    put_response(conn, response)
+  end
+
+  defp handle_tools_list(conn, handler_module, id) do
+    tools = handler_module.get_tools() |> Map.values()
+
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => %{"tools" => tools},
+      "id" => id
+    }
+
+    put_response(conn, response)
+  end
+
+  defp handle_tools_call(conn, handler_module, params, id) do
+    tool_name = Map.get(params, "name")
+    arguments = Map.get(params, "arguments", %{})
+
+    case handler_module.handle_tool_call(tool_name, arguments, %{}) do
+      {:ok, result, _state} ->
+        response = success_response(result, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Tool execution failed", reason, id)
+        put_response(conn, error_response)
+    end
+  end
+
+  defp handle_resources_list(conn, handler_module, id) do
+    resources = handler_module.get_resources() |> Map.values()
+
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => %{"resources" => resources},
+      "id" => id
+    }
+
+    put_response(conn, response)
+  end
+
+  defp handle_resources_read(conn, handler_module, params, id) do
+    uri = Map.get(params, "uri")
+
+    case handler_module.handle_resource_read(uri, uri, %{}) do
+      {:ok, content, _state} ->
         response = %{
           "jsonrpc" => "2.0",
-          "result" => %{
-            "protocolVersion" => "2024-11-05",
-            "capabilities" => handler_module.get_capabilities(),
-            "serverInfo" => server_info
-          },
+          "result" => %{"contents" => content},
           "id" => id
         }
 
         put_response(conn, response)
 
-      "tools/list" ->
-        tools = handler_module.get_tools() |> Map.values()
+      {:error, reason, _state} ->
+        error_response = error_response("Resource read failed", reason, id)
+        put_response(conn, error_response)
+    end
+  end
 
-        response = %{
-          "jsonrpc" => "2.0",
-          "result" => %{"tools" => tools},
-          "id" => id
-        }
+  defp handle_prompts_list(conn, handler_module, id) do
+    prompts = handler_module.get_prompts() |> Map.values()
 
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => %{"prompts" => prompts},
+      "id" => id
+    }
+
+    put_response(conn, response)
+  end
+
+  defp handle_prompts_get(conn, handler_module, params, id) do
+    prompt_name = Map.get(params, "name")
+    arguments = Map.get(params, "arguments", %{})
+
+    case handler_module.handle_prompt_get(prompt_name, arguments, %{}) do
+      {:ok, result, _state} ->
+        response = success_response(result, id)
         put_response(conn, response)
 
-      "tools/call" ->
-        tool_name = Map.get(params, "name")
-        arguments = Map.get(params, "arguments", %{})
+      {:error, reason, _state} ->
+        error_response = error_response("Prompt get failed", reason, id)
+        put_response(conn, error_response)
+    end
+  end
 
-        case handler_module.handle_tool_call(tool_name, arguments, %{}) do
-          {:ok, result, _state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "result" => result,
-              "id" => id
-            }
+  defp handle_custom_method(conn, handler_module, method, params, id) do
+    if Code.ensure_loaded?(handler_module) and
+         function_exported?(handler_module, :handle_request, 3) do
+      handle_custom_request(conn, handler_module, method, params, id)
+    else
+      handle_method_not_found(conn, id)
+    end
+  end
 
-            put_response(conn, response)
-
-          {:error, reason, _state} ->
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "error" => %{
-                "code" => -32603,
-                "message" => "Tool execution failed",
-                "data" => %{"reason" => inspect(reason)}
-              },
-              "id" => id
-            }
-
-            put_response(conn, error_response)
-        end
-
-      "resources/list" ->
-        resources = handler_module.get_resources() |> Map.values()
-
-        response = %{
-          "jsonrpc" => "2.0",
-          "result" => %{"resources" => resources},
-          "id" => id
-        }
-
+  defp handle_custom_request(conn, handler_module, method, params, id) do
+    case handler_module.handle_request(method, params, %{}) do
+      {:reply, result, _state} ->
+        response = success_response(result, id)
         put_response(conn, response)
 
-      "resources/read" ->
-        uri = Map.get(params, "uri")
+      {:error, reason, _state} ->
+        error_response = error_response("Request failed", reason, id)
+        put_response(conn, error_response)
 
-        case handler_module.handle_resource_read(uri, uri, %{}) do
-          {:ok, content, _state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "result" => %{"contents" => content},
-              "id" => id
-            }
-
-            put_response(conn, response)
-
-          {:error, reason, _state} ->
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "error" => %{
-                "code" => -32603,
-                "message" => "Resource read failed",
-                "data" => %{"reason" => inspect(reason)}
-              },
-              "id" => id
-            }
-
-            put_response(conn, error_response)
-        end
-
-      "prompts/list" ->
-        prompts = handler_module.get_prompts() |> Map.values()
-
-        response = %{
-          "jsonrpc" => "2.0",
-          "result" => %{"prompts" => prompts},
-          "id" => id
-        }
-
-        put_response(conn, response)
-
-      "prompts/get" ->
-        prompt_name = Map.get(params, "name")
-        arguments = Map.get(params, "arguments", %{})
-
-        case handler_module.handle_prompt_get(prompt_name, arguments, %{}) do
-          {:ok, result, _state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "result" => result,
-              "id" => id
-            }
-
-            put_response(conn, response)
-
-          {:error, reason, _state} ->
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "error" => %{
-                "code" => -32603,
-                "message" => "Prompt get failed",
-                "data" => %{"reason" => inspect(reason)}
-              },
-              "id" => id
-            }
-
-            put_response(conn, error_response)
-        end
+      {:noreply, _state} ->
+        conn
 
       _ ->
-        # Try custom handler if it exists and module is loaded
-        if Code.ensure_loaded?(handler_module) and
-             function_exported?(handler_module, :handle_request, 3) do
-          case handler_module.handle_request(method, params, %{}) do
-            {:reply, result, _state} ->
-              response = %{
-                "jsonrpc" => "2.0",
-                "result" => result,
-                "id" => id
-              }
-
-              put_response(conn, response)
-
-            {:error, reason, _state} ->
-              error_response = %{
-                "jsonrpc" => "2.0",
-                "error" => %{
-                  "code" => -32603,
-                  "message" => "Request failed",
-                  "data" => %{"reason" => inspect(reason)}
-                },
-                "id" => id
-              }
-
-              put_response(conn, error_response)
-
-            {:noreply, _state} ->
-              # No response for this request
-              conn
-
-            _ ->
-              # Unknown method
-              error_response = %{
-                "jsonrpc" => "2.0",
-                "error" => %{
-                  "code" => -32601,
-                  "message" => "Method not found"
-                },
-                "id" => id
-              }
-
-              put_response(conn, error_response)
-          end
-        else
-          # Unknown method and no custom handler
-          error_response = %{
-            "jsonrpc" => "2.0",
-            "error" => %{
-              "code" => -32601,
-              "message" => "Method not found"
-            },
-            "id" => id
-          }
-
-          put_response(conn, error_response)
-        end
+        handle_method_not_found(conn, id)
     end
+  end
+
+  defp handle_method_not_found(conn, id) do
+    error_response = %{
+      "jsonrpc" => "2.0",
+      "error" => %{
+        "code" => -32601,
+        "message" => "Method not found"
+      },
+      "id" => id
+    }
+
+    put_response(conn, error_response)
+  end
+
+  defp success_response(result, id) do
+    %{
+      "jsonrpc" => "2.0",
+      "result" => result,
+      "id" => id
+    }
+  end
+
+  defp error_response(message, reason, id) do
+    %{
+      "jsonrpc" => "2.0",
+      "error" => %{
+        "code" => -32603,
+        "message" => message,
+        "data" => %{"reason" => inspect(reason)}
+      },
+      "id" => id
+    }
   end
 
   defp get_request_id(request) when is_map(request) do

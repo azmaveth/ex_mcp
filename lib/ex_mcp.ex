@@ -470,49 +470,48 @@ defmodule ExMCP do
     timeout = Keyword.get(opts, :timeout, 10_000)
     parse_json = Keyword.get(opts, :parse_json, false)
 
-    try do
-      case SimpleClient.read_resource(client, uri, timeout) do
-        {:ok, %Response{} = response} ->
-          content =
-            Response.resource_content(response) || Response.text_content(response) ||
-              Response.data_content(response)
+    case try_v2_read_resource(client, uri, timeout) do
+      {:ok, response} -> process_read_response(response, parse_json)
+      {:fallback_to_v1} -> try_v1_read_resource(client, uri, timeout, parse_json)
+      error -> error
+    end
+  end
 
-          if parse_json and is_binary(content) do
-            case Jason.decode(content) do
-              {:ok, parsed} -> parsed
-              {:error, _} -> content
-            end
-          else
-            content
-          end
+  defp try_v2_read_resource(client, uri, timeout) do
+    SimpleClient.read_resource(client, uri, timeout)
+  rescue
+    _ -> {:fallback_to_v1}
+  end
 
-        error ->
-          error
-      end
-    rescue
-      _ ->
-        try do
-          case Client.read_resource(client, uri, timeout) do
-            {:ok, %Response{} = response} ->
-              content =
-                Response.resource_content(response) || Response.text_content(response) ||
-                  Response.data_content(response)
+  defp try_v1_read_resource(client, uri, timeout, parse_json) do
+    case Client.read_resource(client, uri, timeout) do
+      {:ok, response} -> process_read_response(response, parse_json)
+      error -> error
+    end
+  rescue
+    _ -> {:error, Error.connection_error("Client not responding")}
+  end
 
-              if parse_json and is_binary(content) do
-                case Jason.decode(content) do
-                  {:ok, parsed} -> parsed
-                  {:error, _} -> content
-                end
-              else
-                content
-              end
+  defp process_read_response(%Response{} = response, parse_json) do
+    content = extract_response_content(response)
 
-            error ->
-              error
-          end
-        rescue
-          _ -> {:error, Error.connection_error("Client not responding")}
-        end
+    if parse_json and is_binary(content) do
+      parse_json_content(content)
+    else
+      content
+    end
+  end
+
+  defp extract_response_content(response) do
+    Response.resource_content(response) || 
+    Response.text_content(response) || 
+    Response.data_content(response)
+  end
+
+  defp parse_json_content(content) do
+    case Jason.decode(content) do
+      {:ok, parsed} -> parsed
+      {:error, _} -> content
     end
   end
 

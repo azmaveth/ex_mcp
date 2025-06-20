@@ -856,69 +856,69 @@ defmodule ExMCP.Client do
     timeout = Keyword.get(opts, :timeout, 30_000)
 
     # Create tasks for all requests
-    tasks =
-      Enum.map(requests, fn {method, args} ->
-        Task.async(fn ->
-          case method do
-            :call_tool ->
-              case args do
-                [name, arguments] ->
-                  call_tool(client, name, arguments)
-
-                [name, arguments, timeout] when is_integer(timeout) ->
-                  call_tool(client, name, arguments, timeout)
-
-                [name, arguments | rest] ->
-                  call_tool(client, name, arguments, Keyword.new(rest))
-              end
-
-            :list_tools ->
-              case args do
-                [] -> list_tools(client)
-                [opts] when is_list(opts) -> list_tools(client, opts)
-                [timeout] when is_integer(timeout) -> list_tools(client, timeout: timeout)
-              end
-
-            :list_resources ->
-              list_resources(client)
-
-            :read_resource ->
-              case args do
-                [uri] ->
-                  read_resource(client, uri)
-
-                [uri, timeout] when is_integer(timeout) ->
-                  read_resource(client, uri, timeout)
-
-                [uri | rest] ->
-                  read_resource(client, uri, Keyword.get(Keyword.new(rest), :timeout, 30_000))
-              end
-
-            _ ->
-              {:error, {:unsupported_batch_method, method}}
-          end
-        end)
-      end)
+    tasks = Enum.map(requests, &create_batch_task(client, &1))
 
     # Wait for all tasks to complete
     results = Task.yield_many(tasks, timeout)
 
     # Convert task results to proper format
-    batch_results =
-      Enum.map(results, fn {task, result} ->
-        case result do
-          {:ok, value} ->
-            value
-
-          {:exit, reason} ->
-            {:error, reason}
-
-          nil ->
-            Task.shutdown(task, :brutal_kill)
-            {:error, :timeout}
-        end
-      end)
+    batch_results = Enum.map(results, &process_task_result/1)
 
     {:ok, batch_results}
+  end
+
+  defp create_batch_task(client, {method, args}) do
+    Task.async(fn -> execute_batch_method(client, method, args) end)
+  end
+
+  defp execute_batch_method(client, method, args) do
+    case method do
+      :call_tool -> execute_call_tool(client, args)
+      :list_tools -> execute_list_tools(client, args)
+      :list_resources -> list_resources(client)
+      :read_resource -> execute_read_resource(client, args)
+      _ -> {:error, {:unsupported_batch_method, method}}
+    end
+  end
+
+  defp execute_call_tool(client, args) do
+    case args do
+      [name, arguments] ->
+        call_tool(client, name, arguments)
+      [name, arguments, timeout] when is_integer(timeout) ->
+        call_tool(client, name, arguments, timeout)
+      [name, arguments | rest] ->
+        call_tool(client, name, arguments, Keyword.new(rest))
+    end
+  end
+
+  defp execute_list_tools(client, args) do
+    case args do
+      [] -> list_tools(client)
+      [opts] when is_list(opts) -> list_tools(client, opts)
+      [timeout] when is_integer(timeout) -> list_tools(client, timeout: timeout)
+    end
+  end
+
+  defp execute_read_resource(client, args) do
+    case args do
+      [uri] ->
+        read_resource(client, uri)
+      [uri, timeout] when is_integer(timeout) ->
+        read_resource(client, uri, timeout)
+      [uri | rest] ->
+        timeout = Keyword.get(Keyword.new(rest), :timeout, 30_000)
+        read_resource(client, uri, timeout)
+    end
+  end
+
+  defp process_task_result({task, result}) do
+    case result do
+      {:ok, value} -> value
+      {:exit, reason} -> {:error, reason}
+      nil ->
+        Task.shutdown(task, :brutal_kill)
+        {:error, :timeout}
+    end
   end
 end
