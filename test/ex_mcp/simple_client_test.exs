@@ -106,7 +106,7 @@ defmodule ExMCP.SimpleClientTest do
 
     # Should be able to use immediately
     assert {:ok, result} = SimpleClient.list_tools(client)
-    assert %{"tools" => [%{"name" => "test_tool"}]} = result
+    assert [%{"name" => "test_tool"}] = result
 
     GenServer.stop(client)
   end

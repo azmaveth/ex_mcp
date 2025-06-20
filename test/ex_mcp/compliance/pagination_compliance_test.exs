@@ -164,7 +164,7 @@ defmodule ExMCP.PaginationComplianceTest do
           uri: "file:///resource_#{i}.txt",
           name: "Resource #{i}",
           description: "Resource number #{i}",
-          mimeType: "text/plain"
+          mime_type: "text/plain"
         }
       end
     end
@@ -187,7 +187,7 @@ defmodule ExMCP.PaginationComplianceTest do
           uriTemplate: "file:///template_{template_id}/resource_#{i}.txt",
           name: "Template #{i}",
           description: "Resource template number #{i}",
-          mimeType: "text/plain"
+          mime_type: "text/plain"
         }
       end
     end

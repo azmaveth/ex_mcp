@@ -28,7 +28,7 @@ defmodule ExMCP.Server.Tools.HelpersTest do
 
       assert response == %{
                content: [%{type: "text", text: "Something went wrong"}],
-               isError: true
+               is_error: true
              }
     end
 
@@ -380,7 +380,7 @@ defmodule ExMCP.Server.Tools.HelpersTest do
                %{
                  type: "image",
                  data: "https://example.com/image.png",
-                 mimeType: "image/png",
+                 mime_type: "image/png",
                  description: "An example image"
                }
              ]
@@ -393,7 +393,7 @@ defmodule ExMCP.Server.Tools.HelpersTest do
                %{
                  type: "resource",
                  uri: "file:///path/to/file.txt",
-                 mimeType: "text/plain"
+                 mime_type: "text/plain"
                }
              ]
     end
@@ -411,10 +411,10 @@ defmodule ExMCP.Server.Tools.HelpersTest do
                %{
                  type: "image",
                  data: "data:image/png;base64,abc123",
-                 mimeType: "image/png",
+                 mime_type: "image/png",
                  description: "A diagram"
                },
-               %{type: "resource", uri: "file:///doc.pdf", mimeType: "application/pdf"}
+               %{type: "resource", uri: "file:///doc.pdf", mime_type: "application/pdf"}
              ]
     end
   end

@@ -420,10 +420,10 @@ defmodule ExMCP.ClientTest do
 
   describe "start_link/1" do
     test "successfully connects and completes handshake" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       # Verify client is ready
-      {:ok, status} = ClientV2.get_status(client)
+      {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
       assert status.server_info["name"] == "MockServer"
       assert status.server_info["version"] == "1.0.0"
@@ -436,26 +436,26 @@ defmodule ExMCP.ClientTest do
       Process.flag(:trap_exit, true)
 
       assert {:error, {:transport_connect_failed, :connection_refused}} =
-               ClientV2.start_link(transport: MockTransport, fail_connect: true)
+               Client.start_link(transport: MockTransport, fail_connect: true)
     end
 
     test "returns error when MCP handshake fails" do
       Process.flag(:trap_exit, true)
 
       assert {:error, {:initialize_error, %{"code" => -32600}}} =
-               ClientV2.start_link(transport: MockTransport, fail_handshake: true)
+               Client.start_link(transport: MockTransport, fail_handshake: true)
     end
 
     test "accepts custom timeout and reconnection options" do
       {:ok, client} =
-        ClientV2.start_link(
+        Client.start_link(
           transport: MockTransport,
           timeout: 5000,
           max_reconnect_attempts: 3,
           reconnect_interval: 500
         )
 
-      {:ok, status} = ClientV2.get_status(client)
+      {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
 
       if Process.alive?(client), do: GenServer.stop(client)
@@ -464,7 +464,7 @@ defmodule ExMCP.ClientTest do
 
   describe "tool operations" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       on_exit(fn ->
         if Process.alive?(client) do
@@ -476,7 +476,10 @@ defmodule ExMCP.ClientTest do
     end
 
     test "list_tools/2 returns available tools", %{client: client} do
-      {:ok, tools} = ClientV2.list_tools(client)
+      {:ok, result} = Client.list_tools(client)
+      assert is_map(result)
+      assert Map.has_key?(result, :tools)
+      tools = result.tools
       assert is_list(tools)
       assert length(tools) == 2
 
@@ -486,31 +489,33 @@ defmodule ExMCP.ClientTest do
     end
 
     test "call_tool/4 executes a tool successfully", %{client: client} do
-      {:ok, %Response{} = response} = ClientV2.call_tool(client, "hello", %{})
+      {:ok, %Response{} = response} = Client.call_tool(client, "hello", %{})
       assert Response.text_content(response) == "Hello, World!"
       assert response.tool_name == "hello"
       assert response.is_error == false
     end
 
     test "call_tool/4 handles tool execution errors", %{client: client} do
-      {:error, %Error{} = error} = ClientV2.call_tool(client, "error_tool", %{})
+      {:error, %Error{} = error} = Client.call_tool(client, "error_tool", %{})
       assert error.code == -32601
       assert error.message == "Tool execution failed"
     end
 
     test "list_tools/2 with custom timeout" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
-      {:ok, tools} = ClientV2.list_tools(client, 1000)
-      assert is_list(tools)
+      {:ok, result} = Client.list_tools(client, timeout: 1000)
+      assert is_map(result)
+      assert Map.has_key?(result, :tools)
+      assert is_list(result.tools)
 
       if Process.alive?(client), do: GenServer.stop(client)
     end
 
     test "call_tool/4 with custom timeout" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
-      {:ok, %Response{} = response} = ClientV2.call_tool(client, "hello", %{}, 2000)
+      {:ok, %Response{} = response} = Client.call_tool(client, "hello", %{}, 2000)
       assert Response.text_content(response) == "Hello, World!"
 
       if Process.alive?(client), do: GenServer.stop(client)
@@ -519,7 +524,7 @@ defmodule ExMCP.ClientTest do
 
   describe "resource operations" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       on_exit(fn ->
         if Process.alive?(client) do
@@ -531,7 +536,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "list_resources/2 returns available resources", %{client: client} do
-      {:ok, resources} = ClientV2.list_resources(client)
+      {:ok, resources} = Client.list_resources(client)
       assert is_list(resources)
       assert length(resources) == 1
 
@@ -542,15 +547,15 @@ defmodule ExMCP.ClientTest do
     end
 
     test "read_resource/3 reads a resource successfully", %{client: client} do
-      {:ok, %Response{} = response} = ClientV2.read_resource(client, "file:///test.txt")
+      {:ok, %Response{} = response} = Client.read_resource(client, "file:///test.txt")
       assert Response.text_content(response) == "Test content from file:///test.txt"
       assert response.is_error == false
     end
 
     test "read_resource/3 with custom timeout" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
-      {:ok, %Response{} = response} = ClientV2.read_resource(client, "file:///test.txt", 1500)
+      {:ok, %Response{} = response} = Client.read_resource(client, "file:///test.txt", 1500)
       assert Response.text_content(response) == "Test content from file:///test.txt"
 
       if Process.alive?(client), do: GenServer.stop(client)
@@ -559,7 +564,7 @@ defmodule ExMCP.ClientTest do
 
   describe "prompt operations" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       on_exit(fn ->
         if Process.alive?(client) do
@@ -571,7 +576,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "list_prompts/2 returns available prompts", %{client: client} do
-      {:ok, prompts} = ClientV2.list_prompts(client)
+      {:ok, prompts} = Client.list_prompts(client)
       assert is_list(prompts)
       assert length(prompts) == 1
 
@@ -582,7 +587,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "get_prompt/4 retrieves a prompt successfully", %{client: client} do
-      {:ok, %Response{} = response} = ClientV2.get_prompt(client, "greet")
+      {:ok, %Response{} = response} = Client.get_prompt(client, "greet")
 
       # Extract data content (should contain messages)
       data = Response.data_content(response)
@@ -597,10 +602,10 @@ defmodule ExMCP.ClientTest do
     end
 
     test "get_prompt/4 with arguments and custom timeout" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       {:ok, %Response{} = response} =
-        ClientV2.get_prompt(client, "greet", %{"style" => "formal"}, 1500)
+        Client.get_prompt(client, "greet", %{"style" => "formal"}, 1500)
 
       data = Response.data_content(response)
       assert %{"messages" => _messages} = data
@@ -611,9 +616,9 @@ defmodule ExMCP.ClientTest do
 
   describe "connection status and lifecycle" do
     test "get_status/1 returns current connection information" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
-      {:ok, status} = ClientV2.get_status(client)
+      {:ok, status} = Client.get_status(client)
 
       assert status.connection_status == :ready
       assert status.server_info["name"] == "MockServer"
@@ -627,10 +632,10 @@ defmodule ExMCP.ClientTest do
     test "client is immediately ready after start_link" do
       start_time = System.monotonic_time(:millisecond)
 
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       # This should work immediately without any sleep
-      {:ok, _} = ClientV2.list_tools(client)
+      {:ok, _} = Client.list_tools(client)
 
       # Verify it was fast (synchronous initialization)
       elapsed = System.monotonic_time(:millisecond) - start_time
@@ -642,7 +647,7 @@ defmodule ExMCP.ClientTest do
 
   describe "error handling and edge cases" do
     test "handles unknown method requests" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       # Make a request for an unknown method directly via GenServer call
       # This tests the error handling path
@@ -667,10 +672,10 @@ defmodule ExMCP.ClientTest do
     test "handles transport send failures" do
       # This test would require a more sophisticated mock transport
       # For now, test that we handle connection failures gracefully
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       # Verify client works initially
-      {:ok, _} = ClientV2.list_tools(client)
+      {:ok, _} = Client.list_tools(client)
 
       if Process.alive?(client), do: GenServer.stop(client)
     end
@@ -678,7 +683,7 @@ defmodule ExMCP.ClientTest do
     test "handles requests when not connected" do
       # Create a disconnecting transport that fails after initialization
       {:ok, client} =
-        ClientV2.start_link(
+        Client.start_link(
           transport: DisconnectingTransport,
           test_pid: self(),
           disconnect_after: 1,
@@ -690,7 +695,7 @@ defmodule ExMCP.ClientTest do
       Process.sleep(100)
 
       # Try to make a request - should fail with not connected
-      {:ok, status} = ClientV2.get_status(client)
+      {:ok, status} = Client.get_status(client)
 
       # Status should show either disconnected or attempting reconnection
       assert status.connection_status in [:disconnected, :connecting, :error]
@@ -701,39 +706,41 @@ defmodule ExMCP.ClientTest do
 
   describe "concurrent requests" do
     test "handles multiple concurrent requests" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       # Make multiple concurrent requests
       tasks =
         for _i <- 1..5 do
           Task.async(fn ->
-            ClientV2.list_tools(client)
+            Client.list_tools(client)
           end)
         end
 
       # All should succeed
       results = Enum.map(tasks, &Task.await(&1, 2000))
 
-      for {:ok, tools} <- results do
-        assert is_list(tools)
+      for {:ok, result} <- results do
+        assert is_map(result)
+        assert Map.has_key?(result, :tools)
+        assert is_list(result.tools)
       end
 
       if Process.alive?(client), do: GenServer.stop(client)
     end
 
     test "tracks pending requests correctly" do
-      {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      {:ok, client} = Client.start_link(transport: MockTransport)
 
       # Start a request but don't wait for completion
       _task =
         Task.async(fn ->
-          ClientV2.list_tools(client, 5000)
+          Client.list_tools(client, timeout: 5000)
         end)
 
       # Check status while request is pending
       # Give the request time to start
       Process.sleep(10)
-      {:ok, status} = ClientV2.get_status(client)
+      {:ok, status} = Client.get_status(client)
 
       # Should have at least one pending request (or it completed very quickly)
       assert status.pending_requests >= 0
@@ -746,13 +753,13 @@ defmodule ExMCP.ClientTest do
     test "works with different transport options" do
       # Test with custom transport options
       {:ok, client} =
-        ClientV2.start_link(
+        Client.start_link(
           transport: MockTransport,
           custom_option: "test_value",
           another_option: 42
         )
 
-      {:ok, status} = ClientV2.get_status(client)
+      {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
 
       if Process.alive?(client), do: GenServer.stop(client)
@@ -760,13 +767,13 @@ defmodule ExMCP.ClientTest do
 
     test "supports named clients" do
       {:ok, _client} =
-        ClientV2.start_link(
+        Client.start_link(
           transport: MockTransport,
           name: :named_test_client
         )
 
       # Should be able to access by name
-      {:ok, status} = ClientV2.get_status(:named_test_client)
+      {:ok, status} = Client.get_status(:named_test_client)
       assert status.connection_status == :ready
 
       GenServer.stop(:named_test_client)

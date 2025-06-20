@@ -152,7 +152,7 @@ defmodule ExMCP.ToolsComplianceTest do
       # Input validation
       if not is_number(a) or not is_number(b) do
         error_content = [%{type: "text", text: "Invalid input: operands must be numbers"}]
-        {:ok, %{content: error_content, isError: true}, state}
+        {:ok, %{content: error_content, is_error: true}, state}
       else
         case op do
           "add" ->
@@ -174,7 +174,7 @@ defmodule ExMCP.ToolsComplianceTest do
             if b == 0 do
               # Tool execution error - use isError flag
               error_content = [%{type: "text", text: "Division by zero is not allowed"}]
-              {:ok, %{content: error_content, isError: true}, state}
+              {:ok, %{content: error_content, is_error: true}, state}
             else
               result = a / b
               content = [%{type: "text", text: "#{a} ÷ #{b} = #{result}"}]
@@ -220,7 +220,7 @@ defmodule ExMCP.ToolsComplianceTest do
       # Simulate file reading with security checks
       if String.contains?(path, "..") or String.starts_with?(path, "/etc/") do
         error_content = [%{type: "text", text: "Access denied: Invalid file path"}]
-        {:ok, %{content: error_content, isError: true}, state}
+        {:ok, %{content: error_content, is_error: true}, state}
       else
         # Simulate reading a file
         content =
@@ -276,12 +276,12 @@ defmodule ExMCP.ToolsComplianceTest do
         "validation" ->
           # Tool execution error
           error_content = [%{type: "text", text: "Validation failed: invalid input detected"}]
-          {:ok, %{content: error_content, isError: true}, state}
+          {:ok, %{content: error_content, is_error: true}, state}
 
         "execution" ->
           # Tool execution error
           error_content = [%{type: "text", text: "Execution failed: simulated runtime error"}]
-          {:ok, %{content: error_content, isError: true}, state}
+          {:ok, %{content: error_content, is_error: true}, state}
 
         "protocol" ->
           # Protocol error
@@ -451,11 +451,11 @@ defmodule ExMCP.ToolsComplianceTest do
     end
 
     test "tool execution error with isError flag", %{client: client} do
-      # Division by zero should return isError: true
+      # Division by zero should return is_error: true
       args = %{"operation" => "divide", "a" => 10, "b" => 0}
       {:ok, result} = Client.call_tool(client, "calculator", args)
 
-      assert %{content: content, isError: true} = result
+      assert %{content: content, is_error: true} = result
       assert is_list(content)
 
       error_content = hd(content)
@@ -476,7 +476,7 @@ defmodule ExMCP.ToolsComplianceTest do
       {:ok, result} = Client.call_tool(client, "calculator", args)
 
       # Should return tool execution error
-      assert %{content: content, isError: true} = result
+      assert %{content: content, is_error: true} = result
       error_content = hd(content)
       assert String.contains?(error_content.text, "Invalid input")
     end
@@ -505,7 +505,7 @@ defmodule ExMCP.ToolsComplianceTest do
       args = %{"path" => "../../../etc/passwd"}
       {:ok, result} = Client.call_tool(client, "file_reader", args)
 
-      assert %{content: content, isError: true} = result
+      assert %{content: content, is_error: true} = result
       error_content = hd(content)
       assert String.contains?(error_content.text, "Access denied")
     end
@@ -541,12 +541,12 @@ defmodule ExMCP.ToolsComplianceTest do
       {:ok, validation_result} =
         Client.call_tool(client, "error_demo", %{"error_type" => "validation"})
 
-      assert %{isError: true} = validation_result
+      assert %{is_error: true} = validation_result
 
       {:ok, execution_result} =
         Client.call_tool(client, "error_demo", %{"error_type" => "execution"})
 
-      assert %{isError: true} = execution_result
+      assert %{is_error: true} = execution_result
 
       # Protocol error (returns error tuple)
       {:error, _reason} = Client.call_tool(client, "error_demo", %{"error_type" => "protocol"})
@@ -632,7 +632,7 @@ defmodule ExMCP.ToolsComplianceTest do
       args = %{"operation" => "divide", "a" => 1, "b" => 0}
       {:ok, result} = Client.call_tool(client, "calculator", args)
 
-      assert %{content: content, isError: true} = result
+      assert %{content: content, is_error: true} = result
       error_item = hd(content)
 
       assert error_item.type == "text"

@@ -182,7 +182,7 @@ defmodule ExMCP.Server.TransportTest do
     end
   end
 
-  describe "ServerV2 integration" do
+  describe "Server integration" do
     test "start_link with transport: :native" do
       {:ok, pid} = TestServer.start_link(transport: :native, name: :test_server_native)
 

@@ -92,7 +92,7 @@ defmodule ExMCP.Response do
       tool_name: Keyword.get(opts, :tool_name),
       request_id: Keyword.get(opts, :request_id),
       server_info: Keyword.get(opts, :server_info),
-      is_error: Map.get(raw_response, "isError", false)
+      is_error: Map.get(raw_response, "is_error", Map.get(raw_response, "isError", false))
     }
   end
 

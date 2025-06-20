@@ -232,7 +232,7 @@ defmodule ExMCP.Server.ToolsTest do
             %{
               uri: "file:///example.txt",
               name: "Example file",
-              mimeType: "text/plain"
+              mime_type: "text/plain"
             }
           ]
 

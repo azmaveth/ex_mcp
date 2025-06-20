@@ -8,7 +8,9 @@ defmodule ExMCP.ServerTest do
     use ExMCP.Server
 
     deftool "hello" do
-      tool_description("Says hello")
+      meta do
+        description("Says hello")
+      end
 
       args do
         field(:name, :string, required: true, description: "Name to greet")
@@ -17,25 +19,41 @@ defmodule ExMCP.ServerTest do
     end
 
     deftool "error_tool" do
-      tool_description("Tool that always errors")
+      meta do
+        description("Tool that always errors")
+      end
+
+      input_schema(%{
+        type: "object",
+        properties: %{},
+        required: []
+      })
     end
 
     defresource "config://app" do
-      resource_name("App Config")
-      resource_description("Application configuration")
+      meta do
+        name("App Config")
+        description("Application configuration")
+      end
+
       mime_type("application/json")
     end
 
     defresource "data://users" do
-      resource_name("User Data")
-      resource_description("User information")
+      meta do
+        name("User Data")
+        description("User information")
+      end
+
       mime_type("application/json")
       subscribable(true)
     end
 
     defprompt "greeting" do
-      prompt_name("Greeting Template")
-      prompt_description("Generate a greeting message")
+      meta do
+        name("Greeting Template")
+        description("Generate a greeting message")
+      end
 
       arguments do
         arg(:style, description: "Greeting style", required: false)
@@ -44,8 +62,10 @@ defmodule ExMCP.ServerTest do
     end
 
     defprompt "farewell" do
-      prompt_name("Farewell Template")
-      prompt_description("Generate a farewell message")
+      meta do
+        name("Farewell Template")
+        description("Generate a farewell message")
+      end
     end
 
     # Handler implementations
@@ -126,13 +146,13 @@ defmodule ExMCP.ServerTest do
           uri: "config://app",
           name: "App Config",
           description: "Application configuration",
-          mimeType: "application/json"
+          mime_type: "application/json"
         },
         %{
           uri: "data://users",
           name: "User Data",
           description: "User information",
-          mimeType: "application/json"
+          mime_type: "application/json"
         }
       ]
 
@@ -579,7 +599,7 @@ defmodule ExMCP.ServerTest do
 
       # This tests that the function doesn't crash - actual notification
       # handling would require the full MCP server infrastructure
-      assert :ok = ServerV2.notify_resource_update(pid, "data://users")
+      assert :ok = Server.notify_resource_update(pid, "data://users")
 
       GenServer.stop(pid)
     end
@@ -588,7 +608,7 @@ defmodule ExMCP.ServerTest do
       {:ok, _pid} = TestServer.start_link()
 
       # Test with module name
-      assert :ok = ServerV2.notify_resource_update(TestServer, "data://users")
+      assert :ok = Server.notify_resource_update(TestServer, "data://users")
 
       GenServer.stop(TestServer)
     end
@@ -645,7 +665,11 @@ defmodule ExMCP.ServerTest do
         use ExMCP.Server
 
         defresource "static://data" do
-          resource_name("Static Data")
+          meta do
+            name("Static Data")
+            description("Static data resource")
+          end
+
           subscribable(false)
         end
 

@@ -102,13 +102,13 @@ defmodule ExMCP.ResourcesTest do
           uriTemplate: "file:///{path}",
           name: "File Resource",
           description: "Access files by path",
-          mimeType: "text/plain"
+          mime_type: "text/plain"
         },
         %{
           uriTemplate: "db://{table}/{id}",
           name: "Database Record",
           description: "Access database records",
-          mimeType: "application/json"
+          mime_type: "application/json"
         }
       ]
 
@@ -121,19 +121,19 @@ defmodule ExMCP.ResourcesTest do
           uri: "file:///config.json",
           name: "Application Config",
           description: "Main configuration file",
-          mimeType: "application/json"
+          mime_type: "application/json"
         },
         %{
           uri: "file:///data.csv",
           name: "Sample Data",
           description: "CSV data file",
-          mimeType: "text/csv"
+          mime_type: "text/csv"
         },
         %{
           uri: "file:///image.png",
           name: "Logo Image",
           description: "Company logo",
-          mimeType: "image/png"
+          mime_type: "image/png"
         }
       ]
     end
@@ -143,7 +143,7 @@ defmodule ExMCP.ResourcesTest do
         "file:///image.png" ->
           %{
             uri: uri,
-            mimeType: "image/png",
+            mime_type: "image/png",
             # Already base64 encoded
             blob: data
           }
@@ -151,7 +151,7 @@ defmodule ExMCP.ResourcesTest do
         "file:///config.json" ->
           %{
             uri: uri,
-            mimeType: "application/json",
+            mime_type: "application/json",
             text: data
           }
 
@@ -194,7 +194,7 @@ defmodule ExMCP.ResourcesTest do
 
       # Check first page resources
       assert Enum.at(page1, 0).uri == "file:///config.json"
-      assert Enum.at(page1, 0).mimeType == "application/json"
+      assert Enum.at(page1, 0).mime_type == "application/json"
       assert Enum.at(page1, 1).uri == "file:///data.csv"
 
       # Second page
@@ -213,7 +213,7 @@ defmodule ExMCP.ResourcesTest do
 
       resource = hd(content.contents)
       assert resource.uri == "file:///config.json"
-      assert resource.mimeType == "application/json"
+      assert resource.mime_type == "application/json"
       assert resource.text =~ "version"
       assert resource.text =~ "1.0.0"
 
@@ -229,7 +229,7 @@ defmodule ExMCP.ResourcesTest do
       resource = hd(content.contents)
 
       assert resource.uri == "file:///image.png"
-      assert resource.mimeType == "image/png"
+      assert resource.mime_type == "image/png"
       # Base64 encoded
       assert resource.blob
       # Binary resources don't have text
@@ -272,7 +272,7 @@ defmodule ExMCP.ResourcesTest do
 
       file_template = Enum.find(templates, &(&1.uriTemplate == "file:///{path}"))
       assert file_template.name == "File Resource"
-      assert file_template.mimeType == "text/plain"
+      assert file_template.mime_type == "text/plain"
 
       db_template = Enum.find(templates, &(&1.uriTemplate == "db://{table}/{id}"))
       assert db_template.name == "Database Record"
@@ -286,7 +286,7 @@ defmodule ExMCP.ResourcesTest do
       {:ok, image} = Client.read_resource(client, "file:///image.png")
 
       # Verify each has correct content type
-      assert hd(config.contents).mimeType == "application/json"
+      assert hd(config.contents).mime_type == "application/json"
       assert hd(data.contents).text =~ "name,age"
       # Binary data
       assert hd(image.contents).blob

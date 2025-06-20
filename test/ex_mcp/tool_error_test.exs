@@ -73,7 +73,7 @@ defmodule ExMCP.ToolErrorTest do
             text: "Division by zero error: Cannot divide #{dividend} by 0"
           }
         ],
-        isError: true
+        is_error: true
       }
 
       {:ok, result, state}
@@ -95,7 +95,7 @@ defmodule ExMCP.ToolErrorTest do
             text: "Failed to fetch data: API rate limit exceeded"
           }
         ],
-        isError: true
+        is_error: true
       }
 
       {:ok, result, state}
@@ -179,10 +179,10 @@ defmodule ExMCP.ToolErrorTest do
              }
 
       # Verify no isError field is present
-      refute Map.has_key?(result, :isError)
+      refute Map.has_key?(result, :is_error)
     end
 
-    test "division by zero returns isError: true", %{client: client} do
+    test "division by zero returns is_error: true", %{client: client} do
       {:ok, result} = Client.call_tool(client, "divide", %{"dividend" => 10, "divisor" => 0})
 
       assert result == %{
@@ -192,11 +192,11 @@ defmodule ExMCP.ToolErrorTest do
                    text: "Division by zero error: Cannot divide 10 by 0"
                  }
                ],
-               isError: true
+               is_error: true
              }
     end
 
-    test "API failure returns isError: true", %{client: client} do
+    test "API failure returns is_error: true", %{client: client} do
       {:ok, result} = Client.call_tool(client, "fetch_data", %{"endpoint" => "unavailable"})
 
       assert result == %{
@@ -206,7 +206,7 @@ defmodule ExMCP.ToolErrorTest do
                    text: "Failed to fetch data: API rate limit exceeded"
                  }
                ],
-               isError: true
+               is_error: true
              }
     end
 
@@ -217,7 +217,7 @@ defmodule ExMCP.ToolErrorTest do
                content: [%{type: "text", text: "Data from /api/status: {\"status\": \"ok\"}"}]
              }
 
-      refute Map.has_key?(result, :isError)
+      refute Map.has_key?(result, :is_error)
     end
 
     test "unknown tool returns protocol error, not isError", %{client: client} do

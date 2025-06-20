@@ -70,11 +70,11 @@ defmodule ExMCP.ClientMainTest do
       end)
 
       opts = [transport: MockTransport]
-      assert {:ok, client} = ClientV2.start_link(opts)
+      assert {:ok, client} = Client.start_link(opts)
       assert is_pid(client)
 
       # Verify client is ready
-      assert {:ok, status} = ClientV2.get_status(client)
+      assert {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
     end
 
@@ -82,7 +82,7 @@ defmodule ExMCP.ClientMainTest do
       opts = [transport: MockTransport, fail_connect: true]
 
       assert capture_log(fn ->
-               assert {:error, {:connection_refused, _}} = ClientV2.start_link(opts)
+               assert {:error, {:connection_refused, _}} = Client.start_link(opts)
              end) =~ "Failed to initialize MCP client"
     end
 
@@ -100,7 +100,7 @@ defmodule ExMCP.ClientMainTest do
       opts = [transport: MockTransport]
 
       assert capture_log(fn ->
-               assert {:error, _} = ClientV2.start_link(opts)
+               assert {:error, _} = Client.start_link(opts)
              end) =~ "Failed to initialize MCP client"
     end
 
@@ -129,7 +129,7 @@ defmodule ExMCP.ClientMainTest do
       opts = [transport: MockTransport]
 
       assert capture_log(fn ->
-               assert {:error, {:initialize_error, _}} = ClientV2.start_link(opts)
+               assert {:error, {:initialize_error, _}} = Client.start_link(opts)
              end) =~ "Failed to initialize MCP client"
     end
 
@@ -161,10 +161,10 @@ defmodule ExMCP.ClientMainTest do
       end)
 
       opts = [transport: MockTransport, name: TestClient]
-      assert {:ok, _pid} = ClientV2.start_link(opts)
+      assert {:ok, _pid} = Client.start_link(opts)
 
       # Verify we can use the name
-      assert {:ok, status} = ClientV2.get_status(TestClient)
+      assert {:ok, status} = Client.get_status(TestClient)
       assert status.connection_status == :ready
     end
   end
@@ -205,20 +205,20 @@ defmodule ExMCP.ClientMainTest do
         end
       end)
 
-      assert {:ok, result} = ClientV2.list_tools(client)
+      assert {:ok, result} = Client.list_tools(client)
       assert %{"tools" => [tool]} = result
       assert tool["name"] == "hello"
     end
 
     test "handles timeout", %{client: client} do
-      assert {:error, _} = ClientV2.list_tools(client, 100)
+      assert {:error, _} = Client.list_tools(client, 100)
     end
 
     test "handles transport errors", %{client: client} do
       # Simulate disconnection
       send(client, {:transport_closed, :connection_lost})
 
-      assert {:error, {:not_connected, :disconnected}} = ClientV2.list_tools(client)
+      assert {:error, {:not_connected, :disconnected}} = Client.list_tools(client)
     end
   end
 
@@ -253,7 +253,7 @@ defmodule ExMCP.ClientMainTest do
         end
       end)
 
-      assert {:ok, result} = ClientV2.call_tool(client, "hello", %{"name" => "world"})
+      assert {:ok, result} = Client.call_tool(client, "hello", %{"name" => "world"})
       assert %{"content" => [content]} = result
       assert content["text"] == "Hello, world!"
     end
@@ -280,7 +280,7 @@ defmodule ExMCP.ClientMainTest do
         end
       end)
 
-      assert {:error, error} = ClientV2.call_tool(client, "hello", %{})
+      assert {:error, error} = Client.call_tool(client, "hello", %{})
       assert error["code"] == -32602
     end
   end
@@ -317,7 +317,7 @@ defmodule ExMCP.ClientMainTest do
         end
       end)
 
-      assert {:ok, result} = ClientV2.list_resources(client)
+      assert {:ok, result} = Client.list_resources(client)
       assert %{"resources" => [resource]} = result
       assert resource["uri"] == "file:///test.txt"
     end
@@ -357,7 +357,7 @@ defmodule ExMCP.ClientMainTest do
         end
       end)
 
-      assert {:ok, result} = ClientV2.read_resource(client, "file:///test.txt")
+      assert {:ok, result} = Client.read_resource(client, "file:///test.txt")
       assert %{"contents" => [content]} = result
       assert content["text"] == "Hello from test file"
     end
@@ -397,7 +397,7 @@ defmodule ExMCP.ClientMainTest do
         end
       end)
 
-      assert {:ok, result} = ClientV2.list_prompts(client)
+      assert {:ok, result} = Client.list_prompts(client)
       assert %{"prompts" => [prompt]} = result
       assert prompt["name"] == "greeting"
     end
@@ -440,7 +440,7 @@ defmodule ExMCP.ClientMainTest do
         end
       end)
 
-      assert {:ok, result} = ClientV2.get_prompt(client, "greeting", %{"name" => "Alice"})
+      assert {:ok, result} = Client.get_prompt(client, "greeting", %{"name" => "Alice"})
       assert %{"messages" => [message]} = result
       assert message["role"] == "user"
     end
@@ -465,7 +465,7 @@ defmodule ExMCP.ClientMainTest do
         end
       end)
 
-      assert {:ok, _result} = ClientV2.get_prompt(client, "simple")
+      assert {:ok, _result} = Client.get_prompt(client, "simple")
     end
   end
 
@@ -476,7 +476,7 @@ defmodule ExMCP.ClientMainTest do
     end
 
     test "returns current client status", %{client: client} do
-      assert {:ok, status} = ClientV2.get_status(client)
+      assert {:ok, status} = Client.get_status(client)
 
       assert status.connection_status == :ready
       assert status.pending_requests == 0
@@ -497,18 +497,18 @@ defmodule ExMCP.ClientMainTest do
       send(client, {:transport_closed, :connection_lost})
 
       # Status should show disconnected
-      assert {:ok, status} = ClientV2.get_status(client)
+      assert {:ok, status} = Client.get_status(client)
       assert status.connection_status == :disconnected
 
       # Requests should fail immediately
-      assert {:error, {:not_connected, :disconnected}} = ClientV2.list_tools(client)
+      assert {:error, {:not_connected, :disconnected}} = Client.list_tools(client)
     end
 
     test "cancels pending requests on disconnection", %{client: client} do
       # Start a request that won't get a response
       task =
         Task.async(fn ->
-          ClientV2.call_tool(client, "slow", %{})
+          Client.call_tool(client, "slow", %{})
         end)
 
       # Give it time to register
@@ -563,13 +563,13 @@ defmodule ExMCP.ClientMainTest do
       assert log =~ "Failed to parse transport message"
 
       # Client should still be functional
-      assert {:ok, status} = ClientV2.get_status(client)
+      assert {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
     end
 
     test "handles receiver task crashes", %{client: client} do
       # Get receiver task info
-      {:ok, status} = ClientV2.get_status(client)
+      {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
 
       # Simulate receiver crash
@@ -579,7 +579,7 @@ defmodule ExMCP.ClientMainTest do
       send(client, {:DOWN, fake_task_ref, :process, self(), :crash})
 
       # Client should still respond
-      assert {:ok, _} = ClientV2.get_status(client)
+      assert {:ok, _} = Client.get_status(client)
     end
   end
 
@@ -615,7 +615,7 @@ defmodule ExMCP.ClientMainTest do
       end)
 
       # Verify custom transport module works
-      assert {:ok, client} = ClientV2.start_link(transport: MockTransport)
+      assert {:ok, client} = Client.start_link(transport: MockTransport)
       assert is_pid(client)
     end
   end
@@ -659,7 +659,7 @@ defmodule ExMCP.ClientMainTest do
       Process.sleep(:infinity)
     end)
 
-    {:ok, client} = ClientV2.start_link(transport: MockTransport)
+    {:ok, client} = Client.start_link(transport: MockTransport)
     client
   end
 end

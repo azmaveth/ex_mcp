@@ -1,6 +1,6 @@
 defmodule ExMCP.Transport.Test do
   import Kernel, except: [send: 2]
-  
+
   @moduledoc """
   In-memory transport for testing purposes.
 

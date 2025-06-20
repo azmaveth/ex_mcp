@@ -269,11 +269,11 @@ defmodule ExMCP.ClientCoverageTest do
     test "successfully connects with valid transport" do
       opts = [transport: CompleteMockTransport]
 
-      assert {:ok, client} = ClientV2.start_link(opts)
+      assert {:ok, client} = Client.start_link(opts)
       assert is_pid(client)
 
       # Verify status
-      assert {:ok, status} = ClientV2.get_status(client)
+      assert {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
       assert status.server_info["name"] == "Test Server"
     end
@@ -282,7 +282,7 @@ defmodule ExMCP.ClientCoverageTest do
       opts = [transport: CompleteMockTransport, fail_connect: true]
 
       assert capture_log(fn ->
-               assert {:error, {:connection_refused, _}} = ClientV2.start_link(opts)
+               assert {:error, {:connection_refused, _}} = Client.start_link(opts)
              end) =~ "Failed to initialize MCP client"
     end
 
@@ -294,7 +294,7 @@ defmodule ExMCP.ClientCoverageTest do
       ]
 
       assert capture_log(fn ->
-               assert {:error, {:initialization_timeout, _}} = ClientV2.start_link(opts)
+               assert {:error, {:initialization_timeout, _}} = Client.start_link(opts)
              end) =~ "initialization timeout"
     end
 
@@ -304,7 +304,7 @@ defmodule ExMCP.ClientCoverageTest do
         name: :test_client
       ]
 
-      assert {:ok, _client} = ClientV2.start_link(opts)
+      assert {:ok, _client} = Client.start_link(opts)
       assert Process.whereis(:test_client) != nil
 
       # Cleanup
@@ -314,30 +314,30 @@ defmodule ExMCP.ClientCoverageTest do
 
   describe "list_tools/2" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "returns list of tools", %{client: client} do
-      assert {:ok, result} = ClientV2.list_tools(client)
+      assert {:ok, result} = Client.list_tools(client)
       assert result["tools"] != nil
       assert [tool | _] = result["tools"]
       assert tool["name"] == "test_tool"
     end
 
     test "handles timeout", %{client: client} do
-      assert {:error, :timeout} = ClientV2.list_tools(client, 1)
+      assert {:error, :timeout} = Client.list_tools(client, 1)
     end
   end
 
   describe "call_tool/4" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "calls tool successfully", %{client: client} do
-      assert {:ok, result} = ClientV2.call_tool(client, "test_tool", %{message: "hello"})
+      assert {:ok, result} = Client.call_tool(client, "test_tool", %{message: "hello"})
       assert result["content"] != nil
       assert [%{"type" => "text", "text" => text}] = result["content"]
       assert text == "Tool executed successfully"
@@ -345,24 +345,24 @@ defmodule ExMCP.ClientCoverageTest do
 
     test "handles tool errors", %{client: _client} do
       {:ok, client2} =
-        ClientV2.start_link(
+        Client.start_link(
           transport: CompleteMockTransport,
           error_on: "tools/call"
         )
 
-      assert {:error, error} = ClientV2.call_tool(client2, "test_tool", %{})
+      assert {:error, error} = Client.call_tool(client2, "test_tool", %{})
       assert error["code"] == -32603
     end
   end
 
   describe "list_resources/2" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "returns list of resources", %{client: client} do
-      assert {:ok, result} = ClientV2.list_resources(client)
+      assert {:ok, result} = Client.list_resources(client)
       assert result["resources"] != nil
       assert [resource | _] = result["resources"]
       assert resource["uri"] == "file://test.txt"
@@ -371,12 +371,12 @@ defmodule ExMCP.ClientCoverageTest do
 
   describe "read_resource/3" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "reads resource successfully", %{client: client} do
-      assert {:ok, result} = ClientV2.read_resource(client, "file://test.txt")
+      assert {:ok, result} = Client.read_resource(client, "file://test.txt")
       assert result["contents"] != nil
       assert [content | _] = result["contents"]
       assert content["text"] == "Test content"
@@ -385,12 +385,12 @@ defmodule ExMCP.ClientCoverageTest do
 
   describe "list_prompts/2" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "returns list of prompts", %{client: client} do
-      assert {:ok, result} = ClientV2.list_prompts(client)
+      assert {:ok, result} = Client.list_prompts(client)
       assert result["prompts"] != nil
       assert [prompt | _] = result["prompts"]
       assert prompt["name"] == "test_prompt"
@@ -399,12 +399,12 @@ defmodule ExMCP.ClientCoverageTest do
 
   describe "get_prompt/4" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "gets prompt successfully", %{client: client} do
-      assert {:ok, result} = ClientV2.get_prompt(client, "test_prompt", %{})
+      assert {:ok, result} = Client.get_prompt(client, "test_prompt", %{})
       assert result["messages"] != nil
       assert [message | _] = result["messages"]
       assert message["content"]["text"] == "Hello from prompt"
@@ -413,13 +413,13 @@ defmodule ExMCP.ClientCoverageTest do
 
   describe "complete/3" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "returns completion options", %{client: client} do
       assert {:ok, result} =
-               ClientV2.complete(client, %{
+               Client.complete(client, %{
                  "type" => "resource",
                  "uri" => "file://test"
                })
@@ -430,12 +430,12 @@ defmodule ExMCP.ClientCoverageTest do
 
   describe "get_status/1" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "returns client status", %{client: client} do
-      assert {:ok, status} = ClientV2.get_status(client)
+      assert {:ok, status} = Client.get_status(client)
 
       assert status.connection_status == :ready
       assert status.server_info != nil
@@ -447,29 +447,29 @@ defmodule ExMCP.ClientCoverageTest do
 
   describe "stop/1 and stop/2" do
     test "stops client gracefully" do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
 
-      assert :ok = ClientV2.stop(client)
+      assert :ok = Client.stop(client)
       refute Process.alive?(client)
     end
 
     test "stops client with custom reason" do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
 
-      assert :ok = ClientV2.stop(client, :custom_reason)
+      assert :ok = Client.stop(client, :custom_reason)
       refute Process.alive?(client)
     end
   end
 
   describe "send_notification/3" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
     test "sends notification successfully", %{client: client} do
       assert :ok =
-               ClientV2.send_notification(client, "notifications/cancelled", %{
+               Client.send_notification(client, "notifications/cancelled", %{
                  "requestId" => "test-123"
                })
     end
@@ -478,12 +478,12 @@ defmodule ExMCP.ClientCoverageTest do
   describe "error handling" do
     test "handles invalid transport" do
       assert_raise ArgumentError, fn ->
-        ClientV2.start_link(transport: :invalid_transport)
+        Client.start_link(transport: :invalid_transport)
       end
     end
 
     test "handles transport crashes during operation" do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
 
       # Get the transport state
       state = :sys.get_state(client)
@@ -494,13 +494,13 @@ defmodule ExMCP.ClientCoverageTest do
       end
 
       # Operations should fail gracefully
-      assert {:error, _} = ClientV2.list_tools(client)
+      assert {:error, _} = Client.list_tools(client)
     end
   end
 
   describe "concurrent operations" do
     setup do
-      {:ok, client} = ClientV2.start_link(transport: CompleteMockTransport)
+      {:ok, client} = Client.start_link(transport: CompleteMockTransport)
       {:ok, client: client}
     end
 
@@ -509,9 +509,9 @@ defmodule ExMCP.ClientCoverageTest do
         for i <- 1..10 do
           Task.async(fn ->
             case rem(i, 3) do
-              0 -> ClientV2.list_tools(client)
-              1 -> ClientV2.list_resources(client)
-              2 -> ClientV2.list_prompts(client)
+              0 -> Client.list_tools(client)
+              1 -> Client.list_resources(client)
+              2 -> Client.list_prompts(client)
             end
           end)
         end

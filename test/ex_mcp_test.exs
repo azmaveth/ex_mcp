@@ -223,7 +223,7 @@ defmodule ExMCPTest do
   end
 
   describe "use ExMCP.Server macro" do
-    test "allows using ExMCP.Server as alias for ExMCP.ServerV2" do
+    test "allows using ExMCP.Server as alias for ExMCP.Server" do
       # Create a temporary module to test the macro
       code = """
       defmodule TestServerAlias do

@@ -38,7 +38,7 @@ defmodule ExMCP.Spec20241105Test do
              uri: "file:///config.json",
              name: "Configuration",
              description: "System configuration",
-             mimeType: "application/json"
+             mime_type: "application/json"
            }
          ],
          prompts: [
@@ -124,7 +124,7 @@ defmodule ExMCP.Spec20241105Test do
       {:ok,
        %{
          uri: "file:///config.json",
-         mimeType: "application/json",
+         mime_type: "application/json",
          text: Jason.encode!(content)
        }, state}
     end
@@ -250,7 +250,7 @@ defmodule ExMCP.Spec20241105Test do
       assert length(content.contents) == 1
 
       resource_content = hd(content.contents)
-      assert resource_content.mimeType == "application/json"
+      assert resource_content.mime_type == "application/json"
 
       data = Jason.decode!(resource_content.text)
       assert data["version"] == "1.0.0"

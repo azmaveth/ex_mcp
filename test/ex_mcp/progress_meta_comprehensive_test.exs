@@ -118,7 +118,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
         %{
           uri: "test://resource1",
           name: "Test Resource 1",
-          mimeType: "text/plain"
+          mime_type: "text/plain"
         }
       ]
 
@@ -135,7 +135,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       content = [
         %{
           uri: uri,
-          mimeType: "text/plain",
+          mime_type: "text/plain",
           text: "Resource content for #{uri}"
         }
       ]

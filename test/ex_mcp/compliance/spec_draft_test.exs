@@ -155,7 +155,7 @@ defmodule ExMCP.SpecDraftTest do
         # Draft feature: structured content matching outputSchema
         structuredContent: weather_data,
         # Can also indicate if this is an error result
-        isError: false
+        is_error: false
       }
 
       {:ok, result, state}
@@ -201,7 +201,7 @@ defmodule ExMCP.SpecDraftTest do
           uri: "secure://data",
           name: "Secure Data",
           description: "Requires authentication",
-          mimeType: "application/json",
+          mime_type: "application/json",
           # Draft: security annotations
           annotations: %{
             requiresAuth: true,
@@ -220,7 +220,7 @@ defmodule ExMCP.SpecDraftTest do
 
       content = %{
         uri: "secure://data",
-        mimeType: "application/json",
+        mime_type: "application/json",
         text:
           Jason.encode!(%{
             secure: true,
@@ -443,12 +443,12 @@ defmodule ExMCP.SpecDraftTest do
 
     test "error results can use isError flag", %{client: _client} do
       # Try to trigger an error condition
-      # In draft, tools can return isError: true in structured results
+      # In draft, tools can return is_error: true in structured results
 
       # This would be a tool that returns an error
       # result = %{
       #   content: [%{type: "text", text: "Error occurred"}],
-      #   isError: true,
+      #   is_error: true,
       #   errorDetails: %{code: "WEATHER_API_DOWN"}
       # }
     end
@@ -464,8 +464,8 @@ defmodule ExMCP.SpecDraftTest do
         content =
           case type do
             "text" -> Map.put(content, :text, "sample")
-            "image" -> Map.merge(content, %{data: "base64data", mimeType: "image/png"})
-            "audio" -> Map.merge(content, %{data: "base64data", mimeType: "audio/mp3"})
+            "image" -> Map.merge(content, %{data: "base64data", mime_type: "image/png"})
+            "audio" -> Map.merge(content, %{data: "base64data", mime_type: "audio/mp3"})
             "resource" -> Map.put(content, :resource, %{uri: "test://resource"})
           end
 

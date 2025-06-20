@@ -112,13 +112,18 @@ defmodule ExMCP.Client do
   def list_tools(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
     cursor = Keyword.get(opts, :cursor)
-    
+
     params = if cursor, do: %{cursor: cursor}, else: %{}
-    
+
     case GenServer.call(client, {:request, "tools/list", params}, timeout) do
       {:ok, %{"tools" => tools} = response} ->
         result = %{tools: tools}
-        result = if response["nextCursor"], do: Map.put(result, :nextCursor, response["nextCursor"]), else: result
+
+        result =
+          if response["nextCursor"],
+            do: Map.put(result, :nextCursor, response["nextCursor"]),
+            else: result
+
         {:ok, result}
 
       {:ok, response} ->
@@ -136,31 +141,32 @@ defmodule ExMCP.Client do
 
   @doc """
   Calls a tool with the given arguments.
-  
+
   ## Options
-  
+
   * `:timeout` - Request timeout in milliseconds (default: 30_000)
   * `:progress_token` - Token for progress notifications
   """
   @spec call_tool(GenServer.server(), String.t(), map(), timeout() | keyword()) ::
           {:ok, Response.t()} | {:error, Error.t()}
   def call_tool(client, tool_name, arguments, timeout_or_opts \\ 30_000)
-  
+
   def call_tool(client, tool_name, arguments, timeout) when is_integer(timeout) do
     call_tool(client, tool_name, arguments, timeout: timeout)
   end
-  
+
   def call_tool(client, tool_name, arguments, opts) when is_list(opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     progress_token = Keyword.get(opts, :progress_token)
-    
+
     # Add progress token to arguments meta if provided
-    arguments = if progress_token do
-      Map.put(arguments, "_meta", %{"progressToken" => progress_token})
-    else
-      arguments
-    end
-    
+    arguments =
+      if progress_token do
+        Map.put(arguments, "_meta", %{"progressToken" => progress_token})
+      else
+        arguments
+      end
+
     params = %{"name" => tool_name, "arguments" => arguments}
 
     case GenServer.call(client, {:request, "tools/call", params}, timeout) do
@@ -721,51 +727,71 @@ defmodule ExMCP.Client do
   @spec batch_request(pid(), [{atom(), [any()]}], keyword()) :: {:ok, [any()]} | {:error, term()}
   def batch_request(client, requests, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    
+
     # Create tasks for all requests
-    tasks = Enum.map(requests, fn {method, args} ->
-      Task.async(fn ->
-        case method do
-          :call_tool -> 
-            case args do
-              [name, arguments] -> call_tool(client, name, arguments)
-              [name, arguments, timeout] when is_integer(timeout) -> call_tool(client, name, arguments, timeout)
-              [name, arguments | rest] -> call_tool(client, name, arguments, Keyword.new(rest))
-            end
-          :list_tools ->
-            case args do
-              [] -> list_tools(client)
-              [opts] when is_list(opts) -> list_tools(client, opts)
-              [timeout] when is_integer(timeout) -> list_tools(client, timeout: timeout)
-            end
-          :list_resources ->
-            list_resources(client)
-          :read_resource ->
-            case args do
-              [uri] -> read_resource(client, uri)
-              [uri, timeout] when is_integer(timeout) -> read_resource(client, uri, timeout)
-              [uri | rest] -> read_resource(client, uri, Keyword.get(Keyword.new(rest), :timeout, 30_000))
-            end
-          _ ->
-            {:error, {:unsupported_batch_method, method}}
-        end
+    tasks =
+      Enum.map(requests, fn {method, args} ->
+        Task.async(fn ->
+          case method do
+            :call_tool ->
+              case args do
+                [name, arguments] ->
+                  call_tool(client, name, arguments)
+
+                [name, arguments, timeout] when is_integer(timeout) ->
+                  call_tool(client, name, arguments, timeout)
+
+                [name, arguments | rest] ->
+                  call_tool(client, name, arguments, Keyword.new(rest))
+              end
+
+            :list_tools ->
+              case args do
+                [] -> list_tools(client)
+                [opts] when is_list(opts) -> list_tools(client, opts)
+                [timeout] when is_integer(timeout) -> list_tools(client, timeout: timeout)
+              end
+
+            :list_resources ->
+              list_resources(client)
+
+            :read_resource ->
+              case args do
+                [uri] ->
+                  read_resource(client, uri)
+
+                [uri, timeout] when is_integer(timeout) ->
+                  read_resource(client, uri, timeout)
+
+                [uri | rest] ->
+                  read_resource(client, uri, Keyword.get(Keyword.new(rest), :timeout, 30_000))
+              end
+
+            _ ->
+              {:error, {:unsupported_batch_method, method}}
+          end
+        end)
       end)
-    end)
-    
+
     # Wait for all tasks to complete
     results = Task.yield_many(tasks, timeout)
-    
+
     # Convert task results to proper format
-    batch_results = Enum.map(results, fn {task, result} ->
-      case result do
-        {:ok, value} -> value
-        {:exit, reason} -> {:error, reason}
-        nil -> 
-          Task.shutdown(task, :brutal_kill)
-          {:error, :timeout}
-      end
-    end)
-    
+    batch_results =
+      Enum.map(results, fn {task, result} ->
+        case result do
+          {:ok, value} ->
+            value
+
+          {:exit, reason} ->
+            {:error, reason}
+
+          nil ->
+            Task.shutdown(task, :brutal_kill)
+            {:error, :timeout}
+        end
+      end)
+
     {:ok, batch_results}
   end
 end

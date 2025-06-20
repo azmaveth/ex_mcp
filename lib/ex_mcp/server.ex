@@ -414,12 +414,12 @@ defmodule ExMCP.Server do
 
   @doc """
   Starts an MCP server with the given options.
-  
+
   This function provides compatibility with the legacy server API
   and delegates to the appropriate server implementation.
-  
+
   ## Options
-  
+
   * `:handler` - Handler module implementing ExMCP.Server.Handler
   * `:transport` - Transport type (:stdio, :http, :test, etc.)
   * Other options are passed to the underlying implementation
@@ -429,7 +429,7 @@ defmodule ExMCP.Server do
       nil ->
         # No handler specified, this might be a DSL server module calling start_link
         {:error, :no_handler_specified}
-      
+
       _handler_module ->
         # Use the legacy server implementation for handler-based servers
         ExMCP.Server.Legacy.start_link(opts)
@@ -438,7 +438,7 @@ defmodule ExMCP.Server do
 
   @doc """
   Sends a log message through the server.
-  
+
   Compatibility function for the logging system.
   """
   def send_log_message(server, level, message, data) do
@@ -447,7 +447,7 @@ defmodule ExMCP.Server do
 
   @doc """
   Sends a progress notification to the client.
-  
+
   Used for long-running operations to report progress updates.
   """
   def notify_progress(server, progress_token, progress, total) do

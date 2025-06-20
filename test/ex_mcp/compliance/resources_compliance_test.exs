@@ -17,32 +17,32 @@ defmodule ExMCP.ResourcesComplianceTest do
              uri: "file:///readme.md",
              name: "README",
              description: "Project documentation",
-             mimeType: "text/markdown",
+             mime_type: "text/markdown",
              size: 1024
            },
            %{
              uri: "config://app/settings.json",
              name: "Settings",
              description: "App configuration",
-             mimeType: "application/json"
+             mime_type: "application/json"
            },
            %{
              uri: "data://binary/logo.png",
              name: "Logo",
-             mimeType: "image/png",
+             mime_type: "image/png",
              size: 2048
            },
            %{
              uri: "https://example.com/api/data",
              name: "External API",
              description: "External data source",
-             mimeType: "application/json"
+             mime_type: "application/json"
            },
            %{
              uri: "git://repo/main/src/main.ex",
              name: "Source File",
              description: "Main source file",
-             mimeType: "text/plain"
+             mime_type: "text/plain"
            }
          ],
          subscriptions: %{},
@@ -131,19 +131,19 @@ defmodule ExMCP.ResourcesComplianceTest do
           uriTemplate: "file:///{path}",
           name: "Local Files",
           description: "Access local files",
-          mimeType: "text/plain"
+          mime_type: "text/plain"
         },
         %{
           uriTemplate: "config://{app}/{setting}",
           name: "Configuration",
           description: "App configuration values",
-          mimeType: "application/json"
+          mime_type: "application/json"
         },
         %{
           uriTemplate: "data://{category}/{id}",
           name: "Data Resources",
           description: "Dynamic data access",
-          mimeType: "application/json"
+          mime_type: "application/json"
         }
       ]
 
@@ -161,7 +161,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mimeType: "text/markdown",
+             mime_type: "text/markdown",
              text: "# Test Project\n\nThis is a test README file."
            }}
 
@@ -169,7 +169,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mimeType: "application/json",
+             mime_type: "application/json",
              text: Jason.encode!(%{theme: "dark", version: "1.0"})
            }}
 
@@ -180,7 +180,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mimeType: "image/png",
+             mime_type: "image/png",
              blob: fake_png_data
            }}
 
@@ -188,7 +188,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mimeType: "application/json",
+             mime_type: "application/json",
              text: Jason.encode!(%{status: "ok", data: []})
            }}
 
@@ -196,7 +196,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mimeType: "text/plain",
+             mime_type: "text/plain",
              text: "defmodule Main do\n  def start, do: :ok\nend"
            }}
 
@@ -254,7 +254,7 @@ defmodule ExMCP.ResourcesComplianceTest do
       end
 
       if Map.has_key?(resource, :mimeType) do
-        assert is_binary(resource.mimeType)
+        assert is_binary(resource.mime_type)
       end
 
       if Map.has_key?(resource, :size) do
@@ -330,7 +330,7 @@ defmodule ExMCP.ResourcesComplianceTest do
 
       assert %{contents: [content]} = result
       assert content.uri == "file:///readme.md"
-      assert content.mimeType == "text/markdown"
+      assert content.mime_type == "text/markdown"
       assert Map.has_key?(content, :text)
       assert String.contains?(content.text, "Test Project")
     end
@@ -340,7 +340,7 @@ defmodule ExMCP.ResourcesComplianceTest do
 
       assert %{contents: [content]} = result
       assert content.uri == "config://app/settings.json"
-      assert content.mimeType == "application/json"
+      assert content.mime_type == "application/json"
       assert Map.has_key?(content, :text)
 
       # Should be valid JSON
@@ -353,7 +353,7 @@ defmodule ExMCP.ResourcesComplianceTest do
 
       assert %{contents: [content]} = result
       assert content.uri == "data://binary/logo.png"
-      assert content.mimeType == "image/png"
+      assert content.mime_type == "image/png"
       assert Map.has_key?(content, :blob)
 
       # Should be base64 encoded
@@ -425,7 +425,7 @@ defmodule ExMCP.ResourcesComplianceTest do
         end
 
         if Map.has_key?(template, :mimeType) do
-          assert is_binary(template.mimeType)
+          assert is_binary(template.mime_type)
         end
       end)
     end
@@ -514,7 +514,7 @@ defmodule ExMCP.ResourcesComplianceTest do
       # Verify mimeType format for resources that have it
       Enum.each(all_resources, fn resource ->
         if Map.has_key?(resource, :mimeType) do
-          mime_type = resource.mimeType
+          mime_type = resource.mime_type
           assert is_binary(mime_type)
           # Should follow type/subtype format
           assert String.contains?(mime_type, "/")

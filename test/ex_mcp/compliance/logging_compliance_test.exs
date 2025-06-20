@@ -114,7 +114,7 @@ defmodule ExMCP.LoggingComplianceTest do
         # Return tool execution error
         error_result = %{
           content: [%{type: "text", text: "Task failed intentionally"}],
-          isError: true
+          is_error: true
         }
 
         {:ok, error_result, state}
@@ -386,7 +386,7 @@ defmodule ExMCP.LoggingComplianceTest do
       {:ok, result} = Client.call_tool(client, "error_prone_task", %{"should_fail" => true})
 
       # Tool should succeed but indicate error via isError flag
-      assert %{isError: true} = result
+      assert %{is_error: true} = result
     end
 
     test "critical level for critical conditions", %{client: client} do

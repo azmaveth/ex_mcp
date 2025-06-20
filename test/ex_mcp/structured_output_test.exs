@@ -101,7 +101,7 @@ defmodule ExMCP.StructuredOutputTest do
           {:error, reason} ->
             %{
               content: [%{type: "text", text: "Error: #{reason}"}],
-              isError: true
+              is_error: true
             }
         end
 
@@ -206,7 +206,7 @@ defmodule ExMCP.StructuredOutputTest do
 
       # Error result should be in extended format
       assert is_map(result)
-      assert result.isError == true
+      assert result.is_error == true
       assert result.content != nil
       assert result.content |> List.first() |> Map.get(:text) =~ "Error:"
     end
