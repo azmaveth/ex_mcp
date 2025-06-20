@@ -263,13 +263,13 @@ defmodule ExMCP.DSL.Resource do
     unless name do
       raise CompileError,
         description:
-          "Resource #{inspect(uri)} is missing a name. Use meta do name \"...\" end or name/1 to provide one."
+          "Resource #{inspect(uri)} is missing a name. Use meta do name \"...\" end to provide one."
     end
 
     unless description do
       raise CompileError,
         description:
-          "Resource #{inspect(uri)} is missing a description. Use meta do description \"...\" end or description/1 to provide one."
+          "Resource #{inspect(uri)} is missing a description. Use meta do description \"...\" end to provide one."
     end
 
     :ok

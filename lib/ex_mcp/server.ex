@@ -230,6 +230,23 @@ defmodule ExMCP.Server do
             # Start as a regular GenServer for native transport
             GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
+          :stdio ->
+            # Configure logging early for STDIO transport
+            Application.put_env(:ex_mcp, :stdio_mode, true)
+            configure_stdio_logging()
+            # Use transport manager for STDIO transport
+            server_info =
+              case @server_opts do
+                nil ->
+                  %{name: to_string(__MODULE__), version: "1.0.0"}
+
+                opts ->
+                  Keyword.get(opts, :server_info, %{name: to_string(__MODULE__), version: "1.0.0"})
+              end
+
+            tools = get_tools() |> Map.values()
+            ExMCP.Server.Transport.start_server(__MODULE__, server_info, tools, opts)
+
           _ ->
             # Use transport manager for other transports
             server_info =
@@ -245,6 +262,11 @@ defmodule ExMCP.Server do
 
             ExMCP.Server.Transport.start_server(__MODULE__, server_info, tools, opts)
         end
+      end
+
+      # Configure logging for STDIO transport to prevent stdout contamination
+      defp configure_stdio_logging do
+        ExMCP.Internal.StdioLoggerConfig.configure()
       end
 
       @doc """

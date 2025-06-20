@@ -1,91 +1,167 @@
-# Getting Started with ExMCP v2
+# Getting Started with ExMCP
 
-This directory contains examples to get you started with ExMCP v2.
+This directory contains a comprehensive demonstration of all ExMCP transport types and core features.
 
-## Quick Start
+## Overview
 
-**Recommended: Feature Demo**
+ExMCP supports four different transport mechanisms, each with its own strengths:
+
+1. **STDIO** - Standard input/output for subprocess communication
+2. **HTTP** - Traditional HTTP request/response
+3. **HTTP+SSE** - HTTP with Server-Sent Events for streaming
+4. **Native BEAM** - Direct Erlang process communication
+
+## The Servers
+
+### 1. STDIO Server (`01_stdio_server.exs`)
+- **Transport**: STDIO (subprocess)
+- **Feature**: Tool - `hello` with multi-language support
+- **Use Case**: Simple subprocess-based tools, CLI integration
+
+### 2. HTTP Server (`02_http_server.exs`)
+- **Transport**: HTTP without SSE
+- **Feature**: Resources - `hello://world` and `hello://stats`
+- **Use Case**: RESTful APIs, stateless operations
+
+### 3. HTTP+SSE Server (`03_http_sse_server.exs`)
+- **Transport**: HTTP with Server-Sent Events
+- **Feature**: Prompts - `hello_generator` and `story_starter`
+- **Also**: Subscribable resource `events://greetings`
+- **Use Case**: Real-time updates, streaming responses
+
+### 4. Native BEAM Server (`04_beam_server.exs`)
+- **Transport**: Native BEAM (Erlang processes)
+- **Features**: All three - tool, resources, and prompt
+  - Tool: `distributed_hello` - Send messages between nodes
+  - Resources: `beam://system/info` and `beam://messages`
+  - Prompt: `beam_expert` - BEAM/OTP expertise
+- **Use Case**: High-performance, distributed systems
+
+## Running the Demo
+
+### Option 1: Run Everything at Once
+
 ```bash
-./run_simple_demo.sh
+cd examples/getting_started
+./run_demo.sh
 ```
 
-This demonstrates v2 features without complex server setup:
-- Structured Response types (text, JSON, error)
-- Error handling and categories
-- ClientConfig builder pattern
-- JSON-RPC format conversion
-
-## Examples
-
-### Core v2 Features
-
-**`working_demo.exs`** - Interactive demo of v2 Response and Error types
+Or run the client directly:
 ```bash
-elixir working_demo.exs
+elixir demo_client.exs
 ```
 
-**`hello_server_simple.exs`** - Basic server using handler callbacks
+This will:
+1. Start each server in sequence
+2. Connect to it using the appropriate transport
+3. Demonstrate its features
+4. Clean up and move to the next server
+
+### Option 2: Run Servers Individually
+
+Start any server standalone:
+
 ```bash
-elixir hello_server_simple.exs
+# Terminal 1: Start STDIO server
+elixir 01_stdio_server.exs
+
+# Terminal 2: Start HTTP server
+elixir 02_http_server.exs
+
+# Terminal 3: Start HTTP+SSE server
+elixir 03_http_sse_server.exs
+
+# Terminal 4: Start BEAM server
+elixir 04_beam_server.exs
 ```
 
-### Transport Examples (Advanced)
+Then connect with your own client or use parts of `demo_client.exs`.
 
-⚠️ **Note**: The DSL and full transport examples require additional setup and may need debugging. Start with the working demo above.
+## Key Concepts Demonstrated
 
-**STDIO Transport:**
-- `hello_server_stdio.exs` - STDIO server (needs fixing)
-- `hello_client_stdio.exs` - STDIO client
+### Tools
+- Perform actions and computations
+- Accept structured arguments
+- Return content (text, JSON, etc.)
 
-**HTTP Transport:**
-- `hello_server_http.exs` - HTTP server with Mix.install
-- `hello_client_http.exs` - HTTP client
-- `hello_server_sse.exs` - HTTP with SSE streaming
+### Resources
+- Provide data that can be read
+- Can be subscribable for real-time updates
+- Support different MIME types
 
-**Native Transport:**
-- `hello_server_native.exs` - BEAM transport (distributed mode)
+### Prompts
+- Generate conversation templates
+- Accept arguments to customize output
+- Return message sequences for LLMs
 
-**Universal Client:**
-- `hello_client_all.exs` - Tests all transport types
+### Transport Features
 
-## Demo Scripts
+**STDIO**:
+- Simple and universal
+- Works with any language that can spawn processes
+- Great for CLI tools
 
-**Simple Feature Demo (Recommended):**
-```bash
-./run_simple_demo.sh     # Shows v2 features that work
-```
+**HTTP**:
+- Standard web protocols
+- Easy to debug and monitor
+- Works through firewalls
 
-**Full Transport Demo (Experimental):**
-```bash
-./run_demo.sh           # Attempts to test all transports
-```
+**HTTP+SSE**:
+- Real-time streaming
+- Server push capabilities
+- Progress updates and live data
 
-## Current Status
+**Native BEAM**:
+- Zero serialization overhead
+- Direct process communication
+- Access to OTP features
+- Distributed by design
 
-✅ **Working v2 Features:**
-- Response and Error types
-- Content extraction functions
-- ClientConfig builder
-- JSON-RPC format conversion
-- Handler callback pattern
+## Understanding the Code
 
-⚠️ **In Development:**
-- DSL macros (deftool, defresource, etc.)
-- Full transport server examples
-- Distributed client-server communication
+Each server follows the same pattern:
 
-## What Each Example Shows
+1. **Define features** using DSL macros:
+   ```elixir
+   deftool "name" do
+     description "What it does"
+     args do
+       field :param, :string
+     end
+   end
+   ```
 
-All examples implement the same basic functionality:
-- A "hello" tool that greets users
-- A resource providing server information
-- Proper error handling
+2. **Implement handlers**:
+   ```elixir
+   @impl true
+   def handle_tool_call("name", args, state) do
+     # Process and return result
+     {:ok, %{content: [text("Result")]}, state}
+   end
+   ```
 
-The examples are intentionally minimal to focus on transport setup and basic communication.
+3. **Start the server**:
+   ```elixir
+   Server.start_link(
+     transport: :stdio,  # or :http, :native
+     name: :server_name
+   )
+   ```
 
 ## Next Steps
 
-After mastering these basics, explore:
-- `/advanced/` - Complete servers with multiple tools, resources, and prompts
-- `/utilities/` - Helper examples for responses, errors, and configuration
-- `/migration_guide/` - Migrating from v1 to v2
+1. **Modify the servers** - Add new tools, resources, or prompts
+2. **Create your own** - Use these as templates for your MCP servers
+3. **Explore advanced features** - Check the other examples for more complex scenarios
+4. **Build something real** - MCP is great for AI tool integration!
+
+## Tips
+
+- Use STDIO for simple tools and CLI integration
+- Use HTTP when you need standard web compatibility
+- Use HTTP+SSE when you need real-time features
+- Use Native BEAM for maximum performance and Elixir/OTP integration
+- Always handle errors gracefully
+- Keep state management simple and predictable
+
+Happy coding with ExMCP! 🚀

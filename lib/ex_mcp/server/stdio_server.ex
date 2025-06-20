@@ -4,6 +4,55 @@ defmodule ExMCP.Server.StdioServer do
 
   This server reads from stdin and writes to stdout, making it suitable
   for command-line tools and scripting environments.
+
+  ## Important: STDIO Transport Requirements
+
+  The MCP STDIO transport requires that ONLY JSON-RPC messages appear on stdout.
+  All other output (logs, debug messages, etc.) MUST go to stderr to avoid
+  contaminating the protocol stream.
+
+  ## Handling Startup Output
+
+  This module implements several strategies to handle startup output from Mix.install
+  and other sources:
+
+  1. **Automatic logging suppression** - Configures all loggers to emergency level
+  2. **Startup delay** - Waits before reading stdin (configurable via `:stdio_startup_delay`)
+  3. **Graceful non-JSON handling** - Ignores non-JSON lines instead of sending errors
+
+  ## Configuration
+
+  For scripts using Mix.install, add this before calling Mix.install:
+
+      # Configure STDIO mode and startup delay
+      Application.put_env(:ex_mcp, :stdio_mode, true)
+      Application.put_env(:ex_mcp, :stdio_startup_delay, 500)  # ms
+      
+      # Suppress all logging for clean STDIO JSON-RPC
+      System.put_env("ELIXIR_LOG_LEVEL", "emergency")
+
+  ## Usage
+
+      defmodule MyStdioServer do
+        use ExMCP.Server
+        
+        deftool "hello" do
+          meta do
+            description "Says hello"
+          end
+          args do
+            field :name, :string, required: true
+          end
+        end
+        
+        @impl true
+        def handle_tool_call("hello", %{"name" => name}, state) do
+          {:ok, %{content: [text("Hello, \#{name}!")]}, state}
+        end
+      end
+      
+      # Start with STDIO transport
+      MyStdioServer.start_link(transport: :stdio)
   """
 
   use GenServer
@@ -23,6 +72,10 @@ defmodule ExMCP.Server.StdioServer do
 
   @impl GenServer
   def init(opts) do
+    # CRITICAL: For STDIO transport, suppress ALL logging to avoid contaminating JSON stream
+    # MCP STDIO protocol requires ONLY JSON-RPC messages on stdout
+    configure_stdio_logging()
+    
     module = Keyword.fetch!(opts, :module)
 
     # Initialize the handler module state
@@ -47,7 +100,16 @@ defmodule ExMCP.Server.StdioServer do
     Logger.info("STDIO MCP server started with handler: #{module}")
 
     # Start reading from stdin in a separate process
-    spawn_link(fn -> read_stdin_loop(self()) end)
+    # Add a delay to allow Mix.install and other startup output to complete
+    # This is especially important when Mix.install is used in the same process
+    server = self()
+    spawn_link(fn -> 
+      # Wait for any startup output to finish
+      # 100ms is usually enough for small scripts, but Mix.install may need more
+      startup_delay = Application.get_env(:ex_mcp, :stdio_startup_delay, 100)
+      Process.sleep(startup_delay)
+      read_stdin_loop(server) 
+    end)
 
     {:ok, state}
   end
@@ -58,9 +120,11 @@ defmodule ExMCP.Server.StdioServer do
       {:ok, request} ->
         handle_request(request, state)
 
-      {:error, error} ->
-        Logger.error("Invalid JSON received: #{inspect(error)}")
-        send_error_response(-32700, "Parse error", nil, state)
+      {:error, _error} ->
+        # During startup, Mix.install and other tools may output non-JSON lines
+        # We silently ignore these instead of sending error responses
+        # Only log at debug level to avoid stderr contamination
+        Logger.debug("Ignoring non-JSON line: #{inspect(line)}")
         {:noreply, state}
     end
   end
@@ -106,6 +170,20 @@ defmodule ExMCP.Server.StdioServer do
   # Handle incoming MCP requests
   defp handle_request(%{"method" => "initialize"} = request, state) do
     id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    
+    # Get client's requested protocol version
+    client_version = Map.get(params, "protocolVersion", "2025-06-18")
+    
+    # Negotiate protocol version
+    server_versions = ExMCP.Internal.VersionRegistry.supported_versions()
+    negotiated_version = 
+      case ExMCP.Internal.VersionRegistry.negotiate_version(client_version, server_versions) do
+        {:ok, version} -> version
+        {:error, :version_mismatch} -> 
+          # Fall back to latest if negotiation fails
+          ExMCP.Internal.VersionRegistry.latest_version()
+      end
 
     # Get capabilities from handler module
     capabilities =
@@ -124,14 +202,15 @@ defmodule ExMCP.Server.StdioServer do
       "jsonrpc" => "2.0",
       "id" => id,
       "result" => %{
-        "protocolVersion" => "2024-11-05",
+        "protocolVersion" => negotiated_version,
         "capabilities" => capabilities,
         "serverInfo" => server_info
       }
     }
 
     send_response(response, state)
-    {:noreply, state}
+    # Store the negotiated version in state for future use
+    {:noreply, Map.put(state, :protocol_version, negotiated_version)}
   end
 
   defp handle_request(%{"method" => "tools/list"} = request, state) do
@@ -281,6 +360,11 @@ defmodule ExMCP.Server.StdioServer do
 
     json = Jason.encode!(response)
     IO.puts(json)
+  end
+
+  # Configure logging for STDIO transport to prevent stdout contamination
+  defp configure_stdio_logging do
+    ExMCP.Internal.StdioLoggerConfig.configure()
   end
 
   # Read from stdin in a loop and send lines to the main process

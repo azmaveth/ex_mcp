@@ -72,6 +72,9 @@ defmodule ExMCP.Server.Transport do
   @spec start_stdio_server(module(), map(), list(), keyword()) ::
           {:ok, pid()} | {:error, term()}
   def start_stdio_server(module, _server_info, _tools, opts) do
+    # CRITICAL: Configure logging for STDIO transport before starting server
+    configure_stdio_logging()
+    
     # Use ExMCP v1 StdioServer for now - this provides stdio transport
     # In the future, this could be replaced with a v2-specific implementation
     case Code.ensure_loaded(ExMCP.Server.StdioServer) do
@@ -217,6 +220,11 @@ defmodule ExMCP.Server.Transport do
         description: "Native Erlang process communication"
       }
     }
+  end
+
+  # Configure logging for STDIO transport to prevent stdout contamination
+  defp configure_stdio_logging do
+    ExMCP.Internal.StdioLoggerConfig.configure()
   end
 
   # Parse host string to IP tuple

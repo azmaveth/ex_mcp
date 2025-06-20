@@ -268,7 +268,7 @@ defmodule ExMCP.DSL.Tool do
     unless description do
       raise CompileError,
         description:
-          "Tool #{inspect(name)} is missing a description. Use meta do description \"...\" end or description/1 to provide one."
+          "Tool #{inspect(name)} is missing a description. Use meta do description \"...\" end to provide one."
     end
 
     # Must have either input_schema or fields, but not both (already checked in macros)

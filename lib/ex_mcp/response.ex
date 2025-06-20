@@ -32,6 +32,21 @@ defmodule ExMCP.Response do
       text = ExMCP.Response.text_content(response)
       json = ExMCP.Response.json_content(response)
 
+  ## Protocol Data Handling
+
+  Protocol data from MCP servers is kept as string-keyed maps to maintain
+  compatibility with the MCP JSON-RPC protocol and avoid atom exhaustion issues.
+
+      # Tools, resources, and prompts use string keys
+      response.tools
+      #=> [%{"name" => "hello", "description" => "Says hello", "inputSchema" => %{...}}]
+
+      # Use accessor functions for convenience
+      tool = hd(response.tools)
+      ExMCP.Response.tool_name(tool)        #=> "hello"
+      ExMCP.Response.tool_description(tool)  #=> "Says hello"
+      ExMCP.Response.tool_input_schema(tool) #=> %{"type" => "object", ...}
+
   ## Design Rationale
 
   The structured response type provides:
@@ -39,9 +54,10 @@ defmodule ExMCP.Response do
   - Clear extraction functions for different content types
   - Metadata support for tracing and debugging
   - Unified error handling
+  - Protocol fidelity by keeping MCP data as strings
+  - Protection against atom exhaustion attacks
   """
 
-  alias ExMCP.Internal.AtomUtils
 
   defstruct [
     :content,
@@ -124,14 +140,14 @@ defmodule ExMCP.Response do
       structuredOutput:
         Map.get(raw_response, "structuredOutput") || Map.get(raw_response, "structuredContent") ||
           if(Map.has_key?(raw_response, "completion"), do: raw_response, else: nil),
-      resourceLinks: atomize_list_data(Map.get(raw_response, "resourceLinks")),
-      # List response fields - atomized for better Elixir ergonomics
-      tools: atomize_list_data(Map.get(raw_response, "tools")),
-      resources: atomize_list_data(Map.get(raw_response, "resources")),
-      prompts: atomize_list_data(Map.get(raw_response, "prompts")),
-      messages: atomize_list_data(Map.get(raw_response, "messages")),
-      # Resource read response - also atomized
-      contents: atomize_list_data(Map.get(raw_response, "contents")),
+      resourceLinks: Map.get(raw_response, "resourceLinks"),
+      # List response fields - kept as strings to match MCP protocol
+      tools: Map.get(raw_response, "tools"),
+      resources: Map.get(raw_response, "resources"),
+      prompts: Map.get(raw_response, "prompts"),
+      messages: Map.get(raw_response, "messages"),
+      # Resource read response
+      contents: Map.get(raw_response, "contents"),
       # Prompt get response
       description: Map.get(raw_response, "description")
     }
@@ -368,30 +384,56 @@ defmodule ExMCP.Response do
   defp maybe_put(map, _key, false), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  # Helper to atomize list data for better Elixir ergonomics
-  defp atomize_list_data(nil), do: nil
+  # Note: Protocol data is kept as strings to maintain compatibility with MCP
+  # and avoid atom exhaustion issues. Use accessor functions for convenience.
 
-  defp atomize_list_data(data) when is_list(data) do
-    Enum.map(data, &atomize_keys/1)
+  @doc """
+  Gets the tool name from a tool definition.
+
+  ## Examples
+
+      iex> tool = %{"name" => "hello", "description" => "Says hello"}
+      iex> ExMCP.Response.tool_name(tool)
+      "hello"
+  """
+  def tool_name(%{"name" => name}), do: name
+  def tool_name(_), do: nil
+
+  @doc """
+  Gets the tool description from a tool definition.
+
+  ## Examples
+
+      iex> tool = %{"name" => "hello", "description" => "Says hello"}
+      iex> ExMCP.Response.tool_description(tool)
+      "Says hello"
+  """
+  def tool_description(%{"description" => desc}), do: desc
+  def tool_description(_), do: nil
+
+  @doc """
+  Gets the input schema from a tool definition.
+
+  ## Examples
+
+      iex> tool = %{"name" => "hello", "inputSchema" => %{"type" => "object"}}
+      iex> ExMCP.Response.tool_input_schema(tool)
+      %{"type" => "object"}
+  """
+  def tool_input_schema(%{"inputSchema" => schema}), do: schema
+  def tool_input_schema(_), do: nil
+
+  @doc """
+  Gets a property from a schema properties map.
+
+  ## Examples
+
+      iex> schema = %{"properties" => %{"name" => %{"type" => "string"}}}
+      iex> ExMCP.Response.schema_property(schema, "name")
+      %{"type" => "string"}
+  """
+  def schema_property(%{"properties" => props}, key) when is_map(props) do
+    Map.get(props, key)
   end
-
-  defp atomize_list_data(data), do: data
-
-  # Atomize keys in maps/lists - safe version that doesn't create new atoms
-  defp atomize_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {k, v} when is_binary(k) ->
-        atom_key = AtomUtils.safe_string_to_atom(k)
-        {atom_key, atomize_keys(v)}
-
-      {k, v} ->
-        {k, atomize_keys(v)}
-    end)
-  end
-
-  defp atomize_keys(list) when is_list(list) do
-    Enum.map(list, &atomize_keys/1)
-  end
-
-  defp atomize_keys(value), do: value
+  def schema_property(_, _), do: nil
 end
