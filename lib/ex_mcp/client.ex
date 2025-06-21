@@ -586,19 +586,29 @@ defmodule ExMCP.Client do
     transport = determine_transport(opts)
     transport_opts = build_transport_opts(transport, opts)
 
-    with {:ok, transport_state} <- connect_transport(transport, transport_opts),
-         {:ok, state} <- perform_mcp_handshake(transport, transport_state, opts) do
-      # Start receiver task
-      receiver_task = start_receiver_task(transport, transport_state)
+    with {:ok, transport_state} <- connect_transport(transport, transport_opts) do
+      # Check if this is SSE mode
+      is_sse = sse_transport?(transport, transport_state)
 
-      final_state = %{
-        state
-        | receiver_task: receiver_task,
-          connection_status: :ready,
-          reconnect_attempts: 0
-      }
+      if is_sse do
+        # For SSE, start receiver BEFORE handshake to capture async responses
+        perform_sse_initialization(transport, transport_state, opts)
+      else
+        # For non-SSE, use the traditional synchronous approach
+        with {:ok, state} <- perform_mcp_handshake(transport, transport_state, opts) do
+          # Start receiver task
+          receiver_task = start_receiver_task(transport, transport_state)
 
-      {:ok, final_state}
+          final_state = %{
+            state
+            | receiver_task: receiver_task,
+              connection_status: :ready,
+              reconnect_attempts: 0
+          }
+
+          {:ok, final_state}
+        end
+      end
     end
   end
 
@@ -606,7 +616,8 @@ defmodule ExMCP.Client do
     case Keyword.get(opts, :transport, :stdio) do
       :stdio -> ExMCP.Transport.Stdio
       :http -> ExMCP.Transport.HTTP
-      :sse -> ExMCP.Transport.SSE
+      # SSE uses HTTP transport with use_sse flag
+      :sse -> ExMCP.Transport.HTTP
       :native -> ExMCP.Transport.Native
       :beam -> ExMCP.Transport.Native
       :test -> ExMCP.Transport.Test
@@ -872,6 +883,125 @@ defmodule ExMCP.Client do
 
   defp generate_session_id do
     "session-#{:erlang.unique_integer([:positive, :monotonic])}"
+  end
+
+  defp sse_transport?(transport_mod, transport_state) do
+    # Check if transport is HTTP with SSE enabled
+    transport_mod == ExMCP.Transport.HTTP and
+      Map.get(transport_state, :use_sse, false) == true
+  end
+
+  defp perform_sse_initialization(transport_mod, transport_state, opts) do
+    # Build initial state
+    initial_state = %State{
+      transport_mod: transport_mod,
+      transport_state: transport_state,
+      transport_opts: build_transport_opts(transport_mod, opts),
+      connection_status: :connecting,
+      pending_requests: %{},
+      session_id: generate_session_id(),
+      reconnect_attempts: 0,
+      max_reconnect_attempts: Keyword.get(opts, :max_reconnect_attempts, 5),
+      reconnect_interval: Keyword.get(opts, :reconnect_interval, 1_000)
+    }
+
+    # Start receiver task FIRST to capture SSE responses
+    parent = self()
+
+    receiver_task =
+      Task.async(fn ->
+        # Set up temporary message collection
+        collect_sse_messages(transport_mod, transport_state, parent)
+      end)
+
+    # Now perform handshake
+    protocol_version = Keyword.get(opts, :protocol_version, "2025-06-18")
+
+    init_request =
+      Protocol.encode_initialize(
+        %{
+          "name" => "ExMCP",
+          "version" => "0.1.0"
+        },
+        %{},
+        protocol_version
+      )
+
+    # Override the generated ID with our session-specific one
+    init_request = Map.put(init_request, "id", "init-#{initial_state.session_id}")
+
+    Logger.debug("Sending initialize request with ID: #{init_request["id"]}")
+
+    # Send the initialize request
+    case transport_mod.send_message(Jason.encode!(init_request), transport_state) do
+      {:ok, state_after_send} ->
+        # Wait for the response through our message collector
+        receive do
+          {:sse_response, response} ->
+            # Process the response
+            with :ok <- validate_initialize_response(response),
+                 {:ok, _} <- send_initialized_notification(transport_mod, state_after_send) do
+              # Stop the temporary collector
+              Task.shutdown(receiver_task, :brutal_kill)
+
+              # Start the real receiver task
+              real_receiver = start_receiver_task(transport_mod, state_after_send)
+
+              updated_state = %{
+                initial_state
+                | server_info: get_in(response, ["result", "serverInfo"]),
+                  server_capabilities: get_in(response, ["result", "capabilities"]),
+                  protocol_version: get_in(response, ["result", "protocolVersion"]),
+                  connection_status: :ready,
+                  transport_state: state_after_send,
+                  receiver_task: real_receiver
+              }
+
+              {:ok, updated_state}
+            end
+        after
+          10_000 ->
+            Task.shutdown(receiver_task, :brutal_kill)
+            {:error, :initialization_timeout}
+        end
+
+      error ->
+        Task.shutdown(receiver_task, :brutal_kill)
+        error
+    end
+  end
+
+  defp collect_sse_messages(transport_mod, transport_state, parent) do
+    case transport_mod.receive_message(transport_state) do
+      {:ok, data, new_state} ->
+        Logger.debug("SSE message received: #{inspect(data)}")
+        # Check if this is the initialization response
+        case data do
+          %{"id" => "init-" <> _, "result" => _} = response ->
+            Logger.debug("Initialization response detected!")
+            send(parent, {:sse_response, response})
+            # Continue collecting for any other messages
+            collect_sse_messages(transport_mod, new_state, parent)
+
+          _ ->
+            # Store other messages for later processing
+            Logger.debug("Non-init message, continuing...")
+            collect_sse_messages(transport_mod, new_state, parent)
+        end
+
+      {:error, :no_response} ->
+        # Non-SSE HTTP mode - should not happen here
+        Process.sleep(10)
+        collect_sse_messages(transport_mod, transport_state, parent)
+
+      {:error, :closed} ->
+        Logger.debug("SSE connection closed")
+        :ok
+
+      {:error, reason} ->
+        Logger.debug("SSE error: #{inspect(reason)}")
+        :ok
+    end
   end
 
   @doc """

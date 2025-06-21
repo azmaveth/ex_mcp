@@ -181,6 +181,7 @@ defmodule ExMCP.MessageProcessor do
 
     case method do
       "initialize" -> handle_initialize_with_server(conn, server_pid, id)
+      "ping" -> handle_ping(conn, id)
       "tools/list" -> handle_tools_list_with_server(conn, server_pid, id)
       "tools/call" -> handle_tools_call_with_server(conn, server_pid, params, id)
       "resources/list" -> handle_resources_list_with_server(conn, server_pid, id)
@@ -208,6 +209,7 @@ defmodule ExMCP.MessageProcessor do
 
     case method do
       "initialize" -> handle_initialize(conn, handler_module, server_info, id)
+      "ping" -> handle_ping(conn, id)
       "tools/list" -> handle_tools_list(conn, handler_module, id)
       "tools/call" -> handle_tools_call(conn, handler_module, params, id)
       "resources/list" -> handle_resources_list(conn, handler_module, id)
@@ -223,6 +225,11 @@ defmodule ExMCP.MessageProcessor do
       require Logger
       Logger.debug("Processing method: #{method} with handler: #{handler_module}")
     end
+  end
+
+  defp handle_ping(conn, id) do
+    response = success_response(%{}, id)
+    put_response(conn, response)
   end
 
   defp handle_initialize(conn, handler_module, server_info, id) do

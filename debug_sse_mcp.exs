@@ -18,6 +18,7 @@ defmodule SSEMCPDebug do
       transport: :http,
       url: url,
       use_sse: true,
+      endpoint: "/",  # Use root endpoint
       timeout: 10_000
     ]
     

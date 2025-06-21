@@ -321,8 +321,9 @@ defmodule ExMCP.Transport.HTTP do
   def receive_message(%__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
       when is_pid(sse_pid) do
     receive do
-      {:sse_event, ^sse_pid, %{data: data, id: event_id}} ->
+      {:sse_event, ^sse_pid, %{data: data} = event} ->
         # The enhanced SSE client sends structured events
+        event_id = Map.get(event, :id)
         new_state = if event_id, do: %{state | last_event_id: event_id}, else: state
 
         case Jason.decode(data) do
