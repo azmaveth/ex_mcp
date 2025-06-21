@@ -32,7 +32,8 @@ defmodule SSEMCPDebug do
         IO.puts("Requesting tools list...")
         case ExMCP.Client.list_tools(client, timeout: 5_000) do
           {:ok, response} ->
-            IO.puts("✅ Tools list received: #{inspect(response.result)}")
+            IO.puts("✅ Tools list received!")
+            IO.puts("  Tools: #{inspect(response.tools)}")
             
           {:error, error} ->
             IO.puts("❌ Tools list failed: #{inspect(error)}")

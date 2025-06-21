@@ -159,6 +159,11 @@ defmodule ExMCP.Transport.SSEClient do
     buffer = state.buffer <> chunk
     {events, remaining} = parse_events(buffer)
 
+    # Debug logging
+    if length(events) > 0 do
+      Logger.debug("SSE Client parsed #{length(events)} events from chunk")
+    end
+
     # Send events to parent
     Enum.each(events, fn event ->
       process_event(event, state)
@@ -322,6 +327,10 @@ defmodule ExMCP.Transport.SSEClient do
     data = Map.get(event, "data", "")
     event_type = Map.get(event, "event", "message")
     id = Map.get(event, "id")
+
+    Logger.debug(
+      "SSE Client processing event: type=#{event_type}, id=#{inspect(id)}, data_size=#{byte_size(data)}"
+    )
 
     # Update last event ID if provided
     if id do

@@ -779,7 +779,9 @@ defmodule ExMCP.Client do
     parent = self()
 
     Task.async(fn ->
-      receive_loop(transport_mod, transport_state, parent)
+      # For SSE, update the parent to this task
+      updated_state = update_sse_parent(transport_mod, transport_state)
+      receive_loop(transport_mod, updated_state, parent)
     end)
   end
 
@@ -910,8 +912,10 @@ defmodule ExMCP.Client do
 
     receiver_task =
       Task.async(fn ->
+        # Update the SSE client to send messages to this task instead
+        updated_state = update_sse_parent(transport_mod, transport_state)
         # Set up temporary message collection
-        collect_sse_messages(transport_mod, transport_state, parent)
+        collect_sse_messages(transport_mod, updated_state, parent)
       end)
 
     # Now perform handshake
@@ -971,7 +975,21 @@ defmodule ExMCP.Client do
     end
   end
 
+  defp update_sse_parent(_transport_mod, %{sse_pid: sse_pid} = state) when is_pid(sse_pid) do
+    # Tell the SSE client to send messages to us instead
+    send(sse_pid, {:change_parent, self()})
+    # Give it a moment to process
+    Process.sleep(50)
+    state
+  end
+
+  defp update_sse_parent(_transport_mod, state), do: state
+
   defp collect_sse_messages(transport_mod, transport_state, parent) do
+    Logger.debug(
+      "Starting SSE message collection, transport_state: #{inspect(Map.keys(transport_state))}"
+    )
+
     case transport_mod.receive_message(transport_state) do
       {:ok, data, new_state} ->
         Logger.debug("SSE message received: #{inspect(data)}")
@@ -999,7 +1017,7 @@ defmodule ExMCP.Client do
         :ok
 
       {:error, reason} ->
-        Logger.debug("SSE error: #{inspect(reason)}")
+        Logger.debug("SSE error in collector: #{inspect(reason)}")
         :ok
     end
   end
