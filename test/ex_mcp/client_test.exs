@@ -30,11 +30,11 @@ defmodule ExMCP.ClientTest do
       end
     end
 
-    def send(%{connected: false}, _data) do
+    def send_message(_data, %{connected: false} = state) do
       {:error, :not_connected}
     end
 
-    def send(%{agent: agent} = state, data) do
+    def send_message(data, %{agent: agent} = state) do
       # Check if we should fail sending
       fail_send = Agent.get(agent, fn state -> state.fail_send end)
 
@@ -298,14 +298,14 @@ defmodule ExMCP.ClientTest do
       }
     end
 
-    def recv(%{connected: false}, _timeout) do
+    def receive_message(%{connected: false}) do
       {:error, :closed}
     end
 
-    def recv(%{agent: agent} = state, timeout) do
+    def receive_message(%{agent: agent} = state) do
       start_time = System.monotonic_time(:millisecond)
 
-      case poll_for_response(agent, timeout, start_time) do
+      case poll_for_response(agent, 5000, start_time) do
         nil -> {:error, :timeout}
         response -> {:ok, response, state}
       end
@@ -344,21 +344,6 @@ defmodule ExMCP.ClientTest do
     def controlling_process(_state, _pid) do
       :ok
     end
-
-    # V1 transport interface - for compatibility
-    def send_message(state, data) do
-      case send(state, data) do
-        {:ok, new_state} -> {:ok, new_state}
-        {:error, reason} -> {:error, reason}
-      end
-    end
-
-    def receive_message(state) do
-      case recv(state, 100) do
-        {:ok, data, new_state} -> {:ok, data, new_state}
-        {:error, reason} -> {:error, reason}
-      end
-    end
   end
 
   # Mock transport that simulates disconnection
@@ -381,7 +366,7 @@ defmodule ExMCP.ClientTest do
       {:ok, %{agent: agent, request_count: 0}}
     end
 
-    def send(%{agent: agent, request_count: count} = state, data) do
+    def send_message(data, %{agent: agent, request_count: count} = state) do
       disconnect_after = Agent.get(agent, fn s -> s.disconnect_after end)
 
       if count >= disconnect_after do
@@ -412,7 +397,7 @@ defmodule ExMCP.ClientTest do
       end
     end
 
-    def recv(%{agent: agent} = state, timeout) do
+    def receive_message(%{agent: agent} = state) do
       case Agent.get_and_update(agent, fn %{responses: responses} = s ->
              case responses do
                [response | rest] -> {response, %{s | responses: rest}}
@@ -420,7 +405,7 @@ defmodule ExMCP.ClientTest do
              end
            end) do
         nil ->
-          Process.sleep(min(timeout, 50))
+          Process.sleep(50)
           {:error, :timeout}
 
         response ->
@@ -438,21 +423,6 @@ defmodule ExMCP.ClientTest do
 
     def controlling_process(_state, _pid) do
       :ok
-    end
-
-    # V1 transport interface - for compatibility
-    def send_message(state, data) do
-      case send(state, data) do
-        {:ok, new_state} -> {:ok, new_state}
-        {:error, reason} -> {:error, reason}
-      end
-    end
-
-    def receive_message(state) do
-      case recv(state, 100) do
-        {:ok, data, new_state} -> {:ok, data, new_state}
-        {:error, reason} -> {:error, reason}
-      end
     end
   end
 
@@ -574,11 +544,11 @@ defmodule ExMCP.ClientTest do
     end
 
     test "list_resources/2 returns available resources", %{client: client} do
-      {:ok, resources} = Client.list_resources(client)
-      assert is_list(resources)
-      assert length(resources) == 1
+      {:ok, response} = Client.list_resources(client)
+      assert is_list(response.resources)
+      assert length(response.resources) == 1
 
-      resource = hd(resources)
+      resource = hd(response.resources)
       assert resource["uri"] == "file:///test.txt"
       assert resource["name"] == "Test File"
       assert resource["mimeType"] == "text/plain"
@@ -614,11 +584,11 @@ defmodule ExMCP.ClientTest do
     end
 
     test "list_prompts/2 returns available prompts", %{client: client} do
-      {:ok, prompts} = Client.list_prompts(client)
-      assert is_list(prompts)
-      assert length(prompts) == 1
+      {:ok, response} = Client.list_prompts(client)
+      assert is_list(response.prompts)
+      assert length(response.prompts) == 1
 
-      prompt = hd(prompts)
+      prompt = hd(response.prompts)
       assert prompt["name"] == "greet"
       assert prompt["description"] == "Generate a greeting"
       assert is_list(prompt["arguments"])
@@ -719,12 +689,15 @@ defmodule ExMCP.ClientTest do
     end
 
     test "handles requests when not connected" do
+      Process.flag(:trap_exit, true)
+
       # Create a disconnecting transport that fails after initialization
+      # Use disconnect_after: 2 to allow initialize + initialized notification
       {:ok, client} =
         Client.start_link(
           transport: DisconnectingTransport,
           test_pid: self(),
-          disconnect_after: 1,
+          disconnect_after: 2,
           reconnect_interval: 50,
           max_reconnect_attempts: 1
         )

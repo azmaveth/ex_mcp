@@ -3,6 +3,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
 
   alias ExMCP.Reliability
   alias ExMCP.Reliability.Supervisor, as: ReliabilitySupervisor
+  alias ExMCP.Testing.MockServer
 
   describe "start_link/1" do
     test "starts supervisor with default options" do
@@ -49,29 +50,41 @@ defmodule ExMCP.Reliability.SupervisorTest do
   describe "create_reliable_client/2" do
     setup do
       {:ok, supervisor} = ReliabilitySupervisor.start_link()
-      on_exit(fn -> if Process.alive?(supervisor), do: GenServer.stop(supervisor) end)
-      %{supervisor: supervisor}
+      {:ok, mock_server} = MockServer.start_link([])
+
+      on_exit(fn ->
+        if Process.alive?(supervisor), do: GenServer.stop(supervisor)
+        if Process.alive?(mock_server), do: GenServer.stop(mock_server)
+      end)
+
+      %{supervisor: supervisor, mock_server: mock_server}
     end
 
-    test "creates basic reliable client without reliability features", %{supervisor: supervisor} do
-      # Use mock transport that will be handled by SimpleClient
+    test "creates basic reliable client without reliability features", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       assert {:ok, client_pid} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       assert is_pid(client_pid)
       assert Process.alive?(client_pid)
 
+      # Cleanup
       if Process.alive?(client_pid), do: GenServer.stop(client_pid)
     end
 
-    test "creates reliable client with circuit breaker", %{supervisor: supervisor} do
+    test "creates reliable client with circuit breaker", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       assert {:ok, client_pid} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()],
+                 transport: [type: :mock, server_pid: mock_server],
                  circuit_breaker: [
                    failure_threshold: 3,
                    reset_timeout: 1000
@@ -81,14 +94,18 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert is_pid(client_pid)
       assert Process.alive?(client_pid)
 
+      # Cleanup
       if Process.alive?(client_pid), do: GenServer.stop(client_pid)
     end
 
-    test "creates reliable client with health check", %{supervisor: supervisor} do
+    test "creates reliable client with health check", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       assert {:ok, client_pid} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()],
+                 transport: [type: :mock, server_pid: mock_server],
                  health_check: [
                    check_interval: 5000,
                    failure_threshold: 2
@@ -101,11 +118,14 @@ defmodule ExMCP.Reliability.SupervisorTest do
       if Process.alive?(client_pid), do: GenServer.stop(client_pid)
     end
 
-    test "creates reliable client with retry configuration", %{supervisor: supervisor} do
+    test "creates reliable client with retry configuration", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       assert {:ok, client_pid} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()],
+                 transport: [type: :mock, server_pid: mock_server],
                  retry: [
                    max_attempts: 5,
                    backoff_factor: 1.5
@@ -118,11 +138,14 @@ defmodule ExMCP.Reliability.SupervisorTest do
       if Process.alive?(client_pid), do: GenServer.stop(client_pid)
     end
 
-    test "creates reliable client with all reliability features", %{supervisor: supervisor} do
+    test "creates reliable client with all reliability features", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       assert {:ok, client_pid} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()],
+                 transport: [type: :mock, server_pid: mock_server],
                  circuit_breaker: [failure_threshold: 3],
                  retry: [max_attempts: 3],
                  health_check: [check_interval: 10_000]
@@ -134,7 +157,10 @@ defmodule ExMCP.Reliability.SupervisorTest do
       if Process.alive?(client_pid), do: GenServer.stop(client_pid)
     end
 
-    test "handles transport start failure gracefully", %{supervisor: supervisor} do
+    test "handles transport start failure gracefully", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       # Use stdio transport with invalid path to simulate failure
       assert {:error, _reason} =
                ReliabilitySupervisor.create_reliable_client(
@@ -143,17 +169,20 @@ defmodule ExMCP.Reliability.SupervisorTest do
                )
     end
 
-    test "generates unique client IDs for multiple clients", %{supervisor: supervisor} do
+    test "generates unique client IDs for multiple clients", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       assert {:ok, client1} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       assert {:ok, client2} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       assert client1 != client2
@@ -162,14 +191,14 @@ defmodule ExMCP.Reliability.SupervisorTest do
       if Process.alive?(client2), do: GenServer.stop(client2)
     end
 
-    test "accepts custom client ID", %{supervisor: supervisor} do
+    test "accepts custom client ID", %{supervisor: supervisor, mock_server: mock_server} do
       custom_id = "my_custom_client_123"
 
       assert {:ok, client_pid} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
                  id: custom_id,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       assert is_pid(client_pid)
@@ -177,7 +206,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
       if Process.alive?(client_pid), do: GenServer.stop(client_pid)
     end
 
-    test "cleans up on wrapper start failure", %{supervisor: supervisor} do
+    test "cleans up on wrapper start failure", %{supervisor: supervisor, mock_server: mock_server} do
       # Stop the supervisor to force wrapper creation failure
       GenServer.stop(supervisor)
 
@@ -185,7 +214,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert {:error, _reason} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
     end
   end
@@ -193,15 +222,24 @@ defmodule ExMCP.Reliability.SupervisorTest do
   describe "ClientWrapper integration" do
     setup do
       {:ok, supervisor} = ReliabilitySupervisor.start_link()
-      on_exit(fn -> if Process.alive?(supervisor), do: GenServer.stop(supervisor) end)
-      %{supervisor: supervisor}
+      {:ok, mock_server} = MockServer.start_link([])
+
+      on_exit(fn ->
+        if Process.alive?(supervisor), do: GenServer.stop(supervisor)
+        if Process.alive?(mock_server), do: GenServer.stop(mock_server)
+      end)
+
+      %{supervisor: supervisor, mock_server: mock_server}
     end
 
-    test "wrapped client forwards MCP operations", %{supervisor: supervisor} do
+    test "wrapped client forwards MCP operations", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       assert {:ok, wrapper_pid} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       # Test that wrapper can receive and handle calls
@@ -213,11 +251,11 @@ defmodule ExMCP.Reliability.SupervisorTest do
       if Process.alive?(wrapper_pid), do: GenServer.stop(wrapper_pid)
     end
 
-    test "wrapper monitors underlying client", %{supervisor: supervisor} do
+    test "wrapper monitors underlying client", %{supervisor: supervisor, mock_server: mock_server} do
       assert {:ok, wrapper_pid} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       # Monitor the wrapper to see when it dies
@@ -418,30 +456,39 @@ defmodule ExMCP.Reliability.SupervisorTest do
   describe "integration scenarios" do
     setup do
       {:ok, supervisor} = ReliabilitySupervisor.start_link()
-      on_exit(fn -> if Process.alive?(supervisor), do: GenServer.stop(supervisor) end)
-      %{supervisor: supervisor}
+      {:ok, mock_server} = MockServer.start_link([])
+
+      on_exit(fn ->
+        if Process.alive?(supervisor), do: GenServer.stop(supervisor)
+        if Process.alive?(mock_server), do: GenServer.stop(mock_server)
+      end)
+
+      %{supervisor: supervisor, mock_server: mock_server}
     end
 
-    test "multiple reliable clients can coexist", %{supervisor: supervisor} do
+    test "multiple reliable clients can coexist", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       # Create multiple clients with different configurations
       assert {:ok, client1} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()],
+                 transport: [type: :mock, server_pid: mock_server],
                  circuit_breaker: [failure_threshold: 5]
                )
 
       assert {:ok, client2} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()],
+                 transport: [type: :mock, server_pid: mock_server],
                  retry: [max_attempts: 3]
                )
 
       assert {:ok, client3} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()],
+                 transport: [type: :mock, server_pid: mock_server],
                  health_check: [check_interval: 30_000]
                )
 
@@ -461,12 +508,15 @@ defmodule ExMCP.Reliability.SupervisorTest do
       end
     end
 
-    test "supervisor recovery after child failure", %{supervisor: supervisor} do
+    test "supervisor recovery after child failure", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       # Create initial client
       assert {:ok, client1} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       # Force stop the client (simulating crash)
@@ -479,7 +529,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert {:ok, client2} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       assert Process.alive?(client2)
@@ -488,12 +538,15 @@ defmodule ExMCP.Reliability.SupervisorTest do
       if Process.alive?(client2), do: GenServer.stop(client2)
     end
 
-    test "combining convenience functions with supervised clients", %{supervisor: supervisor} do
+    test "combining convenience functions with supervised clients", %{
+      supervisor: supervisor,
+      mock_server: mock_server
+    } do
       # Create supervised client
       assert {:ok, client} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
 
       # Use convenience retry function
@@ -517,17 +570,23 @@ defmodule ExMCP.Reliability.SupervisorTest do
   end
 
   describe "error handling and edge cases" do
-    test "handles invalid supervisor reference" do
+    setup do
+      {:ok, mock_server} = MockServer.start_link([])
+      on_exit(fn -> if Process.alive?(mock_server), do: GenServer.stop(mock_server) end)
+      %{mock_server: mock_server}
+    end
+
+    test "handles invalid supervisor reference", %{mock_server: mock_server} do
       non_existent_supervisor = :non_existent_supervisor
 
       assert {:error, _reason} =
                ReliabilitySupervisor.create_reliable_client(
                  non_existent_supervisor,
-                 transport: [type: :mock, server_pid: self()]
+                 transport: [type: :mock, server_pid: mock_server]
                )
     end
 
-    test "handles empty and nil options gracefully" do
+    test "handles empty and nil options gracefully", %{mock_server: mock_server} do
       {:ok, supervisor} = ReliabilitySupervisor.start_link()
 
       # Empty options - should fail because no transport provided
@@ -537,7 +596,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert {:ok, client2} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :mock, server_pid: self()],
+                 transport: [type: :mock, server_pid: mock_server],
                  circuit_breaker: nil,
                  retry: nil,
                  health_check: nil

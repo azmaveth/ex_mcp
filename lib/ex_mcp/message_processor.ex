@@ -236,7 +236,7 @@ defmodule ExMCP.MessageProcessor do
     response = %{
       "jsonrpc" => "2.0",
       "result" => %{
-        "protocolVersion" => "2024-11-05",
+        "protocolVersion" => "2025-06-18",
         "capabilities" => handler_module.get_capabilities(),
         "serverInfo" => server_info
       },
@@ -399,7 +399,7 @@ defmodule ExMCP.MessageProcessor do
     response = %{
       "jsonrpc" => "2.0",
       "result" => %{
-        "protocolVersion" => "2024-11-05",
+        "protocolVersion" => "2025-06-18",
         "capabilities" => capabilities,
         "serverInfo" => server_info
       },

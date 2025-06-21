@@ -459,7 +459,7 @@ defmodule ExMCP.ConvenienceClient do
       if fuzzy? do
         fuzzy_search_tools(tools, name)
       else
-        Enum.find(tools, fn tool -> tool.name == name end)
+        Enum.find(tools, fn tool -> tool["name"] == name end)
       end
 
     case {filtered, Keyword.get(opts, :return_list, false)} do
@@ -475,15 +475,15 @@ defmodule ExMCP.ConvenienceClient do
 
     tools
     |> Enum.filter(fn tool ->
-      String.contains?(String.downcase(tool.name), pattern_lower) or
-        String.contains?(String.downcase(tool.description || ""), pattern_lower)
+      String.contains?(String.downcase(tool["name"]), pattern_lower) or
+        String.contains?(String.downcase(tool["description"] || ""), pattern_lower)
     end)
     |> Enum.sort_by(fn tool ->
       # Sort by relevance - exact name match first, then description matches
       cond do
-        tool.name == pattern -> 0
-        String.starts_with?(String.downcase(tool.name), pattern_lower) -> 1
-        String.contains?(String.downcase(tool.name), pattern_lower) -> 2
+        tool["name"] == pattern -> 0
+        String.starts_with?(String.downcase(tool["name"]), pattern_lower) -> 1
+        String.contains?(String.downcase(tool["name"]), pattern_lower) -> 2
         true -> 3
       end
     end)
@@ -491,7 +491,7 @@ defmodule ExMCP.ConvenienceClient do
 
   defp maybe_filter_by_schema(tools, opts) do
     if Keyword.get(opts, :has_schema, false) do
-      Enum.filter(tools, fn tool -> not is_nil(tool.input_schema) end)
+      Enum.filter(tools, fn tool -> not is_nil(tool["inputSchema"]) end)
     else
       tools
     end

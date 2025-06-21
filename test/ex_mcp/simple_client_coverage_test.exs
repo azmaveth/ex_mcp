@@ -36,9 +36,10 @@ defmodule ExMCP.SimpleClientCoverageTest do
       {:ok, nil}
     end
 
-    # New transport API
+    # Transport behavior implementation
     def send_message(message, transport_pid) do
       GenServer.call(transport_pid, {:send, message})
+      {:ok, transport_pid}
     end
 
     def receive_message(transport_pid) do
@@ -194,6 +195,7 @@ defmodule ExMCP.SimpleClientCoverageTest do
     end
 
     test "handles connection failure" do
+      Process.flag(:trap_exit, true)
       opts = [transport: WorkingMockTransport, fail_connect: true]
 
       assert capture_log(fn ->
@@ -205,9 +207,9 @@ defmodule ExMCP.SimpleClientCoverageTest do
       opts = [transport: WorkingMockTransport]
       {:ok, client} = SimpleClient.start_link(opts)
 
-      assert {:ok, result} = SimpleClient.list_tools(client)
-      assert result["tools"] != nil
-      assert [%{"name" => "test_tool"}] = result["tools"]
+      assert {:ok, tools} = SimpleClient.list_tools(client)
+      assert tools != nil
+      assert [%{"name" => "test_tool"}] = tools
     end
 
     test "calls tool" do
@@ -215,15 +217,15 @@ defmodule ExMCP.SimpleClientCoverageTest do
       {:ok, client} = SimpleClient.start_link(opts)
 
       assert {:ok, result} = SimpleClient.call_tool(client, "test_tool", %{})
-      assert result["content"] != nil
+      assert result.content != nil
     end
 
     test "lists resources" do
       opts = [transport: WorkingMockTransport]
       {:ok, client} = SimpleClient.start_link(opts)
 
-      assert {:ok, result} = SimpleClient.list_resources(client)
-      assert result["resources"] != nil
+      assert {:ok, resources} = SimpleClient.list_resources(client)
+      assert resources != nil
     end
 
     test "reads resource" do
@@ -231,15 +233,15 @@ defmodule ExMCP.SimpleClientCoverageTest do
       {:ok, client} = SimpleClient.start_link(opts)
 
       assert {:ok, result} = SimpleClient.read_resource(client, "file://test.txt")
-      assert result["contents"] != nil
+      assert result.contents != nil
     end
 
     test "lists prompts" do
       opts = [transport: WorkingMockTransport]
       {:ok, client} = SimpleClient.start_link(opts)
 
-      assert {:ok, result} = SimpleClient.list_prompts(client)
-      assert result["prompts"] != nil
+      assert {:ok, prompts} = SimpleClient.list_prompts(client)
+      assert prompts != nil
     end
 
     test "gets prompt" do
@@ -247,7 +249,7 @@ defmodule ExMCP.SimpleClientCoverageTest do
       {:ok, client} = SimpleClient.start_link(opts)
 
       assert {:ok, result} = SimpleClient.get_prompt(client, "test_prompt", %{})
-      assert result["messages"] != nil
+      assert result.messages != nil
     end
 
     test "performs health check" do
@@ -258,6 +260,8 @@ defmodule ExMCP.SimpleClientCoverageTest do
     end
 
     test "handles request timeout" do
+      Process.flag(:trap_exit, true)
+
       # Create a mock transport that delays responses
       defmodule SlowMockTransport do
         use GenServer
@@ -281,6 +285,18 @@ defmodule ExMCP.SimpleClientCoverageTest do
         def close(pid) do
           GenServer.stop(pid)
           {:ok, nil}
+        end
+
+        # Transport behavior implementation
+        def send_message(message, pid) do
+          GenServer.cast(pid, {:send, message})
+          {:ok, pid}
+        end
+
+        def receive_message(pid) do
+          # Always timeout to simulate slow transport
+          Process.sleep(5010)
+          {:error, :timeout}
         end
 
         def init(_), do: {:ok, %{}}
@@ -322,6 +338,8 @@ defmodule ExMCP.SimpleClientCoverageTest do
     end
 
     test "fails when all transports fail" do
+      Process.flag(:trap_exit, true)
+
       opts = [
         transports: [
           {WorkingMockTransport, [fail_connect: true]},
@@ -331,7 +349,7 @@ defmodule ExMCP.SimpleClientCoverageTest do
 
       assert capture_log(fn ->
                assert {:error, _} = SimpleClient.start_link(opts)
-             end) =~ "All transports failed"
+             end) =~ "all_transports_failed"
     end
   end
 

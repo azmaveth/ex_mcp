@@ -20,6 +20,12 @@ defmodule ExMCP.HttpPlugTest do
       result = %{content: [%{"type" => "text", "text" => "Echo: #{message}"}]}
       {:ok, result, state}
     end
+
+    @impl true
+    def handle_request(_method, _params, state) do
+      # Return unrecognized pattern to trigger handle_method_not_found
+      {:unknown_method, state}
+    end
   end
 
   describe "HTTP Plug behavior" do
@@ -79,7 +85,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
       assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
@@ -101,7 +107,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
 
@@ -126,7 +132,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
 
@@ -160,7 +166,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
 

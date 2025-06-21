@@ -430,7 +430,7 @@ defmodule ExMCP.Reliability.HealthCheck do
         "id" => System.unique_integer([:positive]),
         "method" => "initialize",
         "params" => %{
-          "protocolVersion" => "2024-11-05",
+          "protocolVersion" => "2025-06-18",
           "capabilities" => %{},
           "clientInfo" => %{
             "name" => "ExMCP HealthCheck",

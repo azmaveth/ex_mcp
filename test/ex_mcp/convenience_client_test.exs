@@ -71,7 +71,7 @@ defmodule ExMCP.ConvenienceClientTest do
         case Jason.decode!(msg) do
           %{"method" => method, "id" => _id} = request ->
             response = get_mock_response(agent, method, request)
-            {:ok, Jason.decode!(response), agent}
+            {:ok, response, agent}
 
           _ ->
             {:error, :unknown_message}
@@ -199,11 +199,11 @@ defmodule ExMCP.ConvenienceClientTest do
       assert is_list(tools)
       assert length(tools) == 2
 
-      calculator = Enum.find(tools, &(&1.name == "calculator"))
-      assert calculator.name == "calculator"
-      assert calculator.description == "Performs basic calculations"
-      assert is_map(calculator.input_schema)
-      assert is_map(calculator.metadata)
+      calculator = Enum.find(tools, &(&1["name"] == "calculator"))
+      assert calculator["name"] == "calculator"
+      assert calculator["description"] == "Performs basic calculations"
+      assert is_map(calculator["inputSchema"])
+      assert is_map(calculator["metadata"] || %{})
     end
 
     test "call executes tool and normalizes response", %{client: client} do
@@ -216,15 +216,15 @@ defmodule ExMCP.ConvenienceClientTest do
     test "call with raw response option", %{client: client} do
       result = ConvenienceClient.call(client, "calculator", %{}, normalize: false)
 
-      # Should return raw response structure
-      assert %{"content" => [%{"type" => "text", "text" => "Result: 42"}]} = result
+      # Should return Response struct when normalize: false
+      assert %ExMCP.Response{content: [%{type: "text", text: "Result: 42"}]} = result
     end
 
     test "find_tool with exact match", %{client: client} do
       tool = ConvenienceClient.find_tool(client, "calculator")
 
-      assert tool.name == "calculator"
-      assert tool.description == "Performs basic calculations"
+      assert tool["name"] == "calculator"
+      assert tool["description"] == "Performs basic calculations"
     end
 
     test "find_tool with fuzzy search", %{client: client} do
@@ -232,7 +232,7 @@ defmodule ExMCP.ConvenienceClientTest do
 
       assert is_list(tools)
       assert length(tools) == 1
-      assert Enum.at(tools, 0).name == "calculator"
+      assert Enum.at(tools, 0)["name"] == "calculator"
     end
 
     test "find_tool with schema filter", %{client: client} do
@@ -240,7 +240,7 @@ defmodule ExMCP.ConvenienceClientTest do
 
       assert is_list(tools)
       assert length(tools) == 1
-      assert Enum.at(tools, 0).name == "calculator"
+      assert Enum.at(tools, 0)["name"] == "calculator"
     end
   end
 
@@ -252,10 +252,10 @@ defmodule ExMCP.ConvenienceClientTest do
       assert length(resources) == 1
 
       resource = Enum.at(resources, 0)
-      assert resource.uri == "file://data.txt"
-      assert resource.name == "Data File"
-      assert resource.description == "Sample data file"
-      assert resource.mime_type == "text/plain"
+      assert resource["uri"] == "file://data.txt"
+      assert resource["name"] == "Data File"
+      assert resource["description"] == "Sample data file"
+      assert resource["mimeType"] == "text/plain"
     end
 
     test "read normalizes resource content", %{client: client} do
@@ -274,8 +274,8 @@ defmodule ExMCP.ConvenienceClientTest do
       assert length(prompts) == 1
 
       prompt = Enum.at(prompts, 0)
-      assert prompt.name == "greeting"
-      assert prompt.description == "A friendly greeting prompt"
+      assert prompt["name"] == "greeting"
+      assert prompt["description"] == "A friendly greeting prompt"
     end
 
     test "prompt returns normalized prompt result", %{client: client} do
@@ -286,8 +286,8 @@ defmodule ExMCP.ConvenienceClientTest do
       assert length(messages) == 1
 
       message = Enum.at(messages, 0)
-      assert message.role == "user"
-      assert message.content == "Hello there!"
+      assert message["role"] == "user"
+      assert message["content"]["text"] == "Hello there!"
     end
   end
 
@@ -336,8 +336,8 @@ defmodule ExMCP.ConvenienceClientTest do
     test "server_info returns normalized server information", %{client: client} do
       assert {:ok, server_info} = ConvenienceClient.server_info(client)
 
-      assert server_info.name == "MockServer"
-      assert server_info.version == "1.0.0"
+      assert server_info["name"] == "MockServer"
+      assert server_info["version"] == "1.0.0"
     end
 
     test "status returns connection status", %{client: client} do

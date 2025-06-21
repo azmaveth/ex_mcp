@@ -284,7 +284,7 @@ defmodule ExMCP.Testing.MockServer do
       Builders.success_response(
         request["id"],
         %{
-          "protocolVersion" => "2024-11-05",
+          "protocolVersion" => "2025-06-18",
           "capabilities" => state.capabilities,
           "serverInfo" => %{
             "name" => "ExMCP Mock Server",
@@ -539,7 +539,7 @@ defmodule ExMCP.Testing.MockTransport do
 
   @behaviour ExMCP.Transport
 
-  defstruct [:server_pid, :timeout]
+  defstruct [:server_pid, :timeout, :request_responses]
 
   @impl ExMCP.Transport
   def connect(opts) do
@@ -548,7 +548,8 @@ defmodule ExMCP.Testing.MockTransport do
 
     transport = %__MODULE__{
       server_pid: server_pid,
-      timeout: timeout
+      timeout: timeout,
+      request_responses: %{}
     }
 
     {:ok, transport}
@@ -570,14 +571,18 @@ defmodule ExMCP.Testing.MockTransport do
       {:ok, decoded} ->
         case GenServer.call(transport.server_pid, {:mcp_request, decoded}, transport.timeout) do
           {:ok, response} ->
-            # Store the response for receive to return
-            Process.put({:mock_response, decoded["id"]}, response)
-            {:ok, transport}
+            # Store the response in transport state instead of process dictionary
+            request_id = decoded["id"]
+            updated_responses = Map.put(transport.request_responses, request_id, response)
+            updated_transport = %{transport | request_responses: updated_responses}
+            {:ok, updated_transport}
 
           {:error, error_response} ->
             # For error responses, still store them for recv to return
-            Process.put({:mock_response, decoded["id"]}, error_response)
-            {:ok, transport}
+            request_id = decoded["id"]
+            updated_responses = Map.put(transport.request_responses, request_id, error_response)
+            updated_transport = %{transport | request_responses: updated_responses}
+            {:ok, updated_transport}
         end
 
       {:error, _} = error ->
@@ -593,25 +598,25 @@ defmodule ExMCP.Testing.MockTransport do
 
   # Compatibility method for SimpleClient
   def receive(transport, _timeout \\ 5000) do
-    # Try to get the stored response from send
+    # Try to get the stored response from transport state
     receive do
       _ -> :ok
     after
       0 -> :ok
     end
 
-    # Check process dictionary for stored responses
-    case Process.get_keys()
-         |> Enum.find(fn key ->
-           match?({:mock_response, _}, key)
-         end) do
-      nil ->
+    # Check transport state for stored responses
+    case transport.request_responses do
+      responses when map_size(responses) == 0 ->
         {:error, :no_response}
 
-      key ->
-        response = Process.get(key)
-        Process.delete(key)
-        {:ok, Jason.encode!(response), transport}
+      responses ->
+        # Get the first available response
+        {request_id, response} = Enum.at(responses, 0)
+        # Remove the response from state for next time
+        updated_responses = Map.delete(responses, request_id)
+        updated_transport = %{transport | request_responses: updated_responses}
+        {:ok, Jason.encode!(response), updated_transport}
     end
   end
 

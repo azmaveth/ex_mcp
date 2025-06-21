@@ -9,6 +9,9 @@ Code.require_file("support/test_helpers.ex", __DIR__)
 {:ok, _} = Application.ensure_all_started(:ranch)
 {:ok, _} = Application.ensure_all_started(:cowboy)
 
+# Enable test mode for SSE handlers to prevent blocking in tests
+Application.put_env(:ex_mcp, :test_mode, true)
+
 # Configure default exclusions for fast local development
 # These can be overridden with --include flags
 default_exclusions = [
