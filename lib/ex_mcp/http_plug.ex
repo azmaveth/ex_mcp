@@ -29,6 +29,20 @@ defmodule ExMCP.HttpPlug do
 
   alias ExMCP.HttpPlug.SSEHandler
 
+  # Simple session registry using ETS
+  @ets_table :http_plug_sessions
+
+  def start_link(_opts \\ []) do
+    # Create ETS table for session storage if it doesn't exist
+    try do
+      :ets.new(@ets_table, [:named_table, :public, :set])
+    rescue
+      ArgumentError -> :ok  # Table already exists
+    end
+    
+    {:ok, self()}
+  end
+
   @doc """
   Initializes the plug with configuration options.
   """
@@ -48,6 +62,7 @@ defmodule ExMCP.HttpPlug do
   """
   @impl Plug
   def call(%Plug.Conn{method: "OPTIONS"} = conn, opts) do
+    Logger.debug("HttpPlug: OPTIONS request")
     if opts.cors_enabled do
       handle_cors_preflight(conn)
     else
@@ -72,6 +87,7 @@ defmodule ExMCP.HttpPlug do
   end
 
   def call(%Plug.Conn{method: "POST"} = conn, opts) do
+    Logger.debug("HttpPlug: POST request to #{conn.request_path}")
     handle_mcp_request(conn, opts)
   end
 
@@ -93,15 +109,28 @@ defmodule ExMCP.HttpPlug do
 
   # Handle regular MCP JSON-RPC requests
   defp handle_mcp_request(conn, opts) do
+    Logger.debug("Handling MCP request, SSE enabled: #{opts.sse_enabled}")
     with {:ok, body, conn} <- read_body(conn),
          {:ok, request} <- parse_json(body),
          result <- process_mcp_request(request, opts) do
+      Logger.debug("MCP request processed, result: #{inspect(result)}")
       case result do
         {:ok, response} ->
-          conn
-          |> maybe_add_cors_headers(opts)
-          |> put_resp_content_type("application/json")
-          |> send_resp(200, Jason.encode!(response))
+          # If SSE is enabled, send response via SSE instead of HTTP response
+          if opts.sse_enabled do
+            Logger.debug("SSE mode: sending response via SSE: #{inspect(response)}")
+            send_response_via_sse(response, conn, opts)
+            # Return 202 Accepted for the POST request
+            conn
+            |> maybe_add_cors_headers(opts)
+            |> send_resp(202, "")
+          else
+            # Non-SSE mode: send response in HTTP body
+            conn
+            |> maybe_add_cors_headers(opts)
+            |> put_resp_content_type("application/json")
+            |> send_resp(200, Jason.encode!(response))
+          end
 
         {:notification, _} ->
           # Notifications get 202 Accepted with no body
@@ -181,11 +210,16 @@ defmodule ExMCP.HttpPlug do
         opts.session_manager.register_sse_handler(session_id, handler)
       end
 
+      # Also register in our simple ETS registry
+      register_sse_handler(session_id, handler)
+
       # Block until handler exits
       ref = Process.monitor(handler)
 
       receive do
         {:DOWN, ^ref, :process, ^handler, _reason} ->
+          # Clean up the session registry when handler exits
+          cleanup_sse_handler(session_id)
           conn
       end
     end
@@ -251,9 +285,72 @@ defmodule ExMCP.HttpPlug do
 
   # Extract or generate session ID
   defp get_session_id(conn) do
-    case get_req_header(conn, "x-session-id") do
+    # Try multiple possible session header names for compatibility
+    case get_req_header(conn, "mcp-session-id") do
       [session_id] -> session_id
-      [] -> generate_session_id()
+      [] -> 
+        case get_req_header(conn, "x-session-id") do
+          [session_id] -> session_id  
+          [] -> generate_session_id()
+        end
+    end
+  end
+
+  # Register SSE handler for a session
+  defp register_sse_handler(session_id, handler_pid) do
+    try do
+      :ets.insert(@ets_table, {session_id, handler_pid})
+    rescue
+      ArgumentError ->
+        # Table doesn't exist, create it
+        :ets.new(@ets_table, [:named_table, :public, :set])
+        :ets.insert(@ets_table, {session_id, handler_pid})
+    end
+  end
+
+  # Look up SSE handler for a session
+  defp lookup_sse_handler(session_id) do
+    try do
+      case :ets.lookup(@ets_table, session_id) do
+        [{^session_id, handler_pid}] -> {:ok, handler_pid}
+        [] -> {:error, :not_found}
+      end
+    rescue
+      ArgumentError -> {:error, :table_not_found}
+    end
+  end
+
+  # Clean up SSE handler registration
+  defp cleanup_sse_handler(session_id) do
+    try do
+      :ets.delete(@ets_table, session_id)
+    rescue
+      ArgumentError -> :ok  # Table doesn't exist, nothing to clean up
+    end
+  end
+
+  # Send MCP response via SSE to connected clients
+  defp send_response_via_sse(response, conn, opts) do
+    session_id = get_session_id(conn)
+    Logger.debug("Sending SSE response for session #{session_id}")
+    
+    # Try to send via session manager first if available
+    if function_exported?(opts.session_manager, :send_sse_message, 2) do
+      json_response = Jason.encode!(response)
+      Logger.debug("Using session manager to send SSE message")
+      opts.session_manager.send_sse_message(session_id, json_response)
+    else
+      # Try to send via our ETS registry
+      case lookup_sse_handler(session_id) do
+        {:ok, handler_pid} ->
+          json_response = Jason.encode!(response)
+          Logger.debug("Found SSE handler #{inspect(handler_pid)}, sending event")
+          # Send the response as an SSE event
+          SSEHandler.send_event(handler_pid, "message", json_response)
+          
+        {:error, reason} ->
+          Logger.warning("Could not find SSE handler for session #{session_id}: #{inspect(reason)}")
+      end
     end
   end
 
