@@ -12,6 +12,11 @@ Code.require_file("support/test_helpers.ex", __DIR__)
 # Enable test mode for SSE handlers to prevent blocking in tests
 Application.put_env(:ex_mcp, :test_mode, true)
 
+# Clean up any stray test processes before running tests
+if System.get_env("SKIP_TEST_CLEANUP") != "true" do
+  Mix.Task.run("test.cleanup")
+end
+
 # Configure default exclusions for fast local development
 # These can be overridden with --include flags
 default_exclusions = [

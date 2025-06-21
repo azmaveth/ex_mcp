@@ -1,4 +1,4 @@
-.PHONY: help deps test format lint dialyzer docs clean quality coverage
+.PHONY: help deps test format lint dialyzer docs clean quality coverage cleanup-tests
 
 help: ## Show this help
 	@echo "Available targets:"
@@ -7,7 +7,7 @@ help: ## Show this help
 deps: ## Install dependencies
 	mix deps.get
 
-test: ## Run tests
+test: cleanup-tests ## Run tests (with cleanup first)
 	mix test
 
 format: ## Format code
@@ -44,3 +44,7 @@ setup: deps ## Initial project setup
 	mix compile
 	mix dialyzer --plt
 	mix git_hooks.install
+
+cleanup-tests: ## Clean up stray test processes and ports
+	@echo "🧹 Cleaning up test processes..."
+	@mix test.cleanup --verbose || ./scripts/cleanup_tests.sh

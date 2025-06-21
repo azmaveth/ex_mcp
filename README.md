@@ -847,6 +847,36 @@ mix test.tags
 
 See [test/TAGGING_STRATEGY.md](test/TAGGING_STRATEGY.md) for complete documentation.
 
+### Test Process Cleanup
+
+Tests that start servers can sometimes leave processes running if they crash. ExMCP provides several tools to clean up these stray processes:
+
+```bash
+# Clean up before running tests (automatic with make test)
+mix test.cleanup
+
+# Manual cleanup with verbose output
+mix test.cleanup --verbose
+
+# Dry run to see what would be cleaned
+mix test.cleanup --dry-run
+
+# Alternative bash script
+./scripts/cleanup_tests.sh
+
+# Clean up as part of test run
+make test  # Automatically runs cleanup first
+
+# Skip automatic cleanup if needed
+SKIP_TEST_CLEANUP=true mix test
+```
+
+The cleanup tools will:
+- Stop any Cowboy listeners from tests
+- Kill registered test processes
+- Free up commonly used test ports (8080-8085, 9000-9002)
+- Clean up stray beam.smp processes from test runs
+
 ### Code Quality Tools
 
 - **Formatter** - Elixir's built-in code formatter
