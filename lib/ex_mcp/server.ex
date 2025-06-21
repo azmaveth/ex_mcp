@@ -147,11 +147,14 @@ defmodule ExMCP.Server do
 
   # Make callbacks optional with default implementations
   @optional_callbacks [
+    handle_resource_read: 3,
     handle_resource_list: 1,
     handle_resource_subscribe: 2,
     handle_resource_unsubscribe: 2,
     handle_prompt_list: 1,
     handle_request: 3,
+    handle_tool_call: 3,
+    handle_prompt_get: 3,
     init: 1
   ]
 
@@ -400,15 +403,29 @@ defmodule ExMCP.Server do
   defp generate_default_callbacks do
     quote do
       # Default implementations for optional callbacks
+      def handle_resource_read(_uri, _full_uri, state), do: {:error, :resource_not_found, state}
       def handle_resource_list(state), do: {:ok, [], state}
       def handle_resource_subscribe(_uri, state), do: {:ok, state}
       def handle_resource_unsubscribe(_uri, state), do: {:ok, state}
       def handle_prompt_list(state), do: {:ok, [], state}
       def handle_request(_method, _params, state), do: {:noreply, state}
+
+      def handle_tool_call(_tool_name, _arguments, state),
+        do: {:error, :tool_not_implemented, state}
+
+      def handle_prompt_get(_prompt_name, _arguments, state),
+        do: {:error, :prompt_not_implemented, state}
     end
   end
 
   defp generate_genserver_callbacks do
+    quote do
+      unquote(generate_genserver_init())
+      unquote(generate_genserver_handle_calls())
+    end
+  end
+
+  defp generate_genserver_init do
     quote do
       # Default GenServer init callback
       @impl GenServer
@@ -416,7 +433,19 @@ defmodule ExMCP.Server do
         register_capabilities()
         {:ok, Map.new(args)}
       end
+    end
+  end
 
+  defp generate_genserver_handle_calls do
+    quote do
+      unquote(generate_basic_handle_calls())
+      unquote(generate_mcp_handle_calls())
+      unquote(generate_fallback_handle_call())
+    end
+  end
+
+  defp generate_basic_handle_calls do
+    quote do
       # Handle server info requests
       @impl GenServer
       def handle_call(:get_server_info, _from, state) do
@@ -424,6 +453,63 @@ defmodule ExMCP.Server do
         {:reply, server_info, state}
       end
 
+      # Handle capabilities requests
+      def handle_call(:get_capabilities, _from, state) do
+        {:reply, get_capabilities(), state}
+      end
+
+      # Handle tools list requests
+      def handle_call(:get_tools, _from, state) do
+        {:reply, get_tools(), state}
+      end
+
+      # Handle resources list requests
+      def handle_call(:get_resources, _from, state) do
+        {:reply, get_resources(), state}
+      end
+
+      # Handle prompts list requests
+      def handle_call(:get_prompts, _from, state) do
+        {:reply, get_prompts(), state}
+      end
+    end
+  end
+
+  defp generate_mcp_handle_calls do
+    quote do
+      # Handle tool call requests
+      def handle_call({:handle_tool_call, tool_name, arguments}, _from, state) do
+        result = handle_tool_call(tool_name, arguments, state)
+        {:reply, result, state}
+      end
+
+      # Handle resource read requests
+      def handle_call({:handle_resource_read, uri, full_uri}, _from, state) do
+        case handle_resource_read(uri, full_uri, state) do
+          {:ok, content, new_state} ->
+            {:reply, {:ok, content, new_state}, new_state}
+
+          {:error, reason, new_state} ->
+            {:reply, {:error, reason, new_state}, new_state}
+        end
+      end
+
+      # Handle prompt get requests
+      def handle_call({:handle_prompt_get, prompt_name, arguments}, _from, state) do
+        result = handle_prompt_get(prompt_name, arguments, state)
+        {:reply, result, state}
+      end
+
+      # Handle custom requests
+      def handle_call({:handle_request, method, params}, _from, state) do
+        result = handle_request(method, params, state)
+        {:reply, result, state}
+      end
+    end
+  end
+
+  defp generate_fallback_handle_call do
+    quote do
       # Default handle_call fallback
       def handle_call(request, _from, state) do
         {:reply, {:error, {:unknown_call, request}}, state}
@@ -451,11 +537,14 @@ defmodule ExMCP.Server do
   defp generate_overridable_list do
     quote do
       defoverridable init: 1,
+                     handle_resource_read: 3,
                      handle_resource_list: 1,
                      handle_resource_subscribe: 2,
                      handle_resource_unsubscribe: 2,
                      handle_prompt_list: 1,
-                     handle_request: 3
+                     handle_request: 3,
+                     handle_tool_call: 3,
+                     handle_prompt_get: 3
     end
   end
 

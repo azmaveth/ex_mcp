@@ -133,8 +133,67 @@ defmodule ExMCP.MessageProcessor do
         put_response(conn, error_response)
 
       handler_module when is_atom(handler_module) ->
-        process_with_handler(conn, handler_module, server_info)
+        # Check if handler implements DSL Server pattern
+        if function_exported?(handler_module, :start_link, 1) and
+             function_exported?(handler_module, :handle_resource_read, 3) do
+          process_with_dsl_server(conn, handler_module, server_info)
+        else
+          process_with_handler(conn, handler_module, server_info)
+        end
     end
+  end
+
+  # Process request using DSL Server with temporary GenServer instance
+  defp process_with_dsl_server(conn, handler_module, server_info) do
+    # Start a temporary server instance for this request
+    case start_temporary_server(handler_module) do
+      {:ok, server_pid} ->
+        try do
+          process_with_server_pid(conn, server_pid, server_info)
+        after
+          # Clean up the temporary server
+          if Process.alive?(server_pid) do
+            GenServer.stop(server_pid, :normal, 1000)
+          end
+        end
+
+      {:error, reason} ->
+        error_response = %{
+          "jsonrpc" => "2.0",
+          "error" => %{
+            "code" => -32603,
+            "message" => "Failed to start server instance",
+            "data" => %{"reason" => inspect(reason)}
+          },
+          "id" => get_request_id(conn.request)
+        }
+
+        put_response(conn, error_response)
+    end
+  end
+
+  # Process request using running GenServer instance
+  defp process_with_server_pid(conn, server_pid, _server_info) do
+    request = conn.request
+    method = Map.get(request, "method")
+    params = Map.get(request, "params", %{})
+    id = get_request_id(request)
+
+    case method do
+      "initialize" -> handle_initialize_with_server(conn, server_pid, id)
+      "tools/list" -> handle_tools_list_with_server(conn, server_pid, id)
+      "tools/call" -> handle_tools_call_with_server(conn, server_pid, params, id)
+      "resources/list" -> handle_resources_list_with_server(conn, server_pid, id)
+      "resources/read" -> handle_resources_read_with_server(conn, server_pid, params, id)
+      "prompts/list" -> handle_prompts_list_with_server(conn, server_pid, id)
+      "prompts/get" -> handle_prompts_get_with_server(conn, server_pid, params, id)
+      _ -> handle_custom_method_with_server(conn, server_pid, method, params, id)
+    end
+  end
+
+  defp start_temporary_server(handler_module) do
+    # Start a temporary GenServer instance
+    handler_module.start_link([])
   end
 
   # Process request using ServerV2 handler
@@ -323,6 +382,159 @@ defmodule ExMCP.MessageProcessor do
       },
       "id" => id
     }
+  end
+
+  # GenServer-based handlers
+  defp handle_initialize_with_server(conn, server_pid, id) do
+    server_info = GenServer.call(server_pid, :get_server_info, 5000)
+    capabilities = GenServer.call(server_pid, :get_capabilities, 5000)
+
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => %{
+        "protocolVersion" => "2024-11-05",
+        "capabilities" => capabilities,
+        "serverInfo" => server_info
+      },
+      "id" => id
+    }
+
+    put_response(conn, response)
+  rescue
+    error ->
+      error_response = error_response("Initialize failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_tools_list_with_server(conn, server_pid, id) do
+    tools = GenServer.call(server_pid, :get_tools, 5000) |> Map.values()
+
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => %{"tools" => tools},
+      "id" => id
+    }
+
+    put_response(conn, response)
+  rescue
+    error ->
+      error_response = error_response("Tools list failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_tools_call_with_server(conn, server_pid, params, id) do
+    tool_name = Map.get(params, "name")
+    arguments = Map.get(params, "arguments", %{})
+
+    case GenServer.call(server_pid, {:handle_tool_call, tool_name, arguments}, 10000) do
+      {:ok, result, _state} ->
+        response = success_response(result, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Tool execution failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Tool call failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_resources_list_with_server(conn, server_pid, id) do
+    resources = GenServer.call(server_pid, :get_resources, 5000) |> Map.values()
+
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => %{"resources" => resources},
+      "id" => id
+    }
+
+    put_response(conn, response)
+  rescue
+    error ->
+      error_response = error_response("Resources list failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_resources_read_with_server(conn, server_pid, params, id) do
+    uri = Map.get(params, "uri")
+
+    case GenServer.call(server_pid, {:handle_resource_read, uri, uri}, 10000) do
+      {:ok, content, _state} ->
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => %{"contents" => content},
+          "id" => id
+        }
+
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resource read failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Resource read failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_prompts_list_with_server(conn, server_pid, id) do
+    prompts = GenServer.call(server_pid, :get_prompts, 5000) |> Map.values()
+
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => %{"prompts" => prompts},
+      "id" => id
+    }
+
+    put_response(conn, response)
+  rescue
+    error ->
+      error_response = error_response("Prompts list failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_prompts_get_with_server(conn, server_pid, params, id) do
+    prompt_name = Map.get(params, "name")
+    arguments = Map.get(params, "arguments", %{})
+
+    case GenServer.call(server_pid, {:handle_prompt_get, prompt_name, arguments}, 10000) do
+      {:ok, result, _state} ->
+        response = success_response(result, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Prompt get failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Prompt get failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_custom_method_with_server(conn, server_pid, method, params, id) do
+    case GenServer.call(server_pid, {:handle_request, method, params}, 10000) do
+      {:reply, result, _state} ->
+        response = success_response(result, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Request failed", reason, id)
+        put_response(conn, error_response)
+
+      {:noreply, _state} ->
+        conn
+
+      _ ->
+        handle_method_not_found(conn, id)
+    end
+  rescue
+    error ->
+      error_response = error_response("Custom method failed", error, id)
+      put_response(conn, error_response)
   end
 
   defp get_request_id(request) when is_map(request) do

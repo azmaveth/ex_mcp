@@ -63,6 +63,14 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  def call(%Plug.Conn{method: "GET", path_info: ["mcp", "v1", "sse"]} = conn, opts) do
+    if opts.sse_enabled do
+      handle_sse_connection(conn, opts)
+    else
+      send_resp(conn, 404, "SSE not enabled")
+    end
+  end
+
   def call(%Plug.Conn{method: "POST"} = conn, opts) do
     handle_mcp_request(conn, opts)
   end

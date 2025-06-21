@@ -102,7 +102,8 @@ defmodule ExMCP.Server.Transport do
   def start_http_server(module, server_info, tools, opts) do
     port = Keyword.get(opts, :port, 4000)
     host = Keyword.get(opts, :host, "localhost")
-    sse_enabled = Keyword.get(opts, :sse_enabled, false)
+    # Check both :sse_enabled and :use_sse for compatibility
+    sse_enabled = Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
     cors_enabled = Keyword.get(opts, :cors_enabled, true)
 
     # Configure the HTTP Plug
