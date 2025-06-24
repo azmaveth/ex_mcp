@@ -280,6 +280,157 @@ defmodule ExMCP.Internal.Security do
     ]
   end
 
+  #
+  # Token Passthrough and Consent
+  #
+
+  @sensitive_headers [
+    "authorization",
+    "cookie",
+    "x-api-key",
+    "x-auth-token"
+  ]
+
+  @doc """
+  Checks for and prevents token passthrough to external resources.
+
+  It classifies the URL, and if it's external, it strips sensitive headers.
+  This is a key part of preventing confused deputy attacks.
+  """
+  @spec check_token_passthrough(String.t(), list({String.t(), String.t()}), map()) ::
+          {:ok, list({String.t(), String.t()})}
+  def check_token_passthrough(url, headers, config) do
+    trusted_origins = Map.get(config, :trusted_origins, [])
+    classification = classify_url(url, trusted_origins)
+    new_headers = strip_sensitive_headers(headers, classification)
+    {:ok, new_headers}
+  end
+
+  @doc """
+  Classifies a URL as `:internal` or `:external` based on trusted origins.
+
+  Trusted origins are hosts that are considered part of the same security
+  domain. Wildcard matching (`*.example.com`) is supported for subdomains.
+  """
+  @spec classify_url(String.t(), [String.t()]) :: :internal | :external
+  def classify_url(url, trusted_origins) do
+    with %URI{host: host} <- URI.parse(url),
+         true <- not is_nil(host) do
+      normalized_host = String.downcase(host)
+
+      is_trusted =
+        Enum.any?(trusted_origins, fn trusted ->
+          if String.starts_with?(trusted, "*.") do
+            String.ends_with?(normalized_host, String.trim_leading(trusted, "*"))
+          else
+            normalized_host == trusted
+          end
+        end)
+
+      if is_trusted, do: :internal, else: :external
+    else
+      _error ->
+        # If URL can't be parsed, treat it as external for safety.
+        :external
+    end
+  end
+
+  @doc """
+  Strips sensitive headers if the resource classification is `:external`.
+  """
+  @spec strip_sensitive_headers(list({String.t(), String.t()}), :internal | :external) ::
+          list({String.t(), String.t()})
+  def strip_sensitive_headers(headers, :internal) do
+    headers
+  end
+
+  def strip_sensitive_headers(headers, :external) do
+    Enum.reject(headers, fn {name, _value} ->
+      String.downcase(name) in @sensitive_headers
+    end)
+  end
+
+  @doc """
+  Ensures user consent is obtained before accessing an external resource.
+  """
+  @spec ensure_user_consent(
+          ExMCP.ConsentHandler.user_id(),
+          String.t(),
+          atom(),
+          module(),
+          map()
+        ) :: :ok | {:error, :consent_denied | :consent_required | :consent_error}
+  def ensure_user_consent(user_id, url, transport, handler, config) do
+    trusted_origins = Map.get(config, :trusted_origins, [])
+
+    with {:ok, origin} <- extract_origin(url),
+         :external <- classify_url(url, trusted_origins) do
+      do_ensure_user_consent(user_id, origin, transport, handler, config)
+    else
+      :internal ->
+        :ok
+
+      {:error, _reason} ->
+        # If URL is invalid or has no origin, we can't check consent.
+        # Let other parts of the system handle the invalid URL.
+        # From a consent perspective, we don't block it.
+        :ok
+    end
+  end
+
+  defp do_ensure_user_consent(user_id, origin, transport, handler, config) do
+    case ExMCP.Internal.ConsentCache.check_consent(user_id, origin) do
+      {:ok, _expires_at} ->
+        :ok
+
+      {:not_found} ->
+        handle_consent_request(user_id, origin, transport, handler, config)
+
+      {:expired} ->
+        # Consent expired, so revoke it from cache and re-request.
+        ExMCP.Internal.ConsentCache.revoke_consent(user_id, origin)
+        handle_consent_request(user_id, origin, transport, handler, config)
+    end
+  end
+
+  defp handle_consent_request(user_id, origin, transport, handler, config) do
+    context = %{
+      transport: transport,
+      consent_ttl: Map.get(config, :consent_ttl, 3600)
+    }
+
+    case handler.request_consent(user_id, origin, context) do
+      {:ok, expires_at} ->
+        ExMCP.Internal.ConsentCache.store_consent(user_id, origin, expires_at)
+        :ok
+
+      {:error, :denied} ->
+        {:error, :consent_denied}
+
+      {:error, :consent_required} ->
+        {:error, :consent_required}
+    end
+  end
+
+  @doc """
+  Extracts the origin (scheme://host:port) from a URL string.
+  """
+  @spec extract_origin(String.t()) :: {:ok, String.t()} | {:error, :invalid_uri}
+  def extract_origin(url) do
+    case URI.parse(url) do
+      %URI{scheme: nil} ->
+        {:error, :invalid_uri}
+
+      %URI{host: nil} ->
+        {:error, :invalid_uri}
+
+      %URI{scheme: scheme, host: host, port: port} = _uri ->
+        default_port = URI.default_port(scheme)
+        port_str = if port && port != default_port, do: ":#{port}", else: ""
+        {:ok, "#{scheme}://#{host}#{port_str}"}
+    end
+  end
+
   @doc """
   Validates an HTTP request for security compliance.
 

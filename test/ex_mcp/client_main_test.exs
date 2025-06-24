@@ -169,6 +169,12 @@ defmodule ExMCP.ClientMainTest do
     defp get_mock_response(agent, method, request) do
       state = Agent.get(agent, & &1)
 
+      # In timeout mode, we hang forever to simulate a non-responsive server
+      # for any request other than the initial handshake.
+      if state.timeout_mode and method != "initialize" do
+        Process.sleep(:infinity)
+      end
+
       # Check for error responses first
       case Map.get(state.error_responses, method) do
         nil ->
@@ -326,12 +332,13 @@ defmodule ExMCP.ClientMainTest do
       assert tool["name"] == "hello"
     end
 
-    @tag :skip
     test "handles timeout" do
-      # Skip this test since MockTransport responds too quickly to reliably test timeouts
-      # In real usage, timeouts are tested via integration tests with actual slow transports
-      {:ok, client} = Client.start_link(transport: MockTransport)
-      assert {:error, _} = Client.list_tools(client, timeout: 1)
+      # Start a client with the mock transport in timeout mode.
+      # The mock transport will respond to the handshake but hang on subsequent requests.
+      {:ok, client} = Client.start_link(transport: MockTransport, timeout_mode: true)
+
+      # The GenServer.call should time out because the mock transport never replies.
+      assert {:error, :timeout} = Client.list_tools(client, timeout: 10)
     end
 
     test "handles transport errors", %{client: client} do

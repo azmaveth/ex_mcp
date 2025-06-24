@@ -107,10 +107,10 @@ defmodule ExMCP.BatchIntegrationTest do
 
       # Send batch request
       batch_requests = [
-        {:list_tools, []},
-        {:call_tool, ["test_tool", %{}]},
-        {:list_resources, []},
-        {:read_resource, ["test://resource"]}
+        {"tools/list", %{}},
+        {"tools/call", %{"name" => "test_tool", "arguments" => %{}}},
+        {"resources/list", %{}},
+        {"resources/read", %{"uri" => "test://resource"}}
       ]
 
       # Make batch request
@@ -158,10 +158,10 @@ defmodule ExMCP.BatchIntegrationTest do
 
       # Send batch request with some that will fail
       batch_requests = [
-        {:list_tools, []},
+        {"tools/list", %{}},
         # This will fail
-        {:get_prompt, ["nonexistent", %{}]},
-        {:list_resources, []}
+        {"prompts/get", %{"name" => "nonexistent", "arguments" => %{}}},
+        {"resources/list", %{}}
       ]
 
       # Make batch request

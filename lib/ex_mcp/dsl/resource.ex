@@ -1,11 +1,11 @@
 defmodule ExMCP.DSL.Resource do
   @moduledoc """
-  DSL for defining MCP resources with URI patterns and metadata.
+  Simplified DSL for defining MCP resources.
 
-  Provides the `defresource` and `defresource_template` macros for
-  defining resources that can be read by MCP clients.
+  Provides the `defresource` macro for defining resources with metadata and MIME types.
   """
 
+  require Logger
   alias ExMCP.DSL.Meta
 
   @doc """
@@ -13,12 +13,10 @@ defmodule ExMCP.DSL.Resource do
 
   ## Examples
 
-      # Meta block syntax (recommended)
       defresource "config://app/settings" do
         meta do
           name "Application Settings"
           description "Current application configuration"
-          author "System Team"
         end
 
         mime_type "application/json"
@@ -28,7 +26,6 @@ defmodule ExMCP.DSL.Resource do
         }
       end
 
-      # Pattern-based resource with subscription support
       defresource "file://logs/*.log" do
         meta do
           name "Log Files"
@@ -38,13 +35,6 @@ defmodule ExMCP.DSL.Resource do
         mime_type "text/plain"
         list_pattern true
         subscribable true
-      end
-
-      # Legacy syntax (deprecated but supported)
-      defresource "legacy://resource" do
-        name "Legacy Resource"  # Deprecated - use meta block
-        description "Legacy description"  # Deprecated - use meta block
-        mime_type "text/plain"
       end
   """
   defmacro defresource(uri, do: body) do
@@ -56,37 +46,26 @@ defmodule ExMCP.DSL.Resource do
       Meta.clear_meta(__MODULE__)
 
       @__resource_uri__ unquote(uri)
-      @__resource_opts__ []
 
       unquote(body)
 
       # Get accumulated meta and validate
       resource_meta = Meta.get_meta(__MODULE__)
 
-      # Get legacy name/description for backward compatibility
-      legacy_name = Module.get_attribute(__MODULE__, :__resource_name__)
-      legacy_description = Module.get_attribute(__MODULE__, :__resource_description__)
-
       # Validate the resource definition before registering
-      # credo:disable-for-next-line Credo.Check.Design.AliasUsage
       ExMCP.DSL.Resource.__validate_resource_definition__(
         unquote(uri),
-        resource_meta,
-        legacy_name,
-        legacy_description
+        resource_meta
       )
 
       # Register the resource in the module's metadata
-      final_name = resource_meta[:name] || legacy_name
-      final_description = resource_meta[:description] || legacy_description
-
       @__resources__ Map.put(
                        Module.get_attribute(__MODULE__, :__resources__) || %{},
                        unquote(uri),
                        %{
                          uri: unquote(uri),
-                         name: final_name,
-                         description: final_description,
+                         name: resource_meta[:name],
+                         description: resource_meta[:description],
                          mime_type: Module.get_attribute(__MODULE__, :__resource_mime_type__),
                          annotations:
                            Module.get_attribute(__MODULE__, :__resource_annotations__) || %{},
@@ -101,8 +80,6 @@ defmodule ExMCP.DSL.Resource do
 
       # Clean up temporary attributes
       Module.delete_attribute(__MODULE__, :__resource_uri__)
-      Module.delete_attribute(__MODULE__, :__resource_name__)
-      Module.delete_attribute(__MODULE__, :__resource_description__)
       Module.delete_attribute(__MODULE__, :__resource_mime_type__)
       Module.delete_attribute(__MODULE__, :__resource_annotations__)
       Module.delete_attribute(__MODULE__, :__resource_list_pattern__)
@@ -112,96 +89,11 @@ defmodule ExMCP.DSL.Resource do
   end
 
   @doc """
-  Defines a resource template with URI pattern.
-
-  ## Examples
-
-      defresource_template "github://repos/{owner}/{repo}/issues/{id}" do
-        name "GitHub Issues"
-        description "Access GitHub issue data"
-        mime_type "application/json"
-      end
-  """
-  defmacro defresource_template(uri_template, do: body) do
-    quote do
-      @__resource_template_uri__ unquote(uri_template)
-
-      unquote(body)
-
-      # Register the resource template in the module's metadata
-      @__resource_templates__ Map.put(
-                                Module.get_attribute(__MODULE__, :__resource_templates__) || %{},
-                                unquote(uri_template),
-                                %{
-                                  uri_template: unquote(uri_template),
-                                  name: Module.get_attribute(__MODULE__, :__resource_name__),
-                                  description:
-                                    Module.get_attribute(__MODULE__, :__resource_description__),
-                                  mime_type:
-                                    Module.get_attribute(__MODULE__, :__resource_mime_type__),
-                                  annotations:
-                                    Module.get_attribute(__MODULE__, :__resource_annotations__) ||
-                                      %{}
-                                }
-                              )
-
-      # Clean up temporary attributes
-      Module.delete_attribute(__MODULE__, :__resource_template_uri__)
-      Module.delete_attribute(__MODULE__, :__resource_name__)
-      Module.delete_attribute(__MODULE__, :__resource_description__)
-      Module.delete_attribute(__MODULE__, :__resource_mime_type__)
-      Module.delete_attribute(__MODULE__, :__resource_annotations__)
-    end
-  end
-
-  @doc """
-  Sets annotations for the current resource (design-compliant syntax).
+  Sets annotations for the current resource.
   """
   defmacro annotations(annotations) do
     quote do
       @__resource_annotations__ unquote(annotations)
-    end
-  end
-
-  @doc """
-  Sets the human-readable name for the current resource (deprecated syntax).
-  """
-  defmacro resource_name(resource_name) do
-    caller = __CALLER__
-    file = Path.relative_to_cwd(caller.file)
-    line = caller.line
-
-    quote do
-      require Logger
-
-      Logger.warning(
-        "resource_name/1 is deprecated. Use name/1 instead.",
-        file: unquote(file),
-        line: unquote(line)
-      )
-
-      @__resource_name__ unquote(resource_name)
-    end
-  end
-
-  @doc """
-  Sets the description for the current resource (deprecated syntax).
-  """
-  defmacro resource_description(desc) do
-    caller = __CALLER__
-    file = Path.relative_to_cwd(caller.file)
-    line = caller.line
-
-    quote do
-      require Logger
-
-      Logger.warning(
-        "resource_description/1 is deprecated. Use description/1 instead.",
-        file: unquote(file),
-        line: unquote(line)
-      )
-
-      @__resource_description__ unquote(desc)
     end
   end
 
@@ -211,17 +103,6 @@ defmodule ExMCP.DSL.Resource do
   defmacro mime_type(type) do
     quote do
       @__resource_mime_type__ unquote(type)
-    end
-  end
-
-  @doc """
-  Sets annotations for the current resource (deprecated syntax).
-  """
-  defmacro resource_annotations(annotations) do
-    quote do
-      require Logger
-      Logger.warning("resource_annotations/1 is deprecated. Use annotations/1 instead.")
-      @__resource_annotations__ unquote(annotations)
     end
   end
 
@@ -258,18 +139,15 @@ defmodule ExMCP.DSL.Resource do
   This function is called during the defresource macro expansion to ensure
   the resource definition is complete and valid.
   """
-  def __validate_resource_definition__(uri, meta, legacy_name, legacy_description) do
-    # Check for name in meta block or legacy location
-    name = meta[:name] || legacy_name
-    description = meta[:description] || legacy_description
-
-    unless name do
+  def __validate_resource_definition__(uri, meta) do
+    # Check for name and description in meta block
+    unless meta[:name] do
       raise CompileError,
         description:
           "Resource #{inspect(uri)} is missing a name. Use meta do name \"...\" end to provide one."
     end
 
-    unless description do
+    unless meta[:description] do
       raise CompileError,
         description:
           "Resource #{inspect(uri)} is missing a description. Use meta do description \"...\" end to provide one."
@@ -301,33 +179,6 @@ defmodule ExMCP.DSL.Resource do
     case Regex.compile(regex_pattern) do
       {:ok, regex} -> Regex.match?(regex, uri)
       {:error, _} -> false
-    end
-  end
-
-  @doc """
-  Extracts variables from a URI template.
-
-  ## Examples
-
-      iex> ExMCP.DSL.Resource.extract_variables("repos/owner/repo/issues/123", "repos/{owner}/{repo}/issues/{id}")
-      %{"owner" => "owner", "repo" => "repo", "id" => "123"}
-  """
-  def extract_variables(uri, template) do
-    # Convert template to regex with named groups
-    regex_pattern =
-      template
-      |> String.replace(~r/\{([^}]+)\}/, "(?<\\1>[^/]+)")
-      |> then(&("^" <> &1 <> "$"))
-
-    case Regex.compile(regex_pattern) do
-      {:ok, regex} ->
-        case Regex.named_captures(regex, uri) do
-          nil -> %{}
-          captures -> captures
-        end
-
-      {:error, _} ->
-        %{}
     end
   end
 end

@@ -1,11 +1,11 @@
 defmodule ExMCP.DSL.Prompt do
   @moduledoc """
-  DSL for defining MCP prompts with simpler argument syntax.
+  Simplified DSL for defining MCP prompts.
 
-  Provides the `defprompt` macro for defining prompt templates
-  that can be used by MCP clients.
+  Provides the `defprompt` macro for defining prompt templates with arguments.
   """
 
+  require Logger
   alias ExMCP.DSL.Meta
 
   @doc """
@@ -13,7 +13,6 @@ defmodule ExMCP.DSL.Prompt do
 
   ## Examples
 
-      # Meta block syntax (recommended)
       defprompt "code_review" do
         meta do
           name "Code Review Assistant"
@@ -28,21 +27,10 @@ defmodule ExMCP.DSL.Prompt do
         end
       end
 
-      # Simple prompt without arguments
       defprompt "greeting" do
         meta do
           name "Greeting Template"
           description "A simple greeting prompt"
-        end
-      end
-
-      # Legacy syntax (deprecated but supported)
-      defprompt "legacy_prompt" do
-        name "Legacy Prompt"  # Deprecated - use meta block
-        description "Legacy description"  # Deprecated - use meta block
-
-        arguments do
-          arg :data, description: "Some data"
         end
       end
   """
@@ -61,30 +49,20 @@ defmodule ExMCP.DSL.Prompt do
       # Get accumulated meta and validate
       prompt_meta = Meta.get_meta(__MODULE__)
 
-      # Get legacy name/description for backward compatibility
-      legacy_name = Module.get_attribute(__MODULE__, :__prompt_display_name__)
-      legacy_description = Module.get_attribute(__MODULE__, :__prompt_description__)
-
       # Validate the prompt definition before registering
-      # credo:disable-for-next-line Credo.Check.Design.AliasUsage
       ExMCP.DSL.Prompt.__validate_prompt_definition__(
         unquote(prompt_name),
-        prompt_meta,
-        legacy_name,
-        legacy_description
+        prompt_meta
       )
 
       # Register the prompt in the module's metadata
-      final_name = prompt_meta[:name] || legacy_name || unquote(prompt_name)
-      final_description = prompt_meta[:description] || legacy_description
-
       @__prompts__ Map.put(
                      Module.get_attribute(__MODULE__, :__prompts__) || %{},
                      unquote(prompt_name),
                      %{
                        name: unquote(prompt_name),
-                       display_name: final_name,
-                       description: final_description,
+                       display_name: prompt_meta[:name] || unquote(prompt_name),
+                       description: prompt_meta[:description],
                        arguments: Module.get_attribute(__MODULE__, :__prompt_arguments__) || [],
                        meta: prompt_meta
                      }
@@ -92,51 +70,7 @@ defmodule ExMCP.DSL.Prompt do
 
       # Clean up temporary attributes
       Module.delete_attribute(__MODULE__, :__prompt_name__)
-      Module.delete_attribute(__MODULE__, :__prompt_display_name__)
-      Module.delete_attribute(__MODULE__, :__prompt_description__)
       Module.delete_attribute(__MODULE__, :__prompt_arguments__)
-    end
-  end
-
-  @doc """
-  Sets the display name for the current prompt (deprecated syntax).
-  """
-  defmacro prompt_name(display_name) do
-    caller = __CALLER__
-    file = Path.relative_to_cwd(caller.file)
-    line = caller.line
-
-    quote do
-      require Logger
-
-      Logger.warning(
-        "prompt_name/1 is deprecated. Use name/1 instead.",
-        file: unquote(file),
-        line: unquote(line)
-      )
-
-      @__prompt_display_name__ unquote(display_name)
-    end
-  end
-
-  @doc """
-  Sets the description for the current prompt (deprecated syntax).
-  """
-  defmacro prompt_description(desc) do
-    caller = __CALLER__
-    file = Path.relative_to_cwd(caller.file)
-    line = caller.line
-
-    quote do
-      require Logger
-
-      Logger.warning(
-        "prompt_description/1 is deprecated. Use description/1 instead.",
-        file: unquote(file),
-        line: unquote(line)
-      )
-
-      @__prompt_description__ unquote(desc)
     end
   end
 
@@ -184,18 +118,15 @@ defmodule ExMCP.DSL.Prompt do
   This function is called during the defprompt macro expansion to ensure
   the prompt definition is complete and valid.
   """
-  def __validate_prompt_definition__(prompt_name, meta, legacy_name, legacy_description) do
-    # Check for name in meta block or legacy location
-    name = meta[:name] || legacy_name
-    description = meta[:description] || legacy_description
-
-    unless name do
+  def __validate_prompt_definition__(prompt_name, meta) do
+    # Check for name and description in meta block
+    unless meta[:name] do
       raise CompileError,
         description:
           "Prompt #{inspect(prompt_name)} is missing a name. Use meta do name \"...\" end to provide one."
     end
 
-    unless description do
+    unless meta[:description] do
       raise CompileError,
         description:
           "Prompt #{inspect(prompt_name)} is missing a description. Use meta do description \"...\" end to provide one."

@@ -1,6 +1,6 @@
 defmodule ExMCP.Helpers do
   @moduledoc """
-  Helper macros and functions for common MCP patterns in ExMCP v2.
+  Helper macros and functions for common MCP patterns in ExMCP.
 
   This module provides convenient macros and utilities to reduce boilerplate
   and improve developer experience when working with MCP clients and servers.
@@ -32,7 +32,7 @@ defmodule ExMCP.Helpers do
   defmacro __using__(_opts) do
     quote do
       import ExMCP.Helpers
-      alias ExMCP.ConvenienceClient, as: MCP
+      alias ExMCP, as: MCP
     end
   end
 
@@ -58,13 +58,13 @@ defmodule ExMCP.Helpers do
   """
   defmacro with_mcp_client(connection_spec, opts \\ [], do: block) do
     quote do
-      case ExMCP.ConvenienceClient.connect(unquote(connection_spec), unquote(opts)) do
+      case ExMCP.connect(unquote(connection_spec), unquote(opts)) do
         {:ok, client} ->
           try do
             var!(client) = client
             unquote(block)
           after
-            ExMCP.ConvenienceClient.disconnect(client)
+            ExMCP.disconnect(client)
           end
 
         {:error, reason} ->
@@ -80,7 +80,7 @@ defmodule ExMCP.Helpers do
   """
   defmacro list_tools!(opts \\ []) do
     quote do
-      case ExMCP.ConvenienceClient.tools(var!(client), unquote(opts)) do
+      case ExMCP.tools(var!(client), unquote(opts)) do
         tools when is_list(tools) -> tools
         {:error, error} -> raise ExMCP.ToolError, format_error_message(error)
       end
@@ -99,7 +99,7 @@ defmodule ExMCP.Helpers do
   """
   defmacro call_tool!(tool_name, args \\ quote(do: %{}), opts \\ []) do
     quote do
-      case ExMCP.ConvenienceClient.call(
+      case ExMCP.call(
              var!(client),
              unquote(tool_name),
              unquote(args),
@@ -116,7 +116,7 @@ defmodule ExMCP.Helpers do
   """
   defmacro list_resources!(opts \\ []) do
     quote do
-      case ExMCP.ConvenienceClient.resources(var!(client), unquote(opts)) do
+      case ExMCP.resources(var!(client), unquote(opts)) do
         resources when is_list(resources) -> resources
         {:error, error} -> raise ExMCP.ResourceError, format_error_message(error)
       end
@@ -135,7 +135,7 @@ defmodule ExMCP.Helpers do
   """
   defmacro read_resource!(uri, opts \\ []) do
     quote do
-      case ExMCP.ConvenienceClient.read(var!(client), unquote(uri), unquote(opts)) do
+      case ExMCP.read(var!(client), unquote(uri), unquote(opts)) do
         {:error, error} -> raise ExMCP.ResourceError, format_error_message(error)
         content -> content
       end
@@ -147,7 +147,7 @@ defmodule ExMCP.Helpers do
   """
   defmacro list_prompts!(opts \\ []) do
     quote do
-      case ExMCP.ConvenienceClient.prompts(var!(client), unquote(opts)) do
+      case ExMCP.prompts(var!(client), unquote(opts)) do
         prompts when is_list(prompts) -> prompts
         {:error, error} -> raise ExMCP.PromptError, format_error_message(error)
       end
@@ -159,7 +159,7 @@ defmodule ExMCP.Helpers do
   """
   defmacro get_prompt!(prompt_name, args \\ quote(do: %{}), opts \\ []) do
     quote do
-      case ExMCP.ConvenienceClient.prompt(
+      case ExMCP.prompt(
              var!(client),
              unquote(prompt_name),
              unquote(args),
@@ -176,7 +176,7 @@ defmodule ExMCP.Helpers do
   """
   defmacro get_status! do
     quote do
-      case ExMCP.ConvenienceClient.status(var!(client)) do
+      case ExMCP.status(var!(client)) do
         {:ok, status} -> status
         {:error, error} -> raise ExMCP.ClientError, "Failed to get status: #{inspect(error)}"
       end
@@ -196,7 +196,7 @@ defmodule ExMCP.Helpers do
   """
   defmacro batch_execute!(operations, opts \\ []) do
     quote do
-      ExMCP.ConvenienceClient.batch(var!(client), unquote(operations), unquote(opts))
+      ExMCP.batch(var!(client), unquote(operations), unquote(opts))
     end
   end
 

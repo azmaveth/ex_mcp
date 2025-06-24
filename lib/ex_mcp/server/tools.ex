@@ -84,14 +84,15 @@ defmodule ExMCP.Server.Tools do
         end
       end)
 
-    # Build tool name to handler mapping
+    # Build tool name to handler mapping with output schemas
     tool_mapping =
       tools
       |> Enum.reverse()
       |> Enum.with_index()
       |> Enum.map(fn {tool, index} ->
-        {tool.name, :"__tool_handler_#{index}__"}
+        {tool.name, :"__tool_handler_#{index}__", tool[:outputSchema]}
       end)
+      |> Macro.escape()
 
     quote do
       alias ExMCP.Server.Tools
@@ -107,9 +108,18 @@ defmodule ExMCP.Server.Tools do
         tool_mapping = unquote(tool_mapping)
 
         case List.keyfind(tool_mapping, params.name, 0) do
-          {_, handler_func} ->
+          {_, handler_func, output_schema} ->
             result = apply(__MODULE__, handler_func, [params.arguments, state])
-            Tools.__normalize_response__(result, state)
+
+            # Validate output if schema is defined
+            validated_result =
+              if output_schema do
+                Tools.__validate_and_normalize_response__(result, output_schema, state)
+              else
+                Tools.__normalize_response__(result, state)
+              end
+
+            validated_result
 
           nil ->
             {:ok,
@@ -137,7 +147,9 @@ defmodule ExMCP.Server.Tools do
   end
 
   def __normalize_response__({:ok, response}, state) when is_map(response) do
-    {:ok, response, state}
+    # Ensure response has proper structure for MCP 2025-06-18 spec
+    normalized_response = normalize_response_structure(response)
+    {:ok, normalized_response, state}
   end
 
   def __normalize_response__({:ok, response, new_state}, _state) when is_binary(response) do
@@ -149,7 +161,9 @@ defmodule ExMCP.Server.Tools do
   end
 
   def __normalize_response__({:ok, response, new_state}, _state) do
-    {:ok, response, new_state}
+    # Ensure response has proper structure for MCP 2025-06-18 spec
+    normalized_response = normalize_response_structure(response)
+    {:ok, normalized_response, new_state}
   end
 
   def __normalize_response__({:error, reason}, state) when is_binary(reason) do
@@ -158,6 +172,137 @@ defmodule ExMCP.Server.Tools do
 
   def __normalize_response__({:error, reason}, state) do
     {:ok, %{content: [%{type: "text", text: inspect(reason)}], isError: true}, state}
+  end
+
+  # Helper function to normalize response structure for MCP 2025-06-18 spec compliance
+  defp normalize_response_structure(response) when is_map(response) do
+    response
+    |> ensure_content_field()
+    |> preserve_structured_output()
+    |> preserve_other_fields()
+  end
+
+  defp ensure_content_field(%{content: _} = response), do: response
+
+  defp ensure_content_field(%{structuredOutput: _} = response) do
+    # If only structuredOutput is present, add empty content array
+    Map.put_new(response, :content, [])
+  end
+
+  defp ensure_content_field(response) do
+    # If neither content nor structuredOutput, add empty content array
+    Map.put_new(response, :content, [])
+  end
+
+  defp preserve_structured_output(%{structuredOutput: _} = response), do: response
+
+  defp preserve_structured_output(%{structuredContent: structured_content} = response) do
+    # Support legacy structuredContent field by mapping to structuredOutput
+    response
+    |> Map.put(:structuredOutput, structured_content)
+    |> Map.delete(:structuredContent)
+  end
+
+  defp preserve_structured_output(response), do: response
+
+  defp preserve_other_fields(response) do
+    # Preserve all other fields like isError, metadata, etc.
+    response
+  end
+
+  @doc false
+  def __validate_and_normalize_response__(result, output_schema, state) do
+    case __normalize_response__(result, state) do
+      {:ok, response, new_state} ->
+        validate_structured_output(response, output_schema, new_state)
+
+      error ->
+        error
+    end
+  end
+
+  defp validate_structured_output(response, output_schema, state) do
+    case response do
+      %{structuredOutput: structured_output} ->
+        # Validate the structured output against the schema
+        # Convert structured output to string keys for validation
+        string_data = atomize_keys_to_strings(structured_output)
+
+        case validate_with_schema(string_data, output_schema) do
+          :ok ->
+            {:ok, response, state}
+
+          {:error, validation_errors} ->
+            # Return error response with validation details
+            error_message = format_validation_errors(validation_errors)
+
+            {:ok,
+             %{
+               content: [%{type: "text", text: "Output validation failed: #{error_message}"}],
+               isError: true
+             }, state}
+        end
+
+      _ ->
+        # No structured output to validate
+        {:ok, response, state}
+    end
+  end
+
+  defp validate_with_schema(data, schema) do
+    # Use ExJsonSchema if available, otherwise basic validation
+    if Code.ensure_loaded?(ExJsonSchema) do
+      try do
+        # Convert atom keys to string keys for ExJsonSchema
+        string_schema = atomize_keys_to_strings(schema)
+        resolved_schema = ExJsonSchema.Schema.resolve(string_schema)
+
+        case ExJsonSchema.Validator.validate(resolved_schema, data) do
+          :ok -> :ok
+          {:error, errors} -> {:error, errors}
+        end
+      rescue
+        e -> {:error, ["Schema validation error: #{inspect(e)}"]}
+      end
+    else
+      # Fallback: just check that data is not nil
+      if data != nil do
+        :ok
+      else
+        {:error, ["ExJsonSchema not available for validation"]}
+      end
+    end
+  end
+
+  defp atomize_keys_to_strings(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), atomize_keys_to_strings(v)}
+      {k, v} -> {k, atomize_keys_to_strings(v)}
+    end)
+  end
+
+  defp atomize_keys_to_strings(list) when is_list(list) do
+    Enum.map(list, &atomize_keys_to_strings/1)
+  end
+
+  defp atomize_keys_to_strings(value), do: value
+
+  defp format_validation_errors(errors) when is_list(errors) do
+    errors
+    |> Enum.map(&format_single_error/1)
+    |> Enum.join(", ")
+  end
+
+  defp format_validation_errors(error) do
+    inspect(error)
+  end
+
+  defp format_single_error({error_msg, path}) when is_binary(error_msg) do
+    "#{path}: #{error_msg}"
+  end
+
+  defp format_single_error(error) do
+    inspect(error)
   end
 
   @doc """

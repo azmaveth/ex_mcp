@@ -16,6 +16,7 @@ defmodule ExMCP.Transport.HTTP do
   - **Session management**: Automatic session ID generation and tracking
   - **Configurable endpoint**: Customize the MCP endpoint path
   - **Single response mode**: Option to use HTTP responses instead of SSE
+  - **Protocol Versioning**: Sends `mcp-protocol-version` header.
 
   ## Security Features
 
@@ -33,6 +34,7 @@ defmodule ExMCP.Transport.HTTP do
         transport: :http,
         url: "https://api.example.com",
         endpoint: "/mcp/v1",  # Configurable endpoint
+        protocol_version: "2025-06-18", # Specify protocol version
         use_sse: true,         # Use SSE for responses (default: true)
         session_id: "existing-session",  # Resume existing session
         security: %{
@@ -76,7 +78,11 @@ defmodule ExMCP.Transport.HTTP do
   @behaviour ExMCP.Transport
   require Logger
 
+  alias ExMCP.Transport.SecurityGuard
+  alias ExMCP.Internal.SecurityConfig
+
   alias ExMCP.Internal.Security
+  alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.SSEClient
 
   defstruct [
@@ -91,7 +97,8 @@ defmodule ExMCP.Transport.HTTP do
     :use_sse,
     :last_event_id,
     :last_response,
-    :timeouts
+    :timeouts,
+    :protocol_version
   ]
 
   @type t :: %__MODULE__{
@@ -106,11 +113,13 @@ defmodule ExMCP.Transport.HTTP do
           use_sse: boolean(),
           last_event_id: String.t() | nil,
           last_response: map() | nil,
-          timeouts: map()
+          timeouts: map(),
+          protocol_version: String.t()
         }
 
   @default_endpoint "/mcp/v1"
   @session_header "Mcp-Session-Id"
+  @protocol_version_header "mcp-protocol-version"
 
   @impl true
   def connect(config) do
@@ -121,6 +130,12 @@ defmodule ExMCP.Transport.HTTP do
     security = Keyword.get(config, :security)
     use_sse = Keyword.get(config, :use_sse, true)
     session_id = Keyword.get(config, :session_id)
+
+    protocol_version =
+      Keyword.get(config, :protocol_version) ||
+        Application.get_env(:ex_mcp, :protocol_version) ||
+        VersionNegotiator.latest_version()
+
     # Extract timeout configurations with backwards compatibility
     connect_timeout = Keyword.get(config, :timeout, 5_000)
     request_timeout = Keyword.get(config, :request_timeout, 30_000)
@@ -164,7 +179,8 @@ defmodule ExMCP.Transport.HTTP do
       origin: origin,
       use_sse: use_sse,
       session_id: session_id || generate_session_id(),
-      timeouts: timeouts
+      timeouts: timeouts,
+      protocol_version: protocol_version
     }
 
     # Validate security configuration
@@ -251,6 +267,44 @@ defmodule ExMCP.Transport.HTTP do
     Logger.debug("HTTP request to URL: #{url}")
     headers = build_request_headers(state)
 
+    # Security validation before making external request
+    case validate_http_request(url, headers, state) do
+      {:ok, sanitized_headers} ->
+        make_http_request(url, sanitized_headers, body, state)
+
+      {:error, security_error} ->
+        Logger.warning("HTTP request blocked by security policy",
+          url: url,
+          error: security_error
+        )
+
+        {:error, {:security_violation, security_error}}
+    end
+  end
+
+  defp validate_http_request(url, headers, state) do
+    # Build SecurityGuard request
+    security_request = %{
+      url: url,
+      headers: headers,
+      method: "POST",
+      transport: :http,
+      user_id: extract_user_id(state)
+    }
+
+    # Get transport-specific security configuration
+    config = SecurityConfig.get_transport_config(:http)
+
+    case SecurityGuard.validate_request(security_request, config) do
+      {:ok, sanitized_request} ->
+        {:ok, sanitized_request.headers}
+
+      {:error, security_error} ->
+        {:error, security_error}
+    end
+  end
+
+  defp make_http_request(url, headers, body, state) do
     request = {
       String.to_charlist(url),
       Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end),
@@ -268,6 +322,37 @@ defmodule ExMCP.Transport.HTTP do
       end
 
     :httpc.request(:post, request, http_opts, [])
+  end
+
+  defp extract_user_id(state) do
+    config = SecurityConfig.get_transport_config(:http)
+
+    case Map.get(config, :user_id_resolver) do
+      nil ->
+        # Default behavior if no resolver is configured
+        cond do
+          # Check if user_id is explicitly set in state (struct is a map)
+          Map.has_key?(state, :user_id) ->
+            Map.get(state, :user_id)
+
+          # Check security context for user information
+          is_map(state.security) ->
+            Map.get(state.security, :user_id, "http_anonymous")
+
+          # Check session ID as fallback
+          state.session_id ->
+            "session_#{state.session_id}"
+
+          # Default fallback
+          true ->
+            "http_anonymous"
+        end
+
+      resolver ->
+        # Use the configured resolver. The resolver is expected to be a function
+        # that takes the transport state and returns a user ID string.
+        resolver.(state)
+    end
   end
 
   defp handle_http_response({status_line, headers, body}, state) do
@@ -466,9 +551,14 @@ defmodule ExMCP.Transport.HTTP do
          security: security,
          origin: origin,
          session_id: session_id,
-         last_event_id: last_event_id
+         last_event_id: last_event_id,
+         protocol_version: protocol_version
        }) do
-    base_headers = [{"content-type", "application/json"} | headers]
+    base_headers = [
+      {"content-type", "application/json"},
+      {@protocol_version_header, protocol_version}
+      | headers
+    ]
 
     # Add session header
     headers_with_session = [{@session_header, session_id} | base_headers]

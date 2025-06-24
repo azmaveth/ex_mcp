@@ -31,32 +31,27 @@ defmodule ExMCP.ClientSimpleTest do
     end
   end
 
-  test "client State struct has expected fields" do
-    # Check the State module exists
-    assert {:module, ExMCP.Client.State} = Code.ensure_compiled(ExMCP.Client.State)
-
-    # Create a State struct and verify fields
-    state = %ExMCP.Client.State{}
+  test "client struct has expected fields" do
+    # Create a Client struct and verify fields
+    state = %ExMCP.Client{}
 
     expected_fields = [
       :transport_mod,
       :transport_state,
       :transport_opts,
       :server_info,
-      :server_capabilities,
       :connection_status,
       :pending_requests,
       :last_activity,
-      :session_id,
       :receiver_task,
-      :reconnect_timer,
       :reconnect_attempts,
-      :max_reconnect_attempts,
-      :reconnect_interval
+      :health_check_ref,
+      :health_check_interval,
+      :client_info
     ]
 
     for field <- expected_fields do
-      assert Map.has_key?(state, field), "Expected field #{field} not found in State struct"
+      assert Map.has_key?(state, field), "Expected field #{field} not found in Client struct"
     end
   end
 end

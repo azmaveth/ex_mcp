@@ -1,4 +1,4 @@
-defmodule ExMCP.ContentV2 do
+defmodule ExMCP.ContentHelpers do
   @moduledoc """
   Content helper functions for creating MCP content types.
 

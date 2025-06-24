@@ -28,6 +28,9 @@ defmodule ExMCP.Transport.Stdio do
 
   require Logger
 
+  alias ExMCP.Transport.SecurityGuard
+  alias ExMCP.Internal.SecurityConfig
+
   defstruct [:port, :buffer, :line_buffer]
 
   @impl true
@@ -98,16 +101,80 @@ defmodule ExMCP.Transport.Stdio do
 
   @impl true
   def send_message(message, %__MODULE__{port: port} = state) do
-    # MCP uses newline-delimited JSON
-    data = message <> "\n"
+    # Check if message contains external resource requests that need security validation
+    case validate_stdio_message(message, state) do
+      {:ok, validated_message} ->
+        # MCP uses newline-delimited JSON
+        data = validated_message <> "\n"
 
-    try do
-      Port.command(port, data)
-      {:ok, state}
-    catch
-      :error, reason ->
-        {:error, {:send_failed, reason}}
+        try do
+          Port.command(port, data)
+          {:ok, state}
+        catch
+          :error, reason ->
+            {:error, {:send_failed, reason}}
+        end
+
+      {:error, security_error} ->
+        Logger.warning("Stdio message blocked by security policy",
+          error: security_error
+        )
+
+        {:error, {:security_violation, security_error}}
     end
+  end
+
+  defp validate_stdio_message(message, state) do
+    # Parse message to check for external resource requests
+    case Jason.decode(message) do
+      {:ok, %{"method" => "resources/read", "params" => %{"uri" => uri}}} ->
+        validate_resource_access(uri, message, state)
+
+      {:ok, %{"method" => "resources/list", "params" => %{"uri" => uri}}} when is_binary(uri) ->
+        validate_resource_access(uri, message, state)
+
+      {:ok, _} ->
+        # Non-resource request, allow through
+        {:ok, message}
+
+      {:error, _} ->
+        # Invalid JSON, let it through (will be handled by the receiving process)
+        {:ok, message}
+    end
+  end
+
+  defp validate_resource_access(uri, message, state) do
+    # Only validate if URI appears to be external (has scheme and host)
+    case URI.parse(uri) do
+      %URI{scheme: scheme, host: host} when not is_nil(scheme) and not is_nil(host) ->
+        # This is an external resource, validate with SecurityGuard
+        security_request = %{
+          url: uri,
+          headers: [],
+          method: "GET",
+          transport: :stdio,
+          user_id: extract_stdio_user_id(state)
+        }
+
+        config = SecurityConfig.get_transport_config(:stdio)
+
+        case SecurityGuard.validate_request(security_request, config) do
+          {:ok, _sanitized_request} ->
+            {:ok, message}
+
+          {:error, security_error} ->
+            {:error, security_error}
+        end
+
+      _ ->
+        # Local/relative URI, allow through
+        {:ok, message}
+    end
+  end
+
+  defp extract_stdio_user_id(_state) do
+    # Use system user as default for stdio transport
+    System.get_env("USER") || System.get_env("USERNAME") || "stdio_user"
   end
 
   @impl true

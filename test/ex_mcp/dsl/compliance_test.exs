@@ -23,10 +23,14 @@ defmodule ExMCP.DSL.ComplianceTest do
         description("Adds two numbers together")
       end
 
-      args do
-        field(:a, :number, required: true, description: "First number")
-        field(:b, :number, required: true, description: "Second number")
-      end
+      input_schema(%{
+        type: "object",
+        properties: %{
+          a: %{type: "number", description: "First number"},
+          b: %{type: "number", description: "Second number"}
+        },
+        required: ["a", "b"]
+      })
     end
 
     defresource "config://app/settings" do
@@ -130,54 +134,6 @@ defmodule ExMCP.DSL.ComplianceTest do
     end
   end
 
-  # Test server using deprecated syntax (with warnings)
-  defmodule DeprecatedSyntaxServer do
-    use ExMCP.Server
-
-    deftool "legacy_tool" do
-      # Should generate warning
-      tool_description("A legacy tool")
-
-      args do
-        field(:data, :string, required: true)
-      end
-    end
-
-    defresource "legacy://resource" do
-      # Should generate warning
-      resource_name("Legacy Resource")
-      # Should generate warning
-      resource_description("A legacy resource")
-      mime_type("text/plain")
-    end
-
-    defprompt "legacy_prompt" do
-      # Should generate warning
-      prompt_name("Legacy Prompt")
-      # Should generate warning
-      prompt_description("A legacy prompt")
-    end
-
-    # Handler implementations
-    @impl true
-    def handle_tool_call("legacy_tool", %{"data" => data}, state) do
-      result = %{content: [%{"type" => "text", "text" => "Processed: #{data}"}]}
-      {:ok, result, state}
-    end
-
-    @impl true
-    def handle_resource_read("legacy://resource", _uri, state) do
-      content = [%{"type" => "text", "text" => "Legacy content"}]
-      {:ok, content, state}
-    end
-
-    @impl true
-    def handle_prompt_get("legacy_prompt", _args, state) do
-      messages = [%{"role" => "assistant", "content" => "Legacy response"}]
-      {:ok, %{messages: messages}, state}
-    end
-  end
-
   describe "Design-compliant DSL syntax" do
     test "compiles tools correctly with compliant syntax" do
       tools = DesignCompliantServer.get_tools()
@@ -255,69 +211,6 @@ defmodule ExMCP.DSL.ComplianceTest do
 
       assert Map.has_key?(capabilities, "prompts")
       assert capabilities["prompts"]["listChanged"] == true
-    end
-  end
-
-  describe "Deprecated syntax with warnings" do
-    @tag :skip
-    test "tool_description generates deprecation warning" do
-      # Skip: Deprecation warnings are compile-time warnings, not runtime logs
-      log_output =
-        capture_log(fn ->
-          # Force compilation by accessing tools
-          _tools = DeprecatedSyntaxServer.get_tools()
-        end)
-
-      assert log_output =~ "tool_description/1 is deprecated. Use description/1 instead."
-    end
-
-    @tag :skip
-    test "resource_name and resource_description generate deprecation warnings" do
-      # Skip: Deprecation warnings are compile-time warnings, not runtime logs
-      log_output =
-        capture_log(fn ->
-          # Force compilation by accessing resources
-          _resources = DeprecatedSyntaxServer.get_resources()
-        end)
-
-      assert log_output =~ "resource_name/1 is deprecated. Use name/1 instead."
-      assert log_output =~ "resource_description/1 is deprecated. Use description/1 instead."
-    end
-
-    @tag :skip
-    test "prompt_name and prompt_description generate deprecation warnings" do
-      # Skip: Deprecation warnings are compile-time warnings, not runtime logs
-      log_output =
-        capture_log(fn ->
-          # Force compilation by accessing prompts
-          _prompts = DeprecatedSyntaxServer.get_prompts()
-        end)
-
-      assert log_output =~ "prompt_name/1 is deprecated. Use name/1 instead."
-      assert log_output =~ "prompt_description/1 is deprecated. Use description/1 instead."
-    end
-
-    test "deprecated syntax still works functionally" do
-      tools = DeprecatedSyntaxServer.get_tools()
-      resources = DeprecatedSyntaxServer.get_resources()
-      prompts = DeprecatedSyntaxServer.get_prompts()
-
-      # Tools work with deprecated syntax
-      assert Map.has_key?(tools, "legacy_tool")
-      legacy_tool = tools["legacy_tool"]
-      assert legacy_tool.description == "A legacy tool"
-
-      # Resources work with deprecated syntax
-      assert Map.has_key?(resources, "legacy://resource")
-      legacy_resource = resources["legacy://resource"]
-      assert legacy_resource.name == "Legacy Resource"
-      assert legacy_resource.description == "A legacy resource"
-
-      # Prompts work with deprecated syntax
-      assert Map.has_key?(prompts, "legacy_prompt")
-      legacy_prompt = prompts["legacy_prompt"]
-      assert legacy_prompt.display_name == "Legacy Prompt"
-      assert legacy_prompt.description == "A legacy prompt"
     end
   end
 

@@ -10,7 +10,7 @@ defmodule ExMCP.Reliability.Retry do
 
       # Simple retry with defaults
       Retry.with_retry(fn ->
-        ExMCP.SimpleClient.call_tool(client, "tool", %{})
+        ExMCP.Client.call_tool(client, "tool", %{})
       end)
 
       # Custom configuration

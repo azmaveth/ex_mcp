@@ -47,3 +47,4 @@ ex_mcp-*.tar
 # Environment files
 .env
 .env.local
+.aider*

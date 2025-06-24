@@ -43,6 +43,9 @@ jobs:
     - name: Run credo
       run: mix credo --strict
     
+    - name: Check for skipped tests
+      run: ./scripts/check_skip_tags.sh all
+    
     - name: Check for unused dependencies
       run: mix deps.unlock --check-unused
     

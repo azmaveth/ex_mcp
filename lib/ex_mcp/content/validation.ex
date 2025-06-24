@@ -1,6 +1,6 @@
 defmodule ExMCP.Content.Validation do
   @moduledoc """
-  Content validation and transformation utilities for ExMCP v2.
+  Content validation and transformation utilities for ExMCP.
 
   This module provides comprehensive validation, sanitization, and transformation
   capabilities for MCP content, ensuring data integrity and security.

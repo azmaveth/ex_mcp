@@ -27,55 +27,50 @@ case ExMCP.connect(config) do
   {:ok, client} ->
     IO.puts("✓ Connected successfully!")
 
-    # List available tools
+    # List available tools using the unified API
     IO.puts("\nListing tools...")
-    {:ok, tools_response} = ExMCP.list_tools(client)
+    case ExMCP.tools(client) do
+      tools when is_list(tools) ->
+        IO.puts("Found #{length(tools)} tools:")
 
-    # Extract tools from structured response
-    tools = ExMCP.Response.data_content(tools_response)["tools"] || []
-    IO.puts("Found #{length(tools)} tools:")
+        for tool <- tools do
+          IO.puts("  - #{tool["name"]}: #{tool["description"]}")
+        end
 
-    for tool <- tools do
-      IO.puts("  - #{tool["name"]}: #{tool["description"]}")
-    end
+        # Call a tool if available
+        if first_tool = List.first(tools) do
+          IO.puts("\nCalling tool: #{first_tool["name"]}")
 
-    # Call a tool if available
-    if first_tool = List.first(tools) do
-      IO.puts("\nCalling tool: #{first_tool["name"]}")
+          # Example arguments (adjust based on your tool)
+          args = %{"input" => "Hello from ExMCP!"}
 
-      # Example arguments (adjust based on your tool)
-      args = %{"input" => "Hello from ExMCP!"}
+          case ExMCP.call(client, first_tool["name"], args) do
+            result when is_binary(result) ->
+              IO.puts("Tool response: #{result}")
 
-      case ExMCP.call_tool(client, first_tool["name"], args) do
-        {:ok, response} ->
-          # Handle different response types
-          cond do
-            text = ExMCP.Response.text_content(response) ->
-              IO.puts("Text response: #{text}")
+            {:error, error} ->
+              IO.puts("Tool call failed: #{inspect(error)}")
 
-            json = ExMCP.Response.data_content(response) ->
-              IO.puts("JSON response: #{inspect(json)}")
-
-            response.is_error ->
-              IO.puts("Error response: #{ExMCP.Response.text_content(response)}")
-
-            true ->
-              IO.puts("Other response type: #{inspect(response)}")
+            other ->
+              IO.puts("Tool response: #{inspect(other)}")
           end
+        end
 
-        {:error, error} ->
-          IO.puts("Tool call failed: #{error.message}")
-      end
+      {:error, error} ->
+        IO.puts("Failed to list tools: #{inspect(error)}")
     end
 
-    # List resources
+    # List resources using the unified API
     IO.puts("\nListing resources...")
-    {:ok, resources_response} = ExMCP.list_resources(client)
-    resources = ExMCP.Response.data_content(resources_response)["resources"] || []
+    case ExMCP.resources(client) do
+      resources when is_list(resources) ->
+        IO.puts("Found #{length(resources)} resources:")
+        for resource <- resources do
+          IO.puts("  - #{resource["uri"]}: #{resource["name"]}")
+        end
 
-    IO.puts("Found #{length(resources)} resources:")
-    for resource <- resources do
-      IO.puts("  - #{resource["uri"]}: #{resource["name"]}")
+      {:error, error} ->
+        IO.puts("Failed to list resources: #{inspect(error)}")
     end
 
     # Disconnect

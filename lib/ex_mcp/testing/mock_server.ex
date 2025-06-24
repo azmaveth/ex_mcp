@@ -20,7 +20,7 @@ defmodule ExMCP.Testing.MockServer do
 
       # Simple mock server
       MockServer.with_server([], fn client ->
-        {:ok, result} = ExMCP.SimpleClient.list_tools(client)
+        {:ok, result} = ExMCP.Client.list_tools(client)
         assert length(result["tools"]) == 0
       end)
 
@@ -90,7 +90,7 @@ defmodule ExMCP.Testing.MockServer do
   ## Examples
 
       with_server([], fn client ->
-        result = ExMCP.SimpleClient.list_tools(client)
+        result = ExMCP.Client.list_tools(client)
         assert {:ok, %{"tools" => []}} = result
       end)
 
@@ -119,7 +119,7 @@ defmodule ExMCP.Testing.MockServer do
       auto_initialize: true
     ]
 
-    {:ok, client_pid} = ExMCP.SimpleClient.start_link(client_config)
+    {:ok, client_pid} = ExMCP.Client.start_link(client_config)
 
     try do
       # Run test with client
@@ -490,8 +490,8 @@ defmodule ExMCP.Testing.MockServer do
   ## Examples
 
       with_server([], fn client ->
-        ExMCP.SimpleClient.list_tools(client)
-        ExMCP.SimpleClient.list_tools(client)
+        ExMCP.Client.list_tools(client)
+        ExMCP.Client.list_tools(client)
 
         count = MockServer.get_call_count(server_pid)
         assert count["tools/list"] == 2
@@ -565,7 +565,7 @@ defmodule ExMCP.Testing.MockTransport do
     error -> {:error, %{"error" => %{"code" => -1, "message" => inspect(error)}}}
   end
 
-  # Compatibility method for SimpleClient
+  # Compatibility method for Client
   def send(transport, message) when is_binary(message) do
     case Jason.decode(message) do
       {:ok, decoded} ->
@@ -596,7 +596,7 @@ defmodule ExMCP.Testing.MockTransport do
     {:error, "Mock transport doesn't support async receiving"}
   end
 
-  # Compatibility method for SimpleClient
+  # Compatibility method for Client
   def receive(transport, _timeout \\ 5000) do
     # Try to get the stored response from transport state
     receive do
@@ -620,7 +620,7 @@ defmodule ExMCP.Testing.MockTransport do
     end
   end
 
-  # Alias for receive used by SimpleClient
+  # Alias for receive used by Client
   def recv(transport, timeout) do
     receive(transport, timeout)
   end

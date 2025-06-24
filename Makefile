@@ -29,8 +29,11 @@ clean: ## Clean build artifacts
 	mix clean
 	rm -rf _build deps doc priv/plts
 
-quality: format-check lint ## Run all quality checks
+quality: format-check lint check-skip-tags ## Run all quality checks
 	mix compile --warnings-as-errors
+
+check-skip-tags: ## Check for @tag :skip in tests
+	@./scripts/check_skip_tags.sh all
 
 coverage: ## Run tests with coverage
 	mix coveralls.html

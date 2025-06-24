@@ -12,10 +12,14 @@ defmodule ExMCP.ServerTest do
         description("Says hello")
       end
 
-      args do
-        field(:name, :string, required: true, description: "Name to greet")
-        field(:style, :string, required: false, description: "Greeting style")
-      end
+      input_schema(%{
+        type: "object",
+        properties: %{
+          name: %{type: "string", description: "Name to greet"},
+          style: %{type: "string", description: "Greeting style"}
+        },
+        required: ["name"]
+      })
     end
 
     deftool "error_tool" do
@@ -207,15 +211,6 @@ defmodule ExMCP.ServerTest do
       {:error, "Custom error occurred", state}
     end
 
-    @impl true
-    def init(args) do
-      initial_state = %{
-        debug: Keyword.get(args, :debug, false),
-        subscriptions: MapSet.new()
-      }
-
-      {:ok, initial_state}
-    end
 
     @impl GenServer
     def handle_cast({:notify_resource_update, _uri}, state) do
@@ -389,7 +384,7 @@ defmodule ExMCP.ServerTest do
       {:ok, pid} = MinimalServer.start_link(key1: "value1", key2: "value2")
 
       state = :sys.get_state(pid)
-      assert state == %{key1: "value1", key2: "value2"}
+      assert state == %{key1: "value1", key2: "value2", subscriptions: MapSet.new()}
 
       GenServer.stop(pid)
     end

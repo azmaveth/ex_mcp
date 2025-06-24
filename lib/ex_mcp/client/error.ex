@@ -1,6 +1,6 @@
 defmodule ExMCP.Client.Error do
   @moduledoc """
-  Enhanced error formatting and actionable guidance for MCP v2.
+  Enhanced error formatting and actionable guidance for MCP.
 
   This module transforms low-level MCP protocol errors into developer-friendly
   error messages with actionable guidance and debugging context.

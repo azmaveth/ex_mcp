@@ -1,7 +1,11 @@
-# Ensure support files are compiled
-Code.require_file("support/test_http_server.ex", __DIR__)
-Code.require_file("support/test_server.ex", __DIR__)
-Code.require_file("support/test_helpers.ex", __DIR__)
+# Support files are compiled via elixirc_paths(:test) in mix.exs
+# No need to explicitly require them here as they're already available
+
+# Import test helpers after compilation (in ExUnit.start callback)
+ExUnit.after_suite(fn _ ->
+  # Horde test helpers are available via import in individual test files
+  :ok
+end)
 
 # Start required applications for HTTP tests
 {:ok, _} = Application.ensure_all_started(:inets)
@@ -9,12 +13,37 @@ Code.require_file("support/test_helpers.ex", __DIR__)
 {:ok, _} = Application.ensure_all_started(:ranch)
 {:ok, _} = Application.ensure_all_started(:cowboy)
 
+# Start test consent handler agent
+{:ok, _} = ExMCP.ConsentHandler.Test.start_link()
+
 # Enable test mode for SSE handlers to prevent blocking in tests
 Application.put_env(:ex_mcp, :test_mode, true)
 
 # Clean up any stray test processes before running tests
 if System.get_env("SKIP_TEST_CLEANUP") != "true" do
   Mix.Task.run("test.cleanup")
+end
+
+# Stop the application to prevent global process conflicts during tests
+# Tests that need the application should start it explicitly in their setup
+Application.stop(:ex_mcp)
+
+# Ensure all global processes are stopped
+for name <- [
+      ExMCP.Supervisor,
+      ExMCP.ServiceRegistry,
+      ExMCP.ServiceSupervisor,
+      ExMCP.DynamicSupervisor
+    ] do
+  case Process.whereis(name) do
+    nil ->
+      :ok
+
+    pid ->
+      Process.exit(pid, :kill)
+      # Wait for cleanup
+      Process.sleep(10)
+  end
 end
 
 # Configure default exclusions for fast local development
@@ -36,7 +65,6 @@ default_exclusions = [
 
   # Tests requiring specific setup
   requires_http: true,
-  requires_stdio: true,
   requires_beam: true
 ]
 

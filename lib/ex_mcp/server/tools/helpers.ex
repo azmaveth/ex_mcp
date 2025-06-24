@@ -142,42 +142,314 @@ defmodule ExMCP.Server.Tools.Helpers do
       {:ok, %{name: "Alice", age: 30}}
   """
   def validate_arguments(arguments, schema) do
-    # Simple validation implementation - always passes for now
-    # In production, you would use a proper JSON Schema validator
-    {:ok, apply_defaults(arguments, schema)}
+    atom_keyed_args = atomize_keys(arguments)
+    do_validate(atom_keyed_args, schema, "#")
   end
 
-  defp apply_defaults(value, %{type: "object", properties: properties} = _schema)
-       when is_map(value) do
-    Enum.reduce(properties, value, fn {prop_name, prop_schema}, acc ->
-      # Try both string and atom keys
-      prop_key_str = to_string(prop_name)
-      prop_key_atom = if is_atom(prop_name), do: prop_name, else: String.to_atom(prop_name)
+  defp do_validate(data, schema, path) do
+    with :ok <- validate_type(data, schema, path),
+         :ok <- validate_enum(data, schema, path),
+         {:ok, validated_data} <- validate_by_type(data, schema, path) do
+      {:ok, validated_data}
+    else
+      {:error, _} = error -> error
+    end
+  end
 
-      has_key =
-        Map.has_key?(acc, prop_key_str) or Map.has_key?(acc, prop_key_atom) or
-          Map.has_key?(acc, prop_name)
+  defp validate_by_type(data, schema, path) do
+    type = get_data_type(data)
 
-      if has_key do
-        acc
+    case type do
+      "object" -> validate_object(data, schema, path)
+      "array" -> validate_array(data, schema, path)
+      "string" -> validate_string(data, schema, path)
+      "number" -> validate_number(data, schema, path)
+      "integer" -> validate_number(data, schema, path)
+      _ -> {:ok, data}
+    end
+  end
+
+  # Type validation
+  defp validate_type(_data, %{} = schema, _path) when not is_map_key(schema, :type), do: :ok
+
+  defp validate_type(data, %{type: type}, path) do
+    types = List.wrap(type)
+    data_type = get_data_type(data)
+
+    is_valid =
+      cond do
+        data_type in types -> true
+        data_type == "integer" and "number" in types -> true
+        true -> false
+      end
+
+    if is_valid do
+      :ok
+    else
+      {:error, "#{path}: invalid type (got #{data_type}, expected one of: #{inspect(types)})"}
+    end
+  end
+
+  defp get_data_type(data) when is_integer(data), do: "integer"
+  defp get_data_type(data) when is_float(data), do: "number"
+  defp get_data_type(data) when is_number(data), do: "number"
+  defp get_data_type(data) when is_binary(data), do: "string"
+  defp get_data_type(data) when is_boolean(data), do: "boolean"
+  defp get_data_type(data) when is_list(data), do: "array"
+  defp get_data_type(data) when is_map(data), do: "object"
+  defp get_data_type(data) when is_nil(data), do: "null"
+
+  # Enum validation
+  defp validate_enum(_data, %{} = schema, _path) when not is_map_key(schema, :enum), do: :ok
+
+  defp validate_enum(data, %{enum: enum_values}, path) do
+    if data in enum_values do
+      :ok
+    else
+      {:error, "#{path}: value #{inspect(data)} is not in enum list"}
+    end
+  end
+
+  # Object validation
+  defp validate_object(data, schema, path) do
+    data_with_defaults = apply_object_defaults(data, schema)
+
+    with :ok <- validate_required(data_with_defaults, schema, path),
+         {:ok, validated_data} <- validate_properties(data_with_defaults, schema, path),
+         :ok <- validate_additional_properties(validated_data, schema, path) do
+      {:ok, validated_data}
+    else
+      {:error, _} = error -> error
+    end
+  end
+
+  defp apply_object_defaults(data, %{properties: properties}) when is_map(properties) do
+    Enum.reduce(properties, data, fn {prop, prop_schema}, acc ->
+      prop_atom = String.to_atom(to_string(prop))
+
+      if !Map.has_key?(acc, prop_atom) and Map.has_key?(prop_schema, :default) do
+        Map.put(acc, prop_atom, prop_schema.default)
       else
-        case prop_schema[:default] do
-          nil ->
-            acc
-
-          default ->
-            # Use the same key type as other keys in the map
-            if acc |> Map.keys() |> Enum.any?(&is_atom/1) do
-              Map.put(acc, prop_key_atom, default)
-            else
-              Map.put(acc, prop_key_str, default)
-            end
-        end
+        acc
       end
     end)
   end
 
-  defp apply_defaults(value, _schema), do: value
+  defp apply_object_defaults(data, _), do: data
+
+  defp validate_required(_data, %{} = schema, _path) when not is_map_key(schema, :required),
+    do: :ok
+
+  defp validate_required(data, %{required: required_props}, path) do
+    missing =
+      Enum.filter(required_props, fn prop ->
+        !Map.has_key?(data, String.to_atom(prop))
+      end)
+
+    if Enum.empty?(missing) do
+      :ok
+    else
+      {:error, "#{path}: missing required properties: #{inspect(missing)}"}
+    end
+  end
+
+  defp validate_properties(data, %{properties: properties}, path) when is_map(properties) do
+    Enum.reduce_while(properties, {:ok, data}, fn {prop, prop_schema}, {:ok, current_data} ->
+      prop_atom = String.to_atom(to_string(prop))
+
+      if Map.has_key?(current_data, prop_atom) do
+        value = Map.get(current_data, prop_atom)
+
+        case do_validate(value, prop_schema, "#{path}/#{prop}") do
+          {:ok, validated_value} ->
+            {:cont, {:ok, Map.put(current_data, prop_atom, validated_value)}}
+
+          error ->
+            {:halt, error}
+        end
+      else
+        {:cont, {:ok, current_data}}
+      end
+    end)
+  end
+
+  defp validate_properties(data, _, _), do: {:ok, data}
+
+  defp validate_additional_properties(
+         data,
+         %{additionalProperties: false, properties: props},
+         path
+       ) do
+    allowed_keys = Map.keys(props) |> Enum.map(&String.to_atom(to_string(&1)))
+    extra_keys = Map.keys(data) -- allowed_keys
+
+    if Enum.empty?(extra_keys) do
+      :ok
+    else
+      {:error, "#{path}: has additional properties: #{inspect(extra_keys)}"}
+    end
+  end
+
+  defp validate_additional_properties(_, _, _), do: :ok
+
+  # Array validation
+  defp validate_array(data, schema, path) do
+    with :ok <- validate_min_items(data, schema, path),
+         :ok <- validate_max_items(data, schema, path),
+         :ok <- validate_unique_items(data, schema, path),
+         {:ok, validated_data} <- validate_items(data, schema, path) do
+      {:ok, validated_data}
+    else
+      {:error, _} = error -> error
+    end
+  end
+
+  defp validate_min_items(_data, %{} = s, _) when not is_map_key(s, :minItems), do: :ok
+
+  defp validate_min_items(data, %{minItems: min}, path) do
+    if length(data) >= min, do: :ok, else: {:error, "#{path}: failed minItems constraint"}
+  end
+
+  defp validate_max_items(_data, %{} = s, _) when not is_map_key(s, :maxItems), do: :ok
+
+  defp validate_max_items(data, %{maxItems: max}, path) do
+    if length(data) <= max, do: :ok, else: {:error, "#{path}: failed maxItems constraint"}
+  end
+
+  defp validate_unique_items(_data, %{} = schema, _path)
+       when not is_map_key(schema, :uniqueItems),
+       do: :ok
+
+  defp validate_unique_items(data, %{uniqueItems: true}, path) do
+    if length(Enum.uniq(data)) == length(data),
+      do: :ok,
+      else: {:error, "#{path}: failed uniqueItems constraint"}
+  end
+
+  defp validate_unique_items(_data, _schema, _path), do: :ok
+
+  defp validate_items(data, %{items: item_schema}, path) do
+    data
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {item, i}, {:ok, acc} ->
+      case do_validate(item, item_schema, "#{path}/#{i}") do
+        {:ok, validated_item} -> {:cont, {:ok, [validated_item | acc]}}
+        error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, validated_list} -> {:ok, Enum.reverse(validated_list)}
+      error -> error
+    end
+  end
+
+  defp validate_items(data, _, _), do: {:ok, data}
+
+  # String validation
+  defp validate_string(data, schema, path) do
+    with :ok <- validate_min_length(data, schema, path),
+         :ok <- validate_max_length(data, schema, path),
+         :ok <- validate_pattern(data, schema, path),
+         :ok <- validate_format(data, schema, path) do
+      {:ok, data}
+    else
+      {:error, _} = error -> error
+    end
+  end
+
+  defp validate_min_length(_d, %{} = s, _) when not is_map_key(s, :minLength), do: :ok
+
+  defp validate_min_length(data, %{minLength: min}, path) do
+    if String.length(data) >= min,
+      do: :ok,
+      else: {:error, "#{path}: failed minLength constraint"}
+  end
+
+  defp validate_max_length(_d, %{} = s, _) when not is_map_key(s, :maxLength), do: :ok
+
+  defp validate_max_length(data, %{maxLength: max}, path) do
+    if String.length(data) <= max,
+      do: :ok,
+      else: {:error, "#{path}: failed maxLength constraint"}
+  end
+
+  defp validate_pattern(_d, %{} = s, _) when not is_map_key(s, :pattern), do: :ok
+
+  defp validate_pattern(data, %{pattern: pattern}, path) do
+    if Regex.match?(~r/#{pattern}/, data),
+      do: :ok,
+      else: {:error, "#{path}: failed pattern constraint"}
+  end
+
+  defp validate_format(_d, %{} = s, _) when not is_map_key(s, :format), do: :ok
+
+  defp validate_format(data, %{format: "email"}, path) do
+    if Regex.match?(~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/, data),
+      do: :ok,
+      else: {:error, "#{path}: failed format constraint"}
+  end
+
+  defp validate_format(data, %{format: _}, _path), do: {:ok, data}
+
+  # Number validation
+  defp validate_number(data, schema, path) do
+    with :ok <- validate_minimum(data, schema, path),
+         :ok <- validate_maximum(data, schema, path),
+         :ok <- validate_multiple_of(data, schema, path) do
+      {:ok, data}
+    else
+      {:error, _} = error -> error
+    end
+  end
+
+  defp validate_minimum(_d, %{} = s, _) when not is_map_key(s, :minimum), do: :ok
+
+  defp validate_minimum(data, %{minimum: min} = schema, path) do
+    exclusive = schema[:exclusiveMinimum] == true
+
+    cond do
+      exclusive and data > min -> :ok
+      !exclusive and data >= min -> :ok
+      exclusive -> {:error, "#{path}: failed exclusiveMinimum constraint"}
+      true -> {:error, "#{path}: failed minimum constraint"}
+    end
+  end
+
+  defp validate_maximum(_d, %{} = s, _) when not is_map_key(s, :maximum), do: :ok
+
+  defp validate_maximum(data, %{maximum: max} = schema, path) do
+    exclusive = schema[:exclusiveMaximum] == true
+
+    cond do
+      exclusive and data < max -> :ok
+      !exclusive and data <= max -> :ok
+      exclusive -> {:error, "#{path}: failed exclusiveMaximum constraint"}
+      true -> {:error, "#{path}: failed maximum constraint"}
+    end
+  end
+
+  defp validate_multiple_of(_d, %{} = s, _) when not is_map_key(s, :multipleOf), do: :ok
+
+  defp validate_multiple_of(data, %{multipleOf: factor}, path) do
+    remainder = rem(data, factor)
+
+    if remainder == 0 or abs(remainder) < 1.0e-9 or abs(factor - remainder) < 1.0e-9 do
+      :ok
+    else
+      {:error, "#{path}: failed multipleOf constraint"}
+    end
+  end
+
+  # Key conversion helpers
+  defp atomize_keys(map) when is_map(map) do
+    for {k, v} <- map, into: %{} do
+      key = if is_binary(k), do: String.to_atom(k), else: k
+      {key, atomize_keys(v)}
+    end
+  end
+
+  defp atomize_keys(list) when is_list(list), do: Enum.map(list, &atomize_keys/1)
+  defp atomize_keys(other), do: other
 
   @doc """
   Converts a function spec to a tool definition.

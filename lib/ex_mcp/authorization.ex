@@ -122,7 +122,7 @@ defmodule ExMCP.Authorization do
   > for the complete specification.
   """
 
-  alias ExMCP.Internal.Authorization
+  alias ExMCP.Internal.Authorization.PKCE
 
   @type authorization_config :: %{
           client_id: String.t(),
@@ -194,7 +194,33 @@ defmodule ExMCP.Authorization do
   """
   @spec start_authorization_flow(authorization_config()) ::
           {:ok, String.t(), map()} | {:error, term()}
-  defdelegate start_authorization_flow(config), to: Authorization
+  def start_authorization_flow(config) do
+    with :ok <- validate_https_endpoint(config.authorization_endpoint),
+         :ok <- validate_redirect_uri(config.redirect_uri),
+         {:ok, code_verifier, code_challenge} <- PKCE.generate_challenge() do
+      state = %{
+        code_verifier: code_verifier,
+        state_param: generate_state()
+      }
+
+      params = %{
+        response_type: "code",
+        client_id: config.client_id,
+        redirect_uri: config.redirect_uri,
+        scope: Enum.join(config.scopes, " "),
+        state: state.state_param,
+        code_challenge: code_challenge,
+        code_challenge_method: "S256"
+      }
+
+      additional_params = Map.get(config, :additional_params, %{})
+      all_params = Map.merge(params, additional_params)
+
+      auth_url = build_authorization_url(config.authorization_endpoint, all_params)
+
+      {:ok, auth_url, state}
+    end
+  end
 
   @doc """
   Exchanges an authorization code for an access token using PKCE.
@@ -234,7 +260,34 @@ defmodule ExMCP.Authorization do
       access_token = tokens.access_token
   """
   @spec exchange_code_for_token(map()) :: {:ok, token_response()} | {:error, term()}
-  defdelegate exchange_code_for_token(params), to: Authorization
+  def exchange_code_for_token(
+        %{
+          code: code,
+          code_verifier: code_verifier,
+          client_id: client_id,
+          redirect_uri: redirect_uri,
+          token_endpoint: token_endpoint
+        } = params
+      ) do
+    with :ok <- validate_https_endpoint(token_endpoint) do
+      request_body = %{
+        grant_type: "authorization_code",
+        code: code,
+        redirect_uri: redirect_uri,
+        client_id: client_id,
+        code_verifier: code_verifier
+      }
+
+      # Add client_secret if provided
+      request_body =
+        case Map.get(params, :client_secret) do
+          nil -> request_body
+          secret -> Map.put(request_body, :client_secret, secret)
+        end
+
+      make_token_request(token_endpoint, request_body)
+    end
+  end
 
   @doc """
   Performs OAuth 2.1 client credentials flow.
@@ -266,7 +319,30 @@ defmodule ExMCP.Authorization do
       access_token = tokens.access_token
   """
   @spec client_credentials_flow(map()) :: {:ok, token_response()} | {:error, term()}
-  defdelegate client_credentials_flow(params), to: Authorization
+  def client_credentials_flow(
+        %{
+          client_id: client_id,
+          client_secret: client_secret,
+          token_endpoint: token_endpoint
+        } = params
+      ) do
+    with :ok <- validate_https_endpoint(token_endpoint) do
+      request_body = %{
+        grant_type: "client_credentials",
+        client_id: client_id,
+        client_secret: client_secret
+      }
+
+      # Add scopes if provided
+      request_body =
+        case Map.get(params, :scopes) do
+          nil -> request_body
+          scopes -> Map.put(request_body, :scope, Enum.join(scopes, " "))
+        end
+
+      make_token_request(token_endpoint, request_body)
+    end
+  end
 
   @doc """
   Discovers server metadata from the authorization server.
@@ -299,7 +375,28 @@ defmodule ExMCP.Authorization do
       token_endpoint = metadata.token_endpoint
   """
   @spec discover_server_metadata(String.t()) :: {:ok, server_metadata()} | {:error, term()}
-  defdelegate discover_server_metadata(issuer_url), to: Authorization
+  def discover_server_metadata(issuer_url) do
+    with :ok <- validate_https_endpoint(issuer_url) do
+      metadata_url = build_metadata_url(issuer_url)
+
+      case make_http_request(:get, metadata_url, [], "") do
+        {:ok, {{_, 200, _}, _headers, body}} ->
+          case Jason.decode(body) do
+            {:ok, metadata} ->
+              {:ok, parse_server_metadata(metadata)}
+
+            {:error, reason} ->
+              {:error, {:json_decode_error, reason}}
+          end
+
+        {:ok, {{_, status, _}, _headers, body}} ->
+          {:error, {:http_error, status, body}}
+
+        {:error, reason} ->
+          {:error, {:request_failed, reason}}
+      end
+    end
+  end
 
   @doc """
   Validates an access token with the authorization server.
@@ -329,7 +426,25 @@ defmodule ExMCP.Authorization do
       end
   """
   @spec validate_token(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
-  defdelegate validate_token(token, introspection_endpoint), to: Authorization
+  def validate_token(token, introspection_endpoint) do
+    with :ok <- validate_https_endpoint(introspection_endpoint) do
+      request_body = %{
+        token: token,
+        token_type_hint: "access_token"
+      }
+
+      case make_introspection_request(introspection_endpoint, request_body) do
+        {:ok, %{active: true} = response} ->
+          {:ok, response}
+
+        {:ok, %{active: false}} ->
+          {:error, :token_inactive}
+
+        error ->
+          error
+      end
+    end
+  end
 
   @doc """
   Generates PKCE code challenge parameters.
@@ -381,4 +496,228 @@ defmodule ExMCP.Authorization do
   defdelegate verify_pkce_challenge(code_verifier, expected_challenge),
     to: ExMCP.Internal.Authorization.PKCE,
     as: :verify_challenge
+
+  @doc """
+  Makes a token request to the authorization server.
+
+  Used internally by TokenManager for refresh operations.
+  """
+  @spec token_request(map()) :: {:ok, map()} | {:error, any()}
+  def token_request(config) do
+    endpoint = config[:token_endpoint] || raise "Missing token_endpoint"
+
+    # Build request body based on grant type
+    body = build_refresh_token_request_body(config)
+
+    # Make the request
+    make_token_request(endpoint, body)
+  end
+
+  # Private helper functions
+
+  defp build_refresh_token_request_body(config) do
+    base_params = %{
+      "client_id" => config[:client_id]
+    }
+
+    # Add grant-specific parameters
+    cond do
+      config[:refresh_token] ->
+        params =
+          Map.merge(base_params, %{
+            "grant_type" => "refresh_token",
+            "refresh_token" => config[:refresh_token]
+          })
+
+        # Add client_secret if provided (for confidential clients)
+        if config[:client_secret] do
+          Map.put(params, "client_secret", config[:client_secret])
+        else
+          params
+        end
+
+      config[:code] ->
+        Map.merge(base_params, %{
+          "grant_type" => "authorization_code",
+          "code" => config[:code],
+          "redirect_uri" => config[:redirect_uri],
+          "code_verifier" => config[:code_verifier]
+        })
+
+      config[:client_secret] ->
+        Map.merge(base_params, %{
+          "grant_type" => "client_credentials",
+          "client_secret" => config[:client_secret],
+          "scope" => config[:scope] || ""
+        })
+
+      true ->
+        raise "Invalid token request configuration"
+    end
+  end
+
+  defp validate_https_endpoint(url) do
+    case URI.parse(url) do
+      %URI{scheme: "https"} -> :ok
+      %URI{scheme: "http", host: host} when host in ["localhost", "127.0.0.1"] -> :ok
+      _ -> {:error, :https_required}
+    end
+  end
+
+  defp validate_redirect_uri(uri) do
+    case URI.parse(uri) do
+      %URI{scheme: "https"} -> :ok
+      %URI{scheme: "http", host: host} when host in ["localhost", "127.0.0.1"] -> :ok
+      _ -> {:error, :invalid_redirect_uri}
+    end
+  end
+
+  defp generate_state do
+    :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+  end
+
+  defp build_authorization_url(base_url, params) do
+    query_string = URI.encode_query(params)
+    "#{base_url}?#{query_string}"
+  end
+
+  defp build_metadata_url(issuer_url) do
+    issuer_url
+    |> String.trim_trailing("/")
+    |> Kernel.<>("/.well-known/oauth-authorization-server")
+  end
+
+  defp make_introspection_request(endpoint, body) do
+    headers = [
+      {"content-type", "application/x-www-form-urlencoded"},
+      {"accept", "application/json"}
+    ]
+
+    encoded_body = URI.encode_query(body)
+
+    case make_http_request(:post, endpoint, headers, encoded_body) do
+      {:ok, {{_, 200, _}, _response_headers, response_body}} ->
+        case Jason.decode(response_body) do
+          {:ok, introspection_data} ->
+            {:ok, parse_introspection_response(introspection_data)}
+
+          {:error, reason} ->
+            {:error, {:json_decode_error, reason}}
+        end
+
+      {:ok, {{_, status, _}, _headers, error_body}} ->
+        case Jason.decode(error_body) do
+          {:ok, error_data} ->
+            {:error, {:oauth_error, status, error_data}}
+
+          {:error, _} ->
+            {:error, {:http_error, status, error_body}}
+        end
+
+      {:error, reason} ->
+        {:error, {:request_failed, reason}}
+    end
+  end
+
+  defp make_token_request(endpoint, body) do
+    headers = [
+      {"content-type", "application/x-www-form-urlencoded"},
+      {"accept", "application/json"}
+    ]
+
+    encoded_body = URI.encode_query(body)
+
+    case make_http_request(:post, endpoint, headers, encoded_body) do
+      {:ok, {{_, 200, _}, _response_headers, response_body}} ->
+        case Jason.decode(response_body) do
+          {:ok, token_data} ->
+            {:ok, parse_token_response(token_data)}
+
+          {:error, reason} ->
+            {:error, {:json_decode_error, reason}}
+        end
+
+      {:ok, {{_, status, _}, _headers, error_body}} ->
+        case Jason.decode(error_body) do
+          {:ok, error_data} ->
+            {:error, {:oauth_error, status, error_data}}
+
+          {:error, _} ->
+            {:error, {:http_error, status, error_body}}
+        end
+
+      {:error, reason} ->
+        {:error, {:request_failed, reason}}
+    end
+  end
+
+  defp make_http_request(method, url, headers, body) do
+    # Convert headers to charlist format for httpc
+    httpc_headers =
+      Enum.map(headers, fn {k, v} ->
+        {String.to_charlist(k), String.to_charlist(v)}
+      end)
+
+    request =
+      case method do
+        :get ->
+          {String.to_charlist(url), httpc_headers}
+
+        :post ->
+          {String.to_charlist(url), httpc_headers, ~c"application/x-www-form-urlencoded",
+           String.to_charlist(body)}
+      end
+
+    # SSL options for HTTPS
+    ssl_opts = [
+      ssl: [
+        verify: :verify_peer,
+        cacerts: :public_key.cacerts_get(),
+        versions: [:"tlsv1.2", :"tlsv1.3"]
+      ]
+    ]
+
+    :httpc.request(method, request, ssl_opts, [])
+  end
+
+  defp parse_token_response(data) do
+    %{
+      access_token: Map.fetch!(data, "access_token"),
+      token_type: Map.get(data, "token_type", "Bearer"),
+      expires_in: Map.get(data, "expires_in"),
+      refresh_token: Map.get(data, "refresh_token"),
+      scope: Map.get(data, "scope")
+    }
+  end
+
+  defp parse_introspection_response(data) do
+    %{
+      active: Map.get(data, "active", false),
+      scope: Map.get(data, "scope"),
+      client_id: Map.get(data, "client_id"),
+      username: Map.get(data, "username"),
+      token_type: Map.get(data, "token_type"),
+      exp: Map.get(data, "exp"),
+      iat: Map.get(data, "iat"),
+      nbf: Map.get(data, "nbf"),
+      sub: Map.get(data, "sub"),
+      aud: Map.get(data, "aud"),
+      iss: Map.get(data, "iss"),
+      jti: Map.get(data, "jti")
+    }
+  end
+
+  defp parse_server_metadata(data) do
+    %{
+      authorization_endpoint: Map.fetch!(data, "authorization_endpoint"),
+      token_endpoint: Map.fetch!(data, "token_endpoint"),
+      registration_endpoint: Map.get(data, "registration_endpoint"),
+      scopes_supported: Map.get(data, "scopes_supported", []),
+      response_types_supported: Map.get(data, "response_types_supported", ["code"]),
+      grant_types_supported:
+        Map.get(data, "grant_types_supported", ["authorization_code", "client_credentials"]),
+      code_challenge_methods_supported:
+        Map.get(data, "code_challenge_methods_supported", ["S256"])
+    }
+  end
 end

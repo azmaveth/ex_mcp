@@ -1,6 +1,6 @@
 defmodule ExMCP.TestCase do
   @moduledoc """
-  Custom test case for ExMCP v2 with MCP-specific testing utilities.
+  Custom test case for ExMCP with MCP-specific testing utilities.
 
   This module provides a comprehensive testing framework specifically designed
   for MCP (Model Context Protocol) applications, including:
@@ -72,7 +72,7 @@ defmodule ExMCP.TestCase do
   ## Examples
 
       with_mock_server(tools: [sample_tool()], resources: [sample_resource()]) do |client|
-        result = ExMCP.SimpleClient.list_tools(client)
+        result = ExMCP.Client.list_tools(client)
         assert {:ok, %{"tools" => tools}} = result
         assert length(tools) == 1
       end
@@ -92,7 +92,7 @@ defmodule ExMCP.TestCase do
   ## Examples
 
       with_test_server(MyServer, port: 8080) do |client|
-        result = ExMCP.SimpleClient.list_tools(client)
+        result = ExMCP.Client.list_tools(client)
         assert {:ok, %{"tools" => _}} = result
       end
   """

@@ -61,7 +61,7 @@ defmodule ExMCP.MixProject do
       {:plug, "~> 1.16"},
       {:fuse, "~> 2.4", optional: true},
       # ExMCP v2 dependencies
-      {:ex_json_schema, "~> 0.10", only: [:dev, :test]},
+      {:ex_json_schema, "~> 0.10"},
       {:html_entities, "~> 0.5", only: [:dev, :test]},
       {:propcheck, "~> 1.4", only: :test}
     ]
@@ -96,6 +96,7 @@ defmodule ExMCP.MixProject do
       canonical: "https://hexdocs.pm/ex_mcp",
       extras: [
         "README.md",
+        "docs/PHOENIX_GUIDE.md",
         "USER_GUIDE.md",
         "API_REFERENCE.md",
         "EXTENSIONS.md",
@@ -105,7 +106,7 @@ defmodule ExMCP.MixProject do
       source_ref: "v#{@version}",
       groups_for_extras: [
         Introduction: ~r/README/,
-        Guides: ~r/USER_GUIDE|API_REFERENCE|EXTENSIONS/,
+        Guides: ~r/PHOENIX_GUIDE|USER_GUIDE|API_REFERENCE|EXTENSIONS/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

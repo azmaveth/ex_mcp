@@ -1,7 +1,7 @@
 defmodule ExMCP.ContentTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.ContentV2, as: Content
+  alias ExMCP.ContentHelpers, as: Content
 
   describe "text/1 and text/2" do
     test "creates text content without annotations" do

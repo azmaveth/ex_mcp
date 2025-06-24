@@ -138,7 +138,7 @@ defmodule ExMCP.Server.ToolsTest do
         )
 
       assert result.content == [%{type: "text", text: "Result: 4"}]
-      assert result.structuredContent == %{result: 4, expression: "2 + 2"}
+      assert result.structuredOutput == %{result: 4, expression: "2 + 2"}
     end
 
     test "supports all annotation types" do
@@ -443,7 +443,7 @@ defmodule ExMCP.Server.ToolsTest do
         )
 
       # Extract data for second tool
-      data = fetch_result.structuredContent
+      data = fetch_result.structuredOutput
 
       # Second tool execution
       {:ok, process_result, _} =

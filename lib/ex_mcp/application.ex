@@ -20,7 +20,9 @@ defmodule ExMCP.Application do
       {Horde.DynamicSupervisor,
        strategy: :one_for_one, name: ExMCP.ServiceSupervisor, members: :auto},
       # Dynamic supervisor for runtime components
-      {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor}
+      {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
+      # Start the Consent Cache for security features
+      ExMCP.Internal.ConsentCache
     ]
 
     opts = [strategy: :one_for_one, name: ExMCP.Supervisor]

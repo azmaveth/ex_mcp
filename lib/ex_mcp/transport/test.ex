@@ -61,6 +61,11 @@ defmodule ExMCP.Transport.Test do
 
   @impl true
   def receive_message(%__MODULE__{} = state) do
+    receive_message(state, 5000)
+  end
+
+  # Client API expects receive_message/2 with timeout
+  def receive_message(%__MODULE__{} = state, timeout) do
     receive do
       {:transport_message, message} ->
         {:ok, message, state}
@@ -68,7 +73,7 @@ defmodule ExMCP.Transport.Test do
       {:transport_error, reason} ->
         {:error, reason}
     after
-      5000 ->
+      timeout ->
         {:error, :timeout}
     end
   end
@@ -109,15 +114,11 @@ defmodule ExMCP.Transport.Test do
   end
 
   def recv(state, timeout \\ 5_000) do
-    receive do
-      {:transport_message, message} ->
-        {:ok, message, state}
+    receive_message(state, timeout)
+  end
 
-      {:transport_error, reason} ->
-        {:error, reason}
-    after
-      timeout ->
-        {:error, :timeout}
-    end
+  # Client receiver task expects this function
+  def receive(state) do
+    receive_message(state, 5_000)
   end
 end

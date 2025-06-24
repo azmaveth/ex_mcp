@@ -56,6 +56,9 @@ defmodule ExMCP.Native do
 
   require Logger
 
+  alias ExMCP.Transport.SecurityGuard
+  alias ExMCP.Internal.SecurityConfig
+
   @registry_name ExMCP.ServiceRegistry
   @default_timeout 5_000
 
@@ -136,12 +139,96 @@ defmodule ExMCP.Native do
 
     case lookup_service(service_id) do
       {:ok, pid} ->
-        message = build_mcp_message(method, params, progress_token, meta)
-        make_service_call(pid, message, timeout)
+        # Check if this is an external service call that needs security validation
+        case validate_beam_service_call(service_id, method, params, opts) do
+          {:ok, validated_params} ->
+            message = build_mcp_message(method, validated_params, progress_token, meta)
+            make_service_call(pid, message, timeout)
+
+          {:error, security_error} ->
+            Logger.warning("BEAM service call blocked by security policy",
+              service_id: service_id,
+              method: method,
+              error: security_error
+            )
+
+            {:error, {:security_violation, security_error}}
+        end
 
       {:error, :not_found} ->
         {:error, {:service_not_found, service_id}}
     end
+  end
+
+  defp validate_beam_service_call(service_id, method, params, opts) do
+    # Check if this service call involves external resources or cross-cluster communication
+    case should_validate_beam_call?(service_id, method, params) do
+      true ->
+        # Extract URL from params if this is a resource-related call
+        url = extract_url_from_params(method, params)
+
+        security_request = %{
+          url: url || "beam://#{service_id}/#{method}",
+          headers: [],
+          method: method,
+          transport: :beam,
+          user_id: extract_beam_user_id(opts)
+        }
+
+        config = SecurityConfig.get_transport_config(:beam)
+
+        case SecurityGuard.validate_request(security_request, config) do
+          {:ok, _sanitized_request} ->
+            {:ok, params}
+
+          {:error, security_error} ->
+            {:error, security_error}
+        end
+
+      false ->
+        # Internal BEAM service call, allow through
+        {:ok, params}
+    end
+  end
+
+  defp should_validate_beam_call?(service_id, method, params) do
+    # Validate calls that involve external resources or cross-cluster communication
+    cond do
+      # Resource-related methods that might access external URLs
+      String.starts_with?(method, "resources/") ->
+        case extract_url_from_params(method, params) do
+          nil -> false
+          url -> is_external_url?(url)
+        end
+
+      # Cross-cluster service calls (service_id is a tuple with node)
+      is_tuple(service_id) ->
+        {_service, node} = service_id
+        node != node()
+
+      # Default: internal calls don't need validation
+      true ->
+        false
+    end
+  end
+
+  defp extract_url_from_params("resources/read", %{"uri" => uri}), do: uri
+  defp extract_url_from_params("resources/list", %{"uri" => uri}) when is_binary(uri), do: uri
+  defp extract_url_from_params(_, _), do: nil
+
+  defp is_external_url?(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host} when not is_nil(scheme) and not is_nil(host) ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp extract_beam_user_id(opts) do
+    # Try to extract user ID from options, fallback to node-based identification
+    Keyword.get(opts, :user_id, "#{node()}_beam_user")
   end
 
   @doc """

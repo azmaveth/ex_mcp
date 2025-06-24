@@ -406,7 +406,7 @@ defmodule ExMCP.Reliability.HealthCheck do
   @spec mcp_client_check_fn() :: (pid() -> {:ok, map()} | {:error, any()})
   def mcp_client_check_fn do
     fn client ->
-      case ExMCP.SimpleClient.list_tools(client) do
+      case ExMCP.Client.list_tools(client) do
         {:ok, result} ->
           tool_count = length(Map.get(result, "tools", []))
           {:ok, %{method: :list_tools, tool_count: tool_count}}

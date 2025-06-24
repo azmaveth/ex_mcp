@@ -78,7 +78,7 @@ defmodule ExMCP.Reliability.Supervisor do
     client_id = Keyword.get(opts, :id, generate_client_id())
     transport_opts = Keyword.take(opts, [:transport, :transports])
 
-    with {:ok, client_pid} <- ExMCP.SimpleClient.start_link(transport_opts),
+    with {:ok, client_pid} <- ExMCP.Client.start_link(transport_opts),
          {:ok, breaker_pid} <- maybe_start_circuit_breaker(supervisor, client_id, opts),
          {:ok, health_pid} <- maybe_start_health_check(supervisor, client_id, client_pid, opts) do
       # Create wrapper process that integrates all components
@@ -188,7 +188,7 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
 
   use GenServer
 
-  alias ExMCP.Reliability.{CircuitBreaker, Retry}
+  alias ExMCP.Reliability.Retry
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
@@ -212,7 +212,7 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
   @impl GenServer
   def handle_call({:call_tool, tool_name, args, opts}, from, state) do
     execute_with_reliability(
-      fn -> ExMCP.SimpleClient.call_tool(state.client, tool_name, args, opts) end,
+      fn -> ExMCP.Client.call_tool(state.client, tool_name, args, opts) end,
       from,
       state
     )
@@ -220,7 +220,7 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
 
   def handle_call({:list_tools, opts}, from, state) do
     execute_with_reliability(
-      fn -> ExMCP.SimpleClient.list_tools(state.client, opts) end,
+      fn -> ExMCP.Client.list_tools(state.client, opts) end,
       from,
       state
     )
@@ -228,7 +228,7 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
 
   def handle_call({:list_resources, opts}, from, state) do
     execute_with_reliability(
-      fn -> ExMCP.SimpleClient.list_resources(state.client, opts) end,
+      fn -> ExMCP.Client.list_resources(state.client, opts) end,
       from,
       state
     )
@@ -236,7 +236,7 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
 
   def handle_call({:read_resource, uri, opts}, from, state) do
     execute_with_reliability(
-      fn -> ExMCP.SimpleClient.read_resource(state.client, uri, opts) end,
+      fn -> ExMCP.Client.read_resource(state.client, uri, opts) end,
       from,
       state
     )
@@ -244,7 +244,7 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
 
   def handle_call({:list_prompts, opts}, from, state) do
     execute_with_reliability(
-      fn -> ExMCP.SimpleClient.list_prompts(state.client, opts) end,
+      fn -> ExMCP.Client.list_prompts(state.client, opts) end,
       from,
       state
     )
@@ -252,7 +252,7 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
 
   def handle_call({:get_prompt, name, args, opts}, from, state) do
     execute_with_reliability(
-      fn -> ExMCP.SimpleClient.get_prompt(state.client, name, args, opts) end,
+      fn -> ExMCP.Client.get_prompt(state.client, name, args, opts) end,
       from,
       state
     )
@@ -275,16 +275,8 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
 
   defp execute_with_reliability(fun, from, state) do
     Task.start(fn ->
-      result =
-        if state.circuit_breaker do
-          # Execute through circuit breaker with retry
-          CircuitBreaker.call(state.circuit_breaker, fn ->
-            Retry.with_retry(fun, Retry.mcp_defaults(state.retry_opts))
-          end)
-        else
-          # Just retry without circuit breaker
-          Retry.with_retry(fun, Retry.mcp_defaults(state.retry_opts))
-        end
+      # Execute with retry logic
+      result = Retry.with_retry(fun, Retry.mcp_defaults(state.retry_opts))
 
       GenServer.reply(from, result)
     end)
@@ -304,7 +296,7 @@ defmodule ExMCP.Reliability do
 
       # Wrap a function with retry logic
       ExMCP.Reliability.with_retry(fn ->
-        ExMCP.SimpleClient.call_tool(client, "risky_tool", %{})
+        ExMCP.Client.call_tool(client, "risky_tool", %{})
       end)
 
       # Create a circuit-breaker protected function
@@ -316,32 +308,20 @@ defmodule ExMCP.Reliability do
       protected_call.()
   """
 
-  alias ExMCP.Reliability.{CircuitBreaker, Retry}
+  alias ExMCP.Reliability.Retry
 
   defdelegate with_retry(fun, opts \\ []), to: Retry
 
   @doc """
-  Creates a circuit-breaker protected version of a function.
+  Creates a retry-protected version of a function.
 
-  The circuit breaker is created on first use and reused for
-  subsequent calls.
+  The function will be retried according to the specified options
+  on failure.
   """
   @spec protect(function(), keyword()) :: function()
   def protect(fun, opts \\ []) when is_function(fun) do
-    breaker_name = Keyword.get(opts, :name, {:protect, :erlang.unique_integer()})
-
     fn args ->
-      breaker =
-        case Process.whereis(breaker_name) do
-          nil ->
-            {:ok, pid} = CircuitBreaker.start_link(Keyword.put(opts, :name, breaker_name))
-            pid
-
-          pid ->
-            pid
-        end
-
-      CircuitBreaker.call(breaker, fn -> apply(fun, args) end)
+      Retry.with_retry(fn -> apply(fun, args) end, Retry.mcp_defaults(opts))
     end
   end
 end

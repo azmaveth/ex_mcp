@@ -1,6 +1,6 @@
 defmodule ExMCP.Content.Protocol do
   @moduledoc """
-  Content protocol for ExMCP v2 - type-safe content handling system.
+  Content protocol for ExMCP - type-safe content handling system.
 
   This module defines the core protocol and types for handling different
   content types in MCP messages, providing a unified interface for text,

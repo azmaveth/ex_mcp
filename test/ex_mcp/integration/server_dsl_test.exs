@@ -6,49 +6,71 @@ defmodule ExMCP.Integration.ServerDSLTest do
     use ExMCP.Server
 
     deftool "calculate_sum" do
-      tool_description("Adds two numbers together")
-
-      args do
-        field(:a, :number, required: true, description: "First number")
-        field(:b, :number, required: true, description: "Second number")
+      meta do
+        description("Adds two numbers together")
       end
+
+      input_schema(%{
+        type: "object",
+        properties: %{
+          a: %{type: "number", description: "First number"},
+          b: %{type: "number", description: "Second number"}
+        },
+        required: ["a", "b"]
+      })
     end
 
     deftool "process_data" do
-      tool_description("Processes data with options")
-
-      args do
-        field(:data, :string, required: true)
-
-        field :options, :object do
-          field(:format, :string, default: "json")
-          field(:validate, :boolean, default: true)
-        end
+      meta do
+        description("Processes data with options")
       end
+
+      input_schema(%{
+        type: "object",
+        properties: %{
+          data: %{type: "string"},
+          options: %{
+            type: "object",
+            properties: %{
+              format: %{type: "string", default: "json"},
+              validate: %{type: "boolean", default: true}
+            }
+          }
+        },
+        required: ["data"]
+      })
     end
 
     defresource "config://app/settings" do
-      resource_name("Application Settings")
-      resource_description("Current application configuration")
+      meta do
+        name("Application Settings")
+        description("Current application configuration")
+      end
+
       mime_type("application/json")
 
-      resource_annotations(%{
+      annotations(%{
         audience: ["admin"],
         priority: 0.8
       })
     end
 
     defresource "file://logs/*.log" do
-      resource_name("Log Files")
-      resource_description("Application log files")
+      meta do
+        name("Log Files")
+        description("Application log files")
+      end
+
       mime_type("text/plain")
       list_pattern(true)
       subscribable(true)
     end
 
     defprompt "code_review" do
-      prompt_name("Code Review Assistant")
-      prompt_description("Reviews code with specific focus areas")
+      meta do
+        name("Code Review Assistant")
+        description("Reviews code with specific focus areas")
+      end
 
       arguments do
         arg(:code, required: true, description: "Code to review")
@@ -58,8 +80,10 @@ defmodule ExMCP.Integration.ServerDSLTest do
     end
 
     defprompt "simple_greeting" do
-      prompt_name("Simple Greeting")
-      prompt_description("A simple greeting prompt")
+      meta do
+        name("Simple Greeting")
+        description("A simple greeting prompt")
+      end
     end
 
     # Handler implementations

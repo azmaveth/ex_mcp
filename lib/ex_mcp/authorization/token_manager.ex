@@ -16,7 +16,7 @@ defmodule ExMCP.Authorization.TokenManager do
   use GenServer
   require Logger
 
-  alias ExMCP.Internal.Authorization
+  alias ExMCP.Authorization
 
   # Refresh tokens 5 minutes before expiration by default
   @default_refresh_window 300

@@ -1,6 +1,6 @@
 defmodule ExMCP.Content.Builders do
   @moduledoc """
-  Smart constructors and builder patterns for ExMCP v2 content creation.
+  Smart constructors and builder patterns for ExMCP content creation.
 
   This module provides an intuitive, chainable API for building complex content
   structures with validation, type safety, and helpful defaults.

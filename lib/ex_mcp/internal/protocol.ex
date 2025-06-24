@@ -15,7 +15,7 @@ defmodule ExMCP.Internal.Protocol do
   #
   # All methods in this module are part of the official MCP specification.
 
-  alias ExMCP.Internal.VersionRegistry
+  alias ExMCP.Internal.{MessageValidator, VersionRegistry}
 
   @type json_rpc_id :: String.t() | integer()
   @type method :: String.t()
@@ -510,84 +510,96 @@ defmodule ExMCP.Internal.Protocol do
     }
   end
 
-  # Batch Request Support
-
-  @doc """
-  Encodes a batch of requests and/or notifications.
-
-  ## Example
-
-      batch = [
-        ExMCP.Protocol.encode_list_tools(),
-        ExMCP.Protocol.encode_list_resources(),
-        ExMCP.Protocol.encode_notification("initialized", %{})
-      ]
-
-      encoded = ExMCP.Protocol.encode_batch(batch)
-  """
-  @spec encode_batch(list(map())) :: list(map())
-  def encode_batch(messages) when is_list(messages) do
-    messages
-  end
-
-  @doc """
-  Processes a batch of responses.
-
-  Returns a list of parsed messages.
-  """
-  @spec parse_batch_response(list(map())) :: list(tuple())
-  def parse_batch_response(responses) when is_list(responses) do
-    Enum.map(responses, &parse_message/1)
-  end
-
   # Message Parsing
 
   @doc """
-  Parses a JSON-RPC message.
+  Parses a JSON-RPC message with validation.
 
   Returns one of:
   - `{:request, method, params, id}` - An incoming request
   - `{:notification, method, params}` - An incoming notification
   - `{:result, result, id}` - A response to our request
   - `{:error, error, id}` - An error response
-  - `{:batch, messages}` - A batch of messages
   - `{:error, :invalid_message}` - Invalid message format
+  - `{:error, :validation_failed, error_details}` - Validation failed
   """
-  @spec parse_message(String.t() | map() | list()) ::
+  @spec parse_message(String.t() | map(), MessageValidator.session_state() | nil) ::
           {:request, method(), params(), json_rpc_id()}
           | {:notification, method(), params()}
           | {:result, result(), json_rpc_id()}
           | {:error, error(), json_rpc_id()}
-          | {:batch, list()}
           | {:error, :invalid_message}
-  def parse_message(data) when is_binary(data) do
+          | {:error, :validation_failed, map()}
+
+  def parse_message(data, session_state \\ nil)
+
+  @spec parse_message_unvalidated(String.t() | map()) ::
+          {:request, method(), params(), json_rpc_id()}
+          | {:notification, method(), params()}
+          | {:result, result(), json_rpc_id()}
+          | {:error, error(), json_rpc_id()}
+          | {:error, :invalid_message}
+  def parse_message(data, session_state) when is_binary(data) do
     case Jason.decode(data) do
-      {:ok, decoded} -> parse_message(decoded)
+      {:ok, decoded} -> parse_message(decoded, session_state)
       {:error, _} -> {:error, :invalid_message}
     end
   end
 
-  def parse_message(messages) when is_list(messages) do
-    {:batch, messages}
+  def parse_message(message, session_state) do
+    # Use session state or create new one
+    state = session_state || MessageValidator.new_session()
+
+    # First do basic parsing
+    parsed = parse_message_unvalidated(message)
+
+    # Then validate if we have a valid parsed message
+    case parsed do
+      {:error, :invalid_message} ->
+        {:error, :invalid_message}
+
+      _ ->
+        # For individual messages, validate the original message structure
+        case MessageValidator.validate_message(message, state) do
+          {{:ok, _validated}, _new_state} -> parsed
+          {{:error, error}, _state} -> {:error, :validation_failed, error}
+        end
+    end
   end
 
-  def parse_message(%{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => id}) do
+  def parse_message_unvalidated(data) when is_binary(data) do
+    case Jason.decode(data) do
+      {:ok, decoded} -> parse_message_unvalidated(decoded)
+      {:error, _} -> {:error, :invalid_message}
+    end
+  end
+
+  def parse_message_unvalidated(%{
+        "jsonrpc" => "2.0",
+        "method" => method,
+        "params" => params,
+        "id" => id
+      }) do
     {:request, method, params, id}
   end
 
-  def parse_message(%{"jsonrpc" => "2.0", "method" => method, "params" => params}) do
+  def parse_message_unvalidated(%{"jsonrpc" => "2.0", "method" => method, "params" => params}) do
     {:notification, method, params}
   end
 
-  def parse_message(%{"jsonrpc" => "2.0", "result" => result, "id" => id}) do
+  def parse_message_unvalidated(%{"jsonrpc" => "2.0", "result" => result, "id" => id}) do
     {:result, result, id}
   end
 
-  def parse_message(%{"jsonrpc" => "2.0", "error" => error, "id" => id}) do
+  def parse_message_unvalidated(%{"jsonrpc" => "2.0", "error" => error, "id" => id}) do
     {:error, error, id}
   end
 
-  def parse_message(_), do: {:error, :invalid_message}
+  def parse_message_unvalidated(messages) when is_list(messages) do
+    {:batch, messages}
+  end
+
+  def parse_message_unvalidated(_), do: {:error, :invalid_message}
 
   # Version-specific utilities
 
@@ -620,6 +632,31 @@ defmodule ExMCP.Internal.Protocol do
   end
 
   def validate_message_version(_, _), do: :ok
+
+  # Batch Processing (for backward compatibility with older protocol versions)
+
+  @doc """
+  Encodes a batch of JSON-RPC requests.
+
+  Note: Batch support is deprecated in protocol version 2025-06-18.
+  This function is maintained for backward compatibility with older versions.
+  """
+  @spec encode_batch(list(map())) :: list(map())
+  def encode_batch(requests) when is_list(requests) do
+    requests
+  end
+
+  @doc """
+  Parses a batch of JSON-RPC responses.
+
+  Note: Batch support is deprecated in protocol version 2025-06-18.
+  This function is maintained for backward compatibility with older versions.
+  """
+  @spec parse_batch_response(list(map())) ::
+          list({:result | :error | :notification, any(), any()})
+  def parse_batch_response(responses) when is_list(responses) do
+    Enum.map(responses, &parse_message_unvalidated/1)
+  end
 
   # Utilities
 

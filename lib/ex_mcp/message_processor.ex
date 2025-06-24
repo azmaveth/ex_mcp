@@ -1,10 +1,12 @@
 defmodule ExMCP.MessageProcessor do
   @moduledoc """
-  Core message processing abstraction for ExMCP v2.
+  Core message processing abstraction for ExMCP.
 
   The MessageProcessor provides a simple, composable interface for processing MCP messages.
   It follows the Plug specification pattern used throughout the Elixir ecosystem.
   """
+
+  alias ExMCP.Internal.MessageValidator
 
   @type t :: module()
   @type opts :: term()
@@ -108,6 +110,31 @@ defmodule ExMCP.MessageProcessor do
     end)
   end
 
+  # Detect the type of server based on exported functions.
+  # Returns:
+  # - :dsl_server - Server uses the DSL pattern (has get_tools/0, etc.)
+  # - :handler_server - Server uses the handler pattern (has handle_list_tools/2, etc.)
+  # - :unknown - Cannot determine server type
+  @spec detect_server_type(module()) :: :dsl_server | :handler_server | :unknown
+  defp detect_server_type(handler_module) do
+    cond do
+      # DSL servers have getter functions
+      function_exported?(handler_module, :get_tools, 0) and
+        function_exported?(handler_module, :get_prompts, 0) and
+          function_exported?(handler_module, :get_resources, 0) ->
+        :dsl_server
+
+      # Handler servers have handler callbacks
+      function_exported?(handler_module, :handle_list_tools, 2) and
+        function_exported?(handler_module, :handle_list_prompts, 2) and
+          function_exported?(handler_module, :handle_list_resources, 2) ->
+        :handler_server
+
+      true ->
+        :unknown
+    end
+  end
+
   @doc """
   Process an MCP request using a handler module.
 
@@ -116,6 +143,27 @@ defmodule ExMCP.MessageProcessor do
   """
   @spec process(Conn.t(), map()) :: Conn.t()
   def process(%Conn{} = conn, opts) do
+    # First, validate the incoming request against the MCP spec.
+    case MessageValidator.validate_request(conn.request) do
+      {:ok, _validated_request} ->
+        # Request is valid, proceed with processing.
+        process_validated_request(conn, opts)
+
+      {:error, error_data} ->
+        # Request is invalid, construct and return an error response.
+        # Note: for validation errors, the ID might be null or invalid.
+        # We still try to get it to adhere to JSON-RPC, but it might be nil.
+        error_response = %{
+          "jsonrpc" => "2.0",
+          "error" => error_data,
+          "id" => get_request_id(conn.request)
+        }
+
+        put_response(conn, error_response)
+    end
+  end
+
+  defp process_validated_request(%Conn{} = conn, opts) do
     handler = Map.get(opts, :handler)
     server_info = Map.get(opts, :server_info, %{})
 
@@ -133,12 +181,22 @@ defmodule ExMCP.MessageProcessor do
         put_response(conn, error_response)
 
       handler_module when is_atom(handler_module) ->
-        # Check if handler implements DSL Server pattern
-        if function_exported?(handler_module, :start_link, 1) and
-             function_exported?(handler_module, :handle_resource_read, 3) do
-          process_with_dsl_server(conn, handler_module, server_info)
-        else
-          process_with_handler(conn, handler_module, server_info)
+        # Detect server type based on exported functions
+        case detect_server_type(handler_module) do
+          :dsl_server ->
+            process_with_dsl_server(conn, handler_module, server_info)
+
+          :handler_server ->
+            process_with_handler_genserver(conn, handler_module, server_info)
+
+          :unknown ->
+            # Fallback to original detection for backward compatibility
+            if function_exported?(handler_module, :start_link, 1) and
+                 function_exported?(handler_module, :handle_resource_read, 3) do
+              process_with_dsl_server(conn, handler_module, server_info)
+            else
+              process_with_handler(conn, handler_module, server_info)
+            end
         end
     end
   end
@@ -172,6 +230,82 @@ defmodule ExMCP.MessageProcessor do
     end
   end
 
+  # Process request using Handler Server with GenServer
+  defp process_with_handler_genserver(conn, handler_module, server_info) do
+    # Start the handler as a GenServer
+    case GenServer.start_link(handler_module, []) do
+      {:ok, server_pid} ->
+        try do
+          # Process the request using the handler's GenServer interface
+          process_handler_request(conn, server_pid, server_info)
+        after
+          # Clean up the temporary server
+          if Process.alive?(server_pid) do
+            GenServer.stop(server_pid, :normal, 1000)
+          end
+        end
+
+      {:error, reason} ->
+        error_response = %{
+          "jsonrpc" => "2.0",
+          "error" => %{
+            "code" => -32603,
+            "message" => "Failed to start handler server",
+            "data" => %{"reason" => inspect(reason)}
+          },
+          "id" => get_request_id(conn.request)
+        }
+
+        put_response(conn, error_response)
+    end
+  end
+
+  # Process handler request through GenServer calls
+  defp process_handler_request(conn, server_pid, _server_info) do
+    request = conn.request
+    method = Map.get(request, "method")
+    params = Map.get(request, "params", %{})
+    id = get_request_id(request)
+
+    case method do
+      "initialize" ->
+        handle_handler_initialize(conn, server_pid, params, id)
+
+      "ping" ->
+        handle_ping(conn, id)
+
+      "tools/list" ->
+        handle_handler_tools_list(conn, server_pid, params, id)
+
+      "tools/call" ->
+        handle_handler_tools_call(conn, server_pid, params, id)
+
+      "resources/list" ->
+        handle_handler_resources_list(conn, server_pid, params, id)
+
+      "resources/read" ->
+        handle_handler_resources_read(conn, server_pid, params, id)
+
+      "resources/subscribe" ->
+        handle_handler_resources_subscribe(conn, server_pid, params, id)
+
+      "resources/unsubscribe" ->
+        handle_handler_resources_unsubscribe(conn, server_pid, params, id)
+
+      "prompts/list" ->
+        handle_handler_prompts_list(conn, server_pid, params, id)
+
+      "prompts/get" ->
+        handle_handler_prompts_get(conn, server_pid, params, id)
+
+      "completion/complete" ->
+        handle_handler_completion_complete(conn, server_pid, params, id)
+
+      _ ->
+        handle_handler_custom_method(conn, server_pid, method, params, id)
+    end
+  end
+
   # Process request using running GenServer instance
   defp process_with_server_pid(conn, server_pid, _server_info) do
     request = conn.request
@@ -180,15 +314,38 @@ defmodule ExMCP.MessageProcessor do
     id = get_request_id(request)
 
     case method do
-      "initialize" -> handle_initialize_with_server(conn, server_pid, id)
-      "ping" -> handle_ping(conn, id)
-      "tools/list" -> handle_tools_list_with_server(conn, server_pid, id)
-      "tools/call" -> handle_tools_call_with_server(conn, server_pid, params, id)
-      "resources/list" -> handle_resources_list_with_server(conn, server_pid, id)
-      "resources/read" -> handle_resources_read_with_server(conn, server_pid, params, id)
-      "prompts/list" -> handle_prompts_list_with_server(conn, server_pid, id)
-      "prompts/get" -> handle_prompts_get_with_server(conn, server_pid, params, id)
-      _ -> handle_custom_method_with_server(conn, server_pid, method, params, id)
+      "initialize" ->
+        handle_initialize_with_server(conn, server_pid, id)
+
+      "ping" ->
+        handle_ping(conn, id)
+
+      "tools/list" ->
+        handle_tools_list_with_server(conn, server_pid, id)
+
+      "tools/call" ->
+        handle_tools_call_with_server(conn, server_pid, params, id)
+
+      "resources/list" ->
+        handle_resources_list_with_server(conn, server_pid, id)
+
+      "resources/read" ->
+        handle_resources_read_with_server(conn, server_pid, params, id)
+
+      "resources/subscribe" ->
+        handle_resources_subscribe_with_server(conn, server_pid, params, id)
+
+      "resources/unsubscribe" ->
+        handle_resources_unsubscribe_with_server(conn, server_pid, params, id)
+
+      "prompts/list" ->
+        handle_prompts_list_with_server(conn, server_pid, id)
+
+      "prompts/get" ->
+        handle_prompts_get_with_server(conn, server_pid, params, id)
+
+      _ ->
+        handle_custom_method_with_server(conn, server_pid, method, params, id)
     end
   end
 
@@ -197,7 +354,7 @@ defmodule ExMCP.MessageProcessor do
     handler_module.start_link([])
   end
 
-  # Process request using ServerV2 handler
+  # Process request using Server handler
   defp process_with_handler(conn, handler_module, server_info) do
     request = conn.request
     method = Map.get(request, "method")
@@ -214,6 +371,8 @@ defmodule ExMCP.MessageProcessor do
       "tools/call" -> handle_tools_call(conn, handler_module, params, id)
       "resources/list" -> handle_resources_list(conn, handler_module, id)
       "resources/read" -> handle_resources_read(conn, handler_module, params, id)
+      "resources/subscribe" -> handle_resources_subscribe(conn, handler_module, params, id)
+      "resources/unsubscribe" -> handle_resources_unsubscribe(conn, handler_module, params, id)
       "prompts/list" -> handle_prompts_list(conn, handler_module, id)
       "prompts/get" -> handle_prompts_get(conn, handler_module, params, id)
       _ -> handle_custom_method(conn, handler_module, method, params, id)
@@ -300,6 +459,34 @@ defmodule ExMCP.MessageProcessor do
 
       {:error, reason, _state} ->
         error_response = error_response("Resource read failed", reason, id)
+        put_response(conn, error_response)
+    end
+  end
+
+  defp handle_resources_subscribe(conn, handler_module, params, id) do
+    uri = Map.get(params, "uri")
+
+    case handler_module.handle_resource_subscribe(uri, %{}) do
+      {:ok, _new_state} ->
+        response = success_response(%{}, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resource subscription failed", reason, id)
+        put_response(conn, error_response)
+    end
+  end
+
+  defp handle_resources_unsubscribe(conn, handler_module, params, id) do
+    uri = Map.get(params, "uri")
+
+    case handler_module.handle_resource_unsubscribe(uri, %{}) do
+      {:ok, _new_state} ->
+        response = success_response(%{}, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resource unsubscription failed", reason, id)
         put_response(conn, error_response)
     end
   end
@@ -487,6 +674,42 @@ defmodule ExMCP.MessageProcessor do
       put_response(conn, error_response)
   end
 
+  defp handle_resources_subscribe_with_server(conn, server_pid, params, id) do
+    uri = Map.get(params, "uri")
+
+    case GenServer.call(server_pid, {:handle_resource_subscribe, uri}, 10000) do
+      {:ok, _new_state} ->
+        response = success_response(%{}, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resource subscription failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Resource subscription failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_resources_unsubscribe_with_server(conn, server_pid, params, id) do
+    uri = Map.get(params, "uri")
+
+    case GenServer.call(server_pid, {:handle_resource_unsubscribe, uri}, 10000) do
+      {:ok, _new_state} ->
+        response = success_response(%{}, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resource unsubscription failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Resource unsubscription failed", error, id)
+      put_response(conn, error_response)
+  end
+
   defp handle_prompts_list_with_server(conn, server_pid, id) do
     prompts = GenServer.call(server_pid, :get_prompts, 5000) |> Map.values()
 
@@ -541,6 +764,249 @@ defmodule ExMCP.MessageProcessor do
   rescue
     error ->
       error_response = error_response("Custom method failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  # Handler-specific functions that use GenServer calls
+  defp handle_handler_initialize(conn, server_pid, params, id) do
+    case GenServer.call(server_pid, {:handle_initialize, params}, 5000) do
+      {:ok, result, _state} ->
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => result,
+          "id" => id
+        }
+
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Initialize failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Initialize failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_tools_list(conn, server_pid, params, id) do
+    cursor = Map.get(params, "cursor")
+
+    case GenServer.call(server_pid, {:handle_list_tools, cursor}, 5000) do
+      {:ok, tools, next_cursor, _state} ->
+        result = %{"tools" => tools}
+        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => result,
+          "id" => id
+        }
+
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Tools list failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Tools list failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_tools_call(conn, server_pid, params, id) do
+    tool_name = Map.get(params, "name")
+    arguments = Map.get(params, "arguments", %{})
+
+    case GenServer.call(server_pid, {:handle_call_tool, tool_name, arguments}, 10000) do
+      {:ok, result, _state} ->
+        response = success_response(result, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Tool execution failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Tool call failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_resources_list(conn, server_pid, params, id) do
+    cursor = Map.get(params, "cursor")
+
+    case GenServer.call(server_pid, {:handle_list_resources, cursor}, 5000) do
+      {:ok, resources, next_cursor, _state} ->
+        result = %{"resources" => resources}
+        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => result,
+          "id" => id
+        }
+
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resources list failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Resources list failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_resources_read(conn, server_pid, params, id) do
+    uri = Map.get(params, "uri")
+
+    case GenServer.call(server_pid, {:handle_read_resource, uri}, 10000) do
+      {:ok, content, _state} ->
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => %{"contents" => content},
+          "id" => id
+        }
+
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resource read failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Resource read failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_resources_subscribe(conn, server_pid, params, id) do
+    uri = Map.get(params, "uri")
+
+    case GenServer.call(server_pid, {:handle_subscribe_resource, uri}, 10000) do
+      {:ok, _state} ->
+        response = success_response(%{}, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resource subscription failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Resource subscription failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_resources_unsubscribe(conn, server_pid, params, id) do
+    uri = Map.get(params, "uri")
+
+    case GenServer.call(server_pid, {:handle_unsubscribe_resource, uri}, 10000) do
+      {:ok, _state} ->
+        response = success_response(%{}, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Resource unsubscription failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Resource unsubscription failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_prompts_list(conn, server_pid, params, id) do
+    cursor = Map.get(params, "cursor")
+
+    case GenServer.call(server_pid, {:handle_list_prompts, cursor}, 5000) do
+      {:ok, prompts, next_cursor, _state} ->
+        result = %{"prompts" => prompts}
+        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => result,
+          "id" => id
+        }
+
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Prompts list failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Prompts list failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_prompts_get(conn, server_pid, params, id) do
+    prompt_name = Map.get(params, "name")
+    arguments = Map.get(params, "arguments", %{})
+
+    case GenServer.call(server_pid, {:handle_get_prompt, prompt_name, arguments}, 10000) do
+      {:ok, result, _state} ->
+        response = success_response(result, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Prompt get failed", reason, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Prompt get failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  defp handle_handler_custom_method(conn, server_pid, method, params, id) do
+    case GenServer.call(server_pid, {:handle_request, method, params}, 10000) do
+      {:reply, result, _state} ->
+        response = success_response(result, id)
+        put_response(conn, response)
+
+      {:error, reason, _state} ->
+        error_response = error_response("Request failed", reason, id)
+        put_response(conn, error_response)
+
+      {:noreply, _state} ->
+        conn
+
+      _ ->
+        handle_method_not_found(conn, id)
+    end
+  rescue
+    error ->
+      error_response = error_response("Custom method failed", error, id)
+      put_response(conn, error_response)
+  end
+
+  # Handler-specific completion complete function
+  defp handle_handler_completion_complete(conn, server_pid, params, id) do
+    ref = Map.get(params, "ref")
+    argument = Map.get(params, "argument")
+
+    case GenServer.call(server_pid, {:handle_complete, ref, argument}, 10_000) do
+      {:ok, result, _new_state} ->
+        response = success_response(result, id)
+        put_response(conn, response)
+
+      {:error, reason, _new_state} ->
+        error_response = error_response("Completion error", reason, id)
+        put_response(conn, error_response)
+
+      error ->
+        error_response = error_response("Completion failed", error, id)
+        put_response(conn, error_response)
+    end
+  rescue
+    error ->
+      error_response = error_response("Completion request failed", error, id)
       put_response(conn, error_response)
   end
 

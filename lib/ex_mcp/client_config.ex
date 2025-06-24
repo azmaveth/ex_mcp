@@ -1,6 +1,6 @@
 defmodule ExMCP.ClientConfig do
   @moduledoc """
-  Configuration builder for ExMCP v2 clients.
+  Configuration builder for ExMCP clients.
 
   This module provides a fluent interface for building client configurations,
   ensuring type safety and validation at compile time.
@@ -520,7 +520,7 @@ defmodule ExMCP.ClientConfig do
 
       config = ExMCP.ClientConfig.new(:http, url: "http://localhost:8080")
       opts = ExMCP.ClientConfig.to_client_opts(config)
-      {:ok, client} = ExMCP.SimpleClient.start_link(opts)
+      {:ok, client} = ExMCP.Client.start_link(opts)
   """
   @spec to_client_opts(t()) :: keyword()
   def to_client_opts(config) do

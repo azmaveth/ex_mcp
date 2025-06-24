@@ -1,6 +1,6 @@
 defmodule ExMCP.Testing.Builders do
   @moduledoc """
-  Test data builders and generators for ExMCP v2.
+  Test data builders and generators for ExMCP.
 
   This module provides factories and builders for creating test data that
   conforms to MCP protocol specifications. It includes builders for all

@@ -1,6 +1,6 @@
 defmodule ExMCP.Client.Response do
   @moduledoc """
-  Response normalization and transformation utilities for MCP v2.
+  Response normalization and transformation utilities for MCP.
 
   This module provides consistent, developer-friendly response formats
   by normalizing raw MCP protocol responses into standardized structures.

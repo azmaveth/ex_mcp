@@ -20,7 +20,7 @@
 
 ## Overview
 
-ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](https://modelcontextprotocol.io/), enabling AI models to securely interact with local and remote resources through a standardized protocol. It provides both client and server implementations with multiple transport options, making it easy to build MCP-compliant tools and services in Elixir.
+ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](https://modelcontextprotocol.io/), enabling AI models to securely interact with local and remote resources through a standardized protocol. It provides both client and server implementations with multiple transport options, **including native Phoenix integration via Plug compatibility**, making it easy to build MCP-compliant tools and services in Elixir.
 
 ## ✨ Features
 
@@ -38,7 +38,14 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - ❌ **Request Cancellation** - Cancel in-flight requests with `notifications/cancelled`
 - 📋 **Structured Logging** - RFC 5424 compliant logging with `logging/setLevel` control
 
-### Transport Layers
+### Phoenix & Web Integration
+- 🔌 **Phoenix Plug** - Native Phoenix integration with `ExMCP.HttpPlug` 
+- 🌐 **HTTP/SSE** - HTTP with optional Server-Sent Events for streaming (official MCP transport)
+- 📋 **CORS Support** - Built-in CORS headers for web clients
+- 🎯 **Session Management** - Automatic session tracking for SSE connections
+- 🛡️ **Pipeline Integration** - Works with Phoenix authentication/authorization pipelines
+
+### Transport Layers  
 - 📝 **stdio** - Process communication via standard I/O (official MCP transport)
 - 🌐 **HTTP/SSE** - HTTP with optional Server-Sent Events for streaming (official MCP transport)
 
@@ -149,6 +156,100 @@ mix deps.get
 ```
 
 ## 🚀 Quick Start
+
+### Phoenix Integration (Plug Compatible)
+
+ExMCP provides seamless Phoenix integration via `ExMCP.HttpPlug`, making it easy to add MCP server capabilities to existing Phoenix applications:
+
+```elixir
+# In your Phoenix router (lib/my_app_web/router.ex)
+defmodule MyAppWeb.Router do
+  use MyAppWeb, :router
+  
+  pipeline :mcp do
+    plug :accepts, ["json"]
+    # Add your authentication/authorization here
+  end
+  
+  scope "/api/mcp" do
+    pipe_through :mcp
+    
+    # Mount MCP server at /api/mcp
+    forward "/", ExMCP.HttpPlug,
+      handler: MyApp.MCPHandler,
+      server_info: %{name: "my-phoenix-app", version: "1.0.0"},
+      sse_enabled: true,
+      cors_enabled: true
+  end
+end
+
+# Create your MCP handler (lib/my_app/mcp_handler.ex)
+defmodule MyApp.MCPHandler do
+  use ExMCP.Server.Handler
+  
+  @impl true
+  def init(_args), do: {:ok, %{}}
+  
+  @impl true
+  def handle_initialize(_params, state) do
+    {:ok, %{
+      name: "my-phoenix-app",
+      version: "1.0.0",
+      capabilities: %{tools: %{}, resources: %{}}
+    }, state}
+  end
+  
+  @impl true
+  def handle_list_tools(state) do
+    tools = [
+      %{
+        name: "get_user_count",
+        description: "Get total number of users",
+        input_schema: %{type: "object", properties: %{}}
+      }
+    ]
+    {:ok, tools, state}
+  end
+  
+  @impl true
+  def handle_call_tool("get_user_count", _args, state) do
+    count = MyApp.Accounts.count_users()
+    {:ok, [%{type: "text", text: "Total users: #{count}"}], state}
+  end
+end
+```
+
+**Features:**
+- ✅ **Drop-in compatibility** with existing Phoenix apps
+- ✅ **SSE streaming** for real-time MCP communication  
+- ✅ **CORS support** for web clients
+- ✅ **Automatic session management** with connection tracking
+- ✅ **Standard Plug interface** - works with any Cowboy/Phoenix setup
+
+**Connect from any MCP client:**
+```bash
+# Using the MCP SDK or compatible client
+mcp connect http://localhost:4000/api/mcp
+```
+
+**Why integrate MCP with Phoenix?**
+- 🤖 **AI-First Development** - Make your Phoenix app's data and functionality available to AI models
+- 📊 **Real-time AI Tools** - Expose database queries, business logic, and APIs as AI-callable tools
+- 🔄 **Bi-directional AI** - Allow AI to both read data and trigger actions in your application
+- 🛡️ **Secure by Design** - Leverage Phoenix's existing authentication and authorization
+- 📈 **Future-Proof** - Build for the AI-native application architecture
+
+### Standalone Server (Non-Phoenix)
+
+For standalone MCP servers without Phoenix:
+
+```elixir
+# Start standalone HTTP server
+{:ok, _} = Plug.Cowboy.http(ExMCP.HttpPlug, [
+  handler: MyApp.MCPHandler,
+  server_info: %{name: "standalone-server", version: "1.0.0"}
+], port: 4000)
+```
 
 ### Creating an MCP Client
 
@@ -782,7 +883,8 @@ ExMCP uses the following metadata fields for security and debugging:
 
 ## 📚 Documentation
 
-- 📖 **[User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples
+- 🚀 **[Phoenix Integration Guide](docs/PHOENIX_GUIDE.md)** - Complete guide for Phoenix/Plug integration
+- 📖 **[User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples  
 - 🎨 **[DSL Guide](docs/DSL_GUIDE.md)** - Complete DSL reference with meta block design
 - 🔧 **[API Documentation](https://hexdocs.pm/ex_mcp)** - Detailed API reference
 - 🆕 **[v2 API Reference](docs/API_V2_REFERENCE.md)** - New v2 API with structured responses

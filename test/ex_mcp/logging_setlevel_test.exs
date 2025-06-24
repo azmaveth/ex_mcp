@@ -82,7 +82,7 @@ defmodule ExMCP.LoggingSetLevelTest do
 
     test "returns error for invalid log level", %{client: client} do
       assert {:error, error} = Client.set_log_level(client, "verbose")
-      assert error["message"] =~ "Invalid log level: verbose"
+      assert error.message =~ "Invalid log level: verbose"
     end
   end
 

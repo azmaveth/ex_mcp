@@ -10,6 +10,57 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
   @moduletag :compliance
 
   alias ExMCP.Internal.Security
+  alias ExMCP.Internal.ConsentCache
+  alias ExMCP.Transport.SecurityError
+  alias ExMCP.Transport.SecurityGuard
+
+  setup do
+    # Start ConsentCache for tests that need it
+    start_supervised!(ConsentCache)
+    :ok
+  end
+
+  # Mock Consent Handlers for testing
+  defmodule AllowConsentHandler do
+    @behaviour ExMCP.ConsentHandler
+    def request_consent(_, _, _) do
+      expires_at = DateTime.add(DateTime.utc_now(), :timer.hours(1), :millisecond)
+      {:approved, expires_at: expires_at}
+    end
+
+    def check_existing_consent(_, _), do: :not_found
+    def revoke_consent(_, _), do: :ok
+  end
+
+  defmodule DenyConsentHandler do
+    @behaviour ExMCP.ConsentHandler
+    def request_consent(_, _, _), do: {:denied, reason: "Test denial"}
+    def check_existing_consent(_, _), do: :not_found
+    def revoke_consent(_, _), do: :ok
+  end
+
+  defmodule RequireConsentHandler do
+    @behaviour ExMCP.ConsentHandler
+    def request_consent(_, _, _), do: {:error, reason: "Consent required"}
+    def check_existing_consent(_, _), do: :not_found
+    def revoke_consent(_, _), do: :ok
+  end
+
+  defmodule TracingDenyConsentHandler do
+    @behaviour ExMCP.ConsentHandler
+
+    def request_consent(origin, user_id, opts) do
+      # The test process pid is passed via opts, if present
+      if test_pid = Keyword.get(opts, :test_pid) do
+        send(test_pid, {:consent_requested, origin, user_id})
+      end
+
+      {:error, :denied}
+    end
+
+    def check_existing_consent(_, _), do: :not_found
+    def revoke_consent(_, _), do: :ok
+  end
 
   describe "MCP Security Requirements - DNS Rebinding Protection" do
     test "prevents DNS rebinding with external domain to localhost" do
@@ -183,26 +234,187 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
   end
 
   describe "MCP Security - Confused Deputy Prevention" do
-    @tag :skip
     test "prevents token passthrough to external resources" do
       # MCP spec: tokens should never be passed to external URLs
-      # Currently not implemented - marked as missing in coverage matrix
+      sensitive_headers = [
+        {"Authorization", "Bearer secret-token"},
+        {"authorization", "lowercase bearer"},
+        {"Cookie", "session=secret-session"},
+        {"COOKIE", "UPPERCASE SESSION"},
+        {"X-API-Key", "secret-key"},
+        {"x-api-key", "lowercase key"},
+        {"X-Auth-Token", "secret-auth-token"},
+        {"X-CSRF-Token", "secret-csrf-token"}
+      ]
 
-      # Expected behavior:
-      # 1. Server has API token for external service
-      # 2. Client requests resource from external URL
-      # 3. Server MUST NOT include its own auth tokens in request
+      safe_headers = [
+        {"X-Custom-Header", "safe-value"},
+        {"Accept", "application/json"}
+      ]
+
+      all_headers = sensitive_headers ++ safe_headers
+
+      request = %{
+        url: "https://api.external.com/data",
+        headers: all_headers,
+        method: "GET",
+        transport: :http,
+        user_id: "user123"
+      }
+
+      config = %{
+        trusted_origins: ["https://api.internal.com"],
+        consent_handler: AllowConsentHandler
+      }
+
+      # For external URLs, sensitive headers should be stripped.
+      assert {:ok, sanitized_request} = SecurityGuard.validate_request(request, config)
+
+      # Only non-sensitive headers should remain.
+      # Using Map.new for case-insensitive key comparison and order-insensitivity.
+      expected_sanitized_headers = Map.new(safe_headers, fn {k, v} -> {String.downcase(k), v} end)
+
+      actual_sanitized_headers =
+        Map.new(sanitized_request.headers, fn {k, v} -> {String.downcase(k), v} end)
+
+      assert actual_sanitized_headers == expected_sanitized_headers
+
+      # For internal URLs, headers should be preserved.
+      internal_request = %{request | url: "https://api.internal.com/data"}
+      assert {:ok, preserved_request} = SecurityGuard.validate_request(internal_request, config)
+
+      # All headers should be present for internal requests.
+      expected_preserved_headers = Map.new(all_headers, fn {k, v} -> {String.downcase(k), v} end)
+
+      actual_preserved_headers =
+        Map.new(preserved_request.headers, fn {k, v} -> {String.downcase(k), v} end)
+
+      assert actual_preserved_headers == expected_preserved_headers
     end
 
-    @tag :skip
-    test "validates user consent before accessing external resources" do
-      # MCP spec: user consent required for external resource access
-      # Currently not implemented - marked as missing in coverage matrix
+    describe "validates user consent before accessing external resources" do
+      test "requires consent for external resources" do
+        request = %{
+          url: "https://api.external.com/data",
+          headers: [],
+          method: "GET",
+          transport: :http,
+          user_id: "user123"
+        }
 
-      # Expected behavior:
-      # 1. Client requests external resource
-      # 2. Server checks if user has consented to access that domain
-      # 3. Reject if no consent given
+        require_config = %{
+          trusted_origins: ["api.internal.com"],
+          consent_handler: RequireConsentHandler
+        }
+
+        assert {:error, %SecurityError{type: :consent_required}} =
+                 SecurityGuard.validate_request(request, require_config)
+      end
+
+      test "denies access when consent is denied" do
+        request = %{
+          url: "https://api.external.com/data",
+          headers: [],
+          method: "GET",
+          transport: :http,
+          user_id: "user123"
+        }
+
+        deny_config = %{
+          trusted_origins: ["api.internal.com"],
+          consent_handler: DenyConsentHandler
+        }
+
+        assert {:error, %SecurityError{type: :consent_denied}} =
+                 SecurityGuard.validate_request(request, deny_config)
+      end
+
+      test "allows access when consent is granted" do
+        request = %{
+          url: "https://api.external.com/data",
+          headers: [],
+          method: "GET",
+          transport: :http,
+          user_id: "user123"
+        }
+
+        allow_config = %{
+          trusted_origins: ["api.internal.com"],
+          consent_handler: AllowConsentHandler
+        }
+
+        assert {:ok, _} = SecurityGuard.validate_request(request, allow_config)
+      end
+
+      test "does not require consent for internal resources" do
+        internal_request = %{
+          url: "https://api.internal.com/data",
+          headers: [],
+          method: "GET",
+          transport: :http,
+          user_id: "user123"
+        }
+
+        # Using DenyConsentHandler to prove the handler is not even called for internal URLs.
+        deny_config = %{
+          trusted_origins: ["api.internal.com"],
+          consent_handler: DenyConsentHandler
+        }
+
+        assert {:ok, _} = SecurityGuard.validate_request(internal_request, deny_config)
+      end
+
+      test "does not require consent for non-http transports" do
+        # For stdio and BEAM transports, requests are considered internal and don't need consent.
+        for transport <- [:stdio, :beam] do
+          request = %{
+            url: "some-resource",
+            headers: [],
+            method: "GET",
+            transport: transport,
+            user_id: "user123"
+          }
+
+          # Using DenyConsentHandler to prove the handler is not called.
+          deny_config = %{
+            trusted_origins: ["api.internal.com"],
+            consent_handler: DenyConsentHandler
+          }
+
+          assert {:ok, _} = SecurityGuard.validate_request(request, deny_config)
+        end
+      end
+
+      test "caches consent decisions" do
+        # This test uses a unique user_id to avoid conflicts with other async tests.
+        request = %{
+          url: "https://api.external.com/caching-test",
+          headers: [],
+          method: "GET",
+          transport: :http,
+          user_id: "user-for-caching-test-#{System.unique_integer()}"
+        }
+
+        config = %{
+          trusted_origins: ["api.internal.com"],
+          consent_handler: TracingDenyConsentHandler,
+          consent_handler_opts: [test_pid: self()]
+        }
+
+        # First call: should call the handler and cache the denial.
+        assert {:error, %SecurityError{type: :consent_denied}} =
+                 SecurityGuard.validate_request(request, config)
+
+        assert_receive {:consent_requested, "https://api.external.com", user_id}
+        assert user_id == request.user_id
+
+        # Second call: should hit the cache and not call the handler.
+        assert {:error, %SecurityError{type: :consent_denied}} =
+                 SecurityGuard.validate_request(request, config)
+
+        # Assert that the handler was NOT called a second time.
+        refute_receive {:consent_requested, _, _}
+      end
     end
   end
 

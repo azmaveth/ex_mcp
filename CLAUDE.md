@@ -112,3 +112,12 @@ When implementing new features:
 3. Add comprehensive tests before implementation
 4. Run `mix format` and `mix credo` before committing
 5. Update type specs in `lib/ex_mcp/types.ex` if adding new message types
+
+## Development Workflow
+
+- Whenever you need to write or edit code, prefer to use aider.
+
+## Code Review
+
+- After new code is written, use zen to review the code.
+- Before writing or editing code, use zen to analyze it, get consensus on it, and plan it.

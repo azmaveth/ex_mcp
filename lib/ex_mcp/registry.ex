@@ -1,6 +1,6 @@
 defmodule ExMCP.Registry do
   @moduledoc """
-  Registry for managing tools, resources, and prompts in ExMCP v2.
+  Registry for managing tools, resources, and prompts in ExMCP.
 
   The Registry provides a centralized way to register and lookup MCP capabilities.
   It supports dynamic registration and efficient lookup operations.

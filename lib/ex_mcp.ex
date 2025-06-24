@@ -137,7 +137,6 @@ defmodule ExMCP do
   alias ExMCP.Server
 
   # Convenience aliases
-  alias ExMCP.{ConvenienceClient, SimpleClient}
   alias ExMCP.{Error, Response}
 
   @doc """
@@ -234,40 +233,36 @@ defmodule ExMCP do
     end
   end
 
-  # V2 Convenience Functions
+  # Convenience Functions
 
-  @type v2_client :: pid()
+  @type client :: pid()
   @type connection_spec :: String.t() | {atom(), keyword()} | [any()] | ExMCP.ClientConfig.t()
 
   @doc """
-  Connects to an MCP server using the v2 client implementations.
+  Connects to an MCP server using the unified client implementation.
 
-  This function provides a simplified interface to the v2 clients with
-  automatic client type selection and connection configuration.
+  This function provides a simplified interface to the MCP client with
+  automatic connection configuration and transport selection.
 
   ## Options
 
-  - `:client_type` - Force a specific client (`:simple`, `:v2`, `:convenience`)
   - `:timeout` - Connection timeout in milliseconds (default: 10_000)
   - `:retry_attempts` - Number of retry attempts (default: 3)
-  - Transport-specific options (see individual client docs)
+  - Transport-specific options (see ExMCP.Client docs)
 
   ## Examples
 
-      # HTTP connection using convenience client
+      # HTTP connection
       {:ok, client} = ExMCP.connect("http://localhost:8080")
 
-      # Stdio connection using simple client
+      # Stdio connection
       {:ok, client} = ExMCP.connect({:stdio, command: "my-server"})
 
-      # Multiple transports with fallback
+      # Multiple transports with fallback (uses first available)
       {:ok, client} = ExMCP.connect([
         "http://primary:8080",
         "http://backup:8080"
       ])
-
-      # Force specific client type
-      {:ok, client} = ExMCP.connect("http://localhost:8080", client_type: :v2)
 
       # Using ClientConfig for advanced configuration
       config = ExMCP.ClientConfig.new(:production)
@@ -276,102 +271,77 @@ defmodule ExMCP do
       |> ExMCP.ClientConfig.put_retry_policy(max_attempts: 5)
       {:ok, client} = ExMCP.connect(config)
   """
-  @spec connect(connection_spec(), keyword()) :: {:ok, v2_client()} | {:error, any()}
+  @spec connect(connection_spec(), keyword()) :: {:ok, client()} | {:error, any()}
   def connect(connection_spec, opts \\ [])
 
   def connect(%ExMCP.ClientConfig{} = config, opts) do
     # ClientConfig provided - convert to client options and connect
-    client_type = Keyword.get(opts, :client_type, :simple)
     client_opts = ExMCP.ClientConfig.to_client_opts(config)
 
-    # Merge any additional opts
-    final_opts = Keyword.merge(client_opts, opts)
+    # Merge any additional opts (ignore deprecated client_type option)
+    final_opts = Keyword.merge(client_opts, Keyword.drop(opts, [:client_type]))
 
-    case client_type do
-      :convenience ->
-        ConvenienceClient.connect(
-          config.transport.url || {config.transport.type, final_opts},
-          final_opts
-        )
-
-      :v2 ->
-        Client.start_link(final_opts)
-
-      :simple ->
-        SimpleClient.start_link(final_opts)
-    end
+    Client.start_link(final_opts)
   end
 
   def connect(connection_spec, opts) when is_list(connection_spec) do
-    # Multiple connections - use ConvenienceClient for fallback support
-    ConvenienceClient.connect(connection_spec, opts)
+    # Multiple connections - use first valid connection
+    # Note: Full failover support should be implemented in the unified Client
+    case List.first(connection_spec) do
+      nil -> {:error, :no_connections_specified}
+      first_spec -> connect(first_spec, opts)
+    end
   end
 
   def connect(connection_spec, opts) do
-    client_type = Keyword.get(opts, :client_type, :simple)
+    # Convert connection spec to unified Client format (ignore deprecated client_type)
+    client_opts =
+      normalize_connection_for_client(connection_spec, Keyword.drop(opts, [:client_type]))
 
-    case client_type do
-      :convenience ->
-        ConvenienceClient.connect(connection_spec, opts)
-
-      :v2 ->
-        # Convert connection spec to Client format
-        client_opts = normalize_connection_for_v2(connection_spec, opts)
-        Client.start_link(client_opts)
-
-      :simple ->
-        # Convert connection spec to SimpleClient format
-        client_opts = normalize_connection_for_simple(connection_spec, opts)
-        SimpleClient.start_link(client_opts)
-    end
+    Client.start_link(client_opts)
   end
 
   @doc """
-  Disconnects from an MCP server (v2 clients).
+  Disconnects from an MCP server.
   """
-  @spec disconnect(v2_client()) :: :ok
+  @spec disconnect(client()) :: :ok
   def disconnect(client) do
-    # Try to gracefully stop the client
-    if function_exported?(ConvenienceClient, :disconnect, 1) do
-      ConvenienceClient.disconnect(client)
-    else
-      GenServer.stop(client, :normal)
-    end
+    # Gracefully stop the unified client
+    GenServer.stop(client, :normal)
   catch
     # Already stopped
     :exit, _ -> :ok
   end
 
   @doc """
-  Lists available tools from the connected server (v2 clients).
+  Lists available tools from the connected server.
 
   Returns a list of tool definitions with their schemas and descriptions.
   """
-  @spec tools(v2_client(), keyword()) :: [map()] | {:error, any()}
+  @spec tools(client(), keyword()) :: [map()] | {:error, any()}
   def tools(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    try do
-      case SimpleClient.list_tools(client, timeout) do
-        {:ok, tools} -> tools
-        error -> error
-      end
-    rescue
-      # Fallback to other client types
-      _ ->
-        try do
-          case Client.list_tools(client, timeout) do
-            {:ok, tools} -> tools
-            error -> error
-          end
-        rescue
-          _ -> {:error, Error.connection_error("Client not responding")}
+    case Client.list_tools(client, timeout) do
+      {:ok, %Response{} = response} ->
+        # Extract tools from response
+        case Response.data_content(response) do
+          %{"tools" => tools} -> tools
+          _ -> []
         end
+
+      {:ok, tools} when is_list(tools) ->
+        tools
+
+      error ->
+        error
     end
+  rescue
+    _ -> {:error, Error.connection_error("Client not responding")}
   end
 
   @doc """
-  Calls a tool on the connected server (v2 clients).
+  Calls a tool on the connected server.
 
   ## Options
 
@@ -386,71 +356,53 @@ defmodule ExMCP do
       # With options
       result = ExMCP.call(client, "slow_tool", %{data: "..."}, timeout: 60_000)
   """
-  @spec call(v2_client(), String.t(), map(), keyword()) :: any() | {:error, any()}
+  @spec call(client(), String.t(), map(), keyword()) :: any() | {:error, any()}
   def call(client, tool_name, args \\ %{}, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     normalize = Keyword.get(opts, :normalize, true)
 
-    try do
-      case SimpleClient.call_tool(client, tool_name, args, timeout) do
-        {:ok, %Response{} = response} ->
-          if normalize do
-            Response.text_content(response) || response
-          else
-            response
-          end
-
-        error ->
-          error
-      end
-    rescue
-      # Fallback to other client types
-      _ ->
-        try do
-          case Client.call_tool(client, tool_name, args, timeout) do
-            {:ok, %Response{} = response} ->
-              if normalize do
-                Response.text_content(response) || response
-              else
-                response
-              end
-
-            error ->
-              error
-          end
-        rescue
-          _ -> {:error, Error.connection_error("Client not responding")}
+    case Client.call_tool(client, tool_name, args, timeout) do
+      {:ok, %Response{} = response} ->
+        if normalize do
+          Response.text_content(response) || response
+        else
+          response
         end
+
+      error ->
+        error
     end
+  rescue
+    _ -> {:error, Error.connection_error("Client not responding")}
   end
 
   @doc """
-  Lists available resources from the connected server (v2 clients).
+  Lists available resources from the connected server.
   """
-  @spec resources(v2_client(), keyword()) :: [map()] | {:error, any()}
+  @spec resources(client(), keyword()) :: [map()] | {:error, any()}
   def resources(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    try do
-      case SimpleClient.list_resources(client, timeout) do
-        {:ok, resources} -> resources
-        error -> error
-      end
-    rescue
-      _ ->
-        try do
-          case Client.list_resources(client, timeout) do
-            {:ok, resources} -> resources
-            error -> error
-          end
-        rescue
-          _ -> {:error, Error.connection_error("Client not responding")}
+    case Client.list_resources(client, timeout) do
+      {:ok, %Response{} = response} ->
+        # Extract resources from response
+        case Response.data_content(response) do
+          %{"resources" => resources} -> resources
+          _ -> []
         end
+
+      {:ok, resources} when is_list(resources) ->
+        resources
+
+      error ->
+        error
     end
+  rescue
+    _ -> {:error, Error.connection_error("Client not responding")}
   end
 
   @doc """
-  Reads a resource from the connected server (v2 clients).
+  Reads a resource from the connected server.
 
   ## Options
 
@@ -465,25 +417,11 @@ defmodule ExMCP do
       # Read and parse JSON
       data = ExMCP.read(client, "file://config.json", parse_json: true)
   """
-  @spec read(v2_client(), String.t(), keyword()) :: any() | {:error, any()}
+  @spec read(client(), String.t(), keyword()) :: any() | {:error, any()}
   def read(client, uri, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 10_000)
     parse_json = Keyword.get(opts, :parse_json, false)
 
-    case try_v2_read_resource(client, uri, timeout) do
-      {:ok, response} -> process_read_response(response, parse_json)
-      {:fallback_to_v1} -> try_v1_read_resource(client, uri, timeout, parse_json)
-      error -> error
-    end
-  end
-
-  defp try_v2_read_resource(client, uri, timeout) do
-    SimpleClient.read_resource(client, uri, timeout)
-  rescue
-    _ -> {:fallback_to_v1}
-  end
-
-  defp try_v1_read_resource(client, uri, timeout, parse_json) do
     case Client.read_resource(client, uri, timeout) do
       {:ok, response} -> process_read_response(response, parse_json)
       error -> error
@@ -516,21 +454,16 @@ defmodule ExMCP do
   end
 
   @doc """
-  Gets connection status and server information (v2 clients).
+  Gets connection status and server information.
   """
-  @spec status(v2_client()) :: {:ok, map()} | {:error, any()}
+  @spec status(client()) :: {:ok, map()} | {:error, any()}
   def status(client) do
-    case SimpleClient.get_status(client) do
+    case Client.get_status(client) do
       {:ok, status} -> {:ok, status}
       error -> error
     end
   rescue
-    _ ->
-      try do
-        Client.get_status(client)
-      rescue
-        _ -> {:error, Error.connection_error("Client not responding")}
-      end
+    _ -> {:error, Error.connection_error("Client not responding")}
   end
 
   @doc """
@@ -538,7 +471,21 @@ defmodule ExMCP do
   """
   @spec ping(connection_spec(), keyword()) :: :ok | {:error, any()}
   def ping(connection_spec, opts \\ []) do
-    ConvenienceClient.ping(connection_spec, opts)
+    # Quick connection test using unified client
+    case connect(connection_spec, opts) do
+      {:ok, client} ->
+        result =
+          case status(client) do
+            {:ok, _} -> :ok
+            error -> error
+          end
+
+        disconnect(client)
+        result
+
+      error ->
+        error
+    end
   end
 
   @doc """
@@ -561,9 +508,9 @@ defmodule ExMCP do
     }
   end
 
-  # Private Helper Functions for V2
+  # Private Helper Functions
 
-  defp normalize_connection_for_v2(connection_spec, opts) when is_binary(connection_spec) do
+  defp normalize_connection_for_client(connection_spec, opts) when is_binary(connection_spec) do
     # Parse URL and convert to transport options
     uri = URI.parse(connection_spec)
 
@@ -574,20 +521,15 @@ defmodule ExMCP do
         _ -> [transport: :stdio, command: connection_spec]
       end
 
-    Keyword.merge(transport_opts, Keyword.drop(opts, [:client_type]))
+    Keyword.merge(transport_opts, opts)
   end
 
-  defp normalize_connection_for_v2({transport, transport_opts}, opts) do
-    [transport: transport] ++ transport_opts ++ Keyword.drop(opts, [:client_type])
+  defp normalize_connection_for_client({transport, transport_opts}, opts) do
+    [transport: transport] ++ transport_opts ++ opts
   end
 
-  defp normalize_connection_for_v2(connection_spec, opts) do
+  defp normalize_connection_for_client(connection_spec, opts) do
     # For other formats, pass through
-    Keyword.merge([connection: connection_spec], Keyword.drop(opts, [:client_type]))
-  end
-
-  defp normalize_connection_for_simple(connection_spec, opts) do
-    # SimpleClient expects similar format to v2
-    normalize_connection_for_v2(connection_spec, opts)
+    Keyword.merge([connection: connection_spec], opts)
   end
 end

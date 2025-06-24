@@ -79,7 +79,7 @@ defmodule ExMCP.Server.Transport do
     configure_stdio_logging()
 
     # Use ExMCP v1 StdioServer for now - this provides stdio transport
-    # In the future, this could be replaced with a v2-specific implementation
+    # In the future, this could be replaced with a version-specific implementation
     case Code.ensure_loaded(StdioServer) do
       {:module, StdioServer} ->
         StdioServer.start_link([module: module] ++ opts)

@@ -20,6 +20,19 @@ defmodule ExMCP.HttpPlug do
       plug ExMCP.HttpPlug,
         handler: MyApp.MCPServer,
         server_info: %{name: "my-app", version: "1.0.0"}
+
+  ## OAuth 2.1 Integration
+
+  To enable OAuth 2.1 bearer token validation:
+
+      plug ExMCP.HttpPlug,
+        handler: MyApp.MCPServer,
+        server_info: %{name: "my-app"},
+        oauth_enabled: true,
+        auth_config: %{
+          introspection_endpoint: "https://auth.example.com/introspect",
+          realm: "my-mcp-server" # Optional, defaults to server_info.name
+        }
   """
 
   @behaviour Plug
@@ -28,6 +41,9 @@ defmodule ExMCP.HttpPlug do
   require Logger
 
   alias ExMCP.HttpPlug.SSEHandler
+  alias ExMCP.FeatureFlags
+  alias ExMCP.Authorization.ServerGuard
+  alias ExMCP.Authorization.ScopeValidator
 
   # Simple session registry using ETS
   @ets_table :http_plug_sessions
@@ -51,7 +67,9 @@ defmodule ExMCP.HttpPlug do
       server_info: Keyword.get(opts, :server_info, %{name: "ex_mcp_server", version: "1.0.0"}),
       session_manager: Keyword.get(opts, :session_manager, ExMCP.SessionManager),
       sse_enabled: Keyword.get(opts, :sse_enabled, true),
-      cors_enabled: Keyword.get(opts, :cors_enabled, true)
+      cors_enabled: Keyword.get(opts, :cors_enabled, true),
+      oauth_enabled: Keyword.get(opts, :oauth_enabled, false),
+      auth_config: Keyword.get(opts, :auth_config, %{})
     }
   end
 
@@ -66,6 +84,17 @@ defmodule ExMCP.HttpPlug do
       handle_cors_preflight(conn)
     else
       send_resp(conn, 405, "Method not allowed")
+    end
+  end
+
+  def call(
+        %Plug.Conn{method: "GET", path_info: [".well-known", "oauth-protected-resource"]} = conn,
+        opts
+      ) do
+    if opts.oauth_enabled do
+      handle_well_known_resource(conn, opts)
+    else
+      send_resp(conn, 404, "Not Found")
     end
   end
 
@@ -101,7 +130,10 @@ defmodule ExMCP.HttpPlug do
     conn
     |> put_resp_header("access-control-allow-origin", "*")
     |> put_resp_header("access-control-allow-methods", "GET, POST, OPTIONS")
-    |> put_resp_header("access-control-allow-headers", "content-type, authorization")
+    |> put_resp_header(
+      "access-control-allow-headers",
+      "content-type, authorization, mcp-protocol-version"
+    )
     |> put_resp_header("access-control-max-age", "86400")
     |> send_resp(200, "")
   end
@@ -110,8 +142,10 @@ defmodule ExMCP.HttpPlug do
   defp handle_mcp_request(conn, opts) do
     Logger.debug("Handling MCP request, SSE enabled: #{opts.sse_enabled}")
 
-    with {:ok, body, conn} <- read_body(conn),
+    with {:ok, conn} <- validate_protocol_version(conn),
+         {:ok, body, conn} <- read_body(conn),
          {:ok, request} <- parse_json(body),
+         {:ok, _token_info} <- authorize_request(conn, request, opts),
          result <- process_mcp_request(request, opts) do
       Logger.debug("MCP request processed, result: #{inspect(result)}")
 
@@ -174,6 +208,29 @@ defmodule ExMCP.HttpPlug do
           |> send_resp(500, Jason.encode!(error_response))
       end
     else
+      {:error, {:protocol_version_mismatch, message}} ->
+        error_response = %{
+          "jsonrpc" => "2.0",
+          "error" => %{
+            # Invalid Request
+            "code" => -32600,
+            "message" => message,
+            "data" => %{"expectedVersion" => "2025-06-18"}
+          },
+          "id" => nil
+        }
+
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(error_response))
+
+      {:error, {:auth_error, {status, www_auth_header, body}}} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_header("www-authenticate", www_auth_header)
+        |> send_resp(status, body)
+
       {:error, :parse_error} ->
         error_response = %{
           "jsonrpc" => "2.0",
@@ -218,42 +275,52 @@ defmodule ExMCP.HttpPlug do
 
   # Handle Server-Sent Events connections
   defp handle_sse_connection(conn, opts) do
-    session_id = get_session_id(conn)
+    with {:ok, _token_info} <- authorize_request(conn, %{}, opts) do
+      session_id = get_session_id(conn)
 
-    conn =
-      conn
-      |> maybe_add_cors_headers(opts)
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("connection", "keep-alive")
-      |> send_chunked(200)
+      conn =
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_header("content-type", "text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("connection", "keep-alive")
+        |> send_chunked(200)
 
-    # Check if we're in test mode via application environment
-    if Application.get_env(:ex_mcp, :test_mode, false) do
-      # Send a simple connection message and return for testing
-      {:ok, conn} = chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
-      conn
+      # Check if we're in test mode via application environment
+      if Application.get_env(:ex_mcp, :test_mode, false) do
+        # Send a simple connection message and return for testing
+        {:ok, conn} =
+          chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
+
+        conn
+      else
+        # Use the new SSE handler with backpressure control
+        {:ok, handler} = SSEHandler.start_link(conn, session_id, opts)
+
+        # Register with session manager if available
+        if function_exported?(opts.session_manager, :register_sse_handler, 2) do
+          opts.session_manager.register_sse_handler(session_id, handler)
+        end
+
+        # Also register in our simple ETS registry
+        register_sse_handler(session_id, handler)
+
+        # Block until handler exits
+        ref = Process.monitor(handler)
+
+        receive do
+          {:DOWN, ^ref, :process, ^handler, _reason} ->
+            # Clean up the session registry when handler exits
+            cleanup_sse_handler(session_id)
+            conn
+        end
+      end
     else
-      # Use the new SSE handler with backpressure control
-      {:ok, handler} = SSEHandler.start_link(conn, session_id, opts)
-
-      # Register with session manager if available
-      if function_exported?(opts.session_manager, :register_sse_handler, 2) do
-        opts.session_manager.register_sse_handler(session_id, handler)
-      end
-
-      # Also register in our simple ETS registry
-      register_sse_handler(session_id, handler)
-
-      # Block until handler exits
-      ref = Process.monitor(handler)
-
-      receive do
-        {:DOWN, ^ref, :process, ^handler, _reason} ->
-          # Clean up the session registry when handler exits
-          cleanup_sse_handler(session_id)
-          conn
-      end
+      {:error, {:auth_error, {status, www_auth_header, body}}} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_header("www-authenticate", www_auth_header)
+        |> send_resp(status, body)
     end
   end
 
@@ -310,7 +377,10 @@ defmodule ExMCP.HttpPlug do
     conn
     |> put_resp_header("access-control-allow-origin", "*")
     |> put_resp_header("access-control-allow-methods", "GET, POST, OPTIONS")
-    |> put_resp_header("access-control-allow-headers", "content-type, authorization")
+    |> put_resp_header(
+      "access-control-allow-headers",
+      "content-type, authorization, mcp-protocol-version"
+    )
   end
 
   defp maybe_add_cors_headers(conn, _opts), do: conn
@@ -389,5 +459,72 @@ defmodule ExMCP.HttpPlug do
     "sse_" <>
       (:crypto.strong_rand_bytes(16)
        |> Base.encode16(case: :lower))
+  end
+
+  # --- New Helper Functions ---
+
+  defp validate_protocol_version(conn) do
+    if FeatureFlags.enabled?(:protocol_version_header) do
+      case get_req_header(conn, "mcp-protocol-version") do
+        ["2025-06-18"] ->
+          {:ok, conn}
+
+        [other] ->
+          message = "Unsupported MCP-Protocol-Version: #{other}. Server supports 2025-06-18."
+          {:error, {:protocol_version_mismatch, message}}
+
+        [] ->
+          message = "Missing MCP-Protocol-Version header. Server requires version 2025-06-18."
+          {:error, {:protocol_version_mismatch, message}}
+      end
+    else
+      {:ok, conn}
+    end
+  end
+
+  defp authorize_request(conn, request, opts) do
+    if opts.oauth_enabled do
+      required_scopes = ScopeValidator.get_required_scopes(request)
+      # Set default realm if not provided in config
+      auth_config =
+        if Map.has_key?(opts.auth_config, :realm) do
+          opts.auth_config
+        else
+          Map.put(opts.auth_config, :realm, opts.server_info.name)
+        end
+
+      case ServerGuard.authorize(conn.req_headers, required_scopes, auth_config) do
+        {:ok, token_info} ->
+          {:ok, token_info}
+
+        {:error, error_response} ->
+          {:error, {:auth_error, error_response}}
+
+        :ok ->
+          # This case happens if ServerGuard's own feature flag (:oauth2_auth) is disabled.
+          # We treat this as a successful authorization because the plug's `oauth_enabled`
+          # is the master switch for this instance.
+          {:ok, nil}
+      end
+    else
+      {:ok, nil}
+    end
+  end
+
+  defp handle_well_known_resource(conn, opts) do
+    metadata = %{
+      "resource" => opts.server_info.name,
+      "scopes_supported" => get_supported_scopes(),
+      "bearer_token_types_supported" => ["bearer"]
+    }
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(metadata))
+  end
+
+  defp get_supported_scopes do
+    ScopeValidator.get_all_static_scopes()
   end
 end

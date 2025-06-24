@@ -48,8 +48,6 @@ defmodule ExMCP.Protocol do
   defdelegate encode_log_message(level, message, data \\ nil), to: ExMCP.Internal.Protocol
   defdelegate encode_set_log_level(level), to: ExMCP.Internal.Protocol
   defdelegate encode_elicitation_create(message, requested_schema), to: ExMCP.Internal.Protocol
-  defdelegate encode_batch(messages), to: ExMCP.Internal.Protocol
-  defdelegate parse_batch_response(responses), to: ExMCP.Internal.Protocol
   defdelegate parse_message(data), to: ExMCP.Internal.Protocol
   defdelegate method_available?(method, version), to: ExMCP.Internal.Protocol
   defdelegate validate_message_version(message, version), to: ExMCP.Internal.Protocol

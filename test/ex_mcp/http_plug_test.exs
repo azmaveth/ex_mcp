@@ -8,11 +8,17 @@ defmodule ExMCP.HttpPlugTest do
     use ExMCP.Server
 
     deftool "test_tool" do
-      tool_description("A test tool")
-
-      args do
-        field(:message, :string, required: true)
+      meta do
+        description("A test tool")
       end
+
+      input_schema(%{
+        type: "object",
+        properties: %{
+          message: %{type: "string"}
+        },
+        required: ["message"]
+      })
     end
 
     @impl true
