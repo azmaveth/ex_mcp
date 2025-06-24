@@ -2,7 +2,6 @@ defmodule ExMCP.Authorization.ServerGuardTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Authorization.ServerGuard
-  alias ExMCP.FeatureFlags
 
   setup do
     # Set feature flag to true for most tests
@@ -14,20 +13,27 @@ defmodule ExMCP.Authorization.ServerGuardTest do
     end)
   end
 
-  @config %{
-    introspection_endpoint: "https://auth.example.com/introspect",
+  @base_config %{
     realm: "test-realm"
   }
 
   describe "authorize/3" do
     test "returns :ok when :oauth2_auth feature flag is disabled" do
       Application.put_env(:ex_mcp, :oauth2_enabled, false)
-      assert ServerGuard.authorize([], [], @config) == :ok
+
+      config =
+        Map.put(@base_config, :introspection_endpoint, "https://auth.example.com/introspect")
+
+      assert ServerGuard.authorize([], [], config) == :ok
     end
 
     test "returns error for missing token" do
       headers = []
-      {:error, {status, www_auth, body}} = ServerGuard.authorize(headers, [], @config)
+
+      config =
+        Map.put(@base_config, :introspection_endpoint, "https://auth.example.com/introspect")
+
+      {:error, {status, www_auth, body}} = ServerGuard.authorize(headers, [], config)
 
       assert status == 401
 
@@ -42,57 +48,142 @@ defmodule ExMCP.Authorization.ServerGuardTest do
 
     test "returns error for malformed Authorization header" do
       headers = [{"authorization", "Basic some-token"}]
-      {:error, {401, _, _}} = ServerGuard.authorize(headers, [], @config)
+
+      config =
+        Map.put(@base_config, :introspection_endpoint, "https://auth.example.com/introspect")
+
+      {:error, {401, _, _}} = ServerGuard.authorize(headers, [], config)
+    end
+  end
+
+  describe "authorize/3 with mock introspection endpoint" do
+    @describetag :requires_bypass
+    setup do
+      bypass = Bypass.open()
+
+      # Most tests can use a localhost http endpoint
+      config =
+        @base_config
+        |> Map.put(:introspection_endpoint, "http://localhost:#{bypass.port}/introspect")
+
+      {:ok, bypass: bypass, config: config}
     end
 
-    @tag :skip
-    test "successfully authorizes with valid token and sufficient scopes" do
-      # This test requires an actual OAuth introspection endpoint
-      # Skip for unit testing - would be covered in integration tests
+    test "successfully authorizes with valid token and sufficient scopes", %{
+      bypass: bypass,
+      config: config
+    } do
+      Bypass.stub(bypass, "POST", "/introspect", fn conn ->
+        {:ok, "token=valid-token", conn} = Plug.Conn.read_body(conn)
+        Plug.Conn.resp(conn, 200, Jason.encode!(%{active: true, scope: "read write"}))
+      end)
+
+      headers = [{"authorization", "Bearer valid-token"}]
+      required_scopes = ["read"]
+
+      assert ServerGuard.authorize(headers, required_scopes, config) == :ok
     end
 
-    @tag :skip
-    test "returns error for invalid token" do
-      # This test requires an actual OAuth introspection endpoint
-      # Skip for unit testing - would be covered in integration tests
+    test "returns error for invalid token", %{bypass: bypass, config: config} do
+      Bypass.stub(bypass, "POST", "/introspect", fn conn ->
+        Plug.Conn.resp(conn, 200, Jason.encode!(%{active: false}))
+      end)
+
+      headers = [{"authorization", "Bearer invalid-token"}]
+      {:error, {status, www_auth, body}} = ServerGuard.authorize(headers, [], config)
+
+      assert status == 401
+
+      assert www_auth ==
+               ~s(Bearer realm="test-realm", error="invalid_token", error_description="The access token provided is invalid.")
+
+      assert Jason.decode!(body) == %{
+               "error" => "invalid_token",
+               "error_description" => "The access token provided is invalid."
+             }
     end
 
-    @tag :skip
-    test "returns error for insufficient scope" do
-      # This test requires an actual OAuth introspection endpoint
-      # Skip for unit testing - would be covered in integration tests
+    test "returns error for insufficient scope", %{bypass: bypass, config: config} do
+      Bypass.stub(bypass, "POST", "/introspect", fn conn ->
+        Plug.Conn.resp(conn, 200, Jason.encode!(%{active: true, scope: "read"}))
+      end)
+
+      headers = [{"authorization", "Bearer valid-token"}]
+      required_scopes = ["write"]
+
+      {:error, {status, www_auth, body}} =
+        ServerGuard.authorize(headers, required_scopes, config)
+
+      assert status == 403
+
+      assert www_auth ==
+               ~s(Bearer realm="test-realm", error="insufficient_scope", error_description="The access token does not have the required scope.", scope="write")
+
+      assert Jason.decode!(body) == %{
+               "error" => "insufficient_scope",
+               "error_description" => "The access token does not have the required scope.",
+               "scope" => "write"
+             }
     end
 
-    @tag :skip
-    test "handles token with no scope when scopes are required" do
-      # This test requires an actual OAuth introspection endpoint
-      # Skip for unit testing - would be covered in integration tests
+    test "handles token with no scope when scopes are required", %{
+      bypass: bypass,
+      config: config
+    } do
+      Bypass.stub(bypass, "POST", "/introspect", fn conn ->
+        Plug.Conn.resp(conn, 200, Jason.encode!(%{active: true}))
+      end)
+
+      headers = [{"authorization", "Bearer valid-token"}]
+      required_scopes = ["read"]
+      {:error, {status, _, _}} = ServerGuard.authorize(headers, required_scopes, config)
+      assert status == 403
     end
 
-    @tag :skip
-    test "handles token with nil scope when scopes are required" do
-      # This test requires an actual OAuth introspection endpoint
-      # Skip for unit testing - would be covered in integration tests
+    test "handles token with nil scope when scopes are required", %{
+      bypass: bypass,
+      config: config
+    } do
+      Bypass.stub(bypass, "POST", "/introspect", fn conn ->
+        Plug.Conn.resp(conn, 200, Jason.encode!(%{active: true, scope: nil}))
+      end)
+
+      headers = [{"authorization", "Bearer valid-token"}]
+      required_scopes = ["read"]
+      {:error, {status, _, _}} = ServerGuard.authorize(headers, required_scopes, config)
+      assert status == 403
     end
 
-    @tag :skip
-    test "succeeds when no scopes are required" do
-      # This test requires an actual OAuth introspection endpoint
-      # Skip for unit testing - would be covered in integration tests
+    test "succeeds when no scopes are required", %{bypass: bypass, config: config} do
+      Bypass.stub(bypass, "POST", "/introspect", fn conn ->
+        Plug.Conn.resp(conn, 200, Jason.encode!(%{active: true, scope: "read"}))
+      end)
+
+      headers = [{"authorization", "Bearer valid-token"}]
+      assert ServerGuard.authorize(headers, [], config) == :ok
     end
 
+    test "allows http for localhost introspection endpoint", %{bypass: bypass, config: config} do
+      Bypass.stub(bypass, "POST", "/introspect", fn conn ->
+        Plug.Conn.resp(conn, 200, Jason.encode!(%{active: true}))
+      end)
+
+      headers = [{"authorization", "Bearer valid-token"}]
+      # The config from setup already uses http://localhost
+      assert ServerGuard.authorize(headers, [], config) == :ok
+    end
+  end
+
+  describe "configuration validation" do
     test "returns error for invalid config (non-https introspection endpoint)" do
-      bad_config = %{introspection_endpoint: "http://insecure.com/introspect"}
+      bad_config =
+        @base_config
+        |> Map.put(:introspection_endpoint, "http://insecure.com/introspect")
+
       headers = [{"authorization", "Bearer some-token"}]
 
       {:error, {status, _, _}} = ServerGuard.authorize(headers, [], bad_config)
       assert status == 500
-    end
-
-    @tag :skip
-    test "allows http for localhost introspection endpoint" do
-      # This test requires an actual OAuth introspection endpoint
-      # Skip for unit testing - would be covered in integration tests
     end
   end
 

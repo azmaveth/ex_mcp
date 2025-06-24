@@ -49,12 +49,12 @@ defmodule ExMCP.Transport.SecurityGuard do
         transport: :http,
         user_id: "user123"
       }
-      
+
       case SecurityGuard.validate_request(request, config) do
         {:ok, sanitized_request} ->
           # Proceed with sanitized request
           perform_request(sanitized_request)
-        
+
         {:error, violation} ->
           # Handle security violation
           {:error, violation}
@@ -74,21 +74,6 @@ defmodule ExMCP.Transport.SecurityGuard do
       Logger.debug("SecurityGuard: Request approved", url: request.url)
       {:ok, sanitized_request}
     else
-      {:error, :token_passthrough_blocked} ->
-        error =
-          SecurityError.new(
-            :token_passthrough_blocked,
-            "Server tokens cannot be sent to external URLs",
-            %{url: request.url, transport: request.transport}
-          )
-
-        Logger.warning("SecurityGuard: Token passthrough blocked",
-          url: request.url,
-          transport: request.transport
-        )
-
-        {:error, error}
-
       {:error, :consent_required} ->
         error =
           SecurityError.new(
@@ -115,21 +100,6 @@ defmodule ExMCP.Transport.SecurityGuard do
         Logger.warning("SecurityGuard: Consent denied",
           url: request.url,
           user_id: request.user_id
-        )
-
-        {:error, error}
-
-      {:error, reason} ->
-        error =
-          SecurityError.new(
-            :security_violation,
-            "Security validation failed: #{inspect(reason)}",
-            %{url: request.url, transport: request.transport, reason: reason}
-          )
-
-        Logger.error("SecurityGuard: Security validation failed",
-          url: request.url,
-          reason: reason
         )
 
         {:error, error}

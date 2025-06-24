@@ -1,6 +1,11 @@
 defmodule ExMCP.Internal.Security do
   @moduledoc false
 
+  alias ExMCP.Security.Consent
+  alias ExMCP.Security.CORS
+  alias ExMCP.Security.TokenHandler
+  alias ExMCP.Security.Validation
+
   # Provides authentication and security headers across all MCP transports.
   #
   # ## Security Configuration
@@ -167,16 +172,7 @@ defmodule ExMCP.Internal.Security do
       {:error, :public_binding_requires_security}
   """
   @spec validate_localhost_binding(map()) :: :ok | {:error, :public_binding_requires_security}
-  def validate_localhost_binding(%{binding: binding}) when is_binary(binding) do
-    case binding do
-      "127.0.0.1" -> :ok
-      "localhost" -> :ok
-      "::1" -> :ok
-      _ -> {:error, :public_binding_requires_security}
-    end
-  end
-
-  def validate_localhost_binding(_), do: :ok
+  def validate_localhost_binding(config), do: Validation.validate_localhost_binding(config)
 
   @doc """
   Validates origin header against allowed origins.
@@ -191,79 +187,15 @@ defmodule ExMCP.Internal.Security do
   """
   @spec validate_origin(String.t() | nil, [String.t()] | :any) ::
           :ok | {:error, :origin_not_allowed}
-  def validate_origin(_origin, :any), do: :ok
-  def validate_origin(nil, _allowed), do: {:error, :origin_not_allowed}
-
-  def validate_origin(origin, allowed_origins) when is_list(allowed_origins) do
-    if origin in allowed_origins do
-      :ok
-    else
-      {:error, :origin_not_allowed}
-    end
-  end
+  def validate_origin(origin, allowed_origins),
+    do: CORS.validate_origin(origin, allowed_origins)
 
   @doc """
   Builds CORS headers based on configuration.
   """
   @spec build_cors_headers(cors_config(), String.t() | nil) :: [{String.t(), String.t()}]
-  def build_cors_headers(cors_config, origin \\ nil) do
-    []
-    |> add_origin_header(cors_config, origin)
-    |> add_cors_header(
-      cors_config,
-      "Access-Control-Allow-Methods",
-      :allowed_methods,
-      &Enum.join(&1, ", ")
-    )
-    |> add_cors_header(
-      cors_config,
-      "Access-Control-Allow-Headers",
-      :allowed_headers,
-      &Enum.join(&1, ", ")
-    )
-    |> add_cors_header(
-      cors_config,
-      "Access-Control-Expose-Headers",
-      :expose_headers,
-      &Enum.join(&1, ", ")
-    )
-    |> add_cors_header(cors_config, "Access-Control-Max-Age", :max_age, &to_string/1)
-    |> add_credentials_header(cors_config)
-    |> Enum.reverse()
-  end
-
-  defp add_origin_header(headers, cors_config, origin) do
-    case Map.get(cors_config, :allowed_origins, :any) do
-      :any ->
-        [{"Access-Control-Allow-Origin", "*"} | headers]
-
-      origins when is_list(origins) ->
-        if origin && origin in origins do
-          [{"Access-Control-Allow-Origin", origin} | headers]
-        else
-          headers
-        end
-
-      _ ->
-        headers
-    end
-  end
-
-  defp add_cors_header(headers, cors_config, header_name, key, formatter)
-       when is_map(cors_config) do
-    case Map.get(cors_config, key) do
-      nil -> headers
-      value -> [{header_name, formatter.(value)} | headers]
-    end
-  end
-
-  defp add_credentials_header(headers, cors_config) do
-    if Map.get(cors_config, :allow_credentials, false) do
-      [{"Access-Control-Allow-Credentials", "true"} | headers]
-    else
-      headers
-    end
-  end
+  def build_cors_headers(cors_config, origin \\ nil),
+    do: CORS.build_cors_headers(cors_config, origin)
 
   @doc """
   Builds standard security headers for HTTP-based transports.
@@ -284,13 +216,6 @@ defmodule ExMCP.Internal.Security do
   # Token Passthrough and Consent
   #
 
-  @sensitive_headers [
-    "authorization",
-    "cookie",
-    "x-api-key",
-    "x-auth-token"
-  ]
-
   @doc """
   Checks for and prevents token passthrough to external resources.
 
@@ -299,12 +224,7 @@ defmodule ExMCP.Internal.Security do
   """
   @spec check_token_passthrough(String.t(), list({String.t(), String.t()}), map()) ::
           {:ok, list({String.t(), String.t()})}
-  def check_token_passthrough(url, headers, config) do
-    trusted_origins = Map.get(config, :trusted_origins, [])
-    classification = classify_url(url, trusted_origins)
-    new_headers = strip_sensitive_headers(headers, classification)
-    {:ok, new_headers}
-  end
+  defdelegate check_token_passthrough(url, headers, config), to: TokenHandler
 
   @doc """
   Classifies a URL as `:internal` or `:external` based on trusted origins.
@@ -313,42 +233,14 @@ defmodule ExMCP.Internal.Security do
   domain. Wildcard matching (`*.example.com`) is supported for subdomains.
   """
   @spec classify_url(String.t(), [String.t()]) :: :internal | :external
-  def classify_url(url, trusted_origins) do
-    with %URI{host: host} <- URI.parse(url),
-         true <- not is_nil(host) do
-      normalized_host = String.downcase(host)
-
-      is_trusted =
-        Enum.any?(trusted_origins, fn trusted ->
-          if String.starts_with?(trusted, "*.") do
-            String.ends_with?(normalized_host, String.trim_leading(trusted, "*"))
-          else
-            normalized_host == trusted
-          end
-        end)
-
-      if is_trusted, do: :internal, else: :external
-    else
-      _error ->
-        # If URL can't be parsed, treat it as external for safety.
-        :external
-    end
-  end
+  defdelegate classify_url(url, trusted_origins), to: TokenHandler
 
   @doc """
   Strips sensitive headers if the resource classification is `:external`.
   """
   @spec strip_sensitive_headers(list({String.t(), String.t()}), :internal | :external) ::
           list({String.t(), String.t()})
-  def strip_sensitive_headers(headers, :internal) do
-    headers
-  end
-
-  def strip_sensitive_headers(headers, :external) do
-    Enum.reject(headers, fn {name, _value} ->
-      String.downcase(name) in @sensitive_headers
-    end)
-  end
+  defdelegate strip_sensitive_headers(headers, classification), to: TokenHandler
 
   @doc """
   Ensures user consent is obtained before accessing an external resource.
@@ -360,76 +252,13 @@ defmodule ExMCP.Internal.Security do
           module(),
           map()
         ) :: :ok | {:error, :consent_denied | :consent_required | :consent_error}
-  def ensure_user_consent(user_id, url, transport, handler, config) do
-    trusted_origins = Map.get(config, :trusted_origins, [])
-
-    with {:ok, origin} <- extract_origin(url),
-         :external <- classify_url(url, trusted_origins) do
-      do_ensure_user_consent(user_id, origin, transport, handler, config)
-    else
-      :internal ->
-        :ok
-
-      {:error, _reason} ->
-        # If URL is invalid or has no origin, we can't check consent.
-        # Let other parts of the system handle the invalid URL.
-        # From a consent perspective, we don't block it.
-        :ok
-    end
-  end
-
-  defp do_ensure_user_consent(user_id, origin, transport, handler, config) do
-    case ExMCP.Internal.ConsentCache.check_consent(user_id, origin) do
-      {:ok, _expires_at} ->
-        :ok
-
-      {:not_found} ->
-        handle_consent_request(user_id, origin, transport, handler, config)
-
-      {:expired} ->
-        # Consent expired, so revoke it from cache and re-request.
-        ExMCP.Internal.ConsentCache.revoke_consent(user_id, origin)
-        handle_consent_request(user_id, origin, transport, handler, config)
-    end
-  end
-
-  defp handle_consent_request(user_id, origin, transport, handler, config) do
-    context = %{
-      transport: transport,
-      consent_ttl: Map.get(config, :consent_ttl, 3600)
-    }
-
-    case handler.request_consent(user_id, origin, context) do
-      {:ok, expires_at} ->
-        ExMCP.Internal.ConsentCache.store_consent(user_id, origin, expires_at)
-        :ok
-
-      {:error, :denied} ->
-        {:error, :consent_denied}
-
-      {:error, :consent_required} ->
-        {:error, :consent_required}
-    end
-  end
+  defdelegate ensure_user_consent(user_id, url, transport, handler, config), to: Consent
 
   @doc """
   Extracts the origin (scheme://host:port) from a URL string.
   """
   @spec extract_origin(String.t()) :: {:ok, String.t()} | {:error, :invalid_uri}
-  def extract_origin(url) do
-    case URI.parse(url) do
-      %URI{scheme: nil} ->
-        {:error, :invalid_uri}
-
-      %URI{host: nil} ->
-        {:error, :invalid_uri}
-
-      %URI{scheme: scheme, host: host, port: port} = _uri ->
-        default_port = URI.default_port(scheme)
-        port_str = if port && port != default_port, do: ":#{port}", else: ""
-        {:ok, "#{scheme}://#{host}#{port_str}"}
-    end
-  end
+  defdelegate extract_origin(url), to: TokenHandler
 
   @doc """
   Validates an HTTP request for security compliance.
@@ -448,91 +277,7 @@ defmodule ExMCP.Internal.Security do
   """
   @spec validate_request([{String.t(), String.t()}], security_config()) ::
           :ok | {:error, atom()}
-  def validate_request(headers, config \\ %{}) do
-    with :ok <- validate_request_origin_header(headers, config),
-         :ok <- validate_host_header(headers, config) do
-      validate_https_requirement(headers, config)
-    end
-  end
-
-  defp validate_request_origin_header(headers, %{validate_origin: true} = config) do
-    case find_header(headers, "origin") do
-      nil ->
-        # Origin header is required when origin validation is enabled
-        {:error, :origin_header_required}
-
-      origin ->
-        allowed = Map.get(config, :allowed_origins, [])
-        validate_origin(origin, allowed)
-    end
-  end
-
-  defp validate_request_origin_header(_headers, _config), do: :ok
-
-  defp validate_host_header(headers, config) do
-    case find_header(headers, "host") do
-      nil ->
-        {:error, :host_header_required}
-
-      host ->
-        validate_host_against_policy(host, config)
-    end
-  end
-
-  defp validate_host_against_policy(host, config) do
-    # Basic validation - could be enhanced based on security policy
-    if String.contains?(host, ["localhost", "127.0.0.1", "[::1]"]) do
-      :ok
-    else
-      # For non-localhost hosts, ensure they match expected patterns
-      allowed_hosts = Map.get(config, :allowed_hosts, [])
-
-      if allowed_hosts == [] or host in allowed_hosts do
-        :ok
-      else
-        {:error, :host_not_allowed}
-      end
-    end
-  end
-
-  defp validate_https_requirement(headers, %{enforce_https: true}) do
-    # Check if this is an HTTPS request
-    case find_header(headers, "x-forwarded-proto") do
-      "https" ->
-        :ok
-
-      nil ->
-        # If no x-forwarded-proto, check if this is localhost
-        case find_header(headers, "host") do
-          host when host in ["localhost", "127.0.0.1", "[::1]"] -> :ok
-          _ -> {:error, :https_required}
-        end
-
-      _ ->
-        {:error, :https_required}
-    end
-  end
-
-  defp validate_https_requirement(_headers, _config), do: :ok
-
-  defp find_header(headers, name) do
-    name_lower = String.downcase(name)
-
-    Enum.find_value(headers, fn
-      {key, value} when is_binary(key) ->
-        if String.downcase(key) == name_lower do
-          value
-        end
-
-      {key, value} when is_list(key) ->
-        if String.downcase(to_string(key)) == name_lower do
-          to_string(value)
-        end
-
-      _ ->
-        nil
-    end)
-  end
+  def validate_request(headers, config \\ %{}), do: Validation.validate_request(headers, config)
 
   @doc """
   Validates TLS/SSL configuration.
@@ -548,117 +293,26 @@ defmodule ExMCP.Internal.Security do
       :ok = ExMCP.Internal.Security.validate_tls_config(config)
   """
   @spec validate_tls_config(map()) :: :ok | {:error, atom()}
-  def validate_tls_config(config) when is_map(config) do
-    with :ok <- validate_verify_mode(Map.get(config, :verify)),
-         :ok <- validate_tls_versions(Map.get(config, :versions)),
-         :ok <- validate_cipher_suites(Map.get(config, :ciphers)) do
-      validate_certificates(config)
-    end
-  end
-
-  def validate_tls_config(_), do: {:error, :invalid_tls_config}
-
-  defp validate_verify_mode(nil), do: :ok
-  defp validate_verify_mode(:verify_peer), do: :ok
-  defp validate_verify_mode(:verify_none), do: :ok
-  defp validate_verify_mode(_), do: {:error, :invalid_verify_mode}
-
-  defp validate_tls_versions(nil), do: :ok
-
-  defp validate_tls_versions(versions) when is_list(versions) do
-    insecure_versions = [:"tlsv1.0", :"tlsv1.1", :sslv3, :sslv2]
-
-    if Enum.any?(versions, &(&1 in insecure_versions)) do
-      {:error, :insecure_tls_versions}
-    else
-      :ok
-    end
-  end
-
-  defp validate_tls_versions(_), do: {:error, :invalid_tls_versions}
+  def validate_tls_config(config), do: Validation.validate_tls_config(config)
 
   @doc """
   Validates cipher suite configuration.
   """
   @spec validate_cipher_suites(map() | nil) :: :ok | {:error, atom()}
-  def validate_cipher_suites(nil), do: :ok
-  def validate_cipher_suites(%{ciphers: ciphers}), do: validate_cipher_suites(ciphers)
-
-  def validate_cipher_suites(ciphers) when is_list(ciphers) do
-    weak_ciphers = [
-      # 3DES
-      "DES-CBC3-SHA",
-      # RC4
-      "RC4-SHA",
-      # NULL encryption
-      "NULL-SHA",
-      # Anonymous DH
-      "ADH-",
-      # Anonymous ECDH
-      "AECDH-",
-      # MD5 hash
-      "MD5"
-    ]
-
-    has_weak =
-      Enum.any?(ciphers, fn cipher ->
-        Enum.any?(weak_ciphers, &String.contains?(cipher, &1))
-      end)
-
-    if has_weak do
-      {:error, :weak_cipher_suites}
-    else
-      :ok
-    end
-  end
-
-  def validate_cipher_suites(_), do: {:error, :invalid_cipher_config}
-
-  defp validate_certificates(config) do
-    # Basic validation - could be enhanced
-    case {Map.get(config, :cert), Map.get(config, :key)} do
-      {nil, nil} -> :ok
-      {cert, key} when is_binary(cert) and is_binary(key) -> :ok
-      {cert, nil} when is_binary(cert) -> {:error, :cert_without_key}
-      {nil, key} when is_binary(key) -> {:error, :key_without_cert}
-      _ -> {:error, :invalid_certificate_config}
-    end
-  end
+  def validate_cipher_suites(ciphers), do: Validation.validate_cipher_suites(ciphers)
 
   @doc """
   Validates mutual TLS configuration.
   """
   @spec validate_mtls_config(map()) :: :ok | {:error, atom()}
-  def validate_mtls_config(config) do
-    required_fields = [:cert, :key, :cacerts]
-
-    missing_fields = Enum.reject(required_fields, &Map.has_key?(config, &1))
-
-    if missing_fields == [] do
-      :ok
-    else
-      {:error, :incomplete_mtls_config}
-    end
-  end
+  def validate_mtls_config(config), do: Validation.validate_mtls_config(config)
 
   @doc """
   Validates certificate pinning configuration.
   """
   @spec validate_certificate_pinning_config(map()) :: :ok | {:error, atom()}
-  def validate_certificate_pinning_config(%{certificate_pinning: pins}) when is_list(pins) do
-    valid_pins =
-      Enum.all?(pins, fn pin ->
-        String.starts_with?(pin, "sha256:") and byte_size(pin) > 7
-      end)
-
-    if valid_pins do
-      :ok
-    else
-      {:error, :invalid_certificate_pins}
-    end
-  end
-
-  def validate_certificate_pinning_config(_), do: :ok
+  def validate_certificate_pinning_config(config),
+    do: Validation.validate_certificate_pinning_config(config)
 
   @doc """
   Returns the preferred TLS version from a list.
@@ -734,49 +388,13 @@ defmodule ExMCP.Internal.Security do
   Validates transport security configuration.
   """
   @spec validate_transport_security(map()) :: :ok | {:error, atom()}
-  def validate_transport_security(config) do
-    url = Map.get(config, :url, "")
-    security = Map.get(config, :security, %{})
-
-    with :ok <- validate_url_security(url, security) do
-      validate_tls_config(Map.get(security, :tls, %{}))
-    end
-  end
-
-  defp validate_url_security(url, %{enforce_https: true}) do
-    enforce_https_requirement(url)
-  end
-
-  defp validate_url_security(_url, _security), do: :ok
+  def validate_transport_security(config), do: Validation.validate_transport_security(config)
 
   @doc """
   Validates security configuration.
   """
   @spec validate_config(security_config()) :: :ok | {:error, term()}
-  def validate_config(config) do
-    with :ok <- validate_auth(Map.get(config, :auth)),
-         :ok <- validate_cors(Map.get(config, :cors)),
-         :ok <- validate_tls(Map.get(config, :tls)) do
-      validate_security_requirements(config)
-    end
-  end
-
-  defp validate_auth(nil), do: :ok
-  defp validate_auth({:bearer, token}) when is_binary(token), do: :ok
-  defp validate_auth({:api_key, key, _opts}) when is_binary(key), do: :ok
-  defp validate_auth({:basic, user, pass}) when is_binary(user) and is_binary(pass), do: :ok
-  defp validate_auth({:custom, headers}) when is_list(headers), do: :ok
-  defp validate_auth({:node_cookie, cookie}) when is_atom(cookie), do: :ok
-  defp validate_auth({:oauth2, %{access_token: token}}) when is_binary(token), do: :ok
-  defp validate_auth(_), do: {:error, :invalid_auth_config}
-
-  defp validate_cors(nil), do: :ok
-  defp validate_cors(%{} = _cors), do: :ok
-  defp validate_cors(_), do: {:error, :invalid_cors_config}
-
-  defp validate_tls(nil), do: :ok
-  defp validate_tls(%{} = _tls), do: :ok
-  defp validate_tls(_), do: {:error, :invalid_tls_config}
+  def validate_config(config), do: Validation.validate_config(config)
 
   @doc """
   Applies security configuration to transport options.
@@ -815,43 +433,14 @@ defmodule ExMCP.Internal.Security do
   Validates that security configuration meets MCP specification requirements.
   """
   @spec validate_security_requirements(security_config()) :: :ok | {:error, term()}
-  def validate_security_requirements(config) do
-    with :ok <- validate_origin_requirements(config) do
-      validate_localhost_binding(config)
-    end
-  end
-
-  defp validate_origin_requirements(%{validate_origin: true, allowed_origins: origins})
-       when is_list(origins) and length(origins) > 0 do
-    :ok
-  end
-
-  defp validate_origin_requirements(%{validate_origin: true}) do
-    {:error, :allowed_origins_required_when_origin_validation_enabled}
-  end
-
-  defp validate_origin_requirements(_), do: :ok
+  def validate_security_requirements(config),
+    do: Validation.validate_security_requirements(config)
 
   @doc """
   Enforces HTTPS requirement for non-localhost URLs.
   """
   @spec enforce_https_requirement(String.t()) :: :ok | {:error, :https_required}
-  def enforce_https_requirement(url) do
-    uri = URI.parse(url)
-
-    case {uri.scheme, uri.host} do
-      {"http", "localhost"} -> :ok
-      {"http", "127.0.0.1"} -> :ok
-      # IPv6 localhost without brackets
-      {"http", "::1"} -> :ok
-      # IPv6 localhost with brackets
-      {"http", "[::1]"} -> :ok
-      {"http", _} -> {:error, :https_required}
-      {"https", _} -> :ok
-      # Other schemes like ws/wss handled elsewhere
-      _ -> :ok
-    end
-  end
+  def enforce_https_requirement(url), do: Validation.enforce_https_requirement(url)
 
   @doc """
   Validates request origin against security policy.
@@ -860,12 +449,7 @@ defmodule ExMCP.Internal.Security do
   """
   @spec validate_request_origin(String.t() | nil, security_config()) ::
           :ok | {:error, :origin_validation_failed}
-  def validate_request_origin(origin, %{validate_origin: true} = config) do
-    allowed = Map.get(config, :allowed_origins, [])
-    validate_origin(origin, allowed)
-  end
-
-  def validate_request_origin(_, _), do: :ok
+  def validate_request_origin(origin, config), do: CORS.validate_request_origin(origin, config)
 
   @doc """
   Builds secure default configuration based on deployment context.

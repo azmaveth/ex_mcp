@@ -148,9 +148,8 @@ defmodule ExMCP.Authorization.ServerConfig do
   @spec validate_config(server_config()) :: :ok | {:error, config_error()}
   def validate_config(%{introspection_endpoint: endpoint} = config)
       when is_binary(endpoint) do
-    with :ok <- validate_endpoint(endpoint),
-         :ok <- validate_optional_fields(config) do
-      :ok
+    with :ok <- validate_endpoint(endpoint) do
+      validate_optional_fields(config)
     end
   end
 
@@ -268,9 +267,8 @@ defmodule ExMCP.Authorization.ServerConfig do
 
   defp validate_optional_fields(config) do
     with :ok <- validate_realm(Map.get(config, :realm)),
-         :ok <- validate_timeout(Map.get(config, :timeout)),
-         :ok <- validate_retries(Map.get(config, :retries)) do
-      :ok
+         :ok <- validate_timeout(Map.get(config, :timeout)) do
+      validate_retries(Map.get(config, :retries))
     end
   end
 

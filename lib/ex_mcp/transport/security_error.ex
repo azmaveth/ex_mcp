@@ -32,8 +32,8 @@ defmodule ExMCP.Transport.SecurityError do
 
   ## Examples
 
-      error = SecurityError.new(:consent_required, 
-        "User consent required", 
+      error = SecurityError.new(:consent_required,
+        "User consent required",
         %{url: "https://api.example.com", user_id: "user123"}
       )
   """

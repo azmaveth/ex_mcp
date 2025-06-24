@@ -218,10 +218,10 @@ defmodule ExMCP.Authorization.ServerGuard do
   defp build_error_response(status, error_code, description, realm, scope) do
     parts =
       [
-        realm && ~s(realm="#{realm}"),
+        if(realm, do: ~s(realm="#{realm}")),
         ~s(error="#{error_code}"),
-        description && ~s(error_description="#{description}"),
-        scope && ~s(scope="#{scope}")
+        if(description != "", do: ~s(error_description="#{description}")),
+        if(scope, do: ~s(scope="#{scope}"))
       ]
       |> Enum.reject(&is_nil/1)
 

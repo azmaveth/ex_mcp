@@ -11,9 +11,9 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
   @moduletag :performance
   @moduletag :slow
 
-  alias ExMCP.Transport.SecurityGuard
-  alias ExMCP.Internal.SecurityConfig
   alias ExMCP.ConsentHandler.Test, as: TestConsentHandler
+  alias ExMCP.Internal.SecurityConfig
+  alias ExMCP.Transport.SecurityGuard
 
   @performance_target_microseconds 100
 
