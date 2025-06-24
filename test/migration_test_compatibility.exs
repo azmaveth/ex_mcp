@@ -7,7 +7,7 @@ defmodule ExMCP.MigrationCompatibilityTest do
   """
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
 
   # Simple DSL server for compatibility testing
   defmodule TestDSLServer do
@@ -84,7 +84,7 @@ defmodule ExMCP.MigrationCompatibilityTest do
       assert Map.has_key?(capabilities, "tools")
       assert capabilities["tools"]["listChanged"] == true
 
-      # Should have resources capability  
+      # Should have resources capability
       assert Map.has_key?(capabilities, "resources")
       assert capabilities["resources"]["listChanged"] == true
     end

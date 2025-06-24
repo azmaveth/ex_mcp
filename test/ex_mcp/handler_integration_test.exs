@@ -217,17 +217,17 @@ defmodule ExMCP.HandlerIntegrationTest do
     #   {:ok, result} = Client.list_prompts(client)
     #   assert is_list(result["prompts"])
     # end
-    # 
+    #
     # test "get prompt from handler server", %{client: client} do
     #   {:ok, result} = Client.get_prompt(client, "greeting", %{"name" => "Alice"})
     #   assert is_list(result["messages"])
     # end
-    # 
+    #
     # test "list resources from handler server", %{client: client} do
     #   {:ok, result} = Client.list_resources(client)
     #   assert is_list(result["resources"])
     # end
-    # 
+    #
     # test "read resource from handler server", %{client: client} do
     #   {:ok, result} = Client.read_resource(client, "file:///test.txt")
     #   assert is_list(result["contents"])

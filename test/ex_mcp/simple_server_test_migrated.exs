@@ -8,7 +8,7 @@ defmodule ExMCP.SimpleServerTestMigrated do
   equivalent functionality for basic server features and notification capabilities.
 
   Key differences in migration:
-  - Handler tests remain unchanged (test the Handler behavior itself)  
+  - Handler tests remain unchanged (test the Handler behavior itself)
   - Added DSL server tests showing equivalent capabilities
   - Both patterns coexist and work correctly
   """
@@ -202,7 +202,7 @@ defmodule ExMCP.SimpleServerTestMigrated do
       handler_callbacks = Handler.behaviour_info(:callbacks)
       dsl_functions = TestDslServer.__info__(:functions)
 
-      # Both have initialization 
+      # Both have initialization
       assert {:init, 1} in handler_callbacks
       assert {:init, 1} in dsl_functions
     end
@@ -216,7 +216,7 @@ defmodule ExMCP.SimpleServerTestMigrated do
       # Handler pattern works
       assert {:ok, %{}} = TestHandler.init([])
 
-      # DSL pattern works  
+      # DSL pattern works
       assert {:ok, %{}} = TestDslServer.init([])
 
       # Handler has capabilities that DSL doesn't (documented limitation)

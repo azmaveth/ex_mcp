@@ -1,6 +1,5 @@
 defmodule ExMCP.DSL.ComplianceTest do
   use ExUnit.Case, async: true
-  import ExUnit.CaptureLog
 
   # Test server using design-compliant DSL syntax
   defmodule DesignCompliantServer do

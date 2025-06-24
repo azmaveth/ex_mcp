@@ -1,10 +1,17 @@
 defmodule ExMCP.RegistryTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+  import ExMCP.HordeTestHelpers
 
   alias ExMCP.Registry
 
-  setup do
-    {:ok, registry} = Registry.start_link()
+  setup %{test: test} do
+    registry_name = unique_process_name(test, "registry")
+    {:ok, registry} = Registry.start_link(name: registry_name)
+
+    on_exit(fn ->
+      if Process.alive?(registry), do: GenServer.stop(registry)
+    end)
+
     %{registry: registry}
   end
 

@@ -10,7 +10,6 @@ defmodule ExMCP.MessageProcessorValidationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.MessageProcessor
-  alias ExMCP.MessageProcessor.Conn
 
   # Minimal handler-based server
   defmodule MinimalHandler do
@@ -97,7 +96,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
     end
   end
 
-  # Minimal DSL-based server  
+  # Minimal DSL-based server
   defmodule MinimalDslServer do
     use ExMCP.Server
 

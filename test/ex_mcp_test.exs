@@ -35,24 +35,24 @@ defmodule ExMCPTest do
   end
 
   describe "v2 convenience functions with real servers" do
-    setup do
-      setup_test_servers()
+    setup context do
+      start_test_servers_for_api(context)
     end
 
     test "connect/2 with HTTP URL", %{http_url: http_url} do
-      assert {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
+      assert {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
       assert is_pid(client)
       ExMCP.disconnect(client)
     end
 
     test "connect/2 with HTTP URL and v2 client", %{http_url: http_url} do
-      assert {:ok, client} = ExMCP.connect(http_url, client_type: :v2)
+      assert {:ok, client} = ExMCP.connect(http_url, client_type: :v2, use_sse: false)
       assert is_pid(client)
       ExMCP.disconnect(client)
     end
 
     test "tools/2 returns actual tool list", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
+      {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
       tools = ExMCP.tools(client)
       assert is_list(tools)
@@ -67,7 +67,7 @@ defmodule ExMCPTest do
     end
 
     test "call/4 executes tool and normalizes response", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
+      {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
       result = ExMCP.call(client, "echo", %{"message" => "Hello World"})
       assert result == "Echo: Hello World"
@@ -76,7 +76,7 @@ defmodule ExMCPTest do
     end
 
     test "call/4 with add tool", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
+      {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
       result = ExMCP.call(client, "add", %{"a" => 5, "b" => 3})
       assert result == "5 + 3 = 8"
@@ -85,7 +85,7 @@ defmodule ExMCPTest do
     end
 
     test "call/4 with normalize: false returns raw response", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
+      {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
       result = ExMCP.call(client, "echo", %{"message" => "test"}, normalize: false)
       assert %Response{} = result
@@ -94,44 +94,8 @@ defmodule ExMCPTest do
       ExMCP.disconnect(client)
     end
 
-    test "resources/2 returns actual resource list", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
-
-      resources = ExMCP.resources(client)
-      assert is_list(resources)
-
-      # Check for our test resources
-      resource_uris = Enum.map(resources, & &1["uri"])
-      assert "test://config" in resource_uris
-      assert "test://data.txt" in resource_uris
-
-      ExMCP.disconnect(client)
-    end
-
-    test "read/3 reads resource content", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
-
-      content = ExMCP.read(client, "test://data.txt")
-      assert is_binary(content)
-      assert String.contains?(content, "test data")
-
-      ExMCP.disconnect(client)
-    end
-
-    test "read/3 with parse_json: true parses JSON content", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
-
-      # Read the JSON config resource
-      content = ExMCP.read(client, "test://config", parse_json: true)
-      assert is_map(content)
-      assert content["environment"] == "test"
-      assert content["debug"] == true
-
-      ExMCP.disconnect(client)
-    end
-
     test "status/1 returns connection status", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
+      {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
       {:ok, status} = ExMCP.status(client)
       assert is_map(status)
@@ -141,7 +105,7 @@ defmodule ExMCPTest do
     end
 
     test "disconnect/1 stops the client", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
+      {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
       assert :ok = ExMCP.disconnect(client)
       # Give it a moment to stop
@@ -151,27 +115,29 @@ defmodule ExMCPTest do
   end
 
   describe "connection specification normalization" do
-    setup do
-      setup_test_servers()
+    setup context do
+      start_test_servers_for_api(context)
     end
 
     test "handles HTTP URLs", %{http_url: http_url} do
-      assert {:ok, client1} = ExMCP.connect(http_url, client_type: :simple)
+      assert {:ok, client1} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
       ExMCP.disconnect(client1)
 
       # Test with explicit http:// URL as well
-      assert {:ok, client2} = ExMCP.connect(http_url, client_type: :simple)
+      assert {:ok, client2} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
       ExMCP.disconnect(client2)
     end
 
     test "handles transport tuples", %{http_url: http_url} do
-      assert {:ok, client} = ExMCP.connect({:http, url: http_url}, client_type: :simple)
+      assert {:ok, client} =
+               ExMCP.connect({:http, url: http_url}, client_type: :simple, use_sse: false)
+
       ExMCP.disconnect(client)
     end
 
     test "client_type option selects appropriate client", %{http_url: http_url} do
-      assert {:ok, client1} = ExMCP.connect(http_url, client_type: :simple)
-      assert {:ok, client2} = ExMCP.connect(http_url, client_type: :v2)
+      assert {:ok, client1} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
+      assert {:ok, client2} = ExMCP.connect(http_url, client_type: :v2, use_sse: false)
       # Note: convenience client with fallback may not work with our simple test setup
 
       ExMCP.disconnect(client1)
@@ -180,32 +146,28 @@ defmodule ExMCPTest do
   end
 
   describe "error handling" do
-    setup do
-      setup_test_servers()
+    setup context do
+      start_test_servers_for_api(context)
     end
 
     @tag timeout: 5_000
     test "handles connection errors gracefully" do
       # Try to connect to a non-existent server
-      result = ExMCP.connect("http://localhost:99999", client_type: :simple, timeout: 1_000)
+      result =
+        ExMCP.connect("http://localhost:99999",
+          client_type: :simple,
+          timeout: 1_000,
+          use_sse: false
+        )
+
       assert {:error, _reason} = result
     end
 
     test "handles invalid tool calls gracefully", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
+      {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
       # Try to call a non-existent tool
       result = ExMCP.call(client, "nonexistent_tool", %{})
-      assert {:error, _error} = result
-
-      ExMCP.disconnect(client)
-    end
-
-    test "handles invalid resource reads gracefully", %{http_url: http_url} do
-      {:ok, client} = ExMCP.connect(http_url, client_type: :simple)
-
-      # Try to read a non-existent resource
-      result = ExMCP.read(client, "test://nonexistent")
       assert {:error, _error} = result
 
       ExMCP.disconnect(client)

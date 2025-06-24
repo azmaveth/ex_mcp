@@ -1,10 +1,8 @@
 defmodule ExMCP.Integration.ConcurrentClientsTest do
   use ExUnit.Case, async: false
-  import ExUnit.CaptureLog
 
   alias ExMCP.Client
   alias ExMCP.HttpPlug
-  alias ExMCP.Server
 
   @moduletag :integration
   @moduletag timeout: 60_000
@@ -221,8 +219,8 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
         for i <- 1..sse_count do
           Task.async(fn ->
             # Connect via SSE endpoint
-            url = "http://localhost:#{port}/sse"
-            headers = [{"accept", "text/event-stream"}]
+            _url = "http://localhost:#{port}/sse"
+            _headers = [{"accept", "text/event-stream"}]
 
             # Use HTTPoison or similar to establish SSE connection
             # For this test, we'll simulate the connection behavior

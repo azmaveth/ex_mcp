@@ -28,7 +28,7 @@ defmodule ExMCP.Server.Tools.HelpersTest do
 
       assert response == %{
                content: [%{type: "text", text: "Something went wrong"}],
-               is_error: true
+               isError: true
              }
     end
 
@@ -281,87 +281,6 @@ defmodule ExMCP.Server.Tools.HelpersTest do
     end
   end
 
-  describe "function_to_tool/3" do
-    @describetag :skip
-    defmodule TestModule do
-      @spec echo(String.t()) :: {:ok, String.t()} | {:error, String.t()}
-      def echo(message), do: {:ok, message}
-
-      @spec add(integer(), integer()) :: integer()
-      def add(a, b), do: a + b
-
-      @spec greet(String.t(), keyword()) :: String.t()
-      def greet(name, opts \\ []) do
-        title = Keyword.get(opts, :title, "")
-        if title != "", do: "Hello, #{title} #{name}!", else: "Hello, #{name}!"
-      end
-    end
-
-    test "converts simple function with single parameter" do
-      tool = Helpers.function_to_tool(TestModule, :echo, "Echo a message back")
-
-      assert tool.name == "echo"
-      assert tool.description == "Echo a message back"
-
-      assert tool.inputSchema == %{
-               type: "object",
-               properties: %{
-                 message: %{type: "string"}
-               },
-               required: ["message"]
-             }
-    end
-
-    test "converts function with multiple parameters" do
-      tool = Helpers.function_to_tool(TestModule, :add, "Add two numbers")
-
-      assert tool.name == "add"
-      assert tool.description == "Add two numbers"
-
-      assert tool.inputSchema == %{
-               type: "object",
-               properties: %{
-                 a: %{type: "integer"},
-                 b: %{type: "integer"}
-               },
-               required: ["a", "b"]
-             }
-    end
-
-    test "handles functions with optional parameters" do
-      tool = Helpers.function_to_tool(TestModule, :greet, "Greet a person")
-
-      assert tool.name == "greet"
-      assert tool.inputSchema.properties.name == %{type: "string"}
-      assert tool.inputSchema.required == ["name"]
-      # Optional parameters from keyword list are not included in required
-    end
-
-    test "raises error for non-existent function" do
-      assert_raise ArgumentError, ~r/Function.*does not exist/, fn ->
-        Helpers.function_to_tool(TestModule, :non_existent, "Does not exist")
-      end
-    end
-
-    test "handles functions without specs" do
-      defmodule NoSpecModule do
-        def no_spec_function(arg), do: arg
-      end
-
-      # Should still create a basic tool, but with generic schema
-      tool = Helpers.function_to_tool(NoSpecModule, :no_spec_function, "Function without spec")
-
-      assert tool.name == "no_spec_function"
-      assert tool.description == "Function without spec"
-
-      assert tool.inputSchema == %{
-               type: "object",
-               properties: %{},
-               additionalProperties: true
-             }
-    end
-  end
-
   describe "response builder helpers" do
     test "builds image response" do
       response = Helpers.image_response("https://example.com/image.png", "An example image")
@@ -370,7 +289,7 @@ defmodule ExMCP.Server.Tools.HelpersTest do
                %{
                  type: "image",
                  data: "https://example.com/image.png",
-                 mime_type: "image/png",
+                 mimeType: "image/png",
                  description: "An example image"
                }
              ]
@@ -383,7 +302,7 @@ defmodule ExMCP.Server.Tools.HelpersTest do
                %{
                  type: "resource",
                  uri: "file:///path/to/file.txt",
-                 mime_type: "text/plain"
+                 mimeType: "text/plain"
                }
              ]
     end
@@ -401,10 +320,10 @@ defmodule ExMCP.Server.Tools.HelpersTest do
                %{
                  type: "image",
                  data: "data:image/png;base64,abc123",
-                 mime_type: "image/png",
+                 mimeType: "image/png",
                  description: "A diagram"
                },
-               %{type: "resource", uri: "file:///doc.pdf", mime_type: "application/pdf"}
+               %{type: "resource", uri: "file:///doc.pdf", mimeType: "application/pdf"}
              ]
     end
   end

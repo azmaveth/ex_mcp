@@ -10,7 +10,7 @@ defmodule ExMCP.LoggingSetLevelTest do
   alias ExMCP.Server
 
   defmodule TestHandler do
-    use ExMCP.Server.Handler
+    use ExMCP.Server
 
     @impl true
     def init(_args), do: {:ok, %{log_level: "info"}}
@@ -37,12 +37,6 @@ defmodule ExMCP.LoggingSetLevelTest do
         {:error, "Invalid log level: #{level}", state}
       end
     end
-
-    @impl true
-    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
-
-    @impl true
-    def handle_call_tool(_name, _args, state), do: {:error, "Not implemented", state}
   end
 
   describe "logging/setLevel" do
@@ -89,7 +83,7 @@ defmodule ExMCP.LoggingSetLevelTest do
   describe "handler implementation" do
     test "default handler implementation just returns ok" do
       defmodule MinimalHandler do
-        use ExMCP.Server.Handler
+        use ExMCP.Server
 
         @impl true
         def init(_args), do: {:ok, %{}}
@@ -103,12 +97,6 @@ defmodule ExMCP.LoggingSetLevelTest do
              capabilities: %{}
            }, state}
         end
-
-        @impl true
-        def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
-
-        @impl true
-        def handle_call_tool(_name, _args, state), do: {:error, "Not implemented", state}
       end
 
       {:ok, server} =

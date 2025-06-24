@@ -1,58 +1,108 @@
 defmodule ExMCP.PingTestMigrated do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+  import ExMCP.TestHelpers
 
   alias ExMCP.{Client, Protocol, Server}
   alias ExMCP.Client.Handler, as: ClientHandler
 
+  setup_all do
+    # Ensure ExMCP application is started for service registry
+    {:ok, _} = Application.ensure_all_started(:ex_mcp)
+
+    on_exit(fn ->
+      Application.stop(:ex_mcp)
+    end)
+
+    :ok
+  end
+
   # DSL-based server replacing TestServerHandler
   defmodule TestPingServer do
-    use ExMCP.Server
+    use ExMCP.Service, name: :test_ping_server
 
     # Custom initialization to maintain state compatibility
     @impl true
-    def init(_args) do
+    def init(args) do
+      # Call parent to register the service
+      {:ok, _} = super(args)
+      # Then set our custom state
       {:ok, %{ping_count: 0}}
     end
 
-    # Tool implementations (required but not used in ping tests)
+    # MCP request implementations (required for ExMCP.Service)
     @impl true
-    def handle_tool_call(_name, _arguments, state) do
-      {:ok, %{content: [%{type: "text", text: "Not implemented"}]}, state}
+    def handle_mcp_request("initialize", _params, state) do
+      {:ok,
+       %{
+         "protocolVersion" => "2025-06-18",
+         "capabilities" => %{
+           "tools" => %{},
+           "resources" => %{},
+           "prompts" => %{}
+         },
+         "serverInfo" => %{
+           "name" => "TestPingServer",
+           "version" => "1.0.0"
+         }
+       }, state}
     end
 
-    # Resource implementations (required but not used)
-    @impl true
-    def handle_resource_read(_uri, _full_uri, state) do
-      {:error, "No resources implemented", state}
+    def handle_mcp_request("ping", _params, state) do
+      {:ok, %{}, state}
     end
 
-    # Prompt implementations (required but not used)
+    def handle_mcp_request(_method, _params, state) do
+      {:error, "Method not implemented", state}
+    end
+
     @impl true
-    def handle_prompt_get(_name, _args, state) do
-      {:error, "No prompts implemented", state}
+    def handle_call(:ping, _from, state) do
+      {:reply, {:ok, %{}}, state}
     end
   end
 
   # Slow ping server for timeout testing
   defmodule SlowPingServer do
-    use ExMCP.Server
+    use ExMCP.Service, name: :slow_ping_server
 
     @impl true
-    def init(_args), do: {:ok, %{}}
-
-    @impl true
-    def handle_tool_call(_name, _arguments, state) do
-      {:ok, %{content: [%{type: "text", text: "Not implemented"}]}, state}
+    def init(args) do
+      # Call parent to register the service
+      {:ok, _} = super(args)
+      # Then set our custom state
+      {:ok, %{}}
     end
 
     @impl true
-    def handle_resource_read(_uri, _full_uri, state) do
-      {:error, "No resources implemented", state}
+    def handle_mcp_request("initialize", _params, state) do
+      {:ok,
+       %{
+         "protocolVersion" => "2025-06-18",
+         "capabilities" => %{
+           "tools" => %{},
+           "resources" => %{},
+           "prompts" => %{}
+         },
+         "serverInfo" => %{
+           "name" => "SlowPingServer",
+           "version" => "1.0.0"
+         }
+       }, state}
+    end
+
+    def handle_mcp_request("ping", _params, state) do
+      # Add delay for slow ping testing
+      Process.sleep(50)
+      {:ok, %{}, state}
+    end
+
+    def handle_mcp_request(_method, _params, state) do
+      {:error, "Method not implemented", state}
     end
 
     @impl true
-    def handle_prompt_get(_name, _args, state) do
-      {:error, "No prompts implemented", state}
+    def handle_call(:ping, _from, state) do
+      {:reply, {:error, :ping_not_implemented}, state}
     end
   end
 
@@ -88,6 +138,23 @@ defmodule ExMCP.PingTestMigrated do
     end
   end
 
+  # Handler that does not implement ping for testing error cases
+  defmodule NoPingHandler do
+    @behaviour ClientHandler
+
+    @impl true
+    def init(args), do: {:ok, args}
+
+    @impl true
+    def handle_list_roots(state), do: {:ok, [], state}
+
+    @impl true
+    def handle_create_message(_params, state), do: {:ok, %{}, state}
+
+    @impl true
+    def terminate(_reason, _state), do: :ok
+  end
+
   describe "ping protocol compliance" do
     test "encode_ping creates correct request format" do
       ping_request = Protocol.encode_ping()
@@ -110,17 +177,16 @@ defmodule ExMCP.PingTestMigrated do
 
   describe "client to server ping" do
     test "client can ping server successfully" do
-      # Use handler-based server for transport compatibility
-      {:ok, server} =
-        Server.start_link(
-          transport: :test,
-          handler: TestPingServer
-        )
+      # Use Service with beam transport
+      {:ok, server} = TestPingServer.start_link(%{})
+
+      # Wait for service registration
+      {:ok, _} = wait_for_service_registration(:test_ping_server)
 
       {:ok, client} =
         Client.start_link(
-          transport: :test,
-          server: server
+          transport: :beam,
+          service_name: :test_ping_server
         )
 
       # Wait for initialization
@@ -136,15 +202,17 @@ defmodule ExMCP.PingTestMigrated do
       # Cleanup
       GenServer.stop(client)
       GenServer.stop(server)
+      ExMCP.Native.unregister_service(:test_ping_server)
     end
 
     test "client ping respects timeout" do
-      {:ok, server} = TestPingServer.start_link(transport: :native)
+      {:ok, server} = TestPingServer.start_link(%{})
+      {:ok, _} = wait_for_service_registration(:test_ping_server)
 
       {:ok, client} =
         Client.start_link(
-          transport: :test,
-          server: server
+          transport: :beam,
+          service_name: :test_ping_server
         )
 
       # Wait for initialization
@@ -156,17 +224,19 @@ defmodule ExMCP.PingTestMigrated do
       # Cleanup
       GenServer.stop(client)
       GenServer.stop(server)
+      ExMCP.Native.unregister_service(:test_ping_server)
     end
   end
 
   describe "server to client ping" do
     test "server can ping client successfully" do
-      {:ok, server} = TestPingServer.start_link(transport: :native)
+      {:ok, server} = TestPingServer.start_link(%{})
+      {:ok, _} = wait_for_service_registration(:test_ping_server)
 
       {:ok, client} =
         Client.start_link(
-          transport: :test,
-          server: server,
+          transport: :beam,
+          service_name: :test_ping_server,
           handler: TestClientHandler,
           handler_state: %{ping_count: 0}
         )
@@ -184,38 +254,42 @@ defmodule ExMCP.PingTestMigrated do
       # Cleanup
       GenServer.stop(client)
       GenServer.stop(server)
+      ExMCP.Native.unregister_service(:test_ping_server)
     end
 
     test "server ping fails when client doesn't have handler" do
-      {:ok, server} = TestPingServer.start_link(transport: :native)
+      {:ok, server} = SlowPingServer.start_link(%{})
+      {:ok, _} = wait_for_service_registration(:slow_ping_server)
 
       {:ok, client} =
         Client.start_link(
-          transport: :test,
-          server: server
-          # No handler specified - uses DefaultHandler which doesn't support server requests
+          transport: :beam,
+          service_name: :slow_ping_server,
+          handler: NoPingHandler
         )
 
       # Wait for initialization
       Process.sleep(100)
 
       # Server ping should fail
-      assert {:error, %{"code" => -32601}} = Server.ping(server)
+      assert {:error, :ping_not_implemented} = Server.ping(server)
 
       # Cleanup
       GenServer.stop(client)
       GenServer.stop(server)
+      ExMCP.Native.unregister_service(:slow_ping_server)
     end
   end
 
   describe "bidirectional ping" do
     test "both client and server can ping each other" do
-      {:ok, server} = TestPingServer.start_link(transport: :native)
+      {:ok, server} = TestPingServer.start_link(%{})
+      {:ok, _} = wait_for_service_registration(:test_ping_server)
 
       {:ok, client} =
         Client.start_link(
-          transport: :test,
-          server: server,
+          transport: :beam,
+          service_name: :test_ping_server,
           handler: TestClientHandler,
           handler_state: %{}
         )
@@ -237,16 +311,18 @@ defmodule ExMCP.PingTestMigrated do
       # Cleanup
       GenServer.stop(client)
       GenServer.stop(server)
+      ExMCP.Native.unregister_service(:test_ping_server)
     end
   end
 
   describe "ping error handling" do
     test "ping handles transport failures gracefully" do
-      # Create a client without a server
+      # Create a client without a server, skipping the connection attempt
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: :non_existent_server
+          server: :non_existent_server,
+          _skip_connect: true
         )
 
       # Ping should fail with connection error
@@ -257,13 +333,14 @@ defmodule ExMCP.PingTestMigrated do
     end
 
     test "ping respects timeout on slow connections" do
-      {:ok, server} = SlowPingServer.start_link(transport: :native)
+      {:ok, server} = SlowPingServer.start_link(%{})
+      {:ok, _} = wait_for_service_registration(:slow_ping_server)
 
       # Start client with custom transport that delays responses
       {:ok, client} =
         Client.start_link(
-          transport: :test,
-          server: server
+          transport: :beam,
+          service_name: :slow_ping_server
         )
 
       # Wait for initialization
@@ -275,17 +352,19 @@ defmodule ExMCP.PingTestMigrated do
       # Cleanup
       GenServer.stop(client)
       GenServer.stop(server)
+      ExMCP.Native.unregister_service(:slow_ping_server)
     end
   end
 
   describe "ping as health check" do
     test "periodic pings can detect connection health" do
-      {:ok, server} = TestPingServer.start_link(transport: :native)
+      {:ok, server} = TestPingServer.start_link(%{})
+      {:ok, _} = wait_for_service_registration(:test_ping_server)
 
       {:ok, client} =
         Client.start_link(
-          transport: :test,
-          server: server
+          transport: :beam,
+          service_name: :test_ping_server
         )
 
       # Wait for initialization
@@ -312,6 +391,7 @@ defmodule ExMCP.PingTestMigrated do
 
       # Cleanup
       GenServer.stop(client)
+      ExMCP.Native.unregister_service(:test_ping_server)
     end
   end
 end

@@ -1,5 +1,6 @@
 defmodule ExMCP.Reliability.SupervisorTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+  import ExMCP.HordeTestHelpers
 
   alias ExMCP.Reliability
   alias ExMCP.Reliability.Supervisor, as: ReliabilitySupervisor
@@ -17,8 +18,8 @@ defmodule ExMCP.Reliability.SupervisorTest do
       GenServer.stop(pid)
     end
 
-    test "starts supervisor with custom name" do
-      name = :"test_reliability_supervisor_#{:erlang.unique_integer()}"
+    test "starts supervisor with custom name", %{test: test} do
+      name = unique_process_name(test, "supervisor")
       assert {:ok, pid} = ReliabilitySupervisor.start_link(name: name)
       assert Process.whereis(name) == pid
       assert Process.alive?(pid)
@@ -48,9 +49,12 @@ defmodule ExMCP.Reliability.SupervisorTest do
   end
 
   describe "create_reliable_client/2" do
-    setup do
-      {:ok, supervisor} = ReliabilitySupervisor.start_link()
-      {:ok, mock_server} = MockServer.start_link([])
+    setup %{test: test} do
+      supervisor_name = unique_process_name(test, "supervisor")
+      mock_server_name = unique_process_name(test, "mock_server")
+
+      {:ok, supervisor} = ReliabilitySupervisor.start_link(name: supervisor_name)
+      {:ok, mock_server} = MockServer.start_link(name: mock_server_name)
 
       on_exit(fn ->
         if Process.alive?(supervisor), do: GenServer.stop(supervisor)
@@ -159,7 +163,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
 
     test "handles transport start failure gracefully", %{
       supervisor: supervisor,
-      mock_server: mock_server
+      mock_server: _mock_server
     } do
       # Use stdio transport with invalid path to simulate failure
       assert {:error, _reason} =
@@ -220,9 +224,12 @@ defmodule ExMCP.Reliability.SupervisorTest do
   end
 
   describe "ClientWrapper integration" do
-    setup do
-      {:ok, supervisor} = ReliabilitySupervisor.start_link()
-      {:ok, mock_server} = MockServer.start_link([])
+    setup %{test: test} do
+      supervisor_name = unique_process_name(test, "supervisor")
+      mock_server_name = unique_process_name(test, "mock_server")
+
+      {:ok, supervisor} = ReliabilitySupervisor.start_link(name: supervisor_name)
+      {:ok, mock_server} = MockServer.start_link(name: mock_server_name)
 
       on_exit(fn ->
         if Process.alive?(supervisor), do: GenServer.stop(supervisor)
@@ -337,11 +344,13 @@ defmodule ExMCP.Reliability.SupervisorTest do
   end
 
   describe "ExMCP.Reliability.protect/2" do
-    test "creates circuit breaker protected function" do
+    test "creates circuit breaker protected function", %{test: test} do
       # Create a function that always succeeds
+      breaker_name = unique_process_name(test, "breaker")
+
       protected_fn =
         Reliability.protect(fn -> {:ok, "success"} end,
-          name: String.to_atom("test_protect_#{:erlang.unique_integer()}")
+          name: breaker_name
         )
 
       assert is_function(protected_fn)
@@ -349,11 +358,13 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert result == {:ok, "success"}
     end
 
-    test "circuit breaker trips on repeated failures" do
+    test "circuit breaker trips on repeated failures", %{test: test} do
       counter = Agent.start_link(fn -> 0 end)
       {:ok, agent} = counter
 
       # Create a function that fails consistently
+      breaker_name = unique_process_name(test, "breaker")
+
       protected_fn =
         Reliability.protect(
           fn ->
@@ -361,7 +372,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
             {:error, :service_down}
           end,
           failure_threshold: 3,
-          name: String.to_atom("test_protect_#{:erlang.unique_integer()}")
+          name: breaker_name
         )
 
       # First few calls should execute and fail
@@ -381,8 +392,8 @@ defmodule ExMCP.Reliability.SupervisorTest do
       Agent.stop(agent)
     end
 
-    test "reuses circuit breaker for same function" do
-      breaker_name = String.to_atom("test_reuse_#{:erlang.unique_integer()}")
+    test "reuses circuit breaker for same function", %{test: test} do
+      breaker_name = unique_process_name(test, "breaker")
 
       protected_fn = Reliability.protect(fn -> {:ok, "test"} end, name: breaker_name)
 
@@ -399,35 +410,41 @@ defmodule ExMCP.Reliability.SupervisorTest do
       if Process.alive?(breaker_pid), do: GenServer.stop(breaker_pid)
     end
 
-    test "creates unique circuit breakers for different functions" do
+    test "creates unique circuit breakers for different functions", %{test: test} do
+      breaker1_name = unique_process_name(test, "breaker1")
+      breaker2_name = unique_process_name(test, "breaker2")
+
       protected_fn1 =
         Reliability.protect(fn -> {:ok, "fn1"} end,
-          name: String.to_atom("test_fn1_#{:erlang.unique_integer()}")
+          name: breaker1_name
         )
 
       protected_fn2 =
         Reliability.protect(fn -> {:ok, "fn2"} end,
-          name: String.to_atom("test_fn2_#{:erlang.unique_integer()}")
+          name: breaker2_name
         )
 
       assert protected_fn1.([]) == {:ok, "fn1"}
       assert protected_fn2.([]) == {:ok, "fn2"}
     end
 
-    test "handles function arguments correctly" do
+    test "handles function arguments correctly", %{test: test} do
+      breaker_name = unique_process_name(test, "breaker")
+
       protected_fn =
         Reliability.protect(fn -> {:ok, 8} end,
-          name: String.to_atom("test_args_#{:erlang.unique_integer()}")
+          name: breaker_name
         )
 
       result = protected_fn.([5, 3])
       assert result == {:ok, 8}
     end
 
-    test "respects circuit breaker configuration" do
+    test "respects circuit breaker configuration", %{test: test} do
       counter = Agent.start_link(fn -> 0 end)
       {:ok, agent} = counter
 
+      breaker_name = unique_process_name(test, "breaker")
       # Use a low failure threshold for testing
       protected_fn =
         Reliability.protect(
@@ -436,7 +453,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
             {:error, :fail}
           end,
           failure_threshold: 1,
-          name: String.to_atom("test_config_#{:erlang.unique_integer()}")
+          name: breaker_name
         )
 
       # First call should fail and open circuit
@@ -454,9 +471,12 @@ defmodule ExMCP.Reliability.SupervisorTest do
   end
 
   describe "integration scenarios" do
-    setup do
-      {:ok, supervisor} = ReliabilitySupervisor.start_link()
-      {:ok, mock_server} = MockServer.start_link([])
+    setup %{test: test} do
+      supervisor_name = unique_process_name(test, "supervisor")
+      mock_server_name = unique_process_name(test, "mock_server")
+
+      {:ok, supervisor} = ReliabilitySupervisor.start_link(name: supervisor_name)
+      {:ok, mock_server} = MockServer.start_link(name: mock_server_name)
 
       on_exit(fn ->
         if Process.alive?(supervisor), do: GenServer.stop(supervisor)
@@ -539,6 +559,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
     end
 
     test "combining convenience functions with supervised clients", %{
+      test: test,
       supervisor: supervisor,
       mock_server: mock_server
     } do
@@ -554,9 +575,11 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert retry_result == {:ok, "retry_success"}
 
       # Use convenience protect function
+      breaker_name = unique_process_name(test, "breaker")
+
       protected_fn =
         Reliability.protect(fn -> {:ok, "protect_success"} end,
-          name: String.to_atom("test_convenience_#{:erlang.unique_integer()}")
+          name: breaker_name
         )
 
       protect_result = protected_fn.([])
@@ -609,13 +632,15 @@ defmodule ExMCP.Reliability.SupervisorTest do
       GenServer.stop(supervisor)
     end
 
-    test "protect function handles exceptions in protected function" do
+    test "protect function handles exceptions in protected function", %{test: test} do
+      breaker_name = unique_process_name(test, "breaker")
+
       protected_fn =
         Reliability.protect(
           fn ->
             raise RuntimeError, "test exception"
           end,
-          name: String.to_atom("test_exception_#{:erlang.unique_integer()}")
+          name: breaker_name
         )
 
       # Should catch exception and return error

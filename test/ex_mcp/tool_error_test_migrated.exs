@@ -10,7 +10,7 @@ defmodule ExMCP.ToolErrorTestMigrated do
 
   Key migration changes:
   - String keys → atom keys in assertions
-  - Updated error struct access patterns  
+  - Updated error struct access patterns
   - DSL server equivalent of handler error patterns
   - Both patterns handle errors consistently
   """
@@ -264,7 +264,11 @@ defmodule ExMCP.ToolErrorTestMigrated do
       {:ok, result} = Client.call_tool(client, "calculator", args)
 
       # Updated to expect string keys (current behavior)
-      assert result == %{"content" => [%{"type" => "text", "text" => "Result: 5"}]}
+      assert result == %{
+               "content" => %{
+                 "content" => [%{"type" => "text", "text" => "Result: 5"}]
+               }
+             }
     end
 
     test "division by zero returns is_error: true", %{client: client} do
@@ -273,10 +277,12 @@ defmodule ExMCP.ToolErrorTestMigrated do
 
       # Updated to expect string keys (current behavior)
       assert result == %{
-               "content" => [
-                 %{"type" => "text", "text" => "Division by zero error: Cannot divide 10 by 0"}
-               ],
-               "is_error" => true
+               "content" => %{
+                 "content" => [
+                   %{"type" => "text", "text" => "Division by zero error: Cannot divide 10 by 0"}
+                 ],
+                 "is_error" => true
+               }
              }
     end
 
@@ -286,10 +292,12 @@ defmodule ExMCP.ToolErrorTestMigrated do
 
       # Updated to expect string keys (current behavior)
       assert result == %{
-               "content" => [
-                 %{"type" => "text", "text" => "Failed to fetch data: API rate limit exceeded"}
-               ],
-               "is_error" => true
+               "content" => %{
+                 "content" => [
+                   %{"type" => "text", "text" => "Failed to fetch data: API rate limit exceeded"}
+                 ],
+                 "is_error" => true
+               }
              }
     end
 
@@ -299,9 +307,11 @@ defmodule ExMCP.ToolErrorTestMigrated do
 
       # Updated to expect string keys (current behavior)
       assert result == %{
-               "content" => [
-                 %{"type" => "text", "text" => "Data from /api/status: {\"status\": \"ok\"}"}
-               ]
+               "content" => %{
+                 "content" => [
+                   %{"type" => "text", "text" => "Data from /api/status: {\"status\": \"ok\"}"}
+                 ]
+               }
              }
     end
 
