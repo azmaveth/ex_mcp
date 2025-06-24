@@ -78,11 +78,10 @@ defmodule ExMCP.Transport.HTTP do
   @behaviour ExMCP.Transport
   require Logger
 
-  alias ExMCP.Transport.SecurityGuard
-  alias ExMCP.Internal.SecurityConfig
-
   alias ExMCP.Internal.Security
+  alias ExMCP.Internal.SecurityConfig
   alias ExMCP.Protocol.VersionNegotiator
+  alias ExMCP.Transport.SecurityGuard
   alias ExMCP.Transport.SSEClient
 
   defstruct [

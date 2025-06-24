@@ -47,39 +47,35 @@ defmodule ExMCP.Server.TransportTest do
     @tag :requires_http
     test "starts HTTP transport" do
       # This test requires Cowboy to be available
-      case Code.ensure_loaded?(Plug.Cowboy) do
-        {:module, _} ->
-          {:ok, pid} =
-            Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
-              # Use port 0 for auto-assignment
-              transport: :http,
-              port: 0
-            )
+      if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
+        {:ok, pid} =
+          Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
+            # Use port 0 for auto-assignment
+            transport: :http,
+            port: 0
+          )
 
-          assert is_pid(pid)
-          Plug.Cowboy.shutdown(pid)
-
-        {:error, _} ->
-          # Skip if Cowboy not available
-          :skip
+        assert is_pid(pid)
+        Plug.Cowboy.shutdown(pid)
+      else
+        # Skip if Cowboy not available
+        :skip
       end
     end
 
     @tag :requires_http
     test "starts SSE transport" do
-      case Code.ensure_loaded?(Plug.Cowboy) do
-        {:module, _} ->
-          {:ok, pid} =
-            Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
-              transport: :sse,
-              port: 0
-            )
+      if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
+        {:ok, pid} =
+          Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
+            transport: :sse,
+            port: 0
+          )
 
-          assert is_pid(pid)
-          Plug.Cowboy.shutdown(pid)
-
-        {:error, _} ->
-          :skip
+        assert is_pid(pid)
+        Plug.Cowboy.shutdown(pid)
+      else
+        :skip
       end
     end
 
@@ -114,18 +110,14 @@ defmodule ExMCP.Server.TransportTest do
 
     @tag :requires_http
     test "start_http_server/4" do
-      case Code.ensure_loaded?(Plug.Cowboy) do
-        {:module, _} ->
-          {:ok, pid} =
-            Transport.start_http_server(TestServer, %{name: "test", version: "1.0.0"}, [],
-              port: 0
-            )
+      if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
+        {:ok, pid} =
+          Transport.start_http_server(TestServer, %{name: "test", version: "1.0.0"}, [], port: 0)
 
-          assert is_pid(pid)
-          Plug.Cowboy.shutdown(pid)
-
-        {:error, _} ->
-          :skip
+        assert is_pid(pid)
+        Plug.Cowboy.shutdown(pid)
+      else
+        :skip
       end
     end
   end
@@ -198,15 +190,13 @@ defmodule ExMCP.Server.TransportTest do
 
     @tag :requires_http
     test "start_link with transport: :http" do
-      case Code.ensure_loaded?(Plug.Cowboy) do
-        {:module, _} ->
-          {:ok, pid} = TestServer.start_link(transport: :http, port: 0)
+      if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
+        {:ok, pid} = TestServer.start_link(transport: :http, port: 0)
 
-          assert is_pid(pid)
-          Plug.Cowboy.shutdown(pid)
-
-        {:error, _} ->
-          :skip
+        assert is_pid(pid)
+        Plug.Cowboy.shutdown(pid)
+      else
+        :skip
       end
     end
 

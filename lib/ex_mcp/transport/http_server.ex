@@ -197,18 +197,22 @@ if Code.ensure_loaded?(Plug) do
 
       try do
         # Process the MCP message
-        case Protocol.parse_message(message) do
-          {:request, method, params, id} ->
-            handle_mcp_method(conn, server_pid, method, params, id)
-
-          {:notification, method, params} ->
-            handle_mcp_notification(conn, server_pid, method, params)
-
-          {:batch, messages} ->
+        # Check if it's a batch request first
+        case message do
+          messages when is_list(messages) ->
             handle_mcp_batch(conn, server_pid, messages)
 
           _ ->
-            send_error_response(conn, 400, "Invalid MCP message format")
+            case Protocol.parse_message(message) do
+              {:request, method, params, id} ->
+                handle_mcp_method(conn, server_pid, method, params, id)
+
+              {:notification, method, params} ->
+                handle_mcp_notification(conn, server_pid, method, params)
+
+              _ ->
+                send_error_response(conn, 400, "Invalid MCP message format")
+            end
         end
       after
         # Clean up the temporary server
@@ -332,7 +336,6 @@ if Code.ensure_loaded?(Plug) do
           :host_header_required -> {400, "Host header required"}
           :host_not_allowed -> {403, "Host not allowed"}
           :https_required -> {400, "HTTPS required"}
-          _ -> {400, "Security validation failed"}
         end
 
       send_error_response(conn, status, message)

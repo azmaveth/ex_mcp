@@ -16,21 +16,23 @@ defmodule ExMCP.Transport.HTTPServerWithVersion do
             allowed_origins: ["https://app.example.com"]
           }
       end
-      
+
       # Or with Plug.Router
       defmodule MyRouter do
         use Plug.Router
-        
+
         plug ExMCP.Plugs.ProtocolVersion
         plug :match
         plug :dispatch
-        
+
         forward "/mcp", to: ExMCP.Transport.HTTPServer,
           init_opts: [handler: MyMCPHandler]
       end
   """
 
   use Plug.Builder
+
+  alias ExMCP.Transport.HTTPServer
 
   # Add the protocol version plug to the pipeline
   plug(ExMCP.Plugs.ProtocolVersion)
@@ -49,6 +51,6 @@ defmodule ExMCP.Transport.HTTPServerWithVersion do
   def call(conn, opts) do
     # The protocol version plug has already run via the plug macro
     # Now forward to the HTTPServer
-    ExMCP.Transport.HTTPServer.call(conn, ExMCP.Transport.HTTPServer.init(opts))
+    HTTPServer.call(conn, HTTPServer.init(opts))
   end
 end

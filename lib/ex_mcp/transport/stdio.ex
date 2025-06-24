@@ -28,8 +28,8 @@ defmodule ExMCP.Transport.Stdio do
 
   require Logger
 
-  alias ExMCP.Transport.SecurityGuard
   alias ExMCP.Internal.SecurityConfig
+  alias ExMCP.Transport.SecurityGuard
 
   defstruct [:port, :buffer, :line_buffer]
 
@@ -125,21 +125,135 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   defp validate_stdio_message(message, state) do
-    # Parse message to check for external resource requests
+    # Step 1: Validate that message does not contain embedded newlines
+    # MCP specification: "Messages are delimited by newlines, and MUST NOT contain embedded newlines"
+    case validate_no_embedded_newlines(message) do
+      :ok ->
+        # Step 2: Validate that message is valid JSON
+        case validate_json_format(message) do
+          {:ok, parsed_message} ->
+            # Step 3: Validate JSON-RPC 2.0 structure
+            case validate_jsonrpc_structure(parsed_message) do
+              :ok ->
+                # Step 4: Check for external resource requests that need security validation
+                validate_security_requirements(parsed_message, message, state)
+
+              {:error, validation_error} ->
+                {:error, {:invalid_jsonrpc, validation_error}}
+            end
+
+          {:error, json_error} ->
+            {:error, {:invalid_json, json_error}}
+        end
+
+      {:error, newline_error} ->
+        {:error, {:embedded_newline, newline_error}}
+    end
+  end
+
+  defp validate_no_embedded_newlines(message) do
+    if String.contains?(message, "\n") do
+      {:error,
+       "Message contains embedded newlines which violate MCP stdio transport requirements"}
+    else
+      :ok
+    end
+  end
+
+  defp validate_json_format(message) do
     case Jason.decode(message) do
-      {:ok, %{"method" => "resources/read", "params" => %{"uri" => uri}}} ->
-        validate_resource_access(uri, message, state)
+      {:ok, parsed} ->
+        {:ok, parsed}
 
-      {:ok, %{"method" => "resources/list", "params" => %{"uri" => uri}}} when is_binary(uri) ->
-        validate_resource_access(uri, message, state)
+      {:error, error} ->
+        {:error, "Invalid JSON format: #{inspect(error)}"}
+    end
+  end
 
-      {:ok, _} ->
+  defp validate_jsonrpc_structure(parsed_message) when is_map(parsed_message) do
+    # Validate JSON-RPC 2.0 structure according to specification
+    cond do
+      not Map.has_key?(parsed_message, "jsonrpc") ->
+        {:error, "Missing required 'jsonrpc' field"}
+
+      parsed_message["jsonrpc"] != "2.0" ->
+        {:error, "Invalid jsonrpc version, must be '2.0'"}
+
+      # For requests, must have method and optionally id
+      Map.has_key?(parsed_message, "method") ->
+        validate_jsonrpc_request(parsed_message)
+
+      # For responses, must have id and either result or error
+      Map.has_key?(parsed_message, "id") ->
+        validate_jsonrpc_response(parsed_message)
+
+      true ->
+        {:error, "Invalid JSON-RPC structure: must be request, response, or notification"}
+    end
+  end
+
+  defp validate_jsonrpc_structure(parsed_message) when is_list(parsed_message) do
+    # JSON-RPC batch request - validate each item
+    if parsed_message == [] do
+      {:error, "Empty batch requests are not allowed"}
+    else
+      Enum.reduce_while(parsed_message, :ok, fn item, _acc ->
+        case validate_jsonrpc_structure(item) do
+          :ok -> {:cont, :ok}
+          {:error, error} -> {:halt, {:error, "Batch item invalid: #{error}"}}
+        end
+      end)
+    end
+  end
+
+  defp validate_jsonrpc_structure(_parsed_message) do
+    {:error, "JSON-RPC message must be an object or array"}
+  end
+
+  defp validate_jsonrpc_request(request) do
+    cond do
+      not is_binary(request["method"]) ->
+        {:error, "Method must be a string"}
+
+      String.starts_with?(request["method"], "rpc.") ->
+        {:error, "Methods starting with 'rpc.' are reserved"}
+
+      Map.has_key?(request, "id") and is_nil(request["id"]) ->
+        {:error, "Request id cannot be null"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_jsonrpc_response(response) do
+    has_result = Map.has_key?(response, "result")
+    has_error = Map.has_key?(response, "error")
+
+    cond do
+      has_result and has_error ->
+        {:error, "Response cannot have both result and error"}
+
+      not has_result and not has_error ->
+        {:error, "Response must have either result or error"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_security_requirements(parsed_message, original_message, state) do
+    # Check for external resource requests that need security validation
+    case parsed_message do
+      %{"method" => "resources/read", "params" => %{"uri" => uri}} ->
+        validate_resource_access(uri, original_message, state)
+
+      %{"method" => "resources/list", "params" => %{"uri" => uri}} when is_binary(uri) ->
+        validate_resource_access(uri, original_message, state)
+
+      _ ->
         # Non-resource request, allow through
-        {:ok, message}
-
-      {:error, _} ->
-        # Invalid JSON, let it through (will be handled by the receiving process)
-        {:ok, message}
+        {:ok, original_message}
     end
   end
 
@@ -218,12 +332,16 @@ defmodule ExMCP.Transport.Stdio do
     end
   end
 
+  # Testing support - expose process_data for unit tests
+  @doc false
+  def process_data(data, state), do: do_process_data(data, state)
+
   # Private functions
 
   defp receive_loop(state) do
     receive do
       {port, {:data, data}} when port == state.port ->
-        process_data(data, state)
+        do_process_data(data, state)
 
       {port, {:exit_status, status}} when port == state.port ->
         {:error, {:process_exited, status}}
@@ -233,7 +351,7 @@ defmodule ExMCP.Transport.Stdio do
     end
   end
 
-  defp process_data(data, state) do
+  defp do_process_data(data, state) do
     # Handle both binary and :eol tuple format from port
     binary_data =
       case data do
