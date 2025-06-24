@@ -19,10 +19,11 @@ defmodule ExMCP.TestServer do
 
   @impl true
   def init(opts) do
-    state = 
+    state =
       opts
       |> Map.new()
       |> Map.put_new(:subscriptions, MapSet.new())
+
     {:ok, state}
   end
 

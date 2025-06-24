@@ -443,10 +443,12 @@ defmodule ExMCP.Server do
       @impl GenServer
       def init(args) do
         register_capabilities()
-        state = 
+
+        state =
           args
           |> Map.new()
           |> Map.put_new(:subscriptions, MapSet.new())
+
         {:ok, state}
       end
     end
@@ -647,6 +649,7 @@ defmodule ExMCP.Server do
       true ->
         # Use the legacy server implementation for handler-based servers
         Legacy.start_link(opts)
+
       false ->
         {:error, :no_handler_specified}
     end

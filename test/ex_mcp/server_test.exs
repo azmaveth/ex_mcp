@@ -211,7 +211,6 @@ defmodule ExMCP.ServerTest do
       {:error, "Custom error occurred", state}
     end
 
-
     @impl GenServer
     def handle_cast({:notify_resource_update, _uri}, state) do
       {:noreply, state}
