@@ -178,14 +178,15 @@ This document tracks which MCP specification features are tested in our complian
 
 ### OAuth 2.1
 
-| Feature | 2024-11-05 | 2025-03-26 | Draft | Test Location |
-|---------|------------|------------|-------|---------------|
-| Client credentials flow | N/A | ✅ | ✅ | oauth_*_test.exs |
-| Authorization code flow | N/A | ✅ | ✅ | oauth_*_test.exs |
-| PKCE support | N/A | ✅ | ✅ | oauth_*_test.exs |
-| Token refresh | N/A | ✅ | ✅ | oauth_*_test.exs |
-| Metadata discovery | N/A | ⚠️ | ⚠️ | oauth_*_test.exs |
-| Dynamic registration | N/A | ⚠️ | ⚠️ | oauth_*_test.exs |
+| Feature | 2024-11-05 | 2025-03-26 | 2025-06-18 | Test Location |
+|---------|------------|------------|-------------|---------------|
+| Client credentials flow | N/A | ✅ | ✅ | oauth_2_1_compliance_test.exs |
+| Authorization code flow | N/A | ✅ | ✅ | oauth_2_1_compliance_test.exs |
+| PKCE support | N/A | ✅ | ✅ | oauth_2_1_compliance_test.exs |
+| Token refresh | N/A | ✅ | ✅ | oauth_2_1_compliance_test.exs |
+| RFC 8707 Resource Indicators | N/A | N/A | ✅ | oauth_2_1_compliance_test.exs |
+| Metadata discovery | N/A | ⚠️ | ⚠️ | oauth_2_1_compliance_test.exs |
+| Dynamic registration | N/A | ⚠️ | ⚠️ | oauth_2_1_compliance_test.exs |
 
 ### Security Best Practices
 
@@ -252,11 +253,11 @@ This document tracks which MCP specification features are tested in our complian
 
 ### 2025-06-18 Version
 
-- ✅ Fully tested: 68 features (+3 from stdio transport constraints)
+- ✅ Fully tested: 69 features (+1 from RFC 8707 Resource Indicators, +3 from stdio transport constraints)
 - ⚠️ Partially tested: 0 features (unchanged)
 - ❌ Not tested: 6 features (-2 from stdio transport implementation)
 - **N/A**: 4 features (batch support removed in 2025-06-18)
-- **Coverage**: ~98% (+1% from stdio transport constraint testing)
+- **Coverage**: ~99% (+1% from RFC 8707 implementation, +1% from stdio transport constraint testing)
 
 ## High Priority Missing Tests
 
@@ -278,6 +279,7 @@ This document tracks which MCP specification features are tested in our complian
 10. ✅ **Batch Processing Version Gating**: Fixed critical version gating issues where batch tests incorrectly included 2025-06-18 (batch support removed in that version)
 11. ✅ **Stdio Transport Constraints**: Complete implementation of MCP stdio transport requirements including embedded newline rejection, stdout/stdin isolation validation, JSON-RPC format enforcement, and non-JSON output filtering
 12. ✅ **Test Infrastructure Fixes**: Resolved critical test infrastructure issues by removing duplicate/incorrect handler implementations, fixing callback signatures, and correcting test exclusion configuration
+13. ✅ **RFC 8707 Resource Indicators**: Complete OAuth 2.1 Resource Indicators implementation for MCP 2025-06-18 compliance with proper URI validation, multiple resource support, backwards compatibility, and comprehensive test coverage
 
 ## Next Steps
 
