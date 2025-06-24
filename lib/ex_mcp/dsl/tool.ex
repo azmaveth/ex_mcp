@@ -43,6 +43,7 @@ defmodule ExMCP.DSL.Tool do
       tool_meta = Meta.get_meta(__MODULE__)
 
       # Validate the tool definition before registering
+      # credo:disable-for-next-line Credo.Check.Design.AliasUsage
       ExMCP.DSL.Tool.__validate_tool_definition__(
         unquote(name),
         tool_meta,

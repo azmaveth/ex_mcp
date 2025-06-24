@@ -78,37 +78,71 @@ defmodule ExMCP.Reliability.Supervisor do
     client_id = Keyword.get(opts, :id, generate_client_id())
     transport_opts = Keyword.take(opts, [:transport, :transports])
 
-    with {:ok, client_pid} <- ExMCP.Client.start_link(transport_opts),
-         {:ok, breaker_pid} <- maybe_start_circuit_breaker(supervisor, client_id, opts),
-         {:ok, health_pid} <- maybe_start_health_check(supervisor, client_id, client_pid, opts) do
-      # Create wrapper process that integrates all components
-      wrapper_spec = %{
-        id: {:reliable_client_wrapper, client_id},
-        start:
-          {__MODULE__.ClientWrapper, :start_link,
-           [
-             [
-               client: client_pid,
-               circuit_breaker: breaker_pid,
-               retry_opts: Keyword.get(opts, :retry, []),
-               health_check: health_pid
-             ]
-           ]},
-        restart: :temporary
-      }
+    case ExMCP.Client.start_link(transport_opts) do
+      {:ok, client_pid} ->
+        case maybe_start_circuit_breaker(supervisor, client_id, opts) do
+          {:ok, breaker_pid} ->
+            case maybe_start_health_check(supervisor, client_id, client_pid, opts) do
+              {:ok, health_pid} ->
+                create_wrapper_and_cleanup(
+                  client_id,
+                  client_pid,
+                  breaker_pid,
+                  health_pid,
+                  opts
+                )
 
-      case DynamicSupervisor.start_child(circuit_breaker_supervisor(), wrapper_spec) do
-        {:ok, wrapper_pid} ->
-          {:ok, wrapper_pid}
+              error ->
+                # health check failed
+                cleanup_pids([client_pid, breaker_pid])
+                error
+            end
 
-        error ->
-          # Clean up on failure
-          if is_pid(client_pid), do: GenServer.stop(client_pid)
-          if is_pid(breaker_pid), do: GenServer.stop(breaker_pid)
-          if is_pid(health_pid), do: GenServer.stop(health_pid)
-          error
-      end
+          error ->
+            # circuit breaker failed
+            cleanup_pids([client_pid])
+            error
+        end
+
+      error ->
+        # client failed
+        error
     end
+  end
+
+  defp create_wrapper_and_cleanup(client_id, client_pid, breaker_pid, health_pid, opts) do
+    wrapper_spec = %{
+      id: {:reliable_client_wrapper, client_id},
+      start:
+        {__MODULE__.ClientWrapper, :start_link,
+         [
+           [
+             client: client_pid,
+             circuit_breaker: breaker_pid,
+             retry_opts: Keyword.get(opts, :retry, []),
+             health_check: health_pid
+           ]
+         ]},
+      restart: :temporary
+    }
+
+    case DynamicSupervisor.start_child(circuit_breaker_supervisor(), wrapper_spec) do
+      {:ok, wrapper_pid} ->
+        {:ok, wrapper_pid}
+
+      error ->
+        # Clean up on wrapper start failure
+        cleanup_pids([client_pid, breaker_pid, health_pid])
+        error
+    end
+  end
+
+  defp cleanup_pids(pids) do
+    Enum.each(pids, fn pid ->
+      if pid && is_pid(pid) do
+        GenServer.stop(pid)
+      end
+    end)
   end
 
   defp maybe_start_circuit_breaker(_supervisor, _client_id, opts) do

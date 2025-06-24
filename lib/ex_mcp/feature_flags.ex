@@ -19,7 +19,7 @@ defmodule ExMCP.FeatureFlags do
 
       iex> ExMCP.FeatureFlags.enabled?(:protocol_version_header)
       false
-      
+
       iex> Application.put_env(:ex_mcp, :protocol_version_required, true)
       iex> ExMCP.FeatureFlags.enabled?(:protocol_version_header)
       true

@@ -65,7 +65,7 @@ defmodule ExMCP.Internal.ConsentCache do
   @doc """
   Triggers a manual cleanup of expired consent entries.
   """
-  def cleanup_expired() do
+  def cleanup_expired do
     GenServer.cast(__MODULE__, :cleanup)
   end
 
@@ -103,7 +103,7 @@ defmodule ExMCP.Internal.ConsentCache do
     {:noreply, state}
   end
 
-  defp perform_cleanup() do
+  defp perform_cleanup do
     now = System.monotonic_time(:second)
     match_spec = [{{{:_, :_}, :"$1"}, [{:<, :"$1", now}], [true]}]
     :ets.select_delete(@table, match_spec)

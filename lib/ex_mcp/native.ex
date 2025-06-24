@@ -13,7 +13,7 @@ defmodule ExMCP.Native do
 
   - Trusted Elixir services within the same cluster
   - High-performance internal communication (~15μs local, ~50μs cross-node)
-  - Services that need OTP supervision and monitoring
+  - Services that need to be supervised and monitored by OTP
 
   > #### Future API Direction {: .info}
   >
@@ -56,8 +56,8 @@ defmodule ExMCP.Native do
 
   require Logger
 
-  alias ExMCP.Transport.SecurityGuard
   alias ExMCP.Internal.SecurityConfig
+  alias ExMCP.Transport.SecurityGuard
 
   @registry_name ExMCP.ServiceRegistry
   @default_timeout 5_000
@@ -198,7 +198,7 @@ defmodule ExMCP.Native do
       String.starts_with?(method, "resources/") ->
         case extract_url_from_params(method, params) do
           nil -> false
-          url -> is_external_url?(url)
+          url -> external_url?(url)
         end
 
       # Cross-cluster service calls (service_id is a tuple with node)
@@ -216,7 +216,7 @@ defmodule ExMCP.Native do
   defp extract_url_from_params("resources/list", %{"uri" => uri}) when is_binary(uri), do: uri
   defp extract_url_from_params(_, _), do: nil
 
-  defp is_external_url?(url) do
+  defp external_url?(url) do
     case URI.parse(url) do
       %URI{scheme: scheme, host: host} when not is_nil(scheme) and not is_nil(host) ->
         true

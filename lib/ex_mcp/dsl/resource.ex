@@ -53,6 +53,7 @@ defmodule ExMCP.DSL.Resource do
       resource_meta = Meta.get_meta(__MODULE__)
 
       # Validate the resource definition before registering
+      # credo:disable-for-next-line Credo.Check.Design.AliasUsage
       ExMCP.DSL.Resource.__validate_resource_definition__(
         unquote(uri),
         resource_meta

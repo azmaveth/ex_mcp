@@ -137,7 +137,7 @@ defmodule ExMCP do
   alias ExMCP.Server
 
   # Convenience aliases
-  alias ExMCP.{Error, Response}
+  alias ExMCP.Error
 
   @doc """
   Convenience function to start an MCP client.
@@ -323,15 +323,9 @@ defmodule ExMCP do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     case Client.list_tools(client, timeout) do
-      {:ok, %Response{} = response} ->
-        # Extract tools from response
-        case Response.data_content(response) do
-          %{"tools" => tools} -> tools
-          _ -> []
-        end
-
-      {:ok, tools} when is_list(tools) ->
-        tools
+      {:ok, result} when is_map(result) ->
+        # Extract tools list from the result map
+        Map.get(result, "tools", [])
 
       error ->
         error
@@ -362,11 +356,11 @@ defmodule ExMCP do
     normalize = Keyword.get(opts, :normalize, true)
 
     case Client.call_tool(client, tool_name, args, timeout) do
-      {:ok, %Response{} = response} ->
+      {:ok, result} ->
         if normalize do
-          Response.text_content(response) || response
+          extract_tool_result_content(result)
         else
-          response
+          result
         end
 
       error ->
@@ -384,15 +378,9 @@ defmodule ExMCP do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     case Client.list_resources(client, timeout) do
-      {:ok, %Response{} = response} ->
-        # Extract resources from response
-        case Response.data_content(response) do
-          %{"resources" => resources} -> resources
-          _ -> []
-        end
-
-      {:ok, resources} when is_list(resources) ->
-        resources
+      {:ok, result} when is_map(result) ->
+        # Extract resources list from the result map
+        Map.get(result, "resources", [])
 
       error ->
         error
@@ -430,8 +418,8 @@ defmodule ExMCP do
     _ -> {:error, Error.connection_error("Client not responding")}
   end
 
-  defp process_read_response(%Response{} = response, parse_json) do
-    content = extract_response_content(response)
+  defp process_read_response(response, parse_json) when is_map(response) do
+    content = extract_resource_content(response)
 
     if parse_json and is_binary(content) do
       parse_json_content(content)
@@ -440,10 +428,26 @@ defmodule ExMCP do
     end
   end
 
-  defp extract_response_content(response) do
-    Response.resource_content(response) ||
-      Response.text_content(response) ||
-      Response.data_content(response)
+  defp extract_resource_content(response) when is_map(response) do
+    # Try to extract content from the response map
+    case response do
+      %{"content" => [%{"type" => "text", "text" => text} | _]} ->
+        text
+
+      %{"content" => content} when is_list(content) ->
+        # Extract and join all text content
+        Enum.map_join(
+          Enum.filter(content, &(is_map(&1) and Map.get(&1, "type") == "text")),
+          "\n",
+          &Map.get(&1, "text")
+        )
+
+      %{"text" => text} when is_binary(text) ->
+        text
+
+      _ ->
+        nil
+    end
   end
 
   defp parse_json_content(content) do
@@ -453,15 +457,34 @@ defmodule ExMCP do
     end
   end
 
+  defp extract_tool_result_content(result) when is_map(result) do
+    # Try to extract text content from the result
+    case result do
+      %{"content" => [%{"type" => "text", "text" => text} | _]} ->
+        text
+
+      %{"content" => content} when is_list(content) ->
+        # Extract all text content
+        Enum.map_join(
+          Enum.filter(content, &(is_map(&1) and Map.get(&1, "type") == "text")),
+          "\n",
+          &Map.get(&1, "text")
+        )
+
+      _ ->
+        # Return the full result if we can't extract text
+        result
+    end
+  end
+
+  defp extract_tool_result_content(result), do: result
+
   @doc """
   Gets connection status and server information.
   """
   @spec status(client()) :: {:ok, map()} | {:error, any()}
   def status(client) do
-    case Client.get_status(client) do
-      {:ok, status} -> {:ok, status}
-      error -> error
-    end
+    Client.get_status(client)
   rescue
     _ -> {:error, Error.connection_error("Client not responding")}
   end

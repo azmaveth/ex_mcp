@@ -18,7 +18,7 @@ defmodule ExMCP.Internal.MessageValidator do
 
   @type validation_result :: {:ok, map()} | {:error, map()}
   @type session_state :: %{
-          seen_request_ids: MapSet.t(),
+          seen_request_ids: MapSet.t(String.t()),
           protocol_version: String.t() | nil
         }
 
@@ -31,7 +31,6 @@ defmodule ExMCP.Internal.MessageValidator do
   @doc """
   Creates a new validation session state.
   """
-  @spec new_session(String.t() | nil) :: session_state()
   def new_session(protocol_version \\ nil) do
     %{
       seen_request_ids: MapSet.new(),
@@ -78,9 +77,19 @@ defmodule ExMCP.Internal.MessageValidator do
   """
   @spec validate_message(map() | list(), session_state()) ::
           {validation_result(), session_state()}
+  # Special case: Reject batch requests for protocol version 2025-06-18
+  def validate_message(messages, %{protocol_version: "2025-06-18"} = state)
+      when is_list(messages) do
+    {{:error,
+      create_error(
+        @invalid_request,
+        "Batch requests are not supported in protocol version 2025-06-18"
+      )}, state}
+  end
+
   def validate_message(messages, state) when is_list(messages) do
     # Handle batch requests
-    if length(messages) == 0 do
+    if Enum.empty?(messages) do
       {{:error, create_error(@invalid_request, "Empty batch array is invalid")}, state}
     else
       # Validate each message in the batch

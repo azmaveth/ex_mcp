@@ -50,6 +50,7 @@ defmodule ExMCP.DSL.Prompt do
       prompt_meta = Meta.get_meta(__MODULE__)
 
       # Validate the prompt definition before registering
+      # credo:disable-for-next-line Credo.Check.Design.AliasUsage
       ExMCP.DSL.Prompt.__validate_prompt_definition__(
         unquote(prompt_name),
         prompt_meta

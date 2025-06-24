@@ -10,7 +10,7 @@ defmodule ExMCP.ConsentHandler.CLI do
   def request_consent(user_id, resource_origin, request_context) do
     # Default TTL is 1 hour in seconds
     default_ttl_seconds = 3600
-    ttl = Keyword.get(request_context, :consent_ttl, default_ttl_seconds)
+    ttl = Map.get(request_context, :consent_ttl, default_ttl_seconds)
 
     IO.puts("User '#{user_id}' is requesting access to an external resource: #{resource_origin}")
 

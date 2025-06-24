@@ -40,10 +40,11 @@ defmodule ExMCP.HttpPlug do
   import Plug.Conn
   require Logger
 
-  alias ExMCP.HttpPlug.SSEHandler
-  alias ExMCP.FeatureFlags
-  alias ExMCP.Authorization.ServerGuard
+  alias ExMCP.Authorization.AuthorizationServerMetadata
   alias ExMCP.Authorization.ScopeValidator
+  alias ExMCP.Authorization.ServerGuard
+  alias ExMCP.FeatureFlags
+  alias ExMCP.HttpPlug.SSEHandler
 
   # Simple session registry using ETS
   @ets_table :http_plug_sessions
@@ -98,6 +99,18 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  def call(
+        %Plug.Conn{method: "GET", path_info: [".well-known", "oauth-authorization-server"]} =
+          conn,
+        opts
+      ) do
+    if opts.oauth_enabled do
+      handle_authorization_server_metadata(conn, opts)
+    else
+      send_resp(conn, 404, "Not Found")
+    end
+  end
+
   def call(%Plug.Conn{method: "GET", path_info: ["sse"]} = conn, opts) do
     if opts.sse_enabled do
       handle_sse_connection(conn, opts)
@@ -117,6 +130,14 @@ defmodule ExMCP.HttpPlug do
   def call(%Plug.Conn{method: "POST"} = conn, opts) do
     Logger.debug("HttpPlug: POST request to #{conn.request_path}")
     handle_mcp_request(conn, opts)
+  end
+
+  def call(%Plug.Conn{method: "DELETE", path_info: ["sse", session_id]} = conn, opts) do
+    handle_session_delete(conn, session_id, opts)
+  end
+
+  def call(%Plug.Conn{method: "DELETE", path_info: ["mcp", "v1", "sse", session_id]} = conn, opts) do
+    handle_session_delete(conn, session_id, opts)
   end
 
   def call(conn, _opts) do
@@ -163,6 +184,7 @@ defmodule ExMCP.HttpPlug do
             # Non-SSE mode: send response in HTTP body
             conn
             |> maybe_add_cors_headers(opts)
+            |> maybe_add_protocol_version_header()
             |> put_resp_content_type("application/json")
             |> send_resp(200, Jason.encode!(response))
           end
@@ -222,6 +244,7 @@ defmodule ExMCP.HttpPlug do
 
         conn
         |> maybe_add_cors_headers(opts)
+        |> maybe_add_protocol_version_header()
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(error_response))
 
@@ -273,49 +296,130 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  # Handle Server-Sent Events connections
-  defp handle_sse_connection(conn, opts) do
-    with {:ok, _token_info} <- authorize_request(conn, %{}, opts) do
-      session_id = get_session_id(conn)
+  # Handle session termination via DELETE request
+  defp handle_session_delete(conn, session_id, opts) do
+    case authorize_request(conn, %{}, opts) do
+      {:ok, _token_info} ->
+        # Terminate the session
+        :ok = ExMCP.SessionManager.terminate_session(session_id)
 
-      conn =
+        # Try to stop the SSE handler if it exists
+        case lookup_sse_handler(session_id) do
+          {:ok, handler_pid} ->
+            if Process.alive?(handler_pid) do
+              SSEHandler.close(handler_pid)
+            end
+
+            cleanup_sse_handler(session_id)
+
+          {:error, _} ->
+            # Session not found in ETS, but that's OK
+            :ok
+        end
+
         conn
         |> maybe_add_cors_headers(opts)
-        |> put_resp_header("content-type", "text/event-stream")
-        |> put_resp_header("cache-control", "no-cache")
-        |> put_resp_header("connection", "keep-alive")
-        |> send_chunked(200)
+        |> send_resp(204, "")
 
-      # Check if we're in test mode via application environment
-      if Application.get_env(:ex_mcp, :test_mode, false) do
-        # Send a simple connection message and return for testing
-        {:ok, conn} =
-          chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
-
+      {:error, {:auth_error, {status, www_auth_header, body}}} ->
         conn
-      else
-        # Use the new SSE handler with backpressure control
-        {:ok, handler} = SSEHandler.start_link(conn, session_id, opts)
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_header("www-authenticate", www_auth_header)
+        |> send_resp(status, body)
+    end
+  end
 
-        # Register with session manager if available
-        if function_exported?(opts.session_manager, :register_sse_handler, 2) do
-          opts.session_manager.register_sse_handler(session_id, handler)
+  # Handle Server-Sent Events connections
+  defp handle_sse_connection(conn, opts) do
+    case authorize_request(conn, %{}, opts) do
+      {:ok, _token_info} ->
+        _original_session_id = get_session_id(conn)
+
+        conn =
+          conn
+          |> maybe_add_cors_headers(opts)
+          |> put_resp_header("content-type", "text/event-stream")
+          |> put_resp_header("cache-control", "no-cache")
+          |> put_resp_header("connection", "keep-alive")
+          |> send_chunked(200)
+
+        # Extract client information for session
+        client_info = %{
+          user_agent: get_req_header(conn, "user-agent") |> List.first(),
+          origin: get_req_header(conn, "origin") |> List.first(),
+          referer: get_req_header(conn, "referer") |> List.first(),
+          remote_ip: get_peer_data(conn).address |> :inet.ntoa() |> to_string()
+        }
+
+        # Create or get existing session from SessionManager
+        existing_session_id =
+          case get_req_header(conn, "mcp-session-id") do
+            [existing_id] -> existing_id
+            [] -> nil
+          end
+
+        final_session_id =
+          if existing_session_id do
+            # Check if session exists and is valid
+            case ExMCP.SessionManager.get_session(existing_session_id) do
+              {:ok, session} when session.status == :active ->
+                # Update session activity
+                ExMCP.SessionManager.update_session(existing_session_id, %{
+                  client_info: client_info,
+                  transport: :sse
+                })
+
+                existing_session_id
+
+              _ ->
+                # Session doesn't exist or is terminated, create new one
+                ExMCP.SessionManager.create_session(%{
+                  transport: :sse,
+                  client_info: client_info
+                })
+            end
+          else
+            # Create new session
+            ExMCP.SessionManager.create_session(%{
+              transport: :sse,
+              client_info: client_info
+            })
+          end
+
+        # Check if we're in test mode via application environment
+        if Application.get_env(:ex_mcp, :test_mode, false) do
+          # Send a simple connection message and return for testing
+          {:ok, conn} =
+            chunk(conn, "event: connected\ndata: {\"session_id\": \"#{final_session_id}\"}\n\n")
+
+          conn
+        else
+          # Use the new SSE handler with backpressure control
+          {:ok, handler} = SSEHandler.start_link(conn, final_session_id, opts)
+
+          # Register with session manager
+          ExMCP.SessionManager.update_session(final_session_id, %{handler_pid: handler})
+
+          # Also register in our simple ETS registry
+          register_sse_handler(final_session_id, handler)
+
+          # Block until handler exits
+          ref = Process.monitor(handler)
+
+          receive do
+            {:DOWN, ^ref, :process, ^handler, reason} ->
+              # Clean up the session registry when handler exits
+              cleanup_sse_handler(final_session_id)
+
+              # Terminate session in SessionManager if it was a clean shutdown
+              if reason == :normal do
+                ExMCP.SessionManager.terminate_session(final_session_id)
+              end
+
+              conn
+          end
         end
 
-        # Also register in our simple ETS registry
-        register_sse_handler(session_id, handler)
-
-        # Block until handler exits
-        ref = Process.monitor(handler)
-
-        receive do
-          {:DOWN, ^ref, :process, ^handler, _reason} ->
-            # Clean up the session registry when handler exits
-            cleanup_sse_handler(session_id)
-            conn
-        end
-      end
-    else
       {:error, {:auth_error, {status, www_auth_header, body}}} ->
         conn
         |> maybe_add_cors_headers(opts)
@@ -403,11 +507,21 @@ defmodule ExMCP.HttpPlug do
   # Register SSE handler for a session
   defp register_sse_handler(session_id, handler_pid) do
     :ets.insert(@ets_table, {session_id, handler_pid})
+
+    # Also register with SessionManager if available
+    if function_exported?(ExMCP.SessionManager, :update_session, 2) do
+      ExMCP.SessionManager.update_session(session_id, %{handler_pid: handler_pid})
+    end
   rescue
     ArgumentError ->
       # Table doesn't exist, create it
       :ets.new(@ets_table, [:named_table, :public, :set])
       :ets.insert(@ets_table, {session_id, handler_pid})
+
+      # Also register with SessionManager if available
+      if function_exported?(ExMCP.SessionManager, :update_session, 2) do
+        ExMCP.SessionManager.update_session(session_id, %{handler_pid: handler_pid})
+      end
   end
 
   # Look up SSE handler for a session
@@ -429,28 +543,39 @@ defmodule ExMCP.HttpPlug do
   end
 
   # Send MCP response via SSE to connected clients
-  defp send_response_via_sse(response, conn, opts) do
+  defp send_response_via_sse(response, conn, _opts) do
     session_id = get_session_id(conn)
     Logger.debug("Sending SSE response for session #{session_id}")
 
-    # Try to send via session manager first if available
-    if function_exported?(opts.session_manager, :send_sse_message, 2) do
-      json_response = Jason.encode!(response)
-      Logger.debug("Using session manager to send SSE message")
-      opts.session_manager.send_sse_message(session_id, json_response)
-    else
-      # Try to send via our ETS registry
-      case lookup_sse_handler(session_id) do
-        {:ok, handler_pid} ->
-          Logger.debug("Found SSE handler #{inspect(handler_pid)}, sending event")
-          # Send the response as an SSE event (SSEHandler will encode it)
-          SSEHandler.send_event(handler_pid, "message", response)
+    # Generate event ID for this response
+    event_id = "#{System.system_time(:microsecond)}-#{:rand.uniform(1000)}"
 
-        {:error, reason} ->
-          Logger.warning(
-            "Could not find SSE handler for session #{session_id}: #{inspect(reason)}"
-          )
-      end
+    # Store the event in SessionManager for potential replay
+    event_data = %{
+      id: event_id,
+      session_id: session_id,
+      type: "message",
+      data: response,
+      timestamp: System.system_time(:microsecond)
+    }
+
+    case ExMCP.SessionManager.store_event(session_id, event_data) do
+      :ok ->
+        Logger.debug("Stored event #{event_id} for session #{session_id}")
+
+      {:error, reason} ->
+        Logger.warning("Failed to store event for session #{session_id}: #{inspect(reason)}")
+    end
+
+    # Try to send via our ETS registry
+    case lookup_sse_handler(session_id) do
+      {:ok, handler_pid} ->
+        Logger.debug("Found SSE handler #{inspect(handler_pid)}, sending event")
+        # Send the response as an SSE event with the generated event ID
+        SSEHandler.send_event(handler_pid, "message", response, event_id: event_id)
+
+      {:error, reason} ->
+        Logger.warning("Could not find SSE handler for session #{session_id}: #{inspect(reason)}")
     end
   end
 
@@ -524,7 +649,40 @@ defmodule ExMCP.HttpPlug do
     |> send_resp(200, Jason.encode!(metadata))
   end
 
+  defp handle_authorization_server_metadata(conn, opts) do
+    metadata = AuthorizationServerMetadata.build_metadata()
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_content_type("application/json")
+    |> put_resp_header("cache-control", "public, max-age=3600")
+    |> send_resp(200, Jason.encode!(metadata))
+  rescue
+    e in ArgumentError ->
+      Logger.error(
+        "OAuth authorization server metadata configuration error: #{Exception.message(e)}"
+      )
+
+      error_response = %{
+        "error" => "server_error",
+        "error_description" => "Authorization server metadata is not properly configured"
+      }
+
+      conn
+      |> maybe_add_cors_headers(opts)
+      |> put_resp_content_type("application/json")
+      |> send_resp(500, Jason.encode!(error_response))
+  end
+
   defp get_supported_scopes do
     ScopeValidator.get_all_static_scopes()
+  end
+
+  defp maybe_add_protocol_version_header(conn) do
+    if FeatureFlags.enabled?(:protocol_version_header) do
+      put_resp_header(conn, "mcp-protocol-version", "2025-06-18")
+    else
+      conn
+    end
   end
 end

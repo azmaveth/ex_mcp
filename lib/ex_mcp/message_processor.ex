@@ -30,6 +30,8 @@ defmodule ExMCP.MessageProcessor do
       :transport,
       # Session identifier
       :session_id,
+      # Progress token for long-running operations (MCP 2025-06-18)
+      :progress_token,
       # Whether processing should stop
       :halted
     ]
@@ -41,6 +43,7 @@ defmodule ExMCP.MessageProcessor do
             assigns: map(),
             transport: atom(),
             session_id: String.t() | nil,
+            progress_token: String.t() | integer() | nil,
             halted: boolean()
           }
   end
@@ -67,6 +70,7 @@ defmodule ExMCP.MessageProcessor do
       assigns: %{},
       transport: Keyword.get(opts, :transport),
       session_id: Keyword.get(opts, :session_id),
+      progress_token: extract_progress_token(request),
       halted: false
     }
   end
@@ -267,42 +271,12 @@ defmodule ExMCP.MessageProcessor do
     params = Map.get(request, "params", %{})
     id = get_request_id(request)
 
-    case method do
-      "initialize" ->
-        handle_handler_initialize(conn, server_pid, params, id)
-
-      "ping" ->
-        handle_ping(conn, id)
-
-      "tools/list" ->
-        handle_handler_tools_list(conn, server_pid, params, id)
-
-      "tools/call" ->
-        handle_handler_tools_call(conn, server_pid, params, id)
-
-      "resources/list" ->
-        handle_handler_resources_list(conn, server_pid, params, id)
-
-      "resources/read" ->
-        handle_handler_resources_read(conn, server_pid, params, id)
-
-      "resources/subscribe" ->
-        handle_handler_resources_subscribe(conn, server_pid, params, id)
-
-      "resources/unsubscribe" ->
-        handle_handler_resources_unsubscribe(conn, server_pid, params, id)
-
-      "prompts/list" ->
-        handle_handler_prompts_list(conn, server_pid, params, id)
-
-      "prompts/get" ->
-        handle_handler_prompts_get(conn, server_pid, params, id)
-
-      "completion/complete" ->
-        handle_handler_completion_complete(conn, server_pid, params, id)
-
-      _ ->
+    case Map.get(handler_method_dispatch(), method) do
+      nil ->
         handle_handler_custom_method(conn, server_pid, method, params, id)
+
+      handler_fun ->
+        handler_fun.(conn, server_pid, params, id)
     end
   end
 
@@ -313,39 +287,12 @@ defmodule ExMCP.MessageProcessor do
     params = Map.get(request, "params", %{})
     id = get_request_id(request)
 
-    case method do
-      "initialize" ->
-        handle_initialize_with_server(conn, server_pid, id)
-
-      "ping" ->
-        handle_ping(conn, id)
-
-      "tools/list" ->
-        handle_tools_list_with_server(conn, server_pid, id)
-
-      "tools/call" ->
-        handle_tools_call_with_server(conn, server_pid, params, id)
-
-      "resources/list" ->
-        handle_resources_list_with_server(conn, server_pid, id)
-
-      "resources/read" ->
-        handle_resources_read_with_server(conn, server_pid, params, id)
-
-      "resources/subscribe" ->
-        handle_resources_subscribe_with_server(conn, server_pid, params, id)
-
-      "resources/unsubscribe" ->
-        handle_resources_unsubscribe_with_server(conn, server_pid, params, id)
-
-      "prompts/list" ->
-        handle_prompts_list_with_server(conn, server_pid, id)
-
-      "prompts/get" ->
-        handle_prompts_get_with_server(conn, server_pid, params, id)
-
-      _ ->
+    case Map.get(server_method_dispatch(), method) do
+      nil ->
         handle_custom_method_with_server(conn, server_pid, method, params, id)
+
+      handler_fun ->
+        handler_fun.(conn, server_pid, params, id)
     end
   end
 
@@ -364,18 +311,12 @@ defmodule ExMCP.MessageProcessor do
     # Debug logging for tests
     log_method_processing(method, handler_module)
 
-    case method do
-      "initialize" -> handle_initialize(conn, handler_module, server_info, id)
-      "ping" -> handle_ping(conn, id)
-      "tools/list" -> handle_tools_list(conn, handler_module, id)
-      "tools/call" -> handle_tools_call(conn, handler_module, params, id)
-      "resources/list" -> handle_resources_list(conn, handler_module, id)
-      "resources/read" -> handle_resources_read(conn, handler_module, params, id)
-      "resources/subscribe" -> handle_resources_subscribe(conn, handler_module, params, id)
-      "resources/unsubscribe" -> handle_resources_unsubscribe(conn, handler_module, params, id)
-      "prompts/list" -> handle_prompts_list(conn, handler_module, id)
-      "prompts/get" -> handle_prompts_get(conn, handler_module, params, id)
-      _ -> handle_custom_method(conn, handler_module, method, params, id)
+    case Map.get(handler_direct_dispatch(), method) do
+      nil ->
+        handle_custom_method(conn, handler_module, method, params, id)
+
+      handler_fun ->
+        handler_fun.(conn, handler_module, server_info, params, id)
     end
   end
 
@@ -769,7 +710,7 @@ defmodule ExMCP.MessageProcessor do
 
   # Handler-specific functions that use GenServer calls
   defp handle_handler_initialize(conn, server_pid, params, id) do
-    case GenServer.call(server_pid, {:handle_initialize, params}, 5000) do
+    case GenServer.call(server_pid, {:initialize, params}, 5000) do
       {:ok, result, _state} ->
         response = %{
           "jsonrpc" => "2.0",
@@ -792,7 +733,7 @@ defmodule ExMCP.MessageProcessor do
   defp handle_handler_tools_list(conn, server_pid, params, id) do
     cursor = Map.get(params, "cursor")
 
-    case GenServer.call(server_pid, {:handle_list_tools, cursor}, 5000) do
+    case GenServer.call(server_pid, {:list_tools, cursor}, 5000) do
       {:ok, tools, next_cursor, _state} ->
         result = %{"tools" => tools}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
@@ -819,7 +760,7 @@ defmodule ExMCP.MessageProcessor do
     tool_name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
 
-    case GenServer.call(server_pid, {:handle_call_tool, tool_name, arguments}, 10000) do
+    case GenServer.call(server_pid, {:call_tool, tool_name, arguments}, 10000) do
       {:ok, result, _state} ->
         response = success_response(result, id)
         put_response(conn, response)
@@ -837,7 +778,7 @@ defmodule ExMCP.MessageProcessor do
   defp handle_handler_resources_list(conn, server_pid, params, id) do
     cursor = Map.get(params, "cursor")
 
-    case GenServer.call(server_pid, {:handle_list_resources, cursor}, 5000) do
+    case GenServer.call(server_pid, {:list_resources, cursor}, 5000) do
       {:ok, resources, next_cursor, _state} ->
         result = %{"resources" => resources}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
@@ -863,7 +804,7 @@ defmodule ExMCP.MessageProcessor do
   defp handle_handler_resources_read(conn, server_pid, params, id) do
     uri = Map.get(params, "uri")
 
-    case GenServer.call(server_pid, {:handle_read_resource, uri}, 10000) do
+    case GenServer.call(server_pid, {:read_resource, uri}, 10000) do
       {:ok, content, _state} ->
         response = %{
           "jsonrpc" => "2.0",
@@ -886,7 +827,7 @@ defmodule ExMCP.MessageProcessor do
   defp handle_handler_resources_subscribe(conn, server_pid, params, id) do
     uri = Map.get(params, "uri")
 
-    case GenServer.call(server_pid, {:handle_subscribe_resource, uri}, 10000) do
+    case GenServer.call(server_pid, {:subscribe_resource, uri}, 10000) do
       {:ok, _state} ->
         response = success_response(%{}, id)
         put_response(conn, response)
@@ -904,7 +845,7 @@ defmodule ExMCP.MessageProcessor do
   defp handle_handler_resources_unsubscribe(conn, server_pid, params, id) do
     uri = Map.get(params, "uri")
 
-    case GenServer.call(server_pid, {:handle_unsubscribe_resource, uri}, 10000) do
+    case GenServer.call(server_pid, {:unsubscribe_resource, uri}, 10000) do
       {:ok, _state} ->
         response = success_response(%{}, id)
         put_response(conn, response)
@@ -922,7 +863,7 @@ defmodule ExMCP.MessageProcessor do
   defp handle_handler_prompts_list(conn, server_pid, params, id) do
     cursor = Map.get(params, "cursor")
 
-    case GenServer.call(server_pid, {:handle_list_prompts, cursor}, 5000) do
+    case GenServer.call(server_pid, {:list_prompts, cursor}, 5000) do
       {:ok, prompts, next_cursor, _state} ->
         result = %{"prompts" => prompts}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
@@ -949,7 +890,7 @@ defmodule ExMCP.MessageProcessor do
     prompt_name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
 
-    case GenServer.call(server_pid, {:handle_get_prompt, prompt_name, arguments}, 10000) do
+    case GenServer.call(server_pid, {:get_prompt, prompt_name, arguments}, 10000) do
       {:ok, result, _state} ->
         response = success_response(result, id)
         put_response(conn, response)
@@ -965,7 +906,7 @@ defmodule ExMCP.MessageProcessor do
   end
 
   defp handle_handler_custom_method(conn, server_pid, method, params, id) do
-    case GenServer.call(server_pid, {:handle_request, method, params}, 10000) do
+    case GenServer.call(server_pid, {:request, method, params}, 10000) do
       {:reply, result, _state} ->
         response = success_response(result, id)
         put_response(conn, response)
@@ -991,7 +932,7 @@ defmodule ExMCP.MessageProcessor do
     ref = Map.get(params, "ref")
     argument = Map.get(params, "argument")
 
-    case GenServer.call(server_pid, {:handle_complete, ref, argument}, 10_000) do
+    case GenServer.call(server_pid, {:complete, ref, argument}, 10_000) do
       {:ok, result, _new_state} ->
         response = success_response(result, id)
         put_response(conn, response)
@@ -1015,4 +956,176 @@ defmodule ExMCP.MessageProcessor do
   end
 
   defp get_request_id(_), do: nil
+
+  defp handler_method_dispatch do
+    %{
+      "initialize" => fn conn, server_pid, params, id ->
+        handle_handler_initialize(conn, server_pid, params, id)
+      end,
+      "ping" => fn conn, _server_pid, _params, id -> handle_ping(conn, id) end,
+      "tools/list" => fn conn, server_pid, params, id ->
+        handle_handler_tools_list(conn, server_pid, params, id)
+      end,
+      "tools/call" => fn conn, server_pid, params, id ->
+        handle_handler_tools_call(conn, server_pid, params, id)
+      end,
+      "resources/list" => fn conn, server_pid, params, id ->
+        handle_handler_resources_list(conn, server_pid, params, id)
+      end,
+      "resources/read" => fn conn, server_pid, params, id ->
+        handle_handler_resources_read(conn, server_pid, params, id)
+      end,
+      "resources/subscribe" => fn conn, server_pid, params, id ->
+        handle_handler_resources_subscribe(conn, server_pid, params, id)
+      end,
+      "resources/unsubscribe" => fn conn, server_pid, params, id ->
+        handle_handler_resources_unsubscribe(conn, server_pid, params, id)
+      end,
+      "prompts/list" => fn conn, server_pid, params, id ->
+        handle_handler_prompts_list(conn, server_pid, params, id)
+      end,
+      "prompts/get" => fn conn, server_pid, params, id ->
+        handle_handler_prompts_get(conn, server_pid, params, id)
+      end,
+      "completion/complete" => fn conn, server_pid, params, id ->
+        handle_handler_completion_complete(conn, server_pid, params, id)
+      end
+    }
+  end
+
+  defp server_method_dispatch do
+    %{
+      "initialize" => fn conn, server_pid, _params, id ->
+        handle_initialize_with_server(conn, server_pid, id)
+      end,
+      "ping" => fn conn, _server_pid, _params, id ->
+        handle_ping(conn, id)
+      end,
+      "tools/list" => fn conn, server_pid, _params, id ->
+        handle_tools_list_with_server(conn, server_pid, id)
+      end,
+      "tools/call" => &handle_tools_call_with_server/4,
+      "resources/list" => fn conn, server_pid, _params, id ->
+        handle_resources_list_with_server(conn, server_pid, id)
+      end,
+      "resources/read" => &handle_resources_read_with_server/4,
+      "resources/subscribe" => &handle_resources_subscribe_with_server/4,
+      "resources/unsubscribe" => &handle_resources_unsubscribe_with_server/4,
+      "prompts/list" => fn conn, server_pid, _params, id ->
+        handle_prompts_list_with_server(conn, server_pid, id)
+      end,
+      "prompts/get" => &handle_prompts_get_with_server/4
+    }
+  end
+
+  defp handler_direct_dispatch do
+    %{
+      "initialize" => fn conn, handler_module, server_info, _params, id ->
+        handle_initialize(conn, handler_module, server_info, id)
+      end,
+      "ping" => fn conn, _handler_module, _server_info, _params, id ->
+        handle_ping(conn, id)
+      end,
+      "tools/list" => fn conn, handler_module, _server_info, _params, id ->
+        handle_tools_list(conn, handler_module, id)
+      end,
+      "tools/call" => fn conn, handler_module, _server_info, params, id ->
+        handle_tools_call(conn, handler_module, params, id)
+      end,
+      "resources/list" => fn conn, handler_module, _server_info, _params, id ->
+        handle_resources_list(conn, handler_module, id)
+      end,
+      "resources/read" => fn conn, handler_module, _server_info, params, id ->
+        handle_resources_read(conn, handler_module, params, id)
+      end,
+      "resources/subscribe" => fn conn, handler_module, _server_info, params, id ->
+        handle_resources_subscribe(conn, handler_module, params, id)
+      end,
+      "resources/unsubscribe" => fn conn, handler_module, _server_info, params, id ->
+        handle_resources_unsubscribe(conn, handler_module, params, id)
+      end,
+      "prompts/list" => fn conn, handler_module, _server_info, _params, id ->
+        handle_prompts_list(conn, handler_module, id)
+      end,
+      "prompts/get" => fn conn, handler_module, _server_info, params, id ->
+        handle_prompts_get(conn, handler_module, params, id)
+      end
+    }
+  end
+
+  # Progress notification helpers for MCP 2025-06-18 compliance
+
+  # Extracts the progress token from a request's _meta field.
+  # According to MCP 2025-06-18 specification, progress tokens are sent
+  # in the request metadata field and must be string or integer values.
+  @spec extract_progress_token(map()) :: ExMCP.Types.progress_token() | nil
+  defp extract_progress_token(%{"params" => %{"_meta" => %{"progressToken" => token}}} = _request)
+       when is_binary(token) or is_integer(token) do
+    token
+  end
+
+  defp extract_progress_token(_request), do: nil
+
+  @doc """
+  Starts progress tracking for a connection if it has a progress token.
+
+  This should be called at the beginning of long-running operations.
+  """
+  @spec start_progress_tracking(Conn.t()) :: Conn.t()
+  def start_progress_tracking(%Conn{progress_token: nil} = conn), do: conn
+
+  def start_progress_tracking(%Conn{progress_token: token} = conn) when not is_nil(token) do
+    case ExMCP.ProgressTracker.start_progress(token, self()) do
+      {:ok, _state} ->
+        conn
+
+      {:error, reason} ->
+        require Logger
+        Logger.warning("Failed to start progress tracking", token: token, reason: reason)
+        conn
+    end
+  end
+
+  @doc """
+  Updates progress for a connection.
+
+  This is a helper function to send progress notifications during
+  long-running operations.
+  """
+  @spec update_progress(Conn.t(), number(), number() | nil, String.t() | nil) :: Conn.t()
+  def update_progress(%Conn{progress_token: nil} = conn, _progress, _total, _message), do: conn
+
+  def update_progress(%Conn{progress_token: token} = conn, progress, total, message)
+      when not is_nil(token) do
+    case ExMCP.ProgressTracker.update_progress(token, progress, total, message) do
+      :ok ->
+        conn
+
+      {:error, reason} ->
+        require Logger
+        Logger.warning("Failed to update progress", token: token, reason: reason)
+        conn
+    end
+  end
+
+  @doc """
+  Completes progress tracking for a connection.
+
+  This should be called when a long-running operation finishes,
+  either successfully or with an error.
+  """
+  @spec complete_progress(Conn.t()) :: Conn.t()
+  def complete_progress(%Conn{progress_token: nil} = conn), do: conn
+
+  def complete_progress(%Conn{progress_token: token} = conn) when not is_nil(token) do
+    case ExMCP.ProgressTracker.complete_progress(token) do
+      :ok ->
+        conn
+
+      {:error, reason} ->
+        require Logger
+        Logger.warning("Failed to complete progress", token: token, reason: reason)
+        conn
+    end
+  end
 end

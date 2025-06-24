@@ -32,7 +32,7 @@ defmodule ExMCP.Protocol.VersionNegotiator do
 
       iex> ExMCP.Protocol.VersionNegotiator.negotiate(["2025-06-18", "2025-03-26"])
       {:ok, "2025-06-18"}
-      
+
       iex> ExMCP.Protocol.VersionNegotiator.negotiate(["2024-01-01"])
       {:error, :no_compatible_version}
   """
