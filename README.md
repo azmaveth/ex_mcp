@@ -10,13 +10,13 @@
 
 **A complete Elixir implementation of the Model Context Protocol (MCP)**
 
-[User Guide](docs/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [v2 API](docs/API_V2_REFERENCE.md) | [Examples](examples/) | [Changelog](CHANGELOG.md)
+[Getting Started](docs/getting-started/) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](examples/) | [Changelog](CHANGELOG.md)
 
 </div>
 
 ---
 
-> ⚠️ **Alpha Software**: This project is currently in alpha stage (v0.5.x). The API is unstable and may change significantly before v1.0 release.
+> ⚠️ **Alpha Software**: This project is currently in alpha stage (v0.6.x). The API is unstable and may change significantly before v1.0 release.
 
 ## Overview
 
@@ -144,7 +144,7 @@ Add `ex_mcp` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.5.0"}
+    {:ex_mcp, "~> 0.6.0"}
   ]
 end
 ```
@@ -154,6 +154,18 @@ Then run:
 ```bash
 mix deps.get
 ```
+
+## ✨ What's New in v0.6.0
+
+v0.6.0 brings significant improvements and new features:
+
+- **Enhanced Security**: Complete OAuth 2.1 Resource Server implementation
+- **MCP 2025-06-18 Support**: Latest protocol version with structured tool output
+- **Improved Testing**: Comprehensive compliance test suite
+- **Better Performance**: Optimized native BEAM transport
+- **Documentation**: Enhanced guides and examples
+
+See the [CHANGELOG](CHANGELOG.md) for complete details and breaking changes.
 
 ## 🚀 Quick Start
 
@@ -883,13 +895,14 @@ ExMCP uses the following metadata fields for security and debugging:
 
 ## 📚 Documentation
 
-- 🚀 **[Phoenix Integration Guide](docs/PHOENIX_GUIDE.md)** - Complete guide for Phoenix/Plug integration
-- 📖 **[User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples  
+- 🏁 **[Getting Started](docs/getting-started/)** - Quick start guides, migration help, and reference
+- 🚀 **[Phoenix Integration Guide](docs/guides/PHOENIX_GUIDE.md)** - Complete guide for Phoenix/Plug integration
+- 📖 **[User Guide](docs/guides/USER_GUIDE.md)** - Comprehensive guide with examples  
 - 🎨 **[DSL Guide](docs/DSL_GUIDE.md)** - Complete DSL reference with meta block design
 - 🔧 **[API Documentation](https://hexdocs.pm/ex_mcp)** - Detailed API reference
 - 🆕 **[v2 API Reference](docs/API_V2_REFERENCE.md)** - New v2 API with structured responses
 - 🏗️ **[v2 Architecture](docs/V2_ARCHITECTURE.md)** - v2 design and architecture guide
-- 🔄 **[Migration Guide](MIGRATING_V2.md)** - Migrating from v1 to v2
+- 🔄 **[Migration Guide](docs/getting-started/MIGRATION.md)** - Version migration guide
 - 🔐 **[Security Guide](docs/SECURITY.md)** - Authentication, TLS, and security best practices
 - 📂 **[Examples](examples/)** - Complete working examples
 
