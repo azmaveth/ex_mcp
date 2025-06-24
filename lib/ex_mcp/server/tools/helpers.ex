@@ -452,53 +452,6 @@ defmodule ExMCP.Server.Tools.Helpers do
   defp atomize_keys(other), do: other
 
   @doc """
-  Converts a function spec to a tool definition.
-
-  Extracts parameter information from the function's @spec attribute
-  and generates a tool definition with JSON schema.
-  """
-  def function_to_tool(module, function, description)
-      when is_atom(module) and is_atom(function) do
-    # Check all arities from 0 to 10
-    exists =
-      Enum.any?(0..10, fn arity ->
-        function_exported?(module, function, arity)
-      end)
-
-    if not exists do
-      raise ArgumentError, "Function #{module}.#{function} does not exist"
-    end
-
-    # Try to get the spec
-    spec = get_function_spec(module, function)
-
-    %{
-      name: to_string(function),
-      description: description,
-      inputSchema: spec_to_schema(spec)
-    }
-  end
-
-  defp get_function_spec(_module, _function) do
-    # In a real implementation, we would use Code.Typespec.fetch_specs
-    # For now, return a generic schema
-    %{
-      type: "object",
-      properties: %{},
-      additionalProperties: true
-    }
-  end
-
-  defp spec_to_schema(_spec) do
-    # Simplified implementation
-    %{
-      type: "object",
-      properties: %{},
-      additionalProperties: true
-    }
-  end
-
-  @doc """
   Generates a string schema with constraints.
   """
   def string_schema(opts \\ []) do

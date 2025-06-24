@@ -84,14 +84,19 @@ defmodule ExMCP.Server.Tools do
         end
       end)
 
-    # Build tool name to handler mapping with output schemas
+    # Build tool name to handler mapping with PRE-COMPILED output schemas
+    # Convert to map for O(1) lookup performance instead of O(n) list search
     tool_mapping =
       tools
       |> Enum.reverse()
       |> Enum.with_index()
       |> Enum.map(fn {tool, index} ->
-        {tool.name, :"__tool_handler_#{index}__", tool[:outputSchema]}
+        # Pre-compile the output schema at compile time.
+        # This moves the expensive schema resolution from runtime to compile time.
+        resolved_schema = __MODULE__.compile_schema(tool[:outputSchema])
+        {tool.name, {:"__tool_handler_#{index}__", resolved_schema}}
       end)
+      |> Map.new()
       |> Macro.escape()
 
     quote do
@@ -107,8 +112,8 @@ defmodule ExMCP.Server.Tools do
       def handle_call_tool(params, state) do
         tool_mapping = unquote(tool_mapping)
 
-        case List.keyfind(tool_mapping, params.name, 0) do
-          {_, handler_func, output_schema} ->
+        case Map.get(tool_mapping, params.name) do
+          {handler_func, output_schema} ->
             result = apply(__MODULE__, handler_func, [params.arguments, state])
 
             # Validate output if schema is defined
@@ -206,19 +211,55 @@ defmodule ExMCP.Server.Tools do
   defp preserve_structured_output(response), do: response
 
   defp preserve_other_fields(response) do
-    # Preserve all other fields like isError, metadata, etc.
+    # Preserve all other fields like isError, resourceLinks, metadata, etc.
+    response
+    |> ensure_resource_links_format()
+  end
+
+  defp ensure_resource_links_format(%{resourceLinks: links} = response) when is_list(links) do
+    # Ensure resource links are properly formatted for 2025-06-18 spec
+    response
+  end
+
+  defp ensure_resource_links_format(response) do
+    # No resource links or not a list, leave as is
     response
   end
 
   @doc false
-  def __validate_and_normalize_response__(result, output_schema, state) do
-    case __normalize_response__(result, state) do
-      {:ok, response, new_state} ->
-        validate_structured_output(response, output_schema, new_state)
+  def compile_schema(nil), do: nil
 
-      error ->
-        error
+  def compile_schema(schema) do
+    if Code.ensure_loaded?(ExJsonSchema) do
+      try do
+        string_schema = atomize_keys_to_strings(schema)
+        ExJsonSchema.Schema.resolve(string_schema)
+      rescue
+        e ->
+          # credo:disable-for-next-line Credo.Check.Warning.RaiseInsideRescue
+          raise CompileError,
+            description:
+              "Invalid output schema provided to output_schema/1. Details: #{inspect(e)}",
+            file: __ENV__.file,
+            line: __ENV__.line
+      end
+    else
+      # If ExJsonSchema is not available, emit a compile-time warning
+      IO.warn(
+        "ExJsonSchema is not available at compile time. " <>
+          "Output schema validation will be limited to a non-nil check at runtime. " <>
+          "Please ensure {:ex_json_schema, \"~> 0.9\"} is in your mix.exs deps.",
+        []
+      )
+
+      schema
     end
+  end
+
+  @doc false
+  def __validate_and_normalize_response__(result, output_schema, state) do
+    {:ok, response, new_state} = __normalize_response__(result, state)
+    validate_structured_output(response, output_schema, new_state)
   end
 
   defp validate_structured_output(response, output_schema, state) do
@@ -249,20 +290,25 @@ defmodule ExMCP.Server.Tools do
     end
   end
 
-  defp validate_with_schema(data, schema) do
+  @doc false
+  def validate_with_schema(data, resolved_schema) do
     # Use ExJsonSchema if available, otherwise basic validation
-    if Code.ensure_loaded?(ExJsonSchema) do
+    if Code.ensure_loaded?(ExJsonSchema) and resolved_schema do
+      # The schema is now expected to be pre-resolved at compile time.
       try do
-        # Convert atom keys to string keys for ExJsonSchema
-        string_schema = atomize_keys_to_strings(schema)
-        resolved_schema = ExJsonSchema.Schema.resolve(string_schema)
-
         case ExJsonSchema.Validator.validate(resolved_schema, data) do
           :ok -> :ok
           {:error, errors} -> {:error, errors}
         end
       rescue
-        e -> {:error, ["Schema validation error: #{inspect(e)}"]}
+        e ->
+          # Log the full error for debugging
+          require Logger
+
+          Logger.error("Unexpected error during output schema validation: #{inspect(e)}")
+
+          # Return sanitized error to prevent information leakage
+          {:error, ["Output validation error. Please check server logs for details."]}
       end
     else
       # Fallback: just check that data is not nil
@@ -288,13 +334,7 @@ defmodule ExMCP.Server.Tools do
   defp atomize_keys_to_strings(value), do: value
 
   defp format_validation_errors(errors) when is_list(errors) do
-    errors
-    |> Enum.map(&format_single_error/1)
-    |> Enum.join(", ")
-  end
-
-  defp format_validation_errors(error) do
-    inspect(error)
+    Enum.map_join(errors, ", ", &format_single_error/1)
   end
 
   defp format_single_error({error_msg, path}) when is_binary(error_msg) do
@@ -332,7 +372,7 @@ defmodule ExMCP.Server.Tools do
 
   @doc false
   def __tool__(module, name, description, block) do
-    {params, annotations, input_schema, output_schema, handler, final_description} =
+    {params, annotations, input_schema, output_schema, handler, final_description, title} =
       extract_tool_info(block, description)
 
     # Build the tool definition
@@ -343,7 +383,8 @@ defmodule ExMCP.Server.Tools do
         params,
         annotations,
         input_schema,
-        output_schema
+        output_schema,
+        title
       )
 
     # Store the handler AST for later compilation
@@ -362,6 +403,7 @@ defmodule ExMCP.Server.Tools do
       end
 
     # Extract in correct order
+    {title, statements} = extract_title(statements)
     {description, statements} = extract_description(statements, default_description)
     {params, statements} = extract_params_from_statements(statements, [])
     {input_schema, statements} = extract_input_schema(statements)
@@ -369,7 +411,7 @@ defmodule ExMCP.Server.Tools do
     {annotations, statements} = extract_annotations(statements)
     handler = extract_handler(statements)
 
-    {params, annotations, input_schema, output_schema, handler, description}
+    {params, annotations, input_schema, output_schema, handler, description, title}
   end
 
   defp extract_params_from_statements([], params) do
@@ -442,6 +484,14 @@ defmodule ExMCP.Server.Tools do
     {nil, statements}
   end
 
+  defp extract_title([{:title, _, [title]} | rest]) do
+    {title, rest}
+  end
+
+  defp extract_title(statements) do
+    {nil, statements}
+  end
+
   defp extract_description([{:description, _, [desc]} | rest], _default) do
     {desc, rest}
   end
@@ -462,12 +512,28 @@ defmodule ExMCP.Server.Tools do
     raise "Tool must have a handle function"
   end
 
-  defp build_tool_definition(name, description, params, annotations, input_schema, output_schema) do
+  defp build_tool_definition(
+         name,
+         description,
+         params,
+         annotations,
+         input_schema,
+         output_schema,
+         title
+       ) do
     # Build base tool
     tool = %{
       name: name,
       description: description
     }
+
+    # Add title if provided (2025-06-18 feature)
+    tool =
+      if title do
+        Map.put(tool, :title, title)
+      else
+        tool
+      end
 
     # Add input schema
     tool =
@@ -592,6 +658,15 @@ defmodule ExMCP.Server.Tools do
   defmacro handle(func) do
     quote do
       {:handle, [], [unquote(func)]}
+    end
+  end
+
+  @doc """
+  Set the title for a tool (2025-06-18 feature).
+  """
+  defmacro title(title_text) do
+    quote do
+      {:title, [], [unquote(title_text)]}
     end
   end
 

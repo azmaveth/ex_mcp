@@ -9,6 +9,7 @@ defmodule ExMCP.MixProject do
       app: :ex_mcp,
       version: @version,
       elixir: "~> 1.17",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: description(),
@@ -88,6 +89,10 @@ defmodule ExMCP.MixProject do
         ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md USER_GUIDE.md EXTENSIONS.md)
     ]
   end
+
+  # Specifies which paths to compile per environment
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   defp docs do
     [

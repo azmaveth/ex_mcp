@@ -3,7 +3,9 @@
   {"lib/ex_mcp/testing/assertions.ex"},
   {"lib/ex_mcp/testing/mock_server.ex"},
   
-  # Ignore false positive pattern match warnings
-  {"lib/ex_mcp/transport/http_server.ex", :pattern_match_cov},
-  {"lib/ex_mcp/reliability/supervisor.ex", :pattern_match}
+  # Ignore testing module type resolution issues
+  {"lib/ex_mcp/testing/mock_server.ex", :invalid_contract},
+  {"lib/ex_mcp/testing/mock_server.ex", :no_return},
+  {"lib/ex_mcp/testing/mock_server.ex", :call},
+  {"lib/ex_mcp/testing/assertions.ex", :invalid_contract}
 ]

@@ -487,6 +487,7 @@ defmodule ExMCP.Testing.Assertions do
         call_tool(client, "tool", %{})
       end, iterations: 10, max_avg_time: 100
   """
+  @spec assert_throughput((-> any())) :: [any()]
   @spec assert_throughput((-> any()), assertion_opts()) :: [any()]
   def assert_throughput(operation, opts \\ []) do
     iterations = Keyword.get(opts, :iterations, 10)

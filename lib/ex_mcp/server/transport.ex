@@ -27,7 +27,7 @@ defmodule ExMCP.Server.Transport do
 
   ## Options
 
-  * `:transport` - The transport type (`:stdio`, `:http`, `:sse`, `:native`)
+  * `:transport` - The transport type (`:stdio`, `:http`, `:sse`, `:native`, `:test`)
   * `:port` - Port number for HTTP/SSE transports (default: 4000)
   * `:host` - Host for HTTP/SSE transports (default: "localhost")
   * `:cors_enabled` - Enable CORS for HTTP transports (default: true)
@@ -60,6 +60,9 @@ defmodule ExMCP.Server.Transport do
 
       :native ->
         start_native_server(module, server_info, tools, opts)
+
+      :test ->
+        start_test_server(module, server_info, tools, opts)
 
       _ ->
         {:error, {:unsupported_transport, transport}}
@@ -166,6 +169,33 @@ defmodule ExMCP.Server.Transport do
   end
 
   @doc """
+  Starts a test transport-based MCP server.
+
+  The test transport uses in-memory communication for efficient
+  testing without external processes or network connections.
+  """
+  @spec start_test_server(module(), map(), list(), keyword()) ::
+          {:ok, pid()} | {:error, term()}
+  def start_test_server(module, _server_info, _tools, opts) do
+    Logger.debug("Starting MCP test server: #{module}")
+
+    # Start the server module directly as a GenServer with test transport
+    case module.start_link(opts) do
+      {:ok, pid} ->
+        Logger.debug("MCP test server started successfully")
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} ->
+        Logger.debug("MCP test server already running")
+        {:ok, pid}
+
+      {:error, reason} ->
+        Logger.error("Failed to start MCP test server: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
   Stops a running MCP server.
   """
   @spec stop_server(pid() | atom()) :: :ok
@@ -216,6 +246,10 @@ defmodule ExMCP.Server.Transport do
       native: %{
         available: true,
         description: "Native Erlang process communication"
+      },
+      test: %{
+        available: true,
+        description: "In-memory transport for testing"
       }
     }
   end

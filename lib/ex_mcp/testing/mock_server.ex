@@ -141,6 +141,7 @@ defmodule ExMCP.Testing.MockServer do
 
       tool = sample_tool(name: "custom_tool", description: "Custom tool")
   """
+  @spec sample_tool() :: map()
   @spec sample_tool(keyword()) :: map()
   def sample_tool(opts \\ []) do
     name = Keyword.get(opts, :name, "sample_tool")
@@ -172,6 +173,7 @@ defmodule ExMCP.Testing.MockServer do
 
       resource = sample_resource(uri: "https://api.example.com", name: "API")
   """
+  @spec sample_resource() :: map()
   @spec sample_resource(keyword()) :: map()
   def sample_resource(opts \\ []) do
     uri = Keyword.get(opts, :uri, "file://sample_data.txt")
@@ -193,6 +195,7 @@ defmodule ExMCP.Testing.MockServer do
 
       prompt = sample_prompt(name: "custom_prompt")
   """
+  @spec sample_prompt() :: map()
   @spec sample_prompt(keyword()) :: map()
   def sample_prompt(opts \\ []) do
     name = Keyword.get(opts, :name, "sample_prompt")

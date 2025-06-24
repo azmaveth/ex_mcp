@@ -131,7 +131,8 @@ defmodule ExMCP.Authorization do
           token_endpoint: String.t(),
           redirect_uri: String.t(),
           scopes: [String.t()],
-          additional_params: map() | nil
+          additional_params: map() | nil,
+          resource: String.t() | [String.t()] | nil
         }
 
   @type token_response :: %{
@@ -166,6 +167,7 @@ defmodule ExMCP.Authorization do
     - `:redirect_uri` - Callback URI after authorization
     - `:authorization_endpoint` - Authorization server's authorize endpoint
     - `:scopes` - List of requested scopes
+    - `:resource` - Optional resource indicator(s) (string or list of strings) per RFC 8707
     - `:additional_params` - Optional additional query parameters
 
   ## Return Value
@@ -186,7 +188,8 @@ defmodule ExMCP.Authorization do
         client_id: "my-mcp-client",
         redirect_uri: "http://localhost:8080/callback",
         authorization_endpoint: "https://auth.example.com/oauth/authorize",
-        scopes: ["mcp:read", "mcp:write"]
+        scopes: ["mcp:read", "mcp:write"],
+        resource: "https://mcp.example.com"
       })
 
       # Store state securely (contains code_verifier)
@@ -197,6 +200,7 @@ defmodule ExMCP.Authorization do
   def start_authorization_flow(config) do
     with :ok <- validate_https_endpoint(config.authorization_endpoint),
          :ok <- validate_redirect_uri(config.redirect_uri),
+         :ok <- validate_resource_parameters(config),
          {:ok, code_verifier, code_challenge} <- PKCE.generate_challenge() do
       state = %{
         code_verifier: code_verifier,
@@ -214,7 +218,13 @@ defmodule ExMCP.Authorization do
       }
 
       additional_params = Map.get(config, :additional_params, %{})
-      all_params = Map.merge(params, additional_params)
+      resource_params = build_resource_params(config)
+
+      all_params =
+        params
+        |> Map.merge(additional_params)
+        |> Map.to_list()
+        |> Kernel.++(resource_params)
 
       auth_url = build_authorization_url(config.authorization_endpoint, all_params)
 
@@ -237,6 +247,7 @@ defmodule ExMCP.Authorization do
   - `:redirect_uri` - Same redirect URI used in authorization request
   - `:token_endpoint` - Authorization server's token endpoint
   - `:client_secret` - Client secret (optional, for confidential clients)
+  - `:resource` - Optional resource indicator(s) (string or list of strings) per RFC 8707
 
   ## Return Value
 
@@ -254,7 +265,8 @@ defmodule ExMCP.Authorization do
         code_verifier: state.code_verifier,
         client_id: "my-mcp-client",
         redirect_uri: "http://localhost:8080/callback",
-        token_endpoint: "https://auth.example.com/oauth/token"
+        token_endpoint: "https://auth.example.com/oauth/token",
+        resource: "https://mcp.example.com"
       })
 
       access_token = tokens.access_token
@@ -269,8 +281,9 @@ defmodule ExMCP.Authorization do
           token_endpoint: token_endpoint
         } = params
       ) do
-    with :ok <- validate_https_endpoint(token_endpoint) do
-      request_body = %{
+    with :ok <- validate_https_endpoint(token_endpoint),
+         :ok <- validate_resource_parameters(params) do
+      request_body_map = %{
         grant_type: "authorization_code",
         code: code,
         redirect_uri: redirect_uri,
@@ -279,11 +292,14 @@ defmodule ExMCP.Authorization do
       }
 
       # Add client_secret if provided
-      request_body =
+      request_body_map =
         case Map.get(params, :client_secret) do
-          nil -> request_body
-          secret -> Map.put(request_body, :client_secret, secret)
+          nil -> request_body_map
+          secret -> Map.put(request_body_map, :client_secret, secret)
         end
+
+      resource_params = build_resource_params(params)
+      request_body = Map.to_list(request_body_map) ++ resource_params
 
       make_token_request(token_endpoint, request_body)
     end
@@ -302,6 +318,7 @@ defmodule ExMCP.Authorization do
   - `:client_secret` - Client secret
   - `:token_endpoint` - Authorization server's token endpoint
   - `:scopes` - List of requested scopes (optional)
+  - `:resource` - Optional resource indicator(s) (string or list of strings) per RFC 8707
 
   ## Return Value
 
@@ -313,7 +330,8 @@ defmodule ExMCP.Authorization do
         client_id: "service-client",
         client_secret: "client-secret",
         token_endpoint: "https://auth.example.com/oauth/token",
-        scopes: ["mcp:admin"]
+        scopes: ["mcp:admin"],
+        resource: "https://inventory.api.example.com"
       })
 
       access_token = tokens.access_token
@@ -326,19 +344,23 @@ defmodule ExMCP.Authorization do
           token_endpoint: token_endpoint
         } = params
       ) do
-    with :ok <- validate_https_endpoint(token_endpoint) do
-      request_body = %{
+    with :ok <- validate_https_endpoint(token_endpoint),
+         :ok <- validate_resource_parameters(params) do
+      request_body_map = %{
         grant_type: "client_credentials",
         client_id: client_id,
         client_secret: client_secret
       }
 
       # Add scopes if provided
-      request_body =
+      request_body_map =
         case Map.get(params, :scopes) do
-          nil -> request_body
-          scopes -> Map.put(request_body, :scope, Enum.join(scopes, " "))
+          nil -> request_body_map
+          scopes -> Map.put(request_body_map, :scope, Enum.join(scopes, " "))
         end
+
+      resource_params = build_resource_params(params)
+      request_body = Map.to_list(request_body_map) ++ resource_params
 
       make_token_request(token_endpoint, request_body)
     end
@@ -506,54 +528,59 @@ defmodule ExMCP.Authorization do
   def token_request(config) do
     endpoint = config[:token_endpoint] || raise "Missing token_endpoint"
 
-    # Build request body based on grant type
-    body = build_refresh_token_request_body(config)
+    with :ok <- validate_resource_parameters(config) do
+      # Build request body based on grant type
+      body = build_refresh_token_request_body(config)
 
-    # Make the request
-    make_token_request(endpoint, body)
+      # Make the request
+      make_token_request(endpoint, body)
+    end
   end
 
   # Private helper functions
 
   defp build_refresh_token_request_body(config) do
-    base_params = %{
-      "client_id" => config[:client_id]
-    }
+    base_params = [
+      client_id: config[:client_id]
+    ]
 
     # Add grant-specific parameters
-    cond do
-      config[:refresh_token] ->
-        params =
-          Map.merge(base_params, %{
-            "grant_type" => "refresh_token",
-            "refresh_token" => config[:refresh_token]
-          })
+    grant_params =
+      cond do
+        config[:refresh_token] ->
+          params = [
+            grant_type: "refresh_token",
+            refresh_token: config[:refresh_token]
+          ]
 
-        # Add client_secret if provided (for confidential clients)
-        if config[:client_secret] do
-          Map.put(params, "client_secret", config[:client_secret])
-        else
-          params
-        end
+          # Add client_secret if provided (for confidential clients)
+          if config[:client_secret] do
+            params ++ [client_secret: config[:client_secret]]
+          else
+            params
+          end
 
-      config[:code] ->
-        Map.merge(base_params, %{
-          "grant_type" => "authorization_code",
-          "code" => config[:code],
-          "redirect_uri" => config[:redirect_uri],
-          "code_verifier" => config[:code_verifier]
-        })
+        config[:code] ->
+          [
+            grant_type: "authorization_code",
+            code: config[:code],
+            redirect_uri: config[:redirect_uri],
+            code_verifier: config[:code_verifier]
+          ]
 
-      config[:client_secret] ->
-        Map.merge(base_params, %{
-          "grant_type" => "client_credentials",
-          "client_secret" => config[:client_secret],
-          "scope" => config[:scope] || ""
-        })
+        config[:client_secret] ->
+          [
+            grant_type: "client_credentials",
+            client_secret: config[:client_secret],
+            scope: config[:scope] || ""
+          ]
 
-      true ->
-        raise "Invalid token request configuration"
-    end
+        true ->
+          raise "Invalid token request configuration"
+      end
+
+    resource_params = build_resource_params(config)
+    base_params ++ grant_params ++ resource_params
   end
 
   defp validate_https_endpoint(url) do
@@ -572,6 +599,48 @@ defmodule ExMCP.Authorization do
     end
   end
 
+  defp validate_resource_parameters(config) do
+    case Map.get(config, :resource) do
+      nil ->
+        :ok
+
+      uri when is_binary(uri) ->
+        validate_resource_uri(uri)
+
+      uris when is_list(uris) ->
+        Enum.reduce_while(uris, :ok, fn uri, _acc ->
+          case validate_resource_uri(uri) do
+            :ok -> {:cont, :ok}
+            error -> {:halt, error}
+          end
+        end)
+
+      _ ->
+        {:error, :invalid_resource_parameter}
+    end
+  end
+
+  defp validate_resource_uri(uri_string) when is_binary(uri_string) do
+    if String.trim(uri_string) == "" do
+      {:error, {:invalid_resource_uri, "cannot be a blank string"}}
+    else
+      case URI.parse(uri_string) do
+        %URI{scheme: nil} ->
+          {:error, {:invalid_resource_uri, "missing scheme: " <> uri_string}}
+
+        %URI{fragment: fragment} when fragment != nil ->
+          {:error, {:invalid_resource_uri, "contains fragment: " <> uri_string}}
+
+        %URI{} ->
+          :ok
+      end
+    end
+  end
+
+  defp validate_resource_uri(uri) do
+    {:error, {:invalid_resource_uri, "must be a string, got: #{inspect(uri)}"}}
+  end
+
   defp generate_state do
     :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
   end
@@ -579,6 +648,19 @@ defmodule ExMCP.Authorization do
   defp build_authorization_url(base_url, params) do
     query_string = URI.encode_query(params)
     "#{base_url}?#{query_string}"
+  end
+
+  defp build_resource_params(config) do
+    case Map.get(config, :resource) do
+      nil ->
+        []
+
+      uri when is_binary(uri) ->
+        [resource: uri]
+
+      uris when is_list(uris) ->
+        Enum.map(uris, fn uri -> {:resource, uri} end)
+    end
   end
 
   defp build_metadata_url(issuer_url) do
