@@ -30,9 +30,10 @@ defmodule Mix.Tasks.Test.Cleanup do
     ExMCP.TestServer,
     ExMCP.TestHTTPServer,
     ExMCP.TestSSEServer,
-    ExMCP.Supervisor,
-    ExMCP.ServiceRegistry,
-    ExMCP.Registry,
+    # Don't kill the main application processes - they should be managed by Application.stop/1
+    # ExMCP.Supervisor,
+    # ExMCP.ServiceRegistry,
+    # ExMCP.Registry,
     ExMCP.Testing.MockServer
   ]
   @cowboy_listeners [

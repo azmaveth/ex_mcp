@@ -21,13 +21,28 @@ defmodule ExMCP.Test.Support.SecurityTestHelpers do
   Generates a random string suitable for an API key.
   """
   def generate_api_key,
-    do: "sk-" <> (:crypto.strong_rand_bytes(24) |> Base.encode64url(padding: false))
+    do: "sk-" <> (:crypto.strong_rand_bytes(24) |> Base.url_encode64(padding: false))
 
   @doc """
   Generates a random string suitable for an OAuth token.
   """
   def generate_oauth_token,
-    do: "oauth-" <> (:crypto.strong_rand_bytes(32) |> Base.encode64url(padding: false))
+    do: "oauth-" <> (:crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false))
+
+  @doc """
+  Generates a UUID v4 string without Ecto dependency.
+  """
+  def generate_uuid do
+    <<u0::32, u1::16, u2::16, u3::16, u4::48>> = :crypto.strong_rand_bytes(16)
+    # Set version 4 bits
+    u2_v4 = Bitwise.bor(Bitwise.band(u2, 0x0FFF), 0x4000)
+    # Set variant bits (10xx)
+    u3_var = Bitwise.bor(Bitwise.band(u3, 0x3FFF), 0x8000)
+
+    :io_lib.format("~8.16.0B-~4.16.0B-~4.16.0B-~4.16.0B-~12.16.0B", [u0, u1, u2_v4, u3_var, u4])
+    |> :erlang.iolist_to_binary()
+    |> String.downcase()
+  end
 
   @doc """
   Generates a random string suitable for a session cookie.
@@ -89,7 +104,7 @@ defmodule ExMCP.Test.Support.SecurityTestHelpers do
   def build_security_request(transport, opts \\ []) do
     base_request = %{
       transport: transport,
-      request_id: Ecto.UUID.generate(),
+      request_id: generate_uuid(),
       source: Keyword.get(opts, :source, "test"),
       metadata: Keyword.get(opts, :metadata, %{})
     }

@@ -13,7 +13,7 @@ defmodule ExMCP.Test.FlexibleMockTransport do
     end
   end
 
-  def send(%{pid: pid}, message) do
+  def send_data(%{pid: pid}, message) do
     Kernel.send(pid, {:transport_send, message})
     {:ok, %{pid: pid}}
   end
@@ -33,7 +33,7 @@ defmodule ExMCP.Test.FlexibleMockTransport do
   def close(_state), do: :ok
   def connected?(_state), do: true
   def controlling_process(_state, _pid), do: :ok
-  def send_message(msg, state), do: send(state, msg)
+  def send_message(msg, state), do: send_data(state, msg)
   def receive_message(state), do: recv(state, 5000)
 end
 

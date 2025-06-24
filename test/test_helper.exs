@@ -2,8 +2,9 @@
 # No need to explicitly require them here as they're already available
 
 # Import test helpers after compilation (in ExUnit.start callback)
-ExUnit.after_suite(fn _ ->
-  # Horde test helpers are available via import in individual test files
+ExUnit.after_suite(fn _results ->
+  # Safety net: cleanup any truly orphaned test processes
+  ExMCP.TestSupport.cleanup_orphans()
   :ok
 end)
 
@@ -19,32 +20,16 @@ end)
 # Enable test mode for SSE handlers to prevent blocking in tests
 Application.put_env(:ex_mcp, :test_mode, true)
 
-# Clean up any stray test processes before running tests
-if System.get_env("SKIP_TEST_CLEANUP") != "true" do
-  Mix.Task.run("test.cleanup")
-end
-
-# Stop the application to prevent global process conflicts during tests
+# Stop the application first to prevent it from being killed by cleanup
 # Tests that need the application should start it explicitly in their setup
 Application.stop(:ex_mcp)
 
-# Ensure all global processes are stopped
-for name <- [
-      ExMCP.Supervisor,
-      ExMCP.ServiceRegistry,
-      ExMCP.ServiceSupervisor,
-      ExMCP.DynamicSupervisor
-    ] do
-  case Process.whereis(name) do
-    nil ->
-      :ok
+# Wait a bit for the application to fully stop
+Process.sleep(50)
 
-    pid ->
-      Process.exit(pid, :kill)
-      # Wait for cleanup
-      Process.sleep(10)
-  end
-end
+# Safe cleanup: Only handle network resources that might block new tests
+# Application processes are handled by OTP supervision - don't force kill them
+ExMCP.TestSupport.safe_cleanup_network_resources()
 
 # Configure default exclusions for fast local development
 # These can be overridden with --include flags
@@ -65,7 +50,8 @@ default_exclusions = [
 
   # Tests requiring specific setup
   requires_http: true,
-  requires_beam: true
+  requires_beam: true,
+  requires_bypass: true
 ]
 
 # Print exclusion summary
