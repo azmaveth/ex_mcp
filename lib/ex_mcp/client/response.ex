@@ -221,6 +221,29 @@ defmodule ExMCP.Client.Response do
     }
   end
 
+  @doc """
+  Converts a raw protocol response to a normalized format.
+
+  This is a convenience function that handles the most common response types
+  and provides a unified interface for response normalization.
+  """
+  @spec from_protocol(map()) :: {:ok, any()} | {:error, any()}
+  def from_protocol(%{"result" => result}) do
+    {:ok, result}
+  end
+
+  def from_protocol(%{"error" => error}) do
+    {:error, error}
+  end
+
+  def from_protocol(response) when is_map(response) do
+    {:ok, response}
+  end
+
+  def from_protocol(response) do
+    {:ok, response}
+  end
+
   # Private Implementation
 
   defp normalize_schema(nil), do: nil

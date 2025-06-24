@@ -30,7 +30,7 @@ defmodule ExMCP.ClientTest do
       end
     end
 
-    def send_message(_data, %{connected: false} = state) do
+    def send_message(_data, %{connected: false} = _state) do
       {:error, :not_connected}
     end
 

@@ -17,13 +17,13 @@ defmodule ExMCP.Client do
 
       # Connect with URL
       {:ok, client} = ExMCP.Client.connect("http://localhost:8080/mcp")
-      
+
       # Connect with transport spec
       {:ok, client} = ExMCP.Client.start_link(
         transport: :stdio,
         command: "mcp-server"
       )
-      
+
       # List and call tools
       {:ok, %{"tools" => tools}} = ExMCP.Client.list_tools(client)
       {:ok, result} = ExMCP.Client.call_tool(client, "weather", %{location: "NYC"})
@@ -32,8 +32,13 @@ defmodule ExMCP.Client do
   use GenServer
   require Logger
 
-  alias ExMCP.{Response, Error, TransportManager}
+  alias ExMCP.Client.ConnectionManager
+  alias ExMCP.Client.Operations.Prompts
+  alias ExMCP.Client.Operations.Resources
+  alias ExMCP.Client.Operations.Tools
+  alias ExMCP.Client.RequestHandler
   alias ExMCP.Internal.Protocol
+  alias ExMCP.Response
 
   # Client state
   defstruct [
@@ -42,6 +47,7 @@ defmodule ExMCP.Client do
     :server_info,
     :transport_opts,
     :pending_requests,
+    :pending_batches,
     :receiver_task,
     :health_check_ref,
     :health_check_interval,
@@ -49,8 +55,7 @@ defmodule ExMCP.Client do
     :last_activity,
     :reconnect_attempts,
     :client_info,
-    :raw_terms_enabled,
-    :batch_tracking
+    :raw_terms_enabled
   ]
 
   @type t :: GenServer.server()
@@ -81,10 +86,10 @@ defmodule ExMCP.Client do
 
       # URL string
       {:ok, client} = ExMCP.Client.connect("http://localhost:8080/mcp")
-      
+
       # Transport spec
       {:ok, client} = ExMCP.Client.connect({:stdio, command: "mcp-server"})
-      
+
       # Multiple transports with fallback
       {:ok, client} = ExMCP.Client.connect([
         "http://localhost:8080/mcp",
@@ -107,20 +112,14 @@ defmodule ExMCP.Client do
   """
   @spec list_tools(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
   def list_tools(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    format = Keyword.get(opts, :format, :map)
-
-    case GenServer.call(client, {:request, "tools/list", %{}}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+    make_request(client, "tools/list", %{}, opts, 5_000)
   end
 
   @doc """
   Convenience alias for list_tools/2.
   """
   @spec tools(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
-  def tools(client, opts \\ []), do: list_tools(client, opts)
+  def tools(client, opts \\ []), do: Tools.tools(client, opts)
 
   @doc """
   Calls a tool with the given arguments.
@@ -139,18 +138,40 @@ defmodule ExMCP.Client do
   end
 
   def call_tool(client, tool_name, arguments, opts) when is_list(opts) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
-    format = Keyword.get(opts, :format, :map)
+    Tools.call_tool(client, tool_name, arguments, opts)
+  end
 
-    params = %{
-      "name" => tool_name,
-      "arguments" => arguments
-    }
+  @doc """
+  Sends a batch of requests to the server.
 
-    case GenServer.call(client, {:request, "tools/call", params}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+  This function allows sending multiple requests in a single batch, which can
+  be more efficient than sending them individually. The server processes the
+  requests and returns a batch of responses.
+
+  ## Parameters
+
+  - `client` - Client process reference
+  - `requests` - A list of `{method, params}` tuples for each request.
+  - `timeout` - Timeout for the entire batch operation (default: 30_000).
+
+  ## Returns
+
+  - `{:ok, results}` - On success, where `results` is a list of `{:ok, result}`
+    or `{:error, error}` tuples, in the same order as the original requests.
+  - `{:error, reason}` - If the batch request fails (e.g., timeout).
+
+  ## Example
+
+      requests = [
+        {"tools/list", %{}},
+        {"prompts/list", %{}}
+      ]
+      {:ok, [tools_result, prompts_result]} = ExMCP.Client.batch_request(client, requests)
+  """
+  @spec batch_request(t(), [{String.t(), map()}], timeout()) ::
+          {:ok, [any()]} | {:error, any()}
+  def batch_request(client, requests, timeout \\ 30_000) do
+    GenServer.call(client, {:batch_request, requests}, timeout)
   end
 
   @doc """
@@ -172,13 +193,7 @@ defmodule ExMCP.Client do
   @spec find_tool(t(), String.t() | nil, keyword()) ::
           {:ok, map()} | {:error, :not_found} | {:error, any()}
   def find_tool(client, name_or_pattern \\ nil, opts \\ []) do
-    case list_tools(client, opts) do
-      {:ok, %{"tools" => tools}} ->
-        do_find_matching_tool(tools, name_or_pattern, opts)
-
-      error ->
-        error
-    end
+    Tools.find_tool(client, name_or_pattern, opts)
   end
 
   @doc """
@@ -186,13 +201,7 @@ defmodule ExMCP.Client do
   """
   @spec list_resources(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
   def list_resources(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    format = Keyword.get(opts, :format, :map)
-
-    case GenServer.call(client, {:request, "resources/list", %{}}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+    make_request(client, "resources/list", %{}, opts, 5_000)
   end
 
   @doc """
@@ -200,27 +209,19 @@ defmodule ExMCP.Client do
   """
   @spec read_resource(t(), String.t(), keyword()) :: {:ok, any()} | {:error, any()}
   def read_resource(client, uri, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 10_000)
-    format = Keyword.get(opts, :format, :map)
-
-    params = %{"uri" => uri}
-
-    case GenServer.call(client, {:request, "resources/read", params}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+    Resources.read_resource(client, uri, opts)
   end
 
   @doc """
   Subscribes to notifications for a resource.
 
-  Sends a `resources/subscribe` request to receive notifications when the 
+  Sends a `resources/subscribe` request to receive notifications when the
   specified resource changes. The server will send `notifications/resources/updated`
   messages when the subscribed resource is modified.
 
   ## Parameters
 
-  - `client` - Client process reference  
+  - `client` - Client process reference
   - `uri` - Resource URI to subscribe to (e.g., "file:///path/to/file")
 
   ## Options
@@ -230,7 +231,7 @@ defmodule ExMCP.Client do
 
   ## Returns
 
-  - `{:ok, result}` - Subscription successful 
+  - `{:ok, result}` - Subscription successful
   - `{:error, error}` - Subscription failed with error details
 
   ## Examples
@@ -239,21 +240,13 @@ defmodule ExMCP.Client do
   """
   @spec subscribe_resource(t(), String.t(), keyword()) :: {:ok, map()} | {:error, any()}
   def subscribe_resource(client, uri, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    format = Keyword.get(opts, :format, :map)
-
-    params = %{"uri" => uri}
-
-    case GenServer.call(client, {:request, "resources/subscribe", params}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+    Resources.subscribe_resource(client, uri, opts)
   end
 
   @doc """
   Unsubscribes from notifications for a resource.
 
-  Sends a `resources/unsubscribe` request to stop receiving notifications 
+  Sends a `resources/unsubscribe` request to stop receiving notifications
   for the specified resource.
 
   ## Parameters
@@ -263,7 +256,7 @@ defmodule ExMCP.Client do
 
   ## Options
 
-  - `:timeout` - Request timeout (default: 5000) 
+  - `:timeout` - Request timeout (default: 5000)
   - `:format` - Return format (:map or :struct, default: :map)
 
   ## Returns
@@ -277,15 +270,7 @@ defmodule ExMCP.Client do
   """
   @spec unsubscribe_resource(t(), String.t(), keyword()) :: {:ok, map()} | {:error, any()}
   def unsubscribe_resource(client, uri, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    format = Keyword.get(opts, :format, :map)
-
-    params = %{"uri" => uri}
-
-    case GenServer.call(client, {:request, "resources/unsubscribe", params}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+    Resources.unsubscribe_resource(client, uri, opts)
   end
 
   @doc """
@@ -293,13 +278,7 @@ defmodule ExMCP.Client do
   """
   @spec list_prompts(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
   def list_prompts(client, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    format = Keyword.get(opts, :format, :map)
-
-    case GenServer.call(client, {:request, "prompts/list", %{}}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+    Prompts.list_prompts(client, opts)
   end
 
   @doc """
@@ -307,18 +286,7 @@ defmodule ExMCP.Client do
   """
   @spec get_prompt(t(), String.t(), map(), keyword()) :: {:ok, any()} | {:error, any()}
   def get_prompt(client, prompt_name, arguments \\ %{}, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    format = Keyword.get(opts, :format, :map)
-
-    params = %{
-      "name" => prompt_name,
-      "arguments" => arguments
-    }
-
-    case GenServer.call(client, {:request, "prompts/get", params}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+    Prompts.get_prompt(client, prompt_name, arguments, opts)
   end
 
   @doc """
@@ -352,10 +320,8 @@ defmodule ExMCP.Client do
         opts when is_list(opts) -> Keyword.get(opts, :timeout, 5_000)
       end
 
-    case GenServer.call(client, {:request, "ping", %{}}, timeout) do
-      {:ok, result} -> {:ok, result}
-      error -> error
-    end
+    opts = if is_list(opts_or_timeout), do: opts_or_timeout, else: []
+    make_request(client, "ping", %{}, opts, timeout)
   end
 
   @doc """
@@ -383,44 +349,40 @@ defmodule ExMCP.Client do
   end
 
   @doc """
-  Sends a batch of JSON-RPC requests to the server.
+  Sends a cancellation notification for a pending request.
 
-  Takes a list of request tuples in the format `{method, params}` and sends
-  them as a single JSON-RPC batch. Returns a list of results in the same order
-  as the requests.
+  This function sends a `notifications/cancelled` message to inform the server
+  that a previously-sent request should be cancelled. The server MAY stop
+  processing the request if it hasn't completed yet.
 
   ## Parameters
 
-  - `client` - The client process
-  - `requests` - List of `{method, params}` tuples
-  - `timeout` - Timeout in milliseconds (default: 30_000)
+  - `client` - Client process reference
+  - `request_id` - The ID of the request to cancel
+  - `reason` - Optional human-readable reason for cancellation
 
   ## Returns
 
-  - `{:ok, results}` - List of `{:ok, result}` or `{:error, error}` tuples
-  - `{:error, reason}` - If the batch request fails entirely
+  - `:ok` - Cancellation notification sent
+  - `{:error, :cannot_cancel_initialize}` - Cannot cancel initialize request
 
   ## Examples
 
-      requests = [
-        {"tools/list", %{}},
-        {"resources/list", %{}},
-        {"ping", %{}}
-      ]
-      
-      {:ok, results} = ExMCP.Client.batch_request(client, requests, 5000)
-      
-      # results will be like:
-      # [
-      #   {:ok, %{"tools" => [...]}},
-      #   {:ok, %{"resources" => [...]}},
-      #   {:ok, %{}}
-      # ]
+      :ok = ExMCP.Client.send_cancelled(client, "req_123", "User cancelled")
+      :ok = ExMCP.Client.send_cancelled(client, 12345, nil)
   """
-  @spec batch_request(t(), [{String.t(), map()}], timeout()) ::
-          {:ok, [{:ok, any()} | {:error, any()}]} | {:error, any()}
-  def batch_request(client, requests, timeout \\ 30_000) when is_list(requests) do
-    GenServer.call(client, {:batch_request, requests}, timeout)
+  @spec send_cancelled(t(), ExMCP.Types.request_id(), String.t() | nil) ::
+          :ok | {:error, :cannot_cancel_initialize}
+  def send_cancelled(client, request_id, reason \\ nil) do
+    case Protocol.encode_cancelled(request_id, reason) do
+      {:ok, notification} ->
+        # Extract method and params from the notification
+        %{"method" => method, "params" => params} = notification
+        notify(client, method, params)
+
+      {:error, :cannot_cancel_initialize} = error ->
+        error
+    end
   end
 
   @doc """
@@ -465,7 +427,7 @@ defmodule ExMCP.Client do
     state = %__MODULE__{
       transport_opts: opts,
       pending_requests: %{},
-      batch_tracking: %{},
+      pending_batches: %{},
       health_check_interval: health_check_interval,
       connection_status: :connecting,
       last_activity: System.system_time(:second),
@@ -478,29 +440,9 @@ defmodule ExMCP.Client do
       {:ok, %{state | connection_status: :disconnected}}
     else
       # Start connection process
-      case establish_connection(opts) do
-        {:ok, transport_mod, transport_state, server_info} ->
-          # Check transport capabilities for raw terms support
-          raw_terms_enabled = check_transport_capabilities(transport_mod, transport_state)
-
-          # Start receiver task
-          receiver_task = start_receiver_task(transport_mod, transport_state)
-
-          # Schedule health check
-          health_check_ref = schedule_health_check(health_check_interval)
-
-          new_state = %{
-            state
-            | transport_mod: transport_mod,
-              transport_state: transport_state,
-              server_info: server_info,
-              receiver_task: receiver_task,
-              health_check_ref: health_check_ref,
-              connection_status: :connected,
-              raw_terms_enabled: raw_terms_enabled
-          }
-
-          {:ok, new_state}
+      case ConnectionManager.establish_connection(state, opts) do
+        {:ok, updated_state} ->
+          {:ok, updated_state}
 
         {:error, reason} ->
           Logger.error("Failed to establish connection: #{inspect(reason)}")
@@ -511,100 +453,11 @@ defmodule ExMCP.Client do
 
   @impl GenServer
   def handle_call({:request, method, params}, from, state) do
-    case state.connection_status do
-      :connected ->
-        # Generate request
-        id = generate_id()
-
-        request = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "method" => method,
-          "params" => params
-        }
-
-        # Send request
-        case send_message(state, request) do
-          {:ok, new_transport_state} ->
-            # Track pending request
-            pending = Map.put(state.pending_requests, id, from)
-
-            new_state = %{
-              state
-              | transport_state: new_transport_state,
-                pending_requests: pending,
-                last_activity: System.system_time(:second)
-            }
-
-            {:noreply, new_state}
-
-          {:error, reason} ->
-            {:reply, {:error, reason}, state}
-        end
-
-      _ ->
-        {:reply, {:error, :not_connected}, state}
-    end
+    RequestHandler.handle_request(method, params, from, state)
   end
 
   def handle_call({:batch_request, requests}, from, state) do
-    case state.connection_status do
-      :connected ->
-        # Transform requests into JSON-RPC format with unique IDs
-        {batch_requests, id_mapping} =
-          Enum.reduce(requests, {[], %{}}, fn {method, params}, {acc_reqs, acc_map} ->
-            id = generate_id()
-
-            request = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "method" => method,
-              "params" => params
-            }
-
-            {[request | acc_reqs], Map.put(acc_map, id, length(acc_reqs))}
-          end)
-
-        batch_requests = Enum.reverse(batch_requests)
-
-        # Send batch as array
-        case send_message(state, batch_requests) do
-          {:ok, new_transport_state} ->
-            # Track the batch request with special handling
-            batch_info = %{
-              type: :batch,
-              from: from,
-              id_mapping: id_mapping,
-              responses: %{},
-              expected_count: length(requests)
-            }
-
-            # Add all IDs to pending requests
-            pending =
-              Enum.reduce(Map.keys(id_mapping), state.pending_requests, fn id, acc ->
-                Map.put(acc, id, {:batch, from, id_mapping})
-              end)
-
-            # Store batch info
-            batch_tracking = Map.put(state.batch_tracking || %{}, from, batch_info)
-
-            new_state = %{
-              state
-              | transport_state: new_transport_state,
-                pending_requests: pending,
-                batch_tracking: batch_tracking,
-                last_activity: System.system_time(:second)
-            }
-
-            {:noreply, new_state}
-
-          {:error, reason} ->
-            {:reply, {:error, reason}, state}
-        end
-
-      _ ->
-        {:reply, {:error, :not_connected}, state}
-    end
+    RequestHandler.handle_batch_request(requests, from, state)
   end
 
   def handle_call(:disconnect, _from, state) do
@@ -621,9 +474,10 @@ defmodule ExMCP.Client do
     end
 
     # Reply to all pending requests with error
-    for {_id, from} <- state.pending_requests do
-      GenServer.reply(from, {:error, :disconnected})
-    end
+    state.pending_requests
+    |> Map.values()
+    |> Enum.uniq()
+    |> Enum.each(&GenServer.reply(&1, {:error, :disconnected}))
 
     # Close transport connection
     if state.transport_mod && state.transport_state do
@@ -640,6 +494,7 @@ defmodule ExMCP.Client do
       state
       | connection_status: :disconnected,
         pending_requests: %{},
+        pending_batches: %{},
         receiver_task: nil,
         health_check_ref: nil
     }
@@ -662,228 +517,12 @@ defmodule ExMCP.Client do
 
   @impl GenServer
   def handle_cast({:notification, method, params}, state) do
-    case state.connection_status do
-      :connected ->
-        # Create notification message (no id field)
-        notification = %{
-          "jsonrpc" => "2.0",
-          "method" => method,
-          "params" => params
-        }
-
-        # Send notification
-        case send_message(state, notification) do
-          {:ok, new_transport_state} ->
-            new_state = %{
-              state
-              | transport_state: new_transport_state,
-                last_activity: System.system_time(:second)
-            }
-
-            {:noreply, new_state}
-
-          {:error, _reason} ->
-            # For notifications, we don't reply with errors
-            # Just log and continue
-            {:noreply, state}
-        end
-
-      _ ->
-        # Not connected, ignore notification
-        {:noreply, state}
-    end
+    RequestHandler.handle_cast_notification(method, params, state)
   end
 
   @impl GenServer
   def handle_info({:transport_message, message}, state) do
-    # Update last activity
-    new_state = %{state | last_activity: System.system_time(:second)}
-
-    # Parse message based on transport capabilities
-    parsed_message =
-      if state.raw_terms_enabled do
-        # Message is already a map from raw terms transport
-        {:ok, message}
-      else
-        # Decode JSON message
-        case message do
-          "" -> {:error, :empty_message}
-          m when is_binary(m) -> Jason.decode(m)
-          _ -> {:error, :invalid_message}
-        end
-      end
-
-    case parsed_message do
-      {:ok, responses} when is_list(responses) ->
-        # Handle batch response array
-        {updated_state, _} =
-          Enum.reduce(responses, {new_state, state.pending_requests}, fn response,
-                                                                         {acc_state, acc_pending} ->
-            case response do
-              %{"id" => id} when is_map_key(acc_pending, id) ->
-                # Process each response in the batch
-                {from_info, new_pending} = Map.pop(acc_pending, id)
-
-                case from_info do
-                  {:batch, batch_from, id_mapping} ->
-                    # Store batch member response
-                    batch_info = Map.get(acc_state.batch_tracking, batch_from)
-                    position = Map.get(id_mapping, id)
-
-                    result =
-                      if Map.has_key?(response, "error") do
-                        {:error, format_error(response["error"])}
-                      else
-                        {:ok, response["result"]}
-                      end
-
-                    updated_responses = Map.put(batch_info.responses, position, result)
-                    updated_batch_info = %{batch_info | responses: updated_responses}
-
-                    if map_size(updated_responses) == batch_info.expected_count do
-                      # All responses received
-                      ordered_results =
-                        for i <- 0..(batch_info.expected_count - 1) do
-                          Map.get(updated_responses, i)
-                        end
-
-                      GenServer.reply(batch_from, {:ok, ordered_results})
-
-                      batch_tracking = Map.delete(acc_state.batch_tracking, batch_from)
-
-                      {%{
-                         acc_state
-                         | pending_requests: new_pending,
-                           batch_tracking: batch_tracking
-                       }, new_pending}
-                    else
-                      batch_tracking =
-                        Map.put(acc_state.batch_tracking, batch_from, updated_batch_info)
-
-                      {%{
-                         acc_state
-                         | pending_requests: new_pending,
-                           batch_tracking: batch_tracking
-                       }, new_pending}
-                    end
-
-                  _ ->
-                    # Should not happen in batch but handle anyway
-                    {acc_state, acc_pending}
-                end
-
-              _ ->
-                # Response without ID or unknown ID, skip
-                {acc_state, acc_pending}
-            end
-          end)
-
-        {:noreply, updated_state}
-
-      {:ok, %{"id" => id} = response} when is_map_key(state.pending_requests, id) ->
-        # Handle response to our request
-        {from_info, pending} = Map.pop(state.pending_requests, id)
-
-        case from_info do
-          {:batch, batch_from, id_mapping} ->
-            # This is part of a batch request
-            batch_info = Map.get(state.batch_tracking, batch_from)
-
-            # Store this response
-            position = Map.get(id_mapping, id)
-
-            result =
-              if Map.has_key?(response, "error") do
-                {:error, format_error(response["error"])}
-              else
-                {:ok, response["result"]}
-              end
-
-            updated_responses = Map.put(batch_info.responses, position, result)
-            updated_batch_info = %{batch_info | responses: updated_responses}
-
-            # Check if we have all responses
-            if map_size(updated_responses) == batch_info.expected_count do
-              # All responses received, send ordered results
-              ordered_results =
-                for i <- 0..(batch_info.expected_count - 1) do
-                  Map.get(updated_responses, i)
-                end
-
-              GenServer.reply(batch_from, {:ok, ordered_results})
-
-              # Clean up batch tracking
-              batch_tracking = Map.delete(state.batch_tracking, batch_from)
-              {:noreply, %{new_state | pending_requests: pending, batch_tracking: batch_tracking}}
-            else
-              # Still waiting for more responses
-              batch_tracking = Map.put(state.batch_tracking, batch_from, updated_batch_info)
-              {:noreply, %{new_state | pending_requests: pending, batch_tracking: batch_tracking}}
-            end
-
-          regular_from ->
-            # Regular single request
-            result =
-              if Map.has_key?(response, "error") do
-                {:error, format_error(response["error"])}
-              else
-                {:ok, response["result"]}
-              end
-
-            GenServer.reply(regular_from, result)
-            {:noreply, %{new_state | pending_requests: pending}}
-        end
-
-      {:ok, %{"method" => method, "params" => params} = _notification} ->
-        # Handle server notification
-        case method do
-          "notifications/resources/updated" ->
-            # Handle resource update notification
-            # The notification params contain the updated resource URI
-            # For now, just log the notification - users can override this
-            if Application.get_env(:ex_mcp, :debug_logging, false) do
-              Logger.debug("Resource updated: #{inspect(params)}")
-            end
-
-            {:noreply, new_state}
-
-          "notifications/roots/list_changed" ->
-            # Handle roots list changed notification
-            if Application.get_env(:ex_mcp, :debug_logging, false) do
-              Logger.debug("Roots list changed: #{inspect(params)}")
-            end
-
-            {:noreply, new_state}
-
-          "notifications/message" ->
-            # Handle log message notification from server
-            if Application.get_env(:ex_mcp, :debug_logging, false) do
-              Logger.debug("Server log message: #{inspect(params)}")
-            end
-
-            {:noreply, new_state}
-
-          _ ->
-            # Unknown notification type
-            if Application.get_env(:ex_mcp, :debug_logging, false) do
-              Logger.debug("Unknown notification: #{method} - #{inspect(params)}")
-            end
-
-            {:noreply, new_state}
-        end
-
-      {:ok, %{"method" => method} = notification} ->
-        # Handle notification without params
-        if Application.get_env(:ex_mcp, :debug_logging, false) do
-          Logger.debug("Notification without params: #{method} - #{inspect(notification)}")
-        end
-
-        {:noreply, new_state}
-
-      _ ->
-        # Unknown message
-        {:noreply, new_state}
-    end
+    RequestHandler.parse_transport_message(message, state)
   end
 
   def handle_info(:health_check, state) do
@@ -911,74 +550,7 @@ defmodule ExMCP.Client do
   def parse_connection_spec(spec), do: do_parse_connection_spec(spec)
 
   @doc false
-  def prepare_transport_config(opts), do: do_prepare_transport_config(opts)
-
-  @doc false
-  def find_matching_tool(tools, name, opts), do: do_find_matching_tool(tools, name, opts)
-
-  defp establish_connection(opts) do
-    case do_prepare_transport_config(opts) do
-      {:single, transport_mod, transport_opts} ->
-        # Single transport mode
-        case transport_mod.connect(transport_opts) do
-          {:ok, transport_state} ->
-            case do_handshake(transport_mod, transport_state) do
-              {:ok, server_info} ->
-                {:ok, transport_mod, transport_state, server_info}
-
-              {:error, reason} ->
-                transport_mod.close(transport_state)
-                {:error, reason}
-            end
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {:multiple, transport_manager_opts} ->
-        # Multiple transport mode with fallback
-        case TransportManager.connect(transport_manager_opts) do
-          {:ok, {transport_mod, transport_state}} ->
-            case do_handshake(transport_mod, transport_state) do
-              {:ok, server_info} ->
-                {:ok, transport_mod, transport_state, server_info}
-
-              {:error, reason} ->
-                transport_mod.close(transport_state)
-                {:error, reason}
-            end
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-    end
-  end
-
-  defp do_prepare_transport_config(opts) do
-    cond do
-      Keyword.has_key?(opts, :transports) ->
-        # Multiple transports specified
-        transport_manager_opts =
-          Keyword.take(opts, [
-            :transports,
-            :fallback_strategy,
-            :max_retries,
-            :retry_interval
-          ])
-
-        {:multiple, transport_manager_opts}
-
-      Keyword.has_key?(opts, :transport) ->
-        # Single transport specified
-        transport = Keyword.get(opts, :transport)
-        {transport_mod, transport_opts} = normalize_transport_spec(transport, opts)
-        {:single, transport_mod, transport_opts}
-
-      true ->
-        # Default to stdio
-        {:single, ExMCP.Transport.Stdio, opts}
-    end
-  end
+  def prepare_transport_config(opts), do: ConnectionManager.prepare_transport_config(opts)
 
   defp normalize_transport_spec(transport, opts) when is_atom(transport) do
     {transport_mod, mode_opts} =
@@ -1031,127 +603,11 @@ defmodule ExMCP.Client do
     [transports: transports]
   end
 
-  defp do_handshake(transport_mod, transport_state) do
-    # Check transport capabilities before handshake
-    raw_terms_enabled = check_transport_capabilities(transport_mod, transport_state)
-
-    # Build initialize request
-    client_info = build_client_info()
-
-    init_msg =
-      Protocol.encode_initialize(
-        client_info,
-        %{
-          "tools" => %{},
-          "resources" => %{},
-          "prompts" => %{}
-        }
-      )
-
-    # Send initialize request (encode based on transport capabilities)
-    message_to_send = if raw_terms_enabled, do: init_msg, else: Jason.encode!(init_msg)
-
-    case transport_mod.send_message(message_to_send, transport_state) do
-      {:ok, new_state} ->
-        # Receive response
-        case transport_mod.receive_message(new_state, 5_000) do
-          {:ok, response_data, next_state} ->
-            # Parse response based on transport capabilities
-            parsed_response =
-              if raw_terms_enabled do
-                {:ok, response_data}
-              else
-                Jason.decode(response_data)
-              end
-
-            case parsed_response do
-              {:ok, %{"result" => result}} ->
-                # Send initialized notification
-                case send_initialized(transport_mod, next_state, raw_terms_enabled) do
-                  {:ok, final_state} ->
-                    {:ok, Map.put(result, :transport_state, final_state)}
-
-                  {:error, reason} ->
-                    {:error, {:initialized_failed, reason}}
-                end
-
-              {:ok, %{"error" => error}} ->
-                {:error, {:handshake_error, error}}
-
-              _ ->
-                {:error, :invalid_handshake_response}
-            end
-
-          {:error, reason} ->
-            {:error, {:handshake_failed, reason}}
-        end
-
-      {:error, reason} ->
-        {:error, {:send_failed, reason}}
-    end
-  end
-
-  defp send_initialized(transport_mod, transport_state, raw_terms_enabled) do
-    msg = Protocol.encode_initialized()
-    message_to_send = if raw_terms_enabled, do: msg, else: Jason.encode!(msg)
-    transport_mod.send_message(message_to_send, transport_state)
-  end
-
   defp build_client_info do
     %{
       "name" => "ExMCP",
       "version" => "0.8.0"
     }
-  end
-
-  defp send_message(state, message) do
-    # Check if transport supports raw terms
-    message_to_send =
-      if state.raw_terms_enabled do
-        # Send raw map for performance
-        message
-      else
-        # Encode to JSON for spec compliance
-        Jason.encode!(message)
-      end
-
-    state.transport_mod.send_message(message_to_send, state.transport_state)
-  end
-
-  defp start_receiver_task(transport_mod, transport_state) do
-    parent = self()
-
-    Task.async(fn ->
-      receive_loop(parent, transport_mod, transport_state)
-    end)
-  end
-
-  defp receive_loop(parent, transport_mod, transport_state) do
-    case transport_mod.receive_message(transport_state) do
-      {:ok, message, new_state} ->
-        send(parent, {:transport_message, message})
-        receive_loop(parent, transport_mod, new_state)
-
-      {:error, :closed} ->
-        send(parent, {:transport_closed, :normal})
-        :ok
-
-      {:error, :no_message} ->
-        # No message available right now - continue listening
-        # Skip sleep for high-performance local transports to achieve sub-millisecond latency
-        if transport_mod == ExMCP.Transport.Local do
-          # Local transports use Agent queues - no need to sleep
-          receive_loop(parent, transport_mod, transport_state)
-        else
-          # Network transports need brief sleep to prevent busy-waiting
-          :timer.sleep(1)
-          receive_loop(parent, transport_mod, transport_state)
-        end
-
-      {:error, reason} ->
-        send(parent, {:transport_closed, reason})
-        :ok
-    end
   end
 
   defp schedule_health_check(interval) do
@@ -1167,47 +623,21 @@ defmodule ExMCP.Client do
     {:ok, %Response{content: response}}
   end
 
-  defp generate_id do
-    System.unique_integer([:positive])
-    |> Integer.to_string()
-  end
+  @doc false
+  @spec make_request(t(), String.t(), map(), keyword(), pos_integer()) ::
+          {:ok, any()} | {:error, any()}
+  def make_request(client, method, params, opts, default_timeout) do
+    timeout = Keyword.get(opts, :timeout, default_timeout)
 
-  defp format_error(error) when is_map(error) do
-    if Map.get(error, "code") == -32000 and Map.get(error, "message") == "Request timed out" do
-      :timeout
-    else
-      %Error{
-        code: error["code"],
-        message: error["message"],
-        data: error["data"]
-      }
-    end
-  end
+    case GenServer.call(client, {:request, method, params}, timeout) do
+      {:ok, response} ->
+        case Keyword.get(opts, :format, :map) do
+          :map -> {:ok, response}
+          format -> format_response(response, format)
+        end
 
-  defp format_error(error) do
-    %Error{message: inspect(error)}
-  end
-
-  defp do_find_matching_tool(tools, nil, _opts), do: {:ok, List.first(tools)}
-
-  defp do_find_matching_tool(tools, name, opts) do
-    fuzzy? = Keyword.get(opts, :fuzzy, false)
-
-    result =
-      if fuzzy? do
-        Enum.find(tools, fn tool ->
-          String.contains?(
-            String.downcase(tool["name"] || ""),
-            String.downcase(name)
-          )
-        end)
-      else
-        Enum.find(tools, &(&1["name"] == name))
-      end
-
-    case result do
-      nil -> {:error, :not_found}
-      tool -> {:ok, tool}
+      error ->
+        error
     end
   end
 
@@ -1263,18 +693,12 @@ defmodule ExMCP.Client do
   """
   @spec complete(t(), map(), map(), keyword()) :: {:ok, map()} | {:error, any()}
   def complete(client, ref, argument, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    format = Keyword.get(opts, :format, :map)
-
     params = %{
       "ref" => ref,
       "argument" => argument
     }
 
-    case GenServer.call(client, {:request, "completion/complete", params}, timeout) do
-      {:ok, response} -> format_response(response, format)
-      error -> error
-    end
+    make_request(client, "completion/complete", params, opts, 5_000)
   end
 
   @doc """
@@ -1302,7 +726,7 @@ defmodule ExMCP.Client do
   def set_log_level(client, level) when is_binary(level) do
     params = %{"level" => level}
 
-    case GenServer.call(client, {:request, "logging/setLevel", params}, 30_000) do
+    case make_request(client, "logging/setLevel", params, [], 30_000) do
       {:ok, response} -> {:ok, response}
       error -> error
     end
@@ -1345,14 +769,14 @@ defmodule ExMCP.Client do
 
   ## Parameters
 
-  - `client` - Client process reference  
+  - `client` - Client process reference
   - `level` - Log level string (e.g., "debug", "info", "warning", "error")
   - `message` - Log message text
   - `data` - Optional additional data (map or any JSON-serializable value)
 
   ## Supported Log Levels
 
-  Standard RFC 5424 levels: "debug", "info", "notice", "warning", "error", 
+  Standard RFC 5424 levels: "debug", "info", "notice", "warning", "error",
   "critical", "alert", "emergency"
 
   ## Returns
@@ -1363,10 +787,10 @@ defmodule ExMCP.Client do
   ## Examples
 
       {:ok, client} = ExMCP.Client.start_link(transport: :http, url: "...")
-      
+
       # Simple log message
       :ok = ExMCP.Client.log_message(client, "info", "User logged in")
-      
+
       # Log message with additional context
       :ok = ExMCP.Client.log_message(client, "error", "Database connection failed", %{
         host: "db.example.com",
@@ -1387,13 +811,49 @@ defmodule ExMCP.Client do
     )
   end
 
-  # Private helper to check transport capabilities
-  defp check_transport_capabilities(transport_mod, transport_state) do
-    if function_exported?(transport_mod, :capabilities, 1) do
-      capabilities = transport_mod.capabilities(transport_state)
-      :raw_terms in capabilities
-    else
-      false
+  @doc """
+  Finds a matching tool from a list of tools.
+
+  ## Parameters
+
+  - `tools` - List of tool maps
+  - `name` - Tool name to find (exact match) or pattern (fuzzy match)
+  - `opts` - Options including :fuzzy for fuzzy matching
+
+  ## Examples
+
+      tools = [%{"name" => "calculator"}, %{"name" => "weather"}]
+      {:ok, tool} = ExMCP.Client.find_matching_tool(tools, "calculator", [])
+      {:ok, tool} = ExMCP.Client.find_matching_tool(tools, "calc", fuzzy: true)
+  """
+  @spec find_matching_tool(list(map()), String.t() | nil, keyword()) ::
+          {:ok, map()} | {:error, :not_found}
+  def find_matching_tool(tools, name, opts \\ [])
+
+  def find_matching_tool(tools, nil, _opts) when is_list(tools) do
+    case List.first(tools) do
+      nil -> {:error, :not_found}
+      tool -> {:ok, tool}
+    end
+  end
+
+  def find_matching_tool(tools, name, opts) when is_list(tools) and is_binary(name) do
+    fuzzy? = Keyword.get(opts, :fuzzy, false)
+
+    # Try exact match first
+    case Enum.find(tools, fn tool -> tool["name"] == name end) do
+      nil when fuzzy? ->
+        # Try fuzzy match
+        case Enum.find(tools, fn tool -> String.contains?(tool["name"], name) end) do
+          nil -> {:error, :not_found}
+          tool -> {:ok, tool}
+        end
+
+      nil ->
+        {:error, :not_found}
+
+      tool ->
+        {:ok, tool}
     end
   end
 end

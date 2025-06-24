@@ -145,9 +145,9 @@ defmodule ExMCP.Client.Handler do
   @doc """
   Handles an elicitation request from the server.
 
-  This is a draft protocol feature and is only called when the negotiated
-  protocol version is "draft". The server is requesting additional information
-  from the user through a structured form.
+  This is a stable protocol feature available in MCP 2025-06-18 and later.
+  The server is requesting additional information from the user through a 
+  structured form with JSON schema validation.
 
   ## Parameters
 

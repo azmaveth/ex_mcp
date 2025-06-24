@@ -2,19 +2,19 @@ defmodule ExMCP.ClientBeamTransportTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.Client
-  alias ExMCP.Native
-
-  setup_all do
-    # Ensure the application is started for the ServiceRegistry
-    {:ok, _} = Application.ensure_all_started(:ex_mcp)
-    :ok
-  end
 
   describe "Client with BEAM transport" do
     setup do
+      # Start application for this test suite
+      {:ok, _} = Application.ensure_all_started(:ex_mcp)
+
+      on_exit(fn ->
+        Application.stop(:ex_mcp)
+      end)
+
       # Start a test MCP service using ExMCP.Service
       defmodule TestCalculatorService do
-        use ExMCP.Service, name: :test_calculator_beam
+        use ExMCP.Service, name: :beam_transport_calculator_service
 
         @impl true
         def handle_mcp_request("initialize", _params, state) do
@@ -141,7 +141,7 @@ defmodule ExMCP.ClientBeamTransportTest do
       {:ok, service_pid} = TestCalculatorService.start_link(%{})
 
       on_exit(fn ->
-        Native.unregister_service(:test_calculator_beam)
+        ExMCP.Native.unregister_service(:beam_transport_calculator_service)
       end)
 
       {:ok, service_pid: service_pid}
@@ -152,7 +152,7 @@ defmodule ExMCP.ClientBeamTransportTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          service_name: :test_calculator_beam
+          service_name: :beam_transport_calculator_service
         )
 
       # Verify connection
@@ -164,7 +164,7 @@ defmodule ExMCP.ClientBeamTransportTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          service_name: :test_calculator_beam
+          service_name: :beam_transport_calculator_service
         )
 
       # Test successful calls
@@ -180,7 +180,7 @@ defmodule ExMCP.ClientBeamTransportTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          service_name: :test_calculator_beam
+          service_name: :beam_transport_calculator_service
         )
 
       # Test error responses
@@ -195,7 +195,7 @@ defmodule ExMCP.ClientBeamTransportTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          service_name: :test_calculator_beam
+          service_name: :beam_transport_calculator_service
         )
 
       # Send notifications
@@ -215,7 +215,7 @@ defmodule ExMCP.ClientBeamTransportTest do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
-          service_name: :test_calculator_beam,
+          service_name: :beam_transport_calculator_service,
           # 50ms timeout
           timeout: 50
         )
@@ -245,9 +245,16 @@ defmodule ExMCP.ClientBeamTransportTest do
 
   describe "Client with native transport alias" do
     setup do
+      # Start application for this test suite
+      {:ok, _} = Application.ensure_all_started(:ex_mcp)
+
+      on_exit(fn ->
+        Application.stop(:ex_mcp)
+      end)
+
       # Create another test service
       defmodule TestEchoService do
-        use ExMCP.Service, name: :test_echo_native
+        use ExMCP.Service, name: :native_alias_echo_service
 
         @impl true
         def handle_mcp_request("initialize", _params, state) do
@@ -301,7 +308,7 @@ defmodule ExMCP.ClientBeamTransportTest do
       {:ok, _pid} = TestEchoService.start_link(%{})
 
       on_exit(fn ->
-        Native.unregister_service(:test_echo_native)
+        ExMCP.Native.unregister_service(:native_alias_echo_service)
       end)
 
       :ok
@@ -313,7 +320,7 @@ defmodule ExMCP.ClientBeamTransportTest do
         Client.start_link(
           # Using :native instead of :beam
           transport: :native,
-          service_name: :test_echo_native
+          service_name: :native_alias_echo_service
         )
 
       assert {:ok, %{"message" => "hello"}} =
@@ -323,6 +330,13 @@ defmodule ExMCP.ClientBeamTransportTest do
 
   describe "Performance characteristics" do
     setup do
+      # Start application for this test suite
+      {:ok, _} = Application.ensure_all_started(:ex_mcp)
+
+      on_exit(fn ->
+        Application.stop(:ex_mcp)
+      end)
+
       defmodule PerfTestService do
         use ExMCP.Service, name: :perf_test_service
 
@@ -396,7 +410,7 @@ defmodule ExMCP.ClientBeamTransportTest do
         )
 
       on_exit(fn ->
-        Native.unregister_service(:perf_test_service)
+        ExMCP.Native.unregister_service(:perf_test_service)
       end)
 
       {:ok, client: client}

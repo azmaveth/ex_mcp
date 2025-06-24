@@ -168,7 +168,7 @@ defmodule ExMCP.ConvenienceClientTest do
   end
 
   describe "connection management" do
-    setup do
+    setup _context do
       ExMCP.TestHelpers.setup_test_servers()
     end
 

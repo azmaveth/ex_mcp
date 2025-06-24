@@ -98,7 +98,11 @@ defmodule ExMCP.ClientUnifiedAPITest do
   describe "transport configuration" do
     test "prepares single transport config" do
       result = Client.prepare_transport_config(transport: :http, url: "http://example.com")
-      assert {:single, ExMCP.Transport.HTTP, opts} = result
+      assert {:ok, config} = result
+      assert config[:transports]
+      assert length(config[:transports]) == 1
+      {transport_mod, opts} = hd(config[:transports])
+      assert transport_mod == ExMCP.Transport.HTTP
       assert opts[:url] == "http://example.com"
     end
 
@@ -111,13 +115,14 @@ defmodule ExMCP.ClientUnifiedAPITest do
           ]
         )
 
-      assert {:multiple, opts} = result
-      assert opts[:transports]
+      assert {:ok, config} = result
+      assert config[:transports]
+      assert length(config[:transports]) == 2
     end
 
-    test "defaults to stdio transport" do
+    test "returns error when no transport specified" do
       result = Client.prepare_transport_config([])
-      assert {:single, ExMCP.Transport.Stdio, _opts} = result
+      assert {:error, _message} = result
     end
   end
 
