@@ -55,7 +55,7 @@ defmodule ExMCP.Server.Tools.Builder do
       |> handler(fn %{message: msg}, state -> {:ok, %{text: msg}, state} end)
       |> build()
   """
-  @spec new(String.t()) :: Tool.t()
+  @spec new(String.t()) :: __MODULE__.Tool.t()
   def new(name) when is_binary(name) do
     %Tool{
       name: name,

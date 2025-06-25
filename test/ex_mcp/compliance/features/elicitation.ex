@@ -4,6 +4,8 @@ defmodule ExMCP.Compliance.Features.Elicitation do
   Elicitation is stable in 2025-06-18 (was experimental in earlier versions).
   """
 
+  # Full module names are required in macro-generated code to ensure proper resolution
+  # credo:disable-for-lines:50 Credo.Check.Design.AliasUsage
   defmacro __using__(version) do
     quote do
       import ExMCP.Compliance.Features.Elicitation

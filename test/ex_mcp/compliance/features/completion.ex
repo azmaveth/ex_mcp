@@ -4,6 +4,8 @@ defmodule ExMCP.Compliance.Features.Completion do
   Completion support is available in 2025-03-26 and later.
   """
 
+  # Full module names are required in macro-generated code to ensure proper resolution
+  # credo:disable-for-lines:50 Credo.Check.Design.AliasUsage
   defmacro __using__(version) do
     quote do
       import ExMCP.Compliance.Features.Completion

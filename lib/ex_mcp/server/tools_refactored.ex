@@ -327,6 +327,7 @@ defmodule ExMCP.Server.ToolsRefactored do
     # Add description if provided
     tool_def =
       if description do
+        # @dialyzer knows Builder.description is correct, but can't verify in macro context
         Builder.description(tool_def, description)
       else
         tool_def
@@ -370,7 +371,7 @@ defmodule ExMCP.Server.ToolsRefactored do
 
     # Build the final tool
     case Builder.build(tool_def) do
-      {:ok, {tool_definition, _placeholder_handler}} ->
+      {:ok, {tool_definition, _handler}} ->
         # Store tool definition and handler AST for later use in a quote block
         quote do
           @refactored_tools {unquote(Macro.escape(tool_definition)),

@@ -4,6 +4,8 @@ defmodule ExMCP.Compliance.Features.ResourceTemplates do
   Resource templates were introduced in 2024-11-05.
   """
 
+  # Full module names are required in macro-generated code to ensure proper resolution
+  # credo:disable-for-lines:50 Credo.Check.Design.AliasUsage
   defmacro __using__(version) do
     quote do
       import ExMCP.Compliance.Features.ResourceTemplates

@@ -82,9 +82,11 @@ defmodule ExMCP.Content.Transformer do
   Extracts plain text from various content types.
   """
   @spec extract_text(Protocol.content()) :: {:ok, String.t()} | {:error, String.t()}
-  def extract_text(%{type: :text, text: text}), do: {:ok, text}
+  def extract_text(%{type: :text, text: text, format: :plain}), do: {:ok, text}
 
-  def extract_text(%{type: :html, text: html}) do
+  def extract_text(%{type: :text, text: text}) when is_binary(text), do: {:ok, text}
+
+  def extract_text(%{type: :text, text: html, format: :html}) do
     # Simple HTML tag removal - in production, use a proper HTML parser
     text = String.replace(html, ~r/<[^>]+>/, " ")
     {:ok, normalize_whitespace(text)}
@@ -131,14 +133,18 @@ defmodule ExMCP.Content.Transformer do
   """
   @spec convert_format(Protocol.content(), atom()) ::
           {:ok, Protocol.content()} | {:error, String.t()}
-  def convert_format(%{type: from_type} = content, to_type) do
-    case {from_type, to_type} do
+  def convert_format(%{type: :text, format: from_format} = content, to_format) do
+    case {from_format, to_format} do
       {same, same} -> {:ok, content}
-      {:text, :html} -> convert_text_to_html(content)
-      {:html, :text} -> convert_html_to_text(content)
+      {:plain, :html} -> convert_text_to_html(content)
+      {:html, :plain} -> convert_html_to_text(content)
       {:markdown, :html} -> convert_markdown_to_html(content)
-      _ -> {:error, "Unsupported conversion from #{from_type} to #{to_type}"}
+      _ -> {:error, "Unsupported conversion from #{from_format} to #{to_format}"}
     end
+  end
+
+  def convert_format(_content, _to_format) do
+    {:error, "Content must be text type for format conversion"}
   end
 
   # Private helper functions
@@ -181,12 +187,12 @@ defmodule ExMCP.Content.Transformer do
       |> html_escape()
       |> String.replace("\n", "<br>\n")
 
-    {:ok, %{content | type: :html, text: html}}
+    {:ok, %{content | format: :html, text: html}}
   end
 
-  defp convert_html_to_text(%{text: html} = content) do
-    case extract_text(%{type: :html, text: html}) do
-      {:ok, text} -> {:ok, %{content | type: :text, text: text}}
+  defp convert_html_to_text(%{type: :text, format: :html} = content) do
+    case extract_text(content) do
+      {:ok, text} -> {:ok, %{content | format: :plain, text: text}}
       error -> error
     end
   end

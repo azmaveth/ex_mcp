@@ -1,6 +1,8 @@
 defmodule ExMCP.Compliance.DemoNewStructureTest do
   use ExUnit.Case, async: false
 
+  alias ExMCP.Compliance.{Spec20241105, Spec20250326}
+
   @moduletag :compliance
   @moduletag :demo
 
@@ -24,7 +26,7 @@ defmodule ExMCP.Compliance.DemoNewStructureTest do
 
   test "generated modules work" do
     # Test that generated modules work
-    assert ExMCP.Compliance.Spec20241105.version() == "2024-11-05"
-    assert ExMCP.Compliance.Spec20250326.version() == "2025-03-26"
+    assert Spec20241105.version() == "2024-11-05"
+    assert Spec20250326.version() == "2025-03-26"
   end
 end

@@ -387,17 +387,25 @@ defmodule ExMCP.ClientConfigEnhanced do
   # ===== PRIVATE IMPLEMENTATION =====
 
   # Apply merge strategy helper
+  defp apply_merge_strategy(:shallow, nil, new_value) do
+    new_value
+  end
+
   defp apply_merge_strategy(:shallow, current_value, new_value) when is_map(current_value) do
-    Map.merge(current_value || %{}, new_value)
+    Map.merge(current_value, new_value)
   end
 
   defp apply_merge_strategy(:shallow, base_config, override_config) do
     Map.merge(base_config, override_config)
   end
 
+  defp apply_merge_strategy(:deep, nil, new_value) do
+    new_value
+  end
+
   defp apply_merge_strategy(:deep, current_value, new_value)
        when is_map(current_value) and is_map(new_value) do
-    deep_merge(current_value || %{}, new_value)
+    deep_merge(current_value, new_value)
   end
 
   defp apply_merge_strategy(:deep, base_config, override_config) do
@@ -408,9 +416,13 @@ defmodule ExMCP.ClientConfigEnhanced do
     new_value
   end
 
+  defp apply_merge_strategy(:preserve_existing, nil, new_value) do
+    new_value
+  end
+
   defp apply_merge_strategy(:preserve_existing, current_value, new_value)
        when is_map(current_value) do
-    Map.merge(new_value, current_value || %{})
+    Map.merge(new_value, current_value)
   end
 
   defp apply_merge_strategy(:preserve_existing, base_config, override_config) do

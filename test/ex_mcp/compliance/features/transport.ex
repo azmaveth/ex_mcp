@@ -1,8 +1,13 @@
 defmodule ExMCP.Compliance.Features.Transport do
   @moduledoc """
   Shared transport compliance tests across all MCP versions.
+
+  Note: This module intentionally uses full module names in the __using__ macro
+  to avoid scoping issues when the macro is expanded in different contexts.
   """
 
+  # Full module names are required in macro-generated code to ensure proper resolution
+  # credo:disable-for-lines:40 Credo.Check.Design.AliasUsage
   defmacro __using__(version) do
     quote do
       import ExMCP.Compliance.Features.Transport

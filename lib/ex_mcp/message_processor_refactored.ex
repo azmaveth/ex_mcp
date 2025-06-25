@@ -17,36 +17,6 @@ defmodule ExMCP.MessageProcessorRefactored do
   @type opts :: term()
   @type conn :: Conn.t()
 
-  # Re-export Conn for backward compatibility
-  defmodule Conn do
-    @moduledoc """
-    Connection struct used to pass request/response data through the message processing pipeline.
-
-    This struct contains all the context needed for processing an MCP message.
-    """
-    defstruct [
-      :request,
-      :response,
-      :state,
-      :assigns,
-      :transport,
-      :session_id,
-      :progress_token,
-      :halted
-    ]
-
-    @type t :: %__MODULE__{
-            request: map() | nil,
-            response: map() | nil,
-            state: term(),
-            assigns: map(),
-            transport: atom(),
-            session_id: String.t() | nil,
-            progress_token: String.t() | integer() | nil,
-            halted: boolean()
-          }
-  end
-
   @doc """
   Callback for initializing the plug with options.
   """

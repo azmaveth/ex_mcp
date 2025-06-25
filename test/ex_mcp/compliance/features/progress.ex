@@ -4,6 +4,8 @@ defmodule ExMCP.Compliance.Features.Progress do
   Progress notifications are available in all MCP versions.
   """
 
+  # Full module names are required in macro-generated code to ensure proper resolution
+  # credo:disable-for-lines:50 Credo.Check.Design.AliasUsage
   defmacro __using__(version) do
     quote do
       import ExMCP.Compliance.Features.Progress
