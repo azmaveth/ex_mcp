@@ -541,6 +541,10 @@ defmodule ExMCP.ClientConfigEnhanced do
 
       :custom ->
         ClientConfig.new()
+
+      _ ->
+        # Fallback for unknown templates
+        ClientConfig.new()
     end
   end
 
@@ -610,14 +614,13 @@ defmodule ExMCP.ClientConfigEnhanced do
 
     sections_to_show
     |> Enum.filter(&Map.has_key?(config, &1))
-    |> Enum.map(fn section ->
+    |> Enum.map_join("\n\n", fn section ->
       value = Map.get(config, section)
       "#{section}:\n#{format_value(value, "  ")}"
     end)
-    |> Enum.join("\n\n")
   end
 
-  defp format_config_compact(config, sections) do
+  defp format_config_compact(config, _sections) do
     inspect(config, pretty: true, limit: :infinity)
   end
 
@@ -628,9 +631,9 @@ defmodule ExMCP.ClientConfigEnhanced do
   end
 
   defp format_value(value, indent) when is_map(value) do
-    value
-    |> Enum.map(fn {k, v} -> "#{indent}#{k}: #{format_value(v, indent <> "  ")}" end)
-    |> Enum.join("\n")
+    Enum.map_join(value, "\n", fn {k, v} ->
+      "#{indent}#{k}: #{format_value(v, indent <> "  ")}"
+    end)
   end
 
   defp format_value(value, _indent), do: inspect(value)

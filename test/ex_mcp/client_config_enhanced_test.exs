@@ -206,12 +206,14 @@ defmodule ExMCP.ClientConfigEnhancedTest do
       # Check that validation rule was added
       validation_rules = get_in(config.custom_options, [:validation_rules, :timeout])
       assert length(validation_rules) == 1
-      assert {rule_fun, error_msg} = hd(validation_rules)
+      assert {_rule_fun, error_msg} = hd(validation_rules)
       assert error_msg == "Timeout must be between 1000 and 300000 ms"
     end
 
     test "validate_with_rules/2 applies enhanced validation" do
-      config = ClientConfigEnhanced.new()
+      config =
+        ClientConfigEnhanced.new()
+        |> ClientConfig.put_transport(:http, url: "https://example.com")
 
       # Should pass basic validation
       assert ClientConfigEnhanced.validate_with_rules(config) == :ok
@@ -227,6 +229,7 @@ defmodule ExMCP.ClientConfigEnhancedTest do
 
       config =
         ClientConfigEnhanced.new()
+        |> ClientConfig.put_transport(:http, url: "https://example.com")
         |> ClientConfigEnhanced.add_validation_rule(
           :timeout,
           timeout_validator,

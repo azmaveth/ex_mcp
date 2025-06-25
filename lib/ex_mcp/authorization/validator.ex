@@ -80,9 +80,8 @@ defmodule ExMCP.Authorization.Validator do
   """
   @spec validate_client_credentials(String.t(), String.t() | nil) :: :ok | {:error, term()}
   def validate_client_credentials(client_id, client_secret) do
-    with :ok <- validate_client_id(client_id),
-         :ok <- validate_client_secret(client_secret) do
-      :ok
+    with :ok <- validate_client_id(client_id) do
+      validate_client_secret(client_secret)
     end
   end
 

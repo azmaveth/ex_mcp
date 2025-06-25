@@ -46,7 +46,7 @@ defmodule ExMCP.Server.Tools.Simplified do
       end
   """
 
-  alias ExMCP.Server.Tools.{Builder, Registry}
+  alias ExMCP.Server.Tools.Registry
 
   defmacro __using__(_opts) do
     quote do

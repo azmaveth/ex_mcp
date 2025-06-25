@@ -149,31 +149,19 @@ defmodule ExMCP.Content.Transformer do
     %{content | text: normalize_whitespace(text)}
   end
 
-  defp apply_transformation({:convert_encoding, from}, %{type: :text, text: text} = content) do
-    case convert_encoding(text, from) do
-      {:ok, converted} -> %{content | text: converted}
-      {:error, _} -> content
-    end
+  defp apply_transformation({:convert_encoding, _from}, %{type: :text} = content) do
+    # Encoding conversion not implemented - return content unchanged
+    content
   end
 
-  defp apply_transformation(
-         :compress_images,
-         %{type: :image, data: data, mime_type: mime} = content
-       ) do
-    case compress_image(data, mime) do
-      {:ok, compressed} -> %{content | data: compressed}
-      {:error, _} -> content
-    end
+  defp apply_transformation(:compress_images, %{type: :image} = content) do
+    # Image compression not implemented - return content unchanged
+    content
   end
 
-  defp apply_transformation(
-         {:resize_images, opts},
-         %{type: :image, data: data, mime_type: mime} = content
-       ) do
-    case resize_image(data, mime, opts) do
-      {:ok, resized} -> %{content | data: resized}
-      {:error, _} -> content
-    end
+  defp apply_transformation({:resize_images, _opts}, %{type: :image} = content) do
+    # Image resizing not implemented - return content unchanged
+    content
   end
 
   defp apply_transformation({:custom, fun}, content) when is_function(fun, 1) do
@@ -183,9 +171,10 @@ defmodule ExMCP.Content.Transformer do
   defp apply_transformation(_, content), do: content
 
   defp apply_operation_with_validation(content, operation) do
-    transformed = apply_transformation(operation, content)
-    # TODO: Add validation logic here
-    {:ok, transformed}
+    case apply_transformation(operation, content) do
+      %{} = transformed -> {:ok, transformed}
+      {:error, _} = error -> error
+    end
   end
 
   defp convert_text_to_html(%{text: text} = content) do

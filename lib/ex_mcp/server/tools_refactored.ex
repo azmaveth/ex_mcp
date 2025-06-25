@@ -94,15 +94,45 @@ defmodule ExMCP.Server.ToolsRefactored do
 
     init_code =
       if length(tools) > 0 do
+        # Generate unique handler functions for each tool
+        handler_defs =
+          tools
+          |> Enum.with_index()
+          |> Enum.map(fn {{_tool_def, handler_ast}, index} ->
+            handler_name = :"__tool_handler_#{index}__"
+
+            quote do
+              def unquote(handler_name)(args, state) do
+                # Inject the handler AST here
+                handler_fun = unquote(handler_ast)
+                handler_fun.(args, state)
+              end
+            end
+          end)
+
         quote do
+          # Define all handler functions
+          unquote_splicing(handler_defs)
+
           def __init_tools__ do
             registry = __tool_registry__()
 
-            tools = unquote(Macro.escape(tools))
+            # Register tools with their handler functions
+            unquote(
+              tools
+              |> Enum.with_index()
+              |> Enum.map(fn {{tool_def, _handler_ast}, index} ->
+                handler_name = :"__tool_handler_#{index}__"
 
-            Enum.each(tools, fn {tool_def, handler} ->
-              Registry.register_tool(registry, tool_def, handler)
-            end)
+                quote do
+                  Registry.register_tool(
+                    registry,
+                    unquote(Macro.escape(tool_def)),
+                    &(__MODULE__.unquote(handler_name) / 2)
+                  )
+                end
+              end)
+            )
 
             :ok
           end
@@ -144,7 +174,7 @@ defmodule ExMCP.Server.ToolsRefactored do
       end
 
       @impl ExMCP.Server.Handler
-      def handle_call_tool(%{name: tool_name, arguments: args}, state) do
+      def handle_call_tool(tool_name, args, state) do
         with :ok <- ensure_tools_initialized(),
              {:ok, result, new_state} <-
                Registry.call_tool(__tool_registry__(), tool_name, args, state) do
@@ -223,23 +253,81 @@ defmodule ExMCP.Server.ToolsRefactored do
       end
   """
   defmacro tool(name, description \\ nil, do: block) do
-    tool_builder = build_tool_from_block(name, description, block)
-
-    quote do
-      # Build the tool at compile time
-      tool_result = unquote(tool_builder)
-
-      case tool_result do
-        {:ok, {tool_def, handler}} ->
-          # Store for registration at runtime
-          @refactored_tools {tool_def, handler}
-
-        {:error, reason} ->
-          raise CompileError,
-            description: "Failed to build tool '#{unquote(name)}': #{reason}",
-            file: __ENV__.file,
-            line: __ENV__.line
+    # Process the block to extract instructions
+    instructions =
+      case block do
+        {:__block__, _, stmts} -> stmts
+        single -> [single]
       end
+
+    # Find handler AST
+    handler_ast =
+      Enum.find_value(instructions, fn
+        {:handle, _, [handler]} -> handler
+        _ -> nil
+      end) || raise "No handler defined in tool block"
+
+    # Build the tool definition at compile time
+    tool_def = Builder.new(name)
+
+    # Add description if provided
+    tool_def =
+      if description do
+        Builder.description(tool_def, description)
+      else
+        tool_def
+      end
+
+    # Process all non-handler instructions
+    tool_def =
+      instructions
+      |> Enum.filter(fn
+        {:handle, _, _} -> false
+        _ -> true
+      end)
+      |> Enum.reduce(tool_def, fn
+        {:param, _, [param_name, type, opts]}, acc ->
+          Builder.param(acc, param_name, type, opts)
+
+        {:param, _, [param_name, type]}, acc ->
+          Builder.param(acc, param_name, type, [])
+
+        {:description, _, [text]}, acc ->
+          Builder.description(acc, text)
+
+        {:title, _, [text]}, acc ->
+          Builder.title(acc, text)
+
+        {:input_schema, _, [schema]}, acc ->
+          Builder.input_schema(acc, schema)
+
+        {:output_schema, _, [schema]}, acc ->
+          Builder.output_schema(acc, schema)
+
+        {:annotations, _, [anns]}, acc ->
+          Builder.annotations(acc, anns)
+
+        _, acc ->
+          acc
+      end)
+
+    # Add a placeholder handler for building
+    tool_def = Builder.handler(tool_def, fn _, _ -> {:ok, %{}} end)
+
+    # Build the final tool
+    case Builder.build(tool_def) do
+      {:ok, {tool_definition, _placeholder_handler}} ->
+        # Store tool definition and handler AST for later use in a quote block
+        quote do
+          @refactored_tools {unquote(Macro.escape(tool_definition)),
+                             unquote(Macro.escape(handler_ast))}
+        end
+
+      {:error, reason} ->
+        raise CompileError,
+          description: "Failed to build tool '#{name}': #{reason}",
+          file: __ENV__.file,
+          line: __ENV__.line
     end
   end
 
@@ -265,27 +353,21 @@ defmodule ExMCP.Server.ToolsRefactored do
       param :format, :string, enum: ["json", "xml", "yaml"]
   """
   defmacro param(name, type, opts \\ []) do
-    quote do
-      {:param, unquote(name), unquote(type), unquote(opts)}
-    end
+    {:param, [], [name, type, opts]}
   end
 
   @doc """
   Set the description for a tool.
   """
   defmacro description(text) do
-    quote do
-      {:description, unquote(text)}
-    end
+    {:description, [], [text]}
   end
 
   @doc """
   Set the title for a tool (2025-06-18 feature).
   """
   defmacro title(text) do
-    quote do
-      {:title, unquote(text)}
-    end
+    {:title, [], [text]}
   end
 
   @doc """
@@ -294,18 +376,14 @@ defmodule ExMCP.Server.ToolsRefactored do
   When provided, this overrides any schema generated from param/3 calls.
   """
   defmacro input_schema(schema) do
-    quote do
-      {:input_schema, unquote(Macro.escape(schema))}
-    end
+    {:input_schema, [], [schema]}
   end
 
   @doc """
   Set the output schema for a tool using JSON Schema format.
   """
   defmacro output_schema(schema) do
-    quote do
-      {:output_schema, unquote(Macro.escape(schema))}
-    end
+    {:output_schema, [], [schema]}
   end
 
   @doc """
@@ -319,9 +397,7 @@ defmodule ExMCP.Server.ToolsRefactored do
   - `experimental` - Tool is experimental/unstable
   """
   defmacro annotations(anns) do
-    quote do
-      {:annotations, unquote(Macro.escape(anns))}
-    end
+    {:annotations, [], [anns]}
   end
 
   @doc """
@@ -335,67 +411,6 @@ defmodule ExMCP.Server.ToolsRefactored do
   The response will be automatically normalized to MCP format.
   """
   defmacro handle(func) do
-    quote do
-      {:handle, unquote(func)}
-    end
-  end
-
-  # Private helper for building tools from block content
-
-  defp build_tool_from_block(name, default_desc, block) do
-    # Convert block to list of instructions
-    instructions =
-      case block do
-        {:__block__, _, stmts} -> stmts
-        single -> [single]
-      end
-
-    # Build the tool using the Builder pattern
-    quote do
-      # Start with a new tool builder
-      tool = Builder.new(unquote(name))
-
-      # Set default description if provided
-      tool =
-        if unquote(default_desc) do
-          Builder.description(tool, unquote(default_desc))
-        else
-          tool
-        end
-
-      # Process each instruction in the block
-      final_tool =
-        Enum.reduce(unquote(instructions), tool, fn instruction, acc ->
-          case instruction do
-            {:param, name, type, opts} ->
-              Builder.param(acc, name, type, opts)
-
-            {:description, text} ->
-              Builder.description(acc, text)
-
-            {:title, text} ->
-              Builder.title(acc, text)
-
-            {:input_schema, schema} ->
-              Builder.input_schema(acc, schema)
-
-            {:output_schema, schema} ->
-              Builder.output_schema(acc, schema)
-
-            {:annotations, anns} ->
-              Builder.annotations(acc, anns)
-
-            {:handle, handler} ->
-              Builder.handler(acc, handler)
-
-            _ ->
-              # Ignore unknown instructions for forward compatibility
-              acc
-          end
-        end)
-
-      # Build the final tool
-      Builder.build(final_tool)
-    end
+    {:handle, [], [func]}
   end
 end

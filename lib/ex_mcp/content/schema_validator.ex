@@ -39,7 +39,7 @@ defmodule ExMCP.Content.SchemaValidator do
       end
   """
   @spec validate_schema(Protocol.content(), map()) :: validation_result()
-  def validate_schema(content, schema) when is_map(schema) do
+  def validate_schema(_content, schema) when is_map(schema) do
     # TODO: Implement JSON Schema validation
     # This would use ExJsonSchema or similar library
     :ok

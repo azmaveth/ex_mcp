@@ -17,6 +17,9 @@ end)
 # Start test consent handler agent
 {:ok, _} = ExMCP.ConsentHandler.Test.start_link()
 
+# Start ValidatorRegistry for content validation tests
+{:ok, _} = ExMCP.Content.ValidatorRegistry.start_link(name: ExMCP.Content.ValidatorRegistry)
+
 # Enable test mode for SSE handlers to prevent blocking in tests
 Application.put_env(:ex_mcp, :test_mode, true)
 

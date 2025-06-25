@@ -6,6 +6,8 @@ defmodule ExMCP.Server.Tools.Builder do
   with explicit data structures and runtime registration.
   """
 
+  alias ExMCP.Server.Tools.ASTValidator
+
   defmodule Tool do
     @moduledoc """
     Runtime representation of a tool definition.
@@ -98,25 +100,94 @@ defmodule ExMCP.Server.Tools.Builder do
   @doc """
   Sets the input schema explicitly.
   """
-  @spec input_schema(Tool.t(), map()) :: Tool.t()
-  def input_schema(%Tool{} = tool, schema) when is_map(schema) do
-    %{tool | input_schema: schema}
+  @spec input_schema(Tool.t(), map() | any()) :: Tool.t()
+  def input_schema(%Tool{} = tool, schema) do
+    # Handle both runtime maps and compile-time AST
+    evaluated_schema =
+      case schema do
+        {:%{}, _, _} = ast ->
+          # This is an AST node, validate and evaluate it
+          case ASTValidator.validate_schema_ast(ast) do
+            {:ok, safe_ast} ->
+              {schema_map, _} = Code.eval_quoted(safe_ast)
+              schema_map
+
+            {:error, reason} ->
+              raise ArgumentError, "Invalid schema AST: #{reason}"
+          end
+
+        %{} = map ->
+          # This is already a map
+          map
+
+        _ ->
+          # Fallback for other cases
+          schema
+      end
+
+    %{tool | input_schema: evaluated_schema}
   end
 
   @doc """
   Sets the output schema for validation.
   """
-  @spec output_schema(Tool.t(), map()) :: Tool.t()
-  def output_schema(%Tool{} = tool, schema) when is_map(schema) do
-    %{tool | output_schema: schema}
+  @spec output_schema(Tool.t(), map() | any()) :: Tool.t()
+  def output_schema(%Tool{} = tool, schema) do
+    # Handle both runtime maps and compile-time AST
+    evaluated_schema =
+      case schema do
+        {:%{}, _, _} = ast ->
+          # This is an AST node, validate and evaluate it
+          case ASTValidator.validate_schema_ast(ast) do
+            {:ok, safe_ast} ->
+              {schema_map, _} = Code.eval_quoted(safe_ast)
+              schema_map
+
+            {:error, reason} ->
+              raise ArgumentError, "Invalid schema AST: #{reason}"
+          end
+
+        %{} = map ->
+          # This is already a map
+          map
+
+        _ ->
+          # Fallback for other cases
+          schema
+      end
+
+    %{tool | output_schema: evaluated_schema}
   end
 
   @doc """
   Sets annotations for the tool.
   """
-  @spec annotations(Tool.t(), map()) :: Tool.t()
-  def annotations(%Tool{} = tool, anns) when is_map(anns) do
-    %{tool | annotations: Map.merge(tool.annotations, anns)}
+  @spec annotations(Tool.t(), map() | any()) :: Tool.t()
+  def annotations(%Tool{} = tool, anns) do
+    # Handle both runtime maps and compile-time AST
+    evaluated_anns =
+      case anns do
+        {:%{}, _, _} = ast ->
+          # This is an AST node, validate and evaluate it
+          case ASTValidator.validate_schema_ast(ast) do
+            {:ok, safe_ast} ->
+              {anns_map, _} = Code.eval_quoted(safe_ast)
+              anns_map
+
+            {:error, reason} ->
+              raise ArgumentError, "Invalid annotations AST: #{reason}"
+          end
+
+        %{} = map ->
+          # This is already a map
+          map
+
+        _ ->
+          # Fallback for other cases
+          anns
+      end
+
+    %{tool | annotations: Map.merge(tool.annotations, evaluated_anns)}
   end
 
   @doc """
