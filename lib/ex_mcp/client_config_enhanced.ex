@@ -75,7 +75,7 @@ defmodule ExMCP.ClientConfigEnhanced do
 
   # Example of using other merge strategies (for documentation purposes)
   # defconfig_setter(:deep_config, merge_strategy: :deep)
-  # defconfig_setter(:override_config, merge_strategy: :override)  
+  # defconfig_setter(:override_config, merge_strategy: :override)
   # defconfig_setter(:preserve_config, merge_strategy: :preserve_existing)
 
   # Custom implementation for client_info with user_agent generation

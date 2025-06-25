@@ -46,7 +46,7 @@ defmodule ExMCP.Server.Tools.Simplified do
       end
   """
 
-  alias ExMCP.Server.Tools.Registry
+  alias ExMCP.Server.Tools.{Builder, Registry, ResponseNormalizer}
 
   defmacro __using__(_opts) do
     quote do
@@ -73,42 +73,53 @@ defmodule ExMCP.Server.Tools.Simplified do
   defmacro __before_compile__(env) do
     tools = Module.get_attribute(env.module, :simple_tools, [])
 
-    # Generate initialization function
-    init_code =
-      if length(tools) > 0 do
-        quote do
-          def __init_tools__ do
-            registry = __tool_registry__()
-
-            tools = unquote(Macro.escape(tools))
-
-            Enum.each(tools, fn {tool_def, handler} ->
-              Registry.register_tool(registry, tool_def, handler)
-            end)
-
-            :ok
-          end
-
-          # Auto-initialize on first use
-          defp ensure_tools_initialized do
-            if Process.get(:tools_initialized) != true do
-              __init_tools__()
-              Process.put(:tools_initialized, true)
-            end
-
-            :ok
-          end
-        end
-      else
-        quote do
-          def __init_tools__, do: :ok
-          defp ensure_tools_initialized, do: :ok
-        end
-      end
+    init_code = generate_init_code(tools)
+    handler_implementations = generate_handler_implementations()
 
     quote do
       unquote(init_code)
+      unquote(handler_implementations)
+    end
+  end
 
+  # Generate initialization code based on tools
+  defp generate_init_code([]), do: generate_empty_init()
+  defp generate_init_code(tools), do: generate_tools_init(tools)
+
+  defp generate_empty_init do
+    quote do
+      def __init_tools__, do: :ok
+      defp ensure_tools_initialized, do: :ok
+    end
+  end
+
+  defp generate_tools_init(tools) do
+    quote do
+      def __init_tools__ do
+        registry = __tool_registry__()
+        tools = unquote(Macro.escape(tools))
+
+        Enum.each(tools, fn {tool_def, handler} ->
+          Registry.register_tool(registry, tool_def, handler)
+        end)
+
+        :ok
+      end
+
+      # Auto-initialize on first use
+      defp ensure_tools_initialized do
+        if Process.get(:tools_initialized) != true do
+          __init_tools__()
+          Process.put(:tools_initialized, true)
+        end
+
+        :ok
+      end
+    end
+  end
+
+  defp generate_handler_implementations do
+    quote do
       @impl ExMCP.Server.Handler
       def handle_list_tools(_params, state) do
         ensure_tools_initialized()
@@ -123,11 +134,11 @@ defmodule ExMCP.Server.Tools.Simplified do
         case Registry.call_tool(__tool_registry__(), tool_name, args, state) do
           {:ok, result, new_state} ->
             # Normalize response for MCP spec
-            normalized = ExMCP.Server.Tools.ResponseNormalizer.normalize(result)
+            normalized = ResponseNormalizer.normalize(result)
             {:ok, normalized, new_state}
 
           {:ok, result} ->
-            normalized = ExMCP.Server.Tools.ResponseNormalizer.normalize(result)
+            normalized = ResponseNormalizer.normalize(result)
             {:ok, normalized, state}
 
           {:error, reason} ->
@@ -214,56 +225,67 @@ defmodule ExMCP.Server.Tools.Simplified do
 
   defp build_tool_from_block(name, default_desc, block) do
     # Convert block to list of instructions
-    instructions =
-      case block do
-        {:__block__, _, stmts} -> stmts
-        single -> [single]
-      end
+    instructions = extract_instructions(block)
 
     # Build the tool using the Builder pattern
     quote do
-      tool = ExMCP.Server.Tools.Builder.new(unquote(name))
+      tool = Builder.new(unquote(name))
 
       # Set default description if provided
-      tool =
-        if unquote(default_desc) do
-          ExMCP.Server.Tools.Builder.description(tool, unquote(default_desc))
-        else
-          tool
-        end
+      tool = apply_default_description(tool, unquote(default_desc))
 
       # Process each instruction
-      final_tool =
-        Enum.reduce(unquote(instructions), tool, fn instruction, acc ->
-          case instruction do
-            {:param, name, type, opts} ->
-              ExMCP.Server.Tools.Builder.param(acc, name, type, opts)
-
-            {:description, text} ->
-              ExMCP.Server.Tools.Builder.description(acc, text)
-
-            {:title, text} ->
-              ExMCP.Server.Tools.Builder.title(acc, text)
-
-            {:input_schema, schema} ->
-              ExMCP.Server.Tools.Builder.input_schema(acc, schema)
-
-            {:output_schema, schema} ->
-              ExMCP.Server.Tools.Builder.output_schema(acc, schema)
-
-            {:annotations, anns} ->
-              ExMCP.Server.Tools.Builder.annotations(acc, anns)
-
-            {:run, handler} ->
-              ExMCP.Server.Tools.Builder.handler(acc, handler)
-
-            _ ->
-              acc
-          end
-        end)
+      final_tool = process_instructions(tool, unquote(instructions))
 
       # Build the final tool
-      ExMCP.Server.Tools.Builder.build(final_tool)
+      Builder.build(final_tool)
+    end
+  end
+
+  defp extract_instructions(block) do
+    case block do
+      {:__block__, _, stmts} -> stmts
+      single -> [single]
+    end
+  end
+
+  # Helper function that will be called at runtime in the generated code
+  def apply_default_description(tool, nil), do: tool
+
+  def apply_default_description(tool, desc) do
+    Builder.description(tool, desc)
+  end
+
+  # Helper function that will be called at runtime to process instructions
+  def process_instructions(tool, instructions) do
+    Enum.reduce(instructions, tool, &process_single_instruction/2)
+  end
+
+  defp process_single_instruction(instruction, acc) do
+    case instruction do
+      {:param, name, type, opts} ->
+        Builder.param(acc, name, type, opts)
+
+      {:description, text} ->
+        Builder.description(acc, text)
+
+      {:title, text} ->
+        Builder.title(acc, text)
+
+      {:input_schema, schema} ->
+        Builder.input_schema(acc, schema)
+
+      {:output_schema, schema} ->
+        Builder.output_schema(acc, schema)
+
+      {:annotations, anns} ->
+        Builder.annotations(acc, anns)
+
+      {:run, handler} ->
+        Builder.handler(acc, handler)
+
+      _ ->
+        acc
     end
   end
 end

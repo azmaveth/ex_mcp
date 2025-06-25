@@ -54,22 +54,20 @@ defmodule ExMCP.Content.SecurityScanner do
   @spec scan_security(Protocol.content(), [scan_type()]) ::
           {:ok, scan_result()} | {:error, String.t()}
   def scan_security(content, scan_types) when is_list(scan_types) do
-    try do
-      threats = Enum.flat_map(scan_types, &perform_scan(content, &1))
-      threat_level = calculate_threat_level(threats)
+    threats = Enum.flat_map(scan_types, &perform_scan(content, &1))
+    threat_level = calculate_threat_level(threats)
 
-      {:ok,
-       %{
-         threat_level: threat_level,
-         threats: threats,
-         metadata: %{
-           scanned_at: DateTime.utc_now(),
-           scan_types: scan_types
-         }
-       }}
-    rescue
-      e -> {:error, "Security scan failed: #{Exception.message(e)}"}
-    end
+    {:ok,
+     %{
+       threat_level: threat_level,
+       threats: threats,
+       metadata: %{
+         scanned_at: DateTime.utc_now(),
+         scan_types: scan_types
+       }
+     }}
+  rescue
+    e -> {:error, "Security scan failed: #{Exception.message(e)}"}
   end
 
   @doc """

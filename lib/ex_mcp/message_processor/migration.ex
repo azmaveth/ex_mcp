@@ -7,6 +7,8 @@ defmodule ExMCP.MessageProcessor.Migration do
   a gradual migration without breaking existing code.
   """
 
+  alias ExMCP.MessageProcessor.Dispatcher
+
   @doc """
   Replaces the three dispatch maps with a single unified dispatcher call.
 
@@ -24,7 +26,7 @@ defmodule ExMCP.MessageProcessor.Migration do
     temp_conn = %{conn | request: request}
 
     # Use the unified dispatcher
-    ExMCP.MessageProcessor.Dispatcher.dispatch(temp_conn, handler, mode, server_info)
+    Dispatcher.dispatch(temp_conn, handler, mode, server_info)
   end
 
   @doc """

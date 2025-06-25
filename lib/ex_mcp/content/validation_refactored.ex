@@ -22,14 +22,13 @@ defmodule ExMCP.Content.ValidationRefactored do
   """
 
   alias ExMCP.Content.{
+    Protocol,
     Sanitizer,
     SchemaValidator,
     SecurityScanner,
     Transformer,
     ValidatorRegistry
   }
-
-  alias ExMCP.Content.Protocol
 
   @type validation_rule ::
           atom()

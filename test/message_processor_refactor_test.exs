@@ -1,8 +1,8 @@
 defmodule ExMCP.MessageProcessorRefactorTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.MessageProcessor.{Dispatcher, Handlers}
   alias ExMCP.MessageProcessor.Conn
+  alias ExMCP.MessageProcessor.{Dispatcher, Handlers}
 
   describe "Dispatcher.dispatch/4" do
     test "routes ping requests correctly" do

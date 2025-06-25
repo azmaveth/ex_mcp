@@ -201,10 +201,12 @@ defmodule ExMCP.Server.ToolsRefactored do
 
       @impl ExMCP.Server.Handler
       def handle_call_tool(tool_name, args, state) do
-        with :ok <- ensure_tools_initialized() do
-          handle_tool_execution(tool_name, args, state)
-        else
-          error -> {:error, error, state}
+        case ensure_tools_initialized() do
+          :ok ->
+            handle_tool_execution(tool_name, args, state)
+
+          error ->
+            {:error, error, state}
         end
       end
 

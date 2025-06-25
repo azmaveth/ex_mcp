@@ -32,11 +32,8 @@ defmodule ExMCP.Client do
   use GenServer
   require Logger
 
-  alias ExMCP.Client.ConnectionManager
-  alias ExMCP.Client.Operations.Prompts
-  alias ExMCP.Client.Operations.Resources
-  alias ExMCP.Client.Operations.Tools
-  alias ExMCP.Client.RequestHandler
+  alias ExMCP.Client.{ConnectionManager, RequestHandler}
+  alias ExMCP.Client.Operations.{Prompts, Resources, Tools}
   alias ExMCP.Internal.Protocol
   alias ExMCP.Response
 

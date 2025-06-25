@@ -34,12 +34,10 @@ defmodule ExMCP.Content.Transformer do
   @spec transform(Protocol.content(), [transformation_op()]) ::
           {:ok, Protocol.content()} | {:error, String.t()}
   def transform(content, operations) when is_list(operations) do
-    try do
-      result = Enum.reduce(operations, content, &apply_transformation/2)
-      {:ok, result}
-    rescue
-      e -> {:error, "Transformation failed: #{Exception.message(e)}"}
-    end
+    result = Enum.reduce(operations, content, &apply_transformation/2)
+    {:ok, result}
+  rescue
+    e -> {:error, "Transformation failed: #{Exception.message(e)}"}
   end
 
   @doc """
