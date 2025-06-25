@@ -190,7 +190,7 @@ defmodule ExMCP.Compliance.Features.Resources do
     end
   end
 
-  defp validate_resource_content(content, _version) do
+  defp _validate_resource_content(content, _version) do
     # Validate resource content structure
     assert is_list(content.contents)
 

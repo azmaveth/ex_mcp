@@ -78,7 +78,7 @@ defmodule ExMCP.Compliance.Features.ResourceTemplates do
       assert String.contains?(template_with_params.uriTemplate, "}")
 
       # Common patterns
-      valid_patterns = [
+      _valid_patterns = [
         # {param}
         ~r/\{[a-zA-Z_][a-zA-Z0-9_]*\}/,
         # {param*}

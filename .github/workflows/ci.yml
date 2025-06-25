@@ -86,7 +86,7 @@ jobs:
       run: mix compile
     
     - name: Run MCP 2024-11-05 compliance tests
-      run: mix test --only version_2024_11_05
+      run: mix test.suite compliance
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -117,7 +117,7 @@ jobs:
       run: mix compile
     
     - name: Run MCP 2025-03-26 compliance tests
-      run: mix test --only version_2025_03_26
+      run: mix test.suite compliance
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -148,7 +148,7 @@ jobs:
       run: mix compile
     
     - name: Run MCP 2025-06-18 compliance tests
-      run: mix test --only version_2025_06_18
+      run: mix test.suite compliance
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

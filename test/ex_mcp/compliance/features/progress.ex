@@ -68,7 +68,7 @@ defmodule ExMCP.Compliance.Features.Progress do
       # Test multiple requests with different tokens
       tokens = for i <- 1..3, do: "token-#{i}"
 
-      for token <- tokens do
+      for {token, i} <- Enum.with_index(tokens, 1) do
         {:ok, _} =
           Client.call_tool(client, "calculator", %{
             "operation" => "add",
@@ -165,7 +165,7 @@ defmodule ExMCP.Compliance.Features.Progress do
 
         # Progress should never decrease
         assert current > previous
-        previous = current
+        _previous = current
       end
 
       # Test invalid sequences (should not be sent by compliant servers)
