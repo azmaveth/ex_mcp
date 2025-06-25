@@ -1,6 +1,21 @@
 defmodule ExMCP.Compliance.NewStructureTest do
   use ExUnit.Case, async: true
 
+  alias ExMCP.Compliance.{
+    Spec20241105,
+    Spec20250326,
+    Spec20250618,
+    VersionGenerator
+  }
+
+  alias ExMCP.Compliance.Features.{
+    Authorization,
+    Prompts,
+    Resources,
+    Tools,
+    Transport
+  }
+
   @moduletag :compliance
   @moduletag :new_structure
   @moduletag :skip
@@ -11,7 +26,7 @@ defmodule ExMCP.Compliance.NewStructureTest do
       assert Code.ensure_loaded?(ExMCP.Compliance.VersionGenerator)
 
       # Test that it has the expected functions
-      versions = ExMCP.Compliance.VersionGenerator.supported_versions()
+      versions = VersionGenerator.supported_versions()
       assert is_list(versions)
       assert length(versions) == 3
     end
@@ -46,9 +61,9 @@ defmodule ExMCP.Compliance.NewStructureTest do
     end
 
     test "version modules return correct versions" do
-      assert ExMCP.Compliance.Spec20241105.version() == "2024-11-05"
-      assert ExMCP.Compliance.Spec20250326.version() == "2025-03-26"
-      assert ExMCP.Compliance.Spec20250618.version() == "2025-06-18"
+      assert Spec20241105.version() == "2024-11-05"
+      assert Spec20250326.version() == "2025-03-26"
+      assert Spec20250618.version() == "2025-06-18"
     end
   end
 end

@@ -186,6 +186,18 @@ defmodule ExMCP.Server.ToolsRefactored do
   end
 
   defp generate_handler_implementations do
+    list_tools_impl = generate_list_tools_implementation()
+    call_tool_impl = generate_call_tool_implementation()
+    tool_execution_impl = generate_tool_execution_handler()
+
+    quote do
+      unquote(list_tools_impl)
+      unquote(call_tool_impl)
+      unquote(tool_execution_impl)
+    end
+  end
+
+  defp generate_list_tools_implementation do
     quote do
       @impl ExMCP.Server.Handler
       def handle_list_tools(_params, state) do
@@ -198,7 +210,11 @@ defmodule ExMCP.Server.ToolsRefactored do
             {:error, error, state}
         end
       end
+    end
+  end
 
+  defp generate_call_tool_implementation do
+    quote do
       @impl ExMCP.Server.Handler
       def handle_call_tool(tool_name, args, state) do
         case ensure_tools_initialized() do
@@ -209,7 +225,11 @@ defmodule ExMCP.Server.ToolsRefactored do
             {:error, error, state}
         end
       end
+    end
+  end
 
+  defp generate_tool_execution_handler do
+    quote do
       defp handle_tool_execution(tool_name, args, state) do
         case Registry.call_tool(__tool_registry__(), tool_name, args, state) do
           {:ok, result, new_state} ->

@@ -1,6 +1,21 @@
 defmodule ExMCP.Compliance.FinalStructureTest do
   use ExUnit.Case, async: false
 
+  alias ExMCP.Compliance.{
+    Spec20241105,
+    Spec20250326,
+    Spec20250618,
+    VersionGenerator
+  }
+
+  alias ExMCP.Compliance.Features.{
+    Authorization,
+    Prompts,
+    Resources,
+    Tools,
+    Transport
+  }
+
   @moduletag :compliance
   @moduletag :final_validation
 
@@ -12,9 +27,9 @@ defmodule ExMCP.Compliance.FinalStructureTest do
       assert Code.ensure_loaded?(ExMCP.Compliance.Spec20250618)
 
       # Test that they return correct versions
-      assert ExMCP.Compliance.Spec20241105.version() == "2024-11-05"
-      assert ExMCP.Compliance.Spec20250326.version() == "2025-03-26"
-      assert ExMCP.Compliance.Spec20250618.version() == "2025-06-18"
+      assert Spec20241105.version() == "2024-11-05"
+      assert Spec20250326.version() == "2025-03-26"
+      assert Spec20250618.version() == "2025-06-18"
     end
 
     test "all feature modules are loaded and functional" do
@@ -33,61 +48,61 @@ defmodule ExMCP.Compliance.FinalStructureTest do
     end
 
     test "version generator provides correct information" do
-      versions = ExMCP.Compliance.VersionGenerator.supported_versions()
+      versions = VersionGenerator.supported_versions()
       assert length(versions) == 3
       assert "2024-11-05" in versions
       assert "2025-03-26" in versions
       assert "2025-06-18" in versions
 
       # Test module mapping
-      assert ExMCP.Compliance.VersionGenerator.module_for_version("2024-11-05") ==
-               ExMCP.Compliance.Spec20241105
+      assert VersionGenerator.module_for_version("2024-11-05") ==
+               Spec20241105
 
-      assert ExMCP.Compliance.VersionGenerator.module_for_version("2025-03-26") ==
-               ExMCP.Compliance.Spec20250326
+      assert VersionGenerator.module_for_version("2025-03-26") ==
+               Spec20250326
 
-      assert ExMCP.Compliance.VersionGenerator.module_for_version("2025-06-18") ==
-               ExMCP.Compliance.Spec20250618
+      assert VersionGenerator.module_for_version("2025-06-18") ==
+               Spec20250618
     end
 
     test "feature test functions are accessible" do
       # Test that feature test functions exist and are callable
       # Tools
-      assert function_exported?(ExMCP.Compliance.Features.Tools, :test_basic_tools_list, 1)
-      assert function_exported?(ExMCP.Compliance.Features.Tools, :test_tool_annotations, 1)
+      assert function_exported?(Tools, :test_basic_tools_list, 1)
+      assert function_exported?(Tools, :test_tool_annotations, 1)
 
       # Resources
       assert function_exported?(
-               ExMCP.Compliance.Features.Resources,
+               Resources,
                :test_basic_resources_list,
                1
              )
 
       assert function_exported?(
-               ExMCP.Compliance.Features.Resources,
+               Resources,
                :test_resource_subscriptions,
                1
              )
 
       # Authorization (2025-03-26+ only)
       assert function_exported?(
-               ExMCP.Compliance.Features.Authorization,
+               Authorization,
                :test_oauth_authorization,
                1
              )
 
       assert function_exported?(
-               ExMCP.Compliance.Features.Authorization,
+               Authorization,
                :test_authorization_metadata,
                1
              )
 
       # Transport
-      assert function_exported?(ExMCP.Compliance.Features.Transport, :test_jsonrpc_format, 1)
-      assert function_exported?(ExMCP.Compliance.Features.Transport, :test_batch_processing, 1)
+      assert function_exported?(Transport, :test_jsonrpc_format, 1)
+      assert function_exported?(Transport, :test_batch_processing, 1)
 
       # Prompts
-      assert function_exported?(ExMCP.Compliance.Features.Prompts, :test_basic_prompts_list, 1)
+      assert function_exported?(Prompts, :test_basic_prompts_list, 1)
     end
 
     test "version-specific features are properly gated" do
@@ -95,21 +110,21 @@ defmodule ExMCP.Compliance.FinalStructureTest do
 
       # Authorization should only work for 2025-03-26+
       assert_raise FunctionClauseError, fn ->
-        ExMCP.Compliance.Features.Authorization.test_oauth_authorization("2024-11-05")
+        Authorization.test_oauth_authorization("2024-11-05")
       end
 
       # But should work for 2025-03-26+
-      ExMCP.Compliance.Features.Authorization.test_oauth_authorization("2025-03-26")
-      ExMCP.Compliance.Features.Authorization.test_oauth_authorization("2025-06-18")
+      Authorization.test_oauth_authorization("2025-03-26")
+      Authorization.test_oauth_authorization("2025-06-18")
 
       # Batch processing should only work for 2025-03-26+
       assert_raise FunctionClauseError, fn ->
-        ExMCP.Compliance.Features.Transport.test_batch_processing("2024-11-05")
+        Transport.test_batch_processing("2024-11-05")
       end
 
       # But should work for 2025-03-26+
-      ExMCP.Compliance.Features.Transport.test_batch_processing("2025-03-26")
-      ExMCP.Compliance.Features.Transport.test_batch_processing("2025-06-18")
+      Transport.test_batch_processing("2025-03-26")
+      Transport.test_batch_processing("2025-06-18")
     end
 
     test "basic feature tests work for all versions" do
@@ -117,10 +132,10 @@ defmodule ExMCP.Compliance.FinalStructureTest do
 
       for version <- versions do
         # These should work for all versions
-        ExMCP.Compliance.Features.Tools.test_basic_tools_list(version)
-        ExMCP.Compliance.Features.Resources.test_basic_resources_list(version)
-        ExMCP.Compliance.Features.Transport.test_jsonrpc_format(version)
-        ExMCP.Compliance.Features.Prompts.test_basic_prompts_list(version)
+        Tools.test_basic_tools_list(version)
+        Resources.test_basic_resources_list(version)
+        Transport.test_jsonrpc_format(version)
+        Prompts.test_basic_prompts_list(version)
       end
     end
   end

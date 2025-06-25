@@ -1,6 +1,8 @@
 defmodule ExMCP.Server.ToolsRefactoredTest do
   use ExUnit.Case
 
+  alias ExMCP.Server.Tools.ResponseNormalizer
+
   # Test server module using the refactored tools
   defmodule TestServer do
     use ExMCP.Server.Handler
@@ -267,7 +269,7 @@ defmodule ExMCP.Server.ToolsRefactoredTest do
     test "normalizes string responses" do
       # This would be tested if we had a tool returning a raw string
       # The ResponseNormalizer handles this conversion
-      normalized = ExMCP.Server.Tools.ResponseNormalizer.normalize("Hello")
+      normalized = ResponseNormalizer.normalize("Hello")
       assert normalized == %{content: [%{type: "text", text: "Hello"}]}
     end
 
@@ -277,7 +279,7 @@ defmodule ExMCP.Server.ToolsRefactoredTest do
         structuredOutput: %{result: 42}
       }
 
-      normalized = ExMCP.Server.Tools.ResponseNormalizer.normalize(response)
+      normalized = ResponseNormalizer.normalize(response)
       assert normalized == response
     end
   end
