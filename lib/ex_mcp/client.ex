@@ -172,6 +172,16 @@ defmodule ExMCP.Client do
   end
 
   @doc """
+  Convenience alias for batch_request/3.
+
+  Sends a batch of JSON-RPC requests. Available in protocol version 2025-03-26 only.
+  """
+  @spec send_batch(t(), [map()], timeout()) :: {:ok, [any()]} | {:error, any()}
+  def send_batch(client, requests, timeout \\ 30_000) do
+    batch_request(client, requests, timeout)
+  end
+
+  @doc """
   Convenience alias for call_tool/4.
   """
   @spec call(t(), String.t(), map(), keyword()) :: {:ok, any()} | {:error, any()}
@@ -199,6 +209,17 @@ defmodule ExMCP.Client do
   @spec list_resources(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
   def list_resources(client, opts \\ []) do
     make_request(client, "resources/list", %{}, opts, 5_000)
+  end
+
+  @doc """
+  Lists available roots.
+
+  Sends a `roots/list` request to the server to retrieve the list of
+  available root URIs.
+  """
+  @spec list_roots(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
+  def list_roots(client, opts \\ []) do
+    make_request(client, "roots/list", %{}, opts, 5_000)
   end
 
   @doc """
@@ -295,12 +316,61 @@ defmodule ExMCP.Client do
   end
 
   @doc """
+  Gets the list of pending request IDs.
+
+  Returns a list of request IDs for requests that are currently in progress.
+  This can be used with `send_cancelled/3` to cancel specific requests.
+
+  ## Examples
+
+      {:ok, client} = ExMCP.Client.connect("http://localhost:8080/mcp")
+      
+      # Start a long-running request
+      task = Task.async(fn -> 
+        ExMCP.Client.call_tool(client, "slow_tool", %{})
+      end)
+      
+      # Get pending requests  
+      pending = ExMCP.Client.get_pending_requests(client)
+      # => ["req_123", "req_456"]
+      
+      # Cancel a specific request
+      ExMCP.Client.send_cancelled(client, "req_123", "User cancelled")
+  """
+  @spec get_pending_requests(t()) :: [ExMCP.Types.request_id()]
+  def get_pending_requests(client) do
+    GenServer.call(client, :get_pending_requests)
+  end
+
+  @doc """
   Gets server information.
   """
   @spec server_info(t()) :: {:ok, map()} | {:error, any()}
   def server_info(client) do
     case get_status(client) do
       {:ok, %{server_info: info}} -> {:ok, info}
+      _ -> {:error, :not_connected}
+    end
+  end
+
+  @doc """
+  Gets server capabilities.
+  """
+  @spec server_capabilities(t()) :: {:ok, map()} | {:error, any()}
+  def server_capabilities(client) do
+    case get_status(client) do
+      {:ok, %{server_capabilities: caps}} -> {:ok, caps}
+      _ -> {:error, :not_connected}
+    end
+  end
+
+  @doc """
+  Gets the negotiated protocol version with the server.
+  """
+  @spec negotiated_version(t()) :: {:ok, String.t()} | {:error, any()}
+  def negotiated_version(client) do
+    case get_status(client) do
+      {:ok, %{protocol_version: version}} -> {:ok, version}
       _ -> {:error, :not_connected}
     end
   end
@@ -510,6 +580,12 @@ defmodule ExMCP.Client do
     }
 
     {:reply, {:ok, status}, state}
+  end
+
+  def handle_call(:get_pending_requests, _from, state) do
+    # Return list of pending request IDs from the state
+    pending_ids = Map.keys(state.pending_requests)
+    {:reply, pending_ids, state}
   end
 
   @impl GenServer

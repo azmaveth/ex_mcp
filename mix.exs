@@ -91,7 +91,14 @@ defmodule ExMCP.MixProject do
   end
 
   # Specifies which paths to compile per environment
-  defp elixirc_paths(:test), do: ["lib", "test/support", "test/ex_mcp/compliance/features"]
+  defp elixirc_paths(:test),
+    do: [
+      "lib",
+      "test/support",
+      "test/ex_mcp/compliance/features",
+      "test/ex_mcp/compliance/handlers"
+    ]
+
   defp elixirc_paths(_), do: ["lib"]
 
   defp docs do

@@ -47,7 +47,25 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
       %{client: client}
     end
 
-    # run_security_tests() # TODO: Implement this function
+    test "allows requests with granted consent", %{client: client} do
+      # Pre-grant consent for this test
+      ConsentHandler.grant_consent(@token)
+
+      request_with_token = Map.put(@command, :meta, %{token: @token})
+
+      assert {:ok, response, received_command} = client.(request_with_token)
+      assert response.jsonrpc == "2.0"
+      # Verify the command was processed and token was handled by SecurityGuard
+      assert received_command.method == @command.method
+      assert received_command.params == @command.params
+    end
+
+    test "blocks requests without consent", %{client: client} do
+      request_with_token = Map.put(@command, :meta, %{token: @token})
+
+      # Should be blocked because consent was not granted
+      assert {:error, :consent_required} = client.(request_with_token)
+    end
   end
 
   describe "Stdio Transport Integration" do
@@ -57,7 +75,25 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
       %{client: client}
     end
 
-    # run_security_tests() # TODO: Implement this function
+    test "allows requests with granted consent", %{client: client} do
+      # Pre-grant consent for this test
+      ConsentHandler.grant_consent(@token)
+
+      request_with_token = Map.put(@command, :meta, %{token: @token})
+
+      assert {:ok, response, received_command} = client.(request_with_token)
+      assert response.jsonrpc == "2.0"
+      # Verify the command was processed and token was handled by SecurityGuard
+      assert received_command.method == @command.method
+      assert received_command.params == @command.params
+    end
+
+    test "blocks requests without consent", %{client: client} do
+      request_with_token = Map.put(@command, :meta, %{token: @token})
+
+      # Should be blocked because consent was not granted
+      assert {:error, :consent_required} = client.(request_with_token)
+    end
   end
 
   describe "BEAM Transport Integration" do
@@ -67,7 +103,25 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
       %{client: client}
     end
 
-    # run_security_tests() # TODO: Implement this function
+    test "allows requests with granted consent", %{client: client} do
+      # Pre-grant consent for this test
+      ConsentHandler.grant_consent(@token)
+
+      request_with_token = Map.put(@command, :meta, %{token: @token})
+
+      assert {:ok, response, received_command} = client.(request_with_token)
+      assert response.jsonrpc == "2.0"
+      # Verify the command was processed and token was handled by SecurityGuard
+      assert received_command.method == @command.method
+      assert received_command.params == @command.params
+    end
+
+    test "blocks requests without consent", %{client: client} do
+      request_with_token = Map.put(@command, :meta, %{token: @token})
+
+      # Should be blocked because consent was not granted
+      assert {:error, :consent_required} = client.(request_with_token)
+    end
   end
 
   describe "Performance Benchmarks" do

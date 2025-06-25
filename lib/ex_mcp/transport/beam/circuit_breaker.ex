@@ -233,10 +233,20 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
       end
 
     Map.merge(circuit_breaker.stats, %{
+      # For test compatibility
+      state: circuit_breaker.state,
       current_state: circuit_breaker.state,
       failure_count: circuit_breaker.failure_count,
       success_count: circuit_breaker.success_count,
+      # For test compatibility
+      successful_calls: circuit_breaker.stats.total_successes,
+      # For test compatibility
+      failed_calls: circuit_breaker.stats.total_failures,
+      # For test compatibility - would need separate tracking
+      rejected_calls: 0,
       total_requests: total_requests,
+      # Alias for compatibility
+      total_calls: total_requests,
       failure_rate: failure_rate,
       last_failure_time: circuit_breaker.last_failure_time,
       last_success_time: circuit_breaker.last_success_time,

@@ -63,20 +63,53 @@ defmodule ExMCP.CancellationComprehensiveTest do
       request_id = Map.get(params, "_request_id")
       iterations = Map.get(params, "iterations", 10)
 
-      # Register this request as active
-      state = put_in(state.active_requests[request_id], self())
+      # Check if already cancelled before starting
+      if MapSet.member?(state.cancelled_requests, request_id) do
+        {:error, %{code: -32001, message: "Request was cancelled"}, state}
+      else
+        # Spawn the work in a separate process so it can be interrupted
+        parent_pid = self()
 
-      result = perform_cancellable_work(request_id, iterations, state)
+        worker_pid =
+          spawn_link(fn ->
+            result = perform_cancellable_work(request_id, iterations, state, parent_pid)
+            send(parent_pid, {:work_result, request_id, result})
+          end)
 
-      # Clean up
-      {_, state} = pop_in(state.active_requests[request_id])
+        # Store the worker PID so it can be killed on cancellation
+        state = put_in(state.active_requests[request_id], worker_pid)
 
-      case result do
-        :cancelled ->
-          {:error, %{code: -32001, message: "Request was cancelled"}, state}
+        # Wait for either work completion or cancellation
+        result =
+          receive do
+            {:work_result, ^request_id, work_result} ->
+              work_result
 
-        {:ok, text} ->
-          {:ok, [%{type: "text", text: text}], state}
+            {:cancelled, ^request_id} ->
+              # Forward cancellation to worker and kill it
+              send(worker_pid, {:cancelled, request_id})
+              Process.exit(worker_pid, :cancelled)
+              :cancelled
+          after
+            # 10 second timeout
+            10_000 ->
+              Process.exit(worker_pid, :timeout)
+              {:error, :timeout}
+          end
+
+        # Clean up
+        {_, state} = pop_in(state.active_requests[request_id])
+
+        case result do
+          :cancelled ->
+            {:error, %{code: -32001, message: "Request was cancelled"}, state}
+
+          {:ok, text} ->
+            {:ok, [%{type: "text", text: text}], state}
+
+          {:error, reason} ->
+            {:error, %{code: -32000, message: "Work failed: #{inspect(reason)}"}, state}
+        end
       end
     end
 
@@ -92,28 +125,32 @@ defmodule ExMCP.CancellationComprehensiveTest do
       :ok
     end
 
-    defp perform_cancellable_work(request_id, iterations, state) do
+    defp perform_cancellable_work(request_id, iterations, _state, parent_pid) do
+      require Logger
+      Logger.debug("Starting cancellable work for request #{request_id} in worker process")
+
       Enum.reduce_while(1..iterations, "", fn i, acc ->
-        # Check if cancelled
+        # Check if cancelled via message from parent
         receive do
           {:cancelled, ^request_id} ->
+            Logger.debug("Worker received cancellation message for request #{request_id}")
             {:halt, :cancelled}
         after
           0 ->
             # Do some work
-            Process.sleep(100)
-
-            # Check state for cancellation
-            if MapSet.member?(state.cancelled_requests, request_id) do
-              {:halt, :cancelled}
-            else
-              {:cont, acc <> "Iteration #{i} complete. "}
-            end
+            Process.sleep(50)
+            Logger.debug("Worker iteration #{i} complete for request #{request_id}")
+            {:cont, acc <> "Iteration #{i} complete. "}
         end
       end)
       |> case do
-        :cancelled -> :cancelled
-        text -> {:ok, text}
+        :cancelled ->
+          Logger.debug("Worker work cancelled for request #{request_id}")
+          :cancelled
+
+        text ->
+          Logger.debug("Worker work completed for request #{request_id}")
+          {:ok, text}
       end
     end
   end
@@ -232,7 +269,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       :ok = Client.send_cancelled(client, "unknown_req_id", "No such request")
 
       # Client should remain functional
-      assert {:ok, %{tools: tools}} = Client.list_tools(client)
+      assert {:ok, %{"tools" => tools}} = Client.list_tools(client)
       assert length(tools) > 0
     end
 
@@ -244,7 +281,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       :ok = Client.send_cancelled(client, "already_completed", "Too late")
 
       # Client should remain functional
-      assert {:ok, _tools} = Client.list_tools(client)
+      assert {:ok, _} = Client.list_tools(client)
     end
   end
 
@@ -273,18 +310,17 @@ defmodule ExMCP.CancellationComprehensiveTest do
       {:ok, client: client, server: server}
     end
 
-    @tag :skip
     test "server stops processing cancelled requests", %{client: client} do
       # This test requires the server handler to support cancellation
       # The SlowHandler.handle_call_tool/3 for "cancellable_tool" demonstrates this
 
       task =
         Task.async(fn ->
-          Client.call_tool(client, "cancellable_tool", %{"iterations" => 20})
+          Client.call_tool(client, "cancellable_tool", %{"iterations" => 100})
         end)
 
-      # Let it start processing
-      Process.sleep(200)
+      # Let it start processing - wait for a few iterations but not too long
+      Process.sleep(150)
 
       [request_id] = Client.get_pending_requests(client)
       :ok = Client.send_cancelled(client, request_id, "Stop processing")
@@ -315,7 +351,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       assert Enum.all?(results, fn result -> result == {:error, :cancelled} end)
 
       # Server should still be responsive
-      assert {:ok, _tools} = Client.list_tools(client)
+      assert {:ok, _} = Client.list_tools(client)
     end
   end
 
@@ -361,7 +397,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       assert {:ok, _} = Task.await(result_task)
 
       # System should remain stable
-      assert {:ok, _tools} = Client.list_tools(client)
+      assert {:ok, _} = Client.list_tools(client)
     end
 
     test "handles response arriving after cancellation", %{client: client} do
@@ -416,7 +452,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # In practice, server would send this through the transport
 
       # Both sides remain functional
-      assert {:ok, _tools} = Client.list_tools(client)
+      assert {:ok, _} = Client.list_tools(client)
     end
   end
 
@@ -457,7 +493,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
        })})
 
       # Client should continue functioning
-      assert {:ok, _tools} = Client.list_tools(client)
+      assert {:ok, _} = Client.list_tools(client)
     end
 
     test "cancellation with invalid request ID type is handled", %{client: client} do
@@ -476,7 +512,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       )
 
       # Should be ignored gracefully
-      assert {:ok, _tools} = Client.list_tools(client)
+      assert {:ok, _} = Client.list_tools(client)
     end
   end
 

@@ -82,7 +82,9 @@ defmodule ExMCP.Server.Legacy do
               handler_state: handler_state,
               transport: transport_mod,
               transport_state: transport_state,
-              protocol_version: nil
+              protocol_version: nil,
+              pending_requests: %{},
+              cancelled_requests: MapSet.new()
             }
 
             # For test transport, handle connection setup
@@ -329,6 +331,27 @@ defmodule ExMCP.Server.Legacy do
     end
   end
 
+  def handle_cast({:notification, "notifications/cancelled", params}, state) do
+    # Handle cancellation notifications from clients
+    handle_cancellation_notification(params, state)
+  end
+
+  def handle_cast(request, state) do
+    # Forward unknown casts to the handler if it supports GenServer casts
+    if function_exported?(state.handler_module, :handle_cast, 2) do
+      case state.handler_module.handle_cast(request, state.handler_state) do
+        {:noreply, new_handler_state} ->
+          new_state = %{state | handler_state: new_handler_state}
+          {:noreply, new_state}
+
+        other ->
+          other
+      end
+    else
+      {:noreply, state}
+    end
+  end
+
   @impl GenServer
   def terminate(reason, state) do
     if function_exported?(state.handler_module, :terminate, 2) do
@@ -337,6 +360,108 @@ defmodule ExMCP.Server.Legacy do
   end
 
   # Private functions
+
+  # Handle cancellation notifications from clients
+  defp handle_cancellation_notification(%{"requestId" => request_id} = params, state) do
+    require Logger
+    reason = Map.get(params, "reason", "Request cancelled by client")
+
+    Logger.debug("Received cancellation for request #{request_id}: #{reason}")
+
+    # Mark the request as cancelled
+    new_cancelled_requests = MapSet.put(state.cancelled_requests, request_id)
+    new_state = %{state | cancelled_requests: new_cancelled_requests}
+
+    # If the request is still pending, remove it and reply with cancellation error
+    case Map.get(state.pending_requests, request_id) do
+      nil ->
+        # Request not found or already completed
+        Logger.debug("Request #{request_id} not found in pending requests")
+        # Still update handler state to inform it about cancellation
+        new_handler_state =
+          update_handler_cancelled_requests(state.handler_module, state.handler_state, request_id)
+
+        final_state = %{new_state | handler_state: new_handler_state}
+        {:noreply, final_state}
+
+      from ->
+        # Request is still pending, reply with cancellation error
+        GenServer.reply(from, {:error, :cancelled})
+        new_pending_requests = Map.delete(state.pending_requests, request_id)
+        # Also notify handler about cancellation
+        new_handler_state =
+          update_handler_cancelled_requests(state.handler_module, state.handler_state, request_id)
+
+        final_state = %{
+          new_state
+          | pending_requests: new_pending_requests,
+            handler_state: new_handler_state
+        }
+
+        {:noreply, final_state}
+    end
+  end
+
+  defp handle_cancellation_notification(params, state) do
+    require Logger
+    Logger.warning("Invalid cancellation notification: #{inspect(params)}")
+    {:noreply, state}
+  end
+
+  # Update handler state with cancelled request information
+  defp update_handler_cancelled_requests(_handler_module, handler_state, request_id) do
+    require Logger
+
+    # For the SlowHandler pattern, update the cancelled_requests field
+    updated_state =
+      if Map.has_key?(handler_state, :cancelled_requests) do
+        new_cancelled = MapSet.put(handler_state.cancelled_requests, request_id)
+        Logger.debug("Updated cancelled_requests in handler state: #{inspect(new_cancelled)}")
+        %{handler_state | cancelled_requests: new_cancelled}
+      else
+        handler_state
+      end
+
+    # Also send cancellation message to active request processes
+    if Map.has_key?(handler_state, :active_requests) do
+      case Map.get(handler_state.active_requests, request_id) do
+        nil ->
+          Logger.debug("No active process found for request #{request_id}")
+
+        pid when is_pid(pid) ->
+          Logger.debug(
+            "Sending cancellation message to worker process #{inspect(pid)} for request #{request_id}"
+          )
+
+          # Send cancellation message to the worker process
+          send(pid, {:cancelled, request_id})
+
+        other ->
+          Logger.debug("Unexpected active_requests entry for #{request_id}: #{inspect(other)}")
+      end
+    else
+      Logger.debug("Handler state has no active_requests field")
+    end
+
+    updated_state
+  end
+
+  # Check if a request has been cancelled
+  defp request_cancelled?(request_id, state) do
+    MapSet.member?(state.cancelled_requests, request_id)
+  end
+
+  # Add a pending request to tracking
+  defp track_pending_request(request_id, from, state) do
+    new_pending_requests = Map.put(state.pending_requests, request_id, from)
+    %{state | pending_requests: new_pending_requests}
+  end
+
+  # Remove a pending request from tracking (when completed)
+  defp complete_pending_request(request_id, state) do
+    new_pending_requests = Map.delete(state.pending_requests, request_id)
+    %{state | pending_requests: new_pending_requests}
+  end
 
   defp connect_transport(:test, opts) do
     case Test.connect(opts) do
@@ -420,21 +545,49 @@ defmodule ExMCP.Server.Legacy do
     name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
 
-    case state.handler_module.handle_call_tool(name, arguments, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => result}}
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
+    require Logger
 
-      {:error, error, new_handler_state} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{"code" => -32000, "message" => "Tool call error: #{inspect(error)}"}
-        }
+    # Check if request was already cancelled before processing
+    if request_cancelled?(id, state) do
+      response = %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "error" => %{"code" => -32001, "message" => "Request was cancelled"}
+      }
 
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
+      {:response, response, state}
+    else
+      # Track this as a pending request for cancellation support
+      new_state = track_pending_request(id, :sync_call, state)
+      Logger.debug("Tracking pending request #{id} for tools/call")
+
+      # Add the request_id to arguments for handlers that support cancellation
+      enhanced_arguments = Map.put(arguments, "_request_id", id)
+
+      case new_state.handler_module.handle_call_tool(
+             name,
+             enhanced_arguments,
+             new_state.handler_state
+           ) do
+        {:ok, result, new_handler_state} ->
+          response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => result}}
+          final_state = %{new_state | handler_state: new_handler_state}
+          # Remove from pending requests when complete
+          completed_state = complete_pending_request(id, final_state)
+          {:response, response, completed_state}
+
+        {:error, error, new_handler_state} ->
+          response = %{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{"code" => -32000, "message" => "Tool call error: #{inspect(error)}"}
+          }
+
+          final_state = %{new_state | handler_state: new_handler_state}
+          # Remove from pending requests when complete
+          completed_state = complete_pending_request(id, final_state)
+          {:response, response, completed_state}
+      end
     end
   end
 
@@ -554,6 +707,13 @@ defmodule ExMCP.Server.Legacy do
 
       {:response, response, state}
     end
+  end
+
+  defp process_mcp_request(%{"method" => "notifications/cancelled"} = request, state) do
+    # Handle cancellation notifications from clients
+    params = Map.get(request, "params", %{})
+    {_, new_state} = handle_cancellation_notification(params, state)
+    {:notification, new_state}
   end
 
   defp process_mcp_request(%{"method" => method} = request, state) do

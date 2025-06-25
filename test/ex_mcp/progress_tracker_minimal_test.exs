@@ -1,11 +1,23 @@
 defmodule ExMCP.ProgressTrackerMinimalTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ExMCP.ProgressTracker
 
+  setup do
+    # Start the application to ensure ProgressTracker is available
+    {:ok, _} = Application.ensure_all_started(:ex_mcp)
+
+    on_exit(fn ->
+      # Stop the application after test
+      Application.stop(:ex_mcp)
+    end)
+
+    :ok
+  end
+
   test "basic progress tracker functionality" do
     # This is a minimal test to verify the ProgressTracker works
-    # without any complex setup or teardown
+    # with proper application setup
 
     sender_pid = self()
 
@@ -23,8 +35,8 @@ defmodule ExMCP.ProgressTrackerMinimalTest do
         assert true
 
       {:error, _reason} ->
-        # ProgressTracker may not be started in test env
-        assert true
+        # ProgressTracker may not be started correctly
+        flunk("ProgressTracker should be available when application is started")
     end
   end
 end

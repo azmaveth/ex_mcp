@@ -119,7 +119,7 @@ defmodule ExMCP.Compliance.Features.Resources do
         assert result == %{} or is_map(result)
 
         # Simulate resource update notification
-        Server.notify_resource_updated(test_context.server, resource_uri)
+        Server.notify_resource_update(test_context.server, resource_uri)
 
         # Give time for notification to be processed
         Process.sleep(50)

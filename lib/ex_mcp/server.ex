@@ -448,6 +448,8 @@ defmodule ExMCP.Server do
           args
           |> Map.new()
           |> Map.put_new(:subscriptions, MapSet.new())
+          |> Map.put_new(:pending_requests, %{})
+          |> Map.put_new(:cancelled_requests, MapSet.new())
 
         {:ok, state}
       end
@@ -500,18 +502,67 @@ defmodule ExMCP.Server do
       def handle_call(:list_roots, _from, state) do
         {:reply, {:error, :list_roots_not_implemented}, state}
       end
+
+      # Handle get pending requests
+      def handle_call(:get_pending_requests, _from, state) do
+        pending_ids = get_pending_request_ids(state)
+        {:reply, pending_ids, state}
+      end
     end
   end
 
   defp generate_mcp_handle_calls do
     quote do
-      # Handle tool call requests
+      # Handle tool call requests with cancellation support
+      def handle_call({:handle_tool_call, tool_name, arguments, request_id}, from, state) do
+        # Check if request was already cancelled
+        if request_cancelled?(request_id, state) do
+          {:reply, {:error, :cancelled}, state}
+        else
+          # Track the pending request
+          new_state = track_pending_request(request_id, from, state)
+
+          # Process the tool call
+          case handle_tool_call(tool_name, arguments, new_state) do
+            {:ok, result, final_state} ->
+              completed_state = complete_pending_request(request_id, final_state)
+              {:reply, {:ok, result}, completed_state}
+
+            {:error, reason, final_state} ->
+              completed_state = complete_pending_request(request_id, final_state)
+              {:reply, {:error, reason}, completed_state}
+          end
+        end
+      end
+
+      # Fallback for tool calls without request_id (legacy support)
       def handle_call({:handle_tool_call, tool_name, arguments}, _from, state) do
         result = handle_tool_call(tool_name, arguments, state)
         {:reply, result, state}
       end
 
-      # Handle resource read requests
+      # Handle resource read requests with cancellation support
+      def handle_call({:handle_resource_read, uri, full_uri, request_id}, from, state) do
+        # Check if request was already cancelled
+        if request_cancelled?(request_id, state) do
+          {:reply, {:error, :cancelled}, state}
+        else
+          # Track the pending request
+          new_state = track_pending_request(request_id, from, state)
+
+          case handle_resource_read(uri, full_uri, new_state) do
+            {:ok, content, final_state} ->
+              completed_state = complete_pending_request(request_id, final_state)
+              {:reply, {:ok, content}, completed_state}
+
+            {:error, reason, final_state} ->
+              completed_state = complete_pending_request(request_id, final_state)
+              {:reply, {:error, reason}, completed_state}
+          end
+        end
+      end
+
+      # Fallback for resource reads without request_id (legacy support)
       def handle_call({:handle_resource_read, uri, full_uri}, _from, state) do
         case handle_resource_read(uri, full_uri, state) do
           {:ok, content, new_state} ->
@@ -522,7 +573,28 @@ defmodule ExMCP.Server do
         end
       end
 
-      # Handle prompt get requests
+      # Handle prompt get requests with cancellation support
+      def handle_call({:handle_prompt_get, prompt_name, arguments, request_id}, from, state) do
+        # Check if request was already cancelled
+        if request_cancelled?(request_id, state) do
+          {:reply, {:error, :cancelled}, state}
+        else
+          # Track the pending request
+          new_state = track_pending_request(request_id, from, state)
+
+          case handle_prompt_get(prompt_name, arguments, new_state) do
+            {:ok, result, final_state} ->
+              completed_state = complete_pending_request(request_id, final_state)
+              {:reply, {:ok, result}, completed_state}
+
+            {:error, reason, final_state} ->
+              completed_state = complete_pending_request(request_id, final_state)
+              {:reply, {:error, reason}, completed_state}
+          end
+        end
+      end
+
+      # Fallback for prompt gets without request_id (legacy support)
       def handle_call({:handle_prompt_get, prompt_name, arguments}, _from, state) do
         result = handle_prompt_get(prompt_name, arguments, state)
         {:reply, result, state}
@@ -554,6 +626,21 @@ defmodule ExMCP.Server do
         # For now, we just return :noreply since notification routing
         # is handled by the transport layer
         {:noreply, state}
+      end
+
+      # Handle cancellation notifications from clients
+      def handle_cast({:notification, "notifications/cancelled", params}, state) do
+        handle_cancellation_notification(params, state)
+      end
+
+      # Handle generic notifications
+      def handle_cast({:notification, method, params}, state) do
+        # Forward to handle_request for custom notification handling
+        case handle_request(method, params, state) do
+          {:noreply, new_state} -> {:noreply, new_state}
+          {:reply, _response, new_state} -> {:noreply, new_state}
+          {:error, _reason, new_state} -> {:noreply, new_state}
+        end
       end
 
       # Default handle_cast fallback
@@ -615,6 +702,61 @@ defmodule ExMCP.Server do
         Enum.each(items, fn {key, value} ->
           ExMCP.Registry.register(ExMCP.Registry, type, key, __MODULE__, value)
         end)
+      end
+
+      # Handle cancellation notifications from clients
+      defp handle_cancellation_notification(%{"requestId" => request_id} = params, state) do
+        require Logger
+        reason = Map.get(params, "reason", "Request cancelled by client")
+
+        Logger.debug("Received cancellation for request #{request_id}: #{reason}")
+
+        # Mark the request as cancelled
+        new_cancelled_requests = MapSet.put(state.cancelled_requests, request_id)
+        new_state = %{state | cancelled_requests: new_cancelled_requests}
+
+        # If the request is still pending, remove it and reply with cancellation error
+        case Map.get(state.pending_requests, request_id) do
+          nil ->
+            # Request not found or already completed
+            Logger.debug("Request #{request_id} not found in pending requests")
+            {:noreply, new_state}
+
+          from ->
+            # Request is still pending, reply with cancellation error
+            GenServer.reply(from, {:error, :cancelled})
+            new_pending_requests = Map.delete(state.pending_requests, request_id)
+            final_state = %{new_state | pending_requests: new_pending_requests}
+            {:noreply, final_state}
+        end
+      end
+
+      defp handle_cancellation_notification(params, state) do
+        require Logger
+        Logger.warning("Invalid cancellation notification: #{inspect(params)}")
+        {:noreply, state}
+      end
+
+      # Check if a request has been cancelled
+      defp request_cancelled?(request_id, state) do
+        MapSet.member?(state.cancelled_requests, request_id)
+      end
+
+      # Add a pending request to tracking
+      defp track_pending_request(request_id, from, state) do
+        new_pending_requests = Map.put(state.pending_requests, request_id, from)
+        %{state | pending_requests: new_pending_requests}
+      end
+
+      # Remove a pending request from tracking (when completed)
+      defp complete_pending_request(request_id, state) do
+        new_pending_requests = Map.delete(state.pending_requests, request_id)
+        %{state | pending_requests: new_pending_requests}
+      end
+
+      # Get list of pending request IDs
+      defp get_pending_request_ids(state) do
+        Map.keys(state.pending_requests)
       end
     end
   end
@@ -754,5 +896,62 @@ defmodule ExMCP.Server do
   """
   def notify_resource_update(server, uri) do
     GenServer.cast(server, {:notify_resource_update, uri})
+  end
+
+  @doc """
+  Notifies subscribed clients that the resource list has changed.
+  """
+  @spec notify_resources_changed(GenServer.server()) :: :ok
+  def notify_resources_changed(server) do
+    GenServer.cast(server, {:notify_resources_changed})
+  end
+
+  @doc """
+  Gets the list of pending request IDs on the server.
+
+  Returns a list of request IDs for requests that are currently being processed
+  by the server. This can be used to monitor server load and track long-running
+  operations.
+
+  ## Examples
+
+      {:ok, server} = MyServer.start_link()
+      
+      # Get pending requests  
+      pending = ExMCP.Server.get_pending_requests(server)
+      # => ["req_123", "req_456"]
+  """
+  @spec get_pending_requests(GenServer.server()) :: [ExMCP.Types.request_id()]
+  def get_pending_requests(server) do
+    GenServer.call(server, :get_pending_requests)
+  end
+
+  @doc """
+  Sends a cancellation notification to the server.
+
+  This function allows external processes to notify the server that a request
+  should be cancelled. The server will attempt to cancel the request if it's
+  still pending.
+
+  ## Parameters
+
+  - `server` - Server process reference
+  - `request_id` - The ID of the request to cancel
+  - `reason` - Optional human-readable reason for cancellation
+
+  ## Returns
+
+  - `:ok` - Cancellation notification sent
+
+  ## Examples
+
+      :ok = ExMCP.Server.cancel_request(server, "req_123", "User cancelled")
+      :ok = ExMCP.Server.cancel_request(server, 12345, nil)
+  """
+  @spec cancel_request(GenServer.server(), ExMCP.Types.request_id(), String.t() | nil) :: :ok
+  def cancel_request(server, request_id, reason \\ nil) do
+    params = %{"requestId" => request_id}
+    params = if reason, do: Map.put(params, "reason", reason), else: params
+    GenServer.cast(server, {:notification, "notifications/cancelled", params})
   end
 end
