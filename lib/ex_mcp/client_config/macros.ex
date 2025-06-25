@@ -33,12 +33,11 @@ defmodule ExMCP.ClientConfig.Macros do
 
         # Merge with appropriate strategy
         merged_value =
-          case unquote(default_merge_strategy) do
-            :shallow -> Map.merge(current_value, validated_opts)
-            :deep -> deep_merge(current_value, validated_opts)
-            :override -> validated_opts
-            :preserve_existing -> Map.merge(validated_opts, current_value)
-          end
+          apply_merge_strategy(
+            unquote(default_merge_strategy),
+            current_value,
+            validated_opts
+          )
 
         # Update config
         Map.put(config, unquote(field_name), merged_value)

@@ -72,7 +72,43 @@ defmodule ExMCP.ClientConfigEnhanced do
   # Generate enhanced configuration setters using the macro
   defconfig_setter(:retry_policy, merge_strategy: :shallow, validation: [:positive_integers])
   defconfig_setter(:pool, merge_strategy: :shallow, validation: [:positive_integers])
-  defconfig_setter(:client_info, merge_strategy: :shallow, validation: [:string_fields])
+
+  # Example of using other merge strategies (for documentation purposes)
+  # defconfig_setter(:deep_config, merge_strategy: :deep)
+  # defconfig_setter(:override_config, merge_strategy: :override)  
+  # defconfig_setter(:preserve_config, merge_strategy: :preserve_existing)
+
+  # Custom implementation for client_info with user_agent generation
+  @doc """
+  Configures client information with automatic user_agent generation.
+  """
+  @spec put_client_info(t(), keyword() | map()) :: t()
+  def put_client_info(config, opts) when is_list(opts) do
+    put_client_info(config, Map.new(opts))
+  end
+
+  def put_client_info(config, opts) when is_map(opts) do
+    validated_opts = apply_validation_rules(opts, [:string_fields])
+
+    # Get current client_info
+    current_info = Map.get(config, :client_info, %{})
+
+    # Merge options
+    updated_info = Map.merge(current_info, validated_opts)
+
+    # Generate user_agent if name and version are present
+    updated_info =
+      if Map.has_key?(updated_info, :name) and Map.has_key?(updated_info, :version) do
+        user_agent =
+          "#{updated_info.name}/#{updated_info.version} ExMCP/#{updated_info[:exmcp_version] || "0.6.0"}"
+
+        Map.put(updated_info, :user_agent, user_agent)
+      else
+        updated_info
+      end
+
+    %{config | client_info: updated_info}
+  end
 
   # Custom implementation for complex observability merging
   @doc """
@@ -241,19 +277,7 @@ defmodule ExMCP.ClientConfigEnhanced do
   """
   @spec merge_configs(t(), t(), merge_strategy()) :: t()
   def merge_configs(base_config, override_config, strategy \\ :deep) do
-    case strategy do
-      :shallow ->
-        Map.merge(base_config, override_config)
-
-      :deep ->
-        deep_merge_configs(base_config, override_config)
-
-      :override ->
-        override_config
-
-      :preserve_existing ->
-        Map.merge(override_config, base_config)
-    end
+    apply_merge_strategy(strategy, base_config, override_config)
   end
 
   @doc """
@@ -362,34 +386,46 @@ defmodule ExMCP.ClientConfigEnhanced do
 
   # ===== PRIVATE IMPLEMENTATION =====
 
+  # Apply merge strategy helper
+  defp apply_merge_strategy(:shallow, current_value, new_value) when is_map(current_value) do
+    Map.merge(current_value || %{}, new_value)
+  end
+
+  defp apply_merge_strategy(:shallow, base_config, override_config) do
+    Map.merge(base_config, override_config)
+  end
+
+  defp apply_merge_strategy(:deep, current_value, new_value)
+       when is_map(current_value) and is_map(new_value) do
+    deep_merge(current_value || %{}, new_value)
+  end
+
+  defp apply_merge_strategy(:deep, base_config, override_config) do
+    deep_merge_configs(base_config, override_config)
+  end
+
+  defp apply_merge_strategy(:override, _current_value, new_value) do
+    new_value
+  end
+
+  defp apply_merge_strategy(:preserve_existing, current_value, new_value)
+       when is_map(current_value) do
+    Map.merge(new_value, current_value || %{})
+  end
+
+  defp apply_merge_strategy(:preserve_existing, base_config, override_config) do
+    Map.merge(override_config, base_config)
+  end
+
   # Validation rule application
   defp apply_validation_rules(opts, rules) do
     # Apply built-in validation rules
-    Enum.reduce_while(rules, {:ok, opts}, fn rule, {:ok, acc} ->
-      case rule do
-        :positive_integers ->
-          case validate_positive_integers(acc) do
-            {:ok, validated_opts} -> {:cont, {:ok, validated_opts}}
-            {:error, _} = error -> {:halt, error}
-          end
+    result =
+      Enum.reduce_while(rules, {:ok, opts}, fn rule, {:ok, acc} ->
+        apply_single_validation_rule(rule, acc)
+      end)
 
-        :string_fields ->
-          case validate_string_fields(acc) do
-            {:ok, validated_opts} -> {:cont, {:ok, validated_opts}}
-            {:error, _} = error -> {:halt, error}
-          end
-
-        :url_format ->
-          case validate_url_format(acc) do
-            {:ok, validated_opts} -> {:cont, {:ok, validated_opts}}
-            {:error, _} = error -> {:halt, error}
-          end
-
-        _ ->
-          {:cont, {:ok, acc}}
-      end
-    end)
-    |> case do
+    case result do
       {:ok, validated_opts} ->
         validated_opts
 
@@ -400,6 +436,20 @@ defmodule ExMCP.ClientConfigEnhanced do
         opts
     end
   end
+
+  defp apply_single_validation_rule(rule, opts) do
+    validator = get_validator_for_rule(rule)
+
+    case validator.(opts) do
+      {:ok, validated_opts} -> {:cont, {:ok, validated_opts}}
+      {:error, _} = error -> {:halt, error}
+    end
+  end
+
+  defp get_validator_for_rule(:positive_integers), do: &validate_positive_integers/1
+  defp get_validator_for_rule(:string_fields), do: &validate_string_fields/1
+  defp get_validator_for_rule(:url_format), do: &validate_url_format/1
+  defp get_validator_for_rule(_), do: fn opts -> {:ok, opts} end
 
   defp validate_positive_integers(opts) do
     Enum.reduce_while(opts, {:ok, opts}, fn {key, value}, {:ok, acc} ->
@@ -490,6 +540,11 @@ defmodule ExMCP.ClientConfigEnhanced do
     parsed_value = parse_env_value(value)
 
     case config_path do
+      :url ->
+        # Special handling for URL - set on transport
+        transport_type = (config.transport && config.transport.type) || :http
+        ClientConfig.put_transport(config, transport_type, url: parsed_value)
+
       atom when is_atom(atom) ->
         # Simple field update
         Map.put(config, atom, parsed_value)
@@ -551,10 +606,22 @@ defmodule ExMCP.ClientConfigEnhanced do
   defp apply_customizations(config, customizations) do
     Enum.reduce(customizations, config, fn {key, value}, acc ->
       case key do
-        :transport -> ClientConfig.put_transport(acc, value[:type] || :http, value)
-        :auth -> ClientConfig.put_auth(acc, value[:type] || :none, value)
-        :timeout -> ClientConfig.put_timeout(acc, value)
-        _ -> ClientConfig.put_custom(acc, key, value)
+        :url ->
+          # Extract current transport type
+          transport_type = (acc.transport && acc.transport.type) || :http
+          ClientConfig.put_transport(acc, transport_type, url: value)
+
+        :transport ->
+          ClientConfig.put_transport(acc, value[:type] || :http, value)
+
+        :auth ->
+          ClientConfig.put_auth(acc, value[:type] || :none, value)
+
+        :timeout ->
+          ClientConfig.put_timeout(acc, value)
+
+        _ ->
+          ClientConfig.put_custom(acc, key, value)
       end
     end)
   end

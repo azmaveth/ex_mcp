@@ -1,8 +1,8 @@
 defmodule ExMCP.ClientConfigEnhancedTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.ClientConfigEnhanced
   alias ExMCP.ClientConfig
+  alias ExMCP.ClientConfigEnhanced
 
   describe "macro-generated configuration setters" do
     test "put_retry_policy/2 uses enhanced macro-generated setter" do
@@ -35,7 +35,7 @@ defmodule ExMCP.ClientConfigEnhancedTest do
       assert updated_config.pool.enabled == true
       assert updated_config.pool.size == 15
       assert updated_config.pool.max_overflow == 8
-      # Should preserve existing fields  
+      # Should preserve existing fields
       assert updated_config.pool.checkout_timeout == 5_000
     end
 
@@ -382,7 +382,7 @@ defmodule ExMCP.ClientConfigEnhancedTest do
       updated_config = ClientConfigEnhanced.put_transport(config, :http, url: "https://test.com")
       assert updated_config.transport.url == "https://test.com"
 
-      # Should delegate to original ClientConfig.put_timeout/2  
+      # Should delegate to original ClientConfig.put_timeout/2
       timeout_config = ClientConfigEnhanced.put_timeout(config, connect: 15_000)
       assert timeout_config.timeouts.connect == 15_000
 

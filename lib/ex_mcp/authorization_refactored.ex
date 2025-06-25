@@ -14,7 +14,7 @@ defmodule ExMCP.AuthorizationRefactored do
   leveraging the decomposed architecture for better maintainability.
   """
 
-  alias ExMCP.Authorization.{OAuthFlow, PKCE, HTTPClient, Validator}
+  alias ExMCP.Authorization.{HTTPClient, OAuthFlow, PKCE, Validator}
 
   @type authorization_config :: %{
           client_id: String.t(),

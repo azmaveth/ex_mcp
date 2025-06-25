@@ -92,96 +92,128 @@ defmodule ExMCP.Server.ToolsRefactored do
   defmacro __before_compile__(env) do
     tools = Module.get_attribute(env.module, :refactored_tools, [])
 
-    init_code =
-      if length(tools) > 0 do
-        # Generate unique handler functions for each tool
-        handler_defs =
-          tools
-          |> Enum.with_index()
-          |> Enum.map(fn {{_tool_def, handler_ast}, index} ->
-            handler_name = :"__tool_handler_#{index}__"
-
-            quote do
-              def unquote(handler_name)(args, state) do
-                # Inject the handler AST here
-                handler_fun = unquote(handler_ast)
-                handler_fun.(args, state)
-              end
-            end
-          end)
-
-        quote do
-          # Define all handler functions
-          unquote_splicing(handler_defs)
-
-          def __init_tools__ do
-            registry = __tool_registry__()
-
-            # Register tools with their handler functions
-            unquote(
-              tools
-              |> Enum.with_index()
-              |> Enum.map(fn {{tool_def, _handler_ast}, index} ->
-                handler_name = :"__tool_handler_#{index}__"
-
-                quote do
-                  Registry.register_tool(
-                    registry,
-                    unquote(Macro.escape(tool_def)),
-                    &(__MODULE__.unquote(handler_name) / 2)
-                  )
-                end
-              end)
-            )
-
-            :ok
-          end
-
-          # Auto-initialize on first use with proper error handling
-          defp ensure_tools_initialized do
-            if Process.get(:tools_initialized) != true do
-              case __init_tools__() do
-                :ok ->
-                  Process.put(:tools_initialized, true)
-                  :ok
-
-                error ->
-                  error
-              end
-            else
-              :ok
-            end
-          end
-        end
-      else
-        quote do
-          def __init_tools__, do: :ok
-          defp ensure_tools_initialized, do: :ok
-        end
-      end
+    init_code = generate_init_code(tools)
+    handler_implementations = generate_handler_implementations()
 
     quote do
       unquote(init_code)
+      unquote(handler_implementations)
+    end
+  end
 
+  # Generate initialization code based on whether there are tools
+  defp generate_init_code([]), do: generate_empty_init_code()
+  defp generate_init_code(tools), do: generate_tools_init_code(tools)
+
+  defp generate_empty_init_code do
+    quote do
+      def __init_tools__, do: :ok
+      defp ensure_tools_initialized, do: :ok
+    end
+  end
+
+  defp generate_tools_init_code(tools) do
+    handler_defs = generate_handler_definitions(tools)
+    init_function = generate_init_function(tools)
+    ensure_function = generate_ensure_function()
+
+    quote do
+      # Define all handler functions
+      unquote_splicing(handler_defs)
+      unquote(init_function)
+      unquote(ensure_function)
+    end
+  end
+
+  defp generate_handler_definitions(tools) do
+    tools
+    |> Enum.with_index()
+    |> Enum.map(fn {{_tool_def, handler_ast}, index} ->
+      handler_name = :"__tool_handler_#{index}__"
+
+      quote do
+        def unquote(handler_name)(args, state) do
+          # Inject the handler AST here
+          handler_fun = unquote(handler_ast)
+          handler_fun.(args, state)
+        end
+      end
+    end)
+  end
+
+  defp generate_init_function(tools) do
+    registrations =
+      tools
+      |> Enum.with_index()
+      |> Enum.map(fn {{tool_def, _handler_ast}, index} ->
+        handler_name = :"__tool_handler_#{index}__"
+
+        quote do
+          Registry.register_tool(
+            registry,
+            unquote(Macro.escape(tool_def)),
+            &(__MODULE__.unquote(handler_name) / 2)
+          )
+        end
+      end)
+
+    quote do
+      def __init_tools__ do
+        registry = __tool_registry__()
+        unquote_splicing(registrations)
+        :ok
+      end
+    end
+  end
+
+  defp generate_ensure_function do
+    quote do
+      defp ensure_tools_initialized do
+        if Process.get(:tools_initialized) != true do
+          case __init_tools__() do
+            :ok ->
+              Process.put(:tools_initialized, true)
+              :ok
+
+            error ->
+              error
+          end
+        else
+          :ok
+        end
+      end
+    end
+  end
+
+  defp generate_handler_implementations do
+    quote do
       @impl ExMCP.Server.Handler
       def handle_list_tools(_params, state) do
-        with :ok <- ensure_tools_initialized() do
-          tools = Registry.list_tools(__tool_registry__())
-          {:ok, tools, state}
-        else
-          error -> {:error, error, state}
+        case ensure_tools_initialized() do
+          :ok ->
+            tools = Registry.list_tools(__tool_registry__())
+            {:ok, tools, state}
+
+          error ->
+            {:error, error, state}
         end
       end
 
       @impl ExMCP.Server.Handler
       def handle_call_tool(tool_name, args, state) do
-        with :ok <- ensure_tools_initialized(),
-             {:ok, result, new_state} <-
-               Registry.call_tool(__tool_registry__(), tool_name, args, state) do
-          # Normalize response for MCP spec
-          normalized = ResponseNormalizer.normalize(result)
-          {:ok, normalized, new_state}
+        with :ok <- ensure_tools_initialized() do
+          handle_tool_execution(tool_name, args, state)
         else
+          error -> {:error, error, state}
+        end
+      end
+
+      defp handle_tool_execution(tool_name, args, state) do
+        case Registry.call_tool(__tool_registry__(), tool_name, args, state) do
+          {:ok, result, new_state} ->
+            normalized = ResponseNormalizer.normalize(result)
+            {:ok, normalized, new_state}
+
           {:ok, result} ->
             # Handler didn't return state, use original state
             normalized = ResponseNormalizer.normalize(result)

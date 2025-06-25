@@ -19,6 +19,11 @@ defmodule ExMCP.MessageProcessorRefactored do
 
   # Re-export Conn for backward compatibility
   defmodule Conn do
+    @moduledoc """
+    Connection struct used to pass request/response data through the message processing pipeline.
+
+    This struct contains all the context needed for processing an MCP message.
+    """
     defstruct [
       :request,
       :response,

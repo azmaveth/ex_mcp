@@ -38,44 +38,57 @@ defmodule ExMCP.MessageProcessor.Dispatcher do
     id = get_request_id(request)
 
     # Route to appropriate handler based on method
-    case method do
-      "ping" ->
-        Handlers.handle_ping(conn, id)
+    dispatch_method(method, conn, handler, mode, params, id, server_info)
+  end
 
-      "initialize" ->
-        Handlers.handle_initialize(conn, handler, mode, params, id, server_info)
+  # Define method routing as separate function clauses
+  defp dispatch_method("ping", conn, _handler, _mode, _params, id, _server_info) do
+    Handlers.handle_ping(conn, id)
+  end
 
-      "tools/list" ->
-        Handlers.handle_tools_list(conn, handler, mode, params, id)
+  defp dispatch_method("initialize", conn, handler, mode, params, id, server_info) do
+    Handlers.handle_initialize(conn, handler, mode, params, id, server_info)
+  end
 
-      "tools/call" ->
-        Handlers.handle_tools_call(conn, handler, mode, params, id)
+  defp dispatch_method("tools/list", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_tools_list(conn, handler, mode, params, id)
+  end
 
-      "resources/list" ->
-        Handlers.handle_resources_list(conn, handler, mode, params, id)
+  defp dispatch_method("tools/call", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_tools_call(conn, handler, mode, params, id)
+  end
 
-      "resources/read" ->
-        Handlers.handle_resources_read(conn, handler, mode, params, id)
+  defp dispatch_method("resources/list", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_resources_list(conn, handler, mode, params, id)
+  end
 
-      "resources/subscribe" ->
-        Handlers.handle_resources_subscribe(conn, handler, mode, params, id)
+  defp dispatch_method("resources/read", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_resources_read(conn, handler, mode, params, id)
+  end
 
-      "resources/unsubscribe" ->
-        Handlers.handle_resources_unsubscribe(conn, handler, mode, params, id)
+  defp dispatch_method("resources/subscribe", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_resources_subscribe(conn, handler, mode, params, id)
+  end
 
-      "prompts/list" ->
-        Handlers.handle_prompts_list(conn, handler, mode, params, id)
+  defp dispatch_method("resources/unsubscribe", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_resources_unsubscribe(conn, handler, mode, params, id)
+  end
 
-      "prompts/get" ->
-        Handlers.handle_prompts_get(conn, handler, mode, params, id)
+  defp dispatch_method("prompts/list", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_prompts_list(conn, handler, mode, params, id)
+  end
 
-      "completion/complete" ->
-        Handlers.handle_completion_complete(conn, handler, mode, params, id)
+  defp dispatch_method("prompts/get", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_prompts_get(conn, handler, mode, params, id)
+  end
 
-      _ ->
-        # Unknown method - delegate to custom handler
-        Handlers.handle_custom_method(conn, handler, mode, method, params, id)
-    end
+  defp dispatch_method("completion/complete", conn, handler, mode, params, id, _server_info) do
+    Handlers.handle_completion_complete(conn, handler, mode, params, id)
+  end
+
+  defp dispatch_method(method, conn, handler, mode, params, id, _server_info) do
+    # Unknown method - delegate to custom handler
+    Handlers.handle_custom_method(conn, handler, mode, method, params, id)
   end
 
   @doc """

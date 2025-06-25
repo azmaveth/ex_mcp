@@ -8,7 +8,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
   - Token refresh flow
   """
 
-  alias ExMCP.Authorization.{PKCE, HTTPClient, Validator}
+  alias ExMCP.Authorization.{HTTPClient, PKCE, Validator}
 
   @type auth_params :: %{
           optional(:state) => String.t(),

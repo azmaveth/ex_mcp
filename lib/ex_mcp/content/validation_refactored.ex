@@ -22,10 +22,10 @@ defmodule ExMCP.Content.ValidationRefactored do
   """
 
   alias ExMCP.Content.{
-    SchemaValidator,
     Sanitizer,
-    Transformer,
+    SchemaValidator,
     SecurityScanner,
+    Transformer,
     ValidatorRegistry
   }
 

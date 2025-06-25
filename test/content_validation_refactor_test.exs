@@ -1,7 +1,7 @@
 defmodule ExMCP.ContentValidationRefactorTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.Content.{SchemaValidator, Sanitizer, Transformer, SecurityScanner}
+  alias ExMCP.Content.{Sanitizer, SchemaValidator, SecurityScanner, Transformer}
   alias ExMCP.Content.ValidationRefactored, as: Validation
 
   describe "SchemaValidator" do
@@ -137,7 +137,7 @@ defmodule ExMCP.ContentValidationRefactorTest do
       sanitized = Validation.sanitize(content, [:strip_scripts])
       assert sanitized.text == ""
 
-      # Test delegation to Transformer  
+      # Test delegation to Transformer
       {:ok, transformed} = Validation.transform(content, [:normalize_whitespace])
       assert transformed.text == "<script>"
 
