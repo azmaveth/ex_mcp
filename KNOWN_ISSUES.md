@@ -43,13 +43,14 @@ This document tracks known issues in ExMCP v0.6.0 that will be addressed in futu
 ### 4. Credo Warnings
 
 **Issue**: Minor code quality warnings from Credo:
-- 22 readability issues (mostly missing @moduledoc)
-- 11 refactoring opportunities (complexity warnings)
-- 8 warnings (IO.inspect calls in tests)
+- 10 refactoring opportunities (cyclomatic complexity > 11)
+- 3 warnings (Logger metadata config, test comparison checks)
 
 **Impact**: None - Code quality only
 
 **Target Fix**: v0.7.0 cleanup
+
+**Note**: Most readability issues were fixed in commit 0844ea2
 
 ## Security Considerations
 
