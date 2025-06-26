@@ -626,6 +626,7 @@ defmodule ExMCP.Response do
   # Known safe keys that we can convert to atoms
   @safe_atom_keys ~w(name description required uri text type mime_type mimeType blob arguments inputSchema outputSchema role content values total hasMore uriTemplate uri_template properties enum a b operation)
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp normalize_item_keys(item) when is_map(item) do
     # Create a map that works with both string and atom access for known safe keys
     atom_keys =

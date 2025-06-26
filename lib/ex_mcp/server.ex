@@ -524,6 +524,7 @@ defmodule ExMCP.Server do
     end
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp generate_mcp_handle_calls do
     quote do
       # Handle tool call requests with cancellation support
@@ -663,6 +664,7 @@ defmodule ExMCP.Server do
     end
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp generate_genserver_handle_info do
     quote do
       # Handle test transport connection messages
@@ -733,6 +735,8 @@ defmodule ExMCP.Server do
     end
   end
 
+  # credo:disable-for-lines:200 Credo.Check.Refactor.CyclomaticComplexity
+  # credo:disable-for-lines:200 Credo.Check.Refactor.LongQuoteBlocks
   defp generate_helper_functions do
     quote do
       # Register all capabilities with the ExMCP.Registry
