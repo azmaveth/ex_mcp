@@ -10,6 +10,8 @@ defmodule ExMCP.Server.Handler.Echo do
 
   @behaviour ExMCP.Server.Handler
 
+  alias ExMCP.Protocol.ErrorCodes
+
   @impl true
   def init(_args) do
     {:ok, %{}}
@@ -68,7 +70,7 @@ defmodule ExMCP.Server.Handler.Echo do
   end
 
   def handle_call_tool(_name, _arguments, state) do
-    {:error, %{"code" => -32601, "message" => "Tool not found"}, state}
+    {:error, ErrorCodes.error_response(:method_not_found, "Tool not found"), state}
   end
 
   @impl true
@@ -78,7 +80,7 @@ defmodule ExMCP.Server.Handler.Echo do
 
   @impl true
   def handle_read_resource(_uri, state) do
-    {:error, %{"code" => -32602, "message" => "Resource not found"}, state}
+    {:error, ErrorCodes.error_response(:invalid_params, "Resource not found"), state}
   end
 
   @impl true
@@ -88,7 +90,7 @@ defmodule ExMCP.Server.Handler.Echo do
 
   @impl true
   def handle_get_prompt(_name, _arguments, state) do
-    {:error, %{"code" => -32602, "message" => "Prompt not found"}, state}
+    {:error, ErrorCodes.error_response(:invalid_params, "Prompt not found"), state}
   end
 
   @impl true

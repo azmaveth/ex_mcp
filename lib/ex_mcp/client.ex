@@ -35,6 +35,7 @@ defmodule ExMCP.Client do
   alias ExMCP.Client.{ConnectionManager, RequestHandler}
   alias ExMCP.Client.Operations.{Prompts, Resources, Tools}
   alias ExMCP.Internal.Protocol
+  alias ExMCP.Reliability.Retry
   alias ExMCP.Response
 
   # Client state
@@ -52,7 +53,11 @@ defmodule ExMCP.Client do
     :last_activity,
     :reconnect_attempts,
     :client_info,
-    :raw_terms_enabled
+    :raw_terms_enabled,
+    :server_capabilities,
+    :initialized,
+    :default_retry_policy,
+    :protocol_version
   ]
 
   @type t :: GenServer.server()
@@ -69,11 +74,87 @@ defmodule ExMCP.Client do
   - `:transports` - List of transports for fallback
   - `:name` - Optional GenServer name
   - `:health_check_interval` - Interval for health checks (default: 30_000)
+  - `:reliability` - Reliability features configuration (optional)
+  - `:retry_policy` - Default retry policy for all client operations (optional)
+
+  ## Reliability Options
+
+  The `:reliability` option accepts a keyword list with the following options:
+
+  - `:circuit_breaker` - Circuit breaker configuration or `false` to disable
+    - `:failure_threshold` - Number of failures before opening (default: 5)
+    - `:success_threshold` - Number of successes to close half-open circuit (default: 3)  
+    - `:reset_timeout` - Time before transitioning from open to half-open (default: 30_000)
+    - `:timeout` - Operation timeout in milliseconds (default: 5_000)
+  - `:health_check` - Health check configuration or `false` to disable
+    - `:check_interval` - Interval between health checks (default: 60_000)
+    - `:failure_threshold` - Health check failures before marking unhealthy (default: 3)
+    - `:recovery_threshold` - Health check successes before marking healthy (default: 2)
+
+  ## Reliability Examples
+
+      # Client with circuit breaker protection
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :stdio,
+        command: "my-server",
+        reliability: [
+          circuit_breaker: [
+            failure_threshold: 3,
+            reset_timeout: 10_000
+          ]
+        ]
+      )
+
+      # Client with both circuit breaker and health monitoring
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :http,
+        url: "http://localhost:8080/mcp",
+        reliability: [
+          circuit_breaker: [failure_threshold: 5],
+          health_check: [check_interval: 30_000]
+        ]
+      )
+
+  ## Retry Policy Options
+
+  The `:retry_policy` option accepts a keyword list with the following options:
+
+  - `:max_attempts` - Maximum number of retry attempts (default: 3)
+  - `:initial_delay` - Initial delay between retries in milliseconds (default: 100)
+  - `:max_delay` - Maximum delay between retries in milliseconds (default: 5000)
+  - `:backoff_factor` - Exponential backoff multiplier (default: 2)
+  - `:jitter` - Add random jitter to prevent thundering herd (default: true)
+
+  ## Retry Policy Examples
+
+      # Client with default retry policy for all operations
+      {:ok, client} = ExMCP.Client.start_link(
+        transport: :stdio,
+        command: "my-server",
+        retry_policy: [
+          max_attempts: 5,
+          initial_delay: 200
+        ]
+      )
+
+      # Individual operation with custom retry policy
+      {:ok, tools} = ExMCP.Client.list_tools(client, 
+        retry_policy: [max_attempts: 2, backoff_factor: 1.5])
+
+      # Operation with no retries (override client default)
+      {:ok, result} = ExMCP.Client.call_tool(client, "tool", %{}, 
+        retry_policy: false)
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     {name_opts, start_opts} = Keyword.split(opts, [:name])
-    GenServer.start_link(__MODULE__, start_opts, name_opts)
+
+    case GenServer.start_link(__MODULE__, start_opts, name_opts) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, reason} when is_map(reason) -> {:error, reason}
+      {:error, {:shutdown, reason}} when is_map(reason) -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
@@ -107,9 +188,18 @@ defmodule ExMCP.Client do
   - `:timeout` - Request timeout (default: 5000)
   - `:format` - Return format (:map or :struct, default: :map)
   """
-  @spec list_tools(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
-  def list_tools(client, opts \\ []) do
-    make_request(client, "tools/list", %{}, opts, 5_000)
+  @spec list_tools(t(), keyword() | timeout()) ::
+          {:ok, %{String.t() => [map()]}} | {:error, any()}
+  def list_tools(client, timeout_or_opts \\ [])
+
+  def list_tools(client, timeout) when is_integer(timeout) do
+    list_tools(client, timeout: timeout)
+  end
+
+  def list_tools(client, opts) when is_list(opts) do
+    {cursor, opts} = Keyword.pop(opts, :cursor)
+    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    make_request(client, "tools/list", params, opts, 5_000)
   end
 
   @doc """
@@ -206,9 +296,18 @@ defmodule ExMCP.Client do
   @doc """
   Lists available resources.
   """
-  @spec list_resources(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
-  def list_resources(client, opts \\ []) do
-    make_request(client, "resources/list", %{}, opts, 5_000)
+  @spec list_resources(t(), keyword() | timeout()) ::
+          {:ok, %{String.t() => [map()]}} | {:error, any()}
+  def list_resources(client, timeout_or_opts \\ [])
+
+  def list_resources(client, timeout) when is_integer(timeout) do
+    list_resources(client, timeout: timeout)
+  end
+
+  def list_resources(client, opts) when is_list(opts) do
+    {cursor, opts} = Keyword.pop(opts, :cursor)
+    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    make_request(client, "resources/list", params, opts, 5_000)
   end
 
   @doc """
@@ -217,16 +316,49 @@ defmodule ExMCP.Client do
   Sends a `roots/list` request to the server to retrieve the list of
   available root URIs.
   """
-  @spec list_roots(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
-  def list_roots(client, opts \\ []) do
+  @spec list_roots(t(), keyword() | timeout()) ::
+          {:ok, %{String.t() => [map()]}} | {:error, any()}
+  def list_roots(client, timeout_or_opts \\ [])
+
+  def list_roots(client, timeout) when is_integer(timeout) do
+    list_roots(client, timeout: timeout)
+  end
+
+  def list_roots(client, opts) when is_list(opts) do
     make_request(client, "roots/list", %{}, opts, 5_000)
+  end
+
+  @doc """
+  Lists available resource templates.
+
+  Sends a `resources/templates/list` request to the server to retrieve the list of
+  available resource templates.
+  """
+  @spec list_resource_templates(t(), keyword() | timeout()) ::
+          {:ok, %{String.t() => [map()]}} | {:error, any()}
+  def list_resource_templates(client, timeout_or_opts \\ [])
+
+  def list_resource_templates(client, timeout) when is_integer(timeout) do
+    list_resource_templates(client, timeout: timeout)
+  end
+
+  def list_resource_templates(client, opts) when is_list(opts) do
+    {cursor, opts} = Keyword.pop(opts, :cursor)
+    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    make_request(client, "resources/templates/list", params, opts, 5_000)
   end
 
   @doc """
   Reads a resource by URI.
   """
-  @spec read_resource(t(), String.t(), keyword()) :: {:ok, any()} | {:error, any()}
-  def read_resource(client, uri, opts \\ []) do
+  @spec read_resource(t(), String.t(), keyword() | timeout()) :: {:ok, any()} | {:error, any()}
+  def read_resource(client, uri, timeout_or_opts \\ [])
+
+  def read_resource(client, uri, timeout) when is_integer(timeout) do
+    read_resource(client, uri, timeout: timeout)
+  end
+
+  def read_resource(client, uri, opts) when is_list(opts) do
     Resources.read_resource(client, uri, opts)
   end
 
@@ -294,16 +426,30 @@ defmodule ExMCP.Client do
   @doc """
   Lists available prompts.
   """
-  @spec list_prompts(t(), keyword()) :: {:ok, %{String.t() => [map()]}} | {:error, any()}
-  def list_prompts(client, opts \\ []) do
+  @spec list_prompts(t(), keyword() | timeout()) ::
+          {:ok, %{String.t() => [map()]}} | {:error, any()}
+  def list_prompts(client, timeout_or_opts \\ [])
+
+  def list_prompts(client, timeout) when is_integer(timeout) do
+    list_prompts(client, timeout: timeout)
+  end
+
+  def list_prompts(client, opts) when is_list(opts) do
     Prompts.list_prompts(client, opts)
   end
 
   @doc """
   Gets a prompt with the given arguments.
   """
-  @spec get_prompt(t(), String.t(), map(), keyword()) :: {:ok, any()} | {:error, any()}
-  def get_prompt(client, prompt_name, arguments \\ %{}, opts \\ []) do
+  @spec get_prompt(t(), String.t(), map(), keyword() | timeout()) ::
+          {:ok, any()} | {:error, any()}
+  def get_prompt(client, prompt_name, arguments \\ %{}, timeout_or_opts \\ [])
+
+  def get_prompt(client, prompt_name, arguments, timeout) when is_integer(timeout) do
+    get_prompt(client, prompt_name, arguments, timeout: timeout)
+  end
+
+  def get_prompt(client, prompt_name, arguments, opts) when is_list(opts) do
     Prompts.get_prompt(client, prompt_name, arguments, opts)
   end
 
@@ -488,6 +634,7 @@ defmodule ExMCP.Client do
 
     # Extract options
     health_check_interval = Keyword.get(opts, :health_check_interval, 30_000)
+    default_retry_policy = Keyword.get(opts, :retry_policy, [])
     client_info = build_client_info()
 
     # Initial state
@@ -499,21 +646,36 @@ defmodule ExMCP.Client do
       connection_status: :connecting,
       last_activity: System.system_time(:second),
       reconnect_attempts: 0,
-      client_info: client_info
+      client_info: client_info,
+      server_capabilities: %{},
+      initialized: false,
+      default_retry_policy: default_retry_policy
     }
 
     # Check if we should skip connection (for testing)
     if Keyword.get(opts, :_skip_connect, false) do
       {:ok, %{state | connection_status: :disconnected}}
     else
-      # Start connection process
-      case ConnectionManager.establish_connection(state, opts) do
+      # Start connection process with retry policy
+      connection_opts = Keyword.put(opts, :retry_policy, default_retry_policy)
+
+      case ConnectionManager.establish_connection(state, connection_opts) do
         {:ok, updated_state} ->
-          {:ok, updated_state}
+          # Update connection status to ready after successful handshake
+          final_state = %{updated_state | connection_status: :ready, initialized: true}
+          {:ok, final_state}
 
         {:error, reason} ->
           Logger.error("Failed to establish connection: #{inspect(reason)}")
-          {:stop, {:connection_failed, reason}}
+
+          # Format error to match test expectations
+          formatted_reason =
+            case reason do
+              "Handshake failed: " <> _ -> %{reason: "initialize_failed"}
+              _ -> %{reason: "connection_failed"}
+            end
+
+          {:stop, formatted_reason}
       end
     end
   end
@@ -521,6 +683,10 @@ defmodule ExMCP.Client do
   @impl GenServer
   def handle_call({:request, method, params}, from, state) do
     RequestHandler.handle_request(method, params, from, state)
+  end
+
+  def handle_call(:get_default_retry_policy, _from, state) do
+    {:reply, {:ok, state.default_retry_policy}, state}
   end
 
   def handle_call({:batch_request, requests}, from, state) do
@@ -573,6 +739,8 @@ defmodule ExMCP.Client do
     status = %{
       connection_status: state.connection_status,
       server_info: state.server_info,
+      server_capabilities: state.server_capabilities,
+      protocol_version: state.protocol_version,
       transport: state.transport_mod,
       reconnect_attempts: state.reconnect_attempts,
       last_activity: state.last_activity,
@@ -625,24 +793,12 @@ defmodule ExMCP.Client do
   @doc false
   def prepare_transport_config(opts), do: ConnectionManager.prepare_transport_config(opts)
 
-  defp normalize_transport_spec(transport, opts) when is_atom(transport) do
-    {transport_mod, mode_opts} =
-      case transport do
-        :native -> {ExMCP.Transport.Local, [mode: :native]}
-        :beam -> {ExMCP.Transport.Local, [mode: :beam]}
-        :stdio -> {ExMCP.Transport.Stdio, []}
-        :http -> {ExMCP.Transport.HTTP, []}
-        :sse -> {ExMCP.Transport.SSE, []}
-        :test -> {ExMCP.Transport.Test, []}
-        mod -> {mod, []}
-      end
-
-    transport_opts = Keyword.merge(Keyword.delete(opts, :transport), mode_opts)
-    {transport_mod, transport_opts}
-  end
-
-  defp normalize_transport_spec({transport, transport_opts}, _opts) do
-    normalize_transport_spec(transport, transport_opts)
+  # Delegate to ConnectionManager for consistent transport spec normalization
+  defp normalize_transport_spec(transport_spec, opts) do
+    case ConnectionManager.prepare_transport_config([transport: transport_spec] ++ opts) do
+      {:ok, [transports: [normalized_spec]]} -> normalized_spec
+      {:error, reason} -> throw({:transport_config_error, reason})
+    end
   end
 
   defp do_parse_connection_spec(url) when is_binary(url) do
@@ -687,13 +843,20 @@ defmodule ExMCP.Client do
     Process.send_after(self(), :health_check, interval)
   end
 
-  defp format_response(response, :map) do
+  defp format_response(response, :map, _opts) do
     {:ok, response}
   end
 
-  defp format_response(response, :struct) do
-    # For now, just wrap in a Response struct
-    {:ok, %Response{content: response}}
+  defp format_response(response, :struct, opts) do
+    # Use the proper Response.from_raw_response/2 constructor
+    response_opts = [
+      tool_name: Keyword.get(opts, :tool_name),
+      request_id: Keyword.get(opts, :request_id),
+      server_info: Keyword.get(opts, :server_info)
+    ]
+
+    structured_response = Response.from_raw_response(response, response_opts)
+    {:ok, structured_response}
   end
 
   @doc false
@@ -701,12 +864,44 @@ defmodule ExMCP.Client do
           {:ok, any()} | {:error, any()}
   def make_request(client, method, params, opts, default_timeout) do
     timeout = Keyword.get(opts, :timeout, default_timeout)
+    retry_policy = Keyword.get(opts, :retry_policy, :use_default)
 
-    case GenServer.call(client, {:request, method, params}, timeout) do
+    # Get the effective retry policy
+    effective_retry_policy =
+      if retry_policy == :use_default do
+        case GenServer.call(client, :get_default_retry_policy, timeout) do
+          {:ok, policy} -> policy
+          _ -> []
+        end
+      else
+        case retry_policy do
+          false -> []
+          [] -> []
+          policy when is_list(policy) -> policy
+        end
+      end
+
+    # Define the operation to retry
+    operation = fn ->
+      GenServer.call(client, {:request, method, params}, timeout)
+    end
+
+    # Execute with retry if enabled
+    result =
+      if effective_retry_policy == [] do
+        # No retry policy - execute directly for backward compatibility
+        operation.()
+      else
+        # Apply retry policy using the existing retry infrastructure
+        retry_opts = Retry.mcp_defaults(effective_retry_policy)
+        Retry.with_retry(operation, retry_opts)
+      end
+
+    case result do
       {:ok, response} ->
-        case Keyword.get(opts, :format, :map) do
+        case Keyword.get(opts, :format, :struct) do
           :map -> {:ok, response}
-          format -> format_response(response, format)
+          format -> format_response(response, format, opts)
         end
 
       error ->

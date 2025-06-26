@@ -182,4 +182,55 @@ defmodule ExMCP.DSL.Resource do
       {:error, _} -> false
     end
   end
+
+  @doc """
+  Extracts variables from a URI based on a template pattern.
+
+  Templates use {variable_name} syntax to indicate variable segments.
+  Returns a map of variable names to their values from the URI.
+
+  ## Examples
+
+      iex> ExMCP.DSL.Resource.extract_variables("repos/octocat/hello/issues/42", "repos/{owner}/{repo}/issues/{id}")
+      %{"owner" => "octocat", "repo" => "hello", "id" => "42"}
+
+      iex> ExMCP.DSL.Resource.extract_variables("api/v2/users/123", "api/v{version}/users/{id}")
+      %{"version" => "2", "id" => "123"}
+
+      iex> ExMCP.DSL.Resource.extract_variables("static/path", "static/path")
+      %{}
+  """
+  def extract_variables(uri, template) do
+    # Extract variable names from template
+    variable_names =
+      Regex.scan(~r/\{([^}]+)\}/, template)
+      |> Enum.map(fn [_, name] -> name end)
+
+    # Convert template to regex pattern
+    regex_pattern =
+      template
+      |> Regex.escape()
+      |> String.replace("\\{", "{")
+      |> String.replace("\\}", "}")
+      |> String.replace(~r/\{[^}]+\}/, "([^/]+)")
+      |> then(&("^" <> &1 <> "$"))
+
+    case Regex.compile(regex_pattern) do
+      {:ok, regex} ->
+        case Regex.run(regex, uri) do
+          nil ->
+            %{}
+
+          [_ | values] ->
+            # Zip variable names with captured values
+            variable_names
+            |> Enum.zip(values)
+            |> Enum.into(%{})
+        end
+
+      {:error, _} ->
+        # Return empty map for invalid patterns
+        %{}
+    end
+  end
 end

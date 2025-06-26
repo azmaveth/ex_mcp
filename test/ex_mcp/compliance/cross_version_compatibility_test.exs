@@ -118,8 +118,11 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
       Server.start_link(
         transport: :test,
         handler: MultiVersionHandler,
-        handler_args: [supported_version: version]
+        supported_version: version
       )
+
+    # Allow server to start its message loop
+    Process.sleep(10)
 
     # The client must be configured to request the specific version for the test.
     {:ok, client} =
@@ -140,16 +143,46 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
         Server.start_link(
           transport: :test,
           handler: MultiVersionHandler,
-          handler_args: [supported_version: "2024-11-05"]
+          supported_version: "2024-11-05"
         )
 
+      # Allow server to start its message loop
+      Process.sleep(10)
+
       # Client requests a newer version, which should be rejected
-      assert {:error, %{reason: "initialize_failed"}} =
-               Client.start_link(
-                 transport: :test,
-                 server: server,
-                 protocol_version: "2025-06-18"
-               )
+      Process.flag(:trap_exit, true)
+
+      result =
+        Client.start_link(
+          transport: :test,
+          server: server,
+          protocol_version: "2025-06-18"
+        )
+
+      case result do
+        {:error, %{reason: "initialize_failed"}} ->
+          # This is the expected format if GenServer returns error properly
+          :ok
+
+        {:ok, pid} ->
+          # If the client starts successfully, wait for a potential delayed exit
+          receive do
+            {:EXIT, ^pid, %{reason: "initialize_failed"}} ->
+              # This is also acceptable - initialization failed after start
+              :ok
+
+            {:EXIT, ^pid, reason} ->
+              # Some other exit reason
+              assert %{reason: "initialize_failed"} == reason,
+                     "Expected initialize_failed but got: #{inspect(reason)}"
+          after
+            1000 ->
+              flunk("Expected client initialization to fail but it succeeded and didn't exit")
+          end
+
+        other ->
+          flunk("Unexpected result: #{inspect(other)}")
+      end
     end
 
     test "initialization fails for malformed or unknown version strings" do
@@ -159,13 +192,43 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
           handler: MultiVersionHandler
         )
 
-      # The server handler will reject this version as it doesn't match its supported version
-      assert {:error, %{reason: "initialize_failed"}} =
-               Client.start_link(
-                 transport: :test,
-                 server: server,
-                 protocol_version: "not-a-real-version"
-               )
+      # Allow server to start its message loop
+      Process.sleep(10)
+
+      # Client requests an invalid version, which should be rejected
+      Process.flag(:trap_exit, true)
+
+      result =
+        Client.start_link(
+          transport: :test,
+          server: server,
+          protocol_version: "not-a-real-version"
+        )
+
+      case result do
+        {:error, %{reason: "initialize_failed"}} ->
+          # This is the expected format if GenServer returns error properly
+          :ok
+
+        {:ok, pid} ->
+          # If the client starts successfully, wait for a potential delayed exit
+          receive do
+            {:EXIT, ^pid, %{reason: "initialize_failed"}} ->
+              # This is also acceptable - initialization failed after start
+              :ok
+
+            {:EXIT, ^pid, reason} ->
+              # Some other exit reason
+              assert %{reason: "initialize_failed"} == reason,
+                     "Expected initialize_failed but got: #{inspect(reason)}"
+          after
+            1000 ->
+              flunk("Expected client initialization to fail but it succeeded and didn't exit")
+          end
+
+        other ->
+          flunk("Unexpected result: #{inspect(other)}")
+      end
     end
   end
 
@@ -203,8 +266,10 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
 
       {:ok, responses} = Client.batch_request(client, batch)
       assert length(responses) == 2
-      assert Keyword.has_key?(hd(responses), :tools)
-      assert Keyword.has_key?(Enum.at(responses, 1), :resources)
+      assert {:ok, tools_result} = hd(responses)
+      assert Map.has_key?(tools_result, "tools")
+      assert {:ok, resources_result} = Enum.at(responses, 1)
+      assert Map.has_key?(resources_result, "resources")
     end
 
     test "server accepts batch requests with 2024-11-05 (batch support)" do
@@ -217,8 +282,10 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
 
       {:ok, responses} = Client.batch_request(client, batch)
       assert length(responses) == 2
-      assert Keyword.has_key?(hd(responses), :tools)
-      assert Keyword.has_key?(Enum.at(responses, 1), :resources)
+      assert {:ok, tools_result} = hd(responses)
+      assert Map.has_key?(tools_result, "tools")
+      assert {:ok, resources_result} = Enum.at(responses, 1)
+      assert Map.has_key?(resources_result, "resources")
     end
   end
 
@@ -236,28 +303,28 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
     test "resources/subscribe is rejected in 2024-11-05" do
       {:ok, %{client: client}} = setup_connection("2024-11-05")
       {:error, error} = Client.subscribe_resource(client, "res://test")
-      assert error.message =~ "Method not supported in version 2024-11-05"
+      assert error["message"] =~ "Method not supported in version 2024-11-05"
     end
 
     test "completion/complete is allowed in 2025-06-18" do
       {:ok, %{client: client}} = setup_connection("2025-06-18")
       ref = %{"type" => "ref/prompt", "name" => "test_prompt"}
       {:ok, result} = Client.complete(client, ref, %{"name" => "p", "value" => "v"})
-      assert result["completion"] == ["test completion"]
+      assert result.completion == ["test completion"]
     end
 
     test "completion/complete is allowed in 2025-03-26" do
       {:ok, %{client: client}} = setup_connection("2025-03-26")
       ref = %{"type" => "ref/prompt", "name" => "test_prompt"}
       {:ok, result} = Client.complete(client, ref, %{"name" => "p", "value" => "v"})
-      assert result["completion"] == ["test completion"]
+      assert result.completion == ["test completion"]
     end
 
     test "completion/complete is rejected in 2024-11-05" do
       {:ok, %{client: client}} = setup_connection("2024-11-05")
       ref = %{"type" => "ref/prompt", "name" => "test_prompt"}
       {:error, error} = Client.complete(client, ref, %{"name" => "p", "value" => "v"})
-      assert error.message =~ "Method not supported in version 2024-11-05"
+      assert error["message"] =~ "Method not supported in version 2024-11-05"
     end
   end
 end

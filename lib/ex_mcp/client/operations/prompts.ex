@@ -13,16 +13,24 @@ defmodule ExMCP.Client.Operations.Prompts do
 
   ## Options
 
+  - `:cursor` - Pagination cursor for retrieving additional results
   - `:timeout` - Request timeout (default: 5000)
   - `:format` - Response format (default: :map)
 
   ## Examples
 
       {:ok, prompts} = ExMCP.Client.Operations.Prompts.list_prompts(client)
+      {:ok, prompts} = ExMCP.Client.Operations.Prompts.list_prompts(client, cursor: "page2")
   """
   @spec list_prompts(Types.client(), Types.request_opts()) :: Types.mcp_response()
   def list_prompts(client, opts \\ []) do
-    ExMCP.Client.make_request(client, "prompts/list", %{}, opts, 5_000)
+    params =
+      case Keyword.get(opts, :cursor) do
+        nil -> %{}
+        cursor -> %{"cursor" => cursor}
+      end
+
+    ExMCP.Client.make_request(client, "prompts/list", params, opts, 5_000)
   end
 
   @doc """

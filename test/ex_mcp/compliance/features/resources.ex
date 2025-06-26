@@ -190,29 +190,6 @@ defmodule ExMCP.Compliance.Features.Resources do
     end
   end
 
-  defp _validate_resource_content(content, _version) do
-    # Validate resource content structure
-    assert is_list(content.contents)
-
-    for content_item <- content.contents do
-      assert Map.has_key?(content_item, :type)
-      assert content_item.type in ["text", "image", "audio"]
-
-      case content_item.type do
-        "text" ->
-          assert is_binary(content_item.text)
-
-        "image" ->
-          assert is_binary(content_item.data)
-          assert is_binary(content_item.mimeType)
-
-        "audio" ->
-          assert is_binary(content_item.data)
-          assert is_binary(content_item.mimeType)
-      end
-    end
-  end
-
   def test_resource_titles(version) when version == "2025-06-18" do
     # Test that resources have title fields in 2025-06-18
     {:ok, test_context} = setup_test_client(version)

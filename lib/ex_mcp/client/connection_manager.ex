@@ -9,18 +9,44 @@ defmodule ExMCP.Client.ConnectionManager do
   require Logger
   # alias ExMCP.TransportManager  # Not using full manager for now
   alias ExMCP.Internal.Protocol
-  alias ExMCP.Transport.{HTTP, Local, SSE, Stdio, Test}
+  alias ExMCP.Reliability.Retry
+  alias ExMCP.Transport.{HTTP, Local, SSE, Stdio, Test, ReliabilityWrapper}
 
   @doc """
   Establishes connection using the provided options and updates client state.
 
   Takes the current client state and connection options, establishes the connection,
   and returns the updated state with connection information.
+
+  Supports retry policies for connection establishment through the :retry_policy option.
   """
   def establish_connection(state, opts) do
+    retry_policy = Keyword.get(opts, :retry_policy, [])
+
+    if retry_policy != [] do
+      establish_connection_with_retry(state, opts, retry_policy)
+    else
+      do_establish_connection(state, opts)
+    end
+  end
+
+  @doc """
+  Establishes connection with retry logic applied.
+  """
+  def establish_connection_with_retry(state, opts, retry_policy) do
+    connection_operation = fn ->
+      do_establish_connection(state, opts)
+    end
+
+    retry_opts = Retry.mcp_defaults(retry_policy)
+    Retry.with_retry(connection_operation, retry_opts)
+  end
+
+  defp do_establish_connection(state, opts) do
     with {:ok, transport_manager_opts} <- prepare_transport_config(opts),
          {:ok, {transport_mod, transport_state}} <- connect_transport(transport_manager_opts),
-         {:ok, result, state_after_handshake} <- do_handshake(transport_mod, transport_state),
+         {:ok, result, state_after_handshake} <-
+           do_handshake(transport_mod, transport_state, opts),
          {:ok, state_after_initialized} <-
            send_initialized(transport_mod, state_after_handshake, result),
          {:ok, receiver_task} <-
@@ -31,6 +57,8 @@ defmodule ExMCP.Client.ConnectionManager do
         |> Map.put(:transport_state, state_after_initialized)
         |> Map.put(:receiver_task, receiver_task)
         |> Map.put(:server_capabilities, result["capabilities"])
+        |> Map.put(:protocol_version, result["protocolVersion"])
+        |> Map.put(:server_info, result["serverInfo"])
 
       {:ok, new_state}
     else
@@ -68,13 +96,12 @@ defmodule ExMCP.Client.ConnectionManager do
   # Private Functions
 
   defp connect_transport(transport_manager_opts) do
+    reliability_opts = Keyword.get(transport_manager_opts, :reliability, [])
+
     # For now, just connect to the first transport directly
     case Keyword.get(transport_manager_opts, :transports) do
       [{transport_mod, transport_opts} | _] ->
-        case transport_mod.connect(transport_opts) do
-          {:ok, transport_state} -> {:ok, {transport_mod, transport_state}}
-          error -> error
-        end
+        connect_with_reliability(transport_mod, transport_opts, reliability_opts)
 
       [] ->
         {:error, "No transports configured"}
@@ -83,14 +110,30 @@ defmodule ExMCP.Client.ConnectionManager do
         # Single transport specified
         case Keyword.get(transport_manager_opts, :transports) do
           [{transport_mod, transport_opts}] ->
-            case transport_mod.connect(transport_opts) do
-              {:ok, transport_state} -> {:ok, {transport_mod, transport_state}}
-              error -> error
-            end
+            connect_with_reliability(transport_mod, transport_opts, reliability_opts)
 
           _ ->
             {:error, "No transport specified"}
         end
+    end
+  end
+
+  defp connect_with_reliability(transport_mod, transport_opts, reliability_opts) do
+    case transport_mod.connect(transport_opts) do
+      {:ok, transport_state} ->
+        if reliability_opts != [] do
+          # Wrap with reliability features
+          {:ok, wrapped_state} =
+            ReliabilityWrapper.wrap(transport_mod, transport_state, reliability_opts)
+
+          {:ok, {ReliabilityWrapper, wrapped_state}}
+        else
+          # No reliability features requested
+          {:ok, {transport_mod, transport_state}}
+        end
+
+      error ->
+        error
     end
   end
 
@@ -103,18 +146,37 @@ defmodule ExMCP.Client.ConnectionManager do
             :transports,
             :fallback_strategy,
             :max_retries,
-            :retry_interval
+            :retry_interval,
+            :reliability
           ])
 
         normalized_transports =
           Enum.map(transport_manager_opts[:transports], &normalize_transport_spec(&1, opts))
 
-        {:ok, Keyword.put(transport_manager_opts, :transports, normalized_transports)}
+        # Check for any errors in normalization
+        case Enum.find(normalized_transports, &match?({:error, _}, &1)) do
+          {:error, reason} -> {:error, reason}
+          nil -> {:ok, Keyword.put(transport_manager_opts, :transports, normalized_transports)}
+        end
 
       Keyword.has_key?(opts, :transport) ->
         # Single transport specified
         transport_spec = Keyword.get(opts, :transport)
-        {:ok, [transports: [normalize_transport_spec(transport_spec, opts)]]}
+
+        case normalize_transport_spec(transport_spec, opts) do
+          {:error, reason} ->
+            {:error, reason}
+
+          normalized_spec ->
+            result = [transports: [normalized_spec]]
+
+            result =
+              if Keyword.has_key?(opts, :reliability),
+                do: Keyword.put(result, :reliability, opts[:reliability]),
+                else: result
+
+            {:ok, result}
+        end
 
       true ->
         {:error, "No transport specified. Please provide :transport or :transports option."}
@@ -130,6 +192,7 @@ defmodule ExMCP.Client.ConnectionManager do
         :http -> {HTTP, []}
         :sse -> {SSE, []}
         :test -> {Test, []}
+        :mock -> {Test, []}
         mod when is_atom(mod) -> {mod, []}
       end
 
@@ -140,10 +203,67 @@ defmodule ExMCP.Client.ConnectionManager do
     normalize_transport_spec(transport, transport_opts)
   end
 
-  defp do_handshake(transport_mod, transport_state) do
-    raw_terms_enabled = check_transport_capabilities(transport_mod, transport_state)
+  defp normalize_transport_spec(transport_spec, opts) when is_list(transport_spec) do
+    # Handle keyword list format: [type: :mock, server_pid: pid, ...]
+    case Keyword.get(transport_spec, :type) do
+      nil ->
+        # If no :type key, try to infer from the presence of known keys
+        cond do
+          Keyword.has_key?(transport_spec, :server_pid) ->
+            # Convert :server_pid to :server for Test transport
+            server_pid = Keyword.get(transport_spec, :server_pid)
 
-    case send_initialize_request(transport_mod, transport_state, raw_terms_enabled) do
+            test_opts =
+              transport_spec |> Keyword.delete(:server_pid) |> Keyword.put(:server, server_pid)
+
+            {Test, test_opts}
+
+          Keyword.has_key?(transport_spec, :command) ->
+            {Stdio, transport_spec}
+
+          Keyword.has_key?(transport_spec, :url) ->
+            {HTTP, transport_spec}
+
+          true ->
+            {:error, "Cannot determine transport type from #{inspect(transport_spec)}"}
+        end
+
+      transport_type ->
+        # Use the :type key to determine the transport module
+        transport_spec_without_type = Keyword.delete(transport_spec, :type)
+
+        # Convert :server_pid to :server for Test transport
+        transport_spec_normalized =
+          if (transport_type == :mock or transport_type == :test) and
+               Keyword.has_key?(transport_spec_without_type, :server_pid) do
+            server_pid = Keyword.get(transport_spec_without_type, :server_pid)
+
+            transport_spec_without_type
+            |> Keyword.delete(:server_pid)
+            |> Keyword.put(:server, server_pid)
+          else
+            transport_spec_without_type
+          end
+
+        normalize_transport_spec(transport_type, Keyword.merge(transport_spec_normalized, opts))
+    end
+  end
+
+  # Handle invalid transport types gracefully
+  defp normalize_transport_spec(invalid_transport, _opts) do
+    {:error, "Invalid transport specification: #{inspect(invalid_transport)}"}
+  end
+
+  defp do_handshake(transport_mod, transport_state, opts) do
+    raw_terms_enabled = check_transport_capabilities(transport_mod, transport_state)
+    protocol_version = Keyword.get(opts, :protocol_version)
+
+    case send_initialize_request(
+           transport_mod,
+           transport_state,
+           raw_terms_enabled,
+           protocol_version
+         ) do
       {:ok, state_after_send, response_data} ->
         # Non-SSE HTTP mode - response came back immediately
         parse_handshake_response(response_data, state_after_send)
@@ -165,14 +285,19 @@ defmodule ExMCP.Client.ConnectionManager do
       transport_mod.supports_raw_terms?(transport_state)
   end
 
-  defp send_initialize_request(transport_mod, transport_state, raw_terms_enabled) do
+  defp send_initialize_request(
+         transport_mod,
+         transport_state,
+         raw_terms_enabled,
+         protocol_version
+       ) do
     client_info = %{
       "name" => "ExMCP",
       "version" => "0.8.0"
     }
 
     capabilities = %{"experimental" => %{"rawTerms" => raw_terms_enabled}}
-    request = Protocol.encode_initialize(client_info, capabilities, nil)
+    request = Protocol.encode_initialize(client_info, capabilities, protocol_version)
 
     # Encode the request to JSON string before sending
     with {:ok, encoded_request} <- Protocol.encode_to_string(request) do

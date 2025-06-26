@@ -62,10 +62,12 @@ defmodule ExMCP.Content.Transformer do
     text
     # Normalize line endings
     |> String.replace(~r/\r\n|\r/, "\n")
-    # Collapse multiple spaces/tabs
+    # Collapse multiple spaces/tabs, but preserve newlines
     |> String.replace(~r/[ \t]+/, " ")
     # Limit consecutive newlines
     |> String.replace(~r/\n{3,}/, "\n\n")
+    # Clean up spaces around newlines
+    |> String.replace(~r/ *\n */, "\n")
     |> String.trim()
   end
 
@@ -87,6 +89,13 @@ defmodule ExMCP.Content.Transformer do
   def extract_text(%{type: :text, text: text}) when is_binary(text), do: {:ok, text}
 
   def extract_text(%{type: :text, text: html, format: :html}) do
+    # Simple HTML tag removal - in production, use a proper HTML parser
+    text = String.replace(html, ~r/<[^>]+>/, " ")
+    {:ok, normalize_whitespace(text)}
+  end
+
+  # Handle HTML content type directly
+  def extract_text(%{type: :html, text: html}) when is_binary(html) do
     # Simple HTML tag removal - in production, use a proper HTML parser
     text = String.replace(html, ~r/<[^>]+>/, " ")
     {:ok, normalize_whitespace(text)}

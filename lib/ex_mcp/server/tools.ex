@@ -322,6 +322,7 @@ defmodule ExMCP.Server.Tools do
 
   defp atomize_keys_to_strings(map) when is_map(map) do
     Map.new(map, fn
+      {:is_error, v} -> {"isError", atomize_keys_to_strings(v)}
       {k, v} when is_atom(k) -> {Atom.to_string(k), atomize_keys_to_strings(v)}
       {k, v} -> {k, atomize_keys_to_strings(v)}
     end)

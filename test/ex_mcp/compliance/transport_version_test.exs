@@ -28,9 +28,9 @@ defmodule ExMCP.Compliance.TransportVersionTest do
         {:error, "Unsupported protocol version", state}
       else
         result = %{
-          protocolVersion: params["protocolVersion"],
-          serverInfo: %{name: "version-test-server", version: "1.0.0"},
-          capabilities: %{}
+          "protocolVersion" => params["protocolVersion"],
+          "serverInfo" => %{"name" => "version-test-server", "version" => "1.0.0"},
+          "capabilities" => %{}
         }
 
         {:ok, result, state}
@@ -125,8 +125,9 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       {:ok, server_info} = Client.server_info(client)
       assert server_info["name"] == "version-test-server"
 
-      transport_state = :sys.get_state(client).transport_state
-      assert transport_state.protocol_version == latest_version
+      # Check protocol version from client status
+      {:ok, negotiated} = Client.negotiated_version(client)
+      assert negotiated == latest_version
 
       Client.stop(client)
     end
@@ -220,6 +221,8 @@ defmodule ExMCP.Compliance.TransportVersionTest do
   describe "Native (:test) Transport" do
     setup do
       {:ok, server} = VersionTestServer.start_link(transport: :test)
+      # Allow server to start its message loop
+      Process.sleep(10)
       on_exit(fn -> if Process.alive?(server), do: GenServer.stop(server) end)
       {:ok, server: server}
     end
@@ -237,8 +240,9 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       {:ok, server_info} = Client.server_info(client)
       assert server_info["name"] == "version-test-server"
 
-      transport_state = :sys.get_state(client).transport_state
-      assert transport_state.protocol_version == version
+      # Check protocol version from client status
+      {:ok, negotiated} = Client.negotiated_version(client)
+      assert negotiated == version
 
       Client.stop(client)
     end
@@ -255,8 +259,9 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       {:ok, server_info} = Client.server_info(client)
       assert server_info["name"] == "version-test-server"
 
-      transport_state = :sys.get_state(client).transport_state
-      assert transport_state.protocol_version == latest_version
+      # Check protocol version from client status
+      {:ok, negotiated} = Client.negotiated_version(client)
+      assert negotiated == latest_version
 
       Client.stop(client)
     end

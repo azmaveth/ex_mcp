@@ -64,6 +64,10 @@ defmodule ExMCP.Content.Sanitizer do
   def strip_scripts(text) when is_binary(text) do
     text
     |> String.replace(~r/<script[^>]*>.*?<\/script>/is, "")
+    # Remove standalone script tags
+    |> String.replace(~r/<script[^>]*>/i, "")
+    # Remove orphaned closing script tags
+    |> String.replace(~r/<\/script>/i, "")
     |> String.replace(~r/on\w+\s*=\s*["'][^"']*["']/i, "")
     |> String.replace(~r/javascript:/i, "")
   end

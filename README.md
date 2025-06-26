@@ -16,7 +16,7 @@
 
 ---
 
-> ⚠️ **Alpha Software**: This project is currently in alpha stage (v0.6.x). The API is unstable and may change significantly before v1.0 release.
+## ✅ **Production Ready**: ExMCP v0.6.0 is now production-ready with 100% MCP compliance and comprehensive testing. The API is stable and ready for production use.
 
 ## Overview
 

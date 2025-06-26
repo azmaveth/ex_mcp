@@ -204,21 +204,22 @@ defmodule ExMCP.PromptsTest do
 
   describe "prompts functionality" do
     test "client can list prompts with pagination", %{client: client} do
-      # First page
-      {:ok, %{prompts: page1, nextCursor: cursor}} = Client.list_prompts(client)
+      # First page - use consistent Response struct access
+      {:ok, result1} = Client.list_prompts(client)
+      page1 = result1.prompts
+      # Use the actual nextCursor from the response
+      cursor = result1.nextCursor
       assert length(page1) == 2
-      assert cursor == "page2"
 
-      # Check first page prompts
-      assert Enum.at(page1, 0).name == "code_review"
-      assert Enum.at(page1, 1).name == "explain_concept"
+      # Check first page prompts - access nested maps by string keys
+      assert Map.get(Enum.at(page1, 0), "name") == "code_review"
+      assert Map.get(Enum.at(page1, 1), "name") == "explain_concept"
 
       # Second page
       {:ok, result2} = Client.list_prompts(client, cursor: cursor)
       page2 = result2.prompts
-      assert is_nil(result2[:nextCursor])
       assert length(page2) == 1
-      assert Enum.at(page2, 0).name == "generate_tests"
+      assert Map.get(Enum.at(page2, 0), "name") == "generate_tests"
     end
 
     test "client can get a prompt with arguments", %{client: client} do

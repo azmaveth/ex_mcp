@@ -262,6 +262,24 @@ defmodule ExMCP.Reliability.Retry do
     Keyword.merge(defaults, overrides)
   end
 
+  @doc """
+  Merges client default retry policy with operation-specific overrides.
+
+  Operation-specific values take precedence over client defaults.
+
+  ## Examples
+
+      iex> ExMCP.Reliability.Retry.merge_policies(
+      ...>   [max_attempts: 5, initial_delay: 100],
+      ...>   [max_attempts: 3]
+      ...> )
+      [max_attempts: 3, initial_delay: 100]
+  """
+  @spec merge_policies(keyword(), keyword()) :: keyword()
+  def merge_policies(client_defaults, operation_overrides) do
+    Keyword.merge(client_defaults, operation_overrides)
+  end
+
   defp mcp_should_retry?(error) do
     cond do
       network_error?(error) -> true

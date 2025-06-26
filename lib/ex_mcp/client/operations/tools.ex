@@ -65,7 +65,9 @@ defmodule ExMCP.Client.Operations.Tools do
       "arguments" => arguments
     }
 
-    ExMCP.Client.make_request(client, "tools/call", params, opts, 30_000)
+    # Add tool_name to opts for proper Response struct construction
+    enhanced_opts = Keyword.put(opts, :tool_name, tool_name)
+    ExMCP.Client.make_request(client, "tools/call", params, enhanced_opts, 30_000)
   end
 
   @doc """

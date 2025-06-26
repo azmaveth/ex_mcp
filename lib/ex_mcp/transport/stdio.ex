@@ -29,7 +29,7 @@ defmodule ExMCP.Transport.Stdio do
   require Logger
 
   alias ExMCP.Internal.SecurityConfig
-  alias ExMCP.Transport.SecurityGuard
+  alias ExMCP.Transport.{SecurityGuard, Error}
 
   defstruct [:port, :buffer, :line_buffer]
 
@@ -95,7 +95,7 @@ defmodule ExMCP.Transport.Stdio do
       {:ok, state}
     catch
       :error, reason ->
-        {:error, {:spawn_failed, reason}}
+        Error.connection_error({:spawn_failed, reason})
     end
   end
 
@@ -112,7 +112,7 @@ defmodule ExMCP.Transport.Stdio do
           {:ok, state}
         catch
           :error, reason ->
-            {:error, {:send_failed, reason}}
+            Error.transport_error({:send_failed, reason})
         end
 
       {:error, security_error} ->
@@ -120,7 +120,7 @@ defmodule ExMCP.Transport.Stdio do
           error: security_error
         )
 
-        {:error, {:security_violation, security_error}}
+        Error.security_violation(security_error)
     end
   end
 
@@ -139,15 +139,15 @@ defmodule ExMCP.Transport.Stdio do
                 validate_security_requirements(parsed_message, message, state)
 
               {:error, validation_error} ->
-                {:error, {:invalid_jsonrpc, validation_error}}
+                Error.validation_error({:invalid_jsonrpc, validation_error})
             end
 
           {:error, json_error} ->
-            {:error, {:invalid_json, json_error}}
+            Error.validation_error({:invalid_json, json_error})
         end
 
       {:error, newline_error} ->
-        {:error, {:embedded_newline, newline_error}}
+        Error.validation_error({:embedded_newline, newline_error})
     end
   end
 
@@ -325,10 +325,10 @@ defmodule ExMCP.Transport.Stdio do
         {:ok, message, new_state}
 
       {:ok, {:error, reason}} ->
-        {:error, reason}
+        Error.normalize_error({:error, reason})
 
       nil ->
-        {:error, :timeout}
+        Error.timeout_error(:receive_timeout)
     end
   end
 
@@ -344,10 +344,10 @@ defmodule ExMCP.Transport.Stdio do
         do_process_data(data, state)
 
       {port, {:exit_status, status}} when port == state.port ->
-        {:error, {:process_exited, status}}
+        Error.connection_error({:process_exited, status})
 
       {port, :eof} when port == state.port ->
-        {:error, :eof}
+        Error.connection_error(:eof)
     end
   end
 

@@ -25,6 +25,8 @@ defmodule ExMCP.Transport.Test do
 
   @behaviour ExMCP.Transport
 
+  alias ExMCP.Transport.Error
+
   # State for server side (when acting as server transport)
   defstruct [:peer_pid, :role]
 
@@ -46,7 +48,7 @@ defmodule ExMCP.Transport.Test do
         {:ok, state}
       else
         # Server not available or not a valid PID
-        {:error, :server_not_available}
+        Error.connection_error(:server_not_available)
       end
     else
       # Server listening (no server option means this is the server)
@@ -66,15 +68,21 @@ defmodule ExMCP.Transport.Test do
 
   # Client API expects receive_message/2 with timeout
   def receive_message(%__MODULE__{} = state, timeout) do
-    receive do
-      {:transport_message, message} ->
-        {:ok, message, state}
+    case Error.validate_connection(state, &connected?/1) do
+      :ok ->
+        receive do
+          {:transport_message, message} ->
+            {:ok, message, state}
 
-      {:transport_error, reason} ->
-        {:error, reason}
-    after
-      timeout ->
-        {:error, :timeout}
+          {:transport_error, reason} ->
+            Error.transport_error(reason)
+        after
+          timeout ->
+            Error.timeout_error(:receive_timeout)
+        end
+
+      error ->
+        error
     end
   end
 
@@ -90,11 +98,13 @@ defmodule ExMCP.Transport.Test do
 
   @impl true
   def send_message(message, %__MODULE__{peer_pid: peer_pid} = state) when peer_pid != nil do
-    if Process.alive?(peer_pid) do
-      Kernel.send(peer_pid, {:transport_message, message})
-      {:ok, state}
-    else
-      {:error, :connection_lost}
+    case Error.validate_connection(state, &connected?/1) do
+      :ok ->
+        Kernel.send(peer_pid, {:transport_message, message})
+        {:ok, state}
+
+      error ->
+        error
     end
   end
 

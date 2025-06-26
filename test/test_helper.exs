@@ -20,6 +20,9 @@ end)
 # Start ValidatorRegistry for content validation tests
 {:ok, _} = ExMCP.Content.ValidatorRegistry.start_link(name: ExMCP.Content.ValidatorRegistry)
 
+# Ensure compliance version modules are generated
+Code.ensure_loaded(ExMCP.Compliance.VersionGenerator)
+
 # Enable test mode for SSE handlers to prevent blocking in tests
 Application.put_env(:ex_mcp, :test_mode, true)
 

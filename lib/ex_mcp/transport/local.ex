@@ -53,6 +53,8 @@ defmodule ExMCP.Transport.Local do
 
   @behaviour ExMCP.Transport
 
+  alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Transport.Error
   require Logger
 
   defstruct [:service_name, :node, :timeout, :connected, :queue_agent, :mode]
@@ -125,35 +127,47 @@ defmodule ExMCP.Transport.Local do
 
   @impl true
   def send_message(message, %__MODULE__{queue_agent: queue_agent} = transport) do
-    # Store the message in the shared queue
-    Agent.update(queue_agent, fn queue -> :queue.in(message, queue) end)
-    {:ok, transport}
+    case Error.validate_connection(transport, &connected?/1) do
+      :ok ->
+        # Store the message in the shared queue
+        Agent.update(queue_agent, fn queue -> :queue.in(message, queue) end)
+        {:ok, transport}
+
+      error ->
+        error
+    end
   end
 
   @impl true
   def receive_message(%__MODULE__{queue_agent: queue_agent, mode: mode} = transport) do
-    # Get and remove a message from the shared queue
-    result =
-      Agent.get_and_update(queue_agent, fn queue ->
-        case :queue.out(queue) do
-          {{:value, message}, new_queue} -> {{:ok, message}, new_queue}
-          {:empty, queue} -> {:empty, queue}
+    case Error.validate_connection(transport, &connected?/1) do
+      :ok ->
+        # Get and remove a message from the shared queue
+        result =
+          Agent.get_and_update(queue_agent, fn queue ->
+            case :queue.out(queue) do
+              {{:value, message}, new_queue} -> {{:ok, message}, new_queue}
+              {:empty, queue} -> {:empty, queue}
+            end
+          end)
+
+        case result do
+          :empty ->
+            # No messages to process - client loop will handle polling.
+            {:error, :no_message}
+
+          {:ok, message} ->
+            response =
+              case mode do
+                :beam -> handle_beam_message(message, transport)
+                :native -> handle_native_message(message, transport)
+              end
+
+            {:ok, response, transport}
         end
-      end)
 
-    case result do
-      :empty ->
-        # No messages to process - client loop will handle polling.
-        {:error, :no_message}
-
-      {:ok, message} ->
-        response =
-          case mode do
-            :beam -> handle_beam_message(message, transport)
-            :native -> handle_native_message(message, transport)
-          end
-
-        {:ok, response, transport}
+      error ->
+        error
     end
   end
 
@@ -196,7 +210,7 @@ defmodule ExMCP.Transport.Local do
         error_response = %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32700,
+            "code" => ErrorCodes.parse_error(),
             "message" => "Parse error"
           },
           "id" => nil
@@ -221,7 +235,7 @@ defmodule ExMCP.Transport.Local do
         %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32700,
+            "code" => ErrorCodes.parse_error(),
             "message" => "Parse error"
           },
           "id" => nil
@@ -245,7 +259,7 @@ defmodule ExMCP.Transport.Local do
         %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32000,
+            "code" => ErrorCodes.server_error(),
             "message" => "Request timed out"
           },
           "id" => id
@@ -264,7 +278,7 @@ defmodule ExMCP.Transport.Local do
         %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32603,
+            "code" => ErrorCodes.internal_error(),
             "message" => "Internal error",
             "data" => inspect(reason)
           },
@@ -276,7 +290,7 @@ defmodule ExMCP.Transport.Local do
       %{
         "jsonrpc" => "2.0",
         "error" => %{
-          "code" => -32603,
+          "code" => ErrorCodes.internal_error(),
           "message" => "Internal error",
           "data" => Exception.message(exception)
         },

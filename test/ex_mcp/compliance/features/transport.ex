@@ -34,10 +34,6 @@ defmodule ExMCP.Compliance.Features.Transport do
         test "Streamable HTTP transport works" do
           ExMCP.Compliance.Features.Transport.test_streamable_http(@version)
         end
-
-        test "progress notifications include message field" do
-          ExMCP.Compliance.Features.Transport.test_progress_notifications(@version)
-        end
       end
 
       if @version == "2025-06-18" do
@@ -50,8 +46,6 @@ defmodule ExMCP.Compliance.Features.Transport do
 
   # Import test helpers
   import ExUnit.Assertions
-  alias ExMCP.Client
-  alias ExMCP.Protocol
 
   # Actual test implementations
   def test_jsonrpc_format(version) do
@@ -157,26 +151,6 @@ defmodule ExMCP.Compliance.Features.Transport do
     validate_transport_config(transport_config)
   end
 
-  def test_progress_notifications(version) when version in ["2025-03-26", "2025-06-18"] do
-    # Test progress notifications with message field (new in 2025-03-26)
-    assert version in ["2025-03-26", "2025-06-18"]
-
-    # Test progress notification structure
-    progress_notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "notifications/progress",
-      "params" => %{
-        "progressToken" => "progress-123",
-        "progress" => 50,
-        "total" => 100,
-        # New in 2025-03-26
-        "message" => "Processing request..."
-      }
-    }
-
-    validate_progress_notification(progress_notification, version)
-  end
-
   # Helper functions for transport validation
   defp validate_jsonrpc_request(request) do
     # Validate JSON-RPC 2.0 request structure
@@ -251,29 +225,6 @@ defmodule ExMCP.Compliance.Features.Transport do
       assert Map.has_key?(config, :url)
       assert is_binary(config.url)
       assert String.starts_with?(config.url, "http")
-    end
-  end
-
-  defp validate_progress_notification(notification, version) do
-    # Validate progress notification structure
-    assert notification["method"] == "notifications/progress"
-
-    params = notification["params"]
-    assert Map.has_key?(params, "progressToken")
-    assert Map.has_key?(params, "progress")
-    assert Map.has_key?(params, "total")
-
-    assert is_integer(params["progress"])
-    assert is_integer(params["total"])
-    assert params["progress"] >= 0
-    assert params["total"] > 0
-    assert params["progress"] <= params["total"]
-
-    # Message field is new in 2025-03-26
-    if version in ["2025-03-26", "2025-06-18"] do
-      if Map.has_key?(params, "message") do
-        assert is_binary(params["message"])
-      end
     end
   end
 

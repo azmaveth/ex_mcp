@@ -173,7 +173,8 @@ defmodule ExMCP.ToolErrorTest do
     end
 
     test "successful tool call returns result without isError", %{client: client} do
-      {:ok, result} = Client.call_tool(client, "divide", %{"dividend" => 10, "divisor" => 2})
+      {:ok, result} =
+        Client.call_tool(client, "divide", %{"dividend" => 10, "divisor" => 2}, format: :map)
 
       assert result == %{
                "content" => %{
@@ -186,7 +187,8 @@ defmodule ExMCP.ToolErrorTest do
     end
 
     test "division by zero returns isError: true", %{client: client} do
-      {:ok, result} = Client.call_tool(client, "divide", %{"dividend" => 10, "divisor" => 0})
+      {:ok, result} =
+        Client.call_tool(client, "divide", %{"dividend" => 10, "divisor" => 0}, format: :map)
 
       assert result == %{
                "content" => %{
@@ -202,7 +204,8 @@ defmodule ExMCP.ToolErrorTest do
     end
 
     test "API failure returns isError: true", %{client: client} do
-      {:ok, result} = Client.call_tool(client, "fetch_data", %{"endpoint" => "unavailable"})
+      {:ok, result} =
+        Client.call_tool(client, "fetch_data", %{"endpoint" => "unavailable"}, format: :map)
 
       assert result == %{
                "content" => %{
@@ -218,7 +221,8 @@ defmodule ExMCP.ToolErrorTest do
     end
 
     test "successful API call returns result without isError", %{client: client} do
-      {:ok, result} = Client.call_tool(client, "fetch_data", %{"endpoint" => "/api/status"})
+      {:ok, result} =
+        Client.call_tool(client, "fetch_data", %{"endpoint" => "/api/status"}, format: :map)
 
       assert result == %{
                "content" => %{
@@ -235,9 +239,9 @@ defmodule ExMCP.ToolErrorTest do
       # This should return a protocol error, not a successful response with isError
       {:error, error} = Client.call_tool(client, "unknown_tool", %{})
 
-      # The error should be a protocol-level error
-      assert error.code == -32000
-      assert error.message =~ "Unknown tool: unknown_tool"
+      # The error should be a protocol-level error with string keys
+      assert error["code"] == -32000
+      assert error["message"] =~ "Unknown tool: unknown_tool"
     end
   end
 end

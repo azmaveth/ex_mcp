@@ -65,12 +65,16 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           handler: VersionTestHandler
         )
 
+      # Allow server to start its message loop
+      Process.sleep(10)
+
       # Client initialization happens automatically during start_link
       {:ok, client} =
         Client.start_link(
           transport: :test,
           server: server,
-          client_info: %{name: "test-client", version: "1.0.0"}
+          client_info: %{name: "test-client", version: "1.0.0"},
+          protocol_version: "2025-03-26"
         )
 
       Process.sleep(50)
@@ -92,12 +96,16 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           handler: VersionTestHandler
         )
 
+      # Allow server to start its message loop
+      Process.sleep(10)
+
       # Client with custom info
       {:ok, client} =
         Client.start_link(
           transport: :test,
           server: server,
-          client_info: %{name: "custom-client", version: "2.0.0"}
+          client_info: %{name: "custom-client", version: "2.0.0"},
+          protocol_version: "2025-03-26"
         )
 
       Process.sleep(50)
@@ -113,13 +121,17 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
         Server.start_link(
           transport: :test,
           handler: VersionTestHandler,
-          handler_args: [expected_version: "2025-03-26"]
+          expected_version: "2025-03-26"
         )
+
+      # Allow server to start its message loop
+      Process.sleep(10)
 
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_version: "2025-03-26"
         )
 
       Process.sleep(50)
@@ -140,10 +152,14 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           handler: VersionTestHandler
         )
 
+      # Allow server to start its message loop
+      Process.sleep(10)
+
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_version: "2025-03-26"
         )
 
       Process.sleep(50)
@@ -169,10 +185,14 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           handler: VersionTestHandler
         )
 
+      # Allow server to start its message loop
+      Process.sleep(10)
+
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_version: "2025-03-26"
         )
 
       Process.sleep(50)

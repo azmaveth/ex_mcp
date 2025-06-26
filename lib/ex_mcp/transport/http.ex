@@ -225,22 +225,7 @@ defmodule ExMCP.Transport.HTTP do
 
     case result do
       {:ok, response} ->
-        case handle_http_response(response, state) do
-          {:ok, new_state} ->
-            # Return both the response data and the updated state for immediate consumption
-            case new_state.last_response do
-              # No response body (e.g., 202 notifications)
-              nil ->
-                {:ok, new_state}
-
-              response_data ->
-                # Return the response data and clear it from state to prevent reuse
-                {:ok, %{new_state | last_response: nil}, response_data}
-            end
-
-          error ->
-            error
-        end
+        handle_http_response(response, state)
 
       {:error, reason} ->
         {:error, reason}

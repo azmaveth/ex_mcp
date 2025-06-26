@@ -220,11 +220,13 @@ defmodule ExMCP.Authorization do
       additional_params = Map.get(config, :additional_params, %{})
       resource_params = build_resource_params(config)
 
-      all_params =
+      # Handle resource parameters specially for proper encoding
+      base_params_list =
         params
         |> Map.merge(additional_params)
         |> Map.to_list()
-        |> Kernel.++(resource_params)
+
+      all_params = base_params_list ++ resource_params
 
       auth_url = build_authorization_url(config.authorization_endpoint, all_params)
 
@@ -646,7 +648,21 @@ defmodule ExMCP.Authorization do
   end
 
   defp build_authorization_url(base_url, params) do
-    query_string = URI.encode_query(params)
+    # Custom encoding to preserve resource[] parameter names
+    query_parts =
+      params
+      |> Enum.map(fn
+        {"resource[]", value} ->
+          "resource[]=" <> URI.encode_www_form(value)
+
+        {key, value} when is_atom(key) ->
+          Atom.to_string(key) <> "=" <> URI.encode_www_form(to_string(value))
+
+        {key, value} ->
+          key <> "=" <> URI.encode_www_form(to_string(value))
+      end)
+
+    query_string = Enum.join(query_parts, "&")
     "#{base_url}?#{query_string}"
   end
 
@@ -659,7 +675,8 @@ defmodule ExMCP.Authorization do
         [resource: uri]
 
       uris when is_list(uris) ->
-        Enum.map(uris, fn uri -> {:resource, uri} end)
+        # For multiple resources, use resource[] format as expected by the test
+        Enum.map(uris, fn uri -> {"resource[]", uri} end)
     end
   end
 

@@ -280,6 +280,65 @@ defmodule ExMCP.Testing.MockServer do
     {:reply, :ok, new_state}
   end
 
+  @impl GenServer
+  def handle_info({:test_transport_connect, client_pid}, state) do
+    # Store the connected client pid for test transport
+    new_state = Map.put(state, :test_client_pid, client_pid)
+    {:noreply, new_state}
+  end
+
+  @impl GenServer
+  def handle_info({:transport_message, message}, state) do
+    # Handle test transport messages
+    case Jason.decode(message) do
+      {:ok, request} ->
+        # Process the request and send response back to client
+        {response, new_state} = handle_mcp_request(request, state)
+
+        # Send response back to client if connected and response is not nil (notifications don't need responses)
+        if response && state[:test_client_pid] do
+          client_pid = state[:test_client_pid]
+
+          case Jason.encode(response) do
+            {:ok, encoded_response} ->
+              send(client_pid, {:transport_message, encoded_response})
+
+            {:error, _} ->
+              error_response = %{
+                "jsonrpc" => "2.0",
+                "id" => request["id"],
+                "error" => %{"code" => -32603, "message" => "Failed to encode response"}
+              }
+
+              encoded_error = Jason.encode!(error_response)
+              send(client_pid, {:transport_message, encoded_error})
+          end
+        end
+
+        {:noreply, new_state}
+
+      {:error, _} ->
+        # Invalid JSON - send error response
+        if client_pid = state[:test_client_pid] do
+          error_response = %{
+            "jsonrpc" => "2.0",
+            "id" => nil,
+            "error" => %{"code" => -32700, "message" => "Parse error"}
+          }
+
+          encoded_error = Jason.encode!(error_response)
+          send(client_pid, {:transport_message, encoded_error})
+        end
+
+        {:noreply, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
   # MCP Request Handlers
 
   defp handle_mcp_request(%{"method" => "initialize"} = request, state) do
@@ -384,6 +443,13 @@ defmodule ExMCP.Testing.MockServer do
     response = Builders.success_response(request["id"], result)
     new_state = update_call_stats(state, "prompts/get", request)
     {response, new_state}
+  end
+
+  defp handle_mcp_request(%{"method" => "notifications/initialized"} = request, state) do
+    # The initialized notification doesn't need a response
+    new_state = update_call_stats(state, "notifications/initialized", request)
+    # Return nil to indicate no response needed for notifications
+    {nil, new_state}
   end
 
   defp handle_mcp_request(%{"method" => method} = request, state) do

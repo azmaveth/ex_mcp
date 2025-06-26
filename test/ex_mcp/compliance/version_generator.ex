@@ -19,26 +19,27 @@ defmodule ExMCP.Compliance.VersionGenerator do
     defmodule module_name do
       use ExUnit.Case, async: true
 
+      @version version
+
       # Import feature modules
-      use ExMCP.Compliance.Features.Tools, unquote(version)
-      use ExMCP.Compliance.Features.Resources, unquote(version)
-      use ExMCP.Compliance.Features.ResourceTemplates, unquote(version)
-      use ExMCP.Compliance.Features.Authorization, unquote(version)
-      use ExMCP.Compliance.Features.Prompts, unquote(version)
-      use ExMCP.Compliance.Features.Transport, unquote(version)
-      use ExMCP.Compliance.Features.Roots, unquote(version)
-      use ExMCP.Compliance.Features.Sampling, unquote(version)
-      use ExMCP.Compliance.Features.Cancellation, unquote(version)
-      use ExMCP.Compliance.Features.Progress, unquote(version)
-      use ExMCP.Compliance.Features.Logging, unquote(version)
-      use ExMCP.Compliance.Features.Batch, unquote(version)
-      use ExMCP.Compliance.Features.Completion, unquote(version)
-      use ExMCP.Compliance.Features.Elicitation, unquote(version)
+      use ExMCP.Compliance.Features.Tools, version
+      use ExMCP.Compliance.Features.Resources, version
+      use ExMCP.Compliance.Features.ResourceTemplates, version
+      use ExMCP.Compliance.Features.Authorization, version
+      use ExMCP.Compliance.Features.Prompts, version
+      use ExMCP.Compliance.Features.Transport, version
+      use ExMCP.Compliance.Features.Roots, version
+      use ExMCP.Compliance.Features.Sampling, version
+      use ExMCP.Compliance.Features.Cancellation, version
+      use ExMCP.Compliance.Features.Progress, version
+      use ExMCP.Compliance.Features.Logging, version
+      use ExMCP.Compliance.Features.Batch, version
+      use ExMCP.Compliance.Features.Completion, version
+      use ExMCP.Compliance.Features.Elicitation, version
 
       # Module tags for filtering
       @moduletag :compliance
-      @moduletag :"version_#{String.replace(unquote(version), "-", "_")}"
-      @version unquote(version)
+      @moduletag :"version_#{String.replace(version, "-", "_")}"
 
       @doc """
       Returns the MCP specification version this test module covers.
@@ -49,26 +50,26 @@ defmodule ExMCP.Compliance.VersionGenerator do
       setup do
         # Get the appropriate handler for this version
         handler =
-          case unquote(version) do
+          case @version do
             "2024-11-05" -> ExMCP.Compliance.Handlers.Handler20241105
             "2025-03-26" -> ExMCP.Compliance.Handlers.Handler20250326
             "2025-06-18" -> ExMCP.Compliance.Handlers.Handler20250618
             _ -> ExMCP.Server.Handler
           end
 
-        {:ok, version: @version, spec_version: unquote(version), handler: handler}
+        {:ok, version: @version, spec_version: @version, handler: handler}
       end
 
       # Version-specific tests that don't fit into feature categories
-      test "protocol version negotiation works for #{unquote(version)}" do
+      test "protocol version negotiation works for #{@version}" do
         # Test that this specific version can be negotiated
-        assert @version == unquote(version)
+        assert @version == @version
         # Add actual negotiation test logic here
       end
 
-      test "server capabilities match #{unquote(version)} specification" do
+      test "server capabilities match #{@version} specification" do
         # Test that server capabilities align with this version's spec
-        assert @version == unquote(version)
+        assert @version == @version
         # Add actual capability validation logic here
       end
     end

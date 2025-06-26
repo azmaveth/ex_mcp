@@ -376,17 +376,17 @@ defmodule ExMCP.PaginationComplianceTest do
       {final_page, _} =
         Enum.reduce_while(1..10, {nil, cursor}, fn _i, {_last_page, current_cursor} ->
           case Client.list_tools(client, cursor: current_cursor) do
-            {:ok, %{nextCursor: next_cursor} = page} ->
+            {:ok, %{nextCursor: next_cursor} = page} when not is_nil(next_cursor) ->
               {:cont, {page, next_cursor}}
 
             {:ok, page} ->
-              # No nextCursor - this is the last page
+              # No nextCursor or nextCursor is nil - this is the last page
               {:halt, {page, nil}}
           end
         end)
 
-      # Last page should not have nextCursor
-      refute Map.has_key?(final_page, :nextCursor)
+      # Last page should not have nextCursor or it should be nil
+      assert is_nil(final_page.nextCursor)
     end
 
     test "empty results when cursor points beyond data", %{client: client} do
@@ -485,7 +485,7 @@ defmodule ExMCP.PaginationComplianceTest do
     test "nextCursor field is optional in responses", %{client: client} do
       # First page should have nextCursor
       {:ok, page1} = Client.list_tools(client)
-      assert Map.has_key?(page1, :nextCursor)
+      assert not is_nil(page1.nextCursor)
 
       # Navigate to last page which should NOT have nextCursor
       _cursor = page1.nextCursor
@@ -493,7 +493,7 @@ defmodule ExMCP.PaginationComplianceTest do
       last_page =
         Enum.reduce_while(1..10, page1, fn _i, current_page ->
           case Client.list_tools(client, cursor: current_page.nextCursor) do
-            {:ok, %{nextCursor: _} = next_page} ->
+            {:ok, %{nextCursor: next_cursor} = next_page} when not is_nil(next_cursor) ->
               {:cont, next_page}
 
             {:ok, final_page} ->
@@ -501,7 +501,7 @@ defmodule ExMCP.PaginationComplianceTest do
           end
         end)
 
-      refute Map.has_key?(last_page, :nextCursor)
+      assert is_nil(last_page.nextCursor)
     end
   end
 
@@ -581,16 +581,21 @@ defmodule ExMCP.PaginationComplianceTest do
 
   # Helper function to collect all pages
   defp collect_all_pages(list_fn, key) do
-    collect_pages(list_fn, key, nil, [])
+    collect_pages(list_fn, key, nil, [], 0)
   end
 
-  defp collect_pages(list_fn, key, cursor, acc) do
+  defp collect_pages(_list_fn, _key, _cursor, acc, 100) do
+    # Safety: Prevent infinite loops by limiting to 100 pages max
+    acc
+  end
+
+  defp collect_pages(list_fn, key, cursor, acc, page_count) do
     case list_fn.(cursor) do
-      {:ok, %{^key => items, nextCursor: next_cursor}} ->
-        collect_pages(list_fn, key, next_cursor, acc ++ items)
+      {:ok, %{^key => items, nextCursor: next_cursor}} when not is_nil(next_cursor) ->
+        collect_pages(list_fn, key, next_cursor, acc ++ items, page_count + 1)
 
       {:ok, %{^key => items}} ->
-        # Last page (no nextCursor)
+        # Last page (no nextCursor or nextCursor is nil)
         acc ++ items
 
       {:error, _reason} ->

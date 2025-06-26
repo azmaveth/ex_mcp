@@ -100,6 +100,47 @@ defmodule ExMCP.ResourcesComplianceTest do
     end
 
     @impl true
+    def handle_list_resource_templates(cursor, state) do
+      # Resource templates for testing
+      templates = [
+        %{
+          uriTemplate: "file:///{project}/docs/{file}.md",
+          name: "Project Documentation",
+          description: "Documentation files for projects"
+        },
+        %{
+          uriTemplate: "config://{app}/settings/{env}.json",
+          name: "Configuration Files",
+          description: "Application configuration for different environments"
+        },
+        %{
+          uriTemplate: "data://{type}/{id}",
+          name: "Data Resources",
+          description: "Various data resources by type and ID"
+        }
+      ]
+
+      # Simple pagination for testing
+      page_size = 2
+
+      {items, next_cursor} =
+        case cursor do
+          nil ->
+            {Enum.take(templates, page_size),
+             if(length(templates) > page_size, do: "page2", else: nil)}
+
+          "page2" ->
+            remaining = Enum.drop(templates, page_size)
+            {Enum.take(remaining, page_size), nil}
+
+          _ ->
+            {[], nil}
+        end
+
+      {:ok, items, next_cursor, state}
+    end
+
+    @impl true
     def handle_read_resource(uri, state) do
       case generate_content(uri) do
         {:ok, content} -> {:ok, content, state}
@@ -125,31 +166,6 @@ defmodule ExMCP.ResourcesComplianceTest do
     end
 
     @impl true
-    def handle_list_resource_templates(_cursor, state) do
-      templates = [
-        %{
-          uriTemplate: "file:///{path}",
-          name: "Local Files",
-          description: "Access local files",
-          mime_type: "text/plain"
-        },
-        %{
-          uriTemplate: "config://{app}/{setting}",
-          name: "Configuration",
-          description: "App configuration values",
-          mime_type: "application/json"
-        },
-        %{
-          uriTemplate: "data://{category}/{id}",
-          name: "Data Resources",
-          description: "Dynamic data access",
-          mime_type: "application/json"
-        }
-      ]
-
-      {:ok, templates, nil, state}
-    end
-
     # Helper functions
     defp resource_exists?(uri, state) do
       Enum.any?(state.resources, &(&1.uri == uri))
@@ -161,7 +177,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mime_type: "text/markdown",
+             mimeType: "text/markdown",
              text: "# Test Project\n\nThis is a test README file."
            }}
 
@@ -169,7 +185,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mime_type: "application/json",
+             mimeType: "application/json",
              text: Jason.encode!(%{theme: "dark", version: "1.0"})
            }}
 
@@ -180,7 +196,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mime_type: "image/png",
+             mimeType: "image/png",
              blob: fake_png_data
            }}
 
@@ -188,7 +204,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mime_type: "application/json",
+             mimeType: "application/json",
              text: Jason.encode!(%{status: "ok", data: []})
            }}
 
@@ -196,7 +212,7 @@ defmodule ExMCP.ResourcesComplianceTest do
           {:ok,
            %{
              uri: uri,
-             mime_type: "text/plain",
+             mimeType: "text/plain",
              text: "defmodule Main do\n  def start, do: :ok\nend"
            }}
 

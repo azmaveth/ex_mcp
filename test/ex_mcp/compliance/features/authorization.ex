@@ -50,13 +50,11 @@ defmodule ExMCP.Compliance.Features.Authorization do
 
   # Import test helpers
   import ExUnit.Assertions
-  alias ExMCP.Authorization
-  alias ExMCP.Authorization.TokenManager
   alias ExMCP.Internal.Authorization.PKCE
 
   # Test data constants
   @issuer "https://auth.example.com"
-  @metadata_url "https://auth.example.com/.well-known/oauth-authorization-server"
+  # @metadata_url "https://auth.example.com/.well-known/oauth-authorization-server"
   @auth_endpoint "https://auth.example.com/authorize"
   @token_endpoint "https://auth.example.com/token"
   @introspection_endpoint "https://auth.example.com/introspect"
@@ -281,7 +279,7 @@ defmodule ExMCP.Compliance.Features.Authorization do
   end
 
   # OAuth flow testing implementation
-  defp test_oauth_flow_components(config) do
+  defp test_oauth_flow_components(_config) do
     # Test authorization request parameters
     auth_params = %{
       "response_type" => "code",

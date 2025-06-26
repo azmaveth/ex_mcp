@@ -42,6 +42,7 @@ defmodule ExMCP.Server.Legacy do
   require Logger
 
   alias ExMCP.Transport.Test
+  alias ExMCP.Protocol.ErrorCodes
 
   @type handler_module :: module()
   @type state :: %{
@@ -171,30 +172,47 @@ defmodule ExMCP.Server.Legacy do
         {:error, _reason} -> {:noreply, state}
       end
     else
-      # Process each request in the batch
-      {responses, final_state} =
-        Enum.map_reduce(requests, state, fn request, acc_state ->
-          case process_mcp_request(request, acc_state) do
-            {:response, response, new_state} ->
-              {response, new_state}
+      # Check if batch requests are supported in this protocol version
+      if state.protocol_version == "2025-06-18" do
+        error_response = %{
+          "jsonrpc" => "2.0",
+          "id" => nil,
+          "error" => %{
+            "code" => -32600,
+            "message" => "Batch requests are not supported in protocol version 2025-06-18"
+          }
+        }
 
-            {:notification, new_state} ->
-              # Notifications don't get responses
-              {nil, new_state}
-          end
-        end)
-
-      # Filter out nils from notifications
-      non_nil_responses = Enum.reject(responses, &is_nil/1)
-
-      # Only send response if we have any (notifications don't generate responses)
-      if not Enum.empty?(non_nil_responses) do
-        case send_message(non_nil_responses, final_state) do
+        case send_message(error_response, state) do
           {:ok, new_state} -> {:noreply, new_state}
-          {:error, _reason} -> {:noreply, final_state}
+          {:error, _reason} -> {:noreply, state}
         end
       else
-        {:noreply, final_state}
+        # Process each request in the batch
+        {responses, final_state} =
+          Enum.map_reduce(requests, state, fn request, acc_state ->
+            case process_mcp_request(request, acc_state) do
+              {:response, response, new_state} ->
+                {response, new_state}
+
+              {:notification, new_state} ->
+                # Notifications don't get responses
+                {nil, new_state}
+            end
+          end)
+
+        # Filter out nils from notifications
+        non_nil_responses = Enum.reject(responses, &is_nil/1)
+
+        # Only send response if we have any (notifications don't generate responses)
+        if not Enum.empty?(non_nil_responses) do
+          case send_message(non_nil_responses, final_state) do
+            {:ok, new_state} -> {:noreply, new_state}
+            {:error, _reason} -> {:noreply, final_state}
+          end
+        else
+          {:noreply, final_state}
+        end
       end
     end
   end
@@ -417,6 +435,13 @@ defmodule ExMCP.Server.Legacy do
       if Map.has_key?(handler_state, :cancelled_requests) do
         new_cancelled = MapSet.put(handler_state.cancelled_requests, request_id)
         Logger.debug("Updated cancelled_requests in handler state: #{inspect(new_cancelled)}")
+
+        # Also update ETS table if it exists (for test handlers)
+        if :ets.whereis(:cancellation_tracker) != :undefined do
+          :ets.insert(:cancellation_tracker, {request_id, :cancelled})
+          Logger.debug("Updated ETS cancellation tracker for request #{request_id}")
+        end
+
         %{handler_state | cancelled_requests: new_cancelled}
       else
         handler_state
@@ -442,6 +467,11 @@ defmodule ExMCP.Server.Legacy do
     else
       Logger.debug("Handler state has no active_requests field")
     end
+
+    # IMPORTANT: Also send cancellation to the handler process itself
+    # The handler might be waiting for this message in a receive block
+    send(self(), {:cancelled, request_id})
+    Logger.debug("Sent cancellation message to handler process for request #{request_id}")
 
     updated_state
   end
@@ -528,10 +558,21 @@ defmodule ExMCP.Server.Legacy do
         {:response, response, new_state}
 
       {:error, error, new_handler_state} ->
+        # Use appropriate error code based on error type
+        error_code =
+          case error do
+            # Invalid params
+            "Invalid cursor" <> _ -> -32602
+            # Invalid params
+            "Invalid cursor parameter" -> -32602
+            # Generic server error
+            _ -> -32000
+          end
+
         response = %{
           "jsonrpc" => "2.0",
           "id" => id,
-          "error" => %{"code" => -32000, "message" => "List tools error: #{inspect(error)}"}
+          "error" => %{"code" => error_code, "message" => "List tools error: #{inspect(error)}"}
         }
 
         new_state = %{state | handler_state: new_handler_state}
@@ -570,7 +611,19 @@ defmodule ExMCP.Server.Legacy do
              new_state.handler_state
            ) do
         {:ok, result, new_handler_state} ->
-          response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{"content" => result}}
+          # Handle different result formats
+          response_result =
+            case result do
+              # If result is already a map with content field, normalize it
+              %{content: _} = structured_result ->
+                normalize_error_key(structured_result)
+
+              # If result is just content, wrap it
+              _ ->
+                %{"content" => normalize_error_key(result)}
+            end
+
+          response = %{"jsonrpc" => "2.0", "id" => id, "result" => response_result}
           final_state = %{new_state | handler_state: new_handler_state}
           # Remove from pending requests when complete
           completed_state = complete_pending_request(id, final_state)
@@ -605,14 +658,79 @@ defmodule ExMCP.Server.Legacy do
         {:response, response, new_state}
 
       {:error, error, new_handler_state} ->
+        # Use appropriate error code based on error type
+        error_code =
+          case error do
+            # Invalid params
+            "Invalid cursor" <> _ -> -32602
+            # Invalid params
+            "Invalid cursor parameter" -> -32602
+            # Generic server error
+            _ -> -32000
+          end
+
         response = %{
           "jsonrpc" => "2.0",
           "id" => id,
-          "error" => %{"code" => -32000, "message" => "List resources error: #{inspect(error)}"}
+          "error" => %{
+            "code" => error_code,
+            "message" => "List resources error: #{inspect(error)}"
+          }
         }
 
         new_state = %{state | handler_state: new_handler_state}
         {:response, response, new_state}
+    end
+  end
+
+  defp process_mcp_request(%{"method" => "resources/templates/list"} = request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    cursor = Map.get(params, "cursor")
+
+    if function_exported?(state.handler_module, :handle_list_resource_templates, 2) do
+      case state.handler_module.handle_list_resource_templates(cursor, state.handler_state) do
+        {:ok, templates, next_cursor, new_handler_state} ->
+          result = %{"resourceTemplates" => templates}
+          result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+          response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+          new_state = %{state | handler_state: new_handler_state}
+          {:response, response, new_state}
+
+        {:error, error, new_handler_state} ->
+          # Use appropriate error code based on error type
+          error_code =
+            case error do
+              # Invalid params
+              "Invalid cursor" <> _ -> -32602
+              # Generic server error
+              _ -> -32000
+            end
+
+          response = %{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{
+              "code" => error_code,
+              "message" => "List resource templates error: #{inspect(error)}"
+            }
+          }
+
+          new_state = %{state | handler_state: new_handler_state}
+          {:response, response, new_state}
+      end
+    else
+      response = %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "error" =>
+          ErrorCodes.error_response(
+            :method_not_found,
+            "Method not found: resources/templates/list"
+          )
+      }
+
+      {:response, response, state}
     end
   end
 
@@ -674,6 +792,160 @@ defmodule ExMCP.Server.Legacy do
     end
   end
 
+  defp process_mcp_request(%{"method" => "prompts/list"} = request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    cursor = Map.get(params, "cursor")
+
+    case state.handler_module.handle_list_prompts(cursor, state.handler_state) do
+      {:ok, prompts, next_cursor, new_handler_state} ->
+        result = %{"prompts" => prompts}
+        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+        new_state = %{state | handler_state: new_handler_state}
+        {:response, response, new_state}
+
+      {:error, error, new_handler_state} ->
+        # Use appropriate error code based on error type
+        error_code =
+          case error do
+            # Invalid params
+            "Invalid cursor" <> _ -> -32602
+            # Invalid params
+            "Invalid cursor parameter" -> -32602
+            # Generic server error
+            _ -> -32000
+          end
+
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "error" => %{"code" => error_code, "message" => "List prompts error: #{inspect(error)}"}
+        }
+
+        new_state = %{state | handler_state: new_handler_state}
+        {:response, response, new_state}
+    end
+  end
+
+  defp process_mcp_request(%{"method" => "prompts/get"} = request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    name = Map.get(params, "name")
+    arguments = Map.get(params, "arguments", %{})
+
+    case state.handler_module.handle_get_prompt(name, arguments, state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+        new_state = %{state | handler_state: new_handler_state}
+        {:response, response, new_state}
+
+      {:error, error, new_handler_state} ->
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "error" => %{"code" => -32000, "message" => "Get prompt error: #{inspect(error)}"}
+        }
+
+        new_state = %{state | handler_state: new_handler_state}
+        {:response, response, new_state}
+    end
+  end
+
+  defp process_mcp_request(%{"method" => "roots/list"} = request, state) do
+    id = Map.get(request, "id")
+
+    if function_exported?(state.handler_module, :handle_list_roots, 1) do
+      case state.handler_module.handle_list_roots(state.handler_state) do
+        {:ok, roots, new_handler_state} ->
+          result = %{"roots" => roots}
+          response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+          new_state = %{state | handler_state: new_handler_state}
+          {:response, response, new_state}
+
+        {:error, error, new_handler_state} ->
+          # Use appropriate error code based on error type
+          error_code =
+            case error do
+              # Invalid params
+              "Invalid cursor" <> _ -> -32602
+              # Generic server error
+              _ -> -32000
+            end
+
+          response = %{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{"code" => error_code, "message" => "List roots error: #{inspect(error)}"}
+          }
+
+          new_state = %{state | handler_state: new_handler_state}
+          {:response, response, new_state}
+      end
+    else
+      # Handler doesn't implement roots listing
+      response = %{
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "error" => ErrorCodes.error_response(:method_not_found, "Method not found: roots/list")
+      }
+
+      {:response, response, state}
+    end
+  end
+
+  defp process_mcp_request(%{"method" => "resources/subscribe"} = request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    uri = Map.get(params, "uri")
+
+    case state.handler_module.handle_subscribe_resource(uri, state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+        new_state = %{state | handler_state: new_handler_state}
+        {:response, response, new_state}
+
+      {:error, error, new_handler_state} ->
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "error" => %{
+            "code" => -32000,
+            "message" => "Subscribe resource error: #{inspect(error)}"
+          }
+        }
+
+        new_state = %{state | handler_state: new_handler_state}
+        {:response, response, new_state}
+    end
+  end
+
+  defp process_mcp_request(%{"method" => "resources/unsubscribe"} = request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    uri = Map.get(params, "uri")
+
+    case state.handler_module.handle_unsubscribe_resource(uri, state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+        new_state = %{state | handler_state: new_handler_state}
+        {:response, response, new_state}
+
+      {:error, error, new_handler_state} ->
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "error" => %{
+            "code" => -32000,
+            "message" => "Unsubscribe resource error: #{inspect(error)}"
+          }
+        }
+
+        new_state = %{state | handler_state: new_handler_state}
+        {:response, response, new_state}
+    end
+  end
+
   defp process_mcp_request(%{"method" => "completion/complete"} = request, state) do
     id = Map.get(request, "id")
     params = Map.get(request, "params", %{})
@@ -702,7 +974,8 @@ defmodule ExMCP.Server.Legacy do
       response = %{
         "jsonrpc" => "2.0",
         "id" => id,
-        "error" => %{"code" => -32601, "message" => "Method not found: completion/complete"}
+        "error" =>
+          ErrorCodes.error_response(:method_not_found, "Method not found: completion/complete")
       }
 
       {:response, response, state}
@@ -724,7 +997,7 @@ defmodule ExMCP.Server.Legacy do
       response = %{
         "jsonrpc" => "2.0",
         "id" => id,
-        "error" => %{"code" => -32601, "message" => "Method not found: #{method}"}
+        "error" => ErrorCodes.error_response(:method_not_found, "Method not found: #{method}")
       }
 
       {:response, response, state}
@@ -744,6 +1017,15 @@ defmodule ExMCP.Server.Legacy do
 
     {:response, response, state}
   end
+
+  defp normalize_error_key(%{is_error: error_value} = result) when is_map(result) do
+    # Convert atom key is_error: to string key "isError" for MCP compatibility
+    result
+    |> Map.put("isError", error_value)
+    |> Map.delete(:is_error)
+  end
+
+  defp normalize_error_key(result), do: result
 
   defp send_message(message, state) do
     json_message = Jason.encode!(message)

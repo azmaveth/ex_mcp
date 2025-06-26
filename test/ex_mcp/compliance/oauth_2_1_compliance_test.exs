@@ -7,69 +7,11 @@ defmodule ExMCP.Compliance.OAuth21ComplianceTest do
   @moduletag :compliance
 
   @issuer "https://auth.example.com"
-  @_metadata_url "https://auth.example.com/.well-known/oauth-authorization-server"
   @auth_endpoint "https://auth.example.com/authorize"
   @token_endpoint "https://auth.example.com/token"
   @introspection_endpoint "https://auth.example.com/introspect"
 
   # --- Test Data ---
-
-  defp _valid_metadata_response do
-    body =
-      Jason.encode!(%{
-        "issuer" => @issuer,
-        "authorization_endpoint" => @auth_endpoint,
-        "token_endpoint" => @token_endpoint,
-        "introspection_endpoint" => @introspection_endpoint,
-        "scopes_supported" => ["mcp:read", "mcp:write", "offline_access"],
-        "response_types_supported" => ["code"],
-        "grant_types_supported" => ["authorization_code", "client_credentials", "refresh_token"],
-        "code_challenge_methods_supported" => ["S256"]
-      })
-
-    {:ok, {{~c"HTTP/1.1", 200, ~c"OK"}, [], body}}
-  end
-
-  defp _valid_token_response(scope \\ "mcp:read mcp:write") do
-    body =
-      Jason.encode!(%{
-        "access_token" => "access-token-123",
-        "token_type" => "Bearer",
-        "expires_in" => 3600,
-        "refresh_token" => "refresh-token-xyz",
-        "scope" => scope
-      })
-
-    {:ok, {{~c"HTTP/1.1", 200, ~c"OK"}, [], body}}
-  end
-
-  defp _refreshed_token_response do
-    body =
-      Jason.encode!(%{
-        "access_token" => "new-access-token-456",
-        "token_type" => "Bearer",
-        "expires_in" => 3600,
-        "scope" => "mcp:read mcp:write"
-      })
-
-    {:ok, {{~c"HTTP/1.1", 200, ~c"OK"}, [], body}}
-  end
-
-  defp _oauth_error_response(status, error, description) do
-    body = Jason.encode!(%{"error" => error, "error_description" => description})
-    reason = _status_to_reason(status)
-    {:ok, {{~c"HTTP/1.1", status, reason}, [], body}}
-  end
-
-  defp _http_error_response(status, message) do
-    reason = _status_to_reason(status)
-    {:ok, {{~c"HTTP/1.1", status, reason}, [], message}}
-  end
-
-  defp _status_to_reason(400), do: ~c"Bad Request"
-  defp _status_to_reason(401), do: ~c"Unauthorized"
-  defp _status_to_reason(404), do: ~c"Not Found"
-  defp _status_to_reason(500), do: ~c"Internal Server Error"
 
   # --- Tests ---
 

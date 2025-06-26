@@ -95,7 +95,7 @@ defmodule ExMCP.Compliance.Handlers.Handler20250326 do
   end
 
   @impl true
-  def handle_initialize(params, state) do
+  def handle_initialize(_params, state) do
     # Note: Don't assert in handler, let tests handle validation
 
     result = %{

@@ -17,6 +17,8 @@ defmodule ExMCP.Compliance.Handlers.Handler20250618 do
 
   @impl true
   def init(args) do
+    args_map = Enum.into(args, %{})
+
     {:ok,
      Map.merge(
        %{
@@ -80,12 +82,12 @@ defmodule ExMCP.Compliance.Handlers.Handler20250618 do
          subscriptions: MapSet.new(),
          log_level: "info"
        },
-       args || %{}
+       args_map
      )}
   end
 
   @impl true
-  def handle_initialize(params, state) do
+  def handle_initialize(_params, state) do
     # Note: Don't assert in handler, let tests handle validation
 
     result = %{

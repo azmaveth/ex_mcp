@@ -95,6 +95,7 @@ defmodule ExMCP.MixProject do
     do: [
       "lib",
       "test/support",
+      "test/ex_mcp/compliance",
       "test/ex_mcp/compliance/features",
       "test/ex_mcp/compliance/handlers"
     ]

@@ -43,9 +43,30 @@ defmodule ExMCP.Client.RequestHandler do
   """
   def handle_batch_request(requests, from, state) do
     requests_with_ids =
-      Enum.map(requests, fn {method, params} ->
-        id = Protocol.generate_id()
-        {id, build_request(method, params, id)}
+      Enum.map(requests, fn request ->
+        case request do
+          # Handle {method, params} tuple format
+          {method, params} ->
+            id = Protocol.generate_id()
+            {id, build_request(method, params, id)}
+
+          # Handle pre-formatted JSON-RPC request map
+          %{"method" => _method, "params" => _params, "id" => id} ->
+            {id, request}
+
+          # Handle pre-formatted request without ID
+          %{"method" => _method, "params" => _params} ->
+            id = Protocol.generate_id()
+            request_with_id = Map.put(request, "id", id)
+            {id, request_with_id}
+
+          # Handle pre-formatted request without params
+          %{"method" => _method} = req_map ->
+            id = Map.get(req_map, "id", Protocol.generate_id())
+            params = Map.get(req_map, "params", %{})
+            request_with_id = req_map |> Map.put("id", id) |> Map.put("params", params)
+            {id, request_with_id}
+        end
       end)
 
     ordered_ids = Enum.map(requests_with_ids, &elem(&1, 0))
@@ -99,6 +120,11 @@ defmodule ExMCP.Client.RequestHandler do
         Logger.warning("Received unexpected request from server: #{method}")
         {:noreply, state}
 
+      {:batch, responses} ->
+        # Parse the batch responses first
+        parsed_responses = Protocol.parse_batch_response(responses)
+        handle_batch_response(parsed_responses, state)
+
       {:error, reason} ->
         Logger.error("Failed to parse transport message: #{inspect(reason)}")
         {:noreply, state}
@@ -132,8 +158,23 @@ defmodule ExMCP.Client.RequestHandler do
 
   defp handle_response_by_id(response_id, response_data, state) do
     if is_nil(response_id) do
-      Logger.warning("Received response without an ID: #{inspect(response_data)}")
-      {:noreply, state}
+      # Check if this is a batch validation error - if we have any pending batch requests,
+      # route the error to the first one (batch errors apply to the entire batch)
+      case find_pending_batch_request(state.pending_requests) do
+        {batch_id, {from, :batch, ordered_ids, _received_responses}} ->
+          GenServer.reply(from, response_data)
+          # Clean up all individual request IDs and the batch ID
+          new_pending_requests =
+            Enum.reduce(ordered_ids, state.pending_requests, &Map.delete(&2, &1))
+            |> Map.delete(batch_id)
+
+          new_state = %{state | pending_requests: new_pending_requests}
+          {:noreply, new_state}
+
+        nil ->
+          Logger.warning("Received response without an ID: #{inspect(response_data)}")
+          {:noreply, state}
+      end
     else
       pending_requests = state.pending_requests
 
@@ -235,11 +276,7 @@ defmodule ExMCP.Client.RequestHandler do
       with {:ok, encoded_message} <- Protocol.encode_to_string(message) do
         case transport_mod.send_message(encoded_message, transport_state) do
           {:ok, new_transport_state} ->
-            # SSE mode or other transports that only return state
-            {:ok, %{state | transport_state: new_transport_state}}
-
-          {:ok, new_transport_state, _response_data} ->
-            # HTTP mode that returns response data (we ignore it for send_message)
+            # All transports now return consistent 2-tuple
             {:ok, %{state | transport_state: new_transport_state}}
 
           {:error, reason} ->
@@ -247,6 +284,13 @@ defmodule ExMCP.Client.RequestHandler do
         end
       end
     end
+  end
+
+  defp find_pending_batch_request(pending_requests) do
+    Enum.find(pending_requests, fn
+      {_id, {_from, :batch, _ordered_ids, _received_responses}} -> true
+      _ -> false
+    end)
   end
 
   defp build_request(method, params, id) do

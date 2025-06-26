@@ -140,6 +140,15 @@ defmodule ExMCP.Server do
   @callback handle_request(method :: String.t(), params :: map(), state) ::
               {:reply, map(), state} | {:error, term(), state} | {:noreply, state}
 
+  @doc """
+  Callback for handling initialization requests.
+
+  Called when a client sends an initialize request. Allows custom
+  version negotiation and capability setup.
+  """
+  @callback handle_initialize(params :: map(), state) ::
+              {:ok, map(), state} | {:error, term(), state}
+
   # Make callbacks optional with default implementations
   @optional_callbacks [
     handle_resource_read: 3,
@@ -149,7 +158,8 @@ defmodule ExMCP.Server do
     handle_prompt_list: 1,
     handle_request: 3,
     handle_tool_call: 3,
-    handle_prompt_get: 3
+    handle_prompt_get: 3,
+    handle_initialize: 2
   ]
 
   defmacro __using__(opts \\ []) do
@@ -425,6 +435,9 @@ defmodule ExMCP.Server do
 
       def handle_prompt_get(_prompt_name, _arguments, state),
         do: {:error, :prompt_not_implemented, state}
+
+      def handle_initialize(_params, state),
+        do: {:error, :initialize_not_implemented, state}
     end
   end
 
@@ -663,9 +676,40 @@ defmodule ExMCP.Server do
 
       # Handle test transport messages
       def handle_info({:transport_message, message}, state) do
-        # Forward transport messages for processing
-        # This would typically be handled by a message processor
-        {:noreply, state}
+        # Process the message using similar logic to legacy server
+        case Jason.decode(message) do
+          {:ok, requests} when is_list(requests) ->
+            # Batch requests not supported in DSL server for now
+            error_response = %{
+              "jsonrpc" => "2.0",
+              "id" => nil,
+              "error" => %{
+                "code" => -32600,
+                "message" => "Batch requests are not supported"
+              }
+            }
+
+            send_response(error_response, state)
+            {:noreply, state}
+
+          {:ok, request} when is_map(request) ->
+            case process_request(request, state) do
+              {:response, response, new_state} ->
+                send_response(response, new_state)
+                {:noreply, new_state}
+
+              {:notification, new_state} ->
+                {:noreply, new_state}
+
+              {:noreply, new_state} ->
+                {:noreply, new_state}
+            end
+
+          {:error, error} ->
+            require Logger
+            Logger.error("Failed to decode message: #{inspect(error)}")
+            {:noreply, state}
+        end
       end
 
       # Handle transport errors
@@ -758,6 +802,187 @@ defmodule ExMCP.Server do
       defp get_pending_request_ids(state) do
         Map.keys(state.pending_requests)
       end
+
+      # Send response message via transport
+      defp send_response(response, state) do
+        case Map.get(state, :transport_client_pid) do
+          nil ->
+            require Logger
+            Logger.warning("No transport client connected")
+
+          client_pid when is_pid(client_pid) ->
+            case Jason.encode(response) do
+              {:ok, json} ->
+                send(client_pid, {:transport_message, json})
+
+              {:error, error} ->
+                require Logger
+                Logger.error("Failed to encode response: #{inspect(error)}")
+            end
+        end
+      end
+
+      # Process a single MCP request
+      defp process_request(%{"method" => "initialize"} = request, state) do
+        id = Map.get(request, "id")
+        params = Map.get(request, "params", %{})
+
+        # Check if the module has custom handle_initialize implementation
+        if function_exported?(__MODULE__, :handle_initialize, 2) do
+          case handle_initialize(params, state) do
+            {:ok, result, new_state} ->
+              response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+              {:response, response, new_state}
+
+            {:error, reason, new_state} ->
+              error_response = %{
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "error" => %{
+                  "code" => -32000,
+                  "message" => reason
+                }
+              }
+
+              {:response, error_response, new_state}
+          end
+        else
+          # Default DSL server initialization
+          result = %{
+            "protocolVersion" => Map.get(params, "protocolVersion", "2025-03-26"),
+            "serverInfo" => get_server_info_from_opts(),
+            "capabilities" => get_capabilities()
+          }
+
+          response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+          {:response, response, state}
+        end
+      end
+
+      defp process_request(%{"method" => "tools/list"} = request, state) do
+        id = Map.get(request, "id")
+        tools = get_tools() |> Map.values()
+        result = %{"tools" => tools}
+        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+        {:response, response, state}
+      end
+
+      defp process_request(%{"method" => "tools/call"} = request, state) do
+        id = Map.get(request, "id")
+        params = Map.get(request, "params", %{})
+        tool_name = Map.get(params, "name")
+        arguments = Map.get(params, "arguments", %{})
+
+        case handle_tool_call(tool_name, arguments, state) do
+          {:ok, result, new_state} ->
+            response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+            {:response, response, new_state}
+
+          {:error, reason, new_state} ->
+            error_response = %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "error" => %{"code" => -32000, "message" => inspect(reason)}
+            }
+
+            {:response, error_response, new_state}
+        end
+      end
+
+      defp process_request(%{"method" => "resources/list"} = request, state) do
+        id = Map.get(request, "id")
+        resources = get_resources() |> Map.values()
+        result = %{"resources" => resources}
+        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+        {:response, response, state}
+      end
+
+      defp process_request(%{"method" => "resources/read"} = request, state) do
+        id = Map.get(request, "id")
+        params = Map.get(request, "params", %{})
+        uri = Map.get(params, "uri")
+
+        case handle_resource_read(uri, uri, state) do
+          {:ok, content, new_state} ->
+            result = %{"contents" => [content]}
+            response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+            {:response, response, new_state}
+
+          {:error, reason, new_state} ->
+            error_response = %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "error" => %{"code" => -32000, "message" => inspect(reason)}
+            }
+
+            {:response, error_response, new_state}
+        end
+      end
+
+      defp process_request(%{"method" => "prompts/list"} = request, state) do
+        id = Map.get(request, "id")
+        prompts = get_prompts() |> Map.values()
+        result = %{"prompts" => prompts}
+        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+        {:response, response, state}
+      end
+
+      defp process_request(%{"method" => "prompts/get"} = request, state) do
+        id = Map.get(request, "id")
+        params = Map.get(request, "params", %{})
+        prompt_name = Map.get(params, "name")
+        arguments = Map.get(params, "arguments", %{})
+
+        case handle_prompt_get(prompt_name, arguments, state) do
+          {:ok, result, new_state} ->
+            response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+            {:response, response, new_state}
+
+          {:error, reason, new_state} ->
+            error_response = %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "error" => %{"code" => -32000, "message" => inspect(reason)}
+            }
+
+            {:response, error_response, new_state}
+        end
+      end
+
+      defp process_request(%{"method" => "notifications/initialized"} = request, state) do
+        # This is a notification from client, not a request - just acknowledge it
+        {:notification, state}
+      end
+
+      defp process_request(%{"method" => method} = request, state) do
+        # For other methods, return method not found
+        id = Map.get(request, "id")
+
+        error_response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "error" => %{
+            "code" => -32601,
+            "message" => "Method not found: #{method}"
+          }
+        }
+
+        {:response, error_response, state}
+      end
+
+      defp process_request(_request, state) do
+        # Invalid request format
+        error_response = %{
+          "jsonrpc" => "2.0",
+          "id" => nil,
+          "error" => %{
+            "code" => -32600,
+            "message" => "Invalid Request"
+          }
+        }
+
+        {:response, error_response, state}
+      end
     end
   end
 
@@ -770,7 +995,8 @@ defmodule ExMCP.Server do
                      handle_prompt_list: 1,
                      handle_request: 3,
                      handle_tool_call: 3,
-                     handle_prompt_get: 3
+                     handle_prompt_get: 3,
+                     handle_initialize: 2
     end
   end
 

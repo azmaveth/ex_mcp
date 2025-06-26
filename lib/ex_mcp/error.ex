@@ -47,6 +47,8 @@ defmodule ExMCP.Error do
   4. Provide actionable error messages
   """
 
+  alias ExMCP.Protocol.ErrorCodes
+
   defexception [:code, :message, :data, :request_id]
 
   @type t :: %__MODULE__{
@@ -56,12 +58,12 @@ defmodule ExMCP.Error do
           request_id: String.t() | nil
         }
 
-  # JSON-RPC 2.0 Error Codes
-  @parse_error -32700
-  @invalid_request -32600
-  @method_not_found -32601
-  @invalid_params -32602
-  @internal_error -32603
+  # JSON-RPC 2.0 Error Codes (using ErrorCodes module)
+  @parse_error ErrorCodes.parse_error()
+  @invalid_request ErrorCodes.invalid_request()
+  @method_not_found ErrorCodes.method_not_found()
+  @invalid_params ErrorCodes.invalid_params()
+  @internal_error ErrorCodes.internal_error()
 
   # MCP-specific Error Codes
   @tool_error -32000

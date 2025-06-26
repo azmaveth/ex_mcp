@@ -47,7 +47,7 @@ defmodule ExMCP.Compliance.Features.Batch do
 
   # Actual test implementations
   def test_batch_requests(version) when version == "2025-03-26" do
-    {:ok, %{client: client}} = setup_test_client(version)
+    {:ok, %{client: client, server: server}} = setup_test_client(version)
 
     # Create batch request
     batch = [
@@ -73,11 +73,11 @@ defmodule ExMCP.Compliance.Features.Batch do
 
     assert Map.has_key?(prompts_response, :prompts) or Map.has_key?(prompts_response, "prompts")
 
-    cleanup_test_client(%{client: client})
+    cleanup_test_client(%{client: client, server: server})
   end
 
   def test_batch_response_order(version) when version == "2025-03-26" do
-    {:ok, %{client: client}} = setup_test_client(version)
+    {:ok, %{client: client, server: server}} = setup_test_client(version)
 
     # Create batch with identifiable requests
     batch = [
@@ -100,11 +100,11 @@ defmodule ExMCP.Compliance.Features.Batch do
 
     assert response_ids == [1, 2, 3]
 
-    cleanup_test_client(%{client: client})
+    cleanup_test_client(%{client: client, server: server})
   end
 
   def test_batch_mixed_results(version) when version == "2025-03-26" do
-    {:ok, %{client: client}} = setup_test_client(version)
+    {:ok, %{client: client, server: server}} = setup_test_client(version)
 
     # Create batch with valid and invalid requests
     batch = [
@@ -139,11 +139,11 @@ defmodule ExMCP.Compliance.Features.Batch do
     third = Enum.at(responses, 2)
     assert Map.has_key?(third, :resources) or Map.has_key?(third, "resources")
 
-    cleanup_test_client(%{client: client})
+    cleanup_test_client(%{client: client, server: server})
   end
 
   def test_empty_batch(version) when version == "2025-03-26" do
-    {:ok, %{client: client}} = setup_test_client(version)
+    {:ok, %{client: client, server: server}} = setup_test_client(version)
 
     # Empty batch should be rejected
     result = Client.send_batch(client, [])
@@ -151,11 +151,11 @@ defmodule ExMCP.Compliance.Features.Batch do
     # Should return error
     assert {:error, _reason} = result
 
-    cleanup_test_client(%{client: client})
+    cleanup_test_client(%{client: client, server: server})
   end
 
   def test_initialize_not_in_batch(version) when version == "2025-03-26" do
-    {:ok, %{client: client}} = setup_test_client(version)
+    {:ok, %{client: client, server: server}} = setup_test_client(version)
 
     # Batch with initialize should be rejected
     batch = [
@@ -178,11 +178,11 @@ defmodule ExMCP.Compliance.Features.Batch do
     result = Client.send_batch(client, batch)
     assert {:error, _reason} = result
 
-    cleanup_test_client(%{client: client})
+    cleanup_test_client(%{client: client, server: server})
   end
 
   def test_batch_size_limits(version) when version == "2025-03-26" do
-    {:ok, %{client: client}} = setup_test_client(version)
+    {:ok, %{client: client, server: server}} = setup_test_client(version)
 
     # Test reasonable batch size (should succeed)
     small_batch =
@@ -216,6 +216,6 @@ defmodule ExMCP.Compliance.Features.Batch do
                  String.contains?(to_string(reason), "limit")
     end
 
-    cleanup_test_client(%{client: client})
+    cleanup_test_client(%{client: client, server: server})
   end
 end
