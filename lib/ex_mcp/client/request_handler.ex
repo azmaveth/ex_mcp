@@ -121,7 +121,8 @@ defmodule ExMCP.Client.RequestHandler do
         {:noreply, state}
 
       {:batch, responses} ->
-        # Parse the batch responses first
+        # NOTE: Batch support is deprecated in protocol version 2025-06-18
+        # but maintained for backward compatibility with older versions
         parsed_responses = Protocol.parse_batch_response(responses)
         handle_batch_response(parsed_responses, state)
 

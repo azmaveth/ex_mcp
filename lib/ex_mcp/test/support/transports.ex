@@ -122,9 +122,6 @@ defmodule ExMcp.Test.Support.Transports do
       :test ->
         # Test transport is always valid
         :ok
-
-      _ ->
-        {:error, "Unknown transport type: #{type}"}
     end
   end
 

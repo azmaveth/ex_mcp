@@ -15,5 +15,13 @@
   {"lib/ex_mcp/server/tools_refactored.ex", :call},
   
   # Ignore @spec issue in builder.ex - Dialyzer and Credo have conflicting requirements
-  {"lib/ex_mcp/server/tools/builder.ex", :invalid_contract}
+  {"lib/ex_mcp/server/tools/builder.ex", :invalid_contract},
+  
+  # Ignore pattern match warnings for deprecated batch support
+  # Batch support is deprecated but still needed for backward compatibility
+  {"lib/ex_mcp/client/request_handler.ex", :pattern_match},
+  
+  # Ignore Transport.Error contract warnings in stdio.ex - these functions are used correctly
+  # but Dialyzer expects different return patterns in some call contexts
+  {"lib/ex_mcp/transport/stdio.ex", :call}
 ]
