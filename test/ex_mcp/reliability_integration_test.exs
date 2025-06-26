@@ -9,8 +9,8 @@ defmodule ExMCP.ReliabilityIntegrationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Client
-  alias ExMCP.Transport.{Test, ReliabilityWrapper}
   alias ExMCP.Reliability.Retry
+  alias ExMCP.Transport.{ReliabilityWrapper, Test}
 
   describe "retry policies with circuit breakers" do
     test "retry policy respects circuit breaker state" do
@@ -38,7 +38,7 @@ defmodule ExMCP.ReliabilityIntegrationTest do
     end
 
     test "circuit breaker prevents retry attempts when open" do
-      # Create failing transport manually  
+      # Create failing transport manually
       defmodule FailingTestTransport do
         @behaviour ExMCP.Transport
 

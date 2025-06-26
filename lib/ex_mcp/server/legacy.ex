@@ -41,8 +41,8 @@ defmodule ExMCP.Server.Legacy do
   use GenServer
   require Logger
 
-  alias ExMCP.Transport.Test
   alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Transport.Test
 
   @type handler_module :: module()
   @type state :: %{

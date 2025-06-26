@@ -102,7 +102,7 @@ defmodule ExMCP.ResponsePropertyTest do
 
   # Generators
 
-  defp raw_response_generator() do
+  defp raw_response_generator do
     frequency([
       {3, tool_response_generator()},
       {3, list_response_generator()},
@@ -112,7 +112,7 @@ defmodule ExMCP.ResponsePropertyTest do
     ])
   end
 
-  defp content_item_generator() do
+  defp content_item_generator do
     let type <- oneof(["text", "image", "resource"]) do
       let text <- oneof([nil, utf8()]) do
         let data <- oneof([nil, map(utf8(), term())]) do
@@ -128,11 +128,11 @@ defmodule ExMCP.ResponsePropertyTest do
     end
   end
 
-  defp tool_response_generator() do
+  defp tool_response_generator do
     let(content <- list(content_item_generator()), do: %{"content" => content})
   end
 
-  defp list_response_generator() do
+  defp list_response_generator do
     let field <- oneof(["tools", "resources", "prompts"]) do
       let items <- list(map(utf8(), utf8())) do
         let cursor <- oneof([nil, utf8()]) do
@@ -143,11 +143,11 @@ defmodule ExMCP.ResponsePropertyTest do
     end
   end
 
-  defp resource_response_generator() do
+  defp resource_response_generator do
     let(contents <- list(map(utf8(), utf8())), do: %{"contents" => contents})
   end
 
-  defp prompt_response_generator() do
+  defp prompt_response_generator do
     let desc <- utf8() do
       let messages <- list(message_generator()) do
         %{
@@ -158,7 +158,7 @@ defmodule ExMCP.ResponsePropertyTest do
     end
   end
 
-  defp message_generator() do
+  defp message_generator do
     let role <- oneof(["user", "assistant"]) do
       let content <- content_item_generator() do
         %{
@@ -169,7 +169,7 @@ defmodule ExMCP.ResponsePropertyTest do
     end
   end
 
-  defp error_response_generator() do
+  defp error_response_generator do
     let content <- list(content_item_generator()) do
       let error_key <- oneof(["is_error", "isError"]) do
         %{
@@ -180,7 +180,7 @@ defmodule ExMCP.ResponsePropertyTest do
     end
   end
 
-  defp structured_output_generator() do
+  defp structured_output_generator do
     frequency([
       {1, let(data <- map(utf8(), term()), do: %{"structuredOutput" => data})},
       {1, let(data <- map(utf8(), term()), do: %{"structuredContent" => data})},

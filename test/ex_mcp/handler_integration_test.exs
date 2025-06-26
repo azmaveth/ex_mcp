@@ -207,7 +207,7 @@ defmodule ExMCP.HandlerIntegrationTest do
 
       # The handler returns the correct response format:
       # {:ok, %{content: [%{type: "text", text: "Result: 8"}]}, state}
-      # 
+      #
       # But the response gets lost somewhere in the protocol/transport layer
       # when using the test transport.
 

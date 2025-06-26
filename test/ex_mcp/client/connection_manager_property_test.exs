@@ -42,7 +42,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
 
             other ->
               # Log unexpected responses for debugging
-              IO.inspect(other, label: "Unexpected response for #{transport_atom}")
+              # Unexpected response for debugging purposes
               false
           end
         end
@@ -62,10 +62,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
             true
 
           other ->
-            IO.inspect(other,
-              label: "Unexpected response for tuple #{inspect({transport_atom, transport_opts})}"
-            )
-
+            # Unexpected response for debugging purposes
             false
         end
       end
@@ -94,10 +91,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
             true
 
           other ->
-            IO.inspect(other,
-              label: "Unexpected response for keyword list #{inspect(transport_spec)}"
-            )
-
+            # Unexpected response for debugging purposes
             false
         end
       end
@@ -117,7 +111,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
             true
 
           other ->
-            IO.inspect(other, label: "Unexpected response for server_pid conversion")
+            # Unexpected response for debugging purposes
             false
         end
       end

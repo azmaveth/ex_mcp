@@ -585,7 +585,7 @@ defmodule ExMCP.Integration.CrossTransportTest do
     # {:ok, prompt_result} = Client.get_prompt(client, "simple_prompt", %{"topic" => "testing"})
     # assert prompt_result.description == "Generated prompt about testing"
     # assert length(prompt_result.messages) == 1
-    # 
+    #
     # message = hd(prompt_result.messages)
     # assert message["content"]["text"] =~ "testing"
   end

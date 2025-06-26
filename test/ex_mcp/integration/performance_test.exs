@@ -8,7 +8,7 @@ defmodule ExMCP.Integration.PerformanceTest do
 
   use ExUnit.Case, async: false
 
-  alias ExMCP.{Client}
+  alias ExMCP.Client
   alias ExMCP.Testing.PerformanceProfiler
 
   require Logger
@@ -21,6 +21,7 @@ defmodule ExMCP.Integration.PerformanceTest do
   setup_all do
     # Create a comprehensive test server for performance testing
     defmodule PerformanceTestServer do
+      @moduledoc false
       use ExMCP.Server
 
       # Fast operation for baseline measurement
@@ -379,7 +380,7 @@ defmodule ExMCP.Integration.PerformanceTest do
       Logger.info("Profiling CPU intensive operations...")
       cpu_results = PerformanceProfiler.profile_batch(cpu_operations, transport_type: :test)
 
-      # Memory intensive tests  
+      # Memory intensive tests
       memory_operations = [
         {"memory_1mb", fn -> Client.call_tool(client, "memory_test", %{"size_mb" => 1}) end},
         {"memory_5mb", fn -> Client.call_tool(client, "memory_test", %{"size_mb" => 5}) end},

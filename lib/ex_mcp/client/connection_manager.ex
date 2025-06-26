@@ -10,7 +10,7 @@ defmodule ExMCP.Client.ConnectionManager do
   # alias ExMCP.TransportManager  # Not using full manager for now
   alias ExMCP.Internal.Protocol
   alias ExMCP.Reliability.Retry
-  alias ExMCP.Transport.{HTTP, Local, SSE, Stdio, Test, ReliabilityWrapper}
+  alias ExMCP.Transport.{HTTP, Local, ReliabilityWrapper, SSE, Stdio, Test}
 
   @doc """
   Establishes connection using the provided options and updates client state.

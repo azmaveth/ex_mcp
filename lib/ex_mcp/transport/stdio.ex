@@ -29,7 +29,7 @@ defmodule ExMCP.Transport.Stdio do
   require Logger
 
   alias ExMCP.Internal.SecurityConfig
-  alias ExMCP.Transport.{SecurityGuard, Error}
+  alias ExMCP.Transport.{Error, SecurityGuard}
 
   defstruct [:port, :buffer, :line_buffer]
 

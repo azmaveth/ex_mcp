@@ -9,7 +9,7 @@ defmodule ExMCP.Reliability.HealthMonitoringTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Reliability.HealthCheck
-  alias ExMCP.Transport.{Test, ReliabilityWrapper}
+  alias ExMCP.Transport.{ReliabilityWrapper, Test}
 
   describe "health check basic functionality" do
     test "health check starts and performs initial check" do

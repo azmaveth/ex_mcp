@@ -10,7 +10,7 @@ defmodule ExMCP.Integration.E2EScenariosTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.{Client, Server}
-  alias ExMCP.Testing.{MockServer, Assertions}
+  alias ExMCP.Testing.{Assertions, MockServer}
 
   @moduletag :integration
   @moduletag :e2e
@@ -519,7 +519,7 @@ defmodule ExMCP.Integration.E2EScenariosTest do
                   acc |> String.split("\n") |> Enum.reverse() |> Enum.join("\n")
 
                 "add_prefix" ->
-                  acc |> String.split("\n") |> Enum.map(&"PROCESSED: #{&1}") |> Enum.join("\n")
+                  acc |> String.split("\n") |> Enum.map_join("\n", &"PROCESSED: #{&1}")
 
                 _ ->
                   acc

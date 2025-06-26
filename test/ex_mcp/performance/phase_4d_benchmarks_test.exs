@@ -13,7 +13,7 @@ defmodule ExMCP.Performance.Phase4DBenchmarksTest do
 
   use ExUnit.Case, async: false
 
-  alias ExMCP.{Client}
+  alias ExMCP.Client
   alias ExMCP.Testing.PerformanceProfiler
 
   require Logger
