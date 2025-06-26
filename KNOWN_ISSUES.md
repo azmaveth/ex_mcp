@@ -2,6 +2,9 @@
 
 This document tracks known issues in ExMCP v0.6.0 that will be addressed in future releases.
 
+**Last Updated**: 2025-06-26 (Post-Credo improvements)  
+**Current Status**: 3 non-critical issues + 8 Dialyzer warnings
+
 ## Non-Critical Issues (Does not affect production use)
 
 ### 1. Message Content Normalization
@@ -51,6 +54,54 @@ This document tracks known issues in ExMCP v0.6.0 that will be addressed in futu
 
 **Note**: Macro code that generates other code is inherently complex
 
+### 5. Dialyzer Type Warnings
+
+**Issue**: 8 Dialyzer warnings related to type specifications and pattern matching:
+- Transport.Error function calls breaking contracts (6 warnings in stdio.ex)
+- Pattern match issues in request_handler.ex and test/support/transports.ex
+
+**Impact**: None - Type safety warnings only, no runtime issues
+
+**Details**:
+- `ExMCP.Transport.Error` functions expect different return format
+- Pattern matching on batch responses may have unreachable clause
+- Test transport has unreachable pattern match
+
+**Target Fix**: v0.7.0 - Update type specs and contracts
+
+## Recent Improvements (2025-06-26)
+
+### Code Quality Enhancements
+- **Credo**: Reduced issues from 41 to 0 ✅
+  - Fixed all readability issues (22)
+  - Fixed all warnings (8)
+  - Fixed complexity issues (11)
+- **Commits**: 4 commits improving code quality
+  - 71138ae: Major refactoring for complexity
+  - f33ef2c: Added annotations for macro code
+
+### Next Priority Areas
+
+Based on current issues, recommended work order for v0.7.0:
+
+1. **Fix Dialyzer Warnings** (High Priority)
+   - Update Transport.Error contracts
+   - Fix pattern matching issues
+   - Improve type specifications
+
+2. **HTTP/SSE Transport Fix** (Medium Priority)
+   - Debug timeout issues
+   - Fix response framing
+   - Add integration tests
+
+3. **Transport Message Codec** (Low Priority)
+   - Create unified message encoding/decoding
+   - Standardize across all transports
+
+4. **Message Content Normalization** (Low Priority)
+   - Fix DSL server prompt responses
+   - Improve struct access normalization
+
 ## Security Considerations
 
 All security-critical issues have been resolved. The remaining issues do not impact:
@@ -98,5 +149,6 @@ Avoid HTTP transport until v0.7.0 fixes are released.
 
 ---
 
-**Last Updated**: 2025-06-26  
-**Version**: 0.6.0
+**Last Updated**: 2025-06-26 (Post-Credo improvements)  
+**Version**: 0.6.0  
+**Next Target**: 0.7.0 (Dialyzer fixes + HTTP transport)
