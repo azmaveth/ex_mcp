@@ -294,3 +294,546 @@ defmodule ExMcp.Test.Support.Transports.MockTransport do
     }
   end
 end
+
+defmodule ExMcp.Test.Support.Transports.Http do
+  @moduledoc """
+  HTTP transport test helper with SecurityGuard integration.
+
+  Provides test HTTP endpoints that integrate with SecurityGuard middleware
+  for testing security policies across HTTP transport.
+  """
+
+  use GenServer
+  require Logger
+
+  alias ExMCP.Transport.SecurityGuard
+
+  defstruct [:port, :server_pid, :security_guard, :requests, :responses]
+
+  @doc """
+  Starts a test HTTP endpoint with SecurityGuard middleware.
+
+  ## Options
+  - `:security_guard` - SecurityGuard module to use for validation
+  - `:port` - Port to bind to (defaults to random available port)
+
+  ## Returns
+  `{:ok, endpoint}` where endpoint can be used with `request/3`
+  """
+  def start_test_endpoint(opts \\ []) do
+    security_guard = Keyword.get(opts, :security_guard, SecurityGuard)
+    port = Keyword.get(opts, :port, 0)
+
+    state = %__MODULE__{
+      port: port,
+      security_guard: security_guard,
+      requests: [],
+      responses: %{}
+    }
+
+    case GenServer.start_link(__MODULE__, state) do
+      {:ok, pid} ->
+        # Return endpoint reference that can be used with request/3
+        {:ok, %{pid: pid, type: :http, port: port}}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Sends a request through the HTTP test endpoint with security validation.
+
+  ## Parameters
+  - `endpoint` - Endpoint returned from `start_test_endpoint/1`
+  - `command` - JSON-RPC command to send
+  - `headers` - HTTP headers including authorization
+
+  ## Returns
+  - `{:ok, response, received_command}` - Success with response and command after security processing
+  - `{:error, reason}` - Security violation or other error
+  """
+  def request(endpoint, command, headers) do
+    GenServer.call(endpoint.pid, {:http_request, command, headers})
+  end
+
+  # GenServer implementation
+
+  @impl true
+  def init(state) do
+    {:ok, state}
+  end
+
+  @impl true
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+  def handle_call({:http_request, command, headers}, _from, state) do
+    # Extract authorization token from headers for security validation
+    auth_header =
+      Enum.find_value(headers, fn
+        {"authorization", "Bearer " <> token} -> token
+        {"Authorization", "Bearer " <> token} -> token
+        _ -> nil
+      end)
+
+    # Extract user ID from token - in a real system this would be done by token validation
+    user_id =
+      if auth_header do
+        case String.split(auth_header, "-") do
+          ["secret", "test", "token", "for", user_id] -> user_id
+          _ -> "test_user"
+        end
+      else
+        "anonymous"
+      end
+
+    # For HTTP transport, validate based on the resource being accessed
+    # Handle both string and atom keys since test data comes with atom keys
+    method = Map.get(command, "method") || Map.get(command, :method)
+    params = Map.get(command, "params") || Map.get(command, :params, %{})
+    uri = Map.get(params, "uri") || Map.get(params, :uri)
+
+    case method do
+      "resources/read" when not is_nil(uri) ->
+        validate_http_resource_security(uri, headers, user_id, command, state)
+
+      "resources/list" when not is_nil(uri) ->
+        validate_http_resource_security(uri, headers, user_id, command, state)
+
+      _ ->
+        # Other methods, simulate successful response
+        received_command =
+          if auth_header do
+            Map.put(command, :meta, %{token: auth_header})
+          else
+            command
+          end
+
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => %{"status" => "success"},
+          "id" => Map.get(command, "id") || Map.get(command, :id, 1)
+        }
+
+        {:reply, {:ok, response, received_command}, state}
+    end
+  end
+
+  defp validate_http_resource_security(uri, headers, user_id, command, state) do
+    # Only validate external URIs
+    case URI.parse(uri) do
+      %URI{scheme: scheme, host: host} when not is_nil(scheme) and not is_nil(host) ->
+        # External resource, validate with SecurityGuard
+        security_request = %{
+          url: uri,
+          headers: headers,
+          method: "GET",
+          transport: :http,
+          user_id: user_id
+        }
+
+        config = %{
+          consent_handler: ExMCP.ConsentHandler.Test,
+          trusted_origins: ["localhost", "127.0.0.1"]
+        }
+
+        case SecurityGuard.validate_request(security_request, config) do
+          {:ok, _sanitized_request} ->
+            # Security passed
+            response = %{
+              "jsonrpc" => "2.0",
+              "result" => %{"content" => "Resource content"},
+              "id" => Map.get(command, "id", 1)
+            }
+
+            # Add token to command metadata for verification in tests
+            auth_header =
+              Enum.find_value(headers, fn
+                {"authorization", "Bearer " <> token} -> token
+                {"Authorization", "Bearer " <> token} -> token
+                _ -> nil
+              end)
+
+            received_command =
+              if auth_header do
+                Map.put(command, :meta, %{token: auth_header})
+              else
+                command
+              end
+
+            {:reply, {:ok, response, received_command}, state}
+
+          {:error, %ExMCP.Transport.SecurityError{type: type}} ->
+            # Security violation
+            {:reply, {:error, type}, state}
+        end
+
+      _ ->
+        # Local URI, allow through
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => %{"content" => "Local resource content"},
+          "id" => Map.get(command, "id", 1)
+        }
+
+        # Add token to command metadata for verification
+        auth_header =
+          Enum.find_value(headers, fn
+            {"authorization", "Bearer " <> token} -> token
+            {"Authorization", "Bearer " <> token} -> token
+            _ -> nil
+          end)
+
+        received_command =
+          if auth_header do
+            Map.put(command, :meta, %{token: auth_header})
+          else
+            command
+          end
+
+        {:reply, {:ok, response, received_command}, state}
+    end
+  end
+end
+
+defmodule ExMcp.Test.Support.Transports.Stdio do
+  @moduledoc """
+  Stdio transport test helper with SecurityGuard integration.
+
+  Provides test stdio processes that integrate with SecurityGuard middleware
+  for testing security policies across stdio transport.
+  """
+
+  use GenServer
+  require Logger
+
+  alias ExMCP.Transport.SecurityGuard
+
+  defstruct [:security_guard, :requests, :responses]
+
+  @doc """
+  Starts a test stdio process with SecurityGuard middleware.
+
+  ## Options
+  - `:security_guard` - SecurityGuard module to use for validation
+
+  ## Returns
+  `{:ok, pid}` where pid can be used with `request/2`
+  """
+  def start_test_process(opts \\ []) do
+    security_guard = Keyword.get(opts, :security_guard, SecurityGuard)
+
+    state = %__MODULE__{
+      security_guard: security_guard,
+      requests: [],
+      responses: %{}
+    }
+
+    GenServer.start_link(__MODULE__, state)
+  end
+
+  @doc """
+  Sends a request through the stdio test process with security validation.
+
+  ## Parameters
+  - `pid` - Process PID returned from `start_test_process/1`
+  - `command` - JSON-RPC command to send
+
+  ## Returns
+  - `{:ok, response, received_command}` - Success with response and command after security processing
+  - `{:error, reason}` - Security violation or other error
+  """
+  def request(pid, command) do
+    GenServer.call(pid, {:stdio_request, command})
+  end
+
+  # GenServer implementation
+
+  @impl true
+  def init(state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:stdio_request, command}, _from, state) do
+    # Extract token from command metadata
+    token = get_in(command, [:meta, :token])
+
+    # Check if this is a resource request that needs security validation
+    # Handle both string and atom keys since test data comes with atom keys
+    method = Map.get(command, "method") || Map.get(command, :method)
+    params = Map.get(command, "params") || Map.get(command, :params, %{})
+    uri = Map.get(params, "uri") || Map.get(params, :uri)
+
+    case method do
+      "resources/read" when not is_nil(uri) ->
+        validate_stdio_security(uri, token, command, state)
+
+      "resources/list" when not is_nil(uri) ->
+        validate_stdio_security(uri, token, command, state)
+
+      _ ->
+        # Non-resource request, allow through
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => %{"status" => "success"},
+          "id" => Map.get(command, "id") || Map.get(command, :id, 1)
+        }
+
+        received_command = Map.delete(command, :meta)
+        {:reply, {:ok, response, received_command}, state}
+    end
+  end
+
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+  defp validate_stdio_security(uri, token, command, state) do
+    # Extract user ID from token - in a real system this would be done by token validation
+    user_id =
+      if token do
+        case String.split(token, "-") do
+          ["secret", "test", "token", "for", user_id] -> user_id
+          _ -> "test_user"
+        end
+      else
+        "anonymous"
+      end
+
+    # Only validate external URIs
+    case URI.parse(uri) do
+      %URI{scheme: scheme, host: host} when not is_nil(scheme) and not is_nil(host) ->
+        # External resource, validate with SecurityGuard
+        security_request = %{
+          url: uri,
+          headers: if(token, do: [{"Authorization", "Bearer #{token}"}], else: []),
+          method: "GET",
+          transport: :stdio,
+          user_id: user_id
+        }
+
+        config = %{
+          consent_handler: ExMCP.ConsentHandler.Test,
+          trusted_origins: ["localhost", "127.0.0.1"]
+        }
+
+        case SecurityGuard.validate_request(security_request, config) do
+          {:ok, _sanitized_request} ->
+            # Security passed
+            response = %{
+              "jsonrpc" => "2.0",
+              "result" => %{"content" => "Resource content"},
+              "id" => Map.get(command, "id", 1)
+            }
+
+            received_command = Map.delete(command, :meta)
+            {:reply, {:ok, response, received_command}, state}
+
+          {:error, %ExMCP.Transport.SecurityError{type: type}} ->
+            # Security violation
+            {:reply, {:error, type}, state}
+        end
+
+      _ ->
+        # Local URI, allow through
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => %{"content" => "Local resource content"},
+          "id" => Map.get(command, "id", 1)
+        }
+
+        received_command = Map.delete(command, :meta)
+        {:reply, {:ok, response, received_command}, state}
+    end
+  end
+end
+
+defmodule ExMcp.Test.Support.Transports.Beam do
+  @moduledoc """
+  BEAM transport test helper with SecurityGuard integration.
+
+  Provides test BEAM servers that integrate with SecurityGuard middleware
+  for testing security policies across BEAM transport.
+  """
+
+  use GenServer
+  require Logger
+
+  alias ExMCP.Transport.SecurityGuard
+
+  defstruct [:security_guard, :requests, :responses]
+
+  @doc """
+  Starts a test BEAM server with SecurityGuard middleware.
+
+  ## Options
+  - `:security_guard` - SecurityGuard module to use for validation
+
+  ## Returns
+  `{:ok, pid}` where pid can be used with `request/2`
+  """
+  def start_test_server(opts \\ []) do
+    security_guard = Keyword.get(opts, :security_guard, SecurityGuard)
+
+    state = %__MODULE__{
+      security_guard: security_guard,
+      requests: [],
+      responses: %{}
+    }
+
+    GenServer.start_link(__MODULE__, state)
+  end
+
+  @doc """
+  Sends a request through the BEAM test server with security validation.
+
+  ## Parameters
+  - `pid` - Process PID returned from `start_test_server/1`
+  - `command` - JSON-RPC command to send
+
+  ## Returns
+  - `{:ok, response, received_command}` - Success with response and command after security processing
+  - `{:error, reason}` - Security violation or other error
+  """
+  def request(pid, command) do
+    GenServer.call(pid, {:beam_request, command})
+  end
+
+  # GenServer implementation
+
+  @impl true
+  def init(state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:beam_request, command}, _from, state) do
+    # Extract token from command metadata
+    token = get_in(command, [:meta, :token])
+
+    # BEAM transport - validate external resource access
+    # Handle both string and atom keys since test data comes with atom keys
+    method = Map.get(command, "method") || Map.get(command, :method)
+    params = Map.get(command, "params") || Map.get(command, :params, %{})
+    uri = Map.get(params, "uri") || Map.get(params, :uri)
+
+    case method do
+      "resources/read" when not is_nil(uri) ->
+        validate_beam_resource_security(uri, token, command, state)
+
+      "resources/list" when not is_nil(uri) ->
+        validate_beam_resource_security(uri, token, command, state)
+
+      method when method in ["tools/call"] ->
+        # Tools might access external resources, validate if token present
+        validate_beam_security(token, command, state)
+
+      _ ->
+        # Other methods, allow through
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => %{"status" => "success"},
+          "id" => Map.get(command, "id") || Map.get(command, :id, 1)
+        }
+
+        received_command = Map.delete(command, :meta)
+        {:reply, {:ok, response, received_command}, state}
+    end
+  end
+
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+  defp validate_beam_resource_security(uri, token, command, state) do
+    # Extract user ID from token
+    user_id =
+      if token do
+        case String.split(token, "-") do
+          ["secret", "test", "token", "for", user_id] -> user_id
+          _ -> "test_user"
+        end
+      else
+        "anonymous"
+      end
+
+    # Only validate external URIs
+    case URI.parse(uri) do
+      %URI{scheme: scheme, host: host} when not is_nil(scheme) and not is_nil(host) ->
+        # External resource, validate with SecurityGuard
+        security_request = %{
+          url: uri,
+          headers: if(token, do: [{"Authorization", "Bearer #{token}"}], else: []),
+          method: "GET",
+          transport: :beam,
+          user_id: user_id
+        }
+
+        config = %{
+          consent_handler: ExMCP.ConsentHandler.Test,
+          trusted_origins: ["localhost", "127.0.0.1"]
+        }
+
+        case SecurityGuard.validate_request(security_request, config) do
+          {:ok, _sanitized_request} ->
+            # Security passed
+            response = %{
+              "jsonrpc" => "2.0",
+              "result" => %{"content" => "Resource content"},
+              "id" => Map.get(command, "id", 1)
+            }
+
+            received_command = Map.delete(command, :meta)
+            {:reply, {:ok, response, received_command}, state}
+
+          {:error, %ExMCP.Transport.SecurityError{type: type}} ->
+            # Security violation
+            {:reply, {:error, type}, state}
+        end
+
+      _ ->
+        # Local URI, allow through
+        response = %{
+          "jsonrpc" => "2.0",
+          "result" => %{"content" => "Local resource content"},
+          "id" => Map.get(command, "id", 1)
+        }
+
+        received_command = Map.delete(command, :meta)
+        {:reply, {:ok, response, received_command}, state}
+    end
+  end
+
+  defp validate_beam_security(token, command, state) do
+    # For BEAM transport, we simulate security validation based on presence of token
+    if token do
+      # Assume token provides access - validate with SecurityGuard
+      security_request = %{
+        url: "beam://localhost/mcp",
+        headers: [{"Authorization", "Bearer #{token}"}],
+        method: "BEAM",
+        transport: :beam,
+        user_id: "test_user"
+      }
+
+      config = %{
+        consent_handler: ExMCP.ConsentHandler.Test,
+        trusted_origins: ["localhost", "127.0.0.1"]
+      }
+
+      case SecurityGuard.validate_request(security_request, config) do
+        {:ok, _sanitized_request} ->
+          # Security passed
+          response = %{
+            "jsonrpc" => "2.0",
+            "result" => %{"status" => "authorized"},
+            "id" => Map.get(command, "id", 1)
+          }
+
+          received_command = Map.delete(command, :meta)
+          {:reply, {:ok, response, received_command}, state}
+
+        {:error, _security_error} ->
+          # Security violation
+          {:reply, {:error, :consent_required}, state}
+      end
+    else
+      # No token provided
+      {:reply, {:error, :consent_required}, state}
+    end
+  end
+end

@@ -64,7 +64,8 @@ defmodule ExMCP.MixProject do
       # ExMCP v2 dependencies
       {:ex_json_schema, "~> 0.10"},
       {:html_entities, "~> 0.5", only: [:dev, :test]},
-      {:propcheck, "~> 1.4", only: :test}
+      {:propcheck, "~> 1.4", only: :test},
+      {:benchee, "~> 1.0", only: [:dev, :test]}
     ]
   end
 

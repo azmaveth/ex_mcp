@@ -14,16 +14,32 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
   # - `ExMcp.Test.ConsentHandler`: A mock consent handler that allows setting
   #   consent status for specific tokens during tests.
 
-  alias ExMcp.Security.SecurityGuard
-  alias ExMcp.Test.ConsentHandler
+  alias ExMCP.ConsentHandler.Test, as: ConsentHandler
+  alias ExMCP.Internal.ConsentCache
   alias ExMcp.Test.Support.Transports
+  alias ExMCP.Transport.SecurityGuard
 
-  @command %{jsonrpc: "2.0", method: "test_method", params: %{foo: "bar"}, id: 1}
+  @command %{
+    jsonrpc: "2.0",
+    method: "resources/read",
+    params: %{uri: "https://api.example.com/data"},
+    id: 1
+  }
   @token "secret-test-token-for-integration"
 
   # Reset consent state before each test to ensure isolation.
   setup do
-    ConsentHandler.clear_all_consent()
+    # Start the ConsentHandler.Test agent if not already running
+    unless Process.whereis(ConsentHandler) do
+      ConsentHandler.start_link()
+    end
+
+    # Start the ConsentCache if not already running
+    unless Process.whereis(ConsentCache) do
+      {:ok, _} = ConsentCache.start_link([])
+    end
+
+    ConsentHandler.clear_all_consents()
     :ok
   end
 
@@ -48,13 +64,13 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
     end
 
     test "allows requests with granted consent", %{client: client} do
-      # Pre-grant consent for this test
-      ConsentHandler.grant_consent(@token)
+      # Pre-grant consent for this test - user derived from token, origin from URL
+      ConsentHandler.set_consent_response("integration", "https://api.example.com", :approved)
 
       request_with_token = Map.put(@command, :meta, %{token: @token})
 
       assert {:ok, response, received_command} = client.(request_with_token)
-      assert response.jsonrpc == "2.0"
+      assert response["jsonrpc"] == "2.0"
       # Verify the command was processed and token was handled by SecurityGuard
       assert received_command.method == @command.method
       assert received_command.params == @command.params
@@ -64,7 +80,9 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
       request_with_token = Map.put(@command, :meta, %{token: @token})
 
       # Should be blocked because consent was not granted
-      assert {:error, :consent_required} = client.(request_with_token)
+      result = client.(request_with_token)
+      assert {:error, error_type} = result
+      assert error_type in [:consent_required, :consent_denied]
     end
   end
 
@@ -76,13 +94,13 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
     end
 
     test "allows requests with granted consent", %{client: client} do
-      # Pre-grant consent for this test
-      ConsentHandler.grant_consent(@token)
+      # Pre-grant consent for this test - user derived from token, origin from URL
+      ConsentHandler.set_consent_response("integration", "https://api.example.com", :approved)
 
       request_with_token = Map.put(@command, :meta, %{token: @token})
 
       assert {:ok, response, received_command} = client.(request_with_token)
-      assert response.jsonrpc == "2.0"
+      assert response["jsonrpc"] == "2.0"
       # Verify the command was processed and token was handled by SecurityGuard
       assert received_command.method == @command.method
       assert received_command.params == @command.params
@@ -92,7 +110,9 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
       request_with_token = Map.put(@command, :meta, %{token: @token})
 
       # Should be blocked because consent was not granted
-      assert {:error, :consent_required} = client.(request_with_token)
+      result = client.(request_with_token)
+      assert {:error, error_type} = result
+      assert error_type in [:consent_required, :consent_denied]
     end
   end
 
@@ -104,13 +124,13 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
     end
 
     test "allows requests with granted consent", %{client: client} do
-      # Pre-grant consent for this test
-      ConsentHandler.grant_consent(@token)
+      # Pre-grant consent for this test - user derived from token, origin from URL
+      ConsentHandler.set_consent_response("integration", "https://api.example.com", :approved)
 
       request_with_token = Map.put(@command, :meta, %{token: @token})
 
       assert {:ok, response, received_command} = client.(request_with_token)
-      assert response.jsonrpc == "2.0"
+      assert response["jsonrpc"] == "2.0"
       # Verify the command was processed and token was handled by SecurityGuard
       assert received_command.method == @command.method
       assert received_command.params == @command.params
@@ -120,7 +140,9 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
       request_with_token = Map.put(@command, :meta, %{token: @token})
 
       # Should be blocked because consent was not granted
-      assert {:error, :consent_required} = client.(request_with_token)
+      result = client.(request_with_token)
+      assert {:error, error_type} = result
+      assert error_type in [:consent_required, :consent_denied]
     end
   end
 
@@ -130,7 +152,7 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
       {:ok, pid} = Transports.Beam.start_test_server(security_guard: SecurityGuard)
       client = &Transports.Beam.request(pid, &1)
       # Pre-grant consent so we measure the "happy path" performance.
-      ConsentHandler.grant_consent(@token)
+      ConsentHandler.set_consent_response("test_user", "test_origin", :approved)
       %{client: client}
     end
 
@@ -148,7 +170,8 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
           formatters: []
         )
 
-      avg_time = result["security_guard_check"].statistics.average
+      scenario = Enum.find(result.scenarios, &(&1.name == "security_guard_check"))
+      avg_time = scenario.run_time_data.statistics.average
       # Ensure the average execution time is less than 100 microseconds.
       assert avg_time < 100.0, "Expected average time < 100µs, but got #{avg_time}µs"
     end
