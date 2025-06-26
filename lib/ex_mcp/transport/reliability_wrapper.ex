@@ -318,40 +318,22 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
     end
   end
 
-  defp should_count_as_failure?(error_reason) do
-    case error_reason do
-      # Circuit breaker timeout
-      :timeout ->
-        true
+  # Define which error types should count as failures
+  @failure_error_types [:connection_error, :transport_error, :timeout_error, :protocol_error]
+  @non_failure_error_types [:security_violation, :validation_error]
 
-      # Circuit breaker open
-      :circuit_open ->
-        false
+  defp should_count_as_failure?(:timeout), do: true
+  defp should_count_as_failure?(:circuit_open), do: false
 
-      # Standard transport errors
-      {:error, {error_type, _reason}} ->
-        case error_type do
-          :connection_error -> true
-          :transport_error -> true
-          # Policy issue, not transport failure
-          :security_violation -> false
-          # Client issue, not transport failure
-          :validation_error -> false
-          :timeout_error -> true
-          :protocol_error -> true
-          # Unknown error types default to counting as failures
-          _ -> true
-        end
+  defp should_count_as_failure?({:error, {error_type, _reason}}),
+    do: failure_error_type?(error_type)
 
-      # Legacy error formats
-      {:error, _reason} ->
-        true
+  defp should_count_as_failure?({:error, _reason}), do: true
+  defp should_count_as_failure?(_), do: true
 
-      # Exceptions and other error types
-      _ ->
-        true
-    end
-  end
+  defp failure_error_type?(error_type) when error_type in @failure_error_types, do: true
+  defp failure_error_type?(error_type) when error_type in @non_failure_error_types, do: false
+  defp failure_error_type?(_), do: true
 
   defp merge_circuit_breaker_defaults(opts) do
     defaults = [

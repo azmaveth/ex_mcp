@@ -158,63 +158,64 @@ defmodule ExMCP.Server.Legacy do
   end
 
   # Handle batch requests according to JSON-RPC 2.0 specification
-  defp handle_batch_request(requests, state) when is_list(requests) do
-    if Enum.empty?(requests) do
-      # Empty batch is invalid according to JSON-RPC 2.0
-      error_response = %{
-        "jsonrpc" => "2.0",
-        "id" => nil,
-        "error" => %{"code" => -32600, "message" => "Invalid Request"}
-      }
+  defp handle_batch_request([], state) do
+    # Empty batch is invalid according to JSON-RPC 2.0
+    send_error_response(-32600, "Invalid Request", nil, state)
+  end
 
-      case send_message(error_response, state) do
+  defp handle_batch_request(requests, %{protocol_version: "2025-06-18"} = state)
+       when is_list(requests) do
+    # Batch requests not supported in this version
+    send_error_response(
+      -32600,
+      "Batch requests are not supported in protocol version 2025-06-18",
+      nil,
+      state
+    )
+  end
+
+  defp handle_batch_request(requests, state) when is_list(requests) do
+    # Process each request in the batch
+    {responses, final_state} = process_batch_requests(requests, state)
+
+    # Filter out nils from notifications
+    non_nil_responses = Enum.reject(responses, &is_nil/1)
+
+    # Only send response if we have any (notifications don't generate responses)
+    if not Enum.empty?(non_nil_responses) do
+      case send_message(non_nil_responses, final_state) do
         {:ok, new_state} -> {:noreply, new_state}
-        {:error, _reason} -> {:noreply, state}
+        {:error, _reason} -> {:noreply, final_state}
       end
     else
-      # Check if batch requests are supported in this protocol version
-      if state.protocol_version == "2025-06-18" do
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "id" => nil,
-          "error" => %{
-            "code" => -32600,
-            "message" => "Batch requests are not supported in protocol version 2025-06-18"
-          }
-        }
-
-        case send_message(error_response, state) do
-          {:ok, new_state} -> {:noreply, new_state}
-          {:error, _reason} -> {:noreply, state}
-        end
-      else
-        # Process each request in the batch
-        {responses, final_state} =
-          Enum.map_reduce(requests, state, fn request, acc_state ->
-            case process_mcp_request(request, acc_state) do
-              {:response, response, new_state} ->
-                {response, new_state}
-
-              {:notification, new_state} ->
-                # Notifications don't get responses
-                {nil, new_state}
-            end
-          end)
-
-        # Filter out nils from notifications
-        non_nil_responses = Enum.reject(responses, &is_nil/1)
-
-        # Only send response if we have any (notifications don't generate responses)
-        if not Enum.empty?(non_nil_responses) do
-          case send_message(non_nil_responses, final_state) do
-            {:ok, new_state} -> {:noreply, new_state}
-            {:error, _reason} -> {:noreply, final_state}
-          end
-        else
-          {:noreply, final_state}
-        end
-      end
+      {:noreply, final_state}
     end
+  end
+
+  defp send_error_response(code, message, id, state) do
+    error_response = %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "error" => %{"code" => code, "message" => message}
+    }
+
+    case send_message(error_response, state) do
+      {:ok, new_state} -> {:noreply, new_state}
+      {:error, _reason} -> {:noreply, state}
+    end
+  end
+
+  defp process_batch_requests(requests, state) do
+    Enum.map_reduce(requests, state, fn request, acc_state ->
+      case process_mcp_request(request, acc_state) do
+        {:response, response, new_state} ->
+          {response, new_state}
+
+        {:notification, new_state} ->
+          # Notifications don't get responses
+          {nil, new_state}
+      end
+    end)
   end
 
   @impl GenServer

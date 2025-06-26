@@ -866,48 +866,43 @@ defmodule ExMCP.Client do
     timeout = Keyword.get(opts, :timeout, default_timeout)
     retry_policy = Keyword.get(opts, :retry_policy, :use_default)
 
-    # Get the effective retry policy
-    effective_retry_policy =
-      if retry_policy == :use_default do
-        case GenServer.call(client, :get_default_retry_policy, timeout) do
-          {:ok, policy} -> policy
-          _ -> []
-        end
-      else
-        case retry_policy do
-          false -> []
-          [] -> []
-          policy when is_list(policy) -> policy
-        end
-      end
+    effective_retry_policy = get_effective_retry_policy(client, retry_policy, timeout)
+    operation = fn -> GenServer.call(client, {:request, method, params}, timeout) end
 
-    # Define the operation to retry
-    operation = fn ->
-      GenServer.call(client, {:request, method, params}, timeout)
-    end
+    result = execute_with_retry(operation, effective_retry_policy)
+    handle_request_result(result, opts)
+  end
 
-    # Execute with retry if enabled
-    result =
-      if effective_retry_policy == [] do
-        # No retry policy - execute directly for backward compatibility
-        operation.()
-      else
-        # Apply retry policy using the existing retry infrastructure
-        retry_opts = Retry.mcp_defaults(effective_retry_policy)
-        Retry.with_retry(operation, retry_opts)
-      end
-
-    case result do
-      {:ok, response} ->
-        case Keyword.get(opts, :format, :struct) do
-          :map -> {:ok, response}
-          format -> format_response(response, format, opts)
-        end
-
-      error ->
-        error
+  defp get_effective_retry_policy(client, :use_default, timeout) do
+    case GenServer.call(client, :get_default_retry_policy, timeout) do
+      {:ok, policy} -> policy
+      _ -> []
     end
   end
+
+  defp get_effective_retry_policy(_client, false, _timeout), do: []
+  defp get_effective_retry_policy(_client, [], _timeout), do: []
+  defp get_effective_retry_policy(_client, policy, _timeout) when is_list(policy), do: policy
+
+  defp execute_with_retry(operation, []) do
+    # No retry policy - execute directly for backward compatibility
+    operation.()
+  end
+
+  defp execute_with_retry(operation, retry_policy) do
+    # Apply retry policy using the existing retry infrastructure
+    retry_opts = Retry.mcp_defaults(retry_policy)
+    Retry.with_retry(operation, retry_opts)
+  end
+
+  defp handle_request_result({:ok, response}, opts) do
+    case Keyword.get(opts, :format, :struct) do
+      :map -> {:ok, response}
+      format -> format_response(response, format, opts)
+    end
+  end
+
+  defp handle_request_result(error, _opts), do: error
 
   @doc """
   Requests completion suggestions from the server.

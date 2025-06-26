@@ -88,35 +88,45 @@ defmodule ExMCP.Protocol.ErrorCodes do
       iex> ExMCP.Protocol.ErrorCodes.error_message(:invalid_params)
       "Invalid params"
   """
+  # Map of error codes to messages
+  @error_messages %{
+    @parse_error => "Parse error",
+    @invalid_request => "Invalid Request",
+    @method_not_found => "Method not found",
+    @invalid_params => "Invalid params",
+    @internal_error => "Internal error",
+    @request_cancelled => "Request cancelled",
+    @consent_required => "Consent required",
+    @consent_denied => "Consent denied",
+    @server_error => "Server error"
+  }
+
+  # Map of atom names to error codes
+  @atom_to_code %{
+    :parse_error => @parse_error,
+    :invalid_request => @invalid_request,
+    :method_not_found => @method_not_found,
+    :invalid_params => @invalid_params,
+    :internal_error => @internal_error,
+    :request_cancelled => @request_cancelled,
+    :consent_required => @consent_required,
+    :consent_denied => @consent_denied,
+    :server_error => @server_error
+  }
+
   @spec error_message(integer() | atom()) :: String.t()
   def error_message(code) when is_integer(code) do
-    case code do
-      @parse_error -> "Parse error"
-      @invalid_request -> "Invalid Request"
-      @method_not_found -> "Method not found"
-      @invalid_params -> "Invalid params"
-      @internal_error -> "Internal error"
-      @request_cancelled -> "Request cancelled"
-      @consent_required -> "Consent required"
-      @consent_denied -> "Consent denied"
-      @server_error -> "Server error"
-      code when code >= @server_error_start and code <= @server_error_end -> "Server error"
-      _ -> "Unknown error"
+    cond do
+      Map.has_key?(@error_messages, code) -> @error_messages[code]
+      code >= @server_error_start and code <= @server_error_end -> "Server error"
+      true -> "Unknown error"
     end
   end
 
   def error_message(atom) when is_atom(atom) do
-    case atom do
-      :parse_error -> error_message(@parse_error)
-      :invalid_request -> error_message(@invalid_request)
-      :method_not_found -> error_message(@method_not_found)
-      :invalid_params -> error_message(@invalid_params)
-      :internal_error -> error_message(@internal_error)
-      :request_cancelled -> error_message(@request_cancelled)
-      :consent_required -> error_message(@consent_required)
-      :consent_denied -> error_message(@consent_denied)
-      :server_error -> error_message(@server_error)
-      _ -> "Unknown error"
+    case Map.get(@atom_to_code, atom) do
+      nil -> "Unknown error"
+      code -> error_message(code)
     end
   end
 

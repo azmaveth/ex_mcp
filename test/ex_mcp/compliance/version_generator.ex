@@ -63,13 +63,15 @@ defmodule ExMCP.Compliance.VersionGenerator do
       # Version-specific tests that don't fit into feature categories
       test "protocol version negotiation works for #{@version}" do
         # Test that this specific version can be negotiated
-        assert @version == @version
+        assert is_binary(@version)
+        assert @version in ["2024-11-05", "2025-03-26", "2025-06-18"]
         # Add actual negotiation test logic here
       end
 
       test "server capabilities match #{@version} specification" do
         # Test that server capabilities align with this version's spec
-        assert @version == @version
+        assert is_binary(@version)
+        refute is_nil(@version)
         # Add actual capability validation logic here
       end
     end

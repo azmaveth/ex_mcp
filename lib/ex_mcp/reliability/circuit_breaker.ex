@@ -110,66 +110,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   @impl GenServer
   def handle_call({:execute, fun}, _from, state) do
     if CB.allow_request?(state.circuit_breaker) do
-      try do
-        # Check if circuit breaker has a timeout configured
-        timeout = Map.get(state.circuit_breaker.config, :timeout, :infinity)
-
-        result =
-          if timeout != :infinity do
-            # Use Task with timeout
-            task = Task.async(fun)
-
-            case Task.yield(task, timeout) || Task.shutdown(task) do
-              {:ok, task_result} -> task_result
-              nil -> {:error, :timeout}
-            end
-          else
-            fun.()
-          end
-
-        case result do
-          {:error, :timeout} ->
-            updated_cb = CB.record_failure(state.circuit_breaker)
-            {:reply, {:error, :timeout}, %{state | circuit_breaker: updated_cb}}
-
-          {:error, error_reason} ->
-            # Apply error filter to error return values
-            should_count_error = state.error_filter.(error_reason)
-
-            updated_cb =
-              if should_count_error do
-                CB.record_failure(state.circuit_breaker)
-              else
-                state.circuit_breaker
-              end
-
-            {:reply, {:error, error_reason}, %{state | circuit_breaker: updated_cb}}
-
-          success_result ->
-            updated_cb = CB.record_success(state.circuit_breaker)
-            {:reply, success_result, %{state | circuit_breaker: updated_cb}}
-        end
-      rescue
-        error ->
-          should_count_error = state.error_filter.(error)
-
-          updated_cb =
-            if should_count_error do
-              CB.record_failure(state.circuit_breaker)
-            else
-              state.circuit_breaker
-            end
-
-          {:reply, {:error, error}, %{state | circuit_breaker: updated_cb}}
-      catch
-        :throw, value ->
-          updated_cb = CB.record_failure(state.circuit_breaker)
-          {:reply, {:error, {:throw, value}}, %{state | circuit_breaker: updated_cb}}
-
-        :exit, reason ->
-          updated_cb = CB.record_failure(state.circuit_breaker)
-          {:reply, {:error, {:exit, reason}}, %{state | circuit_breaker: updated_cb}}
-      end
+      execute_with_circuit_breaker(fun, state)
     else
       {:reply, {:error, :circuit_open}, state}
     end
@@ -184,6 +125,91 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   def handle_call(:get_stats, _from, state) do
     stats = CB.get_stats(state.circuit_breaker)
     {:reply, stats, state}
+  end
+
+  def handle_call(:open, _from, state) do
+    updated_cb = CB.force_state(state.circuit_breaker, :open)
+    {:reply, :ok, %{state | circuit_breaker: updated_cb}}
+  end
+
+  def handle_call(:close, _from, state) do
+    updated_cb = CB.force_state(state.circuit_breaker, :closed)
+    {:reply, :ok, %{state | circuit_breaker: updated_cb}}
+  end
+
+  def handle_call(:reset, _from, state) do
+    updated_cb = CB.reset(state.circuit_breaker)
+    {:reply, :ok, %{state | circuit_breaker: updated_cb}}
+  end
+
+  defp execute_with_circuit_breaker(fun, state) do
+    # credo:disable-for-next-line Credo.Check.Readability.PreferImplicitTry
+    try do
+      result = execute_with_timeout(fun, state.circuit_breaker.config)
+      handle_execution_result(result, state)
+    rescue
+      error ->
+        handle_execution_error(error, state)
+    catch
+      :throw, value ->
+        updated_cb = CB.record_failure(state.circuit_breaker)
+        {:reply, {:error, {:throw, value}}, %{state | circuit_breaker: updated_cb}}
+
+      :exit, reason ->
+        updated_cb = CB.record_failure(state.circuit_breaker)
+        {:reply, {:error, {:exit, reason}}, %{state | circuit_breaker: updated_cb}}
+    end
+  end
+
+  defp execute_with_timeout(fun, config) do
+    timeout = Map.get(config, :timeout, :infinity)
+
+    if timeout != :infinity do
+      task = Task.async(fun)
+
+      case Task.yield(task, timeout) || Task.shutdown(task) do
+        {:ok, task_result} -> task_result
+        nil -> {:error, :timeout}
+      end
+    else
+      fun.()
+    end
+  end
+
+  defp handle_execution_result({:error, :timeout}, state) do
+    updated_cb = CB.record_failure(state.circuit_breaker)
+    {:reply, {:error, :timeout}, %{state | circuit_breaker: updated_cb}}
+  end
+
+  defp handle_execution_result({:error, error_reason}, state) do
+    should_count_error = state.error_filter.(error_reason)
+
+    updated_cb =
+      if should_count_error do
+        CB.record_failure(state.circuit_breaker)
+      else
+        state.circuit_breaker
+      end
+
+    {:reply, {:error, error_reason}, %{state | circuit_breaker: updated_cb}}
+  end
+
+  defp handle_execution_result(success_result, state) do
+    updated_cb = CB.record_success(state.circuit_breaker)
+    {:reply, success_result, %{state | circuit_breaker: updated_cb}}
+  end
+
+  defp handle_execution_error(error, state) do
+    should_count_error = state.error_filter.(error)
+
+    updated_cb =
+      if should_count_error do
+        CB.record_failure(state.circuit_breaker)
+      else
+        state.circuit_breaker
+      end
+
+    {:reply, {:error, error}, %{state | circuit_breaker: updated_cb}}
   end
 
   @impl GenServer
