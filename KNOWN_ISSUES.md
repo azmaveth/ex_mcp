@@ -43,14 +43,13 @@ This document tracks known issues in ExMCP v0.6.0 that will be addressed in futu
 ### 4. Credo Warnings
 
 **Issue**: Minor code quality warnings from Credo:
-- 10 refactoring opportunities (cyclomatic complexity > 11)
-- 3 warnings (Logger metadata config, test comparison checks)
+- 5 refactoring opportunities (cyclomatic complexity > 11 in Server DSL macros)
 
 **Impact**: None - Code quality only
 
 **Target Fix**: v0.7.0 cleanup
 
-**Note**: Most readability issues were fixed in commit 0844ea2
+**Note**: Most issues fixed in commit 71138ae (reduced from 41 to 5 issues)
 
 ## Security Considerations
 
