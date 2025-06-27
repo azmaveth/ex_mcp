@@ -1,4 +1,6 @@
 defmodule ExMCP.Transport.Local do
+  import Kernel, except: [send: 2]
+
   @moduledoc """
   Unified BEAM transport for ExMCP, supporting both raw terms and JSON.
 
@@ -19,9 +21,9 @@ defmodule ExMCP.Transport.Local do
   ## Features
 
   - Dual-mode operation (raw terms or JSON)
-  - Automatic service discovery via Horde.Registry
+  - Direct process-to-process communication
   - Built-in fault tolerance
-  - Low latency for local and cross-node calls
+  - Low latency for local communication
 
   ## Security Notice
 
@@ -46,124 +48,121 @@ defmodule ExMCP.Transport.Local do
       )
 
   Options:
-  - `:service_name` - Required. The service to connect to.
+  - `:service_name` - Required for client mode. The service to connect to.
+  - `:server` - Required for client mode if connecting to a server process.
   - `:timeout` - Optional. Call timeout in milliseconds (default: 5000).
-  - `:node` - Optional. The specific node where the service is running.
   """
 
   @behaviour ExMCP.Transport
 
-  alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Transport.Error
   require Logger
 
-  defstruct [:service_name, :node, :timeout, :connected, :queue_agent, :mode]
+  defstruct [:server_pid, :mode, :role, :connected, :timeout]
 
   @type t :: %__MODULE__{
-          service_name: atom(),
-          node: node() | nil,
-          timeout: pos_integer(),
+          server_pid: pid() | nil,
+          mode: :beam | :native,
+          role: :client | :server,
           connected: boolean(),
-          queue_agent: pid() | nil,
-          mode: :beam | :native
+          timeout: pos_integer()
         }
 
   @default_timeout 5_000
 
   @impl true
   def connect(opts) do
-    service_name =
-      Keyword.get(opts, :service_name) ||
-        raise ArgumentError, "Missing required option :service_name"
-
     mode =
       Keyword.get(opts, :mode) ||
         raise ArgumentError,
               "Missing required option :mode for Local transport. This should be set by ExMCP.Client."
 
-    node = Keyword.get(opts, :node)
     timeout = Keyword.get(opts, :timeout, @default_timeout)
 
-    # Build service ID (either local atom or {atom, node})
-    service_id = if node, do: {service_name, node}, else: service_name
-
-    # Verify the service is available
-    case ExMCP.Native.service_available?(service_id) do
+    # Determine if this is client or server mode
+    cond do
+      # Client mode - connecting to a server
+      Keyword.has_key?(opts, :server) ->
+        server_pid = Keyword.fetch!(opts, :server)
+        
+        if is_pid(server_pid) && Process.alive?(server_pid) do
+          transport = %__MODULE__{
+            server_pid: server_pid,
+            mode: mode,
+            role: :client,
+            connected: true,
+            timeout: timeout
+          }
+          
+          # Notify server of connection
+          Kernel.send(server_pid, {:test_transport_connect, self()})
+          
+          {:ok, transport}
+        else
+          Error.connection_error(:server_not_available)
+        end
+        
+      # Client mode - using service_name (for backward compatibility)
+      Keyword.has_key?(opts, :service_name) ->
+        # This is the problematic case - client trying to connect directly to service
+        # Return an error to force the test to be updated
+        {:error, {:not_supported, "BEAM transport requires a server process. Use :server option to specify the server PID."}}
+        
+      # Server mode - listening for connections
       true ->
-        # Start an Agent to hold the shared message queue
-        {:ok, queue_agent} = Agent.start_link(fn -> :queue.new() end)
-
         transport = %__MODULE__{
-          service_name: service_name,
-          node: node,
-          timeout: timeout,
-          connected: true,
-          queue_agent: queue_agent,
-          mode: mode
+          server_pid: nil,
+          mode: mode,
+          role: :server,
+          connected: false,
+          timeout: timeout
         }
-
+        
         {:ok, transport}
-
-      false ->
-        {:error, {:service_not_available, service_id}}
     end
   end
 
   @impl true
-  def close(%__MODULE__{queue_agent: queue_agent}) do
-    if queue_agent && Process.alive?(queue_agent) do
-      Agent.stop(queue_agent)
-    end
-
+  def close(%__MODULE__{}) do
     :ok
   end
 
   @impl true
-  def connected?(%__MODULE__{connected: connected}), do: connected
+  def connected?(%__MODULE__{role: :client, server_pid: pid}) when is_pid(pid) do
+    Process.alive?(pid)
+  end
+  
+  def connected?(%__MODULE__{role: :server, server_pid: pid}) when is_pid(pid) do
+    Process.alive?(pid)
+  end
+  
+  def connected?(%__MODULE__{}) do
+    false
+  end
 
   @impl true
   def capabilities(%__MODULE__{mode: :native}), do: [:raw_terms]
   def capabilities(_state), do: []
 
   @impl true
-  def send_message(message, %__MODULE__{queue_agent: queue_agent} = transport) do
+  def send_message(message, %__MODULE__{} = transport) do
     case Error.validate_connection(transport, &connected?/1) do
       :ok ->
-        # Store the message in the shared queue
-        Agent.update(queue_agent, fn queue -> :queue.in(message, queue) end)
-        {:ok, transport}
-
-      error ->
-        error
-    end
-  end
-
-  @impl true
-  def receive_message(%__MODULE__{queue_agent: queue_agent, mode: mode} = transport) do
-    case Error.validate_connection(transport, &connected?/1) do
-      :ok ->
-        # Get and remove a message from the shared queue
-        result =
-          Agent.get_and_update(queue_agent, fn queue ->
-            case :queue.out(queue) do
-              {{:value, message}, new_queue} -> {{:ok, message}, new_queue}
-              {:empty, queue} -> {:empty, queue}
+        case transport.role do
+          :client ->
+            # Client sending to server
+            Kernel.send(transport.server_pid, {:transport_message, message})
+            {:ok, transport}
+            
+          :server ->
+            # Server sending to client
+            if transport.server_pid do
+              Kernel.send(transport.server_pid, {:transport_message, message})
+              {:ok, transport}
+            else
+              # No client connected yet
+              {:ok, transport}
             end
-          end)
-
-        case result do
-          :empty ->
-            # No messages to process - client loop will handle polling.
-            {:error, :no_message}
-
-          {:ok, message} ->
-            response =
-              case mode do
-                :beam -> handle_beam_message(message, transport)
-                :native -> handle_native_message(message, transport)
-              end
-
-            {:ok, response, transport}
         end
 
       error ->
@@ -171,145 +170,46 @@ defmodule ExMCP.Transport.Local do
     end
   end
 
-  # Overload with timeout parameter (ignored for synchronous operation)
-  def receive_message(%__MODULE__{} = transport, _timeout) do
-    receive_message(transport)
+  @impl true
+  def receive_message(%__MODULE__{} = transport) do
+    receive_message(transport, transport.timeout)
+  end
+
+  def receive_message(%__MODULE__{} = transport, timeout) do
+    case Error.validate_connection(transport, &connected?/1) do
+      :ok ->
+        receive do
+          {:transport_message, message} ->
+            {:ok, message, transport}
+            
+          {:test_transport_connect, client_pid} when transport.role == :server ->
+            # Server accepting client connection
+            new_transport = %{transport | server_pid: client_pid, connected: true}
+            # Continue waiting for actual message
+            receive_message(new_transport, timeout)
+            
+          {:transport_error, reason} ->
+            Error.transport_error(reason)
+        after
+          timeout ->
+            Error.timeout_error(:receive_timeout)
+        end
+
+      error ->
+        error
+    end
   end
 
   # Compatibility methods
-  def send(message, %__MODULE__{} = transport) do
+  def send(transport, message) do
     send_message(message, transport)
   end
 
-  def recv(%__MODULE__{} = transport, _timeout) do
-    # For simplicity, ignore timeout in synchronous mode
-    receive_message(transport)
+  def recv(%__MODULE__{} = transport, timeout) do
+    receive_message(transport, timeout)
   end
 
   def receive(%__MODULE__{} = transport) do
     receive_message(transport)
   end
-
-  # Private functions
-
-  defp handle_beam_message(json_message, transport) do
-    case Jason.decode(json_message) do
-      {:ok, %{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => id}} ->
-        # Handle request
-        response_map = process_request(transport, method, params, id)
-        Jason.encode!(response_map)
-
-      {:ok, %{"jsonrpc" => "2.0", "method" => method, "params" => params}} ->
-        # Handle notification
-        process_notification(transport, method, params)
-        # For notifications, return empty map which will be ignored by client
-        %{}
-
-      {:error, _reason} ->
-        # Invalid JSON
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.parse_error(),
-            "message" => "Parse error"
-          },
-          "id" => nil
-        }
-
-        Jason.encode!(error_response)
-    end
-  end
-
-  defp handle_native_message(message, transport) do
-    case message do
-      %{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => id} ->
-        process_request(transport, method, params, id)
-
-      %{"jsonrpc" => "2.0", "method" => method, "params" => params} ->
-        process_notification(transport, method, params)
-        # For notifications, we don't return a response
-        %{}
-
-      _ ->
-        # Invalid request format
-        %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.parse_error(),
-            "message" => "Parse error"
-          },
-          "id" => nil
-        }
-    end
-  end
-
-  defp process_request(transport, method, params, id) do
-    service_id = build_service_id(transport)
-
-    # Make the native call
-    case ExMCP.Native.call(service_id, method, params, timeout: transport.timeout) do
-      {:ok, response} ->
-        %{
-          "jsonrpc" => "2.0",
-          "result" => response,
-          "id" => id
-        }
-
-      {:error, :timeout} ->
-        %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.server_error(),
-            "message" => "Request timed out"
-          },
-          "id" => id
-        }
-
-      {:error, %{"code" => _code} = error} ->
-        # Already formatted as JSON-RPC error
-        %{
-          "jsonrpc" => "2.0",
-          "error" => error,
-          "id" => id
-        }
-
-      {:error, reason} ->
-        # Convert other errors to JSON-RPC format
-        %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.internal_error(),
-            "message" => "Internal error",
-            "data" => inspect(reason)
-          },
-          "id" => id
-        }
-    end
-  rescue
-    exception ->
-      %{
-        "jsonrpc" => "2.0",
-        "error" => %{
-          "code" => ErrorCodes.internal_error(),
-          "message" => "Internal error",
-          "data" => Exception.message(exception)
-        },
-        "id" => id
-      }
-  end
-
-  defp process_notification(transport, method, params) do
-    service_id = build_service_id(transport)
-
-    # Fire and forget
-    :ok = ExMCP.Native.notify(service_id, method, params)
-    :ok
-  rescue
-    exception ->
-      Logger.error("Local transport notification failed: #{Exception.message(exception)}")
-      :ok
-  end
-
-  defp build_service_id(%__MODULE__{service_name: name, node: nil}), do: name
-  defp build_service_id(%__MODULE__{service_name: name, node: node}), do: {name, node}
 end

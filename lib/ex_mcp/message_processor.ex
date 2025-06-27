@@ -147,23 +147,38 @@ defmodule ExMCP.MessageProcessor do
   """
   @spec process(Conn.t(), map()) :: Conn.t()
   def process(%Conn{} = conn, opts) do
-    # First, validate the incoming request against the MCP spec.
-    case MessageValidator.validate_request(conn.request) do
-      {:ok, _validated_request} ->
-        # Request is valid, proceed with processing.
-        process_validated_request(conn, opts)
+    # Validate based on message type (request vs notification)
+    if is_notification?(conn.request) do
+      # For notifications, use the simpler validation that doesn't require "id"
+      case validate_notification(conn.request) do
+        {:ok, _validated_notification} ->
+          process_validated_notification(conn, opts)
+        
+        {:error, error_data} ->
+          # Notifications that fail validation are just logged, no response
+          require Logger
+          Logger.warning("Invalid notification received: #{inspect(error_data)}")
+          conn
+      end
+    else
+      # For requests, use full request validation
+      case MessageValidator.validate_request(conn.request) do
+        {:ok, _validated_request} ->
+          # Request is valid, proceed with processing.
+          process_validated_request(conn, opts)
 
-      {:error, error_data} ->
-        # Request is invalid, construct and return an error response.
-        # Note: for validation errors, the ID might be null or invalid.
-        # We still try to get it to adhere to JSON-RPC, but it might be nil.
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => error_data,
-          "id" => get_request_id(conn.request)
-        }
+        {:error, error_data} ->
+          # Request is invalid, construct and return an error response.
+          # Note: for validation errors, the ID might be null or invalid.
+          # We still try to get it to adhere to JSON-RPC, but it might be nil.
+          error_response = %{
+            "jsonrpc" => "2.0",
+            "error" => error_data,
+            "id" => get_request_id(conn.request)
+          }
 
-        put_response(conn, error_response)
+          put_response(conn, error_response)
+      end
     end
   end
 
@@ -1127,5 +1142,57 @@ defmodule ExMCP.MessageProcessor do
         Logger.warning("Failed to complete progress", token: token, reason: reason)
         conn
     end
+  end
+
+  # Helper functions for notification handling
+
+  defp is_notification?(%{"method" => _method} = request) do
+    # Notifications don't have an "id" field
+    not Map.has_key?(request, "id")
+  end
+
+  defp is_notification?(_), do: false
+
+  defp validate_notification(notification) do
+    # Simple validation for notifications - just check required fields
+    with :ok <- validate_jsonrpc_version(notification),
+         :ok <- validate_notification_structure(notification) do
+      {:ok, notification}
+    else
+      {:error, error_data} -> {:error, error_data}
+    end
+  end
+
+  defp validate_jsonrpc_version(%{"jsonrpc" => "2.0"}), do: :ok
+  defp validate_jsonrpc_version(_), do: {:error, %{"code" => -32600, "message" => "Invalid JSON-RPC version"}}
+
+  defp validate_notification_structure(%{"method" => _method}) do
+    # Notifications only require jsonrpc and method fields
+    :ok
+  end
+
+  defp validate_notification_structure(_) do
+    {:error, %{"code" => -32600, "message" => "Notification must have method field"}}
+  end
+
+  defp process_validated_notification(%Conn{} = conn, opts) do
+    # Notifications don't generate responses, just process them
+    handler = Map.get(opts, :handler)
+    
+    if handler do
+      try do
+        method = Map.get(conn.request, "method")
+        params = Map.get(conn.request, "params", %{})
+        
+        # For notifications, we just call the handler but don't return a response
+        if function_exported?(handler, :handle_mcp_request, 3) do
+          handler.handle_mcp_request(method, params, %{})
+        end
+      rescue
+        _ -> :ok  # Ignore errors in notifications
+      end
+    end
+    
+    conn
   end
 end

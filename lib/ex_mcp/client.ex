@@ -57,7 +57,8 @@ defmodule ExMCP.Client do
     :server_capabilities,
     :initialized,
     :default_retry_policy,
-    :protocol_version
+    :protocol_version,
+    :default_timeout
   ]
 
   @type t :: GenServer.server()
@@ -635,6 +636,7 @@ defmodule ExMCP.Client do
     # Extract options
     health_check_interval = Keyword.get(opts, :health_check_interval, 30_000)
     default_retry_policy = Keyword.get(opts, :retry_policy, [])
+    default_timeout = Keyword.get(opts, :timeout, 5_000)
     client_info = build_client_info()
 
     # Initial state
@@ -649,7 +651,8 @@ defmodule ExMCP.Client do
       client_info: client_info,
       server_capabilities: %{},
       initialized: false,
-      default_retry_policy: default_retry_policy
+      default_retry_policy: default_retry_policy,
+      default_timeout: default_timeout
     }
 
     # Check if we should skip connection (for testing)
@@ -687,6 +690,10 @@ defmodule ExMCP.Client do
 
   def handle_call(:get_default_retry_policy, _from, state) do
     {:reply, {:ok, state.default_retry_policy}, state}
+  end
+  
+  def handle_call(:get_default_timeout, _from, state) do
+    {:reply, {:ok, state.default_timeout}, state}
   end
 
   def handle_call({:batch_request, requests}, from, state) do
@@ -863,11 +870,27 @@ defmodule ExMCP.Client do
   @spec make_request(t(), String.t(), map(), keyword(), pos_integer()) ::
           {:ok, any()} | {:error, any()}
   def make_request(client, method, params, opts, default_timeout) do
-    timeout = Keyword.get(opts, :timeout, default_timeout)
+    # Get the client's default timeout if no timeout is specified
+    timeout = case Keyword.fetch(opts, :timeout) do
+      {:ok, t} -> t
+      :error ->
+        # Try to get client's default timeout
+        case GenServer.call(client, :get_default_timeout, 5_000) do
+          {:ok, client_timeout} -> client_timeout
+          _ -> default_timeout
+        end
+    end
+    
     retry_policy = Keyword.get(opts, :retry_policy, :use_default)
 
     effective_retry_policy = get_effective_retry_policy(client, retry_policy, timeout)
-    operation = fn -> GenServer.call(client, {:request, method, params}, timeout) end
+    operation = fn -> 
+      try do
+        GenServer.call(client, {:request, method, params}, timeout)
+      catch
+        :exit, {:timeout, _} -> {:error, :timeout}
+      end
+    end
 
     result = execute_with_retry(operation, effective_retry_policy)
     handle_request_result(result, opts)
