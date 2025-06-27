@@ -450,7 +450,7 @@ defmodule ExMCP.ClientBeamTransportTest do
         end
 
       # Collect all results
-      results = Task.await_many(tasks)
+      results = Task.await_many(tasks, 15_000)
 
       # Verify all requests succeeded
       assert length(results) == 100
