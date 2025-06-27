@@ -3,24 +3,18 @@ defmodule DebugVersionNegotiationTest do
 
   alias ExMCP.{Client, Server}
 
-  defmodule DebugVersionHandler do
-    use ExMCP.Server.Handler
-
-    @impl true
-    def init(args) do
-      supported_version = Keyword.get(args, :supported_version, "2024-11-05")
-      {:ok, %{supported_version: supported_version}}
-    end
+  defmodule TestServerV2024 do
+    use ExMCP.Server
 
     @impl true
     def handle_initialize(params, state) do
       client_version = params["protocolVersion"]
 
-      if client_version == state.supported_version do
+      if client_version == "2024-11-05" do
         result = %{
-          "protocolVersion" => state.supported_version,
+          "protocolVersion" => "2024-11-05",
           "serverInfo" => %{
-            "name" => "debug-server",
+            "name" => "debug-server-v2024",
             "version" => "1.0.0"
           },
           "capabilities" => %{}
@@ -32,31 +26,41 @@ defmodule DebugVersionNegotiationTest do
         {:error, error_msg, state}
       end
     end
+  end
+
+  defmodule TestServerV2025 do
+    use ExMCP.Server
 
     @impl true
-    def handle_list_tools(_cursor, state), do: {:ok, [], state}
-    @impl true
-    def handle_tool_call(_name, _arguments, state), do: {:error, :not_implemented, state}
-    @impl true
-    def handle_list_resources(_cursor, state), do: {:ok, [], state}
-    @impl true
-    def handle_resource_read(_uri, state), do: {:error, :not_implemented, state}
-    @impl true
-    def handle_list_prompts(_cursor, state), do: {:ok, [], state}
-    @impl true
-    def handle_prompt_get(_name, _arguments, state), do: {:error, :not_implemented, state}
+    def handle_initialize(params, state) do
+      client_version = params["protocolVersion"]
+
+      if client_version == "2025-06-18" do
+        result = %{
+          "protocolVersion" => "2025-06-18",
+          "serverInfo" => %{
+            "name" => "debug-server-v2025",
+            "version" => "1.0.0"
+          },
+          "capabilities" => %{}
+        }
+
+        {:ok, result, state}
+      else
+        error_msg = "Unsupported protocol version: #{client_version}"
+        {:error, error_msg, state}
+      end
+    end
   end
 
   test "debug version negotiation failure" do
     # Start server that only supports "2024-11-05"
-    {:ok, server} =
-      Server.start_link(
-        transport: :test,
-        handler: DebugVersionHandler,
-        handler_args: [supported_version: "2024-11-05"]
-      )
+    {:ok, server} = TestServerV2024.start_link(transport: :test)
 
     # Try to connect client requesting "2025-06-18" - this SHOULD fail
+    # Client.start_link should crash with version mismatch
+    Process.flag(:trap_exit, true)
+
     result =
       Client.start_link(
         transport: :test,
@@ -64,24 +68,13 @@ defmodule DebugVersionNegotiationTest do
         protocol_version: "2025-06-18"
       )
 
+    # The client should fail to start due to version mismatch
     case result do
-      {:ok, client} ->
-        # If we get here, the connection succeeded when it should have failed
-        # Get status to understand what happened
-        {:ok, status} = Client.get_status(client)
-        Client.stop(client)
+      {:error, {:initialize_error, %{"code" => -32600}}} ->
+        IO.puts("✅ Connection correctly failed with version negotiation error")
 
-        flunk("""
-        Expected client connection to fail but it succeeded!
-        Client status: #{inspect(status)}
-
-        This indicates the version negotiation is not working correctly.
-        """)
-
-      {:error, reason} ->
-        # This is what we expect - connection should fail
-        assert reason != nil
-        IO.puts("✅ Connection correctly failed with reason: #{inspect(reason)}")
+      other ->
+        flunk("Expected version negotiation failure, got: #{inspect(other)}")
     end
 
     GenServer.stop(server)
@@ -89,32 +82,21 @@ defmodule DebugVersionNegotiationTest do
 
   test "debug version negotiation success" do
     # Start server that supports "2025-06-18"
-    {:ok, server} =
-      Server.start_link(
-        transport: :test,
-        handler: DebugVersionHandler,
-        handler_args: [supported_version: "2025-06-18"]
-      )
+    {:ok, server} = TestServerV2025.start_link(transport: :test)
 
     # Connect client requesting the same version - this SHOULD succeed
-    result =
+    {:ok, client} =
       Client.start_link(
         transport: :test,
         server: server,
         protocol_version: "2025-06-18"
       )
 
-    case result do
-      {:ok, client} ->
-        # This is expected - connection should succeed
-        {:ok, status} = Client.get_status(client)
-        assert status.connection_status == :ready
-        Client.stop(client)
-        IO.puts("✅ Connection correctly succeeded")
-
-      {:error, reason} ->
-        flunk("Expected connection to succeed but it failed with: #{inspect(reason)}")
-    end
+    # This is expected - connection should succeed
+    {:ok, status} = Client.get_status(client)
+    assert status.connection_status == :ready
+    Client.stop(client)
+    IO.puts("✅ Connection correctly succeeded")
 
     GenServer.stop(server)
   end

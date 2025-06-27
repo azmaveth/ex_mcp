@@ -84,7 +84,7 @@ defmodule ExMCP.Transport.Local do
       # Client mode - connecting to a server
       Keyword.has_key?(opts, :server) ->
         server_pid = Keyword.fetch!(opts, :server)
-        
+
         if is_pid(server_pid) && Process.alive?(server_pid) do
           transport = %__MODULE__{
             server_pid: server_pid,
@@ -93,21 +93,23 @@ defmodule ExMCP.Transport.Local do
             connected: true,
             timeout: timeout
           }
-          
+
           # Notify server of connection
           Kernel.send(server_pid, {:test_transport_connect, self()})
-          
+
           {:ok, transport}
         else
           Error.connection_error(:server_not_available)
         end
-        
+
       # Client mode - using service_name (for backward compatibility)
       Keyword.has_key?(opts, :service_name) ->
         # This is the problematic case - client trying to connect directly to service
         # Return an error to force the test to be updated
-        {:error, {:not_supported, "BEAM transport requires a server process. Use :server option to specify the server PID."}}
-        
+        {:error,
+         {:not_supported,
+          "BEAM transport requires a server process. Use :server option to specify the server PID."}}
+
       # Server mode - listening for connections
       true ->
         transport = %__MODULE__{
@@ -117,7 +119,7 @@ defmodule ExMCP.Transport.Local do
           connected: false,
           timeout: timeout
         }
-        
+
         {:ok, transport}
     end
   end
@@ -131,11 +133,11 @@ defmodule ExMCP.Transport.Local do
   def connected?(%__MODULE__{role: :client, server_pid: pid}) when is_pid(pid) do
     Process.alive?(pid)
   end
-  
+
   def connected?(%__MODULE__{role: :server, server_pid: pid}) when is_pid(pid) do
     Process.alive?(pid)
   end
-  
+
   def connected?(%__MODULE__{}) do
     false
   end
@@ -153,7 +155,7 @@ defmodule ExMCP.Transport.Local do
             # Client sending to server
             Kernel.send(transport.server_pid, {:transport_message, message})
             {:ok, transport}
-            
+
           :server ->
             # Server sending to client
             if transport.server_pid do
@@ -181,13 +183,13 @@ defmodule ExMCP.Transport.Local do
         receive do
           {:transport_message, message} ->
             {:ok, message, transport}
-            
+
           {:test_transport_connect, client_pid} when transport.role == :server ->
             # Server accepting client connection
             new_transport = %{transport | server_pid: client_pid, connected: true}
             # Continue waiting for actual message
             receive_message(new_transport, timeout)
-            
+
           {:transport_error, reason} ->
             Error.transport_error(reason)
         after

@@ -148,12 +148,12 @@ defmodule ExMCP.MessageProcessor do
   @spec process(Conn.t(), map()) :: Conn.t()
   def process(%Conn{} = conn, opts) do
     # Validate based on message type (request vs notification)
-    if is_notification?(conn.request) do
+    if notification?(conn.request) do
       # For notifications, use the simpler validation that doesn't require "id"
       case validate_notification(conn.request) do
         {:ok, _validated_notification} ->
           process_validated_notification(conn, opts)
-        
+
         {:error, error_data} ->
           # Notifications that fail validation are just logged, no response
           require Logger
@@ -1146,12 +1146,12 @@ defmodule ExMCP.MessageProcessor do
 
   # Helper functions for notification handling
 
-  defp is_notification?(%{"method" => _method} = request) do
+  defp notification?(%{"method" => _method} = request) do
     # Notifications don't have an "id" field
     not Map.has_key?(request, "id")
   end
 
-  defp is_notification?(_), do: false
+  defp notification?(_), do: false
 
   defp validate_notification(notification) do
     # Simple validation for notifications - just check required fields
@@ -1164,7 +1164,9 @@ defmodule ExMCP.MessageProcessor do
   end
 
   defp validate_jsonrpc_version(%{"jsonrpc" => "2.0"}), do: :ok
-  defp validate_jsonrpc_version(_), do: {:error, %{"code" => -32600, "message" => "Invalid JSON-RPC version"}}
+
+  defp validate_jsonrpc_version(_),
+    do: {:error, %{"code" => -32600, "message" => "Invalid JSON-RPC version"}}
 
   defp validate_notification_structure(%{"method" => _method}) do
     # Notifications only require jsonrpc and method fields
@@ -1178,21 +1180,22 @@ defmodule ExMCP.MessageProcessor do
   defp process_validated_notification(%Conn{} = conn, opts) do
     # Notifications don't generate responses, just process them
     handler = Map.get(opts, :handler)
-    
+
     if handler do
       try do
         method = Map.get(conn.request, "method")
         params = Map.get(conn.request, "params", %{})
-        
+
         # For notifications, we just call the handler but don't return a response
         if function_exported?(handler, :handle_mcp_request, 3) do
           handler.handle_mcp_request(method, params, %{})
         end
       rescue
-        _ -> :ok  # Ignore errors in notifications
+        # Ignore errors in notifications
+        _ -> :ok
       end
     end
-    
+
     conn
   end
 end

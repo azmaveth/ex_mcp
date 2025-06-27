@@ -26,12 +26,12 @@ Code.ensure_loaded(ExMCP.Compliance.VersionGenerator)
 # Enable test mode for SSE handlers to prevent blocking in tests
 Application.put_env(:ex_mcp, :test_mode, true)
 
-# Stop the application first to prevent it from being killed by cleanup
-# Tests that need the application should start it explicitly in their setup
-Application.stop(:ex_mcp)
+# Don't stop the application - let tests that need it have access to it
+# Individual tests can stop/restart if needed for isolation
+# Application.stop(:ex_mcp)
 
-# Wait a bit for the application to fully stop
-Process.sleep(50)
+# Ensure the application is started for tests that need it
+{:ok, _} = Application.ensure_all_started(:ex_mcp)
 
 # Safe cleanup: Only handle network resources that might block new tests
 # Application processes are handled by OTP supervision - don't force kill them

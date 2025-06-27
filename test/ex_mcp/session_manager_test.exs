@@ -10,9 +10,13 @@ defmodule ExMCP.SessionManagerTest do
   alias ExMCP.SessionManager
 
   setup do
+    # Generate a unique name for this test's session manager
+    name = :"test_session_manager_#{System.unique_integer([:positive])}"
+
     # Start a separate session manager for each test
     {:ok, pid} =
       SessionManager.start_link(
+        name: name,
         max_events_per_session: 100,
         session_ttl_seconds: 1,
         cleanup_interval_ms: 100
@@ -359,8 +363,11 @@ defmodule ExMCP.SessionManagerTest do
 
     test "cleans up expired sessions" do
       # Use very short TTL for testing
+      name = :"test_session_manager_cleanup_#{System.unique_integer([:positive])}"
+
       {:ok, manager} =
         SessionManager.start_link(
+          name: name,
           # Immediate expiration
           session_ttl_seconds: 0,
           cleanup_interval_ms: 50

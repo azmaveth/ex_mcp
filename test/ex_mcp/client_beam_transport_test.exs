@@ -141,13 +141,14 @@ defmodule ExMCP.ClientBeamTransportTest do
 
       # Start the service with a map as initial state
       {:ok, service_pid} = TestCalculatorService.start_link(%{notifications: []})
-      
+
       # Start a BEAM server that will handle the MCP protocol
-      {:ok, server_pid} = BeamServer.start_link(
-        handler: TestCalculatorService,
-        handler_state: %{notifications: []},
-        transport: [mode: :beam]
-      )
+      {:ok, server_pid} =
+        BeamServer.start_link(
+          handler: TestCalculatorService,
+          handler_state: %{notifications: []},
+          transport: [mode: :beam]
+        )
 
       on_exit(fn ->
         ExMCP.Native.unregister_service(:beam_transport_calculator_service)
@@ -177,12 +178,14 @@ defmodule ExMCP.ClientBeamTransportTest do
         )
 
       # Test successful calls
-      assert {:ok, %{"result" => 5}} = Client.call_tool(client, "add", %{"a" => 2, "b" => 3}, format: :map)
+      assert {:ok, %{"result" => 5}} =
+               Client.call_tool(client, "add", %{"a" => 2, "b" => 3}, format: :map)
 
       assert {:ok, %{"result" => 10}} =
                Client.call_tool(client, "subtract", %{"a" => 15, "b" => 5}, format: :map)
 
-      assert {:ok, %{"result" => 2.5}} = Client.call_tool(client, "divide", %{"a" => 5, "b" => 2}, format: :map)
+      assert {:ok, %{"result" => 2.5}} =
+               Client.call_tool(client, "divide", %{"a" => 5, "b" => 2}, format: :map)
     end
 
     test "handles errors via BEAM transport", %{server_pid: server_pid} do
@@ -200,7 +203,10 @@ defmodule ExMCP.ClientBeamTransportTest do
                Client.call_tool(client, "unknown_method", %{}, format: :map)
     end
 
-    test "handles notifications via BEAM transport", %{service_pid: service_pid, server_pid: server_pid} do
+    test "handles notifications via BEAM transport", %{
+      service_pid: service_pid,
+      server_pid: server_pid
+    } do
       {:ok, client} =
         Client.start_link(
           transport: :beam,
@@ -238,11 +244,12 @@ defmodule ExMCP.ClientBeamTransportTest do
       # The client process will exit if connection fails
       Process.flag(:trap_exit, true)
 
-      result = Client.start_link(
-        transport: :beam,
-        service_name: :nonexistent_service
-      )
-      
+      result =
+        Client.start_link(
+          transport: :beam,
+          service_name: :nonexistent_service
+        )
+
       # The error can be either not_supported or connection_failed
       assert match?({:error, _}, result)
     end
@@ -298,7 +305,11 @@ defmodule ExMCP.ClientBeamTransportTest do
           {:ok, %{"tools" => tools}, state}
         end
 
-        def handle_mcp_request("tools/call", %{"name" => "echo", "arguments" => %{"message" => msg}}, state) do
+        def handle_mcp_request(
+              "tools/call",
+              %{"name" => "echo", "arguments" => %{"message" => msg}},
+              state
+            ) do
           {:ok, %{"echoed" => msg}, state}
         end
 
@@ -309,13 +320,14 @@ defmodule ExMCP.ClientBeamTransportTest do
 
       # Start the service
       {:ok, service_pid} = TestEchoService.start_link(%{})
-      
+
       # Start a BEAM server with native mode
-      {:ok, server_pid} = BeamServer.start_link(
-        handler: TestEchoService,
-        handler_state: %{},
-        transport: [mode: :native]
-      )
+      {:ok, server_pid} =
+        BeamServer.start_link(
+          handler: TestEchoService,
+          handler_state: %{},
+          transport: [mode: :native]
+        )
 
       on_exit(fn ->
         ExMCP.Native.unregister_service(:native_alias_echo_service)
@@ -324,7 +336,9 @@ defmodule ExMCP.ClientBeamTransportTest do
       {:ok, service_pid: service_pid, server_pid: server_pid}
     end
 
-    test "native transport is an alias for beam transport with raw terms", %{server_pid: server_pid} do
+    test "native transport is an alias for beam transport with raw terms", %{
+      server_pid: server_pid
+    } do
       # :native should behave exactly like :beam but with raw terms capability
       {:ok, client} =
         Client.start_link(
@@ -387,7 +401,11 @@ defmodule ExMCP.ClientBeamTransportTest do
           {:ok, %{"tools" => tools}, state}
         end
 
-        def handle_mcp_request("tools/call", %{"name" => "multiply", "arguments" => %{"a" => a, "b" => b}}, state) do
+        def handle_mcp_request(
+              "tools/call",
+              %{"name" => "multiply", "arguments" => %{"a" => a, "b" => b}},
+              state
+            ) do
           {:ok, %{"result" => a * b}, state}
         end
 
@@ -398,13 +416,14 @@ defmodule ExMCP.ClientBeamTransportTest do
 
       # Start the service
       {:ok, service_pid} = TestBatchService.start_link(%{})
-      
+
       # Start a BEAM server
-      {:ok, server_pid} = BeamServer.start_link(
-        handler: TestBatchService,
-        handler_state: %{},
-        transport: [mode: :beam]
-      )
+      {:ok, server_pid} =
+        BeamServer.start_link(
+          handler: TestBatchService,
+          handler_state: %{},
+          transport: [mode: :beam]
+        )
 
       on_exit(fn ->
         ExMCP.Native.unregister_service(:beam_batch_service)
@@ -493,13 +512,14 @@ defmodule ExMCP.ClientBeamTransportTest do
 
       # Start the service
       {:ok, service_pid} = TestConcurrentService.start_link(%{})
-      
+
       # Start a BEAM server
-      {:ok, server_pid} = BeamServer.start_link(
-        handler: TestConcurrentService,
-        handler_state: %{},
-        transport: [mode: :beam]
-      )
+      {:ok, server_pid} =
+        BeamServer.start_link(
+          handler: TestConcurrentService,
+          handler_state: %{},
+          transport: [mode: :beam]
+        )
 
       on_exit(fn ->
         ExMCP.Native.unregister_service(:beam_concurrent_service)

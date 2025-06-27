@@ -108,7 +108,8 @@ defmodule ExMCP.SessionManager do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
   end
 
   @doc """
@@ -233,8 +234,10 @@ defmodule ExMCP.SessionManager do
     }
 
     # Create ETS tables for session and event storage
-    sessions_table = :ets.new(@sessions_table, [:set, :public, :named_table])
-    events_table = :ets.new(@events_table, [:ordered_set, :public, :named_table])
+    # Use unique table names for test isolation
+    table_suffix = System.unique_integer([:positive])
+    sessions_table = :ets.new(:"#{@sessions_table}_#{table_suffix}", [:set, :public])
+    events_table = :ets.new(:"#{@events_table}_#{table_suffix}", [:ordered_set, :public])
 
     # Start cleanup timer
     cleanup_timer =

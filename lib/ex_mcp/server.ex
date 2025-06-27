@@ -68,7 +68,7 @@ defmodule ExMCP.Server do
       end
   """
 
-  alias ExMCP.Internal.StdioLoggerConfig
+  alias ExMCP.Internal.{StdioLoggerConfig, VersionRegistry}
   alias ExMCP.Server.{Legacy, Transport}
 
   @type state :: term()
@@ -851,15 +851,34 @@ defmodule ExMCP.Server do
               {:response, error_response, new_state}
           end
         else
-          # Default DSL server initialization
-          result = %{
-            "protocolVersion" => Map.get(params, "protocolVersion", "2025-03-26"),
-            "serverInfo" => get_server_info_from_opts(),
-            "capabilities" => get_capabilities()
-          }
+          # Default DSL server initialization with proper version validation
+          client_version = Map.get(params, "protocolVersion", "2025-06-18")
+          supported_versions = VersionRegistry.supported_versions()
 
-          response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-          {:response, response, state}
+          if client_version in supported_versions do
+            result = %{
+              "protocolVersion" => client_version,
+              "serverInfo" => get_server_info_from_opts(),
+              "capabilities" => get_capabilities()
+            }
+
+            response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+            {:response, response, state}
+          else
+            error_response = %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "error" => %{
+                "code" => -32600,
+                "message" => "Unsupported protocol version: #{client_version}",
+                "data" => %{
+                  "supported_versions" => supported_versions
+                }
+              }
+            }
+
+            {:response, error_response, state}
+          end
         end
       end
 
@@ -1129,11 +1148,35 @@ defmodule ExMCP.Server do
   end
 
   @doc """
+  Alias for notify_resource_update/2 for backward compatibility.
+  """
+  @spec notify_resource_updated(GenServer.server(), String.t()) :: :ok
+  def notify_resource_updated(server, uri) do
+    notify_resource_update(server, uri)
+  end
+
+  @doc """
   Notifies subscribed clients that the resource list has changed.
   """
   @spec notify_resources_changed(GenServer.server()) :: :ok
   def notify_resources_changed(server) do
     GenServer.cast(server, {:notify_resources_changed})
+  end
+
+  @doc """
+  Notifies subscribed clients that the tools list has changed.
+  """
+  @spec notify_tools_changed(GenServer.server()) :: :ok
+  def notify_tools_changed(server) do
+    GenServer.cast(server, {:notify_tools_changed})
+  end
+
+  @doc """
+  Notifies subscribed clients that the prompts list has changed.
+  """
+  @spec notify_prompts_changed(GenServer.server()) :: :ok
+  def notify_prompts_changed(server) do
+    GenServer.cast(server, {:notify_prompts_changed})
   end
 
   @doc """

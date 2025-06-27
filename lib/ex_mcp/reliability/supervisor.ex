@@ -347,15 +347,81 @@ defmodule ExMCP.Reliability do
   defdelegate with_retry(fun, opts \\ []), to: Retry
 
   @doc """
-  Creates a retry-protected version of a function.
+  Creates a circuit breaker and retry-protected version of a function.
 
-  The function will be retried according to the specified options
-  on failure.
+  The function will be protected by a circuit breaker and retried 
+  according to the specified options on failure.
+
+  ## Options
+
+  - `:name` - Name for the circuit breaker process
+  - `:failure_threshold` - Number of failures before circuit opens (default: 5)
+  - `:success_threshold` - Number of successes to close circuit (default: 2)
+  - `:timeout` - Timeout for each call (default: 5000)
+  - `:reset_timeout` - Time before attempting to close open circuit (default: 30000)
+  - Plus all retry options from `ExMCP.Reliability.Retry.mcp_defaults/1`
   """
   @spec protect(function(), keyword()) :: function()
   def protect(fun, opts \\ []) when is_function(fun) do
+    # Extract circuit breaker specific options
+    {cb_opts, retry_opts} =
+      Keyword.split(opts, [
+        :name,
+        :failure_threshold,
+        :success_threshold,
+        :timeout,
+        :reset_timeout
+      ])
+
+    # Create or get circuit breaker
+    breaker_pid =
+      case cb_opts[:name] do
+        nil ->
+          # Start anonymous circuit breaker
+          {:ok, pid} =
+            DynamicSupervisor.start_child(
+              ExMCP.Reliability.Supervisor.CircuitBreakerSupervisor,
+              {ExMCP.Reliability.CircuitBreaker, cb_opts}
+            )
+
+          pid
+
+        name ->
+          # Try to get existing breaker or start new one
+          case Process.whereis(name) do
+            nil ->
+              case DynamicSupervisor.start_child(
+                     ExMCP.Reliability.Supervisor.CircuitBreakerSupervisor,
+                     {ExMCP.Reliability.CircuitBreaker, Keyword.put(cb_opts, :name, name)}
+                   ) do
+                {:ok, pid} -> pid
+                {:error, {:already_started, pid}} -> pid
+              end
+
+            pid ->
+              pid
+          end
+      end
+
+    # Return a function that uses both circuit breaker and retry
     fn args ->
-      Retry.with_retry(fn -> apply(fun, args) end, Retry.mcp_defaults(opts))
+      cb_timeout = Keyword.get(cb_opts, :timeout, 5000)
+
+      # Execute through circuit breaker
+      case ExMCP.Reliability.CircuitBreaker.call(
+             breaker_pid,
+             fn ->
+               # Inside circuit breaker, apply retry logic
+               Retry.with_retry(fn -> apply(fun, args) end, Retry.mcp_defaults(retry_opts))
+             end,
+             cb_timeout
+           ) do
+        {:error, :circuit_open} = error ->
+          error
+
+        other ->
+          other
+      end
     end
   end
 end

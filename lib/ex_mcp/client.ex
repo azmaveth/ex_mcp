@@ -29,6 +29,8 @@ defmodule ExMCP.Client do
       {:ok, result} = ExMCP.Client.call_tool(client, "weather", %{location: "NYC"})
   """
 
+  alias ExMCP.Error
+
   use GenServer
   require Logger
 
@@ -671,14 +673,27 @@ defmodule ExMCP.Client do
         {:error, reason} ->
           Logger.error("Failed to establish connection: #{inspect(reason)}")
 
-          # Format error to match test expectations
-          formatted_reason =
-            case reason do
-              "Handshake failed: " <> _ -> %{reason: "initialize_failed"}
-              _ -> %{reason: "connection_failed"}
-            end
+          # Return error in the original format for backward compatibility
+          case reason do
+            :invalid_request ->
+              {:stop, {:initialize_error, %{"code" => -32600}}}
 
-          {:stop, formatted_reason}
+            :connection_refused ->
+              {:stop, {:transport_connect_failed, :connection_refused}}
+
+            {:transport_error, details} ->
+              {:stop, {:transport_connect_failed, details}}
+
+            error when is_binary(error) ->
+              if String.contains?(error, "Handshake failed") do
+                {:stop, {:initialize_error, %{"code" => -32600}}}
+              else
+                {:stop, {:transport_connect_failed, error}}
+              end
+
+            _ ->
+              {:stop, {:transport_connect_failed, reason}}
+          end
       end
     end
   end
@@ -691,7 +706,7 @@ defmodule ExMCP.Client do
   def handle_call(:get_default_retry_policy, _from, state) do
     {:reply, {:ok, state.default_retry_policy}, state}
   end
-  
+
   def handle_call(:get_default_timeout, _from, state) do
     {:reply, {:ok, state.default_timeout}, state}
   end
@@ -871,20 +886,24 @@ defmodule ExMCP.Client do
           {:ok, any()} | {:error, any()}
   def make_request(client, method, params, opts, default_timeout) do
     # Get the client's default timeout if no timeout is specified
-    timeout = case Keyword.fetch(opts, :timeout) do
-      {:ok, t} -> t
-      :error ->
-        # Try to get client's default timeout
-        case GenServer.call(client, :get_default_timeout, 5_000) do
-          {:ok, client_timeout} -> client_timeout
-          _ -> default_timeout
-        end
-    end
-    
+    timeout =
+      case Keyword.fetch(opts, :timeout) do
+        {:ok, t} ->
+          t
+
+        :error ->
+          # Try to get client's default timeout
+          case GenServer.call(client, :get_default_timeout, 5_000) do
+            {:ok, client_timeout} -> client_timeout
+            _ -> default_timeout
+          end
+      end
+
     retry_policy = Keyword.get(opts, :retry_policy, :use_default)
 
     effective_retry_policy = get_effective_retry_policy(client, retry_policy, timeout)
-    operation = fn -> 
+
+    operation = fn ->
       try do
         GenServer.call(client, {:request, method, params}, timeout)
       catch
@@ -923,6 +942,14 @@ defmodule ExMCP.Client do
       :map -> {:ok, response}
       format -> format_response(response, format, opts)
     end
+  end
+
+  defp handle_request_result({:error, error_data}, opts) when is_map(error_data) do
+    # Convert error maps to Error structs for backward compatibility
+    error_struct =
+      Error.from_json_rpc_error(error_data, request_id: Keyword.get(opts, :request_id))
+
+    {:error, error_struct}
   end
 
   defp handle_request_result(error, _opts), do: error

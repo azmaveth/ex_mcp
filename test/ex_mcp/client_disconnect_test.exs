@@ -124,14 +124,22 @@ defmodule ExMCP.ClientDisconnectTest do
         transport_mod: nil,
         transport_state: nil,
         server_info: nil,
+        transport_opts: [],
         connection_status: :disconnected,
         pending_requests: %{},
+        pending_batches: %{},
         receiver_task: nil,
         health_check_ref: nil,
         health_check_interval: 30_000,
         last_activity: System.system_time(:second),
         reconnect_attempts: 0,
-        client_info: %{"name" => "ExMCP", "version" => "0.8.0"}
+        client_info: %{"name" => "ExMCP", "version" => "0.8.0"},
+        raw_terms_enabled: false,
+        server_capabilities: %{},
+        initialized: false,
+        default_retry_policy: [],
+        protocol_version: "2025-06-18",
+        default_timeout: 5000
       }
 
       :sys.replace_state(client, fn _ -> state end)
@@ -163,14 +171,22 @@ defmodule ExMCP.ClientDisconnectTest do
         transport_mod: nil,
         transport_state: nil,
         server_info: nil,
+        transport_opts: [],
         connection_status: :disconnected,
         pending_requests: %{},
+        pending_batches: %{},
         receiver_task: nil,
         health_check_ref: nil,
         health_check_interval: 30_000,
         last_activity: System.system_time(:second),
         reconnect_attempts: 0,
-        client_info: %{"name" => "ExMCP", "version" => "0.8.0"}
+        client_info: %{"name" => "ExMCP", "version" => "0.8.0"},
+        raw_terms_enabled: false,
+        server_capabilities: %{},
+        initialized: false,
+        default_retry_policy: [],
+        protocol_version: "2025-06-18",
+        default_timeout: 5000
       }
 
       :sys.replace_state(client, fn _ -> state end)

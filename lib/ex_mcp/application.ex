@@ -26,7 +26,9 @@ defmodule ExMCP.Application do
       # Start the Session Manager for streamable HTTP sessions
       ExMCP.SessionManager,
       # Start the Progress Tracker for 2025-06-18 progress notifications
-      ExMCP.ProgressTracker
+      ExMCP.ProgressTracker,
+      # Start the Reliability Supervisor for circuit breakers and health checks
+      {ExMCP.Reliability.Supervisor, name: ExMCP.Reliability.Supervisor}
     ]
 
     opts = [strategy: :one_for_one, name: ExMCP.Supervisor]
