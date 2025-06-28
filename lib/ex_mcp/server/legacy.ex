@@ -72,8 +72,20 @@ defmodule ExMCP.Server.Legacy do
     handler_module = Keyword.fetch!(opts, :handler)
     transport_type = Keyword.get(opts, :transport, :test)
 
-    # Initialize the handler
-    case handler_module.init(opts) do
+    # Initialize the handler with handler_args or legacy options
+    handler_args =
+      case Keyword.get(opts, :handler_args) do
+        nil ->
+          # Legacy mode: pass all opts except system keys
+          opts
+          |> Keyword.drop([:handler, :transport, :name])
+
+        args ->
+          # New mode: pass explicit handler_args
+          args
+      end
+
+    case handler_module.init(handler_args) do
       {:ok, handler_state} ->
         # Connect to the transport
         case connect_transport(transport_type, opts) do
@@ -117,17 +129,24 @@ defmodule ExMCP.Server.Legacy do
       {:ok, requests} when is_list(requests) ->
         handle_batch_request(requests, state)
 
-      {:ok, request} when is_map(request) ->
-        case process_mcp_request(request, state) do
-          {:response, response, new_state} ->
-            case send_message(response, new_state) do
-              {:ok, final_state} -> {:noreply, final_state}
-              {:error, _reason} -> {:noreply, new_state}
-            end
+      {:ok, message_data} when is_map(message_data) ->
+        # Check if this is a response (has "result" or "error" but no "method")
+        if Map.has_key?(message_data, "result") or Map.has_key?(message_data, "error") do
+          # This is a response from client
+          handle_client_response(message_data, state)
+        else
+          # This is a request from client
+          case process_mcp_request(message_data, state) do
+            {:response, response, new_state} ->
+              case send_message(response, new_state) do
+                {:ok, final_state} -> {:noreply, final_state}
+                {:error, _reason} -> {:noreply, new_state}
+              end
 
-          {:notification, new_state} ->
-            # Single notification received, no response needed.
-            {:noreply, new_state}
+            {:notification, new_state} ->
+              # Single notification received, no response needed.
+              {:noreply, new_state}
+          end
         end
 
       {:error, error} ->
@@ -155,6 +174,48 @@ defmodule ExMCP.Server.Legacy do
   def handle_info({:transport_closed}, state) do
     Logger.info("Transport closed")
     {:stop, :normal, state}
+  end
+
+  def handle_info({:cancelled, request_id}, state) do
+    # Handle cancellation notifications from clients
+    Logger.debug("Received cancellation for request: #{request_id}")
+
+    # Check if this request is still pending and cancel it
+    case Map.get(state.pending_requests, request_id) do
+      nil ->
+        # Request not found - either completed, cancelled, or never existed
+        Logger.debug("Cancellation for unknown request: #{request_id}")
+        {:noreply, state}
+
+      _pending_request ->
+        # Cancel the pending request
+        new_pending = Map.delete(state.pending_requests, request_id)
+        new_state = %{state | pending_requests: new_pending}
+        Logger.debug("Cancelled pending request: #{request_id}")
+        {:noreply, new_state}
+    end
+  end
+
+  def handle_info({:request_timeout, request_id}, state) do
+    # Handle timeout for server->client requests
+    case Map.get(state.pending_requests, request_id) do
+      nil ->
+        # Request already completed or doesn't exist
+        {:noreply, state}
+
+      {from, :server_request} ->
+        # Request timed out, reply with timeout error
+        GenServer.reply(from, {:error, :timeout})
+
+        # Remove from pending requests
+        new_pending_requests = Map.delete(state.pending_requests, request_id)
+        new_state = %{state | pending_requests: new_pending_requests}
+        {:noreply, new_state}
+
+      _ ->
+        # Not a server request, ignore
+        {:noreply, state}
+    end
   end
 
   # Handle batch requests according to JSON-RPC 2.0 specification
@@ -239,31 +300,37 @@ defmodule ExMCP.Server.Legacy do
     end
   end
 
-  def handle_call(:list_roots, _from, state) do
-    # Send list_roots request to client via transport
+  def handle_call({:list_roots, timeout}, from, state) do
+    # Send list_roots request to client via transport with custom timeout
+    request_id = System.unique_integer([:positive])
+
     list_roots_request = %{
       "jsonrpc" => "2.0",
-      "id" => System.unique_integer([:positive]),
+      "id" => request_id,
       "method" => "roots/list",
       "params" => %{}
     }
 
     case send_message(list_roots_request, state) do
-      {:ok, _new_state} ->
-        # In a real implementation, we'd wait for the response from the client
-        # For testing with test transport, we simulate a successful response
-        # Note: Real implementation would need bidirectional client-server communication
-        mock_roots = %{
-          "roots" => [
-            %{"uri" => "file:///shared", "name" => "Shared"}
-          ]
-        }
+      {:ok, new_state} ->
+        # Store the request in pending_requests to wait for client response
+        pending_requests =
+          Map.put(new_state.pending_requests, request_id, {from, :server_request})
 
-        {:reply, {:ok, mock_roots}, state}
+        final_state = %{new_state | pending_requests: pending_requests}
+
+        # Set up timeout
+        Process.send_after(self(), {:request_timeout, request_id}, timeout)
+        {:noreply, final_state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  def handle_call(:list_roots, from, state) do
+    # Default timeout of 5 seconds
+    handle_call({:list_roots, 5000}, from, state)
   end
 
   def handle_call(request, from, state) do
@@ -379,6 +446,41 @@ defmodule ExMCP.Server.Legacy do
   end
 
   # Private functions
+
+  # Handle responses from clients to server requests
+  defp handle_client_response(%{"id" => request_id} = response, state) do
+    case Map.get(state.pending_requests, request_id) do
+      nil ->
+        Logger.warning("Received response for unknown request ID: #{request_id}")
+        {:noreply, state}
+
+      {from, :server_request} ->
+        # This is a response to a server->client request
+        if Map.has_key?(response, "result") do
+          GenServer.reply(from, {:ok, response["result"]})
+        else
+          error = response["error"]
+          GenServer.reply(from, {:error, error})
+        end
+
+        # Remove from pending requests
+        new_pending_requests = Map.delete(state.pending_requests, request_id)
+        new_state = %{state | pending_requests: new_pending_requests}
+        {:noreply, new_state}
+
+      _ ->
+        Logger.warning(
+          "Received response for request with unexpected pending state: #{request_id}"
+        )
+
+        {:noreply, state}
+    end
+  end
+
+  defp handle_client_response(response, state) do
+    Logger.warning("Received response without ID: #{inspect(response)}")
+    {:noreply, state}
+  end
 
   # Handle cancellation notifications from clients
   defp handle_cancellation_notification(%{"requestId" => request_id} = params, state) do

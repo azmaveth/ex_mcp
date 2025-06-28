@@ -7,6 +7,7 @@ defmodule ExMCP.MessageProcessor do
   """
 
   alias ExMCP.Internal.MessageValidator
+  alias ExMCP.Protocol.ErrorCodes
 
   @type t :: module()
   @type opts :: term()
@@ -184,39 +185,61 @@ defmodule ExMCP.MessageProcessor do
 
   defp process_validated_request(%Conn{} = conn, opts) do
     handler = Map.get(opts, :handler)
+    server = Map.get(opts, :server)
     server_info = Map.get(opts, :server_info, %{})
 
-    case handler do
-      nil ->
+    cond do
+      # If we have a server PID, use it directly
+      is_pid(server) ->
+        process_handler_request(conn, server, server_info)
+
+      # If we have a handler module
+      handler != nil ->
+        case handler do
+          handler_module when is_atom(handler_module) ->
+            # Detect server type based on exported functions
+            case detect_server_type(handler_module) do
+              :dsl_server ->
+                process_with_dsl_server(conn, handler_module, server_info)
+
+              :handler_server ->
+                process_with_handler_genserver(conn, handler_module, server_info)
+
+              :unknown ->
+                # Fallback to original detection for backward compatibility
+                if function_exported?(handler_module, :start_link, 1) and
+                     function_exported?(handler_module, :handle_resource_read, 3) do
+                  process_with_dsl_server(conn, handler_module, server_info)
+                else
+                  process_with_handler(conn, handler_module, server_info)
+                end
+            end
+
+          _ ->
+            error_response = %{
+              "jsonrpc" => "2.0",
+              "error" => %{
+                "code" => ErrorCodes.internal_error(),
+                "message" => "Invalid handler type"
+              },
+              "id" => get_request_id(conn.request)
+            }
+
+            put_response(conn, error_response)
+        end
+
+      # No handler or server configured
+      true ->
         error_response = %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32603,
+            "code" => ErrorCodes.internal_error(),
             "message" => "No handler configured"
           },
           "id" => get_request_id(conn.request)
         }
 
         put_response(conn, error_response)
-
-      handler_module when is_atom(handler_module) ->
-        # Detect server type based on exported functions
-        case detect_server_type(handler_module) do
-          :dsl_server ->
-            process_with_dsl_server(conn, handler_module, server_info)
-
-          :handler_server ->
-            process_with_handler_genserver(conn, handler_module, server_info)
-
-          :unknown ->
-            # Fallback to original detection for backward compatibility
-            if function_exported?(handler_module, :start_link, 1) and
-                 function_exported?(handler_module, :handle_resource_read, 3) do
-              process_with_dsl_server(conn, handler_module, server_info)
-            else
-              process_with_handler(conn, handler_module, server_info)
-            end
-        end
     end
   end
 
@@ -238,7 +261,7 @@ defmodule ExMCP.MessageProcessor do
         error_response = %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32603,
+            "code" => ErrorCodes.internal_error(),
             "message" => "Failed to start server instance",
             "data" => %{"reason" => inspect(reason)}
           },
@@ -268,7 +291,7 @@ defmodule ExMCP.MessageProcessor do
         error_response = %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32603,
+            "code" => ErrorCodes.internal_error(),
             "message" => "Failed to start handler server",
             "data" => %{"reason" => inspect(reason)}
           },
@@ -505,7 +528,7 @@ defmodule ExMCP.MessageProcessor do
     error_response = %{
       "jsonrpc" => "2.0",
       "error" => %{
-        "code" => -32601,
+        "code" => ErrorCodes.method_not_found(),
         "message" => "Method not found"
       },
       "id" => id
@@ -526,7 +549,7 @@ defmodule ExMCP.MessageProcessor do
     %{
       "jsonrpc" => "2.0",
       "error" => %{
-        "code" => -32603,
+        "code" => ErrorCodes.internal_error(),
         "message" => message,
         "data" => %{"reason" => inspect(reason)}
       },
@@ -1166,7 +1189,8 @@ defmodule ExMCP.MessageProcessor do
   defp validate_jsonrpc_version(%{"jsonrpc" => "2.0"}), do: :ok
 
   defp validate_jsonrpc_version(_),
-    do: {:error, %{"code" => -32600, "message" => "Invalid JSON-RPC version"}}
+    do:
+      {:error, %{"code" => ErrorCodes.invalid_request(), "message" => "Invalid JSON-RPC version"}}
 
   defp validate_notification_structure(%{"method" => _method}) do
     # Notifications only require jsonrpc and method fields
@@ -1174,7 +1198,8 @@ defmodule ExMCP.MessageProcessor do
   end
 
   defp validate_notification_structure(_) do
-    {:error, %{"code" => -32600, "message" => "Notification must have method field"}}
+    {:error,
+     %{"code" => ErrorCodes.invalid_request(), "message" => "Notification must have method field"}}
   end
 
   defp process_validated_notification(%Conn{} = conn, opts) do

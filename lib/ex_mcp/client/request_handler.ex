@@ -116,9 +116,8 @@ defmodule ExMCP.Client.RequestHandler do
         Logger.debug("Received notification: #{method}")
         {:noreply, state}
 
-      {:request, method, _params, _id} ->
-        Logger.warning("Received unexpected request from server: #{method}")
-        {:noreply, state}
+      {:request, method, params, id} ->
+        handle_server_request(method, params, id, state)
 
       {:batch, responses} ->
         # NOTE: Batch support is deprecated in protocol version 2025-06-18
@@ -149,7 +148,9 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   def handle_single_response({:error, error, response_id}, state) do
-    handle_response_by_id(response_id, {:error, error}, state)
+    # Convert raw error map to ExMCP.Error struct
+    error_struct = ExMCP.Error.from_json_rpc_error(error, request_id: response_id)
+    handle_response_by_id(response_id, {:error, error_struct}, state)
   end
 
   def handle_single_response(other, state) do
@@ -307,5 +308,80 @@ defmodule ExMCP.Client.RequestHandler do
         req
       end
     end)
+  end
+
+  @doc """
+  Handles server-to-client requests by routing them to the appropriate handler callback.
+  """
+  def handle_server_request(method, params, request_id, state) do
+    case method do
+      "roots/list" ->
+        handle_roots_list_request(params, request_id, state)
+
+      _ ->
+        # Return method not found error for unsupported requests
+        error_response = build_error_response(-32601, "Method not found", request_id)
+        send_response(error_response, state)
+    end
+  end
+
+  defp handle_roots_list_request(_params, request_id, state) do
+    # Extract handler from transport_opts
+    client_handler = Keyword.get(state.transport_opts, :handler)
+    handler_state_opts = Keyword.get(state.transport_opts, :handler_state, [])
+
+    if client_handler && function_exported?(client_handler, :handle_list_roots, 1) do
+      # Initialize handler if needed
+      handler_state =
+        case client_handler.init(handler_state_opts) do
+          {:ok, initial_state} -> initial_state
+          _ -> %{}
+        end
+
+      case client_handler.handle_list_roots(handler_state) do
+        {:ok, roots, _new_handler_state} ->
+          result = %{"roots" => roots}
+          response = build_success_response(result, request_id)
+          send_response(response, state)
+
+        {:error, error, _new_handler_state} ->
+          error_response = build_error_response(-32603, error, request_id)
+          send_response(error_response, state)
+      end
+    else
+      # Handler doesn't implement handle_list_roots or no handler configured
+      error_response = build_error_response(-32601, "Method not found", request_id)
+      send_response(error_response, state)
+    end
+  end
+
+  defp build_success_response(result, request_id) do
+    %{
+      "jsonrpc" => "2.0",
+      "result" => result,
+      "id" => request_id
+    }
+  end
+
+  defp build_error_response(code, message, request_id) do
+    %{
+      "jsonrpc" => "2.0",
+      "error" => %{
+        "code" => code,
+        "message" => message
+      },
+      "id" => request_id
+    }
+  end
+
+  defp send_response(response, state) do
+    case send_message(response, state) do
+      {:ok, updated_state} ->
+        {:noreply, updated_state}
+
+      {:error, reason} ->
+        Logger.error("Failed to send response to server: #{inspect(reason)}")
+        {:noreply, state}
+    end
   end
 end

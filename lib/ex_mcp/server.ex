@@ -69,6 +69,7 @@ defmodule ExMCP.Server do
   """
 
   alias ExMCP.Internal.{StdioLoggerConfig, VersionRegistry}
+  alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Server.{Legacy, Transport}
 
   @type state :: term()
@@ -521,6 +522,37 @@ defmodule ExMCP.Server do
         pending_ids = get_pending_request_ids(state)
         {:reply, pending_ids, state}
       end
+
+      # Handle create message request
+      def handle_call({:create_message, params}, _from, state) do
+        # Send sampling/createMessage request to the client via transport
+        message = ExMCP.Internal.Protocol.encode_create_message(params)
+
+        case ExMCP.Transport.send_message(state.transport, Jason.encode!(message)) do
+          :ok ->
+            # Wait for response from client
+            receive do
+              {:transport_message, response_data} ->
+                case Jason.decode(response_data) do
+                  {:ok, %{"result" => result}} ->
+                    {:reply, {:ok, result}, state}
+
+                  {:ok, %{"error" => error}} ->
+                    {:reply, {:error, error}, state}
+
+                  _ ->
+                    {:reply, {:error, :invalid_response}, state}
+                end
+            after
+              # 30 second timeout
+              30_000 ->
+                {:reply, {:error, :timeout}, state}
+            end
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+      end
     end
   end
 
@@ -686,7 +718,7 @@ defmodule ExMCP.Server do
               "jsonrpc" => "2.0",
               "id" => nil,
               "error" => %{
-                "code" => -32600,
+                "code" => ErrorCodes.invalid_request(),
                 "message" => "Batch requests are not supported"
               }
             }
@@ -843,7 +875,7 @@ defmodule ExMCP.Server do
                 "jsonrpc" => "2.0",
                 "id" => id,
                 "error" => %{
-                  "code" => -32000,
+                  "code" => ErrorCodes.server_error(),
                   "message" => reason
                 }
               }
@@ -869,7 +901,7 @@ defmodule ExMCP.Server do
               "jsonrpc" => "2.0",
               "id" => id,
               "error" => %{
-                "code" => -32600,
+                "code" => ErrorCodes.invalid_request(),
                 "message" => "Unsupported protocol version: #{client_version}",
                 "data" => %{
                   "supported_versions" => supported_versions
@@ -905,7 +937,7 @@ defmodule ExMCP.Server do
             error_response = %{
               "jsonrpc" => "2.0",
               "id" => id,
-              "error" => %{"code" => -32000, "message" => inspect(reason)}
+              "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
             }
 
             {:response, error_response, new_state}
@@ -935,7 +967,7 @@ defmodule ExMCP.Server do
             error_response = %{
               "jsonrpc" => "2.0",
               "id" => id,
-              "error" => %{"code" => -32000, "message" => inspect(reason)}
+              "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
             }
 
             {:response, error_response, new_state}
@@ -965,7 +997,7 @@ defmodule ExMCP.Server do
             error_response = %{
               "jsonrpc" => "2.0",
               "id" => id,
-              "error" => %{"code" => -32000, "message" => inspect(reason)}
+              "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
             }
 
             {:response, error_response, new_state}
@@ -985,7 +1017,7 @@ defmodule ExMCP.Server do
           "jsonrpc" => "2.0",
           "id" => id,
           "error" => %{
-            "code" => -32601,
+            "code" => ErrorCodes.method_not_found(),
             "message" => "Method not found: #{method}"
           }
         }
@@ -999,7 +1031,7 @@ defmodule ExMCP.Server do
           "jsonrpc" => "2.0",
           "id" => nil,
           "error" => %{
-            "code" => -32600,
+            "code" => ErrorCodes.invalid_request(),
             "message" => "Invalid Request"
           }
         }
@@ -1038,7 +1070,7 @@ defmodule ExMCP.Server do
   def start_link(opts) when is_list(opts) do
     case Keyword.has_key?(opts, :handler) do
       true ->
-        # Use the legacy server implementation for handler-based servers
+        # Use handler-based server implementation 
         Legacy.start_link(opts)
 
       false ->
@@ -1101,7 +1133,7 @@ defmodule ExMCP.Server do
   """
   @spec list_roots(GenServer.server(), timeout()) :: {:ok, %{roots: [map()]}} | {:error, any()}
   def list_roots(server, timeout \\ 5000) do
-    GenServer.call(server, :list_roots, timeout)
+    GenServer.call(server, {:list_roots, timeout}, timeout)
   end
 
   @doc """
@@ -1226,5 +1258,48 @@ defmodule ExMCP.Server do
     params = %{"requestId" => request_id}
     params = if reason, do: Map.put(params, "reason", reason), else: params
     GenServer.cast(server, {:notification, "notifications/cancelled", params})
+  end
+
+  @doc """
+  Sends a createMessage request to the connected client.
+
+  This function allows the server to request message creation from the client
+  using the sampling/createMessage method. This is part of the MCP sampling
+  feature where servers can ask clients to generate LLM responses.
+
+  ## Parameters
+
+  - `server` - Server process reference
+  - `params` - Parameters for message creation including messages, modelPreferences, etc.
+
+  ## Returns
+
+  - `{:ok, result}` - The created message response from the client
+  - `{:error, reason}` - If the request fails
+
+  ## Examples
+
+      params = %{
+        "messages" => [
+          %{"role" => "user", "content" => %{"type" => "text", "text" => "Hello"}}
+        ],
+        "modelPreferences" => %{
+          "hints" => [%{"name" => "gpt-4"}]
+        }
+      }
+      
+      {:ok, response} = ExMCP.Server.create_message(server, params)
+  """
+  @spec create_message(GenServer.server(), map()) :: {:ok, map()} | {:error, term()}
+  def create_message(server, params) do
+    # Try to call the server with create_message
+    case GenServer.call(server, {:create_message, params}) do
+      {:error, {:unknown_call, _}} ->
+        # Fall back to direct protocol call for servers that don't implement this
+        {:error, :not_implemented}
+
+      result ->
+        result
+    end
   end
 end

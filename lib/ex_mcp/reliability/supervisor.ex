@@ -36,7 +36,7 @@ defmodule ExMCP.Reliability.Supervisor do
 
   use Supervisor
 
-  alias ExMCP.Reliability.{CircuitBreaker, HealthCheck, Retry}
+  alias ExMCP.Reliability.{HealthCheck, Retry}
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name)
@@ -44,16 +44,21 @@ defmodule ExMCP.Reliability.Supervisor do
   end
 
   @impl Supervisor
-  def init(_opts) do
+  def init(opts) do
+    # Create unique names based on a unique identifier
+    unique_id = :erlang.unique_integer([:positive])
+    supervisor_id = Keyword.get(opts, :name, :"#{__MODULE__}_#{unique_id}")
+
     children = [
       # Dynamic supervisor for circuit breakers
-      {DynamicSupervisor, strategy: :one_for_one, name: circuit_breaker_supervisor()},
+      {DynamicSupervisor,
+       strategy: :one_for_one, name: circuit_breaker_supervisor(supervisor_id)},
 
       # Dynamic supervisor for health checks
-      {DynamicSupervisor, strategy: :one_for_one, name: health_check_supervisor()},
+      {DynamicSupervisor, strategy: :one_for_one, name: health_check_supervisor(supervisor_id)},
 
       # Registry for tracking reliability components
-      {Registry, keys: :unique, name: reliability_registry()}
+      {Registry, keys: :unique, name: reliability_registry(supervisor_id)}
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
@@ -85,6 +90,7 @@ defmodule ExMCP.Reliability.Supervisor do
             case maybe_start_health_check(supervisor, client_id, client_pid, opts) do
               {:ok, health_pid} ->
                 create_wrapper_and_cleanup(
+                  supervisor,
                   client_id,
                   client_pid,
                   breaker_pid,
@@ -110,7 +116,14 @@ defmodule ExMCP.Reliability.Supervisor do
     end
   end
 
-  defp create_wrapper_and_cleanup(client_id, client_pid, breaker_pid, health_pid, opts) do
+  defp create_wrapper_and_cleanup(
+         supervisor,
+         client_id,
+         client_pid,
+         breaker_pid,
+         health_pid,
+         opts
+       ) do
     wrapper_spec = %{
       id: {:reliable_client_wrapper, client_id},
       start:
@@ -126,7 +139,7 @@ defmodule ExMCP.Reliability.Supervisor do
       restart: :temporary
     }
 
-    case DynamicSupervisor.start_child(circuit_breaker_supervisor(), wrapper_spec) do
+    case DynamicSupervisor.start_child(find_circuit_breaker_supervisor(supervisor), wrapper_spec) do
       {:ok, wrapper_pid} ->
         {:ok, wrapper_pid}
 
@@ -145,7 +158,7 @@ defmodule ExMCP.Reliability.Supervisor do
     end)
   end
 
-  defp maybe_start_circuit_breaker(_supervisor, _client_id, opts) do
+  defp maybe_start_circuit_breaker(supervisor, _client_id, opts) do
     case Keyword.get(opts, :circuit_breaker) do
       nil ->
         {:ok, nil}
@@ -156,24 +169,24 @@ defmodule ExMCP.Reliability.Supervisor do
             breaker_opts,
             :name,
             {:via, Registry,
-             {reliability_registry(),
+             {find_reliability_registry(supervisor),
               {:circuit_breaker, Keyword.get(opts, :id, generate_client_id())}}}
           )
 
         spec = %{
           id: {:circuit_breaker, :erlang.unique_integer()},
-          start: {CircuitBreaker, :start_link, [breaker_opts]},
+          start: {ExMCP.Reliability.CircuitBreaker, :start_link, [breaker_opts]},
           restart: :temporary
         }
 
-        case DynamicSupervisor.start_child(circuit_breaker_supervisor(), spec) do
+        case DynamicSupervisor.start_child(find_circuit_breaker_supervisor(supervisor), spec) do
           {:ok, pid} -> {:ok, pid}
           error -> error
         end
     end
   end
 
-  defp maybe_start_health_check(_supervisor, client_id, target_pid, opts) do
+  defp maybe_start_health_check(supervisor, client_id, target_pid, opts) do
     case Keyword.get(opts, :health_check) do
       nil ->
         {:ok, nil}
@@ -183,7 +196,7 @@ defmodule ExMCP.Reliability.Supervisor do
           health_opts
           |> Keyword.put(
             :name,
-            {:via, Registry, {reliability_registry(), {:health_check, client_id}}}
+            {:via, Registry, {find_reliability_registry(supervisor), {:health_check, client_id}}}
           )
           |> Keyword.put(:target, target_pid)
           |> Keyword.put_new(:check_fn, HealthCheck.mcp_client_check_fn())
@@ -194,16 +207,76 @@ defmodule ExMCP.Reliability.Supervisor do
           restart: :temporary
         }
 
-        case DynamicSupervisor.start_child(health_check_supervisor(), spec) do
+        case DynamicSupervisor.start_child(find_health_check_supervisor(supervisor), spec) do
           {:ok, pid} -> {:ok, pid}
           error -> error
         end
     end
   end
 
-  defp circuit_breaker_supervisor, do: Module.concat(__MODULE__, CircuitBreakerSupervisor)
-  defp health_check_supervisor, do: Module.concat(__MODULE__, HealthCheckSupervisor)
-  defp reliability_registry, do: Module.concat(__MODULE__, Registry)
+  defp circuit_breaker_supervisor(supervisor_name \\ __MODULE__) do
+    Module.concat([supervisor_name, CircuitBreakerSupervisor])
+  end
+
+  defp health_check_supervisor(supervisor_name \\ __MODULE__) do
+    Module.concat([supervisor_name, HealthCheckSupervisor])
+  end
+
+  defp reliability_registry(supervisor_name \\ __MODULE__) do
+    Module.concat([supervisor_name, Registry])
+  end
+
+  # Helper functions to find child supervisor names from a running supervisor
+  defp find_circuit_breaker_supervisor(supervisor) do
+    children = Supervisor.which_children(supervisor)
+
+    cb_supervisor =
+      Enum.find_value(children, fn
+        {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
+          name_str = Atom.to_string(name)
+          if String.contains?(name_str, "CircuitBreakerSupervisor"), do: name
+
+        _ ->
+          nil
+      end)
+
+    # Fallback to default if not found (backwards compatibility)
+    cb_supervisor || circuit_breaker_supervisor()
+  end
+
+  defp find_health_check_supervisor(supervisor) do
+    children = Supervisor.which_children(supervisor)
+
+    hc_supervisor =
+      Enum.find_value(children, fn
+        {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
+          name_str = Atom.to_string(name)
+          if String.contains?(name_str, "HealthCheckSupervisor"), do: name
+
+        _ ->
+          nil
+      end)
+
+    # Fallback to default if not found (backwards compatibility)  
+    hc_supervisor || health_check_supervisor()
+  end
+
+  defp find_reliability_registry(supervisor) do
+    children = Supervisor.which_children(supervisor)
+
+    registry =
+      Enum.find_value(children, fn
+        {name, _pid, :worker, [Registry]} when is_atom(name) ->
+          name_str = Atom.to_string(name)
+          if String.contains?(name_str, "Registry"), do: name
+
+        _ ->
+          nil
+      end)
+
+    # Fallback to default if not found (backwards compatibility)
+    registry || reliability_registry()
+  end
 
   defp generate_client_id do
     "client_#{:erlang.unique_integer([:positive])}"
