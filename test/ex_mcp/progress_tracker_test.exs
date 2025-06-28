@@ -7,9 +7,8 @@ defmodule ExMCP.ProgressTrackerTest do
   @valid_integer_token 456
 
   setup do
-    # Start ProgressTracker for each test
-    {:ok, _pid} = start_supervised(ProgressTracker)
-    # Clear any existing state
+    # ProgressTracker is already started by the application
+    # Clear any existing state for test isolation
     ProgressTracker.clear_all()
     :ok
   end

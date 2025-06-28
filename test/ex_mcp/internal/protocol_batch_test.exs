@@ -95,7 +95,9 @@ defmodule ExMCP.Internal.ProtocolBatchTest do
     end
 
     test "handles empty batch" do
-      assert {:batch, []} = Protocol.parse_message([])
+      assert {:error, :validation_failed,
+              %{code: -32600, message: "Empty batch array is invalid"}} =
+               Protocol.parse_message([])
     end
   end
 end

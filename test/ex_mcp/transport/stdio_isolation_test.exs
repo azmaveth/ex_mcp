@@ -403,6 +403,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
           # The error is wrapped in security_violation
           assert true
 
+        {:error, {:security_violation, {:validation_error, {:embedded_newline, _}}}} ->
+          # The error is wrapped in security_violation and validation_error
+          assert true
+
         {:error, {:send_failed, _}} ->
           # Should not reach here - validation should catch embedded newlines first
           flunk("Embedded newline validation should prevent send_failed error")
@@ -450,6 +454,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
         {:error, {:security_violation, {:embedded_newline, _}}} ->
           # The error is wrapped in security_violation
+          assert true
+
+        {:error, {:security_violation, {:validation_error, {:embedded_newline, _}}}} ->
+          # The error is wrapped in security_violation and validation_error
           assert true
 
         {:ok, _} ->

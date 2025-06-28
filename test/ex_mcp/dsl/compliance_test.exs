@@ -144,9 +144,9 @@ defmodule ExMCP.DSL.ComplianceTest do
       say_hello_tool = tools["say_hello"]
       assert say_hello_tool.name == "say_hello"
       assert say_hello_tool.description == "Says hello to a given name"
-      assert say_hello_tool.input_schema[:type] == "object"
-      assert say_hello_tool.input_schema[:properties][:name][:type] == "string"
-      assert say_hello_tool.input_schema[:required] == ["name"]
+      assert say_hello_tool.input_schema["type"] == "object"
+      assert say_hello_tool.input_schema["properties"]["name"]["type"] == "string"
+      assert say_hello_tool.input_schema["required"] == ["name"]
 
       # Test args-based tool
       sum_tool = tools["calculate_sum"]

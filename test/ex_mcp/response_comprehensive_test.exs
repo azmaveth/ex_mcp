@@ -296,7 +296,8 @@ defmodule ExMCP.ResponseComprehensiveTest do
       }
 
       response = Response.from_map(map)
-      assert response.tools == [%{"name" => "test"}]
+      # The implementation provides both string and atom keys for compatibility
+      assert response.tools == [%{:name => "test", "name" => "test"}]
       assert response.nextCursor == "abc"
     end
 

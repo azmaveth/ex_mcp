@@ -383,7 +383,16 @@ defmodule ExMCP.ServerTest do
       {:ok, pid} = MinimalServer.start_link(key1: "value1", key2: "value2")
 
       state = :sys.get_state(pid)
-      assert state == %{key1: "value1", key2: "value2", subscriptions: MapSet.new()}
+      # Legacy server adds request tracking fields to the handler state
+      expected_state = %{
+        key1: "value1",
+        key2: "value2",
+        subscriptions: MapSet.new(),
+        pending_requests: %{},
+        cancelled_requests: MapSet.new()
+      }
+
+      assert state == expected_state
 
       GenServer.stop(pid)
     end

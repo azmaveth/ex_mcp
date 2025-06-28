@@ -18,10 +18,13 @@ defmodule ExMCP.Server.Handler.Echo do
   end
 
   @impl true
-  def handle_initialize(_params, state) do
+  def handle_initialize(params, state) do
+    # Echo back the protocol version sent by the client
+    client_version = params["protocolVersion"] || "2025-06-18"
+
     {:ok,
      %{
-       protocolVersion: "2025-03-26",
+       protocolVersion: client_version,
        serverInfo: %{
          name: "echo-server",
          version: "1.0.0"

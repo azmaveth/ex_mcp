@@ -125,8 +125,8 @@ defmodule ExMCP.HITLIntegrationTest do
 
       # Server calls createMessage on client - should get error
       {:error, error} = ExMCP.Server.create_message(server, params)
-      assert error["code"] == -32603
-      assert error["message"] =~ "denied"
+      assert error.code == -32603
+      assert error.message =~ "denied"
     end
 
     test "approval handler receives context and can track requests" do

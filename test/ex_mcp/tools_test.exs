@@ -1,5 +1,6 @@
 defmodule ExMCP.ToolsTest do
   use ExUnit.Case, async: true
+  import ExMCP.TestHelpers
 
   alias ExMCP.{Client, Server}
 
@@ -279,8 +280,8 @@ defmodule ExMCP.ToolsTest do
     Process.sleep(100)
 
     on_exit(fn ->
-      if Process.alive?(client), do: GenServer.stop(client)
-      if Process.alive?(server), do: GenServer.stop(server)
+      ExMCP.TestHelpers.safe_stop_process(client)
+      ExMCP.TestHelpers.safe_stop_process(server)
     end)
 
     %{server: server, client: client}

@@ -306,7 +306,7 @@ defmodule ExMCP.UtilitiesTest do
     test "invalid cursor returns error", %{client: client} do
       invalid_cursor = Base.encode64("invalid")
       {:error, error} = Client.list_tools(client, cursor: invalid_cursor)
-      assert error["message"] =~ "Invalid cursor"
+      assert error.message =~ "Invalid cursor"
     end
   end
 

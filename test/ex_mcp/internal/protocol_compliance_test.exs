@@ -120,8 +120,8 @@ defmodule ExMCP.Internal.ProtocolComplianceTest do
     test "protocol version is correct" do
       msg = Protocol.encode_initialize(%{name: "test", version: "1.0"})
 
-      assert msg["params"]["protocolVersion"] == "2025-03-26",
-             "Protocol version must be 2025-03-26"
+      assert msg["params"]["protocolVersion"] == "2025-06-18",
+             "Protocol version must be 2025-06-18"
     end
 
     test "method names follow MCP convention" do

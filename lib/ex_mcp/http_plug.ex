@@ -45,6 +45,7 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.Authorization.ServerGuard
   alias ExMCP.FeatureFlags
   alias ExMCP.HttpPlug.SSEHandler
+  alias ExMCP.Protocol.ErrorCodes
 
   # Simple session registry using ETS
   @ets_table :http_plug_sessions
@@ -127,6 +128,26 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  # Handle POST to OAuth endpoints - these should return 404
+  def call(
+        %Plug.Conn{method: "POST", path_info: [".well-known", "oauth-authorization-server"]} =
+          conn,
+        _opts
+      ) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(404, Jason.encode!(%{error: "Not found"}))
+  end
+
+  def call(
+        %Plug.Conn{method: "POST", path_info: [".well-known", "oauth-protected-resource"]} = conn,
+        _opts
+      ) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(404, Jason.encode!(%{error: "Not found"}))
+  end
+
   def call(%Plug.Conn{method: "POST"} = conn, opts) do
     Logger.debug("HttpPlug: POST request to #{conn.request_path}")
     handle_mcp_request(conn, opts)
@@ -201,7 +222,7 @@ defmodule ExMCP.HttpPlug do
           error_response = %{
             "jsonrpc" => "2.0",
             "error" => %{
-              "code" => -32603,
+              "code" => ErrorCodes.internal_error(),
               "message" => "Internal error: no response from handler"
             },
             "id" => Map.get(request, "id")
@@ -218,7 +239,7 @@ defmodule ExMCP.HttpPlug do
           error_response = %{
             "jsonrpc" => "2.0",
             "error" => %{
-              "code" => -32603,
+              "code" => ErrorCodes.internal_error(),
               "message" => "Internal error"
             },
             "id" => Map.get(request, "id")
@@ -235,7 +256,7 @@ defmodule ExMCP.HttpPlug do
           "jsonrpc" => "2.0",
           "error" => %{
             # Invalid Request
-            "code" => -32600,
+            "code" => ErrorCodes.invalid_request(),
             "message" => message,
             "data" => %{"expectedVersion" => "2025-06-18"}
           },
@@ -258,7 +279,7 @@ defmodule ExMCP.HttpPlug do
         error_response = %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32700,
+            "code" => ErrorCodes.parse_error(),
             "message" => "Parse error"
           },
           "id" => nil
@@ -275,7 +296,7 @@ defmodule ExMCP.HttpPlug do
         error_response = %{
           "jsonrpc" => "2.0",
           "error" => %{
-            "code" => -32603,
+            "code" => ErrorCodes.internal_error(),
             "message" => "Internal error"
           },
           "id" => nil

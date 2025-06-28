@@ -528,29 +528,37 @@ defmodule ExMCP.Server do
         # Send sampling/createMessage request to the client via transport
         message = ExMCP.Internal.Protocol.encode_create_message(params)
 
-        case ExMCP.Transport.send_message(state.transport, Jason.encode!(message)) do
-          :ok ->
-            # Wait for response from client
-            receive do
-              {:transport_message, response_data} ->
-                case Jason.decode(response_data) do
-                  {:ok, %{"result" => result}} ->
-                    {:reply, {:ok, result}, state}
+        case Map.get(state, :transport_client_pid) do
+          nil ->
+            {:reply, {:error, :not_connected}, state}
 
-                  {:ok, %{"error" => error}} ->
-                    {:reply, {:error, error}, state}
+          client_pid when is_pid(client_pid) ->
+            case Jason.encode(message) do
+              {:ok, json} ->
+                send(client_pid, {:transport_message, json})
 
-                  _ ->
-                    {:reply, {:error, :invalid_response}, state}
+                # Wait for response from client
+                receive do
+                  {:transport_message, response_data} ->
+                    case Jason.decode(response_data) do
+                      {:ok, %{"result" => result}} ->
+                        {:reply, {:ok, result}, state}
+
+                      {:ok, %{"error" => error}} ->
+                        {:reply, {:error, error}, state}
+
+                      _ ->
+                        {:reply, {:error, :invalid_response}, state}
+                    end
+                after
+                  # 30 second timeout
+                  30_000 ->
+                    {:reply, {:error, :timeout}, state}
                 end
-            after
-              # 30 second timeout
-              30_000 ->
-                {:reply, {:error, :timeout}, state}
-            end
 
-          {:error, reason} ->
-            {:reply, {:error, reason}, state}
+              {:error, error} ->
+                {:reply, {:error, error}, state}
+            end
         end
       end
     end
@@ -612,10 +620,10 @@ defmodule ExMCP.Server do
       def handle_call({:handle_resource_read, uri, full_uri}, _from, state) do
         case handle_resource_read(uri, full_uri, state) do
           {:ok, content, new_state} ->
-            {:reply, {:ok, content, new_state}, new_state}
+            {:reply, {:ok, content}, new_state}
 
           {:error, reason, new_state} ->
-            {:reply, {:error, reason, new_state}, new_state}
+            {:reply, {:error, reason}, new_state}
         end
       end
 
@@ -1070,7 +1078,7 @@ defmodule ExMCP.Server do
   def start_link(opts) when is_list(opts) do
     case Keyword.has_key?(opts, :handler) do
       true ->
-        # Use handler-based server implementation 
+        # Use handler-based server implementation
         Legacy.start_link(opts)
 
       false ->
@@ -1221,8 +1229,8 @@ defmodule ExMCP.Server do
   ## Examples
 
       {:ok, server} = MyServer.start_link()
-      
-      # Get pending requests  
+
+      # Get pending requests
       pending = ExMCP.Server.get_pending_requests(server)
       # => ["req_123", "req_456"]
   """
@@ -1287,7 +1295,7 @@ defmodule ExMCP.Server do
           "hints" => [%{"name" => "gpt-4"}]
         }
       }
-      
+
       {:ok, response} = ExMCP.Server.create_message(server, params)
   """
   @spec create_message(GenServer.server(), map()) :: {:ok, map()} | {:error, term()}

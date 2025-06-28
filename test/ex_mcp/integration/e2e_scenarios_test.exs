@@ -150,7 +150,7 @@ defmodule ExMCP.Integration.E2EScenariosTest do
           "b" => 0
         })
 
-      assert error["message"] == "Division by zero"
+      assert error.message == "Division by zero"
 
       # Cleanup
       Client.stop(client)
@@ -265,7 +265,7 @@ defmodule ExMCP.Integration.E2EScenariosTest do
 
       # Step 4: Test error handling for missing resource
       {:error, error} = Client.read_resource(client, "missing://resource")
-      assert error["message"] =~ "Resource not found"
+      assert error.message =~ "Resource not found"
 
       # Cleanup
       Client.stop(client)
@@ -418,7 +418,7 @@ defmodule ExMCP.Integration.E2EScenariosTest do
 
       # Step 4: Test error handling
       {:error, error} = Client.get_prompt(client, "nonexistent", %{})
-      assert error["message"] =~ "Prompt not found"
+      assert error.message =~ "Prompt not found"
 
       # Cleanup
       Client.stop(client)
@@ -829,7 +829,7 @@ defmodule ExMCP.Integration.E2EScenariosTest do
 
       # Step 2: Test unreliable tool failure
       {:error, error} = Client.call_tool(client, "unreliable_tool", %{"should_fail" => true})
-      assert error["message"] == "Simulated failure"
+      assert error.message == "Simulated failure"
 
       # Step 3: Verify client can still operate after error
       {:ok, result2} = Client.call_tool(client, "reliable_tool", %{})

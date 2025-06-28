@@ -257,7 +257,7 @@ defmodule ExMCP.Reliability.Supervisor do
           nil
       end)
 
-    # Fallback to default if not found (backwards compatibility)  
+    # Fallback to default if not found (backwards compatibility)
     hc_supervisor || health_check_supervisor()
   end
 
@@ -422,7 +422,7 @@ defmodule ExMCP.Reliability do
   @doc """
   Creates a circuit breaker and retry-protected version of a function.
 
-  The function will be protected by a circuit breaker and retried 
+  The function will be protected by a circuit breaker and retried
   according to the specified options on failure.
 
   ## Options

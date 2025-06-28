@@ -109,17 +109,24 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   @impl GenServer
   def handle_call({:execute, fun}, _from, state) do
-    if CB.allow_request?(state.circuit_breaker) do
-      execute_with_circuit_breaker(fun, state)
+    {allowed, updated_cb} = CB.allow_request_with_state?(state.circuit_breaker)
+    updated_state = %{state | circuit_breaker: updated_cb}
+
+    if allowed do
+      execute_with_circuit_breaker(fun, updated_state)
     else
-      {:reply, {:error, :circuit_open}, state}
+      {:reply, {:error, :circuit_open}, updated_state}
     end
   end
 
   def handle_call(:get_state, _from, state) do
-    # Get fresh stats which includes state transitions
-    stats = CB.get_stats(state.circuit_breaker)
-    {:reply, stats, state}
+    # Check for state transitions and update the GenServer state
+    {_allowed, updated_cb} = CB.allow_request_with_state?(state.circuit_breaker)
+    updated_state = %{state | circuit_breaker: updated_cb}
+
+    # Get fresh stats from the updated circuit breaker
+    stats = CB.get_stats(updated_cb)
+    {:reply, stats, updated_state}
   end
 
   def handle_call(:get_stats, _from, state) do

@@ -179,15 +179,15 @@ defmodule ExMCP.StructuredOutputTest do
       assert result.content |> List.first() |> Map.get(:type) == "text"
 
       # Check structured content is present
-      assert Map.has_key?(result, :structuredContent)
-      structured = Map.get(result, :structuredContent)
+      assert Map.has_key?(result, :structuredOutput)
+      structured = Map.get(result, :structuredOutput)
       assert structured != nil
 
-      # Keys might be atoms after JSON encoding/decoding
-      assert Map.get(structured, :temperature) == 22.5
-      assert Map.get(structured, :conditions) == "Partly cloudy"
-      assert Map.get(structured, :humidity) == 65
-      assert Map.get(structured, :windSpeed) == 15.2
+      # Keys are strings after JSON encoding/decoding
+      assert Map.get(structured, "temperature") == 22.5
+      assert Map.get(structured, "conditions") == "Partly cloudy"
+      assert Map.get(structured, "humidity") == 65
+      assert Map.get(structured, "windSpeed") == 15.2
     end
 
     test "traditional tools work without structured content", %{client: client} do

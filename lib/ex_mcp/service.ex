@@ -28,7 +28,7 @@ defmodule ExMCP.Service do
         end
 
         def handle_mcp_request(method, _params, state) do
-          {:error, %{"code" => -32601, "message" => "Method not found: \#{method}"}, state}
+          {:error, %{"code" => ErrorCodes.method_not_found(), "message" => "Method not found: \#{method}"}, state}
         end
       end
 
@@ -64,6 +64,7 @@ defmodule ExMCP.Service do
       @behaviour ExMCP.Service
 
       require Logger
+      alias ExMCP.Protocol.ErrorCodes
 
       @service_name unquote(service_name)
 

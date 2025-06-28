@@ -353,7 +353,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       :ok = Client.send_cancelled(client, "unknown_req_id", "No such request")
 
       # Client should remain functional
-      assert {:ok, %{"tools" => tools}} = Client.list_tools(client)
+      assert {:ok, %{"tools" => tools}} = Client.list_tools(client, format: :map)
       assert length(tools) > 0
     end
 

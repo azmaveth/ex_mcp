@@ -58,7 +58,10 @@ defmodule ExMCP.DSL.Tool do
                      name: unquote(name),
                      display_name: tool_meta[:name],
                      description: tool_meta[:description],
-                     input_schema: Module.get_attribute(__MODULE__, :__tool_input_schema__),
+                     input_schema:
+                       convert_schema_keys_to_strings(
+                         Module.get_attribute(__MODULE__, :__tool_input_schema__)
+                       ),
                      annotations: Module.get_attribute(__MODULE__, :__tool_annotations__) || %{},
                      meta: tool_meta
                    }
@@ -96,6 +99,26 @@ defmodule ExMCP.DSL.Tool do
       @__tool_annotations__ unquote(annotations)
     end
   end
+
+  @doc """
+  Converts atom keys to string keys recursively in a data structure.
+
+  This ensures that JSON schemas use string keys as required by the MCP specification.
+  """
+  def convert_schema_keys_to_strings(nil), do: nil
+
+  def convert_schema_keys_to_strings(schema) when is_map(schema) do
+    Enum.into(schema, %{}, fn {key, value} ->
+      string_key = if is_atom(key), do: Atom.to_string(key), else: key
+      {string_key, convert_schema_keys_to_strings(value)}
+    end)
+  end
+
+  def convert_schema_keys_to_strings(schema) when is_list(schema) do
+    Enum.map(schema, &convert_schema_keys_to_strings/1)
+  end
+
+  def convert_schema_keys_to_strings(value), do: value
 
   @doc """
   Validates a tool definition at compile time.

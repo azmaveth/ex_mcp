@@ -3,6 +3,7 @@ defmodule ExMCP.LoggingSetLevelTest do
   Tests for the logging/setLevel request handler.
   """
   use ExUnit.Case, async: true
+  import ExMCP.TestHelpers
   @moduletag :integration
   @moduletag :logging
 
@@ -10,7 +11,7 @@ defmodule ExMCP.LoggingSetLevelTest do
   alias ExMCP.Server
 
   defmodule TestHandler do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
 
     @impl true
     def init(_args), do: {:ok, %{log_level: "info"}}
@@ -55,8 +56,8 @@ defmodule ExMCP.LoggingSetLevelTest do
         )
 
       on_exit(fn ->
-        if Process.alive?(client), do: GenServer.stop(client)
-        if Process.alive?(server), do: GenServer.stop(server)
+        ExMCP.TestHelpers.safe_stop_process(client)
+        ExMCP.TestHelpers.safe_stop_process(server)
       end)
 
       {:ok, client: client, server: server}

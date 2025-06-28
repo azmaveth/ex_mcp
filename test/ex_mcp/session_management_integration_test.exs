@@ -116,7 +116,6 @@ defmodule ExMCP.SessionManagementIntegrationTest do
 
   describe "event storage and messaging" do
     test "stores events when sending SSE responses", %{
-      session_manager: session_manager,
       plug_opts: _opts
     } do
       # Create a session first
@@ -144,7 +143,15 @@ defmodule ExMCP.SessionManagementIntegrationTest do
       }
 
       # Store the event directly in SessionManager (simulating what SSE handler would do)
-      SessionManager.add_event(session_manager, session_id, response)
+      event = %{
+        id: "event_#{System.unique_integer([:positive])}",
+        session_id: session_id,
+        type: "message",
+        data: response,
+        timestamp: DateTime.utc_now()
+      }
+
+      SessionManager.store_event(session_id, event)
 
       # Verify event was stored
       # Give time for async storage

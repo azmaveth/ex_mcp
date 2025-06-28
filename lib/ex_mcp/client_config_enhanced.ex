@@ -120,6 +120,16 @@ defmodule ExMCP.ClientConfigEnhanced do
     %{config | observability: observability_config}
   end
 
+  @doc """
+  Configures retry policy with validation.
+  """
+  @spec put_retry_policy(t(), keyword()) :: t()
+  def put_retry_policy(config, opts) do
+    validated_opts = apply_validation_rules(Map.new(opts), [:positive_integers])
+    retry_policy = Map.merge(config.retry_policy, validated_opts)
+    %{config | retry_policy: retry_policy}
+  end
+
   # ===== ENVIRONMENT CONFIGURATION LOADING =====
 
   @doc """
@@ -442,10 +452,8 @@ defmodule ExMCP.ClientConfigEnhanced do
         validated_opts
 
       {:error, reason} ->
-        # Log the validation error but don't crash the process
-        _ = Logger.warning("Validation failed: #{reason}")
-        # Return original opts if validation fails
-        opts
+        # Raise ArgumentError for validation failures in enhanced mode
+        raise ArgumentError, "Validation failed: #{reason}"
     end
   end
 
@@ -631,6 +639,13 @@ defmodule ExMCP.ClientConfigEnhanced do
 
         :timeout ->
           ClientConfig.put_timeout(acc, value)
+
+        :command ->
+          # Update the transport with the new command
+          transport_type = (acc.transport && acc.transport.type) || :stdio
+          current_transport_opts = acc.transport || %{}
+          new_transport_opts = Map.put(current_transport_opts, :command, value)
+          ClientConfig.put_transport(acc, transport_type, new_transport_opts)
 
         _ ->
           ClientConfig.put_custom(acc, key, value)

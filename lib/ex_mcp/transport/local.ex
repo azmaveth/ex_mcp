@@ -177,7 +177,7 @@ defmodule ExMCP.Transport.Local do
     receive_message(transport, transport.timeout)
   end
 
-  def receive_message(%__MODULE__{} = transport, timeout) do
+  def receive_message(%__MODULE__{} = transport, _timeout) do
     case Error.validate_connection(transport, &connected?/1) do
       :ok ->
         receive do
@@ -188,13 +188,10 @@ defmodule ExMCP.Transport.Local do
             # Server accepting client connection
             new_transport = %{transport | server_pid: client_pid, connected: true}
             # Continue waiting for actual message
-            receive_message(new_transport, timeout)
+            receive_message(new_transport, nil)
 
           {:transport_error, reason} ->
             Error.transport_error(reason)
-        after
-          timeout ->
-            Error.timeout_error(:receive_timeout)
         end
 
       error ->

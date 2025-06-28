@@ -386,8 +386,8 @@ defmodule ExMCP.ClientConfigEnhancedTest do
       timeout_config = ClientConfigEnhanced.put_timeout(config, connect: 15_000)
       assert timeout_config.timeouts.connect == 15_000
 
-      # Should delegate to original ClientConfig.validate/1
-      assert ClientConfigEnhanced.validate(config) == :ok
+      # Should delegate to original ClientConfig.validate/1 - use config with valid URL
+      assert ClientConfigEnhanced.validate(updated_config) == :ok
 
       # Should delegate to original ClientConfig.to_client_opts/1
       opts = ClientConfigEnhanced.to_client_opts(config)

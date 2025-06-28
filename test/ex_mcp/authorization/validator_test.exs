@@ -95,7 +95,7 @@ defmodule ExMCP.Authorization.ValidatorTest do
       config = %{resource: 123}
 
       assert Validator.validate_resource_parameters(config) ==
-               {:error, {:invalid_resource_uri, "must be a string, got: 123"}}
+               {:error, :invalid_resource_parameter}
     end
 
     test "rejects invalid resource parameter type" do

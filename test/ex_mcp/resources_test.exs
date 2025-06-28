@@ -238,7 +238,7 @@ defmodule ExMCP.ResourcesTest do
 
     test "read_resource returns error for unknown resource", %{client: client} do
       {:error, error} = Client.read_resource(client, "file:///unknown.txt")
-      assert error["message"] =~ "Resource not found"
+      assert error.message =~ "Resource not found"
     end
 
     test "client can subscribe to resources", %{client: client} do
@@ -250,7 +250,7 @@ defmodule ExMCP.ResourcesTest do
 
       # Try to subscribe to non-existent resource
       {:error, error} = Client.subscribe_resource(client, "file:///nonexistent.txt")
-      assert error["message"] =~ "Resource not found"
+      assert error.message =~ "Resource not found"
     end
 
     test "client can unsubscribe from resources", %{client: client} do

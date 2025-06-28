@@ -275,8 +275,8 @@ defmodule ExMCP.PaginationComplianceTest do
         {:error, error} = Client.list_tools(client, cursor: invalid_cursor)
 
         # Should return error code -32602 (Invalid params)
-        assert error["code"] == -32602
-        assert String.contains?(error["message"], "Invalid cursor")
+        assert error.code == -32602
+        assert String.contains?(error.message, "Invalid cursor")
       end
     end
   end
@@ -436,7 +436,7 @@ defmodule ExMCP.PaginationComplianceTest do
       for tampered <- tampered_cursors do
         case Client.list_tools(client, cursor: tampered) do
           {:error, error} ->
-            assert error["code"] == -32602
+            assert error.code == -32602
 
           {:ok, _response} ->
             # Some tampering might still result in valid cursors due to redundancy
@@ -519,7 +519,7 @@ defmodule ExMCP.PaginationComplianceTest do
       for cursor <- malformed_cursors do
         if is_binary(cursor) do
           {:error, error} = Client.list_tools(client, cursor: cursor)
-          assert error["code"] == -32602
+          assert error.code == -32602
         end
       end
     end
@@ -527,12 +527,12 @@ defmodule ExMCP.PaginationComplianceTest do
     test "handles edge cases appropriately", %{client: client} do
       # Empty cursor string
       {:error, error} = Client.list_tools(client, cursor: "")
-      assert error["code"] == -32602
+      assert error.code == -32602
 
       # Very long cursor
       long_cursor = String.duplicate("a", 10000)
       {:error, error} = Client.list_tools(client, cursor: long_cursor)
-      assert error["code"] == -32602
+      assert error.code == -32602
     end
   end
 

@@ -65,7 +65,8 @@ defmodule ExMCP.MixProject do
       {:ex_json_schema, "~> 0.10"},
       {:html_entities, "~> 0.5", only: [:dev, :test]},
       {:propcheck, "~> 1.4", only: :test},
-      {:benchee, "~> 1.0", only: [:dev, :test]}
+      {:benchee, "~> 1.0", only: [:dev, :test]},
+      {:bypass, "~> 2.0", only: :test}
     ]
   end
 

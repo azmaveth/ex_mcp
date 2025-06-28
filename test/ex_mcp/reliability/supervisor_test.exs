@@ -1,6 +1,7 @@
 defmodule ExMCP.Reliability.SupervisorTest do
   use ExUnit.Case, async: false
   import ExMCP.HordeTestHelpers
+  import ExMCP.TestHelpers
 
   alias ExMCP.Reliability
   alias ExMCP.Reliability.Supervisor, as: ReliabilitySupervisor
@@ -57,8 +58,8 @@ defmodule ExMCP.Reliability.SupervisorTest do
       {:ok, mock_server} = MockServer.start_link(name: mock_server_name)
 
       on_exit(fn ->
-        if Process.alive?(supervisor), do: GenServer.stop(supervisor)
-        if Process.alive?(mock_server), do: GenServer.stop(mock_server)
+        ExMCP.TestHelpers.safe_stop_process(supervisor)
+        ExMCP.TestHelpers.safe_stop_process(mock_server)
       end)
 
       %{supervisor: supervisor, mock_server: mock_server}
@@ -232,8 +233,8 @@ defmodule ExMCP.Reliability.SupervisorTest do
       {:ok, mock_server} = MockServer.start_link(name: mock_server_name)
 
       on_exit(fn ->
-        if Process.alive?(supervisor), do: GenServer.stop(supervisor)
-        if Process.alive?(mock_server), do: GenServer.stop(mock_server)
+        ExMCP.TestHelpers.safe_stop_process(supervisor)
+        ExMCP.TestHelpers.safe_stop_process(mock_server)
       end)
 
       %{supervisor: supervisor, mock_server: mock_server}
@@ -479,8 +480,8 @@ defmodule ExMCP.Reliability.SupervisorTest do
       {:ok, mock_server} = MockServer.start_link(name: mock_server_name)
 
       on_exit(fn ->
-        if Process.alive?(supervisor), do: GenServer.stop(supervisor)
-        if Process.alive?(mock_server), do: GenServer.stop(mock_server)
+        ExMCP.TestHelpers.safe_stop_process(supervisor)
+        ExMCP.TestHelpers.safe_stop_process(mock_server)
       end)
 
       %{supervisor: supervisor, mock_server: mock_server}

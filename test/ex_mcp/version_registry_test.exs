@@ -1,8 +1,8 @@
 defmodule ExMCP.VersionRegistryTest do
   use ExUnit.Case
 
+  alias ExMCP.Internal.Protocol
   alias ExMCP.Internal.VersionRegistry
-  alias ExMCP.Protocol
 
   describe "version registry" do
     test "lists supported versions in order" do
@@ -18,7 +18,7 @@ defmodule ExMCP.VersionRegistryTest do
 
     test "gets preferred version from config" do
       # Default should be latest
-      assert VersionRegistry.preferred_version() == "2025-03-26"
+      assert VersionRegistry.preferred_version() == "2025-06-18"
 
       # Can be overridden by config
       Application.put_env(:ex_mcp, :protocol_version, "2025-06-18")

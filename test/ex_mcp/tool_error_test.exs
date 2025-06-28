@@ -177,13 +177,11 @@ defmodule ExMCP.ToolErrorTest do
         Client.call_tool(client, "divide", %{"dividend" => 10, "divisor" => 2}, format: :map)
 
       assert result == %{
-               "content" => %{
-                 "content" => [%{"type" => "text", "text" => "Result: 5.0"}]
-               }
+               "content" => [%{"type" => "text", "text" => "Result: 5.0"}]
              }
 
-      # Verify no isError field is present
-      refute Map.has_key?(result["content"], "isError")
+      # Verify no isError field is present in any content item
+      refute Enum.any?(result["content"], &Map.has_key?(&1, "isError"))
     end
 
     test "division by zero returns isError: true", %{client: client} do
@@ -191,15 +189,13 @@ defmodule ExMCP.ToolErrorTest do
         Client.call_tool(client, "divide", %{"dividend" => 10, "divisor" => 0}, format: :map)
 
       assert result == %{
-               "content" => %{
-                 "content" => [
-                   %{
-                     "type" => "text",
-                     "text" => "Division by zero error: Cannot divide 10 by 0"
-                   }
-                 ],
-                 "isError" => true
-               }
+               "content" => [
+                 %{
+                   "type" => "text",
+                   "text" => "Division by zero error: Cannot divide 10 by 0"
+                 }
+               ],
+               "isError" => true
              }
     end
 
@@ -208,15 +204,13 @@ defmodule ExMCP.ToolErrorTest do
         Client.call_tool(client, "fetch_data", %{"endpoint" => "unavailable"}, format: :map)
 
       assert result == %{
-               "content" => %{
-                 "content" => [
-                   %{
-                     "type" => "text",
-                     "text" => "Failed to fetch data: API rate limit exceeded"
-                   }
-                 ],
-                 "isError" => true
-               }
+               "content" => [
+                 %{
+                   "type" => "text",
+                   "text" => "Failed to fetch data: API rate limit exceeded"
+                 }
+               ],
+               "isError" => true
              }
     end
 
@@ -225,23 +219,21 @@ defmodule ExMCP.ToolErrorTest do
         Client.call_tool(client, "fetch_data", %{"endpoint" => "/api/status"}, format: :map)
 
       assert result == %{
-               "content" => %{
-                 "content" => [
-                   %{"type" => "text", "text" => "Data from /api/status: {\"status\": \"ok\"}"}
-                 ]
-               }
+               "content" => [
+                 %{"type" => "text", "text" => "Data from /api/status: {\"status\": \"ok\"}"}
+               ]
              }
 
-      refute Map.has_key?(result["content"], "isError")
+      refute Map.has_key?(result, "isError")
     end
 
     test "unknown tool returns protocol error, not isError", %{client: client} do
       # This should return a protocol error, not a successful response with isError
       {:error, error} = Client.call_tool(client, "unknown_tool", %{})
 
-      # The error should be a protocol-level error with string keys
-      assert error["code"] == -32000
-      assert error["message"] =~ "Unknown tool: unknown_tool"
+      # The error should be a protocol-level error with struct access
+      assert error.code == -32000
+      assert error.message =~ "Unknown tool: unknown_tool"
     end
   end
 end

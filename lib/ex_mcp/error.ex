@@ -51,6 +51,8 @@ defmodule ExMCP.Error do
 
   defexception [:code, :message, :data, :request_id]
 
+  @behaviour Access
+
   @type t :: %__MODULE__{
           code: integer() | atom(),
           message: String.t(),
@@ -360,6 +362,29 @@ defmodule ExMCP.Error do
   def category(%__MODULE__{code: @authorization_error}), do: "Authorization Error"
   def category(%__MODULE__{code: :connection_error}), do: "Connection Error"
   def category(%__MODULE__{}), do: "Unknown Error"
+
+  # Access behavior implementation
+  @impl Access
+  def fetch(error, key) when key in [:code, :message, :data, :request_id] do
+    {:ok, Map.get(error, key)}
+  end
+
+  def fetch(_error, _key), do: :error
+
+  @impl Access
+  def get_and_update(error, key, fun) when key in [:code, :message, :data, :request_id] do
+    {current_value, updated_value} = fun.(Map.get(error, key))
+    {current_value, Map.put(error, key, updated_value)}
+  end
+
+  def get_and_update(_error, _key, _fun), do: :error
+
+  @impl Access
+  def pop(error, key) when key in [:code, :message, :data, :request_id] do
+    {Map.get(error, key), Map.put(error, key, nil)}
+  end
+
+  def pop(_error, _key), do: :error
 
   # Exception behavior implementation
   @impl Exception

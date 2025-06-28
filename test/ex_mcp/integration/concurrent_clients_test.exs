@@ -1,8 +1,284 @@
+defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
+  @moduledoc false
+  use GenServer
+  @behaviour ExMCP.Server.Handler
+
+  # GenServer callbacks
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts)
+  end
+
+  @impl GenServer
+  def init(_opts) do
+    {:ok, %{request_count: 0}}
+  end
+
+  @impl GenServer
+  def handle_call({:initialize, params}, _from, state) do
+    case handle_initialize(params, state) do
+      {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
+      {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
+    end
+  end
+
+  def handle_call({:list_tools, cursor}, _from, state) do
+    case handle_list_tools(cursor, state) do
+      {:ok, tools, next_cursor, new_state} ->
+        {:reply, {:ok, %{"tools" => tools, "nextCursor" => next_cursor}, new_state}, new_state}
+
+      {:error, reason, new_state} ->
+        {:reply, {:error, reason, new_state}, new_state}
+    end
+  end
+
+  def handle_call({:call_tool, name, args}, _from, state) do
+    case handle_call_tool(name, args, state) do
+      {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
+      {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
+    end
+  end
+
+  def handle_call(:get_server_info, _from, state) do
+    server_info = %{
+      name: "concurrent-test-server",
+      version: "1.0.0"
+    }
+
+    {:reply, server_info, state}
+  end
+
+  def handle_call(:get_capabilities, _from, state) do
+    capabilities = %{
+      "tools" => %{},
+      "resources" => %{},
+      "prompts" => %{}
+    }
+
+    {:reply, capabilities, state}
+  end
+
+  # Handler behaviour callbacks
+  @impl ExMCP.Server.Handler
+
+  def handle_initialize(_params, state) do
+    {:ok,
+     %{
+       name: "concurrent-test-server",
+       version: "1.0.0",
+       capabilities: %{
+         tools: %{},
+         resources: %{},
+         prompts: %{}
+       }
+     }, state}
+  end
+
+  def handle_list_tools(_cursor, state) do
+    tools = [
+      %{
+        name: "slow_operation",
+        description: "Simulates a slow operation",
+        input_schema: %{
+          type: "object",
+          properties: %{
+            duration: %{type: "integer", description: "Duration in ms"}
+          },
+          required: ["duration"]
+        }
+      },
+      %{
+        name: "fast_operation",
+        description: "Simulates a fast operation",
+        input_schema: %{
+          type: "object",
+          properties: %{},
+          required: []
+        }
+      }
+    ]
+
+    {:ok, tools, nil, state}
+  end
+
+  def handle_call_tool("slow_operation", %{"duration" => duration}, state) do
+    Process.sleep(duration)
+    {:ok, %{content: [%{type: "text", text: "Completed after #{duration}ms"}]}, state}
+  end
+
+  def handle_call_tool("fast_operation", %{"value" => value}, state) do
+    {:ok, %{content: [%{type: "text", text: "Processed: #{value}"}]}, state}
+  end
+
+  def handle_call_tool(_name, _args, state) do
+    {:error, "Unknown tool", state}
+  end
+
+  # DSL server compatibility methods
+  def get_capabilities do
+    %{
+      "tools" => %{},
+      "resources" => %{},
+      "prompts" => %{}
+    }
+  end
+
+  def get_tools do
+    %{
+      "slow_operation" => %{
+        "name" => "slow_operation",
+        "description" => "Simulates a slow operation",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "duration" => %{"type" => "integer", "description" => "Duration in ms"}
+          },
+          "required" => ["duration"]
+        }
+      },
+      "fast_operation" => %{
+        "name" => "fast_operation",
+        "description" => "Simulates a fast operation",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{},
+          "required" => []
+        }
+      }
+    }
+  end
+
+  def get_resources, do: %{}
+  def get_prompts, do: %{}
+end
+
+defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
+  @moduledoc false
+  use GenServer
+  @behaviour ExMCP.Server.Handler
+
+  # GenServer callbacks
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts)
+  end
+
+  @impl GenServer
+  def init(_opts) do
+    {:ok, %{call_count: 0}}
+  end
+
+  @impl GenServer
+  def handle_call({:initialize, params}, _from, state) do
+    case handle_initialize(params, state) do
+      {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
+      {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
+    end
+  end
+
+  def handle_call({:list_tools, cursor}, _from, state) do
+    case handle_list_tools(cursor, state) do
+      {:ok, tools, next_cursor, new_state} ->
+        {:reply, {:ok, %{"tools" => tools, "nextCursor" => next_cursor}, new_state}, new_state}
+
+      {:error, reason, new_state} ->
+        {:reply, {:error, reason, new_state}, new_state}
+    end
+  end
+
+  def handle_call({:call_tool, name, args}, _from, state) do
+    case handle_call_tool(name, args, state) do
+      {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
+      {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
+    end
+  end
+
+  def handle_call(:get_server_info, _from, state) do
+    server_info = %{
+      name: "error-prone-server",
+      version: "1.0.0"
+    }
+
+    {:reply, server_info, state}
+  end
+
+  def handle_call(:get_capabilities, _from, state) do
+    capabilities = %{
+      "tools" => %{}
+    }
+
+    {:reply, capabilities, state}
+  end
+
+  # Handler behaviour callbacks
+  @impl ExMCP.Server.Handler
+
+  def handle_initialize(_params, state) do
+    {:ok,
+     %{
+       name: "error-prone-server",
+       version: "1.0.0",
+       capabilities: %{tools: %{}}
+     }, state}
+  end
+
+  def handle_list_tools(_cursor, state) do
+    {:ok,
+     [
+       %{
+         name: "unreliable",
+         description: "Sometimes fails",
+         input_schema: %{type: "object", properties: %{}}
+       }
+     ], nil, state}
+  end
+
+  def handle_call_tool("unreliable", _params, state) do
+    new_count = state.call_count + 1
+
+    # Fail every 3rd call
+    if rem(new_count, 3) == 0 do
+      {:error, "Simulated failure", %{state | call_count: new_count}}
+    else
+      {:ok, %{content: [%{type: "text", text: "Success #{new_count}"}]},
+       %{state | call_count: new_count}}
+    end
+  end
+
+  def handle_call_tool(_name, _args, state) do
+    {:error, "Unknown tool", state}
+  end
+
+  def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
+  def handle_read_resource(_uri, state), do: {:error, "Not found", state}
+  def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
+  def handle_get_prompt(_name, _params, state), do: {:error, "Not found", state}
+
+  # DSL server compatibility methods
+  def get_capabilities do
+    %{
+      "tools" => %{}
+    }
+  end
+
+  def get_tools do
+    %{
+      "unreliable" => %{
+        "name" => "unreliable",
+        "description" => "Sometimes fails",
+        "inputSchema" => %{"type" => "object", "properties" => %{}}
+      }
+    }
+  end
+
+  def get_resources, do: %{}
+  def get_prompts, do: %{}
+end
+
 defmodule ExMCP.Integration.ConcurrentClientsTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.Client
   alias ExMCP.HttpPlug
+  alias __MODULE__.{TestConcurrentHandler, ErrorProneHandler}
 
   @moduletag :integration
   @moduletag timeout: 60_000
@@ -10,72 +286,6 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
   setup do
     # Start a test HTTP server
     port = 8000 + :rand.uniform(1000)
-
-    # Define a test handler
-    defmodule TestConcurrentHandler do
-      @behaviour ExMCP.Server.Handler
-
-      def init(_args), do: {:ok, %{request_count: 0}}
-
-      def handle_initialize(_params, state) do
-        {:ok,
-         %{
-           name: "concurrent-test-server",
-           version: "1.0.0",
-           capabilities: %{
-             tools: %{},
-             resources: %{},
-             prompts: %{}
-           }
-         }, state}
-      end
-
-      def handle_list_tools(state) do
-        tools = [
-          %{
-            name: "slow_operation",
-            description: "Simulates a slow operation",
-            input_schema: %{
-              type: "object",
-              properties: %{
-                duration: %{type: "integer", description: "Duration in ms"}
-              },
-              required: ["duration"]
-            }
-          },
-          %{
-            name: "fast_operation",
-            description: "Simulates a fast operation",
-            input_schema: %{
-              type: "object",
-              properties: %{
-                value: %{type: "string"}
-              },
-              required: ["value"]
-            }
-          }
-        ]
-
-        {:ok, tools, state}
-      end
-
-      def handle_call_tool("slow_operation", %{"duration" => duration}, state) do
-        # Simulate slow work
-        Process.sleep(duration)
-        result = [%{type: "text", text: "Completed after #{duration}ms"}]
-        {:ok, result, %{state | request_count: state.request_count + 1}}
-      end
-
-      def handle_call_tool("fast_operation", %{"value" => value}, state) do
-        result = [%{type: "text", text: "Processed: #{value}"}]
-        {:ok, result, %{state | request_count: state.request_count + 1}}
-      end
-
-      def handle_list_resources(state), do: {:ok, [], state}
-      def handle_read_resource(_uri, state), do: {:error, "Not found", state}
-      def handle_list_prompts(state), do: {:ok, [], state}
-      def handle_get_prompt(_name, _params, state), do: {:error, "Not found", state}
-    end
 
     # Start HTTP server with our plug
     {:ok, _} =
@@ -106,16 +316,7 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
 
       clients =
         for i <- 1..client_count do
-          config =
-            ExMCP.ClientConfig.new()
-            |> ExMCP.ClientConfig.put_transport(:http)
-            |> ExMCP.ClientConfig.put_transport_options(
-              host: "localhost",
-              port: port,
-              path: "/"
-            )
-
-          {:ok, client} = Client.connect(config)
+          {:ok, client} = Client.connect("http://localhost:#{port}/")
           {i, client}
         end
 
@@ -148,16 +349,7 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
 
     test "concurrent tool calls work correctly", %{port: port} do
       # Create client
-      config =
-        ExMCP.ClientConfig.new()
-        |> ExMCP.ClientConfig.put_transport(:http)
-        |> ExMCP.ClientConfig.put_transport_options(
-          host: "localhost",
-          port: port,
-          path: "/"
-        )
-
-      {:ok, client} = Client.connect(config)
+      {:ok, client} = Client.connect("http://localhost:#{port}/")
 
       # Make concurrent tool calls
       task_count = 20
@@ -240,16 +432,7 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
       # Start multiple clients
       clients =
         for i <- 1..5 do
-          config =
-            ExMCP.ClientConfig.new()
-            |> ExMCP.ClientConfig.put_transport(:http)
-            |> ExMCP.ClientConfig.put_transport_options(
-              host: "localhost",
-              port: port,
-              path: "/"
-            )
-
-          {:ok, client} = Client.connect(config)
+          {:ok, client} = Client.connect("http://localhost:#{port}/")
           {i, client}
         end
 
@@ -311,6 +494,13 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
 
       port = 8000 + :rand.uniform(1000)
 
+      # Stop any existing server on this port first
+      try do
+        Plug.Cowboy.shutdown(:"Elixir.ExMCP.HttpPlug.HTTP#{port}")
+      catch
+        :exit, _ -> :ok
+      end
+
       # Start a rate-limited server
       {:ok, _} =
         Plug.Cowboy.http(
@@ -320,22 +510,14 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
             server_info: %{name: "rate-limited-server", version: "1.0.0"}
             # Rate limiting could be configured here
           ],
-          port: port
+          port: port,
+          ref: :"Elixir.ExMCP.HttpPlug.HTTP#{port}"
         )
 
       Process.sleep(100)
 
       # Create client
-      config =
-        ExMCP.ClientConfig.new()
-        |> ExMCP.ClientConfig.put_transport(:http)
-        |> ExMCP.ClientConfig.put_transport_options(
-          host: "localhost",
-          port: port,
-          path: "/"
-        )
-
-      {:ok, client} = Client.connect(config)
+      {:ok, client} = Client.connect("http://localhost:#{port}/")
 
       # Flood with requests
       flood_count = 100
@@ -380,52 +562,15 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
 
   describe "error handling under load" do
     test "server recovers from handler errors", %{port: port} do
-      # Create a handler that occasionally errors
-      defmodule ErrorProneHandler do
-        @behaviour ExMCP.Server.Handler
-
-        def init(_args), do: {:ok, %{call_count: 0}}
-
-        def handle_initialize(_params, state) do
-          {:ok,
-           %{
-             name: "error-prone-server",
-             version: "1.0.0",
-             capabilities: %{tools: %{}}
-           }, state}
-        end
-
-        def handle_list_tools(state) do
-          {:ok,
-           [
-             %{
-               name: "unreliable",
-               description: "Sometimes fails",
-               input_schema: %{type: "object", properties: %{}}
-             }
-           ], state}
-        end
-
-        def handle_call_tool("unreliable", _params, state) do
-          new_count = state.call_count + 1
-
-          # Fail every 3rd call
-          if rem(new_count, 3) == 0 do
-            {:error, "Simulated failure", %{state | call_count: new_count}}
-          else
-            {:ok, [%{type: "text", text: "Success #{new_count}"}],
-             %{state | call_count: new_count}}
-          end
-        end
-
-        def handle_list_resources(state), do: {:ok, [], state}
-        def handle_read_resource(_uri, state), do: {:error, "Not found", state}
-        def handle_list_prompts(state), do: {:ok, [], state}
-        def handle_get_prompt(_name, _params, state), do: {:error, "Not found", state}
-      end
-
       # Start server with error-prone handler
       error_port = port + 100
+
+      # Stop any existing server on this port first
+      try do
+        Plug.Cowboy.shutdown(:"Elixir.ExMCP.HttpPlug.HTTP#{error_port}")
+      catch
+        :exit, _ -> :ok
+      end
 
       {:ok, _} =
         Plug.Cowboy.http(
@@ -434,22 +579,14 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
             handler: ErrorProneHandler,
             server_info: %{name: "error-test", version: "1.0.0"}
           ],
-          port: error_port
+          port: error_port,
+          ref: :"Elixir.ExMCP.HttpPlug.HTTP#{error_port}"
         )
 
       Process.sleep(100)
 
       # Create client
-      config =
-        ExMCP.ClientConfig.new()
-        |> ExMCP.ClientConfig.put_transport(:http)
-        |> ExMCP.ClientConfig.put_transport_options(
-          host: "localhost",
-          port: error_port,
-          path: "/"
-        )
-
-      {:ok, client} = Client.connect(config)
+      {:ok, client} = Client.connect("http://localhost:#{error_port}/")
 
       # Make multiple calls
       results =

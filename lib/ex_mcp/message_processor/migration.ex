@@ -8,6 +8,7 @@ defmodule ExMCP.MessageProcessor.Migration do
   """
 
   alias ExMCP.MessageProcessor.Dispatcher
+  alias ExMCP.Protocol.ErrorCodes
 
   @doc """
   Replaces the three dispatch maps with a single unified dispatcher call.
@@ -76,7 +77,7 @@ defmodule ExMCP.MessageProcessor.Migration do
     %{
       "jsonrpc" => "2.0",
       "error" => %{
-        "code" => -32603,
+        "code" => ErrorCodes.internal_error(),
         "message" => message,
         "data" => data
       },

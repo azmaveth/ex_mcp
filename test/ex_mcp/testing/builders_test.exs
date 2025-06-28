@@ -247,7 +247,7 @@ defmodule ExMCP.Testing.BuildersTest do
         )
 
       assert resource["description"] == "REST API"
-      assert resource["mime_type"] == "application/json"
+      assert resource["mimeType"] == "application/json"
     end
 
     test "creates random resource" do

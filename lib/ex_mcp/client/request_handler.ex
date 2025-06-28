@@ -148,9 +148,8 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   def handle_single_response({:error, error, response_id}, state) do
-    # Convert raw error map to ExMCP.Error struct
-    error_struct = ExMCP.Error.from_json_rpc_error(error, request_id: response_id)
-    handle_response_by_id(response_id, {:error, error_struct}, state)
+    # Keep raw error data - let format handling in make_request decide how to format it
+    handle_response_by_id(response_id, {:error, error}, state)
   end
 
   def handle_single_response(other, state) do

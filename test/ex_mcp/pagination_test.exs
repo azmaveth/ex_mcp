@@ -197,7 +197,7 @@ defmodule ExMCP.PaginationTest do
       assert length(tools3) == 1
       assert [%{name: "tool7"}] = tools3
       # No more pages
-      refute Map.has_key?(result3, :nextCursor)
+      assert result3.nextCursor == nil
     end
 
     test "list_resources supports pagination", %{client: client} do
@@ -213,7 +213,7 @@ defmodule ExMCP.PaginationTest do
       assert length(resources2) == 2
       assert [%{uri: "file:///4"}, %{uri: "file:///5"}] = resources2
       # No more pages
-      refute Map.has_key?(result2, :nextCursor)
+      assert result2.nextCursor == nil
     end
 
     test "list_prompts supports pagination", %{client: client} do
@@ -229,7 +229,7 @@ defmodule ExMCP.PaginationTest do
       assert length(prompts2) == 1
       assert [%{name: "prompt4"}] = prompts2
       # No more pages
-      refute Map.has_key?(result2, :nextCursor)
+      assert result2.nextCursor == nil
     end
 
     test "pagination with nil cursor starts from beginning", %{client: client} do

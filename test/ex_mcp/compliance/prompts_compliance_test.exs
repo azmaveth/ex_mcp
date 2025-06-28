@@ -221,7 +221,14 @@ defmodule ExMCP.PromptsComplianceTest do
 
       # Check that reason is an error map with message
       assert is_map(reason)
-      message = reason["message"] || reason.message || "#{inspect(reason)}"
+
+      message =
+        case reason do
+          %{message: msg} -> msg
+          %{"message" => msg} -> msg
+          _ -> "#{inspect(reason)}"
+        end
+
       assert String.contains?(message, "Missing required arguments")
       assert String.contains?(message, "code")
       assert String.contains?(message, "language")
@@ -232,7 +239,14 @@ defmodule ExMCP.PromptsComplianceTest do
 
       # Check that reason is an error map with message
       assert is_map(reason)
-      message = reason["message"] || reason.message || "#{inspect(reason)}"
+
+      message =
+        case reason do
+          %{message: msg} -> msg
+          %{"message" => msg} -> msg
+          _ -> "#{inspect(reason)}"
+        end
+
       assert String.contains?(message, "Unknown prompt")
     end
 
@@ -335,7 +349,14 @@ defmodule ExMCP.PromptsComplianceTest do
 
       # Check that reason is an error map with message
       assert is_map(reason)
-      message = reason["message"] || reason.message || "#{inspect(reason)}"
+
+      message =
+        case reason do
+          %{message: msg} -> msg
+          %{"message" => msg} -> msg
+          _ -> "#{inspect(reason)}"
+        end
+
       assert String.contains?(message, "Missing required arguments: code")
     end
 

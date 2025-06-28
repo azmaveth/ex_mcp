@@ -30,6 +30,7 @@ defmodule ExMCP.Client do
   """
 
   alias ExMCP.Error
+  alias ExMCP.Protocol.ErrorCodes
 
   use GenServer
   require Logger
@@ -153,10 +154,23 @@ defmodule ExMCP.Client do
     {name_opts, start_opts} = Keyword.split(opts, [:name])
 
     case GenServer.start_link(__MODULE__, start_opts, name_opts) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, reason} when is_map(reason) -> {:error, reason}
-      {:error, {:shutdown, reason}} when is_map(reason) -> {:error, reason}
-      {:error, reason} -> {:error, reason}
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, reason} when is_map(reason) ->
+        {:error, reason}
+
+      {:error, {:shutdown, reason}} when is_map(reason) ->
+        {:error, reason}
+
+      {:error, {:shutdown, {:transport_connect_failed, details}}} ->
+        {:error, {:connection_error, details}}
+
+      {:error, {:shutdown, {:initialize_error, details}}} ->
+        {:error, {:initialize_error, details}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -671,12 +685,12 @@ defmodule ExMCP.Client do
           {:ok, final_state}
 
         {:error, reason} ->
-          Logger.error("Failed to establish connection: #{inspect(reason)}")
+          Logger.error("Failed to initialize MCP client: #{inspect(reason)}")
 
           # Return error in the original format for backward compatibility
           case reason do
             :invalid_request ->
-              {:stop, {:initialize_error, %{"code" => -32600}}}
+              {:stop, {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}}
 
             :connection_refused ->
               {:stop, {:transport_connect_failed, :connection_refused}}
@@ -684,9 +698,15 @@ defmodule ExMCP.Client do
             {:transport_error, details} ->
               {:stop, {:transport_connect_failed, details}}
 
+            {:method_not_found, message} ->
+              # Initialize method not found - this is an initialize error
+              {:stop,
+               {:initialize_error,
+                %{"code" => ErrorCodes.method_not_found(), "message" => message}}}
+
             error when is_binary(error) ->
               if String.contains?(error, "Handshake failed") do
-                {:stop, {:initialize_error, %{"code" => -32600}}}
+                {:stop, {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}}
               else
                 {:stop, {:transport_connect_failed, error}}
               end
@@ -728,11 +748,35 @@ defmodule ExMCP.Client do
       end
     end
 
-    # Reply to all pending requests with error
+    # Reply to all pending requests with connection error
+    connection_error = Error.connection_error("Client disconnected")
+
     state.pending_requests
-    |> Map.values()
-    |> Enum.uniq()
-    |> Enum.each(&GenServer.reply(&1, {:error, :disconnected}))
+    |> Enum.each(fn
+      {_id, {from, :single}} ->
+        GenServer.reply(from, {:error, connection_error})
+
+      {_id, {pid, ref}} when is_pid(pid) and is_reference(ref) ->
+        # Handle simple {pid, ref} tuples from older test code
+        GenServer.reply({pid, ref}, {:error, :disconnected})
+
+      {_batch_id, {from, :batch, ordered_ids, received_responses}}
+      when is_map(received_responses) ->
+        # For batch requests, we need to handle them specially
+        missing_responses =
+          ordered_ids
+          |> Enum.reject(&Map.has_key?(received_responses, &1))
+          |> Enum.map(fn id -> {id, {:error, connection_error}} end)
+          |> Map.new()
+
+        all_responses = Map.merge(received_responses, missing_responses)
+        ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
+        GenServer.reply(from, ordered_responses)
+
+      {_id, batch_id} when is_binary(batch_id) ->
+        # This is a request that's part of a batch
+        :ok
+    end)
 
     # Close transport connection
     if state.transport_mod && state.transport_state do
@@ -801,6 +845,52 @@ defmodule ExMCP.Client do
     Logger.error("Receiver task died: #{inspect(reason)}")
     # Note: Automatic reconnection logic could be implemented here
     {:noreply, %{state | connection_status: :disconnected}}
+  end
+
+  def handle_info({:transport_closed, reason}, state) do
+    Logger.error("Transport closed: #{inspect(reason)}")
+
+    # Reply to all pending requests with connection error
+    connection_error = Error.connection_error("Transport closed: #{inspect(reason)}")
+
+    state.pending_requests
+    |> Enum.each(fn
+      {_id, {from, :single}} ->
+        GenServer.reply(from, {:error, connection_error})
+
+      {_id, {pid, ref}} when is_pid(pid) and is_reference(ref) ->
+        # Handle simple {pid, ref} tuples from older test code
+        GenServer.reply({pid, ref}, {:error, connection_error})
+
+      {_batch_id, {from, :batch, ordered_ids, received_responses}}
+      when is_map(received_responses) ->
+        # For batch requests, we need to handle them specially
+        missing_responses =
+          ordered_ids
+          |> Enum.reject(&Map.has_key?(received_responses, &1))
+          |> Enum.map(fn id -> {id, {:error, connection_error}} end)
+          |> Map.new()
+
+        all_responses = Map.merge(received_responses, missing_responses)
+        ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
+        GenServer.reply(from, ordered_responses)
+
+      {_id, batch_id} when is_binary(batch_id) ->
+        # This is a request that's part of a batch
+        :ok
+    end)
+
+    # Clear transport references and update connection status
+    new_state = %{
+      state
+      | connection_status: :disconnected,
+        transport_mod: nil,
+        transport_state: nil,
+        pending_requests: %{},
+        pending_batches: %{}
+    }
+
+    {:noreply, new_state}
   end
 
   def handle_info(_msg, state) do
@@ -893,9 +983,14 @@ defmodule ExMCP.Client do
 
         :error ->
           # Try to get client's default timeout
-          case GenServer.call(client, :get_default_timeout, 5_000) do
-            {:ok, client_timeout} -> client_timeout
-            _ -> default_timeout
+          try do
+            case GenServer.call(client, :get_default_timeout, 5_000) do
+              {:ok, client_timeout} -> client_timeout
+              _ -> default_timeout
+            end
+          catch
+            :exit, {:timeout, _} -> default_timeout
+            :exit, _ -> default_timeout
           end
       end
 
@@ -916,9 +1011,14 @@ defmodule ExMCP.Client do
   end
 
   defp get_effective_retry_policy(client, :use_default, timeout) do
-    case GenServer.call(client, :get_default_retry_policy, timeout) do
-      {:ok, policy} -> policy
-      _ -> []
+    try do
+      case GenServer.call(client, :get_default_retry_policy, timeout) do
+        {:ok, policy} -> policy
+        _ -> []
+      end
+    catch
+      :exit, {:timeout, _} -> []
+      :exit, _ -> []
     end
   end
 
@@ -944,12 +1044,41 @@ defmodule ExMCP.Client do
     end
   end
 
-  defp handle_request_result({:error, error_data}, opts) when is_map(error_data) do
-    # Convert error maps to Error structs for backward compatibility
-    error_struct =
-      Error.from_json_rpc_error(error_data, request_id: Keyword.get(opts, :request_id))
+  defp handle_request_result({:error, %Error{}} = error, _opts) do
+    # Already an ExMCP.Error, return as-is
+    error
+  end
 
-    {:error, error_struct}
+  defp handle_request_result({:error, error_data}, opts) when is_map(error_data) do
+    case Keyword.get(opts, :format, :struct) do
+      :map ->
+        # Return error data as map when format is :map
+        {:error, error_data}
+
+      _ ->
+        # Convert error maps to Error structs for backward compatibility
+        error_struct =
+          Error.from_json_rpc_error(error_data, request_id: Keyword.get(opts, :request_id))
+
+        {:error, error_struct}
+    end
+  end
+
+  defp handle_request_result({:error, :not_connected}, _opts) do
+    # Preserve :not_connected atom for backward compatibility
+    {:error, :not_connected}
+  end
+
+  defp handle_request_result({:error, :timeout}, opts) do
+    case Keyword.get(opts, :format, :struct) do
+      :map ->
+        # Return timeout as atom when format is :map
+        {:error, :timeout}
+
+      _ ->
+        # Convert timeout to proper ExMCP.Error
+        {:error, Error.internal_error("Request timeout")}
+    end
   end
 
   defp handle_request_result(error, _opts), do: error

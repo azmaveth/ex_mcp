@@ -164,6 +164,10 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
           # This is the expected format if GenServer returns error properly
           :ok
 
+        {:error, {:initialize_error, %{"code" => code}}} when code in [-32600, -32000] ->
+          # This is the new format - initialization error with JSON-RPC error code
+          :ok
+
         {:ok, pid} ->
           # If the client starts successfully, wait for a potential delayed exit
           receive do
@@ -210,6 +214,10 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
           # This is the expected format if GenServer returns error properly
           :ok
 
+        {:error, {:initialize_error, %{"code" => code}}} when code in [-32600, -32000] ->
+          # This is the new format - initialization error with JSON-RPC error code
+          :ok
+
         {:ok, pid} ->
           # If the client starts successfully, wait for a potential delayed exit
           receive do
@@ -246,10 +254,9 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
       # Note: This test will fail if the MessageValidator does not correctly
       # check the protocol version before processing a batch.
       case Client.batch_request(client, batch) do
-        {:error, error} ->
-          # Invalid Request
-          assert error["code"] == -32600
-          assert error["message"] =~ "Batch requests are not supported"
+        {:error, %ExMCP.Error{code: -32600} = error} ->
+          # Invalid Request - error is an ExMCP.Error struct
+          assert error.message =~ "Batch requests are not supported"
 
         {:ok, _responses} ->
           flunk("Server incorrectly accepted a batch request for protocol version 2025-06-18.")
@@ -303,7 +310,7 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
     test "resources/subscribe is rejected in 2024-11-05" do
       {:ok, %{client: client}} = setup_connection("2024-11-05")
       {:error, error} = Client.subscribe_resource(client, "res://test")
-      assert error["message"] =~ "Method not supported in version 2024-11-05"
+      assert error.message =~ "Method not supported in version 2024-11-05"
     end
 
     test "completion/complete is allowed in 2025-06-18" do
@@ -324,7 +331,7 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
       {:ok, %{client: client}} = setup_connection("2024-11-05")
       ref = %{"type" => "ref/prompt", "name" => "test_prompt"}
       {:error, error} = Client.complete(client, ref, %{"name" => "p", "value" => "v"})
-      assert error["message"] =~ "Method not supported in version 2024-11-05"
+      assert error.message =~ "Method not supported in version 2024-11-05"
     end
   end
 end

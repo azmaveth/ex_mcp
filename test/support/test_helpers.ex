@@ -211,31 +211,83 @@ defmodule ExMCP.TestHelpers do
     # This is a simplified, non-Horde version for basic API tests.
     ensure_ranch_started()
     ensure_session_manager_started()
-    port = find_available_port(8080)
+    # Use a wider port range to avoid conflicts
+    base_port = 8080 + :rand.uniform(5000)
+    port = find_available_port(base_port)
 
     server_opts = [transport: :http, port: port, sse_enabled: false]
 
     # 1. Start the HTTP server using a real ExMCP.Server.
     case ApiTestServer.start_link(server_opts) do
       {:ok, pid} ->
+        # Give the server a moment to fully start and bind to port
+        Process.sleep(300)
         # Wait for the server to be ready to accept connections
-        :ok = wait_for_server_ready(port)
+        case wait_for_server_ready(port, 100) do
+          :ok -> :ok
+          {:error, reason} -> raise "Server not ready: #{inspect(reason)}"
+        end
 
         # 2. Register on_exit for the server process itself.
-        on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid, :shutdown, 500) end)
+        on_exit(fn ->
+          if Process.alive?(pid) do
+            GenServer.stop(pid, :shutdown, 500)
+            # Small delay to ensure port is released before next test
+            Process.sleep(100)
+          end
+        end)
 
         # 3. Return the context map required by the tests.
         %{http_url: "http://localhost:#{port}"}
 
-      {:error, {:transport_error, {:start_server_failed, _reason}}} ->
-        # Retry on a different port
+      {:error, reason} when reason in [:eaddrinuse, :eacces, :enotfound] ->
+        # Retry on a different port for common binding failures
         retry_port = find_available_port(port + 1)
         server_opts = [transport: :http, port: retry_port, sse_enabled: false]
 
         case ApiTestServer.start_link(server_opts) do
           {:ok, pid} ->
-            :ok = wait_for_server_ready(retry_port)
-            on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid, :shutdown, 500) end)
+            Process.sleep(300)
+
+            case wait_for_server_ready(retry_port, 100) do
+              :ok -> :ok
+              {:error, reason} -> raise "Server not ready on retry: #{inspect(reason)}"
+            end
+
+            on_exit(fn ->
+              if Process.alive?(pid) do
+                GenServer.stop(pid, :shutdown, 500)
+                Process.sleep(100)
+              end
+            end)
+
+            %{http_url: "http://localhost:#{retry_port}"}
+
+          {:error, reason} ->
+            raise "Failed to start test HTTP server on retry: #{inspect(reason)}"
+        end
+
+      {:error, {:transport_error, {:start_server_failed, _reason}}} ->
+        # Legacy error format - retry on a different port
+        retry_port = find_available_port(port + 1)
+        server_opts = [transport: :http, port: retry_port, sse_enabled: false]
+
+        case ApiTestServer.start_link(server_opts) do
+          {:ok, pid} ->
+            Process.sleep(300)
+
+            case wait_for_server_ready(retry_port, 100) do
+              :ok -> :ok
+              {:error, reason} -> raise "Server not ready on retry: #{inspect(reason)}"
+            end
+
+            on_exit(fn ->
+              if Process.alive?(pid) do
+                GenServer.stop(pid, :shutdown, 500)
+                Process.sleep(100)
+              end
+            end)
+
             %{http_url: "http://localhost:#{retry_port}"}
 
           {:error, reason} ->
@@ -415,22 +467,26 @@ defmodule ExMCP.TestHelpers do
     end
   end
 
-  defp find_available_port(preferred_port) do
+  defp find_available_port(preferred_port, max_attempts \\ 100) do
     case :gen_tcp.listen(preferred_port, []) do
       {:ok, socket} ->
         :gen_tcp.close(socket)
         preferred_port
 
-      {:error, :eaddrinuse} ->
-        find_available_port(preferred_port + 1)
+      {:error, :eaddrinuse} when max_attempts > 0 ->
+        find_available_port(preferred_port + 1, max_attempts - 1)
 
       {:error, _} ->
-        # Fallback to default if there's any other error
-        8080
+        # Fallback or raise error if we can't find any port
+        if max_attempts > 0 do
+          find_available_port(preferred_port + 1, max_attempts - 1)
+        else
+          raise "Could not find available port after 100 attempts starting from #{preferred_port - 100}"
+        end
     end
   end
 
-  defp wait_for_server_ready(port, attempts \\ 10) do
+  defp wait_for_server_ready(port, attempts \\ 50) do
     case :gen_tcp.connect(~c"localhost", port, []) do
       {:ok, socket} ->
         :gen_tcp.close(socket)
@@ -442,6 +498,26 @@ defmodule ExMCP.TestHelpers do
 
       {:error, reason} ->
         {:error, {:server_not_ready, reason}}
+    end
+  end
+
+  @doc """
+  Safely stops a GenServer process, ignoring if it's already dead.
+
+  This is a robust alternative to `GenServer.stop/1` for test teardown
+  that handles race conditions where processes might die before cleanup.
+  """
+  def safe_stop_process(pid_or_name, reason \\ :normal, timeout \\ 5000)
+      when is_pid(pid_or_name) or is_atom(pid_or_name) do
+    try do
+      if Process.alive?(pid_or_name) do
+        GenServer.stop(pid_or_name, reason, timeout)
+      end
+    catch
+      :exit, {:noproc, _} -> :ok
+      :exit, {:normal, _} -> :ok
+      :exit, {:shutdown, _} -> :ok
+      :exit, _ -> :ok
     end
   end
 end

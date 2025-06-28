@@ -42,7 +42,12 @@ defmodule ExMCP.Server.BeamServer do
     transport_opts = Keyword.get(opts, :transport, [])
 
     # Initialize transport in server mode
-    transport_opts = Keyword.put(transport_opts, :mode, :beam)
+    transport_opts =
+      case transport_opts do
+        opts when is_list(opts) -> Keyword.put(opts, :mode, :beam)
+        atom when is_atom(atom) -> [type: atom, mode: :beam]
+        _ -> [mode: :beam]
+      end
 
     case Local.connect(transport_opts) do
       {:ok, transport_state} ->

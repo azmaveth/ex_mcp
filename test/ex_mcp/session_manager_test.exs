@@ -28,27 +28,27 @@ defmodule ExMCP.SessionManagerTest do
       end
     end)
 
-    {:ok, session_manager: pid}
+    {:ok, session_manager: pid, session_manager_name: name}
   end
 
   describe "session lifecycle" do
-    test "creates new sessions with unique IDs" do
-      session_id1 = SessionManager.create_session(%{transport: :sse})
-      session_id2 = SessionManager.create_session(%{transport: :http})
+    test "creates new sessions with unique IDs", %{session_manager_name: name} do
+      session_id1 = GenServer.call(name, {:create_session, %{transport: :sse}})
+      session_id2 = GenServer.call(name, {:create_session, %{transport: :http}})
 
       assert is_binary(session_id1)
       assert is_binary(session_id2)
       assert session_id1 != session_id2
     end
 
-    test "stores session metadata" do
+    test "stores session metadata", %{session_manager_name: name} do
       metadata = %{
         transport: :sse,
         client_info: %{user_agent: "test-client/1.0", ip: "127.0.0.1"}
       }
 
-      session_id = SessionManager.create_session(metadata)
-      {:ok, session} = SessionManager.get_session(session_id)
+      session_id = GenServer.call(name, {:create_session, metadata})
+      {:ok, session} = GenServer.call(name, {:get_session, session_id})
 
       assert session.id == session_id
       assert session.transport == :sse
@@ -59,39 +59,42 @@ defmodule ExMCP.SessionManagerTest do
       assert session.event_count == 0
     end
 
-    test "updates session metadata and activity" do
-      session_id = SessionManager.create_session(%{transport: :sse})
-      {:ok, original_session} = SessionManager.get_session(session_id)
+    test "updates session metadata and activity", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
+      {:ok, original_session} = GenServer.call(name, {:get_session, session_id})
 
       # Sleep briefly to ensure timestamp difference
       Process.sleep(1)
 
       updates = %{client_info: %{version: "2.0"}}
-      :ok = SessionManager.update_session(session_id, updates)
+      :ok = GenServer.call(name, {:update_session, session_id, updates})
 
-      {:ok, updated_session} = SessionManager.get_session(session_id)
+      {:ok, updated_session} = GenServer.call(name, {:get_session, session_id})
       assert updated_session.client_info == updates.client_info
       assert updated_session.last_activity > original_session.last_activity
     end
 
-    test "terminates sessions" do
-      session_id = SessionManager.create_session(%{transport: :sse})
-      :ok = SessionManager.terminate_session(session_id)
+    test "terminates sessions", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
+      :ok = GenServer.call(name, {:terminate_session, session_id})
 
-      {:ok, session} = SessionManager.get_session(session_id)
+      {:ok, session} = GenServer.call(name, {:get_session, session_id})
       assert session.status == :terminated
     end
 
-    test "handles non-existent sessions gracefully" do
-      assert {:error, :session_not_found} = SessionManager.get_session("non-existent")
-      assert {:error, :session_not_found} = SessionManager.update_session("non-existent", %{})
-      assert :ok = SessionManager.terminate_session("non-existent")
+    test "handles non-existent sessions gracefully", %{session_manager_name: name} do
+      assert {:error, :session_not_found} = GenServer.call(name, {:get_session, "non-existent"})
+
+      assert {:error, :session_not_found} =
+               GenServer.call(name, {:update_session, "non-existent", %{}})
+
+      assert :ok = GenServer.call(name, {:terminate_session, "non-existent"})
     end
   end
 
   describe "event storage and replay" do
-    test "stores events for sessions" do
-      session_id = SessionManager.create_session(%{transport: :sse})
+    test "stores events for sessions", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
 
       event = %{
         id: "event-1",
@@ -101,15 +104,15 @@ defmodule ExMCP.SessionManagerTest do
         timestamp: System.system_time(:microsecond)
       }
 
-      assert :ok = SessionManager.store_event(session_id, event)
+      assert :ok = GenServer.call(name, {:store_event, session_id, event})
 
       # Verify session event count is updated
-      {:ok, session} = SessionManager.get_session(session_id)
+      {:ok, session} = GenServer.call(name, {:get_session, session_id})
       assert session.event_count == 1
     end
 
-    test "stores multiple events and maintains order" do
-      session_id = SessionManager.create_session(%{transport: :sse})
+    test "stores multiple events and maintains order", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
 
       events = [
         %{
@@ -135,10 +138,10 @@ defmodule ExMCP.SessionManagerTest do
         }
       ]
 
-      Enum.each(events, &SessionManager.store_event(session_id, &1))
+      Enum.each(events, &GenServer.call(name, {:store_event, session_id, &1}))
 
       # Verify all events can be replayed
-      replayed_events = SessionManager.replay_events_after(session_id, nil)
+      replayed_events = GenServer.call(name, {:replay_events_after, session_id, nil})
       assert length(replayed_events) == 3
 
       # Events should be in timestamp order
@@ -146,8 +149,8 @@ defmodule ExMCP.SessionManagerTest do
       assert messages == ["First", "Second", "Third"]
     end
 
-    test "replays events after specific event ID" do
-      session_id = SessionManager.create_session(%{transport: :sse})
+    test "replays events after specific event ID", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
 
       # Create events with sortable IDs
       base_time = System.system_time(:microsecond)
@@ -176,24 +179,24 @@ defmodule ExMCP.SessionManagerTest do
         }
       ]
 
-      Enum.each(events, &SessionManager.store_event(session_id, &1))
+      Enum.each(events, &GenServer.call(name, {:store_event, session_id, &1}))
 
       # Replay events after the first event
-      replayed_events = SessionManager.replay_events_after(session_id, "#{base_time}-1")
+      replayed_events = GenServer.call(name, {:replay_events_after, session_id, "#{base_time}-1"})
       assert length(replayed_events) == 2
 
       messages = Enum.map(replayed_events, & &1.data.message)
       assert messages == ["Second", "Third"]
     end
 
-    test "handles event replay for non-existent sessions" do
-      result = SessionManager.replay_events_after("non-existent", nil)
+    test "handles event replay for non-existent sessions", %{session_manager_name: name} do
+      result = GenServer.call(name, {:replay_events_after, "non-existent", nil})
       assert result == {:error, :session_not_found}
     end
 
-    test "prevents storing events for terminated sessions" do
-      session_id = SessionManager.create_session(%{transport: :sse})
-      :ok = SessionManager.terminate_session(session_id)
+    test "prevents storing events for terminated sessions", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
+      :ok = GenServer.call(name, {:terminate_session, session_id})
 
       event = %{
         id: "event-1",
@@ -203,12 +206,15 @@ defmodule ExMCP.SessionManagerTest do
         timestamp: System.system_time(:microsecond)
       }
 
-      assert {:error, :session_not_found} = SessionManager.store_event(session_id, event)
+      assert {:error, :session_not_found} =
+               GenServer.call(name, {:store_event, session_id, event})
     end
   end
 
   describe "SSE handler integration" do
     test "replays events to SSE handler process" do
+      # These tests use the global SessionManager since the 3-arg replay_events_after
+      # function internally calls the global API
       session_id = SessionManager.create_session(%{transport: :sse})
 
       # Create a mock SSE handler process
@@ -235,7 +241,7 @@ defmodule ExMCP.SessionManagerTest do
 
       SessionManager.store_event(session_id, event)
 
-      # Replay events to the handler
+      # Replay events to the handler (this function exists in the module API)
       :ok = SessionManager.replay_events_after(session_id, nil, mock_handler)
 
       # Verify the handler received the event
@@ -270,15 +276,15 @@ defmodule ExMCP.SessionManagerTest do
   end
 
   describe "session management" do
-    test "lists active sessions" do
-      session_id1 = SessionManager.create_session(%{transport: :sse})
-      session_id2 = SessionManager.create_session(%{transport: :http})
-      session_id3 = SessionManager.create_session(%{transport: :sse})
+    test "lists active sessions", %{session_manager_name: name} do
+      session_id1 = GenServer.call(name, {:create_session, %{transport: :sse}})
+      session_id2 = GenServer.call(name, {:create_session, %{transport: :http}})
+      session_id3 = GenServer.call(name, {:create_session, %{transport: :sse}})
 
       # Terminate one session
-      SessionManager.terminate_session(session_id2)
+      GenServer.call(name, {:terminate_session, session_id2})
 
-      sessions = SessionManager.list_sessions()
+      sessions = GenServer.call(name, :list_sessions)
       active_ids = Enum.map(sessions, & &1.id)
 
       assert length(sessions) == 2
@@ -287,10 +293,10 @@ defmodule ExMCP.SessionManagerTest do
       assert session_id2 not in active_ids
     end
 
-    test "provides session statistics" do
+    test "provides session statistics", %{session_manager_name: name} do
       # Create some sessions and events
-      session_id1 = SessionManager.create_session(%{transport: :sse})
-      session_id2 = SessionManager.create_session(%{transport: :http})
+      session_id1 = GenServer.call(name, {:create_session, %{transport: :sse}})
+      session_id2 = GenServer.call(name, {:create_session, %{transport: :http}})
 
       # Add events to first session
       for i <- 1..3 do
@@ -302,13 +308,13 @@ defmodule ExMCP.SessionManagerTest do
           timestamp: System.system_time(:microsecond)
         }
 
-        SessionManager.store_event(session_id1, event)
+        GenServer.call(name, {:store_event, session_id1, event})
       end
 
       # Terminate second session
-      SessionManager.terminate_session(session_id2)
+      GenServer.call(name, {:terminate_session, session_id2})
 
-      stats = SessionManager.get_stats()
+      stats = GenServer.call(name, :get_stats)
       assert stats.total_sessions == 2
       assert stats.active_sessions == 1
       assert stats.total_events == 3
@@ -320,7 +326,8 @@ defmodule ExMCP.SessionManagerTest do
   describe "event limits and cleanup" do
     test "trims old events when limit is exceeded" do
       # Use a small event limit for testing
-      {:ok, manager} = SessionManager.start_link(max_events_per_session: 2)
+      name = :"test_event_limit_#{System.unique_integer([:positive])}"
+      {:ok, manager} = SessionManager.start_link(name: name, max_events_per_session: 2)
 
       session_id = GenServer.call(manager, {:create_session, %{transport: :sse}})
 
@@ -398,14 +405,14 @@ defmodule ExMCP.SessionManagerTest do
   end
 
   describe "edge cases" do
-    test "handles empty event replay" do
-      session_id = SessionManager.create_session(%{transport: :sse})
-      events = SessionManager.replay_events_after(session_id, nil)
+    test "handles empty event replay", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
+      events = GenServer.call(name, {:replay_events_after, session_id, nil})
       assert events == []
     end
 
-    test "handles event replay with future event ID" do
-      session_id = SessionManager.create_session(%{transport: :sse})
+    test "handles event replay with future event ID", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
 
       # Store one event
       event = %{
@@ -416,16 +423,16 @@ defmodule ExMCP.SessionManagerTest do
         timestamp: System.system_time(:microsecond)
       }
 
-      SessionManager.store_event(session_id, event)
+      GenServer.call(name, {:store_event, session_id, event})
 
       # Request events after a future ID
       future_id = "#{System.system_time(:microsecond) + 10000}-999"
-      events = SessionManager.replay_events_after(session_id, future_id)
+      events = GenServer.call(name, {:replay_events_after, session_id, future_id})
       assert events == []
     end
 
-    test "handles invalid event ID formats" do
-      session_id = SessionManager.create_session(%{transport: :sse})
+    test "handles invalid event ID formats", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
 
       # Store events with non-standard IDs
       events = [
@@ -445,10 +452,10 @@ defmodule ExMCP.SessionManagerTest do
         }
       ]
 
-      Enum.each(events, &SessionManager.store_event(session_id, &1))
+      Enum.each(events, &GenServer.call(name, {:store_event, session_id, &1}))
 
       # Should fallback to string comparison
-      replayed_events = SessionManager.replay_events_after(session_id, "custom-event-1")
+      replayed_events = GenServer.call(name, {:replay_events_after, session_id, "custom-event-1"})
       assert length(replayed_events) == 1
       assert hd(replayed_events).data.message == "Second"
     end

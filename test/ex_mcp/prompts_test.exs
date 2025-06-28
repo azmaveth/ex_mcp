@@ -242,7 +242,7 @@ defmodule ExMCP.PromptsTest do
 
     test "get_prompt returns error for unknown prompt", %{client: client} do
       {:error, error} = Client.get_prompt(client, "unknown_prompt", %{})
-      assert error["message"] =~ "Prompt not found: unknown_prompt"
+      assert error.message =~ "Prompt not found: unknown_prompt"
     end
 
     test "get_prompt works with optional arguments", %{client: client} do

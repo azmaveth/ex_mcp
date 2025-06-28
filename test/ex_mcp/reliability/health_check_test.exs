@@ -385,7 +385,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
           %{"tools" => [%{"name" => "tool1"}, %{"name" => "tool2"}]}
         end)
 
-      # Override the SimpleClient module temporarily for testing
+      # Mock client check function for testing
       check_fn = fn client ->
         result = Agent.get(client, & &1)
         tool_count = length(Map.get(result, "tools", []))

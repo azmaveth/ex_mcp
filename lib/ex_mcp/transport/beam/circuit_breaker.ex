@@ -115,6 +115,23 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
   end
 
   @doc """
+  Checks if a request should be allowed and returns both the result and updated circuit breaker.
+  """
+  @spec allow_request_with_state?(t()) :: {boolean(), t()}
+  def allow_request_with_state?(%__MODULE__{} = circuit_breaker) do
+    updated_cb = check_state_transitions(circuit_breaker)
+
+    allowed =
+      case updated_cb.state do
+        :closed -> true
+        :half_open -> true
+        :open -> false
+      end
+
+    {allowed, updated_cb}
+  end
+
+  @doc """
   Records a successful operation and updates the circuit breaker state.
   """
   @spec record_success(t()) :: t()
@@ -277,7 +294,7 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
     current_time = System.system_time(:millisecond)
 
     if circuit_breaker.opened_at != nil and
-         current_time - circuit_breaker.opened_at >= circuit_breaker.config.timeout do
+         current_time - circuit_breaker.opened_at >= circuit_breaker.config.reset_timeout do
       # Transition to half-open
       %{
         circuit_breaker

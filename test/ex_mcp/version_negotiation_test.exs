@@ -11,6 +11,9 @@ defmodule ExMCP.VersionNegotiationTest do
     @supported_versions ["2025-03-26", "2025-06-18"]
 
     @impl true
+    def init(_args), do: {:ok, %{}}
+
+    @impl true
     def handle_initialize(params, state) do
       client_version = params["protocolVersion"]
       client_capabilities = params["capabilities"] || %{}
@@ -119,10 +122,10 @@ defmodule ExMCP.VersionNegotiationTest do
       {:ok, server_info} = Client.server_info(client)
       assert server_info["name"] == "test-version-server"
 
-      # Both should be using 2025-03-26 (latest)
+      # Both should be using 2025-06-18 (latest supported)
       # Now we can access the negotiated version from public API
       {:ok, negotiated_version} = Client.negotiated_version(client)
-      assert negotiated_version == "2025-03-26"
+      assert negotiated_version == "2025-06-18"
 
       # And verify the connection works
       {:ok, %{tools: tools}} = Client.list_tools(client)

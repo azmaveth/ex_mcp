@@ -1,5 +1,6 @@
 defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
   use ExUnit.Case, async: true
+  import Plug.Test
 
   alias ExMCP.HttpPlug
 
@@ -32,11 +33,7 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
     end
 
     test "returns authorization server metadata when OAuth is enabled", %{opts: opts} do
-      conn = %Plug.Conn{
-        method: "GET",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      conn = conn(:get, "/.well-known/oauth-authorization-server")
 
       result_conn = HttpPlug.call(conn, opts)
 
@@ -62,11 +59,7 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
     end
 
     test "includes CORS headers when CORS is enabled", %{opts: opts} do
-      conn = %Plug.Conn{
-        method: "GET",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      conn = conn(:get, "/.well-known/oauth-authorization-server")
 
       result_conn = HttpPlug.call(conn, opts)
 
@@ -84,11 +77,7 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
           oauth_enabled: false
         )
 
-      conn = %Plug.Conn{
-        method: "GET",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      conn = conn(:get, "/.well-known/oauth-authorization-server")
 
       result_conn = HttpPlug.call(conn, opts)
 
@@ -111,11 +100,7 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
           oauth_enabled: true
         )
 
-      conn = %Plug.Conn{
-        method: "GET",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      conn = conn(:get, "/.well-known/oauth-authorization-server")
 
       result_conn = HttpPlug.call(conn, opts)
 
@@ -132,22 +117,14 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
 
     test "handles different request methods correctly", %{opts: opts} do
       # POST should not match the route
-      post_conn = %Plug.Conn{
-        method: "POST",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      post_conn = conn(:post, "/.well-known/oauth-authorization-server")
 
       result_conn = HttpPlug.call(post_conn, opts)
       # Should fall through to the catch-all and return 404
       assert result_conn.status == 404
 
       # OPTIONS should be handled by CORS preflight
-      options_conn = %Plug.Conn{
-        method: "OPTIONS",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      options_conn = conn(:options, "/.well-known/oauth-authorization-server")
 
       cors_opts = %{opts | cors_enabled: true}
       result_conn = HttpPlug.call(options_conn, cors_opts)
@@ -156,11 +133,7 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
     end
 
     test "validates response format against RFC 8414", %{opts: opts} do
-      conn = %Plug.Conn{
-        method: "GET",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      conn = conn(:get, "/.well-known/oauth-authorization-server")
 
       result_conn = HttpPlug.call(conn, opts)
 
@@ -199,11 +172,7 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
     end
 
     test "caches responses appropriately", %{opts: opts} do
-      conn = %Plug.Conn{
-        method: "GET",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      conn = conn(:get, "/.well-known/oauth-authorization-server")
 
       result_conn = HttpPlug.call(conn, opts)
 
@@ -224,11 +193,7 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
         token_endpoint: "https://minimal.test.com/token"
       )
 
-      conn = %Plug.Conn{
-        method: "GET",
-        path_info: [".well-known", "oauth-authorization-server"],
-        req_headers: []
-      }
+      conn = conn(:get, "/.well-known/oauth-authorization-server")
 
       result_conn = HttpPlug.call(conn, opts)
 

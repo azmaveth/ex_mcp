@@ -301,7 +301,7 @@ defmodule ExMCP.Testing.MockServerTest do
       result =
         MockServer.with_server([], fn _client ->
           # Test that client is a valid PID
-          # In a real scenario, this would be used with SimpleClient
+          # In a real scenario, this would be used with ExMCP.Client
           :test_completed
         end)
 
@@ -340,7 +340,7 @@ defmodule ExMCP.Testing.MockServerTest do
       ]
 
       MockServer.with_server(config, fn _client ->
-        # In real usage, would call SimpleClient methods here
+        # In real usage, would call ExMCP.Client methods here
         # and verify they work with the mock data
         :test_with_config
       end)
@@ -394,7 +394,7 @@ defmodule ExMCP.Testing.MockServerTest do
         assert is_pid(client)
 
         # Try to list tools (should work with 0% error rate)
-        {:ok, result} = ExMCP.SimpleClient.list_tools(client)
+        {:ok, result} = ExMCP.Client.list_tools(client, format: :map)
         assert is_map(result)
         assert Map.has_key?(result, "tools")
         assert is_list(result["tools"])

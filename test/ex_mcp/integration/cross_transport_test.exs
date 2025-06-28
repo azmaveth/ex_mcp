@@ -425,8 +425,8 @@ defmodule ExMCP.Integration.CrossTransportTest do
         )
 
       {:error, error} = Client.call_tool(client, "error_tool", %{})
-      assert error["message"] == "\"Intentional test error\""
-      assert is_integer(error["code"])
+      assert error.message == "\"Intentional test error\""
+      assert is_integer(error.code)
 
       # Verify client is still operational after error
       {:ok, tools} = Client.list_tools(client)

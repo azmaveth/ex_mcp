@@ -15,8 +15,8 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
   alias ExMCP.Transport.SecurityGuard
 
   setup do
-    # Start ConsentCache for tests that need it
-    start_supervised!(ConsentCache)
+    # ConsentCache is already started by the application
+    # Just ensure clean state for each test
     :ok
   end
 

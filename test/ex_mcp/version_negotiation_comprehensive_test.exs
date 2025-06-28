@@ -10,7 +10,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
   @moduletag :protocol
   @moduletag :slow
 
-  alias ExMCP.{Client, Protocol, Server, VersionRegistry}
+  alias ExMCP.{Client, Protocol, Server}
+  alias ExMCP.Internal.VersionRegistry
 
   defmodule MultiVersionHandler do
     @moduledoc false

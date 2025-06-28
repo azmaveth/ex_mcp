@@ -56,37 +56,37 @@ defmodule ExMCP.MessageProcessorValidationTest do
     def handle_read_resource(_uri, state), do: {:error, "Not implemented", state}
 
     # GenServer callbacks needed when started as GenServer
-    def handle_call({:handle_list_tools, cursor}, _from, state) do
+    def handle_call({:list_tools, cursor}, _from, state) do
       {:ok, tools, next_cursor, new_state} = handle_list_tools(cursor, state)
       {:reply, {:ok, tools, next_cursor, new_state}, new_state}
     end
 
-    def handle_call({:handle_list_prompts, cursor}, _from, state) do
+    def handle_call({:list_prompts, cursor}, _from, state) do
       {:ok, prompts, next_cursor, new_state} = handle_list_prompts(cursor, state)
       {:reply, {:ok, prompts, next_cursor, new_state}, new_state}
     end
 
-    def handle_call({:handle_list_resources, cursor}, _from, state) do
+    def handle_call({:list_resources, cursor}, _from, state) do
       {:ok, resources, next_cursor, new_state} = handle_list_resources(cursor, state)
       {:reply, {:ok, resources, next_cursor, new_state}, new_state}
     end
 
-    def handle_call({:handle_call_tool, name, args}, _from, state) do
+    def handle_call({:call_tool, name, args}, _from, state) do
       result = handle_call_tool(name, args, state)
       {:reply, result, state}
     end
 
-    def handle_call({:handle_read_resource, uri}, _from, state) do
+    def handle_call({:read_resource, uri}, _from, state) do
       result = handle_read_resource(uri, state)
       {:reply, result, state}
     end
 
-    def handle_call({:handle_get_prompt, name, args}, _from, state) do
+    def handle_call({:get_prompt, name, args}, _from, state) do
       result = handle_get_prompt(name, args, state)
       {:reply, result, state}
     end
 
-    def handle_call({:handle_initialize, params}, _from, state) do
+    def handle_call({:initialize, params}, _from, state) do
       {:ok, result, new_state} = handle_initialize(params, state)
       {:reply, {:ok, result, new_state}, new_state}
     end
@@ -123,6 +123,14 @@ defmodule ExMCP.MessageProcessorValidationTest do
 
   describe "message processor routing validation" do
     test "handler server works correctly with new routing" do
+      # Start the handler server first
+      {:ok, server} =
+        ExMCP.Server.start_link(
+          transport: :test,
+          handler: MinimalHandler,
+          handler_args: []
+        )
+
       # Create a tools/list request
       request = %{
         "jsonrpc" => "2.0",
@@ -133,7 +141,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
 
       # Create connection with handler server
       conn = MessageProcessor.new(request, transport: :test)
-      opts = %{handler: MinimalHandler}
+      opts = %{server: server}
 
       # This should now work with the fixed routing
       result = MessageProcessor.process(conn, opts)
@@ -151,6 +159,9 @@ defmodule ExMCP.MessageProcessorValidationTest do
       # Check the actual structure returned
       tool = hd(tools)
       assert tool.name == "test_tool" || tool["name"] == "test_tool"
+
+      # Cleanup
+      GenServer.stop(server)
     end
 
     test "DSL server works correctly through message processor" do
@@ -202,6 +213,14 @@ defmodule ExMCP.MessageProcessorValidationTest do
     end
 
     test "handler routing works for multiple MCP methods" do
+      # Start the handler server first
+      {:ok, server} =
+        ExMCP.Server.start_link(
+          transport: :test,
+          handler: MinimalHandler,
+          handler_args: []
+        )
+
       # Test prompts/list
       request = %{
         "jsonrpc" => "2.0",
@@ -211,7 +230,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
       }
 
       conn = MessageProcessor.new(request, transport: :test)
-      opts = %{handler: MinimalHandler}
+      opts = %{server: server}
 
       # This should now work
       result = MessageProcessor.process(conn, opts)
@@ -228,6 +247,9 @@ defmodule ExMCP.MessageProcessorValidationTest do
       conn2 = MessageProcessor.new(request2, transport: :test)
       result2 = MessageProcessor.process(conn2, opts)
       assert result2.response["result"]["resources"] == []
+
+      # Cleanup
+      GenServer.stop(server)
     end
   end
 
@@ -237,7 +259,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
       {:ok, pid} = GenServer.start_link(MinimalHandler, [])
 
       # This is how the message processor SHOULD call handlers
-      result = GenServer.call(pid, {:handle_list_tools, nil})
+      result = GenServer.call(pid, {:list_tools, nil})
 
       assert {:ok, tools, _cursor, _state} = result
       assert length(tools) == 1
@@ -250,7 +272,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
       {:ok, pid} = GenServer.start_link(MinimalHandler, [])
 
       # Handler should be initialized and callable
-      result = GenServer.call(pid, {:handle_initialize, %{}})
+      result = GenServer.call(pid, {:initialize, %{}})
 
       assert {:ok, init_result, _state} = result
       assert init_result.protocolVersion == "2025-03-26"

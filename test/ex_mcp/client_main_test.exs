@@ -18,6 +18,7 @@ defmodule ExMCP.ClientMainTest do
           timeout_mode = Keyword.get(opts, :timeout_mode, false)
           fail_handshake = Keyword.get(opts, :fail_handshake, false)
           error_responses = Keyword.get(opts, :error_responses, %{})
+          no_response_methods = Keyword.get(opts, :no_response_methods, [])
 
           Agent.start_link(fn ->
             %{
@@ -25,7 +26,8 @@ defmodule ExMCP.ClientMainTest do
               responses: default_responses(),
               timeout_mode: timeout_mode,
               fail_handshake: fail_handshake,
-              error_responses: error_responses
+              error_responses: error_responses,
+              no_response_methods: no_response_methods
             }
           end)
       end
@@ -45,13 +47,32 @@ defmodule ExMCP.ClientMainTest do
       # Check if timeout mode is enabled
       timeout_mode = Agent.get(agent, & &1.timeout_mode)
 
-      if timeout_mode do
-        # Return timeout immediately for timeout tests
+      # Check if we've already handled the initialize
+      initialized =
+        Agent.get(agent, fn state ->
+          Map.get(state, :initialized, false)
+        end)
+
+      if timeout_mode and initialized do
+        # Return timeout for requests after initialization
         {:error, :timeout}
       else
         # Poll for messages with a reasonable timeout to simulate blocking
         # Poll every 50ms for up to 5 seconds
-        poll_for_message(agent, 50, 100)
+        result = poll_for_message(agent, 50, 100)
+
+        # Mark as initialized after successful initialize response
+        case result do
+          {:ok, response, _agent} when is_binary(response) ->
+            if String.contains?(response, "initialize") and String.contains?(response, "result") do
+              Agent.update(agent, fn state -> Map.put(state, :initialized, true) end)
+            end
+
+            result
+
+          _ ->
+            result
+        end
       end
     end
 
@@ -73,8 +94,16 @@ defmodule ExMCP.ClientMainTest do
         msg ->
           case Jason.decode!(msg) do
             %{"method" => method, "id" => _id} = request ->
-              response = get_mock_response(agent, method, request)
-              {:ok, response, agent}
+              # Check if this method should not get a response
+              no_response_methods = Agent.get(agent, & &1.no_response_methods)
+
+              if method in no_response_methods do
+                # Don't respond, just keep polling forever (simulate pending request)
+                Process.sleep(:infinity)
+              else
+                response = get_mock_response(agent, method, request)
+                {:ok, response, agent}
+              end
 
             %{"method" => "notifications/" <> _notification} ->
               # Notifications don't need responses, but we should continue polling
@@ -338,14 +367,15 @@ defmodule ExMCP.ClientMainTest do
       {:ok, client} = Client.start_link(transport: MockTransport, timeout_mode: true)
 
       # The GenServer.call should time out because the mock transport never replies.
-      assert {:error, :timeout} = Client.list_tools(client, timeout: 10)
+      assert {:error, %ExMCP.Error{code: -32603, message: "Internal error: Request timeout"}} =
+               Client.list_tools(client, timeout: 10)
     end
 
     test "handles transport errors", %{client: client} do
       # Simulate disconnection
       send(client, {:transport_closed, :connection_lost})
 
-      assert {:error, %ExMCP.Error{code: :connection_error}} = Client.list_tools(client)
+      assert {:error, :not_connected} = Client.list_tools(client)
     end
   end
 
@@ -559,7 +589,8 @@ defmodule ExMCP.ClientMainTest do
 
       assert {:ok, result} = Client.get_prompt(client, "greeting", %{"name" => "Alice"})
       assert [message] = result.messages
-      assert message["role"] == "user"
+      # Response struct provides atom keys
+      assert message.role == "user"
     end
 
     test "works with default empty arguments", %{client: client} do
@@ -618,23 +649,30 @@ defmodule ExMCP.ClientMainTest do
       assert status.connection_status == :disconnected
 
       # Requests should fail immediately
-      assert {:error, %ExMCP.Error{code: :connection_error}} = Client.list_tools(client)
+      assert {:error, :not_connected} = Client.list_tools(client)
     end
 
-    test "cancels pending requests on disconnection", %{client: client} do
+    test "cancels pending requests on disconnection" do
+      # Start client with a transport that won't respond to tools/call
+      {:ok, client} =
+        Client.start_link(
+          transport: MockTransport,
+          no_response_methods: ["tools/call"]
+        )
+
       # Start a request that won't get a response
       task =
         Task.async(fn ->
-          Client.call_tool(client, "slow", %{})
+          Client.call_tool(client, "test_tool", %{})
         end)
 
-      # Give it time to register
+      # Give it time to register the request
       Process.sleep(50)
 
-      # Disconnect
+      # Disconnect while request is still pending
       send(client, {:transport_closed, :error})
 
-      # Task should receive error
+      # Task should receive connection error
       assert {:error, %ExMCP.Error{code: :connection_error}} = Task.await(task)
     end
   end

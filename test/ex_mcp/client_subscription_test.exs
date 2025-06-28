@@ -5,6 +5,35 @@ defmodule ExMCP.ClientSubscriptionTest do
 
   @moduletag :subscription
 
+  # Helper to create a mock client that handles all required calls
+  defp create_mock_client(custom_handler \\ nil) do
+    spawn(fn ->
+      loop = fn loop ->
+        receive do
+          {:"$gen_call", from, :get_default_timeout} ->
+            GenServer.reply(from, {:ok, 5000})
+            loop.(loop)
+
+          {:"$gen_call", from, :get_default_retry_policy} ->
+            GenServer.reply(from, {:ok, []})
+            loop.(loop)
+
+          {:"$gen_call", from, message} when is_function(custom_handler) ->
+            response = custom_handler.(message)
+            GenServer.reply(from, response)
+            loop.(loop)
+
+          {:"$gen_call", from, {:request, method, params}} ->
+            # Default handler for requests
+            GenServer.reply(from, {:ok, %{}})
+            loop.(loop)
+        end
+      end
+
+      loop.(loop)
+    end)
+  end
+
   describe "Client.subscribe_resource/2" do
     test "creates proper subscription request" do
       # Mock GenServer.call to capture the request
@@ -12,11 +41,24 @@ defmodule ExMCP.ClientSubscriptionTest do
 
       client =
         spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:request, method, params}} ->
-              send(test_pid, {:captured_request, method, params})
-              GenServer.reply(from, {:ok, %{}})
+          loop = fn loop ->
+            receive do
+              {:"$gen_call", from, {:request, method, params}} ->
+                send(test_pid, {:captured_request, method, params})
+                GenServer.reply(from, {:ok, %{}})
+                loop.(loop)
+
+              {:"$gen_call", from, :get_default_timeout} ->
+                GenServer.reply(from, {:ok, 5000})
+                loop.(loop)
+
+              {:"$gen_call", from, :get_default_retry_policy} ->
+                GenServer.reply(from, {:ok, []})
+                loop.(loop)
+            end
           end
+
+          loop.(loop)
         end)
 
       # Test subscription
@@ -29,10 +71,23 @@ defmodule ExMCP.ClientSubscriptionTest do
     test "handles subscription success response" do
       client =
         spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:request, "resources/subscribe", _params}} ->
-              GenServer.reply(from, {:ok, %{}})
+          loop = fn loop ->
+            receive do
+              {:"$gen_call", from, {:request, "resources/subscribe", _params}} ->
+                GenServer.reply(from, {:ok, %{}})
+                loop.(loop)
+
+              {:"$gen_call", from, :get_default_timeout} ->
+                GenServer.reply(from, {:ok, 5000})
+                loop.(loop)
+
+              {:"$gen_call", from, :get_default_retry_policy} ->
+                GenServer.reply(from, {:ok, []})
+                loop.(loop)
+            end
           end
+
+          loop.(loop)
         end)
 
       assert {:ok, %{}} = Client.subscribe_resource(client, "file:///test.txt")
@@ -41,10 +96,23 @@ defmodule ExMCP.ClientSubscriptionTest do
     test "handles subscription error response" do
       client =
         spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:request, "resources/subscribe", _params}} ->
-              GenServer.reply(from, {:error, "Resource not found"})
+          loop = fn loop ->
+            receive do
+              {:"$gen_call", from, {:request, "resources/subscribe", _params}} ->
+                GenServer.reply(from, {:error, "Resource not found"})
+                loop.(loop)
+
+              {:"$gen_call", from, :get_default_timeout} ->
+                GenServer.reply(from, {:ok, 5000})
+                loop.(loop)
+
+              {:"$gen_call", from, :get_default_retry_policy} ->
+                GenServer.reply(from, {:ok, []})
+                loop.(loop)
+            end
           end
+
+          loop.(loop)
         end)
 
       assert {:error, "Resource not found"} =
@@ -53,12 +121,10 @@ defmodule ExMCP.ClientSubscriptionTest do
 
     test "supports timeout option" do
       client =
-        spawn(fn ->
-          receive do
-            {:"$gen_call", from, {:request, "resources/subscribe", _params}} ->
-              :timer.sleep(100)
-              GenServer.reply(from, {:ok, %{}})
-          end
+        create_mock_client(fn
+          {:request, "resources/subscribe", _params} ->
+            :timer.sleep(100)
+            {:ok, %{}}
         end)
 
       assert {:ok, %{}} = Client.subscribe_resource(client, "file:///slow.txt", timeout: 200)

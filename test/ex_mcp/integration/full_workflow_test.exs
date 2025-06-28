@@ -20,12 +20,12 @@ defmodule ExMCP.Integration.FullWorkflowTest do
 
       MockServer.with_server([tools: tools], fn client ->
         # 1. Initialize connection
-        # In real test, this would call SimpleClient.initialize()
+        # In real test, this would call ExMCP.Client.initialize()
         # Placeholder for client initialization
         assert true
 
         # 2. Discover available tools
-        # tools_result = SimpleClient.list_tools(client)
+        # tools_result = ExMCP.Client.list_tools(client)
         # assert_success(tools_result)
         # tool_list = tools_result.result["tools"]
 
@@ -72,7 +72,7 @@ defmodule ExMCP.Integration.FullWorkflowTest do
 
       MockServer.with_server([resources: resources], fn client ->
         # 1. Discover available resources
-        # resources_result = SimpleClient.list_resources(client)
+        # resources_result = ExMCP.Client.list_resources(client)
         # assert_success(resources_result)
         # resource_list = resources_result.result["resources"]
 
@@ -108,7 +108,7 @@ defmodule ExMCP.Integration.FullWorkflowTest do
 
       MockServer.with_server([prompts: prompts], fn client ->
         # 1. Discover available prompts
-        # prompts_result = SimpleClient.list_prompts(client)
+        # prompts_result = ExMCP.Client.list_prompts(client)
         # assert_success(prompts_result)
         # prompt_list = prompts_result.result["prompts"]
 
@@ -164,15 +164,15 @@ defmodule ExMCP.Integration.FullWorkflowTest do
     test "error handling and recovery workflow" do
       MockServer.with_server([error_rate: 0.0], fn _client ->
         # 1. Test invalid tool calls
-        # invalid_result = SimpleClient.call_tool(client, "nonexistent_tool", %{})
+        # invalid_result = ExMCP.Client.call_tool(client, "nonexistent_tool", %{})
         # assert_error(invalid_result)
 
         # 2. Test invalid resource access
-        # invalid_resource = SimpleClient.read_resource(client, "invalid://uri")
+        # invalid_resource = ExMCP.Client.read_resource(client, "invalid://uri")
         # assert_error(invalid_resource)
 
         # 3. Test invalid prompt requests
-        # invalid_prompt = SimpleClient.get_prompt(client, "nonexistent_prompt", %{})
+        # invalid_prompt = ExMCP.Client.get_prompt(client, "nonexistent_prompt", %{})
         # assert_error(invalid_prompt)
 
         # Simulate error scenarios
@@ -211,18 +211,18 @@ defmodule ExMCP.Integration.FullWorkflowTest do
         # Test that multiple operations maintain consistent state
 
         # 1. Multiple tool list calls should return consistent results
-        # result1 = SimpleClient.list_tools(client)
-        # result2 = SimpleClient.list_tools(client)
+        # result1 = ExMCP.Client.list_tools(client)
+        # result2 = ExMCP.Client.list_tools(client)
         # assert result1 == result2
 
         # 2. Resource lists should be consistent
-        # resource1 = SimpleClient.list_resources(client)
-        # resource2 = SimpleClient.list_resources(client)
+        # resource1 = ExMCP.Client.list_resources(client)
+        # resource2 = ExMCP.Client.list_resources(client)
         # assert resource1 == resource2
 
         # 3. Prompt lists should be consistent
-        # prompt1 = SimpleClient.list_prompts(client)
-        # prompt2 = SimpleClient.list_prompts(client)
+        # prompt1 = ExMCP.Client.list_prompts(client)
+        # prompt2 = ExMCP.Client.list_prompts(client)
         # assert prompt1 == prompt2
 
         # Placeholder for consistency testing
@@ -328,7 +328,7 @@ defmodule ExMCP.Integration.FullWorkflowTest do
 
   defp test_tool_execution(_client, tool_name, arguments) do
     # In real implementation, this would call:
-    # result = SimpleClient.call_tool(client, tool_name, arguments)
+    # result = ExMCP.Client.call_tool(client, tool_name, arguments)
     # assert_success(result)
     # assert_valid_tool_result(result)
     # result
@@ -343,7 +343,7 @@ defmodule ExMCP.Integration.FullWorkflowTest do
 
   defp test_resource_access(_client, uri) do
     # In real implementation, this would call:
-    # result = SimpleClient.read_resource(client, uri)
+    # result = ExMCP.Client.read_resource(client, uri)
     # assert_success(result)
     # result
 
@@ -356,7 +356,7 @@ defmodule ExMCP.Integration.FullWorkflowTest do
 
   defp test_prompt_generation(_client, prompt_name, arguments) do
     # In real implementation, this would call:
-    # result = SimpleClient.get_prompt(client, prompt_name, arguments)
+    # result = ExMCP.Client.get_prompt(client, prompt_name, arguments)
     # assert_success(result)
     # result
 
