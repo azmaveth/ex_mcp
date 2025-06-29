@@ -672,7 +672,11 @@ defmodule ExMCP.ClientTest do
 
       # Should get an error response
       case Task.await(task, 1000) do
-        {:error, error} ->
+        {:error, error} when is_map(error) ->
+          assert error["code"] == -32601
+          assert error["message"] =~ "Method not found"
+
+        {:error, %ExMCP.Error{} = error} ->
           assert error.code == -32601
           assert error.message =~ "Method not found"
 

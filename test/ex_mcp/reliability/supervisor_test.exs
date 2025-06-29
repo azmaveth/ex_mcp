@@ -170,7 +170,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert {:error, _reason} =
                ReliabilitySupervisor.create_reliable_client(
                  supervisor,
-                 transport: [type: :stdio, command: "/nonexistent/command"]
+                 transport: [type: :stdio, command: ["/nonexistent/command"]]
                )
     end
 

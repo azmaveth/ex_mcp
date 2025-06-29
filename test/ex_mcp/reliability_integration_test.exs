@@ -197,16 +197,25 @@ defmodule ExMCP.ReliabilityIntegrationTest do
       defmodule RecoveringTransport do
         @behaviour ExMCP.Transport
 
-        def connect(_opts), do: {:ok, %{attempts: 0}}
-
-        def send_message(_msg, %{attempts: attempts} = state) when attempts < 2 do
-          {:error, :temporary_failure}
+        def connect(_opts) do
+          # Use an Agent to track state across calls
+          {:ok, agent} = Agent.start_link(fn -> %{attempts: 0} end)
+          {:ok, %{agent: agent}}
         end
 
-        def send_message(_msg, state), do: {:ok, %{state | attempts: state.attempts + 1}}
+        def send_message(_msg, %{agent: agent} = state) do
+          attempts = Agent.get(agent, & &1.attempts)
+
+          if attempts < 2 do
+            {:error, :temporary_failure}
+          else
+            Agent.update(agent, fn s -> %{s | attempts: s.attempts + 1} end)
+            {:ok, state}
+          end
+        end
 
         def receive_message(state), do: {:ok, "response", state}
-        def close(_state), do: :ok
+        def close(%{agent: agent}), do: Agent.stop(agent)
         def connected?(_state), do: true
       end
 
@@ -226,14 +235,15 @@ defmodule ExMCP.ReliabilityIntegrationTest do
       assert {:error, :temporary_failure} =
                ReliabilityWrapper.send_message("test2", wrapped_state)
 
-      # Circuit should be open (may still return the transport error initially)
+      # Circuit should be open
       result = ReliabilityWrapper.send_message("test3", wrapped_state)
-
-      assert match?({:error, :circuit_open}, result) or
-               match?({:error, :temporary_failure}, result)
+      assert {:error, :circuit_open} = result
 
       # Wait for reset timeout (need more time for half-open transition)
       :timer.sleep(150)
+
+      # Update the Agent state to allow success
+      Agent.update(transport_state.agent, fn s -> %{s | attempts: 2} end)
 
       # Next call should succeed and close the circuit
       assert {:ok, _} = ReliabilityWrapper.send_message("test4", wrapped_state)

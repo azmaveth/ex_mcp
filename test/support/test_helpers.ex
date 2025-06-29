@@ -207,15 +207,20 @@ defmodule ExMCP.TestHelpers do
         end
       end
   """
-  def start_test_servers_for_api(_context) do
+  def start_test_servers_for_api(context) do
     # This is a simplified, non-Horde version for basic API tests.
     ensure_ranch_started()
     ensure_session_manager_started()
+
+    # Generate unique server name to avoid conflicts
+    test_name = Map.get(context, :test, :default_test)
+    server_name = :"ApiTestServer_#{test_name}_#{System.unique_integer([:positive])}"
+
     # Use a wider port range to avoid conflicts
     base_port = 8080 + :rand.uniform(5000)
     port = find_available_port(base_port)
 
-    server_opts = [transport: :http, port: port, sse_enabled: false]
+    server_opts = [transport: :http, port: port, sse_enabled: false, name: server_name]
 
     # 1. Start the HTTP server using a real ExMCP.Server.
     case ApiTestServer.start_link(server_opts) do
@@ -230,15 +235,41 @@ defmodule ExMCP.TestHelpers do
 
         # 2. Register on_exit for the server process itself.
         on_exit(fn ->
-          if Process.alive?(pid) do
-            GenServer.stop(pid, :shutdown, 500)
-            # Small delay to ensure port is released before next test
-            Process.sleep(100)
-          end
+          safe_stop_process(server_name)
+          # Small delay to ensure port is released before next test
+          Process.sleep(100)
         end)
 
         # 3. Return the context map required by the tests.
         %{http_url: "http://localhost:#{port}"}
+
+      {:error, {:already_started, _pid}} ->
+        # Try stopping the existing server and retry
+        safe_stop_process(server_name)
+        Process.sleep(200)
+
+        # Retry with same options
+        case ApiTestServer.start_link(server_opts) do
+          {:ok, pid} ->
+            Process.sleep(300)
+
+            case wait_for_server_ready(port, 100) do
+              :ok ->
+                on_exit(fn ->
+                  safe_stop_process(server_name)
+                  Process.sleep(100)
+                end)
+
+                %{http_url: "http://localhost:#{port}"}
+
+              {:error, reason} ->
+                safe_stop_process(server_name)
+                raise "Server not ready after restart: #{inspect(reason)}"
+            end
+
+          {:error, reason} ->
+            raise "Failed to restart test HTTP server: #{inspect(reason)}"
+        end
 
       {:error, reason} when reason in [:eaddrinuse, :eacces, :enotfound] ->
         # Retry on a different port for common binding failures
@@ -510,7 +541,14 @@ defmodule ExMCP.TestHelpers do
   def safe_stop_process(pid_or_name, reason \\ :normal, timeout \\ 5000)
       when is_pid(pid_or_name) or is_atom(pid_or_name) do
     try do
-      if Process.alive?(pid_or_name) do
+      # For atoms, we need to check if the process exists first
+      should_stop =
+        case pid_or_name do
+          pid when is_pid(pid) -> Process.alive?(pid)
+          name when is_atom(name) -> Process.whereis(name) != nil
+        end
+
+      if should_stop do
         GenServer.stop(pid_or_name, reason, timeout)
       end
     catch

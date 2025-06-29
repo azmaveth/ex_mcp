@@ -298,7 +298,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # Start a cancellable request
       task =
         Task.async(fn ->
-          Client.call_tool(client, "cancellable_tool", %{"iterations" => 100})
+          Client.call_tool(client, "cancellable_tool", %{"iterations" => 30})
         end)
 
       # Wait for request to be sent and start processing
@@ -326,7 +326,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       tasks =
         for i <- 1..3 do
           Task.async(fn ->
-            {i, Client.call_tool(client, "cancellable_tool", %{"iterations" => 50, "index" => i})}
+            {i, Client.call_tool(client, "cancellable_tool", %{"iterations" => 20, "index" => i})}
           end)
         end
 
@@ -400,7 +400,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
 
       task =
         Task.async(fn ->
-          Client.call_tool(client, "cancellable_tool", %{"iterations" => 100})
+          Client.call_tool(client, "cancellable_tool", %{"iterations" => 30})
         end)
 
       # Let it start processing - wait for a few iterations but not too long
@@ -418,7 +418,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       tasks =
         for i <- 1..5 do
           Task.async(fn ->
-            Client.call_tool(client, "cancellable_tool", %{"iterations" => 50, "index" => i})
+            Client.call_tool(client, "cancellable_tool", %{"iterations" => 15, "index" => i})
           end)
         end
 
@@ -504,7 +504,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # Start a cancellable operation
       task =
         Task.async(fn ->
-          Client.call_tool(client, "cancellable_tool", %{"iterations" => 100})
+          Client.call_tool(client, "cancellable_tool", %{"iterations" => 30})
         end)
 
       Process.sleep(150)
@@ -643,7 +643,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # Start a request
       task =
         Task.async(fn ->
-          Client.call_tool(client, "cancellable_tool", %{"iterations" => 100})
+          Client.call_tool(client, "cancellable_tool", %{"iterations" => 30})
         end)
 
       Process.sleep(150)

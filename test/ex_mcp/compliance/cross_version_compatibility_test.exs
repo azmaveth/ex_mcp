@@ -258,6 +258,10 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
           # Invalid Request - error is an ExMCP.Error struct
           assert error.message =~ "Batch requests are not supported"
 
+        {:error, %{"code" => -32600, "message" => message}} ->
+          # Invalid Request - error is a plain map
+          assert message =~ "Batch requests are not supported in protocol version 2025-06-18"
+
         {:ok, _responses} ->
           flunk("Server incorrectly accepted a batch request for protocol version 2025-06-18.")
       end

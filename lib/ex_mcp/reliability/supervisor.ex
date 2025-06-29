@@ -80,39 +80,80 @@ defmodule ExMCP.Reliability.Supervisor do
   @spec create_reliable_client(Supervisor.supervisor(), keyword()) ::
           {:ok, pid()} | {:error, term()}
   def create_reliable_client(supervisor \\ __MODULE__, opts) do
-    client_id = Keyword.get(opts, :id, generate_client_id())
-    transport_opts = Keyword.take(opts, [:transport, :transports])
+    # Verify supervisor is valid
+    with :ok <- verify_supervisor(supervisor) do
+      client_id = Keyword.get(opts, :id, generate_client_id())
+      transport_opts = Keyword.take(opts, [:transport, :transports])
 
-    case ExMCP.Client.start_link(transport_opts) do
-      {:ok, client_pid} ->
-        case maybe_start_circuit_breaker(supervisor, client_id, opts) do
-          {:ok, breaker_pid} ->
-            case maybe_start_health_check(supervisor, client_id, client_pid, opts) do
-              {:ok, health_pid} ->
-                create_wrapper_and_cleanup(
-                  supervisor,
-                  client_id,
-                  client_pid,
-                  breaker_pid,
-                  health_pid,
-                  opts
-                )
+      # Trap exits to handle client startup failures gracefully
+      Process.flag(:trap_exit, true)
+
+      result =
+        case ExMCP.Client.start_link(transport_opts) do
+          {:ok, client_pid} ->
+            # Restore original trap_exit setting
+            Process.flag(:trap_exit, false)
+
+            case maybe_start_circuit_breaker(supervisor, client_id, opts) do
+              {:ok, breaker_pid} ->
+                case maybe_start_health_check(supervisor, client_id, client_pid, opts) do
+                  {:ok, health_pid} ->
+                    create_wrapper_and_cleanup(
+                      supervisor,
+                      client_id,
+                      client_pid,
+                      breaker_pid,
+                      health_pid,
+                      opts
+                    )
+
+                  error ->
+                    # health check failed
+                    cleanup_pids([client_pid, breaker_pid])
+                    error
+                end
 
               error ->
-                # health check failed
-                cleanup_pids([client_pid, breaker_pid])
+                # circuit breaker failed
+                cleanup_pids([client_pid])
                 error
             end
 
           error ->
-            # circuit breaker failed
-            cleanup_pids([client_pid])
+            # Restore original trap_exit setting
+            Process.flag(:trap_exit, false)
+            # client failed
             error
         end
 
-      error ->
-        # client failed
-        error
+      # Handle any EXIT messages from client startup failures
+      receive do
+        {:EXIT, _pid, {:transport_connect_failed, reason}} ->
+          {:error, {:transport_connect_failed, reason}}
+
+        {:EXIT, _pid, {:initialize_error, reason}} ->
+          {:error, {:initialize_error, reason}}
+
+        {:EXIT, _pid, reason} ->
+          {:error, {:client_start_failed, reason}}
+      after
+        0 -> result
+      end
+    end
+  end
+
+  defp verify_supervisor(supervisor) when is_atom(supervisor) do
+    case Process.whereis(supervisor) do
+      nil -> {:error, {:supervisor_not_found, supervisor}}
+      _pid -> :ok
+    end
+  end
+
+  defp verify_supervisor(supervisor) when is_pid(supervisor) do
+    if Process.alive?(supervisor) do
+      :ok
+    else
+      {:error, {:supervisor_not_alive, supervisor}}
     end
   end
 
@@ -227,55 +268,123 @@ defmodule ExMCP.Reliability.Supervisor do
   end
 
   # Helper functions to find child supervisor names from a running supervisor
-  defp find_circuit_breaker_supervisor(supervisor) do
-    children = Supervisor.which_children(supervisor)
+  @doc false
+  def find_circuit_breaker_supervisor(supervisor) do
+    try do
+      children = Supervisor.which_children(supervisor)
 
-    cb_supervisor =
-      Enum.find_value(children, fn
-        {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
-          name_str = Atom.to_string(name)
-          if String.contains?(name_str, "CircuitBreakerSupervisor"), do: name
+      cb_supervisor =
+        Enum.find_value(children, fn
+          {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
+            name_str = Atom.to_string(name)
+            if String.contains?(name_str, "CircuitBreakerSupervisor"), do: name
 
-        _ ->
-          nil
-      end)
+          _ ->
+            nil
+        end)
 
-    # Fallback to default if not found (backwards compatibility)
-    cb_supervisor || circuit_breaker_supervisor()
+      # If not found, try to get supervisor name for fallback
+      cb_supervisor || get_circuit_breaker_supervisor_name(supervisor)
+    catch
+      :exit, {:noproc, _} ->
+        # Supervisor is not running, return the default
+        circuit_breaker_supervisor()
+    end
   end
 
   defp find_health_check_supervisor(supervisor) do
-    children = Supervisor.which_children(supervisor)
+    try do
+      children = Supervisor.which_children(supervisor)
 
-    hc_supervisor =
-      Enum.find_value(children, fn
-        {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
-          name_str = Atom.to_string(name)
-          if String.contains?(name_str, "HealthCheckSupervisor"), do: name
+      hc_supervisor =
+        Enum.find_value(children, fn
+          {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
+            name_str = Atom.to_string(name)
+            if String.contains?(name_str, "HealthCheckSupervisor"), do: name
 
-        _ ->
-          nil
-      end)
+          _ ->
+            nil
+        end)
 
-    # Fallback to default if not found (backwards compatibility)
-    hc_supervisor || health_check_supervisor()
+      # If not found, try to get supervisor name for fallback
+      hc_supervisor || get_health_check_supervisor_name(supervisor)
+    catch
+      :exit, {:noproc, _} ->
+        # Supervisor is not running, return the default
+        health_check_supervisor()
+    end
   end
 
   defp find_reliability_registry(supervisor) do
-    children = Supervisor.which_children(supervisor)
+    try do
+      children = Supervisor.which_children(supervisor)
 
-    registry =
-      Enum.find_value(children, fn
-        {name, _pid, :worker, [Registry]} when is_atom(name) ->
-          name_str = Atom.to_string(name)
-          if String.contains?(name_str, "Registry"), do: name
+      registry =
+        Enum.find_value(children, fn
+          {name, _pid, :worker, [Registry]} when is_atom(name) ->
+            name_str = Atom.to_string(name)
+            if String.contains?(name_str, "Registry"), do: name
 
-        _ ->
-          nil
-      end)
+          _ ->
+            nil
+        end)
 
-    # Fallback to default if not found (backwards compatibility)
-    registry || reliability_registry()
+      # If not found, try to get supervisor name for fallback
+      registry || get_reliability_registry_name(supervisor)
+    catch
+      :exit, {:noproc, _} ->
+        # Supervisor is not running, return the default
+        reliability_registry()
+    end
+  end
+
+  # Helper functions to get the correct child names based on supervisor
+  defp get_circuit_breaker_supervisor_name(supervisor) when is_pid(supervisor) do
+    # Try to get the registered name of the supervisor
+    case Process.info(supervisor, :registered_name) do
+      {:registered_name, name} when is_atom(name) and name != [] ->
+        circuit_breaker_supervisor(name)
+
+      _ ->
+        # No registered name, use default
+        circuit_breaker_supervisor()
+    end
+  end
+
+  defp get_circuit_breaker_supervisor_name(supervisor) when is_atom(supervisor) do
+    circuit_breaker_supervisor(supervisor)
+  end
+
+  defp get_health_check_supervisor_name(supervisor) when is_pid(supervisor) do
+    # Try to get the registered name of the supervisor
+    case Process.info(supervisor, :registered_name) do
+      {:registered_name, name} when is_atom(name) and name != [] ->
+        health_check_supervisor(name)
+
+      _ ->
+        # No registered name, use default
+        health_check_supervisor()
+    end
+  end
+
+  defp get_health_check_supervisor_name(supervisor) when is_atom(supervisor) do
+    health_check_supervisor(supervisor)
+  end
+
+  defp get_reliability_registry_name(supervisor) when is_pid(supervisor) do
+    # Try to get the registered name of the supervisor
+    case Process.info(supervisor, :registered_name) do
+      {:registered_name, name} when is_atom(name) and name != [] ->
+        reliability_registry(name)
+
+      _ ->
+        # No registered name, use default
+        reliability_registry()
+    end
+  end
+
+  defp get_reliability_registry_name(supervisor) when is_atom(supervisor) do
+    reliability_registry(supervisor)
   end
 
   defp generate_client_id do
@@ -446,6 +555,28 @@ defmodule ExMCP.Reliability do
         :reset_timeout
       ])
 
+    # Find the circuit breaker supervisor from the main reliability supervisor
+    # First try to find the running ExMCP.Reliability.Supervisor
+    cb_supervisor =
+      case Process.whereis(ExMCP.Reliability.Supervisor) do
+        nil ->
+          # If not found, the application might not be started
+          # Start a temporary supervisor for testing
+          {:ok, temp_sup} = ExMCP.Reliability.Supervisor.start_link()
+          # Give it time to start children
+          Process.sleep(50)
+
+          # Find the circuit breaker supervisor within it
+          cb_sup = ExMCP.Reliability.Supervisor.find_circuit_breaker_supervisor(temp_sup)
+
+          # Note: In tests, this supervisor will be cleaned up when the test process exits
+          cb_sup
+
+        sup_pid ->
+          # Use the existing supervisor
+          ExMCP.Reliability.Supervisor.find_circuit_breaker_supervisor(sup_pid)
+      end
+
     # Create or get circuit breaker
     breaker_pid =
       case cb_opts[:name] do
@@ -453,7 +584,7 @@ defmodule ExMCP.Reliability do
           # Start anonymous circuit breaker
           {:ok, pid} =
             DynamicSupervisor.start_child(
-              ExMCP.Reliability.Supervisor.CircuitBreakerSupervisor,
+              cb_supervisor,
               {ExMCP.Reliability.CircuitBreaker, cb_opts}
             )
 
@@ -464,7 +595,7 @@ defmodule ExMCP.Reliability do
           case Process.whereis(name) do
             nil ->
               case DynamicSupervisor.start_child(
-                     ExMCP.Reliability.Supervisor.CircuitBreakerSupervisor,
+                     cb_supervisor,
                      {ExMCP.Reliability.CircuitBreaker, Keyword.put(cb_opts, :name, name)}
                    ) do
                 {:ok, pid} -> pid
@@ -477,6 +608,7 @@ defmodule ExMCP.Reliability do
       end
 
     # Return a function that uses both circuit breaker and retry
+    # For simplicity, always expect a list of arguments (even if empty)
     fn args ->
       cb_timeout = Keyword.get(cb_opts, :timeout, 5000)
 
@@ -485,7 +617,21 @@ defmodule ExMCP.Reliability do
              breaker_pid,
              fn ->
                # Inside circuit breaker, apply retry logic
-               Retry.with_retry(fn -> apply(fun, args) end, Retry.mcp_defaults(retry_opts))
+               Retry.with_retry(
+                 fn ->
+                   # Determine function arity and call appropriately
+                   case :erlang.fun_info(fun)[:arity] do
+                     0 -> fun.()
+                     1 when is_list(args) and length(args) == 1 -> fun.(hd(args))
+                     # If args is not a list, pass it directly
+                     1 -> fun.(args)
+                     _ when is_list(args) -> apply(fun, args)
+                     # Fallback
+                     _ -> fun.(args)
+                   end
+                 end,
+                 Retry.mcp_defaults(retry_opts)
+               )
              end,
              cb_timeout
            ) do

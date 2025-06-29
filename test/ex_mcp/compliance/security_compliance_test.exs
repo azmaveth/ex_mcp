@@ -16,7 +16,8 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
 
   setup do
     # ConsentCache is already started by the application
-    # Just ensure clean state for each test
+    # Ensure clean state for each test by clearing the cache
+    ConsentCache.clear()
     :ok
   end
 

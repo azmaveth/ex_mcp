@@ -721,13 +721,22 @@ defmodule ExMCP.Server do
         # Process the message using similar logic to legacy server
         case Jason.decode(message) do
           {:ok, requests} when is_list(requests) ->
-            # Batch requests not supported in DSL server for now
+            # Check protocol version for batch support
+            protocol_version = Map.get(state, :protocol_version, "2025-06-18")
+
+            error_message =
+              if protocol_version == "2025-06-18" do
+                "Batch requests are not supported in protocol version 2025-06-18"
+              else
+                "Batch requests are not supported"
+              end
+
             error_response = %{
               "jsonrpc" => "2.0",
               "id" => nil,
               "error" => %{
                 "code" => ErrorCodes.invalid_request(),
-                "message" => "Batch requests are not supported"
+                "message" => error_message
               }
             }
 
@@ -903,7 +912,8 @@ defmodule ExMCP.Server do
             }
 
             response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-            {:response, response, state}
+            new_state = Map.put(state, :protocol_version, client_version)
+            {:response, response, new_state}
           else
             error_response = %{
               "jsonrpc" => "2.0",
@@ -1173,6 +1183,10 @@ defmodule ExMCP.Server do
 
   Used for long-running operations to report progress updates.
   """
+  def notify_progress(server, progress_token, progress) do
+    GenServer.cast(server, {:notify_progress, progress_token, progress, nil})
+  end
+
   def notify_progress(server, progress_token, progress, total) do
     GenServer.cast(server, {:notify_progress, progress_token, progress, total})
   end

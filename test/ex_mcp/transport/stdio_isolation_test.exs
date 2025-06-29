@@ -123,6 +123,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
           # Expected error due to mock port
           assert true
 
+        {:error, {:transport_error, {:send_failed, _}}} ->
+          # Also acceptable - wrapped transport error
+          assert true
+
         {:error, {:security_violation, _}} ->
           flunk("Relative resource should not be blocked by security")
 
@@ -157,6 +161,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
         {:error, {:send_failed, _}} ->
           # Expected error due to mock port
+          assert true
+
+        {:error, {:transport_error, {:send_failed, _}}} ->
+          # Also acceptable - wrapped transport error
           assert true
 
         {:error, {:security_violation, _}} ->
@@ -502,6 +510,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
           # Expected due to mock port
           assert true
 
+        {:error, {:transport_error, {:send_failed, _}}} ->
+          # Also acceptable - wrapped transport error
+          assert true
+
         {:error, {:embedded_newline, _}} ->
           flunk("Valid message should not be rejected for embedded newlines")
 
@@ -546,6 +558,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
         {:error, {:send_failed, _}} ->
           # Expected due to mock port
+          assert true
+
+        {:error, {:transport_error, {:send_failed, _}}} ->
+          # Also acceptable - wrapped transport error
           assert true
 
         {:error, {:embedded_newline, _}} ->
@@ -677,6 +693,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
             # Some "valid JSON" (like numbers) are rejected as invalid JSON-RPC
             assert true
 
+          {:error, {:security_violation, {:validation_error, _}}} ->
+            # Validation errors wrapped in security_violation
+            assert true
+
           {:ok, _} ->
             flunk("Invalid JSON should be rejected: #{invalid_input}")
 
@@ -716,6 +736,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
           {:error, {:security_violation, {:invalid_jsonrpc, _}}} ->
             # The error is wrapped in security_violation
+            assert true
+
+          {:error, {:security_violation, {:validation_error, _}}} ->
+            # Validation errors wrapped in security_violation
             assert true
 
           {:ok, _} ->
@@ -761,6 +785,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
           {:error, {:send_failed, _}} ->
             # Expected due to mock port - validation passed
+            assert true
+
+          {:error, {:transport_error, {:send_failed, _}}} ->
+            # Also acceptable - wrapped transport error
             assert true
 
           {:error, validation_error} ->

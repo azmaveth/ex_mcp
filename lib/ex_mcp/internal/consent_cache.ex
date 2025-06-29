@@ -69,6 +69,15 @@ defmodule ExMCP.Internal.ConsentCache do
     GenServer.cast(__MODULE__, :cleanup)
   end
 
+  @doc """
+  Clears all consent decisions from the cache.
+
+  This is primarily intended for testing purposes to ensure test isolation.
+  """
+  def clear do
+    GenServer.cast(__MODULE__, :clear)
+  end
+
   # --- Server Callbacks ---
 
   @impl true
@@ -93,6 +102,12 @@ defmodule ExMCP.Internal.ConsentCache do
   @impl true
   def handle_cast(:cleanup, state) do
     perform_cleanup()
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(:clear, state) do
+    :ets.delete_all_objects(@table)
     {:noreply, state}
   end
 

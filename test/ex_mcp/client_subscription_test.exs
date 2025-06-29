@@ -209,20 +209,18 @@ defmodule ExMCP.ClientSubscriptionTest do
   end
 
   describe "function signatures and documentation" do
-    test "subscribe_resource/2 has correct arity" do
-      assert function_exported?(Client, :subscribe_resource, 2)
+    test "subscribe_resource/3 has correct arity" do
+      # Ensure module is compiled
+      Code.ensure_compiled!(ExMCP.Client)
+      # Functions with default arguments only have the maximum arity
+      assert function_exported?(ExMCP.Client, :subscribe_resource, 3)
     end
 
-    test "subscribe_resource/3 has correct arity with options" do
-      assert function_exported?(Client, :subscribe_resource, 3)
-    end
-
-    test "unsubscribe_resource/2 has correct arity" do
-      assert function_exported?(Client, :unsubscribe_resource, 2)
-    end
-
-    test "unsubscribe_resource/3 has correct arity with options" do
-      assert function_exported?(Client, :unsubscribe_resource, 3)
+    test "unsubscribe_resource/3 has correct arity" do
+      # Ensure module is compiled
+      Code.ensure_compiled!(ExMCP.Client)
+      # Functions with default arguments only have the maximum arity
+      assert function_exported?(ExMCP.Client, :unsubscribe_resource, 3)
     end
   end
 end

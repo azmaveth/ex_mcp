@@ -49,6 +49,7 @@ defmodule ExMCP.Client do
     :transport_opts,
     :pending_requests,
     :pending_batches,
+    :cancelled_requests,
     :receiver_task,
     :health_check_ref,
     :health_check_interval,
@@ -608,7 +609,7 @@ defmodule ExMCP.Client do
       {:ok, notification} ->
         # Extract method and params from the notification
         %{"method" => method, "params" => params} = notification
-        notify(client, method, params)
+        GenServer.call(client, {:send_cancelled, request_id, method, params})
 
       {:error, :cannot_cancel_initialize} = error ->
         error
@@ -660,6 +661,7 @@ defmodule ExMCP.Client do
       transport_opts: opts,
       pending_requests: %{},
       pending_batches: %{},
+      cancelled_requests: MapSet.new(),
       health_check_interval: health_check_interval,
       connection_status: :connecting,
       last_activity: System.system_time(:second),
@@ -794,6 +796,7 @@ defmodule ExMCP.Client do
       | connection_status: :disconnected,
         pending_requests: %{},
         pending_batches: %{},
+        cancelled_requests: MapSet.new(),
         receiver_task: nil,
         health_check_ref: nil
     }
@@ -820,6 +823,34 @@ defmodule ExMCP.Client do
     # Return list of pending request IDs from the state
     pending_ids = Map.keys(state.pending_requests)
     {:reply, pending_ids, state}
+  end
+
+  def handle_call({:send_cancelled, request_id, method, params}, _from, state) do
+    # Track the cancelled request
+    updated_state = %{
+      state
+      | cancelled_requests: MapSet.put(state.cancelled_requests, request_id)
+    }
+
+    # Send the cancellation notification
+    RequestHandler.handle_cast_notification(method, params, updated_state)
+
+    # Check if this request is still pending and complete it with :cancelled error
+    case Map.get(state.pending_requests, request_id) do
+      nil ->
+        # Request already completed or doesn't exist
+        {:reply, :ok, updated_state}
+
+      {from, :single} ->
+        # Reply with cancelled error and remove from pending
+        GenServer.reply(from, {:error, :cancelled})
+        new_pending = Map.delete(state.pending_requests, request_id)
+        {:reply, :ok, %{updated_state | pending_requests: new_pending}}
+
+      _ ->
+        # Other types of requests (batch, etc.) - just track as cancelled
+        {:reply, :ok, updated_state}
+    end
   end
 
   @impl GenServer
@@ -850,17 +881,32 @@ defmodule ExMCP.Client do
   def handle_info({:transport_closed, reason}, state) do
     Logger.error("Transport closed: #{inspect(reason)}")
 
-    # Reply to all pending requests with connection error
+    # Reply to all pending requests with connection error or cancelled error
     connection_error = Error.connection_error("Transport closed: #{inspect(reason)}")
 
     state.pending_requests
     |> Enum.each(fn
-      {_id, {from, :single}} ->
-        GenServer.reply(from, {:error, connection_error})
+      {id, {from, :single}} ->
+        # Check if this request was cancelled
+        error =
+          if MapSet.member?(state.cancelled_requests, id) do
+            :cancelled
+          else
+            connection_error
+          end
 
-      {_id, {pid, ref}} when is_pid(pid) and is_reference(ref) ->
+        GenServer.reply(from, {:error, error})
+
+      {id, {pid, ref}} when is_pid(pid) and is_reference(ref) ->
         # Handle simple {pid, ref} tuples from older test code
-        GenServer.reply({pid, ref}, {:error, connection_error})
+        error =
+          if MapSet.member?(state.cancelled_requests, id) do
+            :cancelled
+          else
+            connection_error
+          end
+
+        GenServer.reply({pid, ref}, {:error, error})
 
       {_batch_id, {from, :batch, ordered_ids, received_responses}}
       when is_map(received_responses) ->
@@ -887,7 +933,8 @@ defmodule ExMCP.Client do
         transport_mod: nil,
         transport_state: nil,
         pending_requests: %{},
-        pending_batches: %{}
+        pending_batches: %{},
+        cancelled_requests: MapSet.new()
     }
 
     {:noreply, new_state}
