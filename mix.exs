@@ -66,7 +66,8 @@ defmodule ExMCP.MixProject do
       {:html_entities, "~> 0.5", only: [:dev, :test]},
       {:propcheck, "~> 1.4", only: :test},
       {:benchee, "~> 1.0", only: [:dev, :test]},
-      {:bypass, "~> 2.0", only: :test}
+      {:bypass, "~> 2.0", only: :test},
+      {:gen_state_machine, "~> 3.0"}
     ]
   end
 

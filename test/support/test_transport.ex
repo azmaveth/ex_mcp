@@ -1,0 +1,234 @@
+defmodule ExMCP.TestHelpers.TestTransport do
+  @moduledoc """
+  Test transport for integration testing the state machine.
+
+  Provides various test modes to simulate different scenarios:
+  - :controlled - Manual control over messages
+  - :echo - Echoes requests back
+  - :fail_connect - Fails on connect
+  - :no_response - Connects but doesn't respond
+  - :flaky - Simulates disconnections
+  - :always_fail - Always fails
+  - :interactive - Full control
+  """
+
+  @behaviour ExMCP.Transport
+
+  use GenServer
+
+  defstruct [:mode, :client_pid, :test_pid, :connected, :messages]
+
+  # Transport behaviour implementation
+
+  @impl true
+  def connect(opts) do
+    mode = Keyword.get(opts, :test_mode, :controlled)
+    test_pid = Keyword.get(opts, :test_pid, self())
+    client_pid = Keyword.get(opts, :client_pid, self())
+
+    case mode do
+      :fail_connect ->
+        {:error, :connection_refused}
+
+      _ ->
+        {:ok, state} = GenServer.start_link(__MODULE__, {mode, test_pid, client_pid})
+        # Register for tracking
+        :global.register_name({:test_transport, client_pid}, state)
+        {:ok, state}
+    end
+  end
+
+  @impl true
+  def send_message(message, transport_pid) when is_pid(transport_pid) do
+    GenServer.call(transport_pid, {:send, message})
+  end
+
+  @impl true
+  def receive_message(transport_pid) when is_pid(transport_pid) do
+    # For test transport, we don't use this - we send messages directly
+    # This will timeout quickly since we send via send_to_client
+    GenServer.call(transport_pid, :receive, 100)
+  end
+
+  @impl true
+  def close(transport_pid) when is_pid(transport_pid) do
+    GenServer.stop(transport_pid)
+  end
+
+  @impl true
+  def connected?(transport_pid) when is_pid(transport_pid) do
+    GenServer.call(transport_pid, :connected?)
+  end
+
+  # Test API
+
+  def send_to_client(client_pid, message) do
+    # Send message directly to the state machine process
+    # The receiver loop expects this format
+    send(client_pid, {:transport_message, Jason.encode!(message)})
+    :ok
+  end
+
+  def send_raw_to_client(client_pid, raw_message) do
+    # Send raw message directly to the state machine process
+    send(client_pid, {:transport_message, raw_message})
+    :ok
+  end
+
+  def simulate_disconnect(client_pid) do
+    # Send transport error directly to the state machine process
+    send(client_pid, {:transport_error, :connection_lost})
+    :ok
+  end
+
+  def get_last_message(client_pid) do
+    # For testing, we'll use a registry to track transport messages
+    # This is simplified - in real usage the transport would handle this
+    case GenServer.whereis({:global, {:test_transport, client_pid}}) do
+      nil ->
+        {:error, :no_transport}
+
+      transport_pid ->
+        GenServer.call(transport_pid, :get_last_message)
+    end
+  end
+
+  def get_last_sent_id(client_pid) do
+    case get_last_message(client_pid) do
+      {:ok, %{"id" => id}} -> {:ok, id}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :no_id}
+    end
+  end
+
+  # GenServer implementation
+
+  @impl true
+  def init({mode, test_pid, client_pid}) do
+    state = %__MODULE__{
+      mode: mode,
+      test_pid: test_pid,
+      client_pid: client_pid,
+      connected: true,
+      messages: []
+    }
+
+    {:ok, state}
+  end
+
+  # Legacy init for existing code
+  def init({mode, test_pid}) do
+    init({mode, test_pid, test_pid})
+  end
+
+  @impl true
+  def handle_call({:send, message}, _from, state) do
+    # Store message
+    new_state = %{state | messages: [message | state.messages]}
+
+    # Handle based on mode
+    case state.mode do
+      :controlled ->
+        # For controlled mode, auto-respond to initialize requests
+        case Jason.decode(message) do
+          {:ok, %{"id" => id, "method" => "initialize"}} ->
+            response = %{
+              "id" => id,
+              "result" => %{
+                "protocolVersion" => "2025-03-26",
+                "capabilities" => %{
+                  "tools" => true,
+                  "resources" => true
+                },
+                "serverInfo" => %{
+                  "name" => "test-server",
+                  "version" => "1.0.0"
+                }
+              }
+            }
+
+            # Send response directly to client
+            if state.client_pid do
+              send(state.client_pid, {:transport_message, Jason.encode!(response)})
+            end
+
+          _ ->
+            :ok
+        end
+
+      :no_response ->
+        # For no_response mode, don't respond to anything - just store the message
+        IO.puts("DEBUG: TestTransport in no_response mode, not sending response")
+        :ok
+
+      :echo ->
+        # Parse and echo back
+        case Jason.decode(message) do
+          {:ok, %{"id" => id, "method" => method, "params" => params}} ->
+            response = %{
+              "id" => id,
+              "result" => %{"echo" => %{"method" => method, "params" => params}}
+            }
+
+            send(self(), {:echo_response, Jason.encode!(response)})
+
+          _ ->
+            :ok
+        end
+
+      _ ->
+        :ok
+    end
+
+    {:reply, {:ok, self()}, new_state}
+  end
+
+  def handle_call(:receive, _from, %{mode: :always_fail} = state) do
+    {:reply, {:error, :transport_error}, state}
+  end
+
+  def handle_call(:receive, _from, %{connected: false} = state) do
+    {:reply, {:error, :closed}, state}
+  end
+
+  def handle_call(:receive, from, state) do
+    # Wait for messages
+    receive do
+      {:test_message, message} ->
+        {:reply, {:ok, message, self()}, state}
+
+      {:echo_response, message} ->
+        {:reply, {:ok, message, self()}, state}
+    after
+      100 ->
+        # Check if we're still waiting
+        if state.mode == :no_response do
+          # Keep waiting indefinitely
+          handle_call(:receive, from, state)
+        else
+          # Return timeout
+          {:reply, {:error, :timeout}, state}
+        end
+    end
+  end
+
+  def handle_call(:connected?, _from, state) do
+    {:reply, state.connected, state}
+  end
+
+  def handle_call(:get_last_message, _from, state) do
+    case state.messages do
+      [last | _] ->
+        {:reply, {:ok, Jason.decode!(last)}, state}
+
+      [] ->
+        {:reply, {:error, :no_messages}, state}
+    end
+  end
+
+  @impl true
+  def handle_cast(:disconnect, state) do
+    new_state = %{state | connected: false}
+    {:noreply, new_state}
+  end
+end
