@@ -48,3 +48,6 @@ ex_mcp-*.tar
 .env
 .env.local
 .aider*
+
+# Test output files
+test_output.log

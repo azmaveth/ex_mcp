@@ -276,17 +276,19 @@ defmodule ExMCP.Reliability.Supervisor do
   def find_circuit_breaker_supervisor(supervisor) do
     children = Supervisor.which_children(supervisor)
 
+    # Look for the expected circuit breaker supervisor by name, not string matching
+    expected_name = get_circuit_breaker_supervisor_name(supervisor)
+
     cb_supervisor =
       Enum.find_value(children, fn
-        {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
-          name_str = Atom.to_string(name)
-          if String.contains?(name_str, "CircuitBreakerSupervisor"), do: name
+        {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) ->
+          expected_name
 
         _ ->
           nil
       end)
 
-    # If not found, try to get supervisor name for fallback
+    # Only return if found, otherwise fall back to name calculation
     cb_supervisor || get_circuit_breaker_supervisor_name(supervisor)
   catch
     :exit, {:noproc, _} ->
@@ -297,17 +299,19 @@ defmodule ExMCP.Reliability.Supervisor do
   defp find_health_check_supervisor(supervisor) do
     children = Supervisor.which_children(supervisor)
 
+    # Look for the expected health check supervisor by name, not string matching
+    expected_name = get_health_check_supervisor_name(supervisor)
+
     hc_supervisor =
       Enum.find_value(children, fn
-        {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
-          name_str = Atom.to_string(name)
-          if String.contains?(name_str, "HealthCheckSupervisor"), do: name
+        {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) ->
+          expected_name
 
         _ ->
           nil
       end)
 
-    # If not found, try to get supervisor name for fallback
+    # Only return if found, otherwise fall back to name calculation
     hc_supervisor || get_health_check_supervisor_name(supervisor)
   catch
     :exit, {:noproc, _} ->
@@ -318,17 +322,19 @@ defmodule ExMCP.Reliability.Supervisor do
   defp find_reliability_registry(supervisor) do
     children = Supervisor.which_children(supervisor)
 
+    # Look for the expected registry by name, not string matching
+    expected_name = get_reliability_registry_name(supervisor)
+
     registry =
       Enum.find_value(children, fn
-        {name, _pid, :worker, [Registry]} when is_atom(name) ->
-          name_str = Atom.to_string(name)
-          if String.contains?(name_str, "Registry"), do: name
+        {^expected_name, pid, :worker, [Registry]} when is_pid(pid) ->
+          expected_name
 
         _ ->
           nil
       end)
 
-    # If not found, try to get supervisor name for fallback
+    # Only return if found, otherwise fall back to name calculation
     registry || get_reliability_registry_name(supervisor)
   catch
     :exit, {:noproc, _} ->

@@ -117,9 +117,6 @@ defmodule ExMCP.TestHelpers do
     Provides basic tools for testing MCP server functionality
     including echo and arithmetic operations.
     """
-    # Suppress warnings for unreachable clauses in generated code
-    @dialyzer {:nowarn_function,
-               [handle_info: 2, handle_call: 3, handle_cast: 2, process_request: 2]}
     use ExMCP.Server
 
     deftool "echo" do
