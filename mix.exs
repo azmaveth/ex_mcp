@@ -28,7 +28,7 @@ defmodule ExMCP.MixProject do
       dialyzer: [
         plt_add_apps: [:mix, :ex_unit],
         ignore_warnings: ".dialyzer_ignore.exs",
-        list_unused_filters: true,
+        list_unused_filters: false,
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts"
       ]

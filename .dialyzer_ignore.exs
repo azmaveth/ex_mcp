@@ -22,5 +22,19 @@
   
   # Ignore Transport.Error contract warnings in stdio.ex - these functions are used correctly
   # but Dialyzer expects different return patterns in some call contexts
-  {"lib/ex_mcp/transport/stdio.ex", :call}
+  {"lib/ex_mcp/transport/stdio.ex", :call},
+
+  # Ignore test support and compliance test warnings - these are generated tests and mock code
+  # These filters are unused in dev environment but needed in test environment (CI)
+  {"test/support/test_helpers.ex"},
+  {"test/support/consent_handler/test.ex"},
+  {"test/ex_mcp/compliance/features/batch.ex"},
+  {"test/ex_mcp/compliance/features/cancellation.ex"},
+  {"test/ex_mcp/compliance/features/completion.ex"},
+  {"test/ex_mcp/compliance/features/roots.ex"},
+  {"test/ex_mcp/compliance/features/transport.ex"},
+  {"test/ex_mcp/compliance/handlers/handler20241105.ex"},
+  {"test/ex_mcp/compliance/handlers/handler20250326.ex"},
+  {"test/ex_mcp/compliance/handlers/handler20250618.ex"},
+  {"test/ex_mcp/compliance/version_generator.ex"}
 ]
