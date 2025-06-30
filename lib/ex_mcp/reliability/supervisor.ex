@@ -554,6 +554,117 @@ defmodule ExMCP.Reliability do
 
   defdelegate with_retry(fun, opts \\ []), to: Retry
 
+  # Helper functions for protect/2 to reduce cyclomatic complexity
+
+  defp find_or_create_circuit_breaker_supervisor do
+    case Process.whereis(ExMCP.Reliability.Supervisor) do
+      nil ->
+        create_temporary_supervisor()
+
+      sup_pid ->
+        ExMCP.Reliability.Supervisor.find_circuit_breaker_supervisor(sup_pid)
+    end
+  end
+
+  defp create_temporary_supervisor do
+    temp_name = :"#{__MODULE__}_#{System.unique_integer([:positive])}_temp"
+    {:ok, temp_sup} = ExMCP.Reliability.Supervisor.start_link(name: temp_name)
+    # Give it time to start children
+    Process.sleep(150)
+
+    find_circuit_breaker_from_temp_supervisor(temp_sup, temp_name)
+  end
+
+  defp find_circuit_breaker_from_temp_supervisor(temp_sup, temp_name) do
+    children = Supervisor.which_children(temp_sup)
+    expected_name = ExMCP.Reliability.Supervisor.get_circuit_breaker_supervisor_name(temp_sup)
+
+    case find_circuit_breaker_pid_from_children(children, expected_name) do
+      pid when is_pid(pid) ->
+        pid
+
+      nil ->
+        fallback_circuit_breaker_lookup(expected_name, temp_name)
+    end
+  end
+
+  defp find_circuit_breaker_pid_from_children(children, expected_name) do
+    Enum.find_value(children, fn
+      {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) -> pid
+      _ -> nil
+    end)
+  end
+
+  defp fallback_circuit_breaker_lookup(expected_name, temp_name) do
+    case Process.whereis(expected_name) do
+      pid when is_pid(pid) ->
+        pid
+
+      nil ->
+        # Last resort: return the expected name (this will likely fail but is better than crashing)
+        ExMCP.Reliability.Supervisor.circuit_breaker_supervisor(temp_name)
+    end
+  end
+
+  defp get_or_create_circuit_breaker(cb_supervisor, cb_opts) do
+    case cb_opts[:name] do
+      nil ->
+        create_anonymous_circuit_breaker(cb_supervisor, cb_opts)
+
+      name ->
+        get_or_create_named_circuit_breaker(cb_supervisor, cb_opts, name)
+    end
+  end
+
+  defp create_anonymous_circuit_breaker(cb_supervisor, cb_opts) do
+    {:ok, pid} =
+      DynamicSupervisor.start_child(
+        cb_supervisor,
+        {ExMCP.Reliability.CircuitBreaker, cb_opts}
+      )
+
+    pid
+  end
+
+  defp get_or_create_named_circuit_breaker(cb_supervisor, cb_opts, name) do
+    case Process.whereis(name) do
+      nil ->
+        start_named_circuit_breaker(cb_supervisor, cb_opts, name)
+
+      pid ->
+        pid
+    end
+  end
+
+  defp start_named_circuit_breaker(cb_supervisor, cb_opts, name) do
+    case DynamicSupervisor.start_child(
+           cb_supervisor,
+           {ExMCP.Reliability.CircuitBreaker, Keyword.put(cb_opts, :name, name)}
+         ) do
+      {:ok, pid} -> pid
+      {:error, {:already_started, pid}} -> pid
+    end
+  end
+
+  defp create_protected_function(fun, breaker_pid, cb_opts, retry_opts) do
+    fn args ->
+      cb_timeout = Keyword.get(cb_opts, :timeout, 5000)
+
+      # Execute through circuit breaker
+      case ExMCP.Reliability.CircuitBreaker.call(
+             breaker_pid,
+             fn -> execute_with_retry(fun, args, retry_opts) end,
+             cb_timeout
+           ) do
+        {:error, :circuit_open} = error ->
+          error
+
+        other ->
+          other
+      end
+    end
+  end
+
   @doc """
   Creates a circuit breaker and retry-protected version of a function.
 
@@ -581,96 +692,14 @@ defmodule ExMCP.Reliability do
         :reset_timeout
       ])
 
-    # Find the circuit breaker supervisor from the main reliability supervisor
-    # First try to find the running ExMCP.Reliability.Supervisor
-    cb_supervisor =
-      case Process.whereis(ExMCP.Reliability.Supervisor) do
-        nil ->
-          # If not found, the application might not be started
-          # In test environments, start a temporary supervisor with unique name
-          temp_name = :"#{__MODULE__}_#{System.unique_integer([:positive])}_temp"
-          {:ok, temp_sup} = ExMCP.Reliability.Supervisor.start_link(name: temp_name)
-          # Give it time to start children
-          Process.sleep(150)
-
-          # Get the circuit breaker supervisor PID directly from children
-          children = Supervisor.which_children(temp_sup)
-
-          expected_name =
-            ExMCP.Reliability.Supervisor.get_circuit_breaker_supervisor_name(temp_sup)
-
-          case Enum.find_value(children, fn
-                 {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) -> pid
-                 _ -> nil
-               end) do
-            pid when is_pid(pid) ->
-              pid
-
-            nil ->
-              # Fallback: try direct lookup by expected name
-              case Process.whereis(expected_name) do
-                pid when is_pid(pid) ->
-                  pid
-
-                nil ->
-                  # Last resort: return the expected name (this will likely fail but is better than crashing)
-                  ExMCP.Reliability.Supervisor.circuit_breaker_supervisor(temp_name)
-              end
-          end
-
-        sup_pid ->
-          # Use the existing supervisor
-          ExMCP.Reliability.Supervisor.find_circuit_breaker_supervisor(sup_pid)
-      end
+    # Find or create circuit breaker supervisor
+    cb_supervisor = find_or_create_circuit_breaker_supervisor()
 
     # Create or get circuit breaker
-    breaker_pid =
-      case cb_opts[:name] do
-        nil ->
-          # Start anonymous circuit breaker
-          {:ok, pid} =
-            DynamicSupervisor.start_child(
-              cb_supervisor,
-              {ExMCP.Reliability.CircuitBreaker, cb_opts}
-            )
-
-          pid
-
-        name ->
-          # Try to get existing breaker or start new one
-          case Process.whereis(name) do
-            nil ->
-              case DynamicSupervisor.start_child(
-                     cb_supervisor,
-                     {ExMCP.Reliability.CircuitBreaker, Keyword.put(cb_opts, :name, name)}
-                   ) do
-                {:ok, pid} -> pid
-                {:error, {:already_started, pid}} -> pid
-              end
-
-            pid ->
-              pid
-          end
-      end
+    breaker_pid = get_or_create_circuit_breaker(cb_supervisor, cb_opts)
 
     # Return a function that uses both circuit breaker and retry
-    # For simplicity, always expect a list of arguments (even if empty)
-    fn args ->
-      cb_timeout = Keyword.get(cb_opts, :timeout, 5000)
-
-      # Execute through circuit breaker
-      case ExMCP.Reliability.CircuitBreaker.call(
-             breaker_pid,
-             fn -> execute_with_retry(fun, args, retry_opts) end,
-             cb_timeout
-           ) do
-        {:error, :circuit_open} = error ->
-          error
-
-        other ->
-          other
-      end
-    end
+    create_protected_function(fun, breaker_pid, cb_opts, retry_opts)
   end
 
   defp execute_with_retry(fun, args, retry_opts) do

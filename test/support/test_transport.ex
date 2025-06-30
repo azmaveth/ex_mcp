@@ -182,95 +182,94 @@ defmodule ExMCP.TestHelpers.TestTransport do
     init({mode, test_pid, test_pid})
   end
 
+  # Helper functions for handling different transport modes
+  defp handle_mode_response(:controlled, message, state) do
+    handle_controlled_mode(message, state)
+  end
+
+  defp handle_mode_response(:echo, message, state) do
+    handle_echo_mode(message, state)
+  end
+
+  defp handle_mode_response(:no_response, _message, _state) do
+    IO.puts("DEBUG: TestTransport in no_response mode, not sending response")
+    :ok
+  end
+
+  defp handle_mode_response(mode, _message, _state)
+       when mode in [:always_fail, :flaky, :interactive] do
+    :ok
+  end
+
+  defp handle_mode_response(_mode, _message, _state) do
+    :ok
+  end
+
+  defp handle_controlled_mode(message, state) do
+    case Jason.decode(message) do
+      {:ok, %{"id" => id, "method" => "initialize"}} ->
+        response = %{
+          "id" => id,
+          "result" => %{
+            "protocolVersion" => "2025-03-26",
+            "capabilities" => %{
+              "tools" => true,
+              "resources" => true
+            },
+            "serverInfo" => %{
+              "name" => "test-server",
+              "version" => "1.0.0"
+            }
+          }
+        }
+
+        send_response_to_client(response, state)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp handle_echo_mode(message, state) do
+    case Jason.decode(message) do
+      {:ok, %{"id" => id, "method" => "initialize", "params" => _params}} ->
+        response = %{
+          "id" => id,
+          "result" => %{
+            "protocolVersion" => "2025-03-26",
+            "capabilities" => %{},
+            "serverInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        }
+
+        send_response_to_client(response, state)
+
+      {:ok, %{"id" => id, "method" => method, "params" => params}} ->
+        response = %{
+          "id" => id,
+          "result" => %{"echo" => %{"method" => method, "params" => params}}
+        }
+
+        send_response_to_client(response, state)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp send_response_to_client(response, state) do
+    if state.client_pid do
+      send(state.client_pid, {:transport_message, Jason.encode!(response)})
+    end
+  end
+
   @impl true
   def handle_call({:send, message}, _from, state) do
     # Store message
     new_state = %{state | messages: [message | state.messages]}
 
     # Handle based on mode
-    case state.mode do
-      :controlled ->
-        # For controlled mode, auto-respond to initialize requests
-        case Jason.decode(message) do
-          {:ok, %{"id" => id, "method" => "initialize"}} ->
-            response = %{
-              "id" => id,
-              "result" => %{
-                "protocolVersion" => "2025-03-26",
-                "capabilities" => %{
-                  "tools" => true,
-                  "resources" => true
-                },
-                "serverInfo" => %{
-                  "name" => "test-server",
-                  "version" => "1.0.0"
-                }
-              }
-            }
-
-            # Send response directly to client
-            if state.client_pid do
-              send(state.client_pid, {:transport_message, Jason.encode!(response)})
-            end
-
-          _ ->
-            :ok
-        end
-
-      :always_fail ->
-        # In always_fail mode, don't respond to anything - let everything timeout
-        :ok
-
-      :flaky ->
-        # In flaky mode, don't auto-respond - let test control messages manually
-        :ok
-
-      :no_response ->
-        # For no_response mode, don't respond to anything - just store the message
-        IO.puts("DEBUG: TestTransport in no_response mode, not sending response")
-        :ok
-
-      :interactive ->
-        # In interactive mode, don't auto-respond - let test control messages manually
-        :ok
-
-      :echo ->
-        # Parse and echo back
-        case Jason.decode(message) do
-          {:ok, %{"id" => id, "method" => "initialize", "params" => _params}} ->
-            # For initialize, send a proper handshake response
-            response = %{
-              "id" => id,
-              "result" => %{
-                "protocolVersion" => "2025-03-26",
-                "capabilities" => %{},
-                "serverInfo" => %{"name" => "test", "version" => "1.0"}
-              }
-            }
-
-            # Send response directly to client
-            if state.client_pid do
-              send(state.client_pid, {:transport_message, Jason.encode!(response)})
-            end
-
-          {:ok, %{"id" => id, "method" => method, "params" => params}} ->
-            response = %{
-              "id" => id,
-              "result" => %{"echo" => %{"method" => method, "params" => params}}
-            }
-
-            # Send response directly to client
-            if state.client_pid do
-              send(state.client_pid, {:transport_message, Jason.encode!(response)})
-            end
-
-          _ ->
-            :ok
-        end
-
-      _ ->
-        :ok
-    end
+    handle_mode_response(state.mode, message, state)
 
     {:reply, {:ok, self()}, new_state}
   end
