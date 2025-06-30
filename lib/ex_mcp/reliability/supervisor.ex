@@ -85,61 +85,64 @@ defmodule ExMCP.Reliability.Supervisor do
       client_id = Keyword.get(opts, :id, generate_client_id())
       transport_opts = Keyword.take(opts, [:transport, :transports])
 
-      # Trap exits to handle client startup failures gracefully
-      Process.flag(:trap_exit, true)
+      # Store original trap_exit setting to restore later
+      original_trap_exit = Process.flag(:trap_exit, true)
 
-      result =
-        case ExMCP.Client.start_link(transport_opts) do
-          {:ok, client_pid} ->
-            # Keep trap_exit enabled until after we check for EXIT messages
-            case maybe_start_circuit_breaker(supervisor, client_id, opts) do
-              {:ok, breaker_pid} ->
-                case maybe_start_health_check(supervisor, client_id, client_pid, opts) do
-                  {:ok, health_pid} ->
-                    create_wrapper_and_cleanup(
-                      supervisor,
-                      client_id,
-                      client_pid,
-                      breaker_pid,
-                      health_pid,
-                      opts
-                    )
+      try do
+        result =
+          case ExMCP.Client.start_link(transport_opts) do
+            {:ok, client_pid} ->
+              # Keep trap_exit enabled until after we check for EXIT messages
+              case maybe_start_circuit_breaker(supervisor, client_id, opts) do
+                {:ok, breaker_pid} ->
+                  case maybe_start_health_check(supervisor, client_id, client_pid, opts) do
+                    {:ok, health_pid} ->
+                      create_wrapper_and_cleanup(
+                        supervisor,
+                        client_id,
+                        client_pid,
+                        breaker_pid,
+                        health_pid,
+                        opts
+                      )
 
-                  error ->
-                    # health check failed
-                    cleanup_pids([client_pid, breaker_pid])
-                    error
-                end
+                    error ->
+                      # health check failed
+                      cleanup_pids([client_pid, breaker_pid])
+                      error
+                  end
 
-              error ->
-                # circuit breaker failed
-                cleanup_pids([client_pid])
-                error
-            end
+                error ->
+                  # circuit breaker failed
+                  cleanup_pids([client_pid])
+                  error
+              end
 
-          error ->
-            # client failed
-            error
-        end
+            error ->
+              # client failed
+              error
+          end
 
-      # Handle any EXIT messages from client startup failures
-      final_result =
-        receive do
-          {:EXIT, _pid, {:transport_connect_failed, reason}} ->
-            {:error, {:transport_connect_failed, reason}}
+        # Handle any EXIT messages from client startup failures
+        final_result =
+          receive do
+            {:EXIT, _pid, {:transport_connect_failed, reason}} ->
+              {:error, {:transport_connect_failed, reason}}
 
-          {:EXIT, _pid, {:initialize_error, reason}} ->
-            {:error, {:initialize_error, reason}}
+            {:EXIT, _pid, {:initialize_error, reason}} ->
+              {:error, {:initialize_error, reason}}
 
-          {:EXIT, _pid, reason} ->
-            {:error, {:client_start_failed, reason}}
-        after
-          0 -> result
-        end
+            {:EXIT, _pid, reason} ->
+              {:error, {:client_start_failed, reason}}
+          after
+            0 -> result
+          end
 
-      # Restore original trap_exit setting after checking for EXIT messages
-      Process.flag(:trap_exit, false)
-      final_result
+        final_result
+      after
+        # Always restore original trap_exit setting, regardless of success or failure
+        Process.flag(:trap_exit, original_trap_exit)
+      end
     end
   end
 
@@ -271,72 +274,66 @@ defmodule ExMCP.Reliability.Supervisor do
   # Helper functions to find child supervisor names from a running supervisor
   @doc false
   def find_circuit_breaker_supervisor(supervisor) do
-    try do
-      children = Supervisor.which_children(supervisor)
+    children = Supervisor.which_children(supervisor)
 
-      cb_supervisor =
-        Enum.find_value(children, fn
-          {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
-            name_str = Atom.to_string(name)
-            if String.contains?(name_str, "CircuitBreakerSupervisor"), do: name
+    cb_supervisor =
+      Enum.find_value(children, fn
+        {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
+          name_str = Atom.to_string(name)
+          if String.contains?(name_str, "CircuitBreakerSupervisor"), do: name
 
-          _ ->
-            nil
-        end)
+        _ ->
+          nil
+      end)
 
-      # If not found, try to get supervisor name for fallback
-      cb_supervisor || get_circuit_breaker_supervisor_name(supervisor)
-    catch
-      :exit, {:noproc, _} ->
-        # Supervisor is not running, return the default
-        circuit_breaker_supervisor()
-    end
+    # If not found, try to get supervisor name for fallback
+    cb_supervisor || get_circuit_breaker_supervisor_name(supervisor)
+  catch
+    :exit, {:noproc, _} ->
+      # Supervisor is not running, return the default
+      circuit_breaker_supervisor()
   end
 
   defp find_health_check_supervisor(supervisor) do
-    try do
-      children = Supervisor.which_children(supervisor)
+    children = Supervisor.which_children(supervisor)
 
-      hc_supervisor =
-        Enum.find_value(children, fn
-          {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
-            name_str = Atom.to_string(name)
-            if String.contains?(name_str, "HealthCheckSupervisor"), do: name
+    hc_supervisor =
+      Enum.find_value(children, fn
+        {name, _pid, :supervisor, [DynamicSupervisor]} when is_atom(name) ->
+          name_str = Atom.to_string(name)
+          if String.contains?(name_str, "HealthCheckSupervisor"), do: name
 
-          _ ->
-            nil
-        end)
+        _ ->
+          nil
+      end)
 
-      # If not found, try to get supervisor name for fallback
-      hc_supervisor || get_health_check_supervisor_name(supervisor)
-    catch
-      :exit, {:noproc, _} ->
-        # Supervisor is not running, return the default
-        health_check_supervisor()
-    end
+    # If not found, try to get supervisor name for fallback
+    hc_supervisor || get_health_check_supervisor_name(supervisor)
+  catch
+    :exit, {:noproc, _} ->
+      # Supervisor is not running, return the default
+      health_check_supervisor()
   end
 
   defp find_reliability_registry(supervisor) do
-    try do
-      children = Supervisor.which_children(supervisor)
+    children = Supervisor.which_children(supervisor)
 
-      registry =
-        Enum.find_value(children, fn
-          {name, _pid, :worker, [Registry]} when is_atom(name) ->
-            name_str = Atom.to_string(name)
-            if String.contains?(name_str, "Registry"), do: name
+    registry =
+      Enum.find_value(children, fn
+        {name, _pid, :worker, [Registry]} when is_atom(name) ->
+          name_str = Atom.to_string(name)
+          if String.contains?(name_str, "Registry"), do: name
 
-          _ ->
-            nil
-        end)
+        _ ->
+          nil
+      end)
 
-      # If not found, try to get supervisor name for fallback
-      registry || get_reliability_registry_name(supervisor)
-    catch
-      :exit, {:noproc, _} ->
-        # Supervisor is not running, return the default
-        reliability_registry()
-    end
+    # If not found, try to get supervisor name for fallback
+    registry || get_reliability_registry_name(supervisor)
+  catch
+    :exit, {:noproc, _} ->
+      # Supervisor is not running, return the default
+      reliability_registry()
   end
 
   # Helper functions to get the correct child names based on supervisor
@@ -616,24 +613,7 @@ defmodule ExMCP.Reliability do
       # Execute through circuit breaker
       case ExMCP.Reliability.CircuitBreaker.call(
              breaker_pid,
-             fn ->
-               # Inside circuit breaker, apply retry logic
-               Retry.with_retry(
-                 fn ->
-                   # Determine function arity and call appropriately
-                   case :erlang.fun_info(fun)[:arity] do
-                     0 -> fun.()
-                     1 when is_list(args) and length(args) == 1 -> fun.(hd(args))
-                     # If args is not a list, pass it directly
-                     1 -> fun.(args)
-                     _ when is_list(args) -> apply(fun, args)
-                     # Fallback
-                     _ -> fun.(args)
-                   end
-                 end,
-                 Retry.mcp_defaults(retry_opts)
-               )
-             end,
+             fn -> execute_with_retry(fun, args, retry_opts) end,
              cb_timeout
            ) do
         {:error, :circuit_open} = error ->
@@ -643,5 +623,23 @@ defmodule ExMCP.Reliability do
           other
       end
     end
+  end
+
+  defp execute_with_retry(fun, args, retry_opts) do
+    Retry.with_retry(
+      fn ->
+        # Determine function arity and call appropriately
+        case :erlang.fun_info(fun)[:arity] do
+          0 -> fun.()
+          1 when is_list(args) and length(args) == 1 -> fun.(hd(args))
+          # If args is not a list, pass it directly
+          1 -> fun.(args)
+          _ when is_list(args) -> apply(fun, args)
+          # Fallback
+          _ -> fun.(args)
+        end
+      end,
+      Retry.mcp_defaults(retry_opts)
+    )
   end
 end

@@ -89,7 +89,7 @@ defmodule Mix.Tasks.Test.Cleanup do
         if dry_run do
           try do
             case :ranch.info(listener) do
-              info when is_map(info) ->
+              info when is_list(info) ->
                 Mix.shell().info("  Would stop listener: #{inspect(listener)}")
                 acc + 1
             end

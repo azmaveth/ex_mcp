@@ -478,6 +478,7 @@ defmodule ExMCP.Server do
     end
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp generate_basic_handle_calls do
     quote do
       # Handle server info requests
@@ -523,42 +524,111 @@ defmodule ExMCP.Server do
         {:reply, pending_ids, state}
       end
 
-      # Handle create message request
-      def handle_call({:create_message, params}, _from, state) do
-        # Send sampling/createMessage request to the client via transport
-        message = ExMCP.Internal.Protocol.encode_create_message(params)
+      # Handle create message request - delegate to separate function (now async)
+      def handle_call({:create_message, params}, from, state) do
+        handle_create_message_request(params, from, state)
+      end
 
+      # Helper function for create message handling (now async)
+      defp handle_create_message_request(params, from, state) do
         case Map.get(state, :transport_client_pid) do
           nil ->
             {:reply, {:error, :not_connected}, state}
 
           client_pid when is_pid(client_pid) ->
-            case Jason.encode(message) do
-              {:ok, json} ->
-                send(client_pid, {:transport_message, json})
+            send_and_store_pending_request(params, from, client_pid, state)
+        end
+      end
 
-                # Wait for response from client
-                receive do
-                  {:transport_message, response_data} ->
-                    case Jason.decode(response_data) do
-                      {:ok, %{"result" => result}} ->
-                        {:reply, {:ok, result}, state}
+      # Send message and store pending request (async)
+      defp send_and_store_pending_request(params, from, client_pid, state) do
+        message = ExMCP.Internal.Protocol.encode_create_message(params)
+        request_id = generate_request_id()
 
-                      {:ok, %{"error" => error}} ->
-                        {:reply, {:error, error}, state}
+        # Add request ID to the message for correlation
+        message_with_id = Map.put(message, "id", request_id)
 
-                      _ ->
-                        {:reply, {:error, :invalid_response}, state}
-                    end
-                after
-                  # 30 second timeout
-                  30_000 ->
-                    {:reply, {:error, :timeout}, state}
-                end
+        case encode_and_send_message(message_with_id, client_pid) do
+          :ok ->
+            # Store the pending create_message request with a timeout
+            pending_create_messages = Map.get(state, :pending_create_messages, %{})
 
-              {:error, error} ->
-                {:reply, {:error, error}, state}
-            end
+            updated_pending =
+              Map.put(
+                pending_create_messages,
+                request_id,
+                {from, System.monotonic_time(:millisecond)}
+              )
+
+            new_state = Map.put(state, :pending_create_messages, updated_pending)
+
+            # Set up timeout for this request
+            Process.send_after(self(), {:create_message_timeout, request_id}, 30_000)
+
+            {:noreply, new_state}
+
+          {:error, error} ->
+            {:reply, {:error, error}, state}
+        end
+      end
+
+      # Encode and send message to client
+      defp encode_and_send_message(message, client_pid) do
+        case Jason.encode(message) do
+          {:ok, json} ->
+            send(client_pid, {:transport_message, json})
+            :ok
+
+          {:error, error} ->
+            {:error, error}
+        end
+      end
+
+      # Generate unique request ID for create_message correlation
+      defp generate_request_id do
+        "create_msg_#{:erlang.unique_integer([:positive, :monotonic])}"
+      end
+
+      # Check if incoming message is a create_message response
+      defp create_message_response?(request, state) do
+        pending_create_messages = Map.get(state, :pending_create_messages, %{})
+        request_id = Map.get(request, "id")
+
+        if request_id && Map.has_key?(pending_create_messages, request_id) do
+          {true, request_id}
+        else
+          false
+        end
+      end
+
+      # Handle create_message response (called from handle_info)
+      defp handle_create_message_response(response_data, request_id, state) do
+        pending_create_messages = Map.get(state, :pending_create_messages, %{})
+
+        case Map.get(pending_create_messages, request_id) do
+          nil ->
+            # Request not found (already timed out or completed)
+            state
+
+          {from, _timestamp} ->
+            # Process response and reply to caller
+            result =
+              case Jason.decode(response_data) do
+                {:ok, %{"result" => result}} ->
+                  {:ok, result}
+
+                {:ok, %{"error" => error}} ->
+                  {:error, error}
+
+                _ ->
+                  {:error, :invalid_response}
+              end
+
+            GenServer.reply(from, result)
+
+            # Remove from pending requests
+            updated_pending = Map.delete(pending_create_messages, request_id)
+            Map.put(state, :pending_create_messages, updated_pending)
         end
       end
     end
@@ -744,16 +814,26 @@ defmodule ExMCP.Server do
             {:noreply, state}
 
           {:ok, request} when is_map(request) ->
-            case process_request(request, state) do
-              {:response, response, new_state} ->
-                send_response(response, new_state)
+            # Check if this is a create_message response first
+            case create_message_response?(request, state) do
+              {true, request_id} ->
+                # Handle create_message response
+                new_state = handle_create_message_response(message, request_id, state)
                 {:noreply, new_state}
 
-              {:notification, new_state} ->
-                {:noreply, new_state}
+              false ->
+                # Handle regular request
+                case process_request(request, state) do
+                  {:response, response, new_state} ->
+                    send_response(response, new_state)
+                    {:noreply, new_state}
 
-              {:noreply, new_state} ->
-                {:noreply, new_state}
+                  {:notification, new_state} ->
+                    {:noreply, new_state}
+
+                  {:noreply, new_state} ->
+                    {:noreply, new_state}
+                end
             end
 
           {:error, error} ->
@@ -775,6 +855,24 @@ defmodule ExMCP.Server do
         require Logger
         Logger.info("Transport closed in DSL server")
         {:stop, :normal, state}
+      end
+
+      # Handle create_message timeout
+      def handle_info({:create_message_timeout, request_id}, state) do
+        pending_create_messages = Map.get(state, :pending_create_messages, %{})
+
+        case Map.get(pending_create_messages, request_id) do
+          nil ->
+            # Request already completed or not found
+            {:noreply, state}
+
+          {from, _timestamp} ->
+            # Reply with timeout error and remove from pending
+            GenServer.reply(from, {:error, :timeout})
+            updated_pending = Map.delete(pending_create_messages, request_id)
+            new_state = Map.put(state, :pending_create_messages, updated_pending)
+            {:noreply, new_state}
+        end
       end
 
       # Default handle_info fallback
@@ -822,8 +920,7 @@ defmodule ExMCP.Server do
           from ->
             # Request is still pending, reply with cancellation error
             GenServer.reply(from, {:error, :cancelled})
-            new_pending_requests = Map.delete(state.pending_requests, request_id)
-            final_state = %{new_state | pending_requests: new_pending_requests}
+            final_state = complete_pending_request(request_id, new_state)
             {:noreply, final_state}
         end
       end

@@ -134,11 +134,9 @@ defmodule ExMCP do
   """
 
   alias ExMCP.Client
-  alias ExMCP.Server
-  alias ExMCP.Response
-
-  # Convenience aliases
   alias ExMCP.Error
+  alias ExMCP.Response
+  alias ExMCP.Server
 
   @doc """
   Convenience function to start an MCP client.
@@ -324,10 +322,6 @@ defmodule ExMCP do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     case Client.list_tools(client, timeout) do
-      {:ok, %Response{tools: tools}} when is_list(tools) ->
-        # Handle Response struct
-        tools
-
       {:ok, result} when is_map(result) ->
         # Extract tools list from the result map
         # Try both string and atom keys

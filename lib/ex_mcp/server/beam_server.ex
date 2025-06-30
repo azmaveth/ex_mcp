@@ -166,9 +166,6 @@ defmodule ExMCP.Server.BeamServer do
       {:error, {:transport_error, _}} ->
         :ok
 
-      {:error, {:timeout_error, _}} ->
-        :ok
-
       {:error, {:connection_error, _}} ->
         :ok
     end

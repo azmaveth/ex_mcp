@@ -625,32 +625,44 @@ defmodule ExMCP.ClientConfigEnhanced do
 
   defp apply_customizations(config, customizations) do
     Enum.reduce(customizations, config, fn {key, value}, acc ->
-      case key do
-        :url ->
-          # Extract current transport type
-          transport_type = (acc.transport && acc.transport.type) || :http
-          ClientConfig.put_transport(acc, transport_type, url: value)
-
-        :transport ->
-          ClientConfig.put_transport(acc, value[:type] || :http, value)
-
-        :auth ->
-          ClientConfig.put_auth(acc, value[:type] || :none, value)
-
-        :timeout ->
-          ClientConfig.put_timeout(acc, value)
-
-        :command ->
-          # Update the transport with the new command
-          transport_type = (acc.transport && acc.transport.type) || :stdio
-          current_transport_opts = acc.transport || %{}
-          new_transport_opts = Map.put(current_transport_opts, :command, value)
-          ClientConfig.put_transport(acc, transport_type, new_transport_opts)
-
-        _ ->
-          ClientConfig.put_custom(acc, key, value)
-      end
+      apply_single_customization(acc, key, value)
     end)
+  end
+
+  # Apply a single customization based on the key
+  defp apply_single_customization(config, :url, value) do
+    transport_type = get_transport_type(config)
+    ClientConfig.put_transport(config, transport_type, url: value)
+  end
+
+  defp apply_single_customization(config, :transport, value) do
+    ClientConfig.put_transport(config, value[:type] || :http, value)
+  end
+
+  defp apply_single_customization(config, :auth, value) do
+    ClientConfig.put_auth(config, value[:type] || :none, value)
+  end
+
+  defp apply_single_customization(config, :timeout, value) do
+    ClientConfig.put_timeout(config, value)
+  end
+
+  defp apply_single_customization(config, :command, value) do
+    transport_type = get_transport_type(config, :stdio)
+    current_transport_opts = config.transport || %{}
+    new_transport_opts = Map.put(current_transport_opts, :command, value)
+    # Convert map to keyword list for put_transport
+    opts_as_keyword = Enum.to_list(new_transport_opts)
+    ClientConfig.put_transport(config, transport_type, opts_as_keyword)
+  end
+
+  defp apply_single_customization(config, key, value) do
+    ClientConfig.put_custom(config, key, value)
+  end
+
+  # Get the transport type from config with optional default
+  defp get_transport_type(config, default \\ :http) do
+    (config.transport && config.transport.type) || default
   end
 
   # Enhanced validation
