@@ -1087,7 +1087,8 @@ defmodule ExMCP.Client do
   end
 
   defp get_effective_retry_policy(client, :use_default, timeout) do
-    case GenServer.call(client, :get_default_retry_policy, timeout) do
+    GenServer.call(client, :get_default_retry_policy, timeout)
+    |> case do
       {:ok, policy} -> policy
       _ -> []
     end
