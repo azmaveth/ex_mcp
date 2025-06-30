@@ -199,11 +199,8 @@ defmodule ExMCP.HandlerIntegrationTest do
       assert tool["description"] == "Basic math operations"
     end
 
-    @tag :skip
     test "call tool on handler server", %{client: client} do
-      # This test is temporarily skipped because the test transport
-      # doesn't properly handle tool call responses in the current implementation.
-      # This will be fixed in Phase 2A: Protocol Methods Implementation.
+      # Test tool call functionality works correctly
 
       # The handler returns the correct response format:
       # {:ok, %{content: [%{type: "text", text: "Result: 8"}]}, state}

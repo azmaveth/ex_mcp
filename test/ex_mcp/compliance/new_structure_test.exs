@@ -18,7 +18,6 @@ defmodule ExMCP.Compliance.NewStructureTest do
 
   @moduletag :compliance
   @moduletag :new_structure
-  @moduletag :skip
 
   describe "new compliance test structure" do
     test "version generator module loads correctly" do
