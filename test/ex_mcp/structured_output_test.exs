@@ -149,8 +149,18 @@ defmodule ExMCP.StructuredOutputTest do
       )
 
     on_exit(fn ->
-      if Process.alive?(client), do: GenServer.stop(client)
-      if Process.alive?(server), do: GenServer.stop(server)
+      # More robust cleanup with try/catch
+      try do
+        if Process.alive?(client), do: GenServer.stop(client)
+      catch
+        :exit, _ -> :ok
+      end
+
+      try do
+        if Process.alive?(server), do: GenServer.stop(server)
+      catch
+        :exit, _ -> :ok
+      end
     end)
 
     {:ok, client: client}

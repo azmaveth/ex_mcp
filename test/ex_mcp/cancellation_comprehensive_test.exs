@@ -7,7 +7,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
   validation, and resource cleanup.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ExMCP.{Client, Protocol, Server}
   alias ExMCP.Server.Handler
@@ -287,8 +287,18 @@ defmodule ExMCP.CancellationComprehensiveTest do
       Process.sleep(100)
 
       on_exit(fn ->
-        if Process.alive?(client), do: GenServer.stop(client)
-        if Process.alive?(server), do: GenServer.stop(server)
+        # More robust cleanup with try/catch
+        try do
+          if Process.alive?(client), do: GenServer.stop(client)
+        catch
+          :exit, _ -> :ok
+        end
+
+        try do
+          if Process.alive?(server), do: GenServer.stop(server)
+        catch
+          :exit, _ -> :ok
+        end
       end)
 
       {:ok, client: client, server: server}
@@ -387,8 +397,18 @@ defmodule ExMCP.CancellationComprehensiveTest do
       Process.sleep(100)
 
       on_exit(fn ->
-        if Process.alive?(client), do: GenServer.stop(client)
-        if Process.alive?(server), do: GenServer.stop(server)
+        # More robust cleanup with try/catch
+        try do
+          if Process.alive?(client), do: GenServer.stop(client)
+        catch
+          :exit, _ -> :ok
+        end
+
+        try do
+          if Process.alive?(server), do: GenServer.stop(server)
+        catch
+          :exit, _ -> :ok
+        end
       end)
 
       {:ok, client: client, server: server}
@@ -472,8 +492,18 @@ defmodule ExMCP.CancellationComprehensiveTest do
       Process.sleep(100)
 
       on_exit(fn ->
-        if Process.alive?(client), do: GenServer.stop(client)
-        if Process.alive?(server), do: GenServer.stop(server)
+        # More robust cleanup with try/catch
+        try do
+          if Process.alive?(client), do: GenServer.stop(client)
+        catch
+          :exit, _ -> :ok
+        end
+
+        try do
+          if Process.alive?(server), do: GenServer.stop(server)
+        catch
+          :exit, _ -> :ok
+        end
       end)
 
       {:ok, client: client, server: server}
@@ -535,8 +565,18 @@ defmodule ExMCP.CancellationComprehensiveTest do
       Process.sleep(100)
 
       on_exit(fn ->
-        if Process.alive?(client), do: GenServer.stop(client)
-        if Process.alive?(server), do: GenServer.stop(server)
+        # More robust cleanup with try/catch
+        try do
+          if Process.alive?(client), do: GenServer.stop(client)
+        catch
+          :exit, _ -> :ok
+        end
+
+        try do
+          if Process.alive?(server), do: GenServer.stop(server)
+        catch
+          :exit, _ -> :ok
+        end
       end)
 
       {:ok, client: client, server: server}
@@ -573,8 +613,18 @@ defmodule ExMCP.CancellationComprehensiveTest do
       Process.sleep(100)
 
       on_exit(fn ->
-        if Process.alive?(client), do: GenServer.stop(client)
-        if Process.alive?(server), do: GenServer.stop(server)
+        # More robust cleanup with try/catch
+        try do
+          if Process.alive?(client), do: GenServer.stop(client)
+        catch
+          :exit, _ -> :ok
+        end
+
+        try do
+          if Process.alive?(server), do: GenServer.stop(server)
+        catch
+          :exit, _ -> :ok
+        end
       end)
 
       {:ok, client: client, server: server}
@@ -660,8 +710,8 @@ defmodule ExMCP.CancellationComprehensiveTest do
       assert result == {:error, :cancelled}
 
       # Clean up
-      GenServer.stop(client)
-      GenServer.stop(server)
+      if Process.alive?(client), do: GenServer.stop(client)
+      if Process.alive?(server), do: GenServer.stop(server)
     end
 
     test "logging of cancellation reasons" do

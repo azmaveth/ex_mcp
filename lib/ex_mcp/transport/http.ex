@@ -376,8 +376,9 @@ defmodule ExMCP.Transport.HTTP do
   defp handle_non_sse_response(body, state) do
     case Jason.decode(body) do
       {:ok, response} ->
-        # In non-SSE mode, store response in transport state for immediate access
-        {:ok, %{state | last_response: response}}
+        # In non-SSE mode, return response immediately as third element of tuple
+        # This allows the client to process responses synchronously
+        {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
       {:error, reason} ->
         {:error, {:json_decode_error, reason}}
@@ -420,8 +421,10 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   def receive_message(%__MODULE__{use_sse: false} = _state) do
-    # Non-SSE mode with no response available
-    {:error, :no_response}
+    # Non-SSE mode should not use receive_message in a loop
+    # Instead, responses are returned directly from send_message
+    # Return a special error to indicate this mode doesn't support streaming
+    {:error, :not_supported_in_sync_mode}
   end
 
   def receive_message(%__MODULE__{} = _state) do

@@ -21,6 +21,13 @@ defmodule ExMCP.SessionManagementIntegrationTest do
     original_test_mode = Application.get_env(:ex_mcp, :test_mode, false)
     Application.put_env(:ex_mcp, :test_mode, true)
 
+    # Clean up any existing sessions before starting the test
+    existing_sessions = SessionManager.list_sessions()
+
+    Enum.each(existing_sessions, fn session ->
+      SessionManager.terminate_session(session.id)
+    end)
+
     on_exit(fn ->
       # Clean up all sessions created during this test
       sessions = SessionManager.list_sessions()

@@ -481,8 +481,11 @@ defmodule ExMCP.ClientTest do
       {:ok, client} = Client.start_link(transport: MockTransport)
 
       on_exit(fn ->
-        if Process.alive?(client) do
+        # More robust cleanup with try/catch
+        try do
           if Process.alive?(client), do: GenServer.stop(client)
+        catch
+          :exit, _ -> :ok
         end
       end)
 
@@ -541,8 +544,11 @@ defmodule ExMCP.ClientTest do
       {:ok, client} = Client.start_link(transport: MockTransport)
 
       on_exit(fn ->
-        if Process.alive?(client) do
+        # More robust cleanup with try/catch
+        try do
           if Process.alive?(client), do: GenServer.stop(client)
+        catch
+          :exit, _ -> :ok
         end
       end)
 
@@ -581,8 +587,11 @@ defmodule ExMCP.ClientTest do
       {:ok, client} = Client.start_link(transport: MockTransport)
 
       on_exit(fn ->
-        if Process.alive?(client) do
+        # More robust cleanup with try/catch
+        try do
           if Process.alive?(client), do: GenServer.stop(client)
+        catch
+          :exit, _ -> :ok
         end
       end)
 
