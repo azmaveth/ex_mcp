@@ -282,7 +282,7 @@ defmodule ExMCP.Reliability.Supervisor do
     cb_supervisor =
       Enum.find_value(children, fn
         {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) ->
-          expected_name
+          pid
 
         _ ->
           nil
@@ -305,7 +305,7 @@ defmodule ExMCP.Reliability.Supervisor do
     hc_supervisor =
       Enum.find_value(children, fn
         {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) ->
-          expected_name
+          pid
 
         _ ->
           nil
@@ -328,7 +328,7 @@ defmodule ExMCP.Reliability.Supervisor do
     registry =
       Enum.find_value(children, fn
         {^expected_name, pid, :worker, [Registry]} when is_pid(pid) ->
-          expected_name
+          pid
 
         _ ->
           nil
