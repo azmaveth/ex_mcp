@@ -15,11 +15,11 @@ defmodule ExMCP.ResponsePropertyTest do
 
       # Check that all expected fields are preserved
       (raw["content"] == nil or (response.content != nil and is_list(response.content))) and
-        (raw["tools"] == nil or response.tools == raw["tools"]) and
-        (raw["resources"] == nil or response.resources == raw["resources"]) and
-        (raw["prompts"] == nil or response.prompts == raw["prompts"]) and
+        (raw["tools"] == nil or check_list_normalization(response.tools, raw["tools"])) and
+        (raw["resources"] == nil or check_list_normalization(response.resources, raw["resources"])) and
+        (raw["prompts"] == nil or check_list_normalization(response.prompts, raw["prompts"])) and
         (raw["nextCursor"] == nil or response.nextCursor == raw["nextCursor"]) and
-        (raw["contents"] == nil or (response.contents != nil and is_list(response.contents))) and
+        (raw["contents"] == nil or check_list_normalization(response.contents, raw["contents"])) and
         (raw["description"] == nil or response.description == raw["description"])
     end
   end
@@ -190,4 +190,19 @@ defmodule ExMCP.ResponsePropertyTest do
 
   defp maybe_add_cursor(map, nil), do: map
   defp maybe_add_cursor(map, cursor), do: Map.put(map, "nextCursor", cursor)
+
+  # Helper to check if normalized list matches original
+  defp check_list_normalization(normalized, original)
+       when is_list(normalized) and is_list(original) do
+    length(normalized) == length(original) and
+      Enum.all?(Enum.zip(normalized, original), fn {norm_item, orig_item} ->
+        # The normalized item should contain all the original keys
+        # It may have additional atom keys, which is expected
+        Enum.all?(orig_item, fn {k, v} ->
+          Map.get(norm_item, k) == v
+        end)
+      end)
+  end
+
+  defp check_list_normalization(normalized, original), do: normalized == original
 end

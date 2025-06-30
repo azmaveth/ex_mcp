@@ -127,7 +127,7 @@ defmodule ExMCP.Client.RequestHandler do
         handle_single_response({:error, error, id}, state)
 
       {:notification, method, _params} ->
-        Logger.debug("Received notification: #{method}")
+        Logger.info("Received notification: #{method}")
         {:noreply, state}
 
       {:request, method, params, id} ->

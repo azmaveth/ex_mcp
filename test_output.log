@@ -1,0 +1,3868 @@
+Compiling 2 files (.ex)
+     warning: variable "pid" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 238 │       {:ok, pid} ->
+     │             ~
+     │
+     └─ test/support/test_helpers.ex:238:13: ExMCP.TestHelpers.start_test_servers_for_api/1
+
+     warning: variable "pid" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 270 │           {:ok, pid} ->
+     │                 ~
+     │
+     └─ test/support/test_helpers.ex:270:17: ExMCP.TestHelpers.start_test_servers_for_api/1
+
+     warning: the following clause will never match:
+
+         {:noreply, new_state}
+
+     because it attempts to match on the result of:
+
+         process_request(request, state)
+
+     which has type:
+
+         dynamic({:notification, term()} or {:response, %{...}, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.handle_info/2
+
+     warning: the following clause will never match:
+
+         {:error, reason, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_tool_call(tool_name, arguments, new_state)
+
+     which has type:
+
+         dynamic({:ok, %{content: non_empty_list(%{text: binary(), type: binary()})}, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.handle_call/3
+
+     warning: the following clause will never match:
+
+         {:ok, content, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, full_uri, new_state)
+
+     which has type:
+
+         dynamic({:error, :resource_not_found, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.handle_call/3
+
+     warning: the following clause will never match:
+
+         {:ok, content, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, full_uri, state)
+
+     which has type:
+
+         dynamic({:error, :resource_not_found, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.handle_call/3
+
+     warning: the following clause will never match:
+
+         {:ok, result, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_prompt_get(prompt_name, arguments, new_state)
+
+     which has type:
+
+         dynamic({:error, :prompt_not_implemented, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.handle_call/3
+
+     warning: the following clause will never match:
+
+         {:error, _reason, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_request(method, params, state)
+
+     which has type:
+
+         dynamic({:noreply, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.handle_cast/2
+
+     warning: the following clause will never match:
+
+         {:reply, _response, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_request(method, params, state)
+
+     which has type:
+
+         dynamic({:noreply, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.handle_cast/2
+
+     warning: the following clause will never match:
+
+         {:error, reason, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_tool_call(tool_name, arguments, state)
+
+     which has type:
+
+         dynamic({:ok, %{content: non_empty_list(%{text: binary(), type: binary()})}, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, content, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, uri, state)
+
+     which has type:
+
+         dynamic({:error, :resource_not_found, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, result, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_initialize(params, state)
+
+     which has type:
+
+         dynamic({:error, :initialize_not_implemented, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, result, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_prompt_get(prompt_name, arguments, state)
+
+     which has type:
+
+         dynamic({:error, :prompt_not_implemented, term()})
+
+     typing violation found at:
+     │
+ 120 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/support/test_helpers.ex:120: ExMCP.TestHelpers.ApiTestServer.process_request/2
+
+     warning: variable "operations" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 426 │   defp generate_recommendations(operations, summary) do
+     │                                 ~~~~~~~~~~
+     │
+     └─ test/support/performance_profiler.ex:426:33: ExMCP.Testing.PerformanceProfiler.generate_recommendations/2
+
+Generated ex_mcp app
+
+20:15:47.621 module=Horde.RegistryImpl function=init/1 file=lib/horde/registry_impl.ex line=65 [info] Starting Horde.RegistryImpl with name ExMCP.ServiceRegistry
+
+20:15:47.625 module=Horde.DynamicSupervisorImpl function=init/1 file=lib/horde/dynamic_supervisor_impl.ex line=42 [info] Starting Horde.DynamicSupervisorImpl with name ExMCP.ServiceSupervisor
+
+20:15:47.628 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 3600, cleanup_interval_ms: 60000, max_events_per_session: 1000, storage_backend: :ets}
+
+⚠️  Test tags excluded by default: [:integration, :external, :live_server, :slow, :performance, :stress, :wip, :skip, :requires_http, :requires_beam, :requires_bypass]
+   Use --include <tag> to run specific test categories
+
+    warning: unused alias Authorization
+    │
+ 11 │   alias ExMCP.Compliance.Features.{
+    │   ~
+    │
+    └─ test/ex_mcp/compliance/new_structure_test.exs:11:3
+
+    warning: unused alias Prompts
+    │
+ 11 │   alias ExMCP.Compliance.Features.{
+    │   ~
+    │
+    └─ test/ex_mcp/compliance/new_structure_test.exs:11:3
+
+    warning: unused alias Resources
+    │
+ 11 │   alias ExMCP.Compliance.Features.{
+    │   ~
+    │
+    └─ test/ex_mcp/compliance/new_structure_test.exs:11:3
+
+    warning: unused alias Tools
+    │
+ 11 │   alias ExMCP.Compliance.Features.{
+    │   ~
+    │
+    └─ test/ex_mcp/compliance/new_structure_test.exs:11:3
+
+    warning: unused alias Transport
+    │
+ 11 │   alias ExMCP.Compliance.Features.{
+    │   ~
+    │
+    └─ test/ex_mcp/compliance/new_structure_test.exs:11:3
+
+Running ExUnit with seed: 201746, max_cases: 32
+Excluding tags: [integration: true, external: true, live_server: true, slow: true, performance: true, stress: true, wip: true, skip: true, requires_http: true, requires_beam: true, requires_bypass: true]
+
+......
+20:15:48.255 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.255 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+    warning: unused import ExMCP.TestHelpers
+    │
+  6 │   import ExMCP.TestHelpers
+    │   ~
+    │
+    └─ test/ex_mcp/logging_setlevel_test.exs:6:3
+
+.
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+.
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+.
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+.
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+.
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+.
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.261 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.262 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.262 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.262 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.262 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+
+20:15:48.262 module=ExMCP.Client.RequestHandler function=handle_cast_notification/3 file=lib/ex_mcp/client/request_handler.ex line=280 [error] Failed to send notification: :not_connected
+     warning: variable "small" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 346 │       [tiny, small, medium, large, xlarge] = Enum.map(payload_results, & &1.execution_time_ms)
+     │              ~~~~~
+     │
+     └─ test/ex_mcp/integration/performance_test.exs:346:14: ExMCP.Integration.PerformanceTest."test payload size performance analyzes performance across different payload sizes"/1
+
+
+20:15:48.298 module=ExMCP.HttpPlug function=call/2 file=lib/ex_mcp/http_plug.ex line=152 [debug] HttpPlug: POST request to /
+
+20:15:48.298 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=185 [debug] Handling MCP request, SSE enabled: false
+     warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 250 │         def send_message(_msg, %{should_fail: true} = state) do
+     │                                                       ~~~~~
+     │
+     └─ test/ex_mcp/reliability/health_monitoring_test.exs:250:55: ExMCP.Reliability.HealthMonitoringTest.ControllableTransport.send_message/2
+
+........
+20:15:48.319 module=ExMCP.Reliability.HealthCheck function=notify_status_change/3 file=lib/ex_mcp/reliability/health_check.ex line=363 [info] Health check test_checker: unknown -> healthy
+.....................
+20:15:48.330 module=ExMCP.HttpPlug function=call/2 file=lib/ex_mcp/http_plug.ex line=152 [debug] HttpPlug: POST request to /
+
+20:15:48.330 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=185 [debug] Handling MCP request, SSE enabled: false
+.
+20:15:48.338 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=192 [debug] MCP request processed, result: {:ok, %{"id" => 1, "jsonrpc" => "2.0", "result" => %{"message" => "hello"}}}
+.
+20:15:48.338 module=ExMCP.HttpPlug function=call/2 file=lib/ex_mcp/http_plug.ex line=83 [debug] HttpPlug: OPTIONS request
+.
+20:15:48.339 module=ExMCP.HttpPlug function=call/2 file=lib/ex_mcp/http_plug.ex line=152 [debug] HttpPlug: POST request to /
+
+20:15:48.339 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=185 [debug] Handling MCP request, SSE enabled: false
+.
+20:15:48.339 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=192 [debug] MCP request processed, result: {:ok, %{"id" => 1, "jsonrpc" => "2.0", "result" => %{"message" => "hello"}}}
+.
+20:15:48.339 module=ExMCP.HttpPlug function=call/2 file=lib/ex_mcp/http_plug.ex line=152 [debug] HttpPlug: POST request to /
+.
+20:15:48.339 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=185 [debug] Handling MCP request, SSE enabled: false
+.
+20:15:48.339 module=ExMCP.HttpPlug function=call/2 file=lib/ex_mcp/http_plug.ex line=152 [debug] HttpPlug: POST request to /
+
+20:15:48.339 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=185 [debug] Handling MCP request, SSE enabled: false
+
+20:15:48.339 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=192 [debug] MCP request processed, result: {:ok, %{"id" => 1, "jsonrpc" => "2.0", "result" => %{"message" => "hello"}}}
+
+20:15:48.339 module=ExMCP.HttpPlug function=call/2 file=lib/ex_mcp/http_plug.ex line=152 [debug] HttpPlug: POST request to /
+
+20:15:48.339 module=ExMCP.HttpPlug function=handle_mcp_request/2 file=lib/ex_mcp/http_plug.ex line=185 [debug] Handling MCP request, SSE enabled: false
+..............................................
+20:15:48.357 module=ExMCP.ProgressTracker function=send_progress_notification/1 token=dead_test file=lib/ex_mcp/progress_tracker.ex line=323 [warning] Progress notification sender process is dead
+............................................................................................................     warning: variable "service_pid" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 207 │       service_pid: service_pid,
+     │                    ~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/client_beam_transport_test.exs:207:20: ExMCP.ClientBeamTransportTest."test Client with BEAM transport handles notifications via BEAM transport"/1
+
+.
+20:15:48.400 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.example.com/data transport=http user_id=integration file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+...................
+20:15:48.417 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/data transport=http user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+..........
+20:15:48.430 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.example.com/data user_id=integration file=lib/ex_mcp/transport/security_guard.ex line=100 [warning] SecurityGuard: Consent denied
+.
+20:15:48.430 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.example.com/data transport=http user_id=integration file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+....    warning: variable "method" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 26 │           {:"$gen_call", from, {:request, method, params}} ->
+    │                                           ~
+    │
+    └─ test/ex_mcp/client_subscription_test.exs:26:43: ExMCP.ClientSubscriptionTest.create_mock_client/1
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 26 │           {:"$gen_call", from, {:request, method, params}} ->
+    │                                                   ~
+    │
+    └─ test/ex_mcp/client_subscription_test.exs:26:51: ExMCP.ClientSubscriptionTest.create_mock_client/1
+
+.
+20:15:48.441 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 23 for tools/call
+
+20:15:48.445 module=ExMCP.Transport.ReliabilityWrapper function=execute_wrapped_operation/3 error=service_unavailable file=lib/ex_mcp/transport/reliability_wrapper.ex line=308 [debug] Transport operation failed
+.    warning: default values for the optional arguments in create_mock_client/1 are never used
+    │
+  9 │   defp create_mock_client(custom_handler \\ nil) do
+    │        ~
+    │
+    └─ test/ex_mcp/client_subscription_test.exs:9:8: ExMCP.ClientSubscriptionTest (module)
+
+.
+20:15:48.449 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/data file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+.
+20:15:48.449 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.example.com/data file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+.
+20:15:48.449 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.internal.com/data transport=http user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+.
+20:15:48.449 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.internal.com/data file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+
+20:15:48.449 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=some-resource transport=stdio user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+
+20:15:48.449 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=some-resource file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+.
+20:15:48.449 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=some-resource transport=beam user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+
+20:15:48.449 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=some-resource file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+...................
+20:15:48.459 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.internal.com/data transport=http user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+.
+20:15:48.459 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.internal.com/data file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+.
+20:15:48.459 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/data transport=http user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+.
+20:15:48.459 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/data user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=100 [warning] SecurityGuard: Consent denied
+.
+20:15:48.459 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/data transport=http user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+.
+20:15:48.459 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/data user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=85 [info] SecurityGuard: Consent required
+............
+20:15:48.468 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/data transport=http user_id=user123 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+.
+20:15:48.468 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/data file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+.
+20:15:48.468 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/caching-test transport=http user_id=user-for-caching-test--576460752303415037 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+.
+20:15:48.468 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/caching-test file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+.
+20:15:48.468 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/caching-test transport=http user_id=user-for-caching-test--576460752303415037 file=lib/ex_mcp/transport/security_guard.ex line=65 [debug] SecurityGuard validating request
+
+20:15:48.468 module=ExMCP.Transport.SecurityGuard function=validate_request/2 url=https://api.external.com/caching-test file=lib/ex_mcp/transport/security_guard.ex line=74 [debug] SecurityGuard: Request approved
+.....................    warning: unused import ExMCP.TestHelpers
+    │
+  4 │   import ExMCP.TestHelpers
+    │   ~
+    │
+    └─ test/ex_mcp/reliability/supervisor_test.exs:4:3
+
+
+20:15:48.495 module=ExMCP.Client.ConnectionManager function=parse_handshake_response/2 file=lib/ex_mcp/client/connection_manager.ex line=336 [debug] Handshake error details: %{"code" => -32000, "message" => "Initialize error: \"Unsupported protocol version: not-a-real-version\""}
+
+20:15:48.495 module=ExMCP.Client function=init/1 file=lib/ex_mcp/client.ex line=690 [error] Failed to initialize MCP client: "Handshake failed: Initialize error: \"Unsupported protocol version: not-a-real-version\""
+...................    warning: unused alias MockServer
+    │
+ 13 │   alias ExMCP.Testing.{Assertions, MockServer}
+    │   ~
+    │
+    └─ test/ex_mcp/integration/e2e_scenarios_test.exs:13:3
+
+    warning: unused alias Server
+    │
+ 12 │   alias ExMCP.{Client, Server}
+    │   ~
+    │
+    └─ test/ex_mcp/integration/e2e_scenarios_test.exs:12:3
+
+    warning: unused import ExMCP.Testing.Assertions
+    │
+ 19 │   import Assertions
+    │   ~
+    │
+    └─ test/ex_mcp/integration/e2e_scenarios_test.exs:19:3
+
+.
+20:15:48.505 module=ExMCP.Client function=init/1 file=lib/ex_mcp/client.ex line=690 [error] Failed to initialize MCP client: {:connection_error, :server_not_available}
+..
+20:15:48.507 module=ExMCP.Client.ConnectionManager function=parse_handshake_response/2 file=lib/ex_mcp/client/connection_manager.ex line=336 [debug] Handshake error details: %{"code" => -32000, "message" => "Initialize error: \"Unsupported protocol version: 2025-06-18\""}
+.
+20:15:48.507 module=ExMCP.Client function=init/1 file=lib/ex_mcp/client.ex line=690 [error] Failed to initialize MCP client: "Handshake failed: Initialize error: \"Unsupported protocol version: 2025-06-18\""
+...    warning: unused alias Server
+    │
+  7 │   alias ExMCP.Server
+    │   ~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:7:3
+
+........
+20:15:48.518 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 34 for tools/call
+..
+20:15:48.518 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 38 for tools/call
+.
+20:15:48.519 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 41 for tools/call
+.
+20:15:48.519 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 43 for tools/call
+.
+20:15:48.519 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 45 for tools/call
+.✅ Connection correctly succeeded
+.✅ Connection correctly failed with version negotiation error
+
+20:15:48.526 module=ExMCP.Client.ConnectionManager function=parse_handshake_response/2 file=lib/ex_mcp/client/connection_manager.ex line=336 [debug] Handshake error details: %{"code" => -32000, "message" => "Unsupported protocol version: 2025-06-18"}
+
+20:15:48.526 module=ExMCP.Client function=init/1 file=lib/ex_mcp/client.ex line=690 [error] Failed to initialize MCP client: "Handshake failed: Unsupported protocol version: 2025-06-18"
+    warning: unused alias Server
+    │
+  4 │   alias ExMCP.{Client, Server}
+    │   ~
+    │
+    └─ test/debug_version_negotiation_test.exs:4:3
+
+....    warning: module attribute @introspection_endpoint was set but never used
+    │
+ 12 │   @introspection_endpoint "https://auth.example.com/introspect"
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/oauth_2_1_compliance_test.exs:12: ExMCP.Compliance.OAuth21ComplianceTest (module)
+
+    warning: module attribute @issuer was set but never used
+    │
+  9 │   @issuer "https://auth.example.com"
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/oauth_2_1_compliance_test.exs:9: ExMCP.Compliance.OAuth21ComplianceTest (module)
+
+
+20:15:48.542 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 50 for tools/call
+.................    warning: variable "other" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 43 │             other ->
+    │             ~
+    │
+    └─ test/ex_mcp/client/connection_manager_property_test.exs:43:13: ExMCP.Client.ConnectionManagerPropertyTest."property transport configuration property tests normalize_transport_spec handles all atom transport types"/1
+
+    warning: variable "other" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 64 │           other ->
+    │           ~
+    │
+    └─ test/ex_mcp/client/connection_manager_property_test.exs:64:11: ExMCP.Client.ConnectionManagerPropertyTest."property transport configuration property tests normalize_transport_spec handles tuple transport specifications"/1
+
+    warning: variable "other" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 93 │           other ->
+    │           ~
+    │
+    └─ test/ex_mcp/client/connection_manager_property_test.exs:93:11: ExMCP.Client.ConnectionManagerPropertyTest."property transport configuration property tests normalize_transport_spec handles keyword list transport specifications"/1
+
+.     warning: variable "other" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 113 │           other ->
+     │           ~
+     │
+     └─ test/ex_mcp/client/connection_manager_property_test.exs:113:11: ExMCP.Client.ConnectionManagerPropertyTest."property transport configuration property tests server_pid to server conversion works correctly"/1
+
+......................................................................................
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+.
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 3600, cleanup_interval_ms: 60000, max_events_per_session: 2, storage_backend: :ets}
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session wFLsUIQG0kBau5P9sEfE8A with transport sse
+.
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session eq1hvUwl8CEIbjrABnGA1A with transport sse
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session WuXya8J-j0odLl2VMDCRYw with transport http
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session -PZtBtkYuFTgRUMy8jIBfQ with transport sse
+.
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=346 [debug] Terminated session WuXya8J-j0odLl2VMDCRYw
+.
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+.
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session j6SvxVOoOeygJ7R49Pli4w with transport sse
+.
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+.
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session iv1cFbaY9Mk6vH8Seq3nbQ with transport sse
+.
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+.
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session Dn98pKZhGT_m6xPGe9C35w with transport sse
+.
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session ui30UT9oMIYQf4BaIHjVEw with transport sse
+
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session dpEaHdT2PHQjiiv_PW7XXg with transport sse
+.
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session s5Gu7JxjYCZaacXfdUP70w with transport http
+
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session 9cyuHooEh6b_tshS0NuOIA with transport sse
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session JAVeu3h4cw9Xf7KbFH-77w with transport http
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=346 [debug] Terminated session JAVeu3h4cw9Xf7KbFH-77w
+
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session 0mhhfLc3K51-WjgOtR48tQ with transport sse
+
+20:15:48.590 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.590 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session efImmKGeXjw0qfn-cQkXpA with transport sse
+
+20:15:48.591 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=346 [debug] Terminated session efImmKGeXjw0qfn-cQkXpA
+
+20:15:48.591 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.591 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session 8QvKYWKz7vgnbr28eTBqug with transport sse
+
+20:15:48.596 module=ExMCP.Plugs.ProtocolVersion function=validate_protocol_version/1 file=lib/ex_mcp/plugs/protocol_version.ex line=51 [warning] Invalid MCP-Protocol-Version: 
+...
+20:15:48.596 module=ExMCP.Plugs.ProtocolVersion function=validate_protocol_version/1 file=lib/ex_mcp/plugs/protocol_version.ex line=47 [debug] Valid MCP-Protocol-Version: 2025-06-18
+.
+20:15:48.596 module=ExMCP.Plugs.ProtocolVersion function=validate_protocol_version/1 file=lib/ex_mcp/plugs/protocol_version.ex line=47 [debug] Valid MCP-Protocol-Version: 2025-06-18
+.
+20:15:48.596 module=ExMCP.Plugs.ProtocolVersion function=validate_protocol_version/1 file=lib/ex_mcp/plugs/protocol_version.ex line=51 [warning] Invalid MCP-Protocol-Version: 2024-01-01
+.
+20:15:48.596 module=ExMCP.Plugs.ProtocolVersion function=validate_protocol_version/1 file=lib/ex_mcp/plugs/protocol_version.ex line=47 [debug] Valid MCP-Protocol-Version: 2025-06-18
+.
+20:15:48.596 module=ExMCP.Plugs.ProtocolVersion function=validate_protocol_version/1 file=lib/ex_mcp/plugs/protocol_version.ex line=47 [debug] Valid MCP-Protocol-Version: 2025-03-26
+.
+20:15:48.596 module=ExMCP.Plugs.ProtocolVersion function=validate_protocol_version/1 file=lib/ex_mcp/plugs/protocol_version.ex line=47 [debug] Valid MCP-Protocol-Version: 2024-11-05
+.
+20:15:48.596 module=ExMCP.Plugs.ProtocolVersion function=validate_protocol_version/1 file=lib/ex_mcp/plugs/protocol_version.ex line=43 [debug] No MCP-Protocol-Version header found, using default: 2025-06-18
+....
+20:15:48.601 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+.
+20:15:48.601 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+.
+20:15:48.601 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session 87fkvia-vHsIAlTnXCh9Yg with transport sse
+
+20:15:48.601 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.601 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 0, cleanup_interval_ms: 50, max_events_per_session: 1000, storage_backend: :ets}
+
+20:15:48.601 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session Wh_-00Fls_aXaz2TdBJ2MA with transport sse
+........................................
+20:15:48.643 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 66 for tools/call
+............
+20:15:48.652 module=ExMCP.SessionManager function=cleanup_expired_sessions/1 file=lib/ex_mcp/session_manager.ex line=535 [debug] Cleaning up expired session Wh_-00Fls_aXaz2TdBJ2MA
+
+20:15:48.652 module=ExMCP.SessionManager function=cleanup_expired_sessions/1 file=lib/ex_mcp/session_manager.ex line=545 [info] Cleaned up 1 expired sessions
+................
+20:15:48.702 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.702 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session _LBvHOIzTp2bhSZ7zYyjOw with transport sse
+.
+20:15:48.702 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=346 [debug] Terminated session _LBvHOIzTp2bhSZ7zYyjOw
+.
+20:15:48.703 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+.
+20:15:48.703 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session rsp0HSD0Pe4Aweok3c5Dkg with transport sse
+
+20:15:48.703 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.703 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session HxZh0OOT8ggRpK6cpY9mHg with transport sse
+
+20:15:48.703 module=ExMCP.SessionManager function=init/1 file=lib/ex_mcp/session_manager.ex line=253 [info] SessionManager started with config: %{session_ttl_seconds: 1, cleanup_interval_ms: 100, max_events_per_session: 100, storage_backend: :ets}
+
+20:15:48.703 module=ExMCP.SessionManager function=handle_call/3 file=lib/ex_mcp/session_manager.ex line=274 [debug] Created session 4W2PXE22By3YJbIt_cwa4w with transport sse
+..
+20:15:48.715 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=203 [debug] Attempt 1 failed: {:exit, :test_exit}, retrying in 10ms
+..
+20:15:48.721 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 86 for tools/call
+
+20:15:48.721 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 87 for tools/call
+
+20:15:48.721 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 88 for tools/call
+
+20:15:48.725 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=210 [warning] Retry exhausted after 2 attempts: {:exit, :test_exit}
+.
+20:15:48.725 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=203 [debug] Attempt 1 failed: :test_error, retrying in 11ms
+...
+20:15:48.730 module=ExMCP.Server.Legacy function=handle_client_response/2 file=lib/ex_mcp/server/legacy.ex line=454 [warning] Received response for unknown request ID: 11401
+.
+20:15:48.730 module=ExMCP.Server.Legacy function=handle_client_response/2 file=lib/ex_mcp/server/legacy.ex line=454 [warning] Received response for unknown request ID: 11465
+....
+20:15:48.737 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=203 [debug] Attempt 2 failed: :test_error, retrying in 24ms
+******.
+20:15:48.743 module=ExMCP.Reliability.HealthCheck function=notify_status_change/3 file=lib/ex_mcp/reliability/health_check.ex line=363 [info] Health check test_checker: unknown -> healthy
+..
+20:15:48.744 module=ExMCP.Reliability.HealthCheck function=notify_status_change/3 file=lib/ex_mcp/reliability/health_check.ex line=363 [info] Health check test_checker: unknown -> healthy
+.
+20:15:48.744 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 95 for tools/call
+.     warning: this clause for init/1 cannot match because a previous clause at line 101 always matches
+     │
+ 116 │     def init(_args), do: {:ok, %{name: "minimal-dsl"}}
+     │         ~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:116:9
+
+
+20:15:48.755 module=ExMCP.Server.Legacy function=process_mcp_request/2 file=lib/ex_mcp/server/legacy.ex line=706 [debug] Tracking pending request 100 for tools/call
+...
+20:15:48.762 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=210 [warning] Retry exhausted after 3 attempts: :test_error
+
+20:15:48.762 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=203 [debug] Attempt 1 failed: :temporary_failure, retrying in 9ms
+.
+20:15:48.772 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=203 [debug] Attempt 2 failed: :temporary_failure, retrying in 23ms
+............................................
+20:15:48.794 module=ExMCP.Reliability.HealthCheck function=notify_status_change/3 file=lib/ex_mcp/reliability/health_check.ex line=363 [info] Health check test_checker: unknown -> unhealthy
+.
+20:15:48.794 module=ExMCP.Reliability.HealthCheck function=notify_status_change/3 file=lib/ex_mcp/reliability/health_check.ex line=363 [info] Health check test_checker: unhealthy -> healthy
+.
+20:15:48.794 module=ExMCP.Reliability.HealthCheck function=notify_status_change/3 file=lib/ex_mcp/reliability/health_check.ex line=363 [info] Health check test_checker: unknown -> healthy
+.
+20:15:48.794 module=ExMCP.Reliability.HealthCheck function=notify_status_change/3 file=lib/ex_mcp/reliability/health_check.ex line=363 [info] Health check test_checker: healthy -> unhealthy
+.
+20:15:48.795 module=ExMCP.Reliability.HealthCheck function=notify_status_change/3 file=lib/ex_mcp/reliability/health_check.ex line=363 [info] Health check test_checker: unknown -> healthy
+.
+20:15:48.795 module=ExMCP.HttpPlug function=handle_authorization_server_metadata/2 file=lib/ex_mcp/http_plug.ex line=683 [error] OAuth authorization server metadata configuration error: Required OAuth authorization server metadata field issuer is not configured. Please set :ex_mcp, :oauth2_authorization_server_metadata, issuer: "..."
+.
+20:15:48.795 module=ExMCP.HttpPlug function=call/2 file=lib/ex_mcp/http_plug.ex line=83 [debug] HttpPlug: OPTIONS request
+.....
+20:15:48.796 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=194 [info] Operation succeeded after 3 attempts
+..
+20:15:48.796 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=203 [debug] Attempt 1 failed: %RuntimeError{message: "Test exception"}, retrying in 9ms
+******.Operating System: macOS
+CPU Information: Apple M4 Max
+Number of Available Cores: 16
+Available memory: 128 GB
+Elixir 1.18.4
+Erlang 28.0.1
+JIT enabled: true
+
+Benchmark suite executing with the following configuration:
+warmup: 2 s
+time: 1 s
+memory time: 0 ns
+reduction time: 0 ns
+parallel: 1
+inputs: none specified
+Estimated total run time: 3 s
+
+.....
+20:15:48.806 module=ExMCP.Server.Transport function=start_native_server/4 file=lib/ex_mcp/server/transport.ex line=178 [info] Starting MCP native server: Elixir.ExMCP.Server.TransportTest.TestServer
+.
+20:15:48.806 module=ExMCP.Server.Transport function=start_native_server/4 file=lib/ex_mcp/server/transport.ex line=183 [info] MCP native server started successfully
+.
+20:15:48.806 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=210 [warning] Retry exhausted after 2 attempts: %RuntimeError{message: "Test exception"}
+.
+20:15:48.806 module=ExMCP.Reliability.Retry function=execute_with_retry/4 file=lib/ex_mcp/reliability/retry.ex line=203 [debug] Attempt 1 failed: :failure, retrying in 50ms
+.
+20:15:48.806 module=ExMCP.Server.Transport function=start_native_server/4 file=lib/ex_mcp/server/transport.ex line=178 [info] Starting MCP native server: Elixir.ExMCP.Server.TransportTest.TestServer
+
+20:15:48.806 module=ExMCP.Server.Transport function=start_native_server/4 file=lib/ex_mcp/server/transport.ex line=183 [info] MCP native server started successfully
+............     warning: this clause for handle_cast/2 cannot match because a previous clause at line 8 always matches
+     │
+ 215 │     def handle_cast({:notify_resource_update, _uri}, state) do
+     │         ~
+     │
+     └─ test/ex_mcp/server_test.exs:215:9
+
+..    warning: unused import ExMCP.TestHelpers
+    │
+  3 │   import ExMCP.TestHelpers
+    │   ~
+    │
+    └─ test/ex_mcp/tools_test.exs:3:3
+
+....................................................Benchmarking security_guard_check ...
+...................    warning: variable "correct_challenge" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 77 │       correct_challenge = PKCE.generate_code_challenge(verifier)
+    │       ~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/authorization/pkce_test.exs:77:7: ExMCP.Authorization.PKCETest."test validate_challenge/2 uses secure comparison to prevent timing attacks"/1
+
+.............................
+
+  1) property invalid URI in resource content fails validation (ExMCP.Content.ProtocolPropertyTest)
+     test/ex_mcp/property/content_protocol_property_test.exs:292
+     Property Elixir.ExMCP.Content.ProtocolPropertyTest.property invalid URI in resource content fails validation() failed. Counter-Example is:
+     [<<65, 58, 0>>]
+
+     Counter example stored.
+
+     code: nil
+     stacktrace:
+       (propcheck 1.5.0) lib/properties.ex:253: PropCheck.Properties.handle_check_results/2
+       test/ex_mcp/property/content_protocol_property_test.exs:292: (test)
+
+..................................     warning: this clause for handle_cast/2 cannot match because a previous clause at line 222 always matches
+     │
+ 240 │     def handle_cast(_msg, state) do
+     │         ~
+     │
+     └─ test/ex_mcp/server_test.exs:240:9
+
+.    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 46 │         def send_message(_msg, state), do: {:error, :transport_failure}
+    │                                ~~~~~
+    │
+    └─ test/ex_mcp/reliability_integration_test.exs:46:32: ExMCP.ReliabilityIntegrationTest.FailingTestTransport.send_message/2
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 47 │         def receive_message(state), do: {:error, :transport_failure}
+    │                             ~~~~~
+    │
+    └─ test/ex_mcp/reliability_integration_test.exs:47:29: ExMCP.ReliabilityIntegrationTest.FailingTestTransport.receive_message/1
+
+..........................................
+
+  2) test start_link/1 fails when transport connection fails (ExMCP.ClientMainTest)
+     test/ex_mcp/client_main_test.exs:253
+     Assertion with =~ failed
+     code:  assert capture_log(fn ->
+              assert {:error, {:transport_connect_failed, :connection_refused}} = Client.start_link(opts)
+            end) =~ "Failed to initialize MCP client"
+     left:  ""
+     right: "Failed to initialize MCP client"
+     stacktrace:
+       test/ex_mcp/client_main_test.exs:257: (test)
+
+..    warning: module attribute @medium_op_threshold_ms was set but never used
+    │
+ 30 │   @medium_op_threshold_ms 50
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/performance/phase_4d_benchmarks_test.exs:30: ExMCP.Performance.Phase4DBenchmarksTest (module)
+
+........................    warning: unused alias Server
+    │
+ 12 │   alias ExMCP.{Client, Server}
+    │   ~
+    │
+    └─ test/ex_mcp/integration/performance_profiling_test.exs:12:3
+
+............................................................    warning: unused alias Server
+    │
+ 12 │   alias ExMCP.{Client, Server}
+    │   ~
+    │
+    └─ test/ex_mcp/integration/cross_transport_test.exs:12:3
+
+............
+
+  3) test notification handling handles server notifications (ExMCP.ClientMainTest)
+     test/ex_mcp/client_main_test.exs:686
+     Assertion with =~ failed
+     code:  assert log =~ "Received notification: resources/updated"
+     left:  ""
+     right: "Received notification: resources/updated"
+     stacktrace:
+       test/ex_mcp/client_main_test.exs:700: (test)
+
+..     warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 141 │         def send_message(_msg, %{failure_mode: true} = state) do
+     │                                                        ~~~~~
+     │
+     └─ test/ex_mcp/reliability_integration_test.exs:141:56: ExMCP.ReliabilityIntegrationTest.DegradingTransport.send_message/2
+
+     warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 147 │         def receive_message(%{failure_mode: true} = state), do: {:error, :connection_error}
+     │                                                     ~~~~~
+     │
+     └─ test/ex_mcp/reliability_integration_test.exs:147:53: ExMCP.ReliabilityIntegrationTest.DegradingTransport.receive_message/1
+
+.....................................................................................................................................
+
+  4) test start_link/1 fails when initialize returns error (ExMCP.ClientMainTest)
+     test/ex_mcp/client_main_test.exs:269
+     Assertion with =~ failed
+     code:  assert capture_log(fn -> assert {:error, {:initialize_error, _}} = Client.start_link(opts) end) =~
+              "Failed to initialize MCP client"
+     left:  ""
+     right: "Failed to initialize MCP client"
+     stacktrace:
+       test/ex_mcp/client_main_test.exs:273: (test)
+
+.........................................................................................
+
+  5) test service registration registers and unregisters services (ExMCP.NativeTest)
+     test/ex_mcp/native_test.exs:7
+     Expected truthy, got false
+     code: assert Native.service_available?(service_name)
+     arguments:
+
+         # 1
+         :test_service_
+
+     stacktrace:
+       test/ex_mcp/native_test.exs:15: (test)
+
+................................................................................     warning: comparison between distinct types found:
+
+         retry_policy == :use_default
+
+     given types:
+
+         non_empty_list({:max_attempts, integer()}) == :use_default
+
+     where "retry_policy" was given the type:
+
+         # type: non_empty_list({:max_attempts, integer()})
+         # from: test/ex_mcp/client_retry_test.exs:130:20
+         retry_policy = [max_attempts: 3]
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 134 │         if retry_policy == :use_default do
+     │                         ~
+     │
+     └─ test/ex_mcp/client_retry_test.exs:134:25: ExMCP.ClientRetryTest."test integration with make_request make_request handles retry policy merging correctly"/1
+
+     warning: the following clause will never match:
+
+         false
+
+     because it attempts to match on the result of:
+
+         retry_policy
+
+     which has type:
+
+         non_empty_list({:max_attempts, integer()})
+
+     typing violation found at:
+     │
+ 138 │             false -> []
+     │             ~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/client_retry_test.exs:138: ExMCP.ClientRetryTest."test integration with make_request make_request handles retry policy merging correctly"/1
+
+     warning: the following clause will never match:
+
+         []
+
+     because it attempts to match on the result of:
+
+         retry_policy
+
+     which has type:
+
+         non_empty_list({:max_attempts, integer()})
+
+     typing violation found at:
+     │
+ 139 │             [] -> []
+     │             ~~~~~~~~
+     │
+     └─ test/ex_mcp/client_retry_test.exs:139: ExMCP.ClientRetryTest."test integration with make_request make_request handles retry policy merging correctly"/1
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{description: term(), input_schema: term(), metadata: term(), name: term()}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{description: term(), input_schema: term(), metadata: term(), name: term()})
+         # from: test/ex_mcp/client/response_test.exs:798
+         left = ExMCP.Client.Response.normalize_tool(%{})
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/client/response_test.exs:798
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 798 │       assert Response.normalize_tool(%{}) != nil
+     │                                           ~
+     │
+     └─ test/ex_mcp/client/response_test.exs:798:43: ExMCP.Client.ResponseTest."test metadata extraction handles non-map inputs gracefully"/1
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{description: term(), metadata: term(), mime_type: term(), name: term(), uri: term()}) !=
+           nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{description: term(), metadata: term(), mime_type: term(), name: term(), uri: term()})
+         # from: test/ex_mcp/client/response_test.exs:799
+         left = ExMCP.Client.Response.normalize_resource(%{})
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/client/response_test.exs:799
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 799 │       assert Response.normalize_resource(%{}) != nil
+     │                                               ~
+     │
+     └─ test/ex_mcp/client/response_test.exs:799:47: ExMCP.Client.ResponseTest."test metadata extraction handles non-map inputs gracefully"/1
+
+.     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{arguments: term(), description: term(), metadata: term(), name: term()}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{arguments: term(), description: term(), metadata: term(), name: term()})
+         # from: test/ex_mcp/client/response_test.exs:800
+         left = ExMCP.Client.Response.normalize_prompt(%{})
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/client/response_test.exs:800
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 800 │       assert Response.normalize_prompt(%{}) != nil
+     │                                             ~
+     │
+     └─ test/ex_mcp/client/response_test.exs:800:45: ExMCP.Client.ResponseTest."test metadata extraction handles non-map inputs gracefully"/1
+
+.     warning: got "@impl true" for function handle_log/4 but no behaviour specifies such callback. The known callbacks are:
+
+       * ExMCP.Client.Handler.handle_create_message/2 (function)
+       * ExMCP.Client.Handler.handle_elicitation_create/3 (function)
+       * ExMCP.Client.Handler.handle_list_roots/1 (function)
+       * ExMCP.Client.Handler.handle_ping/1 (function)
+       * ExMCP.Client.Handler.init/1 (function)
+       * ExMCP.Client.Handler.terminate/2 (function)
+
+     │
+ 250 │     def handle_log(level, message, data, state) do
+     │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/compliance/logging_compliance_test.exs:250: ExMCP.LoggingComplianceTest.TestLoggingClient (module)
+
+    warning: conflicting behaviours found. Callback function init/1 is defined by both GenServer and ExMCP.Server.Handler (in module ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler)
+    │
+  1 │ defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
+    │ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/concurrent_clients_test.exs:1: ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler (module)
+
+    warning: conflicting behaviours found. Callback function terminate/2 is defined by both GenServer and ExMCP.Server.Handler (in module ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler)
+    │
+  1 │ defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
+    │ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/concurrent_clients_test.exs:1: ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler (module)
+
+     warning: conflicting behaviours found. Callback function init/1 is defined by both GenServer and ExMCP.Server.Handler (in module ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler)
+     │
+ 154 │ defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
+     │ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:154: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler (module)
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_initialize(params, state)
+
+    which has type:
+
+        dynamic(
+          {:ok,
+           %{
+             capabilities: %{prompts: empty_map(), resources: empty_map(), tools: empty_map()},
+             name: binary(),
+             version: binary()
+           }, term()}
+        )
+
+    typing violation found at:
+    │
+ 20 │       {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
+    │       ~
+    │
+    └─ test/ex_mcp/integration/concurrent_clients_test.exs:20:7: ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_list_tools(cursor, state)
+
+    which has type:
+
+        dynamic(
+          {:ok,
+           non_empty_list(%{
+             description: binary(),
+             input_schema:
+               %{
+                 properties: %{duration: %{description: binary(), type: binary()}},
+                 required: non_empty_list(binary()),
+                 type: binary()
+               } or %{properties: empty_map(), required: empty_list(), type: binary()},
+             name: binary()
+           }), nil, term()}
+        )
+
+    typing violation found at:
+    │
+ 29 │       {:error, reason, new_state} ->
+    │       ~
+    │
+    └─ test/ex_mcp/integration/concurrent_clients_test.exs:29:7: ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler.handle_call/3
+
+     warning: conflicting behaviours found. Callback function terminate/2 is defined by both GenServer and ExMCP.Server.Handler (in module ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler)
+     │
+ 154 │ defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
+     │ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:154: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler (module)
+
+    warning: module attribute @impl was not set for function handle_list_tools/2 callback (specified in ExMCP.Server.Handler). This either means you forgot to add the "@impl true" annotation before the definition or that you are accidentally overriding this callback
+    │
+ 76 │   def handle_list_tools(_cursor, state) do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/concurrent_clients_test.exs:76: ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler (module)
+
+     warning: the following clause will never match:
+
+         {:error, reason, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_initialize(params, state)
+
+     which has type:
+
+         dynamic({:ok, %{capabilities: %{tools: empty_map()}, name: binary(), version: binary()}, term()})
+
+     typing violation found at:
+     │
+ 173 │       {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
+     │       ~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:173:7: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler.handle_call/3
+
+     warning: module attribute @impl was not set for function handle_call_tool/3 callback (specified in ExMCP.Server.Handler). This either means you forgot to add the "@impl true" annotation before the definition or that you are accidentally overriding this callback
+     │
+ 103 │   def handle_call_tool("slow_operation", %{"duration" => duration}, state) do
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:103: ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler (module)
+
+     warning: the following clause will never match:
+
+         {:error, reason, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_list_tools(cursor, state)
+
+     which has type:
+
+         dynamic(
+           {:ok,
+            non_empty_list(%{
+              description: binary(),
+              input_schema: %{properties: empty_map(), type: binary()},
+              name: binary()
+            }), nil, term()}
+         )
+
+     typing violation found at:
+     │
+ 182 │       {:error, reason, new_state} ->
+     │       ~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:182:7: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler.handle_call/3
+
+..............     warning: module attribute @impl was not set for function handle_list_tools/2 callback (specified in ExMCP.Server.Handler). This either means you forgot to add the "@impl true" annotation before the definition or that you are accidentally overriding this callback
+     │
+ 223 │   def handle_list_tools(_cursor, state) do
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:223: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler (module)
+
+.    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:unknown_method, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.handle_cast/2
+
+    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        process_request(request, state)
+
+    which has type:
+
+        dynamic({:notification, term()} or {:response, %{...}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.handle_info/2
+
+    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        process_request(request, state)
+
+    which has type:
+
+        dynamic({:notification, term()} or {:response, %{...}, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.handle_info/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:ok, %{messages: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.handle_call/3
+
+     warning: the following clause will never match:
+
+         {:noreply, new_state}
+
+     because it attempts to match on the result of:
+
+         process_request(request, state)
+
+     which has type:
+
+         dynamic({:notification, term()} or {:response, %{...}, term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.handle_info/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, new_state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(%{...}), term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.handle_call/3
+
+     warning: module attribute @impl was not set for function handle_call_tool/3 callback (specified in ExMCP.Server.Handler). This either means you forgot to add the "@impl true" annotation before the definition or that you are accidentally overriding this callback
+     │
+ 234 │   def handle_call_tool("unreliable", _params, state) do
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:234: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler (module)
+
+    warning: the following clause will never match:
+
+        {:ok, content, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, new_state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(%{...}), term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, result, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, _reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.handle_cast/2
+
+     warning: the following clause will never match:
+
+         {:ok, content, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, full_uri, new_state)
+
+     which has type:
+
+         dynamic({:error, binary(), term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, _reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:unknown_method, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.handle_cast/2
+
+     warning: module attribute @impl was not set for function handle_list_resources/2 callback (specified in ExMCP.Server.Handler). This either means you forgot to add the "@impl true" annotation before the definition or that you are accidentally overriding this callback
+     │
+ 250 │   def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:250: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler (module)
+
+    warning: the following clause will never match:
+
+        {:reply, _response, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.handle_cast/2
+
+    warning: the following clause will never match:
+
+        {:reply, _response, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:unknown_method, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.handle_cast/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, state)
+
+    which has type:
+
+        dynamic({:ok, %{messages: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, content, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, full_uri, state)
+
+     which has type:
+
+         dynamic({:error, binary(), term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, uri, state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(%{...}), term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.process_request/2
+
+     warning: module attribute @impl was not set for function handle_read_resource/2 callback (specified in ExMCP.Server.Handler). This either means you forgot to add the "@impl true" annotation before the definition or that you are accidentally overriding this callback
+     │
+ 251 │   def handle_read_resource(_uri, state), do: {:error, "Not found", state}
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:251: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler (module)
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_initialize(params, state)
+
+    which has type:
+
+        dynamic({:error, :initialize_not_implemented, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_initialize(params, state)
+
+    which has type:
+
+        dynamic({:error, :initialize_not_implemented, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/dsl/compliance_test.exs:6: ExMCP.DSL.ComplianceTest.DesignCompliantServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, result, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_prompt_get(prompt_name, arguments, new_state)
+
+     which has type:
+
+         dynamic({:error, binary(), term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+  9 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/http_plug_test.exs:9: ExMCP.HttpPlugTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        process_request(request, state)
+
+    which has type:
+
+        dynamic({:notification, term()} or {:response, %{...}, term()})
+
+    typing violation found at:
+    │
+  8 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server_test.exs:8: ExMCP.ServerTest.TestServer.handle_info/2
+
+    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        process_request(request, state)
+
+    which has type:
+
+        dynamic({:notification, term()} or {:response, %{...}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.handle_info/2
+
+     warning: module attribute @impl was not set for function handle_list_prompts/2 callback (specified in ExMCP.Server.Handler). This either means you forgot to add the "@impl true" annotation before the definition or that you are accidentally overriding this callback
+     │
+ 252 │   def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:252: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler (module)
+
+.    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:ok, %{messages: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  8 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server_test.exs:8: ExMCP.ServerTest.TestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:ok, %{messages: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.handle_call/3
+
+.    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, new_state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(%{...}), term()})
+
+    typing violation found at:
+    │
+  8 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server_test.exs:8: ExMCP.ServerTest.TestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, new_state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(term()), term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.handle_call/3
+
+.     warning: the following clause will never match:
+
+         {:ok, result, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_tool_call(tool_name, arguments, new_state)
+
+     which has type:
+
+         dynamic({:error, binary(), term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(%{...}), term()})
+
+    typing violation found at:
+    │
+  8 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server_test.exs:8: ExMCP.ServerTest.TestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(term())}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.handle_call/3
+
+     warning: module attribute @impl was not set for function handle_get_prompt/3 callback (specified in ExMCP.Server.Handler). This either means you forgot to add the "@impl true" annotation before the definition or that you are accidentally overriding this callback
+     │
+ 253 │   def handle_get_prompt(_name, _params, state), do: {:error, "Not found", state}
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/integration/concurrent_clients_test.exs:253: ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler (module)
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, state)
+
+    which has type:
+
+        dynamic({:ok, %{messages: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  8 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server_test.exs:8: ExMCP.ServerTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(term()), term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.handle_call/3
+
+     warning: the following clause will never match:
+
+         {:error, _reason, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_request(method, params, state)
+
+     which has type:
+
+         dynamic({:noreply, term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.handle_cast/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, uri, state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(%{...}), term()})
+
+    typing violation found at:
+    │
+  8 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server_test.exs:8: ExMCP.ServerTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:error, _reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.handle_cast/2
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_initialize(params, state)
+
+    which has type:
+
+        dynamic({:error, :initialize_not_implemented, term()})
+
+    typing violation found at:
+    │
+  8 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server_test.exs:8: ExMCP.ServerTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:reply, _response, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.handle_cast/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, state)
+
+    which has type:
+
+        dynamic({:ok, %{messages: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:reply, _response, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_request(method, params, state)
+
+     which has type:
+
+         dynamic({:noreply, term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.handle_cast/2
+
+.    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, uri, state)
+
+    which has type:
+
+        dynamic({:ok, non_empty_list(term()), term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, content, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, uri, state)
+
+     which has type:
+
+         dynamic({:error, binary(), term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(term())}, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_initialize(params, state)
+
+    which has type:
+
+        dynamic({:error, :initialize_not_implemented, term()})
+
+    typing violation found at:
+    │
+  6 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/integration/server_dsl_test.exs:6: ExMCP.Integration.ServerDSLTest.TestServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, result, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_initialize(params, state)
+
+     which has type:
+
+         dynamic({:error, :initialize_not_implemented, term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, result, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_prompt_get(prompt_name, arguments, state)
+
+     which has type:
+
+         dynamic({:error, binary(), term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, result, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_tool_call(tool_name, arguments, state)
+
+     which has type:
+
+         dynamic({:error, binary(), term()})
+
+     typing violation found at:
+     │
+ 222 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/server_test.exs:222: ExMCP.ServerTest.MinimalServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:noreply, new_state}
+
+     because it attempts to match on the result of:
+
+         process_request(request, state)
+
+     which has type:
+
+         dynamic({:notification, term()} or {:response, %{...}, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.handle_info/2
+
+    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        process_request(request, state)
+
+    which has type:
+
+        dynamic({:notification, term()} or {:response, %{...}, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.handle_info/2
+
+.    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.handle_call/3
+
+     warning: the following clause will never match:
+
+         {:error, reason, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_tool_call(tool_name, arguments, new_state)
+
+     which has type:
+
+         dynamic({:ok, %{content: non_empty_list(%{text: binary(), type: binary()})}, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, content, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, new_state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.handle_call/3
+
+     warning: function resource_exists?/2 is private, @impl attribute is always discarded for private functions/macros
+     │
+ 170 │     defp resource_exists?(uri, state) do
+     │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/compliance/resources_compliance_test.exs:170: ExMCP.ResourcesComplianceTest.TestResourcesServer (module)
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, result, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.handle_call/3
+
+.     warning: the following clause will never match:
+
+         {:ok, content, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, full_uri, new_state)
+
+     which has type:
+
+         dynamic({:error, :resource_not_found, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, _reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.handle_cast/2
+
+     warning: the following clause will never match:
+
+         {:ok, content, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, full_uri, state)
+
+     which has type:
+
+         dynamic({:error, :resource_not_found, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:reply, _response, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.handle_cast/2
+
+     warning: ExMCP.Protocol.encode_initialize/2 is deprecated. Use ExMCP.Internal.Protocol instead. Note that internal modules are not part of the public API.
+     │
+ 602 │         Protocol.encode_initialize(
+     │                  ~
+     │
+     └─ test/ex_mcp/version_negotiation_comprehensive_test.exs:602:18: ExMCP.VersionNegotiationComprehensiveTest."test spec compliance for version negotiation initialize request MUST include protocolVersion"/1
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, result, final_state}
+
+     because it attempts to match on the result of:
+
+         handle_prompt_get(prompt_name, arguments, new_state)
+
+     which has type:
+
+         dynamic({:error, :prompt_not_implemented, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_initialize(params, state)
+
+    which has type:
+
+        dynamic({:error, :initialize_not_implemented, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:error, _reason, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_request(method, params, state)
+
+     which has type:
+
+         dynamic({:noreply, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.handle_cast/2
+
+    warning: function handle_call_tool/3 required by behaviour ExMCP.Server.Handler is not implemented (in module ExMCP.Compliance.StructuredOutputComplianceTest.TestServer)
+    │
+ 17 │   defmodule TestServer do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/structured_output_compliance_test.exs:17: ExMCP.Compliance.StructuredOutputComplianceTest.TestServer (module)
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/transport_test.exs:7: ExMCP.Server.TransportTest.TestServer.process_request/2
+
+    warning: function handle_initialize/2 required by behaviour ExMCP.Server.Handler is not implemented (in module ExMCP.Compliance.StructuredOutputComplianceTest.TestServer)
+    │
+ 17 │   defmodule TestServer do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/structured_output_compliance_test.exs:17: ExMCP.Compliance.StructuredOutputComplianceTest.TestServer (module)
+
+...     warning: the following clause will never match:
+
+         {:reply, _response, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_request(method, params, state)
+
+     which has type:
+
+         dynamic({:noreply, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.handle_cast/2
+
+    warning: got "@impl ExMCP.Server.Handler" for function handle_call_tool/2 but this behaviour does not specify such callback. The known callbacks are:
+
+      * ExMCP.Server.Handler.handle_call_tool/3 (function)
+      * ExMCP.Server.Handler.handle_complete/3 (function)
+      * ExMCP.Server.Handler.handle_create_message/2 (function)
+      * ExMCP.Server.Handler.handle_get_prompt/3 (function)
+      * ExMCP.Server.Handler.handle_initialize/2 (function)
+      * ExMCP.Server.Handler.handle_list_prompts/2 (function)
+      * ExMCP.Server.Handler.handle_list_resource_templates/2 (function)
+      * ExMCP.Server.Handler.handle_list_resources/2 (function)
+      * ExMCP.Server.Handler.handle_list_roots/1 (function)
+      * ExMCP.Server.Handler.handle_list_tools/2 (function)
+      * ExMCP.Server.Handler.handle_read_resource/2 (function)
+      * ExMCP.Server.Handler.handle_set_log_level/2 (function)
+      * ExMCP.Server.Handler.handle_subscribe_resource/2 (function)
+      * ExMCP.Server.Handler.handle_unsubscribe_resource/2 (function)
+      * ExMCP.Server.Handler.init/1 (function)
+      * ExMCP.Server.Handler.terminate/2 (function)
+
+    │
+ 17 │   defmodule TestServer do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/structured_output_compliance_test.exs:17: ExMCP.Compliance.StructuredOutputComplianceTest.TestServer (module)
+
+     warning: the following clause will never match:
+
+         {:error, reason, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_tool_call(tool_name, arguments, state)
+
+     which has type:
+
+         dynamic({:ok, %{content: non_empty_list(%{text: binary(), type: binary()})}, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.process_request/2
+
+     warning: the following clause will never match:
+
+         {:ok, content, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_resource_read(uri, uri, state)
+
+     which has type:
+
+         dynamic({:error, :resource_not_found, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.process_request/2
+
+     warning: the following pattern will never match:
+
+         result = raise RuntimeError.exception("test error")
+
+     because the right-hand side has type:
+
+         none()
+
+     typing violation found at:
+     │
+ 108 │         measure do
+     │         ~~~~~~~~~~
+     │
+     └─ test/ex_mcp/helpers_test.exs:108: ExMCP.HelpersTest."test measure macro preserves return value on exception"/1
+
+     warning: the following clause will never match:
+
+         {:ok, result, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_initialize(params, state)
+
+     which has type:
+
+         dynamic({:error, :initialize_not_implemented, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.process_request/2
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{...}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{...})
+         # from: test/ex_mcp/integration/full_workflow_test.exs:262
+         left = fetch_result
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/integration/full_workflow_test.exs:262
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 262 │         assert fetch_result != nil
+     │                             ~
+     │
+     └─ test/ex_mcp/integration/full_workflow_test.exs:262:29: ExMCP.Integration.FullWorkflowTest."test complex interaction scenarios chained tool execution workflow"/1
+
+    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        process_request(request, state)
+
+    which has type:
+
+        dynamic({:notification, term()} or {:response, %{...}, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.handle_info/2
+
+     warning: the following clause will never match:
+
+         {:ok, result, new_state}
+
+     because it attempts to match on the result of:
+
+         handle_prompt_get(prompt_name, arguments, state)
+
+     which has type:
+
+         dynamic({:error, :prompt_not_implemented, term()})
+
+     typing violation found at:
+     │
+ 101 │     use ExMCP.Server
+     │     ~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/message_processor_validation_test.exs:101: ExMCP.MessageProcessorValidationTest.MinimalDslServer.process_request/2
+
+    warning: ExMCP.DSL.Tool.__compile_schema__/1 is undefined or private
+    │
+ 22 │       schema = Tool.__compile_schema__(fields)
+    │                     ~
+    │
+    └─ test/ex_mcp/dsl/tool_test.exs:22:21: ExMCP.DSL.ToolTest."test __compile_schema__/1 compiles simple fields to JSON Schema"/1
+    └─ test/ex_mcp/dsl/tool_test.exs:46:21: ExMCP.DSL.ToolTest."test __compile_schema__/1 compiles array fields"/1
+    └─ test/ex_mcp/dsl/tool_test.exs:68:21: ExMCP.DSL.ToolTest."test __compile_schema__/1 compiles nested object fields"/1
+    └─ test/ex_mcp/dsl/tool_test.exs:90:21: ExMCP.DSL.ToolTest."test __compile_schema__/1 handles string patterns"/1
+    └─ test/ex_mcp/dsl/tool_test.exs:100:21: ExMCP.DSL.ToolTest."test __compile_schema__/1 handles default values"/1
+    └─ test/ex_mcp/dsl/tool_test.exs:110:21: ExMCP.DSL.ToolTest."test __compile_schema__/1 omits required array when no required fields"/1
+
+    warning: the following clause will never match:
+
+        {:ok, content, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, new_state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.handle_call/3
+
+     warning: ExMCP.Server.notify_progress/5 is undefined or private. Did you mean:
+
+           * notify_progress/3
+           * notify_progress/4
+
+     │
+ 205 │             Server.notify_progress(self(), token, i, 5, "Generating chunk #{i}")
+     │                    ~
+     │
+     └─ test/ex_mcp/progress_meta_comprehensive_test.exs:205:20: ExMCP.ProgressMetaComprehensiveTest.ComprehensiveHandler.handle_complete/3
+     └─ test/ex_mcp/progress_meta_comprehensive_test.exs:268:20: ExMCP.ProgressMetaComprehensiveTest.ComprehensiveHandler.handle_progress_tool/3
+     └─ test/ex_mcp/progress_meta_comprehensive_test.exs:306:18: ExMCP.ProgressMetaComprehensiveTest.ComprehensiveHandler.send_progress_updates/2
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.handle_call/3
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{...}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{...})
+         # from: test/ex_mcp/integration/full_workflow_test.exs:263
+         left = process_result
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/integration/full_workflow_test.exs:263
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 263 │         assert process_result != nil
+     │                               ~
+     │
+     └─ test/ex_mcp/integration/full_workflow_test.exs:263:31: ExMCP.Integration.FullWorkflowTest."test complex interaction scenarios chained tool execution workflow"/1
+
+    warning: the following clause will never match:
+
+        {:ok, result, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, result, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:error, :tool_not_implemented, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.handle_call/3
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{...}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{...})
+         # from: test/ex_mcp/integration/full_workflow_test.exs:264
+         left = final_result
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/integration/full_workflow_test.exs:264
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 264 │         assert final_result != nil
+     │                             ~
+     │
+     └─ test/ex_mcp/integration/full_workflow_test.exs:264:29: ExMCP.Integration.FullWorkflowTest."test complex interaction scenarios chained tool execution workflow"/1
+
+    warning: the following clause will never match:
+
+        {:error, _reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.handle_cast/2
+
+    warning: the following clause will never match:
+
+        {:reply, _response, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.handle_cast/2
+
+    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        process_request(request, state)
+
+    which has type:
+
+        dynamic({:notification, term()} or {:response, %{...}, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.handle_info/2
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{...}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{...})
+         # from: test/ex_mcp/integration/full_workflow_test.exs:292
+         left = config_result
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/integration/full_workflow_test.exs:292
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 292 │         assert config_result != nil
+     │                              ~
+     │
+     └─ test/ex_mcp/integration/full_workflow_test.exs:292:30: ExMCP.Integration.FullWorkflowTest."test complex interaction scenarios resource-informed tool execution"/1
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.process_request/2
+
+    warning: the following clause will never match:
+
+        {:error, reason, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.process_request/2
+
+    warning: the following clause will never match:
+
+        {:ok, content, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, new_state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, state)
+
+    which has type:
+
+        dynamic({:error, :tool_not_implemented, term()})
+
+    typing violation found at:
+    │
+ 32 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:32: DebugVersionNegotiationTest.TestServerV2025.process_request/2
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.handle_call/3
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{...}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{...})
+         # from: test/ex_mcp/integration/full_workflow_test.exs:293
+         left = tool_result
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/integration/full_workflow_test.exs:293
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 293 │         assert tool_result != nil
+     │                            ~
+     │
+     └─ test/ex_mcp/integration/full_workflow_test.exs:293:28: ExMCP.Integration.FullWorkflowTest."test complex interaction scenarios resource-informed tool execution"/1
+
+    warning: the following clause will never match:
+
+        {:noreply, new_state}
+
+    because it attempts to match on the result of:
+
+        process_request(request, state)
+
+    which has type:
+
+        dynamic({:notification, term()} or {:response, %{...}, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.handle_info/2
+
+    warning: the following clause will never match:
+
+        {:ok, result, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, content, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, new_state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:error, _reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.handle_cast/2
+
+    warning: function handle_call_tool/3 required by behaviour ExMCP.Server.Handler is not implemented (in module ExMCP.Server.StructuredOutputTest.TestServer)
+    │
+  9 │   defmodule TestServer do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/structured_output_test.exs:9: ExMCP.Server.StructuredOutputTest.TestServer (module)
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, full_uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:reply, _response, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.handle_cast/2
+
+    warning: function handle_initialize/2 required by behaviour ExMCP.Server.Handler is not implemented (in module ExMCP.Server.StructuredOutputTest.TestServer)
+    │
+  9 │   defmodule TestServer do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/structured_output_test.exs:9: ExMCP.Server.StructuredOutputTest.TestServer (module)
+
+    warning: the following clause will never match:
+
+        {:ok, result, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.handle_call/3
+
+    warning: got "@impl ExMCP.Server.Handler" for function handle_call_tool/2 but this behaviour does not specify such callback. The known callbacks are:
+
+      * ExMCP.Server.Handler.handle_call_tool/3 (function)
+      * ExMCP.Server.Handler.handle_complete/3 (function)
+      * ExMCP.Server.Handler.handle_create_message/2 (function)
+      * ExMCP.Server.Handler.handle_get_prompt/3 (function)
+      * ExMCP.Server.Handler.handle_initialize/2 (function)
+      * ExMCP.Server.Handler.handle_list_prompts/2 (function)
+      * ExMCP.Server.Handler.handle_list_resource_templates/2 (function)
+      * ExMCP.Server.Handler.handle_list_resources/2 (function)
+      * ExMCP.Server.Handler.handle_list_roots/1 (function)
+      * ExMCP.Server.Handler.handle_list_tools/2 (function)
+      * ExMCP.Server.Handler.handle_read_resource/2 (function)
+      * ExMCP.Server.Handler.handle_set_log_level/2 (function)
+      * ExMCP.Server.Handler.handle_subscribe_resource/2 (function)
+      * ExMCP.Server.Handler.handle_unsubscribe_resource/2 (function)
+      * ExMCP.Server.Handler.init/1 (function)
+      * ExMCP.Server.Handler.terminate/2 (function)
+
+    │
+  9 │   defmodule TestServer do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/server/structured_output_test.exs:9: ExMCP.Server.StructuredOutputTest.TestServer (module)
+
+    warning: the following clause will never match:
+
+        {:error, reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, state)
+
+    which has type:
+
+        dynamic({:ok, %{content: non_empty_list(%{...})}, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.process_request/2
+
+.     warning: function handle_call_tool/3 required by behaviour ExMCP.Server.Handler is not implemented (in module ExMCP.Performance.SchemaCompilationPerformanceTest.TestPerformanceServer)
+     │
+ 124 │     defmodule TestPerformanceServer do
+     │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/performance/schema_compilation_performance_test.exs:124: ExMCP.Performance.SchemaCompilationPerformanceTest.TestPerformanceServer (module)
+
+    warning: the following clause will never match:
+
+        {:ok, result, final_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, new_state)
+
+    which has type:
+
+        dynamic({:error, :tool_not_implemented, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.handle_call/3
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.process_request/2
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{...}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{...})
+         # from: test/ex_mcp/integration/full_workflow_test.exs:321
+         left = prompt_result
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/integration/full_workflow_test.exs:321
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 321 │         assert prompt_result != nil
+     │                              ~
+     │
+     └─ test/ex_mcp/integration/full_workflow_test.exs:321:30: ExMCP.Integration.FullWorkflowTest."test complex interaction scenarios dynamic prompt generation and execution"/1
+
+    warning: the following clause will never match:
+
+        {:error, _reason, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.handle_cast/2
+
+     warning: function handle_initialize/2 required by behaviour ExMCP.Server.Handler is not implemented (in module ExMCP.Performance.SchemaCompilationPerformanceTest.TestPerformanceServer)
+     │
+ 124 │     defmodule TestPerformanceServer do
+     │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/performance/schema_compilation_performance_test.exs:124: ExMCP.Performance.SchemaCompilationPerformanceTest.TestPerformanceServer (module)
+
+    warning: the following clause will never match:
+
+        {:reply, _response, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_request(method, params, state)
+
+    which has type:
+
+        dynamic({:noreply, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.handle_cast/2
+
+.    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+ 14 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/compliance/transport_version_test.exs:14: ExMCP.Compliance.TransportVersionTest.VersionTestServer.process_request/2
+
+    warning: the following clause will never match:
+
+        {:ok, content, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_resource_read(uri, uri, state)
+
+    which has type:
+
+        dynamic({:error, :resource_not_found, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.process_request/2
+
+     warning: got "@impl ExMCP.Server.Handler" for function handle_call_tool/2 but this behaviour does not specify such callback. The known callbacks are:
+
+       * ExMCP.Server.Handler.handle_call_tool/3 (function)
+       * ExMCP.Server.Handler.handle_complete/3 (function)
+       * ExMCP.Server.Handler.handle_create_message/2 (function)
+       * ExMCP.Server.Handler.handle_get_prompt/3 (function)
+       * ExMCP.Server.Handler.handle_initialize/2 (function)
+       * ExMCP.Server.Handler.handle_list_prompts/2 (function)
+       * ExMCP.Server.Handler.handle_list_resource_templates/2 (function)
+       * ExMCP.Server.Handler.handle_list_resources/2 (function)
+       * ExMCP.Server.Handler.handle_list_roots/1 (function)
+       * ExMCP.Server.Handler.handle_list_tools/2 (function)
+       * ExMCP.Server.Handler.handle_read_resource/2 (function)
+       * ExMCP.Server.Handler.handle_set_log_level/2 (function)
+       * ExMCP.Server.Handler.handle_subscribe_resource/2 (function)
+       * ExMCP.Server.Handler.handle_unsubscribe_resource/2 (function)
+       * ExMCP.Server.Handler.init/1 (function)
+       * ExMCP.Server.Handler.terminate/2 (function)
+
+     │
+ 124 │     defmodule TestPerformanceServer do
+     │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/ex_mcp/performance/schema_compilation_performance_test.exs:124: ExMCP.Performance.SchemaCompilationPerformanceTest.TestPerformanceServer (module)
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_prompt_get(prompt_name, arguments, state)
+
+    which has type:
+
+        dynamic({:error, :prompt_not_implemented, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.process_request/2
+
+    warning: the following clause will never match:
+
+        {:ok, result, new_state}
+
+    because it attempts to match on the result of:
+
+        handle_tool_call(tool_name, arguments, state)
+
+    which has type:
+
+        dynamic({:error, :tool_not_implemented, term()})
+
+    typing violation found at:
+    │
+  7 │     use ExMCP.Server
+    │     ~~~~~~~~~~~~~~~~
+    │
+    └─ test/debug_version_negotiation_test.exs:7: DebugVersionNegotiationTest.TestServerV2024.process_request/2
+
+     warning: comparison between distinct types found:
+
+         left != right
+
+     given types:
+
+         dynamic(%{...}) != nil
+
+     where "left" (context ExUnit.Assertions) was given the type:
+
+         # type: dynamic(%{...})
+         # from: test/ex_mcp/integration/full_workflow_test.exs:322
+         left = execution_result
+
+     where "right" (context ExUnit.Assertions) was given the type:
+
+         # type: nil
+         # from: test/ex_mcp/integration/full_workflow_test.exs:322
+         right = nil
+
+     While Elixir can compare across all types, you are comparing across types which are always disjoint, and the result is either always true or always false
+
+     typing violation found at:
+     │
+ 322 │         assert execution_result != nil
+     │                                 ~
+     │
+     └─ test/ex_mcp/integration/full_workflow_test.exs:322:33: ExMCP.Integration.FullWorkflowTest."test complex interaction scenarios dynamic prompt generation and execution"/1
+
+.    warning: function handle_call_tool/3 required by behaviour ExMCP.Server.Handler is not implemented (in module ExMCP.LoggingSetLevelTest.TestHandler)
+    │
+ 13 │   defmodule TestHandler do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/logging_setlevel_test.exs:13: ExMCP.LoggingSetLevelTest.TestHandler (module)
+
+    warning: function handle_list_tools/2 required by behaviour ExMCP.Server.Handler is not implemented (in module ExMCP.LoggingSetLevelTest.TestHandler)
+    │
+ 13 │   defmodule TestHandler do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/logging_setlevel_test.exs:13: ExMCP.LoggingSetLevelTest.TestHandler (module)
+
+....    warning: Horde.Supervisor.start_link/2 is undefined (module Horde.Supervisor is not available or is yet to be defined)
+    │
+ 18 │     {:ok, _sup} = Horde.Supervisor.start_link([], name: supervisor_name)
+    │                                    ~
+    │
+    └─ test/ex_mcp/debug_service_test.exs:18:36: ExMCP.DebugServiceTest.__ex_unit_setup_0/1
+
+     warning: Horde.Registry.members/1 is undefined or private
+     │
+ 140 │     members = Horde.Registry.members(registry_name)
+     │                              ~
+     │
+     └─ test/ex_mcp/debug_service_test.exs:140:30: ExMCP.DebugServiceTest."test list available services and inspect registry state"/1
+
+......................................
+
+  6) property from_raw_response preserves all fields (ExMCP.ResponsePropertyTest)
+     test/ex_mcp/response_property_test.exs:12
+     Property Elixir.ExMCP.ResponsePropertyTest.property from_raw_response preserves all fields() failed. Counter-Example is:
+     [%{"resources" => [%{"a" => ""}]}]
+
+     Counter example stored.
+
+     code: nil
+     stacktrace:
+       (propcheck 1.5.0) lib/properties.ex:253: PropCheck.Properties.handle_check_results/2
+       test/ex_mcp/response_property_test.exs:12: (test)
+
+................................................................................................................................Calculating statistics...
+Formatting results...
+...................................................................    warning: redefining module ExMCP.ClientBeamTransportTest.TestCalculatorService (current version defined in memory)
+    │
+ 17 │       defmodule TestCalculatorService do
+    │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/client_beam_transport_test.exs:17: ExMCP.ClientBeamTransportTest.TestCalculatorService (module)
+
+..    warning: redefining module ExMCP.ClientBeamTransportTest.TestCalculatorService (current version defined in memory)
+    │
+ 17 │       defmodule TestCalculatorService do
+    │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/client_beam_transport_test.exs:17: ExMCP.ClientBeamTransportTest.TestCalculatorService (module)
+
+.    warning: redefining module ExMCP.ClientBeamTransportTest.TestCalculatorService (current version defined in memory)
+    │
+ 17 │       defmodule TestCalculatorService do
+    │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/client_beam_transport_test.exs:17: ExMCP.ClientBeamTransportTest.TestCalculatorService (module)
+
+.    warning: redefining module ExMCP.ClientBeamTransportTest.TestCalculatorService (current version defined in memory)
+    │
+ 17 │       defmodule TestCalculatorService do
+    │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/client_beam_transport_test.exs:17: ExMCP.ClientBeamTransportTest.TestCalculatorService (module)
+
+.    warning: redefining module ExMCP.ClientBeamTransportTest.TestCalculatorService (current version defined in memory)
+    │
+ 17 │       defmodule TestCalculatorService do
+    │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/client_beam_transport_test.exs:17: ExMCP.ClientBeamTransportTest.TestCalculatorService (module)
+
+..    warning: redefining module ExMCP.ClientBeamTransportTest.TestCalculatorService (current version defined in memory)
+    │
+ 17 │       defmodule TestCalculatorService do
+    │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/ex_mcp/client_beam_transport_test.exs:17: ExMCP.ClientBeamTransportTest.TestCalculatorService (module)
+
+...................................................................................................................................................................warning: the following clause will never match:
+
+    {:noreply, new_state}
+
+because it attempts to match on the result of:
+
+    process_request(request, state)
+
+which has type:
+
+    dynamic({:notification, term()} or {:response, %{...}, term()})
+
+└─ nofile:2: TestServerAlias.handle_info/2
+
+warning: the following clause will never match:
+
+    {:error, reason, final_state}
+
+because it attempts to match on the result of:
+
+    handle_tool_call(tool_name, arguments, new_state)
+
+which has type:
+
+    dynamic({:ok, %{content: empty_list()}, term()})
+
+└─ nofile:2: TestServerAlias.handle_call/3
+
+warning: the following clause will never match:
+
+    {:ok, content, final_state}
+
+because it attempts to match on the result of:
+
+    handle_resource_read(uri, full_uri, new_state)
+
+which has type:
+
+    dynamic({:error, binary(), term()})
+
+└─ nofile:2: TestServerAlias.handle_call/3
+
+warning: the following clause will never match:
+
+    {:ok, content, new_state}
+
+because it attempts to match on the result of:
+
+    handle_resource_read(uri, full_uri, state)
+
+which has type:
+
+    dynamic({:error, binary(), term()})
+
+└─ nofile:2: TestServerAlias.handle_call/3
+
+warning: the following clause will never match:
+
+    {:ok, result, final_state}
+
+because it attempts to match on the result of:
+
+    handle_prompt_get(prompt_name, arguments, new_state)
+
+which has type:
+
+    dynamic({:error, binary(), term()})
+
+└─ nofile:2: TestServerAlias.handle_call/3
+
+warning: the following clause will never match:
+
+    {:error, _reason, new_state}
+
+because it attempts to match on the result of:
+
+    handle_request(method, params, state)
+
+which has type:
+
+    dynamic({:noreply, term()})
+
+└─ nofile:2: TestServerAlias.handle_cast/2
+
+warning: the following clause will never match:
+
+    {:reply, _response, new_state}
+
+because it attempts to match on the result of:
+
+    handle_request(method, params, state)
+
+which has type:
+
+    dynamic({:noreply, term()})
+
+└─ nofile:2: TestServerAlias.handle_cast/2
+
+warning: the following clause will never match:
+
+    {:error, reason, new_state}
+
+because it attempts to match on the result of:
+
+    handle_tool_call(tool_name, arguments, state)
+
+which has type:
+
+    dynamic({:ok, %{content: empty_list()}, term()})
+
+└─ nofile:2: TestServerAlias.process_request/2
+
+warning: the following clause will never match:
+
+    {:ok, content, new_state}
+
+because it attempts to match on the result of:
+
+    handle_resource_read(uri, uri, state)
+
+which has type:
+
+    dynamic({:error, binary(), term()})
+
+└─ nofile:2: TestServerAlias.process_request/2
+
+warning: the following clause will never match:
+
+    {:ok, result, new_state}
+
+because it attempts to match on the result of:
+
+    handle_initialize(params, state)
+
+which has type:
+
+    dynamic({:error, :initialize_not_implemented, term()})
+
+└─ nofile:2: TestServerAlias.process_request/2
+
+warning: the following clause will never match:
+
+    {:ok, result, new_state}
+
+because it attempts to match on the result of:
+
+    handle_prompt_get(prompt_name, arguments, state)
+
+which has type:
+
+    dynamic({:error, binary(), term()})
+
+└─ nofile:2: TestServerAlias.process_request/2
+
+.......................................................................................................
+Finished in 63.6 seconds (40.3s async, 23.2s sync)
+15 doctests, 34 properties, 1922 tests, 6 failures, 181 excluded, 12 skipped

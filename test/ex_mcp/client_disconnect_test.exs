@@ -105,7 +105,13 @@ defmodule ExMCP.ClientDisconnectTest do
 
       # We should receive the error reply for the pending request
       # GenServer.reply sends {ref, response}
-      assert_receive {^ref, {:error, :disconnected}}, 1_000
+      assert_receive {^ref,
+                      {:error,
+                       %ExMCP.Error{
+                         code: :connection_error,
+                         message: "Connection error: Client disconnected"
+                       }}},
+                     1_000
 
       # Stop the client
       GenServer.stop(client)

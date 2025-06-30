@@ -650,92 +650,94 @@ defmodule ExMCP.Client do
     # Set up process
     Process.flag(:trap_exit, true)
 
-    # Extract options
-    health_check_interval = Keyword.get(opts, :health_check_interval, 30_000)
-    default_retry_policy = Keyword.get(opts, :retry_policy, [])
-    default_timeout = Keyword.get(opts, :timeout, 5_000)
-    client_info = build_client_info()
-
-    # Initial state
-    state = %__MODULE__{
-      transport_opts: opts,
-      pending_requests: %{},
-      pending_batches: %{},
-      cancelled_requests: MapSet.new(),
-      health_check_interval: health_check_interval,
-      connection_status: :connecting,
-      last_activity: System.system_time(:second),
-      reconnect_attempts: 0,
-      client_info: client_info,
-      server_capabilities: %{},
-      initialized: false,
-      default_retry_policy: default_retry_policy,
-      default_timeout: default_timeout
-    }
+    # Build initial state from options
+    state = build_initial_state(opts)
 
     # Check if we should skip connection (for testing)
     if Keyword.get(opts, :_skip_connect, false) do
       {:ok, %{state | connection_status: :disconnected}}
     else
-      # Start connection process with retry policy
-      connection_opts = Keyword.put(opts, :retry_policy, default_retry_policy)
-
-      case ConnectionManager.establish_connection(state, connection_opts) do
-        {:ok, updated_state} ->
-          # Update connection status to ready after successful handshake
-          final_state = %{updated_state | connection_status: :ready, initialized: true}
-          {:ok, final_state}
-
-        {:error, reason} ->
-          Logger.error("Failed to initialize MCP client: #{inspect(reason)}")
-
-          # Return error in the original format for backward compatibility
-          case reason do
-            :invalid_request ->
-              {:stop, {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}}
-
-            :connection_refused ->
-              {:stop, {:transport_connect_failed, :connection_refused}}
-
-            {:transport_error, details} ->
-              {:stop, {:transport_connect_failed, details}}
-
-            {:method_not_found, message} ->
-              # Initialize method not found - this is an initialize error
-              {:stop,
-               {:initialize_error,
-                %{"code" => ErrorCodes.method_not_found(), "message" => message}}}
-
-            error when is_binary(error) ->
-              if String.contains?(error, "Handshake failed") do
-                {:stop, {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}}
-              else
-                {:stop, {:transport_connect_failed, error}}
-              end
-
-            _ ->
-              # Normalize the error to avoid nested error tuples
-              normalized_reason =
-                case reason do
-                  %{"code" => _, "message" => _} = err_map ->
-                    err_map
-
-                  {:error, inner_reason} ->
-                    # Unwrap nested error tuples
-                    inner_reason
-
-                  atom when is_atom(atom) ->
-                    to_string(atom)
-
-                  other ->
-                    inspect(other)
-                end
-
-              {:stop, {:transport_connect_failed, normalized_reason}}
-          end
-      end
+      # Start connection process
+      establish_connection(state, opts)
     end
   end
+
+  # Build initial client state from options
+  defp build_initial_state(opts) do
+    %__MODULE__{
+      transport_opts: opts,
+      pending_requests: %{},
+      pending_batches: %{},
+      cancelled_requests: MapSet.new(),
+      health_check_interval: Keyword.get(opts, :health_check_interval, 30_000),
+      connection_status: :connecting,
+      last_activity: System.system_time(:second),
+      reconnect_attempts: 0,
+      client_info: build_client_info(),
+      server_capabilities: %{},
+      initialized: false,
+      default_retry_policy: Keyword.get(opts, :retry_policy, []),
+      default_timeout: Keyword.get(opts, :timeout, 5_000)
+    }
+  end
+
+  # Establish connection with the server
+  defp establish_connection(state, opts) do
+    connection_opts = Keyword.put(opts, :retry_policy, state.default_retry_policy)
+
+    case ConnectionManager.establish_connection(state, connection_opts) do
+      {:ok, updated_state} ->
+        # Update connection status to ready after successful handshake
+        final_state = %{updated_state | connection_status: :ready, initialized: true}
+        {:ok, final_state}
+
+      {:error, reason} ->
+        handle_connection_error(reason)
+    end
+  end
+
+  # Handle connection errors with proper normalization
+  defp handle_connection_error(reason) do
+    Logger.error("Failed to initialize MCP client: #{inspect(reason)}")
+    {:stop, normalize_connection_error(reason)}
+  end
+
+  # Normalize various error formats to consistent structure
+  defp normalize_connection_error(:invalid_request) do
+    {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
+  end
+
+  defp normalize_connection_error(:connection_refused) do
+    {:transport_connect_failed, :connection_refused}
+  end
+
+  defp normalize_connection_error({:transport_error, details}) do
+    {:transport_connect_failed, details}
+  end
+
+  defp normalize_connection_error({:method_not_found, message}) do
+    {:initialize_error, %{"code" => ErrorCodes.method_not_found(), "message" => message}}
+  end
+
+  defp normalize_connection_error(error) when is_binary(error) do
+    if String.contains?(error, "Handshake failed") do
+      {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
+    else
+      {:transport_connect_failed, error}
+    end
+  end
+
+  defp normalize_connection_error(reason) do
+    # Handle nested errors and other formats
+    normalized = extract_inner_reason(reason)
+    {:transport_connect_failed, normalized}
+  end
+
+  # Extract inner reason from nested structures
+  defp extract_inner_reason(%{"code" => _, "message" => _} = err_map), do: err_map
+  defp extract_inner_reason({:error, inner_reason}), do: inner_reason
+  defp extract_inner_reason(atom) when is_atom(atom), do: to_string(atom)
+  defp extract_inner_reason(other), do: inspect(other)
 
   @impl GenServer
   def handle_call({:request, method, params}, from, state) do
@@ -1085,15 +1087,13 @@ defmodule ExMCP.Client do
   end
 
   defp get_effective_retry_policy(client, :use_default, timeout) do
-    try do
-      case GenServer.call(client, :get_default_retry_policy, timeout) do
-        {:ok, policy} -> policy
-        _ -> []
-      end
-    catch
-      :exit, {:timeout, _} -> []
-      :exit, _ -> []
+    case GenServer.call(client, :get_default_retry_policy, timeout) do
+      {:ok, policy} -> policy
+      _ -> []
     end
+  catch
+    :exit, {:timeout, _} -> []
+    :exit, _ -> []
   end
 
   defp get_effective_retry_policy(_client, false, _timeout), do: []

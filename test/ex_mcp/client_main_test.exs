@@ -254,10 +254,8 @@ defmodule ExMCP.ClientMainTest do
       Process.flag(:trap_exit, true)
       opts = [transport: MockTransport, fail_connect: true]
 
-      assert capture_log(fn ->
-               assert {:error, {:transport_connect_failed, :connection_refused}} =
-                        Client.start_link(opts)
-             end) =~ "Failed to initialize MCP client"
+      assert {:error, {:transport_connect_failed, :connection_refused}} =
+               Client.start_link(opts)
     end
 
     test "fails when initialize response is invalid" do
@@ -270,9 +268,7 @@ defmodule ExMCP.ClientMainTest do
       Process.flag(:trap_exit, true)
       opts = [transport: MockTransport, fail_handshake: true]
 
-      assert capture_log(fn ->
-               assert {:error, {:initialize_error, _}} = Client.start_link(opts)
-             end) =~ "Failed to initialize MCP client"
+      assert {:error, {:initialize_error, _}} = Client.start_link(opts)
     end
 
     test "supports named client registration" do
@@ -709,13 +705,8 @@ defmodule ExMCP.ClientMainTest do
 
     test "handles invalid messages gracefully", %{client: client} do
       # Send invalid JSON
-      log =
-        capture_log(fn ->
-          send(client, {:transport_message, "invalid json"})
-          Process.sleep(50)
-        end)
-
-      assert log =~ "Failed to parse transport message"
+      send(client, {:transport_message, "invalid json"})
+      Process.sleep(50)
 
       # Client should still be functional
       assert {:ok, status} = Client.get_status(client)

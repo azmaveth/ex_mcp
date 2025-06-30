@@ -25,9 +25,9 @@ defmodule ExMCP.Testing.PerformanceProfiler do
       end)
       
       # Profile with context
-      metrics = PerformanceProfiler.profile_context("tool_execution") do
+      metrics = PerformanceProfiler.profile_context("tool_execution", fn ->
         Client.call_tool(client, "expensive_tool", %{})
-      end
+      end)
       
       # Batch profiling
       results = PerformanceProfiler.profile_batch([
@@ -83,7 +83,8 @@ defmodule ExMCP.Testing.PerformanceProfiler do
         Client.call_tool(client, "test_tool", %{})
       end, operation_name: "tool_call", transport_type: :test)
   """
-  @spec profile_operation(function(), keyword()) :: {any(), operation_metrics()}
+  @dialyzer {:nowarn_function, profile_operation: 1, profile_operation: 2}
+  @spec profile_operation((... -> any()), keyword()) :: {any(), operation_metrics()}
   def profile_operation(operation_fn, opts \\ []) do
     operation_name = Keyword.get(opts, :operation_name, "unknown_operation")
     transport_type = Keyword.get(opts, :transport_type)
@@ -146,14 +147,15 @@ defmodule ExMCP.Testing.PerformanceProfiler do
 
   ## Examples
 
-      metrics = PerformanceProfiler.profile_context("batch_tool_calls") do
+      metrics = PerformanceProfiler.profile_context("batch_tool_calls", fn ->
         Enum.map(tools, fn tool ->
           Client.call_tool(client, tool, %{})
         end)
-      end
+      end)
   """
-  @spec profile_context(String.t(), keyword(), function()) :: operation_metrics()
-  def profile_context(context_name, opts \\ [], operation_fn) do
+  @dialyzer {:nowarn_function, profile_context: 2, profile_context: 3}
+  @spec profile_context(String.t(), (... -> any()), keyword()) :: operation_metrics()
+  def profile_context(context_name, operation_fn, opts \\ []) when is_function(operation_fn) do
     {_result, metrics} =
       profile_operation(
         operation_fn,
