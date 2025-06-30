@@ -58,16 +58,16 @@ defmodule ExMCP.Client.Wrapper do
   """
   def get_adapter(config, opts) do
     cond do
-      # Explicit adapter in opts
-      adapter = opts[:adapter] ->
+      # Explicit adapter in opts (non-nil)
+      (adapter = opts[:adapter]) && adapter != nil ->
         adapter
 
-      # Adapter in config
-      is_map(config) && Map.has_key?(config, :adapter) ->
+      # Adapter in config (non-nil)
+      is_map(config) && Map.has_key?(config, :adapter) && config.adapter != nil ->
         config.adapter
 
-      # From application environment
-      adapter = Application.get_env(:ex_mcp, :client_adapter) ->
+      # From application environment (non-nil)
+      (adapter = Application.get_env(:ex_mcp, :client_adapter)) && adapter != nil ->
         adapter
 
       # Default

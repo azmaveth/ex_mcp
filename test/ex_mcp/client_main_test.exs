@@ -683,7 +683,7 @@ defmodule ExMCP.ClientMainTest do
       # Send a notification
       notification = %{
         "jsonrpc" => "2.0",
-        "method" => "resources/updated",
+        "method" => "notifications/resource/updated",
         "params" => %{"uri" => "file:///changed.txt"}
       }
 
@@ -693,7 +693,7 @@ defmodule ExMCP.ClientMainTest do
           Process.sleep(50)
         end)
 
-      assert log =~ "Received notification: resources/updated"
+      assert log =~ "Received notification: notifications/resource/updated"
     end
   end
 

@@ -60,7 +60,9 @@ defmodule ExMCP.Client.StateMachine do
   """
   def request(client, method, params, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5000)
-    GenStateMachine.call(client, {:request, method, params, opts}, timeout)
+    # Add buffer to GenStateMachine call timeout to allow proper request timeout handling
+    call_timeout = timeout + 1000
+    GenStateMachine.call(client, {:request, method, params, opts}, call_timeout)
   end
 
   @doc """
@@ -94,6 +96,14 @@ defmodule ExMCP.Client.StateMachine do
   @impl true
   def handle_event(:enter, old_state, new_state, _data) do
     Logger.debug("State transition: #{old_state} -> #{new_state}")
+
+    # Emit telemetry event for state transitions
+    :telemetry.execute(
+      [:ex_mcp, :client, :state_transition],
+      %{count: 1},
+      %{from_state: old_state, to_state: new_state}
+    )
+
     :keep_state_and_data
   end
 
@@ -130,6 +140,13 @@ defmodule ExMCP.Client.StateMachine do
 
   # Handle request in ready state
   def handle_event({:call, from}, {:request, method, params, opts}, :ready, data) do
+    # Emit telemetry for request start
+    :telemetry.execute(
+      [:ex_mcp, :client, :request, :start],
+      %{count: 1},
+      %{method: method, state: :ready}
+    )
+
     case Transitions.add_request(data, from, method, params, opts) do
       {:ok, new_data, request_id} ->
         # Send request to transport
@@ -137,6 +154,13 @@ defmodule ExMCP.Client.StateMachine do
         {:keep_state, new_data, actions}
 
       {:error, reason} ->
+        # Emit telemetry for request error
+        :telemetry.execute(
+          [:ex_mcp, :client, :request, :error],
+          %{count: 1},
+          %{method: method, reason: reason, state: :ready}
+        )
+
         {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
     end
   end
@@ -211,8 +235,28 @@ defmodule ExMCP.Client.StateMachine do
         {:next_state, :ready, new_data}
 
       {:error, reason} ->
-        new_data = Transitions.to_disconnected(data, {:handshake_error, reason})
-        {:next_state, :disconnected, new_data}
+        # Check if we're in a reconnection flow
+        case data do
+          %{from_reconnecting: %{} = reconnect_info} ->
+            # We were reconnecting, go back to reconnecting state
+            reconnecting_data = %States.Reconnecting{
+              common: data.common,
+              last_transport: nil,
+              last_server_info: nil,
+              attempt_number: reconnect_info.attempt_number,
+              max_attempts: reconnect_info.max_attempts,
+              backoff_ms: reconnect_info.backoff_ms,
+              reconnect_timer: nil
+            }
+
+            # Let handle_reconnect_failure decide what to do
+            handle_reconnect_failure(reconnecting_data, reason)
+
+          _ ->
+            # Normal handshake failure, go to disconnected
+            new_data = Transitions.to_disconnected(data, {:handshake_error, reason})
+            {:next_state, :disconnected, new_data}
+        end
     end
   end
 
@@ -220,7 +264,19 @@ defmodule ExMCP.Client.StateMachine do
   def handle_event(:internal, {:send_request, request_id}, :ready, data) do
     case send_request_to_transport(data, request_id) do
       :ok ->
-        :keep_state_and_data
+        # Set up timeout timer for the request
+        case Map.get(data.pending_requests, request_id) do
+          %{timeout: timeout} ->
+            timer_ref = Process.send_after(self(), {:request_timeout, request_id}, timeout)
+            # Store timer ref in request data
+            updated_request = Map.put(data.pending_requests[request_id], :timer_ref, timer_ref)
+            new_pending = Map.put(data.pending_requests, request_id, updated_request)
+            new_data = %{data | pending_requests: new_pending}
+            {:keep_state, new_data}
+
+          _ ->
+            :keep_state_and_data
+        end
 
       {:error, reason} ->
         # Handle request error
@@ -231,6 +287,13 @@ defmodule ExMCP.Client.StateMachine do
 
   # Transport messages
   def handle_event(:info, {:transport_connected, transport}, :connecting, data) do
+    # Emit telemetry for connection success
+    :telemetry.execute(
+      [:ex_mcp, :client, :connection, :success],
+      %{count: 1},
+      %{state: :connecting}
+    )
+
     new_data = Transitions.to_handshaking(data, transport)
     # Schedule handshake start after state transition
     Process.send(self(), :start_handshake_internal, [:nosuspend])
@@ -238,19 +301,41 @@ defmodule ExMCP.Client.StateMachine do
   end
 
   def handle_event(:info, {:transport_error, reason}, state, data) when state != :disconnected do
+    # Emit telemetry for transport error
+    :telemetry.execute(
+      [:ex_mcp, :client, :transport, :error],
+      %{count: 1},
+      %{reason: reason, state: state}
+    )
+
     new_data = Transitions.to_disconnected(data, {:transport_error, reason})
     {:next_state, :disconnected, new_data}
   end
 
   def handle_event(:info, {:transport_closed, reason}, :ready, data) do
+    # Emit telemetry for transport closure with reconnection
+    :telemetry.execute(
+      [:ex_mcp, :client, :transport, :closed],
+      %{count: 1},
+      %{reason: reason, state: :ready, action: :reconnect}
+    )
+
     # Transport closed while ready - attempt reconnection
     new_data = Transitions.to_reconnecting(data, {:transport_closed, reason})
-    # Schedule reconnection attempt
-    Process.send(self(), :attempt_reconnect, [:nosuspend])
-    {:next_state, :reconnecting, new_data}
+    # Schedule reconnection attempt with configured backoff
+    timer_ref = Process.send_after(self(), :attempt_reconnect, new_data.backoff_ms)
+    new_data_with_timer = %{new_data | reconnect_timer: timer_ref}
+    {:next_state, :reconnecting, new_data_with_timer}
   end
 
   def handle_event(:info, {:transport_closed, reason}, state, data) when state != :disconnected do
+    # Emit telemetry for transport closure with disconnection
+    :telemetry.execute(
+      [:ex_mcp, :client, :transport, :closed],
+      %{count: 1},
+      %{reason: reason, state: state, action: :disconnect}
+    )
+
     # Transport closed in other states - disconnect
     new_data = Transitions.to_disconnected(data, {:transport_closed, reason})
     {:next_state, :disconnected, new_data}
@@ -261,17 +346,51 @@ defmodule ExMCP.Client.StateMachine do
     {:keep_state, new_data}
   end
 
+  # Request timeout handling
+  def handle_event(:info, {:request_timeout, request_id}, :ready, data) do
+    # Check if request is still pending
+    case Map.get(data.pending_requests, request_id) do
+      nil ->
+        # Request already completed, ignore timeout
+        :keep_state_and_data
+
+      _request ->
+        # Request timed out
+        new_data = Transitions.fail_request(data, request_id, :timeout)
+        {:keep_state, new_data}
+    end
+  end
+
   # Reconnection logic
   def handle_event(:info, :attempt_reconnect, :reconnecting, data) do
+    # Emit telemetry for reconnection attempt
+    :telemetry.execute(
+      [:ex_mcp, :client, :reconnect, :attempt],
+      %{count: 1, attempt_number: data.attempt_number},
+      %{backoff_ms: data.backoff_ms}
+    )
+
     case start_transport(data) do
       {:ok, transport_info} ->
+        # Emit telemetry for successful reconnection
+        :telemetry.execute(
+          [:ex_mcp, :client, :reconnect, :success],
+          %{count: 1, attempt_number: data.attempt_number},
+          %{backoff_ms: data.backoff_ms}
+        )
+
         # Transport connected, move to handshaking
         new_data = %States.Handshaking{
           common: data.common,
           transport: transport_info,
           transport_state: nil,
           client_info: build_client_info(),
-          handshake_start_time: System.monotonic_time(:millisecond)
+          handshake_start_time: System.monotonic_time(:millisecond),
+          from_reconnecting: %{
+            attempt_number: data.attempt_number,
+            max_attempts: data.max_attempts,
+            backoff_ms: data.backoff_ms
+          }
         }
 
         # Schedule handshake
@@ -279,12 +398,26 @@ defmodule ExMCP.Client.StateMachine do
         {:next_state, :handshaking, new_data}
 
       {:error, reason} ->
+        # Emit telemetry for failed reconnection attempt
+        :telemetry.execute(
+          [:ex_mcp, :client, :reconnect, :error],
+          %{count: 1, attempt_number: data.attempt_number},
+          %{reason: reason, backoff_ms: data.backoff_ms}
+        )
+
         # Reconnection failed
         handle_reconnect_failure(data, reason)
     end
   end
 
   def handle_event(:info, :reconnect_timeout, :reconnecting, data) do
+    # Emit telemetry for reconnection timeout
+    :telemetry.execute(
+      [:ex_mcp, :client, :reconnect, :timeout],
+      %{count: 1, attempt_number: data.attempt_number},
+      %{max_attempts: data.max_attempts}
+    )
+
     # Reconnection timeout - give up
     new_data = Transitions.to_disconnected(data, :reconnect_timeout)
     {:next_state, :disconnected, new_data}
@@ -325,6 +458,13 @@ defmodule ExMCP.Client.StateMachine do
        }) do
     Logger.debug("Starting handshake with transport: #{inspect(transport_module)}")
 
+    # Emit telemetry for handshake start
+    :telemetry.execute(
+      [:ex_mcp, :client, :handshake, :start],
+      %{count: 1},
+      %{transport: transport_module}
+    )
+
     # Send initialize request
     initialize_request = %{
       "jsonrpc" => "2.0",
@@ -356,17 +496,45 @@ defmodule ExMCP.Client.StateMachine do
                transport_state
              ) do
           {:ok, _new_state} ->
+            # Emit telemetry for successful handshake
+            :telemetry.execute(
+              [:ex_mcp, :client, :handshake, :success],
+              %{count: 1},
+              %{transport: transport_module}
+            )
+
             Logger.debug("Initialize result: #{inspect(result)}")
             {:ok, result}
 
           {:error, reason} ->
+            # Emit telemetry for handshake error
+            :telemetry.execute(
+              [:ex_mcp, :client, :handshake, :error],
+              %{count: 1},
+              %{transport: transport_module, reason: {:initialized_send_failed, reason}}
+            )
+
             {:error, {:initialized_send_failed, reason}}
         end
 
       {:ok, %{"error" => error}} ->
+        # Emit telemetry for handshake error
+        :telemetry.execute(
+          [:ex_mcp, :client, :handshake, :error],
+          %{count: 1},
+          %{transport: transport_module, reason: {:initialize_failed, error}}
+        )
+
         {:error, {:initialize_failed, error}}
 
       {:error, reason} ->
+        # Emit telemetry for handshake error
+        :telemetry.execute(
+          [:ex_mcp, :client, :handshake, :error],
+          %{count: 1},
+          %{transport: transport_module, reason: {:transport_error, reason}}
+        )
+
         {:error, {:transport_error, reason}}
     end
   end
@@ -459,7 +627,9 @@ defmodule ExMCP.Client.StateMachine do
         command: config[:command],
         args: config[:args],
         # Include test_pid if present
-        test_pid: config[:test_pid]
+        test_pid: config[:test_pid],
+        # Include test_mode if present (for TestTransport)
+        test_mode: config[:test_mode]
       ]
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
 
@@ -522,6 +692,23 @@ defmodule ExMCP.Client.StateMachine do
                 send(self(), {:transport_message, message})
                 {:error, :timeout}
             end
+
+          {:transport_error, reason} ->
+            # Emit telemetry for transport error immediately
+            :telemetry.execute(
+              [:ex_mcp, :client, :transport, :error],
+              %{count: 1},
+              %{reason: reason, state: :handshaking}
+            )
+
+            # Re-send the error to be handled by the state machine
+            send(self(), {:transport_error, reason})
+            {:error, {:transport_error, reason}}
+
+          {:transport_closed, reason} ->
+            # Re-send the closure to be handled by the state machine
+            send(self(), {:transport_closed, reason})
+            {:error, {:transport_closed, reason}}
         after
           5000 ->
             {:error, :timeout}
@@ -560,16 +747,78 @@ defmodule ExMCP.Client.StateMachine do
 
   defp handle_server_notification(data, "notifications/progress", params) do
     progress_token = params["progressToken"]
+    progress_value = params["progress"]
+    total = params["total"]
+    message = params["message"]
 
     case Map.get(data.progress_callbacks, progress_token) do
       nil ->
+        # Emit telemetry for unknown progress token
+        :telemetry.execute(
+          [:ex_mcp, :client, :progress, :unknown_token],
+          %{count: 1},
+          %{token: progress_token}
+        )
+
         Logger.warning("Progress notification for unknown token: #{progress_token}")
         data
 
       callback ->
-        # Call the progress callback
-        callback.(params)
-        data
+        # Update progress through ProgressTracker for validation and rate limiting
+        case ExMCP.ProgressTracker.update_progress(progress_token, progress_value, total, message) do
+          :ok ->
+            # Emit telemetry for successful progress update
+            :telemetry.execute(
+              [:ex_mcp, :client, :progress, :update],
+              %{count: 1, progress: progress_value, total: total || 100},
+              %{token: progress_token, message: message}
+            )
+
+            # Call the progress callback if ProgressTracker validation passed
+            callback.(params)
+            data
+
+          {:error, :not_found} ->
+            # Emit telemetry for progress update without tracker
+            :telemetry.execute(
+              [:ex_mcp, :client, :progress, :untracked],
+              %{count: 1, progress: progress_value},
+              %{token: progress_token}
+            )
+
+            # Token not found in ProgressTracker, but we have a callback - call it anyway
+            Logger.debug(
+              "Progress token not in ProgressTracker, calling callback directly: #{progress_token}"
+            )
+
+            callback.(params)
+            data
+
+          {:error, :rate_limited} ->
+            # Emit telemetry for rate limited progress
+            :telemetry.execute(
+              [:ex_mcp, :client, :progress, :rate_limited],
+              %{count: 1},
+              %{token: progress_token}
+            )
+
+            Logger.debug("Progress notification rate limited for token: #{progress_token}")
+            data
+
+          {:error, :not_increasing} ->
+            # Emit telemetry for non-increasing progress
+            :telemetry.execute(
+              [:ex_mcp, :client, :progress, :not_increasing],
+              %{count: 1, progress: progress_value},
+              %{token: progress_token}
+            )
+
+            Logger.warning(
+              "Progress value not increasing for token #{progress_token}: #{progress_value}"
+            )
+
+            data
+        end
     end
   end
 

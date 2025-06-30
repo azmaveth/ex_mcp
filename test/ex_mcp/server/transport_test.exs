@@ -3,6 +3,20 @@ defmodule ExMCP.Server.TransportTest do
 
   alias ExMCP.Server.Transport
 
+  setup do
+    # Save original configuration before any tests that might use STDIO transport
+    original_level = Logger.level()
+    original_stdio_mode = Application.get_env(:ex_mcp, :stdio_mode, false)
+
+    on_exit(fn ->
+      # Restore original logger configuration after STDIO tests
+      Logger.configure(level: original_level)
+      Application.put_env(:ex_mcp, :stdio_mode, original_stdio_mode)
+    end)
+
+    :ok
+  end
+
   defmodule TestServer do
     use ExMCP.Server
 

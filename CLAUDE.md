@@ -113,6 +113,79 @@ When implementing new features:
 4. Run `mix format` and `mix credo` before committing
 5. Update type specs in `lib/ex_mcp/types.ex` if adding new message types
 
+## State Machine Implementation
+
+The library now includes a refactored client implementation using GenStateMachine for better state management and observability.
+
+### Client Implementation Configuration
+
+Set the default client adapter:
+
+```elixir
+# config/config.exs
+config :ex_mcp, :client_adapter, ExMCP.Client.StateMachineAdapter
+```
+
+Available adapters:
+- `ExMCP.Client.LegacyAdapter` (default) - Original GenServer implementation
+- `ExMCP.Client.StateMachineAdapter` - New state machine implementation
+
+### Per-Client Configuration
+
+```elixir
+# Use specific adapter for a client
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :stdio,
+  command: "mcp-server", 
+  adapter: ExMCP.Client.StateMachineAdapter
+)
+```
+
+### State Machine Benefits
+
+- Formal state transitions with guards
+- State-specific data structures (reduced from 21 to 5-9 fields per state)
+- Comprehensive telemetry events for observability
+- Enhanced reconnection logic with exponential backoff
+- Integration with ExMCP.ProgressTracker
+
+### Telemetry Events
+
+The state machine emits telemetry for monitoring:
+
+```elixir
+# State transitions
+[:ex_mcp, :client, :state_transition]
+
+# Request lifecycle  
+[:ex_mcp, :client, :request, :start]
+[:ex_mcp, :client, :request, :success]
+[:ex_mcp, :client, :request, :error]
+
+# Connection events
+[:ex_mcp, :client, :connection, :success]
+[:ex_mcp, :client, :transport, :error]
+[:ex_mcp, :client, :transport, :closed]
+
+# Handshake events
+[:ex_mcp, :client, :handshake, :start]
+[:ex_mcp, :client, :handshake, :success]
+[:ex_mcp, :client, :handshake, :error]
+
+# Reconnection events
+[:ex_mcp, :client, :reconnect, :attempt]
+[:ex_mcp, :client, :reconnect, :success]
+[:ex_mcp, :client, :reconnect, :error]
+[:ex_mcp, :client, :reconnect, :timeout]
+
+# Progress tracking
+[:ex_mcp, :client, :progress, :update]
+[:ex_mcp, :client, :progress, :unknown_token]
+[:ex_mcp, :client, :progress, :rate_limited]
+```
+
+See `ExMCP.Client.Configuration` for complete configuration documentation.
+
 ## Development Workflow
 
 - Whenever you need to write or edit code, prefer to use aider.

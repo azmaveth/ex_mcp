@@ -16,7 +16,7 @@ defmodule ExMCP.TestHelpers.TestTransport do
 
   use GenServer
 
-  defstruct [:mode, :client_pid, :test_pid, :connected, :messages]
+  defstruct [:mode, :client_pid, :test_pid, :connected, :messages, :connection_count]
 
   # Transport behaviour implementation
 
@@ -29,6 +29,35 @@ defmodule ExMCP.TestHelpers.TestTransport do
     case mode do
       :fail_connect ->
         {:error, :connection_refused}
+
+      :always_fail ->
+        {:error, :transport_error}
+
+      :flaky ->
+        # Check if this is a reconnection attempt (transport already exists)
+        case :global.whereis_name({:test_transport, client_pid}) do
+          :undefined ->
+            # First connection - succeed
+            {:ok, state} = GenServer.start_link(__MODULE__, {mode, test_pid, client_pid})
+            :global.register_name({:test_transport, client_pid}, state)
+            {:ok, state}
+
+          _existing_pid ->
+            # Reconnection attempt - fail
+            {:error, :reconnection_failed}
+        end
+
+      :reconnect_timeout ->
+        # Similar to flaky but designed for timeout scenarios
+        case :global.whereis_name({:test_transport, client_pid}) do
+          :undefined ->
+            {:ok, state} = GenServer.start_link(__MODULE__, {mode, test_pid, client_pid})
+            :global.register_name({:test_transport, client_pid}, state)
+            {:ok, state}
+
+          _existing_pid ->
+            {:error, :connection_timeout}
+        end
 
       _ ->
         {:ok, state} = GenServer.start_link(__MODULE__, {mode, test_pid, client_pid})
@@ -76,16 +105,27 @@ defmodule ExMCP.TestHelpers.TestTransport do
   end
 
   def simulate_disconnect(client_pid) do
-    # Send transport error directly to the state machine process
-    send(client_pid, {:transport_error, :connection_lost})
+    # Send transport closed message to trigger reconnection behavior
+    send(client_pid, {:transport_closed, :connection_lost})
+
+    # Clean up global registration to allow reconnection behavior
+    case :global.whereis_name({:test_transport, client_pid}) do
+      :undefined ->
+        :ok
+
+      transport_pid ->
+        :global.unregister_name({:test_transport, client_pid})
+        GenServer.stop(transport_pid, :normal)
+    end
+
     :ok
   end
 
   def get_last_message(client_pid) do
     # For testing, we'll use a registry to track transport messages
     # This is simplified - in real usage the transport would handle this
-    case GenServer.whereis({:global, {:test_transport, client_pid}}) do
-      nil ->
+    case :global.whereis_name({:test_transport, client_pid}) do
+      :undefined ->
         {:error, :no_transport}
 
       transport_pid ->
@@ -101,6 +141,26 @@ defmodule ExMCP.TestHelpers.TestTransport do
     end
   end
 
+  def respond_to_handshake(client_pid) do
+    # Get the last sent message to find the ID to respond to
+    case get_last_sent_id(client_pid) do
+      {:ok, id} ->
+        response = %{
+          "id" => id,
+          "result" => %{
+            "protocolVersion" => "2025-03-26",
+            "capabilities" => %{},
+            "serverInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        }
+
+        send_to_client(client_pid, response)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   # GenServer implementation
 
   @impl true
@@ -110,7 +170,8 @@ defmodule ExMCP.TestHelpers.TestTransport do
       test_pid: test_pid,
       client_pid: client_pid,
       connected: true,
-      messages: []
+      messages: [],
+      connection_count: 1
     }
 
     {:ok, state}
@@ -156,21 +217,52 @@ defmodule ExMCP.TestHelpers.TestTransport do
             :ok
         end
 
+      :always_fail ->
+        # In always_fail mode, don't respond to anything - let everything timeout
+        :ok
+
+      :flaky ->
+        # In flaky mode, don't auto-respond - let test control messages manually
+        :ok
+
       :no_response ->
         # For no_response mode, don't respond to anything - just store the message
         IO.puts("DEBUG: TestTransport in no_response mode, not sending response")
         :ok
 
+      :interactive ->
+        # In interactive mode, don't auto-respond - let test control messages manually
+        :ok
+
       :echo ->
         # Parse and echo back
         case Jason.decode(message) do
+          {:ok, %{"id" => id, "method" => "initialize", "params" => _params}} ->
+            # For initialize, send a proper handshake response
+            response = %{
+              "id" => id,
+              "result" => %{
+                "protocolVersion" => "2025-03-26",
+                "capabilities" => %{},
+                "serverInfo" => %{"name" => "test", "version" => "1.0"}
+              }
+            }
+
+            # Send response directly to client
+            if state.client_pid do
+              send(state.client_pid, {:transport_message, Jason.encode!(response)})
+            end
+
           {:ok, %{"id" => id, "method" => method, "params" => params}} ->
             response = %{
               "id" => id,
               "result" => %{"echo" => %{"method" => method, "params" => params}}
             }
 
-            send(self(), {:echo_response, Jason.encode!(response)})
+            # Send response directly to client
+            if state.client_pid do
+              send(state.client_pid, {:transport_message, Jason.encode!(response)})
+            end
 
           _ ->
             :ok
@@ -195,9 +287,6 @@ defmodule ExMCP.TestHelpers.TestTransport do
     # Wait for messages
     receive do
       {:test_message, message} ->
-        {:reply, {:ok, message, self()}, state}
-
-      {:echo_response, message} ->
         {:reply, {:ok, message, self()}, state}
     after
       100 ->

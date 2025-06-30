@@ -30,7 +30,13 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       config = %{transport: TestTransport, test_mode: :fail_connect}
       {:ok, client} = StateMachine.start_link(config)
 
-      assert {:error, _} = StateMachine.connect(client)
+      # Connect returns :ok immediately (async)
+      assert :ok = StateMachine.connect(client)
+
+      # Wait for async connection to fail
+      Process.sleep(100)
+
+      # Should be back in disconnected state after failure
       assert %{state: :disconnected} = StateMachine.get_state(client)
     end
 
@@ -56,14 +62,7 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       :ok = StateMachine.connect(client)
       Process.sleep(50)
 
-      TestTransport.send_to_client(client, %{
-        "id" => "init_1",
-        "result" => %{
-          "protocolVersion" => "2025-03-26",
-          "capabilities" => %{},
-          "serverInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      TestTransport.respond_to_handshake(client)
 
       Process.sleep(50)
 
@@ -71,23 +70,24 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
     end
 
     test "handles successful request", %{client: client} do
-      task =
-        Task.async(fn ->
-          StateMachine.request(client, "test/method", %{foo: "bar"})
-        end)
+      # The echo mode automatically responds, so we just need to wait
+      result = StateMachine.request(client, "test/method", %{foo: "bar"})
 
-      # Server echoes back the request
-      Process.sleep(50)
-
-      TestTransport.send_to_client(client, %{
-        "id" => 1,
-        "result" => %{"echo" => %{"method" => "test/method", "params" => %{"foo" => "bar"}}}
-      })
-
-      assert {:ok, %{"echo" => %{"method" => "test/method"}}} = Task.await(task)
+      assert {:ok, %{"echo" => %{"method" => "test/method", "params" => %{"foo" => "bar"}}}} =
+               result
     end
 
-    test "handles request error", %{client: client} do
+    test "handles request error" do
+      # Use interactive mode to control responses
+      config = %{transport: TestTransport, test_mode: :interactive}
+      {:ok, client} = StateMachine.start_link(config)
+
+      # Connect and complete handshake
+      :ok = StateMachine.connect(client)
+      Process.sleep(50)
+      TestTransport.respond_to_handshake(client)
+      Process.sleep(50)
+
       task =
         Task.async(fn ->
           StateMachine.request(client, "error/method", %{})
@@ -106,7 +106,16 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       assert {:error, %{"code" => -32000}} = Task.await(task)
     end
 
-    test "handles concurrent requests", %{client: client} do
+    test "handles concurrent requests" do
+      # Use interactive mode to control responses
+      config = %{transport: TestTransport, test_mode: :interactive}
+      {:ok, client} = StateMachine.start_link(config)
+
+      # Connect and complete handshake
+      :ok = StateMachine.connect(client)
+      Process.sleep(50)
+      TestTransport.respond_to_handshake(client)
+      Process.sleep(50)
       # Start 5 concurrent requests
       tasks =
         for i <- 1..5 do
@@ -116,7 +125,7 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
         end
 
       # Send responses in reverse order
-      for i <- 5..1 do
+      for i <- 5..1//-1 do
         Process.sleep(10)
 
         TestTransport.send_to_client(client, %{
@@ -133,11 +142,21 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       end
     end
 
-    test "handles request timeout", %{client: client} do
+    test "handles request timeout" do
+      # Use interactive mode to control responses manually
+      config = %{transport: TestTransport, test_mode: :interactive}
+      {:ok, client} = StateMachine.start_link(config)
+
+      # Connect and complete handshake
+      :ok = StateMachine.connect(client)
+      Process.sleep(50)
+      TestTransport.respond_to_handshake(client)
+      Process.sleep(50)
+
       # Request with short timeout
       result = StateMachine.request(client, "slow/method", %{}, timeout: 100)
 
-      # No response sent
+      # No response sent - should timeout
       assert {:error, :timeout} = result
     end
   end
@@ -146,7 +165,8 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
     test "automatically reconnects on transport failure" do
       config = %{
         transport: TestTransport,
-        test_mode: :flaky,
+        # Use interactive mode for successful reconnection
+        test_mode: :interactive,
         max_reconnect_attempts: 3,
         reconnect_backoff_ms: 50
       }
@@ -158,40 +178,46 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       Process.sleep(50)
 
       # Complete handshake
-      TestTransport.send_to_client(client, %{
-        "id" => "init_1",
-        "result" => %{
-          "protocolVersion" => "2025-03-26",
-          "capabilities" => %{},
-          "serverInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      TestTransport.respond_to_handshake(client)
 
       Process.sleep(50)
       assert %{state: :ready} = StateMachine.get_state(client)
+
+      # Start a task that will respond to the handshake as soon as it arrives
+      responder_task =
+        Task.async(fn ->
+          # Poll for handshake request
+          Enum.reduce_while(1..100, nil, fn _i, _acc ->
+            case TestTransport.get_last_message(client) do
+              {:ok, %{"method" => "initialize"}} ->
+                # Handshake request found, respond immediately
+                TestTransport.respond_to_handshake(client)
+                {:halt, :ok}
+
+              _ ->
+                Process.sleep(10)
+                {:cont, nil}
+            end
+          end)
+        end)
 
       # Simulate transport failure
       TestTransport.simulate_disconnect(client)
 
-      # Should transition to reconnecting
-      Process.sleep(50)
-      assert %{state: :reconnecting} = StateMachine.get_state(client)
+      # Should transition to reconnecting immediately
+      Process.sleep(10)
+      state = StateMachine.get_state(client)
+      assert state.state == :reconnecting
 
-      # Wait for reconnection
+      # Wait for the responder task to complete (it will respond to handshake)
+      Task.await(responder_task, 2000)
+
+      # Wait for handshake to complete
       Process.sleep(100)
 
-      # Should reconnect and complete handshake again
-      TestTransport.send_to_client(client, %{
-        "id" => "init_2",
-        "result" => %{
-          "protocolVersion" => "2025-03-26",
-          "capabilities" => %{},
-          "serverInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
-
-      Process.sleep(50)
-      assert %{state: :ready} = StateMachine.get_state(client)
+      # Should be back to ready state
+      state = StateMachine.get_state(client)
+      assert state.state == :ready
     end
 
     test "gives up after max reconnect attempts" do
@@ -224,14 +250,7 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       :ok = StateMachine.connect(client)
       Process.sleep(50)
 
-      TestTransport.send_to_client(client, %{
-        "id" => "init_1",
-        "result" => %{
-          "protocolVersion" => "2025-03-26",
-          "capabilities" => %{},
-          "serverInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      TestTransport.respond_to_handshake(client)
 
       Process.sleep(50)
 
@@ -308,14 +327,7 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       :ok = StateMachine.connect(client)
       Process.sleep(50)
 
-      TestTransport.send_to_client(client, %{
-        "id" => "init_1",
-        "result" => %{
-          "protocolVersion" => "2025-03-26",
-          "capabilities" => %{},
-          "serverInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      TestTransport.respond_to_handshake(client)
 
       Process.sleep(50)
 
@@ -355,14 +367,7 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       :ok = StateMachine.connect(client)
       Process.sleep(50)
 
-      TestTransport.send_to_client(client, %{
-        "id" => "init_1",
-        "result" => %{
-          "protocolVersion" => "2025-03-26",
-          "capabilities" => %{"progress" => true},
-          "serverInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      TestTransport.respond_to_handshake(client)
 
       Process.sleep(50)
 
@@ -383,6 +388,9 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
             progress_token: progress_token
           )
         end)
+
+      # Wait a moment for the request to be registered
+      Process.sleep(50)
 
       # Send progress updates
       TestTransport.send_to_client(client, %{

@@ -59,7 +59,8 @@ defmodule ExMCP.Client.Transitions do
       # Deprecated, kept for compatibility
       transport_state: nil,
       client_info: client_info,
-      handshake_start_time: System.monotonic_time(:millisecond)
+      handshake_start_time: System.monotonic_time(:millisecond),
+      from_reconnecting: nil
     }
   end
 
@@ -122,12 +123,14 @@ defmodule ExMCP.Client.Transitions do
       ) do
     Logger.info("Connection lost, attempting to reconnect: #{inspect(reason)}")
 
+    # Get initial backoff from config or default to 1000ms
+    initial_backoff = common.config[:reconnect_backoff_ms] || 1000
+
     %Reconnecting{
       common: common,
       last_transport: transport,
       last_server_info: server_info,
-      # Start with 1 second backoff
-      backoff_ms: 1000,
+      backoff_ms: initial_backoff,
       attempt_number: 1,
       max_attempts: get_max_reconnect_attempts(common.config),
       reconnect_timer: nil
@@ -140,7 +143,11 @@ defmodule ExMCP.Client.Transitions do
   Adds a pending request to the ready state.
   """
   def add_request(
-        %Ready{pending_requests: pending, next_request_id: id} = state,
+        %Ready{
+          pending_requests: pending,
+          next_request_id: id,
+          progress_callbacks: progress_callbacks
+        } = state,
         from,
         method,
         params,
@@ -152,13 +159,42 @@ defmodule ExMCP.Client.Transitions do
       params: params,
       from: from,
       timeout: opts[:timeout] || 5000,
-      start_time: System.monotonic_time(:millisecond)
+      start_time: System.monotonic_time(:millisecond),
+      progress_token: opts[:progress_token]
     }
+
+    # Handle progress tracking if callback and token are provided
+    new_progress_callbacks =
+      case {opts[:progress_callback], opts[:progress_token]} do
+        {callback, token} when is_function(callback) and not is_nil(token) ->
+          # Register with ProgressTracker for token management and rate limiting
+          # We pass a dummy pid since we handle notifications through transport, not direct messages
+          case ExMCP.ProgressTracker.start_progress(token, spawn(fn -> :ok end)) do
+            {:ok, _progress_state} ->
+              # Store callback for this token
+              Map.put(progress_callbacks, token, callback)
+
+            {:error, :token_exists} ->
+              # Token already in use - log warning but still store callback
+              require Logger
+              Logger.warning("Progress token already in use: #{token}")
+              Map.put(progress_callbacks, token, callback)
+
+            {:error, reason} ->
+              require Logger
+              Logger.error("Failed to start progress tracking: #{inspect(reason)}")
+              progress_callbacks
+          end
+
+        _ ->
+          progress_callbacks
+      end
 
     new_state = %{
       state
       | pending_requests: Map.put(pending, id, request),
-        next_request_id: id + 1
+        next_request_id: id + 1,
+        progress_callbacks: new_progress_callbacks
     }
 
     {:ok, new_state, id}
@@ -171,34 +207,90 @@ defmodule ExMCP.Client.Transitions do
   @doc """
   Marks a request as failed and replies to the caller.
   """
-  def fail_request(%Ready{pending_requests: pending} = state, request_id, reason) do
+  def fail_request(
+        %Ready{pending_requests: pending, progress_callbacks: progress_callbacks} = state,
+        request_id,
+        reason
+      ) do
     case Map.get(pending, request_id) do
       nil ->
         state
 
       request ->
+        # Cancel timeout timer if present
+        case Map.get(request, :timer_ref) do
+          nil -> :ok
+          timer_ref -> Process.cancel_timer(timer_ref)
+        end
+
+        # Calculate request duration
+        duration = System.monotonic_time(:millisecond) - request.start_time
+
+        # Emit telemetry for failed request
+        :telemetry.execute(
+          [:ex_mcp, :client, :request, :error],
+          %{count: 1, duration: duration},
+          %{method: request.method, request_id: request_id, reason: reason}
+        )
+
         # Reply to the caller
         GenStateMachine.reply(request.from, {:error, reason})
 
+        # Clean up progress tracking if this request had a progress token
+        new_progress_callbacks =
+          cleanup_progress_tracking(progress_callbacks, request.progress_token)
+
         # Remove from pending
-        %{state | pending_requests: Map.delete(pending, request_id)}
+        %{
+          state
+          | pending_requests: Map.delete(pending, request_id),
+            progress_callbacks: new_progress_callbacks
+        }
     end
   end
 
   @doc """
   Completes a request with a successful response.
   """
-  def complete_request(%Ready{pending_requests: pending} = state, request_id, result) do
+  def complete_request(
+        %Ready{pending_requests: pending, progress_callbacks: progress_callbacks} = state,
+        request_id,
+        result
+      ) do
     case Map.get(pending, request_id) do
       nil ->
         state
 
       request ->
+        # Cancel timeout timer if present
+        case Map.get(request, :timer_ref) do
+          nil -> :ok
+          timer_ref -> Process.cancel_timer(timer_ref)
+        end
+
+        # Calculate request duration
+        duration = System.monotonic_time(:millisecond) - request.start_time
+
+        # Emit telemetry for successful request
+        :telemetry.execute(
+          [:ex_mcp, :client, :request, :success],
+          %{count: 1, duration: duration},
+          %{method: request.method, request_id: request_id}
+        )
+
         # Reply to the caller
         GenStateMachine.reply(request.from, {:ok, result})
 
+        # Clean up progress tracking if this request had a progress token
+        new_progress_callbacks =
+          cleanup_progress_tracking(progress_callbacks, request.progress_token)
+
         # Remove from pending
-        %{state | pending_requests: Map.delete(pending, request_id)}
+        %{
+          state
+          | pending_requests: Map.delete(pending, request_id),
+            progress_callbacks: new_progress_callbacks
+        }
     end
   end
 
@@ -264,4 +356,23 @@ defmodule ExMCP.Client.Transitions do
   end
 
   defp maybe_call_disconnect_callback(_, _), do: :ok
+
+  # Progress tracking cleanup
+  defp cleanup_progress_tracking(progress_callbacks, nil), do: progress_callbacks
+
+  defp cleanup_progress_tracking(progress_callbacks, progress_token) do
+    # Complete progress tracking in ProgressTracker
+    case ExMCP.ProgressTracker.complete_progress(progress_token) do
+      :ok ->
+        require Logger
+        Logger.debug("Progress tracking completed for token: #{progress_token}")
+
+      {:error, :not_found} ->
+        require Logger
+        Logger.debug("Progress token not found in ProgressTracker: #{progress_token}")
+    end
+
+    # Remove callback from state
+    Map.delete(progress_callbacks, progress_token)
+  end
 end

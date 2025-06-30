@@ -7,6 +7,12 @@ defmodule ExMCP.SessionManagerBasicTest do
   alias ExMCP.SessionManager
 
   test "SessionManager can be started and stopped independently" do
+    # Stop existing SessionManager if running
+    case Process.whereis(ExMCP.SessionManager) do
+      nil -> :ok
+      pid -> GenServer.stop(pid)
+    end
+
     # Start the session manager independently
     {:ok, pid} =
       SessionManager.start_link(
@@ -32,6 +38,12 @@ defmodule ExMCP.SessionManagerBasicTest do
   end
 
   test "SessionManager basic event storage and retrieval" do
+    # Stop existing SessionManager if running
+    case Process.whereis(ExMCP.SessionManager) do
+      nil -> :ok
+      pid -> GenServer.stop(pid)
+    end
+
     {:ok, pid} =
       SessionManager.start_link(
         max_events_per_session: 5,
@@ -62,6 +74,12 @@ defmodule ExMCP.SessionManagerBasicTest do
   end
 
   test "SessionManager session termination" do
+    # Stop existing SessionManager if running
+    case Process.whereis(ExMCP.SessionManager) do
+      nil -> :ok
+      pid -> GenServer.stop(pid)
+    end
+
     {:ok, pid} = SessionManager.start_link([])
 
     # Create session

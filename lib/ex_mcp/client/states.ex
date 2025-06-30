@@ -95,7 +95,8 @@ defmodule ExMCP.Client.States do
       :transport,
       :transport_state,
       :client_info,
-      :handshake_start_time
+      :handshake_start_time,
+      :from_reconnecting
     ]
 
     @type t :: %__MODULE__{
@@ -103,7 +104,8 @@ defmodule ExMCP.Client.States do
             transport: pid(),
             transport_state: term(),
             client_info: map(),
-            handshake_start_time: integer()
+            handshake_start_time: integer(),
+            from_reconnecting: nil | map()
           }
   end
 

@@ -259,7 +259,8 @@ defmodule ExMCP.Reliability.Supervisor do
     end
   end
 
-  defp circuit_breaker_supervisor(supervisor_name \\ __MODULE__) do
+  @doc false
+  def circuit_breaker_supervisor(supervisor_name \\ __MODULE__) do
     Module.concat([supervisor_name, CircuitBreakerSupervisor])
   end
 
@@ -276,20 +277,39 @@ defmodule ExMCP.Reliability.Supervisor do
   def find_circuit_breaker_supervisor(supervisor) do
     children = Supervisor.which_children(supervisor)
 
-    # Look for the expected circuit breaker supervisor by name, not string matching
-    expected_name = get_circuit_breaker_supervisor_name(supervisor)
-
+    # Look for CircuitBreakerSupervisor by name pattern rather than exact match
     cb_supervisor =
       Enum.find_value(children, fn
-        {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) ->
-          pid
+        {name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) ->
+          # Check if the name ends with CircuitBreakerSupervisor
+          name_str = Atom.to_string(name)
+
+          if String.ends_with?(name_str, "CircuitBreakerSupervisor") do
+            pid
+          else
+            nil
+          end
 
         _ ->
           nil
       end)
 
-    # Only return if found, otherwise fall back to name calculation
-    cb_supervisor || get_circuit_breaker_supervisor_name(supervisor)
+    # Always return a PID - if not found in children, this indicates a problem
+    case cb_supervisor do
+      pid when is_pid(pid) ->
+        pid
+
+      nil ->
+        # If we can't find it in children, it means the supervisor structure is wrong
+        # This should not happen in a properly initialized supervisor
+        raise """
+        Could not find circuit breaker supervisor in children of #{inspect(supervisor)}.
+        Available children: #{inspect(Enum.map(children, fn {name, _pid, _type, _modules} -> name end))}
+        Looking for DynamicSupervisor with name ending in 'CircuitBreakerSupervisor'.
+
+        This indicates the reliability supervisor was not properly initialized.
+        """
+    end
   catch
     :exit, {:noproc, _} ->
       # Supervisor is not running, return the default
@@ -343,7 +363,8 @@ defmodule ExMCP.Reliability.Supervisor do
   end
 
   # Helper functions to get the correct child names based on supervisor
-  defp get_circuit_breaker_supervisor_name(supervisor) when is_pid(supervisor) do
+  @doc false
+  def get_circuit_breaker_supervisor_name(supervisor) when is_pid(supervisor) do
     # Try to get the registered name of the supervisor
     case Process.info(supervisor, :registered_name) do
       {:registered_name, name} when is_atom(name) and name != [] ->
@@ -355,7 +376,8 @@ defmodule ExMCP.Reliability.Supervisor do
     end
   end
 
-  defp get_circuit_breaker_supervisor_name(supervisor) when is_atom(supervisor) do
+  @doc false
+  def get_circuit_breaker_supervisor_name(supervisor) when is_atom(supervisor) do
     circuit_breaker_supervisor(supervisor)
   end
 
@@ -565,16 +587,36 @@ defmodule ExMCP.Reliability do
       case Process.whereis(ExMCP.Reliability.Supervisor) do
         nil ->
           # If not found, the application might not be started
-          # Start a temporary supervisor for testing
-          {:ok, temp_sup} = ExMCP.Reliability.Supervisor.start_link()
+          # In test environments, start a temporary supervisor with unique name
+          temp_name = :"#{__MODULE__}_#{System.unique_integer([:positive])}_temp"
+          {:ok, temp_sup} = ExMCP.Reliability.Supervisor.start_link(name: temp_name)
           # Give it time to start children
-          Process.sleep(50)
+          Process.sleep(150)
 
-          # Find the circuit breaker supervisor within it
-          cb_sup = ExMCP.Reliability.Supervisor.find_circuit_breaker_supervisor(temp_sup)
+          # Get the circuit breaker supervisor PID directly from children
+          children = Supervisor.which_children(temp_sup)
 
-          # Note: In tests, this supervisor will be cleaned up when the test process exits
-          cb_sup
+          expected_name =
+            ExMCP.Reliability.Supervisor.get_circuit_breaker_supervisor_name(temp_sup)
+
+          case Enum.find_value(children, fn
+                 {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) -> pid
+                 _ -> nil
+               end) do
+            pid when is_pid(pid) ->
+              pid
+
+            nil ->
+              # Fallback: try direct lookup by expected name
+              case Process.whereis(expected_name) do
+                pid when is_pid(pid) ->
+                  pid
+
+                nil ->
+                  # Last resort: return the expected name (this will likely fail but is better than crashing)
+                  ExMCP.Reliability.Supervisor.circuit_breaker_supervisor(temp_name)
+              end
+          end
 
         sup_pid ->
           # Use the existing supervisor
