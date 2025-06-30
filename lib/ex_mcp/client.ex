@@ -714,7 +714,24 @@ defmodule ExMCP.Client do
               end
 
             _ ->
-              {:stop, {:transport_connect_failed, reason}}
+              # Normalize the error to avoid nested error tuples
+              normalized_reason =
+                case reason do
+                  %{"code" => _, "message" => _} = err_map ->
+                    err_map
+
+                  {:error, inner_reason} ->
+                    # Unwrap nested error tuples
+                    inner_reason
+
+                  atom when is_atom(atom) ->
+                    to_string(atom)
+
+                  other ->
+                    inspect(other)
+                end
+
+              {:stop, {:transport_connect_failed, normalized_reason}}
           end
       end
     end
@@ -744,7 +761,7 @@ defmodule ExMCP.Client do
     end
 
     # Stop receiver task by killing the process directly
-    if state.receiver_task do
+    if state.receiver_task && is_struct(state.receiver_task, Task) do
       if Process.alive?(state.receiver_task.pid) do
         Process.exit(state.receiver_task.pid, :shutdown)
       end
@@ -760,7 +777,8 @@ defmodule ExMCP.Client do
 
       {_id, {pid, ref}} when is_pid(pid) and is_reference(ref) ->
         # Handle simple {pid, ref} tuples from older test code
-        GenServer.reply({pid, ref}, {:error, :disconnected})
+        # Use consistent error format
+        GenServer.reply({pid, ref}, {:error, connection_error})
 
       {_batch_id, {from, :batch, ordered_ids, received_responses}}
       when is_map(received_responses) ->
@@ -872,7 +890,8 @@ defmodule ExMCP.Client do
     {:noreply, %{state | health_check_ref: health_check_ref}}
   end
 
-  def handle_info({:EXIT, pid, reason}, %{receiver_task: %{pid: pid}} = state) do
+  def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
+      when pid == task_pid do
     Logger.error("Receiver task died: #{inspect(reason)}")
     # Note: Automatic reconnection logic could be implemented here
     {:noreply, %{state | connection_status: :disconnected}}
@@ -890,7 +909,11 @@ defmodule ExMCP.Client do
         # Check if this request was cancelled
         error =
           if MapSet.member?(state.cancelled_requests, id) do
-            :cancelled
+            # Use proper error map for cancelled requests
+            %{
+              "code" => ErrorCodes.request_cancelled(),
+              "message" => "Request cancelled"
+            }
           else
             connection_error
           end
@@ -901,7 +924,11 @@ defmodule ExMCP.Client do
         # Handle simple {pid, ref} tuples from older test code
         error =
           if MapSet.member?(state.cancelled_requests, id) do
-            :cancelled
+            # Use proper error map for cancelled requests
+            %{
+              "code" => ErrorCodes.request_cancelled(),
+              "message" => "Request cancelled"
+            }
           else
             connection_error
           end

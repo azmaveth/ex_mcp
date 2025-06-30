@@ -135,6 +135,7 @@ defmodule ExMCP do
 
   alias ExMCP.Client
   alias ExMCP.Server
+  alias ExMCP.Response
 
   # Convenience aliases
   alias ExMCP.Error
@@ -323,9 +324,14 @@ defmodule ExMCP do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     case Client.list_tools(client, timeout) do
+      {:ok, %Response{tools: tools}} when is_list(tools) ->
+        # Handle Response struct
+        tools
+
       {:ok, result} when is_map(result) ->
         # Extract tools list from the result map
-        Map.get(result, "tools", [])
+        # Try both string and atom keys
+        Map.get(result, "tools") || Map.get(result, :tools, [])
 
       error ->
         error
@@ -455,6 +461,11 @@ defmodule ExMCP do
       {:ok, parsed} -> parsed
       {:error, _} -> content
     end
+  end
+
+  defp extract_tool_result_content(%Response{} = response) do
+    # Handle Response struct - use the text_content function
+    Response.text_content(response)
   end
 
   defp extract_tool_result_content(result) when is_map(result) do

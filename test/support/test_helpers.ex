@@ -214,13 +214,24 @@ defmodule ExMCP.TestHelpers do
 
     # Generate unique server name to avoid conflicts
     test_name = Map.get(context, :test, :default_test)
-    server_name = :"ApiTestServer_#{test_name}_#{System.unique_integer([:positive])}"
+    unique_id = System.unique_integer([:positive])
+    server_name = :"ApiTestServer_#{test_name}_#{unique_id}"
+
+    # Generate a unique ranch ref to avoid listener conflicts
+    ranch_ref = :"ranch_listener_#{test_name}_#{unique_id}"
 
     # Use a wider port range to avoid conflicts
     base_port = 8080 + :rand.uniform(5000)
     port = find_available_port(base_port)
 
-    server_opts = [transport: :http, port: port, sse_enabled: false, name: server_name]
+    server_opts = [
+      transport: :http,
+      port: port,
+      sse_enabled: false,
+      name: server_name,
+      # Pass ranch ref to avoid conflicts
+      ranch_ref: ranch_ref
+    ]
 
     # 1. Start the HTTP server using a real ExMCP.Server.
     case ApiTestServer.start_link(server_opts) do
@@ -235,6 +246,13 @@ defmodule ExMCP.TestHelpers do
 
         # 2. Register on_exit for the server process itself.
         on_exit(fn ->
+          # Stop the ranch listener if it exists
+          try do
+            :ranch.stop_listener(ranch_ref)
+          catch
+            :exit, _ -> :ok
+          end
+
           safe_stop_process(server_name)
           # Small delay to ensure port is released before next test
           Process.sleep(100)
@@ -243,19 +261,24 @@ defmodule ExMCP.TestHelpers do
         # 3. Return the context map required by the tests.
         %{http_url: "http://localhost:#{port}"}
 
-      {:error, {:already_started, _pid}} ->
-        # Try stopping the existing server and retry
-        safe_stop_process(server_name)
-        Process.sleep(200)
+      {:error, {:already_started, _}} ->
+        # This means the ranch listener already exists - try with a different ref
+        retry_ranch_ref = :"ranch_listener_retry_#{test_name}_#{unique_id}"
+        retry_opts = Keyword.put(server_opts, :ranch_ref, retry_ranch_ref)
 
-        # Retry with same options
-        case ApiTestServer.start_link(server_opts) do
+        case ApiTestServer.start_link(retry_opts) do
           {:ok, pid} ->
             Process.sleep(300)
 
             case wait_for_server_ready(port, 100) do
               :ok ->
                 on_exit(fn ->
+                  try do
+                    :ranch.stop_listener(retry_ranch_ref)
+                  catch
+                    :exit, _ -> :ok
+                  end
+
                   safe_stop_process(server_name)
                   Process.sleep(100)
                 end)

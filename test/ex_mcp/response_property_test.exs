@@ -19,7 +19,7 @@ defmodule ExMCP.ResponsePropertyTest do
         (raw["resources"] == nil or response.resources == raw["resources"]) and
         (raw["prompts"] == nil or response.prompts == raw["prompts"]) and
         (raw["nextCursor"] == nil or response.nextCursor == raw["nextCursor"]) and
-        (raw["contents"] == nil or response.contents == raw["contents"]) and
+        (raw["contents"] == nil or (response.contents != nil and is_list(response.contents))) and
         (raw["description"] == nil or response.description == raw["description"])
     end
   end

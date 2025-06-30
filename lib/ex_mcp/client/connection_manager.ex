@@ -374,7 +374,14 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp start_receiver_task(parent, transport_mod, transport_state) do
-    task = Task.async(fn -> __MODULE__.receive_loop(parent, transport_mod, transport_state) end)
-    {:ok, task}
+    # Check if this is HTTP in non-SSE mode
+    if transport_mod == ExMCP.Transport.HTTP and not transport_state.use_sse do
+      # Don't start a receive loop for synchronous HTTP
+      {:ok, nil}
+    else
+      # Start receive loop for SSE or other streaming transports
+      task = Task.async(fn -> __MODULE__.receive_loop(parent, transport_mod, transport_state) end)
+      {:ok, task}
+    end
   end
 end

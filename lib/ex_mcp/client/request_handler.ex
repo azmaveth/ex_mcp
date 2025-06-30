@@ -19,7 +19,21 @@ defmodule ExMCP.Client.RequestHandler do
     request = build_request(method, params, id)
 
     case send_message(request, state) do
+      {:ok, updated_state, response_data} ->
+        # Non-SSE HTTP returns response immediately
+        case Protocol.parse_message(response_data) do
+          {:result, result, _id} ->
+            {:reply, {:ok, result}, updated_state}
+
+          {:error, error_data, _id} ->
+            {:reply, {:error, error_data}, updated_state}
+
+          _ ->
+            {:reply, {:error, :invalid_response}, updated_state}
+        end
+
       {:ok, updated_state} ->
+        # SSE and streaming transports - track pending request
         pending_requests = Map.put(updated_state.pending_requests, id, {from, :single})
         new_state = %{updated_state | pending_requests: pending_requests}
         {:noreply, new_state}
@@ -255,6 +269,10 @@ defmodule ExMCP.Client.RequestHandler do
     notification = build_request(method, params, nil)
 
     case send_message(notification, state) do
+      {:ok, updated_state, _response_data} ->
+        # Non-SSE HTTP returns response but we ignore it for notifications
+        {:noreply, updated_state}
+
       {:ok, updated_state} ->
         {:noreply, updated_state}
 
@@ -276,8 +294,12 @@ defmodule ExMCP.Client.RequestHandler do
     else
       with {:ok, encoded_message} <- Protocol.encode_to_string(message) do
         case transport_mod.send_message(encoded_message, transport_state) do
+          {:ok, new_transport_state, response_data} ->
+            # Non-SSE HTTP returns response immediately
+            {:ok, %{state | transport_state: new_transport_state}, response_data}
+
           {:ok, new_transport_state} ->
-            # All transports now return consistent 2-tuple
+            # SSE and other streaming transports return 2-tuple
             {:ok, %{state | transport_state: new_transport_state}}
 
           {:error, reason} ->

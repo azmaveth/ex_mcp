@@ -108,6 +108,7 @@ defmodule ExMCP.Server.Transport do
     # Check both :sse_enabled and :use_sse for compatibility
     sse_enabled = Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
     cors_enabled = Keyword.get(opts, :cors_enabled, true)
+    ranch_ref = Keyword.get(opts, :ranch_ref)
 
     # Configure the HTTP Plug
     plug_opts = [
@@ -118,26 +119,50 @@ defmodule ExMCP.Server.Transport do
       cors_enabled: cors_enabled
     ]
 
-    # Configure Cowboy
-    cowboy_opts = [
-      port: port,
-      ip: parse_host(host)
-    ]
-
     Logger.info("Starting MCP HTTP server on #{host}:#{port} (SSE: #{sse_enabled})")
 
-    case Plug.Cowboy.http(ExMCP.HttpPlug, plug_opts, cowboy_opts) do
-      {:ok, pid} ->
-        Logger.info("MCP HTTP server started successfully")
-        {:ok, pid}
+    # If a custom ranch_ref is provided, use it for test isolation
+    if ranch_ref do
+      # Use Plug.Cowboy with the custom ref option
+      cowboy_opts = [
+        port: port,
+        ip: parse_host(host),
+        ref: ranch_ref
+      ]
 
-      {:error, {:already_started, pid}} ->
-        Logger.info("MCP HTTP server already running")
-        {:ok, pid}
+      case Plug.Cowboy.http(ExMCP.HttpPlug, plug_opts, cowboy_opts) do
+        {:ok, pid} ->
+          Logger.info("MCP HTTP server started successfully with ref #{inspect(ranch_ref)}")
+          {:ok, pid}
 
-      {:error, reason} ->
-        Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
-        {:error, reason}
+        {:error, {:already_started, pid}} ->
+          Logger.info("MCP HTTP server already running with ref #{inspect(ranch_ref)}")
+          {:ok, pid}
+
+        {:error, reason} ->
+          Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
+          {:error, reason}
+      end
+    else
+      # Use default Plug.Cowboy approach for production
+      cowboy_opts = [
+        port: port,
+        ip: parse_host(host)
+      ]
+
+      case Plug.Cowboy.http(ExMCP.HttpPlug, plug_opts, cowboy_opts) do
+        {:ok, pid} ->
+          Logger.info("MCP HTTP server started successfully")
+          {:ok, pid}
+
+        {:error, {:already_started, pid}} ->
+          Logger.info("MCP HTTP server already running")
+          {:ok, pid}
+
+        {:error, reason} ->
+          Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
+          {:error, reason}
+      end
     end
   end
 

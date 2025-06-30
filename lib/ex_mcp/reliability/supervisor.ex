@@ -91,9 +91,7 @@ defmodule ExMCP.Reliability.Supervisor do
       result =
         case ExMCP.Client.start_link(transport_opts) do
           {:ok, client_pid} ->
-            # Restore original trap_exit setting
-            Process.flag(:trap_exit, false)
-
+            # Keep trap_exit enabled until after we check for EXIT messages
             case maybe_start_circuit_breaker(supervisor, client_id, opts) do
               {:ok, breaker_pid} ->
                 case maybe_start_health_check(supervisor, client_id, client_pid, opts) do
@@ -120,25 +118,28 @@ defmodule ExMCP.Reliability.Supervisor do
             end
 
           error ->
-            # Restore original trap_exit setting
-            Process.flag(:trap_exit, false)
             # client failed
             error
         end
 
       # Handle any EXIT messages from client startup failures
-      receive do
-        {:EXIT, _pid, {:transport_connect_failed, reason}} ->
-          {:error, {:transport_connect_failed, reason}}
+      final_result =
+        receive do
+          {:EXIT, _pid, {:transport_connect_failed, reason}} ->
+            {:error, {:transport_connect_failed, reason}}
 
-        {:EXIT, _pid, {:initialize_error, reason}} ->
-          {:error, {:initialize_error, reason}}
+          {:EXIT, _pid, {:initialize_error, reason}} ->
+            {:error, {:initialize_error, reason}}
 
-        {:EXIT, _pid, reason} ->
-          {:error, {:client_start_failed, reason}}
-      after
-        0 -> result
-      end
+          {:EXIT, _pid, reason} ->
+            {:error, {:client_start_failed, reason}}
+        after
+          0 -> result
+        end
+
+      # Restore original trap_exit setting after checking for EXIT messages
+      Process.flag(:trap_exit, false)
+      final_result
     end
   end
 
