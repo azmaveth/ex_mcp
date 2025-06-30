@@ -117,6 +117,9 @@ defmodule ExMCP.TestHelpers do
     Provides basic tools for testing MCP server functionality
     including echo and arithmetic operations.
     """
+    # Suppress warnings for unreachable clauses in generated code
+    @dialyzer {:nowarn_function,
+               [handle_info: 2, handle_call: 3, handle_cast: 2, process_request: 2]}
     use ExMCP.Server
 
     deftool "echo" do
@@ -212,147 +215,133 @@ defmodule ExMCP.TestHelpers do
     ensure_ranch_started()
     ensure_session_manager_started()
 
-    # Generate unique server name to avoid conflicts
+    {server_name, ranch_ref, port} = generate_server_config(context)
+    server_opts = build_server_opts(server_name, ranch_ref, port)
+
+    start_server_with_retries(server_opts, server_name, ranch_ref, port)
+  end
+
+  # Extract server configuration generation
+  defp generate_server_config(context) do
     test_name = Map.get(context, :test, :default_test)
     unique_id = System.unique_integer([:positive])
     server_name = :"ApiTestServer_#{test_name}_#{unique_id}"
-
-    # Generate a unique ranch ref to avoid listener conflicts
     ranch_ref = :"ranch_listener_#{test_name}_#{unique_id}"
 
-    # Use a wider port range to avoid conflicts
     base_port = 8080 + :rand.uniform(5000)
     port = find_available_port(base_port)
 
-    server_opts = [
+    {server_name, ranch_ref, port}
+  end
+
+  # Extract server options building
+  defp build_server_opts(server_name, ranch_ref, port) do
+    [
       transport: :http,
       port: port,
       sse_enabled: false,
       name: server_name,
-      # Pass ranch ref to avoid conflicts
       ranch_ref: ranch_ref
     ]
+  end
 
-    # 1. Start the HTTP server using a real ExMCP.Server.
+  # Main server starting logic with retries
+  defp start_server_with_retries(server_opts, server_name, ranch_ref, port) do
     case ApiTestServer.start_link(server_opts) do
-      {:ok, pid} ->
-        # Give the server a moment to fully start and bind to port
-        Process.sleep(300)
-        # Wait for the server to be ready to accept connections
-        case wait_for_server_ready(port, 100) do
-          :ok -> :ok
-          {:error, reason} -> raise "Server not ready: #{inspect(reason)}"
-        end
-
-        # 2. Register on_exit for the server process itself.
-        on_exit(fn ->
-          # Stop the ranch listener if it exists
-          try do
-            :ranch.stop_listener(ranch_ref)
-          catch
-            :exit, _ -> :ok
-          end
-
-          safe_stop_process(server_name)
-          # Small delay to ensure port is released before next test
-          Process.sleep(100)
-        end)
-
-        # 3. Return the context map required by the tests.
-        %{http_url: "http://localhost:#{port}"}
+      {:ok, _pid} ->
+        handle_successful_start(server_name, ranch_ref, port)
 
       {:error, {:already_started, _}} ->
-        # This means the ranch listener already exists - try with a different ref
-        retry_ranch_ref = :"ranch_listener_retry_#{test_name}_#{unique_id}"
-        retry_opts = Keyword.put(server_opts, :ranch_ref, retry_ranch_ref)
-
-        case ApiTestServer.start_link(retry_opts) do
-          {:ok, pid} ->
-            Process.sleep(300)
-
-            case wait_for_server_ready(port, 100) do
-              :ok ->
-                on_exit(fn ->
-                  try do
-                    :ranch.stop_listener(retry_ranch_ref)
-                  catch
-                    :exit, _ -> :ok
-                  end
-
-                  safe_stop_process(server_name)
-                  Process.sleep(100)
-                end)
-
-                %{http_url: "http://localhost:#{port}"}
-
-              {:error, reason} ->
-                safe_stop_process(server_name)
-                raise "Server not ready after restart: #{inspect(reason)}"
-            end
-
-          {:error, reason} ->
-            raise "Failed to restart test HTTP server: #{inspect(reason)}"
-        end
+        handle_already_started_error(server_opts, server_name, port)
 
       {:error, reason} when reason in [:eaddrinuse, :eacces, :enotfound] ->
-        # Retry on a different port for common binding failures
-        retry_port = find_available_port(port + 1)
-        server_opts = [transport: :http, port: retry_port, sse_enabled: false]
-
-        case ApiTestServer.start_link(server_opts) do
-          {:ok, pid} ->
-            Process.sleep(300)
-
-            case wait_for_server_ready(retry_port, 100) do
-              :ok -> :ok
-              {:error, reason} -> raise "Server not ready on retry: #{inspect(reason)}"
-            end
-
-            on_exit(fn ->
-              if Process.alive?(pid) do
-                GenServer.stop(pid, :shutdown, 500)
-                Process.sleep(100)
-              end
-            end)
-
-            %{http_url: "http://localhost:#{retry_port}"}
-
-          {:error, reason} ->
-            raise "Failed to start test HTTP server on retry: #{inspect(reason)}"
-        end
+        handle_port_binding_error(server_name, port)
 
       {:error, {:transport_error, {:start_server_failed, _reason}}} ->
-        # Legacy error format - retry on a different port
-        retry_port = find_available_port(port + 1)
-        server_opts = [transport: :http, port: retry_port, sse_enabled: false]
-
-        case ApiTestServer.start_link(server_opts) do
-          {:ok, pid} ->
-            Process.sleep(300)
-
-            case wait_for_server_ready(retry_port, 100) do
-              :ok -> :ok
-              {:error, reason} -> raise "Server not ready on retry: #{inspect(reason)}"
-            end
-
-            on_exit(fn ->
-              if Process.alive?(pid) do
-                GenServer.stop(pid, :shutdown, 500)
-                Process.sleep(100)
-              end
-            end)
-
-            %{http_url: "http://localhost:#{retry_port}"}
-
-          {:error, reason} ->
-            raise "Failed to start test HTTP server on retry: #{inspect(reason)}"
-        end
+        # Pass through transport errors
+        raise "Failed to start test HTTP server due to transport error"
 
       {:error, reason} ->
-        # If server setup fails, we should fail the test setup.
-        # Raising is a clear way to do this.
         raise "Failed to start test HTTP server: #{inspect(reason)}"
     end
+  end
+
+  # Handle successful server start
+  defp handle_successful_start(server_name, ranch_ref, port) do
+    Process.sleep(300)
+    ensure_server_ready(port)
+    register_cleanup(server_name, ranch_ref)
+    %{http_url: "http://localhost:#{port}"}
+  end
+
+  # Handle already started error by retrying with different ranch ref
+  defp handle_already_started_error(server_opts, server_name, port) do
+    test_name = server_opts[:name]
+    unique_id = System.unique_integer([:positive])
+    retry_ranch_ref = :"ranch_listener_retry_#{test_name}_#{unique_id}"
+    retry_opts = Keyword.put(server_opts, :ranch_ref, retry_ranch_ref)
+
+    case ApiTestServer.start_link(retry_opts) do
+      {:ok, _pid} ->
+        Process.sleep(300)
+        ensure_server_ready(port)
+        register_cleanup(server_name, retry_ranch_ref)
+        %{http_url: "http://localhost:#{port}"}
+
+      {:error, reason} ->
+        raise "Failed to restart test HTTP server: #{inspect(reason)}"
+    end
+  end
+
+  # Handle port binding errors by trying a different port
+  defp handle_port_binding_error(_server_name, original_port) do
+    retry_port = find_available_port(original_port + 1)
+    server_opts = [transport: :http, port: retry_port, sse_enabled: false]
+
+    case ApiTestServer.start_link(server_opts) do
+      {:ok, pid} ->
+        Process.sleep(300)
+        ensure_server_ready(retry_port)
+        register_simple_cleanup(pid)
+        %{http_url: "http://localhost:#{retry_port}"}
+
+      {:error, reason} ->
+        raise "Failed to start test HTTP server on retry: #{inspect(reason)}"
+    end
+  end
+
+  # Ensure server is ready or raise error
+  defp ensure_server_ready(port) do
+    case wait_for_server_ready(port, 100) do
+      :ok -> :ok
+      {:error, reason} -> raise "Server not ready: #{inspect(reason)}"
+    end
+  end
+
+  # Register cleanup for server and ranch listener
+  defp register_cleanup(server_name, ranch_ref) do
+    on_exit(fn ->
+      cleanup_ranch_listener(ranch_ref)
+      safe_stop_process(server_name)
+      Process.sleep(100)
+    end)
+  end
+
+  # Register simple cleanup for just the process
+  defp register_simple_cleanup(pid) do
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        GenServer.stop(pid, :shutdown, 500)
+        Process.sleep(100)
+      end
+    end)
+  end
+
+  # Extract ranch cleanup logic
+  defp cleanup_ranch_listener(ranch_ref) do
+    :ranch.stop_listener(ranch_ref)
+  catch
+    :exit, _ -> :ok
   end
 
   @doc """
@@ -563,22 +552,20 @@ defmodule ExMCP.TestHelpers do
   """
   def safe_stop_process(pid_or_name, reason \\ :normal, timeout \\ 5000)
       when is_pid(pid_or_name) or is_atom(pid_or_name) do
-    try do
-      # For atoms, we need to check if the process exists first
-      should_stop =
-        case pid_or_name do
-          pid when is_pid(pid) -> Process.alive?(pid)
-          name when is_atom(name) -> Process.whereis(name) != nil
-        end
-
-      if should_stop do
-        GenServer.stop(pid_or_name, reason, timeout)
+    # For atoms, we need to check if the process exists first
+    should_stop =
+      case pid_or_name do
+        pid when is_pid(pid) -> Process.alive?(pid)
+        name when is_atom(name) -> Process.whereis(name) != nil
       end
-    catch
-      :exit, {:noproc, _} -> :ok
-      :exit, {:normal, _} -> :ok
-      :exit, {:shutdown, _} -> :ok
-      :exit, _ -> :ok
+
+    if should_stop do
+      GenServer.stop(pid_or_name, reason, timeout)
     end
+  catch
+    :exit, {:noproc, _} -> :ok
+    :exit, {:normal, _} -> :ok
+    :exit, {:shutdown, _} -> :ok
+    :exit, _ -> :ok
   end
 end

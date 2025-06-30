@@ -423,7 +423,7 @@ defmodule ExMCP.Testing.PerformanceProfiler do
     header <> rows
   end
 
-  defp generate_recommendations(operations, summary) do
+  defp generate_recommendations(_operations, summary) do
     recommendations = []
 
     # Performance recommendations
