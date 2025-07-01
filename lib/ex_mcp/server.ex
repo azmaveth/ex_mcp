@@ -646,23 +646,33 @@ defmodule ExMCP.Server do
           # Track the pending request
           new_state = track_pending_request(request_id, from, state)
 
-          # Process the tool call
-          case handle_tool_call(tool_name, arguments, new_state) do
-            {:ok, result, final_state} ->
-              completed_state = complete_pending_request(request_id, final_state)
-              {:reply, {:ok, result}, completed_state}
+          # Check if the module has custom handle_tool_call implementation
+          if function_exported?(__MODULE__, :handle_tool_call, 3) do
+            case handle_tool_call(tool_name, arguments, new_state) do
+              {:ok, result, final_state} ->
+                completed_state = complete_pending_request(request_id, final_state)
+                {:reply, {:ok, result}, completed_state}
 
-            {:error, reason, final_state} ->
-              completed_state = complete_pending_request(request_id, final_state)
-              {:reply, {:error, reason}, completed_state}
+              {:error, reason, final_state} ->
+                completed_state = complete_pending_request(request_id, final_state)
+                {:reply, {:error, reason}, completed_state}
+            end
+          else
+            # No custom implementation, return default error
+            completed_state = complete_pending_request(request_id, new_state)
+            {:reply, {:error, :tool_not_implemented}, completed_state}
           end
         end
       end
 
       # Fallback for tool calls without request_id (legacy support)
       def handle_call({:handle_tool_call, tool_name, arguments}, _from, state) do
-        result = handle_tool_call(tool_name, arguments, state)
-        {:reply, result, state}
+        if function_exported?(__MODULE__, :handle_tool_call, 3) do
+          result = handle_tool_call(tool_name, arguments, state)
+          {:reply, result, state}
+        else
+          {:reply, {:error, :tool_not_implemented}, state}
+        end
       end
 
       # Handle resource read requests with cancellation support
@@ -674,26 +684,37 @@ defmodule ExMCP.Server do
           # Track the pending request
           new_state = track_pending_request(request_id, from, state)
 
-          case handle_resource_read(uri, full_uri, new_state) do
-            {:ok, content, final_state} ->
-              completed_state = complete_pending_request(request_id, final_state)
-              {:reply, {:ok, content}, completed_state}
+          # Check if the module has custom handle_resource_read implementation
+          if function_exported?(__MODULE__, :handle_resource_read, 3) do
+            case handle_resource_read(uri, full_uri, new_state) do
+              {:ok, content, final_state} ->
+                completed_state = complete_pending_request(request_id, final_state)
+                {:reply, {:ok, content}, completed_state}
 
-            {:error, reason, final_state} ->
-              completed_state = complete_pending_request(request_id, final_state)
-              {:reply, {:error, reason}, completed_state}
+              {:error, reason, final_state} ->
+                completed_state = complete_pending_request(request_id, final_state)
+                {:reply, {:error, reason}, completed_state}
+            end
+          else
+            # No custom implementation, return default error
+            completed_state = complete_pending_request(request_id, new_state)
+            {:reply, {:error, :resource_not_found}, completed_state}
           end
         end
       end
 
       # Fallback for resource reads without request_id (legacy support)
       def handle_call({:handle_resource_read, uri, full_uri}, _from, state) do
-        case handle_resource_read(uri, full_uri, state) do
-          {:ok, content, new_state} ->
-            {:reply, {:ok, content}, new_state}
+        if function_exported?(__MODULE__, :handle_resource_read, 3) do
+          case handle_resource_read(uri, full_uri, state) do
+            {:ok, content, new_state} ->
+              {:reply, {:ok, content}, new_state}
 
-          {:error, reason, new_state} ->
-            {:reply, {:error, reason}, new_state}
+            {:error, reason, new_state} ->
+              {:reply, {:error, reason}, new_state}
+          end
+        else
+          {:reply, {:error, :resource_not_found}, state}
         end
       end
 
@@ -703,17 +724,22 @@ defmodule ExMCP.Server do
         if request_cancelled?(request_id, state) do
           {:reply, {:error, :cancelled}, state}
         else
-          # Track the pending request
-          new_state = track_pending_request(request_id, from, state)
+          # Check if custom implementation exists
+          if function_exported?(__MODULE__, :handle_prompt_get, 3) do
+            # Track the pending request
+            new_state = track_pending_request(request_id, from, state)
 
-          case handle_prompt_get(prompt_name, arguments, new_state) do
-            {:ok, result, final_state} ->
-              completed_state = complete_pending_request(request_id, final_state)
-              {:reply, {:ok, result}, completed_state}
+            case handle_prompt_get(prompt_name, arguments, new_state) do
+              {:ok, result, final_state} ->
+                completed_state = complete_pending_request(request_id, final_state)
+                {:reply, {:ok, result}, completed_state}
 
-            {:error, reason, final_state} ->
-              completed_state = complete_pending_request(request_id, final_state)
-              {:reply, {:error, reason}, completed_state}
+              {:error, reason, final_state} ->
+                completed_state = complete_pending_request(request_id, final_state)
+                {:reply, {:error, reason}, completed_state}
+            end
+          else
+            {:reply, {:error, :prompt_not_implemented}, state}
           end
         end
       end
@@ -760,10 +786,9 @@ defmodule ExMCP.Server do
       # Handle generic notifications
       def handle_cast({:notification, method, params}, state) do
         # Forward to handle_request for custom notification handling
+        # Default handle_request only returns {:noreply, state}
         case handle_request(method, params, state) do
           {:noreply, new_state} -> {:noreply, new_state}
-          {:reply, _response, new_state} -> {:noreply, new_state}
-          {:error, _reason, new_state} -> {:noreply, new_state}
         end
       end
 
@@ -829,9 +854,6 @@ defmodule ExMCP.Server do
                     {:noreply, new_state}
 
                   {:notification, new_state} ->
-                    {:noreply, new_state}
-
-                  {:noreply, new_state} ->
                     {:noreply, new_state}
                 end
             end
@@ -1043,19 +1065,31 @@ defmodule ExMCP.Server do
         tool_name = Map.get(params, "name")
         arguments = Map.get(params, "arguments", %{})
 
-        case handle_tool_call(tool_name, arguments, state) do
-          {:ok, result, new_state} ->
-            response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-            {:response, response, new_state}
+        # Check if the module has custom handle_tool_call implementation
+        if function_exported?(__MODULE__, :handle_tool_call, 3) do
+          case handle_tool_call(tool_name, arguments, state) do
+            {:ok, result, new_state} ->
+              response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+              {:response, response, new_state}
 
-          {:error, reason, new_state} ->
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
-            }
+            {:error, reason, new_state} ->
+              error_response = %{
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
+              }
 
-            {:response, error_response, new_state}
+              {:response, error_response, new_state}
+          end
+        else
+          # No custom implementation, return default error
+          error_response = %{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{"code" => ErrorCodes.server_error(), "message" => "Tool not implemented"}
+          }
+
+          {:response, error_response, state}
         end
       end
 
@@ -1072,20 +1106,32 @@ defmodule ExMCP.Server do
         params = Map.get(request, "params", %{})
         uri = Map.get(params, "uri")
 
-        case handle_resource_read(uri, uri, state) do
-          {:ok, content, new_state} ->
-            result = %{"contents" => [content]}
-            response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-            {:response, response, new_state}
+        # Check if the module has custom handle_resource_read implementation
+        if function_exported?(__MODULE__, :handle_resource_read, 3) do
+          case handle_resource_read(uri, uri, state) do
+            {:ok, content, new_state} ->
+              result = %{"contents" => [content]}
+              response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+              {:response, response, new_state}
 
-          {:error, reason, new_state} ->
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
-            }
+            {:error, reason, new_state} ->
+              error_response = %{
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
+              }
 
-            {:response, error_response, new_state}
+              {:response, error_response, new_state}
+          end
+        else
+          # No custom implementation, return default error
+          error_response = %{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{"code" => ErrorCodes.server_error(), "message" => "Resource reading not implemented"}
+          }
+
+          {:response, error_response, state}
         end
       end
 
@@ -1103,19 +1149,31 @@ defmodule ExMCP.Server do
         prompt_name = Map.get(params, "name")
         arguments = Map.get(params, "arguments", %{})
 
-        case handle_prompt_get(prompt_name, arguments, state) do
-          {:ok, result, new_state} ->
-            response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-            {:response, response, new_state}
+        # Check if the module has custom handle_prompt_get implementation
+        if function_exported?(__MODULE__, :handle_prompt_get, 3) do
+          case handle_prompt_get(prompt_name, arguments, state) do
+            {:ok, result, new_state} ->
+              response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+              {:response, response, new_state}
 
-          {:error, reason, new_state} ->
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
-            }
+            {:error, reason, new_state} ->
+              error_response = %{
+                "jsonrpc" => "2.0",
+                "id" => id,
+                "error" => %{"code" => ErrorCodes.server_error(), "message" => inspect(reason)}
+              }
 
-            {:response, error_response, new_state}
+              {:response, error_response, new_state}
+          end
+        else
+          # No custom implementation, return default error
+          error_response = %{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{"code" => ErrorCodes.server_error(), "message" => "Prompt retrieval not implemented"}
+          }
+
+          {:response, error_response, state}
         end
       end
 

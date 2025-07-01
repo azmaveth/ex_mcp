@@ -158,22 +158,97 @@ defmodule ExMCP.TestHelpers do
       end
     end
 
+    defresource "test://config" do
+      meta do
+        name("Test Config")
+        description("Test configuration resource")
+      end
+
+      mime_type("application/json")
+    end
+
+    defprompt "test_prompt" do
+      meta do
+        name("Test Prompt")
+        description("A test prompt for API testing")
+      end
+
+      arguments do
+        arg(:message, required: true, description: "The message to process")
+      end
+    end
+
     @impl true
-    def handle_tool_call("echo", %{"message" => message}, state) do
+    def handle_prompt_get("test_prompt", arguments, state) do
+      message = Map.get(arguments, "message", "default")
+      result = %{
+        messages: [
+          %{
+            role: "user",
+            content: %{type: "text", text: "Test prompt with message: #{message}"}
+          }
+        ]
+      }
+      {:ok, result, state}
+    end
+
+    @impl true
+    def handle_prompt_get(_prompt_name, _arguments, state) do
+      {:error, "Prompt not found", state}
+    end
+
+    @impl true
+    def handle_resource_read("test://config", _full_uri, state) do
+      content = %{
+        type: "text",
+        text: Jason.encode!(%{test: true, port: 8080})
+      }
+      {:ok, content, state}
+    end
+
+    @impl true
+    def handle_resource_read(_uri, _full_uri, state) do
+      {:error, "Resource not found", state}
+    end
+
+    @impl true
+    def handle_tool_call("echo", %{"message" => message}, state) when is_binary(message) do
       result = %{content: [%{type: "text", text: "Echo: #{message}"}]}
       {:ok, result, state}
     end
 
     @impl true
-    def handle_tool_call("add", %{"a" => a, "b" => b}, state) do
+    def handle_tool_call("add", %{"a" => a, "b" => b}, state) when is_number(a) and is_number(b) do
       result = %{content: [%{type: "text", text: "#{a} + #{b} = #{a + b}"}]}
       {:ok, result, state}
     end
 
     @impl true
-    def handle_tool_call("greet", %{"name" => name}, state) do
+    def handle_tool_call("greet", %{"name" => name}, state) when is_binary(name) do
       result = %{content: [%{type: "text", text: "Hello, #{name}!"}]}
       {:ok, result, state}
+    end
+
+    @impl true
+    def handle_tool_call(_tool_name, _arguments, state) do
+      {:error, "Tool not implemented or invalid arguments", state}
+    end
+
+    @impl true
+    def handle_initialize(params, state) do
+      # Add some basic validation to make error pattern reachable
+      case Map.get(params, "protocolVersion") do
+        nil ->
+          {:error, "Protocol version required", state}
+        version when version in ["2025-03-26", "2024-11-05"] ->
+          {:ok, %{
+            protocolVersion: version,
+            serverInfo: %{name: "api-test-server", version: "1.0.0"},
+            capabilities: %{tools: %{}, resources: %{}, prompts: %{}}
+          }, state}
+        _unsupported ->
+          {:error, "Unsupported protocol version", state}
+      end
     end
   end
 
