@@ -5,7 +5,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
   These tests validate security features required by the MCP specification,
   including DNS rebinding protection, HTTPS enforcement, and origin validation.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   @moduletag :compliance
 

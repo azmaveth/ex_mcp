@@ -6,10 +6,8 @@ defmodule ExMCP.Compliance.OAuth21ComplianceTest do
 
   @moduletag :compliance
 
-  @issuer "https://auth.example.com"
   @auth_endpoint "https://auth.example.com/authorize"
   @token_endpoint "https://auth.example.com/token"
-  @introspection_endpoint "https://auth.example.com/introspect"
 
   # --- Test Data ---
 

@@ -1,5 +1,5 @@
 defmodule ExMcp.Transport.SecurityIntegrationTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # These tests assume the existence of several helper modules:
   #
