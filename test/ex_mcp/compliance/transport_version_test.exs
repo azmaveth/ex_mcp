@@ -4,7 +4,6 @@ defmodule ExMCP.Compliance.TransportVersionTest do
   # Aliases
   alias ExMCP.Client
   alias ExMCP.Protocol.VersionNegotiator
-  alias ExMCP.Server
   alias ExMCP.Transport.HTTP
 
   # A server module for testing version negotiation.

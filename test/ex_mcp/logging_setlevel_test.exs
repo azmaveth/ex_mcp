@@ -3,7 +3,7 @@ defmodule ExMCP.LoggingSetLevelTest do
   Tests for the logging/setLevel request handler.
   """
   use ExUnit.Case, async: true
-  import ExMCP.TestHelpers
+  alias ExMCP.TestHelpers
   @moduletag :integration
   @moduletag :logging
 
@@ -56,8 +56,8 @@ defmodule ExMCP.LoggingSetLevelTest do
         )
 
       on_exit(fn ->
-        ExMCP.TestHelpers.safe_stop_process(client)
-        ExMCP.TestHelpers.safe_stop_process(server)
+        TestHelpers.safe_stop_process(client)
+        TestHelpers.safe_stop_process(server)
       end)
 
       {:ok, client: client, server: server}
@@ -84,7 +84,7 @@ defmodule ExMCP.LoggingSetLevelTest do
   describe "handler implementation" do
     test "default handler implementation just returns ok" do
       defmodule MinimalHandler do
-        use ExMCP.Server
+        use ExMCP.Server.Handler
 
         @impl true
         def init(_args), do: {:ok, %{}}

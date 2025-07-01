@@ -26,8 +26,6 @@ defmodule ExMCP.Performance.Phase4DBenchmarksTest do
   # Performance thresholds for different operation categories
   # Basic operations
   @fast_op_threshold_ms 10
-  # Medium complexity operations
-  @medium_op_threshold_ms 50
   # Resource-intensive operations
   @slow_op_threshold_ms 200
   # Minimum ops/sec for basic operations

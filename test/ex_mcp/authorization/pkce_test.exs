@@ -74,7 +74,7 @@ defmodule ExMCP.Authorization.PKCETest do
 
     test "uses secure comparison to prevent timing attacks" do
       verifier = "test_verifier"
-      correct_challenge = PKCE.generate_code_challenge(verifier)
+      _correct_challenge = PKCE.generate_code_challenge(verifier)
 
       # Challenges of same length but different content
       wrong_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"

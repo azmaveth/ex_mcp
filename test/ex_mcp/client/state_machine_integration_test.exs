@@ -2,7 +2,6 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Client.StateMachine
-  alias ExMCP.Client.StateMachineAdapter
   alias ExMCP.TestHelpers.TestTransport
 
   describe "state transitions" do

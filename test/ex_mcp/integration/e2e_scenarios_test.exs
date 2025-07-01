@@ -9,14 +9,11 @@ defmodule ExMCP.Integration.E2EScenariosTest do
 
   use ExUnit.Case, async: false
 
-  alias ExMCP.{Client, Server}
-  alias ExMCP.Testing.{Assertions, MockServer}
+  alias ExMCP.Client
 
   @moduletag :integration
   @moduletag :e2e
   @moduletag timeout: 60_000
-
-  import Assertions
 
   describe "real MCP server interactions" do
     test "complete tool discovery and execution workflow" do

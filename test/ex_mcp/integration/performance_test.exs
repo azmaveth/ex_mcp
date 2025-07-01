@@ -343,7 +343,7 @@ defmodule ExMCP.Integration.PerformanceTest do
       assert Enum.all?(payload_results, & &1.success), "All payload tests should succeed"
 
       # Check that performance scales reasonably with payload size
-      [tiny, small, medium, large, xlarge] = Enum.map(payload_results, & &1.execution_time_ms)
+      [tiny, _small, medium, large, xlarge] = Enum.map(payload_results, & &1.execution_time_ms)
 
       # Allow for some timing variance in small operations
       # Focus on larger-scale trends rather than exact ordering

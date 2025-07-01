@@ -2,7 +2,6 @@ defmodule ExMCP.Client.StateMachineSimpleTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Client.StateMachine
-  alias ExMCP.Client.States
 
   defmodule SimpleTransport do
     @behaviour ExMCP.Transport

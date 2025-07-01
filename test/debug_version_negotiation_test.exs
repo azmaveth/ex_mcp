@@ -1,7 +1,7 @@
 defmodule DebugVersionNegotiationTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
 
   defmodule TestServerV2024 do
     use ExMCP.Server

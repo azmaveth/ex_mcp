@@ -224,7 +224,7 @@ defmodule ExMCP.ToolsTest do
        ], state}
     end
 
-    defp handle_image_process(%{"operation" => _op, "imageData" => data}, state) do
+    defp handle_image_process(%{"operation" => _operation, "imageData" => data}, state) do
       # Simulate image processing - return a modified base64 string
       processed = "processed_" <> String.slice(data, 0..10) <> "..."
 

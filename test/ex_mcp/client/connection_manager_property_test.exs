@@ -40,7 +40,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
               # Expected error for invalid combinations
               true
 
-            other ->
+            _other ->
               # Log unexpected responses for debugging
               # Unexpected response for debugging purposes
               false
@@ -61,7 +61,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
           {:error, _reason} ->
             true
 
-          other ->
+          _other ->
             # Unexpected response for debugging purposes
             false
         end
@@ -90,7 +90,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
             # Expected for some invalid combinations
             true
 
-          other ->
+          _other ->
             # Unexpected response for debugging purposes
             false
         end
@@ -110,7 +110,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
           {:error, _reason} ->
             true
 
-          other ->
+          _other ->
             # Unexpected response for debugging purposes
             false
         end

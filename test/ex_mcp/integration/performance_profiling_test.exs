@@ -9,7 +9,7 @@ defmodule ExMCP.Integration.PerformanceProfilingTest do
 
   use ExUnit.Case, async: false
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
 
   @moduletag :integration
   @moduletag :performance
