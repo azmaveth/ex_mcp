@@ -13,6 +13,9 @@ defmodule ExMCP.ClientBeamTransportTest do
         Application.stop(:ex_mcp)
       end)
 
+      # Clean up any existing service first
+      ExMCP.Native.unregister_service(:beam_transport_calculator_service)
+
       # Start a test MCP service using ExMCP.Service
       defmodule TestCalculatorService do
         use ExMCP.Service, name: :beam_transport_calculator_service
@@ -271,6 +274,9 @@ defmodule ExMCP.ClientBeamTransportTest do
       end)
 
       # Create another test service
+      # Clean up any existing service first
+      ExMCP.Native.unregister_service(:native_alias_echo_service)
+
       defmodule TestEchoService do
         use ExMCP.Service, name: :native_alias_echo_service
 
@@ -364,6 +370,9 @@ defmodule ExMCP.ClientBeamTransportTest do
       on_exit(fn ->
         Application.stop(:ex_mcp)
       end)
+
+      # Clean up any existing service first
+      ExMCP.Native.unregister_service(:beam_batch_service)
 
       # Use the same calculator service
       defmodule TestBatchService do
@@ -467,6 +476,9 @@ defmodule ExMCP.ClientBeamTransportTest do
       end)
 
       # Service for concurrent testing
+      # Clean up any existing service first
+      ExMCP.Native.unregister_service(:beam_concurrent_service)
+
       defmodule TestConcurrentService do
         use ExMCP.Service, name: :beam_concurrent_service
 

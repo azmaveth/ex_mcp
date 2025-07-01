@@ -319,13 +319,18 @@ defmodule ExMCP.Reliability.Supervisor do
   defp find_health_check_supervisor(supervisor) do
     children = Supervisor.which_children(supervisor)
 
-    # Look for the expected health check supervisor by name, not string matching
-    expected_name = get_health_check_supervisor_name(supervisor)
-
+    # Look for HealthCheckSupervisor by name pattern rather than exact match
     hc_supervisor =
       Enum.find_value(children, fn
-        {^expected_name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) ->
-          pid
+        {name, pid, :supervisor, [DynamicSupervisor]} when is_pid(pid) ->
+          # Check if the name ends with HealthCheckSupervisor
+          name_str = Atom.to_string(name)
+
+          if String.ends_with?(name_str, "HealthCheckSupervisor") do
+            pid
+          else
+            nil
+          end
 
         _ ->
           nil
@@ -342,13 +347,18 @@ defmodule ExMCP.Reliability.Supervisor do
   defp find_reliability_registry(supervisor) do
     children = Supervisor.which_children(supervisor)
 
-    # Look for the expected registry by name, not string matching
-    expected_name = get_reliability_registry_name(supervisor)
-
+    # Look for Registry by name pattern rather than exact match
     registry =
       Enum.find_value(children, fn
-        {^expected_name, pid, :worker, [Registry]} when is_pid(pid) ->
-          pid
+        {name, pid, :worker, [Registry]} when is_pid(pid) ->
+          # Check if the name ends with Registry
+          name_str = Atom.to_string(name)
+
+          if String.ends_with?(name_str, "Registry") do
+            pid
+          else
+            nil
+          end
 
         _ ->
           nil

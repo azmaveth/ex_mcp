@@ -168,8 +168,18 @@ defmodule ExMCP.Client.Transitions do
       case {opts[:progress_callback], opts[:progress_token]} do
         {callback, token} when is_function(callback) and not is_nil(token) ->
           # Register with ProgressTracker for token management and rate limiting
-          # We pass a dummy pid since we handle notifications through transport, not direct messages
-          case ExMCP.ProgressTracker.start_progress(token, spawn(fn -> :ok end)) do
+          # We pass self() since the state machine process handles notifications
+          # Handle case where ProgressTracker is not running (e.g., in tests)
+          result =
+            try do
+              ExMCP.ProgressTracker.start_progress(token, self())
+            catch
+              :exit, {:noproc, _} ->
+                # ProgressTracker not running, continue without it
+                {:ok, :tracker_not_running}
+            end
+
+          case result do
             {:ok, _progress_state} ->
               # Store callback for this token
               Map.put(progress_callbacks, token, callback)
@@ -362,7 +372,17 @@ defmodule ExMCP.Client.Transitions do
 
   defp cleanup_progress_tracking(progress_callbacks, progress_token) do
     # Complete progress tracking in ProgressTracker
-    case ExMCP.ProgressTracker.complete_progress(progress_token) do
+    # Handle case where ProgressTracker is not running
+    result =
+      try do
+        ExMCP.ProgressTracker.complete_progress(progress_token)
+      catch
+        :exit, {:noproc, _} ->
+          # ProgressTracker not running, continue without it
+          {:error, :not_found}
+      end
+
+    case result do
       :ok ->
         require Logger
         Logger.debug("Progress tracking completed for token: #{progress_token}")

@@ -423,6 +423,49 @@ defmodule ExMCP.Client.StateMachine do
     {:next_state, :disconnected, new_data}
   end
 
+  # Progress notification from ProgressTracker (for internal tracking)
+  def handle_event(:info, {:progress_notification, notification}, :ready, data) do
+    # Process progress notifications from ProgressTracker
+    # These are sent when ProgressTracker validates and rate-limits updates
+    case notification do
+      %{token: token, progress: progress, total: total, message: message} ->
+        # Find the callback for this token
+        case Map.get(data.progress_callbacks, token) do
+          nil ->
+            # No callback registered, ignore
+            :keep_state_and_data
+
+          callback ->
+            # Call the user's progress callback
+            params = %{
+              "progressToken" => token,
+              "progress" => progress,
+              "total" => total,
+              "message" => message
+            }
+
+            # Emit telemetry for progress update
+            :telemetry.execute(
+              [:ex_mcp, :client, :progress, :update],
+              %{count: 1, progress: progress, total: total || 100},
+              %{token: token, message: message}
+            )
+
+            callback.(params)
+            :keep_state_and_data
+        end
+
+      _ ->
+        # Unknown notification format, ignore
+        :keep_state_and_data
+    end
+  end
+
+  # Ignore progress notifications in non-ready states
+  def handle_event(:info, {:progress_notification, _notification}, _state, _data) do
+    :keep_state_and_data
+  end
+
   # Catch-all for unhandled events
   def handle_event(event_type, event_content, state, _data) do
     Logger.warning("Unhandled event in state #{state}: #{event_type} #{inspect(event_content)}")
@@ -765,7 +808,17 @@ defmodule ExMCP.Client.StateMachine do
 
       callback ->
         # Update progress through ProgressTracker for validation and rate limiting
-        case ExMCP.ProgressTracker.update_progress(progress_token, progress_value, total, message) do
+        # Try to update progress in ProgressTracker, handle case where it's not running
+        update_result =
+          try do
+            ExMCP.ProgressTracker.update_progress(progress_token, progress_value, total, message)
+          catch
+            :exit, {:noproc, _} ->
+              # ProgressTracker not running, continue without it
+              :ok
+          end
+
+        case update_result do
           :ok ->
             # Emit telemetry for successful progress update
             :telemetry.execute(
