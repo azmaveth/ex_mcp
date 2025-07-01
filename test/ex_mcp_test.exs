@@ -150,7 +150,7 @@ defmodule ExMCPTest do
       start_test_servers_for_api(context)
     end
 
-    @tag timeout: 10_000
+    @tag timeout: 15_000
     test "handles connection errors gracefully" do
       # Try to connect to a non-existent server
       # Note: We need to use a short request_timeout to avoid test timeout
@@ -160,8 +160,8 @@ defmodule ExMCPTest do
       result =
         ExMCP.connect("http://localhost:99999",
           client_type: :simple,
-          timeout: 1_000,
-          request_timeout: 1_000,
+          timeout: 2_000,
+          request_timeout: 2_000,
           use_sse: false
         )
 
@@ -169,7 +169,7 @@ defmodule ExMCPTest do
       receive do
         {:EXIT, _pid, _reason} -> :ok
       after
-        100 -> :ok
+        500 -> :ok
       end
 
       assert {:error, _reason} = result

@@ -466,6 +466,18 @@ defmodule ExMCP.Client.StateMachine do
     :keep_state_and_data
   end
 
+  # Handle Task async/await messages (from internal async operations)
+  def handle_event(:info, {ref, _result}, _state, _data) when is_reference(ref) do
+    # This is a Task async result - ignore it as it's handled by Task.await
+    :keep_state_and_data
+  end
+
+  def handle_event(:info, {:DOWN, ref, :process, _pid, _reason}, _state, _data)
+      when is_reference(ref) do
+    # This is a Task process exit - normal behavior for completed tasks
+    :keep_state_and_data
+  end
+
   # Catch-all for unhandled events
   def handle_event(event_type, event_content, state, _data) do
     Logger.warning("Unhandled event in state #{state}: #{event_type} #{inspect(event_content)}")

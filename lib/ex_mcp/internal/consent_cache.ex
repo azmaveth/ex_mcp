@@ -41,16 +41,24 @@ defmodule ExMCP.Internal.ConsentCache do
   @spec check_consent(ConsentHandler.user_id(), ConsentHandler.resource_origin()) ::
           {:ok, expires_at :: non_neg_integer()} | {:not_found} | {:expired}
   def check_consent(user_id, resource_origin) do
-    case :ets.lookup(@table, {user_id, resource_origin}) do
-      [{_key, expires_at}] ->
-        if System.monotonic_time(:second) < expires_at do
-          {:ok, expires_at}
-        else
-          {:expired}
-        end
-
-      [] ->
+    # Ensure table exists - handle race condition during startup
+    case :ets.whereis(@table) do
+      :undefined ->
+        # Table doesn't exist yet, treat as not found
         {:not_found}
+
+      _tid ->
+        case :ets.lookup(@table, {user_id, resource_origin}) do
+          [{_key, expires_at}] ->
+            if System.monotonic_time(:second) < expires_at do
+              {:ok, expires_at}
+            else
+              {:expired}
+            end
+
+          [] ->
+            {:not_found}
+        end
     end
   end
 
@@ -107,7 +115,12 @@ defmodule ExMCP.Internal.ConsentCache do
 
   @impl true
   def handle_cast(:clear, state) do
-    :ets.delete_all_objects(@table)
+    # Only clear if table exists (defensive programming)
+    case :ets.whereis(@table) do
+      :undefined -> :ok
+      _tid -> :ets.delete_all_objects(@table)
+    end
+
     {:noreply, state}
   end
 
