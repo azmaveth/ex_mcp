@@ -43,8 +43,8 @@ defmodule ExMCP.ReliabilityIntegrationTest do
         @behaviour ExMCP.Transport
 
         def connect(_opts), do: {:ok, %{fail_count: 0}}
-        def send_message(_msg, state), do: {:error, :transport_failure}
-        def receive_message(state), do: {:error, :transport_failure}
+        def send_message(_msg, _state), do: {:error, :transport_failure}
+        def receive_message(_state), do: {:error, :transport_failure}
         def close(_state), do: :ok
         def connected?(_state), do: false
       end
@@ -138,13 +138,13 @@ defmodule ExMCP.ReliabilityIntegrationTest do
 
         def connect(_opts), do: {:ok, %{failure_mode: false}}
 
-        def send_message(_msg, %{failure_mode: true} = state) do
+        def send_message(_msg, %{failure_mode: true} = _state) do
           {:error, :connection_error}
         end
 
         def send_message(_msg, state), do: {:ok, state}
 
-        def receive_message(%{failure_mode: true} = state), do: {:error, :connection_error}
+        def receive_message(%{failure_mode: true} = _state), do: {:error, :connection_error}
         def receive_message(state), do: {:ok, "response", state}
 
         def close(_state), do: :ok

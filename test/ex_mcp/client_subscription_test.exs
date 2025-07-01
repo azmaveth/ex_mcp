@@ -6,7 +6,7 @@ defmodule ExMCP.ClientSubscriptionTest do
   @moduletag :subscription
 
   # Helper to create a mock client that handles all required calls
-  defp create_mock_client(custom_handler \\ nil) do
+  defp create_mock_client(custom_handler) do
     spawn(fn ->
       loop = fn loop ->
         receive do
@@ -23,7 +23,7 @@ defmodule ExMCP.ClientSubscriptionTest do
             GenServer.reply(from, response)
             loop.(loop)
 
-          {:"$gen_call", from, {:request, method, params}} ->
+          {:"$gen_call", from, {:request, _method, _params}} ->
             # Default handler for requests
             GenServer.reply(from, {:ok, %{}})
             loop.(loop)

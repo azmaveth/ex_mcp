@@ -207,7 +207,7 @@ defmodule ExMCP.ClientBeamTransportTest do
     end
 
     test "handles notifications via BEAM transport", %{
-      service_pid: service_pid,
+      service_pid: _service_pid,
       server_pid: server_pid
     } do
       {:ok, client} =

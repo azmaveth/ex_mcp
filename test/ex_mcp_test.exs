@@ -150,18 +150,18 @@ defmodule ExMCPTest do
       start_test_servers_for_api(context)
     end
 
-    @tag timeout: 15_000
+    @tag timeout: 10_000
     test "handles connection errors gracefully" do
-      # Try to connect to a non-existent server
+      # Try to connect to a non-existent server (use 192.0.2.1 - reserved test address)
       # Note: We need to use a short request_timeout to avoid test timeout
       # Also trap exits to handle the client process dying
       Process.flag(:trap_exit, true)
 
       result =
-        ExMCP.connect("http://localhost:99999",
+        ExMCP.connect("http://192.0.2.1:99999",
           client_type: :simple,
-          timeout: 2_000,
-          request_timeout: 2_000,
+          timeout: 1_000,
+          request_timeout: 1_000,
           use_sse: false
         )
 

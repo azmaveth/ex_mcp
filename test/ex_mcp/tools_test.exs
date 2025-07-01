@@ -1,6 +1,6 @@
 defmodule ExMCP.ToolsTest do
   use ExUnit.Case, async: true
-  import ExMCP.TestHelpers
+  # Removed unused import
 
   alias ExMCP.{Client, Server}
 

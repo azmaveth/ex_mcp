@@ -95,7 +95,7 @@ defmodule ExMCP.Client.StateMachineTest do
       assert :ok = StateMachine.connect(client)
 
       # Check state immediately - should be connecting or handshaking
-      state_info = StateMachine.get_state(client)
+      _state_info = StateMachine.get_state(client)
 
       # Try to send request (should fail because not connected)
       assert {:error, {:not_connected, state}} =

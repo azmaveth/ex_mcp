@@ -7,18 +7,13 @@ defmodule ExMCP.SessionManagerBasicTest do
   alias ExMCP.SessionManager
 
   test "SessionManager can be started and stopped independently" do
-    # Stop existing SessionManager if running
-    case Process.whereis(ExMCP.SessionManager) do
-      nil -> :ok
-      pid -> GenServer.stop(pid)
-    end
-
-    # Start the session manager independently
+    # Start the session manager without registration to avoid conflicts
     {:ok, pid} =
       SessionManager.start_link(
         max_events_per_session: 10,
         session_ttl_seconds: 60,
-        cleanup_interval_ms: 10000
+        cleanup_interval_ms: 10000,
+        name: nil
       )
 
     assert Process.alive?(pid)
@@ -38,17 +33,13 @@ defmodule ExMCP.SessionManagerBasicTest do
   end
 
   test "SessionManager basic event storage and retrieval" do
-    # Stop existing SessionManager if running
-    case Process.whereis(ExMCP.SessionManager) do
-      nil -> :ok
-      pid -> GenServer.stop(pid)
-    end
-
+    # Start the session manager without registration to avoid conflicts
     {:ok, pid} =
       SessionManager.start_link(
         max_events_per_session: 5,
         session_ttl_seconds: 60,
-        cleanup_interval_ms: 10000
+        cleanup_interval_ms: 10000,
+        name: nil
       )
 
     # Create session
@@ -74,13 +65,8 @@ defmodule ExMCP.SessionManagerBasicTest do
   end
 
   test "SessionManager session termination" do
-    # Stop existing SessionManager if running
-    case Process.whereis(ExMCP.SessionManager) do
-      nil -> :ok
-      pid -> GenServer.stop(pid)
-    end
-
-    {:ok, pid} = SessionManager.start_link([])
+    # Start the session manager without registration to avoid conflicts
+    {:ok, pid} = SessionManager.start_link(name: nil)
 
     # Create session
     session_id = GenServer.call(pid, {:create_session, %{transport: :sse}})

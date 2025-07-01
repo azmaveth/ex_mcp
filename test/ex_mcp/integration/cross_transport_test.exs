@@ -9,7 +9,7 @@ defmodule ExMCP.Integration.CrossTransportTest do
 
   use ExUnit.Case, async: false
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
 
   @moduletag :integration
   @moduletag :cross_transport

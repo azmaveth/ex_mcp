@@ -8,13 +8,7 @@ defmodule ExMCP.Compliance.NewStructureTest do
     VersionGenerator
   }
 
-  alias ExMCP.Compliance.Features.{
-    Authorization,
-    Prompts,
-    Resources,
-    Tools,
-    Transport
-  }
+  # Removed unused aliases
 
   @moduletag :compliance
   @moduletag :new_structure
