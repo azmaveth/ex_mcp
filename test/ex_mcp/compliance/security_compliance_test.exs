@@ -42,7 +42,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
 
   defmodule RequireConsentHandler do
     @behaviour ExMCP.ConsentHandler
-    def request_consent(_, _, _), do: {:error, reason: "Consent required"}
+    def request_consent(_, _, _), do: {:error, [reason: "Consent required"]}
     def check_existing_consent(_, _), do: :not_found
     def revoke_consent(_, _), do: :ok
   end
