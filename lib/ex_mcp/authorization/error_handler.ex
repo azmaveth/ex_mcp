@@ -64,8 +64,8 @@ defmodule ExMCP.Authorization.ErrorHandler do
       Logger.debug("Error details: #{uri}")
     end
 
-    error_atom = String.to_atom(error)
-    {:error, {error_atom, description}}
+    # Keep error as string to avoid atom exhaustion
+    {:error, {error, description}}
   end
 
   def handle_oauth_error(response) do
@@ -116,7 +116,7 @@ defmodule ExMCP.Authorization.ErrorHandler do
     case Regex.scan(~r/(\w+)="([^"]+)"/, value) do
       matches when matches != [] ->
         params =
-          Enum.map(matches, fn [_, key, val] -> {String.to_atom(key), val} end)
+          Enum.map(matches, fn [_, key, val] -> {key, val} end)
           |> Enum.into(%{})
 
         {:ok, params}

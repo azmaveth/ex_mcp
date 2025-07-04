@@ -51,6 +51,7 @@ defmodule ExMCP.MixProject do
       {:mint_web_socket, "~> 1.0"},
       {:castore, "~> 1.0"},
       {:horde, "~> 0.8"},
+      {:telemetry, "~> 1.2"},
       {:ex_doc, "~> 0.36", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

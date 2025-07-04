@@ -389,7 +389,8 @@ defmodule ExMCP.ServerTest do
         key2: "value2",
         subscriptions: MapSet.new(),
         pending_requests: %{},
-        cancelled_requests: MapSet.new()
+        cancelled_requests: MapSet.new(),
+        __module__: MinimalServer
       }
 
       assert state == expected_state

@@ -19,6 +19,14 @@ A comprehensive guide to using ExMCP, the Elixir implementation of the Model Con
 9. [Best Practices](#best-practices)
 10. [Troubleshooting](#troubleshooting)
 
+## Related Documentation
+
+- **[Configuration Guide](../CONFIGURATION.md)** - Complete configuration reference
+- **[Transport Guide](../TRANSPORT_GUIDE.md)** - Detailed transport selection and optimization
+- **[Security Guide](../SECURITY.md)** - Security best practices and authentication
+- **[Development Guide](../DEVELOPMENT.md)** - Setup, testing, and contributing
+- **[Phoenix Integration Guide](PHOENIX_GUIDE.md)** - Phoenix/Plug integration details
+
 ## Introduction
 
 ExMCP is a complete Elixir implementation of the Model Context Protocol (MCP), enabling AI models to securely interact with local and remote resources through a standardized protocol. It supports all major MCP features including tools, resources, prompts, sampling, and the latest roots and subscription capabilities.
@@ -962,6 +970,8 @@ end
 ```
 
 ## Transport Layers
+
+ExMCP supports multiple transport layers. For detailed configuration and optimization information, see the **[Transport Guide](../TRANSPORT_GUIDE.md)**.
 
 ### stdio Transport
 

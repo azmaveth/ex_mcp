@@ -22,7 +22,7 @@ defmodule ExMCP.UtilitiesTestMigrated do
   use ExUnit.Case, async: true
 
   # Handler-based server (original pattern with utilities)
-  defmodule TestUtilitiesHandler do
+  defmodule TestUtilitiesHandlerMigrated do
     use ExMCP.Server.Handler
 
     @impl true
@@ -331,20 +331,20 @@ defmodule ExMCP.UtilitiesTestMigrated do
       state = init_test_state()
 
       # First page
-      {:ok, page1, cursor1, _} = TestUtilitiesHandler.handle_list_tools(nil, state)
+      {:ok, page1, cursor1, _} = TestUtilitiesHandlerMigrated.handle_list_tools(nil, state)
       assert length(page1) == 5
       assert cursor1 != nil
       assert Enum.at(page1, 0).name == "tool_1"
 
       # Second page
-      {:ok, page2, cursor2, _} = TestUtilitiesHandler.handle_list_tools(cursor1, state)
+      {:ok, page2, cursor2, _} = TestUtilitiesHandlerMigrated.handle_list_tools(cursor1, state)
       assert length(page2) == 5
       assert cursor2 != nil
       assert Enum.at(page2, 0).name == "tool_6"
 
       # Continue pagination to collect all items
-      {:ok, page3, cursor3, _} = TestUtilitiesHandler.handle_list_tools(cursor2, state)
-      {:ok, page4, cursor4, _} = TestUtilitiesHandler.handle_list_tools(cursor3, state)
+      {:ok, page3, cursor3, _} = TestUtilitiesHandlerMigrated.handle_list_tools(cursor2, state)
+      {:ok, page4, cursor4, _} = TestUtilitiesHandlerMigrated.handle_list_tools(cursor3, state)
 
       assert length(page3) == 5
       assert length(page4) == 5
@@ -356,14 +356,14 @@ defmodule ExMCP.UtilitiesTestMigrated do
       # Page size is 3 for prompts
       state = init_test_state()
 
-      {:ok, page1, cursor1, _} = TestUtilitiesHandler.handle_list_prompts(nil, state)
+      {:ok, page1, cursor1, _} = TestUtilitiesHandlerMigrated.handle_list_prompts(nil, state)
       assert length(page1) == 3
       assert cursor1 != nil
 
       # Collect all prompts through pagination
       all_prompts =
         collect_all_handler_pages(
-          &TestUtilitiesHandler.handle_list_prompts/2,
+          &TestUtilitiesHandlerMigrated.handle_list_prompts/2,
           state,
           page1,
           cursor1
@@ -378,13 +378,13 @@ defmodule ExMCP.UtilitiesTestMigrated do
       # Page size is 7 for resources
       state = init_test_state()
 
-      {:ok, page1, cursor1, _} = TestUtilitiesHandler.handle_list_resources(nil, state)
+      {:ok, page1, cursor1, _} = TestUtilitiesHandlerMigrated.handle_list_resources(nil, state)
       assert length(page1) == 7
 
       # Verify we can paginate through all resources
       all_resources =
         collect_all_handler_pages(
-          &TestUtilitiesHandler.handle_list_resources/2,
+          &TestUtilitiesHandlerMigrated.handle_list_resources/2,
           state,
           page1,
           cursor1
@@ -397,7 +397,7 @@ defmodule ExMCP.UtilitiesTestMigrated do
       state = %{tools: []}
       invalid_cursor = Base.encode64("invalid")
 
-      {:error, reason, _} = TestUtilitiesHandler.handle_list_tools(invalid_cursor, state)
+      {:error, reason, _} = TestUtilitiesHandlerMigrated.handle_list_tools(invalid_cursor, state)
       assert reason =~ "Invalid cursor"
     end
   end
@@ -408,7 +408,7 @@ defmodule ExMCP.UtilitiesTestMigrated do
       state = init_test_state()
 
       {:ok, result, _} =
-        TestUtilitiesHandler.handle_complete(
+        TestUtilitiesHandlerMigrated.handle_complete(
           %{"type" => "ref/prompt", "name" => "prompt_1"},
           %{"name" => "arg1", "value" => "opt"},
           state
@@ -425,7 +425,7 @@ defmodule ExMCP.UtilitiesTestMigrated do
       state = init_test_state()
 
       {:ok, result, _} =
-        TestUtilitiesHandler.handle_complete(
+        TestUtilitiesHandlerMigrated.handle_complete(
           %{"type" => "ref/resource", "uri" => "file:///"},
           %{"name" => "path", "value" => "resource_1"},
           state
@@ -442,7 +442,7 @@ defmodule ExMCP.UtilitiesTestMigrated do
       state = init_test_state()
 
       {:ok, result, _} =
-        TestUtilitiesHandler.handle_complete(
+        TestUtilitiesHandlerMigrated.handle_complete(
           %{"type" => "ref/prompt", "name" => "prompt_1"},
           %{"name" => "arg1", "value" => "xyz"},
           state
@@ -457,7 +457,7 @@ defmodule ExMCP.UtilitiesTestMigrated do
       state = init_test_state()
 
       {:ok, result, _} =
-        TestUtilitiesHandler.handle_complete(
+        TestUtilitiesHandlerMigrated.handle_complete(
           %{"type" => "ref/resource", "uri" => "file:///"},
           %{"name" => "path", "value" => ""},
           state
@@ -655,7 +655,7 @@ defmodule ExMCP.UtilitiesTestMigrated do
 
   # Helper functions
   defp init_test_state do
-    {:ok, state} = TestUtilitiesHandler.init([])
+    {:ok, state} = TestUtilitiesHandlerMigrated.init([])
     state
   end
 

@@ -4,6 +4,269 @@ defmodule ExMCP.ClientBeamTransportTest do
   alias ExMCP.Client
   alias ExMCP.Server.BeamServer
 
+  defmodule TestCalculatorService do
+    use ExMCP.Service, name: :beam_transport_calculator_service
+
+    @impl true
+    def handle_mcp_request("initialize", _params, state) do
+      # Handle the initialize request
+      {:ok,
+       %{
+         "protocolVersion" => "2025-03-26",
+         "capabilities" => %{},
+         "serverInfo" => %{
+           "name" => "TestCalculatorService",
+           "version" => "1.0.0"
+         }
+       }, state}
+    end
+
+    # Handle tools/list to list available tools
+    def handle_mcp_request("tools/list", _params, state) do
+      tools = [
+        %{
+          "name" => "add",
+          "description" => "Add two numbers",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "a" => %{"type" => "number"},
+              "b" => %{"type" => "number"}
+            },
+            "required" => ["a", "b"]
+          }
+        },
+        %{
+          "name" => "subtract",
+          "description" => "Subtract two numbers",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "a" => %{"type" => "number"},
+              "b" => %{"type" => "number"}
+            },
+            "required" => ["a", "b"]
+          }
+        },
+        %{
+          "name" => "divide",
+          "description" => "Divide two numbers",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "a" => %{"type" => "number"},
+              "b" => %{"type" => "number"}
+            },
+            "required" => ["a", "b"]
+          }
+        },
+        %{
+          "name" => "slow_operation",
+          "description" => "A slow operation for testing timeouts",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{}
+          }
+        }
+      ]
+
+      {:ok, %{"tools" => tools}, state}
+    end
+
+    # Handle tools/call - extract tool name and delegate
+    def handle_mcp_request("tools/call", %{"name" => tool_name, "arguments" => args}, state) do
+      result =
+        case {tool_name, args} do
+          {"add", %{"a" => a, "b" => b}} ->
+            %{"result" => a + b}
+
+          {"subtract", %{"a" => a, "b" => b}} ->
+            %{"result" => a - b}
+
+          {"divide", %{"a" => _a, "b" => 0}} ->
+            {:error, %{"code" => -32602, "message" => "Division by zero"}}
+
+          {"divide", %{"a" => a, "b" => b}} ->
+            %{"result" => a / b}
+
+          {"slow_operation", _} ->
+            # Simulate slow operation
+            Process.sleep(100)
+            %{"result" => "completed"}
+
+          _ ->
+            {:error, %{"code" => -32601, "message" => "Tool not found: #{tool_name}"}}
+        end
+
+      case result do
+        {:error, error} -> {:error, error, state}
+        _ -> {:ok, result, state}
+      end
+    end
+
+    # Handle notifications in the same callback
+    def handle_mcp_request("notifications/initialized", _params, state) do
+      {:ok, %{}, state}
+    end
+
+    def handle_mcp_request("log", %{"message" => message}, state) do
+      # Store notifications in state for testing
+      notifications = Map.get(state, :notifications, [])
+      {:ok, %{}, Map.put(state, :notifications, [message | notifications])}
+    end
+
+    def handle_mcp_request(_method, _params, state) do
+      {:error, %{"code" => -32601, "message" => "Method not found"}, state}
+    end
+
+    # Helper to retrieve notifications for testing
+    def get_notifications(pid) do
+      GenServer.call(pid, :get_notifications)
+    end
+
+    def handle_call(:get_notifications, _from, state) do
+      {:reply, Enum.reverse(Map.get(state, :notifications, [])), state}
+    end
+  end
+
+  defmodule TestEchoService do
+    use ExMCP.Service, name: :native_alias_echo_service
+
+    @impl true
+    def handle_mcp_request("initialize", _params, state) do
+      {:ok,
+       %{
+         "protocolVersion" => "2025-03-26",
+         "capabilities" => %{},
+         "serverInfo" => %{
+           "name" => "TestEchoService",
+           "version" => "1.0.0"
+         }
+       }, state}
+    end
+
+    def handle_mcp_request("tools/list", _params, state) do
+      tools = [
+        %{
+          "name" => "echo",
+          "description" => "Echo back the input",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "message" => %{"type" => "string"}
+            },
+            "required" => ["message"]
+          }
+        }
+      ]
+
+      {:ok, %{"tools" => tools}, state}
+    end
+
+    def handle_mcp_request(
+          "tools/call",
+          %{"name" => "echo", "arguments" => %{"message" => msg}},
+          state
+        ) do
+      {:ok, %{"echoed" => msg}, state}
+    end
+
+    def handle_mcp_request(_method, _params, state) do
+      {:error, %{"code" => -32601, "message" => "Method not found"}, state}
+    end
+  end
+
+  defmodule TestBatchService do
+    use ExMCP.Service, name: :beam_batch_service
+
+    @impl true
+    def handle_mcp_request("initialize", _params, state) do
+      {:ok,
+       %{
+         "protocolVersion" => "2025-03-26",
+         "capabilities" => %{},
+         "serverInfo" => %{
+           "name" => "TestBatchService",
+           "version" => "1.0.0"
+         }
+       }, state}
+    end
+
+    def handle_mcp_request("tools/list", _params, state) do
+      tools = [
+        %{
+          "name" => "multiply",
+          "description" => "Multiply two numbers",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "a" => %{"type" => "number"},
+              "b" => %{"type" => "number"}
+            },
+            "required" => ["a", "b"]
+          }
+        }
+      ]
+
+      {:ok, %{"tools" => tools}, state}
+    end
+
+    def handle_mcp_request(
+          "tools/call",
+          %{"name" => "multiply", "arguments" => %{"a" => a, "b" => b}},
+          state
+        ) do
+      {:ok, %{"result" => a * b}, state}
+    end
+
+    def handle_mcp_request(_method, _params, state) do
+      {:error, %{"code" => -32601, "message" => "Method not found"}, state}
+    end
+  end
+
+  defmodule TestConcurrentService do
+    use ExMCP.Service, name: :beam_concurrent_service
+
+    @impl true
+    def handle_mcp_request("initialize", _params, state) do
+      {:ok,
+       %{
+         "protocolVersion" => "2025-03-26",
+         "capabilities" => %{},
+         "serverInfo" => %{
+           "name" => "TestConcurrentService",
+           "version" => "1.0.0"
+         }
+       }, state}
+    end
+
+    def handle_mcp_request("tools/list", _params, state) do
+      tools = [
+        %{
+          "name" => "counter",
+          "description" => "Increment and return counter",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{}
+          }
+        }
+      ]
+
+      {:ok, %{"tools" => tools}, state}
+    end
+
+    def handle_mcp_request("tools/call", %{"name" => "counter"}, state) do
+      # Thread-safe counter using state
+      counter = Map.get(state, :counter, 0) + 1
+      new_state = Map.put(state, :counter, counter)
+      {:ok, %{"count" => counter}, new_state}
+    end
+
+    def handle_mcp_request(_method, _params, state) do
+      {:error, %{"code" => -32601, "message" => "Method not found"}, state}
+    end
+  end
+
   describe "Client with BEAM transport" do
     setup do
       # Start application for this test suite
@@ -15,132 +278,6 @@ defmodule ExMCP.ClientBeamTransportTest do
 
       # Clean up any existing service first
       ExMCP.Native.unregister_service(:beam_transport_calculator_service)
-
-      # Start a test MCP service using ExMCP.Service
-      defmodule TestCalculatorService do
-        use ExMCP.Service, name: :beam_transport_calculator_service
-
-        @impl true
-        def handle_mcp_request("initialize", _params, state) do
-          # Handle the initialize request
-          {:ok,
-           %{
-             "protocolVersion" => "2025-03-26",
-             "capabilities" => %{},
-             "serverInfo" => %{
-               "name" => "TestCalculatorService",
-               "version" => "1.0.0"
-             }
-           }, state}
-        end
-
-        # Handle tools/list to list available tools
-        def handle_mcp_request("tools/list", _params, state) do
-          tools = [
-            %{
-              "name" => "add",
-              "description" => "Add two numbers",
-              "inputSchema" => %{
-                "type" => "object",
-                "properties" => %{
-                  "a" => %{"type" => "number"},
-                  "b" => %{"type" => "number"}
-                },
-                "required" => ["a", "b"]
-              }
-            },
-            %{
-              "name" => "subtract",
-              "description" => "Subtract two numbers",
-              "inputSchema" => %{
-                "type" => "object",
-                "properties" => %{
-                  "a" => %{"type" => "number"},
-                  "b" => %{"type" => "number"}
-                },
-                "required" => ["a", "b"]
-              }
-            },
-            %{
-              "name" => "divide",
-              "description" => "Divide two numbers",
-              "inputSchema" => %{
-                "type" => "object",
-                "properties" => %{
-                  "a" => %{"type" => "number"},
-                  "b" => %{"type" => "number"}
-                },
-                "required" => ["a", "b"]
-              }
-            },
-            %{
-              "name" => "slow_operation",
-              "description" => "A slow operation for testing timeouts",
-              "inputSchema" => %{
-                "type" => "object",
-                "properties" => %{}
-              }
-            }
-          ]
-
-          {:ok, %{"tools" => tools}, state}
-        end
-
-        # Handle tools/call - extract tool name and delegate
-        def handle_mcp_request("tools/call", %{"name" => tool_name, "arguments" => args}, state) do
-          result =
-            case {tool_name, args} do
-              {"add", %{"a" => a, "b" => b}} ->
-                %{"result" => a + b}
-
-              {"subtract", %{"a" => a, "b" => b}} ->
-                %{"result" => a - b}
-
-              {"divide", %{"a" => _a, "b" => 0}} ->
-                {:error, %{"code" => -32602, "message" => "Division by zero"}}
-
-              {"divide", %{"a" => a, "b" => b}} ->
-                %{"result" => a / b}
-
-              {"slow_operation", _} ->
-                # Simulate slow operation
-                Process.sleep(100)
-                %{"result" => "completed"}
-
-              _ ->
-                {:error, %{"code" => -32601, "message" => "Tool not found: #{tool_name}"}}
-            end
-
-          case result do
-            {:error, error} -> {:error, error, state}
-            _ -> {:ok, result, state}
-          end
-        end
-
-        # Handle notifications in the same callback
-        def handle_mcp_request("notifications/initialized", _params, state) do
-          {:ok, %{}, state}
-        end
-
-        def handle_mcp_request("log", %{"message" => message}, state) do
-          # Store notifications in state for testing
-          notifications = Map.get(state, :notifications, [])
-          {:ok, %{}, Map.put(state, :notifications, [message | notifications])}
-        end
-
-        def handle_mcp_request(_method, _params, state) do
-          {:error, %{"code" => -32601, "message" => "Method not found"}, state}
-        end
-
-        # Helper to retrieve notifications for testing
-        def get_notifications(pid) do
-          GenServer.call(pid, :get_notifications)
-        end
-
-        def handle_call(:get_notifications, _from, state) do
-          {:reply, Enum.reverse(Map.get(state, :notifications, [])), state}
-        end
-      end
 
       # Start the service with a map as initial state
       {:ok, service_pid} = TestCalculatorService.start_link(%{notifications: []})
@@ -277,53 +414,6 @@ defmodule ExMCP.ClientBeamTransportTest do
       # Clean up any existing service first
       ExMCP.Native.unregister_service(:native_alias_echo_service)
 
-      defmodule TestEchoService do
-        use ExMCP.Service, name: :native_alias_echo_service
-
-        @impl true
-        def handle_mcp_request("initialize", _params, state) do
-          {:ok,
-           %{
-             "protocolVersion" => "2025-03-26",
-             "capabilities" => %{},
-             "serverInfo" => %{
-               "name" => "TestEchoService",
-               "version" => "1.0.0"
-             }
-           }, state}
-        end
-
-        def handle_mcp_request("tools/list", _params, state) do
-          tools = [
-            %{
-              "name" => "echo",
-              "description" => "Echo back the input",
-              "inputSchema" => %{
-                "type" => "object",
-                "properties" => %{
-                  "message" => %{"type" => "string"}
-                },
-                "required" => ["message"]
-              }
-            }
-          ]
-
-          {:ok, %{"tools" => tools}, state}
-        end
-
-        def handle_mcp_request(
-              "tools/call",
-              %{"name" => "echo", "arguments" => %{"message" => msg}},
-              state
-            ) do
-          {:ok, %{"echoed" => msg}, state}
-        end
-
-        def handle_mcp_request(_method, _params, state) do
-          {:error, %{"code" => -32601, "message" => "Method not found"}, state}
-        end
-      end
-
       # Start the service
       {:ok, service_pid} = TestEchoService.start_link(%{})
 
@@ -373,55 +463,6 @@ defmodule ExMCP.ClientBeamTransportTest do
 
       # Clean up any existing service first
       ExMCP.Native.unregister_service(:beam_batch_service)
-
-      # Use the same calculator service
-      defmodule TestBatchService do
-        use ExMCP.Service, name: :beam_batch_service
-
-        @impl true
-        def handle_mcp_request("initialize", _params, state) do
-          {:ok,
-           %{
-             "protocolVersion" => "2025-03-26",
-             "capabilities" => %{},
-             "serverInfo" => %{
-               "name" => "TestBatchService",
-               "version" => "1.0.0"
-             }
-           }, state}
-        end
-
-        def handle_mcp_request("tools/list", _params, state) do
-          tools = [
-            %{
-              "name" => "multiply",
-              "description" => "Multiply two numbers",
-              "inputSchema" => %{
-                "type" => "object",
-                "properties" => %{
-                  "a" => %{"type" => "number"},
-                  "b" => %{"type" => "number"}
-                },
-                "required" => ["a", "b"]
-              }
-            }
-          ]
-
-          {:ok, %{"tools" => tools}, state}
-        end
-
-        def handle_mcp_request(
-              "tools/call",
-              %{"name" => "multiply", "arguments" => %{"a" => a, "b" => b}},
-              state
-            ) do
-          {:ok, %{"result" => a * b}, state}
-        end
-
-        def handle_mcp_request(_method, _params, state) do
-          {:error, %{"code" => -32601, "message" => "Method not found"}, state}
-        end
-      end
 
       # Start the service
       {:ok, service_pid} = TestBatchService.start_link(%{})
@@ -478,49 +519,6 @@ defmodule ExMCP.ClientBeamTransportTest do
       # Service for concurrent testing
       # Clean up any existing service first
       ExMCP.Native.unregister_service(:beam_concurrent_service)
-
-      defmodule TestConcurrentService do
-        use ExMCP.Service, name: :beam_concurrent_service
-
-        @impl true
-        def handle_mcp_request("initialize", _params, state) do
-          {:ok,
-           %{
-             "protocolVersion" => "2025-03-26",
-             "capabilities" => %{},
-             "serverInfo" => %{
-               "name" => "TestConcurrentService",
-               "version" => "1.0.0"
-             }
-           }, state}
-        end
-
-        def handle_mcp_request("tools/list", _params, state) do
-          tools = [
-            %{
-              "name" => "counter",
-              "description" => "Increment and return counter",
-              "inputSchema" => %{
-                "type" => "object",
-                "properties" => %{}
-              }
-            }
-          ]
-
-          {:ok, %{"tools" => tools}, state}
-        end
-
-        def handle_mcp_request("tools/call", %{"name" => "counter"}, state) do
-          # Thread-safe counter using state
-          counter = Map.get(state, :counter, 0) + 1
-          new_state = Map.put(state, :counter, counter)
-          {:ok, %{"count" => counter}, new_state}
-        end
-
-        def handle_mcp_request(_method, _params, state) do
-          {:error, %{"code" => -32601, "message" => "Method not found"}, state}
-        end
-      end
 
       # Start the service
       {:ok, service_pid} = TestConcurrentService.start_link(%{})

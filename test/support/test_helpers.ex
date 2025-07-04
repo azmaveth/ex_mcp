@@ -88,6 +88,13 @@ defmodule ExMCP.TestHelpers do
   end
 
   @doc """
+  Starts a test server with the given module.
+  """
+  def start_test_server(server_module, opts \\ []) do
+    GenServer.start_link(server_module, opts)
+  end
+
+  @doc """
   Waits for a service to be registered with the native service registry.
 
   This helper is useful in tests to avoid race conditions where a test
@@ -181,6 +188,7 @@ defmodule ExMCP.TestHelpers do
     @impl true
     def handle_prompt_get("test_prompt", arguments, state) do
       message = Map.get(arguments, "message", "default")
+
       result = %{
         messages: [
           %{
@@ -189,6 +197,7 @@ defmodule ExMCP.TestHelpers do
           }
         ]
       }
+
       {:ok, result, state}
     end
 
@@ -203,6 +212,7 @@ defmodule ExMCP.TestHelpers do
         type: "text",
         text: Jason.encode!(%{test: true, port: 8080})
       }
+
       {:ok, content, state}
     end
 
@@ -218,7 +228,8 @@ defmodule ExMCP.TestHelpers do
     end
 
     @impl true
-    def handle_tool_call("add", %{"a" => a, "b" => b}, state) when is_number(a) and is_number(b) do
+    def handle_tool_call("add", %{"a" => a, "b" => b}, state)
+        when is_number(a) and is_number(b) do
       result = %{content: [%{type: "text", text: "#{a} + #{b} = #{a + b}"}]}
       {:ok, result, state}
     end
@@ -240,12 +251,15 @@ defmodule ExMCP.TestHelpers do
       case Map.get(params, "protocolVersion") do
         nil ->
           {:error, "Protocol version required", state}
+
         version when version in ["2025-03-26", "2024-11-05"] ->
-          {:ok, %{
-            protocolVersion: version,
-            serverInfo: %{name: "api-test-server", version: "1.0.0"},
-            capabilities: %{tools: %{}, resources: %{}, prompts: %{}}
-          }, state}
+          {:ok,
+           %{
+             protocolVersion: version,
+             serverInfo: %{name: "api-test-server", version: "1.0.0"},
+             capabilities: %{tools: %{}, resources: %{}, prompts: %{}}
+           }, state}
+
         _unsupported ->
           {:error, "Unsupported protocol version", state}
       end

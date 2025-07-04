@@ -513,7 +513,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "call_tool/4 handles tool execution errors", %{client: client} do
-      {:error, %Error{} = error} = Client.call_tool(client, "error_tool", %{})
+      {:error, %Error.ProtocolError{} = error} = Client.call_tool(client, "error_tool", %{})
       assert error.code == -32601
       assert error.message == "Tool execution failed"
     end
@@ -685,7 +685,7 @@ defmodule ExMCP.ClientTest do
           assert error["code"] == -32601
           assert error["message"] =~ "Method not found"
 
-        {:error, %ExMCP.Error{} = error} ->
+        {:error, %ExMCP.Error.ProtocolError{} = error} ->
           assert error.code == -32601
           assert error.message =~ "Method not found"
 

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING:** Refactored internal architecture of `ExMCP.Server` module
+  - Split monolithic 1,488-line module into focused components:
+    - `ExMCP.Protocol.ResponseBuilder` - Response formatting
+    - `ExMCP.Protocol.RequestTracker` - Request lifecycle management
+    - `ExMCP.Protocol.RequestProcessor` - Request routing and handling
+    - `ExMCP.Server.Transport.Coordinator` - Transport management
+    - `ExMCP.DSL.CodeGenerator` - DSL macro code generation
+  - Public API remains unchanged - 100% backward compatible
+
+### Added
+- Structured error types with `ExMCP.Error` module
+- Comprehensive telemetry instrumentation:
+  - `[:ex_mcp, :request, :start/stop]` events
+  - `[:ex_mcp, :tool, :start/stop]` events
+  - `[:ex_mcp, :resource, :read, :start/stop]` events
+  - `[:ex_mcp, :prompt, :get, :start/stop]` events
+- Integration tests for refactored components
+- Success metrics documentation
+
+### Fixed
+- Security: Replaced unsafe `String.to_atom` usage with safe alternatives
+  - Fixed potential atom exhaustion in schema validation
+  - Fixed potential atom exhaustion in OAuth error handling
+  - Fixed potential atom exhaustion in content security scanning
+  - Fixed potential atom exhaustion in protected resource metadata parsing
+
+### Security
+- Prevented atom exhaustion attacks by using string keys instead of dynamic atom creation
+
 ## [0.6.0] - 2025-06-26
 
 ### 🎉 Major Release: Production-Ready ExMCP

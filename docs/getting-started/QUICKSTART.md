@@ -2,6 +2,8 @@
 
 Get up and running with ExMCP in just a few minutes! This guide shows you how to create MCP services using both traditional transports and ExMCP's ultra-fast Native BEAM dispatcher.
 
+**Next Steps:** After completing this quickstart, see the **[User Guide](../guides/USER_GUIDE.md)** for comprehensive examples and the **[Configuration Guide](../CONFIGURATION.md)** for production setup.
+
 ## Installation
 
 Add ExMCP to your `mix.exs` dependencies:

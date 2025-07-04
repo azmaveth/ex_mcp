@@ -142,8 +142,9 @@ defmodule ExMCP.Server.Tools.Helpers do
       {:ok, %{name: "Alice", age: 30}}
   """
   def validate_arguments(arguments, schema) do
-    atom_keyed_args = atomize_keys(arguments)
-    do_validate(atom_keyed_args, schema, "#")
+    # Keep string keys to avoid atom exhaustion
+    string_keyed_args = stringify_keys(arguments)
+    do_validate(string_keyed_args, schema, "#")
   end
 
   defp do_validate(data, schema, path) do
@@ -225,10 +226,10 @@ defmodule ExMCP.Server.Tools.Helpers do
 
   defp apply_object_defaults(data, %{properties: properties}) when is_map(properties) do
     Enum.reduce(properties, data, fn {prop, prop_schema}, acc ->
-      prop_atom = String.to_atom(to_string(prop))
+      prop_key = to_string(prop)
 
-      if !Map.has_key?(acc, prop_atom) and Map.has_key?(prop_schema, :default) do
-        Map.put(acc, prop_atom, prop_schema.default)
+      if !Map.has_key?(acc, prop_key) and Map.has_key?(prop_schema, :default) do
+        Map.put(acc, prop_key, prop_schema.default)
       else
         acc
       end
@@ -243,7 +244,7 @@ defmodule ExMCP.Server.Tools.Helpers do
   defp validate_required(data, %{required: required_props}, path) do
     missing =
       Enum.filter(required_props, fn prop ->
-        !Map.has_key?(data, String.to_atom(prop))
+        !Map.has_key?(data, to_string(prop))
       end)
 
     if Enum.empty?(missing) do
@@ -255,14 +256,14 @@ defmodule ExMCP.Server.Tools.Helpers do
 
   defp validate_properties(data, %{properties: properties}, path) when is_map(properties) do
     Enum.reduce_while(properties, {:ok, data}, fn {prop, prop_schema}, {:ok, current_data} ->
-      prop_atom = String.to_atom(to_string(prop))
+      prop_key = to_string(prop)
 
-      if Map.has_key?(current_data, prop_atom) do
-        value = Map.get(current_data, prop_atom)
+      if Map.has_key?(current_data, prop_key) do
+        value = Map.get(current_data, prop_key)
 
         case do_validate(value, prop_schema, "#{path}/#{prop}") do
           {:ok, validated_value} ->
-            {:cont, {:ok, Map.put(current_data, prop_atom, validated_value)}}
+            {:cont, {:ok, Map.put(current_data, prop_key, validated_value)}}
 
           error ->
             {:halt, error}
@@ -280,8 +281,8 @@ defmodule ExMCP.Server.Tools.Helpers do
          %{additionalProperties: false, properties: props},
          path
        ) do
-    allowed_keys = Map.keys(props) |> Enum.map(&String.to_atom(to_string(&1)))
-    extra_keys = Map.keys(data) -- allowed_keys
+    allowed_keys = Map.keys(props) |> Enum.map(&to_string/1)
+    extra_keys = Map.keys(data) |> Enum.map(&to_string/1) |> Kernel.--(allowed_keys)
 
     if Enum.empty?(extra_keys) do
       :ok
@@ -441,15 +442,15 @@ defmodule ExMCP.Server.Tools.Helpers do
   end
 
   # Key conversion helpers
-  defp atomize_keys(map) when is_map(map) do
+  defp stringify_keys(map) when is_map(map) do
     for {k, v} <- map, into: %{} do
-      key = if is_binary(k), do: String.to_atom(k), else: k
-      {key, atomize_keys(v)}
+      key = to_string(k)
+      {key, stringify_keys(v)}
     end
   end
 
-  defp atomize_keys(list) when is_list(list), do: Enum.map(list, &atomize_keys/1)
-  defp atomize_keys(other), do: other
+  defp stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
+  defp stringify_keys(other), do: other
 
   @doc """
   Generates a string schema with constraints.

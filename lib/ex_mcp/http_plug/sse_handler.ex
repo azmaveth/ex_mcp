@@ -384,12 +384,15 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   defp format_error(error) do
     case error do
-      %ExMCP.Error{} = e ->
-        %{
-          code: e.code,
-          message: e.message,
-          data: e.data
-        }
+      %{__struct__: mod} = e
+      when mod in [
+             ExMCP.Error.ProtocolError,
+             ExMCP.Error.TransportError,
+             ExMCP.Error.ToolError,
+             ExMCP.Error.ResourceError,
+             ExMCP.Error.ValidationError
+           ] ->
+        ExMCP.Error.to_json_rpc(e)
 
       {type, reason} ->
         %{

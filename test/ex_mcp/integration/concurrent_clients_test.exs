@@ -1,7 +1,6 @@
 defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
   @moduledoc false
   use GenServer
-  @behaviour ExMCP.Server.Handler
 
   # GenServer callbacks
   def start_link(opts \\ []) do
@@ -12,6 +11,9 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
   def init(_opts) do
     {:ok, %{request_count: 0}}
   end
+
+  @impl GenServer
+  def terminate(_reason, _state), do: :ok
 
   @impl GenServer
   def handle_call({:initialize, params}, _from, state) do
@@ -58,8 +60,6 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
   end
 
   # Handler behaviour callbacks
-  @impl ExMCP.Server.Handler
-
   def handle_initialize(_params, state) do
     {:ok,
      %{
@@ -154,7 +154,6 @@ end
 defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
   @moduledoc false
   use GenServer
-  @behaviour ExMCP.Server.Handler
 
   # GenServer callbacks
   def start_link(opts \\ []) do
@@ -165,6 +164,9 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
   def init(_opts) do
     {:ok, %{call_count: 0}}
   end
+
+  @impl GenServer
+  def terminate(_reason, _state), do: :ok
 
   @impl GenServer
   def handle_call({:initialize, params}, _from, state) do
@@ -209,8 +211,6 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
   end
 
   # Handler behaviour callbacks
-  @impl ExMCP.Server.Handler
-
   def handle_initialize(_params, state) do
     {:ok,
      %{

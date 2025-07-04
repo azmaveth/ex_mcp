@@ -1119,8 +1119,15 @@ defmodule ExMCP.Client do
     end
   end
 
-  defp handle_request_result({:error, %Error{}} = error, _opts) do
-    # Already an ExMCP.Error, return as-is
+  defp handle_request_result({:error, %{__struct__: mod}} = error, _opts)
+       when mod in [
+              Error.ProtocolError,
+              Error.TransportError,
+              Error.ToolError,
+              Error.ResourceError,
+              Error.ValidationError
+            ] do
+    # Already an ExMCP.Error struct, return as-is
     error
   end
 

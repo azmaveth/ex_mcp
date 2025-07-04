@@ -200,7 +200,7 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
               else
                 # Remove quotes if present
                 clean_value = String.trim(value, "\"")
-                Map.put(acc, String.to_atom(key), clean_value)
+                Map.put(acc, key, clean_value)
               end
 
             _ ->

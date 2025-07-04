@@ -1,0 +1,55 @@
+defmodule ExMCP.TestHelpers.RefactoredTestServer do
+  @moduledoc false
+  use ExMCP.Server,
+    name: "Refactored Test Server",
+    version: "1.0.0"
+
+  deftool "test_tool" do
+    meta do
+      description("Test tool")
+
+      input_schema(%{
+        "type" => "object",
+        "properties" => %{"index" => %{"type" => "number"}},
+        "required" => []
+      })
+    end
+  end
+
+  defresource "test://resource" do
+    meta do
+      name("Test resource")
+      description("A test resource for integration testing")
+    end
+  end
+
+  defprompt "test_prompt" do
+    meta do
+      name("Test prompt")
+      description("A test prompt for integration testing")
+    end
+  end
+
+  @impl true
+  def handle_tool_call("test_tool", _args, state) do
+    result = %{content: [%{type: "text", text: "Tool executed"}]}
+    {:ok, result, state}
+  end
+
+  @impl true
+  def handle_resource_read("test://resource", _uri, state) do
+    content = %{"text" => "Resource content"}
+    {:ok, content, state}
+  end
+
+  @impl true
+  def handle_prompt_get("test_prompt", _args, state) do
+    result = %{
+      messages: [
+        %{role: "user", content: "Test prompt"}
+      ]
+    }
+
+    {:ok, result, state}
+  end
+end
