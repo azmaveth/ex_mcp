@@ -899,6 +899,35 @@ defmodule ExMCP.Server do
     # credo:disable-for-lines:200 Credo.Check.Refactor.LongQuoteBlocks
     defp generate_helper_functions do
       quote do
+        # Content helper functions
+        @doc """
+        Creates text content.
+        """
+        def text(content, annotations \\ %{}) do
+          ExMCP.ContentHelpers.text(content, annotations)
+        end
+
+        @doc """
+        Creates JSON content.
+        """
+        def json(data, annotations \\ %{}) do
+          ExMCP.ContentHelpers.json(data, annotations)
+        end
+
+        @doc """
+        Creates a user message for prompts.
+        """
+        def user(content) do
+          ExMCP.ContentHelpers.user(content)
+        end
+
+        @doc """
+        Creates an assistant message for prompts.
+        """
+        def assistant(content) do
+          ExMCP.ContentHelpers.assistant(content)
+        end
+
         # Register all capabilities with the ExMCP.Registry
         defp register_capabilities do
           register_items(@__tools__, :tool)

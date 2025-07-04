@@ -35,6 +35,11 @@
   {"test/support/refactored_test_server.ex", :pattern_match},
   {"test/support/test_helpers.ex", :pattern_match},
   
+  # Test support files with intentional unreachable clauses for comprehensive error handling
+  {"test/support/error_test_server.ex", :pattern_match_cov},
+  {"test/support/refactored_test_server.ex", :pattern_match_cov},
+  {"test/support/test_helpers.ex", :pattern_match_cov},
+  
   # Test support callback type mismatches - these are intentional for testing edge cases
   {"test/support/consent_handler/test.ex", :callback_type_mismatch},
   {"test/support/refactored_test_server.ex", :callback_type_mismatch},
