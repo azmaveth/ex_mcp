@@ -47,34 +47,31 @@ defmodule ExMCP.StructuredResponseIntegrationTest do
 
       error = Error.from_json_rpc_error(json_error, request_id: "123")
 
-      assert %Error{} = error
+      assert %Error.ProtocolError{} = error
       assert error.code == -32601
       assert error.message == "Method not found"
-      assert error.request_id == "123"
     end
 
     test "to_json_rpc converts error to JSON-RPC format" do
-      error = Error.tool_error("Execution failed", "test_tool")
+      error = Error.tool_error("test_tool", "Execution failed")
       json = Error.to_json_rpc(error)
 
       assert json["code"] == -32000
-      assert json["message"] =~ "test_tool"
-      assert json["message"] =~ "Execution failed"
+      assert json["message"] == "Tool execution error"
     end
 
-    test "error categorization works correctly" do
-      tool_error = Error.tool_error("Failed", "tool")
-      rpc_error = Error.parse_error("Invalid JSON")
+    test "different error types have correct codes" do
+      tool_error = Error.tool_error("tool", "Failed")
+      protocol_error = Error.protocol_error(-32601, "Method not found")
       conn_error = Error.connection_error("Timeout")
 
-      assert Error.mcp_error?(tool_error) == true
-      assert Error.json_rpc_error?(rpc_error) == true
-      assert Error.mcp_error?(rpc_error) == false
-      assert Error.json_rpc_error?(conn_error) == false
+      tool_json = Error.to_json_rpc(tool_error)
+      protocol_json = Error.to_json_rpc(protocol_error)
+      conn_json = Error.to_json_rpc(conn_error)
 
-      assert Error.category(tool_error) == "Tool Error"
-      assert Error.category(rpc_error) == "Parse Error"
-      assert Error.category(conn_error) == "Connection Error"
+      assert tool_json["code"] == -32000
+      assert protocol_json["code"] == -32601
+      assert conn_json["code"] == -32000
     end
   end
 end

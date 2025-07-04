@@ -107,9 +107,9 @@ defmodule ExMCP.ClientDisconnectTest do
       # GenServer.reply sends {ref, response}
       assert_receive {^ref,
                       {:error,
-                       %ExMCP.Error{
-                         code: :connection_error,
-                         message: "Connection error: Client disconnected"
+                       %ExMCP.Error.TransportError{
+                         transport: :connection,
+                         reason: "Client disconnected"
                        }}},
                      1_000
 

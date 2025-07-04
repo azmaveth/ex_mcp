@@ -363,7 +363,7 @@ defmodule ExMCP.ClientMainTest do
       {:ok, client} = Client.start_link(transport: MockTransport, timeout_mode: true)
 
       # The GenServer.call should time out because the mock transport never replies.
-      assert {:error, %ExMCP.Error{code: -32603, message: "Internal error: Request timeout"}} =
+      assert {:error, %ExMCP.Error.ProtocolError{code: -32603, message: "Request timeout"}} =
                Client.list_tools(client, timeout: 10)
     end
 
@@ -669,7 +669,8 @@ defmodule ExMCP.ClientMainTest do
       send(client, {:transport_closed, :error})
 
       # Task should receive connection error
-      assert {:error, %ExMCP.Error{code: :connection_error}} = Task.await(task)
+      result = Task.await(task)
+      assert {:error, %ExMCP.Error.TransportError{transport: :connection}} = result
     end
   end
 

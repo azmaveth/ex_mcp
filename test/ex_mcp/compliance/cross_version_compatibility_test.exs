@@ -254,7 +254,7 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
       # Note: This test will fail if the MessageValidator does not correctly
       # check the protocol version before processing a batch.
       case Client.batch_request(client, batch) do
-        {:error, %ExMCP.Error{code: -32600} = error} ->
+        {:error, %ExMCP.Error.ProtocolError{code: -32600} = error} ->
           # Invalid Request - error is an ExMCP.Error struct
           assert error.message =~ "Batch requests are not supported"
 
