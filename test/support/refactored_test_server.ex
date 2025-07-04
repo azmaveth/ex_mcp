@@ -1,5 +1,11 @@
 defmodule ExMCP.TestHelpers.RefactoredTestServer do
-  @moduledoc false
+  @moduledoc """
+  Test server for integration testing.
+
+  Note: This module may generate compiler warnings about unreachable clauses
+  due to the DSL generating comprehensive pattern matches. These warnings are
+  benign and can be ignored.
+  """
   use ExMCP.Server,
     name: "Refactored Test Server",
     version: "1.0.0"

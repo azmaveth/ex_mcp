@@ -1,5 +1,12 @@
 defmodule ExMCP.TestHelpers.ErrorTestServer do
-  @moduledoc false
+  @moduledoc """
+  Test server that always returns errors for testing error handling paths.
+
+  Note: This module generates compiler warnings about unreachable clauses.
+  This is expected because the DSL generates both success and error handling
+  patterns, but this test server only ever returns errors. The warnings are
+  benign and can be ignored.
+  """
   use ExMCP.Server
 
   deftool "protocol_error" do
@@ -90,5 +97,21 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
   @impl true
   def handle_resource_read("error://test", _uri, state) do
     {:error, "Resource not found", state}
+  end
+
+  # Add handlers that would never be called but satisfy pattern matching
+  @impl true
+  def handle_prompt_get(_prompt_name, _arguments, state) do
+    {:error, :prompt_not_implemented, state}
+  end
+
+  @impl true
+  def handle_resource_subscribe(_uri, state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_resource_unsubscribe(_uri, state) do
+    {:ok, state}
   end
 end

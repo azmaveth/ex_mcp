@@ -123,6 +123,10 @@ defmodule ExMCP.TestHelpers do
 
     Provides basic tools for testing MCP server functionality
     including echo and arithmetic operations.
+
+    Note: This module may generate compiler warnings about unreachable clauses
+    due to the DSL generating comprehensive pattern matches. These warnings are
+    benign and can be ignored.
     """
     use ExMCP.Server
 
