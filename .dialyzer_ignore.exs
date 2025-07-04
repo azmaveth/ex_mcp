@@ -36,5 +36,12 @@
   {"test/ex_mcp/compliance/handlers/handler20241105.ex"},
   {"test/ex_mcp/compliance/handlers/handler20250326.ex"},
   {"test/ex_mcp/compliance/handlers/handler20250618.ex"},
-  {"test/ex_mcp/compliance/version_generator.ex"}
+  {"test/ex_mcp/compliance/version_generator.ex"},
+  
+  # Ignore pattern match warnings in DSL-generated code
+  # The generated code includes error handling branches that dialyzer knows won't be used
+  # with the default implementations, but users can override these handlers
+  {"test/support/refactored_test_server.ex", :pattern_match},
+  {"test/support/error_test_server.ex", :pattern_match},
+  {"test/support/test_helpers.ex", :pattern_match}
 ]

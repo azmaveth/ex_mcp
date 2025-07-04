@@ -737,7 +737,7 @@ defmodule ExMCP.DSL.CodeGenerator do
 
       # Check if a request has been cancelled
       defp request_cancelled?(request_id, state) do
-        RequestTracker.is_cancelled?(request_id, state)
+        RequestTracker.cancelled?(request_id, state)
       end
 
       # Add a pending request to tracking

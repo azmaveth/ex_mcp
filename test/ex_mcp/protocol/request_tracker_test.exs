@@ -95,18 +95,18 @@ defmodule ExMCP.Protocol.RequestTrackerTest do
     end
   end
 
-  describe "is_cancelled?/2" do
+  describe "cancelled?/2" do
     test "returns true for cancelled requests" do
       state = RequestTracker.init()
       state = RequestTracker.cancel_request("req-123", state)
 
-      assert RequestTracker.is_cancelled?("req-123", state)
+      assert RequestTracker.cancelled?("req-123", state)
     end
 
     test "returns false for non-cancelled requests" do
       state = RequestTracker.init()
 
-      refute RequestTracker.is_cancelled?("req-123", state)
+      refute RequestTracker.cancelled?("req-123", state)
     end
   end
 
@@ -154,7 +154,7 @@ defmodule ExMCP.Protocol.RequestTrackerTest do
       {:reply, returned_from, new_state} = RequestTracker.handle_cancellation("req-123", state)
 
       assert returned_from == from
-      assert RequestTracker.is_cancelled?("req-123", new_state)
+      assert RequestTracker.cancelled?("req-123", new_state)
       refute Map.has_key?(new_state.pending_requests, "req-123")
     end
 
@@ -163,7 +163,7 @@ defmodule ExMCP.Protocol.RequestTrackerTest do
 
       {:noreply, new_state} = RequestTracker.handle_cancellation("req-123", state)
 
-      assert RequestTracker.is_cancelled?("req-123", new_state)
+      assert RequestTracker.cancelled?("req-123", new_state)
     end
 
     test "handles already cancelled request" do
@@ -172,7 +172,7 @@ defmodule ExMCP.Protocol.RequestTrackerTest do
 
       {:noreply, new_state} = RequestTracker.handle_cancellation("req-123", state)
 
-      assert RequestTracker.is_cancelled?("req-123", new_state)
+      assert RequestTracker.cancelled?("req-123", new_state)
     end
   end
 
@@ -231,7 +231,7 @@ defmodule ExMCP.Protocol.RequestTrackerTest do
       assert returned_from == from
 
       # 4. Verify it's marked as cancelled and not pending
-      assert RequestTracker.is_cancelled?("req-123", state)
+      assert RequestTracker.cancelled?("req-123", state)
       assert :error = RequestTracker.get_pending_request("req-123", state)
     end
 
@@ -258,9 +258,9 @@ defmodule ExMCP.Protocol.RequestTrackerTest do
       # Still pending
       assert {:ok, {_, :tag3}} = RequestTracker.get_pending_request("req-3", state)
 
-      assert RequestTracker.is_cancelled?("req-2", state)
-      refute RequestTracker.is_cancelled?("req-1", state)
-      refute RequestTracker.is_cancelled?("req-3", state)
+      assert RequestTracker.cancelled?("req-2", state)
+      refute RequestTracker.cancelled?("req-1", state)
+      refute RequestTracker.cancelled?("req-3", state)
 
       assert RequestTracker.get_pending_request_ids(state) |> Enum.sort() == ["req-2", "req-3"]
     end

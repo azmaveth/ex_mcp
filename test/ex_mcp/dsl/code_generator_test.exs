@@ -235,7 +235,7 @@ defmodule ExMCP.DSL.CodeGeneratorTest do
       assert code_str =~ "request_cancelled?"
       assert code_str =~ "RequestTracker.track_request"
       assert code_str =~ "RequestTracker.complete_request"
-      assert code_str =~ "RequestTracker.is_cancelled?"
+      assert code_str =~ "RequestTracker.cancelled?"
     end
 
     test "includes response sending helpers" do
