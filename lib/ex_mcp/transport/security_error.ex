@@ -19,6 +19,7 @@ defmodule ExMCP.Transport.SecurityError do
           :token_passthrough_blocked
           | :consent_required
           | :consent_denied
+          | :consent_error
           | :security_violation
 
   @doc """
@@ -124,6 +125,7 @@ defmodule ExMCP.Transport.SecurityError do
              :token_passthrough_blocked,
              :consent_required,
              :consent_denied,
+             :consent_error,
              :security_violation
            ],
       do: true
@@ -135,6 +137,7 @@ defmodule ExMCP.Transport.SecurityError do
   defp error_code_for_type(:token_passthrough_blocked), do: -32001
   defp error_code_for_type(:consent_required), do: -32002
   defp error_code_for_type(:consent_denied), do: -32003
+  defp error_code_for_type(:consent_error), do: -32004
   defp error_code_for_type(:security_violation), do: -32000
   # Internal error
   defp error_code_for_type(_), do: -32603

@@ -24,6 +24,10 @@
   # but Dialyzer expects different return patterns in some call contexts
   {"lib/ex_mcp/transport/stdio.ex", :call},
 
+  # Ignore unreachable pattern warning in SecurityGuard - this is a defensive pattern
+  # for robustness against malformed consent handlers
+  {"lib/ex_mcp/transport/security_guard.ex", :pattern_match_cov},
+
   # NOTE: Test files are not analyzed in dev environment
   # These entries may be needed when running dialyzer in test environment (CI)
 ]

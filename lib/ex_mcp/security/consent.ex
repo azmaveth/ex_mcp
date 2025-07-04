@@ -100,6 +100,16 @@ defmodule ExMCP.Security.Consent do
         else
           {:error, :consent_denied}
         end
+
+      other ->
+        # Handle unexpected consent handler responses
+        require Logger
+
+        Logger.warning(
+          "Unexpected consent handler response: #{inspect(other)} from #{inspect(handler)} for user #{user_id} at #{origin}"
+        )
+
+        {:error, :consent_error}
     end
   end
 

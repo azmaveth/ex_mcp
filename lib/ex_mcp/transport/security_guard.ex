@@ -103,6 +103,21 @@ defmodule ExMCP.Transport.SecurityGuard do
         )
 
         {:error, error}
+
+      {:error, :consent_error} ->
+        error =
+          SecurityError.new(
+            :consent_error,
+            "Error processing user consent for external resource access",
+            %{url: request.url, user_id: request.user_id, transport: request.transport}
+          )
+
+        Logger.error("SecurityGuard: Consent processing error",
+          url: request.url,
+          user_id: request.user_id
+        )
+
+        {:error, error}
     end
   end
 
@@ -146,8 +161,24 @@ defmodule ExMCP.Transport.SecurityGuard do
         # We map this to `{:ok, :consent_granted}` to satisfy the `with` clause in `validate_request`.
         {:ok, :consent_granted}
 
+      {:error, :consent_denied} = error ->
+        error
+
+      {:error, :consent_required} = error ->
+        error
+
+      {:error, :consent_error} = error ->
+        error
+
       other ->
-        other
+        # Log unexpected values for debugging and treat as consent error
+        # This is a defensive pattern for robustness against malformed consent handlers
+        Logger.warning("SecurityGuard: Unexpected consent result: #{inspect(other)}",
+          url: request.url,
+          user_id: request.user_id
+        )
+
+        {:error, :consent_error}
     end
   end
 end
