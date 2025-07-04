@@ -1,6 +1,9 @@
 # Support files are compiled via elixirc_paths(:test) in mix.exs
 # No need to explicitly require them here as they're already available
 
+# Configure logger before starting applications
+Logger.configure(level: :warning)
+
 # Import test helpers after compilation (in ExUnit.start callback)
 ExUnit.after_suite(fn _results ->
   # Safety net: cleanup any truly orphaned test processes

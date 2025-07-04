@@ -89,7 +89,7 @@ defmodule ExMCP.Server.Tools.HelpersTest do
       }
 
       # Valid arguments
-      assert {:ok, %{name: "Alice", age: 30}} =
+      assert {:ok, %{"name" => "Alice", "age" => 30}} =
                Helpers.validate_arguments(%{name: "Alice", age: 30}, schema)
 
       # Missing required field

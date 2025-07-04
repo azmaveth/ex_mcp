@@ -276,6 +276,11 @@ defmodule ExMCP.Client.RequestHandler do
       {:ok, updated_state} ->
         {:noreply, updated_state}
 
+      {:error, :not_connected} ->
+        # This is expected in tests when clients are disconnected
+        Logger.debug("Cannot send notification: client not connected")
+        {:noreply, state}
+
       {:error, reason} ->
         Logger.error("Failed to send notification: #{inspect(reason)}")
         {:noreply, state}
