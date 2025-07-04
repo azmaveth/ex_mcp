@@ -115,6 +115,15 @@ defmodule ExMCP.DSL.CodeGenerator do
   # Generate start_link function with transport support
   defp generate_start_link_function do
     quote do
+      unquote(generate_start_link_doc())
+      unquote(generate_start_link_impl())
+      unquote(generate_transport_handlers())
+      unquote(generate_transport_helpers())
+    end
+  end
+
+  defp generate_start_link_doc do
+    quote do
       @doc """
       Starts the server with optional transport configuration.
 
@@ -136,11 +145,20 @@ defmodule ExMCP.DSL.CodeGenerator do
           # Start with native transport (default)
           MyServer.start_link()
       """
+    end
+  end
+
+  defp generate_start_link_impl do
+    quote do
       def start_link(opts \\ []) do
         transport = Keyword.get(opts, :transport, :native)
         do_start_link(transport, opts)
       end
+    end
+  end
 
+  defp generate_transport_handlers do
+    quote do
       defp do_start_link(:native, opts) do
         # Extract name from opts if provided, otherwise use module name
         genserver_opts =
@@ -167,7 +185,11 @@ defmodule ExMCP.DSL.CodeGenerator do
       defp do_start_link(_transport, opts) do
         start_transport_server(opts)
       end
+    end
+  end
 
+  defp generate_transport_helpers do
+    quote do
       defp start_transport_server(opts) do
         server_info = get_server_info_from_opts()
         tools = get_tools() |> Map.values()

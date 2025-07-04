@@ -1114,7 +1114,7 @@ defmodule ExMCP.MessageProcessor do
 
   def start_progress_tracking(%Conn{progress_token: token} = conn) when not is_nil(token) do
     case ExMCP.ProgressTracker.start_progress(token, self()) do
-      :ok ->
+      {:ok, _tracker} ->
         conn
 
       {:error, reason} ->

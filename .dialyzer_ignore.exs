@@ -24,24 +24,6 @@
   # but Dialyzer expects different return patterns in some call contexts
   {"lib/ex_mcp/transport/stdio.ex", :call},
 
-  # Ignore test support and compliance test warnings - these are generated tests and mock code
-  # These filters are unused in dev environment but needed in test environment (CI)
-  {"test/support/test_helpers.ex"},
-  {"test/support/consent_handler/test.ex"},
-  {"test/ex_mcp/compliance/features/batch.ex"},
-  {"test/ex_mcp/compliance/features/cancellation.ex"},
-  {"test/ex_mcp/compliance/features/completion.ex"},
-  {"test/ex_mcp/compliance/features/roots.ex"},
-  {"test/ex_mcp/compliance/features/transport.ex"},
-  {"test/ex_mcp/compliance/handlers/handler20241105.ex"},
-  {"test/ex_mcp/compliance/handlers/handler20250326.ex"},
-  {"test/ex_mcp/compliance/handlers/handler20250618.ex"},
-  {"test/ex_mcp/compliance/version_generator.ex"},
-  
-  # Ignore pattern match warnings in DSL-generated code
-  # The generated code includes error handling branches that dialyzer knows won't be used
-  # with the default implementations, but users can override these handlers
-  {"test/support/refactored_test_server.ex", :pattern_match},
-  {"test/support/error_test_server.ex", :pattern_match},
-  {"test/support/test_helpers.ex", :pattern_match}
+  # NOTE: Test files are not analyzed in dev environment
+  # These entries may be needed when running dialyzer in test environment (CI)
 ]
