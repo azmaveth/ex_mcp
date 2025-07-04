@@ -73,7 +73,7 @@ defmodule ExMCP.DSL.CodeGeneratorTest do
 
       # Aliases - check for grouped alias syntax
       assert imports_str =~
-               "alias ExMCP.Protocol.{ResponseBuilder, RequestProcessor, RequestTracker}"
+               "alias ExMCP.Protocol.{RequestProcessor, RequestTracker, ResponseBuilder}"
 
       assert imports_str =~ "alias ExMCP.Server.Transport"
 

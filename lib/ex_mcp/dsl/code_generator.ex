@@ -504,20 +504,35 @@ defmodule ExMCP.DSL.CodeGenerator do
 
       # Handle tool execution
       def handle_call({:execute_tool, tool_name, arguments}, _from, state) do
-        result = handle_tool_call(tool_name, arguments, state)
-        {:reply, result, state}
+        case handle_tool_call(tool_name, arguments, state) do
+          {:ok, result, new_state} ->
+            {:reply, {:ok, result}, new_state}
+
+          {:error, reason, new_state} ->
+            {:reply, {:error, reason}, new_state}
+        end
       end
 
       # Handle resource read
       def handle_call({:read_resource, uri}, _from, state) do
-        result = handle_resource_read(uri, uri, state)
-        {:reply, result, state}
+        case handle_resource_read(uri, uri, state) do
+          {:ok, content, new_state} ->
+            {:reply, {:ok, content}, new_state}
+
+          {:error, reason, new_state} ->
+            {:reply, {:error, reason}, new_state}
+        end
       end
 
       # Handle prompt get
       def handle_call({:get_prompt, prompt_name, arguments}, _from, state) do
-        result = handle_prompt_get(prompt_name, arguments, state)
-        {:reply, result, state}
+        case handle_prompt_get(prompt_name, arguments, state) do
+          {:ok, prompt, new_state} ->
+            {:reply, {:ok, prompt}, new_state}
+
+          {:error, reason, new_state} ->
+            {:reply, {:error, reason}, new_state}
+        end
       end
 
       # Handle resource subscription
