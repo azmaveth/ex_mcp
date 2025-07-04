@@ -28,6 +28,43 @@
   # for robustness against malformed consent handlers
   {"lib/ex_mcp/transport/security_guard.ex", :pattern_match_cov},
 
-  # NOTE: Test files are not analyzed in dev environment
-  # These entries may be needed when running dialyzer in test environment (CI)
+  # Test environment specific warnings - these files are only analyzed when MIX_ENV=test
+  
+  # Test support files with intentional pattern mismatches for error testing
+  {"test/support/error_test_server.ex", :pattern_match},
+  {"test/support/refactored_test_server.ex", :pattern_match},
+  {"test/support/test_helpers.ex", :pattern_match},
+  
+  # Test support callback type mismatches - these are intentional for testing edge cases
+  {"test/support/consent_handler/test.ex", :callback_type_mismatch},
+  {"test/support/refactored_test_server.ex", :callback_type_mismatch},
+  
+  # Test functions with no return - these are generated test functions that don't need returns
+  {"test/ex_mcp/compliance/batch_test.ex", :no_return},
+  {"test/ex_mcp/compliance/completion_test.ex", :no_return},
+  {"test/ex_mcp/compliance/version_generator.ex", :no_return},
+  
+  # Test support files - guard clause and call warnings from test helper patterns
+  {"test/support/test_helpers.ex", :guard_fail},
+  {"test/support/test_helpers.ex", :call},
+  {"test/ex_mcp/compliance/batch_test.ex", :guard_fail},
+  {"test/ex_mcp/compliance/completion_test.ex", :guard_fail},
+  
+  # Test pattern match warnings that are false positives
+  {"test/ex_mcp/compliance/batch_test.ex", :pattern_match},
+  {"test/ex_mcp/compliance/completion_test.ex", :pattern_match},
+  
+  # Compliance test feature files - these contain generated test functions and intentional mismatches
+  {"test/ex_mcp/compliance/features/batch.ex", :no_return},
+  {"test/ex_mcp/compliance/features/batch.ex", :call},
+  {"test/ex_mcp/compliance/features/completion.ex", :no_return},
+  {"test/ex_mcp/compliance/features/completion.ex", :call},
+  {"test/ex_mcp/compliance/features/cancellation.ex", :guard_fail},
+  {"test/ex_mcp/compliance/features/roots.ex", :guard_fail},
+  {"test/ex_mcp/compliance/features/transport.ex", :pattern_match},
+  
+  # Compliance handler files with intentional callback mismatches for testing different protocol versions
+  {"test/ex_mcp/compliance/handlers/handler20241105.ex", :callback_type_mismatch},
+  {"test/ex_mcp/compliance/handlers/handler20250326.ex", :callback_type_mismatch},
+  {"test/ex_mcp/compliance/handlers/handler20250618.ex", :callback_type_mismatch}
 ]
