@@ -401,11 +401,11 @@ defmodule ExMCP.MessageProcessor do
     arguments = Map.get(params, "arguments", %{})
 
     case handler_module.handle_tool_call(tool_name, arguments, %{}) do
-      {:ok, result, _state} ->
+      {:ok, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Tool execution failed", reason, id)
         put_response(conn, error_response)
     end
@@ -427,7 +427,7 @@ defmodule ExMCP.MessageProcessor do
     uri = Map.get(params, "uri")
 
     case handler_module.handle_resource_read(uri, uri, %{}) do
-      {:ok, content, _state} ->
+      {:ok, content} ->
         response = %{
           "jsonrpc" => "2.0",
           "result" => %{"contents" => content},
@@ -436,7 +436,7 @@ defmodule ExMCP.MessageProcessor do
 
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource read failed", reason, id)
         put_response(conn, error_response)
     end
@@ -446,11 +446,11 @@ defmodule ExMCP.MessageProcessor do
     uri = Map.get(params, "uri")
 
     case handler_module.handle_resource_subscribe(uri, %{}) do
-      {:ok, _new_state} ->
+      :ok ->
         response = success_response(%{}, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource subscription failed", reason, id)
         put_response(conn, error_response)
     end
@@ -460,11 +460,11 @@ defmodule ExMCP.MessageProcessor do
     uri = Map.get(params, "uri")
 
     case handler_module.handle_resource_unsubscribe(uri, %{}) do
-      {:ok, _new_state} ->
+      :ok ->
         response = success_response(%{}, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource unsubscription failed", reason, id)
         put_response(conn, error_response)
     end
@@ -487,11 +487,11 @@ defmodule ExMCP.MessageProcessor do
     arguments = Map.get(params, "arguments", %{})
 
     case handler_module.handle_prompt_get(prompt_name, arguments, %{}) do
-      {:ok, result, _state} ->
+      {:ok, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Prompt get failed", reason, id)
         put_response(conn, error_response)
     end
@@ -508,15 +508,15 @@ defmodule ExMCP.MessageProcessor do
 
   defp handle_custom_request(conn, handler_module, method, params, id) do
     case handler_module.handle_request(method, params, %{}) do
-      {:reply, result, _state} ->
+      {:reply, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Request failed", reason, id)
         put_response(conn, error_response)
 
-      {:noreply, _state} ->
+      {:noreply} ->
         conn
 
       _ ->
@@ -599,12 +599,12 @@ defmodule ExMCP.MessageProcessor do
     tool_name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
 
-    case GenServer.call(server_pid, {:handle_tool_call, tool_name, arguments}, 10000) do
-      {:ok, result, _state} ->
+    case GenServer.call(server_pid, {:execute_tool, tool_name, arguments}, 10000) do
+      {:ok, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Tool execution failed", reason, id)
         put_response(conn, error_response)
     end
@@ -633,8 +633,8 @@ defmodule ExMCP.MessageProcessor do
   defp handle_resources_read_with_server(conn, server_pid, params, id) do
     uri = Map.get(params, "uri")
 
-    case GenServer.call(server_pid, {:handle_resource_read, uri, uri}, 10000) do
-      {:ok, content, _state} ->
+    case GenServer.call(server_pid, {:read_resource, uri}, 10000) do
+      {:ok, content} ->
         response = %{
           "jsonrpc" => "2.0",
           "result" => %{"contents" => content},
@@ -643,7 +643,7 @@ defmodule ExMCP.MessageProcessor do
 
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource read failed", reason, id)
         put_response(conn, error_response)
     end
@@ -656,12 +656,12 @@ defmodule ExMCP.MessageProcessor do
   defp handle_resources_subscribe_with_server(conn, server_pid, params, id) do
     uri = Map.get(params, "uri")
 
-    case GenServer.call(server_pid, {:handle_resource_subscribe, uri}, 10000) do
-      {:ok, _new_state} ->
+    case GenServer.call(server_pid, {:subscribe_resource, uri}, 10000) do
+      :ok ->
         response = success_response(%{}, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource subscription failed", reason, id)
         put_response(conn, error_response)
     end
@@ -674,12 +674,12 @@ defmodule ExMCP.MessageProcessor do
   defp handle_resources_unsubscribe_with_server(conn, server_pid, params, id) do
     uri = Map.get(params, "uri")
 
-    case GenServer.call(server_pid, {:handle_resource_unsubscribe, uri}, 10000) do
-      {:ok, _new_state} ->
+    case GenServer.call(server_pid, {:unsubscribe_resource, uri}, 10000) do
+      :ok ->
         response = success_response(%{}, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource unsubscription failed", reason, id)
         put_response(conn, error_response)
     end
@@ -709,12 +709,12 @@ defmodule ExMCP.MessageProcessor do
     prompt_name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
 
-    case GenServer.call(server_pid, {:handle_prompt_get, prompt_name, arguments}, 10000) do
-      {:ok, result, _state} ->
+    case GenServer.call(server_pid, {:get_prompt, prompt_name, arguments}, 10000) do
+      {:ok, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Prompt get failed", reason, id)
         put_response(conn, error_response)
     end
@@ -726,15 +726,15 @@ defmodule ExMCP.MessageProcessor do
 
   defp handle_custom_method_with_server(conn, server_pid, method, params, id) do
     case GenServer.call(server_pid, {:handle_request, method, params}, 10000) do
-      {:reply, result, _state} ->
+      {:reply, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Request failed", reason, id)
         put_response(conn, error_response)
 
-      {:noreply, _state} ->
+      {:noreply} ->
         conn
 
       _ ->
@@ -749,7 +749,7 @@ defmodule ExMCP.MessageProcessor do
   # Handler-specific functions that use GenServer calls
   defp handle_handler_initialize(conn, server_pid, params, id) do
     case GenServer.call(server_pid, {:initialize, params}, 5000) do
-      {:ok, result, _state} ->
+      {:ok, result} ->
         response = %{
           "jsonrpc" => "2.0",
           "result" => result,
@@ -758,7 +758,7 @@ defmodule ExMCP.MessageProcessor do
 
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Initialize failed", reason, id)
         put_response(conn, error_response)
     end
@@ -772,7 +772,7 @@ defmodule ExMCP.MessageProcessor do
     cursor = Map.get(params, "cursor")
 
     case GenServer.call(server_pid, {:list_tools, cursor}, 5000) do
-      {:ok, tools, next_cursor, _state} ->
+      {:ok, tools, next_cursor} ->
         result = %{"tools" => tools}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 
@@ -784,7 +784,7 @@ defmodule ExMCP.MessageProcessor do
 
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Tools list failed", reason, id)
         put_response(conn, error_response)
     end
@@ -799,11 +799,11 @@ defmodule ExMCP.MessageProcessor do
     arguments = Map.get(params, "arguments", %{})
 
     case GenServer.call(server_pid, {:call_tool, tool_name, arguments}, 10000) do
-      {:ok, result, _state} ->
+      {:ok, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Tool execution failed", reason, id)
         put_response(conn, error_response)
     end
@@ -817,7 +817,7 @@ defmodule ExMCP.MessageProcessor do
     cursor = Map.get(params, "cursor")
 
     case GenServer.call(server_pid, {:list_resources, cursor}, 5000) do
-      {:ok, resources, next_cursor, _state} ->
+      {:ok, resources, next_cursor} ->
         result = %{"resources" => resources}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 
@@ -829,7 +829,7 @@ defmodule ExMCP.MessageProcessor do
 
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resources list failed", reason, id)
         put_response(conn, error_response)
     end
@@ -843,7 +843,7 @@ defmodule ExMCP.MessageProcessor do
     uri = Map.get(params, "uri")
 
     case GenServer.call(server_pid, {:read_resource, uri}, 10000) do
-      {:ok, content, _state} ->
+      {:ok, content} ->
         response = %{
           "jsonrpc" => "2.0",
           "result" => %{"contents" => content},
@@ -852,7 +852,7 @@ defmodule ExMCP.MessageProcessor do
 
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource read failed", reason, id)
         put_response(conn, error_response)
     end
@@ -866,11 +866,11 @@ defmodule ExMCP.MessageProcessor do
     uri = Map.get(params, "uri")
 
     case GenServer.call(server_pid, {:subscribe_resource, uri}, 10000) do
-      {:ok, _state} ->
+      :ok ->
         response = success_response(%{}, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource subscription failed", reason, id)
         put_response(conn, error_response)
     end
@@ -884,11 +884,11 @@ defmodule ExMCP.MessageProcessor do
     uri = Map.get(params, "uri")
 
     case GenServer.call(server_pid, {:unsubscribe_resource, uri}, 10000) do
-      {:ok, _state} ->
+      :ok ->
         response = success_response(%{}, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Resource unsubscription failed", reason, id)
         put_response(conn, error_response)
     end
@@ -902,7 +902,7 @@ defmodule ExMCP.MessageProcessor do
     cursor = Map.get(params, "cursor")
 
     case GenServer.call(server_pid, {:list_prompts, cursor}, 5000) do
-      {:ok, prompts, next_cursor, _state} ->
+      {:ok, prompts, next_cursor} ->
         result = %{"prompts" => prompts}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 
@@ -914,7 +914,7 @@ defmodule ExMCP.MessageProcessor do
 
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Prompts list failed", reason, id)
         put_response(conn, error_response)
     end
@@ -929,11 +929,11 @@ defmodule ExMCP.MessageProcessor do
     arguments = Map.get(params, "arguments", %{})
 
     case GenServer.call(server_pid, {:get_prompt, prompt_name, arguments}, 10000) do
-      {:ok, result, _state} ->
+      {:ok, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Prompt get failed", reason, id)
         put_response(conn, error_response)
     end
@@ -945,15 +945,15 @@ defmodule ExMCP.MessageProcessor do
 
   defp handle_handler_custom_method(conn, server_pid, method, params, id) do
     case GenServer.call(server_pid, {:request, method, params}, 10000) do
-      {:reply, result, _state} ->
+      {:reply, result} ->
         response = success_response(result, id)
         put_response(conn, response)
 
-      {:error, reason, _state} ->
+      {:error, reason} ->
         error_response = error_response("Request failed", reason, id)
         put_response(conn, error_response)
 
-      {:noreply, _state} ->
+      {:noreply} ->
         conn
 
       _ ->
@@ -1114,7 +1114,7 @@ defmodule ExMCP.MessageProcessor do
 
   def start_progress_tracking(%Conn{progress_token: token} = conn) when not is_nil(token) do
     case ExMCP.ProgressTracker.start_progress(token, self()) do
-      {:ok, _state} ->
+      :ok ->
         conn
 
       {:error, reason} ->
