@@ -10,7 +10,7 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
   @moduletag :protocol
   @moduletag :slow
 
-  alias ExMCP.{Client, Protocol, Server}
+  alias ExMCP.{Client, Server}
   alias ExMCP.Internal.VersionRegistry
 
   defmodule MultiVersionHandler do
@@ -599,7 +599,7 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
 
     test "initialize request MUST include protocolVersion" do
       msg =
-        Protocol.encode_initialize(
+        ExMCP.Internal.Protocol.encode_initialize(
           %{name: "test", version: "1.0"},
           %{}
         )

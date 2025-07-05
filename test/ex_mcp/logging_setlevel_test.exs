@@ -38,6 +38,16 @@ defmodule ExMCP.LoggingSetLevelTest do
         {:error, "Invalid log level: #{level}", state}
       end
     end
+
+    @impl true
+    def handle_call_tool(_name, _args, state) do
+      {:error, "No tools available", state}
+    end
+
+    @impl true
+    def handle_list_tools(state) do
+      {:ok, [], state}
+    end
   end
 
   describe "logging/setLevel" do

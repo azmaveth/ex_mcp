@@ -239,7 +239,7 @@ defmodule ExMCP.Benchmarks.SimplePerformanceTest do
 
           {_result, _bindings} = Code.eval_quoted(ast)
           # Ensure module is compiled and available
-          Code.ensure_compiled(LargeServerBench)
+          {:module, LargeServerBench} = Code.ensure_compiled(LargeServerBench)
         end)
 
       IO.puts(

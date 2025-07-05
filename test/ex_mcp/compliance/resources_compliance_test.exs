@@ -165,7 +165,6 @@ defmodule ExMCP.ResourcesComplianceTest do
       {:ok, %{}, %{state | subscriptions: subscriptions}}
     end
 
-    @impl true
     # Helper functions
     defp resource_exists?(uri, state) do
       Enum.any?(state.resources, &(&1.uri == uri))

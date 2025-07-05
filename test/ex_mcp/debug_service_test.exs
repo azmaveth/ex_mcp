@@ -15,7 +15,9 @@ defmodule ExMCP.DebugServiceTest do
     registry_name = unique_process_name(test, "registry")
 
     # Start Horde processes for the test
-    {:ok, _sup} = Horde.Supervisor.start_link([], name: supervisor_name)
+    {:ok, _sup} =
+      Horde.DynamicSupervisor.start_link(strategy: :one_for_one, name: supervisor_name)
+
     {:ok, _reg} = Horde.Registry.start_link([], name: registry_name, keys: :unique)
 
     # Ensure processes are stopped after the test
@@ -137,7 +139,10 @@ defmodule ExMCP.DebugServiceTest do
 
     # Horde.Registry.members/1 returns all {key, value} pairs. For services,
     # this is typically {service_name, pid}.
-    members = Horde.Registry.members(registry_name)
+    # Get all registered services by doing a match on all entries
+    members =
+      Horde.Registry.select(registry_name, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2"}}]}])
+
     # Debug info: Current members in registry: #{inspect(members)}
 
     # Assert that our test server is one of the registered members.

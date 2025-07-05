@@ -96,7 +96,7 @@ defmodule ExMCP.DSL.MacroExpansionTest do
     end
 
     @impl true
-    def handle_tool_call("complex_tool", params, state) do
+    def handle_tool_call("complex_tool", _params, state) do
       {:ok, %{content: [text("Processed")]}, state}
     end
 

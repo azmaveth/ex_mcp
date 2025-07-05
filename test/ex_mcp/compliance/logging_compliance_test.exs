@@ -246,7 +246,7 @@ defmodule ExMCP.LoggingComplianceTest do
       {:ok, [], state}
     end
 
-    @impl true
+    # Custom logging handler for testing
     def handle_log(level, message, data, state) do
       log_entry = %{
         level: level,

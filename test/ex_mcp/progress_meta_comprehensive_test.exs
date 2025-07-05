@@ -202,7 +202,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
           for i <- 1..5 do
             Process.sleep(100)
-            Server.notify_progress(self(), token, i, 5, "Generating chunk #{i}")
+            Server.notify_progress(self(), token, i, 5)
           end
         end)
       end

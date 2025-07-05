@@ -6,8 +6,6 @@ defmodule ExMCP.Integration.ServerRefactorTest do
 
   use ExUnit.Case, async: true
 
-  alias ExMCP.DSL.CodeGenerator
-  alias ExMCP.Protocol.{RequestProcessor, RequestTracker, ResponseBuilder}
   alias ExMCP.TestHelpers
 
   setup do
@@ -47,7 +45,7 @@ defmodule ExMCP.Integration.ServerRefactorTest do
       # Spawn process to make the call but don't wait for it yet
       caller = self()
 
-      pid =
+      _pid =
         spawn(fn ->
           result = GenServer.call(server, {:process_request, request}, 5000)
           send(caller, {:request_completed, result})
