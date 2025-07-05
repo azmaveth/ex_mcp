@@ -14,14 +14,22 @@ defmodule ExMCP.Transport.Beam.Serializer do
   - Leverages "free serialization" in BEAM VM
 
   ## Security
-  - Uses `:safe` option for ETF deserialization to prevent code injection
-  - Validates data size limits
-  - Handles serialization errors gracefully
+  - Uses `:safe` and `:used` options for ETF deserialization to prevent code injection
+  - Enforces strict size limits (10MB max) to prevent resource exhaustion
+  - Monitors atom table usage to prevent atom exhaustion attacks
+  - Detects trailing data in ETF binaries to identify potential attacks
+  - Handles serialization errors gracefully with detailed error reporting
   """
 
   @type format :: :etf | :json | :protobuf
   @type serialization_result :: {:ok, binary()} | {:error, term()}
   @type deserialization_result :: {:ok, term()} | {:error, term()}
+
+  # Security limits for ETF deserialization
+  # 10MB limit for ETF binaries
+  @max_etf_size 10 * 1024 * 1024
+  # Limit new atoms created per deserialization
+  @max_atoms_per_deserialize 100
 
   @doc """
   Serializes a message using the specified format.
@@ -67,11 +75,12 @@ defmodule ExMCP.Transport.Beam.Serializer do
   """
   @spec deserialize(binary(), format()) :: deserialization_result()
   def deserialize(binary, :etf) when is_binary(binary) do
-    # Use :safe option to prevent code injection attacks
-    term = :erlang.binary_to_term(binary, [:safe])
-    {:ok, term}
-  rescue
-    error -> {:error, {:etf_deserialization_failed, error}}
+    with :ok <- validate_etf_size(binary),
+         {:ok, initial_atom_count} <- get_current_atom_count(),
+         {:ok, term} <- safe_etf_deserialize(binary),
+         :ok <- validate_atom_usage(initial_atom_count) do
+      {:ok, term}
+    end
   end
 
   def deserialize(json, :json) when is_binary(json) do
@@ -170,4 +179,50 @@ defmodule ExMCP.Transport.Beam.Serializer do
   defp estimate_term_size(ref) when is_reference(ref), do: 16
   # Default estimate
   defp estimate_term_size(_), do: 8
+
+  # Security helper functions for ETF deserialization
+
+  defp validate_etf_size(binary) do
+    if byte_size(binary) <= @max_etf_size do
+      :ok
+    else
+      {:error, {:etf_binary_too_large, byte_size(binary), @max_etf_size}}
+    end
+  end
+
+  defp get_current_atom_count do
+    {:ok, :erlang.system_info(:atom_count)}
+  rescue
+    # Fallback if atom count unavailable
+    _ -> {:ok, 0}
+  end
+
+  defp safe_etf_deserialize(binary) do
+    # Use both :safe and :used options for maximum security
+    # :safe prevents code injection, :used detects trailing data
+    case :erlang.binary_to_term(binary, [:safe, :used]) do
+      {term, bytes_used} when bytes_used == byte_size(binary) ->
+        {:ok, term}
+
+      {_term, bytes_used} ->
+        # Trailing data detected - potential attack or corruption
+        {:error, {:etf_trailing_data, bytes_used, byte_size(binary)}}
+    end
+  rescue
+    error -> {:error, {:etf_deserialization_failed, error}}
+  end
+
+  defp validate_atom_usage(initial_atom_count) do
+    current_atom_count = :erlang.system_info(:atom_count)
+    atoms_created = current_atom_count - initial_atom_count
+
+    if atoms_created <= @max_atoms_per_deserialize do
+      :ok
+    else
+      {:error, {:too_many_atoms_created, atoms_created, @max_atoms_per_deserialize}}
+    end
+  rescue
+    # Fallback if atom count check fails
+    _ -> :ok
+  end
 end
