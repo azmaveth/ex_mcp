@@ -72,6 +72,7 @@ defmodule ExMCP.Protocol.ResponseBuilder do
   @spec build_error_response(integer() | struct(), String.t() | any(), any(), any()) :: map()
   def build_error_response(%mod{} = error, id)
       when mod in [
+             Error,
              Error.ProtocolError,
              Error.TransportError,
              Error.ToolError,

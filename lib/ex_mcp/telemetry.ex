@@ -172,9 +172,24 @@ defmodule ExMCP.Telemetry do
 
       status =
         case result do
-          {:ok, _} -> :ok
-          {:error, _} -> :error
-          _ -> :ok
+          {:ok, _, _} ->
+            :ok
+
+          {:error, _, _} ->
+            :error
+
+          {:ok, _} ->
+            :ok
+
+          {:error, _} ->
+            :error
+
+          {:response, response, _} ->
+            # Check if the response contains an error
+            if ExMCP.Protocol.ResponseBuilder.error_response?(response), do: :error, else: :ok
+
+          _ ->
+            :ok
         end
 
       stop_metadata = Map.put(metadata, :status, status)

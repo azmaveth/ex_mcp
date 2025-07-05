@@ -1138,9 +1138,23 @@ defmodule ExMCP.Client do
         {:error, error_data}
 
       _ ->
-        # Convert error maps to Error structs for backward compatibility
+        # Convert JSON-RPC errors to ProtocolError for client responses
+        code = Map.get(error_data, "code")
+        message = Map.get(error_data, "message", "Unknown error")
+        data = Map.get(error_data, "data")
+
+        # For JSON-RPC standard errors, return ProtocolError
         error_struct =
-          Error.from_json_rpc_error(error_data, request_id: Keyword.get(opts, :request_id))
+          if code && code >= -32768 && code <= -32000 do
+            %Error.ProtocolError{
+              code: code,
+              message: message,
+              data: data
+            }
+          else
+            # For non-standard errors, use the helper function for compatibility
+            Error.from_json_rpc_error(error_data, request_id: Keyword.get(opts, :request_id))
+          end
 
         {:error, error_struct}
     end
@@ -1159,7 +1173,12 @@ defmodule ExMCP.Client do
 
       _ ->
         # Convert timeout to proper ExMCP.Error
-        {:error, Error.internal_error("Request timeout")}
+        {:error,
+         %Error.ProtocolError{
+           code: -32603,
+           message: "Request timeout",
+           data: nil
+         }}
     end
   end
 

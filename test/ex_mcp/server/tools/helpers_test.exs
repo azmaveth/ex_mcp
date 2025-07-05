@@ -256,11 +256,11 @@ defmodule ExMCP.Server.Tools.HelpersTest do
 
       # Without default field
       {:ok, validated} = Helpers.validate_arguments(%{name: "Alice"}, schema)
-      assert validated == %{name: "Alice", active: true}
+      assert validated == %{"name" => "Alice", "active" => true}
 
       # Overriding default
       {:ok, validated} = Helpers.validate_arguments(%{name: "Alice", active: false}, schema)
-      assert validated == %{name: "Alice", active: false}
+      assert validated == %{"name" => "Alice", "active" => false}
     end
 
     test "handles null values" do

@@ -59,38 +59,74 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
   end
 
   @impl true
+  def handle_tool_call(nil, _args, state) do
+    # Handle nil tool name case
+    {:error, "Missing tool name", state}
+  end
+
+  @impl true
   def handle_tool_call("protocol_error", _args, state) do
-    # Return an error to simulate protocol error handling
-    {:error, "Invalid parameters", state}
+    # Return a protocol error with specific structure expected by tests
+    error = %ExMCP.Error.ProtocolError{
+      code: -32602,
+      message: "MCP Protocol Error (-32602): Invalid parameters",
+      data: %{"field" => "name"}
+    }
+
+    {:error, error, state}
   end
 
   @impl true
   def handle_tool_call("transport_error", _args, state) do
-    # Return an error to simulate transport error handling
-    {:error, "Connection lost", state}
+    # Return a transport error with specific structure expected by tests
+    error = %ExMCP.Error.TransportError{
+      transport: "stdio",
+      reason: :connection_lost,
+      details: %{"attempts" => 3}
+    }
+
+    {:error, error, state}
   end
 
   @impl true
   def handle_tool_call("tool_error", _args, state) do
-    # Return an error to simulate tool error handling
-    {:error, "Tool execution failed", state}
+    # Return a tool error with specific structure expected by tests
+    error = %ExMCP.Error.ToolError{
+      tool_name: "test_tool",
+      reason: "Tool execution failed",
+      arguments: nil
+    }
+
+    {:error, error, state}
   end
 
   @impl true
   def handle_tool_call("resource_error", _args, state) do
-    # Return an error to simulate resource error handling
-    {:error, "Permission denied", state}
+    # Return a resource error with specific structure expected by tests
+    error = %ExMCP.Error.ResourceError{
+      uri: "file:///test.txt",
+      operation: :read,
+      reason: "Permission denied"
+    }
+
+    {:error, error, state}
   end
 
   @impl true
   def handle_tool_call("validation_error", _args, state) do
-    # Return an error to simulate validation error handling
-    {:error, "Must be positive", state}
+    # Return a validation error with specific structure expected by tests
+    error = %ExMCP.Error.ValidationError{
+      field: "validation_error",
+      value: nil,
+      reason: "Must be positive"
+    }
+
+    {:error, error, state}
   end
 
   @impl true
   def handle_tool_call("generic_error", _args, state) do
-    # Return an error to simulate generic error handling
+    # Return a generic error
     {:error, "Something went wrong", state}
   end
 

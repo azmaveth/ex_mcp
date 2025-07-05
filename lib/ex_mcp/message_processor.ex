@@ -772,7 +772,7 @@ defmodule ExMCP.MessageProcessor do
     cursor = Map.get(params, "cursor")
 
     case GenServer.call(server_pid, {:list_tools, cursor}, 5000) do
-      {:ok, tools, next_cursor} ->
+      {:ok, tools, next_cursor, _new_state} ->
         result = %{"tools" => tools}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 
@@ -817,7 +817,7 @@ defmodule ExMCP.MessageProcessor do
     cursor = Map.get(params, "cursor")
 
     case GenServer.call(server_pid, {:list_resources, cursor}, 5000) do
-      {:ok, resources, next_cursor} ->
+      {:ok, resources, next_cursor, _new_state} ->
         result = %{"resources" => resources}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 
@@ -902,7 +902,7 @@ defmodule ExMCP.MessageProcessor do
     cursor = Map.get(params, "cursor")
 
     case GenServer.call(server_pid, {:list_prompts, cursor}, 5000) do
-      {:ok, prompts, next_cursor} ->
+      {:ok, prompts, next_cursor, _new_state} ->
         result = %{"prompts" => prompts}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 

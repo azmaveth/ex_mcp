@@ -38,7 +38,9 @@ defmodule ExMCP.TestHelpers.RefactoredTestServer do
 
   @impl true
   def handle_tool_call("test_tool", _args, state) do
-    result = %{content: [%{type: "text", text: "Tool executed"}]}
+    # Add a delay to allow tests to observe pending state
+    Process.sleep(100)
+    result = %{content: [%{"type" => "text", "text" => "Tool executed"}]}
     {:ok, result, state}
   end
 
@@ -46,6 +48,20 @@ defmodule ExMCP.TestHelpers.RefactoredTestServer do
   def handle_resource_read("test://resource", _uri, state) do
     content = %{"text" => "Resource content"}
     {:ok, content, state}
+  end
+
+  @impl true
+  def handle_initialize(params, state) do
+    client_version = Map.get(params, "protocolVersion", "2025-06-18")
+
+    result = %{
+      "protocolVersion" => client_version,
+      "serverInfo" => %{"name" => "Refactored Test Server", "version" => "1.0.0"},
+      "capabilities" => get_capabilities()
+    }
+
+    new_state = Map.put(state, :protocol_version, client_version)
+    {:ok, result, new_state}
   end
 
   @impl true

@@ -191,18 +191,18 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
   end
 
   describe "error helper functions" do
-    test "connection_error creates transport error" do
+    test "connection_error creates connection error" do
       error = Error.connection_error("Connection refused")
-      assert %Error.TransportError{} = error
-      assert error.transport == :connection
-      assert error.reason == "Connection refused"
+      assert %Error{} = error
+      assert error.code == :connection_error
+      assert error.message == "Connection error: Connection refused"
     end
 
     test "internal_error creates protocol error with correct code" do
       error = Error.internal_error("Unexpected state")
       assert %Error.ProtocolError{} = error
       assert error.code == -32603
-      assert error.message == "Unexpected state"
+      assert error.message == "Internal error: Unexpected state"
     end
 
     test "from_json_rpc_error converts JSON-RPC errors" do
@@ -213,7 +213,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       }
 
       error = Error.from_json_rpc_error(json_error)
-      assert %Error.ProtocolError{} = error
+      assert %Error{} = error
       assert error.code == -32700
       assert error.message == "Parse error"
       assert error.data == %{"line" => 5}

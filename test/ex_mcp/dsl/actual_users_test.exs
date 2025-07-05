@@ -7,14 +7,23 @@ defmodule ExMCP.DSL.ActualUsersTest do
 
   use ExUnit.Case, async: false
 
+  # Helper function to check if a module has DSL-generated functions
+  defp module_has_dsl_functions?(module) do
+    exports = module.module_info(:exports)
+
+    Enum.any?(exports, fn {name, arity} ->
+      name in [:get_tools, :get_resources, :get_prompts] and arity == 0
+    end)
+  rescue
+    _ -> false
+  end
+
   describe "identify actual DSL users" do
     test "categorize all potential DSL users" do
       potential_users = [
-        ExMCP.Server.Legacy,
-        ExMCP.Server.Tools,
-        ExMCP.Server.ToolsRefactored,
-        ExMCP.Server.Tools.Simplified,
-        ExMCP.Server.StdioServer,
+        ExMCP.TestHelpers.RefactoredTestServer,
+        ExMCP.TestHelpers.ApiTestServer,
+        ExMCP.TestHelpers.ErrorTestServer,
         ExMCP.Server.Handler,
         ExMCP.Compliance.Handlers.Handler20241105,
         ExMCP.Compliance.Handlers.Handler20250326,
@@ -30,10 +39,8 @@ defmodule ExMCP.DSL.ActualUsersTest do
             function_exported?(module, :behaviour_info, 1) ->
               {dsl, [module | behav], other}
 
-            # Check if it has DSL-generated functions
-            function_exported?(module, :get_tools, 0) ||
-              function_exported?(module, :get_resources, 0) ||
-                function_exported?(module, :get_prompts, 0) ->
+            # Check if it has DSL-generated functions (use module_info instead of function_exported?)
+            module_has_dsl_functions?(module) ->
               {[module | dsl], behav, other}
 
             # Otherwise it's something else
@@ -59,8 +66,9 @@ defmodule ExMCP.DSL.ActualUsersTest do
   describe "test actual DSL users" do
     # These are confirmed DSL users from the categorization above
     @confirmed_dsl_users [
-      ExMCP.Server.ToolsRefactored,
-      ExMCP.TestServer
+      ExMCP.TestHelpers.RefactoredTestServer,
+      ExMCP.TestHelpers.ApiTestServer,
+      ExMCP.TestHelpers.ErrorTestServer
     ]
 
     for module <- @confirmed_dsl_users do
@@ -68,15 +76,12 @@ defmodule ExMCP.DSL.ActualUsersTest do
 
       test "#{inspect(@module)} has DSL-generated functions" do
         # Should have at least one of these
-        has_dsl_functions =
-          function_exported?(@module, :get_tools, 0) ||
-            function_exported?(@module, :get_resources, 0) ||
-            function_exported?(@module, :get_prompts, 0)
+        has_dsl_functions = module_has_dsl_functions?(@module)
 
         assert has_dsl_functions
 
         # If it has tools, check the structure
-        if function_exported?(@module, :get_tools, 0) do
+        try do
           tools = @module.get_tools()
           assert is_map(tools)
 
@@ -84,6 +89,9 @@ defmodule ExMCP.DSL.ActualUsersTest do
             assert Map.has_key?(tool, :name)
             assert Map.has_key?(tool, :description)
           end
+        rescue
+          # Module doesn't have tools, that's fine
+          UndefinedFunctionError -> :ok
         end
       end
 

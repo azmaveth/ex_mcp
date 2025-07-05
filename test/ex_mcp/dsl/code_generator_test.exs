@@ -77,10 +77,8 @@ defmodule ExMCP.DSL.CodeGeneratorTest do
 
       assert imports_str =~ "alias ExMCP.Server.Transport"
 
-      # Content helpers
-      assert imports_str =~ "import ExMCP.ContentHelpers"
-      assert imports_str =~ "text: 1"
-      assert imports_str =~ "json: 2"
+      # Note: Content helpers are now delegated in helper functions generation
+      # rather than imported to avoid conflicts
     end
   end
 

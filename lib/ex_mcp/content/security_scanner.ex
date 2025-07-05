@@ -106,7 +106,7 @@ defmodule ExMCP.Content.SecurityScanner do
         matches ->
           Enum.map(matches, fn [match | _] ->
             %{
-              type: "sensitive_data_#{type}",
+              type: :"sensitive_data_#{type}",
               severity: severity_for_data_type(type),
               description: description,
               location: "Found: #{String.slice(match, 0, 10)}...",

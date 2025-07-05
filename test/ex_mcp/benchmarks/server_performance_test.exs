@@ -121,7 +121,12 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
       end
 
       {:ok, pid} = RuntimeBenchServer.start_link()
-      on_exit(fn -> GenServer.stop(pid) end)
+
+      on_exit(fn ->
+        if Process.alive?(pid) do
+          GenServer.stop(pid)
+        end
+      end)
 
       %{server: pid}
     end
@@ -129,14 +134,14 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
     test "measure request processing time", %{server: server} do
       # Warm up
       for _ <- 1..100 do
-        GenServer.call(server, {:mcp, :list_tools})
+        GenServer.call(server, :get_tools)
       end
 
       # Measure list_tools performance
       {list_time, _} =
         :timer.tc(fn ->
           for _ <- 1..1000 do
-            GenServer.call(server, {:mcp, :list_tools})
+            GenServer.call(server, :get_tools)
           end
         end)
 
@@ -148,7 +153,7 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
       {call_time, _} =
         :timer.tc(fn ->
           for _ <- 1..1000 do
-            GenServer.call(server, {:mcp, :call_tool, "compute", %{"n" => 100}})
+            GenServer.call(server, {:execute_tool, "compute", %{"n" => 100}})
           end
         end)
 
@@ -169,7 +174,7 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
 
       # Perform many operations
       for i <- 1..1000 do
-        GenServer.call(server, {:mcp, :call_tool, "compute", %{"n" => i}})
+        GenServer.call(server, {:execute_tool, "compute", %{"n" => i}})
       end
 
       # Check memory after operations
@@ -206,10 +211,14 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
 
             input_schema(%{type: "object"})
           end
+        end
 
-          @impl true
-          def handle_tool_call("cap_tool_#{i}", _params, state) do
-            {:ok, %{content: []}, state}
+        # Handle tool calls with pattern matching fallback
+        @impl true
+        def handle_tool_call(tool_name, _params, state) when is_binary(tool_name) do
+          case String.starts_with?(tool_name, "cap_tool_") do
+            true -> {:ok, %{content: []}, state}
+            false -> {:error, :tool_not_found, state}
           end
         end
 
@@ -217,16 +226,21 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
         for i <- 1..50 do
           defresource "cap://res/#{i}" do
             meta do
+              name("Resource #{i}")
               description("Resource #{i}")
             end
 
             mime_type("text/plain")
             subscribable(true)
           end
+        end
 
-          @impl true
-          def handle_resource_read("cap://res/#{i}", _uri, state) do
-            {:ok, [], state}
+        # Handle resource reads with pattern matching fallback
+        @impl true
+        def handle_resource_read(uri, _full_uri, state) when is_binary(uri) do
+          case String.starts_with?(uri, "cap://res/") do
+            true -> {:ok, [], state}
+            false -> {:error, :resource_not_found, state}
           end
         end
       end

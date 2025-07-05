@@ -51,23 +51,6 @@ defmodule ExMCP.DSL.CodeGenerator do
       alias ExMCP.Internal.StdioLoggerConfig
       alias ExMCP.Protocol.{RequestProcessor, RequestTracker, ResponseBuilder}
       alias ExMCP.Server.Transport
-
-      import ExMCP.ContentHelpers,
-        only: [
-          text: 1,
-          text: 2,
-          image: 2,
-          image: 3,
-          audio: 2,
-          audio: 3,
-          resource: 1,
-          resource: 2,
-          user: 1,
-          assistant: 1,
-          system: 1,
-          json: 1,
-          json: 2
-        ]
     end
   end
 
@@ -510,6 +493,18 @@ defmodule ExMCP.DSL.CodeGenerator do
         end
       end
 
+      # Handle malformed process_request calls
+      def handle_call({:process_request, request}, _from, state) do
+        # Process invalid/malformed requests through the RequestProcessor
+        case process_request(request, state) do
+          {:response, response, new_state} ->
+            {:reply, {:ok, response}, new_state}
+
+          _ ->
+            {:reply, {:error, :invalid_request}, state}
+        end
+      end
+
       # Handle cancellation requests
       def handle_call({:cancel_request, request_id}, _from, state) do
         case RequestTracker.handle_cancellation(request_id, state) do
@@ -576,6 +571,28 @@ defmodule ExMCP.DSL.CodeGenerator do
 
           {:error, reason, new_state} ->
             {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      # Handle request calls from MessageProcessor for unknown methods
+      def handle_call({:handle_request, method, params}, _from, state) do
+        # First check if we have a custom handle_request implementation
+        case handle_request(method, params, state) do
+          {:unknown_method, new_state} ->
+            # This should trigger method not found in MessageProcessor
+            {:reply, :method_not_found, new_state}
+
+          {:noreply, new_state} ->
+            {:reply, {:noreply}, new_state}
+
+          {:reply, result, new_state} ->
+            {:reply, {:reply, result}, new_state}
+
+          {:error, reason, new_state} ->
+            {:reply, {:error, reason}, new_state}
+
+          _ ->
+            {:reply, :method_not_found, state}
         end
       end
 
@@ -733,6 +750,16 @@ defmodule ExMCP.DSL.CodeGenerator do
   # credo:disable-for-lines:200 Credo.Check.Refactor.LongQuoteBlocks
   defp generate_helper_functions do
     quote do
+      # Content helper functions (exported for backward compatibility)
+      defdelegate text(content, annotations \\ %{}), to: ExMCP.ContentHelpers
+      defdelegate json(data, annotations \\ %{}), to: ExMCP.ContentHelpers
+      defdelegate user(content), to: ExMCP.ContentHelpers
+      defdelegate assistant(content), to: ExMCP.ContentHelpers
+      defdelegate system(content), to: ExMCP.ContentHelpers
+      defdelegate image(base64_data, mime_type, annotations \\ %{}), to: ExMCP.ContentHelpers
+      defdelegate audio(base64_data, mime_type, annotations \\ %{}), to: ExMCP.ContentHelpers
+      defdelegate resource(uri, annotations \\ %{}), to: ExMCP.ContentHelpers
+
       # Register all capabilities with the ExMCP.Registry
       defp register_capabilities do
         register_items(@__tools__, :tool)

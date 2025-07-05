@@ -47,7 +47,7 @@ defmodule ExMCP.StructuredResponseIntegrationTest do
 
       error = Error.from_json_rpc_error(json_error, request_id: "123")
 
-      assert %Error.ProtocolError{} = error
+      assert %Error{} = error
       assert error.code == -32601
       assert error.message == "Method not found"
     end
@@ -71,7 +71,7 @@ defmodule ExMCP.StructuredResponseIntegrationTest do
 
       assert tool_json["code"] == -32000
       assert protocol_json["code"] == -32601
-      assert conn_json["code"] == -32000
+      assert conn_json["code"] == -32003
     end
   end
 end

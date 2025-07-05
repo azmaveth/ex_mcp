@@ -147,39 +147,68 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
     # Check if the module has custom handle_tool_call implementation
     if function_exported?(module, :handle_tool_call, 3) do
-      metadata = %{
-        tool_name: tool_name || "unknown",
-        request_id: to_string(id)
-      }
-
-      result =
-        ExMCP.Telemetry.span([:ex_mcp, :tool], metadata, fn ->
-          module.handle_tool_call(tool_name, arguments, state)
-        end)
-
-      case result do
-        {:ok, result, new_state} ->
-          # Build tool response with proper structure
-          tool_result =
-            Map.merge(
-              %{"content" => result.content},
-              if(Map.get(result, :is_error?, false), do: %{"isError" => true}, else: %{})
-            )
-
-          response = ResponseBuilder.build_success_response(tool_result, id)
-          {:response, response, new_state}
-
-        {:error, reason, new_state} ->
-          error = Error.tool_error(tool_name || "unknown", reason)
-          error_response = ResponseBuilder.build_error_response(error, id)
-          {:response, error_response, new_state}
-      end
+      execute_tool_call(module, tool_name, arguments, id, state)
     else
       # No custom implementation, return default error
-      error = Error.tool_error(tool_name || "unknown", "Tool not implemented")
+      error = %Error.ToolError{
+        tool_name: tool_name || "unknown",
+        reason: "Tool not implemented",
+        arguments: nil
+      }
+
       error_response = ResponseBuilder.build_error_response(error, id)
       {:response, error_response, state}
     end
+  end
+
+  # Execute tool call with telemetry
+  defp execute_tool_call(module, tool_name, arguments, id, state) do
+    metadata = %{
+      tool_name: tool_name || "unknown",
+      request_id: to_string(id)
+    }
+
+    result =
+      ExMCP.Telemetry.span([:ex_mcp, :tool], metadata, fn ->
+        module.handle_tool_call(tool_name, arguments, state)
+      end)
+
+    handle_tool_result(result, tool_name, id)
+  end
+
+  # Handle tool execution result
+  defp handle_tool_result({:ok, result, new_state}, _tool_name, id) do
+    # Build tool response with proper structure
+    tool_result =
+      Map.merge(
+        %{"content" => result.content},
+        if(Map.get(result, :is_error?, false), do: %{"isError" => true}, else: %{})
+      )
+
+    response = ResponseBuilder.build_success_response(tool_result, id)
+    {:response, response, new_state}
+  end
+
+  defp handle_tool_result({:error, reason, new_state}, tool_name, id) do
+    error = normalize_error(reason, tool_name)
+    error_response = ResponseBuilder.build_error_response(error, id)
+    {:response, error_response, new_state}
+  end
+
+  # Normalize various error formats to Error structs
+  defp normalize_error(%Error.ProtocolError{} = err, _tool_name), do: err
+  defp normalize_error(%Error.TransportError{} = err, _tool_name), do: err
+  defp normalize_error(%Error.ToolError{} = err, _tool_name), do: err
+  defp normalize_error(%Error.ResourceError{} = err, _tool_name), do: err
+  defp normalize_error(%Error.ValidationError{} = err, _tool_name), do: err
+
+  defp normalize_error(reason, tool_name) do
+    # Create ToolError struct for plain reasons
+    %Error.ToolError{
+      tool_name: tool_name || "unknown",
+      reason: reason,
+      arguments: nil
+    }
   end
 
   # Resources list request
