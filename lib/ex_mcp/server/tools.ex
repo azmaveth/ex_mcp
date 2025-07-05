@@ -78,8 +78,8 @@ defmodule ExMCP.Server.Tools do
         handler_ast = tool[:__handler_ast__]
 
         quote do
-          def unquote(handler_name)(args, state) do
-            unquote(handler_ast).(args, state)
+          def unquote(handler_name)(_args, state) do
+            unquote(handler_ast).(_args, state)
           end
         end
       end)
