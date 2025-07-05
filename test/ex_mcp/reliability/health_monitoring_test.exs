@@ -247,7 +247,7 @@ defmodule ExMCP.Reliability.HealthMonitoringTest do
 
         def connect(_opts), do: {:ok, %{should_fail: false}}
 
-        def send_message(_msg, %{should_fail: true} = state) do
+        def send_message(_msg, %{should_fail: true}) do
           {:error, :service_unavailable}
         end
 

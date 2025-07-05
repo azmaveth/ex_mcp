@@ -143,6 +143,22 @@ defmodule ExMCP.Server.StructuredOutputTest do
     defp eval_expression("10*5"), do: {:ok, 50}
     defp eval_expression("invalid"), do: {:error, "invalid expression"}
     defp eval_expression(_), do: {:ok, 42}
+
+    @impl true
+    def handle_initialize(_params, state) do
+      {:ok,
+       %{
+         "protocolVersion" => "2025-06-18",
+         "serverInfo" => %{"name" => "Test Server", "version" => "1.0.0"},
+         "capabilities" => %{"tools" => %{}}
+       }, state}
+    end
+
+    @impl true
+    def handle_call_tool(tool_name, args, state) do
+      # The tools handle the implementation via the macro
+      {:error, "Tool #{tool_name} not handled", state}
+    end
   end
 
   describe "structured output with validation" do

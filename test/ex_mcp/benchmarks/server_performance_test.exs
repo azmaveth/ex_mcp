@@ -64,7 +64,7 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
 
             # Implement handlers
             @impl true
-            def handle_tool_call(tool_name, params, state) do
+            def handle_tool_call(tool_name, _params, state) do
               {:ok, %{content: [text("Result for #{tool_name}")]}, state}
             end
 

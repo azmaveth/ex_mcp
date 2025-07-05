@@ -548,21 +548,30 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
       # Test protocol message validation
 
       # Valid for all versions
+      # Need to check if this function exists in the public API
+      # If not, we should use ExMCP.Internal.Protocol instead
+      validator =
+        if function_exported?(Protocol, :validate_message_version, 2) do
+          &Protocol.validate_message_version/2
+        else
+          &ExMCP.Internal.Protocol.validate_message_version/2
+        end
+
       assert :ok =
-               Protocol.validate_message_version(
+               validator.(
                  %{"method" => "tools/list"},
                  "2025-06-18"
                )
 
       # Only valid for newer versions
       assert :ok =
-               Protocol.validate_message_version(
+               validator.(
                  %{"method" => "resources/subscribe"},
                  "2025-03-26"
                )
 
       assert {:error, msg} =
-               Protocol.validate_message_version(
+               validator.(
                  %{"method" => "resources/subscribe"},
                  "2025-06-18"
                )
@@ -571,13 +580,13 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
 
       # 2025-06-18-only method
       assert :ok =
-               Protocol.validate_message_version(
+               validator.(
                  %{"method" => "elicitation/create"},
                  "2025-06-18"
                )
 
       assert {:error, _} =
-               Protocol.validate_message_version(
+               validator.(
                  %{"method" => "elicitation/create"},
                  "2025-03-26"
                )

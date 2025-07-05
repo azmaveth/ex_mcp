@@ -136,8 +136,13 @@ defmodule ExMCP.Client.StateMachineIntegrationTest do
       # All should complete successfully
       results = Enum.map(tasks, &Task.await/1)
 
+      # Sort results by the "n" value since tasks may complete out of order
+      sorted_results =
+        results
+        |> Enum.sort_by(fn {:ok, %{"n" => n}} -> n end)
+
       for i <- 1..5 do
-        assert {:ok, %{"n" => ^i}} = Enum.at(results, i - 1)
+        assert {:ok, %{"n" => ^i}} = Enum.at(sorted_results, i - 1)
       end
     end
 

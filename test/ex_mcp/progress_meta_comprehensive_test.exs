@@ -265,7 +265,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
           for i <- 1..steps do
             Process.sleep(step_duration)
-            Server.notify_progress(self(), token, i, steps, "Step #{i} of #{steps}")
+            Server.notify_progress(self(), token, i, steps)
           end
         end)
       end

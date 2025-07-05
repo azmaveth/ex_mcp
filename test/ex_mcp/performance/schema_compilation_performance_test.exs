@@ -148,6 +148,22 @@ defmodule ExMCP.Performance.SchemaCompilationPerformanceTest do
            }, state}
         end)
       end
+
+      @impl true
+      def handle_initialize(_params, state) do
+        {:ok,
+         %{
+           "protocolVersion" => "2025-06-18",
+           "serverInfo" => %{"name" => "Test Performance Server", "version" => "1.0.0"},
+           "capabilities" => %{"tools" => %{}}
+         }, state}
+      end
+
+      @impl true
+      def handle_call_tool(tool_name, args, state) do
+        # The tools handle the implementation via the macro
+        {:error, "Tool #{tool_name} not handled", state}
+      end
     end
 
     test "end-to-end tool call performance with schema validation" do

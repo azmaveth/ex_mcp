@@ -50,7 +50,7 @@ defmodule ExMCP.Benchmarks.SimplePerformanceTest do
             end
 
             @impl true
-            def handle_tool_call("test_tool", params, state) do
+            def handle_tool_call("test_tool", _params, state) do
               {:ok, %{content: [text("Result")]}, state}
             end
 
@@ -249,7 +249,21 @@ defmodule ExMCP.Benchmarks.SimplePerformanceTest do
       # Capability detection performance
       {cap_time, capabilities} =
         :timer.tc(fn ->
-          LargeServerBench.get_capabilities()
+          if function_exported?(LargeServerBench, :get_capabilities, 0) do
+            LargeServerBench.get_capabilities()
+          else
+            # Fallback for DSL-based servers
+            state = %{}
+            {:ok, tools, _} = LargeServerBench.handle_list_tools(%{}, state)
+            {:ok, resources, _} = LargeServerBench.handle_list_resources(%{}, state)
+            {:ok, prompts, _} = LargeServerBench.handle_list_prompts(%{}, state)
+
+            %{
+              "tools" => %{"tools" => tools},
+              "resources" => %{"resources" => resources},
+              "prompts" => %{"prompts" => prompts}
+            }
+          end
         end)
 
       IO.puts("Capability detection time: #{cap_time}μs")
