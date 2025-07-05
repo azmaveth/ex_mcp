@@ -548,14 +548,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
       # Test protocol message validation
 
       # Valid for all versions
-      # Need to check if this function exists in the public API
-      # If not, we should use ExMCP.Internal.Protocol instead
-      validator =
-        if function_exported?(Protocol, :validate_message_version, 2) do
-          &Protocol.validate_message_version/2
-        else
-          &ExMCP.Internal.Protocol.validate_message_version/2
-        end
+      # Use ExMCP.Internal.Protocol since Protocol is not in the public API
+      validator = &ExMCP.Internal.Protocol.validate_message_version/2
 
       assert :ok =
                validator.(

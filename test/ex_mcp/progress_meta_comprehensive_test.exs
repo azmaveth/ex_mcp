@@ -303,7 +303,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       Task.start(fn ->
         for i <- 1..count do
           Process.sleep(50)
-          Server.notify_progress(self(), token, i, count, "Progress #{i}/#{count}")
+          Server.notify_progress(self(), token, i, count)
         end
       end)
     end

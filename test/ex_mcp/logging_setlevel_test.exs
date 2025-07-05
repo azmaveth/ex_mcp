@@ -45,8 +45,8 @@ defmodule ExMCP.LoggingSetLevelTest do
     end
 
     @impl true
-    def handle_list_tools(state) do
-      {:ok, [], state}
+    def handle_list_tools(_cursor, state) do
+      {:ok, [], nil, state}
     end
   end
 

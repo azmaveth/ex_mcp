@@ -250,13 +250,17 @@ defmodule ExMCP.Benchmarks.SimplePerformanceTest do
       {cap_time, capabilities} =
         :timer.tc(fn ->
           if function_exported?(LargeServerBench, :get_capabilities, 0) do
-            LargeServerBench.get_capabilities()
+            # credo:disable-for-next-line Credo.Check.Refactor.Apply
+            apply(LargeServerBench, :get_capabilities, [])
           else
             # Fallback for DSL-based servers
             state = %{}
-            {:ok, tools, _} = LargeServerBench.handle_list_tools(%{}, state)
-            {:ok, resources, _} = LargeServerBench.handle_list_resources(%{}, state)
-            {:ok, prompts, _} = LargeServerBench.handle_list_prompts(%{}, state)
+            # credo:disable-for-next-line Credo.Check.Refactor.Apply
+            {:ok, tools, _} = apply(LargeServerBench, :handle_list_tools, [%{}, state])
+            # credo:disable-for-next-line Credo.Check.Refactor.Apply
+            {:ok, resources, _} = apply(LargeServerBench, :handle_list_resources, [%{}, state])
+            # credo:disable-for-next-line Credo.Check.Refactor.Apply
+            {:ok, prompts, _} = apply(LargeServerBench, :handle_list_prompts, [%{}, state])
 
             %{
               "tools" => %{"tools" => tools},
