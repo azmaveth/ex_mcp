@@ -18,7 +18,7 @@ defmodule ExMCP.Types do
   """
 
   # Protocol version constants
-  @latest_protocol_version "2025-06-18"
+  @latest_protocol_version "2025-11-25"
   @jsonrpc_version "2.0"
 
   # Error code constants
@@ -46,10 +46,19 @@ defmodule ExMCP.Types do
   # String version for protocol messages
   @type log_level_string :: String.t()
 
+  # Icon type (new in 2025-11-25)
+  @type icon :: %{
+          required(:type) => String.t(),
+          required(:uri) => String.t(),
+          optional(:mediaType) => String.t()
+        }
+
   # Implementation info
   @type implementation :: %{
           required(:name) => String.t(),
-          required(:version) => String.t()
+          required(:version) => String.t(),
+          optional(:title) => String.t(),
+          optional(:description) => String.t()
         }
 
   @type client_info :: implementation()
@@ -85,7 +94,8 @@ defmodule ExMCP.Types do
   # Annotations
   @type annotations :: %{
           optional(:audience) => [role()],
-          optional(:priority) => float()
+          optional(:priority) => float(),
+          optional(:lastModified) => String.t()
         }
 
   # JSON Schema type
@@ -112,7 +122,9 @@ defmodule ExMCP.Types do
           required(:inputSchema) => json_schema(),
           # Output schema (stable in 2025-06-18)
           optional(:outputSchema) => json_schema(),
-          optional(:annotations) => tool_annotations()
+          optional(:annotations) => tool_annotations(),
+          # Icons (new in 2025-11-25)
+          optional(:icons) => [icon()]
         }
 
   # Content types
@@ -162,7 +174,9 @@ defmodule ExMCP.Types do
           optional(:description) => String.t(),
           optional(:mimeType) => String.t(),
           optional(:annotations) => annotations(),
-          optional(:size) => integer()
+          optional(:size) => integer(),
+          # Icons (new in 2025-11-25)
+          optional(:icons) => [icon()]
         }
 
   @type resource_template :: %{
@@ -203,7 +217,9 @@ defmodule ExMCP.Types do
   @type prompt :: %{
           required(:name) => String.t(),
           optional(:description) => String.t(),
-          optional(:arguments) => [prompt_argument()]
+          optional(:arguments) => [prompt_argument()],
+          # Icons (new in 2025-11-25)
+          optional(:icons) => [icon()]
         }
 
   @type prompt_message :: %{
@@ -267,6 +283,45 @@ defmodule ExMCP.Types do
           optional(:includeContext) => include_context(),
           optional(:temperature) => float(),
           optional(:stopSequences) => [String.t()],
+          optional(:metadata) => map(),
+          # Tool calling in sampling (new in 2025-11-25)
+          optional(:tools) => [tool()],
+          optional(:toolChoice) => tool_choice()
+        }
+
+  # Tool choice for sampling (new in 2025-11-25)
+  @type tool_choice :: %{
+          required(:type) => String.t()
+        }
+
+  # Tool use content (new in 2025-11-25)
+  @type tool_use_content :: %{
+          required(:type) => String.t(),
+          required(:id) => String.t(),
+          required(:name) => String.t(),
+          required(:input) => map()
+        }
+
+  # Tool result content (new in 2025-11-25)
+  @type tool_result_content :: %{
+          required(:type) => String.t(),
+          required(:tool_use_id) => String.t(),
+          required(:content) => [content()],
+          optional(:isError) => boolean()
+        }
+
+  # Task state (new in 2025-11-25)
+  @type task_state :: :working | :input_required | :completed | :failed | :cancelled
+
+  # Task struct (new in 2025-11-25)
+  @type task :: %{
+          required(:id) => String.t(),
+          required(:state) => task_state(),
+          optional(:toolName) => String.t(),
+          optional(:arguments) => map(),
+          optional(:createdAt) => String.t(),
+          optional(:ttl) => integer(),
+          optional(:result) => tool_result(),
           optional(:metadata) => map()
         }
 

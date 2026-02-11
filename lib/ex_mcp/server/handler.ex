@@ -457,6 +457,49 @@ defmodule ExMCP.Server.Handler do
   @callback handle_set_log_level(level :: String.t(), state()) ::
               {:ok, state()} | {:error, any(), state()}
 
+  # Task callbacks (new in 2025-11-25)
+
+  @doc """
+  Handles a tasks/get request.
+
+  Returns the current state of a task by ID.
+  """
+  @callback handle_task_get(task_id :: String.t(), state()) ::
+              {:ok, map(), state()} | {:error, any(), state()}
+
+  @doc """
+  Handles a tasks/result request.
+
+  Returns the result of a completed task.
+  """
+  @callback handle_task_result(task_id :: String.t(), state()) ::
+              {:ok, map(), state()} | {:error, any(), state()}
+
+  @doc """
+  Handles a tasks/list request.
+
+  Returns a list of known tasks.
+  """
+  @callback handle_task_list(cursor :: String.t() | nil, state()) ::
+              {:ok, tasks :: [map()], next_cursor :: String.t() | nil, state()}
+              | {:error, any(), state()}
+
+  @doc """
+  Handles a tasks/cancel request.
+
+  Cancels a running task.
+  """
+  @callback handle_task_cancel(task_id :: String.t(), state()) ::
+              {:ok, map(), state()} | {:error, any(), state()}
+
+  @doc """
+  Handles a notifications/elicitation/complete notification.
+
+  Called when the client notifies that a URL-mode elicitation has completed.
+  """
+  @callback handle_elicitation_complete(elicitation_id :: String.t(), state()) ::
+              {:ok, state()} | {:error, any(), state()}
+
   # Optional callbacks with defaults
   @optional_callbacks [
     handle_list_resources: 2,
@@ -470,6 +513,11 @@ defmodule ExMCP.Server.Handler do
     handle_unsubscribe_resource: 2,
     handle_list_resource_templates: 2,
     handle_set_log_level: 2,
+    handle_task_get: 2,
+    handle_task_result: 2,
+    handle_task_list: 2,
+    handle_task_cancel: 2,
+    handle_elicitation_complete: 2,
     terminate: 2
   ]
 
@@ -544,6 +592,31 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl true
+      def handle_task_get(_task_id, state) do
+        {:error, "Tasks not implemented", state}
+      end
+
+      @impl true
+      def handle_task_result(_task_id, state) do
+        {:error, "Tasks not implemented", state}
+      end
+
+      @impl true
+      def handle_task_list(_cursor, state) do
+        {:error, "Tasks not implemented", state}
+      end
+
+      @impl true
+      def handle_task_cancel(_task_id, state) do
+        {:error, "Tasks not implemented", state}
+      end
+
+      @impl true
+      def handle_elicitation_complete(_elicitation_id, state) do
+        {:ok, state}
+      end
+
+      @impl true
       def terminate(_reason, _state), do: :ok
 
       defoverridable init: 1,
@@ -558,6 +631,11 @@ defmodule ExMCP.Server.Handler do
                      handle_unsubscribe_resource: 2,
                      handle_list_resource_templates: 2,
                      handle_set_log_level: 2,
+                     handle_task_get: 2,
+                     handle_task_result: 2,
+                     handle_task_list: 2,
+                     handle_task_cancel: 2,
+                     handle_elicitation_complete: 2,
                      terminate: 2
     end
   end

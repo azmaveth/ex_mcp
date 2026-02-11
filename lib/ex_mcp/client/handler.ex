@@ -179,9 +179,41 @@ defmodule ExMCP.Client.Handler do
               | {:error, error_info, state}
 
   @doc """
+  Handles a URL-mode elicitation request from the server.
+
+  Instead of a form schema, the server sends a URL for the client to navigate to.
+  Available in protocol version 2025-11-25.
+
+  ## Parameters
+
+  - `message` - Human-readable message explaining what information is needed
+  - `url` - URL for the client to open/navigate to
+
+  ## Response
+
+  Same as handle_elicitation_create - action and optional content.
+  """
+  @callback handle_url_elicitation(message :: String.t(), url :: String.t(), state) ::
+              {:ok, map(), state}
+              | {:error, error_info, state}
+
+  @doc """
+  Handles a task status notification from the server.
+
+  Called when the server sends a notification about a task state change.
+  Available in protocol version 2025-11-25.
+  """
+  @callback handle_task_status(notification :: map(), state) ::
+              {:ok, state}
+              | {:error, error_info, state}
+
+  @doc """
   Called when the handler process is about to terminate.
   """
   @callback terminate(reason :: term(), state) :: :ok
 
-  @optional_callbacks terminate: 2, handle_elicitation_create: 3
+  @optional_callbacks terminate: 2,
+                      handle_elicitation_create: 3,
+                      handle_url_elicitation: 3,
+                      handle_task_status: 2
 end

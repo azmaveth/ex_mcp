@@ -45,6 +45,7 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.Authorization.ServerGuard
   alias ExMCP.FeatureFlags
   alias ExMCP.HttpPlug.SSEHandler
+  alias ExMCP.Internal.VersionRegistry
   alias ExMCP.Protocol.ErrorCodes
 
   # Simple session registry using ETS
@@ -258,7 +259,7 @@ defmodule ExMCP.HttpPlug do
             # Invalid Request
             "code" => ErrorCodes.invalid_request(),
             "message" => message,
-            "data" => %{"expectedVersion" => "2025-06-18"}
+            "data" => %{"expectedVersion" => VersionRegistry.latest_version()}
           },
           "id" => nil
         }
@@ -611,16 +612,20 @@ defmodule ExMCP.HttpPlug do
 
   defp validate_protocol_version(conn) do
     if FeatureFlags.enabled?(:protocol_version_header) do
-      case get_req_header(conn, "mcp-protocol-version") do
-        ["2025-06-18"] ->
-          {:ok, conn}
+      supported = VersionRegistry.supported_versions()
+      latest = VersionRegistry.latest_version()
 
-        [other] ->
-          message = "Unsupported MCP-Protocol-Version: #{other}. Server supports 2025-06-18."
-          {:error, {:protocol_version_mismatch, message}}
+      case get_req_header(conn, "mcp-protocol-version") do
+        [version] when is_binary(version) ->
+          if version in supported do
+            {:ok, conn}
+          else
+            message = "Unsupported MCP-Protocol-Version: #{version}. Server supports #{latest}."
+            {:error, {:protocol_version_mismatch, message}}
+          end
 
         [] ->
-          message = "Missing MCP-Protocol-Version header. Server requires version 2025-06-18."
+          message = "Missing MCP-Protocol-Version header. Server requires version #{latest}."
           {:error, {:protocol_version_mismatch, message}}
       end
     else
@@ -701,7 +706,7 @@ defmodule ExMCP.HttpPlug do
 
   defp maybe_add_protocol_version_header(conn) do
     if FeatureFlags.enabled?(:protocol_version_header) do
-      put_resp_header(conn, "mcp-protocol-version", "2025-06-18")
+      put_resp_header(conn, "mcp-protocol-version", VersionRegistry.latest_version())
     else
       conn
     end

@@ -10,8 +10,8 @@ defmodule ExMCP.Protocol.VersionNegotiator do
   require Logger
   alias ExMCP.Authorization.ScopeValidator
 
-  @supported_versions ["2025-06-18", "2025-03-26", "2024-11-05"]
-  @latest_version "2025-06-18"
+  @supported_versions ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+  @latest_version "2025-11-25"
 
   @doc """
   Negotiate the protocol version based on client capabilities.
@@ -101,6 +101,37 @@ defmodule ExMCP.Protocol.VersionNegotiator do
     # Add version-specific capabilities
     capabilities =
       case negotiated_version do
+        "2025-11-25" ->
+          oauth2_capability =
+            if ExMCP.FeatureFlags.enabled?(:oauth2_auth) do
+              %{
+                scopes_supported: ScopeValidator.get_all_static_scopes(),
+                bearer_token_types_supported: ["bearer"],
+                resource_server: "ExMCP"
+              }
+            else
+              false
+            end
+
+          tasks_capability =
+            if ExMCP.FeatureFlags.enabled?(:tasks) do
+              %{}
+            else
+              false
+            end
+
+          %{
+            experimental: %{
+              protocolVersionHeader: true,
+              structuredOutput: ExMCP.FeatureFlags.enabled?(:structured_output),
+              oauth2: oauth2_capability,
+              icons: true,
+              urlElicitation: true,
+              toolCallingInSampling: true
+            },
+            tasks: tasks_capability
+          }
+
         "2025-06-18" ->
           oauth2_capability =
             if ExMCP.FeatureFlags.enabled?(:oauth2_auth) do

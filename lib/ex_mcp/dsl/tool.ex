@@ -50,27 +50,44 @@ defmodule ExMCP.DSL.Tool do
         Module.get_attribute(__MODULE__, :__tool_input_schema__)
       )
 
+      # Build tool definition map
+      tool_def = %{
+        name: unquote(name),
+        display_name: tool_meta[:name],
+        description: tool_meta[:description],
+        input_schema:
+          convert_schema_keys_to_strings(Module.get_attribute(__MODULE__, :__tool_input_schema__)),
+        annotations: Module.get_attribute(__MODULE__, :__tool_annotations__) || %{},
+        meta: tool_meta
+      }
+
+      # Add optional icons if present
+      tool_def =
+        case Module.get_attribute(__MODULE__, :__tool_icons__) do
+          nil -> tool_def
+          icons -> Map.put(tool_def, :icons, icons)
+        end
+
+      # Add optional execution config if present
+      tool_def =
+        case Module.get_attribute(__MODULE__, :__tool_execution__) do
+          nil -> tool_def
+          execution -> Map.put(tool_def, :execution, execution)
+        end
+
       # Register the tool in the module's metadata
       @__tools__ Map.put(
                    Module.get_attribute(__MODULE__, :__tools__) || %{},
                    unquote(name),
-                   %{
-                     name: unquote(name),
-                     display_name: tool_meta[:name],
-                     description: tool_meta[:description],
-                     input_schema:
-                       convert_schema_keys_to_strings(
-                         Module.get_attribute(__MODULE__, :__tool_input_schema__)
-                       ),
-                     annotations: Module.get_attribute(__MODULE__, :__tool_annotations__) || %{},
-                     meta: tool_meta
-                   }
+                   tool_def
                  )
 
       # Clean up temporary attributes
       Module.delete_attribute(__MODULE__, :__tool_name__)
       Module.delete_attribute(__MODULE__, :__tool_input_schema__)
       Module.delete_attribute(__MODULE__, :__tool_annotations__)
+      Module.delete_attribute(__MODULE__, :__tool_icons__)
+      Module.delete_attribute(__MODULE__, :__tool_execution__)
     end
   end
 
@@ -97,6 +114,32 @@ defmodule ExMCP.DSL.Tool do
   defmacro tool_annotations(annotations) do
     quote do
       @__tool_annotations__ unquote(annotations)
+    end
+  end
+
+  @doc """
+  Sets icons for the current tool (new in 2025-11-25).
+
+  ## Examples
+
+      icons [%{type: "icon", uri: "https://example.com/icon.svg", mediaType: "image/svg+xml"}]
+  """
+  defmacro icons(icon_list) do
+    quote do
+      @__tool_icons__ unquote(icon_list)
+    end
+  end
+
+  @doc """
+  Sets task execution support for the current tool (new in 2025-11-25).
+
+  ## Examples
+
+      execution %{taskSupport: :optional}
+  """
+  defmacro execution(config) do
+    quote do
+      @__tool_execution__ unquote(config)
     end
   end
 

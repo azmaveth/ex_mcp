@@ -145,6 +145,11 @@ defmodule ExMCP.Compliance.VersionNegotiationPropertyTest do
           # Verify that version-specific capabilities are present.
           # The exact values may depend on feature flags, so we just check for keys.
           case version do
+            "2025-11-25" ->
+              Map.has_key?(experimental_caps, :protocolVersionHeader) and
+                Map.has_key?(experimental_caps, :structuredOutput) and
+                Map.has_key?(experimental_caps, :oauth2)
+
             "2025-06-18" ->
               Map.has_key?(experimental_caps, :protocolVersionHeader) and
                 Map.has_key?(experimental_caps, :structuredOutput) and

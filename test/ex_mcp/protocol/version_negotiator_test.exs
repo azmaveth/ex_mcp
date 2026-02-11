@@ -5,8 +5,9 @@ defmodule ExMCP.Protocol.VersionNegotiatorTest do
 
   describe "negotiate/1" do
     test "returns the highest mutually supported version" do
+      assert {:ok, "2025-11-25"} = VersionNegotiator.negotiate(["2025-11-25", "2025-06-18"])
+      assert {:ok, "2025-11-25"} = VersionNegotiator.negotiate(["2025-06-18", "2025-11-25"])
       assert {:ok, "2025-06-18"} = VersionNegotiator.negotiate(["2025-06-18", "2025-03-26"])
-      assert {:ok, "2025-06-18"} = VersionNegotiator.negotiate(["2025-03-26", "2025-06-18"])
     end
 
     test "returns 2025-03-26 when it's the only supported version" do
@@ -20,6 +21,14 @@ defmodule ExMCP.Protocol.VersionNegotiatorTest do
     end
 
     test "prefers newer versions over older ones" do
+      assert {:ok, "2025-11-25"} =
+               VersionNegotiator.negotiate([
+                 "2024-11-05",
+                 "2025-11-25",
+                 "2025-06-18",
+                 "2025-03-26"
+               ])
+
       assert {:ok, "2025-06-18"} =
                VersionNegotiator.negotiate(["2024-11-05", "2025-06-18", "2025-03-26"])
 
@@ -39,13 +48,13 @@ defmodule ExMCP.Protocol.VersionNegotiatorTest do
     end
 
     test "filters out unsupported versions" do
-      client_versions = ["2025-06-18", "2024-12-31", "2025-03-26", "2023-01-01"]
-      assert {:ok, "2025-06-18"} = VersionNegotiator.negotiate(client_versions)
+      client_versions = ["2025-11-25", "2024-12-31", "2025-06-18", "2023-01-01"]
+      assert {:ok, "2025-11-25"} = VersionNegotiator.negotiate(client_versions)
     end
 
     test "handles duplicate versions in client list" do
-      assert {:ok, "2025-06-18"} =
-               VersionNegotiator.negotiate(["2025-06-18", "2025-06-18", "2025-03-26"])
+      assert {:ok, "2025-11-25"} =
+               VersionNegotiator.negotiate(["2025-11-25", "2025-11-25", "2025-03-26"])
     end
   end
 
@@ -53,21 +62,23 @@ defmodule ExMCP.Protocol.VersionNegotiatorTest do
     test "returns the correct list of supported versions" do
       versions = VersionNegotiator.supported_versions()
       assert is_list(versions)
+      assert "2025-11-25" in versions
       assert "2025-06-18" in versions
       assert "2025-03-26" in versions
       assert "2024-11-05" in versions
-      assert length(versions) == 3
+      assert length(versions) == 4
     end
   end
 
   describe "latest_version/0" do
     test "returns the latest version" do
-      assert VersionNegotiator.latest_version() == "2025-06-18"
+      assert VersionNegotiator.latest_version() == "2025-11-25"
     end
   end
 
   describe "supported?/1" do
     test "returns true for supported versions" do
+      assert VersionNegotiator.supported?("2025-11-25")
       assert VersionNegotiator.supported?("2025-06-18")
       assert VersionNegotiator.supported?("2025-03-26")
       assert VersionNegotiator.supported?("2024-11-05")
@@ -88,6 +99,18 @@ defmodule ExMCP.Protocol.VersionNegotiatorTest do
   end
 
   describe "build_capabilities/1" do
+    test "builds capabilities for 2025-11-25" do
+      capabilities = VersionNegotiator.build_capabilities("2025-11-25")
+
+      assert capabilities.protocolVersion == "2025-11-25"
+      assert capabilities.serverInfo.name == "ExMCP"
+      assert is_binary(capabilities.serverInfo.version)
+      assert capabilities.capabilities.experimental.protocolVersionHeader == true
+      # These depend on feature flags
+      assert is_boolean(capabilities.capabilities.experimental.structuredOutput)
+      assert is_boolean(capabilities.capabilities.experimental.oauth2)
+    end
+
     test "builds capabilities for 2025-06-18" do
       capabilities = VersionNegotiator.build_capabilities("2025-06-18")
 

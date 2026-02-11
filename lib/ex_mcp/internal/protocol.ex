@@ -493,7 +493,7 @@ defmodule ExMCP.Internal.Protocol do
   end
 
   @doc """
-  Encodes an elicitation/create request.
+  Encodes an elicitation/create request with form schema.
 
   This feature is available in protocol version 2025-06-18 and later.
   """
@@ -508,6 +508,108 @@ defmodule ExMCP.Internal.Protocol do
       },
       "id" => generate_id()
     }
+  end
+
+  @doc """
+  Encodes a URL-mode elicitation/create request.
+
+  This feature is available in protocol version 2025-11-25 and later.
+  Instead of a form schema, the server sends a URL for the client to navigate to.
+  """
+  @spec encode_elicitation_create_url(String.t(), String.t(), keyword()) :: map()
+  def encode_elicitation_create_url(message, url, _opts \\ []) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "elicitation/create",
+      "params" => %{
+        "message" => message,
+        "url" => url
+      },
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes an elicitation complete notification.
+
+  Sent by the client to notify the server that an elicitation (especially URL-mode)
+  has been completed. Available in protocol version 2025-11-25.
+  """
+  @spec encode_elicitation_complete_notification(String.t()) :: map()
+  def encode_elicitation_complete_notification(elicitation_id) do
+    encode_notification("notifications/elicitation/complete", %{
+      "elicitationId" => elicitation_id
+    })
+  end
+
+  # Task protocol methods (new in 2025-11-25)
+
+  @doc """
+  Encodes a tasks/get request.
+  """
+  @spec encode_task_get(String.t()) :: map()
+  def encode_task_get(task_id) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "tasks/get",
+      "params" => %{"taskId" => task_id},
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a tasks/result request to get the result of a completed task.
+  """
+  @spec encode_task_result(String.t()) :: map()
+  def encode_task_result(task_id) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "tasks/result",
+      "params" => %{"taskId" => task_id},
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a tasks/list request.
+  """
+  @spec encode_task_list(String.t() | nil) :: map()
+  def encode_task_list(cursor \\ nil) do
+    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "tasks/list",
+      "params" => params,
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a tasks/cancel request.
+  """
+  @spec encode_task_cancel(String.t()) :: map()
+  def encode_task_cancel(task_id) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "tasks/cancel",
+      "params" => %{"taskId" => task_id},
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a task status notification.
+  """
+  @spec encode_task_status_notification(String.t(), String.t(), map() | nil) :: map()
+  def encode_task_status_notification(task_id, state, metadata \\ nil) do
+    params = %{
+      "taskId" => task_id,
+      "state" => state
+    }
+
+    params = if metadata, do: Map.put(params, "metadata", metadata), else: params
+    encode_notification("notifications/tasks/status", params)
   end
 
   # Message Parsing
@@ -606,16 +708,39 @@ defmodule ExMCP.Internal.Protocol do
   @doc """
   Checks if a method is available in the given protocol version.
   """
+  # Methods gated by minimum version for availability checks
+  @methods_v20250326_plus MapSet.new([
+                            "resources/subscribe",
+                            "resources/unsubscribe",
+                            "logging/setLevel",
+                            "notifications/resources/updated"
+                          ])
+  @methods_v20250618_plus MapSet.new(["elicitation/create"])
+  @methods_v20251125_only MapSet.new([
+                            "tasks/get",
+                            "tasks/list",
+                            "tasks/result",
+                            "tasks/cancel",
+                            "notifications/tasks/status",
+                            "notifications/elicitation/complete"
+                          ])
+  @versions_v20250326_plus MapSet.new(["2025-03-26", "2025-06-18", "2025-11-25"])
+  @versions_v20250618_plus MapSet.new(["2025-06-18", "2025-11-25"])
+
   @spec method_available?(String.t(), String.t()) :: boolean()
   def method_available?(method, version) do
-    case method do
-      "resources/subscribe" -> version in ["2025-03-26", "2025-06-18"]
-      # ExMCP extension - not in spec but we allow it for these versions
-      "resources/unsubscribe" -> version in ["2025-03-26", "2025-06-18"]
-      "logging/setLevel" -> version in ["2025-03-26", "2025-06-18"]
-      "notifications/resources/updated" -> version in ["2025-03-26", "2025-06-18"]
-      "elicitation/create" -> version == "2025-06-18"
-      _ -> true
+    cond do
+      MapSet.member?(@methods_v20251125_only, method) ->
+        version == "2025-11-25"
+
+      MapSet.member?(@methods_v20250618_plus, method) ->
+        MapSet.member?(@versions_v20250618_plus, version)
+
+      MapSet.member?(@methods_v20250326_plus, method) ->
+        MapSet.member?(@versions_v20250326_plus, version)
+
+      true ->
+        true
     end
   end
 

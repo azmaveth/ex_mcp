@@ -21,8 +21,8 @@ defmodule ExMCP.Plugs.ProtocolVersion do
 
   @behaviour Plug
 
-  @supported_versions ["2025-06-18", "2025-03-26", "2024-11-05"]
-  @default_version "2025-06-18"
+  @supported_versions ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+  @default_version "2025-11-25"
 
   @impl true
   def init(opts), do: opts

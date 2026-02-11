@@ -12,8 +12,9 @@ defmodule ExMCP.Internal.VersionRegistry do
 
   # Protocol versions in order of preference (newest first)
   @versions [
-    {"2025-06-18", "Current stable specification"},
-    {"2025-03-26", "Previous stable specification with batch support"},
+    {"2025-11-25", "Latest spec with tasks, icons, and URL elicitation"},
+    {"2025-06-18", "Previous stable specification"},
+    {"2025-03-26", "Stable specification with batch support"},
     {"2024-11-05", "Initial stable specification"}
   ]
 
@@ -29,7 +30,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   Get the latest stable protocol version.
   """
   @spec latest_version() :: version()
-  def latest_version, do: "2025-06-18"
+  def latest_version, do: "2025-11-25"
 
   @doc """
   Get the preferred protocol version from configuration or default.
@@ -102,6 +103,32 @@ defmodule ExMCP.Internal.VersionRegistry do
     }
   end
 
+  def capabilities_for_version("2025-11-25") do
+    %{
+      # Enhanced capabilities in 2025-11-25
+      prompts: %{listChanged: true},
+      resources: %{subscribe: true, listChanged: true},
+      tools: %{outputSchema: true, listChanged: true},
+      logging: %{setLevel: true},
+      completion: %{
+        hasArguments: true,
+        values: true
+      },
+      # Tasks capability (new in 2025-11-25)
+      tasks: %{},
+      # 2025-11-25 features
+      experimental: %{
+        elicitation: true,
+        structuredContent: true,
+        toolOutputSchema: true,
+        batchProcessing: false,
+        urlElicitation: true,
+        icons: true,
+        toolCallingInSampling: true
+      }
+    }
+  end
+
   def capabilities_for_version(_unknown), do: capabilities_for_version(latest_version())
 
   @doc """
@@ -111,9 +138,10 @@ defmodule ExMCP.Internal.VersionRegistry do
   def feature_available?(version, feature) do
     cond do
       feature in base_features() -> true
-      feature in v2025_features() -> version in ["2025-03-26", "2025-06-18"]
+      feature in v2025_features() -> version in ["2025-03-26", "2025-06-18", "2025-11-25"]
       feature in batch_features() -> version == "2025-03-26"
-      feature in v20250618_features() -> version == "2025-06-18"
+      feature in v20250618_features() -> version in ["2025-06-18", "2025-11-25"]
+      feature in v20251125_features() -> version == "2025-11-25"
       true -> false
     end
   end
@@ -134,6 +162,8 @@ defmodule ExMCP.Internal.VersionRegistry do
   defp batch_features, do: [:batch_processing]
 
   defp v20250618_features, do: [:elicitation, :structured_content, :tool_output_schema]
+
+  defp v20251125_features, do: [:tasks, :icons, :url_elicitation, :tool_calling_in_sampling]
 
   @doc """
   Get the message format differences for a version.
@@ -197,6 +227,34 @@ defmodule ExMCP.Internal.VersionRegistry do
     }
   end
 
+  def message_format("2025-11-25") do
+    %{
+      # 2025-11-25 format with tasks and URL elicitation
+      supports_batch: false,
+      supports_progress: true,
+      supports_cancellation: true,
+      notification_methods: [
+        "notifications/initialized",
+        "notifications/tools/list_changed",
+        "notifications/resources/list_changed",
+        "notifications/prompts/list_changed",
+        "notifications/progress",
+        "notifications/message",
+        "notifications/cancelled",
+        "notifications/resources/updated",
+        "notifications/tasks/status",
+        "notifications/elicitation/complete",
+        "logging/setLevel"
+      ],
+      request_methods: [
+        "tasks/get",
+        "tasks/list",
+        "tasks/result",
+        "tasks/cancel"
+      ]
+    }
+  end
+
   def message_format(_unknown), do: message_format(latest_version())
 
   @doc """
@@ -245,5 +303,6 @@ defmodule ExMCP.Internal.VersionRegistry do
   def types_module("2024-11-05"), do: ExMCP.Types.V20241105
   def types_module("2025-03-26"), do: ExMCP.Types.V20250326
   def types_module("2025-06-18"), do: ExMCP.Types.V20250618
+  def types_module("2025-11-25"), do: ExMCP.Types.V20251125
   def types_module(_), do: ExMCP.Types
 end

@@ -32,7 +32,7 @@ defmodule ExMCP.Plugs.ProtocolVersionTest do
         conn(:post, "/mcp")
         |> ProtocolVersion.call([])
 
-      assert conn.assigns[:mcp_version] == "2025-06-18"
+      assert conn.assigns[:mcp_version] == "2025-11-25"
       refute conn.halted
     end
 
@@ -42,7 +42,7 @@ defmodule ExMCP.Plugs.ProtocolVersionTest do
         |> put_req_header("mcp-protocol-version", "invalid-version")
         |> ProtocolVersion.call([])
 
-      assert conn.assigns[:mcp_version] == "2025-06-18"
+      assert conn.assigns[:mcp_version] == "2025-11-25"
       refute conn.halted
     end
   end
@@ -58,7 +58,17 @@ defmodule ExMCP.Plugs.ProtocolVersionTest do
         conn(:post, "/mcp")
         |> ProtocolVersion.call([])
 
-      assert conn.assigns[:mcp_version] == "2025-06-18"
+      assert conn.assigns[:mcp_version] == "2025-11-25"
+      refute conn.halted
+    end
+
+    test "accepts valid 2025-11-25 version" do
+      conn =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2025-11-25")
+        |> ProtocolVersion.call([])
+
+      assert conn.assigns[:mcp_version] == "2025-11-25"
       refute conn.halted
     end
 
@@ -108,6 +118,7 @@ defmodule ExMCP.Plugs.ProtocolVersionTest do
       assert body["error"]["data"]["reason"] =~ "Unsupported protocol version"
 
       assert body["error"]["data"]["supported_versions"] == [
+               "2025-11-25",
                "2025-06-18",
                "2025-03-26",
                "2024-11-05"
@@ -146,11 +157,16 @@ defmodule ExMCP.Plugs.ProtocolVersionTest do
 
   describe "helper functions" do
     test "supported_versions/0 returns correct list" do
-      assert ProtocolVersion.supported_versions() == ["2025-06-18", "2025-03-26", "2024-11-05"]
+      assert ProtocolVersion.supported_versions() == [
+               "2025-11-25",
+               "2025-06-18",
+               "2025-03-26",
+               "2024-11-05"
+             ]
     end
 
     test "default_version/0 returns correct version" do
-      assert ProtocolVersion.default_version() == "2025-06-18"
+      assert ProtocolVersion.default_version() == "2025-11-25"
     end
   end
 

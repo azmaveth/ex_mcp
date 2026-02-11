@@ -56,28 +56,45 @@ defmodule ExMCP.DSL.Prompt do
         prompt_meta
       )
 
+      # Build prompt definition map
+      prompt_def = %{
+        name: unquote(prompt_name),
+        display_name: prompt_meta[:name] || unquote(prompt_name),
+        description: prompt_meta[:description],
+        arguments: Module.get_attribute(__MODULE__, :__prompt_arguments__) || [],
+        meta: prompt_meta
+      }
+
+      # Add optional icons if present
+      prompt_def =
+        case Module.get_attribute(__MODULE__, :__prompt_icons__) do
+          nil -> prompt_def
+          icons -> Map.put(prompt_def, :icons, icons)
+        end
+
       # Register the prompt in the module's metadata
       @__prompts__ Map.put(
                      Module.get_attribute(__MODULE__, :__prompts__) || %{},
                      unquote(prompt_name),
-                     %{
-                       name: unquote(prompt_name),
-                       display_name: prompt_meta[:name] || unquote(prompt_name),
-                       description: prompt_meta[:description],
-                       arguments: Module.get_attribute(__MODULE__, :__prompt_arguments__) || [],
-                       meta: prompt_meta
-                     }
+                     prompt_def
                    )
 
       # Clean up temporary attributes
       Module.delete_attribute(__MODULE__, :__prompt_name__)
       Module.delete_attribute(__MODULE__, :__prompt_arguments__)
+      Module.delete_attribute(__MODULE__, :__prompt_icons__)
     end
   end
 
   @doc """
-  Begins an arguments block for defining prompt arguments.
+  Sets icons for the current prompt (new in 2025-11-25).
   """
+  defmacro icons(icon_list) do
+    quote do
+      @__prompt_icons__ unquote(icon_list)
+    end
+  end
+
   defmacro arguments(do: body) do
     quote do
       @__prompt_arguments__ []

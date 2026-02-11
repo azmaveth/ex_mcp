@@ -88,7 +88,7 @@ defmodule ExMCP.ProtocolVersionTest do
       response = Jason.decode!(conn.resp_body)
       assert response["error"]["code"] == -32600
       assert response["error"]["message"] =~ "Unsupported MCP-Protocol-Version: 2024-01-01"
-      assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
+      assert response["error"]["data"]["expectedVersion"] == "2025-11-25"
     end
 
     test "rejects requests missing protocol version header", %{opts: opts} do
@@ -109,7 +109,7 @@ defmodule ExMCP.ProtocolVersionTest do
       response = Jason.decode!(conn.resp_body)
       assert response["error"]["code"] == -32600
       assert response["error"]["message"] =~ "Missing MCP-Protocol-Version header"
-      assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
+      assert response["error"]["data"]["expectedVersion"] == "2025-11-25"
     end
   end
 
@@ -129,7 +129,7 @@ defmodule ExMCP.ProtocolVersionTest do
         |> HttpPlug.call(opts)
 
       assert conn.status == 200
-      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
+      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-11-25"]
     end
 
     test "includes protocol version header in error responses", %{opts: opts} do
@@ -147,7 +147,7 @@ defmodule ExMCP.ProtocolVersionTest do
         |> HttpPlug.call(opts)
 
       assert conn.status == 400
-      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
+      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-11-25"]
     end
   end
 

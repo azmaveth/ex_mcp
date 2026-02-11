@@ -58,17 +58,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
     }
 
     ExMCP.Telemetry.span([:ex_mcp, :request], metadata, fn ->
-      case method do
-        "initialize" -> process_initialize(request, state)
-        "tools/list" -> process_tools_list(request, state)
-        "tools/call" -> process_tools_call(request, state)
-        "resources/list" -> process_resources_list(request, state)
-        "resources/read" -> process_resources_read(request, state)
-        "prompts/list" -> process_prompts_list(request, state)
-        "prompts/get" -> process_prompts_get(request, state)
-        "notifications/initialized" -> process_initialized_notification(request, state)
-        _ -> process_unknown_method(request, state)
-      end
+      dispatch_method(method, request, state)
     end)
   end
 
@@ -78,6 +68,29 @@ defmodule ExMCP.Protocol.RequestProcessor do
     error_response = ResponseBuilder.build_error_response(error, nil)
     {:response, error_response, state}
   end
+
+  defp dispatch_method("initialize", req, state), do: process_initialize(req, state)
+  defp dispatch_method("tools/list", req, state), do: process_tools_list(req, state)
+  defp dispatch_method("tools/call", req, state), do: process_tools_call(req, state)
+  defp dispatch_method("resources/list", req, state), do: process_resources_list(req, state)
+  defp dispatch_method("resources/read", req, state), do: process_resources_read(req, state)
+  defp dispatch_method("prompts/list", req, state), do: process_prompts_list(req, state)
+  defp dispatch_method("prompts/get", req, state), do: process_prompts_get(req, state)
+
+  defp dispatch_method("notifications/initialized", req, state),
+    do: process_initialized_notification(req, state)
+
+  defp dispatch_method("notifications/elicitation/complete", req, state),
+    do: process_elicitation_complete(req, state)
+
+  defp dispatch_method("notifications/tasks/status", req, state),
+    do: process_task_status_notification(req, state)
+
+  defp dispatch_method("tasks/get", req, state), do: process_task_get(req, state)
+  defp dispatch_method("tasks/list", req, state), do: process_task_list(req, state)
+  defp dispatch_method("tasks/result", req, state), do: process_task_result(req, state)
+  defp dispatch_method("tasks/cancel", req, state), do: process_task_cancel(req, state)
+  defp dispatch_method(_, req, state), do: process_unknown_method(req, state)
 
   # Initialize request processing
   defp process_initialize(%{"id" => id} = request, state) do
@@ -310,6 +323,124 @@ defmodule ExMCP.Protocol.RequestProcessor do
   defp process_initialized_notification(_request, state) do
     # This is a notification from client, not a request - just acknowledge it
     {:notification, state}
+  end
+
+  # Elicitation complete notification (2025-11-25)
+  defp process_elicitation_complete(%{"params" => params}, state) do
+    module = state.__module__
+    elicitation_id = Map.get(params, "elicitationId", "")
+
+    if function_exported?(module, :handle_elicitation_complete, 2) do
+      case module.handle_elicitation_complete(elicitation_id, state) do
+        {:ok, new_state} -> {:notification, new_state}
+        {:error, _reason, new_state} -> {:notification, new_state}
+      end
+    else
+      {:notification, state}
+    end
+  end
+
+  defp process_elicitation_complete(_request, state), do: {:notification, state}
+
+  # Task status notification (2025-11-25)
+  defp process_task_status_notification(_request, state), do: {:notification, state}
+
+  # Tasks/get (2025-11-25)
+  defp process_task_get(%{"id" => id} = request, state) do
+    params = Map.get(request, "params", %{})
+    task_id = Map.get(params, "taskId")
+    module = state.__module__
+
+    if function_exported?(module, :handle_task_get, 2) do
+      case module.handle_task_get(task_id, state) do
+        {:ok, result, new_state} ->
+          response = ResponseBuilder.build_success_response(result, id)
+          {:response, response, new_state}
+
+        {:error, reason, new_state} ->
+          error = Error.protocol_error(-32000, to_string(reason))
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
+      end
+    else
+      error = Error.protocol_error(-32601, "Method not found: tasks/get")
+      error_response = ResponseBuilder.build_error_response(error, id)
+      {:response, error_response, state}
+    end
+  end
+
+  # Tasks/list (2025-11-25)
+  defp process_task_list(%{"id" => id} = request, state) do
+    params = Map.get(request, "params", %{})
+    cursor = Map.get(params, "cursor")
+    module = state.__module__
+
+    if function_exported?(module, :handle_task_list, 2) do
+      case module.handle_task_list(cursor, state) do
+        {:ok, tasks, next_cursor, new_state} ->
+          result = %{"tasks" => tasks}
+          result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+          response = ResponseBuilder.build_success_response(result, id)
+          {:response, response, new_state}
+
+        {:error, reason, new_state} ->
+          error = Error.protocol_error(-32000, to_string(reason))
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
+      end
+    else
+      error = Error.protocol_error(-32601, "Method not found: tasks/list")
+      error_response = ResponseBuilder.build_error_response(error, id)
+      {:response, error_response, state}
+    end
+  end
+
+  # Tasks/result (2025-11-25)
+  defp process_task_result(%{"id" => id} = request, state) do
+    params = Map.get(request, "params", %{})
+    task_id = Map.get(params, "taskId")
+    module = state.__module__
+
+    if function_exported?(module, :handle_task_result, 2) do
+      case module.handle_task_result(task_id, state) do
+        {:ok, result, new_state} ->
+          response = ResponseBuilder.build_success_response(result, id)
+          {:response, response, new_state}
+
+        {:error, reason, new_state} ->
+          error = Error.protocol_error(-32000, to_string(reason))
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
+      end
+    else
+      error = Error.protocol_error(-32601, "Method not found: tasks/result")
+      error_response = ResponseBuilder.build_error_response(error, id)
+      {:response, error_response, state}
+    end
+  end
+
+  # Tasks/cancel (2025-11-25)
+  defp process_task_cancel(%{"id" => id} = request, state) do
+    params = Map.get(request, "params", %{})
+    task_id = Map.get(params, "taskId")
+    module = state.__module__
+
+    if function_exported?(module, :handle_task_cancel, 2) do
+      case module.handle_task_cancel(task_id, state) do
+        {:ok, result, new_state} ->
+          response = ResponseBuilder.build_success_response(result, id)
+          {:response, response, new_state}
+
+        {:error, reason, new_state} ->
+          error = Error.protocol_error(-32000, to_string(reason))
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
+      end
+    else
+      error = Error.protocol_error(-32601, "Method not found: tasks/cancel")
+      error_response = ResponseBuilder.build_error_response(error, id)
+      {:response, error_response, state}
+    end
   end
 
   # Unknown method

@@ -37,6 +37,10 @@ defmodule ExMCP.FeatureFlags do
     Application.get_env(:ex_mcp, :oauth2_enabled, false)
   end
 
+  def enabled?(:tasks) do
+    Application.get_env(:ex_mcp, :tasks_enabled, false)
+  end
+
   def enabled?(_unknown_feature), do: false
 
   @doc """
@@ -56,7 +60,8 @@ defmodule ExMCP.FeatureFlags do
     %{
       protocol_version_header: enabled?(:protocol_version_header),
       structured_output: enabled?(:structured_output),
-      oauth2_auth: enabled?(:oauth2_auth)
+      oauth2_auth: enabled?(:oauth2_auth),
+      tasks: enabled?(:tasks)
     }
   end
 end

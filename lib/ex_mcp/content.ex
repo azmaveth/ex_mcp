@@ -84,6 +84,42 @@ defmodule ExMCP.Content do
   end
 
   @doc """
+  Creates a tool use content object (new in 2025-11-25).
+
+  Used in sampling/createMessage responses when the model wants to call a tool.
+
+  ## Parameters
+    - id: Unique identifier for this tool use
+    - name: Name of the tool to call
+    - input: Arguments to pass to the tool
+  """
+  @spec tool_use(String.t(), String.t(), map()) :: Types.tool_use_content()
+  def tool_use(id, name, input) when is_binary(id) and is_binary(name) and is_map(input) do
+    %{type: "tool_use", id: id, name: name, input: input}
+  end
+
+  @doc """
+  Creates a tool result content object (new in 2025-11-25).
+
+  Used in sampling/createMessage to provide the result of a tool call.
+
+  ## Parameters
+    - tool_use_id: The ID of the tool_use this is a result for
+    - content: List of content items (the tool's output)
+    - opts: Optional keyword list with `:is_error` boolean
+  """
+  @spec tool_result(String.t(), [map()], keyword()) :: Types.tool_result_content()
+  def tool_result(tool_use_id, content, opts \\ []) do
+    result = %{type: "tool_result", tool_use_id: tool_use_id, content: content}
+
+    if Keyword.get(opts, :is_error, false) do
+      Map.put(result, :isError, true)
+    else
+      result
+    end
+  end
+
+  @doc """
   Validates content object structure.
 
   Returns {:ok, content} if valid, {:error, reason} otherwise.
@@ -112,6 +148,18 @@ defmodule ExMCP.Content do
   end
 
   def validate(%{type: :resource, resource: %{uri: uri}} = content) when is_binary(uri) do
+    {:ok, content}
+  end
+
+  # Tool use content (new in 2025-11-25)
+  def validate(%{type: "tool_use", id: id, name: name, input: input} = content)
+      when is_binary(id) and is_binary(name) and is_map(input) do
+    {:ok, content}
+  end
+
+  # Tool result content (new in 2025-11-25)
+  def validate(%{type: "tool_result", tool_use_id: id, content: items} = content)
+      when is_binary(id) and is_list(items) do
     {:ok, content}
   end
 

@@ -3,9 +3,9 @@ import Config
 # ExMCP Configuration
 config :ex_mcp,
   # Protocol version to use when initiating connections
-  # Options: "2024-11-05", "2025-03-26", "2025-06-18"
-  # Default: "2025-06-18" (latest)
-  protocol_version: "2025-06-18",
+  # Options: "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"
+  # Default: "2025-11-25" (latest)
+  protocol_version: "2025-11-25",
   # Feature flags for phased rollout of new MCP features.
   # These flags allow for enabling new functionality in a controlled manner.
   #

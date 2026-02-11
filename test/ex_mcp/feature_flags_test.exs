@@ -7,6 +7,7 @@ defmodule ExMCP.FeatureFlagsTest do
       Application.delete_env(:ex_mcp, :protocol_version_required)
       Application.delete_env(:ex_mcp, :structured_output_enabled)
       Application.delete_env(:ex_mcp, :oauth2_enabled)
+      Application.delete_env(:ex_mcp, :tasks_enabled)
     end)
   end
 
@@ -42,7 +43,8 @@ defmodule ExMCP.FeatureFlagsTest do
       expected_map = %{
         protocol_version_header: false,
         structured_output: false,
-        oauth2_auth: false
+        oauth2_auth: false,
+        tasks: false
       }
 
       assert ExMCP.FeatureFlags.all() == expected_map
@@ -55,7 +57,8 @@ defmodule ExMCP.FeatureFlagsTest do
       expected_map = %{
         protocol_version_header: true,
         structured_output: false,
-        oauth2_auth: true
+        oauth2_auth: true,
+        tasks: false
       }
 
       assert ExMCP.FeatureFlags.all() == expected_map

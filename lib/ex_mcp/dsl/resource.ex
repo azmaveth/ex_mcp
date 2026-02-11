@@ -59,24 +59,31 @@ defmodule ExMCP.DSL.Resource do
         resource_meta
       )
 
+      # Build resource definition map
+      resource_def = %{
+        uri: unquote(uri),
+        name: resource_meta[:name],
+        description: resource_meta[:description],
+        mime_type: Module.get_attribute(__MODULE__, :__resource_mime_type__),
+        annotations: Module.get_attribute(__MODULE__, :__resource_annotations__) || %{},
+        list_pattern: Module.get_attribute(__MODULE__, :__resource_list_pattern__) || false,
+        subscribable: Module.get_attribute(__MODULE__, :__resource_subscribable__) || false,
+        size: Module.get_attribute(__MODULE__, :__resource_size__),
+        meta: resource_meta
+      }
+
+      # Add optional icons if present
+      resource_def =
+        case Module.get_attribute(__MODULE__, :__resource_icons__) do
+          nil -> resource_def
+          icons -> Map.put(resource_def, :icons, icons)
+        end
+
       # Register the resource in the module's metadata
       @__resources__ Map.put(
                        Module.get_attribute(__MODULE__, :__resources__) || %{},
                        unquote(uri),
-                       %{
-                         uri: unquote(uri),
-                         name: resource_meta[:name],
-                         description: resource_meta[:description],
-                         mime_type: Module.get_attribute(__MODULE__, :__resource_mime_type__),
-                         annotations:
-                           Module.get_attribute(__MODULE__, :__resource_annotations__) || %{},
-                         list_pattern:
-                           Module.get_attribute(__MODULE__, :__resource_list_pattern__) || false,
-                         subscribable:
-                           Module.get_attribute(__MODULE__, :__resource_subscribable__) || false,
-                         size: Module.get_attribute(__MODULE__, :__resource_size__),
-                         meta: resource_meta
-                       }
+                       resource_def
                      )
 
       # Clean up temporary attributes
@@ -86,6 +93,7 @@ defmodule ExMCP.DSL.Resource do
       Module.delete_attribute(__MODULE__, :__resource_list_pattern__)
       Module.delete_attribute(__MODULE__, :__resource_subscribable__)
       Module.delete_attribute(__MODULE__, :__resource_size__)
+      Module.delete_attribute(__MODULE__, :__resource_icons__)
     end
   end
 
@@ -131,6 +139,15 @@ defmodule ExMCP.DSL.Resource do
   defmacro size(bytes) do
     quote do
       @__resource_size__ unquote(bytes)
+    end
+  end
+
+  @doc """
+  Sets icons for the current resource (new in 2025-11-25).
+  """
+  defmacro icons(icon_list) do
+    quote do
+      @__resource_icons__ unquote(icon_list)
     end
   end
 

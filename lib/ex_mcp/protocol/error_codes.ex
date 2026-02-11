@@ -45,6 +45,8 @@ defmodule ExMCP.Protocol.ErrorCodes do
   @consent_required -32002
   @consent_denied -32003
   @server_error -32000
+  @resource_not_found -32002
+  @url_elicitation_required -32042
 
   # Server-defined error codes range
   @server_error_start -32099
@@ -77,6 +79,12 @@ defmodule ExMCP.Protocol.ErrorCodes do
   @doc "Generic server error: Catch-all for server-side errors"
   def server_error, do: @server_error
 
+  @doc "Resource not found: The requested resource does not exist"
+  def resource_not_found, do: @resource_not_found
+
+  @doc "URL elicitation required: The server requires URL-mode elicitation"
+  def url_elicitation_required, do: @url_elicitation_required
+
   @doc """
   Returns a human-readable error message for the given error code or atom.
 
@@ -98,7 +106,8 @@ defmodule ExMCP.Protocol.ErrorCodes do
     @request_cancelled => "Request cancelled",
     @consent_required => "Consent required",
     @consent_denied => "Consent denied",
-    @server_error => "Server error"
+    @server_error => "Server error",
+    @url_elicitation_required => "URL elicitation required"
   }
 
   # Map of atom names to error codes
@@ -111,7 +120,9 @@ defmodule ExMCP.Protocol.ErrorCodes do
     :request_cancelled => @request_cancelled,
     :consent_required => @consent_required,
     :consent_denied => @consent_denied,
-    :server_error => @server_error
+    :server_error => @server_error,
+    :resource_not_found => @resource_not_found,
+    :url_elicitation_required => @url_elicitation_required
   }
 
   @spec error_message(integer() | atom()) :: String.t()
@@ -159,7 +170,7 @@ defmodule ExMCP.Protocol.ErrorCodes do
   """
   @spec is_mcp_error?(integer()) :: boolean()
   def is_mcp_error?(code) when is_integer(code) do
-    code in [@request_cancelled, @consent_required, @consent_denied] or
+    code in [@request_cancelled, @consent_required, @consent_denied, @url_elicitation_required] or
       (code >= @server_error_start and code <= @server_error_end)
   end
 
@@ -201,19 +212,21 @@ defmodule ExMCP.Protocol.ErrorCodes do
     %{code: code, message: message}
   end
 
+  # Map from atom to error code for quick lookup
+  @atom_to_code_map %{
+    parse_error: @parse_error,
+    invalid_request: @invalid_request,
+    method_not_found: @method_not_found,
+    invalid_params: @invalid_params,
+    internal_error: @internal_error,
+    request_cancelled: @request_cancelled,
+    consent_required: @consent_required,
+    consent_denied: @consent_denied,
+    server_error: @server_error,
+    resource_not_found: @resource_not_found,
+    url_elicitation_required: @url_elicitation_required
+  }
+
   # Private helper to convert atom to error code
-  defp atom_to_code(atom) do
-    case atom do
-      :parse_error -> @parse_error
-      :invalid_request -> @invalid_request
-      :method_not_found -> @method_not_found
-      :invalid_params -> @invalid_params
-      :internal_error -> @internal_error
-      :request_cancelled -> @request_cancelled
-      :consent_required -> @consent_required
-      :consent_denied -> @consent_denied
-      :server_error -> @server_error
-      _ -> @server_error
-    end
-  end
+  defp atom_to_code(atom), do: Map.get(@atom_to_code_map, atom, @server_error)
 end

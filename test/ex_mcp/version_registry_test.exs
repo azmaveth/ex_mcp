@@ -7,18 +7,19 @@ defmodule ExMCP.VersionRegistryTest do
   describe "version registry" do
     test "lists supported versions in order" do
       versions = VersionRegistry.supported_versions()
+      assert "2025-11-25" in versions
       assert "2025-06-18" in versions
       assert "2025-03-26" in versions
       assert "2024-11-05" in versions
     end
 
     test "identifies latest stable version" do
-      assert VersionRegistry.latest_version() == "2025-06-18"
+      assert VersionRegistry.latest_version() == "2025-11-25"
     end
 
     test "gets preferred version from config" do
       # Default should be latest
-      assert VersionRegistry.preferred_version() == "2025-06-18"
+      assert VersionRegistry.preferred_version() == "2025-11-25"
 
       # Can be overridden by config
       Application.put_env(:ex_mcp, :protocol_version, "2025-06-18")
@@ -27,9 +28,9 @@ defmodule ExMCP.VersionRegistryTest do
     end
 
     test "checks if versions are supported" do
+      assert VersionRegistry.supported?("2025-11-25")
+      assert VersionRegistry.supported?("2025-06-18")
       assert VersionRegistry.supported?("2025-03-26")
-      assert VersionRegistry.supported?("2025-06-18")
-      assert VersionRegistry.supported?("2025-06-18")
       refute VersionRegistry.supported?("1.0.0")
       refute VersionRegistry.supported?("unknown")
     end
@@ -55,6 +56,12 @@ defmodule ExMCP.VersionRegistryTest do
       assert caps_2025_06.experimental.elicitation
       assert caps_2025_06.experimental.structuredContent
       assert caps_2025_06.experimental.toolOutputSchema
+
+      # 2025-11-25 capabilities
+      caps_2025_11 = VersionRegistry.capabilities_for_version("2025-11-25")
+      assert caps_2025_11.tools.outputSchema
+      assert caps_2025_11.tools.listChanged
+      assert Map.has_key?(caps_2025_11, :tasks)
     end
 
     test "checks feature availability by version" do
@@ -74,6 +81,17 @@ defmodule ExMCP.VersionRegistryTest do
       assert VersionRegistry.feature_available?("2025-06-18", :elicitation)
       assert VersionRegistry.feature_available?("2025-06-18", :structured_content)
       refute VersionRegistry.feature_available?("2025-03-26", :elicitation)
+
+      # 2025-11-25 features
+      assert VersionRegistry.feature_available?("2025-11-25", :tasks)
+      assert VersionRegistry.feature_available?("2025-11-25", :icons)
+      assert VersionRegistry.feature_available?("2025-11-25", :url_elicitation)
+      assert VersionRegistry.feature_available?("2025-11-25", :tool_calling_in_sampling)
+      # 2025-11-25 also supports all older features
+      assert VersionRegistry.feature_available?("2025-11-25", :elicitation)
+      assert VersionRegistry.feature_available?("2025-11-25", :structured_content)
+      assert VersionRegistry.feature_available?("2025-11-25", :resource_subscription)
+      refute VersionRegistry.feature_available?("2025-06-18", :tasks)
     end
 
     test "negotiates protocol versions" do
@@ -98,25 +116,36 @@ defmodule ExMCP.VersionRegistryTest do
       assert VersionRegistry.types_module("2024-11-05") == ExMCP.Types.V20241105
       assert VersionRegistry.types_module("2025-03-26") == ExMCP.Types.V20250326
       assert VersionRegistry.types_module("2025-06-18") == ExMCP.Types.V20250618
+      assert VersionRegistry.types_module("2025-11-25") == ExMCP.Types.V20251125
       assert VersionRegistry.types_module("unknown") == ExMCP.Types
     end
   end
 
   describe "protocol version-specific methods" do
     test "identifies version-specific methods" do
-      # 2025-06-18 only
+      # 2025-06-18 and 2025-11-25
       assert Protocol.method_available?("elicitation/create", "2025-06-18")
+      assert Protocol.method_available?("elicitation/create", "2025-11-25")
       refute Protocol.method_available?("elicitation/create", "2025-03-26")
       refute Protocol.method_available?("elicitation/create", "2024-11-05")
 
-      # 2025-03-26 and 2025-06-18
+      # 2025-03-26, 2025-06-18, and 2025-11-25
       assert Protocol.method_available?("resources/subscribe", "2025-03-26")
       assert Protocol.method_available?("resources/subscribe", "2025-06-18")
+      assert Protocol.method_available?("resources/subscribe", "2025-11-25")
       refute Protocol.method_available?("resources/subscribe", "2024-11-05")
 
       assert Protocol.method_available?("logging/setLevel", "2025-03-26")
       assert Protocol.method_available?("logging/setLevel", "2025-06-18")
+      assert Protocol.method_available?("logging/setLevel", "2025-11-25")
       refute Protocol.method_available?("logging/setLevel", "2024-11-05")
+
+      # 2025-11-25 only methods
+      assert Protocol.method_available?("tasks/get", "2025-11-25")
+      assert Protocol.method_available?("tasks/list", "2025-11-25")
+      assert Protocol.method_available?("tasks/result", "2025-11-25")
+      assert Protocol.method_available?("tasks/cancel", "2025-11-25")
+      refute Protocol.method_available?("tasks/get", "2025-06-18")
 
       # Available in all versions
       assert Protocol.method_available?("tools/list", "2024-11-05")
@@ -126,6 +155,7 @@ defmodule ExMCP.VersionRegistryTest do
 
     test "validates message version compatibility" do
       # Valid methods
+      assert :ok = Protocol.validate_message_version(%{"method" => "tools/list"}, "2025-11-25")
       assert :ok = Protocol.validate_message_version(%{"method" => "tools/list"}, "2025-06-18")
 
       assert :ok =
@@ -137,6 +167,25 @@ defmodule ExMCP.VersionRegistryTest do
       assert :ok =
                Protocol.validate_message_version(
                  %{"method" => "elicitation/create"},
+                 "2025-06-18"
+               )
+
+      assert :ok =
+               Protocol.validate_message_version(
+                 %{"method" => "elicitation/create"},
+                 "2025-11-25"
+               )
+
+      # 2025-11-25 only methods
+      assert :ok =
+               Protocol.validate_message_version(
+                 %{"method" => "tasks/get"},
+                 "2025-11-25"
+               )
+
+      assert {:error, _} =
+               Protocol.validate_message_version(
+                 %{"method" => "tasks/get"},
                  "2025-06-18"
                )
 

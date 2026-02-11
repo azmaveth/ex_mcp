@@ -814,7 +814,7 @@ defmodule ExMCP.Server do
           case Jason.decode(message) do
             {:ok, requests} when is_list(requests) ->
               # Check protocol version for batch support
-              protocol_version = Map.get(state, :protocol_version, "2025-06-18")
+              protocol_version = Map.get(state, :protocol_version, "2025-11-25")
 
               error_message =
                 if protocol_version == "2025-06-18" do
@@ -823,7 +823,7 @@ defmodule ExMCP.Server do
                   "Batch requests are not supported"
                 end
 
-              protocol_version = Map.get(state, :protocol_version, "2025-06-18")
+              protocol_version = Map.get(state, :protocol_version, "2025-11-25")
               error_response = ResponseBuilder.build_batch_error(protocol_version)
 
               send_response(error_response, state)
