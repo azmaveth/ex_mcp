@@ -26,7 +26,7 @@ defmodule ExMCP.Compliance.IconsTest do
         description("A tool with an emoji icon")
       end
 
-      ExMCP.DSL.Tool.icons([%{type: "emoji", uri: "\u{1F527}"}])
+      ExMCP.DSL.Tool.icons([%{src: "\u{1F527}"}])
 
       input_schema(%{
         type: "object",
@@ -50,8 +50,8 @@ defmodule ExMCP.Compliance.IconsTest do
       end
 
       ExMCP.DSL.Tool.icons([
-        %{type: "emoji", uri: "\u{1F4E6}"},
-        %{type: "icon", uri: "https://example.com/tool-icon.svg", mediaType: "image/svg+xml"}
+        %{src: "\u{1F4E6}"},
+        %{src: "https://example.com/tool-icon.svg", mimeType: "image/svg+xml"}
       ])
 
       input_schema(%{
@@ -99,7 +99,7 @@ defmodule ExMCP.Compliance.IconsTest do
 
       mime_type("application/json")
 
-      ExMCP.DSL.Resource.icons([%{type: "emoji", uri: "\u{1F5C4}\u{FE0F}"}])
+      ExMCP.DSL.Resource.icons([%{src: "\u{1F5C4}\u{FE0F}"}])
     end
 
     @impl true
@@ -120,7 +120,7 @@ defmodule ExMCP.Compliance.IconsTest do
       mime_type("text/csv")
 
       ExMCP.DSL.Resource.icons([
-        %{type: "icon", uri: "https://example.com/csv-icon.svg", mediaType: "image/svg+xml"}
+        %{src: "https://example.com/csv-icon.svg", mimeType: "image/svg+xml"}
       ])
     end
 
@@ -157,7 +157,7 @@ defmodule ExMCP.Compliance.IconsTest do
         description("Review code for best practices")
       end
 
-      ExMCP.DSL.Prompt.icons([%{type: "emoji", uri: "\u{1F50D}"}])
+      ExMCP.DSL.Prompt.icons([%{src: "\u{1F50D}"}])
 
       arguments do
         arg(:code, required: true, description: "Code to review")
@@ -180,8 +180,8 @@ defmodule ExMCP.Compliance.IconsTest do
       end
 
       ExMCP.DSL.Prompt.icons([
-        %{type: "emoji", uri: "\u{1F4DD}"},
-        %{type: "icon", uri: "https://example.com/summarize.png", mediaType: "image/png"}
+        %{src: "\u{1F4DD}"},
+        %{src: "https://example.com/summarize.png", mimeType: "image/png"}
       ])
 
       arguments do
@@ -220,7 +220,7 @@ defmodule ExMCP.Compliance.IconsTest do
         description("Tool with icon")
       end
 
-      ExMCP.DSL.Tool.icons([%{type: "emoji", uri: "\u{2699}\u{FE0F}"}])
+      ExMCP.DSL.Tool.icons([%{src: "\u{2699}\u{FE0F}"}])
 
       input_schema(%{
         type: "object",
@@ -245,7 +245,7 @@ defmodule ExMCP.Compliance.IconsTest do
         description("Resource with icon")
       end
 
-      ExMCP.DSL.Resource.icons([%{type: "emoji", uri: "\u{1F4C1}"}])
+      ExMCP.DSL.Resource.icons([%{src: "\u{1F4C1}"}])
     end
 
     defresource "res://without-icon" do
@@ -261,7 +261,7 @@ defmodule ExMCP.Compliance.IconsTest do
         description("Prompt with icon")
       end
 
-      ExMCP.DSL.Prompt.icons([%{type: "emoji", uri: "\u{1F4AC}"}])
+      ExMCP.DSL.Prompt.icons([%{src: "\u{1F4AC}"}])
     end
 
     defprompt "no_icon_prompt" do
@@ -299,8 +299,7 @@ defmodule ExMCP.Compliance.IconsTest do
       assert length(tool.icons) == 1
 
       [icon] = tool.icons
-      assert icon.type == "emoji"
-      assert icon.uri == "\u{1F527}"
+      assert icon.src == "\u{1F527}"
     end
 
     test "tool with multiple icon types has all icons in metadata" do
@@ -311,14 +310,12 @@ defmodule ExMCP.Compliance.IconsTest do
       assert is_list(tool.icons)
       assert length(tool.icons) == 2
 
-      emoji_icon = Enum.find(tool.icons, &(&1.type == "emoji"))
+      emoji_icon = Enum.find(tool.icons, &(&1.src == "\u{1F4E6}"))
       assert emoji_icon != nil
-      assert emoji_icon.uri == "\u{1F4E6}"
 
-      svg_icon = Enum.find(tool.icons, &(&1.type == "icon"))
+      svg_icon = Enum.find(tool.icons, &(&1.src == "https://example.com/tool-icon.svg"))
       assert svg_icon != nil
-      assert svg_icon.uri == "https://example.com/tool-icon.svg"
-      assert svg_icon.mediaType == "image/svg+xml"
+      assert svg_icon.mimeType == "image/svg+xml"
     end
 
     test "tool without icons macro does not have icons key" do
@@ -349,8 +346,7 @@ defmodule ExMCP.Compliance.IconsTest do
       assert length(resource.icons) == 1
 
       [icon] = resource.icons
-      assert icon.type == "emoji"
-      assert icon.uri == "\u{1F5C4}\u{FE0F}"
+      assert icon.src == "\u{1F5C4}\u{FE0F}"
     end
 
     test "resource with SVG icon has correct icon metadata" do
@@ -362,9 +358,8 @@ defmodule ExMCP.Compliance.IconsTest do
       assert length(resource.icons) == 1
 
       [icon] = resource.icons
-      assert icon.type == "icon"
-      assert icon.uri == "https://example.com/csv-icon.svg"
-      assert icon.mediaType == "image/svg+xml"
+      assert icon.src == "https://example.com/csv-icon.svg"
+      assert icon.mimeType == "image/svg+xml"
     end
 
     test "resource without icons macro does not have icons key" do
@@ -395,8 +390,7 @@ defmodule ExMCP.Compliance.IconsTest do
       assert length(prompt.icons) == 1
 
       [icon] = prompt.icons
-      assert icon.type == "emoji"
-      assert icon.uri == "\u{1F50D}"
+      assert icon.src == "\u{1F50D}"
     end
 
     test "prompt with multiple icon types has all icons in metadata" do
@@ -407,14 +401,12 @@ defmodule ExMCP.Compliance.IconsTest do
       assert is_list(prompt.icons)
       assert length(prompt.icons) == 2
 
-      emoji_icon = Enum.find(prompt.icons, &(&1.type == "emoji"))
+      emoji_icon = Enum.find(prompt.icons, &(&1.src == "\u{1F4DD}"))
       assert emoji_icon != nil
-      assert emoji_icon.uri == "\u{1F4DD}"
 
-      png_icon = Enum.find(prompt.icons, &(&1.type == "icon"))
+      png_icon = Enum.find(prompt.icons, &(&1.src == "https://example.com/summarize.png"))
       assert png_icon != nil
-      assert png_icon.uri == "https://example.com/summarize.png"
-      assert png_icon.mediaType == "image/png"
+      assert png_icon.mimeType == "image/png"
     end
 
     test "prompt without icons macro does not have icons key" do
@@ -443,7 +435,7 @@ defmodule ExMCP.Compliance.IconsTest do
       icon_tool = tools["icon_tool"]
       assert Map.has_key?(icon_tool, :icons)
       assert length(icon_tool.icons) == 1
-      assert hd(icon_tool.icons).type == "emoji"
+      assert hd(icon_tool.icons).src == "\u{2699}\u{FE0F}"
 
       no_icon_tool = tools["no_icon_tool"]
       refute Map.has_key?(no_icon_tool, :icons)
@@ -455,7 +447,7 @@ defmodule ExMCP.Compliance.IconsTest do
       icon_resource = resources["res://with-icon"]
       assert Map.has_key?(icon_resource, :icons)
       assert length(icon_resource.icons) == 1
-      assert hd(icon_resource.icons).uri == "\u{1F4C1}"
+      assert hd(icon_resource.icons).src == "\u{1F4C1}"
 
       no_icon_resource = resources["res://without-icon"]
       refute Map.has_key?(no_icon_resource, :icons)
@@ -467,7 +459,7 @@ defmodule ExMCP.Compliance.IconsTest do
       icon_prompt = prompts["icon_prompt"]
       assert Map.has_key?(icon_prompt, :icons)
       assert length(icon_prompt.icons) == 1
-      assert hd(icon_prompt.icons).uri == "\u{1F4AC}"
+      assert hd(icon_prompt.icons).src == "\u{1F4AC}"
 
       no_icon_prompt = prompts["no_icon_prompt"]
       refute Map.has_key?(no_icon_prompt, :icons)
@@ -475,25 +467,29 @@ defmodule ExMCP.Compliance.IconsTest do
   end
 
   describe "icon structure validation" do
-    test "emoji icon has required type and uri fields" do
+    test "emoji icon has required src field" do
       tools = ToolWithIcons.get_tools()
       [icon] = tools["wrench_tool"].icons
 
-      assert Map.has_key?(icon, :type)
-      assert Map.has_key?(icon, :uri)
-      assert icon.type == "emoji"
+      assert Map.has_key?(icon, :src)
+      refute Map.has_key?(icon, :type)
+      refute Map.has_key?(icon, :uri)
+      assert icon.src == "\u{1F527}"
     end
 
-    test "URI-based icon has type, uri, and mediaType fields" do
+    test "URL-based icon has src and mimeType fields" do
       tools = ToolWithMultipleIcons.get_tools()
-      svg_icon = Enum.find(tools["multi_icon_tool"].icons, &(&1.type == "icon"))
 
-      assert Map.has_key?(svg_icon, :type)
-      assert Map.has_key?(svg_icon, :uri)
-      assert Map.has_key?(svg_icon, :mediaType)
-      assert svg_icon.type == "icon"
-      assert String.starts_with?(svg_icon.uri, "https://")
-      assert svg_icon.mediaType == "image/svg+xml"
+      svg_icon =
+        Enum.find(tools["multi_icon_tool"].icons, &String.starts_with?(&1.src, "https://"))
+
+      assert Map.has_key?(svg_icon, :src)
+      assert Map.has_key?(svg_icon, :mimeType)
+      refute Map.has_key?(svg_icon, :type)
+      refute Map.has_key?(svg_icon, :uri)
+      refute Map.has_key?(svg_icon, :mediaType)
+      assert String.starts_with?(svg_icon.src, "https://")
+      assert svg_icon.mimeType == "image/svg+xml"
     end
 
     test "icons list is always a list when present" do
@@ -505,6 +501,67 @@ defmodule ExMCP.Compliance.IconsTest do
 
       prompts = PromptWithIcons.get_prompts()
       assert is_list(prompts["code_review"].icons)
+    end
+
+    test "icon with sizes field includes size descriptors" do
+      # Sizes field per MCP 2025-11-25 spec: string array like ["48x48", "96x96", "any"]
+      icon = %{
+        src: "https://example.com/icon.png",
+        mimeType: "image/png",
+        sizes: ["48x48", "96x96"]
+      }
+
+      assert icon.src == "https://example.com/icon.png"
+      assert icon.mimeType == "image/png"
+      assert icon.sizes == ["48x48", "96x96"]
+      assert is_list(icon.sizes)
+      assert Enum.all?(icon.sizes, &is_binary/1)
+    end
+
+    test "icon with theme field specifies light or dark theme" do
+      # Theme field per MCP 2025-11-25 spec: "light" | "dark"
+      light_icon = %{
+        src: "https://example.com/icon-light.svg",
+        mimeType: "image/svg+xml",
+        theme: "light"
+      }
+
+      dark_icon = %{
+        src: "https://example.com/icon-dark.svg",
+        mimeType: "image/svg+xml",
+        theme: "dark"
+      }
+
+      assert light_icon.theme == "light"
+      assert dark_icon.theme == "dark"
+      assert light_icon.src == "https://example.com/icon-light.svg"
+      assert dark_icon.src == "https://example.com/icon-dark.svg"
+    end
+
+    test "icon with all optional fields populated" do
+      # Full Icon struct per MCP 2025-11-25 spec
+      icon = %{
+        src: "https://example.com/icon.png",
+        mimeType: "image/png",
+        sizes: ["48x48", "96x96", "any"],
+        theme: "dark"
+      }
+
+      assert icon.src == "https://example.com/icon.png"
+      assert icon.mimeType == "image/png"
+      assert icon.sizes == ["48x48", "96x96", "any"]
+      assert icon.theme == "dark"
+    end
+
+    test "icon with data URI as src" do
+      # Data URIs are valid per MCP 2025-11-25 spec
+      data_uri =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+      icon = %{src: data_uri, mimeType: "image/png"}
+
+      assert String.starts_with?(icon.src, "data:")
+      assert icon.mimeType == "image/png"
     end
   end
 end

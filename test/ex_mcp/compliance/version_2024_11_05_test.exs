@@ -138,20 +138,20 @@ defmodule ExMCP.Compliance.Version20241105Test do
       assert Protocol.method_available?("completion/complete", "2024-11-05")
     end
 
-    test "resources/subscribe is NOT available" do
-      refute Protocol.method_available?("resources/subscribe", "2024-11-05")
+    test "resources/subscribe is available" do
+      assert Protocol.method_available?("resources/subscribe", "2024-11-05")
     end
 
-    test "resources/unsubscribe is NOT available" do
-      refute Protocol.method_available?("resources/unsubscribe", "2024-11-05")
+    test "resources/unsubscribe is available" do
+      assert Protocol.method_available?("resources/unsubscribe", "2024-11-05")
     end
 
-    test "logging/setLevel is NOT available" do
-      refute Protocol.method_available?("logging/setLevel", "2024-11-05")
+    test "logging/setLevel is available" do
+      assert Protocol.method_available?("logging/setLevel", "2024-11-05")
     end
 
-    test "notifications/resources/updated is NOT available" do
-      refute Protocol.method_available?("notifications/resources/updated", "2024-11-05")
+    test "notifications/resources/updated is available" do
+      assert Protocol.method_available?("notifications/resources/updated", "2024-11-05")
     end
 
     test "elicitation/create is NOT available" do
@@ -191,24 +191,24 @@ defmodule ExMCP.Compliance.Version20241105Test do
       end
     end
 
-    test "resource_subscription is NOT available" do
-      refute VersionRegistry.feature_available?("2024-11-05", :resource_subscription)
+    test "resource_subscription is available" do
+      assert VersionRegistry.feature_available?("2024-11-05", :resource_subscription)
     end
 
-    test "prompts_list_changed is NOT available" do
-      refute VersionRegistry.feature_available?("2024-11-05", :prompts_list_changed)
+    test "prompts_list_changed is available" do
+      assert VersionRegistry.feature_available?("2024-11-05", :prompts_list_changed)
     end
 
-    test "resources_list_changed is NOT available" do
-      refute VersionRegistry.feature_available?("2024-11-05", :resources_list_changed)
+    test "resources_list_changed is available" do
+      assert VersionRegistry.feature_available?("2024-11-05", :resources_list_changed)
     end
 
-    test "logging_set_level is NOT available" do
-      refute VersionRegistry.feature_available?("2024-11-05", :logging_set_level)
+    test "logging_set_level is available" do
+      assert VersionRegistry.feature_available?("2024-11-05", :logging_set_level)
     end
 
-    test "completion is NOT available" do
-      refute VersionRegistry.feature_available?("2024-11-05", :completion)
+    test "completion is available" do
+      assert VersionRegistry.feature_available?("2024-11-05", :completion)
     end
 
     test "batch_processing is NOT available" do
@@ -245,22 +245,22 @@ defmodule ExMCP.Compliance.Version20241105Test do
   end
 
   describe "capabilities_for_version" do
-    test "prompts is an empty map (no listChanged)" do
+    test "prompts has listChanged: true" do
       caps = VersionRegistry.capabilities_for_version("2024-11-05")
-      assert caps.prompts == %{}
+      assert caps.prompts == %{listChanged: true}
     end
 
-    test "resources has subscribe: false, listChanged: false" do
+    test "resources has subscribe: true, listChanged: true" do
       caps = VersionRegistry.capabilities_for_version("2024-11-05")
-      assert caps.resources == %{subscribe: false, listChanged: false}
+      assert caps.resources == %{subscribe: true, listChanged: true}
     end
 
-    test "tools is an empty map (no outputSchema)" do
+    test "tools has listChanged: true" do
       caps = VersionRegistry.capabilities_for_version("2024-11-05")
-      assert caps.tools == %{}
+      assert caps.tools == %{listChanged: true}
     end
 
-    test "logging is an empty map (no setLevel)" do
+    test "logging is an empty map (just an object indicating support)" do
       caps = VersionRegistry.capabilities_for_version("2024-11-05")
       assert caps.logging == %{}
     end
@@ -309,12 +309,17 @@ defmodule ExMCP.Compliance.Version20241105Test do
       assert "notifications/cancelled" in format.notification_methods
     end
 
-    test "does NOT have notifications/resources/updated" do
+    test "has notifications/resources/updated" do
       format = VersionRegistry.message_format("2024-11-05")
-      refute "notifications/resources/updated" in format.notification_methods
+      assert "notifications/resources/updated" in format.notification_methods
     end
 
-    test "does NOT have logging/setLevel" do
+    test "has notifications/roots/list_changed" do
+      format = VersionRegistry.message_format("2024-11-05")
+      assert "notifications/roots/list_changed" in format.notification_methods
+    end
+
+    test "does NOT have logging/setLevel in notification_methods (it is a request, not a notification)" do
       format = VersionRegistry.message_format("2024-11-05")
       refute "logging/setLevel" in format.notification_methods
     end
@@ -353,21 +358,18 @@ defmodule ExMCP.Compliance.Version20241105Test do
         "prompts/get",
         "ping",
         "sampling/createMessage",
-        "completion/complete"
+        "completion/complete",
+        # These are all defined in the 2024-11-05 schema
+        "resources/subscribe",
+        "resources/unsubscribe",
+        "logging/setLevel",
+        "notifications/resources/updated"
       ]
 
       for method <- base_methods do
         assert :ok == Protocol.validate_message_version(%{"method" => method}, "2024-11-05"),
                "#{method} should pass validation for 2024-11-05"
       end
-    end
-
-    test "resources/subscribe fails validation for 2024-11-05" do
-      assert {:error, _message} =
-               Protocol.validate_message_version(
-                 %{"method" => "resources/subscribe"},
-                 "2024-11-05"
-               )
     end
 
     test "elicitation/create fails validation for 2024-11-05" do
@@ -385,10 +387,6 @@ defmodule ExMCP.Compliance.Version20241105Test do
 
     test "all version-gated methods fail validation for 2024-11-05" do
       gated_methods = [
-        "resources/subscribe",
-        "resources/unsubscribe",
-        "logging/setLevel",
-        "notifications/resources/updated",
         "elicitation/create",
         "tasks/get",
         "tasks/list",

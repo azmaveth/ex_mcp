@@ -27,10 +27,13 @@ defmodule ExMCP.Tasks.Task do
   @type t :: %__MODULE__{
           id: String.t(),
           state: state(),
+          status_message: String.t() | nil,
           tool_name: String.t(),
           arguments: map(),
           created_at: String.t(),
+          last_updated_at: String.t() | nil,
           ttl: integer() | nil,
+          poll_interval: integer() | nil,
           result: map() | nil,
           metadata: map()
         }
@@ -42,7 +45,10 @@ defmodule ExMCP.Tasks.Task do
     :id,
     :tool_name,
     :ttl,
+    :poll_interval,
     :result,
+    :status_message,
+    :last_updated_at,
     state: :working,
     arguments: %{},
     created_at: nil,
@@ -66,13 +72,18 @@ defmodule ExMCP.Tasks.Task do
   """
   @spec new(String.t(), map(), keyword()) :: t()
   def new(tool_name, arguments \\ %{}, opts \\ []) do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
     %__MODULE__{
       id: Keyword.get(opts, :id, generate_id()),
       state: :working,
       tool_name: tool_name,
       arguments: arguments,
-      created_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+      created_at: now,
+      last_updated_at: now,
       ttl: Keyword.get(opts, :ttl),
+      poll_interval: Keyword.get(opts, :poll_interval),
+      status_message: Keyword.get(opts, :status_message),
       metadata: Keyword.get(opts, :metadata, %{})
     }
   end
@@ -86,7 +97,8 @@ defmodule ExMCP.Tasks.Task do
   @spec transition(t(), state()) :: {:ok, t()} | {:error, String.t()}
   def transition(%__MODULE__{state: current} = task, new_state) do
     if valid_transition?(current, new_state) do
-      {:ok, %{task | state: new_state}}
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+      {:ok, %{task | state: new_state, last_updated_at: now}}
     else
       {:error, "Invalid transition from #{current} to #{new_state}"}
     end
@@ -149,15 +161,18 @@ defmodule ExMCP.Tasks.Task do
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = task) do
     base = %{
-      "id" => task.id,
-      "state" => Atom.to_string(task.state),
+      "taskId" => task.id,
+      "status" => Atom.to_string(task.state),
       "toolName" => task.tool_name
     }
 
     base
     |> maybe_put("arguments", task.arguments, %{})
     |> maybe_put("createdAt", task.created_at)
+    |> maybe_put("lastUpdatedAt", task.last_updated_at)
     |> maybe_put("ttl", task.ttl)
+    |> maybe_put("pollInterval", task.poll_interval)
+    |> maybe_put("statusMessage", task.status_message)
     |> maybe_put("result", task.result)
     |> maybe_put("metadata", task.metadata, %{})
   end

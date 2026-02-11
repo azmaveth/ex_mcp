@@ -301,23 +301,25 @@ defmodule ExMCP.Compliance.Version20250618Test do
       assert caps.resources.listChanged == true
     end
 
-    test "tools has outputSchema: true (NEW - not in 2025-03-26)" do
-      caps_0618 = VersionRegistry.capabilities_for_version("2025-06-18")
-      assert caps_0618.tools.outputSchema == true
-
-      caps_0326 = VersionRegistry.capabilities_for_version("2025-03-26")
-      refute Map.has_key?(caps_0326.tools, :outputSchema)
+    test "tools has listChanged: true (outputSchema goes on individual Tool definitions, not capabilities)" do
+      caps = VersionRegistry.capabilities_for_version("2025-06-18")
+      assert caps.tools == %{listChanged: true}
+      assert caps.tools.listChanged == true
+      # outputSchema is NOT a server capability field; it belongs on individual Tool definitions
+      refute Map.has_key?(caps.tools, :outputSchema)
     end
 
-    test "logging has setLevel: true" do
+    test "logging is an empty object (the spec says logging?: object)" do
       caps = VersionRegistry.capabilities_for_version("2025-06-18")
-      assert caps.logging.setLevel == true
+      assert caps.logging == %{}
     end
 
-    test "completion has hasArguments: true and values: true" do
+    test "completions (with 's') is present as an empty object" do
       caps = VersionRegistry.capabilities_for_version("2025-06-18")
-      assert caps.completion.hasArguments == true
-      assert caps.completion.values == true
+      assert Map.has_key?(caps, :completions)
+      assert caps.completions == %{}
+      # The key is "completions" not "completion"
+      refute Map.has_key?(caps, :completion)
     end
 
     test "experimental.elicitation is true (NEW)" do
@@ -365,14 +367,28 @@ defmodule ExMCP.Compliance.Version20250618Test do
       assert format.supports_cancellation == true
     end
 
-    test "notification_methods includes all from 2025-03-26" do
+    test "notification_methods includes all notifications from 2025-03-26 (excluding logging/setLevel which is a request)" do
       format = VersionRegistry.message_format("2025-06-18")
       format_0326 = VersionRegistry.message_format("2025-03-26")
 
-      for method <- format_0326.notification_methods do
+      # logging/setLevel is a REQUEST method, not a notification, so exclude it from comparison
+      notifications_only =
+        Enum.reject(format_0326.notification_methods, &(&1 == "logging/setLevel"))
+
+      for method <- notifications_only do
         assert method in format.notification_methods,
                "#{method} from 2025-03-26 should be in 2025-06-18 notification_methods"
       end
+    end
+
+    test "includes notifications/roots/list_changed" do
+      format = VersionRegistry.message_format("2025-06-18")
+      assert "notifications/roots/list_changed" in format.notification_methods
+    end
+
+    test "does NOT include logging/setLevel in notification_methods (it is a request, not a notification)" do
+      format = VersionRegistry.message_format("2025-06-18")
+      refute "logging/setLevel" in format.notification_methods
     end
 
     test "does NOT include notifications/tasks/status" do

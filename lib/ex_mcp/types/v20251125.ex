@@ -38,9 +38,10 @@ defmodule ExMCP.Types.V20251125 do
   Icon metadata for tools, resources, prompts, and server info.
   """
   @type icon :: %{
-          required(:type) => String.t(),
-          required(:uri) => String.t(),
-          optional(:mediaType) => String.t()
+          required(:src) => String.t(),
+          optional(:mimeType) => String.t(),
+          optional(:sizes) => String.t(),
+          optional(:theme) => String.t()
         }
 
   # --- Implementation ---
@@ -52,7 +53,9 @@ defmodule ExMCP.Types.V20251125 do
           required(:name) => String.t(),
           required(:version) => String.t(),
           optional(:title) => String.t(),
-          optional(:description) => String.t()
+          optional(:description) => String.t(),
+          optional(:websiteUrl) => String.t(),
+          optional(:icons) => [icon()]
         }
 
   # --- Capabilities ---
@@ -87,9 +90,7 @@ defmodule ExMCP.Types.V20251125 do
             optional(:listChanged) => boolean(),
             optional(:outputSchema) => boolean()
           },
-          optional(:logging) => %{
-            optional(:setLevel) => boolean()
-          },
+          optional(:logging) => %{},
           optional(:completions) => %{},
           optional(:tasks) => %{},
           optional(:_meta) => meta()
@@ -179,7 +180,7 @@ defmodule ExMCP.Types.V20251125 do
   """
   @type call_tool_result :: %{
           optional(:content) => [ExMCP.Types.content()],
-          optional(:structuredOutput) => any(),
+          optional(:structuredContent) => any(),
           optional(:resourceLinks) => [ExMCP.Types.V20250618.resource_link()],
           optional(:isError) => boolean(),
           optional(:_meta) => meta()
@@ -196,14 +197,13 @@ defmodule ExMCP.Types.V20251125 do
   Task struct representing an async operation.
   """
   @type task :: %{
-          required(:id) => String.t(),
-          required(:state) => task_state(),
-          optional(:toolName) => String.t(),
-          optional(:arguments) => map(),
-          optional(:createdAt) => String.t(),
-          optional(:ttl) => integer(),
-          optional(:result) => call_tool_result(),
-          optional(:metadata) => map()
+          required(:taskId) => String.t(),
+          required(:status) => task_state(),
+          optional(:statusMessage) => String.t(),
+          required(:createdAt) => String.t(),
+          required(:lastUpdatedAt) => String.t(),
+          required(:ttl) => integer(),
+          optional(:pollInterval) => integer()
         }
 
   @typedoc """
@@ -224,6 +224,8 @@ defmodule ExMCP.Types.V20251125 do
   @type url_elicit_request :: %{
           required(:message) => String.t(),
           required(:url) => String.t(),
+          required(:mode) => String.t(),
+          required(:elicitationId) => String.t(),
           optional(:_meta) => meta()
         }
 
@@ -233,7 +235,7 @@ defmodule ExMCP.Types.V20251125 do
   Tool choice for sampling/createMessage.
   """
   @type tool_choice :: %{
-          required(:type) => String.t()
+          optional(:mode) => String.t()
         }
 
   @typedoc """
@@ -251,7 +253,7 @@ defmodule ExMCP.Types.V20251125 do
   """
   @type tool_result_content :: %{
           required(:type) => String.t(),
-          required(:tool_use_id) => String.t(),
+          required(:toolUseId) => String.t(),
           required(:content) => [ExMCP.Types.content()],
           optional(:isError) => boolean()
         }

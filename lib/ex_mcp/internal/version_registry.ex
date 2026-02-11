@@ -55,9 +55,11 @@ defmodule ExMCP.Internal.VersionRegistry do
   def capabilities_for_version("2024-11-05") do
     %{
       # Base capabilities available in 2024-11-05
-      prompts: %{},
-      resources: %{subscribe: false, listChanged: false},
-      tools: %{},
+      # The 2024-11-05 schema defines subscribe and listChanged for resources,
+      # listChanged for prompts and tools, and logging as an object capability.
+      prompts: %{listChanged: true},
+      resources: %{subscribe: true, listChanged: true},
+      tools: %{listChanged: true},
       logging: %{},
       # No experimental features
       experimental: %{}
@@ -70,12 +72,10 @@ defmodule ExMCP.Internal.VersionRegistry do
       prompts: %{listChanged: true},
       resources: %{subscribe: true, listChanged: true},
       tools: %{},
-      logging: %{setLevel: true},
-      completion: %{
-        # Indicates support for argument completion
-        hasArguments: true,
-        values: true
-      },
+      # logging is a presence indicator per spec (logging?: object)
+      logging: %{},
+      # completions (with "s") is a presence indicator per spec (completions?: object)
+      completions: %{},
       # Batch processing available in 2025-03-26
       experimental: %{batchProcessing: true}
     }
@@ -86,13 +86,12 @@ defmodule ExMCP.Internal.VersionRegistry do
       # Enhanced capabilities in 2025-06-18
       prompts: %{listChanged: true},
       resources: %{subscribe: true, listChanged: true},
-      tools: %{outputSchema: true},
-      logging: %{setLevel: true},
-      completion: %{
-        # Indicates support for argument completion
-        hasArguments: true,
-        values: true
-      },
+      # tools capability has listChanged; outputSchema goes on individual Tool definitions
+      tools: %{listChanged: true},
+      # logging is an empty object per the spec (logging?: object)
+      logging: %{},
+      # The spec uses "completions" (with "s") as the capability key
+      completions: %{},
       # 2025-06-18 features (no batch processing)
       experimental: %{
         elicitation: true,
@@ -108,12 +107,12 @@ defmodule ExMCP.Internal.VersionRegistry do
       # Enhanced capabilities in 2025-11-25
       prompts: %{listChanged: true},
       resources: %{subscribe: true, listChanged: true},
-      tools: %{outputSchema: true, listChanged: true},
-      logging: %{setLevel: true},
-      completion: %{
-        hasArguments: true,
-        values: true
-      },
+      # outputSchema is per-tool definition, not a server capability
+      tools: %{listChanged: true},
+      # logging capability is an empty object per MCP spec
+      logging: %{},
+      # MCP spec uses "completions" (plural) for server capabilities
+      completions: %{},
       # Tasks capability (new in 2025-11-25)
       tasks: %{},
       # 2025-11-25 features
@@ -147,16 +146,26 @@ defmodule ExMCP.Internal.VersionRegistry do
   end
 
   # Helper functions for feature categorization
-  defp base_features, do: [:prompts, :resources, :tools, :logging]
-
-  defp v2025_features do
+  # The 2024-11-05 schema defines resource subscriptions, listChanged notifications
+  # for prompts/resources, logging/setLevel, and completion/complete - so these are
+  # all base features available in every version.
+  defp base_features do
     [
+      :prompts,
+      :resources,
+      :tools,
+      :logging,
       :resource_subscription,
       :prompts_list_changed,
       :resources_list_changed,
       :logging_set_level,
       :completion
     ]
+  end
+
+  # No features are gated to 2025-03-26 exclusively (batch is handled separately)
+  defp v2025_features do
+    []
   end
 
   defp batch_features, do: [:batch_processing]
@@ -182,7 +191,9 @@ defmodule ExMCP.Internal.VersionRegistry do
         "notifications/prompts/list_changed",
         "notifications/progress",
         "notifications/message",
-        "notifications/cancelled"
+        "notifications/cancelled",
+        "notifications/resources/updated",
+        "notifications/roots/list_changed"
       ]
     }
   end
@@ -202,7 +213,7 @@ defmodule ExMCP.Internal.VersionRegistry do
         "notifications/message",
         "notifications/cancelled",
         "notifications/resources/updated",
-        "logging/setLevel"
+        "notifications/roots/list_changed"
       ]
     }
   end
@@ -222,7 +233,7 @@ defmodule ExMCP.Internal.VersionRegistry do
         "notifications/message",
         "notifications/cancelled",
         "notifications/resources/updated",
-        "logging/setLevel"
+        "notifications/roots/list_changed"
       ]
     }
   end
@@ -242,9 +253,9 @@ defmodule ExMCP.Internal.VersionRegistry do
         "notifications/message",
         "notifications/cancelled",
         "notifications/resources/updated",
+        "notifications/roots/list_changed",
         "notifications/tasks/status",
-        "notifications/elicitation/complete",
-        "logging/setLevel"
+        "notifications/elicitation/complete"
       ],
       request_methods: [
         "tasks/get",

@@ -365,8 +365,8 @@ defmodule ExMCP.Tasks.TaskTest do
       task = Task.new("my-tool", %{}, id: "test-123")
       map = Task.to_map(task)
 
-      assert map["id"] == "test-123"
-      assert map["state"] == "working"
+      assert map["taskId"] == "test-123"
+      assert map["status"] == "working"
       assert map["toolName"] == "my-tool"
     end
 
@@ -434,29 +434,75 @@ defmodule ExMCP.Tasks.TaskTest do
       refute Map.has_key?(map, "metadata")
     end
 
-    test "serializes state as string" do
+    test "serializes state as status string" do
       task = Task.new("my-tool")
       {:ok, task} = Task.transition(task, :input_required)
       map = Task.to_map(task)
 
-      assert map["state"] == "input_required"
+      assert map["status"] == "input_required"
     end
 
     test "maps all fields for a fully populated task" do
       task =
-        Task.new("my-tool", %{"a" => 1}, id: "full-task", ttl: 60_000, metadata: %{"m" => true})
+        Task.new("my-tool", %{"a" => 1},
+          id: "full-task",
+          ttl: 60_000,
+          metadata: %{"m" => true},
+          status_message: "Almost done",
+          poll_interval: 5000
+        )
 
       {:ok, task} = Task.complete(task, %{"output" => "success"})
       map = Task.to_map(task)
 
-      assert map["id"] == "full-task"
-      assert map["state"] == "completed"
+      assert map["taskId"] == "full-task"
+      assert map["status"] == "completed"
       assert map["toolName"] == "my-tool"
       assert map["arguments"] == %{"a" => 1}
       assert map["ttl"] == 60_000
       assert map["result"] == %{"output" => "success"}
       assert map["metadata"] == %{"m" => true}
       assert is_binary(map["createdAt"])
+      assert is_binary(map["lastUpdatedAt"])
+      assert map["statusMessage"] == "Almost done"
+      assert map["pollInterval"] == 5000
+    end
+
+    test "to_map includes lastUpdatedAt" do
+      task = Task.new("my-tool")
+      map = Task.to_map(task)
+
+      assert is_binary(map["lastUpdatedAt"])
+      # lastUpdatedAt should be a valid ISO 8601 timestamp
+      assert {:ok, _datetime, _offset} = DateTime.from_iso8601(map["lastUpdatedAt"])
+    end
+
+    test "to_map supports statusMessage" do
+      task = Task.new("my-tool", %{}, status_message: "Processing step 2 of 5")
+      map = Task.to_map(task)
+
+      assert map["statusMessage"] == "Processing step 2 of 5"
+    end
+
+    test "to_map omits statusMessage when nil" do
+      task = Task.new("my-tool")
+      map = Task.to_map(task)
+
+      refute Map.has_key?(map, "statusMessage")
+    end
+
+    test "to_map supports pollInterval" do
+      task = Task.new("my-tool", %{}, poll_interval: 2000)
+      map = Task.to_map(task)
+
+      assert map["pollInterval"] == 2000
+    end
+
+    test "to_map omits pollInterval when nil" do
+      task = Task.new("my-tool")
+      map = Task.to_map(task)
+
+      refute Map.has_key?(map, "pollInterval")
     end
   end
 

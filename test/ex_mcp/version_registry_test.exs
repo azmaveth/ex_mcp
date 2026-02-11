@@ -36,10 +36,10 @@ defmodule ExMCP.VersionRegistryTest do
     end
 
     test "returns version-specific capabilities" do
-      # 2024-11-05 capabilities
+      # 2024-11-05 capabilities - subscribe and listChanged are defined in the spec
       caps_2024 = VersionRegistry.capabilities_for_version("2024-11-05")
-      refute caps_2024.resources.subscribe
-      refute caps_2024.resources.listChanged
+      assert caps_2024.resources.subscribe
+      assert caps_2024.resources.listChanged
       assert caps_2024.experimental == %{}
 
       # 2025-03-26 capabilities
@@ -47,19 +47,19 @@ defmodule ExMCP.VersionRegistryTest do
       assert caps_2025.resources.subscribe
       assert caps_2025.resources.listChanged
       assert caps_2025.prompts.listChanged
-      assert caps_2025.logging.setLevel
+      # logging is a presence indicator (empty object) per the spec
+      assert caps_2025.logging == %{}
       assert caps_2025.experimental.batchProcessing
 
       # 2025-06-18 capabilities
       caps_2025_06 = VersionRegistry.capabilities_for_version("2025-06-18")
-      assert caps_2025_06.tools.outputSchema
+      assert caps_2025_06.tools.listChanged
       assert caps_2025_06.experimental.elicitation
       assert caps_2025_06.experimental.structuredContent
       assert caps_2025_06.experimental.toolOutputSchema
 
       # 2025-11-25 capabilities
       caps_2025_11 = VersionRegistry.capabilities_for_version("2025-11-25")
-      assert caps_2025_11.tools.outputSchema
       assert caps_2025_11.tools.listChanged
       assert Map.has_key?(caps_2025_11, :tasks)
     end
@@ -70,12 +70,13 @@ defmodule ExMCP.VersionRegistryTest do
       assert VersionRegistry.feature_available?("2025-06-18", :resources)
       assert VersionRegistry.feature_available?("2025-06-18", :tools)
 
-      # 2025-03-26 features
+      # resource_subscription, prompts_list_changed, logging_set_level are base features
+      # available in all versions (defined in 2024-11-05 schema)
       assert VersionRegistry.feature_available?("2025-03-26", :resource_subscription)
       assert VersionRegistry.feature_available?("2025-03-26", :prompts_list_changed)
       assert VersionRegistry.feature_available?("2025-03-26", :logging_set_level)
       assert VersionRegistry.feature_available?("2025-03-26", :batch_processing)
-      refute VersionRegistry.feature_available?("2024-11-05", :resource_subscription)
+      assert VersionRegistry.feature_available?("2024-11-05", :resource_subscription)
 
       # 2025-06-18 features
       assert VersionRegistry.feature_available?("2025-06-18", :elicitation)
@@ -129,16 +130,17 @@ defmodule ExMCP.VersionRegistryTest do
       refute Protocol.method_available?("elicitation/create", "2025-03-26")
       refute Protocol.method_available?("elicitation/create", "2024-11-05")
 
-      # 2025-03-26, 2025-06-18, and 2025-11-25
+      # resources/subscribe and logging/setLevel are defined in the 2024-11-05 schema
+      # and are available in all versions
       assert Protocol.method_available?("resources/subscribe", "2025-03-26")
       assert Protocol.method_available?("resources/subscribe", "2025-06-18")
       assert Protocol.method_available?("resources/subscribe", "2025-11-25")
-      refute Protocol.method_available?("resources/subscribe", "2024-11-05")
+      assert Protocol.method_available?("resources/subscribe", "2024-11-05")
 
       assert Protocol.method_available?("logging/setLevel", "2025-03-26")
       assert Protocol.method_available?("logging/setLevel", "2025-06-18")
       assert Protocol.method_available?("logging/setLevel", "2025-11-25")
-      refute Protocol.method_available?("logging/setLevel", "2024-11-05")
+      assert Protocol.method_available?("logging/setLevel", "2024-11-05")
 
       # 2025-11-25 only methods
       assert Protocol.method_available?("tasks/get", "2025-11-25")
@@ -205,14 +207,12 @@ defmodule ExMCP.VersionRegistryTest do
                  "2025-06-18"
                )
 
-      # Should fail for older version
-      assert {:error, msg2} =
+      # resources/subscribe is available in 2024-11-05 (defined in the spec)
+      assert :ok =
                Protocol.validate_message_version(
                  %{"method" => "resources/subscribe"},
                  "2024-11-05"
                )
-
-      assert msg2 =~ "not available"
     end
 
     test "encodes initialize with preferred version" do

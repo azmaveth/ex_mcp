@@ -4,7 +4,7 @@ defmodule ExMCP.Compliance.Version20250326Test do
 
   Validates version negotiation, capability advertisement, method availability,
   feature registry, and backward compatibility for the 2025-03-26 specification
-  which introduces subscriptions, batch processing, completion, and logging/setLevel.
+  which introduces batch processing and completions support.
   """
   use ExUnit.Case, async: true
 
@@ -154,24 +154,20 @@ defmodule ExMCP.Compliance.Version20250326Test do
       assert Protocol.method_available?("completion/complete", "2025-03-26")
     end
 
-    test "resources/subscribe is NEWLY available (not in 2024-11-05)" do
+    test "resources/subscribe is available" do
       assert Protocol.method_available?("resources/subscribe", "2025-03-26")
-      refute Protocol.method_available?("resources/subscribe", "2024-11-05")
     end
 
-    test "resources/unsubscribe is NEWLY available (not in 2024-11-05)" do
+    test "resources/unsubscribe is available" do
       assert Protocol.method_available?("resources/unsubscribe", "2025-03-26")
-      refute Protocol.method_available?("resources/unsubscribe", "2024-11-05")
     end
 
-    test "logging/setLevel is NEWLY available (not in 2024-11-05)" do
+    test "logging/setLevel is available" do
       assert Protocol.method_available?("logging/setLevel", "2025-03-26")
-      refute Protocol.method_available?("logging/setLevel", "2024-11-05")
     end
 
-    test "notifications/resources/updated is NEWLY available (not in 2024-11-05)" do
+    test "notifications/resources/updated is available" do
       assert Protocol.method_available?("notifications/resources/updated", "2025-03-26")
-      refute Protocol.method_available?("notifications/resources/updated", "2024-11-05")
     end
 
     test "elicitation/create is NOT available" do
@@ -274,15 +270,15 @@ defmodule ExMCP.Compliance.Version20250326Test do
       assert caps.tools == %{}
     end
 
-    test "logging includes setLevel: true" do
+    test "logging is an empty map (presence indicator per spec)" do
       caps = VersionRegistry.capabilities_for_version("2025-03-26")
-      assert caps.logging == %{setLevel: true}
+      assert caps.logging == %{}
     end
 
-    test "completion includes hasArguments and values" do
+    test "completions is an empty map (presence indicator per spec)" do
       caps = VersionRegistry.capabilities_for_version("2025-03-26")
-      assert caps.completion.hasArguments == true
-      assert caps.completion.values == true
+      assert Map.has_key?(caps, :completions)
+      assert caps.completions == %{}
     end
 
     test "experimental includes batchProcessing: true" do
@@ -345,9 +341,14 @@ defmodule ExMCP.Compliance.Version20250326Test do
       assert "notifications/resources/updated" in format.notification_methods
     end
 
-    test "notification_methods includes logging/setLevel (new)" do
+    test "notification_methods includes notifications/roots/list_changed" do
       format = VersionRegistry.message_format("2025-03-26")
-      assert "logging/setLevel" in format.notification_methods
+      assert "notifications/roots/list_changed" in format.notification_methods
+    end
+
+    test "logging/setLevel is a request method, NOT a notification method" do
+      format = VersionRegistry.message_format("2025-03-26")
+      refute "logging/setLevel" in format.notification_methods
     end
 
     test "notification_methods includes all base methods" do

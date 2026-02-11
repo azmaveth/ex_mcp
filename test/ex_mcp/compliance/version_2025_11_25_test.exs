@@ -339,11 +339,16 @@ defmodule ExMCP.Compliance.Version20251125Test do
       assert caps.resources.subscribe == true
       assert caps.resources.listChanged == true
       assert is_map(caps.tools)
-      assert caps.tools.outputSchema == true
       assert caps.tools.listChanged == true
+
+      refute Map.has_key?(caps.tools, :outputSchema),
+             "outputSchema belongs on individual Tool definitions, not ServerCapabilities.tools"
+
       assert is_map(caps.logging)
-      assert caps.logging.setLevel == true
-      assert is_map(caps.completion)
+      assert caps.logging == %{}, "logging capability should be an empty object per MCP spec"
+
+      assert is_map(caps.completions),
+             "MCP spec uses 'completions' (plural) for server capabilities"
 
       # Tasks capability (new in 2025-11-25)
       assert is_map(caps.tasks)
@@ -380,7 +385,9 @@ defmodule ExMCP.Compliance.Version20251125Test do
       assert "notifications/message" in format.notification_methods
       assert "notifications/cancelled" in format.notification_methods
       assert "notifications/resources/updated" in format.notification_methods
-      assert "logging/setLevel" in format.notification_methods
+      assert "notifications/roots/list_changed" in format.notification_methods
+      # logging/setLevel is a request method, not a notification
+      refute "logging/setLevel" in format.notification_methods
     end
 
     test "validate_message_version accepts all new 2025-11-25 methods" do

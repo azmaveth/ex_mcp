@@ -24,6 +24,8 @@ defmodule ExMCP.Compliance.UrlElicitationTest do
       assert is_integer(encoded["id"])
       assert encoded["params"]["message"] == message
       assert encoded["params"]["url"] == url
+      assert encoded["params"]["mode"] == "url"
+      assert is_binary(encoded["params"]["elicitationId"])
     end
 
     test "does not include requestedSchema field" do
@@ -32,10 +34,22 @@ defmodule ExMCP.Compliance.UrlElicitationTest do
       refute Map.has_key?(encoded["params"], "requestedSchema")
     end
 
-    test "includes only message and url in params" do
+    test "includes message, url, mode, and elicitationId in params" do
       encoded = Protocol.encode_elicitation_create_url("msg", "https://example.com")
 
-      assert Map.keys(encoded["params"]) |> Enum.sort() == ["message", "url"]
+      assert Map.keys(encoded["params"]) |> Enum.sort() == [
+               "elicitationId",
+               "message",
+               "mode",
+               "url"
+             ]
+    end
+
+    test "mode is always 'url' not 'form'" do
+      encoded = Protocol.encode_elicitation_create_url("msg", "https://example.com")
+
+      assert encoded["params"]["mode"] == "url"
+      refute encoded["params"]["mode"] == "form"
     end
 
     test "accepts optional opts keyword list" do

@@ -65,7 +65,7 @@ defmodule ExMCP.Compliance.TasksTest do
       assert notification["jsonrpc"] == "2.0"
       assert notification["method"] == "notifications/tasks/status"
       assert notification["params"]["taskId"] == "task-123"
-      assert notification["params"]["state"] == "working"
+      assert notification["params"]["status"] == "working"
       assert notification["params"]["metadata"] == %{"progress" => 50}
       # Notifications do not have an id field
       refute Map.has_key?(notification, "id")
@@ -77,7 +77,7 @@ defmodule ExMCP.Compliance.TasksTest do
       assert notification["jsonrpc"] == "2.0"
       assert notification["method"] == "notifications/tasks/status"
       assert notification["params"]["taskId"] == "task-456"
-      assert notification["params"]["state"] == "completed"
+      assert notification["params"]["status"] == "completed"
       refute Map.has_key?(notification["params"], "metadata")
       refute Map.has_key?(notification, "id")
     end
@@ -86,7 +86,7 @@ defmodule ExMCP.Compliance.TasksTest do
       notification = Protocol.encode_task_status_notification("task-789", "failed", nil)
 
       assert notification["params"]["taskId"] == "task-789"
-      assert notification["params"]["state"] == "failed"
+      assert notification["params"]["status"] == "failed"
       refute Map.has_key?(notification["params"], "metadata")
     end
 

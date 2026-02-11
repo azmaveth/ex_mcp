@@ -186,19 +186,19 @@ defmodule ExMCP.ToolCallingSamplingTest do
     end
 
     test "rejects tool_result missing required fields" do
-      # Missing tool_use_id
+      # Missing toolUseId
       assert {:error, _} = Content.validate(%{type: "tool_result", content: []})
       # Missing content
-      assert {:error, _} = Content.validate(%{type: "tool_result", tool_use_id: "x"})
+      assert {:error, _} = Content.validate(%{type: "tool_result", toolUseId: "x"})
     end
 
-    test "rejects tool_result with non-string tool_use_id" do
-      assert {:error, _} = Content.validate(%{type: "tool_result", tool_use_id: 123, content: []})
+    test "rejects tool_result with non-string toolUseId" do
+      assert {:error, _} = Content.validate(%{type: "tool_result", toolUseId: 123, content: []})
     end
 
     test "rejects tool_result with non-list content" do
       assert {:error, _} =
-               Content.validate(%{type: "tool_result", tool_use_id: "x", content: "bad"})
+               Content.validate(%{type: "tool_result", toolUseId: "x", content: "bad"})
     end
   end
 

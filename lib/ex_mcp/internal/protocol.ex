@@ -523,7 +523,9 @@ defmodule ExMCP.Internal.Protocol do
       "method" => "elicitation/create",
       "params" => %{
         "message" => message,
-        "url" => url
+        "url" => url,
+        "mode" => "url",
+        "elicitationId" => "elicit-#{generate_id()}"
       },
       "id" => generate_id()
     }
@@ -602,10 +604,10 @@ defmodule ExMCP.Internal.Protocol do
   Encodes a task status notification.
   """
   @spec encode_task_status_notification(String.t(), String.t(), map() | nil) :: map()
-  def encode_task_status_notification(task_id, state, metadata \\ nil) do
+  def encode_task_status_notification(task_id, status, metadata \\ nil) do
     params = %{
       "taskId" => task_id,
-      "state" => state
+      "status" => status
     }
 
     params = if metadata, do: Map.put(params, "metadata", metadata), else: params
@@ -709,12 +711,10 @@ defmodule ExMCP.Internal.Protocol do
   Checks if a method is available in the given protocol version.
   """
   # Methods gated by minimum version for availability checks
-  @methods_v20250326_plus MapSet.new([
-                            "resources/subscribe",
-                            "resources/unsubscribe",
-                            "logging/setLevel",
-                            "notifications/resources/updated"
-                          ])
+  # Note: resources/subscribe, resources/unsubscribe, logging/setLevel,
+  # and notifications/resources/updated are all defined in the 2024-11-05
+  # schema and are NOT gated to later versions.
+  @methods_v20250326_plus MapSet.new([])
   @methods_v20250618_plus MapSet.new(["elicitation/create"])
   @methods_v20251125_only MapSet.new([
                             "tasks/get",
