@@ -1,0 +1,408 @@
+defmodule ExMCP.Compliance.Version20241105Test do
+  @moduledoc """
+  Tests for MCP protocol version 2024-11-05 compliance.
+
+  Validates version negotiation, capability advertisement, method availability,
+  feature registry, and message format for the 2024-11-05 specification
+  which is the initial stable (baseline) version of the protocol.
+  """
+  use ExUnit.Case, async: true
+
+  @moduletag :compliance
+
+  alias ExMCP.Internal.{Protocol, VersionRegistry}
+  alias ExMCP.Protocol.VersionNegotiator
+
+  describe "version support" do
+    test "2024-11-05 is a supported version in VersionRegistry" do
+      assert VersionRegistry.supported?("2024-11-05")
+    end
+
+    test "2024-11-05 is a supported version in VersionNegotiator" do
+      assert VersionNegotiator.supported?("2024-11-05")
+    end
+
+    test "2024-11-05 is NOT the latest version in VersionRegistry" do
+      refute VersionRegistry.latest_version() == "2024-11-05"
+    end
+
+    test "2024-11-05 is NOT the latest version in VersionNegotiator" do
+      refute VersionNegotiator.latest_version() == "2024-11-05"
+    end
+
+    test "2024-11-05 appears in the list of supported versions" do
+      assert "2024-11-05" in VersionRegistry.supported_versions()
+      assert "2024-11-05" in VersionNegotiator.supported_versions()
+    end
+  end
+
+  describe "version negotiation" do
+    test "server negotiates 2024-11-05 when it is the only offered version" do
+      assert {:ok, "2024-11-05"} = VersionNegotiator.negotiate(["2024-11-05"])
+    end
+
+    test "when client offers all versions, server picks latest (NOT 2024-11-05)" do
+      {:ok, negotiated} =
+        VersionNegotiator.negotiate([
+          "2024-11-05",
+          "2025-03-26",
+          "2025-06-18",
+          "2025-11-25"
+        ])
+
+      refute negotiated == "2024-11-05"
+      assert negotiated == VersionNegotiator.latest_version()
+    end
+
+    test "when client offers only 2024-11-05, server accepts it" do
+      assert {:ok, "2024-11-05"} = VersionNegotiator.negotiate(["2024-11-05"])
+    end
+
+    test "VersionRegistry negotiate_version works for 2024-11-05" do
+      server_versions = VersionRegistry.supported_versions()
+
+      assert {:ok, "2024-11-05"} =
+               VersionRegistry.negotiate_version("2024-11-05", server_versions)
+    end
+  end
+
+  describe "build_capabilities for 2024-11-05" do
+    test "returns protocolVersion set to 2024-11-05" do
+      caps = VersionNegotiator.build_capabilities("2024-11-05")
+      assert caps.protocolVersion == "2024-11-05"
+    end
+
+    test "returns serverInfo with name and version" do
+      caps = VersionNegotiator.build_capabilities("2024-11-05")
+      assert is_map(caps.serverInfo)
+      assert caps.serverInfo.name == "ExMCP"
+      assert is_binary(caps.serverInfo.version)
+    end
+
+    test "capabilities include experimental.batchRequests true" do
+      caps = VersionNegotiator.build_capabilities("2024-11-05")
+      assert caps.capabilities.experimental.batchRequests == true
+    end
+
+    test "no advanced experimental features like protocolVersionHeader" do
+      caps = VersionNegotiator.build_capabilities("2024-11-05")
+      experimental = caps.capabilities.experimental
+
+      refute Map.has_key?(experimental, :protocolVersionHeader)
+      refute Map.has_key?(experimental, :structuredOutput)
+      refute Map.has_key?(experimental, :oauth2)
+      refute Map.has_key?(experimental, :icons)
+      refute Map.has_key?(experimental, :urlElicitation)
+      refute Map.has_key?(experimental, :toolCallingInSampling)
+    end
+  end
+
+  describe "method availability - base methods" do
+    test "initialize is available" do
+      assert Protocol.method_available?("initialize", "2024-11-05")
+    end
+
+    test "tools/list is available" do
+      assert Protocol.method_available?("tools/list", "2024-11-05")
+    end
+
+    test "tools/call is available" do
+      assert Protocol.method_available?("tools/call", "2024-11-05")
+    end
+
+    test "resources/list is available" do
+      assert Protocol.method_available?("resources/list", "2024-11-05")
+    end
+
+    test "resources/read is available" do
+      assert Protocol.method_available?("resources/read", "2024-11-05")
+    end
+
+    test "prompts/list is available" do
+      assert Protocol.method_available?("prompts/list", "2024-11-05")
+    end
+
+    test "prompts/get is available" do
+      assert Protocol.method_available?("prompts/get", "2024-11-05")
+    end
+
+    test "ping is available" do
+      assert Protocol.method_available?("ping", "2024-11-05")
+    end
+
+    test "sampling/createMessage is available" do
+      assert Protocol.method_available?("sampling/createMessage", "2024-11-05")
+    end
+
+    test "completion/complete is available" do
+      assert Protocol.method_available?("completion/complete", "2024-11-05")
+    end
+
+    test "resources/subscribe is NOT available" do
+      refute Protocol.method_available?("resources/subscribe", "2024-11-05")
+    end
+
+    test "resources/unsubscribe is NOT available" do
+      refute Protocol.method_available?("resources/unsubscribe", "2024-11-05")
+    end
+
+    test "logging/setLevel is NOT available" do
+      refute Protocol.method_available?("logging/setLevel", "2024-11-05")
+    end
+
+    test "notifications/resources/updated is NOT available" do
+      refute Protocol.method_available?("notifications/resources/updated", "2024-11-05")
+    end
+
+    test "elicitation/create is NOT available" do
+      refute Protocol.method_available?("elicitation/create", "2024-11-05")
+    end
+
+    test "tasks/get is NOT available" do
+      refute Protocol.method_available?("tasks/get", "2024-11-05")
+    end
+
+    test "tasks/list is NOT available" do
+      refute Protocol.method_available?("tasks/list", "2024-11-05")
+    end
+
+    test "tasks/result is NOT available" do
+      refute Protocol.method_available?("tasks/result", "2024-11-05")
+    end
+
+    test "tasks/cancel is NOT available" do
+      refute Protocol.method_available?("tasks/cancel", "2024-11-05")
+    end
+
+    test "notifications/tasks/status is NOT available" do
+      refute Protocol.method_available?("notifications/tasks/status", "2024-11-05")
+    end
+
+    test "notifications/elicitation/complete is NOT available" do
+      refute Protocol.method_available?("notifications/elicitation/complete", "2024-11-05")
+    end
+  end
+
+  describe "feature registry" do
+    test "base features are available" do
+      for feature <- [:prompts, :resources, :tools, :logging] do
+        assert VersionRegistry.feature_available?("2024-11-05", feature),
+               "#{feature} should be available in 2024-11-05"
+      end
+    end
+
+    test "resource_subscription is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :resource_subscription)
+    end
+
+    test "prompts_list_changed is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :prompts_list_changed)
+    end
+
+    test "resources_list_changed is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :resources_list_changed)
+    end
+
+    test "logging_set_level is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :logging_set_level)
+    end
+
+    test "completion is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :completion)
+    end
+
+    test "batch_processing is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :batch_processing)
+    end
+
+    test "elicitation is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :elicitation)
+    end
+
+    test "structured_content is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :structured_content)
+    end
+
+    test "tool_output_schema is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :tool_output_schema)
+    end
+
+    test "tasks is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :tasks)
+    end
+
+    test "icons is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :icons)
+    end
+
+    test "url_elicitation is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :url_elicitation)
+    end
+
+    test "tool_calling_in_sampling is NOT available" do
+      refute VersionRegistry.feature_available?("2024-11-05", :tool_calling_in_sampling)
+    end
+  end
+
+  describe "capabilities_for_version" do
+    test "prompts is an empty map (no listChanged)" do
+      caps = VersionRegistry.capabilities_for_version("2024-11-05")
+      assert caps.prompts == %{}
+    end
+
+    test "resources has subscribe: false, listChanged: false" do
+      caps = VersionRegistry.capabilities_for_version("2024-11-05")
+      assert caps.resources == %{subscribe: false, listChanged: false}
+    end
+
+    test "tools is an empty map (no outputSchema)" do
+      caps = VersionRegistry.capabilities_for_version("2024-11-05")
+      assert caps.tools == %{}
+    end
+
+    test "logging is an empty map (no setLevel)" do
+      caps = VersionRegistry.capabilities_for_version("2024-11-05")
+      assert caps.logging == %{}
+    end
+
+    test "experimental is an empty map" do
+      caps = VersionRegistry.capabilities_for_version("2024-11-05")
+      assert caps.experimental == %{}
+    end
+
+    test "no completion key" do
+      caps = VersionRegistry.capabilities_for_version("2024-11-05")
+      refute Map.has_key?(caps, :completion)
+    end
+
+    test "no tasks key" do
+      caps = VersionRegistry.capabilities_for_version("2024-11-05")
+      refute Map.has_key?(caps, :tasks)
+    end
+  end
+
+  describe "message_format" do
+    test "supports_batch is false" do
+      format = VersionRegistry.message_format("2024-11-05")
+      assert format.supports_batch == false
+    end
+
+    test "supports_progress is true" do
+      format = VersionRegistry.message_format("2024-11-05")
+      assert format.supports_progress == true
+    end
+
+    test "supports_cancellation is true" do
+      format = VersionRegistry.message_format("2024-11-05")
+      assert format.supports_cancellation == true
+    end
+
+    test "has basic notification_methods" do
+      format = VersionRegistry.message_format("2024-11-05")
+
+      assert "notifications/initialized" in format.notification_methods
+      assert "notifications/tools/list_changed" in format.notification_methods
+      assert "notifications/resources/list_changed" in format.notification_methods
+      assert "notifications/prompts/list_changed" in format.notification_methods
+      assert "notifications/progress" in format.notification_methods
+      assert "notifications/message" in format.notification_methods
+      assert "notifications/cancelled" in format.notification_methods
+    end
+
+    test "does NOT have notifications/resources/updated" do
+      format = VersionRegistry.message_format("2024-11-05")
+      refute "notifications/resources/updated" in format.notification_methods
+    end
+
+    test "does NOT have logging/setLevel" do
+      format = VersionRegistry.message_format("2024-11-05")
+      refute "logging/setLevel" in format.notification_methods
+    end
+
+    test "does NOT have notifications/tasks/status" do
+      format = VersionRegistry.message_format("2024-11-05")
+      refute "notifications/tasks/status" in format.notification_methods
+    end
+
+    test "does NOT have notifications/elicitation/complete" do
+      format = VersionRegistry.message_format("2024-11-05")
+      refute "notifications/elicitation/complete" in format.notification_methods
+    end
+
+    test "does NOT have request_methods key" do
+      format = VersionRegistry.message_format("2024-11-05")
+      refute Map.has_key?(format, :request_methods)
+    end
+  end
+
+  describe "type module" do
+    test "types_module returns ExMCP.Types.V20241105 for 2024-11-05" do
+      assert VersionRegistry.types_module("2024-11-05") == ExMCP.Types.V20241105
+    end
+  end
+
+  describe "validate_message_version" do
+    test "base methods pass validation for 2024-11-05" do
+      base_methods = [
+        "initialize",
+        "tools/list",
+        "tools/call",
+        "resources/list",
+        "resources/read",
+        "prompts/list",
+        "prompts/get",
+        "ping",
+        "sampling/createMessage",
+        "completion/complete"
+      ]
+
+      for method <- base_methods do
+        assert :ok == Protocol.validate_message_version(%{"method" => method}, "2024-11-05"),
+               "#{method} should pass validation for 2024-11-05"
+      end
+    end
+
+    test "resources/subscribe fails validation for 2024-11-05" do
+      assert {:error, _message} =
+               Protocol.validate_message_version(
+                 %{"method" => "resources/subscribe"},
+                 "2024-11-05"
+               )
+    end
+
+    test "elicitation/create fails validation for 2024-11-05" do
+      assert {:error, _message} =
+               Protocol.validate_message_version(
+                 %{"method" => "elicitation/create"},
+                 "2024-11-05"
+               )
+    end
+
+    test "tasks/get fails validation for 2024-11-05" do
+      assert {:error, _message} =
+               Protocol.validate_message_version(%{"method" => "tasks/get"}, "2024-11-05")
+    end
+
+    test "all version-gated methods fail validation for 2024-11-05" do
+      gated_methods = [
+        "resources/subscribe",
+        "resources/unsubscribe",
+        "logging/setLevel",
+        "notifications/resources/updated",
+        "elicitation/create",
+        "tasks/get",
+        "tasks/list",
+        "tasks/result",
+        "tasks/cancel",
+        "notifications/tasks/status",
+        "notifications/elicitation/complete"
+      ]
+
+      for method <- gated_methods do
+        assert {:error, _message} =
+                 Protocol.validate_message_version(%{"method" => method}, "2024-11-05"),
+               "#{method} should fail validation for 2024-11-05"
+      end
+    end
+  end
+end
