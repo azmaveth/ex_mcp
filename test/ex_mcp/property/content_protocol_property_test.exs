@@ -291,7 +291,12 @@ defmodule ExMCP.Content.ProtocolPropertyTest do
 
   property "invalid URI in resource content fails validation" do
     forall invalid_uri <-
-             such_that(s <- non_empty_string_gen(), when: not String.contains?(s, "://")) do
+             such_that(
+               s <- non_empty_string_gen(),
+               when:
+                 not String.contains?(s, "://") and
+                   not match?(%URI{scheme: scheme} when is_binary(scheme), URI.parse(s))
+             ) do
       content = Protocol.resource(invalid_uri)
       match?({:error, _}, Protocol.validate(content))
     end
