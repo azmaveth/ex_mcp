@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "files": {
+    "2025-11-25/Architecture.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/architecture/index.mdx",
+      "sha256": "6a023e659f7555fae4ed67ef70dbc1b8ec84c4044422a0fe72cd398b7fe32de9",
+      "etag": "\"7277a25bfc0de09ce794f1523c424d9104afef45fc82c6d1d2b848f8d36b31a9\"",
+      "synced_at": "2026-02-11T21:13:22.780845Z"
+    },
+    "2025-11-25/BaseProtocol/Authorization.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/authorization.mdx",
+      "sha256": "b295404ff0c4cef86aa91b55ca757368d8b6ef217776b2475933520b4f99ae76",
+      "etag": "\"fecfd523c94be1edd00563634e7e43c697df1582af2ad5b8fb17546c3c13974a\"",
+      "synced_at": "2026-02-11T21:13:23.295671Z"
+    },
+    "2025-11-25/BaseProtocol/Lifecycle.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/lifecycle.mdx",
+      "sha256": "108ecf7ba04707188ea7cda7c5678d27bea910c564b7cd7ef636e8d2d0219c52",
+      "etag": "\"21a04d72aad4178fffe6d39ed8bca11b3ba53014f91dadcf8ca6ba7bea7787ea\"",
+      "synced_at": "2026-02-11T21:13:22.987008Z"
+    },
+    "2025-11-25/BaseProtocol/Overview.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/index.mdx",
+      "sha256": "857f5aa7d7751cc938bf755040a819d37828bce861e2445328840f516bca6131",
+      "etag": "\"6dc2f63132ba57b144f15365c62e3329238f2413b92b97d9cfb7cbfbd0717727\"",
+      "synced_at": "2026-02-11T21:13:22.891639Z"
+    },
+    "2025-11-25/BaseProtocol/SecurityBestPractices.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/security_best_practices.mdx",
+      "sha256": "2d8c733d80287ba23f2670eb83593990b34d82a0f714dddcb566e0e588be88e3",
+      "etag": "\"f39f777eb562d51d523bbd848d51bd1e557eb39e24a505304983a6bc7d0852c4\"",
+      "synced_at": "2026-02-11T21:13:23.396451Z"
+    },
+    "2025-11-25/BaseProtocol/Transports.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/transports.mdx",
+      "sha256": "13cae7f62cc414c5390dd9409956614609184102bb0ec98625d0135ec2386c1d",
+      "etag": "\"01e02d7f181ff1e9f85b84f08936bb7ac6b09527feba366cd2f661b5cf3dfb3c\"",
+      "synced_at": "2026-02-11T21:13:23.095854Z"
+    },
+    "2025-11-25/BaseProtocol/Utilities/Cancellation.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/utilities/cancellation.mdx",
+      "sha256": "f2b9a631b36b1ec706236bace8c153712425ea1dd829fb1d8145d4ffeb16129d",
+      "etag": "\"d1de0725aac12a002fd92af580371860513034f75c0ddb67b4f77bf7e3fa8bee\"",
+      "synced_at": "2026-02-11T21:13:23.490940Z"
+    },
+    "2025-11-25/BaseProtocol/Utilities/Ping.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/utilities/ping.mdx",
+      "sha256": "916b541f54b83001da3402a44fce6a77a84051e4934a4d8036a72febe94ef815",
+      "etag": "\"f12e73007d22ff4c7ee5f2de296337ebe21308eaa2925792c0d040e0dd4bbcd6\"",
+      "synced_at": "2026-02-11T21:13:23.590621Z"
+    },
+    "2025-11-25/BaseProtocol/Utilities/Progress.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/utilities/progress.mdx",
+      "sha256": "21f55d2f38b03408834e8b49b3b167dc2928dec23a04815a8256dc3e5b2f397d",
+      "etag": "\"26b58011c49cbf2e20ca82370f4836b586ca09c8608d0afe5d24fbaf2955d11f\"",
+      "synced_at": "2026-02-11T21:13:23.692283Z"
+    },
+    "2025-11-25/BaseProtocol/Utilities/Tasks.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/basic/utilities/tasks.mdx",
+      "sha256": "840ae592944ee7410a6f05daa85c72d95cae955b9038769330fef49f16fa8d8f",
+      "etag": "\"30b28a6d5bcf0633be825fa7b5a867038abf59849a27b1ab59659436d99c447e\"",
+      "synced_at": "2026-02-11T21:13:23.796984Z"
+    },
+    "2025-11-25/ClientFeatures/Elicitation.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/client/elicitation.mdx",
+      "sha256": "594fb3524ffcd56d67be34393b730a98f8ae6da48c12d3d44e6e7d534e87a28c",
+      "etag": "\"91c4b419879b551048cbacd42cb31a8b15a6c7860acc7897f99fda8a5202581b\"",
+      "synced_at": "2026-02-11T21:13:24.717677Z"
+    },
+    "2025-11-25/ClientFeatures/Roots.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/client/roots.mdx",
+      "sha256": "3356d87b8a07452fdd745aa3e2984ad72f6bd2b0eec4d07245bd987e6a6c068d",
+      "etag": "\"9a33a9a512ae2d67113a9550cdcf8fddfa99c798a31e232fff2763a2a9feb357\"",
+      "synced_at": "2026-02-11T21:13:24.820368Z"
+    },
+    "2025-11-25/ClientFeatures/Sampling.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/client/sampling.mdx",
+      "sha256": "0aae472965aea8076d825abff27aa342326fba88e2cba71debabfabd4225a733",
+      "etag": "\"d06841cc4bde146d8c6d82f7dedadb1a2b14b46566437bbfdfef544ce5089efe\"",
+      "synced_at": "2026-02-11T21:13:24.914008Z"
+    },
+    "2025-11-25/KeyChanges.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/changelog.mdx",
+      "sha256": "8c65410fb5017675ae0be8363815e384e4bc108db7c0a9bf610cf8c4f2e58acf",
+      "etag": "\"0efa684eb306f651de959dc61f3594108f4ba7499762218861638ab8b592859c\"",
+      "synced_at": "2026-02-11T21:13:22.658684Z"
+    },
+    "2025-11-25/ServerFeatures/Overview.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/server/index.mdx",
+      "sha256": "73caa6c90929f1fe58ea9981eee9b448d84df80a07c8ebfdc546370341fdd08a",
+      "etag": "\"f38f958c67d14e039a35235926e37e666d0732ce7a86875ac623a244b78f5085\"",
+      "synced_at": "2026-02-11T21:13:24.002568Z"
+    },
+    "2025-11-25/ServerFeatures/Prompts.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/server/prompts.mdx",
+      "sha256": "1d962f41da20dd39c3e669d59e2eee9102044f826a6ff1eac46d3bc1276f0cf3",
+      "etag": "\"1face1aeac4dd59ae4e5d914fab985e94d0d24939491930201caf31e41e60f81\"",
+      "synced_at": "2026-02-11T21:13:24.097793Z"
+    },
+    "2025-11-25/ServerFeatures/Resources.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/server/resources.mdx",
+      "sha256": "fef4cc60d0c66301fac544a09da1def98f887b83f9c3232a3365b9fd87325df1",
+      "etag": "\"0d0052d2c684d0de63c4bb5e95deaf4bdcdd05ab11374223c14febece8dae744\"",
+      "synced_at": "2026-02-11T21:13:24.192625Z"
+    },
+    "2025-11-25/ServerFeatures/Tools.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/server/tools.mdx",
+      "sha256": "03b5fe77bad6368d3047f2cb4fb250b6740f6d6c76d47db3feb0c53e906f0166",
+      "etag": "\"ea800be1e6b54d1d269629ef0ed520051ca232459ec753a12fc90dc976986630\"",
+      "synced_at": "2026-02-11T21:13:24.300924Z"
+    },
+    "2025-11-25/ServerFeatures/Utilities/Completion.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/server/utilities/completion.mdx",
+      "sha256": "9e5643aecec7cd979eebef9735cfb70eb0300d378a77bc4b6cc5160b25c89086",
+      "etag": "\"4a53bf949969ff5729403598f943a98c04073ad545f38d418adef63e7ce124bd\"",
+      "synced_at": "2026-02-11T21:13:24.391793Z"
+    },
+    "2025-11-25/ServerFeatures/Utilities/Logging.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/server/utilities/logging.mdx",
+      "sha256": "66e9c76f6094767e9c1d46f4a0e07aeabf098d698eb8d31b3bded6e10c4befbf",
+      "etag": "\"1696a37ccf022894945287284b7ac72f95ff4a872d1fe9ccdc1c5ce42cc515be\"",
+      "synced_at": "2026-02-11T21:13:24.484821Z"
+    },
+    "2025-11-25/ServerFeatures/Utilities/Pagination.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/server/utilities/pagination.mdx",
+      "sha256": "cb3407e9f883a1c6f6a62d30ccac722e543ab2d18f28e8fc0321c85994ddfca8",
+      "etag": "\"6cd253b87dc72bbfab422a7bd683b2ab199513c1771960fb8e86f5cab5d8b239\"",
+      "synced_at": "2026-02-11T21:13:24.585629Z"
+    },
+    "2025-11-25/Specification.md": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/docs/specification/2025-11-25/index.mdx",
+      "sha256": "3b54edb092b1758a0a7357155f0e1049e659ac12766353966bdd5b2fdbf75129",
+      "etag": "\"99695dd5046570241ccccfa055170ca4fa203ad142c1f218db7b99f599c4c91b\"",
+      "synced_at": "2026-02-11T21:13:22.565298Z"
+    },
+    "2025-11-25/schema.json": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json",
+      "sha256": "1ffe4c5577974012f5fa02af14ea88df4b7146679df1abaaad497c8d9230ca8a",
+      "etag": "\"969e96e454ebfdcc901c1736917372aa5ccf781cd0dfdb90b9b5bfaba67c35c9\"",
+      "synced_at": "2026-02-11T21:13:22.551069Z"
+    },
+    "2025-11-25/schema.ts": {
+      "source_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.ts",
+      "sha256": "d8198640700df328329d52315739febfa8f783b483a9334e6b38636660b52653",
+      "etag": "\"7dc7cc77d8429030c272fb317de7337b14a81fa1b97f9ac5be65062cd8f9675a\"",
+      "synced_at": "2026-02-11T21:13:22.525068Z"
+    }
+  },
+  "last_sync": "2026-02-11T21:13:32.332342Z"
+}
