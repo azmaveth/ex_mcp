@@ -60,7 +60,10 @@ default_exclusions = [
   # Tests requiring specific setup
   requires_http: true,
   requires_beam: true,
-  requires_bypass: true
+  requires_bypass: true,
+
+  # Cross-language interop tests (require Node.js + npm)
+  interop: true
 ]
 
 # Print exclusion summary

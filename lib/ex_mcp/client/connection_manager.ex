@@ -296,7 +296,13 @@ defmodule ExMCP.Client.ConnectionManager do
       "version" => "0.8.0"
     }
 
-    capabilities = %{"experimental" => %{"rawTerms" => raw_terms_enabled}}
+    capabilities =
+      if raw_terms_enabled do
+        %{"experimental" => %{"rawTerms" => true}}
+      else
+        %{}
+      end
+
     request = Protocol.encode_initialize(client_info, capabilities, protocol_version)
 
     # Encode the request to JSON string before sending

@@ -43,8 +43,13 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
   alias ExMCP.Reliability.HealthCheck
 
+  setup do
+    checker_name = :"test_checker_#{System.unique_integer([:positive])}"
+    {:ok, checker_name: checker_name}
+  end
+
   describe "health monitoring" do
-    test "starts with unknown status" do
+    test "starts with unknown status", context do
       {:ok, target} = Agent.start_link(fn -> :ok end)
 
       # Provide a custom check function that works with Agent
@@ -59,7 +64,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_fn: check_fn,
           check_interval: 60_000
@@ -69,7 +74,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
       assert status == :unknown
     end
 
-    test "becomes healthy after successful checks" do
+    test "becomes healthy after successful checks", context do
       {:ok, target} = start_healthy_target()
 
       check_fn = fn target ->
@@ -81,7 +86,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_fn: check_fn,
           check_interval: 10_000,
@@ -97,7 +102,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
       assert info.consecutive_successes >= 2
     end
 
-    test "becomes unhealthy after failed checks" do
+    test "becomes unhealthy after failed checks", context do
       {:ok, target} = start_failing_target()
 
       # Custom check function that actually fails for failing target
@@ -110,7 +115,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_fn: check_fn,
           check_interval: 10_000,
@@ -126,7 +131,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
       assert info.consecutive_failures >= 2
     end
 
-    test "recovers from unhealthy to healthy" do
+    test "recovers from unhealthy to healthy", context do
       {:ok, target} = start_toggle_target()
 
       # Custom check function that checks the state
@@ -139,7 +144,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_fn: check_fn,
           check_interval: 10_000,
@@ -167,7 +172,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
   end
 
   describe "custom check functions" do
-    test "uses custom check function" do
+    test "uses custom check function", context do
       {:ok, target} = Agent.start_link(fn -> 42 end)
 
       check_fn = fn target ->
@@ -182,7 +187,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_fn: check_fn,
           check_interval: 10_000
@@ -195,7 +200,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
   end
 
   describe "subscriptions" do
-    test "notifies subscribers of status changes" do
+    test "notifies subscribers of status changes", context do
       {:ok, target} = start_toggle_target()
 
       # Custom check function that checks the state
@@ -208,7 +213,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_fn: check_fn,
           check_interval: 10_000,
@@ -224,7 +229,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
       HealthCheck.check_now(checker)
 
       assert_receive {:health_status_changed, :unknown, :healthy, metadata}
-      assert metadata.checker == :test_checker
+      assert metadata.checker == context.checker_name
 
       # Make it unhealthy
       GenServer.call(target, {:update, fn _ -> :failing end})
@@ -233,12 +238,12 @@ defmodule ExMCP.Reliability.HealthCheckTest do
       assert_receive {:health_status_changed, :healthy, :unhealthy, _metadata}
     end
 
-    test "handles subscriber crashes" do
+    test "handles subscriber crashes", context do
       {:ok, target} = start_healthy_target()
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_interval: 10_000
         )
@@ -259,7 +264,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
   end
 
   describe "pause and resume" do
-    test "pauses health checks" do
+    test "pauses health checks", context do
       {:ok, target} = start_healthy_target()
       check_count = start_counter()
 
@@ -274,7 +279,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_fn: check_fn,
           check_interval: 50
@@ -312,12 +317,12 @@ defmodule ExMCP.Reliability.HealthCheckTest do
   end
 
   describe "history tracking" do
-    test "maintains check history" do
+    test "maintains check history", context do
       {:ok, target} = start_healthy_target()
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_interval: 10_000
         )
@@ -334,7 +339,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
   end
 
   describe "status change callbacks" do
-    test "calls on_status_change callback" do
+    test "calls on_status_change callback", context do
       {:ok, target} = start_toggle_target()
       {:ok, callback_agent} = Agent.start_link(fn -> [] end)
 
@@ -353,7 +358,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: target,
           check_fn: check_fn,
           check_interval: 10_000,
@@ -378,7 +383,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
   end
 
   describe "MCP-specific health checks" do
-    test "MCP client check function" do
+    test "MCP client check function", context do
       # Mock MCP client
       {:ok, mock_client} =
         Agent.start_link(fn ->
@@ -394,7 +399,7 @@ defmodule ExMCP.Reliability.HealthCheckTest do
 
       {:ok, checker} =
         HealthCheck.start_link(
-          name: :test_checker,
+          name: context.checker_name,
           target: mock_client,
           check_fn: check_fn,
           check_interval: 10_000
