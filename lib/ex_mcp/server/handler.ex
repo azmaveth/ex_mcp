@@ -177,7 +177,7 @@ defmodule ExMCP.Server.Handler do
 
   ### Sampling/LLM Integration
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_create_message(params, state) do
         messages = params["messages"]
         model_prefs = params["modelPreferences"]
@@ -524,99 +524,103 @@ defmodule ExMCP.Server.Handler do
   defmacro __using__(_opts) do
     quote do
       @behaviour ExMCP.Server.Handler
+      use GenServer
       alias ExMCP.Internal.Logging
 
-      @impl true
+      @before_compile ExMCP.Server.Handler
+
+      @impl ExMCP.Server.Handler
       def init(_args), do: {:ok, %{}}
 
-      @impl true
+      # Defaults for optional callbacks — user inline overrides work
+      # via defoverridable. Required callbacks (handle_initialize,
+      # handle_list_tools, handle_call_tool) are defined in
+      # @before_compile with defoverridable so the Tool DSL's
+      # @before_compile can also override them.
+      @impl ExMCP.Server.Handler
       def handle_list_resources(_cursor, state) do
         {:error, "Resources not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_read_resource(_uri, state) do
         {:error, "Resource reading not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_list_prompts(_cursor, state) do
         {:error, "Prompts not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_get_prompt(_name, _arguments, state) do
         {:error, "Prompt retrieval not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_complete(_ref, _params, state) do
         {:error, "Completion not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_create_message(_params, state) do
         {:error, "Sampling not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_list_roots(state) do
         {:error, "Roots not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_subscribe_resource(_uri, state) do
         {:error, "Resource subscriptions not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_unsubscribe_resource(_uri, state) do
         {:error, "Resource subscriptions not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_list_resource_templates(_cursor, state) do
         {:error, "Resource templates not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_set_log_level(level, state) do
-        # Default implementation integrates with ExMCP.Internal.Logging
         case Logging.set_global_level(level) do
-          :ok ->
-            {:ok, state}
-
-          {:error, reason} ->
-            {:error, reason, state}
+          :ok -> {:ok, state}
+          {:error, reason} -> {:error, reason, state}
         end
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_task_get(_task_id, state) do
         {:error, "Tasks not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_task_result(_task_id, state) do
         {:error, "Tasks not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_task_list(_cursor, state) do
         {:error, "Tasks not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_task_cancel(_task_id, state) do
         {:error, "Tasks not implemented", state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def handle_elicitation_complete(_elicitation_id, state) do
         {:ok, state}
       end
 
-      @impl true
+      @impl ExMCP.Server.Handler
       def terminate(_reason, _state), do: :ok
 
       defoverridable init: 1,
@@ -637,6 +641,160 @@ defmodule ExMCP.Server.Handler do
                      handle_task_cancel: 2,
                      handle_elicitation_complete: 2,
                      terminate: 2
+    end
+  end
+
+  @doc false
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+  defmacro __before_compile__(_env) do
+    quote do
+      # =================================================================
+      # Required callback defaults (injected via @before_compile)
+      #
+      # These use defoverridable so the Tool DSL's @before_compile
+      # (which runs after this one) can override them. User inline
+      # defs also override these since inline defs beat @before_compile.
+      # =================================================================
+
+      @impl ExMCP.Server.Handler
+      def handle_initialize(_params, state) do
+        {:ok,
+         %{
+           protocolVersion: "2025-03-26",
+           serverInfo: %{name: "ex_mcp", version: "0.1.0"},
+           capabilities: %{}
+         }, state}
+      end
+
+      @impl ExMCP.Server.Handler
+      def handle_list_tools(_cursor, state) do
+        {:ok, [], nil, state}
+      end
+
+      @impl ExMCP.Server.Handler
+      def handle_call_tool(_name, _arguments, state) do
+        {:error, "Tool not found", state}
+      end
+
+      defoverridable handle_initialize: 2,
+                     handle_list_tools: 2,
+                     handle_call_tool: 3
+
+      # =================================================================
+      # GenServer Bridge
+      #
+      # ExMCP.HttpPlug and MessageProcessor dispatch MCP protocol
+      # messages via GenServer.call. These clauses bridge to the
+      # Handler behaviour callbacks. Function calls resolve to the
+      # final compiled version (user override or Tool DSL override).
+      # =================================================================
+
+      @impl GenServer
+      def handle_call({:initialize, params}, _from, state) do
+        case handle_initialize(params, state) do
+          {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
+      end
+
+      def handle_call({:list_tools, cursor}, _from, state) do
+        case handle_list_tools(cursor, state) do
+          {:ok, tools, next_cursor, new_state} ->
+            {:reply, {:ok, tools, next_cursor, new_state}, new_state}
+
+          {:ok, tools, new_state} ->
+            {:reply, {:ok, tools, nil, new_state}, new_state}
+
+          {:error, reason, new_state} ->
+            {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:call_tool, name, args}, _from, state) do
+        case handle_call_tool(name, args, state) do
+          {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:execute_tool, name, args}, _from, state) do
+        case handle_call_tool(name, args, state) do
+          {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:list_resources, cursor}, _from, state) do
+        case handle_list_resources(cursor, state) do
+          {:ok, resources, next_cursor, new_state} ->
+            {:reply, {:ok, resources, next_cursor, new_state}, new_state}
+
+          {:ok, resources, new_state} ->
+            {:reply, {:ok, resources, nil, new_state}, new_state}
+
+          {:error, reason, new_state} ->
+            {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:read_resource, uri}, _from, state) do
+        case handle_read_resource(uri, state) do
+          {:ok, content, new_state} -> {:reply, {:ok, content}, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:subscribe_resource, uri}, _from, state) do
+        case handle_subscribe_resource(uri, state) do
+          {:ok, _result, new_state} -> {:reply, :ok, new_state}
+          {:ok, new_state} -> {:reply, :ok, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:unsubscribe_resource, uri}, _from, state) do
+        case handle_unsubscribe_resource(uri, state) do
+          {:ok, _result, new_state} -> {:reply, :ok, new_state}
+          {:ok, new_state} -> {:reply, :ok, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:list_prompts, cursor}, _from, state) do
+        case handle_list_prompts(cursor, state) do
+          {:ok, prompts, next_cursor, new_state} ->
+            {:reply, {:ok, prompts, next_cursor, new_state}, new_state}
+
+          {:ok, prompts, new_state} ->
+            {:reply, {:ok, prompts, nil, new_state}, new_state}
+
+          {:error, reason, new_state} ->
+            {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:get_prompt, name, args}, _from, state) do
+        case handle_get_prompt(name, args, state) do
+          {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
+        end
+      end
+
+      def handle_call({:complete, ref, argument}, _from, state) do
+        case handle_complete(ref, argument, state) do
+          {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
+        end
+      end
+
+      def handle_call({:request, method, _params}, _from, state) do
+        {:reply, {:error, "Unknown method: #{method}"}, state}
+      end
+
+      def handle_call(_msg, _from, state) do
+        {:reply, {:error, "Unknown message"}, state}
+      end
     end
   end
 
