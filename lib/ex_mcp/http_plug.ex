@@ -162,6 +162,23 @@ defmodule ExMCP.HttpPlug do
     handle_session_delete(conn, session_id, opts)
   end
 
+  # Per MCP spec, SSE GET uses the same endpoint as POST.
+  # Handle GET requests with Accept: text/event-stream on any path.
+  def call(%Plug.Conn{method: "GET"} = conn, opts) do
+    accepts_sse =
+      conn
+      |> get_req_header("accept")
+      |> Enum.any?(&String.contains?(&1, "text/event-stream"))
+
+    if opts.sse_enabled and accepts_sse do
+      handle_sse_connection(conn, opts)
+    else
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(404, Jason.encode!(%{error: "Not found"}))
+    end
+  end
+
   def call(conn, _opts) do
     conn
     |> put_resp_content_type("application/json")
@@ -185,6 +202,10 @@ defmodule ExMCP.HttpPlug do
   defp handle_mcp_request(conn, opts) do
     Logger.debug("Handling MCP request, SSE enabled: #{opts.sse_enabled}")
 
+    # Per MCP spec, get or generate session ID for this request.
+    # The server provides session IDs to clients via response headers.
+    session_id = get_or_create_session_id(conn)
+
     with {:ok, conn} <- validate_protocol_version(conn),
          {:ok, body, conn} <- read_body(conn),
          {:ok, request} <- parse_json(body),
@@ -194,27 +215,22 @@ defmodule ExMCP.HttpPlug do
 
       case result do
         {:ok, response} ->
-          # If SSE is enabled, send response via SSE instead of HTTP response
-          if opts.sse_enabled do
-            Logger.debug("SSE mode: sending response via SSE: #{inspect(response)}")
-            send_response_via_sse(response, conn, opts)
-            # Return 202 Accepted for the POST request
-            conn
-            |> maybe_add_cors_headers(opts)
-            |> send_resp(202, "")
-          else
-            # Non-SSE mode: send response in HTTP body
-            conn
-            |> maybe_add_cors_headers(opts)
-            |> maybe_add_protocol_version_header()
-            |> put_resp_content_type("application/json")
-            |> send_resp(200, Jason.encode!(response))
-          end
+          # Per MCP spec, POST responses MUST contain the result in the body,
+          # even when SSE is enabled. The SSE stream is for server-initiated
+          # messages only (notifications, progress updates).
+          conn
+          |> maybe_add_cors_headers(opts)
+          |> add_protocol_version_header()
+          |> put_resp_header("mcp-session-id", session_id)
+          |> put_resp_content_type("application/json")
+          |> send_resp(200, Jason.encode!(response))
 
         {:notification, _} ->
           # Notifications get 202 Accepted with no body
           conn
           |> maybe_add_cors_headers(opts)
+          |> add_protocol_version_header()
+          |> put_resp_header("mcp-session-id", session_id)
           |> send_resp(202, "")
 
         {:error, :no_response} ->
@@ -231,6 +247,8 @@ defmodule ExMCP.HttpPlug do
 
           conn
           |> maybe_add_cors_headers(opts)
+          |> add_protocol_version_header()
+          |> put_resp_header("mcp-session-id", session_id)
           |> put_resp_content_type("application/json")
           |> send_resp(500, Jason.encode!(error_response))
 
@@ -248,6 +266,8 @@ defmodule ExMCP.HttpPlug do
 
           conn
           |> maybe_add_cors_headers(opts)
+          |> add_protocol_version_header()
+          |> put_resp_header("mcp-session-id", session_id)
           |> put_resp_content_type("application/json")
           |> send_resp(500, Jason.encode!(error_response))
       end
@@ -266,7 +286,8 @@ defmodule ExMCP.HttpPlug do
 
         conn
         |> maybe_add_cors_headers(opts)
-        |> maybe_add_protocol_version_header()
+        |> add_protocol_version_header()
+        |> put_resp_header("mcp-session-id", session_id)
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(error_response))
 
@@ -288,6 +309,8 @@ defmodule ExMCP.HttpPlug do
 
         conn
         |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_header("mcp-session-id", session_id)
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(error_response))
 
@@ -305,6 +328,8 @@ defmodule ExMCP.HttpPlug do
 
         conn
         |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_header("mcp-session-id", session_id)
         |> put_resp_content_type("application/json")
         |> send_resp(500, Jason.encode!(error_response))
     end
@@ -511,7 +536,17 @@ defmodule ExMCP.HttpPlug do
 
   defp maybe_add_cors_headers(conn, _opts), do: conn
 
-  # Extract or generate session ID
+  # Extract session ID from request or generate a new one.
+  # Per MCP spec, the server provides the session ID — the client's first
+  # request should not include one, and the server generates it.
+  defp get_or_create_session_id(conn) do
+    case get_req_header(conn, "mcp-session-id") do
+      [session_id] -> session_id
+      [] -> generate_session_id()
+    end
+  end
+
+  # Extract or generate session ID (legacy, also checks x-session-id)
   defp get_session_id(conn) do
     # Try multiple possible session header names for compatibility
     case get_req_header(conn, "mcp-session-id") do
@@ -562,43 +597,6 @@ defmodule ExMCP.HttpPlug do
   rescue
     # Table doesn't exist, nothing to clean up
     ArgumentError -> :ok
-  end
-
-  # Send MCP response via SSE to connected clients
-  defp send_response_via_sse(response, conn, _opts) do
-    session_id = get_session_id(conn)
-    Logger.debug("Sending SSE response for session #{session_id}")
-
-    # Generate event ID for this response
-    event_id = "#{System.system_time(:microsecond)}-#{:rand.uniform(1000)}"
-
-    # Store the event in SessionManager for potential replay
-    event_data = %{
-      id: event_id,
-      session_id: session_id,
-      type: "message",
-      data: response,
-      timestamp: System.system_time(:microsecond)
-    }
-
-    case ExMCP.SessionManager.store_event(session_id, event_data) do
-      :ok ->
-        Logger.debug("Stored event #{event_id} for session #{session_id}")
-
-      {:error, reason} ->
-        Logger.warning("Failed to store event for session #{session_id}: #{inspect(reason)}")
-    end
-
-    # Try to send via our ETS registry
-    case lookup_sse_handler(session_id) do
-      {:ok, handler_pid} ->
-        Logger.debug("Found SSE handler #{inspect(handler_pid)}, sending event")
-        # Send the response as an SSE event with the generated event ID
-        SSEHandler.send_event(handler_pid, "message", response, event_id: event_id)
-
-      {:error, reason} ->
-        Logger.warning("Could not find SSE handler for session #{session_id}: #{inspect(reason)}")
-    end
   end
 
   # Generate a simple session ID
@@ -704,11 +702,8 @@ defmodule ExMCP.HttpPlug do
     ScopeValidator.get_all_static_scopes()
   end
 
-  defp maybe_add_protocol_version_header(conn) do
-    if FeatureFlags.enabled?(:protocol_version_header) do
-      put_resp_header(conn, "mcp-protocol-version", VersionRegistry.latest_version())
-    else
-      conn
-    end
+  # Per MCP spec, all responses MUST include the mcp-protocol-version header.
+  defp add_protocol_version_header(conn) do
+    put_resp_header(conn, "mcp-protocol-version", VersionRegistry.latest_version())
   end
 end

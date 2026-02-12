@@ -95,7 +95,8 @@ defmodule ExMCP.Transport.HTTP do
     :last_event_id,
     :last_response,
     :timeouts,
-    :protocol_version
+    :protocol_version,
+    sse_deferred_attempted: false
   ]
 
   @type t :: %__MODULE__{
@@ -111,7 +112,8 @@ defmodule ExMCP.Transport.HTTP do
           last_event_id: String.t() | nil,
           last_response: map() | nil,
           timeouts: map(),
-          protocol_version: String.t()
+          protocol_version: String.t(),
+          sse_deferred_attempted: boolean()
         }
 
   @default_endpoint "/mcp/v1"
@@ -175,53 +177,55 @@ defmodule ExMCP.Transport.HTTP do
       security: security,
       origin: origin,
       use_sse: use_sse,
-      session_id: session_id || generate_session_id(),
+      session_id: session_id,
       timeouts: timeouts,
       protocol_version: protocol_version
     }
 
     # Validate security configuration
+    # Per MCP spec, session ID comes from the server after initialization.
+    # SSE is deferred until after the first successful POST (which provides
+    # the session ID needed for the GET SSE stream).
     with :ok <- validate_security(state) do
       if use_sse do
-        Logger.debug("Starting SSE for HTTP transport")
-
-        case start_sse(state) do
-          {:ok, sse_pid} ->
-            Logger.debug("SSE started successfully with pid: #{inspect(sse_pid)}")
-            # Wait for SSE connection to be fully established using configurable timeout
-            handshake_timeout = state.timeouts.stream_handshake
-            Logger.debug("Waiting for SSE handshake, timeout: #{handshake_timeout}ms")
-
-            receive do
-              {:sse_connected, ^sse_pid} ->
-                Logger.debug("SSE connection fully established")
-                {:ok, %{state | sse_pid: sse_pid}}
-
-              {:sse_error, ^sse_pid, reason} ->
-                Logger.debug("SSE connection failed: #{inspect(reason)}")
-                {:error, {:sse_connection_failed, reason}}
-            after
-              handshake_timeout ->
-                Logger.debug("SSE connection timeout after #{handshake_timeout}ms")
-                {:error, :sse_connection_timeout}
-            end
-
-          error ->
-            Logger.debug("SSE start failed: #{inspect(error)}")
-            error
-        end
+        Logger.debug("HTTP transport configured with SSE (deferred until after initialization)")
       else
         Logger.debug("SSE disabled, using synchronous HTTP responses")
-        {:ok, state}
       end
+
+      {:ok, state}
     end
   end
 
   @impl true
+  def send_message(message, %__MODULE__{use_sse: true, sse_pid: nil} = state) do
+    # SSE configured but not yet started (pre-initialization).
+    # Handle synchronously like non-SSE mode, then start SSE if we get a session ID.
+    result = perform_http_request(message, state)
+
+    case result do
+      {:ok, response} ->
+        case handle_http_response(response, state) do
+          {:ok, new_state, response_data} ->
+            new_state = maybe_start_deferred_sse(new_state)
+            {:ok, new_state, response_data}
+
+          {:ok, new_state} ->
+            new_state = maybe_start_deferred_sse(new_state)
+            {:ok, new_state}
+
+          error ->
+            error
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   def send_message(message, %__MODULE__{use_sse: false} = state) do
     # For non-SSE mode, we handle the request-response synchronously
-    body = message
-    result = perform_http_request(body, state)
+    result = perform_http_request(message, state)
 
     case result do
       {:ok, response} ->
@@ -233,9 +237,8 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   def send_message(message, %__MODULE__{} = state) do
-    # Message is already JSON encoded by the client
-    body = message
-    result = perform_http_request(body, state)
+    # SSE mode with active connection — responses arrive via SSE stream
+    result = perform_http_request(message, state)
 
     case result do
       {:ok, response} -> handle_http_response(response, state)
@@ -341,28 +344,19 @@ defmodule ExMCP.Transport.HTTP do
     # Convert charlist to binary if needed (httpc returns charlists by default)
     body_binary = if is_list(body), do: List.to_string(body), else: body
 
+    # Extract session ID from server response headers (per MCP spec)
+    state = maybe_update_session_id(headers, state)
+
     case status_line do
       {_, 200, _} ->
-        if state.use_sse do
-          # SSE mode - responses come via SSE
-          case validate_cors_response(headers, state) do
-            :ok -> {:ok, state}
-            error -> error
-          end
-        else
-          # Non-SSE mode - response in HTTP body
-          handle_non_sse_response(body_binary, state)
-        end
+        # Always parse the response body — per MCP spec, POST responses
+        # contain the result even in SSE mode. The SSE stream is for
+        # server-initiated messages (notifications, progress updates).
+        handle_non_sse_response(body_binary, headers, state)
 
       {_, 202, _} ->
         # 202 Accepted - notification was accepted, no response body expected
-        if state.use_sse do
-          {:ok, state}
-        else
-          # For non-SSE mode, we still need to signal that the request completed
-          # even though there's no JSON response to parse
-          {:ok, state}
-        end
+        {:ok, state}
 
       {_, status, _} ->
         {:error, {:http_error, status, body_binary}}
@@ -373,10 +367,20 @@ defmodule ExMCP.Transport.HTTP do
     {:error, reason}
   end
 
-  defp handle_non_sse_response(body, state) do
-    case Jason.decode(body) do
+  defp handle_non_sse_response(body, headers, state) do
+    content_type = find_header(headers, "content-type") || ""
+
+    json_body =
+      if String.contains?(content_type, "text/event-stream") do
+        # Server responded with SSE-formatted events — extract JSON from data lines
+        extract_json_from_sse(body)
+      else
+        body
+      end
+
+    case Jason.decode(json_body) do
       {:ok, response} ->
-        # In non-SSE mode, return response immediately as third element of tuple
+        # Return response immediately as third element of tuple
         # This allows the client to process responses synchronously
         {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
@@ -385,9 +389,21 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
+  defp extract_json_from_sse(body) do
+    # Parse SSE format: extract data from "data: <json>" lines
+    body
+    |> String.split("\n")
+    |> Enum.filter(&String.starts_with?(&1, "data: "))
+    |> Enum.map_join("", fn "data: " <> data -> data end)
+  end
+
   @impl true
   def receive_message(%__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
       when is_pid(sse_pid) do
+    # Ensure SSEClient sends events to the calling process (may be the receiver task,
+    # not the process that originally started the SSE connection)
+    send(sse_pid, {:change_parent, self()})
+
     receive do
       {:sse_event, ^sse_pid, %{data: data} = event} ->
         # The enhanced SSE client sends structured events
@@ -446,8 +462,49 @@ defmodule ExMCP.Transport.HTTP do
 
   # Private functions
 
+  defp maybe_update_session_id(headers, state) do
+    case find_header(headers, @session_header) do
+      nil -> state
+      session_id -> %{state | session_id: session_id}
+    end
+  end
+
+  defp maybe_start_deferred_sse(
+         %{use_sse: true, sse_pid: nil, session_id: session_id, sse_deferred_attempted: false} =
+           state
+       )
+       when is_binary(session_id) do
+    Logger.debug("Starting deferred SSE connection with session ID: #{session_id}")
+    state = %{state | sse_deferred_attempted: true}
+
+    case start_sse(state) do
+      {:ok, sse_pid} ->
+        handshake_timeout = state.timeouts.stream_handshake
+
+        receive do
+          {:sse_connected, ^sse_pid} ->
+            Logger.debug("Deferred SSE connection established")
+            %{state | sse_pid: sse_pid}
+
+          {:sse_error, ^sse_pid, reason} ->
+            Logger.debug("Deferred SSE connection failed: #{inspect(reason)}, falling back")
+            state
+        after
+          handshake_timeout ->
+            Logger.debug("Deferred SSE connection timeout, falling back to non-SSE")
+            state
+        end
+
+      {:error, reason} ->
+        Logger.debug("Failed to start deferred SSE: #{inspect(reason)}, falling back")
+        state
+    end
+  end
+
+  defp maybe_start_deferred_sse(state), do: state
+
   defp start_sse(state) do
-    url = build_url(state, "/sse")
+    url = build_url(state, "")
     Logger.debug("Starting SSE connection to: #{url}")
     ssl_opts = build_ssl_options_from_state(state)
 
@@ -482,10 +539,6 @@ defmodule ExMCP.Transport.HTTP do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  defp generate_session_id do
-    :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
   end
 
   defp build_url(%__MODULE__{base_url: base_url, endpoint: endpoint}, path) do
@@ -541,12 +594,19 @@ defmodule ExMCP.Transport.HTTP do
        }) do
     base_headers = [
       {"content-type", "application/json"},
+      {"accept", "application/json, text/event-stream"},
       {@protocol_version_header, protocol_version}
       | headers
     ]
 
-    # Add session header
-    headers_with_session = [{@session_header, session_id} | base_headers]
+    # Add session header only if we have a session ID (per MCP spec,
+    # the first request should not include a session ID — the server provides one)
+    headers_with_session =
+      if session_id do
+        [{@session_header, session_id} | base_headers]
+      else
+        base_headers
+      end
 
     # Add Last-Event-ID for resumability if available
     headers_with_event_id =
@@ -642,30 +702,6 @@ defmodule ExMCP.Transport.HTTP do
   defp build_ssl_options_from_state(_state) do
     build_ssl_options(%{})
   end
-
-  defp validate_cors_response(
-         response_headers,
-         %{security: %{validate_origin: true, allowed_origins: allowed}} = state
-       ) do
-    origin_header = find_header(response_headers, "access-control-allow-origin")
-
-    case origin_header do
-      nil ->
-        {:error, :missing_cors_header}
-
-      "*" when allowed != :any ->
-        {:error, :wildcard_origin_not_allowed}
-
-      origin ->
-        if origin == state.origin || origin in (allowed || []) do
-          :ok
-        else
-          {:error, {:origin_not_allowed, origin}}
-        end
-    end
-  end
-
-  defp validate_cors_response(_headers, _state), do: :ok
 
   defp find_header(headers, name) do
     name_lower = String.downcase(name)

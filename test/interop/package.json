@@ -4,6 +4,8 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/server-everything": "^2025.1.13",
+    "express": "^5.1.0",
     "zod": "^3.25.0"
   }
 }

@@ -36,7 +36,8 @@ defmodule ExMCP.Transport.SSEClient do
     :last_event_id,
     :reconnect_timer,
     :connect_timeout,
-    :idle_timeout
+    :idle_timeout,
+    :httpc_profile
   ]
 
   @type t :: %__MODULE__{
@@ -52,7 +53,8 @@ defmodule ExMCP.Transport.SSEClient do
           last_event_id: String.t() | nil,
           reconnect_timer: reference() | nil,
           connect_timeout: non_neg_integer(),
-          idle_timeout: non_neg_integer()
+          idle_timeout: non_neg_integer(),
+          httpc_profile: atom() | nil
         }
 
   # Client API
@@ -91,6 +93,11 @@ defmodule ExMCP.Transport.SSEClient do
     connect_timeout = Keyword.get(opts, :connect_timeout, @connection_timeout)
     idle_timeout = Keyword.get(opts, :idle_timeout, @heartbeat_interval)
 
+    # Use a separate httpc profile to avoid connection pool conflicts
+    # with POST requests on the default profile
+    profile = String.to_atom("sse_#{:erlang.unique_integer([:positive])}")
+    {:ok, _} = :inets.start(:httpc, [{:profile, profile}])
+
     state = %__MODULE__{
       url: url,
       headers: headers,
@@ -100,7 +107,8 @@ defmodule ExMCP.Transport.SSEClient do
       retry_delay: @initial_retry_delay,
       retry_count: 0,
       connect_timeout: connect_timeout,
-      idle_timeout: idle_timeout
+      idle_timeout: idle_timeout,
+      httpc_profile: profile
     }
 
     {:ok, state, {:continue, :connect}}
@@ -189,7 +197,7 @@ defmodule ExMCP.Transport.SSEClient do
     Logger.warning("SSE heartbeat timeout, reconnecting...")
 
     if state.ref do
-      :httpc.cancel_request(state.ref)
+      :httpc.cancel_request(state.ref, state.httpc_profile)
     end
 
     schedule_reconnect(state)
@@ -210,7 +218,7 @@ defmodule ExMCP.Transport.SSEClient do
   @impl true
   def terminate(_reason, state) do
     if state.ref do
-      :httpc.cancel_request(state.ref)
+      :httpc.cancel_request(state.ref, state.httpc_profile)
     end
 
     if state.heartbeat_ref do
@@ -219,6 +227,11 @@ defmodule ExMCP.Transport.SSEClient do
 
     if state.reconnect_timer do
       Process.cancel_timer(state.reconnect_timer)
+    end
+
+    # Stop the dedicated httpc profile
+    if state.httpc_profile do
+      :inets.stop(:httpc, state.httpc_profile)
     end
 
     :ok
@@ -236,13 +249,29 @@ defmodule ExMCP.Transport.SSEClient do
       end)
     }
 
+    # For SSE connections, :timeout is the total request time — we use infinity
+    # since SSE connections are long-lived. The SSEClient's heartbeat mechanism
+    # handles idle detection. :connect_timeout limits just the TCP connection.
     http_opts =
       case URI.parse(state.url).scheme do
-        "https" -> [{:ssl, state.ssl_opts} | [{:timeout, state.connect_timeout}]]
-        _ -> [{:timeout, state.connect_timeout}]
+        "https" ->
+          [
+            {:ssl, state.ssl_opts},
+            {:timeout, :infinity},
+            {:connect_timeout, state.connect_timeout}
+          ]
+
+        _ ->
+          [{:timeout, :infinity}, {:connect_timeout, state.connect_timeout}]
       end
 
-    :httpc.request(:get, request, http_opts, [{:sync, false}, {:stream, :self}])
+    :httpc.request(
+      :get,
+      request,
+      http_opts,
+      [{:sync, false}, {:stream, :self}],
+      state.httpc_profile
+    )
   end
 
   defp build_headers(state) do

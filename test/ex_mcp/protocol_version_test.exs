@@ -173,8 +173,9 @@ defmodule ExMCP.ProtocolVersionTest do
       response = Jason.decode!(conn.resp_body)
       assert response["result"] == %{"message" => "hello"}
 
-      # Response should not include protocol version header
-      assert get_resp_header(conn, "mcp-protocol-version") == []
+      # Per MCP spec, server MUST always include mcp-protocol-version in responses,
+      # even when incoming validation is disabled by feature flag
+      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-11-25"]
     end
   end
 
