@@ -520,8 +520,10 @@ defmodule ExMCP.DSL.CodeGenerator do
       end
 
       # Handle tool execution
+      # Uses apply/3 to prevent compiler type narrowing warnings when
+      # the default callback only returns one of the possible result types
       def handle_call({:execute_tool, tool_name, arguments}, _from, state) do
-        case handle_tool_call(tool_name, arguments, state) do
+        case apply(__MODULE__, :handle_tool_call, [tool_name, arguments, state]) do
           {:ok, result, new_state} ->
             {:reply, {:ok, result}, new_state}
 
@@ -532,7 +534,7 @@ defmodule ExMCP.DSL.CodeGenerator do
 
       # Handle resource read
       def handle_call({:read_resource, uri}, _from, state) do
-        case handle_resource_read(uri, uri, state) do
+        case apply(__MODULE__, :handle_resource_read, [uri, uri, state]) do
           {:ok, content, new_state} ->
             {:reply, {:ok, content}, new_state}
 
@@ -543,7 +545,7 @@ defmodule ExMCP.DSL.CodeGenerator do
 
       # Handle prompt get
       def handle_call({:get_prompt, prompt_name, arguments}, _from, state) do
-        case handle_prompt_get(prompt_name, arguments, state) do
+        case apply(__MODULE__, :handle_prompt_get, [prompt_name, arguments, state]) do
           {:ok, prompt, new_state} ->
             {:reply, {:ok, prompt}, new_state}
 
@@ -554,7 +556,7 @@ defmodule ExMCP.DSL.CodeGenerator do
 
       # Handle resource subscription
       def handle_call({:subscribe_resource, uri}, _from, state) do
-        case handle_resource_subscribe(uri, state) do
+        case apply(__MODULE__, :handle_resource_subscribe, [uri, state]) do
           {:ok, new_state} ->
             {:reply, :ok, new_state}
 
@@ -565,7 +567,7 @@ defmodule ExMCP.DSL.CodeGenerator do
 
       # Handle resource unsubscription
       def handle_call({:unsubscribe_resource, uri}, _from, state) do
-        case handle_resource_unsubscribe(uri, state) do
+        case apply(__MODULE__, :handle_resource_unsubscribe, [uri, state]) do
           {:ok, new_state} ->
             {:reply, :ok, new_state}
 
@@ -576,12 +578,7 @@ defmodule ExMCP.DSL.CodeGenerator do
 
       # Handle request calls from MessageProcessor for unknown methods
       def handle_call({:handle_request, method, params}, _from, state) do
-        # First check if we have a custom handle_request implementation
-        case handle_request(method, params, state) do
-          {:unknown_method, new_state} ->
-            # This should trigger method not found in MessageProcessor
-            {:reply, :method_not_found, new_state}
-
+        case apply(__MODULE__, :handle_request, [method, params, state]) do
           {:noreply, new_state} ->
             {:reply, {:noreply}, new_state}
 

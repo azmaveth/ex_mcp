@@ -5,7 +5,8 @@ defmodule ExMCP.ProtocolVersionTest do
   Tests the implementation of the 2025-06-18 specification requirement
   that HTTP transport must include MCP-Protocol-Version headers.
   """
-  use ExUnit.Case, async: true
+  # Cannot be async: modifies global Application env (:protocol_version_required)
+  use ExUnit.Case, async: false
 
   import Plug.Test
   import Plug.Conn

@@ -18,19 +18,24 @@ defmodule ExMCP.MixProject do
       source_url: @github_url,
       homepage_url: @github_url,
       test_coverage: [tool: ExCoveralls],
-      preferred_cli_env: [
-        coveralls: :test,
-        "coveralls.detail": :test,
-        "coveralls.post": :test,
-        "coveralls.html": :test,
-        "coveralls.github": :test
-      ],
       dialyzer: [
         plt_add_apps: [:mix, :ex_unit],
         ignore_warnings: ".dialyzer_ignore.exs",
         list_unused_filters: false,
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts"
+      ]
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.post": :test,
+        "coveralls.html": :test,
+        "coveralls.github": :test
       ]
     ]
   end
