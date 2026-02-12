@@ -83,7 +83,7 @@ defmodule ExMCP.Internal.ConsentCache do
   This is primarily intended for testing purposes to ensure test isolation.
   """
   def clear do
-    GenServer.cast(__MODULE__, :clear)
+    GenServer.call(__MODULE__, :clear)
   end
 
   # --- Server Callbacks ---
@@ -114,14 +114,14 @@ defmodule ExMCP.Internal.ConsentCache do
   end
 
   @impl true
-  def handle_cast(:clear, state) do
+  def handle_call(:clear, _from, state) do
     # Only clear if table exists (defensive programming)
     case :ets.whereis(@table) do
       :undefined -> :ok
       _tid -> :ets.delete_all_objects(@table)
     end
 
-    {:noreply, state}
+    {:reply, :ok, state}
   end
 
   @impl true
