@@ -527,16 +527,15 @@ defmodule ExMCP.Server.Handler do
       use GenServer
       alias ExMCP.Internal.Logging
 
+      # Required callback defaults live in @before_compile with
+      # defoverridable so the Tool DSL's @before_compile can override them.
       @before_compile ExMCP.Server.Handler
 
       @impl ExMCP.Server.Handler
       def init(_args), do: {:ok, %{}}
 
       # Defaults for optional callbacks — user inline overrides work
-      # via defoverridable. Required callbacks (handle_initialize,
-      # handle_list_tools, handle_call_tool) are defined in
-      # @before_compile with defoverridable so the Tool DSL's
-      # @before_compile can also override them.
+      # via defoverridable.
       @impl ExMCP.Server.Handler
       def handle_list_resources(_cursor, state) do
         {:error, "Resources not implemented", state}
@@ -641,52 +640,19 @@ defmodule ExMCP.Server.Handler do
                      handle_task_cancel: 2,
                      handle_elicitation_complete: 2,
                      terminate: 2
-    end
-  end
 
-  @doc false
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-  defmacro __before_compile__(_env) do
-    quote do
       # =================================================================
-      # Required callback defaults (injected via @before_compile)
+      # GenServer Bridge (inline)
       #
-      # These use defoverridable so the Tool DSL's @before_compile
-      # (which runs after this one) can override them. User inline
-      # defs also override these since inline defs beat @before_compile.
-      # =================================================================
-
-      @impl ExMCP.Server.Handler
-      def handle_initialize(_params, state) do
-        {:ok,
-         %{
-           protocolVersion: "2025-03-26",
-           serverInfo: %{name: "ex_mcp", version: "0.1.0"},
-           capabilities: %{}
-         }, state}
-      end
-
-      @impl ExMCP.Server.Handler
-      def handle_list_tools(_cursor, state) do
-        {:ok, [], nil, state}
-      end
-
-      @impl ExMCP.Server.Handler
-      def handle_call_tool(_name, _arguments, state) do
-        {:error, "Tool not found", state}
-      end
-
-      defoverridable handle_initialize: 2,
-                     handle_list_tools: 2,
-                     handle_call_tool: 3
-
-      # =================================================================
-      # GenServer Bridge
+      # These MUST be inline (not in @before_compile) because GenServer
+      # in Elixir 1.19+ defines its catch-all handle_call via its own
+      # @before_compile hook. Inline defs always beat @before_compile
+      # defs, so these specific pattern-matching clauses will appear
+      # before GenServer's catch-all in the compiled function.
       #
-      # ExMCP.HttpPlug and MessageProcessor dispatch MCP protocol
-      # messages via GenServer.call. These clauses bridge to the
-      # Handler behaviour callbacks. Function calls resolve to the
-      # final compiled version (user override or Tool DSL override).
+      # Function calls to callbacks (handle_initialize, handle_list_tools,
+      # etc.) resolve to the final compiled version regardless of
+      # definition order, so Tool DSL overrides work correctly.
       # =================================================================
 
       @impl GenServer
@@ -795,6 +761,43 @@ defmodule ExMCP.Server.Handler do
       def handle_call(_msg, _from, state) do
         {:reply, {:error, "Unknown message"}, state}
       end
+    end
+  end
+
+  @doc false
+  defmacro __before_compile__(_env) do
+    quote do
+      # =================================================================
+      # Required callback defaults (injected via @before_compile)
+      #
+      # These use defoverridable so the Tool DSL's @before_compile
+      # (which runs after this one) can override them. User inline
+      # defs also override these since inline defs beat @before_compile.
+      # =================================================================
+
+      @impl ExMCP.Server.Handler
+      def handle_initialize(_params, state) do
+        {:ok,
+         %{
+           protocolVersion: "2025-03-26",
+           serverInfo: %{name: "ex_mcp", version: "0.1.0"},
+           capabilities: %{}
+         }, state}
+      end
+
+      @impl ExMCP.Server.Handler
+      def handle_list_tools(_cursor, state) do
+        {:ok, [], nil, state}
+      end
+
+      @impl ExMCP.Server.Handler
+      def handle_call_tool(_name, _arguments, state) do
+        {:error, "Tool not found", state}
+      end
+
+      defoverridable handle_initialize: 2,
+                     handle_list_tools: 2,
+                     handle_call_tool: 3
     end
   end
 
