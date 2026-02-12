@@ -16,7 +16,7 @@
 
 ---
 
-## ✅ **Production Ready**: ExMCP v0.6.0 is now production-ready with 100% MCP compliance and comprehensive testing. The API is stable and ready for production use.
+## ✅ **Production Ready**: ExMCP v0.7.0 is production-ready with 100% MCP compliance and comprehensive testing. The API is stable and ready for production use.
 
 ## Overview
 
@@ -25,7 +25,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 ## ✨ Key Features
 
 ### Protocol & Standards
-- 🚀 **Multiple MCP Versions** - Supports protocol versions 2024-11-05, 2025-03-26, and 2025-06-18
+- 🚀 **Multiple MCP Versions** - Supports protocol versions 2024-11-05, 2025-03-26, 2025-06-18, and 2025-11-25
 - ✅ **100% MCP Compliant** - Full implementation of official MCP specification
 - 🛠️ **Complete Feature Set** - Tools, Resources, Prompts, Roots, Subscriptions, Batch requests
 - 🔐 **OAuth 2.1 Support** - Complete Resource Server implementation
@@ -43,7 +43,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - 🔄 **Bi-directional Communication** - Servers can make requests to clients
 
 ### Developer Experience
-- 🧪 **Well Tested** - Comprehensive test suite with 500+ tests
+- 🧪 **Well Tested** - Comprehensive test suite with 2600+ tests
 - 📚 **Extensive Documentation** - Complete guides and real-world examples
 - 🔧 **Easy Configuration** - Sensible defaults with flexible customization
 - 🛡️ **Security First** - Built-in authentication, TLS/SSL, CORS support
@@ -55,7 +55,7 @@ Add `ex_mcp` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.6.0"}
+    {:ex_mcp, "~> 0.7.0"}
   ]
 end
 ```
@@ -134,6 +134,41 @@ end
 ```bash
 mcp connect http://localhost:4000/api/mcp
 ```
+
+### DSL Server (Quickest Way)
+
+Define tools, resources, and prompts declaratively:
+
+```elixir
+defmodule MyServer do
+  use ExMCP.Server
+
+  deftool "greet" do
+    description "Greets a person by name"
+    args do
+      field :name, :string, required: true, description: "Person to greet"
+    end
+  end
+
+  defresource "info://about" do
+    name "About"
+    description "Server information"
+    mime_type "text/plain"
+  end
+
+  @impl true
+  def handle_tool_call("greet", %{"name" => name}, state) do
+    {:ok, %{content: [text("Hello, #{name}!")]}, state}
+  end
+
+  @impl true
+  def handle_resource_read("info://about", _uri, state) do
+    {:ok, [text("MyServer v1.0")], state}
+  end
+end
+```
+
+See the [DSL Guide](docs/DSL_GUIDE.md) and [examples/](examples/) for more patterns.
 
 ### Standalone MCP Client
 
@@ -222,13 +257,14 @@ ExMCP provides comprehensive documentation organized for different needs:
 | **stdio** | ~1-5ms | External tools | Subprocess communication |
 | **HTTP/SSE** | ~5-20ms | Network clients | Web applications, remote APIs |
 
-## ✨ What's New in v0.6.0
+## ✨ What's New in v0.7.0
 
-- **Enhanced Security**: Complete OAuth 2.1 Resource Server implementation
-- **MCP 2025-06-18 Support**: Latest protocol version with structured tool output
-- **Improved Testing**: Comprehensive compliance test suite
-- **Better Performance**: Optimized native BEAM transport
-- **Documentation**: Enhanced guides and examples
+- **MCP 2025-11-25 Support**: Latest protocol version with full spec compliance
+- **Streamable HTTP**: Spec-compliant client and server (session IDs, SSE path, protocol version headers)
+- **TypeScript SDK Interop**: Verified interoperability with the official TypeScript MCP SDK
+- **Client State Machine**: Refactored client with GenStateMachine for better observability
+- **Agent Simulation Tests**: Integration tests with MockLLM for agent workflows
+- **Conformance Suites**: Automated conformance tests for all 4 protocol versions
 
 See the [CHANGELOG](CHANGELOG.md) for complete details and breaking changes.
 

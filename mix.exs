@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "0.6.0"
+  @version "0.7.0"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -79,10 +79,9 @@ defmodule ExMCP.MixProject do
 
   defp description do
     """
-    Complete Elixir implementation of the Model Context Protocol (MCP) v2025-03-26.
-    Build MCP clients and servers with support for tools, resources, prompts, sampling,
-    roots, and subscriptions. Includes both spec-compliant features and Elixir-specific
-    extensions like BEAM transport, auto-reconnection, and server discovery.
+    Complete Elixir implementation of the Model Context Protocol (MCP) v2025-11-25.
+    Build MCP clients and servers with tools, resources, prompts, and multiple transports
+    including stdio, HTTP/SSE, and native BEAM.
     """
   end
 
@@ -94,8 +93,7 @@ defmodule ExMCP.MixProject do
         "Changelog" => "#{@github_url}/blob/master/CHANGELOG.md",
         "MCP Spec" => "https://modelcontextprotocol.io"
       },
-      files:
-        ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md USER_GUIDE.md EXTENSIONS.md)
+      files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md)
     ]
   end
 
@@ -118,17 +116,22 @@ defmodule ExMCP.MixProject do
       canonical: "https://hexdocs.pm/ex_mcp",
       extras: [
         "README.md",
-        "docs/PHOENIX_GUIDE.md",
-        "USER_GUIDE.md",
-        "API_REFERENCE.md",
-        "EXTENSIONS.md",
+        "docs/guides/USER_GUIDE.md",
+        "docs/guides/PHOENIX_GUIDE.md",
+        "docs/DSL_GUIDE.md",
+        "docs/TRANSPORT_GUIDE.md",
+        "docs/CONFIGURATION.md",
+        "docs/SECURITY.md",
+        "docs/ARCHITECTURE.md",
+        "docs/DEVELOPMENT.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",
       source_ref: "v#{@version}",
       groups_for_extras: [
         Introduction: ~r/README/,
-        Guides: ~r/PHOENIX_GUIDE|USER_GUIDE|API_REFERENCE|EXTENSIONS/,
+        Guides:
+          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|CONFIGURATION|SECURITY|ARCHITECTURE|DEVELOPMENT/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

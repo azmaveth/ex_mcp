@@ -5,7 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2025-02-11
+
+### Added
+- **MCP Protocol Version 2025-11-25 Support** - Latest protocol version with full spec compliance
+- **Streamable HTTP Spec Compliance** - Client and server now fully comply with MCP Streamable HTTP spec:
+  - Server provides session ID (not client); first POST omits `Mcp-Session-Id` header
+  - `Accept: application/json, text/event-stream` header sent on requests
+  - SSE GET handled on same endpoint as POST (not `/sse`)
+  - `mcp-protocol-version` header included in all responses
+  - POST responses return 200 with JSON body even when SSE is enabled
+- **TypeScript MCP SDK Interop Tests** - Verified interoperability with the official TypeScript MCP SDK
+- **Agent Simulation Integration Tests** - Integration tests with MockLLM for testing agent workflows
+- **`mix mcp.sync_spec` Task** - Automated task for syncing MCP protocol specifications
+- **Conformance Test Suites** - Automated conformance tests for all 4 protocol versions (2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25)
+- **Client State Machine Adapter** - Refactored client using GenStateMachine with:
+  - Formal state transitions with guards
+  - State-specific data structures
+  - Comprehensive telemetry events for observability
+  - Enhanced reconnection logic with exponential backoff
+  - Integration with `ExMCP.ProgressTracker`
+- Structured error types with `ExMCP.Error` module
+- Comprehensive telemetry instrumentation:
+  - `[:ex_mcp, :request, :start/stop]` events
+  - `[:ex_mcp, :tool, :start/stop]` events
+  - `[:ex_mcp, :resource, :read, :start/stop]` events
+  - `[:ex_mcp, :prompt, :get, :start/stop]` events
+- Bidirectional communication for MCP server-to-client requests
+- Comprehensive protocol version validation
 
 ### Changed
 - **BREAKING:** Refactored internal architecture of `ExMCP.Server` module
@@ -16,26 +43,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `ExMCP.Server.Transport.Coordinator` - Transport management
     - `ExMCP.DSL.CodeGenerator` - DSL macro code generation
   - Public API remains unchanged - 100% backward compatible
-
-### Added
-- Structured error types with `ExMCP.Error` module
-- Comprehensive telemetry instrumentation:
-  - `[:ex_mcp, :request, :start/stop]` events
-  - `[:ex_mcp, :tool, :start/stop]` events
-  - `[:ex_mcp, :resource, :read, :start/stop]` events
-  - `[:ex_mcp, :prompt, :get, :start/stop]` events
-- Integration tests for refactored components
-- Success metrics documentation
+- Replaced deprecated `preferred_cli_env` with `cli/0` callback
+- Reduced cyclomatic complexity in `TestTransport` and `Reliability.Supervisor`
 
 ### Fixed
-- Security: Replaced unsafe `String.to_atom` usage with safe alternatives
-  - Fixed potential atom exhaustion in schema validation
-  - Fixed potential atom exhaustion in OAuth error handling
-  - Fixed potential atom exhaustion in content security scanning
-  - Fixed potential atom exhaustion in protected resource metadata parsing
+- DSL type narrowing warnings for unreachable clauses (closes #3)
+- Test isolation issues in session and property tests
+- Conformance test alignment with MCP spec
+- ETF deserialization security in BEAM transport
+- Security guard robustness against malformed consent handlers
+- Flaky security test race conditions
+- Test infrastructure race conditions
+- HTTP transport communication reliability
+- Replaced unsafe `String.to_atom` usage with safe alternatives (atom exhaustion prevention)
+- All compiler warnings in test files resolved
+
+### Removed
+- 22 stale planning/internal docs from root directory
+- 16 stale docs and 5 stale subdirectories from `docs/`
+- Non-existent `USER_GUIDE.md` and `EXTENSIONS.md` from hex package file list
 
 ### Security
 - Prevented atom exhaustion attacks by using string keys instead of dynamic atom creation
+- Enhanced ETF deserialization security in BEAM transport
 
 ## [0.6.0] - 2025-06-26
 
