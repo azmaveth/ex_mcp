@@ -83,7 +83,10 @@ defmodule ExMCP.Internal.ConsentCache do
   This is primarily intended for testing purposes to ensure test isolation.
   """
   def clear do
-    GenServer.call(__MODULE__, :clear)
+    case GenServer.whereis(__MODULE__) do
+      nil -> :ok
+      pid -> GenServer.call(pid, :clear)
+    end
   end
 
   # --- Server Callbacks ---

@@ -232,7 +232,8 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       state = %{}
       params = %{name: "weather_tool", arguments: %{location: "London"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Verify response structure for 2025-06-18 compliance
       assert Map.has_key?(response, :content)
@@ -260,7 +261,8 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       state = %{}
       params = %{name: "calculator", arguments: %{expression: "2+2"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Valid output should pass validation
       assert response.structuredOutput.result == 4
@@ -273,7 +275,8 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       state = %{}
       params = %{name: "invalid_output_tool", arguments: %{value: "test"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Should get validation error
       assert Map.has_key?(response, :isError)
@@ -288,7 +291,8 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       state = %{}
       params = %{name: "legacy_tool", arguments: %{input: "test"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Should have structuredOutput, not structuredContent
       assert Map.has_key?(response, :structuredOutput)
@@ -300,7 +304,8 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       state = %{}
       params = %{name: "structured_only", arguments: %{data: "test"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Should have empty content array and structured output
       assert response.content == []
@@ -315,7 +320,8 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       state = %{}
       params = %{name: "legacy_tool", arguments: %{input: "hello"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Should work without validation
       assert length(response.content) == 1
@@ -327,7 +333,8 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       state = %{}
       params = %{name: "calculator", arguments: %{expression: "invalid"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Error should have proper structure
       assert Map.has_key?(response, :isError)

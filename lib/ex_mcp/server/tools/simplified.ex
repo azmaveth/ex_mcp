@@ -128,7 +128,7 @@ defmodule ExMCP.Server.Tools.Simplified do
       end
 
       @impl ExMCP.Server.Handler
-      def handle_call_tool(%{name: tool_name, arguments: args}, state) do
+      def handle_call_tool(tool_name, args, state) do
         ensure_tools_initialized()
 
         case Registry.call_tool(__tool_registry__(), tool_name, args, state) do

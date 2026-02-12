@@ -109,12 +109,12 @@ defmodule ExMCP.Server.Tools do
       end
 
       @impl ExMCP.Server.Handler
-      def handle_call_tool(params, state) do
+      def handle_call_tool(name, arguments, state) do
         tool_mapping = unquote(tool_mapping)
 
-        case Map.get(tool_mapping, params.name) do
+        case Map.get(tool_mapping, name) do
           {handler_func, output_schema} ->
-            result = apply(__MODULE__, handler_func, [params.arguments, state])
+            result = apply(__MODULE__, handler_func, [arguments, state])
 
             # Validate output if schema is defined
             validated_result =
@@ -129,7 +129,7 @@ defmodule ExMCP.Server.Tools do
           nil ->
             {:ok,
              %{
-               content: [%{type: "text", text: "Unknown tool: #{params.name}"}],
+               content: [%{type: "text", text: "Unknown tool: #{name}"}],
                isError: true
              }, state}
         end

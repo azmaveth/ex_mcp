@@ -36,7 +36,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Test tool execution
       {:ok, result, _state} =
         SimpleToolServer.handle_call_tool(
-          %{name: "echo", arguments: %{message: "Hello, World!"}},
+          "echo",
+          %{message: "Hello, World!"},
           %{}
         )
 
@@ -133,7 +134,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Test execution
       {:ok, result, _} =
         AdvancedToolServer.handle_call_tool(
-          %{name: "calculate", arguments: %{expression: "2 + 2"}},
+          "calculate",
+          %{expression: "2 + 2"},
           %{}
         )
 
@@ -194,7 +196,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Success case
       {:ok, result, _} =
         ErrorToolServer.handle_call_tool(
-          %{name: "failing_tool", arguments: %{trigger_error: false}},
+          "failing_tool",
+          %{trigger_error: false},
           %{}
         )
 
@@ -203,7 +206,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Error case
       {:ok, result, _} =
         ErrorToolServer.handle_call_tool(
-          %{name: "failing_tool", arguments: %{trigger_error: true}},
+          "failing_tool",
+          %{trigger_error: true},
           %{}
         )
 
@@ -338,7 +342,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Valid division
       {:ok, result, _} =
         ValidationServer.handle_call_tool(
-          %{name: "divide", arguments: %{dividend: 10, divisor: 2}},
+          "divide",
+          %{dividend: 10, divisor: 2},
           %{}
         )
 
@@ -347,7 +352,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Division by zero
       {:ok, result, _} =
         ValidationServer.handle_call_tool(
-          %{name: "divide", arguments: %{dividend: 10, divisor: 0}},
+          "divide",
+          %{dividend: 10, divisor: 0},
           %{}
         )
 
@@ -378,7 +384,8 @@ defmodule ExMCP.Server.ToolsTest do
       # With all parameters
       {:ok, result, _} =
         RequiredParamServer.handle_call_tool(
-          %{name: "greet", arguments: %{name: "Alice", title: "Dr."}},
+          "greet",
+          %{name: "Alice", title: "Dr."},
           %{}
         )
 
@@ -387,7 +394,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Missing optional parameter
       {:ok, result, _} =
         RequiredParamServer.handle_call_tool(
-          %{name: "greet", arguments: %{name: "Bob"}},
+          "greet",
+          %{name: "Bob"},
           %{}
         )
 
@@ -396,7 +404,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Missing required parameter - handler should handle gracefully
       {:ok, result, _} =
         RequiredParamServer.handle_call_tool(
-          %{name: "greet", arguments: %{title: "Mr."}},
+          "greet",
+          %{title: "Mr."},
           %{}
         )
 
@@ -438,7 +447,8 @@ defmodule ExMCP.Server.ToolsTest do
       # First tool execution
       {:ok, fetch_result, state} =
         CompositeServer.handle_call_tool(
-          %{name: "fetch_data", arguments: %{source: "database"}},
+          "fetch_data",
+          %{source: "database"},
           %{}
         )
 
@@ -448,7 +458,8 @@ defmodule ExMCP.Server.ToolsTest do
       # Second tool execution
       {:ok, process_result, _} =
         CompositeServer.handle_call_tool(
-          %{name: "process_data", arguments: %{data: data}},
+          "process_data",
+          %{data: data},
           state
         )
 

@@ -166,14 +166,14 @@ defmodule ExMCP.Performance.SchemaCompilationPerformanceTest do
 
       # Warm up
       for _ <- 1..5 do
-        TestPerformanceServer.handle_call_tool(params, state)
+        TestPerformanceServer.handle_call_tool(params.name, params.arguments, state)
       end
 
       # Measure tool call performance
       {time_microseconds, results} =
         :timer.tc(fn ->
           for _ <- 1..100 do
-            TestPerformanceServer.handle_call_tool(params, state)
+            TestPerformanceServer.handle_call_tool(params.name, params.arguments, state)
           end
         end)
 

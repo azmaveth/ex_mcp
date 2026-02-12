@@ -160,7 +160,8 @@ defmodule ExMCP.Server.StructuredOutputTest do
       state = %{}
       params = %{name: "calculate", arguments: %{expression: "2+2"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       assert %{
                content: [%{type: "text", text: "Result: 4"}],
@@ -174,7 +175,8 @@ defmodule ExMCP.Server.StructuredOutputTest do
       state = %{}
       params = %{name: "invalid_output", arguments: %{value: "test"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Should get validation error now that schema conversion is fixed
       assert %{
@@ -189,7 +191,8 @@ defmodule ExMCP.Server.StructuredOutputTest do
       state = %{}
       params = %{name: "echo", arguments: %{message: "hello"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       assert %{
                content: [%{type: "text", text: "hello"}]
@@ -203,7 +206,8 @@ defmodule ExMCP.Server.StructuredOutputTest do
       state = %{}
       params = %{name: "structured_only", arguments: %{data: "test"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       assert %{
                content: [],
@@ -215,7 +219,8 @@ defmodule ExMCP.Server.StructuredOutputTest do
       state = %{}
       params = %{name: "legacy_structured_content", arguments: %{input: "test"}}
 
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       assert %{
                content: [%{type: "text", text: "Processing..."}],
@@ -232,7 +237,9 @@ defmodule ExMCP.Server.StructuredOutputTest do
 
       # Test through the actual tool call to verify normalization
       params = %{name: "calculate", arguments: %{expression: "10*5"}}
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Should have both content and structuredOutput
       assert Map.has_key?(response, :content)
@@ -245,7 +252,9 @@ defmodule ExMCP.Server.StructuredOutputTest do
       state = %{}
 
       params = %{name: "legacy_structured_content", arguments: %{input: "test"}}
-      assert {:ok, response, ^state} = TestServer.handle_call_tool(params, state)
+
+      assert {:ok, response, ^state} =
+               TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Should have structuredOutput, not structuredContent
       assert Map.has_key?(response, :structuredOutput)
