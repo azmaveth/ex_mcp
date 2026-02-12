@@ -71,5 +71,8 @@
   # Compliance handler files with intentional callback mismatches for testing different protocol versions
   {"test/ex_mcp/compliance/handlers/handler20241105.ex", :callback_type_mismatch},
   {"test/ex_mcp/compliance/handlers/handler20250326.ex", :callback_type_mismatch},
-  {"test/ex_mcp/compliance/handlers/handler20250618.ex", :callback_type_mismatch}
+  {"test/ex_mcp/compliance/handlers/handler20250618.ex", :callback_type_mismatch},
+
+  # Agent test server - DSL-generated pattern match warning from use ExMCP.Server
+  {"test/support/agent_test_server.ex", :pattern_match}
 ]
