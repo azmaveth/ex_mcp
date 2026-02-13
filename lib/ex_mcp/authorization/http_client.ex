@@ -12,7 +12,7 @@ defmodule ExMCP.Authorization.HTTPClient do
   Handles both token exchange and refresh token requests with proper
   error handling and response parsing.
   """
-  @spec make_token_request(String.t(), keyword()) ::
+  @spec make_token_request(String.t(), keyword() | [{String.t(), String.t()}]) ::
           {:ok, map()} | {:error, term()}
   def make_token_request(endpoint, body) do
     headers = [
@@ -145,13 +145,19 @@ defmodule ExMCP.Authorization.HTTPClient do
   # Response parsing helpers
 
   defp parse_token_response(data) do
-    %{
+    base = %{
       access_token: Map.fetch!(data, "access_token"),
       token_type: Map.get(data, "token_type", "Bearer"),
       expires_in: Map.get(data, "expires_in"),
       refresh_token: Map.get(data, "refresh_token"),
       scope: Map.get(data, "scope")
     }
+
+    # Include issued_token_type for RFC 8693 token exchange responses
+    case Map.get(data, "issued_token_type") do
+      nil -> base
+      issued_type -> Map.put(base, :issued_token_type, issued_type)
+    end
   end
 
   defp parse_introspection_response(data) do
@@ -181,7 +187,13 @@ defmodule ExMCP.Authorization.HTTPClient do
       grant_types_supported:
         Map.get(data, "grant_types_supported", ["authorization_code", "client_credentials"]),
       code_challenge_methods_supported:
-        Map.get(data, "code_challenge_methods_supported", ["S256"])
+        Map.get(data, "code_challenge_methods_supported", ["S256"]),
+      token_endpoint_auth_methods_supported:
+        Map.get(data, "token_endpoint_auth_methods_supported", ["client_secret_post"]),
+      token_endpoint_auth_signing_alg_values_supported:
+        Map.get(data, "token_endpoint_auth_signing_alg_values_supported"),
+      issuer: Map.get(data, "issuer"),
+      jwks_uri: Map.get(data, "jwks_uri")
     }
   end
 end

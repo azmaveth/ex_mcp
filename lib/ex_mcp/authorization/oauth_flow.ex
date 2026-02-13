@@ -8,7 +8,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
   - Token refresh flow
   """
 
-  alias ExMCP.Authorization.{HTTPClient, PKCE, Validator}
+  alias ExMCP.Authorization.{ClientAssertion, HTTPClient, PKCE, Validator}
 
   @type auth_params :: %{
           optional(:state) => String.t(),
@@ -144,6 +144,54 @@ defmodule ExMCP.Authorization.OAuthFlow do
     end
   end
 
+  @type jwt_credentials_params :: %{
+          optional(:scopes) => [String.t()],
+          optional(:resource) => String.t() | [String.t()],
+          optional(:alg) => String.t(),
+          optional(:kid) => String.t(),
+          client_id: String.t(),
+          private_key: JOSE.JWK.t(),
+          token_endpoint: String.t()
+        }
+
+  @doc """
+  Performs OAuth 2.1 client credentials flow with JWT client authentication (private_key_jwt).
+
+  Uses RFC 7523 Section 2.2 client assertions instead of a client secret.
+  """
+  @spec client_credentials_jwt_flow(jwt_credentials_params()) ::
+          {:ok, token_response()} | {:error, term()}
+  def client_credentials_jwt_flow(
+        %{
+          client_id: client_id,
+          private_key: private_key,
+          token_endpoint: token_endpoint
+        } = params
+      ) do
+    with :ok <- Validator.validate_https_endpoint(token_endpoint),
+         :ok <- Validator.validate_resource_parameters(params),
+         {:ok, assertion_params} <-
+           ClientAssertion.build_assertion_params(
+             client_id: client_id,
+             token_endpoint: token_endpoint,
+             private_key: private_key,
+             alg: Map.get(params, :alg, "RS256"),
+             kid: Map.get(params, :kid)
+           ) do
+      request_body =
+        [{"grant_type", "client_credentials"}] ++
+          assertion_params
+
+      # Add optional parameters
+      request_body =
+        request_body
+        |> maybe_add_scope_param(params)
+        |> maybe_add_resource_params(params)
+
+      HTTPClient.make_token_request(token_endpoint, request_body)
+    end
+  end
+
   @doc """
   Refreshes an access token using a refresh token.
 
@@ -260,6 +308,13 @@ defmodule ExMCP.Authorization.OAuthFlow do
   end
 
   defp maybe_add_scopes(request_body, _), do: request_body
+
+  defp maybe_add_scope_param(params_list, %{scopes: scopes})
+       when is_list(scopes) and scopes != [] do
+    params_list ++ [{"scope", Enum.join(scopes, " ")}]
+  end
+
+  defp maybe_add_scope_param(params_list, _), do: params_list
 
   defp maybe_add_resource_params(params_list, %{resource: resource}) when is_binary(resource) do
     params_list ++ [{"resource", resource}]

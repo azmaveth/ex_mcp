@@ -73,7 +73,8 @@ defmodule ExMCP.MixProject do
       {:propcheck, "~> 1.4", only: :test},
       {:benchee, "~> 1.0", only: [:dev, :test]},
       {:bypass, "~> 2.0", only: :test},
-      {:gen_state_machine, "~> 3.0"}
+      {:gen_state_machine, "~> 3.0"},
+      {:jose, "~> 1.11"}
     ]
   end
 

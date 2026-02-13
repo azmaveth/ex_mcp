@@ -126,7 +126,9 @@ defmodule ExMCP.Authorization.AuthorizationServerMetadata do
       :grant_types_supported,
       :code_challenge_methods_supported,
       :introspection_endpoint,
-      :revocation_endpoint
+      :revocation_endpoint,
+      :token_endpoint_auth_methods_supported,
+      :token_endpoint_auth_signing_alg_values_supported
     ]
 
     optional_fields

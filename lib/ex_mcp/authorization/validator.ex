@@ -122,6 +122,16 @@ defmodule ExMCP.Authorization.Validator do
     validate_required_params(params, required)
   end
 
+  def validate_grant_params("urn:ietf:params:oauth:grant-type:jwt-bearer", params) do
+    required = [:assertion]
+    validate_required_params(params, required)
+  end
+
+  def validate_grant_params("urn:ietf:params:oauth:grant-type:token-exchange", params) do
+    required = [:subject_token, :subject_token_type]
+    validate_required_params(params, required)
+  end
+
   def validate_grant_params(grant_type, _params) do
     {:error, {:unsupported_grant_type, grant_type}}
   end

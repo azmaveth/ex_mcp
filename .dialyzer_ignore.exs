@@ -74,5 +74,14 @@
   {"test/ex_mcp/compliance/handlers/handler20250618.ex", :callback_type_mismatch},
 
   # Agent test server - DSL-generated pattern match warning from use ExMCP.Server
-  {"test/support/agent_test_server.ex", :pattern_match}
+  {"test/support/agent_test_server.ex", :pattern_match},
+
+  # JWT/OAuth authorization modules - Dialyzer doesn't track rescue clause types correctly,
+  # causing false positives for pattern_match and unused_fun in with-chains
+  {"lib/ex_mcp/authorization/oauth_flow.ex", :pattern_match},
+  {"lib/ex_mcp/authorization/oauth_flow.ex", :unused_fun},
+  {"lib/ex_mcp/authorization/enterprise_flow.ex", :pattern_match},
+  {"lib/ex_mcp/authorization/enterprise_flow.ex", :unused_fun},
+  {"lib/ex_mcp/authorization/token_exchange.ex", :call},
+  {"lib/ex_mcp/authorization/jwt_bearer_assertion.ex", :call}
 ]

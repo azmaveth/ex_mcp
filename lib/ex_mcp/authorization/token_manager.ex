@@ -28,9 +28,12 @@ defmodule ExMCP.Authorization.TokenManager do
     :token_type,
     :scope,
     :auth_config,
+    :auth_method,
     :refresh_timer,
     :subscribers
   ]
+
+  @type auth_method :: :client_secret | :private_key_jwt | :enterprise_idjag
 
   @type t :: %__MODULE__{
           access_token: String.t() | nil,
@@ -39,6 +42,7 @@ defmodule ExMCP.Authorization.TokenManager do
           token_type: String.t(),
           scope: String.t() | nil,
           auth_config: map(),
+          auth_method: auth_method() | nil,
           refresh_timer: reference() | nil,
           subscribers: MapSet.t(pid())
         }
@@ -140,9 +144,11 @@ defmodule ExMCP.Authorization.TokenManager do
   def init(opts) do
     auth_config = Keyword.fetch!(opts, :auth_config)
     refresh_window = Keyword.get(opts, :refresh_window, @default_refresh_window)
+    auth_method = Keyword.get(opts, :auth_method)
 
     state = %__MODULE__{
       auth_config: Map.put(auth_config, :refresh_window, refresh_window),
+      auth_method: auth_method,
       token_type: "Bearer",
       subscribers: MapSet.new()
     }
@@ -350,8 +356,21 @@ defmodule ExMCP.Authorization.TokenManager do
   end
 
   defp refresh_token(state) do
-    Logger.info("Refreshing access token")
+    Logger.info("Refreshing access token (method: #{inspect(state.auth_method)})")
 
+    case state.auth_method do
+      :private_key_jwt ->
+        refresh_with_jwt_auth(state)
+
+      :enterprise_idjag ->
+        refresh_with_enterprise(state)
+
+      _other ->
+        refresh_with_client_secret(state)
+    end
+  end
+
+  defp refresh_with_client_secret(state) do
     config =
       Map.merge(state.auth_config, %{
         grant_type: "refresh_token",
@@ -359,6 +378,34 @@ defmodule ExMCP.Authorization.TokenManager do
       })
 
     Authorization.token_request(config)
+  end
+
+  defp refresh_with_jwt_auth(state) do
+    alias ExMCP.Authorization.OAuthFlow
+
+    params = %{
+      client_id: state.auth_config[:client_id],
+      private_key: state.auth_config[:private_key],
+      token_endpoint: state.auth_config[:token_endpoint]
+    }
+
+    params =
+      case state.scope do
+        nil -> params
+        scope -> Map.put(params, :scopes, String.split(scope, " ", trim: true))
+      end
+
+    OAuthFlow.client_credentials_jwt_flow(params)
+  end
+
+  defp refresh_with_enterprise(state) do
+    # Enterprise flow requires re-authentication; we can only attempt
+    # a refresh if we have a refresh token from the original grant
+    if state.refresh_token do
+      refresh_with_client_secret(state)
+    else
+      {:error, :enterprise_reauthorization_required}
+    end
   end
 
   defp refresh_token_with_scopes(state, scopes) do
