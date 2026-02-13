@@ -1,8 +1,8 @@
-# ExMCP v2 Architecture Guide
+# ExMCP Architecture Guide
 
 ## Overview
 
-ExMCP v2 represents a complete redesign of the library architecture, focusing on developer experience, type safety, and production readiness. This guide explains the architectural decisions and design patterns used in v2.
+ExMCP's architecture focuses on developer experience, type safety, and production readiness. This guide explains the architectural decisions and design patterns.
 
 ## Core Design Principles
 
@@ -346,7 +346,7 @@ config |> ExMCP.ClientConfig.put_middleware([
 
 ## Conclusion
 
-ExMCP v2's architecture prioritizes:
+ExMCP's architecture prioritizes:
 - **Developer experience** through clear APIs and helpful errors
 - **Type safety** with structured responses
 - **Production readiness** with backpressure and monitoring

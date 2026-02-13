@@ -1,8 +1,8 @@
-# ExMCP v2 DSL Guide
+# ExMCP DSL Guide
 
 ## Overview
 
-ExMCP v2 provides a powerful Domain-Specific Language (DSL) for defining MCP tools, resources, and prompts. The DSL is designed around three core principles:
+ExMCP provides a powerful Domain-Specific Language (DSL) for defining MCP tools, resources, and prompts. The DSL is designed around three core principles:
 
 1. **Consistency** - Same syntax patterns across all DSL types
 2. **Developer Experience** - Clean, intuitive syntax that feels natural in Elixir
@@ -12,7 +12,7 @@ ExMCP v2 provides a powerful Domain-Specific Language (DSL) for defining MCP too
 
 ### The Problem We Solved
 
-Early versions of the ExMCP v2 DSL suffered from naming conflicts and inconsistent syntax:
+Early versions of the DSL suffered from naming conflicts and inconsistent syntax:
 
 ```elixir
 # POOR DESIGN: Inconsistent and conflicting naming
@@ -322,8 +322,8 @@ While not currently implemented, the meta block pattern makes it easy to add met
 ```elixir
 # Future feature concept
 defmodule MyServer do
-  use ExMCP.ServerV2
-  
+  use ExMCP.Server
+
   # Global metadata for all definitions
   default_meta do
     author "Development Team"
@@ -404,7 +404,7 @@ end
 
 ### From Legacy Syntax
 
-If you have existing v2 code using the old syntax, migration is straightforward:
+If you have existing code using the old syntax, migration is straightforward:
 
 **Before:**
 
@@ -563,7 +563,7 @@ All of these use block syntax to create scoped contexts with their own vocabular
 
 ### The Separation of Definition and Implementation
 
-ExMCP v2 intentionally separates DSL definitions from handler implementations. This follows Elixir's behaviour pattern and provides several benefits:
+ExMCP intentionally separates DSL definitions from handler implementations. This follows Elixir's behaviour pattern and provides several benefits:
 
 1. **Testability** - Handlers are public functions that can be unit tested directly
 2. **Organization** - Definitions grouped at the top, implementations below
@@ -576,8 +576,8 @@ After defining tools, resources, and prompts with the DSL, implement handlers us
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.ServerV2
-  
+  use ExMCP.Server
+
   # Definitions at the top
   deftool "say_hello" do
     meta do
@@ -603,7 +603,7 @@ end
 
 ### The `defhandler` Macro
 
-To reduce boilerplate while maintaining the separation principle, ExMCP v2 provides the `defhandler` macro:
+To reduce boilerplate while maintaining the separation principle, ExMCP provides the `defhandler` macro:
 
 ```elixir
 # Instead of:
@@ -762,11 +762,11 @@ end
 
 ## Conclusion
 
-The ExMCP v2 DSL provides a comprehensive toolkit for building MCP servers:
+The ExMCP DSL provides a comprehensive toolkit for building MCP servers:
 
 1. **Meta Block Pattern** - Consistent syntax for all DSL types
 2. **Separated Handlers** - Clear distinction between definition and implementation
 3. **`defhandler` Macro** - Optional convenience for reducing boilerplate
 4. **Full Elixir Power** - No limitations on what you can implement
 
-This design ensures that ExMCP v2's DSL feels natural to Elixir developers while providing a solid foundation for future enhancements.
+This design ensures that ExMCP's DSL feels natural to Elixir developers while providing a solid foundation for future enhancements.
