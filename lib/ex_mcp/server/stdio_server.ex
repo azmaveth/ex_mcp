@@ -40,9 +40,12 @@ defmodule ExMCP.Server.StdioServer do
           meta do
             description "Says hello"
           end
-          args do
-            field :name, :string, required: true
-          end
+
+          input_schema %{
+            type: "object",
+            properties: %{name: %{type: "string"}},
+            required: ["name"]
+          }
         end
 
         @impl true

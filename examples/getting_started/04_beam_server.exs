@@ -36,15 +36,21 @@ defmodule BeamHelloServer do
       description "Sends a hello across BEAM nodes"
     end
     
-    args do
-      field :target_node, :string, 
-        required: true,
-        description: "Name of the target node (e.g., 'client@hostname')"
-        
-      field :message, :string,
-        default: "Hello from the BEAM!",
-        description: "Custom message to send"
-    end
+    input_schema %{
+      type: "object",
+      properties: %{
+        target_node: %{
+          type: "string",
+          description: "Name of the target node (e.g., 'client@hostname')"
+        },
+        message: %{
+          type: "string",
+          default: "Hello from the BEAM!",
+          description: "Custom message to send"
+        }
+      },
+      required: ["target_node"]
+    }
   end
   
   # Resource: BEAM System Info

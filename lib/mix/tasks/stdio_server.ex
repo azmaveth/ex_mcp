@@ -32,9 +32,13 @@ defmodule Mix.Tasks.StdioServer do
           description "Say hello to someone via stdio"
         end
 
-        args do
-          field(:name, :string, required: true, description: "Name to greet")
-        end
+        input_schema %{
+          type: "object",
+          properties: %{
+            name: %{type: "string", description: "Name to greet"}
+          },
+          required: ["name"]
+        }
       end
 
       deftool "echo" do
@@ -42,10 +46,14 @@ defmodule Mix.Tasks.StdioServer do
           description "Echo back the input message"
         end
 
-        args do
-          field(:message, :string, required: true, description: "Message to echo")
-          field(:uppercase, :boolean, default: false, description: "Convert to uppercase")
-        end
+        input_schema %{
+          type: "object",
+          properties: %{
+            message: %{type: "string", description: "Message to echo"},
+            uppercase: %{type: "boolean", default: false, description: "Convert to uppercase"}
+          },
+          required: ["message"]
+        }
       end
 
       defresource "config://server/info" do

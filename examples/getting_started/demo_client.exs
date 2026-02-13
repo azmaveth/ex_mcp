@@ -11,7 +11,6 @@ System.put_env("ELIXIR_LOG_LEVEL", "error")
 
 # Configure application-level logging
 Application.put_env(:logger, :level, :error)
-Application.put_env(:horde, :log_level, :emergency)
 
 # Configure Logger module
 try do
@@ -32,7 +31,6 @@ Mix.install([
 :logger.set_primary_config(:level, :error)
 Logger.configure(level: :error)
 Application.put_env(:logger, :level, :error)
-Application.put_env(:horde, :log_level, :emergency)
 
 try do
   Logger.configure_backend(:console, level: :error)

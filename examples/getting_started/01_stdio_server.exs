@@ -15,7 +15,6 @@ Application.put_env(:ex_mcp, :stdio_startup_delay, 10)
 # Suppress all logging for clean STDIO JSON-RPC
 System.put_env("ELIXIR_LOG_LEVEL", "emergency")
 Application.put_env(:logger, :level, :emergency)
-Application.put_env(:horde, :log_level, :emergency)
 :logger.set_primary_config(:level, :emergency)
 
 Mix.install([
@@ -28,7 +27,6 @@ Mix.install([
 # Configure logging again after Mix.install
 Logger.configure(level: :emergency)
 Application.put_env(:logger, :level, :emergency)
-Application.put_env(:horde, :log_level, :emergency)
 
 defmodule StdioHelloServer do
   use ExMCP.Server
@@ -46,16 +44,19 @@ defmodule StdioHelloServer do
       description "Says hello to someone"
     end
     
-    args do
-      field :name, :string, 
-        required: true, 
-        description: "Name of the person to greet"
-        
-      field :language, :string,
-        enum: ["english", "spanish", "french", "japanese"],
-        default: "english",
-        description: "Language for the greeting"
-    end
+    input_schema %{
+      type: "object",
+      properties: %{
+        name: %{type: "string", description: "Name of the person to greet"},
+        language: %{
+          type: "string",
+          enum: ["english", "spanish", "french", "japanese"],
+          default: "english",
+          description: "Language for the greeting"
+        }
+      },
+      required: ["name"]
+    }
   end
   
   @impl true
