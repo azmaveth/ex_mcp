@@ -71,25 +71,25 @@ config :ex_mcp,
 | Feature | 2024-11-05 | 2025-03-26 | 2025-06-18 | 2025-11-25 |
 |---------|:----------:|:----------:|:----------:|:----------:|
 | **Core Features** | | | | |
-| Tools, Resources, Prompts | yes | yes | yes | yes |
-| Bi-directional requests | yes | yes | yes | yes |
-| Request cancellation | yes | yes | yes | yes |
-| Progress notifications | yes | yes | yes | yes |
+| Tools, Resources, Prompts | ✅ | ✅ | ✅ | ✅ |
+| Bi-directional requests | ✅ | ✅ | ✅ | ✅ |
+| Request cancellation | ✅ | ✅ | ✅ | ✅ |
+| Progress notifications | ✅ | ✅ | ✅ | ✅ |
 | **2025-03-26 Features** | | | | |
-| Resource subscriptions | -- | yes | yes | yes |
-| Roots | -- | yes | yes | yes |
-| Structured logging | -- | yes | yes | yes |
-| Tool annotations | -- | yes | yes | yes |
+| Resource subscriptions | -- | ✅ | ✅ | ✅ |
+| Roots | -- | ✅ | ✅ | ✅ |
+| Structured logging | -- | ✅ | ✅ | ✅ |
+| Tool annotations | -- | ✅ | ✅ | ✅ |
 | **2025-06-18 Features** | | | | |
-| Structured tool output | -- | -- | yes | yes |
-| Elicitation support | -- | -- | yes | yes |
-| OAuth 2.1 Resource Server | -- | -- | yes | yes |
+| Structured tool output | -- | -- | ✅ | ✅ |
+| Elicitation support | -- | -- | ✅ | ✅ |
+| OAuth 2.1 Resource Server | -- | -- | ✅ | ✅ |
 | **2025-11-25 Features** | | | | |
-| Tasks (async long-running tools) | -- | -- | -- | yes |
-| Icons metadata | -- | -- | -- | yes |
-| URL-mode elicitation | -- | -- | -- | yes |
-| Tool calling in sampling | -- | -- | -- | yes |
-| Enhanced OAuth/OIDC (incremental scope) | -- | -- | -- | yes |
+| Tasks (async long-running tools) | -- | -- | -- | ✅ |
+| Icons metadata | -- | -- | -- | ✅ |
+| URL-mode elicitation | -- | -- | -- | ✅ |
+| Tool calling in sampling | -- | -- | -- | ✅ |
+| Enhanced OAuth/OIDC (incremental scope) | -- | -- | -- | ✅ |
 
 ### Recommendations
 
