@@ -146,10 +146,29 @@ defmodule ExMCP.Authorization.OAuthFlow do
 
   @doc """
   Refreshes an access token using a refresh token.
+
+  ## Options
+
+  - `client_secret` - Client secret for confidential clients (default: nil)
+  - `scope` - Space-separated scope string to request expanded scopes during refresh.
+    Used for incremental scope upgrades (2025-11-25). If the authorization server
+    supports it, the new token will have the expanded scope set.
   """
-  @spec refresh_token(String.t(), String.t(), String.t(), String.t() | nil) ::
+  @spec refresh_token(String.t(), String.t(), String.t(), keyword() | String.t() | nil) ::
           {:ok, token_response()} | {:error, term()}
-  def refresh_token(refresh_token, client_id, token_endpoint, client_secret \\ nil) do
+  def refresh_token(refresh_token, client_id, token_endpoint, opts \\ nil)
+
+  # Backwards-compatible: opts is a string (client_secret) or nil
+  def refresh_token(refresh_token, client_id, token_endpoint, client_secret)
+      when is_binary(client_secret) or is_nil(client_secret) do
+    refresh_token(refresh_token, client_id, token_endpoint, client_secret: client_secret)
+  end
+
+  # New: opts is a keyword list
+  def refresh_token(refresh_token, client_id, token_endpoint, opts) when is_list(opts) do
+    client_secret = Keyword.get(opts, :client_secret)
+    scope = Keyword.get(opts, :scope)
+
     with :ok <- Validator.validate_https_endpoint(token_endpoint) do
       request_body = %{
         grant_type: "refresh_token",
@@ -164,8 +183,30 @@ defmodule ExMCP.Authorization.OAuthFlow do
           request_body
         end
 
+      request_body =
+        if scope do
+          Map.put(request_body, :scope, scope)
+        else
+          request_body
+        end
+
       HTTPClient.make_token_request(token_endpoint, Map.to_list(request_body))
     end
+  end
+
+  @doc """
+  Initiates a full re-authorization flow with an expanded scope set.
+
+  Used when a refresh token is not available or the server does not support
+  scope upgrades via refresh. This starts a new authorization code flow
+  with the combined current + additional scopes.
+  """
+  @spec reauthorize_with_scopes(auth_params(), [String.t()]) ::
+          {:ok, String.t(), map()} | {:error, term()}
+  def reauthorize_with_scopes(params, additional_scopes) do
+    current_scopes = Map.get(params, :scopes, [])
+    combined_scopes = Enum.uniq(current_scopes ++ additional_scopes)
+    start_authorization_flow(%{params | scopes: combined_scopes})
   end
 
   # Private helpers

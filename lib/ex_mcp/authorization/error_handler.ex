@@ -33,13 +33,17 @@ defmodule ExMCP.Authorization.ErrorHandler do
     end
   end
 
-  def handle_auth_error(403, _headers, body, _state) do
+  def handle_auth_error(403, headers, body, state) do
     Logger.warning("Received 403 Forbidden response")
 
-    # Parse error details if available
-    error_details = parse_error_body(body)
+    # Check WWW-Authenticate header for scope requirements (incremental scope)
+    case extract_www_authenticate(headers) do
+      {:ok, auth_info} when is_map_key(auth_info, "scope") ->
+        build_scope_upgrade_retry(auth_info["scope"], state)
 
-    {:error, {:forbidden, error_details}}
+      _ ->
+        handle_forbidden_body(body, state)
+    end
   end
 
   def handle_auth_error(status, _headers, _body, _state) when status in 400..499 do
@@ -73,6 +77,43 @@ defmodule ExMCP.Authorization.ErrorHandler do
   end
 
   # Private functions
+
+  defp handle_forbidden_body(body, state) do
+    error_details = parse_error_body(body)
+
+    case error_details do
+      %{error: "insufficient_scope"} ->
+        scope_string = parse_json_body(body)["scope"]
+        build_scope_upgrade_retry(scope_string, state)
+
+      _ ->
+        {:error, {:forbidden, error_details}}
+    end
+  end
+
+  defp build_scope_upgrade_retry(scope_string, state) do
+    required_scopes = parse_scope_string(scope_string)
+    current_scopes = extract_current_scopes(state)
+
+    {:retry,
+     %{
+       action: :scope_upgrade,
+       required_scopes: required_scopes,
+       current_scopes: current_scopes
+     }}
+  end
+
+  defp parse_scope_string(nil), do: []
+  defp parse_scope_string(s) when is_binary(s), do: String.split(s, " ", trim: true)
+  defp parse_scope_string(_), do: []
+
+  defp extract_current_scopes(state) do
+    case state[:scopes] do
+      nil -> []
+      s when is_binary(s) -> String.split(s, " ", trim: true)
+      s when is_list(s) -> s
+    end
+  end
 
   defp handle_unauthorized(auth_info, state) do
     cond do
@@ -156,4 +197,13 @@ defmodule ExMCP.Authorization.ErrorHandler do
   end
 
   defp parse_error_body(body), do: %{raw: inspect(body)}
+
+  defp parse_json_body(body) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, json} when is_map(json) -> json
+      _ -> %{}
+    end
+  end
+
+  defp parse_json_body(_body), do: %{}
 end

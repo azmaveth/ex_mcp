@@ -107,12 +107,17 @@ defmodule ExMCP.Client.Handler do
   - `includeContext` (optional) - Whether to include MCP context
   - `temperature` (optional) - Sampling temperature
   - `maxTokens` (optional) - Maximum tokens to sample
+  - `tools` (optional, 2025-11-25) - List of tool definitions the LLM may call.
+    Each tool has `name`, `description`, and `inputSchema` fields.
+  - `toolChoice` (optional, 2025-11-25) - Controls how the LLM uses tools.
+    A map with a `type` key: `"auto"`, `"none"`, or `"tool"` (with `name`).
 
   ## Response
 
   The result should contain:
   - `role` - The role of the created message (usually "assistant")
-  - `content` - The content of the message
+  - `content` - The content of the message. May include `tool_use` and
+    `tool_result` content blocks when tools are provided.
   - `model` - The model that was used
 
   ## Human-in-the-Loop
@@ -136,6 +141,18 @@ defmodule ExMCP.Client.Handler do
           :denied ->
             {:error, "User denied sampling request", state}
         end
+      end
+
+  ## Example with Tool Calling (2025-11-25)
+
+      def handle_create_message(%{"tools" => tools} = params, state) when is_list(tools) do
+        # Pass tools to the LLM and handle tool_use responses
+        result = %{
+          role: "assistant",
+          content: %{type: "tool_use", id: "call_1", name: "get_weather", input: %{"city" => "NYC"}},
+          model: "gpt-4"
+        }
+        {:ok, result, state}
       end
   """
   @callback handle_create_message(params :: map(), state) ::

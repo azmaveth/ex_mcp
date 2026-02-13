@@ -116,6 +116,24 @@ defmodule ExMCP.Authorization.TokenManager do
     GenServer.call(manager, {:unsubscribe, self()})
   end
 
+  @doc """
+  Upgrades the token's scopes by merging additional scopes with the current ones.
+
+  If a refresh token is available, attempts to refresh with the expanded scope set.
+  If no refresh token is available, returns `{:error, :reauthorization_required}`
+  with the combined scope list so the caller can initiate a full re-authorization.
+
+  ## Options
+
+  - `:timeout` - Call timeout in milliseconds (default: 30_000)
+  """
+  @spec upgrade_scopes(GenServer.server(), [String.t()], keyword()) ::
+          {:ok, map()} | {:error, atom() | {atom(), [String.t()]}}
+  def upgrade_scopes(manager, additional_scopes, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    GenServer.call(manager, {:upgrade_scopes, additional_scopes}, timeout)
+  end
+
   # GenServer callbacks
 
   @impl true
@@ -191,6 +209,39 @@ defmodule ExMCP.Authorization.TokenManager do
       {:noreply, state}
     else
       {:reply, {:error, :no_refresh_token}, state}
+    end
+  end
+
+  def handle_call({:upgrade_scopes, additional_scopes}, from, state) do
+    current_scopes =
+      case state.scope do
+        nil -> []
+        s when is_binary(s) -> String.split(s, " ", trim: true)
+      end
+
+    combined_scopes = Enum.uniq(current_scopes ++ additional_scopes)
+
+    if state.refresh_token do
+      manager = self()
+
+      # Attempt refresh with expanded scope set
+      Task.start(fn ->
+        result = refresh_token_with_scopes(state, combined_scopes)
+
+        case result do
+          {:ok, new_token} ->
+            # Update state in manager with new token
+            send(manager, {:token_refreshed, new_token})
+            GenServer.reply(from, {:ok, new_token})
+
+          error ->
+            GenServer.reply(from, error)
+        end
+      end)
+
+      {:noreply, state}
+    else
+      {:reply, {:error, {:reauthorization_required, combined_scopes}}, state}
     end
   end
 
@@ -305,6 +356,19 @@ defmodule ExMCP.Authorization.TokenManager do
       Map.merge(state.auth_config, %{
         grant_type: "refresh_token",
         refresh_token: state.refresh_token
+      })
+
+    Authorization.token_request(config)
+  end
+
+  defp refresh_token_with_scopes(state, scopes) do
+    Logger.info("Refreshing access token with expanded scopes: #{Enum.join(scopes, " ")}")
+
+    config =
+      Map.merge(state.auth_config, %{
+        grant_type: "refresh_token",
+        refresh_token: state.refresh_token,
+        scope: Enum.join(scopes, " ")
       })
 
     Authorization.token_request(config)

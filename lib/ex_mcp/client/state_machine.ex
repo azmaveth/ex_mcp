@@ -918,9 +918,124 @@ defmodule ExMCP.Client.StateMachine do
     data
   end
 
+  defp handle_server_request(
+         %{transport: {transport_module, transport_state, _}} = data,
+         "sampling/createMessage",
+         params,
+         id
+       ) do
+    handler = data.common.config[:handler]
+    handler_state_opts = data.common.config[:handler_state] || []
+
+    response =
+      if handler && function_exported?(handler, :handle_create_message, 2) do
+        handler_state =
+          case handler.init(handler_state_opts) do
+            {:ok, initial_state} -> initial_state
+            _ -> %{}
+          end
+
+        case handler.handle_create_message(params, handler_state) do
+          {:ok, result, _new_handler_state} ->
+            %{"jsonrpc" => "2.0", "result" => result, "id" => id}
+
+          {:error, error, _new_handler_state} ->
+            %{
+              "jsonrpc" => "2.0",
+              "error" => %{"code" => -32603, "message" => error},
+              "id" => id
+            }
+        end
+      else
+        %{
+          "jsonrpc" => "2.0",
+          "error" => %{"code" => -32601, "message" => "Method not found"},
+          "id" => id
+        }
+      end
+
+    case transport_module.send_message(Jason.encode!(response), transport_state) do
+      {:ok, _} ->
+        Logger.debug("Responded to sampling/createMessage request")
+
+      {:error, reason} ->
+        Logger.error("Failed to send sampling/createMessage response: #{inspect(reason)}")
+    end
+
+    data
+  end
+
+  defp handle_server_request(
+         %{transport: {transport_module, transport_state, _}} = data,
+         "elicitation/create",
+         params,
+         id
+       ) do
+    handler = data.common.config[:handler]
+    handler_state_opts = data.common.config[:handler_state] || []
+
+    response =
+      if handler && function_exported?(handler, :handle_elicitation_create, 3) do
+        handler_state =
+          case handler.init(handler_state_opts) do
+            {:ok, initial_state} -> initial_state
+            _ -> %{}
+          end
+
+        message = Map.get(params, "message", "")
+        requested_schema = Map.get(params, "requestedSchema", %{})
+
+        case handler.handle_elicitation_create(message, requested_schema, handler_state) do
+          {:ok, result, _new_handler_state} ->
+            %{"jsonrpc" => "2.0", "result" => result, "id" => id}
+
+          {:error, error, _new_handler_state} ->
+            %{
+              "jsonrpc" => "2.0",
+              "error" => %{"code" => -32603, "message" => error},
+              "id" => id
+            }
+        end
+      else
+        %{
+          "jsonrpc" => "2.0",
+          "error" => %{"code" => -32601, "message" => "Method not found"},
+          "id" => id
+        }
+      end
+
+    case transport_module.send_message(Jason.encode!(response), transport_state) do
+      {:ok, _} ->
+        Logger.debug("Responded to elicitation/create request")
+
+      {:error, reason} ->
+        Logger.error("Failed to send elicitation/create response: #{inspect(reason)}")
+    end
+
+    data
+  end
+
   defp handle_server_request(data, method, _params, id) do
     Logger.warning("Unhandled server request: #{method} (id: #{id})")
-    # TODO: Send error response
+
+    # Send method not found error response if transport available
+    case data do
+      %{transport: {transport_module, transport_state, _}} ->
+        response = %{
+          "jsonrpc" => "2.0",
+          "error" => %{"code" => -32601, "message" => "Method not found"},
+          "id" => id
+        }
+
+        case transport_module.send_message(Jason.encode!(response), transport_state) do
+          {:ok, _} -> :ok
+          {:error, reason} -> Logger.error("Failed to send error response: #{inspect(reason)}")
+        end
+
+      _ ->
+        :ok
+    end
+
     data
   end
 
