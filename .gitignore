@@ -38,9 +38,10 @@ ex_mcp-*.tar
 # OS files
 .DS_Store
 
-# Editor files
+# Editor/IDE files
 .vscode/
 .idea/
+.elixir_ls/
 *.swp
 *.swo
 *~
