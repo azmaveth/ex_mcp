@@ -634,26 +634,14 @@ defmodule ExMCP.Server.Handler do
                      handle_elicitation_complete: 2,
                      terminate: 2
 
-      # =================================================================
-      # GenServer Bridge (inline)
-      #
-      # These MUST be inline (not in @before_compile) because GenServer
-      # in Elixir 1.19+ defines its catch-all handle_call via its own
-      # @before_compile hook. Inline defs always beat @before_compile
-      # defs, so these specific pattern-matching clauses will appear
-      # before GenServer's catch-all in the compiled function.
-      #
-      # Function calls to callbacks (handle_initialize, handle_list_tools,
-      # etc.) resolve to the final compiled version regardless of
-      # definition order, so Tool DSL overrides work correctly.
-      #
-      # __widen_type__/1 prevents Elixir 1.19's type system from
-      # narrowing callback return types based on default implementations.
-      # Without it, optional callbacks that default to {:error, ...}
-      # cause "will never match" warnings on {:ok, ...} bridge clauses.
-      # =================================================================
+      # GenServer bridge (inline — must beat GenServer's @before_compile catch-all).
+      # __widen_type__/1 prevents Elixir 1.19 type narrowing on callback returns.
+      # @dialyzer {:no_match, ...} suppresses pattern_match warnings because the
+      # bridge handles all return variants but specific handlers only use a subset.
 
       defp __widen_type__(result), do: result
+
+      @dialyzer {:no_match, handle_call: 3}
 
       @impl GenServer
       def handle_call({:initialize, params}, _from, state) do
