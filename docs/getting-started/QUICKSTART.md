@@ -11,8 +11,8 @@ Add ExMCP to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.6.0"},
-    {:horde, "~> 0.8"}  # Required for Native Service Dispatcher
+    {:ex_mcp, "~> 0.7.3"},
+    {:horde, "~> 0.8"}  # Optional: required for Native Service Dispatcher
   ]
 end
 ```

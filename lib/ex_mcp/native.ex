@@ -4,8 +4,8 @@ defmodule ExMCP.Native do
 
   This module provides ultra-fast, direct process communication leveraging OTP's built-in features:
   - Direct GenServer.call between processes
-  - Horde.Registry for distributed service discovery
-  - Automatic distribution across BEAM nodes
+  - Pluggable service registry (local `Registry` by default, `Horde` for distribution)
+  - Automatic distribution across BEAM nodes (with Horde adapter)
   - Built-in fault tolerance and monitoring
   - Zero serialization overhead for local calls
 
@@ -25,7 +25,7 @@ defmodule ExMCP.Native do
 
   - Local calls: ~15μs latency
   - Cross-node calls: ~50μs latency
-  - Memory overhead: Single Horde.Registry entry per service
+  - Memory overhead: Single registry entry per service
   - Throughput: Limited only by service processing speed
 
   ## Examples
@@ -59,7 +59,6 @@ defmodule ExMCP.Native do
   alias ExMCP.Internal.SecurityConfig
   alias ExMCP.Transport.SecurityGuard
 
-  @registry_name ExMCP.ServiceRegistry
   @default_timeout 5_000
 
   @type service_id :: atom() | {atom(), node()}
@@ -83,13 +82,13 @@ defmodule ExMCP.Native do
   """
   @spec register_service(atom()) :: :ok
   def register_service(name) when is_atom(name) do
-    case Horde.Registry.register(@registry_name, name, %{registered_at: DateTime.utc_now()}) do
-      {:ok, _pid} ->
+    case registry_adapter().register(name, %{registered_at: DateTime.utc_now()}) do
+      :ok ->
         Logger.info("Service registered: #{name}")
         :ok
 
-      {:error, {:already_registered, _pid}} ->
-        Logger.warning("Service already registered: #{name}")
+      {:error, reason} ->
+        Logger.warning("Failed to register service #{name}: #{inspect(reason)}")
         :ok
     end
   end
@@ -101,7 +100,7 @@ defmodule ExMCP.Native do
   """
   @spec unregister_service(atom()) :: :ok
   def unregister_service(name) when is_atom(name) do
-    Horde.Registry.unregister(@registry_name, name)
+    registry_adapter().unregister(name)
     Logger.info("Service unregistered: #{name}")
     :ok
   end
@@ -109,7 +108,7 @@ defmodule ExMCP.Native do
   @doc """
   Calls a service method with the given parameters.
 
-  Supports both local and cross-node calls transparently through Horde.Registry.
+  Supports both local and cross-node calls transparently through the configured registry adapter.
 
   ## Options
 
@@ -263,7 +262,7 @@ defmodule ExMCP.Native do
   """
   @spec list_services() :: [{atom(), pid(), map()}]
   def list_services do
-    Horde.Registry.select(@registry_name, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
+    registry_adapter().list()
   end
 
   @doc """
@@ -271,37 +270,40 @@ defmodule ExMCP.Native do
   """
   @spec service_available?(atom()) :: boolean()
   def service_available?(service_name) when is_atom(service_name) do
-    case Horde.Registry.lookup(@registry_name, service_name) do
-      [{_pid, _metadata}] -> true
-      [] -> false
+    case registry_adapter().lookup(service_name) do
+      {:ok, _pid} -> true
+      {:error, :not_found} -> false
     end
   end
 
   # Private functions
 
   defp lookup_service(service_id) when is_atom(service_id) do
-    case Horde.Registry.lookup(@registry_name, service_id) do
-      [{pid, _metadata}] -> {:ok, pid}
-      [] -> {:error, :not_found}
-    end
+    registry_adapter().lookup(service_id)
   end
 
-  defp lookup_service({service_name, node}) when is_atom(service_name) and is_atom(node) do
-    # Horde handles cross-node lookups transparently
-    # No need for RPC calls - Horde gossips service registrations across the cluster
-    case Horde.Registry.lookup(@registry_name, service_name) do
-      [{pid, _metadata}] ->
-        # Verify the PID is on the expected node
-        if node(pid) == node do
-          {:ok, pid}
-        else
+  defp lookup_service({service_name, target_node})
+       when is_atom(service_name) and is_atom(target_node) do
+    adapter = registry_adapter()
+
+    if function_exported?(adapter, :lookup_on_node, 2) do
+      adapter.lookup_on_node(service_name, target_node)
+    else
+      case adapter.lookup(service_name) do
+        {:ok, pid} ->
+          if node(pid) == target_node do
+            {:ok, pid}
+          else
+            {:error, :not_found}
+          end
+
+        {:error, :not_found} ->
           {:error, :not_found}
-        end
-
-      [] ->
-        {:error, :not_found}
+      end
     end
   end
+
+  defp registry_adapter, do: ExMCP.ServiceRegistry.adapter()
 
   defp build_mcp_message(method, params, progress_token, meta) do
     message = %{"method" => method, "params" => params}

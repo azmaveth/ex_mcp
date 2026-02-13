@@ -25,15 +25,15 @@ defmodule ExMCP.ApplicationTest do
       Process.exit(pid, :normal)
     end
 
-    test "starts the ExMCP.ServiceRegistry" do
+    test "starts the service registry" do
       # Start the application
       {:ok, sup_pid} = ExMCP.Application.start(:normal, [])
 
       # Give it a moment to start children
       Process.sleep(50)
 
-      # Verify the registry is running
-      registry_pid = Process.whereis(ExMCP.ServiceRegistry)
+      # Verify the registry is running (default Local adapter)
+      registry_pid = Process.whereis(ExMCP.ServiceRegistry.Local.Registry)
       assert is_pid(registry_pid)
       assert Process.alive?(registry_pid)
 
@@ -42,27 +42,32 @@ defmodule ExMCP.ApplicationTest do
     end
 
     test "supervisor restarts children on failure" do
+      # Trap exits so the linked supervisor doesn't take down the test process
+      Process.flag(:trap_exit, true)
+
       # Start the application
       {:ok, sup_pid} = ExMCP.Application.start(:normal, [])
 
       # Give it a moment to start children
       Process.sleep(50)
 
-      # Get the registry pid
-      registry_pid = Process.whereis(ExMCP.ServiceRegistry)
-      assert is_pid(registry_pid)
+      # Use a simple GenServer child (SessionManager) to test restart behavior.
+      # Registry is a supervisor with internal partitions — killing it with :kill
+      # causes cascading exits that exceed the restart intensity.
+      child_pid = Process.whereis(ExMCP.SessionManager)
+      assert is_pid(child_pid)
 
-      # Kill the registry
-      Process.exit(registry_pid, :kill)
+      # Kill the child
+      Process.exit(child_pid, :kill)
 
       # Give supervisor time to restart it
-      Process.sleep(100)
+      Process.sleep(200)
 
-      # Verify a new registry is running
-      new_registry_pid = Process.whereis(ExMCP.ServiceRegistry)
-      assert is_pid(new_registry_pid)
-      assert new_registry_pid != registry_pid
-      assert Process.alive?(new_registry_pid)
+      # Verify a new child is running
+      new_child_pid = Process.whereis(ExMCP.SessionManager)
+      assert is_pid(new_child_pid)
+      assert new_child_pid != child_pid
+      assert Process.alive?(new_child_pid)
 
       # Clean up
       Process.exit(sup_pid, :normal)
@@ -78,9 +83,9 @@ defmodule ExMCP.ApplicationTest do
       # Verify we have children
       assert length(sup_info) > 0
 
-      # Verify the registry is among the children
+      # Verify the registry is among the children (default Local adapter)
       assert Enum.any?(sup_info, fn {id, _child, _type, _modules} ->
-               id == ExMCP.ServiceRegistry
+               id == ExMCP.ServiceRegistry.Local.Registry
              end)
 
       # Clean up

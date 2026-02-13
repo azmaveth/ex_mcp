@@ -13,23 +13,23 @@ defmodule ExMCP.Application do
       configure_stdio_logging()
     end
 
-    # Now define children - Horde won't log during startup
-    children = [
-      # Start Horde cluster for distributed services
-      {Horde.Registry, keys: :unique, name: ExMCP.ServiceRegistry, members: :auto},
-      {Horde.DynamicSupervisor,
-       strategy: :one_for_one, name: ExMCP.ServiceSupervisor, members: :auto},
-      # Dynamic supervisor for runtime components
-      {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
-      # Start the Consent Cache for security features
-      ExMCP.Internal.ConsentCache,
-      # Start the Session Manager for streamable HTTP sessions
-      ExMCP.SessionManager,
-      # Start the Progress Tracker for 2025-06-18 progress notifications
-      ExMCP.ProgressTracker,
-      # Start the Reliability Supervisor for circuit breakers and health checks
-      {ExMCP.Reliability.Supervisor, name: ExMCP.Reliability.Supervisor}
-    ]
+    # Start the configured service registry adapter
+    registry_children = ExMCP.ServiceRegistry.adapter().child_specs([])
+
+    children =
+      registry_children ++
+        [
+          # Dynamic supervisor for runtime components
+          {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
+          # Start the Consent Cache for security features
+          ExMCP.Internal.ConsentCache,
+          # Start the Session Manager for streamable HTTP sessions
+          ExMCP.SessionManager,
+          # Start the Progress Tracker for 2025-06-18 progress notifications
+          ExMCP.ProgressTracker,
+          # Start the Reliability Supervisor for circuit breakers and health checks
+          {ExMCP.Reliability.Supervisor, name: ExMCP.Reliability.Supervisor}
+        ]
 
     opts = [strategy: :one_for_one, name: ExMCP.Supervisor]
     Supervisor.start_link(children, opts)

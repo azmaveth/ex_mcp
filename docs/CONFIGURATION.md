@@ -44,7 +44,7 @@ In your `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.7.2"}
+    {:ex_mcp, "~> 0.7.3"}
   ]
 end
 ```

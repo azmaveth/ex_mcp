@@ -50,27 +50,27 @@ defmodule ExMCP.Integration.TelemetryTest do
 
       {:ok, response} = GenServer.call(server, {:process_request, request})
 
-      # Wait for events
-      assert_receive {^events_ref, [:ex_mcp, :request, :start], measurements, metadata}
+      # Wait for events — match on specific metadata fields to avoid picking up
+      # telemetry events from concurrent async tests (telemetry handlers are global)
+      assert_receive {^events_ref, [:ex_mcp, :request, :start], measurements,
+                      %{request_id: "1", method: "tools/call"} = metadata}
+
       assert measurements.system_time
-      assert metadata.request_id == "1"
-      assert metadata.method == "tools/call"
 
-      assert_receive {^events_ref, [:ex_mcp, :tool, :start], measurements, metadata}
+      assert_receive {^events_ref, [:ex_mcp, :tool, :start], measurements,
+                      %{tool_name: "test_tool", request_id: "1"} = metadata}
+
       assert measurements.system_time
-      assert metadata.tool_name == "test_tool"
-      assert metadata.request_id == "1"
 
-      assert_receive {^events_ref, [:ex_mcp, :tool, :stop], measurements, metadata}
-      assert measurements.duration > 0
-      assert metadata.tool_name == "test_tool"
-      assert metadata.status == :ok
+      assert_receive {^events_ref, [:ex_mcp, :tool, :stop], measurements,
+                      %{tool_name: "test_tool", status: :ok} = metadata}
 
-      assert_receive {^events_ref, [:ex_mcp, :request, :stop], measurements, metadata}
       assert measurements.duration > 0
-      # Allow for either string or integer request_id, and handle race conditions
-      assert metadata.request_id in ["1", 1] or is_binary(metadata.request_id)
-      assert metadata.status == :ok
+
+      assert_receive {^events_ref, [:ex_mcp, :request, :stop], measurements,
+                      %{request_id: "1", status: :ok} = metadata}
+
+      assert measurements.duration > 0
 
       # Clean up
       :telemetry.detach(handler_id)
@@ -112,16 +112,16 @@ defmodule ExMCP.Integration.TelemetryTest do
 
       {:ok, response} = GenServer.call(server, {:process_request, request})
 
-      # Wait for events
-      assert_receive {^events_ref, [:ex_mcp, :resource, :read, :start], measurements, metadata}
-      assert measurements.system_time
-      assert metadata.uri == "test://resource"
-      assert metadata.request_id == "2"
+      # Wait for events — match on specific metadata to avoid cross-test interference
+      assert_receive {^events_ref, [:ex_mcp, :resource, :read, :start], measurements,
+                      %{uri: "test://resource", request_id: "2"} = metadata}
 
-      assert_receive {^events_ref, [:ex_mcp, :resource, :read, :stop], measurements, metadata}
+      assert measurements.system_time
+
+      assert_receive {^events_ref, [:ex_mcp, :resource, :read, :stop], measurements,
+                      %{uri: "test://resource", status: :ok} = metadata}
+
       assert measurements.duration > 0
-      assert metadata.uri == "test://resource"
-      assert metadata.status == :ok
 
       # Clean up
       :telemetry.detach(handler_id)
@@ -168,14 +168,18 @@ defmodule ExMCP.Integration.TelemetryTest do
 
       {:ok, response} = GenServer.call(server, {:process_request, request})
 
-      # Wait for events
-      assert_receive {^events_ref, [:ex_mcp, :request, :start], _measurements, _metadata}
-      assert_receive {^events_ref, [:ex_mcp, :tool, :start], _measurements, _metadata}
-      assert_receive {^events_ref, [:ex_mcp, :tool, :stop], _measurements, metadata}
-      assert metadata.status == :error
+      # Wait for events — match on specific metadata to avoid cross-test interference
+      assert_receive {^events_ref, [:ex_mcp, :request, :start], _measurements,
+                      %{request_id: "3", method: "tools/call"}}
 
-      assert_receive {^events_ref, [:ex_mcp, :request, :stop], _measurements, metadata2}
-      assert metadata2.status == :error
+      assert_receive {^events_ref, [:ex_mcp, :tool, :start], _measurements,
+                      %{tool_name: "tool_error", request_id: "3"}}
+
+      assert_receive {^events_ref, [:ex_mcp, :tool, :stop], _measurements,
+                      %{tool_name: "tool_error", status: :error}}
+
+      assert_receive {^events_ref, [:ex_mcp, :request, :stop], _measurements,
+                      %{request_id: "3", status: :error}}
 
       # Clean up
       :telemetry.detach(handler_id)
