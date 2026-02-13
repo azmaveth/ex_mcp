@@ -85,7 +85,7 @@ config :ex_mcp,
 | Elicitation support | -- | -- | ✅ | ✅ |
 | OAuth 2.1 Resource Server | -- | -- | ✅ | ✅ |
 | **2025-11-25 Features** | | | | |
-| Tasks (async long-running tools) | -- | -- | -- | ✅ |
+| Tasks (async long-running tools) | -- | -- | -- | experimental |
 | Icons metadata | -- | -- | -- | ✅ |
 | URL-mode elicitation | -- | -- | -- | ✅ |
 | Tool calling in sampling | -- | -- | -- | ✅ |
