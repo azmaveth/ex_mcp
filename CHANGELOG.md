@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-02-12
+
+### Fixed
+- Aligned Tools DSL `handle_call_tool` with Handler behaviour arity
+- Resolved CI failures in compliance test and dialyzer
+- Made `ConsentCache.clear/0` synchronous to fix test isolation race condition
+- Eliminated Elixir 1.19 type warnings in handler bridge
+- Fixed `@before_compile` ordering for GenServer bridge in Elixir 1.19
+- Injected GenServer bridge via `__using__` macro for HttpPlug compatibility
+
 ## [0.7.0] - 2026-02-11
 
 ### Added
