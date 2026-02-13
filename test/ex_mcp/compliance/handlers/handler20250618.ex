@@ -13,9 +13,9 @@ defmodule ExMCP.Compliance.Handlers.Handler20250618 do
     - Enhanced completion with context
     - MCP-Protocol-Version header requirement
   """
-  @behaviour ExMCP.Server.Handler
+  use ExMCP.Server.Handler
 
-  @impl true
+  @impl GenServer
   def init(args) do
     args_map = Enum.into(args, %{})
 
