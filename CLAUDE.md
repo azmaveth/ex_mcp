@@ -59,11 +59,6 @@ MIX_ENV=test mix compile         # Compile for test environment
 mix sobelow --skip               # Security analysis
 mix coveralls.html               # Generate coverage report
 
-# Using Makefile shortcuts
-make setup                       # Initial setup with git hooks
-make quality                     # Run format check, credo, and compile checks
-make all                         # Run all quality checks, tests, and dialyzer
-make coverage                    # Generate HTML coverage report
 ```
 
 ## Architecture

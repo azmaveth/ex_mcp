@@ -17,8 +17,6 @@ This guide covers everything you need to know for developing, testing, and contr
 
 - Elixir 1.14+ and Erlang/OTP 25+
 - Git with hooks support
-- Make (for using Makefile shortcuts)
-
 ### Initial Setup
 
 ```bash
@@ -26,11 +24,14 @@ This guide covers everything you need to know for developing, testing, and contr
 git clone https://github.com/azmaveth/ex_mcp.git
 cd ex_mcp
 
-# Install dependencies and set up git hooks
-make setup
+# Install dependencies
+mix deps.get
+
+# Install git hooks
+mix git_hooks.install
 
 # Verify setup
-make quality
+mix compile --warnings-as-errors && mix credo
 ```
 
 ### Essential Development Commands
@@ -57,13 +58,6 @@ MIX_ENV=test mix compile              # Compile for test environment
 mix docs              # Generate documentation
 iex -S mix            # Start interactive shell with project loaded
 
-# Using Makefile shortcuts
-make setup                       # Initial setup with git hooks
-make quality                     # Run format check, credo, and compile checks
-make all                         # Run all quality checks, tests, and dialyzer
-make coverage                    # Generate HTML coverage report
-make test                        # Run tests with automatic cleanup
-make docs                        # Generate documentation
 ```
 
 ## Code Quality Tools
@@ -270,12 +264,6 @@ mix test.cleanup --verbose
 
 # Dry run to see what would be cleaned
 mix test.cleanup --dry-run
-
-# Alternative bash script
-./scripts/cleanup_tests.sh
-
-# Clean up as part of test run
-make test  # Automatically runs cleanup first
 
 # Skip automatic cleanup if needed
 SKIP_TEST_CLEANUP=true mix test
