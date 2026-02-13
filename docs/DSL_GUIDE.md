@@ -15,7 +15,7 @@ ExMCP v2 provides a powerful Domain-Specific Language (DSL) for defining MCP too
 Early versions of the ExMCP v2 DSL suffered from naming conflicts and inconsistent syntax:
 
 ```elixir
-# 🚫 POOR DESIGN: Inconsistent and conflicting naming
+# POOR DESIGN: Inconsistent and conflicting naming
 deftool "say_hello" do
   name "Hello Tool"           # Clean syntax for tools
   description "Says hello"
@@ -44,7 +44,7 @@ end
 We implemented a **meta block pattern** that provides consistent syntax across all DSL types:
 
 ```elixir
-# ✅ EXCELLENT DESIGN: Consistent and clean
+# GOOD DESIGN: Consistent and clean
 deftool "say_hello" do
   meta do
     name "Hello Tool"
@@ -497,7 +497,7 @@ end
 
 **Considered but not chosen because:** Less flexible for complex metadata and doesn't scale well with many fields.
 
-#### Option 4: Meta Block Pattern (✅ Chosen)
+#### Option 4: Meta Block Pattern (Chosen)
 
 ```elixir
 # Block-based organization
@@ -712,7 +712,7 @@ We carefully evaluated whether to include handlers directly in the DSL (inline h
 ### Example: Why Separation Works Better
 
 ```elixir
-# ❌ BAD: Inline handler (not supported)
+# BAD: Inline handler (not supported)
 deftool "process_data" do
   meta do
     name "Data Processor"
@@ -727,7 +727,7 @@ deftool "process_data" do
   end
 end
 
-# ✅ GOOD: Separate handler (recommended)
+# GOOD: Separate handler (recommended)
 deftool "process_data" do
   meta do
     name "Data Processor"

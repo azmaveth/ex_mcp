@@ -124,6 +124,7 @@ defmodule ExMCP.MixProject do
         "docs/SECURITY.md",
         "docs/ARCHITECTURE.md",
         "docs/DEVELOPMENT.md",
+        "docs/TROUBLESHOOTING.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",
@@ -131,7 +132,7 @@ defmodule ExMCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|CONFIGURATION|SECURITY|ARCHITECTURE|DEVELOPMENT/,
+          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|CONFIGURATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

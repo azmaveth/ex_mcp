@@ -256,10 +256,10 @@ end
 
 ## Next Steps
 
-1. **Read the [User Guide](USER_GUIDE.md)** - Comprehensive documentation
-2. **Check the [API Reference](API_REFERENCE.md)** - Detailed API docs  
-3. **Explore [Examples](../examples/)** - Real-world usage patterns
-4. **Review [Transport Architecture](TRANSPORT_ARCHITECTURE.md)** - Deep dive into transports
+1. **Read the [User Guide](../guides/USER_GUIDE.md)** - Comprehensive documentation
+2. **Check the [API Docs](https://hexdocs.pm/ex_mcp)** - Detailed API reference
+3. **Explore [Examples](../../examples/)** - Real-world usage patterns
+4. **Review [Transport Guide](../TRANSPORT_GUIDE.md)** - Transport selection and optimization
 
 ## Performance Tips
 
