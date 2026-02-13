@@ -1,11 +1,7 @@
 defmodule ExMCP.Protocol do
-  @moduledoc """
-  **Deprecated**: This module has been moved to `ExMCP.Internal.Protocol`.
-
-  Internal modules are not part of the public API and may change without notice.
-  If you were using this module directly, please consider using the public APIs
-  in `ExMCP.Client` and `ExMCP.Server` instead.
-  """
+  @moduledoc false
+  # Deprecated: moved to ExMCP.Internal.Protocol.
+  # This wrapper exists only for backwards compatibility.
 
   @deprecated "Use ExMCP.Internal.Protocol instead. Note that internal modules are not part of the public API."
 

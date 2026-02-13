@@ -6,11 +6,11 @@
 [![Documentation](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/ex_mcp)
 [![CI](https://github.com/azmaveth/ex_mcp/workflows/CI/badge.svg)](https://github.com/azmaveth/ex_mcp/actions)
 [![Coverage](https://img.shields.io/codecov/c/github/azmaveth/ex_mcp.svg)](https://codecov.io/gh/azmaveth/ex_mcp)
-[![License](https://img.shields.io/hexpm/l/ex_mcp.svg)](LICENSE)
+[![License](https://img.shields.io/hexpm/l/ex_mcp.svg)](https://github.com/azmaveth/ex_mcp/blob/master/LICENSE)
 
 **A complete Elixir implementation of the Model Context Protocol (MCP)**
 
-[Getting Started](docs/getting-started/) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](examples/) | [Changelog](CHANGELOG.md)
+[Getting Started](https://github.com/azmaveth/ex_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -168,7 +168,7 @@ defmodule MyServer do
 end
 ```
 
-See the [DSL Guide](docs/DSL_GUIDE.md) and [examples/](examples/) for more patterns.
+See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) for more patterns.
 
 ### Standalone MCP Client
 
@@ -228,9 +228,9 @@ end
 ExMCP provides comprehensive documentation organized for different needs:
 
 ### 🚀 Getting Started
-- **[Quick Start Guide](docs/getting-started/QUICKSTART.md)** - Get running in 5 minutes
-- **[Quick Reference](docs/getting-started/QUICK_REFERENCE.md)** - One-page operation reference
-- **[Migration Guide](docs/getting-started/MIGRATION.md)** - Version upgrade instructions
+- **[Quick Start Guide](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/QUICKSTART.md)** - Get running in 5 minutes
+- **[Quick Reference](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/QUICK_REFERENCE.md)** - One-page operation reference
+- **[Migration Guide](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/MIGRATION.md)** - Version upgrade instructions
 
 ### 📖 Comprehensive Guides  
 - **[User Guide](docs/guides/USER_GUIDE.md)** - Complete feature walkthrough with examples
@@ -243,11 +243,11 @@ ExMCP provides comprehensive documentation organized for different needs:
 - **[Development Guide](docs/DEVELOPMENT.md)** - Setup, testing, and contributing
 - **[API Documentation](https://hexdocs.pm/ex_mcp)** - Complete API reference
 - **[Architecture Guide](docs/ARCHITECTURE.md)** - Internal architecture and design decisions
-- **[Examples](examples/)** - Real-world implementation patterns
+- **[Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples)** - Real-world implementation patterns
 
 ### 📋 Protocol & Specifications
-- **[MCP Specifications](docs/mcp-specs/)** - Complete protocol documentation for all versions
-- **[Protocol Support Matrix](docs/getting-started/QUICK_REFERENCE.md#protocol-support)** - Feature comparison across versions
+- **[MCP Specifications](https://github.com/azmaveth/ex_mcp/tree/master/docs/mcp-specs)** - Complete protocol documentation for all versions
+- **[Protocol Support Matrix](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/QUICK_REFERENCE.md#protocol-support)** - Feature comparison across versions
 
 ## 🎯 Transport Performance
 
@@ -285,7 +285,7 @@ Before contributing:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/azmaveth/ex_mcp/blob/master/LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 

@@ -6,6 +6,28 @@ defmodule ExMCP.Security.Validation do
   incoming requests and security configurations meet the required policies.
   """
 
+  @typedoc """
+  Security configuration map for transport-level security.
+
+  Supports bearer tokens, API keys, basic auth, OAuth 2.1, custom headers,
+  origin validation, CORS, and TLS configuration.
+  """
+  @type security_config :: %{
+          optional(:auth) => auth_method(),
+          optional(:headers) => [{String.t(), String.t()}],
+          optional(:validate_origin) => boolean(),
+          optional(:allowed_origins) => [String.t()],
+          optional(:cors) => map(),
+          optional(:tls) => map()
+        }
+
+  @type auth_method ::
+          {:bearer, token :: String.t()}
+          | {:api_key, key :: String.t(), opts :: keyword()}
+          | {:basic, username :: String.t(), password :: String.t()}
+          | {:custom, headers :: [{String.t(), String.t()}]}
+          | {:oauth2, map()}
+
   @doc """
   Validates that a server binding is localhost-only for security.
 
@@ -71,7 +93,7 @@ defmodule ExMCP.Security.Validation do
 
       :ok = ExMCP.Security.Validation.validate_request(headers, config)
   """
-  @spec validate_request([{String.t(), String.t()}], ExMCP.Internal.Security.security_config()) ::
+  @spec validate_request([{String.t(), String.t()}], security_config()) ::
           :ok | {:error, atom()}
   def validate_request(headers, config \\ %{}) do
     with :ok <- validate_request_origin_header(headers, config),
@@ -307,7 +329,7 @@ defmodule ExMCP.Security.Validation do
   @doc """
   Validates security configuration.
   """
-  @spec validate_config(ExMCP.Internal.Security.security_config()) :: :ok | {:error, term()}
+  @spec validate_config(security_config()) :: :ok | {:error, term()}
   def validate_config(config) do
     with :ok <- validate_auth(Map.get(config, :auth)),
          :ok <- validate_cors(Map.get(config, :cors)),
@@ -338,7 +360,7 @@ defmodule ExMCP.Security.Validation do
   @doc """
   Validates that security configuration meets MCP specification requirements.
   """
-  @spec validate_security_requirements(ExMCP.Internal.Security.security_config()) ::
+  @spec validate_security_requirements(security_config()) ::
           :ok | {:error, term()}
   def validate_security_requirements(config) do
     with :ok <- validate_origin_requirements(config) do

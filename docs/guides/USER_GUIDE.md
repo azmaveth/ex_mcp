@@ -1327,7 +1327,7 @@ end
 
 ## Next Steps
 
-- Explore the [examples](examples/) directory for complete working examples
+- Explore the [examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) directory for complete working examples
 - Read the [API documentation](https://hexdocs.pm/ex_mcp)
 - Check out the [MCP specification](https://modelcontextprotocol.io)
 - Join the community and contribute on [GitHub](https://github.com/azmaveth/ex_mcp)

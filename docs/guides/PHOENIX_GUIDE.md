@@ -542,7 +542,7 @@ end
 ## Next Steps
 
 1. **Read the [ExMCP Documentation](https://hexdocs.pm/ex_mcp)** for complete API reference
-2. **Check out [Examples](../examples/)** for more implementation patterns  
+2. **Check out [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples)** for more implementation patterns
 3. **Review [Security Guide](SECURITY.md)** for production deployment best practices
 4. **Join the Community** - contribute to the project or ask questions in Issues
 

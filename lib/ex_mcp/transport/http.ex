@@ -105,7 +105,7 @@ defmodule ExMCP.Transport.HTTP do
           http_client: module(),
           sse_pid: pid() | nil,
           endpoint: String.t(),
-          security: Security.security_config() | nil,
+          security: ExMCP.Security.Validation.security_config() | nil,
           origin: String.t() | nil,
           session_id: String.t() | nil,
           use_sse: boolean(),
