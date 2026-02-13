@@ -13,11 +13,6 @@ defmodule ExMCP.Server.Handler.Echo do
   alias ExMCP.Protocol.ErrorCodes
 
   @impl true
-  def init(_args) do
-    {:ok, %{}}
-  end
-
-  @impl true
   def handle_initialize(params, state) do
     # Echo back the protocol version sent by the client
     client_version = params["protocolVersion"] || "2025-06-18"
@@ -104,10 +99,5 @@ defmodule ExMCP.Server.Handler.Echo do
   @impl true
   def handle_complete(_ref, _argument, state) do
     {:ok, %{completion: []}, state}
-  end
-
-  @impl true
-  def terminate(_reason, _state) do
-    :ok
   end
 end

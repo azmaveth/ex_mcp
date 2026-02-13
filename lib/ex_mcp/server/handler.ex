@@ -431,15 +431,9 @@ defmodule ExMCP.Server.Handler do
                next_cursor :: String.t() | nil, state()}
               | {:error, any(), state()}
 
-  @doc """
-  Called when the handler process is started.
-  """
-  @callback init(args :: any()) :: {:ok, state()} | {:error, any()}
-
-  @doc """
-  Called when the handler process is terminating.
-  """
-  @callback terminate(reason :: any(), state()) :: any()
+  # init/1 and terminate/2 are inherited from GenServer (injected by `use GenServer`
+  # in __using__). Not declared here to avoid "conflicting behaviours" warnings
+  # in Elixir 1.19+.
 
   @doc """
   Handles setting the log level for the server.
@@ -500,7 +494,7 @@ defmodule ExMCP.Server.Handler do
   @callback handle_elicitation_complete(elicitation_id :: String.t(), state()) ::
               {:ok, state()} | {:error, any(), state()}
 
-  # Optional callbacks with defaults
+  # Optional callbacks with defaults provided in __using__
   @optional_callbacks [
     handle_list_resources: 2,
     handle_read_resource: 2,
@@ -517,8 +511,7 @@ defmodule ExMCP.Server.Handler do
     handle_task_result: 2,
     handle_task_list: 2,
     handle_task_cancel: 2,
-    handle_elicitation_complete: 2,
-    terminate: 2
+    handle_elicitation_complete: 2
   ]
 
   defmacro __using__(_opts) do
@@ -531,7 +524,7 @@ defmodule ExMCP.Server.Handler do
       # defoverridable so the Tool DSL's @before_compile can override them.
       @before_compile ExMCP.Server.Handler
 
-      @impl ExMCP.Server.Handler
+      @impl GenServer
       def init(_args), do: {:ok, %{}}
 
       # Defaults for optional callbacks — user inline overrides work
@@ -619,7 +612,7 @@ defmodule ExMCP.Server.Handler do
         {:ok, state}
       end
 
-      @impl ExMCP.Server.Handler
+      @impl GenServer
       def terminate(_reason, _state), do: :ok
 
       defoverridable init: 1,
@@ -653,11 +646,18 @@ defmodule ExMCP.Server.Handler do
       # Function calls to callbacks (handle_initialize, handle_list_tools,
       # etc.) resolve to the final compiled version regardless of
       # definition order, so Tool DSL overrides work correctly.
+      #
+      # __widen_type__/1 prevents Elixir 1.19's type system from
+      # narrowing callback return types based on default implementations.
+      # Without it, optional callbacks that default to {:error, ...}
+      # cause "will never match" warnings on {:ok, ...} bridge clauses.
       # =================================================================
+
+      defp __widen_type__(result), do: result
 
       @impl GenServer
       def handle_call({:initialize, params}, _from, state) do
-        case handle_initialize(params, state) do
+        case __widen_type__(handle_initialize(params, state)) do
           {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
           {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
           {:error, reason} -> {:reply, {:error, reason}, state}
@@ -665,7 +665,7 @@ defmodule ExMCP.Server.Handler do
       end
 
       def handle_call({:list_tools, cursor}, _from, state) do
-        case handle_list_tools(cursor, state) do
+        case __widen_type__(handle_list_tools(cursor, state)) do
           {:ok, tools, next_cursor, new_state} ->
             {:reply, {:ok, tools, next_cursor, new_state}, new_state}
 
@@ -678,21 +678,21 @@ defmodule ExMCP.Server.Handler do
       end
 
       def handle_call({:call_tool, name, args}, _from, state) do
-        case handle_call_tool(name, args, state) do
+        case __widen_type__(handle_call_tool(name, args, state)) do
           {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
           {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
         end
       end
 
       def handle_call({:execute_tool, name, args}, _from, state) do
-        case handle_call_tool(name, args, state) do
+        case __widen_type__(handle_call_tool(name, args, state)) do
           {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
           {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
         end
       end
 
       def handle_call({:list_resources, cursor}, _from, state) do
-        case handle_list_resources(cursor, state) do
+        case __widen_type__(handle_list_resources(cursor, state)) do
           {:ok, resources, next_cursor, new_state} ->
             {:reply, {:ok, resources, next_cursor, new_state}, new_state}
 
@@ -705,14 +705,14 @@ defmodule ExMCP.Server.Handler do
       end
 
       def handle_call({:read_resource, uri}, _from, state) do
-        case handle_read_resource(uri, state) do
+        case __widen_type__(handle_read_resource(uri, state)) do
           {:ok, content, new_state} -> {:reply, {:ok, content}, new_state}
           {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
         end
       end
 
       def handle_call({:subscribe_resource, uri}, _from, state) do
-        case handle_subscribe_resource(uri, state) do
+        case __widen_type__(handle_subscribe_resource(uri, state)) do
           {:ok, _result, new_state} -> {:reply, :ok, new_state}
           {:ok, new_state} -> {:reply, :ok, new_state}
           {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
@@ -720,7 +720,7 @@ defmodule ExMCP.Server.Handler do
       end
 
       def handle_call({:unsubscribe_resource, uri}, _from, state) do
-        case handle_unsubscribe_resource(uri, state) do
+        case __widen_type__(handle_unsubscribe_resource(uri, state)) do
           {:ok, _result, new_state} -> {:reply, :ok, new_state}
           {:ok, new_state} -> {:reply, :ok, new_state}
           {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
@@ -728,7 +728,7 @@ defmodule ExMCP.Server.Handler do
       end
 
       def handle_call({:list_prompts, cursor}, _from, state) do
-        case handle_list_prompts(cursor, state) do
+        case __widen_type__(handle_list_prompts(cursor, state)) do
           {:ok, prompts, next_cursor, new_state} ->
             {:reply, {:ok, prompts, next_cursor, new_state}, new_state}
 
@@ -741,14 +741,14 @@ defmodule ExMCP.Server.Handler do
       end
 
       def handle_call({:get_prompt, name, args}, _from, state) do
-        case handle_get_prompt(name, args, state) do
+        case __widen_type__(handle_get_prompt(name, args, state)) do
           {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
           {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
         end
       end
 
       def handle_call({:complete, ref, argument}, _from, state) do
-        case handle_complete(ref, argument, state) do
+        case __widen_type__(handle_complete(ref, argument, state)) do
           {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
           {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
         end

@@ -55,45 +55,8 @@ defmodule ExMCP.MessageProcessorValidationTest do
     @impl true
     def handle_read_resource(_uri, state), do: {:error, "Not implemented", state}
 
-    # GenServer callbacks needed when started as GenServer
-    def handle_call({:list_tools, cursor}, _from, state) do
-      {:ok, tools, next_cursor, new_state} = handle_list_tools(cursor, state)
-      {:reply, {:ok, tools, next_cursor, new_state}, new_state}
-    end
-
-    def handle_call({:list_prompts, cursor}, _from, state) do
-      {:ok, prompts, next_cursor, new_state} = handle_list_prompts(cursor, state)
-      {:reply, {:ok, prompts, next_cursor, new_state}, new_state}
-    end
-
-    def handle_call({:list_resources, cursor}, _from, state) do
-      {:ok, resources, next_cursor, new_state} = handle_list_resources(cursor, state)
-      {:reply, {:ok, resources, next_cursor, new_state}, new_state}
-    end
-
-    def handle_call({:call_tool, name, args}, _from, state) do
-      result = handle_call_tool(name, args, state)
-      {:reply, result, state}
-    end
-
-    def handle_call({:read_resource, uri}, _from, state) do
-      result = handle_read_resource(uri, state)
-      {:reply, result, state}
-    end
-
-    def handle_call({:get_prompt, name, args}, _from, state) do
-      result = handle_get_prompt(name, args, state)
-      {:reply, result, state}
-    end
-
-    def handle_call({:initialize, params}, _from, state) do
-      {:ok, result, new_state} = handle_initialize(params, state)
-      {:reply, {:ok, result, new_state}, new_state}
-    end
-
-    def handle_call(request, _from, state) do
-      {:reply, {:error, "Unknown request: #{inspect(request)}"}, state}
-    end
+    # Bridge clauses are now provided by `use ExMCP.Server.Handler` inline.
+    # No manual handle_call/3 needed.
   end
 
   # Minimal DSL-based server
@@ -274,7 +237,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
       # Handler should be initialized and callable
       result = GenServer.call(pid, {:initialize, %{}})
 
-      assert {:ok, init_result, _state} = result
+      assert {:ok, init_result} = result
       assert init_result.protocolVersion == "2025-03-26"
       assert init_result.serverInfo.name == "minimal-handler"
 
