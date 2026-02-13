@@ -23,8 +23,8 @@ Configure ExMCP in your `config/config.exs`:
 # config/config.exs
 config :ex_mcp,
   # Default protocol version
-  protocol_version: "2025-03-26",
-  
+  protocol_version: "2025-11-25",
+
   # Global timeout settings
   default_timeout: 30_000,
   request_timeout: 15_000,
@@ -44,7 +44,7 @@ In your `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.6.0"}
+    {:ex_mcp, "~> 0.7.2"}
   ]
 end
 ```
@@ -59,35 +59,42 @@ ExMCP supports multiple MCP protocol versions. Choose based on your needs:
 config :ex_mcp,
   protocol_version: "2024-11-05"  # Maximum compatibility
   # OR
-  protocol_version: "2025-03-26"  # Latest stable (recommended)
+  protocol_version: "2025-03-26"  # Stable baseline
   # OR
-  protocol_version: "2025-06-18"  # Latest features
+  protocol_version: "2025-06-18"  # Structured output, elicitation, OAuth 2.1
+  # OR
+  protocol_version: "2025-11-25"  # Latest (recommended)
 ```
 
 ### Version Feature Matrix
 
-| Feature | 2024-11-05 | 2025-03-26 | 2025-06-18 |
-|---------|:----------:|:----------:|:----------:|
-| **Core Features** | | | |
-| Tools, Resources, Prompts | ✅ | ✅ | ✅ |
-| Bi-directional requests | ✅ | ✅ | ✅ |
-| Request cancellation | ✅ | ✅ | ✅ |
-| Progress notifications | ✅ | ✅ | ✅ |
-| **2025-03-26 Features** | | | |
-| Resource subscriptions | ❌ | ✅ | ✅ |
-| Roots | ❌ | ✅ | ✅ |
-| Structured logging | ❌ | ✅ | ✅ |
-| Tool annotations | ❌ | ✅ | ✅ |
-| **2025-06-18 Features** | | | |
-| Structured tool output | ❌ | ❌ | ✅ |
-| Elicitation support | ❌ | ❌ | ✅ |
-| OAuth 2.1 Resource Server | ❌ | ❌ | ✅ |
+| Feature | 2024-11-05 | 2025-03-26 | 2025-06-18 | 2025-11-25 |
+|---------|:----------:|:----------:|:----------:|:----------:|
+| **Core Features** | | | | |
+| Tools, Resources, Prompts | yes | yes | yes | yes |
+| Bi-directional requests | yes | yes | yes | yes |
+| Request cancellation | yes | yes | yes | yes |
+| Progress notifications | yes | yes | yes | yes |
+| **2025-03-26 Features** | | | | |
+| Resource subscriptions | -- | yes | yes | yes |
+| Roots | -- | yes | yes | yes |
+| Structured logging | -- | yes | yes | yes |
+| Tool annotations | -- | yes | yes | yes |
+| **2025-06-18 Features** | | | | |
+| Structured tool output | -- | -- | yes | yes |
+| Elicitation support | -- | -- | yes | yes |
+| OAuth 2.1 Resource Server | -- | -- | yes | yes |
+| **2025-11-25 Features** | | | | |
+| Tasks (async long-running tools) | -- | -- | -- | yes |
+| Icons metadata | -- | -- | -- | yes |
+| URL-mode elicitation | -- | -- | -- | yes |
+| Tool calling in sampling | -- | -- | -- | yes |
+| Enhanced OAuth/OIDC (incremental scope) | -- | -- | -- | yes |
 
 ### Recommendations
 
-- **Production**: Use `"2025-03-26"` for latest stable features
-- **Compatibility**: Use `"2024-11-05"` for maximum compatibility  
-- **Latest**: Use `"2025-06-18"` for newest features (may have more breaking changes)
+- **Production**: Use `"2025-11-25"` for the latest features
+- **Compatibility**: Use `"2024-11-05"` for maximum compatibility with older clients
 
 ## Transport Configuration
 
@@ -496,7 +503,7 @@ import Config
 
 # ExMCP main configuration
 config :ex_mcp,
-  protocol_version: "2025-03-26",
+  protocol_version: "2025-11-25",
   default_timeout: 30_000,
   request_timeout: 15_000,
   auto_reconnect: true,
@@ -555,7 +562,7 @@ import Config
 
 if config_env() == :prod do
   config :ex_mcp,
-    protocol_version: System.get_env("MCP_PROTOCOL_VERSION", "2025-03-26"),
+    protocol_version: System.get_env("MCP_PROTOCOL_VERSION", "2025-11-25"),
     default_timeout: String.to_integer(System.get_env("MCP_TIMEOUT", "30000")),
     log_level: String.to_atom(System.get_env("MCP_LOG_LEVEL", "info"))
 
@@ -578,7 +585,7 @@ end
 import Config
 
 config :ex_mcp,
-  protocol_version: "2025-03-26",
+  protocol_version: "2025-11-25",
   log_level: :debug,
   auto_reconnect: false  # Easier debugging
 
@@ -595,7 +602,7 @@ config :logger, :console,
 import Config
 
 config :ex_mcp,
-  protocol_version: "2025-03-26",
+  protocol_version: "2025-11-25",
   default_timeout: 5_000,  # Faster tests
   log_level: :warning,     # Reduce test noise
   auto_reconnect: false    # Predictable test behavior
@@ -614,7 +621,7 @@ import Config
 
 # Similar to production but with more lenient settings
 config :ex_mcp,
-  protocol_version: "2025-06-18",  # Test latest features
+  protocol_version: "2025-11-25",
   log_level: :debug,               # More verbose for debugging
   
   # Relaxed security for testing
@@ -654,7 +661,7 @@ ExMCP.Config.get(:protocol_version)
 ExMCP.Config.get(:default_timeout)
 
 # Validate specific settings
-ExMCP.Config.validate_protocol_version("2025-03-26")
+ExMCP.Config.validate_protocol_version("2025-11-25")
 ExMCP.Config.validate_transport_config(:http, options)
 ```
 
@@ -665,7 +672,7 @@ ExMCP.Config.validate_transport_config(:http, options)
 1. **Protocol Version Mismatch**
    ```
    Error: Unsupported protocol version "invalid"
-   Solution: Use "2024-11-05", "2025-03-26", or "2025-06-18"
+   Solution: Use "2024-11-05", "2025-03-26", "2025-06-18", or "2025-11-25"
    ```
 
 2. **Transport Configuration**
@@ -686,7 +693,7 @@ ExMCP.Config.validate_transport_config(:http, options)
 # Test configuration in IEx
 iex> ExMCP.Config.test_config()
 %{
-  protocol_version: "2025-03-26",
+  protocol_version: "2025-11-25",
   transports: [:stdio, :http, :native],
   security: %{...},
   valid: true
