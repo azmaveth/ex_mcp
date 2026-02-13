@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended `AuthorizationServerMetadata` with auth method metadata fields
 - Extended `TokenManager` with `auth_method` awareness (`:client_secret`, `:private_key_jwt`, `:enterprise_idjag`)
 - Added `{:jose, "~> 1.11"}` dependency for JWT operations
+- **Pluggable Service Registry** (`ExMCP.ServiceRegistry`) -- Registry abstraction with `Local` (built-in `Registry`, zero deps) and `Horde` adapters for `ExMCP.Native`
+- `ExMCP.ServiceRegistry.Local` -- Default adapter using Elixir's built-in `Registry` for single-node service discovery
+- `ExMCP.ServiceRegistry.Horde` -- Distributed adapter wrapping `Horde.Registry` for cross-node clusters (opt-in)
+
+### Changed
+- `Horde` is now fully optional -- default service registry uses Elixir's built-in `Registry` with zero extra dependencies
+- `ExMCP.Native` uses pluggable registry via `ExMCP.ServiceRegistry.adapter()` instead of hardcoded `Horde.Registry`
+- Application supervision tree starts the configured registry adapter's child specs instead of hardcoded Horde processes
+
+### Fixed
+- All examples updated to use correct DSL syntax (`meta do` + `input_schema`) -- previously used invalid syntax that would fail to compile
+- Removed unnecessary Horde references from examples and getting-started guides
+- Updated all documentation to present DSL (`use ExMCP.Server`) as the primary server API
+- User Guide rewritten to lead with DSL examples; low-level Handler API preserved as one reference section
 
 ## [0.7.2] - 2026-02-12
 
