@@ -476,7 +476,7 @@ large_data = File.read!("large_dataset.json")  # 10MB file
 # Performance characteristics:
 # - Local calls: ~15μs latency
 # - Cross-node calls: ~50μs latency  
-# - Memory overhead: Single Horde.Registry entry per service
+# - Memory overhead: Single registry entry per service
 ```
 
 #### Distributed Service Discovery
@@ -498,19 +498,19 @@ if ExMCP.Native.service_available?(:calculator) do
 end
 ```
 
-### Horde Configuration
+### Registry Configuration
+
+By default, ExMCP uses Elixir's built-in `Registry` for local service discovery (zero extra dependencies). For distributed clusters, opt in to the Horde adapter:
 
 ```elixir
 # config/config.exs
-config :horde, Horde.Registry,
-  name: ExMCP.Native.Registry,
-  keys: :unique,
-  members: :auto,
-  
-  # Performance tuning
-  sync_interval: 2000,
-  max_delta_size: 200,
-  delta_crdt: Horde.DeltaCrdt
+
+# Default: local Registry (no extra deps needed)
+# config :ex_mcp, :service_registry, ExMCP.ServiceRegistry.Local
+
+# For distributed clusters: use Horde adapter
+# First add {:horde, "~> 0.8"} to mix.exs deps
+config :ex_mcp, :service_registry, ExMCP.ServiceRegistry.Horde
 
 # For distributed clusters
 config :libcluster,
@@ -797,20 +797,17 @@ config :ssl,
 # Check if service is registered
 ExMCP.Native.list_services()
 
-# Verify Horde registry status
-Horde.Registry.lookup(ExMCP.Native.Registry, :my_service)
-
 # Check node connectivity
 Node.list()
+
+# If using Horde adapter, check registry directly:
+# Horde.Registry.lookup(ExMCP.ServiceRegistry.Horde.Registry, :my_service)
 ```
 
 **Performance issues:**
 ```elixir
 # Monitor service performance
 :observer.start()
-
-# Check registry size
-Horde.Registry.count(ExMCP.Native.Registry)
 
 # Profile service calls
 :fprof.start()

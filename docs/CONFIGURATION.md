@@ -203,11 +203,8 @@ end
   %{"name" => "calculator", "arguments" => %{"a" => 1, "b" => 2}}
 )
 
-# Configuration for Horde.Registry
-config :horde, Horde.Registry,
-  name: ExMCP.Native.Registry,
-  keys: :unique,
-  members: :auto
+# For distributed clusters, opt in to Horde adapter:
+# config :ex_mcp, :service_registry, ExMCP.ServiceRegistry.Horde
 ```
 
 ## Security Configuration
@@ -500,16 +497,11 @@ ExMCP.Logging.critical(server, "System component failure")
 ### Native BEAM Optimization
 
 ```elixir
-# Configure Horde for performance
-config :horde, Horde.Registry,
-  name: ExMCP.Native.Registry,
-  keys: :unique,
-  members: :auto,
-  
-  # Performance tuning
-  sync_interval: 2000,
-  max_delta_size: 200,
-  delta_crdt: Horde.DeltaCrdt
+# Default: local Registry (zero deps, single-node)
+# config :ex_mcp, :service_registry, ExMCP.ServiceRegistry.Local
+
+# For distributed clusters, use Horde adapter:
+# config :ex_mcp, :service_registry, ExMCP.ServiceRegistry.Horde
 ```
 
 ### Progress Tracking Configuration
@@ -567,13 +559,8 @@ config :logger_json, :backend,
   json_encoder: Jason,
   formatter: LoggerJSON.Formatters.GoogleCloudLogger
 
-# Horde configuration for Native BEAM
-config :horde, Horde.Registry,
-  name: ExMCP.Native.Registry,
-  keys: :unique,
-  members: :auto,
-  sync_interval: 2000,
-  max_delta_size: 200
+# Native BEAM registry (default: local, use Horde for distributed)
+# config :ex_mcp, :service_registry, ExMCP.ServiceRegistry.Horde
 
 # SSL/TLS configuration
 config :ex_mcp, :ssl,

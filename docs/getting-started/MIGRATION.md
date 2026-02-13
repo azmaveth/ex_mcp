@@ -89,7 +89,7 @@ ExMCP.Client.start_link(transport: :beam, ...)
 defmodule MyService do
   use ExMCP.Service
   
-  # Service automatically registered with Horde.Registry
+  # Service automatically registered with the configured registry
 end
 
 # Call services with zero serialization overhead
