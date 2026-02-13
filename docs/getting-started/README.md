@@ -7,7 +7,6 @@ Welcome to ExMCP! This section contains everything you need to get up and runnin
 ```
 📚 Getting Started
 ├── 🚀 QUICKSTART.md      - 5-minute setup guide
-├── 📖 QUICK_REFERENCE.md - One-page operation reference  
 ├── 🔄 MIGRATION.md       - Version upgrade guide
 └── 📋 README.md          - This overview (you are here)
 ```
@@ -19,12 +18,6 @@ Welcome to ExMCP! This section contains everything you need to get up and runnin
 - Complete setup in 5 minutes
 - Working examples for all transport types
 - Basic client and server patterns
-
-### 🔍 Need Quick Answers?
-**Go to:** [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
-- One-page reference for common operations
-- Transport selection guide
-- Code snippets for frequent tasks
 
 ### 🔄 Upgrading ExMCP?
 **Check:** [MIGRATION.md](MIGRATION.md)
@@ -101,9 +94,8 @@ Create reusable prompt patterns:
 ## Next Steps
 
 1. **📖 Read the [QUICKSTART.md](QUICKSTART.md)** - Get your first MCP server running
-2. **🔍 Bookmark [QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - For quick answers during development  
-3. **📚 Explore the full [USER_GUIDE.md](../guides/USER_GUIDE.md)** - Deep dive into advanced features
-4. **💡 Check out [examples/](../../examples/)** - Real-world implementation patterns
+2. **📚 Explore the full [USER_GUIDE.md](../guides/USER_GUIDE.md)** - Deep dive into advanced features
+3. **💡 Check out [examples/](../../examples/)** - Real-world implementation patterns
 
 ## Getting Help
 

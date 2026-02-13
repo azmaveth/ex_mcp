@@ -206,7 +206,6 @@ end
 
 ### Getting Started
 - **[Quick Start Guide](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/QUICKSTART.md)** -- Get running in 5 minutes
-- **[Quick Reference](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/QUICK_REFERENCE.md)** -- One-page operation reference
 - **[Migration Guide](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/MIGRATION.md)** -- Version upgrade instructions
 
 ### Guides
