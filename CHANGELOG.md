@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-02-13
+
+### Added
+- **OAuth Client Credentials with JWT Authentication** (`private_key_jwt`) -- RFC 7523 Section 2.2 client assertions as an alternative to client secrets for machine-to-machine auth
+- **Enterprise-Managed Authorization (ID-JAG)** -- RFC 8693 token exchange + RFC 7523 JWT bearer grants for enterprise SSO flows
+- **JWT Infrastructure** (`ExMCP.Authorization.JWT`) -- General-purpose JWT module wrapping JOSE for key management, signing, verification, and claims validation
+- **Client Assertion Module** (`ExMCP.Authorization.ClientAssertion`) -- Build and verify JWT client assertions for token endpoint authentication
+- **Discovery Flow** (`ExMCP.Authorization.DiscoveryFlow`) -- Full 401-to-discovery-to-auth orchestrator supporting both `client_secret` and `private_key_jwt` methods
+- **Token Exchange** (`ExMCP.Authorization.TokenExchange`) -- RFC 8693 token exchange for swapping ID tokens for ID-JAG tokens
+- **JWT Bearer Grant** (`ExMCP.Authorization.JWTBearerAssertion`) -- RFC 7523 Section 2.1 JWT bearer authorization grants
+- **ID-JAG Creation and Validation** (`ExMCP.Authorization.IdJag`) -- Create and validate ID-JAG JWTs with `typ="oauth-id-jag+jwt"`
+- **ID-JAG Server Handler** (`ExMCP.Authorization.IdJagHandler`) -- Server-side processing of JWT bearer grants containing ID-JAG tokens
+- **Enterprise Flow** (`ExMCP.Authorization.EnterpriseFlow`) -- Client-side enterprise SSO orchestrator (OIDC -> token exchange -> JWT bearer grant)
+- Extended `OAuthFlow` with `client_credentials_jwt_flow/1` for private_key_jwt auth
+- Extended `HTTPClient` metadata parsing with `token_endpoint_auth_methods_supported`, `token_endpoint_auth_signing_alg_values_supported`, `issuer`, `jwks_uri`, and `issued_token_type`
+- Extended `Validator` with JWT bearer and token exchange grant type validation
+- Extended `AuthorizationServerMetadata` with auth method metadata fields
+- Extended `TokenManager` with `auth_method` awareness (`:client_secret`, `:private_key_jwt`, `:enterprise_idjag`)
+- Added `{:jose, "~> 1.11"}` dependency for JWT operations
+
 ## [0.7.2] - 2026-02-12
 
 ### Fixed

@@ -86,8 +86,8 @@ security = %{
 For OAuth 2.1 authentication flows:
 
 ```elixir
-# First, obtain tokens via OAuth flow
-{:ok, token_response} = ExMCP.Authorization.client_credentials_flow(%{
+# Client credentials with client secret
+{:ok, token_response} = ExMCP.Authorization.OAuthFlow.client_credentials_flow(%{
   client_id: "my-client",
   client_secret: "my-secret",
   token_endpoint: "https://auth.example.com/token"
@@ -97,6 +97,54 @@ For OAuth 2.1 authentication flows:
 security = %{
   auth: {:oauth2, token_response}
 }
+```
+
+### JWT Client Authentication (private_key_jwt)
+
+For machine-to-machine auth using JWT client assertions (RFC 7523):
+
+```elixir
+# Load private key and authenticate with JWT instead of client secret
+{:ok, private_key} = ExMCP.Authorization.JWT.load_key({:pem_file, "/path/to/key.pem"})
+
+{:ok, token_response} = ExMCP.Authorization.OAuthFlow.client_credentials_jwt_flow(%{
+  client_id: "my-client",
+  private_key: private_key,
+  token_endpoint: "https://auth.example.com/token",
+  scopes: ["mcp:read", "mcp:write"]
+})
+```
+
+### Enterprise-Managed Authorization (ID-JAG)
+
+For enterprise SSO using ID-JAG (Identity JWT Authorization Grant):
+
+```elixir
+# Step 1: Authenticate user with enterprise IdP via OIDC (obtain id_token)
+# Step 2-3: Exchange ID token for access token via ID-JAG flow
+{:ok, access_token} = ExMCP.Authorization.EnterpriseFlow.execute(%{
+  id_token: id_token_from_oidc,
+  idp_token_endpoint: "https://idp.enterprise.com/token",
+  as_issuer: "https://auth.example.com",
+  resource_url: "https://mcp.example.com",
+  client_id: "my-client"
+})
+```
+
+Server-side ID-JAG validation:
+
+```elixir
+# Validate an incoming ID-JAG in a JWT bearer grant
+{:ok, result} = ExMCP.Authorization.IdJagHandler.handle_grant(
+  assertion: id_jag_token,
+  expected_audience: "https://auth.example.com",
+  expected_resource: "https://mcp.example.com",
+  trusted_idps: %{
+    "https://idp.enterprise.com" => %{
+      jwks_uri: "https://idp.enterprise.com/.well-known/jwks.json"
+    }
+  }
+)
 ```
 
 ## Transport-Specific Security

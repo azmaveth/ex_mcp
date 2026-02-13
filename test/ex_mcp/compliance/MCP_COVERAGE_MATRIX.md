@@ -181,10 +181,17 @@ This document tracks which MCP specification features are tested in our complian
 | Feature | 2024-11-05 | 2025-03-26 | 2025-06-18 | Test Location |
 |---------|------------|------------|-------------|---------------|
 | Client credentials flow | N/A | ✅ | ✅ | oauth_2_1_compliance_test.exs |
+| Client credentials JWT (private_key_jwt) | N/A | N/A | ✅ | client_assertion_test.exs |
 | Authorization code flow | N/A | ✅ | ✅ | oauth_2_1_compliance_test.exs |
 | PKCE support | N/A | ✅ | ✅ | oauth_2_1_compliance_test.exs |
 | Token refresh | N/A | ✅ | ✅ | oauth_2_1_compliance_test.exs |
 | RFC 8707 Resource Indicators | N/A | N/A | ✅ | oauth_2_1_compliance_test.exs |
+| RFC 7523 JWT client assertions | N/A | N/A | ✅ | client_assertion_test.exs |
+| RFC 8693 Token Exchange | N/A | N/A | ✅ | token_exchange_test.exs |
+| RFC 7523 JWT bearer grant | N/A | N/A | ✅ | jwt_bearer_assertion_test.exs |
+| ID-JAG creation/validation | N/A | N/A | ✅ | id_jag_test.exs |
+| Enterprise SSO flow (ID-JAG) | N/A | N/A | ✅ | enterprise_flow_test.exs |
+| Discovery flow orchestrator | N/A | N/A | ✅ | discovery_flow_test.exs |
 | Metadata discovery | N/A | ⚠️ | ⚠️ | oauth_2_1_compliance_test.exs |
 | Dynamic registration | N/A | ⚠️ | ⚠️ | oauth_2_1_compliance_test.exs |
 
@@ -270,6 +277,8 @@ This document tracks which MCP specification features are tested in our complian
 1. ✅ **Message Validation**: Complete implementation with request ID uniqueness, null ID rejection, response format validation
 2. ✅ **Security Compliance**: Token passthrough prevention, user consent validation, security guard implementation
 3. ✅ **OAuth 2.1 Basic Support**: PKCE support, authorization flow, token management, scope validation
+11. ✅ **OAuth JWT Authentication**: RFC 7523 client assertions (private_key_jwt), JWT bearer grants, token exchange (RFC 8693)
+12. ✅ **Enterprise-Managed Authorization (ID-JAG)**: ID-JAG creation/validation, enterprise SSO flow, discovery orchestrator
 4. ✅ **Error Code Validation**: Standard and custom error code range validation
 5. ✅ **Batch Validation**: Empty batch rejection, notification-only batch handling (for supported versions)
 6. ✅ **HTTP Protocol Version Headers**: MCP-Protocol-Version header validation and testing

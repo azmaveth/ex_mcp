@@ -90,6 +90,8 @@ config :ex_mcp,
 | URL-mode elicitation | -- | -- | -- | ✅ |
 | Tool calling in sampling | -- | -- | -- | ✅ |
 | Enhanced OAuth/OIDC (incremental scope) | -- | -- | -- | ✅ |
+| JWT client authentication (private_key_jwt) | -- | -- | -- | ✅ |
+| Enterprise SSO / ID-JAG | -- | -- | -- | ✅ |
 
 ### Recommendations
 
@@ -259,6 +261,38 @@ config :ex_mcp, :oauth,
   jwks_uri: "https://auth.example.com/.well-known/jwks.json",
   cache_jwks: true,
   cache_ttl: 3600
+```
+
+#### JWT Client Authentication (private_key_jwt)
+
+For machine-to-machine auth using JWT client assertions (RFC 7523) instead of client secrets:
+
+```elixir
+# Load your private key
+{:ok, private_key} = ExMCP.Authorization.JWT.load_key({:pem_file, "/path/to/key.pem"})
+
+# Client credentials flow with JWT authentication
+{:ok, token} = ExMCP.Authorization.OAuthFlow.client_credentials_jwt_flow(%{
+  client_id: "my-client",
+  private_key: private_key,
+  token_endpoint: "https://auth.example.com/token",
+  scopes: ["mcp:read", "mcp:write"]
+})
+```
+
+#### Enterprise-Managed Authorization (ID-JAG)
+
+For enterprise SSO via ID-JAG (RFC 8693 token exchange + RFC 7523 JWT bearer grant):
+
+```elixir
+# After obtaining an OIDC ID token from the enterprise IdP
+{:ok, access_token} = ExMCP.Authorization.EnterpriseFlow.execute(%{
+  id_token: id_token_from_oidc,
+  idp_token_endpoint: "https://idp.enterprise.com/token",
+  as_issuer: "https://auth.example.com",
+  resource_url: "https://mcp.example.com",
+  client_id: "my-client"
+})
 ```
 
 ### TLS/SSL Configuration

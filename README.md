@@ -26,7 +26,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **Multiple transports** -- HTTP/SSE, stdio, and native BEAM (~15us local calls)
 - **Phoenix Plug** -- native Phoenix integration with `ExMCP.HttpPlug`
 - **DSL and Handler APIs** -- declarative tool/resource/prompt definitions or callback-based handlers
-- **OAuth 2.1** -- complete Resource Server implementation
+- **OAuth 2.1** -- Resource Server, JWT client auth (private_key_jwt), enterprise SSO (ID-JAG)
 - **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, telemetry
 - **2600+ tests** -- comprehensive suite including TypeScript SDK interop
 
@@ -37,7 +37,7 @@ Add `ex_mcp` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.7.2"}
+    {:ex_mcp, "~> 0.7.3"}
   ]
 end
 ```
