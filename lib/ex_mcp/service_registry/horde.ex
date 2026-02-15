@@ -26,6 +26,11 @@ defmodule ExMCP.ServiceRegistry.Horde do
 
   @registry_name __MODULE__.Registry
 
+  # All Horde.Registry calls use apply/3 to avoid compile-time warnings
+  # when Horde is not installed (it's an optional dependency).
+  # Runtime availability is checked via ensure_horde!/0.
+  # credo:disable-for-this-file Credo.Check.Refactor.Apply
+
   @impl true
   def child_specs(_opts) do
     ensure_horde!()
@@ -37,7 +42,7 @@ defmodule ExMCP.ServiceRegistry.Horde do
 
   @impl true
   def register(name, metadata) when is_atom(name) do
-    case Horde.Registry.register(@registry_name, name, metadata) do
+    case apply(Horde.Registry, :register, [@registry_name, name, metadata]) do
       {:ok, _pid} ->
         :ok
 
@@ -48,13 +53,13 @@ defmodule ExMCP.ServiceRegistry.Horde do
 
   @impl true
   def unregister(name) when is_atom(name) do
-    Horde.Registry.unregister(@registry_name, name)
+    apply(Horde.Registry, :unregister, [@registry_name, name])
     :ok
   end
 
   @impl true
   def lookup(name) when is_atom(name) do
-    case Horde.Registry.lookup(@registry_name, name) do
+    case apply(Horde.Registry, :lookup, [@registry_name, name]) do
       [{pid, _metadata}] -> {:ok, pid}
       [] -> {:error, :not_found}
     end
@@ -68,7 +73,7 @@ defmodule ExMCP.ServiceRegistry.Horde do
   """
   @spec lookup_on_node(atom(), node()) :: {:ok, pid()} | {:error, :not_found}
   def lookup_on_node(name, target_node) when is_atom(name) and is_atom(target_node) do
-    case Horde.Registry.lookup(@registry_name, name) do
+    case apply(Horde.Registry, :lookup, [@registry_name, name]) do
       [{pid, _metadata}] ->
         if node(pid) == target_node do
           {:ok, pid}
@@ -83,8 +88,9 @@ defmodule ExMCP.ServiceRegistry.Horde do
 
   @impl true
   def list do
-    Horde.Registry.select(@registry_name, [
-      {{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}
+    apply(Horde.Registry, :select, [
+      @registry_name,
+      [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}]
     ])
   end
 

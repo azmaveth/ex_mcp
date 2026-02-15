@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-02-14
+
+### Fixed
+- Fixed compile warnings for users without Horde installed -- `ExMCP.ServiceRegistry.Horde` now uses `apply/3` for all `Horde.Registry` calls to avoid compile-time "module is not available" warnings
+- Removed 15 dead test files left over from DSL migration (eliminates ExUnit `test_load_filters` warning)
+
 ## [0.7.3] - 2026-02-13
 
 ### Added
