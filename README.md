@@ -37,7 +37,7 @@ Add `ex_mcp` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.7.3"}
+    {:ex_mcp, "~> 0.7.4"}
   ]
 end
 ```
