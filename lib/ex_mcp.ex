@@ -139,6 +139,13 @@ defmodule ExMCP do
   alias ExMCP.Server
 
   @doc """
+  Starts an ACP client connected to an agent subprocess.
+
+  See `ExMCP.ACP.start_client/1` for details.
+  """
+  defdelegate start_acp_client(opts), to: ExMCP.ACP, as: :start_client
+
+  @doc """
   Convenience function to start an MCP client.
 
   This is equivalent to `ExMCP.Client.start_link/1` but provides a simpler
