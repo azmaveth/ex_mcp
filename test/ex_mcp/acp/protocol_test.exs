@@ -37,11 +37,12 @@ defmodule ExMCP.ACP.ProtocolTest do
       assert is_integer(msg["id"])
     end
 
-    test "omits nil fields" do
+    test "omits nil fields but always includes mcpServers" do
       msg = Protocol.encode_session_new()
 
       refute Map.has_key?(msg["params"], "cwd")
-      refute Map.has_key?(msg["params"], "mcpServers")
+      # mcpServers is always present (some agents like Gemini require it)
+      assert msg["params"]["mcpServers"] == []
     end
 
     test "includes mcp_servers" do
@@ -68,7 +69,7 @@ defmodule ExMCP.ACP.ProtocolTest do
 
       assert msg["method"] == "session/prompt"
       assert msg["params"]["sessionId"] == "sess_1"
-      assert msg["params"]["content"] == blocks
+      assert msg["params"]["prompt"] == blocks
       assert is_integer(msg["id"])
     end
   end

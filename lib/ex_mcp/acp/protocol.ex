@@ -57,7 +57,8 @@ defmodule ExMCP.ACP.Protocol do
   def encode_session_new(cwd \\ nil, mcp_servers \\ nil) do
     params = %{}
     params = maybe_put(params, "cwd", cwd)
-    params = maybe_put(params, "mcpServers", mcp_servers)
+    # Always include mcpServers (some agents like Gemini require it even if empty)
+    params = Map.put(params, "mcpServers", mcp_servers || [])
 
     %{
       "jsonrpc" => "2.0",
@@ -88,7 +89,7 @@ defmodule ExMCP.ACP.Protocol do
     %{
       "jsonrpc" => "2.0",
       "method" => "session/prompt",
-      "params" => %{"sessionId" => session_id, "content" => content_blocks},
+      "params" => %{"sessionId" => session_id, "prompt" => content_blocks},
       "id" => generate_id()
     }
   end
