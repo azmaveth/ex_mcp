@@ -264,10 +264,10 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
     end
 
     test "turn/completed produces prompt response with accumulated text", %{state: state} do
-      # Track a pending turn_start so we have an ACP ID
+      # Set current_prompt_acp_id (saved when turn/start response was processed)
       state = %{
         state
-        | pending_requests: %{2 => %{type: :turn_start, acp_id: 5}},
+        | current_prompt_acp_id: 5,
           accumulated_text: ["world", "Hello "]
       }
 
@@ -292,7 +292,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
     test "turn/completed with error status", %{state: state} do
       state = %{
         state
-        | pending_requests: %{2 => %{type: :turn_start, acp_id: 6}},
+        | current_prompt_acp_id: 6,
           accumulated_text: []
       }
 
@@ -381,7 +381,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         | thread_id: "t-1",
           turn_id: "turn-1",
           phase: :ready,
-          pending_requests: %{2 => %{type: :turn_start, acp_id: 10}}
+          current_prompt_acp_id: 10
       }
 
       # Simulate streaming deltas

@@ -35,6 +35,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     :model,
     :thread_id,
     :turn_id,
+    :current_prompt_acp_id,
     next_id: 1,
     phase: :initializing,
     pending_requests: %{},
@@ -241,10 +242,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [error_response(acp_id, error)], state}
   end
 
-  defp handle_typed_response(:turn_start, _entry, {:ok, result}, state) do
+  defp handle_typed_response(:turn_start, %{acp_id: acp_id}, {:ok, result}, state) do
     turn = result["turn"] || %{}
     turn_id = turn["id"] || ""
-    {:skip, %{state | turn_id: turn_id}}
+    {:skip, %{state | turn_id: turn_id, current_prompt_acp_id: acp_id}}
   end
 
   defp handle_typed_response(:turn_start, %{acp_id: acp_id}, {:error, error}, state) do
@@ -343,8 +344,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
     turn = params["turn"] || %{}
     status = turn["status"]
 
-    # Find the pending turn_start ACP request ID
-    acp_id = find_turn_acp_id(state)
+    # Use saved ACP ID (set when turn/start response arrived)
+    acp_id = state.current_prompt_acp_id
 
     text =
       state.accumulated_text
@@ -369,7 +370,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
         []
       end
 
-    state = %{state | accumulated_text: [], accumulated_thinking: [], turn_id: nil}
+    state = %{
+      state
+      | accumulated_text: [],
+        accumulated_thinking: [],
+        turn_id: nil,
+        current_prompt_acp_id: nil
+    }
+
     {:messages, messages, state}
   end
 
@@ -443,14 +451,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp track_request(state, id, type, acp_id) do
     entry = %{type: type, acp_id: acp_id}
     %{state | pending_requests: Map.put(state.pending_requests, id, entry)}
-  end
-
-  defp find_turn_acp_id(state) do
-    state.pending_requests
-    |> Enum.find_value(fn
-      {_id, %{type: :turn_start, acp_id: acp_id}} -> acp_id
-      _ -> nil
-    end)
   end
 
   defp encode_request(id, method, params) do
