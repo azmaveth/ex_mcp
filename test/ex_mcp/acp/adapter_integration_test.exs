@@ -208,13 +208,45 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
     end
   end
 
+  # Helper to send initialize and drain the synthesized init response
+  defp send_initialize(transport) do
+    {:ok, transport} =
+      AdapterTransport.send_message(
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "initialize",
+          "id" => 0,
+          "params" => %{}
+        }),
+        transport
+      )
+
+    {:ok, init_raw, transport} = AdapterTransport.receive_message(transport)
+    {Jason.decode!(init_raw), transport}
+  end
+
+  defp bridge_send_initialize(bridge) do
+    :ok =
+      AdapterBridge.send_message(
+        bridge,
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "initialize",
+          "id" => 0,
+          "params" => %{}
+        })
+      )
+
+    {:ok, init_raw} = AdapterBridge.receive_message(bridge, 5_000)
+    Jason.decode!(init_raw)
+  end
+
   describe "AdapterTransport full lifecycle" do
     test "connect + init + session/new + prompt round-trip" do
       {:ok, transport} = AdapterTransport.connect(adapter: IntegrationAdapter, adapter_opts: [])
 
-      # 1. Receive synthesized init response
-      {:ok, init_raw, transport} = AdapterTransport.receive_message(transport)
-      init_msg = Jason.decode!(init_raw)
+      # 1. Send initialize and receive synthesized init response
+      {init_msg, transport} = send_initialize(transport)
       assert init_msg["result"]["agentInfo"]["name"] == "integrationadapter"
       assert init_msg["result"]["capabilities"]["streaming"] == true
 
@@ -269,8 +301,8 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
     test "multiple sequential prompts maintain correct state" do
       {:ok, transport} = AdapterTransport.connect(adapter: IntegrationAdapter, adapter_opts: [])
 
-      # Drain init
-      {:ok, _, transport} = AdapterTransport.receive_message(transport)
+      # Send initialize and drain init response
+      {_init_msg, transport} = send_initialize(transport)
 
       # session/new
       {:ok, transport} =
@@ -349,24 +381,23 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
     test "adapter performs initialize handshake via cat echo" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: HandshakeAdapter, adapter_opts: [])
 
-      # Receive synthesized init (from bridge, not from handshake)
-      {:ok, init_raw} = AdapterBridge.receive_message(bridge, 5_000)
-      init_msg = Jason.decode!(init_raw)
-      assert init_msg["result"]["capabilities"]["handshake"] == true
-
-      # The handshake happened internally:
+      # The handshake happened internally via post_connect:
       # 1. post_connect wrote initialize request to cat
       # 2. cat echoed it back
       # 3. translate_inbound processed it, sent "initialized" via skip_and_write
       # 4. cat echoed "initialized" back (ignored by translate_inbound)
 
-      # Verify bridge is still functional
+      # Send initialize to receive synthesized init response
+      init_msg = bridge_send_initialize(bridge)
+      assert init_msg["result"]["capabilities"]["handshake"] == true
+
+      # Verify bridge is still functional after handshake
       assert :ok =
                AdapterBridge.send_message(
                  bridge,
                  Jason.encode!(%{
                    "jsonrpc" => "2.0",
-                   "method" => "initialize",
+                   "method" => "test",
                    "id" => 1,
                    "params" => %{}
                  })
@@ -380,8 +411,8 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
     test "produces messages and writes data back to port" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: WriteBackAdapter, adapter_opts: [])
 
-      # Drain init
-      {:ok, _} = AdapterBridge.receive_message(bridge, 5_000)
+      # Send initialize and drain init response
+      _init_msg = bridge_send_initialize(bridge)
 
       # Send a prompt that triggers the write-back flow
       prompt_msg = %{
@@ -426,8 +457,8 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
     test "receive from closed bridge returns error" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: IntegrationAdapter, adapter_opts: [])
 
-      # Drain init
-      {:ok, _} = AdapterBridge.receive_message(bridge, 5_000)
+      # Send initialize and drain init response
+      _init_msg = bridge_send_initialize(bridge)
 
       AdapterBridge.close(bridge)
 

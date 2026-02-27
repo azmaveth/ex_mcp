@@ -105,13 +105,29 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip, state}
   end
 
+  # Helper to send initialize and drain the synthesized init response
+  defp send_initialize(bridge) do
+    :ok =
+      AdapterBridge.send_message(
+        bridge,
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "initialize",
+          "id" => 0,
+          "params" => %{}
+        })
+      )
+
+    {:ok, init_raw} = AdapterBridge.receive_message(bridge, 5_000)
+    Jason.decode!(init_raw)
+  end
+
   describe "start_link/1 with persistent adapter" do
     test "starts and produces initialize response" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
 
-      # Should have a synthesized initialize response in the outbox
-      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
-      msg = Jason.decode!(raw)
+      # Send initialize to trigger synthesized init response
+      msg = send_initialize(bridge)
 
       assert msg["jsonrpc"] == "2.0"
       assert msg["result"]["agentInfo"]["name"] == "mockadapter"
@@ -127,8 +143,8 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     test "prompt goes through adapter translate and back" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
 
-      # Drain the init response
-      {:ok, _init} = AdapterBridge.receive_message(bridge, 5_000)
+      # Send initialize and drain init response
+      _init = send_initialize(bridge)
 
       # Send a prompt
       prompt_msg = %{
@@ -159,8 +175,8 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     test "produces results without persistent Port" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: OneShotMockAdapter, adapter_opts: [])
 
-      # Drain init response
-      {:ok, _init} = AdapterBridge.receive_message(bridge, 5_000)
+      # Send initialize and drain init response
+      _init = send_initialize(bridge)
 
       # Send prompt
       prompt_msg = %{
@@ -191,8 +207,8 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     test "receive blocks until message available" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
 
-      # Drain init
-      {:ok, _} = AdapterBridge.receive_message(bridge, 5_000)
+      # Send initialize and drain init response
+      _init = send_initialize(bridge)
 
       # Start a receive that will block
       task =
@@ -237,8 +253,8 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     test "replies error to waiters when port exits" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
 
-      # Drain init
-      {:ok, _} = AdapterBridge.receive_message(bridge, 5_000)
+      # Send initialize and drain init response
+      _init = send_initialize(bridge)
 
       # Close the underlying port by closing the bridge
       # We'll test via the close path
@@ -250,13 +266,10 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
   end
 
   describe "skip messages" do
-    test "initialize is skipped by adapter" do
+    test "initialize is handled by bridge and adapter skips it" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
 
-      # Drain init response
-      {:ok, _} = AdapterBridge.receive_message(bridge, 5_000)
-
-      # Send initialize — should be skipped (no port write)
+      # Send initialize — bridge synthesizes init response, adapter skips port write
       init_msg = %{
         "jsonrpc" => "2.0",
         "method" => "initialize",
@@ -265,6 +278,12 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       }
 
       assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(init_msg))
+
+      # Should get synthesized init response
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+      assert msg["id"] == 1
+      assert msg["result"]["agentInfo"]["name"] == "mockadapter"
 
       AdapterBridge.close(bridge)
     end

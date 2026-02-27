@@ -88,14 +88,13 @@ defmodule ExMCP.ACP.AdapterBridge do
     case adapter_mod.command(adapter_opts) do
       :one_shot ->
         # One-shot adapters don't open a Port on init
-        state = synthesize_init_response(state)
+        # Init response is synthesized when the Client sends the initialize request
         {:ok, %{state | status: :ready}}
 
       {cmd, args} ->
         case open_port(cmd, args, adapter_opts) do
           {:ok, port} ->
             state = %{state | port: port, status: :ready}
-            state = synthesize_init_response(state)
             state = maybe_post_connect(state)
             {:ok, state}
 
@@ -203,7 +202,17 @@ defmodule ExMCP.ACP.AdapterBridge do
     end
   end
 
-  defp synthesize_init_response(state) do
+  defp synthesize_result(state, request_id, result) do
+    response = %{
+      "jsonrpc" => "2.0",
+      "result" => result,
+      "id" => request_id
+    }
+
+    push_message(state, Jason.encode!(response))
+  end
+
+  defp synthesize_init_response(state, request_id) do
     caps =
       if function_exported?(state.adapter_mod, :capabilities, 0) do
         state.adapter_mod.capabilities()
@@ -221,7 +230,7 @@ defmodule ExMCP.ACP.AdapterBridge do
         "capabilities" => caps,
         "protocolVersion" => 1
       },
-      "id" => 1
+      "id" => request_id
     }
 
     push_message(state, Jason.encode!(init_result))
@@ -247,6 +256,55 @@ defmodule ExMCP.ACP.AdapterBridge do
     |> Module.split()
     |> List.last()
     |> String.downcase()
+  end
+
+  # Synthesize responses for ACP methods that adapted agents don't handle natively.
+  # The Client sends these as normal JSON-RPC requests and expects matching responses.
+
+  defp handle_outbound(%{"method" => "initialize", "id" => id} = msg, _json, _from, state) do
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_init_response(state, id)
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_init_response(state, id)
+        _ = write_to_port(state, data)
+        {:reply, :ok, state}
+    end
+  end
+
+  defp handle_outbound(%{"method" => "session/new", "id" => id} = msg, _json, _from, state) do
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        session_id = "session_#{System.unique_integer([:positive])}"
+        state = synthesize_result(state, id, %{"sessionId" => session_id})
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        {:reply, :ok, state}
+    end
+  end
+
+  defp handle_outbound(%{"method" => "session/load", "id" => id} = msg, _json, _from, state) do
+    session_id = get_in(msg, ["params", "sessionId"]) || "default"
+
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, %{"sessionId" => session_id})
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        {:reply, :ok, state}
+    end
   end
 
   defp handle_outbound(msg, _json, _from, state) do
