@@ -96,6 +96,7 @@ defmodule ExMCP.ACP.AdapterBridge do
           {:ok, port} ->
             state = %{state | port: port, status: :ready}
             state = synthesize_init_response(state)
+            state = maybe_post_connect(state)
             {:ok, state}
 
           {:error, reason} ->
@@ -226,6 +227,21 @@ defmodule ExMCP.ACP.AdapterBridge do
     push_message(state, Jason.encode!(init_result))
   end
 
+  defp maybe_post_connect(%{adapter_mod: adapter_mod, adapter_state: adapter_state} = state) do
+    if function_exported?(adapter_mod, :post_connect, 1) do
+      case adapter_mod.post_connect(adapter_state) do
+        {:ok, data, new_adapter_state} ->
+          _ = write_to_port(state, data)
+          %{state | adapter_state: new_adapter_state}
+
+        {:ok, new_adapter_state} ->
+          %{state | adapter_state: new_adapter_state}
+      end
+    else
+      state
+    end
+  end
+
   defp adapter_name(mod) do
     mod
     |> Module.split()
@@ -287,6 +303,17 @@ defmodule ExMCP.ACP.AdapterBridge do
         {:messages, messages, new_adapter_state} ->
           acc = %{acc | adapter_state: new_adapter_state}
           push_messages(acc, Enum.map(messages, &Jason.encode!/1))
+
+        {:messages_and_write, messages, write_data, new_adapter_state} ->
+          acc = %{acc | adapter_state: new_adapter_state}
+          acc = push_messages(acc, Enum.map(messages, &Jason.encode!/1))
+          _ = write_to_port(acc, write_data)
+          acc
+
+        {:skip_and_write, write_data, new_adapter_state} ->
+          acc = %{acc | adapter_state: new_adapter_state}
+          _ = write_to_port(acc, write_data)
+          acc
 
         {:partial, new_adapter_state} ->
           %{acc | adapter_state: new_adapter_state}

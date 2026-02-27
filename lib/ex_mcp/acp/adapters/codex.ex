@@ -1,41 +1,45 @@
 defmodule ExMCP.ACP.Adapters.Codex do
   @moduledoc """
-  Adapter for Codex CLI (OpenAI).
+  Adapter for Codex CLI (OpenAI) using `codex app-server` persistent mode.
 
-  Codex is a one-shot agent — each prompt launches a new subprocess.
-  Translates between ACP JSON-RPC and Codex's NDJSON event stream.
-  Ported from Arbor's `CodexCli`.
+  Translates between ACP JSON-RPC and Codex's app-server JSON-RPC protocol.
+  The app-server runs as a persistent subprocess communicating over NDJSON
+  on stdin/stdout, with a JSON-RPC initialize handshake.
 
-  ## Codex CLI Protocol
+  Ported from `nshkrdotcom/codex_sdk`'s `AppServer.Connection` pattern.
 
-  - **Command:** `codex exec -m MODEL --json --skip-git-repo-check PROMPT`
-  - **Output:** NDJSON events: `thread.started`, `item.completed`, `turn.completed`
-  - **Lifecycle:** One subprocess per prompt, exits when done
+  ## Codex App-Server Protocol
+
+  - **Command:** `codex app-server`
+  - **Handshake:** `initialize` request → response → `initialized` notification
+  - **Session:** `thread/start` → `turn/start` → notifications → `turn/completed`
+  - **Notifications:** NDJSON events for items, text deltas, reasoning, tool calls, etc.
 
   ## ACP Mapping
 
-  | Codex Event | ACP Message |
+  | ACP Message | Codex JSON-RPC |
   |---|---|
-  | `thread.started` | session_id capture |
-  | `item.completed` (agent_message) | `session/update` notification (kind: text) |
-  | `turn.completed` | prompt response result (with usage) |
+  | `session/new` | `thread/start` request |
+  | `session/prompt` | `turn/start` request |
+  | `session/cancel` | `turn/interrupt` request |
+  | `item/agentMessage/delta` | `session/update` (kind: text) |
+  | `item/reasoning/textDelta` | `session/update` (kind: thinking) |
+  | `turn/completed` | prompt response result |
   """
 
   @behaviour ExMCP.ACP.Adapter
 
   require Logger
 
-  @default_timeout 600_000
-
-  @session_vars_to_clear ~w(
-    CLAUDE_CODE_ENTRYPOINT CLAUDE_SESSION_ID CLAUDE_CONFIG_DIR
-    CLAUDECODE
-  )
-
   defstruct [
-    :session_id,
     :model,
-    pending_prompt_id: nil,
+    :thread_id,
+    :turn_id,
+    next_id: 1,
+    phase: :initializing,
+    pending_requests: %{},
+    accumulated_text: [],
+    accumulated_thinking: [],
     opts: []
   ]
 
@@ -43,225 +47,426 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   @impl true
   def init(opts) do
-    {:ok, %__MODULE__{opts: opts, model: Keyword.get(opts, :model)}}
+    {:ok,
+     %__MODULE__{
+       opts: opts,
+       model: Keyword.get(opts, :model)
+     }}
   end
 
   @impl true
   def command(_opts) do
-    # Codex is one-shot — we manage subprocess per prompt
-    :one_shot
+    {"codex", ["app-server"]}
   end
 
   @impl true
   def capabilities do
     %{
-      "streaming" => false,
-      "supportedModes" => []
+      "streaming" => true,
+      "supportedModes" => ["thread"]
     }
   end
 
   @impl true
+  def post_connect(state) do
+    {id, state} = next_request_id(state)
+
+    client_name = Keyword.get(state.opts, :client_name, "ex_mcp")
+    client_version = Keyword.get(state.opts, :client_version, "1.0.0")
+
+    request =
+      encode_request(id, "initialize", %{
+        "clientInfo" => %{
+          "name" => client_name,
+          "version" => client_version
+        }
+      })
+
+    state = track_request(state, id, :initialize, nil)
+    {:ok, request, state}
+  end
+
+  # Outbound: ACP → Codex
+
+  @impl true
   def translate_outbound(%{"method" => "initialize"}, state) do
+    # Handled by post_connect + bridge synthetic init
     {:ok, :skip, state}
   end
 
-  def translate_outbound(%{"method" => "session/new"}, state) do
-    {:ok, :skip, state}
+  def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
+    {id, state} = next_request_id(state)
+
+    wire_params =
+      %{}
+      |> maybe_put("model", state.model || params["model"])
+      |> maybe_put("cwd", params["cwd"] || Keyword.get(state.opts, :cwd))
+      |> maybe_put("approvalPolicy", params["approvalPolicy"])
+      |> maybe_put("sandbox", params["sandbox"])
+
+    request = encode_request(id, "thread/start", wire_params)
+    state = track_request(state, id, :thread_start, acp_id)
+    {:ok, request, state}
   end
 
-  def translate_outbound(%{"method" => "session/prompt", "id" => id, "params" => params}, state) do
-    content = extract_prompt_text(params["content"])
-    state = %{state | pending_prompt_id: id}
+  def translate_outbound(
+        %{"method" => "session/prompt", "id" => acp_id, "params" => params},
+        state
+      ) do
+    thread_id = params["sessionId"] || state.thread_id
 
-    cmd_fn = fn ->
-      execute_codex(content, state)
+    if thread_id do
+      {id, state} = next_request_id(state)
+      content = extract_prompt_text(params["content"])
+
+      wire_params =
+        %{
+          "threadId" => thread_id,
+          "input" => content
+        }
+        |> maybe_put("model", params["model"] || state.model)
+        |> maybe_put("cwd", params["cwd"] || Keyword.get(state.opts, :cwd))
+
+      request = encode_request(id, "turn/start", wire_params)
+
+      state =
+        state
+        |> track_request(id, :turn_start, acp_id)
+        |> Map.put(:accumulated_text, [])
+        |> Map.put(:accumulated_thinking, [])
+
+      {:ok, request, state}
+    else
+      {:ok, :skip, state}
     end
+  end
 
-    {:one_shot, cmd_fn, state}
+  def translate_outbound(
+        %{"method" => "session/cancel", "params" => params},
+        state
+      ) do
+    thread_id = params["sessionId"] || state.thread_id
+    turn_id = params["turnId"] || state.turn_id
+
+    if thread_id && turn_id do
+      {id, state} = next_request_id(state)
+
+      request =
+        encode_request(id, "turn/interrupt", %{
+          "threadId" => thread_id,
+          "turnId" => turn_id
+        })
+
+      state = track_request(state, id, :turn_interrupt, nil)
+      {:ok, request, state}
+    else
+      {:ok, :skip, state}
+    end
   end
 
   def translate_outbound(_msg, state) do
     {:ok, :skip, state}
   end
 
+  # Inbound: Codex → ACP
+
   @impl true
-  def translate_inbound(_line, state) do
-    # One-shot adapter — inbound is handled via execute_codex, not Port lines
+  def translate_inbound(line, state) do
+    case Jason.decode(line) do
+      {:ok, msg} ->
+        handle_inbound_message(msg, state)
+
+      {:error, _} ->
+        {:skip, state}
+    end
+  end
+
+  # JSON-RPC message routing
+
+  defp handle_inbound_message(%{"id" => id, "result" => result}, state) do
+    handle_response(state, id, {:ok, result})
+  end
+
+  defp handle_inbound_message(%{"id" => id, "error" => error}, state) do
+    handle_response(state, id, {:error, error})
+  end
+
+  defp handle_inbound_message(%{"method" => method, "params" => params}, state)
+       when is_binary(method) do
+    handle_notification(method, params || %{}, state)
+  end
+
+  defp handle_inbound_message(%{"method" => method}, state) when is_binary(method) do
+    handle_notification(method, %{}, state)
+  end
+
+  defp handle_inbound_message(_msg, state) do
     {:skip, state}
   end
 
-  # One-shot execution
+  # Response handling
 
-  defp execute_codex(prompt, state) do
-    case System.find_executable("codex") do
-      nil ->
-        {:error, :codex_not_found}
+  defp handle_response(state, id, reply) do
+    case Map.pop(state.pending_requests, id) do
+      {nil, _} ->
+        {:skip, state}
 
-      codex_path ->
-        args = build_args(prompt, state)
-        shell_cmd = build_shell_command(codex_path, args)
-        timeout = Keyword.get(state.opts, :timeout, @default_timeout)
-
-        cwd = Keyword.get(state.opts, :cwd, File.cwd!())
-
-        port_opts = [
-          :binary,
-          :exit_status,
-          :stderr_to_stdout,
-          {:env, safe_env()},
-          {:cd, to_charlist(cwd)}
-        ]
-
-        port = Port.open({:spawn, shell_cmd}, port_opts)
-        output = collect_output(port, <<>>, timeout)
-
-        case output do
-          {:ok, data} ->
-            messages = parse_output(data, state)
-            {:ok, messages}
-
-          {:error, {:exit_code, _code, data}} ->
-            messages = parse_output(data, state)
-            {:ok, messages}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+      {%{type: type} = entry, pending} ->
+        state = %{state | pending_requests: pending}
+        handle_typed_response(type, entry, reply, state)
     end
   end
 
-  defp build_args(prompt, state) do
-    args = ["exec"]
-
-    args =
-      case state.model do
-        nil -> args
-        "default" -> args
-        model -> args ++ ["-m", model]
-      end
-
-    args ++ ["--json", "--skip-git-repo-check", prompt]
+  defp handle_typed_response(:initialize, _entry, _reply, state) do
+    state = %{state | phase: :ready}
+    initialized = encode_notification("initialized")
+    {:skip_and_write, initialized, state}
   end
 
-  defp build_shell_command(cmd, args) do
-    escaped = Enum.map(args, &shell_escape/1)
-    Enum.join([cmd | escaped], " ") <> " </dev/null"
+  defp handle_typed_response(:thread_start, %{acp_id: acp_id}, {:ok, result}, state) do
+    thread = result["thread"] || %{}
+    thread_id = thread["id"] || ""
+    state = %{state | thread_id: thread_id}
+
+    response = %{
+      "jsonrpc" => "2.0",
+      "id" => acp_id,
+      "result" => %{"sessionId" => thread_id, "metadata" => thread}
+    }
+
+    {:messages, [response], state}
   end
 
-  defp shell_escape(arg) do
-    "'" <> String.replace(arg, "'", "'\\''") <> "'"
+  defp handle_typed_response(:thread_start, %{acp_id: acp_id}, {:error, error}, state) do
+    {:messages, [error_response(acp_id, error)], state}
   end
 
-  defp collect_output(port, acc, timeout) do
-    receive do
-      {^port, {:data, data}} ->
-        collect_output(port, acc <> data, timeout)
-
-      {^port, {:exit_status, 0}} ->
-        {:ok, acc}
-
-      {^port, {:exit_status, code}} ->
-        {:error, {:exit_code, code, acc}}
-    after
-      timeout ->
-        Port.close(port)
-        {:error, :timeout}
-    end
+  defp handle_typed_response(:turn_start, _entry, {:ok, result}, state) do
+    turn = result["turn"] || %{}
+    turn_id = turn["id"] || ""
+    {:skip, %{state | turn_id: turn_id}}
   end
 
-  defp parse_output(output, state) do
-    events =
-      output
-      |> String.split("\n", trim: true)
-      |> Enum.map(&String.trim/1)
-      |> Enum.filter(&String.starts_with?(&1, "{"))
-      |> Enum.flat_map(fn line ->
-        case Jason.decode(line) do
-          {:ok, event} -> [event]
-          _ -> []
-        end
-      end)
+  defp handle_typed_response(:turn_start, %{acp_id: acp_id}, {:error, error}, state) do
+    {:messages, [error_response(acp_id, error)], state}
+  end
 
-    text = extract_agent_text(events)
-    usage = extract_usage(events)
-    session_id = extract_session_id(events) || state.session_id
+  defp handle_typed_response(:turn_interrupt, _entry, _reply, state) do
+    {:skip, state}
+  end
 
-    messages = []
+  defp error_response(acp_id, error) do
+    %{
+      "jsonrpc" => "2.0",
+      "id" => acp_id,
+      "error" => normalize_error(error)
+    }
+  end
 
-    # Text update notification
-    messages =
-      if text != "" do
+  # Notification handling
+
+  defp handle_notification("thread/started", params, state) do
+    thread = params["thread"] || %{}
+    thread_id = thread["id"] || ""
+    {:skip, %{state | thread_id: thread_id}}
+  end
+
+  defp handle_notification("turn/started", params, state) do
+    turn = params["turn"] || %{}
+    turn_id = turn["id"] || ""
+    {:skip, %{state | turn_id: turn_id}}
+  end
+
+  defp handle_notification("item/agentMessage/delta", params, state) do
+    delta = params["delta"] || ""
+    state = %{state | accumulated_text: [delta | state.accumulated_text]}
+    session_id = state.thread_id || "default"
+
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{
+        "sessionId" => session_id,
+        "kind" => "text",
+        "content" => delta
+      }
+    }
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/reasoning/textDelta", params, state) do
+    delta = params["delta"] || ""
+    state = %{state | accumulated_thinking: [delta | state.accumulated_thinking]}
+    session_id = state.thread_id || "default"
+
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{
+        "sessionId" => session_id,
+        "kind" => "thinking",
+        "content" => delta
+      }
+    }
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/completed", params, state) do
+    item = params["item"] || %{}
+
+    case item["type"] do
+      "agent_message" ->
+        text = item["text"] || ""
+        session_id = state.thread_id || "default"
+
         notification = %{
           "jsonrpc" => "2.0",
           "method" => "session/update",
           "params" => %{
-            "sessionId" => session_id || "default",
+            "sessionId" => session_id,
             "kind" => "text",
-            "content" => text
+            "content" => text,
+            "final" => true
           }
         }
 
-        [Jason.encode!(notification) | messages]
-      else
-        messages
-      end
-
-    # Prompt response result
-    messages =
-      if state.pending_prompt_id do
-        response = %{
-          "jsonrpc" => "2.0",
-          "result" => %{
-            "stopReason" => if(text == "", do: "error", else: "end_turn"),
-            "text" => text,
-            "usage" => format_usage(usage),
-            "sessionId" => session_id
-          },
-          "id" => state.pending_prompt_id
-        }
-
-        [Jason.encode!(response) | messages]
-      else
-        messages
-      end
-
-    Enum.reverse(messages)
-  end
-
-  defp extract_agent_text(events) do
-    events
-    |> Enum.filter(fn event ->
-      event["type"] == "item.completed" &&
-        get_in(event, ["item", "type"]) == "agent_message"
-    end)
-    |> Enum.map_join("\n", fn event -> get_in(event, ["item", "text"]) || "" end)
-  end
-
-  defp extract_usage(events) do
-    case Enum.find(events, &(&1["type"] == "turn.completed")) do
-      %{"usage" => usage} ->
-        %{
-          input_tokens: usage["input_tokens"] || 0,
-          output_tokens: usage["output_tokens"] || 0
-        }
+        {:messages, [notification], state}
 
       _ ->
-        %{input_tokens: 0, output_tokens: 0}
+        {:skip, state}
     end
   end
 
-  defp extract_session_id(events) do
-    case Enum.find(events, &(&1["type"] == "thread.started")) do
-      %{"thread_id" => id} -> id
-      _ -> nil
-    end
+  defp handle_notification("turn/completed", params, state) do
+    turn = params["turn"] || %{}
+    status = turn["status"]
+
+    # Find the pending turn_start ACP request ID
+    acp_id = find_turn_acp_id(state)
+
+    text =
+      state.accumulated_text
+      |> Enum.reverse()
+      |> IO.iodata_to_binary()
+
+    messages =
+      if acp_id do
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => acp_id,
+          "result" => %{
+            "stopReason" => normalize_stop_reason(status),
+            "text" => text,
+            "sessionId" => state.thread_id,
+            "turnId" => state.turn_id
+          }
+        }
+
+        [response]
+      else
+        []
+      end
+
+    state = %{state | accumulated_text: [], accumulated_thinking: [], turn_id: nil}
+    {:messages, messages, state}
   end
 
-  defp format_usage(usage) do
-    %{
-      "inputTokens" => usage.input_tokens,
-      "outputTokens" => usage.output_tokens
+  defp handle_notification("thread/tokenUsage/updated", params, state) do
+    token_usage = params["tokenUsage"] || %{}
+    total = token_usage["total"] || %{}
+    session_id = state.thread_id || "default"
+
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{
+        "sessionId" => session_id,
+        "kind" => "usage",
+        "content" => %{
+          "inputTokens" => total["inputTokens"] || 0,
+          "outputTokens" => total["outputTokens"] || 0,
+          "cachedInputTokens" => total["cachedInputTokens"] || 0
+        }
+      }
     }
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("error", params, state) do
+    error = params["error"] || %{}
+    session_id = state.thread_id || "default"
+
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{
+        "sessionId" => session_id,
+        "kind" => "error",
+        "content" => error["message"] || "Unknown error"
+      }
+    }
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/commandExecution/outputDelta", params, state) do
+    delta = params["delta"] || ""
+    session_id = state.thread_id || "default"
+
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{
+        "sessionId" => session_id,
+        "kind" => "tool_output",
+        "content" => delta,
+        "itemId" => params["itemId"] || params["item_id"]
+      }
+    }
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification(_method, _params, state) do
+    {:skip, state}
+  end
+
+  # Helpers
+
+  defp next_request_id(%{next_id: id} = state) do
+    {id, %{state | next_id: id + 1}}
+  end
+
+  defp track_request(state, id, type, acp_id) do
+    entry = %{type: type, acp_id: acp_id}
+    %{state | pending_requests: Map.put(state.pending_requests, id, entry)}
+  end
+
+  defp find_turn_acp_id(state) do
+    state.pending_requests
+    |> Enum.find_value(fn
+      {_id, %{type: :turn_start, acp_id: acp_id}} -> acp_id
+      _ -> nil
+    end)
+  end
+
+  defp encode_request(id, method, params) do
+    msg =
+      %{"id" => id, "method" => method}
+      |> maybe_put("params", params)
+
+    [Jason.encode!(msg), "\n"]
+  end
+
+  defp encode_notification(method, params \\ nil) do
+    msg =
+      %{"method" => method}
+      |> maybe_put("params", params)
+
+    [Jason.encode!(msg), "\n"]
   end
 
   defp extract_prompt_text(nil), do: ""
@@ -274,8 +479,27 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp extract_prompt_text(text) when is_binary(text), do: text
 
-  defp safe_env do
-    cleared = Enum.map(@session_vars_to_clear, &{to_charlist(&1), false})
-    [{~c"TERM", ~c"dumb"} | cleared]
+  defp normalize_error(%{"message" => msg} = error) do
+    %{"code" => error["code"] || -1, "message" => msg}
   end
+
+  defp normalize_error(error) when is_binary(error) do
+    %{"code" => -1, "message" => error}
+  end
+
+  defp normalize_error(error) do
+    %{"code" => -1, "message" => inspect(error)}
+  end
+
+  defp normalize_stop_reason(nil), do: "end_turn"
+  defp normalize_stop_reason("completed"), do: "end_turn"
+  defp normalize_stop_reason("cancelled"), do: "cancelled"
+  defp normalize_stop_reason("interrupted"), do: "cancelled"
+  defp normalize_stop_reason("errored"), do: "error"
+  defp normalize_stop_reason(other), do: other
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, ""), do: map
+  defp maybe_put(map, _key, map_val) when map_val == %{}, do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

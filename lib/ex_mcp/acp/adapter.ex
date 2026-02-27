@@ -46,13 +46,27 @@ defmodule ExMCP.ACP.Adapter do
 
   Returns:
   - `{:messages, [map()], new_state}` — one or more ACP JSON-RPC messages
+  - `{:messages_and_write, [map()], iodata(), new_state}` — messages + data to write back to port
+  - `{:skip_and_write, iodata(), new_state}` — no messages, but write data back to port
   - `{:partial, new_state}` — line accumulated, no complete messages yet
   - `{:skip, new_state}` — line ignored (non-JSON, irrelevant event, etc.)
   """
   @callback translate_inbound(raw_line :: String.t(), state()) ::
               {:messages, [map()], state()}
+              | {:messages_and_write, [map()], iodata(), state()}
+              | {:skip_and_write, iodata(), state()}
               | {:partial, state()}
               | {:skip, state()}
+
+  @doc """
+  Called after the Port is opened, before any ACP messages are processed.
+
+  Return `{:ok, iodata, new_state}` to write initial data to the port
+  (e.g., a JSON-RPC initialize handshake), or `{:ok, state}` to do nothing.
+
+  Optional — defaults to no-op.
+  """
+  @callback post_connect(state()) :: {:ok, iodata(), state()} | {:ok, state()}
 
   @doc """
   Return static agent capabilities for the initialize response.
@@ -61,5 +75,5 @@ defmodule ExMCP.ACP.Adapter do
   """
   @callback capabilities() :: map()
 
-  @optional_callbacks [capabilities: 0]
+  @optional_callbacks [capabilities: 0, post_connect: 1]
 end
