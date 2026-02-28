@@ -83,5 +83,10 @@
   {"lib/ex_mcp/authorization/enterprise_flow.ex", :pattern_match},
   {"lib/ex_mcp/authorization/enterprise_flow.ex", :unused_fun},
   {"lib/ex_mcp/authorization/token_exchange.ex", :call},
-  {"lib/ex_mcp/authorization/jwt_bearer_assertion.ex", :call}
+  {"lib/ex_mcp/authorization/jwt_bearer_assertion.ex", :call},
+
+  # Codex adapter - defensive checks for input format (content is always binary from extract_prompt_text,
+  # but guard is kept for robustness) and params nil check (params always a map)
+  {"lib/ex_mcp/acp/adapters/codex.ex", :pattern_match},
+  {"lib/ex_mcp/acp/adapters/codex.ex", :guard_fail}
 ]

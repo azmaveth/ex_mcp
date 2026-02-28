@@ -120,10 +120,19 @@ defmodule ExMCP.ACP.Adapters.Codex do
       {id, state} = next_request_id(state)
       content = extract_prompt_text(params["content"])
 
+      # Codex turn/start expects input as an array of InputItem objects
+      # InputItem uses internally tagged format: {"type": "text", "text": "..."}
+      input =
+        if is_binary(content) and content != "" do
+          [%{"type" => "text", "text" => content}]
+        else
+          [%{"type" => "text", "text" => ""}]
+        end
+
       wire_params =
         %{
           "threadId" => thread_id,
-          "input" => content
+          "input" => input
         }
         |> maybe_put("model", params["model"] || state.model)
         |> maybe_put("cwd", params["cwd"] || Keyword.get(state.opts, :cwd))
@@ -454,10 +463,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp encode_request(id, method, params) do
-    msg =
-      %{"id" => id, "method" => method}
-      |> maybe_put("params", params)
-
+    params = if is_map(params) and map_size(params) > 0, do: params, else: %{}
+    msg = %{"id" => id, "method" => method, "params" => params}
     [Jason.encode!(msg), "\n"]
   end
 
