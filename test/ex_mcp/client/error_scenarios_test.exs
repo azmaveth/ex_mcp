@@ -194,9 +194,15 @@ defmodule ExMCP.Client.ErrorScenariosTest do
       # All should receive their respective errors
       results = Enum.map(tasks, &Task.await/1)
 
-      for {result, i} <- Enum.with_index(results, 1) do
-        assert {:error, error} = result
-        assert error["message"] == "Error #{i}"
+      error_messages =
+        for result <- results do
+          assert {:error, error} = result
+          error["message"]
+        end
+
+      # All 5 error messages should be present (order may vary due to concurrency)
+      for i <- 1..5 do
+        assert "Error #{i}" in error_messages
       end
     end
   end
