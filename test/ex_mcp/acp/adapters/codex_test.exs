@@ -100,7 +100,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       {:ok, codex_msg} = Jason.decode(json)
       assert codex_msg["method"] == "turn/start"
       assert codex_msg["params"]["threadId"] == "thread-123"
-      assert codex_msg["params"]["input"] == "Fix the bug"
+      assert codex_msg["params"]["input"] == [%{"type" => "text", "text" => "Fix the bug"}]
       assert new_state.accumulated_text == []
       assert new_state.accumulated_thinking == []
     end
