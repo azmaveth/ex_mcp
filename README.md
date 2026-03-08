@@ -8,7 +8,7 @@
 [![Coverage](https://img.shields.io/codecov/c/github/azmaveth/ex_mcp.svg)](https://codecov.io/gh/azmaveth/ex_mcp)
 [![License](https://img.shields.io/hexpm/l/ex_mcp.svg)](https://github.com/azmaveth/ex_mcp/blob/master/LICENSE)
 
-**A complete Elixir implementation of the Model Context Protocol (MCP)**
+**A complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP)**
 
 [Getting Started](https://github.com/azmaveth/ex_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) | [Changelog](CHANGELOG.md)
 
@@ -18,7 +18,7 @@
 
 ## Overview
 
-ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](https://modelcontextprotocol.io/), enabling AI models to securely interact with local and remote resources through a standardized protocol. It provides both client and server implementations with multiple transport options, including native Phoenix integration via Plug compatibility.
+ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](https://modelcontextprotocol.io/) and the [Agent Client Protocol](https://agentclientprotocol.com/), enabling AI models to securely interact with local and remote resources through standardized protocols. It provides both client and server implementations with multiple transport options, including native Phoenix integration via Plug compatibility, plus the ability to control coding agents like Gemini CLI, Claude Code, and Codex via ACP.
 
 ## Key Features
 
@@ -28,6 +28,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **DSL and Handler APIs** -- declarative tool/resource/prompt definitions or callback-based handlers
 - **OAuth 2.1** -- Resource Server, JWT client auth (private_key_jwt), enterprise SSO (ID-JAG)
 - **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, telemetry
+- **Agent Client Protocol (ACP)** -- control coding agents (Gemini CLI, Claude Code, Codex, etc.) over stdio
 - **2600+ tests** -- comprehensive suite including TypeScript SDK interop
 
 ## Installation
@@ -37,7 +38,7 @@ Add `ex_mcp` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.7.4"}
+    {:ex_mcp, "~> 0.8.0"}
   ]
 end
 ```
@@ -194,6 +195,27 @@ end
 {:ok, tools} = ExMCP.Native.call(:my_tools, "list_tools", %{})
 ```
 
+### ACP: Control Coding Agents
+
+Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control coding agents programmatically:
+
+```elixir
+# Connect to a native ACP agent (Gemini CLI, OpenCode, Qwen Code, etc.)
+{:ok, client} = ExMCP.ACP.start_client(command: ["gemini", "--acp"])
+
+# Create a session and send a prompt
+{:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/my/project")
+{:ok, %{"stopReason" => _}} = ExMCP.ACP.Client.prompt(client, sid, "Fix the failing tests")
+
+# Use adapters for non-native agents (Claude Code, Codex)
+{:ok, client} = ExMCP.ACP.start_client(
+  command: ["claude"],
+  adapter: ExMCP.ACP.Adapters.Claude
+)
+```
+
+See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
+
 ## Transport Performance
 
 | Transport | Latency | Best For |
@@ -212,6 +234,7 @@ end
 - **[User Guide](docs/guides/USER_GUIDE.md)** -- Complete feature walkthrough
 - **[Phoenix Integration](docs/guides/PHOENIX_GUIDE.md)** -- Detailed Phoenix/Plug integration
 - **[DSL Guide](docs/DSL_GUIDE.md)** -- Declarative server definitions
+- **[ACP Guide](docs/ACP_GUIDE.md)** -- Agent Client Protocol for controlling coding agents
 - **[Transport Guide](docs/TRANSPORT_GUIDE.md)** -- Transport selection and optimization
 - **[Configuration](docs/CONFIGURATION.md)** -- All configuration options
 - **[Security](docs/SECURITY.md)** -- Authentication, TLS, and best practices
@@ -238,6 +261,6 @@ MIT -- see [LICENSE](https://github.com/azmaveth/ex_mcp/blob/master/LICENSE).
 
 ## Acknowledgments
 
-- The [Model Context Protocol](https://modelcontextprotocol.io/) specification creators
+- The [Model Context Protocol](https://modelcontextprotocol.io/) and [Agent Client Protocol](https://agentclientprotocol.com/) specification creators
 - The Elixir community for excellent tooling and libraries
 - Contributors and early adopters providing feedback

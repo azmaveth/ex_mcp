@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "0.7.4"
+  @version "0.8.0"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -80,9 +80,10 @@ defmodule ExMCP.MixProject do
 
   defp description do
     """
-    Complete Elixir implementation of the Model Context Protocol (MCP) v2025-11-25.
+    Complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP).
     Build MCP clients and servers with tools, resources, prompts, and multiple transports
-    including stdio, HTTP/SSE, and native BEAM.
+    including stdio, HTTP/SSE, and native BEAM. Control coding agents via ACP with adapters
+    for Claude Code, Codex, Gemini CLI, and more.
     """
   end
 
@@ -92,7 +93,8 @@ defmodule ExMCP.MixProject do
       links: %{
         "GitHub" => @github_url,
         "Changelog" => "#{@github_url}/blob/master/CHANGELOG.md",
-        "MCP Spec" => "https://modelcontextprotocol.io"
+        "MCP Spec" => "https://modelcontextprotocol.io",
+        "ACP Spec" => "https://agentclientprotocol.com"
       },
       files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md)
     ]
@@ -126,6 +128,7 @@ defmodule ExMCP.MixProject do
         "docs/ARCHITECTURE.md",
         "docs/DEVELOPMENT.md",
         "docs/TROUBLESHOOTING.md",
+        "docs/ACP_GUIDE.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",
@@ -133,7 +136,7 @@ defmodule ExMCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|CONFIGURATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|ACP_GUIDE|CONFIGURATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
@@ -146,6 +149,19 @@ defmodule ExMCP.MixProject do
           ExMCP.Transport.SSE
         ],
         "MCP + Extensions": [ExMCP.Client],
+        "Agent Client Protocol (ACP)": [
+          ExMCP.ACP,
+          ExMCP.ACP.Client,
+          ExMCP.ACP.Client.Handler,
+          ExMCP.ACP.Client.DefaultHandler,
+          ExMCP.ACP.Protocol,
+          ExMCP.ACP.Types,
+          ExMCP.ACP.Adapter,
+          ExMCP.ACP.AdapterBridge,
+          ExMCP.ACP.AdapterTransport,
+          ExMCP.ACP.Adapters.Claude,
+          ExMCP.ACP.Adapters.Codex
+        ],
         "ExMCP Extensions": [
           ExMCP.Transport.Beam,
           ExMCP.ServerManager,

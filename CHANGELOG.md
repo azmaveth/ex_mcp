@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-08
+
+### Added
+- **Agent Client Protocol (ACP) Support** -- Full implementation of the [Agent Client Protocol](https://agentclientprotocol.com/) for controlling coding agents programmatically
+  - `ExMCP.ACP` facade module for quick client startup
+  - `ExMCP.ACP.Client` GenServer for managing ACP agent connections over stdio
+  - `ExMCP.ACP.Protocol` for ACP-specific JSON-RPC 2.0 message encoding (integer protocol versions, ACP method names)
+  - `ExMCP.ACP.Types` with type specifications and builder functions for ACP messages
+  - `ExMCP.ACP.Client.Handler` behaviour for handling session events (updates, permission requests, file access)
+  - `ExMCP.ACP.Client.DefaultHandler` implementation that auto-allows permissions
+- **ACP Adapter System** for non-native agents
+  - `ExMCP.ACP.Adapter` behaviour for protocol translation between ACP and agent-native formats
+  - `ExMCP.ACP.AdapterBridge` GenServer bridge managing adapted agent subprocesses
+  - `ExMCP.ACP.AdapterTransport` transport implementation delegating to the adapter bridge
+  - `ExMCP.ACP.Adapters.Claude` -- Adapter for Claude Code CLI (NDJSON stream-json protocol)
+  - `ExMCP.ACP.Adapters.Codex` -- Adapter for Codex CLI (app-server JSON-RPC protocol)
+- **ACP Session Management** -- Create, resume, prompt, cancel, and configure sessions
+  - `session/new`, `session/load`, `session/prompt`, `session/cancel` methods
+  - `session/set_mode`, `session/set_config_option` for runtime agent configuration
+  - Streaming session updates via notifications
+  - Bidirectional communication for permission and file access requests
+- **ACP Documentation** -- New [ACP Guide](docs/ACP_GUIDE.md) with usage examples and adapter development instructions
+
 ## [0.7.4] - 2026-02-14
 
 ### Fixed
