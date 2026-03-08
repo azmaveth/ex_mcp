@@ -80,10 +80,7 @@ defmodule ExMCP.MixProject do
 
   defp description do
     """
-    Complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP).
-    Build MCP clients and servers with tools, resources, prompts, and multiple transports
-    including stdio, HTTP/SSE, and native BEAM. Control coding agents via ACP with adapters
-    for Claude Code, Codex, Gemini CLI, and more.
+    Elixir implementation of MCP and ACP. Build MCP clients/servers with tools, resources, prompts over stdio, HTTP/SSE, and BEAM. Control coding agents via ACP with adapters for Claude Code, Codex, and more.
     """
   end
 
