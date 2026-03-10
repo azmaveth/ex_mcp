@@ -179,7 +179,7 @@ defmodule MyApp.CustomAgentAdapter do
   @impl true
   def translate_outbound(%{"method" => "session/prompt"} = msg, state) do
     # Convert ACP prompt to agent's native format
-    prompt_text = get_in(msg, ["params", "prompt"])
+    prompt_text = get_in(msg, ["params", "content"])
     native_json = Jason.encode!(%{"action" => "ask", "text" => prompt_text})
     {:ok, [native_json, "\n"], state}
   end

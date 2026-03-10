@@ -89,7 +89,7 @@ defmodule ExMCP.ACP.Protocol do
     %{
       "jsonrpc" => "2.0",
       "method" => "session/prompt",
-      "params" => %{"sessionId" => session_id, "prompt" => content_blocks},
+      "params" => %{"sessionId" => session_id, "content" => content_blocks},
       "id" => generate_id()
     }
   end

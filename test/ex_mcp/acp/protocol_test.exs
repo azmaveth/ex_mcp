@@ -69,7 +69,7 @@ defmodule ExMCP.ACP.ProtocolTest do
 
       assert msg["method"] == "session/prompt"
       assert msg["params"]["sessionId"] == "sess_1"
-      assert msg["params"]["prompt"] == blocks
+      assert msg["params"]["content"] == blocks
       assert is_integer(msg["id"])
     end
   end
