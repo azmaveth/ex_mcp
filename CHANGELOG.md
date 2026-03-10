@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-03-10
+
+### Fixed
+- `AdapterTransport` receiver loop now uses `:infinity` timeout (was 30s) for `AdapterBridge.receive_message/2`. This prevents spurious `receiver_exited` errors when CLI agents (Claude, Codex) take longer than 30 seconds to produce their first output line — common during complex reasoning or multi-turn tool use. The timeout is now configurable via `receive_timeout:` in transport opts.
+
+## [0.8.3] - 2026-03-09
+
+### Added
+- Claude adapter handles multi-turn tool use sequences (`assistant(thinking)→assistant(tool_use)→user(tool_result)→assistant(text)→result`). Emits `tool_call` and `tool_result` session updates for observability.
+
 ## [0.8.2] - 2026-03-09
 
 ### Fixed

@@ -19,12 +19,13 @@ defmodule ExMCP.ACP.AdapterTransport do
 
   alias ExMCP.ACP.AdapterBridge
 
-  defstruct [:bridge]
+  defstruct [:bridge, receive_timeout: :infinity]
 
   @impl true
   def connect(opts) do
     adapter = Keyword.fetch!(opts, :adapter)
     adapter_opts = Keyword.get(opts, :adapter_opts, [])
+    receive_timeout = Keyword.get(opts, :receive_timeout, :infinity)
 
     bridge_opts = [
       adapter: adapter,
@@ -33,7 +34,7 @@ defmodule ExMCP.ACP.AdapterTransport do
 
     case AdapterBridge.start_link(bridge_opts) do
       {:ok, bridge} ->
-        {:ok, %__MODULE__{bridge: bridge}}
+        {:ok, %__MODULE__{bridge: bridge, receive_timeout: receive_timeout}}
 
       {:error, reason} ->
         {:error, reason}
@@ -49,8 +50,8 @@ defmodule ExMCP.ACP.AdapterTransport do
   end
 
   @impl true
-  def receive_message(%__MODULE__{bridge: bridge} = state) do
-    case AdapterBridge.receive_message(bridge) do
+  def receive_message(%__MODULE__{bridge: bridge, receive_timeout: timeout} = state) do
+    case AdapterBridge.receive_message(bridge, timeout) do
       {:ok, message} -> {:ok, message, state}
       {:error, reason} -> {:error, reason}
     end
