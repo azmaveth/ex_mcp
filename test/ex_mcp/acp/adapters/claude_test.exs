@@ -237,7 +237,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
           }
         })
 
-      assert {:skip, new_state} = Claude.translate_inbound(line, state)
+      assert {:messages, notifications, new_state} = Claude.translate_inbound(line, state)
+
+      # Text block emits an agent_message_chunk notification
+      assert length(notifications) == 1
+
+      assert %{"method" => "session/update", "params" => %{"update" => update}} =
+               hd(notifications)
+
+      assert update["sessionUpdate"] == "agent_message_chunk"
 
       # "Already seen" should be deduped, "New thinking" should be added
       assert length(new_state.thinking_blocks) == 2
@@ -304,6 +312,172 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       result_msg = Enum.find(messages, &(&1["id"] == 11))
       assert result_msg["result"]["stopReason"] == "error"
+    end
+  end
+
+  describe "translate_inbound/2 — multi-turn tool use" do
+    test "tool_use content block emits tool_call notification", %{state: state} do
+      state = %{state | session_id: "s1"}
+
+      line =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_123",
+                "name" => "Grep",
+                "input" => %{"pattern" => "defmodule"}
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], new_state} = Claude.translate_inbound(line, state)
+      assert notification["method"] == "session/update"
+
+      update = notification["params"]["update"]
+      assert update["sessionUpdate"] == "tool_call"
+      assert update["title"] == "Grep"
+      assert update["toolCallId"] == "toolu_123"
+      assert new_state.in_tool_use == true
+    end
+
+    test "user event with tool_result emits tool_result notification", %{state: state} do
+      state = %{state | session_id: "s1", in_tool_use: true}
+
+      line =
+        Jason.encode!(%{
+          "type" => "user",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_123",
+                "content" => "Found 3 matches"
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["sessionUpdate"] == "tool_result"
+      assert update["toolCallId"] == "toolu_123"
+    end
+
+    test "assistant after tool use clears text_acc for final answer", %{state: state} do
+      # Simulate state after tool_use cycle — text_acc might have stale text
+      state = %{state | session_id: "s1", in_tool_use: true, text_acc: ["stale"]}
+
+      line =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{"type" => "text", "text" => "The final answer"}
+            ]
+          }
+        })
+
+      assert {:messages, _notifications, new_state} = Claude.translate_inbound(line, state)
+      assert new_state.text_acc == ["The final answer"]
+      assert new_state.in_tool_use == false
+    end
+
+    test "full multi-turn tool use sequence produces correct result", %{state: state} do
+      state = %{state | session_id: "s1", pending_prompt_id: 42}
+
+      # Step 1: assistant with thinking
+      line1 =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{"type" => "thinking", "thinking" => "I need to search...", "signature" => nil}
+            ]
+          }
+        })
+
+      {:skip, state} = Claude.translate_inbound(line1, state)
+
+      # Step 2: assistant with tool_use
+      line2 =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_abc",
+                "name" => "Grep",
+                "input" => %{"pattern" => "trust_profile"}
+              }
+            ]
+          }
+        })
+
+      {:messages, _tool_notifs, state} = Claude.translate_inbound(line2, state)
+      assert state.in_tool_use == true
+
+      # Step 3: user with tool_result
+      line3 =
+        Jason.encode!(%{
+          "type" => "user",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_abc",
+                "content" => "trust_profile.ex:5: defmodule TrustProfile"
+              }
+            ]
+          }
+        })
+
+      {:messages, _result_notifs, state} = Claude.translate_inbound(line3, state)
+
+      # Step 4: assistant with final text answer
+      line4 =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{"type" => "text", "text" => "I found the TrustProfile module."}
+            ]
+          }
+        })
+
+      {:messages, _text_notifs, state} = Claude.translate_inbound(line4, state)
+      assert state.in_tool_use == false
+      assert state.text_acc == ["I found the TrustProfile module."]
+
+      # Step 5: result event
+      line5 =
+        Jason.encode!(%{
+          "type" => "result",
+          "session_id" => "s1",
+          "result" => "I found the TrustProfile module.",
+          "usage" => %{"input_tokens" => 200, "output_tokens" => 30}
+        })
+
+      {:messages, messages, final_state} = Claude.translate_inbound(line5, state)
+      assert final_state.pending_prompt_id == nil
+
+      response = Enum.find(messages, &(&1["id"] == 42))
+      assert response["result"]["text"] == "I found the TrustProfile module."
+      assert response["result"]["stopReason"] == "end_turn"
+    end
+
+    test "user event without tool_result content is skipped", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "type" => "user",
+          "message" => %{"content" => "plain text"}
+        })
+
+      assert {:skip, ^state} = Claude.translate_inbound(line, state)
     end
   end
 

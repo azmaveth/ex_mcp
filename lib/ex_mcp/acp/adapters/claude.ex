@@ -8,7 +8,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
   ## Claude CLI Protocol
 
   - **Input:** NDJSON on stdin with `{"type":"user","message":{...},"session_id":"..."}`
-  - **Output:** NDJSON on stdout with event types: `stream_event`, `assistant`, `result`
+  - **Output:** NDJSON on stdout with event types: `stream_event`, `assistant`, `user`, `result`
   - **Args:** `--output-format stream-json --input-format stream-json --verbose`
 
   ## ACP Mapping
@@ -18,6 +18,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
   | `stream_event` (text_delta) | `session/update` notification (kind: text) |
   | `stream_event` (thinking_delta) | `session/update` notification (kind: thinking) |
   | `assistant` | accumulate content blocks |
+  | `assistant` (tool_use) | `session/update` notification (tool_call) |
+  | `user` (tool_result) | `session/update` notification (tool_result) |
   | `result` | prompt response result |
   """
 
@@ -34,6 +36,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
     current_block_type: nil,
     usage: nil,
     pending_prompt_id: nil,
+    in_tool_use: false,
     opts: []
   ]
 
@@ -146,8 +149,18 @@ defmodule ExMCP.ACP.Adapters.Claude do
   end
 
   defp process_event(%{"type" => "assistant", "message" => message}, state) do
-    state = process_assistant_message(message, state)
-    {:skip, state}
+    process_assistant_message(message, state)
+  end
+
+  defp process_event(%{"type" => "user", "message" => message}, state) do
+    # Tool results from Claude CLI's internal tool use.
+    # Emit a session update for observability, but don't affect text accumulation.
+    notifications = extract_tool_results(message, state)
+
+    case notifications do
+      [] -> {:skip, state}
+      notifs -> {:messages, notifs, state}
+    end
   end
 
   defp process_event(%{"type" => "result"} = result, state) do
@@ -210,27 +223,48 @@ defmodule ExMCP.ACP.Adapters.Claude do
     {:skip, state}
   end
 
-  # Assistant message — accumulate thinking blocks for dedup
+  # Assistant message — accumulate thinking/text blocks, emit tool_call notifications
 
   defp process_assistant_message(%{"content" => content} = message, state)
        when is_list(content) do
     session_id = message["id"]
     model = message["model"]
 
-    state = process_content_blocks(content, state)
+    has_tool_use = Enum.any?(content, &(&1["type"] == "tool_use"))
+    has_text = Enum.any?(content, &(&1["type"] == "text"))
+
+    # When a new assistant message arrives after tool use with text content,
+    # clear the previous text accumulator so we capture the final answer
+    state =
+      if state.in_tool_use and has_text do
+        %{state | text_acc: [], in_tool_use: false}
+      else
+        state
+      end
+
+    {state, notifications} = process_content_blocks(content, state)
 
     state =
       state
       |> maybe_set(:session_id, session_id)
       |> maybe_set(:model, model)
 
-    state
+    # Mark that we're in a tool use cycle
+    state = if has_tool_use, do: %{state | in_tool_use: true}, else: state
+
+    case notifications do
+      [] -> {:skip, state}
+      notifs -> {:messages, notifs, state}
+    end
   end
 
-  defp process_assistant_message(_message, state), do: state
+  defp process_assistant_message(_message, state), do: {:skip, state}
 
   defp process_content_blocks(content, state) when is_list(content) do
-    Enum.reduce(content, state, &process_content_block/2)
+    Enum.reduce(content, {state, []}, fn block, {st, notifs} ->
+      {new_st, new_notifs} = process_content_block(block, st)
+      {new_st, notifs ++ new_notifs}
+    end)
   end
 
   defp process_content_block(%{"type" => "thinking"} = block, state) do
@@ -241,24 +275,50 @@ defmodule ExMCP.ACP.Adapters.Claude do
     }
 
     # Dedup: only add if not already from streaming
-    if Enum.any?(state.thinking_blocks, &(&1.text == thinking_block.text)) do
-      state
-    else
-      %{state | thinking_blocks: [thinking_block | state.thinking_blocks]}
-    end
+    state =
+      if Enum.any?(state.thinking_blocks, &(&1.text == thinking_block.text)) do
+        state
+      else
+        %{state | thinking_blocks: [thinking_block | state.thinking_blocks]}
+      end
+
+    {state, []}
   end
 
   defp process_content_block(%{"type" => "text", "text" => text}, state)
        when is_binary(text) do
     # Accumulate text from assistant message when streaming deltas were absent
-    if state.text_acc == [] do
-      %{state | text_acc: [text]}
-    else
-      state
-    end
+    state =
+      if state.text_acc == [] do
+        %{state | text_acc: [text]}
+      else
+        state
+      end
+
+    # Emit as agent_message_chunk for streaming visibility
+    notification =
+      session_update(state.session_id, %{
+        "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => text}
+      })
+
+    {state, [notification]}
   end
 
-  defp process_content_block(_block, state), do: state
+  defp process_content_block(%{"type" => "tool_use"} = block, state) do
+    # Claude CLI is calling one of its own tools (Grep, Read, Write, etc.)
+    notification =
+      session_update(state.session_id, %{
+        "sessionUpdate" => "tool_call",
+        "title" => block["name"] || "tool",
+        "toolCallId" => block["id"],
+        "input" => block["input"]
+      })
+
+    {state, [notification]}
+  end
+
+  defp process_content_block(_block, state), do: {state, []}
 
   # Result event — finalize and produce ACP prompt response
 
@@ -363,6 +423,20 @@ defmodule ExMCP.ACP.Adapters.Claude do
     }
   end
 
+  defp extract_tool_results(%{"content" => content}, state) when is_list(content) do
+    content
+    |> Enum.filter(&(&1["type"] == "tool_result"))
+    |> Enum.map(fn result ->
+      session_update(state.session_id, %{
+        "sessionUpdate" => "tool_result",
+        "toolCallId" => result["tool_use_id"],
+        "content" => result["content"]
+      })
+    end)
+  end
+
+  defp extract_tool_results(_, _state), do: []
+
   defp reset_accumulators(state) do
     %{
       state
@@ -370,7 +444,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
         thinking_acc: [],
         thinking_blocks: [],
         current_block_type: nil,
-        usage: nil
+        usage: nil,
+        in_tool_use: false
     }
   end
 
