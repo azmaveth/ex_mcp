@@ -46,7 +46,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
           %{"method" => "session/prompt", "id" => id, "params" => params},
           state
         ) do
-      text = extract_text(params["content"])
+      text = extract_text(params["prompt"])
       state = %{state | pending_prompt_id: id}
       data = Jason.encode!(%{"_echo" => "prompt", "_text" => text, "_id" => id}) <> "\n"
       {:ok, data, state}
@@ -72,8 +72,10 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
             "method" => "session/update",
             "params" => %{
               "sessionId" => state.session_id,
-              "kind" => "text",
-              "content" => text
+              "update" => %{
+                "sessionUpdate" => "agent_message_chunk",
+                "content" => %{"type" => "text", "text" => text}
+              }
             }
           }
 
@@ -175,7 +177,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
     def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
 
     def translate_outbound(%{"method" => "session/prompt", "params" => params}, state) do
-      text = get_in(params, ["content", Access.at(0), "text"]) || ""
+      text = get_in(params, ["prompt", Access.at(0), "text"]) || ""
       data = Jason.encode!(%{"_trigger" => "ack", "_text" => text}) <> "\n"
       {:ok, data, state}
     end
@@ -191,7 +193,12 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
           notification = %{
             "jsonrpc" => "2.0",
             "method" => "session/update",
-            "params" => %{"kind" => "text", "content" => text}
+            "params" => %{
+              "update" => %{
+                "sessionUpdate" => "agent_message_chunk",
+                "content" => %{"type" => "text", "text" => text}
+              }
+            }
           }
 
           # Write an ack back to the subprocess while also producing a message
@@ -248,7 +255,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
       # 1. Send initialize and receive synthesized init response
       {init_msg, transport} = send_initialize(transport)
       assert init_msg["result"]["agentInfo"]["name"] == "integrationadapter"
-      assert init_msg["result"]["capabilities"]["streaming"] == true
+      assert init_msg["result"]["agentCapabilities"]["streaming"] == true
 
       # 2. Send session/new
       {:ok, transport} =
@@ -276,7 +283,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
             "id" => 2,
             "params" => %{
               "sessionId" => "test-session",
-              "content" => [%{"type" => "text", "text" => "Hello from integration"}]
+              "prompt" => [%{"type" => "text", "text" => "Hello from integration"}]
             }
           }),
           transport
@@ -286,8 +293,12 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
       {:ok, update_raw, transport} = AdapterTransport.receive_message(transport)
       update = Jason.decode!(update_raw)
       assert update["method"] == "session/update"
-      assert update["params"]["kind"] == "text"
-      assert update["params"]["content"] == "Hello from integration"
+      assert update["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+
+      assert update["params"]["update"]["content"] == %{
+               "type" => "text",
+               "text" => "Hello from integration"
+             }
 
       {:ok, resp_raw, transport} = AdapterTransport.receive_message(transport)
       resp = Jason.decode!(resp_raw)
@@ -327,7 +338,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
             "id" => 2,
             "params" => %{
               "sessionId" => "test-session",
-              "content" => [%{"type" => "text", "text" => "First"}]
+              "prompt" => [%{"type" => "text", "text" => "First"}]
             }
           }),
           transport
@@ -335,7 +346,12 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
 
       {:ok, u1, transport} = AdapterTransport.receive_message(transport)
       {:ok, r1, transport} = AdapterTransport.receive_message(transport)
-      assert Jason.decode!(u1)["params"]["content"] == "First"
+
+      assert Jason.decode!(u1)["params"]["update"]["content"] == %{
+               "type" => "text",
+               "text" => "First"
+             }
+
       assert Jason.decode!(r1)["id"] == 2
 
       # Prompt 2
@@ -347,7 +363,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
             "id" => 3,
             "params" => %{
               "sessionId" => "test-session",
-              "content" => [%{"type" => "text", "text" => "Second"}]
+              "prompt" => [%{"type" => "text", "text" => "Second"}]
             }
           }),
           transport
@@ -355,7 +371,12 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
 
       {:ok, u2, transport} = AdapterTransport.receive_message(transport)
       {:ok, r2, _transport} = AdapterTransport.receive_message(transport)
-      assert Jason.decode!(u2)["params"]["content"] == "Second"
+
+      assert Jason.decode!(u2)["params"]["update"]["content"] == %{
+               "type" => "text",
+               "text" => "Second"
+             }
+
       assert Jason.decode!(r2)["id"] == 3
       assert Jason.decode!(r2)["result"]["text"] == "Second"
 
@@ -389,7 +410,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
 
       # Send initialize to receive synthesized init response
       init_msg = bridge_send_initialize(bridge)
-      assert init_msg["result"]["capabilities"]["handshake"] == true
+      assert init_msg["result"]["agentCapabilities"]["handshake"] == true
 
       # Verify bridge is still functional after handshake
       assert :ok =
@@ -421,7 +442,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
         "id" => 1,
         "params" => %{
           "sessionId" => "s1",
-          "content" => [%{"type" => "text", "text" => "write-back test"}]
+          "prompt" => [%{"type" => "text", "text" => "write-back test"}]
         }
       }
 
@@ -431,7 +452,11 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
       {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
       msg = Jason.decode!(raw)
       assert msg["method"] == "session/update"
-      assert msg["params"]["content"] == "write-back test"
+
+      assert msg["params"]["update"]["content"] == %{
+               "type" => "text",
+               "text" => "write-back test"
+             }
 
       # The ack was written back to cat, which echoed it.
       # translate_inbound skips the ack echo, so no more messages.
@@ -528,7 +553,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
             "id" => 11,
             "params" => %{
               "sessionId" => "thread-42",
-              "content" => [%{"type" => "text", "text" => "Fix the tests"}]
+              "prompt" => [%{"type" => "text", "text" => "Fix the tests"}]
             }
           },
           state
@@ -558,8 +583,8 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
         })
 
       {:messages, [upd1], state} = Codex.translate_inbound(delta1, state)
-      assert upd1["params"]["kind"] == "text"
-      assert upd1["params"]["content"] == "I'll fix "
+      assert upd1["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+      assert upd1["params"]["update"]["content"] == %{"type" => "text", "text" => "I'll fix "}
 
       delta2 =
         Jason.encode!(%{
@@ -568,7 +593,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
         })
 
       {:messages, [upd2], state} = Codex.translate_inbound(delta2, state)
-      assert upd2["params"]["content"] == "the tests."
+      assert upd2["params"]["update"]["content"] == %{"type" => "text", "text" => "the tests."}
 
       # Simulate turn/completed
       completed =
@@ -611,7 +636,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
             "id" => 2,
             "params" => %{
               "sessionId" => "default",
-              "content" => [%{"type" => "text", "text" => "Hello Claude"}]
+              "prompt" => [%{"type" => "text", "text" => "Hello Claude"}]
             }
           },
           state
@@ -633,8 +658,8 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
         })
 
       {:messages, [upd], state} = Claude.translate_inbound(delta_line, state)
-      assert upd["params"]["kind"] == "text"
-      assert upd["params"]["content"] == "Hi there!"
+      assert upd["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+      assert upd["params"]["update"]["content"] == %{"type" => "text", "text" => "Hi there!"}
 
       # Simulate result (usage is at top level of the result event)
       result_line =

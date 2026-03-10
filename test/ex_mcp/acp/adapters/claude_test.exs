@@ -75,7 +75,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
         "id" => 3,
         "params" => %{
           "sessionId" => "sess_001",
-          "content" => [%{"type" => "text", "text" => "Hello Claude"}]
+          "prompt" => [%{"type" => "text", "text" => "Hello Claude"}]
         }
       }
 
@@ -101,7 +101,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
         "id" => 4,
         "params" => %{
           "sessionId" => "s1",
-          "content" => [%{"type" => "text", "text" => "new prompt"}]
+          "prompt" => [%{"type" => "text", "text" => "new prompt"}]
         }
       }
 
@@ -125,8 +125,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert {:messages, [msg], new_state} = Claude.translate_inbound(line, state)
 
       assert msg["method"] == "session/update"
-      assert msg["params"]["kind"] == "text"
-      assert msg["params"]["content"] == "Hello "
+      assert msg["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+      assert msg["params"]["update"]["content"] == %{"type" => "text", "text" => "Hello "}
       assert new_state.text_acc == ["Hello "]
     end
 
@@ -177,8 +177,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       assert {:messages, [msg], new_state} = Claude.translate_inbound(line, state)
 
-      assert msg["params"]["kind"] == "thinking"
-      assert msg["params"]["content"] == "Let me think..."
+      assert msg["params"]["update"]["sessionUpdate"] == "thinking"
+      assert msg["params"]["update"]["content"] == "Let me think..."
       assert new_state.current_block_type == :thinking
     end
   end

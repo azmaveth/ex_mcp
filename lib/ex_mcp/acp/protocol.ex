@@ -42,7 +42,9 @@ defmodule ExMCP.ACP.Protocol do
         protocol_version \\ @default_protocol_version
       ) do
     params = %{"clientInfo" => client_info, "protocolVersion" => protocol_version}
-    params = if capabilities, do: Map.put(params, "capabilities", capabilities), else: params
+
+    params =
+      if capabilities, do: Map.put(params, "clientCapabilities", capabilities), else: params
 
     %{
       "jsonrpc" => "2.0",
@@ -89,7 +91,7 @@ defmodule ExMCP.ACP.Protocol do
     %{
       "jsonrpc" => "2.0",
       "method" => "session/prompt",
-      "params" => %{"sessionId" => session_id, "content" => content_blocks},
+      "params" => %{"sessionId" => session_id, "prompt" => content_blocks},
       "id" => generate_id()
     }
   end
@@ -109,7 +111,7 @@ defmodule ExMCP.ACP.Protocol do
   def encode_session_set_mode(session_id, mode_id) do
     %{
       "jsonrpc" => "2.0",
-      "method" => "session/setMode",
+      "method" => "session/set_mode",
       "params" => %{"sessionId" => session_id, "modeId" => mode_id},
       "id" => generate_id()
     }
@@ -120,7 +122,7 @@ defmodule ExMCP.ACP.Protocol do
   def encode_session_set_config_option(session_id, config_id, value) do
     %{
       "jsonrpc" => "2.0",
-      "method" => "session/setConfigOption",
+      "method" => "session/set_config_option",
       "params" => %{"sessionId" => session_id, "configId" => config_id, "value" => value},
       "id" => generate_id()
     }
@@ -128,22 +130,22 @@ defmodule ExMCP.ACP.Protocol do
 
   # Responses to agent requests
 
-  @doc "Encodes a response to a `session/requestPermission` request from the agent."
+  @doc "Encodes a response to a `session/request_permission` request from the agent."
   @spec encode_permission_response(integer() | String.t(), map()) :: map()
   def encode_permission_response(id, outcome) do
-    encode_response(%{"outcome" => outcome}, id)
+    encode_response(outcome, id)
   end
 
-  @doc "Encodes a response to a `session/fileRead` request from the agent."
+  @doc "Encodes a response to a `fs/read_text_file` request from the agent."
   @spec encode_file_read_response(integer() | String.t(), String.t()) :: map()
   def encode_file_read_response(id, content) do
     encode_response(%{"content" => content}, id)
   end
 
-  @doc "Encodes a response to a `session/fileWrite` request from the agent."
+  @doc "Encodes a response to a `fs/write_text_file` request from the agent."
   @spec encode_file_write_response(integer() | String.t()) :: map()
   def encode_file_write_response(id) do
-    encode_response(%{}, id)
+    encode_response(nil, id)
   end
 
   defp maybe_put(map, _key, nil), do: map

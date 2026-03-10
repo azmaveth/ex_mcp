@@ -16,7 +16,7 @@ defmodule ExMCP.ACP.TypesTest do
 
       assert block == %{
                "type" => "image",
-               "mediaType" => "image/png",
+               "mimeType" => "image/png",
                "data" => "base64data"
              }
     end
@@ -57,7 +57,7 @@ defmodule ExMCP.ACP.TypesTest do
 
       assert params == %{
                "sessionId" => "sess_1",
-               "content" => [%{"type" => "text", "text" => "Fix the bug"}]
+               "prompt" => [%{"type" => "text", "text" => "Fix the bug"}]
              }
     end
 
@@ -70,8 +70,8 @@ defmodule ExMCP.ACP.TypesTest do
       params = Types.prompt_params("sess_1", blocks)
 
       assert params["sessionId"] == "sess_1"
-      assert length(params["content"]) == 2
-      assert hd(params["content"])["type"] == "text"
+      assert length(params["prompt"]) == 2
+      assert hd(params["prompt"])["type"] == "text"
     end
   end
 end

@@ -149,7 +149,7 @@ defmodule ExMCP.ACP.ClientTest do
           "jsonrpc" => "2.0",
           "result" => %{
             "agentInfo" => %{"name" => "mock_agent", "version" => "1.0.0"},
-            "capabilities" => %{"streaming" => true},
+            "agentCapabilities" => %{"streaming" => true},
             "protocolVersion" => 1
           },
           "id" => id
@@ -189,7 +189,10 @@ defmodule ExMCP.ACP.ClientTest do
           Jason.encode!(%{
             "jsonrpc" => "2.0",
             "method" => "session/update",
-            "params" => Map.put(update, "sessionId", session_id)
+            "params" => %{
+              "sessionId" => session_id,
+              "update" => update
+            }
           })
 
         MessageRelay.push(state.to_client, notification)
@@ -203,7 +206,7 @@ defmodule ExMCP.ACP.ClientTest do
         perm_request =
           Jason.encode!(%{
             "jsonrpc" => "2.0",
-            "method" => "session/requestPermission",
+            "method" => "session/request_permission",
             "params" => %{
               "sessionId" => session_id,
               "toolCall" => tool_call,
@@ -240,12 +243,12 @@ defmodule ExMCP.ACP.ClientTest do
       :ok
     end
 
-    defp handle_message(%{"method" => "session/setMode", "id" => id}, state) do
+    defp handle_message(%{"method" => "session/set_mode", "id" => id}, state) do
       response = Jason.encode!(Protocol.encode_response(%{}, id))
       MessageRelay.push(state.to_client, response)
     end
 
-    defp handle_message(%{"method" => "session/setConfigOption", "id" => id}, state) do
+    defp handle_message(%{"method" => "session/set_config_option", "id" => id}, state) do
       response = Jason.encode!(Protocol.encode_response(%{}, id))
       MessageRelay.push(state.to_client, response)
     end
@@ -303,8 +306,11 @@ defmodule ExMCP.ACP.ClientTest do
   describe "prompt/4" do
     test "blocks until response with streaming events" do
       updates = [
-        %{"kind" => "status", "status" => "working"},
-        %{"kind" => "text", "content" => "I'll fix that bug."}
+        %{"sessionUpdate" => "status", "status" => "working"},
+        %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "I'll fix that bug."}
+        }
       ]
 
       {client, _agent} = start_client(updates: updates)
@@ -316,7 +322,10 @@ defmodule ExMCP.ACP.ClientTest do
 
     test "handler receives streaming events" do
       updates = [
-        %{"kind" => "text", "content" => "Working on it..."}
+        %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "Working on it..."}
+        }
       ]
 
       {client, _agent} = start_client(updates: updates)
@@ -356,8 +365,8 @@ defmodule ExMCP.ACP.ClientTest do
       tool_call = %{"toolName" => "file_write", "arguments" => %{"path" => "/etc/hosts"}}
 
       options = [
-        %{"id" => "allow", "label" => "Allow"},
-        %{"id" => "deny", "label" => "Deny"}
+        %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
+        %{"optionId" => "deny", "name" => "Deny", "kind" => "reject_once"}
       ]
 
       {client, _agent} = start_client(permission_request: {tool_call, options})
@@ -366,14 +375,18 @@ defmodule ExMCP.ACP.ClientTest do
       {:ok, _} = Client.prompt(client, "sess_mock_001", "Write a file")
 
       assert_receive {:permission_response, resp}, 5_000
-      assert resp["result"]["outcome"]["optionId"] == "allow"
+      assert resp["result"]["outcome"] == "selected"
+      assert resp["result"]["optionId"] == "allow"
     end
   end
 
   describe "event listener" do
     test "receives session update messages" do
       updates = [
-        %{"kind" => "text", "content" => "Hello from agent"}
+        %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "Hello from agent"}
+        }
       ]
 
       {:ok, to_client_relay} = MessageRelay.start_link()
@@ -395,8 +408,8 @@ defmodule ExMCP.ACP.ClientTest do
       {:ok, _} = Client.prompt(client, "sess_mock_001", "Say hello")
 
       assert_receive {:acp_session_update, "sess_mock_001", update}, 5_000
-      assert update["kind"] == "text"
-      assert update["content"] == "Hello from agent"
+      assert update["sessionUpdate"] == "agent_message_chunk"
+      assert update["content"] == %{"type" => "text", "text" => "Hello from agent"}
     end
   end
 

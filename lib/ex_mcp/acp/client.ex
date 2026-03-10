@@ -312,7 +312,7 @@ defmodule ExMCP.ACP.Client do
          %{
            state
            | agent_info: result["agentInfo"],
-             agent_capabilities: result["capabilities"],
+             agent_capabilities: result["agentCapabilities"],
              protocol_version: result["protocolVersion"] || state.protocol_version,
              status: :ready
          }}
@@ -429,7 +429,7 @@ defmodule ExMCP.ACP.Client do
 
   defp handle_session_update(params, state) do
     session_id = params["sessionId"]
-    update = params
+    update = params["update"]
 
     # Notify handler
     {:ok, new_handler_state} =
@@ -443,7 +443,7 @@ defmodule ExMCP.ACP.Client do
     %{state | handler_state: new_handler_state}
   end
 
-  defp handle_agent_request("session/requestPermission", params, id, state) do
+  defp handle_agent_request("session/request_permission", params, id, state) do
     session_id = params["sessionId"]
     tool_call = params["toolCall"]
     options = params["options"] || []
@@ -462,7 +462,7 @@ defmodule ExMCP.ACP.Client do
     %{state | handler_state: new_handler_state}
   end
 
-  defp handle_agent_request("session/fileRead", params, id, state) do
+  defp handle_agent_request("fs/read_text_file", params, id, state) do
     session_id = params["sessionId"]
     path = params["path"]
     opts = Map.drop(params, ["sessionId", "path"])
@@ -486,7 +486,7 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
-  defp handle_agent_request("session/fileWrite", params, id, state) do
+  defp handle_agent_request("fs/write_text_file", params, id, state) do
     session_id = params["sessionId"]
     path = params["path"]
     content = params["content"]

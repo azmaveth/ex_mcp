@@ -227,7 +227,7 @@ defmodule ExMCP.ACP.AdapterBridge do
           "name" => adapter_name(state.adapter_mod),
           "version" => "1.0.0"
         },
-        "capabilities" => caps,
+        "agentCapabilities" => caps,
         "protocolVersion" => 1
       },
       "id" => request_id
@@ -292,12 +292,10 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp handle_outbound(%{"method" => "session/load", "id" => id} = msg, _json, _from, state) do
-    session_id = get_in(msg, ["params", "sessionId"]) || "default"
-
     case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
       {:ok, :skip, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_result(state, id, %{"sessionId" => session_id})
+        state = synthesize_result(state, id, nil)
         {:reply, :ok, state}
 
       {:ok, data, new_adapter_state} ->

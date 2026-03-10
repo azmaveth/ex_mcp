@@ -112,13 +112,13 @@ defmodule MyApp.ACPHandler do
   def init(_opts), do: {:ok, %{}}
 
   @impl true
-  def handle_session_update(session_id, %{"kind" => "text"} = update, state) do
-    IO.write(update["text"])
+  def handle_session_update(session_id, %{"sessionUpdate" => "agent_message_chunk"} = update, state) do
+    IO.write(update["content"]["text"])
     {:ok, state}
   end
 
-  def handle_session_update(_session_id, %{"kind" => "tool_call"} = update, state) do
-    IO.puts("Agent calling tool: #{update["name"]}")
+  def handle_session_update(_session_id, %{"sessionUpdate" => "tool_call"} = update, state) do
+    IO.puts("Agent calling tool: #{update["title"]}")
     {:ok, state}
   end
 
@@ -129,8 +129,8 @@ defmodule MyApp.ACPHandler do
   @impl true
   def handle_permission_request(_session_id, tool_call, options, state) do
     # Auto-allow all tool calls (or implement your own approval logic)
-    allow_option = Enum.find(options, &(&1["isRecommended"])) || List.first(options)
-    {:ok, %{"optionId" => allow_option["id"]}, state}
+    allow_option = Enum.find(options, &(&1["kind"] == "allow_once")) || List.first(options)
+    {:ok, %{"outcome" => "selected", "optionId" => allow_option["optionId"]}, state}
   end
 end
 
@@ -153,8 +153,8 @@ For simple use cases, receive session updates as process messages instead of imp
 
 # In your receive loop or GenServer
 receive do
-  {:acp_session_update, session_id, %{"kind" => "text"} = update} ->
-    IO.write(update["text"])
+  {:acp_session_update, session_id, %{"sessionUpdate" => "agent_message_chunk"} = update} ->
+    IO.write(update["content"]["text"])
 end
 ```
 
@@ -179,7 +179,7 @@ defmodule MyApp.CustomAgentAdapter do
   @impl true
   def translate_outbound(%{"method" => "session/prompt"} = msg, state) do
     # Convert ACP prompt to agent's native format
-    prompt_text = get_in(msg, ["params", "content"])
+    prompt_text = get_in(msg, ["params", "prompt"])
     native_json = Jason.encode!(%{"action" => "ask", "text" => prompt_text})
     {:ok, [native_json, "\n"], state}
   end
@@ -195,7 +195,7 @@ defmodule MyApp.CustomAgentAdapter do
         acp_result = %{
           "jsonrpc" => "2.0",
           "id" => state.pending_id,
-          "result" => %{"stopReason" => "end", "content" => [%{"type" => "text", "text" => text}]}
+          "result" => %{"stopReason" => "end_turn"}
         }
         {:messages, [acp_result], state}
 
@@ -203,7 +203,13 @@ defmodule MyApp.CustomAgentAdapter do
         notification = %{
           "jsonrpc" => "2.0",
           "method" => "session/update",
-          "params" => %{"kind" => "text", "text" => delta}
+          "params" => %{
+            "sessionId" => "default",
+            "update" => %{
+              "sessionUpdate" => "agent_message_chunk",
+              "content" => %{"type" => "text", "text" => delta}
+            }
+          }
         }
         {:messages, [notification], state}
 
@@ -231,7 +237,8 @@ end
 
 Translates between ACP and Claude's NDJSON stream-json protocol:
 - Launches Claude with `--output-format stream-json --input-format stream-json --verbose`
-- Maps `stream_event` (text/thinking deltas) to `session/update` notifications
+- Maps `stream_event` text deltas to `session/update` notifications (`agent_message_chunk`)
+- Maps `stream_event` thinking deltas to `session/update` notifications (`thinking`)
 - Maps `result` events to prompt response results
 
 ### Codex (`ExMCP.ACP.Adapters.Codex`)

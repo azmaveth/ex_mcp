@@ -29,22 +29,31 @@ defmodule ExMCP.ACP.Types do
 
   @type image_block :: %{
           required(:type) => :image,
-          required(:media_type) => String.t(),
+          required(:mimeType) => String.t(),
           required(:data) => String.t()
         }
 
   # Capabilities
 
   @type client_capabilities :: %{
-          optional(:streaming) => boolean(),
-          optional(:supportedMediaTypes) => [String.t()]
+          optional(:fs) => %{
+            optional(:readTextFile) => boolean(),
+            optional(:writeTextFile) => boolean()
+          },
+          optional(:terminal) => boolean()
         }
 
   @type agent_capabilities :: %{
-          optional(:streaming) => boolean(),
-          optional(:supportedMediaTypes) => [String.t()],
-          optional(:supportedModes) => [mode()],
-          optional(:supportedConfigOptions) => [config_option()]
+          optional(:loadSession) => boolean(),
+          optional(:promptCapabilities) => %{
+            optional(:image) => boolean(),
+            optional(:audio) => boolean(),
+            optional(:embeddedContext) => boolean()
+          },
+          optional(:mcp) => %{
+            optional(:http) => boolean(),
+            optional(:sse) => boolean()
+          }
         }
 
   @type mode :: %{
@@ -75,13 +84,13 @@ defmodule ExMCP.ACP.Types do
 
   @type initialize_request :: %{
           required(:clientInfo) => client_info(),
-          optional(:capabilities) => client_capabilities(),
+          optional(:clientCapabilities) => client_capabilities(),
           optional(:protocolVersion) => pos_integer()
         }
 
   @type initialize_response :: %{
           required(:agentInfo) => agent_info(),
-          optional(:capabilities) => agent_capabilities(),
+          optional(:agentCapabilities) => agent_capabilities(),
           optional(:protocolVersion) => pos_integer()
         }
 
@@ -109,106 +118,84 @@ defmodule ExMCP.ACP.Types do
 
   @type prompt_request :: %{
           required(:sessionId) => String.t(),
-          required(:content) => [content_block()]
+          required(:prompt) => [content_block()]
         }
 
   @type prompt_response :: %{
           required(:stopReason) => String.t()
         }
 
-  # Session updates (9 variants)
+  # Session updates — nested under "update" with "sessionUpdate" discriminator
+  # Spec-defined types: agent_message_chunk, tool_call, tool_call_update, plan
+  # Extension types: thinking, status, usage, error, tool_output
 
-  @type session_update ::
-          status_update()
-          | text_update()
-          | tool_call_update()
-          | tool_result_update()
-          | plan_update()
-          | mcp_tool_call_update()
-          | mcp_tool_result_update()
-          | thinking_update()
-          | model_preference_update()
-
-  @type status_update :: %{
-          required(:kind) => :status,
+  @type session_update_params :: %{
           required(:sessionId) => String.t(),
-          required(:status) => String.t(),
-          optional(:message) => String.t()
+          required(:update) => session_update()
         }
 
-  @type text_update :: %{
-          required(:kind) => :text,
-          required(:sessionId) => String.t(),
-          required(:content) => String.t()
+  @type session_update ::
+          agent_message_chunk_update()
+          | tool_call_update()
+          | tool_call_status_update()
+          | plan_update()
+          | thinking_update()
+          | status_update()
+
+  @type agent_message_chunk_update :: %{
+          required(:sessionUpdate) => :agent_message_chunk,
+          required(:content) => content_block()
         }
 
   @type tool_call_update :: %{
-          required(:kind) => :tool_call,
-          required(:sessionId) => String.t(),
+          required(:sessionUpdate) => :tool_call,
           required(:toolCallId) => String.t(),
-          required(:toolName) => String.t(),
-          optional(:arguments) => map()
+          required(:title) => String.t(),
+          required(:kind) => String.t(),
+          required(:status) => String.t()
         }
 
-  @type tool_result_update :: %{
-          required(:kind) => :tool_result,
-          required(:sessionId) => String.t(),
+  @type tool_call_status_update :: %{
+          required(:sessionUpdate) => :tool_call_update,
           required(:toolCallId) => String.t(),
-          required(:content) => [content_block()]
+          required(:status) => String.t(),
+          optional(:content) => [map()]
         }
 
   @type plan_update :: %{
-          required(:kind) => :plan,
-          required(:sessionId) => String.t(),
+          required(:sessionUpdate) => :plan,
           required(:entries) => [plan_entry()]
         }
 
   @type plan_entry :: %{
-          required(:id) => String.t(),
-          required(:title) => String.t(),
-          optional(:status) => String.t(),
-          optional(:description) => String.t()
-        }
-
-  @type mcp_tool_call_update :: %{
-          required(:kind) => :mcp_tool_call,
-          required(:sessionId) => String.t(),
-          required(:serverUri) => String.t(),
-          required(:toolName) => String.t(),
-          optional(:arguments) => map()
-        }
-
-  @type mcp_tool_result_update :: %{
-          required(:kind) => :mcp_tool_result,
-          required(:sessionId) => String.t(),
-          required(:serverUri) => String.t(),
-          required(:toolName) => String.t(),
-          required(:content) => [content_block()]
+          required(:content) => String.t(),
+          required(:priority) => String.t(),
+          required(:status) => String.t()
         }
 
   @type thinking_update :: %{
-          required(:kind) => :thinking,
-          required(:sessionId) => String.t(),
+          required(:sessionUpdate) => :thinking,
           required(:content) => String.t()
         }
 
-  @type model_preference_update :: %{
-          required(:kind) => :model_preference,
-          required(:sessionId) => String.t(),
-          required(:modelId) => String.t()
+  @type status_update :: %{
+          required(:sessionUpdate) => :status,
+          required(:status) => String.t(),
+          optional(:message) => String.t()
         }
 
   # Permission handling
 
   @type permission_option :: %{
-          required(:id) => String.t(),
-          required(:label) => String.t(),
-          optional(:description) => String.t(),
-          optional(:isDefault) => boolean()
+          required(:optionId) => String.t(),
+          required(:name) => String.t(),
+          required(:kind) => String.t(),
+          optional(:description) => String.t()
         }
 
   @type permission_outcome :: %{
-          required(:optionId) => String.t()
+          required(:outcome) => String.t(),
+          optional(:optionId) => String.t()
         }
 
   @type permission_request :: %{
@@ -252,8 +239,8 @@ defmodule ExMCP.ACP.Types do
 
   @doc "Creates an image content block."
   @spec image_block(String.t(), String.t()) :: map()
-  def image_block(media_type, data) when is_binary(media_type) and is_binary(data) do
-    %{"type" => "image", "mediaType" => media_type, "data" => data}
+  def image_block(mime_type, data) when is_binary(mime_type) and is_binary(data) do
+    %{"type" => "image", "mimeType" => mime_type, "data" => data}
   end
 
   @doc "Creates client info for the initialize handshake."
@@ -293,6 +280,6 @@ defmodule ExMCP.ACP.Types do
         blocks when is_list(blocks) -> blocks
       end
 
-    %{"sessionId" => session_id, "content" => blocks}
+    %{"sessionId" => session_id, "prompt" => blocks}
   end
 end

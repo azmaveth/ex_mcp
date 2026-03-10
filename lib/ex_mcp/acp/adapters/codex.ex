@@ -118,7 +118,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     if thread_id do
       {id, state} = next_request_id(state)
-      content = extract_prompt_text(params["content"])
+      content = extract_prompt_text(params["prompt"])
 
       # Codex turn/start expects input as an array of InputItem objects
       # InputItem uses internally tagged format: {"type": "text", "text": "..."}
@@ -297,8 +297,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "method" => "session/update",
       "params" => %{
         "sessionId" => session_id,
-        "kind" => "text",
-        "content" => delta
+        "update" => %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => delta}
+        }
       }
     }
 
@@ -315,8 +317,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "method" => "session/update",
       "params" => %{
         "sessionId" => session_id,
-        "kind" => "thinking",
-        "content" => delta
+        "update" => %{
+          "sessionUpdate" => "thinking",
+          "content" => delta
+        }
       }
     }
 
@@ -336,9 +340,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
           "method" => "session/update",
           "params" => %{
             "sessionId" => session_id,
-            "kind" => "text",
-            "content" => text,
-            "final" => true
+            "update" => %{
+              "sessionUpdate" => "agent_message_chunk",
+              "content" => %{"type" => "text", "text" => text},
+              "final" => true
+            }
           }
         }
 
@@ -400,11 +406,13 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "method" => "session/update",
       "params" => %{
         "sessionId" => session_id,
-        "kind" => "usage",
-        "content" => %{
-          "inputTokens" => total["inputTokens"] || 0,
-          "outputTokens" => total["outputTokens"] || 0,
-          "cachedInputTokens" => total["cachedInputTokens"] || 0
+        "update" => %{
+          "sessionUpdate" => "usage",
+          "content" => %{
+            "inputTokens" => total["inputTokens"] || 0,
+            "outputTokens" => total["outputTokens"] || 0,
+            "cachedInputTokens" => total["cachedInputTokens"] || 0
+          }
         }
       }
     }
@@ -421,8 +429,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "method" => "session/update",
       "params" => %{
         "sessionId" => session_id,
-        "kind" => "error",
-        "content" => error["message"] || "Unknown error"
+        "update" => %{
+          "sessionUpdate" => "error",
+          "content" => error["message"] || "Unknown error"
+        }
       }
     }
 
@@ -438,9 +448,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "method" => "session/update",
       "params" => %{
         "sessionId" => session_id,
-        "kind" => "tool_output",
-        "content" => delta,
-        "itemId" => params["itemId"] || params["item_id"]
+        "update" => %{
+          "sessionUpdate" => "tool_output",
+          "content" => delta,
+          "itemId" => params["itemId"] || params["item_id"]
+        }
       }
     }
 

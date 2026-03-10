@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-03-09
+
+### Fixed
+- **BREAKING:** Comprehensive ACP spec conformance audit — align all method names, field names, and message structures with the [ACP specification](https://agentclientprotocol.com/)
+  - `session/prompt` params key is `"prompt"` (not `"content"`) per spec
+  - `initialize` request uses `"clientCapabilities"` (not `"capabilities"`)
+  - `initialize` response reads `"agentCapabilities"` (not `"capabilities"`)
+  - Method names use snake_case: `session/set_mode`, `session/set_config_option`, `session/request_permission`
+  - File system methods: `fs/read_text_file` / `fs/write_text_file` (not `session/fileRead` / `session/fileWrite`)
+  - `session/update` notifications use nested `"update"` object with `"sessionUpdate"` discriminator (not flat `"kind"`)
+  - Text updates use `"sessionUpdate": "agent_message_chunk"` with content block (not `"kind": "text"`)
+  - Permission options use `"optionId"` field (not `"id"`)
+  - Permission response is flat `{"outcome": "selected", "optionId": "..."}` (not wrapped)
+  - `fs/write_text_file` response returns `null` result (not empty map)
+  - Image content blocks use `"mimeType"` (not `"mediaType"`)
+  - Plan entries use `"content"` / `"priority"` (not `"id"` / `"title"`)
+  - Capabilities restructured to match spec (`loadSession`, `promptCapabilities`, `mcp`, `fs`, `terminal`)
+
 ## [0.8.1] - 2026-03-09
 
 ### Fixed

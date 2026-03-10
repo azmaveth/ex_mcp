@@ -91,7 +91,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         "id" => 3,
         "params" => %{
           "sessionId" => "thread-123",
-          "content" => [%{"type" => "text", "text" => "Fix the bug"}]
+          "prompt" => [%{"type" => "text", "text" => "Fix the bug"}]
         }
       }
 
@@ -110,7 +110,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         "method" => "session/prompt",
         "id" => 3,
         "params" => %{
-          "content" => [%{"type" => "text", "text" => "Fix the bug"}]
+          "prompt" => [%{"type" => "text", "text" => "Fix the bug"}]
         }
       }
 
@@ -215,8 +215,8 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       assert {:messages, [msg], new_state} = Codex.translate_inbound(line, state)
       assert msg["method"] == "session/update"
-      assert msg["params"]["kind"] == "text"
-      assert msg["params"]["content"] == "Hello "
+      assert msg["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+      assert msg["params"]["update"]["content"] == %{"type" => "text", "text" => "Hello "}
       assert new_state.accumulated_text == ["Hello "]
     end
 
@@ -229,8 +229,8 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       assert {:messages, [msg], new_state} = Codex.translate_inbound(line, state)
       assert msg["method"] == "session/update"
-      assert msg["params"]["kind"] == "thinking"
-      assert msg["params"]["content"] == "Let me think..."
+      assert msg["params"]["update"]["sessionUpdate"] == "thinking"
+      assert msg["params"]["update"]["content"] == "Let me think..."
       assert new_state.accumulated_thinking == ["Let me think..."]
     end
 
@@ -245,9 +245,9 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         })
 
       assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
-      assert msg["params"]["kind"] == "text"
-      assert msg["params"]["final"] == true
-      assert msg["params"]["content"] == "Done!"
+      assert msg["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+      assert msg["params"]["update"]["final"] == true
+      assert msg["params"]["update"]["content"] == %{"type" => "text", "text" => "Done!"}
     end
 
     test "item/completed non-agent_message is skipped", %{state: state} do
@@ -322,9 +322,9 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         })
 
       assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
-      assert msg["params"]["kind"] == "usage"
-      assert msg["params"]["content"]["inputTokens"] == 100
-      assert msg["params"]["content"]["outputTokens"] == 50
+      assert msg["params"]["update"]["sessionUpdate"] == "usage"
+      assert msg["params"]["update"]["content"]["inputTokens"] == 100
+      assert msg["params"]["update"]["content"]["outputTokens"] == 50
     end
 
     test "error notification produces error update", %{state: state} do
@@ -338,8 +338,8 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         })
 
       assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
-      assert msg["params"]["kind"] == "error"
-      assert msg["params"]["content"] == "Rate limited"
+      assert msg["params"]["update"]["sessionUpdate"] == "error"
+      assert msg["params"]["update"]["content"] == "Rate limited"
     end
 
     test "item/commandExecution/outputDelta produces tool_output", %{state: state} do
@@ -354,9 +354,9 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         })
 
       assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
-      assert msg["params"]["kind"] == "tool_output"
-      assert msg["params"]["content"] == "$ ls\nfoo.txt\n"
-      assert msg["params"]["itemId"] == "item-1"
+      assert msg["params"]["update"]["sessionUpdate"] == "tool_output"
+      assert msg["params"]["update"]["content"] == "$ ls\nfoo.txt\n"
+      assert msg["params"]["update"]["itemId"] == "item-1"
     end
 
     test "unknown notifications are skipped", %{state: state} do

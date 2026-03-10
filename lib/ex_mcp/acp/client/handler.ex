@@ -17,8 +17,8 @@ defmodule ExMCP.ACP.Client.Handler do
   @doc """
   Called for each `session/update` notification from the agent.
 
-  The `update` map contains a `"kind"` field indicating the update type
-  (e.g., `"status"`, `"text"`, `"tool_call"`, `"plan"`, etc.).
+  The `update` map contains a `"sessionUpdate"` discriminator field indicating
+  the update type (e.g., `"agent_message_chunk"`, `"tool_call"`, `"plan"`, etc.).
   """
   @callback handle_session_update(session_id :: String.t(), update :: map(), state()) ::
               {:ok, state()}

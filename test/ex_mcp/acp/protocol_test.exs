@@ -15,10 +15,10 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
 
     test "includes capabilities when provided" do
-      caps = %{"streaming" => true}
+      caps = %{"fs" => %{"readTextFile" => true}}
       msg = Protocol.encode_initialize(%{"name" => "t", "version" => "1"}, caps)
 
-      assert msg["params"]["capabilities"] == %{"streaming" => true}
+      assert msg["params"]["clientCapabilities"] == %{"fs" => %{"readTextFile" => true}}
     end
 
     test "uses custom protocol version" do
@@ -69,7 +69,7 @@ defmodule ExMCP.ACP.ProtocolTest do
 
       assert msg["method"] == "session/prompt"
       assert msg["params"]["sessionId"] == "sess_1"
-      assert msg["params"]["content"] == blocks
+      assert msg["params"]["prompt"] == blocks
       assert is_integer(msg["id"])
     end
   end
@@ -88,7 +88,7 @@ defmodule ExMCP.ACP.ProtocolTest do
     test "produces valid request" do
       msg = Protocol.encode_session_set_mode("sess_1", "code")
 
-      assert msg["method"] == "session/setMode"
+      assert msg["method"] == "session/set_mode"
       assert msg["params"]["sessionId"] == "sess_1"
       assert msg["params"]["modeId"] == "code"
     end
@@ -98,7 +98,7 @@ defmodule ExMCP.ACP.ProtocolTest do
     test "produces valid request" do
       msg = Protocol.encode_session_set_config_option("sess_1", "theme", "dark")
 
-      assert msg["method"] == "session/setConfigOption"
+      assert msg["method"] == "session/set_config_option"
       assert msg["params"]["sessionId"] == "sess_1"
       assert msg["params"]["configId"] == "theme"
       assert msg["params"]["value"] == "dark"
@@ -106,12 +106,14 @@ defmodule ExMCP.ACP.ProtocolTest do
   end
 
   describe "encode_permission_response/2" do
-    test "wraps outcome in result" do
-      msg = Protocol.encode_permission_response(42, %{"optionId" => "allow"})
+    test "encodes outcome directly as result" do
+      msg =
+        Protocol.encode_permission_response(42, %{"outcome" => "selected", "optionId" => "allow"})
 
       assert msg["jsonrpc"] == "2.0"
       assert msg["id"] == 42
-      assert msg["result"]["outcome"] == %{"optionId" => "allow"}
+      assert msg["result"]["outcome"] == "selected"
+      assert msg["result"]["optionId"] == "allow"
     end
   end
 
@@ -125,10 +127,10 @@ defmodule ExMCP.ACP.ProtocolTest do
   end
 
   describe "encode_file_write_response/1" do
-    test "returns empty result" do
+    test "returns null result" do
       msg = Protocol.encode_file_write_response(9)
 
-      assert msg["result"] == %{}
+      assert msg["result"] == nil
       assert msg["id"] == 9
     end
   end

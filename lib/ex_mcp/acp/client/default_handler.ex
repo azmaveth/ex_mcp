@@ -26,8 +26,8 @@ defmodule ExMCP.ACP.Client.DefaultHandler do
     # Auto-allow: pick the first option (usually "allow" or "allow once")
     outcome =
       case options do
-        [first | _] -> %{"optionId" => first["id"]}
-        [] -> %{"optionId" => "allow"}
+        [first | _] -> %{"outcome" => "selected", "optionId" => first["optionId"]}
+        [] -> %{"outcome" => "selected", "optionId" => "allow"}
       end
 
     {:ok, outcome, state}

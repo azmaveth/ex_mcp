@@ -101,7 +101,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
   end
 
   def translate_outbound(%{"method" => "session/prompt", "id" => id, "params" => params}, state) do
-    content = extract_prompt_text(params["content"])
+    content = extract_prompt_text(params["prompt"])
     session_id = params["sessionId"] || state.session_id || "default"
 
     stdin_msg = %{
@@ -183,8 +183,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     notification =
       session_update(state.session_id, %{
-        "kind" => "text",
-        "content" => text
+        "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => text}
       })
 
     {:messages, [notification], state}
@@ -199,7 +199,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     notification =
       session_update(state.session_id, %{
-        "kind" => "thinking",
+        "sessionUpdate" => "thinking",
         "content" => thinking
       })
 
@@ -248,6 +248,16 @@ defmodule ExMCP.ACP.Adapters.Claude do
     end
   end
 
+  defp process_content_block(%{"type" => "text", "text" => text}, state)
+       when is_binary(text) do
+    # Accumulate text from assistant message when streaming deltas were absent
+    if state.text_acc == [] do
+      %{state | text_acc: [text]}
+    else
+      state
+    end
+  end
+
   defp process_content_block(_block, state), do: state
 
   # Result event — finalize and produce ACP prompt response
@@ -255,7 +265,17 @@ defmodule ExMCP.ACP.Adapters.Claude do
   defp process_result(result, state) do
     usage = extract_usage(result)
     session_id = result["session_id"] || state.session_id
-    text = IO.iodata_to_binary(Enum.reverse(state.text_acc))
+
+    text =
+      case state.text_acc do
+        [] ->
+          # No streaming deltas received — fall back to the result event's text field.
+          # Claude CLI in stream-json stdin mode may skip content_block_delta events.
+          result["result"] || ""
+
+        acc ->
+          IO.iodata_to_binary(Enum.reverse(acc))
+      end
 
     state = finalize_thinking_block(state)
 
@@ -272,7 +292,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     # Status update
     messages = [
-      session_update(session_id, %{"kind" => "status", "status" => "completed"})
+      session_update(session_id, %{"sessionUpdate" => "status", "status" => "completed"})
       | messages
     ]
 
@@ -374,11 +394,14 @@ defmodule ExMCP.ACP.Adapters.Claude do
     }
   end
 
-  defp session_update(session_id, params) do
+  defp session_update(session_id, update) do
     %{
       "jsonrpc" => "2.0",
       "method" => "session/update",
-      "params" => Map.put(params, "sessionId", session_id || "default")
+      "params" => %{
+        "sessionId" => session_id || "default",
+        "update" => update
+      }
     }
   end
 

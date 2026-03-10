@@ -31,7 +31,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def translate_outbound(%{"method" => "session/prompt", "params" => params}, state) do
       # Echo the prompt text back as a line to stdin
       text =
-        params["content"]
+        params["prompt"]
         |> List.first()
         |> Map.get("text", "")
 
@@ -52,8 +52,10 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
             "method" => "session/update",
             "params" => %{
               "sessionId" => "test_session",
-              "kind" => "text",
-              "content" => text
+              "update" => %{
+                "sessionUpdate" => "agent_message_chunk",
+                "content" => %{"type" => "text", "text" => text}
+              }
             }
           }
 
@@ -131,8 +133,8 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
       assert msg["jsonrpc"] == "2.0"
       assert msg["result"]["agentInfo"]["name"] == "mockadapter"
-      assert msg["result"]["capabilities"]["streaming"] == true
-      assert msg["result"]["capabilities"]["mockAdapter"] == true
+      assert msg["result"]["agentCapabilities"]["streaming"] == true
+      assert msg["result"]["agentCapabilities"]["mockAdapter"] == true
       assert msg["result"]["protocolVersion"] == 1
 
       AdapterBridge.close(bridge)
@@ -152,7 +154,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
         "method" => "session/prompt",
         "params" => %{
           "sessionId" => "test_session",
-          "content" => [%{"type" => "text", "text" => "Hello adapter"}]
+          "prompt" => [%{"type" => "text", "text" => "Hello adapter"}]
         },
         "id" => 42
       }
@@ -164,8 +166,8 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       msg = Jason.decode!(raw)
 
       assert msg["method"] == "session/update"
-      assert msg["params"]["kind"] == "text"
-      assert msg["params"]["content"] == "Hello adapter"
+      assert msg["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+      assert msg["params"]["update"]["content"] == %{"type" => "text", "text" => "Hello adapter"}
 
       AdapterBridge.close(bridge)
     end
@@ -184,7 +186,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
         "method" => "session/prompt",
         "params" => %{
           "sessionId" => "s1",
-          "content" => [%{"type" => "text", "text" => "test"}]
+          "prompt" => [%{"type" => "text", "text" => "test"}]
         },
         "id" => 99
       }
@@ -225,7 +227,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
         "method" => "session/prompt",
         "params" => %{
           "sessionId" => "s1",
-          "content" => [%{"type" => "text", "text" => "delayed"}]
+          "prompt" => [%{"type" => "text", "text" => "delayed"}]
         },
         "id" => 1
       }
@@ -235,7 +237,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       # The blocked receive should now get the message
       assert {:ok, raw} = Task.await(task, 10_000)
       msg = Jason.decode!(raw)
-      assert msg["params"]["content"] == "delayed"
+      assert msg["params"]["update"]["content"] == %{"type" => "text", "text" => "delayed"}
 
       AdapterBridge.close(bridge)
     end
