@@ -50,7 +50,10 @@ defmodule ExMCP.ACP.AdapterTransport do
   end
 
   @impl true
-  def receive_message(%__MODULE__{bridge: bridge, receive_timeout: timeout} = state) do
+  def receive_message(%__MODULE__{bridge: bridge} = state) do
+    # Use Map.get for backward compat: old structs without receive_timeout default to :infinity
+    timeout = Map.get(state, :receive_timeout, :infinity)
+
     case AdapterBridge.receive_message(bridge, timeout) do
       {:ok, message} -> {:ok, message, state}
       {:error, reason} -> {:error, reason}
