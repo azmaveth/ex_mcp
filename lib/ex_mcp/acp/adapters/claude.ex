@@ -110,6 +110,27 @@ defmodule ExMCP.ACP.Adapters.Claude do
     }
   end
 
+  @impl true
+  def config_options do
+    [
+      %{
+        "id" => "model",
+        "name" => "Model",
+        "category" => "model",
+        "description" => "Claude model to use",
+        "type" => "string"
+      },
+      %{
+        "id" => "thinking_budget",
+        "name" => "Thinking Budget",
+        "category" => "thought_level",
+        "description" => "Max thinking tokens",
+        "type" => "integer",
+        "default" => 10_000
+      }
+    ]
+  end
+
   # ── Outbound: ACP → Claude CLI ───────────────────────────────
 
   @impl true
@@ -163,8 +184,21 @@ defmodule ExMCP.ACP.Adapters.Claude do
     {:ok, :skip, state}
   end
 
-  def translate_outbound(%{"method" => "session/setConfigOption"}, state) do
-    Logger.debug("[Claude Adapter] session/setConfigOption not supported (static config)")
+  # ACP spec: session/set_config_option — store model for reference
+  def translate_outbound(
+        %{"method" => "session/set_config_option", "params" => %{"configId" => "model"} = params},
+        state
+      ) do
+    state = %{state | model: params["value"]}
+
+    Logger.debug(
+      "[Claude Adapter] Model preference stored: #{params["value"]} (static at startup)"
+    )
+
+    {:ok, :skip, state}
+  end
+
+  def translate_outbound(%{"method" => "session/set_config_option"}, state) do
     {:ok, :skip, state}
   end
 

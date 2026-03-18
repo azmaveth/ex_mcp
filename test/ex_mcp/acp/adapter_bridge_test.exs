@@ -290,4 +290,124 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       AdapterBridge.close(bridge)
     end
   end
+
+  describe "session/list" do
+    test "returns empty sessions for adapter without list_sessions" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      list_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/list",
+        "params" => %{},
+        "id" => 50
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(list_msg))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+      assert msg["id"] == 50
+      assert msg["result"]["sessions"] == []
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
+  describe "session/set_mode" do
+    test "returns OK response" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      mode_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/set_mode",
+        "params" => %{"sessionId" => "s1", "modeId" => "code"},
+        "id" => 51
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(mode_msg))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+      assert msg["id"] == 51
+      assert is_map(msg["result"])
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
+  describe "session/set_config_option" do
+    test "returns OK response" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      config_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/set_config_option",
+        "params" => %{"sessionId" => "s1", "configId" => "model", "value" => "test"},
+        "id" => 52
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(config_msg))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+      assert msg["id"] == 52
+      assert is_map(msg["result"])
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
+  describe "initialize with modes and config_options" do
+    # MockAdapter with modes and config_options
+    defmodule EnhancedMockAdapter do
+      @behaviour ExMCP.ACP.Adapter
+
+      defstruct []
+
+      @impl true
+      def init(_opts), do: {:ok, %__MODULE__{}}
+
+      @impl true
+      def command(_opts), do: {"cat", []}
+
+      @impl true
+      def capabilities, do: %{"streaming" => true}
+
+      @impl true
+      def modes do
+        [%{"id" => "code", "name" => "Code Mode"}]
+      end
+
+      @impl true
+      def config_options do
+        [%{"id" => "model", "name" => "Model", "category" => "model"}]
+      end
+
+      @impl true
+      def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+      def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+      @impl true
+      def translate_inbound(_line, state), do: {:skip, state}
+    end
+
+    test "includes modes and configOptions in init response" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: EnhancedMockAdapter, adapter_opts: [])
+
+      msg = send_initialize(bridge)
+
+      caps = msg["result"]["agentCapabilities"]
+      assert caps["streaming"] == true
+      assert is_list(caps["modes"])
+      assert hd(caps["modes"])["id"] == "code"
+      assert is_list(caps["configOptions"])
+      assert hd(caps["configOptions"])["id"] == "model"
+
+      AdapterBridge.close(bridge)
+    end
+  end
 end

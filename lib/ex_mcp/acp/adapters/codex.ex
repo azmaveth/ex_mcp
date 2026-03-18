@@ -91,6 +91,40 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   @impl true
+  def modes do
+    [
+      %{
+        "id" => "suggest",
+        "name" => "Suggest",
+        "description" => "Suggests changes, requires approval for each"
+      },
+      %{
+        "id" => "auto-edit",
+        "name" => "Auto Edit",
+        "description" => "Automatically applies code changes"
+      },
+      %{
+        "id" => "full-auto",
+        "name" => "Full Auto",
+        "description" => "Full autonomy including shell commands"
+      }
+    ]
+  end
+
+  @impl true
+  def config_options do
+    [
+      %{
+        "id" => "model",
+        "name" => "Model",
+        "category" => "model",
+        "description" => "OpenAI model to use",
+        "type" => "string"
+      }
+    ]
+  end
+
+  @impl true
   def post_connect(state) do
     {id, state} = next_request_id(state)
 
@@ -216,17 +250,30 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
-  # Explicit handlers for unsupported ACP methods
-  def translate_outbound(%{"method" => "session/setMode"}, state) do
+  # ACP spec: session/set_mode — Codex uses approvalPolicy at thread/start
+  # We track it in state for the next thread/start call
+  def translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
     Logger.debug(
-      "[Codex Adapter] session/setMode not supported (set approvalPolicy at thread/start)"
+      "[Codex Adapter] Mode change stored: #{params["modeId"]} (applies on next session)"
     )
 
     {:ok, :skip, state}
   end
 
-  def translate_outbound(%{"method" => "session/setConfigOption"}, state) do
-    Logger.debug("[Codex Adapter] session/setConfigOption not supported (static config)")
+  def translate_outbound(%{"method" => "session/set_mode"}, state) do
+    {:ok, :skip, state}
+  end
+
+  # ACP spec: session/set_config_option — model stored for next turn
+  def translate_outbound(
+        %{"method" => "session/set_config_option", "params" => %{"configId" => "model"} = params},
+        state
+      ) do
+    state = %{state | model: params["value"]}
+    {:ok, :skip, state}
+  end
+
+  def translate_outbound(%{"method" => "session/set_config_option"}, state) do
     {:ok, :skip, state}
   end
 

@@ -57,6 +57,37 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
     end
   end
 
+  describe "config_options/0" do
+    test "returns model and thinking_budget options" do
+      opts = Claude.config_options()
+      ids = Enum.map(opts, & &1["id"])
+      assert "model" in ids
+      assert "thinking_budget" in ids
+      assert Enum.all?(opts, &Map.has_key?(&1, "category"))
+    end
+  end
+
+  describe "session/set_config_option" do
+    test "stores model preference", %{state: state} do
+      msg = %{
+        "method" => "session/set_config_option",
+        "params" => %{"configId" => "model", "value" => "opus"}
+      }
+
+      assert {:ok, :skip, new_state} = Claude.translate_outbound(msg, state)
+      assert new_state.model == "opus"
+    end
+
+    test "skips unknown config options", %{state: state} do
+      msg = %{
+        "method" => "session/set_config_option",
+        "params" => %{"configId" => "unknown", "value" => "x"}
+      }
+
+      assert {:ok, :skip, _state} = Claude.translate_outbound(msg, state)
+    end
+  end
+
   describe "translate_outbound/2" do
     test "skips initialize", %{state: state} do
       msg = %{"method" => "initialize", "id" => 1, "params" => %{}}

@@ -127,6 +127,66 @@ defmodule ExMCP.ACP.Adapters.Pi do
     }
   end
 
+  @impl true
+  def modes do
+    [
+      %{"id" => "code", "name" => "Code Mode", "description" => "Default coding mode"}
+    ]
+  end
+
+  @impl true
+  def config_options do
+    [
+      %{
+        "id" => "model",
+        "name" => "Model",
+        "category" => "model",
+        "description" => "LLM model to use (provider/model format)",
+        "type" => "string"
+      },
+      %{
+        "id" => "thinking_level",
+        "name" => "Thinking Level",
+        "category" => "thought_level",
+        "description" => "Reasoning depth",
+        "type" => "enum",
+        "values" => @thinking_levels
+      },
+      %{
+        "id" => "auto_compaction",
+        "name" => "Auto Compaction",
+        "category" => "other",
+        "description" => "Automatically compact context when nearly full",
+        "type" => "boolean",
+        "default" => true
+      },
+      %{
+        "id" => "auto_retry",
+        "name" => "Auto Retry",
+        "category" => "other",
+        "description" => "Automatically retry on transient errors",
+        "type" => "boolean",
+        "default" => true
+      },
+      %{
+        "id" => "steering_mode",
+        "name" => "Steering Mode",
+        "category" => "other",
+        "description" => "How steering messages are delivered",
+        "type" => "enum",
+        "values" => ["all", "one-at-a-time"]
+      },
+      %{
+        "id" => "follow_up_mode",
+        "name" => "Follow-up Mode",
+        "category" => "other",
+        "description" => "How follow-up messages are delivered",
+        "type" => "enum",
+        "values" => ["all", "one-at-a-time"]
+      }
+    ]
+  end
+
   # ── Outbound: ACP → Pi RPC ────────────────────────────────────
 
   @impl true
@@ -189,6 +249,19 @@ defmodule ExMCP.ACP.Adapters.Pi do
     rpc_msg = %{"type" => "abort"}
     data = encode_rpc(rpc_msg)
     {:ok, data, state}
+  end
+
+  # ACP spec: session/set_mode — Pi only has one mode (code), so this is a no-op
+  def translate_outbound(%{"method" => "session/set_mode"}, state) do
+    {:ok, :skip, state}
+  end
+
+  # ACP spec: session/set_config_option — route to appropriate Pi RPC command
+  def translate_outbound(
+        %{"method" => "session/set_config_option", "params" => params},
+        state
+      ) do
+    translate_config_option(params["configId"], params["value"], state)
   end
 
   # ── Extended Pi Commands via ACP Extensions ───────────────────
@@ -865,4 +938,57 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp maybe_set(state, _key, nil), do: state
   defp maybe_set(state, key, value), do: Map.put(state, key, value)
+
+  # ── Config Option Routing ─────────────────────────────────────
+  # Maps ACP session/set_config_option to Pi RPC commands
+
+  defp translate_config_option("model", value, state) when is_binary(value) do
+    # Pi model format: "provider/modelId" — split and send set_model
+    case String.split(value, "/", parts: 2) do
+      [provider, model_id] ->
+        rpc_msg = %{"type" => "set_model", "provider" => provider, "modelId" => model_id}
+        {:ok, encode_rpc(rpc_msg), state}
+
+      [model_id] ->
+        # No provider specified — use as modelId directly
+        rpc_msg = %{"type" => "set_model", "modelId" => model_id}
+        {:ok, encode_rpc(rpc_msg), state}
+    end
+  end
+
+  defp translate_config_option("thinking_level", value, state) when is_binary(value) do
+    if value in @thinking_levels do
+      rpc_msg = %{"type" => "set_thinking_level", "level" => value}
+      state = %{state | thinking_level: value}
+      {:ok, encode_rpc(rpc_msg), state}
+    else
+      {:ok, :skip, state}
+    end
+  end
+
+  defp translate_config_option("auto_compaction", value, state) when is_boolean(value) do
+    rpc_msg = %{"type" => "set_auto_compaction", "enabled" => value}
+    {:ok, encode_rpc(rpc_msg), state}
+  end
+
+  defp translate_config_option("auto_retry", value, state) when is_boolean(value) do
+    rpc_msg = %{"type" => "set_auto_retry", "enabled" => value}
+    {:ok, encode_rpc(rpc_msg), state}
+  end
+
+  defp translate_config_option("steering_mode", value, state)
+       when value in ["all", "one-at-a-time"] do
+    rpc_msg = %{"type" => "set_steering_mode", "mode" => value}
+    {:ok, encode_rpc(rpc_msg), state}
+  end
+
+  defp translate_config_option("follow_up_mode", value, state)
+       when value in ["all", "one-at-a-time"] do
+    rpc_msg = %{"type" => "set_follow_up_mode", "mode" => value}
+    {:ok, encode_rpc(rpc_msg), state}
+  end
+
+  defp translate_config_option(_config_id, _value, state) do
+    {:ok, :skip, state}
+  end
 end

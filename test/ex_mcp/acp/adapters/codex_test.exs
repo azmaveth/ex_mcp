@@ -21,6 +21,36 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
     end
   end
 
+  describe "modes/0" do
+    test "returns suggest, auto-edit, and full-auto modes" do
+      modes = Codex.modes()
+      ids = Enum.map(modes, & &1["id"])
+      assert "suggest" in ids
+      assert "auto-edit" in ids
+      assert "full-auto" in ids
+    end
+  end
+
+  describe "config_options/0" do
+    test "returns model option" do
+      opts = Codex.config_options()
+      ids = Enum.map(opts, & &1["id"])
+      assert "model" in ids
+    end
+  end
+
+  describe "session/set_config_option" do
+    test "stores model for next turn", %{state: state} do
+      msg = %{
+        "method" => "session/set_config_option",
+        "params" => %{"configId" => "model", "value" => "gpt-5"}
+      }
+
+      assert {:ok, :skip, new_state} = Codex.translate_outbound(msg, state)
+      assert new_state.model == "gpt-5"
+    end
+  end
+
   describe "init/1" do
     test "stores model from opts" do
       {:ok, state} = Codex.init(model: "gpt-5")

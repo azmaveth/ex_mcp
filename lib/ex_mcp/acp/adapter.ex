@@ -6,13 +6,20 @@ defmodule ExMCP.ACP.Adapter do
   one-shot JSON output). Adapters translate between ACP JSON-RPC messages and the
   agent's native format.
 
-  ## Callbacks
+  ## Required Callbacks
 
   - `init/1` — initialize adapter state
   - `command/1` — return the executable and args to launch the agent
   - `translate_outbound/2` — convert ACP message to native CLI format
   - `translate_inbound/2` — convert native CLI output line to ACP messages
-  - `capabilities/0` — return static agent capabilities (optional)
+
+  ## Optional Callbacks
+
+  - `capabilities/0` — return static agent capabilities
+  - `post_connect/1` — called after Port is opened
+  - `modes/0` — return supported operational modes
+  - `config_options/0` — return supported config options
+  - `list_sessions/1` — return available sessions (for `session/list`)
   """
 
   @type state :: term()
@@ -75,5 +82,42 @@ defmodule ExMCP.ACP.Adapter do
   """
   @callback capabilities() :: map()
 
-  @optional_callbacks [capabilities: 0, post_connect: 1]
+  @doc """
+  Return the operational modes this agent supports.
+
+  Each mode is a map with `"id"`, `"name"`, and optional `"description"`.
+  Returned in the `initialize` response under `agentCapabilities.modes`.
+
+  Optional — defaults to an empty list.
+  """
+  @callback modes() :: [map()]
+
+  @doc """
+  Return the config options this agent supports.
+
+  Each option is a map with `"id"`, `"name"`, `"category"` (mode/model/thought_level/other),
+  and optional `"description"`, `"type"`, `"default"`, `"values"`.
+  Returned in the `initialize` response under `agentCapabilities.configOptions`.
+
+  Optional — defaults to an empty list.
+  """
+  @callback config_options() :: [map()]
+
+  @doc """
+  List available sessions for this agent.
+
+  Returns `{:ok, sessions, new_state}` where sessions is a list of maps
+  with `"sessionId"` and optional `"name"`, `"createdAt"`.
+
+  Optional — defaults to returning an empty list.
+  """
+  @callback list_sessions(state()) :: {:ok, [map()], state()}
+
+  @optional_callbacks [
+    capabilities: 0,
+    post_connect: 1,
+    modes: 0,
+    config_options: 0,
+    list_sessions: 1
+  ]
 end

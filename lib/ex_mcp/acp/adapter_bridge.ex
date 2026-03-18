@@ -220,6 +220,36 @@ defmodule ExMCP.ACP.AdapterBridge do
         %{}
       end
 
+    # Add modes if adapter declares them
+    caps =
+      if function_exported?(state.adapter_mod, :modes, 0) do
+        case state.adapter_mod.modes() do
+          [] -> caps
+          modes -> Map.put(caps, "modes", modes)
+        end
+      else
+        caps
+      end
+
+    # Add config options if adapter declares them
+    caps =
+      if function_exported?(state.adapter_mod, :config_options, 0) do
+        case state.adapter_mod.config_options() do
+          [] -> caps
+          opts -> Map.put(caps, "configOptions", opts)
+        end
+      else
+        caps
+      end
+
+    # Add session listing capability
+    caps =
+      if function_exported?(state.adapter_mod, :list_sessions, 1) do
+        Map.put(caps, "sessionCapabilities", %{"list" => %{}})
+      else
+        caps
+      end
+
     init_result = %{
       "jsonrpc" => "2.0",
       "result" => %{
@@ -301,6 +331,74 @@ defmodule ExMCP.ACP.AdapterBridge do
       {:ok, data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
         _ = write_to_port(state, data)
+        {:reply, :ok, state}
+    end
+  end
+
+  defp handle_outbound(%{"method" => "session/list", "id" => id} = msg, _json, _from, state) do
+    # Try adapter's list_sessions callback, fall back to translate_outbound
+    if function_exported?(state.adapter_mod, :list_sessions, 1) do
+      case state.adapter_mod.list_sessions(state.adapter_state) do
+        {:ok, sessions, new_adapter_state} ->
+          state = %{state | adapter_state: new_adapter_state}
+          state = synthesize_result(state, id, %{"sessions" => sessions})
+          {:reply, :ok, state}
+      end
+    else
+      # Let translate_outbound handle it (may send to native agent or skip)
+      case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+        {:ok, :skip, new_adapter_state} ->
+          state = %{state | adapter_state: new_adapter_state}
+          state = synthesize_result(state, id, %{"sessions" => []})
+          {:reply, :ok, state}
+
+        {:ok, data, new_adapter_state} ->
+          state = %{state | adapter_state: new_adapter_state}
+          _ = write_to_port(state, data)
+          {:reply, :ok, state}
+      end
+    end
+  end
+
+  defp handle_outbound(
+         %{"method" => "session/set_mode", "id" => id} = msg,
+         _json,
+         _from,
+         state
+       ) do
+    # Delegate to adapter — it may translate to a native command or handle in state
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        # Adapter handled it internally (e.g., state update) — synthesize OK
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, %{})
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        # Synthesize result since native agent won't send ACP response
+        state = synthesize_result(state, id, %{})
+        {:reply, :ok, state}
+    end
+  end
+
+  defp handle_outbound(
+         %{"method" => "session/set_config_option", "id" => id} = msg,
+         _json,
+         _from,
+         state
+       ) do
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, %{})
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        state = synthesize_result(state, id, %{})
         {:reply, :ok, state}
     end
   end
