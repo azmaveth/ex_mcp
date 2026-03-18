@@ -66,7 +66,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   def command(opts) do
     cli_path = Keyword.get(opts, :cli_path, "pi")
 
-    args = ["--mode", "rpc"]
+    args = ["--mode", "rpc", "--no-themes"]
 
     # Add model if specified
     args =
@@ -132,15 +132,13 @@ defmodule ExMCP.ACP.Adapters.Pi do
     rpc_msg = %{
       "type" => "prompt",
       "id" => msg_id,
-      "content" => content
+      "message" => content,
+      "images" => []
     }
 
     # Add images if present
-    rpc_msg =
-      case extract_images(params["prompt"]) do
-        [] -> rpc_msg
-        images -> Map.put(rpc_msg, "images", images)
-      end
+    images = extract_images(params["prompt"])
+    rpc_msg = if images != [], do: %{rpc_msg | "images" => images}, else: rpc_msg
 
     data = Jason.encode!(rpc_msg) <> "\n"
 
