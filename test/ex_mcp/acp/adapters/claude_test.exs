@@ -368,9 +368,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert notification["method"] == "session/update"
 
       update = notification["params"]["update"]
-      assert update["sessionUpdate"] == "tool_call"
-      assert update["title"] == "Search"
+      assert update["sessionUpdate"] == "tool_call_update"
+      assert update["title"] == "Search: defmodule"
       assert update["toolCallId"] == "toolu_123"
+      assert update["status"] == "running"
+      assert update["pattern"] == "defmodule"
       assert new_state.in_tool_use == true
     end
 
@@ -393,8 +395,81 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["sessionUpdate"] == "tool_result"
+      assert update["sessionUpdate"] == "tool_call_update"
       assert update["toolCallId"] == "toolu_123"
+      assert update["status"] == "completed"
+    end
+
+    test "Read tool includes filePath metadata", %{state: state} do
+      state = %{state | session_id: "s1"}
+
+      line =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_read",
+                "name" => "Read",
+                "input" => %{"file_path" => "/src/main.ex"}
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["title"] == "Read main.ex"
+      assert update["filePath"] == "/src/main.ex"
+    end
+
+    test "Bash tool includes command metadata", %{state: state} do
+      state = %{state | session_id: "s1"}
+
+      line =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_bash",
+                "name" => "Bash",
+                "input" => %{"command" => "mix test --only fast"}
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["title"] == "Run: mix test --only fast"
+      assert update["command"] == "mix test --only fast"
+    end
+
+    test "tool_result with error has failed status", %{state: state} do
+      state = %{state | session_id: "s1", in_tool_use: true}
+
+      line =
+        Jason.encode!(%{
+          "type" => "user",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_err",
+                "content" => "File not found",
+                "is_error" => true
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["status"] == "failed"
+      assert update["isError"] == true
     end
 
     test "assistant after tool use clears text_acc for final answer", %{state: state} do

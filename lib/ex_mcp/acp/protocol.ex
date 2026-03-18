@@ -99,6 +99,26 @@ defmodule ExMCP.ACP.Protocol do
     }
   end
 
+  @doc """
+  Encodes an `authenticate` request.
+
+  Authentication is currently in RFD draft stage in the ACP spec.
+  Error code -32000 indicates authentication is required.
+
+  ## Parameters
+
+  - `params` — authentication parameters (provider-specific)
+  """
+  @spec encode_authenticate(map()) :: map()
+  def encode_authenticate(params \\ %{}) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "authenticate",
+      "params" => params,
+      "id" => generate_id()
+    }
+  end
+
   @doc "Encodes a `session/prompt` request."
   @spec encode_session_prompt(String.t(), [map()]) :: map()
   def encode_session_prompt(session_id, content_blocks) do

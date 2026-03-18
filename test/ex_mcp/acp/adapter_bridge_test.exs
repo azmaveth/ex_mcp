@@ -360,6 +360,29 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     end
   end
 
+  describe "authenticate" do
+    test "returns authenticated OK for adapter without auth" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      auth_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "authenticate",
+        "params" => %{"provider" => "api_key"},
+        "id" => 60
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(auth_msg))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+      assert msg["id"] == 60
+      assert msg["result"]["authenticated"] == true
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
   describe "initialize with modes and config_options" do
     # MockAdapter with modes and config_options
     defmodule EnhancedMockAdapter do

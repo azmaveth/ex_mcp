@@ -135,6 +135,38 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
   end
 
+  describe "encode_authenticate/1" do
+    test "produces valid request" do
+      msg = Protocol.encode_authenticate(%{"provider" => "api_key", "key" => "sk-123"})
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "authenticate"
+      assert msg["params"]["provider"] == "api_key"
+      assert is_integer(msg["id"])
+    end
+
+    test "works with empty params" do
+      msg = Protocol.encode_authenticate()
+      assert msg["method"] == "authenticate"
+      assert msg["params"] == %{}
+    end
+  end
+
+  describe "encode_session_list/1" do
+    test "produces valid request" do
+      msg = Protocol.encode_session_list()
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "session/list"
+      assert is_integer(msg["id"])
+    end
+
+    test "includes cursor when provided" do
+      msg = Protocol.encode_session_list(cursor: "page2")
+      assert msg["params"]["cursor"] == "page2"
+    end
+  end
+
   describe "round-trip encoding" do
     test "encode → JSON → decode → parse" do
       msg = Protocol.encode_session_new("/tmp")

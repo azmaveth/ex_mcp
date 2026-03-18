@@ -420,17 +420,23 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
   defp process_content_block(%{"type" => "tool_use"} = block, state) do
     # Claude CLI is calling one of its own tools (Grep, Read, Write, etc.)
-    # Extract tool name for better display
     tool_name = block["name"] || "tool"
+    input = block["input"] || %{}
 
-    notification =
-      session_update(state.session_id, %{
-        "sessionUpdate" => "tool_call",
-        "title" => tool_display_name(tool_name),
-        "toolCallId" => block["id"],
-        "toolName" => tool_name,
-        "input" => block["input"]
-      })
+    # Build ACP-spec tool_call_update with structured metadata
+    update = %{
+      "sessionUpdate" => "tool_call_update",
+      "title" => tool_call_title(tool_name, input),
+      "toolCallId" => block["id"],
+      "toolName" => tool_name,
+      "status" => "running",
+      "input" => input
+    }
+
+    # Add tool-specific metadata for richer UI rendering
+    update = enrich_tool_metadata(update, tool_name, input)
+
+    notification = session_update(state.session_id, update)
 
     {state, [notification]}
   end
@@ -558,13 +564,18 @@ defmodule ExMCP.ACP.Adapters.Claude do
     content
     |> Enum.filter(&(&1["type"] == "tool_result"))
     |> Enum.map(fn result ->
-      session_update(state.session_id, %{
-        "sessionUpdate" => "tool_result",
+      is_error = result["is_error"] || false
+
+      # Use spec-compliant tool_call_update with completed/failed status
+      update = %{
+        "sessionUpdate" => "tool_call_update",
         "toolCallId" => result["tool_use_id"],
-        "toolName" => result["tool_name"],
-        "content" => result["content"],
-        "isError" => result["is_error"] || false
-      })
+        "status" => if(is_error, do: "failed", else: "completed"),
+        "content" => parse_tool_result_content(result["content"]),
+        "isError" => is_error
+      }
+
+      session_update(state.session_id, update)
     end)
   end
 
@@ -621,16 +632,93 @@ defmodule ExMCP.ACP.Adapters.Claude do
     end
   end
 
-  # Human-readable tool display names for common Claude CLI tools
-  defp tool_display_name("Read"), do: "Read File"
-  defp tool_display_name("Write"), do: "Write File"
-  defp tool_display_name("Edit"), do: "Edit File"
-  defp tool_display_name("Bash"), do: "Run Command"
-  defp tool_display_name("Grep"), do: "Search"
-  defp tool_display_name("Glob"), do: "Find Files"
-  defp tool_display_name("WebFetch"), do: "Fetch URL"
-  defp tool_display_name("WebSearch"), do: "Web Search"
-  defp tool_display_name(name), do: name
+  # ── Tool Introspection ──────────────────────────────────────────
+  # Parse tool inputs for richer UI display titles and metadata.
+
+  # Generate a context-aware title from tool name + input
+  defp tool_call_title("Read", %{"file_path" => path}), do: "Read #{Path.basename(path)}"
+  defp tool_call_title("Write", %{"file_path" => path}), do: "Write #{Path.basename(path)}"
+  defp tool_call_title("Edit", %{"file_path" => path}), do: "Edit #{Path.basename(path)}"
+  defp tool_call_title("Bash", %{"command" => cmd}), do: "Run: #{truncate(cmd, 50)}"
+  defp tool_call_title("Grep", %{"pattern" => pat}), do: "Search: #{truncate(pat, 40)}"
+  defp tool_call_title("Glob", %{"pattern" => pat}), do: "Find: #{truncate(pat, 40)}"
+
+  defp tool_call_title("WebFetch", %{"url" => url}),
+    do: "Fetch: #{truncate(url, 50)}"
+
+  defp tool_call_title("WebSearch", %{"query" => q}), do: "Search: #{truncate(q, 40)}"
+  defp tool_call_title("Read", _), do: "Read File"
+  defp tool_call_title("Write", _), do: "Write File"
+  defp tool_call_title("Edit", _), do: "Edit File"
+  defp tool_call_title("Bash", _), do: "Run Command"
+  defp tool_call_title("Grep", _), do: "Search"
+  defp tool_call_title("Glob", _), do: "Find Files"
+  defp tool_call_title("WebFetch", _), do: "Fetch URL"
+  defp tool_call_title("WebSearch", _), do: "Web Search"
+  defp tool_call_title(name, _), do: name
+
+  # Add tool-specific structured metadata to the update
+  defp enrich_tool_metadata(update, "Read", %{"file_path" => path} = input) do
+    update
+    |> Map.put("filePath", path)
+    |> maybe_put_tool("lineRange", format_line_range(input))
+  end
+
+  defp enrich_tool_metadata(update, "Write", %{"file_path" => path}) do
+    Map.put(update, "filePath", path)
+  end
+
+  defp enrich_tool_metadata(update, "Edit", %{"file_path" => path}) do
+    Map.put(update, "filePath", path)
+  end
+
+  defp enrich_tool_metadata(update, "Bash", %{"command" => command}) do
+    Map.put(update, "command", command)
+  end
+
+  defp enrich_tool_metadata(update, "Grep", input) do
+    update
+    |> maybe_put_tool("pattern", input["pattern"])
+    |> maybe_put_tool("path", input["path"])
+    |> maybe_put_tool("glob", input["glob"])
+  end
+
+  defp enrich_tool_metadata(update, "Glob", %{"pattern" => pattern}) do
+    Map.put(update, "pattern", pattern)
+  end
+
+  defp enrich_tool_metadata(update, _tool_name, _input), do: update
+
+  # Parse tool result content for structured display
+  defp parse_tool_result_content(content) when is_list(content) do
+    # Extract text from content blocks
+    Enum.map_join(content, "\n", fn
+      %{"type" => "text", "text" => text} -> text
+      %{"text" => text} -> text
+      other -> inspect(other)
+    end)
+  end
+
+  defp parse_tool_result_content(content) when is_binary(content), do: content
+  defp parse_tool_result_content(nil), do: ""
+  defp parse_tool_result_content(other), do: inspect(other)
+
+  defp format_line_range(%{"offset" => offset, "limit" => limit})
+       when is_integer(offset) and is_integer(limit) do
+    "#{offset}-#{offset + limit}"
+  end
+
+  defp format_line_range(_), do: nil
+
+  defp truncate(str, max) when is_binary(str) and byte_size(str) > max do
+    String.slice(str, 0, max) <> "..."
+  end
+
+  defp truncate(str, _max) when is_binary(str), do: str
+  defp truncate(_, _), do: ""
+
+  defp maybe_put_tool(map, _key, nil), do: map
+  defp maybe_put_tool(map, key, value), do: Map.put(map, key, value)
 
   defp session_update(session_id, update) do
     %{

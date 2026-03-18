@@ -104,6 +104,21 @@ defmodule ExMCP.ACP.Types do
           optional(:default) => any()
         }
 
+  # ACP Error Codes
+  # Standard JSON-RPC: -32700 (parse), -32600 (invalid request), -32601 (method not found),
+  #                    -32602 (invalid params), -32603 (internal error)
+  # ACP-specific:
+  @auth_required_code -32_000
+  @resource_not_found_code -32_002
+
+  @doc "Error code indicating authentication is required."
+  @spec auth_required_code() :: integer()
+  def auth_required_code, do: @auth_required_code
+
+  @doc "Error code indicating a resource was not found."
+  @spec resource_not_found_code() :: integer()
+  def resource_not_found_code, do: @resource_not_found_code
+
   # Initialize
 
   @type client_info :: %{
@@ -355,6 +370,28 @@ defmodule ExMCP.ACP.Types do
   @spec client_info(String.t(), String.t()) :: map()
   def client_info(name, version) when is_binary(name) and is_binary(version) do
     %{"name" => name, "version" => version}
+  end
+
+  @doc "Creates a plan entry."
+  @spec plan_entry(String.t(), String.t(), String.t()) :: map()
+  def plan_entry(content, priority \\ "medium", status \\ "pending") do
+    %{"content" => content, "priority" => priority, "status" => status}
+  end
+
+  @doc "Creates a plan_update session update."
+  @spec plan_update(String.t(), [map()]) :: map()
+  def plan_update(session_id, entries) when is_list(entries) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{
+        "sessionId" => session_id,
+        "update" => %{
+          "sessionUpdate" => "plan_update",
+          "entries" => entries
+        }
+      }
+    }
   end
 
   @doc """

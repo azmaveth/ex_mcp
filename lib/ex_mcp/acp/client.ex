@@ -60,6 +60,18 @@ defmodule ExMCP.ACP.Client do
     GenServer.start_link(__MODULE__, client_opts, gen_opts)
   end
 
+  @doc """
+  Authenticates with the agent.
+
+  Authentication is currently in RFD draft stage in the ACP spec.
+  Sends provider-specific authentication parameters.
+  """
+  @spec authenticate(GenServer.server(), map(), keyword()) :: {:ok, map()} | {:error, any()}
+  def authenticate(client, params \\ %{}, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    GenServer.call(client, {:authenticate, params}, timeout)
+  end
+
   @doc "Creates a new agent session."
   @spec new_session(GenServer.server(), String.t() | nil, keyword()) ::
           {:ok, map()} | {:error, any()}
@@ -173,6 +185,11 @@ defmodule ExMCP.ACP.Client do
   @impl true
   def handle_call({:new_session, cwd, mcp_servers}, from, %{status: :ready} = state) do
     msg = Protocol.encode_session_new(cwd, mcp_servers)
+    send_request(msg, from, state)
+  end
+
+  def handle_call({:authenticate, params}, from, %{status: :ready} = state) do
+    msg = Protocol.encode_authenticate(params)
     send_request(msg, from, state)
   end
 

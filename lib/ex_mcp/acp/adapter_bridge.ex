@@ -291,6 +291,23 @@ defmodule ExMCP.ACP.AdapterBridge do
   # Synthesize responses for ACP methods that adapted agents don't handle natively.
   # The Client sends these as normal JSON-RPC requests and expects matching responses.
 
+  defp handle_outbound(%{"method" => "authenticate", "id" => id} = msg, _json, _from, state) do
+    # Delegate to adapter — it may have native auth support or handle internally
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        # No native auth — synthesize OK (agent handles auth externally)
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, %{"authenticated" => true})
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        state = synthesize_result(state, id, %{"authenticated" => true})
+        {:reply, :ok, state}
+    end
+  end
+
   defp handle_outbound(%{"method" => "initialize", "id" => id} = msg, _json, _from, state) do
     case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
       {:ok, :skip, new_adapter_state} ->
