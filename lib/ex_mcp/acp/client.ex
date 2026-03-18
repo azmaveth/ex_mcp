@@ -92,6 +92,13 @@ defmodule ExMCP.ACP.Client do
     GenServer.call(client, {:prompt, session_id, content}, timeout)
   end
 
+  @doc "Lists available sessions from the agent. Stabilized in ACP spec March 9, 2026."
+  @spec list_sessions(GenServer.server(), keyword()) :: {:ok, map()} | {:error, any()}
+  def list_sessions(client, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    GenServer.call(client, {:list_sessions, opts}, timeout)
+  end
+
   @doc "Cancels the current prompt in a session (fire-and-forget)."
   @spec cancel(GenServer.server(), String.t()) :: :ok
   def cancel(client, session_id) do
@@ -166,6 +173,11 @@ defmodule ExMCP.ACP.Client do
   @impl true
   def handle_call({:new_session, cwd, mcp_servers}, from, %{status: :ready} = state) do
     msg = Protocol.encode_session_new(cwd, mcp_servers)
+    send_request(msg, from, state)
+  end
+
+  def handle_call({:list_sessions, opts}, from, %{status: :ready} = state) do
+    msg = Protocol.encode_session_list(opts)
     send_request(msg, from, state)
   end
 
@@ -505,6 +517,27 @@ defmodule ExMCP.ACP.Client do
       end
     else
       response = Protocol.encode_error(-32601, "File write not supported", nil, id)
+      send_to_transport(response, state)
+      state
+    end
+  end
+
+  # Terminal operations — spec-defined but delegated to handler
+  defp handle_agent_request("terminal/" <> _ = method, params, id, state) do
+    if function_exported?(state.handler_mod, :handle_terminal_request, 4) do
+      case state.handler_mod.handle_terminal_request(method, params, id, state.handler_state) do
+        {:ok, result, new_handler_state} ->
+          response = Protocol.encode_response(result, id)
+          send_to_transport(response, state)
+          %{state | handler_state: new_handler_state}
+
+        {:error, reason, new_handler_state} ->
+          response = Protocol.encode_error(-32603, reason, nil, id)
+          send_to_transport(response, state)
+          %{state | handler_state: new_handler_state}
+      end
+    else
+      response = Protocol.encode_error(-32601, "Terminal operations not supported", nil, id)
       send_to_transport(response, state)
       state
     end

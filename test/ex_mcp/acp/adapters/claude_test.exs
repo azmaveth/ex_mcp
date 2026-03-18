@@ -51,10 +51,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
   end
 
   describe "capabilities/0" do
-    test "returns streaming and modes" do
+    test "returns streaming capability" do
       caps = Claude.capabilities()
       assert caps["streaming"] == true
-      assert is_list(caps["supportedModes"])
     end
   end
 
@@ -339,7 +338,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       update = notification["params"]["update"]
       assert update["sessionUpdate"] == "tool_call"
-      assert update["title"] == "Grep"
+      assert update["title"] == "Search"
       assert update["toolCallId"] == "toolu_123"
       assert new_state.in_tool_use == true
     end
@@ -486,8 +485,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert {:skip, ^state} = Claude.translate_inbound("not json at all", state)
     end
 
-    test "skips unknown event types", %{state: state} do
+    test "system events emit status notification", %{state: state} do
       line = Jason.encode!(%{"type" => "system", "message" => "hello"})
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      assert notification["params"]["update"]["sessionUpdate"] == "status"
+      assert notification["params"]["update"]["message"] == "hello"
+    end
+
+    test "skips truly unknown event types", %{state: state} do
+      line = Jason.encode!(%{"type" => "unknown_xyz", "data" => "test"})
       assert {:skip, ^state} = Claude.translate_inbound(line, state)
     end
   end

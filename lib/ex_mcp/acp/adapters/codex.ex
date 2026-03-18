@@ -20,11 +20,31 @@ defmodule ExMCP.ACP.Adapters.Codex do
   | ACP Message | Codex JSON-RPC |
   |---|---|
   | `session/new` | `thread/start` request |
+  | `session/load` | `thread/start` with threadId (resume) |
   | `session/prompt` | `turn/start` request |
   | `session/cancel` | `turn/interrupt` request |
-  | `item/agentMessage/delta` | `session/update` (kind: text) |
-  | `item/reasoning/textDelta` | `session/update` (kind: thinking) |
+  | `item/agentMessage/delta` | `session/update` (text) |
+  | `item/reasoning/textDelta` | `session/update` (thinking) |
+  | `item/completed` (tool) | `session/update` (tool_call/tool_result) |
+  | `item/commandExecution/*` | `session/update` (tool_output) |
   | `turn/completed` | prompt response result |
+
+  ## Features
+
+  - Initialize handshake with `post_connect/1`
+  - Text and thinking streaming
+  - Tool call and tool result notifications
+  - Command execution output streaming
+  - Token usage tracking
+  - Turn interrupt/cancel support
+  - Image content in prompts
+
+  ## Limitations
+
+  - No session listing (Codex doesn't expose session enumeration)
+  - No mode switching (static approval policy at session start)
+  - No model switching mid-session (set at thread/start)
+  - No authentication flow (relies on user's local auth)
   """
 
   @behaviour ExMCP.ACP.Adapter
@@ -41,6 +61,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     pending_requests: %{},
     accumulated_text: [],
     accumulated_thinking: [],
+    accumulated_usage: nil,
     opts: []
   ]
 
@@ -63,8 +84,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
   @impl true
   def capabilities do
     %{
-      "streaming" => true,
-      "supportedModes" => ["thread"]
+      "streaming" => true
+      # Note: Codex supports approval policies (suggest/auto-edit/full-auto)
+      # but these are set at thread/start, not switched dynamically.
     }
   end
 
@@ -87,7 +109,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:ok, request, state}
   end
 
-  # Outbound: ACP → Codex
+  # ── Outbound: ACP → Codex ────────────────────────────────────
 
   @impl true
   def translate_outbound(%{"method" => "initialize"}, state) do
@@ -95,7 +117,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:ok, :skip, state}
   end
 
-  def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
+  def translate_outbound(
+        %{"method" => "session/new", "id" => acp_id, "params" => params},
+        state
+      ) do
     {id, state} = next_request_id(state)
 
     wire_params =
@@ -111,6 +136,29 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   def translate_outbound(
+        %{"method" => "session/load", "id" => acp_id, "params" => params},
+        state
+      ) do
+    # Resume an existing session by passing threadId to thread/start
+    session_id = params["sessionId"]
+
+    if session_id do
+      {id, state} = next_request_id(state)
+
+      wire_params =
+        %{"threadId" => session_id}
+        |> maybe_put("model", state.model || params["model"])
+        |> maybe_put("cwd", params["cwd"] || Keyword.get(state.opts, :cwd))
+
+      request = encode_request(id, "thread/start", wire_params)
+      state = track_request(state, id, :thread_start, acp_id)
+      {:ok, request, state}
+    else
+      {:ok, :skip, state}
+    end
+  end
+
+  def translate_outbound(
         %{"method" => "session/prompt", "id" => acp_id, "params" => params},
         state
       ) do
@@ -118,16 +166,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     if thread_id do
       {id, state} = next_request_id(state)
-      content = extract_prompt_text(params["prompt"])
 
-      # Codex turn/start expects input as an array of InputItem objects
-      # InputItem uses internally tagged format: {"type": "text", "text": "..."}
-      input =
-        if is_binary(content) and content != "" do
-          [%{"type" => "text", "text" => content}]
-        else
-          [%{"type" => "text", "text" => ""}]
-        end
+      # Build input items from prompt content
+      input = extract_input_items(params["prompt"])
 
       wire_params =
         %{
@@ -144,6 +185,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         |> track_request(id, :turn_start, acp_id)
         |> Map.put(:accumulated_text, [])
         |> Map.put(:accumulated_thinking, [])
+        |> Map.put(:accumulated_usage, nil)
 
       {:ok, request, state}
     else
@@ -174,11 +216,25 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
+  # Explicit handlers for unsupported ACP methods
+  def translate_outbound(%{"method" => "session/setMode"}, state) do
+    Logger.debug(
+      "[Codex Adapter] session/setMode not supported (set approvalPolicy at thread/start)"
+    )
+
+    {:ok, :skip, state}
+  end
+
+  def translate_outbound(%{"method" => "session/setConfigOption"}, state) do
+    Logger.debug("[Codex Adapter] session/setConfigOption not supported (static config)")
+    {:ok, :skip, state}
+  end
+
   def translate_outbound(_msg, state) do
     {:ok, :skip, state}
   end
 
-  # Inbound: Codex → ACP
+  # ── Inbound: Codex → ACP ─────────────────────────────────────
 
   @impl true
   def translate_inbound(line, state) do
@@ -214,7 +270,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:skip, state}
   end
 
-  # Response handling
+  # ── Response Handling ─────────────────────────────────────────
 
   defp handle_response(state, id, reply) do
     case Map.pop(state.pending_requests, id) do
@@ -273,7 +329,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     }
   end
 
-  # Notification handling
+  # ── Notification Handling ─────────────────────────────────────
 
   defp handle_notification("thread/started", params, state) do
     thread = params["thread"] || %{}
@@ -287,73 +343,131 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:skip, %{state | turn_id: turn_id}}
   end
 
+  # ── Text Streaming ───────────────────────────────────────────
+
   defp handle_notification("item/agentMessage/delta", params, state) do
     delta = params["delta"] || ""
     state = %{state | accumulated_text: [delta | state.accumulated_text]}
-    session_id = state.thread_id || "default"
 
-    notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id,
-        "update" => %{
-          "sessionUpdate" => "agent_message_chunk",
-          "content" => %{"type" => "text", "text" => delta}
-        }
-      }
-    }
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => delta}
+      })
 
     {:messages, [notification], state}
   end
+
+  # ── Thinking/Reasoning Streaming ──────────────────────────────
 
   defp handle_notification("item/reasoning/textDelta", params, state) do
     delta = params["delta"] || ""
     state = %{state | accumulated_thinking: [delta | state.accumulated_thinking]}
-    session_id = state.thread_id || "default"
 
-    notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id,
-        "update" => %{
-          "sessionUpdate" => "thinking",
-          "content" => delta
-        }
-      }
-    }
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "thinking",
+        "content" => delta
+      })
 
     {:messages, [notification], state}
   end
 
+  # ── Tool Call Notifications ───────────────────────────────────
+
+  # Tool call started (item/created with tool call type)
+  defp handle_notification(
+         "item/created",
+         %{"item" => %{"type" => "function_call"} = item},
+         state
+       ) do
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => item["callId"] || item["id"],
+        "toolName" => item["name"],
+        "title" => item["name"],
+        "input" => item["arguments"],
+        "status" => "pending"
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/created", _params, state) do
+    {:skip, state}
+  end
+
+  # Item completed — handles agent messages, tool calls, and tool results
   defp handle_notification("item/completed", params, state) do
     item = params["item"] || %{}
-
-    case item["type"] do
-      "agent_message" ->
-        text = item["text"] || ""
-        session_id = state.thread_id || "default"
-
-        notification = %{
-          "jsonrpc" => "2.0",
-          "method" => "session/update",
-          "params" => %{
-            "sessionId" => session_id,
-            "update" => %{
-              "sessionUpdate" => "agent_message_chunk",
-              "content" => %{"type" => "text", "text" => text},
-              "final" => true
-            }
-          }
-        }
-
-        {:messages, [notification], state}
-
-      _ ->
-        {:skip, state}
-    end
+    handle_item_completed(item, state)
   end
+
+  # ── Command Execution Streaming ───────────────────────────────
+
+  defp handle_notification("item/commandExecution/started", params, state) do
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_execution",
+        "status" => "started",
+        "toolCallId" => params["callId"] || params["itemId"],
+        "toolName" => "command",
+        "command" => params["command"]
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/commandExecution/outputDelta", params, state) do
+    delta = params["delta"] || ""
+
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_output",
+        "content" => delta,
+        "itemId" => params["itemId"] || params["item_id"]
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/commandExecution/completed", params, state) do
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_execution",
+        "status" => "completed",
+        "toolCallId" => params["callId"] || params["itemId"],
+        "toolName" => "command",
+        "exitCode" => params["exitCode"],
+        "output" => params["output"]
+      })
+
+    {:messages, [notification], state}
+  end
+
+  # ── Patch/Approval Events ─────────────────────────────────────
+
+  defp handle_notification("item/patch/created", params, state) do
+    patch = params["patch"] || params
+
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => patch["id"] || params["itemId"],
+        "toolName" => "patch",
+        "title" => "Edit File",
+        "input" => %{
+          "path" => patch["path"],
+          "diff" => patch["diff"]
+        },
+        "status" => "pending"
+      })
+
+    {:messages, [notification], state}
+  end
+
+  # ── Turn Completion ───────────────────────────────────────────
 
   defp handle_notification("turn/completed", params, state) do
     turn = params["turn"] || %{}
@@ -367,6 +481,32 @@ defmodule ExMCP.ACP.Adapters.Codex do
       |> Enum.reverse()
       |> IO.iodata_to_binary()
 
+    messages = []
+
+    # Emit usage update if we have accumulated usage
+    messages =
+      if state.accumulated_usage do
+        [
+          session_update(state, %{
+            "sessionUpdate" => "usage",
+            "content" => state.accumulated_usage
+          })
+          | messages
+        ]
+      else
+        messages
+      end
+
+    # Status completed notification
+    messages = [
+      session_update(state, %{
+        "sessionUpdate" => "status",
+        "status" => "completed"
+      })
+      | messages
+    ]
+
+    # Prompt response
     messages =
       if acp_id do
         response = %{
@@ -380,90 +520,153 @@ defmodule ExMCP.ACP.Adapters.Codex do
           }
         }
 
-        [response]
+        [response | messages]
       else
-        []
+        messages
       end
 
     state = %{
       state
       | accumulated_text: [],
         accumulated_thinking: [],
+        accumulated_usage: nil,
         turn_id: nil,
         current_prompt_acp_id: nil
     }
 
-    {:messages, messages, state}
+    {:messages, Enum.reverse(messages), state}
   end
+
+  # ── Token Usage ───────────────────────────────────────────────
 
   defp handle_notification("thread/tokenUsage/updated", params, state) do
     token_usage = params["tokenUsage"] || %{}
     total = token_usage["total"] || %{}
-    session_id = state.thread_id || "default"
 
-    notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id,
-        "update" => %{
-          "sessionUpdate" => "usage",
-          "content" => %{
-            "inputTokens" => total["inputTokens"] || 0,
-            "outputTokens" => total["outputTokens"] || 0,
-            "cachedInputTokens" => total["cachedInputTokens"] || 0
-          }
-        }
-      }
+    usage_data = %{
+      "inputTokens" => total["inputTokens"] || 0,
+      "outputTokens" => total["outputTokens"] || 0,
+      "cachedInputTokens" => total["cachedInputTokens"] || 0
     }
+
+    # Accumulate usage for turn/completed response
+    state = %{state | accumulated_usage: usage_data}
+
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "usage",
+        "content" => usage_data
+      })
 
     {:messages, [notification], state}
   end
+
+  # ── Error Notifications ───────────────────────────────────────
 
   defp handle_notification("error", params, state) do
     error = params["error"] || %{}
-    session_id = state.thread_id || "default"
 
-    notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id,
-        "update" => %{
-          "sessionUpdate" => "error",
-          "content" => error["message"] || "Unknown error"
-        }
-      }
-    }
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "error",
+        "content" => error["message"] || "Unknown error",
+        "code" => error["code"]
+      })
 
     {:messages, [notification], state}
   end
 
-  defp handle_notification("item/commandExecution/outputDelta", params, state) do
-    delta = params["delta"] || ""
-    session_id = state.thread_id || "default"
+  # ── Web Search Events ─────────────────────────────────────────
 
-    notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id,
-        "update" => %{
-          "sessionUpdate" => "tool_output",
-          "content" => delta,
-          "itemId" => params["itemId"] || params["item_id"]
-        }
-      }
-    }
+  defp handle_notification("item/webSearch/started", params, state) do
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_execution",
+        "status" => "started",
+        "toolCallId" => params["itemId"],
+        "toolName" => "web_search",
+        "query" => params["query"]
+      })
 
     {:messages, [notification], state}
   end
 
-  defp handle_notification(_method, _params, state) do
+  defp handle_notification("item/webSearch/completed", params, state) do
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_execution",
+        "status" => "completed",
+        "toolCallId" => params["itemId"],
+        "toolName" => "web_search",
+        "results" => params["results"]
+      })
+
+    {:messages, [notification], state}
+  end
+
+  # Catch-all for unknown notifications
+  defp handle_notification(method, _params, state) do
+    Logger.debug("[Codex Adapter] Unhandled notification: #{method}")
     {:skip, state}
   end
 
-  # Helpers
+  # ── Item Completion Handlers ───────────────────────────────────
+
+  defp handle_item_completed(%{"type" => "agent_message"} = item, state) do
+    text = item["text"] || ""
+
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => text},
+        "final" => true
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(%{"type" => "function_call"} = item, state) do
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => item["callId"] || item["id"],
+        "toolName" => item["name"],
+        "status" => "completed",
+        "arguments" => item["arguments"]
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(%{"type" => "function_call_output"} = item, state) do
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_result",
+        "toolCallId" => item["callId"] || item["id"],
+        "content" => item["output"] || item["text"] || "",
+        "isError" => item["isError"] || false
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(%{"type" => "patch"} = item, state) do
+    notification =
+      session_update(state, %{
+        "sessionUpdate" => "tool_result",
+        "toolCallId" => item["callId"] || item["id"],
+        "toolName" => "patch",
+        "content" => item["diff"] || item["text"] || "",
+        "filePath" => item["path"],
+        "isError" => false
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(_item, state), do: {:skip, state}
+
+  # ── Helpers ────────────────────────────────────────────────────
 
   defp next_request_id(%{next_id: id} = state) do
     {id, %{state | next_id: id + 1}}
@@ -488,15 +691,47 @@ defmodule ExMCP.ACP.Adapters.Codex do
     [Jason.encode!(msg), "\n"]
   end
 
-  defp extract_prompt_text(nil), do: ""
-
-  defp extract_prompt_text(blocks) when is_list(blocks) do
-    blocks
-    |> Enum.filter(&(&1["type"] == "text"))
-    |> Enum.map_join("\n", &(&1["text"] || ""))
+  defp session_update(state, update) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{
+        "sessionId" => state.thread_id || "default",
+        "update" => update
+      }
+    }
   end
 
-  defp extract_prompt_text(text) when is_binary(text), do: text
+  # Extract input items from prompt — supports text and images
+  defp extract_input_items(nil), do: [%{"type" => "text", "text" => ""}]
+
+  defp extract_input_items(prompt) when is_binary(prompt) do
+    [%{"type" => "text", "text" => prompt}]
+  end
+
+  defp extract_input_items(blocks) when is_list(blocks) do
+    items =
+      Enum.flat_map(blocks, fn
+        %{"type" => "text", "text" => text} ->
+          [%{"type" => "text", "text" => text}]
+
+        %{"type" => "image", "data" => data} = img ->
+          [
+            %{
+              "type" => "image",
+              "data" => data,
+              "mimeType" => img["mimeType"] || "image/png"
+            }
+          ]
+
+        _ ->
+          []
+      end)
+
+    if items == [], do: [%{"type" => "text", "text" => ""}], else: items
+  end
+
+  defp extract_input_items(_), do: [%{"type" => "text", "text" => ""}]
 
   defp normalize_error(%{"message" => msg} = error) do
     %{"code" => error["code"] || -1, "message" => msg}

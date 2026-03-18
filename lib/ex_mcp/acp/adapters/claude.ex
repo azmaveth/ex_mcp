@@ -15,17 +15,41 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
   | Claude Event | ACP Message |
   |---|---|
-  | `stream_event` (text_delta) | `session/update` notification (kind: text) |
-  | `stream_event` (thinking_delta) | `session/update` notification (kind: thinking) |
+  | `stream_event` (text_delta) | `session/update` notification (text) |
+  | `stream_event` (thinking_delta) | `session/update` notification (thinking) |
   | `assistant` | accumulate content blocks |
   | `assistant` (tool_use) | `session/update` notification (tool_call) |
   | `user` (tool_result) | `session/update` notification (tool_result) |
   | `result` | prompt response result |
+
+  ## Features
+
+  - Session resume via `--resume <session_id>` flag
+  - Thinking block streaming with deduplication
+  - Multi-turn tool use cycle tracking
+  - Usage tracking with cache token support
+  - Configurable thinking budget
+
+  ## Limitations
+
+  - No session persistence/listing (sessions managed by Claude CLI)
+  - No mode switching (Claude CLI uses `--dangerously-skip-permissions`)
+  - No session cancel (would need SIGINT to Port subprocess)
+  - No runtime config changes (static at launch)
   """
 
   @behaviour ExMCP.ACP.Adapter
 
   require Logger
+
+  # Stop reason classification matching Zed's error semantics
+  @stop_reasons %{
+    "end_turn" => "end_turn",
+    "stop" => "end_turn",
+    "max_tokens" => "max_tokens",
+    "tool_use" => "tool_use",
+    "error" => "error"
+  }
 
   defstruct [
     :session_id,
@@ -79,13 +103,14 @@ defmodule ExMCP.ACP.Adapters.Claude do
   @impl true
   def capabilities do
     %{
-      "streaming" => true,
-      "supportedModes" => [
-        %{"id" => "plan", "label" => "Plan Mode"},
-        %{"id" => "code", "label" => "Code Mode"}
-      ]
+      "streaming" => true
+      # Note: Claude CLI supports plan mode via --allowedTools but we don't
+      # expose mode switching through the adapter. Session modes would require
+      # the bridge to restart the subprocess with different flags.
     }
   end
+
+  # ── Outbound: ACP → Claude CLI ───────────────────────────────
 
   @impl true
   def translate_outbound(%{"method" => "initialize"}, state) do
@@ -99,11 +124,15 @@ defmodule ExMCP.ACP.Adapters.Claude do
   end
 
   def translate_outbound(%{"method" => "session/load"}, state) do
-    # Session resume is handled via --resume flag at startup
+    # Session resume is handled via --resume flag at startup.
+    # To resume a session, pass session_id in adapter_opts when creating the bridge.
     {:ok, :skip, state}
   end
 
-  def translate_outbound(%{"method" => "session/prompt", "id" => id, "params" => params}, state) do
+  def translate_outbound(
+        %{"method" => "session/prompt", "id" => id, "params" => params},
+        state
+      ) do
     content = extract_prompt_text(params["prompt"])
     session_id = params["sessionId"] || state.session_id || "default"
 
@@ -120,14 +149,30 @@ defmodule ExMCP.ACP.Adapters.Claude do
   end
 
   def translate_outbound(%{"method" => "session/cancel"}, state) do
-    # Cancel would need SIGINT — not directly supported via Port.command
-    # The bridge would need to send OS signal to the Port subprocess
+    # Cancel would need SIGINT — not directly supported via Port.command.
+    # The bridge would need to send OS signal to the Port subprocess.
+    # For now, log and skip.
+    Logger.debug("[Claude Adapter] session/cancel not supported (requires SIGINT)")
+    {:ok, :skip, state}
+  end
+
+  # Explicit handlers for ACP methods we don't support —
+  # better than silently dropping via catch-all
+  def translate_outbound(%{"method" => "session/setMode"}, state) do
+    Logger.debug("[Claude Adapter] session/setMode not supported (static permissions)")
+    {:ok, :skip, state}
+  end
+
+  def translate_outbound(%{"method" => "session/setConfigOption"}, state) do
+    Logger.debug("[Claude Adapter] session/setConfigOption not supported (static config)")
     {:ok, :skip, state}
   end
 
   def translate_outbound(_msg, state) do
     {:ok, :skip, state}
   end
+
+  # ── Inbound: Claude CLI → ACP ─────────────────────────────────
 
   @impl true
   def translate_inbound(line, state) do
@@ -167,13 +212,47 @@ defmodule ExMCP.ACP.Adapters.Claude do
     process_result(result, state)
   end
 
+  # System/status events from Claude CLI
+  defp process_event(%{"type" => "system"} = event, state) do
+    # Claude CLI sends system events for status updates (compaction, etc.)
+    case event["message"] do
+      nil ->
+        {:skip, state}
+
+      message ->
+        notification =
+          session_update(state.session_id, %{
+            "sessionUpdate" => "status",
+            "status" => "info",
+            "message" => message
+          })
+
+        {:messages, [notification], state}
+    end
+  end
+
+  # Rate limit events
+  defp process_event(%{"type" => "rate_limit_event"} = event, state) do
+    notification =
+      session_update(state.session_id, %{
+        "sessionUpdate" => "status",
+        "status" => "rate_limited",
+        "retryAfter" => event["retry_after"]
+      })
+
+    {:messages, [notification], state}
+  end
+
   defp process_event(_event, state) do
     {:skip, state}
   end
 
   # Stream events produce ACP session/update notifications
 
-  defp process_stream_event(%{"type" => "content_block_start", "content_block" => block}, state) do
+  defp process_stream_event(
+         %{"type" => "content_block_start", "content_block" => block},
+         state
+       ) do
     block_type = block_type_from(block)
     {:skip, %{state | current_block_type: block_type}}
   end
@@ -307,11 +386,15 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
   defp process_content_block(%{"type" => "tool_use"} = block, state) do
     # Claude CLI is calling one of its own tools (Grep, Read, Write, etc.)
+    # Extract tool name for better display
+    tool_name = block["name"] || "tool"
+
     notification =
       session_update(state.session_id, %{
         "sessionUpdate" => "tool_call",
-        "title" => block["name"] || "tool",
+        "title" => tool_display_name(tool_name),
         "toolCallId" => block["id"],
+        "toolName" => tool_name,
         "input" => block["input"]
       })
 
@@ -347,8 +430,20 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     state = %{state | usage: usage, session_id: session_id}
 
-    # Build ACP response
+    # Build ACP response messages
     messages = []
+
+    # Usage update notification (emit before final result so clients can display it)
+    messages = [
+      session_update(session_id, %{
+        "sessionUpdate" => "usage",
+        "inputTokens" => usage.input_tokens,
+        "outputTokens" => usage.output_tokens,
+        "cacheReadTokens" => usage.cache_read_tokens,
+        "cacheCreationTokens" => usage.cache_creation_tokens
+      })
+      | messages
+    ]
 
     # Status update
     messages = [
@@ -359,8 +454,10 @@ defmodule ExMCP.ACP.Adapters.Claude do
     # If we have a pending prompt ID, send the result
     messages =
       if state.pending_prompt_id do
+        stop_reason = classify_stop_reason(result)
+
         response_result = %{
-          "stopReason" => if(result["is_error"], do: "error", else: "end_turn"),
+          "stopReason" => stop_reason,
           "text" => text,
           "usage" => format_usage(usage)
         }
@@ -392,7 +489,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
     {:messages, Enum.reverse(messages), state}
   end
 
-  # Helpers
+  # ── Helpers ────────────────────────────────────────────────────
 
   defp block_type_from(%{"type" => "thinking"}), do: :thinking
   defp block_type_from(%{"type" => "text"}), do: :text
@@ -430,7 +527,9 @@ defmodule ExMCP.ACP.Adapters.Claude do
       session_update(state.session_id, %{
         "sessionUpdate" => "tool_result",
         "toolCallId" => result["tool_use_id"],
-        "content" => result["content"]
+        "toolName" => result["tool_name"],
+        "content" => result["content"],
+        "isError" => result["is_error"] || false
       })
     end)
   end
@@ -468,6 +567,36 @@ defmodule ExMCP.ACP.Adapters.Claude do
       "cacheCreationTokens" => usage.cache_creation_tokens
     }
   end
+
+  # Classify stop reason with more granularity than binary error/success
+  defp classify_stop_reason(result) do
+    cond do
+      result["is_error"] ->
+        "error"
+
+      result["stop_reason"] ->
+        Map.get(@stop_reasons, result["stop_reason"], result["stop_reason"])
+
+      # Check for max tokens by examining the result text
+      result["usage"] && result["usage"]["output_tokens"] &&
+          result["usage"]["output_tokens"] >= (result["usage"]["max_output_tokens"] || 999_999) ->
+        "max_tokens"
+
+      true ->
+        "end_turn"
+    end
+  end
+
+  # Human-readable tool display names for common Claude CLI tools
+  defp tool_display_name("Read"), do: "Read File"
+  defp tool_display_name("Write"), do: "Write File"
+  defp tool_display_name("Edit"), do: "Edit File"
+  defp tool_display_name("Bash"), do: "Run Command"
+  defp tool_display_name("Grep"), do: "Search"
+  defp tool_display_name("Glob"), do: "Find Files"
+  defp tool_display_name("WebFetch"), do: "Fetch URL"
+  defp tool_display_name("WebSearch"), do: "Web Search"
+  defp tool_display_name(name), do: name
 
   defp session_update(session_id, update) do
     %{

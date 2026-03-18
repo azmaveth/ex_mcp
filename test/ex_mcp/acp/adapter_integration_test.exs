@@ -605,7 +605,8 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
           }
         })
 
-      {:messages, [final], _state} = Codex.translate_inbound(completed, state)
+      {:messages, messages, _state} = Codex.translate_inbound(completed, state)
+      final = Enum.find(messages, &Map.has_key?(&1, "id"))
       assert final["id"] == 11
       assert final["result"]["text"] == "I'll fix the tests."
       assert final["result"]["stopReason"] == "end_turn"

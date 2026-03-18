@@ -85,6 +85,20 @@ defmodule ExMCP.ACP.Protocol do
     }
   end
 
+  @doc "Encodes a `session/list` request. Stabilized in ACP spec March 9, 2026."
+  @spec encode_session_list(keyword()) :: map()
+  def encode_session_list(opts \\ []) do
+    params = %{}
+    params = maybe_put(params, "cursor", Keyword.get(opts, :cursor))
+
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "session/list",
+      "params" => params,
+      "id" => generate_id()
+    }
+  end
+
   @doc "Encodes a `session/prompt` request."
   @spec encode_session_prompt(String.t(), [map()]) :: map()
   def encode_session_prompt(session_id, content_blocks) do

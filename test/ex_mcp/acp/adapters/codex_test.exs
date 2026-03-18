@@ -15,10 +15,9 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
   end
 
   describe "capabilities/0" do
-    test "returns streaming capabilities" do
+    test "returns streaming capability" do
       caps = Codex.capabilities()
       assert caps["streaming"] == true
-      assert "thread" in caps["supportedModes"]
     end
   end
 
@@ -280,11 +279,17 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
           }
         })
 
-      assert {:messages, [msg], new_state} = Codex.translate_inbound(line, state)
-      assert msg["id"] == 5
-      assert msg["result"]["text"] == "Hello world"
-      assert msg["result"]["stopReason"] == "end_turn"
-      assert msg["result"]["sessionId"] == "t-1"
+      assert {:messages, messages, new_state} = Codex.translate_inbound(line, state)
+      # Should have status notification + response
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+      status = Enum.find(messages, &(&1["method"] == "session/update"))
+
+      assert response["id"] == 5
+      assert response["result"]["text"] == "Hello world"
+      assert response["result"]["stopReason"] == "end_turn"
+      assert response["result"]["sessionId"] == "t-1"
+      assert status["params"]["update"]["sessionUpdate"] == "status"
+      assert status["params"]["update"]["status"] == "completed"
       assert new_state.accumulated_text == []
       assert new_state.turn_id == nil
     end
@@ -305,8 +310,9 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
           }
         })
 
-      assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
-      assert msg["result"]["stopReason"] == "error"
+      assert {:messages, messages, _state} = Codex.translate_inbound(line, state)
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+      assert response["result"]["stopReason"] == "error"
     end
 
     test "thread/tokenUsage/updated produces usage update", %{state: state} do
@@ -404,7 +410,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         )
 
       # Turn completes
-      {:messages, [msg], _state} =
+      {:messages, messages, _state} =
         Codex.translate_inbound(
           Jason.encode!(%{
             "method" => "turn/completed",
@@ -415,7 +421,8 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
           state
         )
 
-      assert msg["result"]["text"] == "Hello world!"
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+      assert response["result"]["text"] == "Hello world!"
     end
   end
 end
