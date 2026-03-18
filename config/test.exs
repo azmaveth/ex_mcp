@@ -1,13 +1,10 @@
 import Config
 
-# Reduce log verbosity in tests to make output cleaner
-config :logger, level: :warning
-
-# Compile time purging - remove debug calls at compile time for better performance
-config :logger,
-  compile_time_purge_matching: [
-    [level_lower_than: :warning]
-  ]
+# Log at :info level so capture_log has useful output on test failures.
+# ExUnit's capture_log: true suppresses logs for passing tests, so this
+# doesn't add noise — it only shows when a test fails.
+# Override with LOG_LEVEL env var: LOG_LEVEL=debug mix test
+config :logger, level: :info
 
 # Keep the same metadata configuration as in config.exs for consistency
 config :logger, :console,

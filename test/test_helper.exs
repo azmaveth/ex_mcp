@@ -1,12 +1,21 @@
 # Support files are compiled via elixirc_paths(:test) in mix.exs
 # No need to explicitly require them here as they're already available
 
-# Configure logger before starting applications
-Logger.configure(level: :warning)
+# Configure logger — default :info so capture_log shows useful output on failures.
+# Override: LOG_LEVEL=debug mix test
+log_level =
+  case System.get_env("LOG_LEVEL") do
+    nil -> :info
+    level -> String.to_existing_atom(level)
+  end
+
+Logger.configure(level: log_level)
 
 # Import test helpers after compilation (in ExUnit.start callback)
 ExUnit.after_suite(fn _results ->
-  # Safety net: cleanup any truly orphaned test processes
+  # Safety net: cleanup any truly orphaned test processes.
+  # Suppress logs since this runs outside test capture scope.
+  Logger.configure(level: :error)
   ExMCP.TestSupport.cleanup_orphans()
   :ok
 end)
@@ -78,7 +87,8 @@ if length(excluded_tags) > 0 do
 end
 
 ExUnit.configure(exclude: default_exclusions)
-ExUnit.start()
+
+ExUnit.start(capture_log: true)
 
 # Define mocks
 # Note: Transport mocks removed since v1 Transport module was deleted

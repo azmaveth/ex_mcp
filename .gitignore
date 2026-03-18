@@ -57,3 +57,4 @@ test_output.log
 # Node.js dependencies for interop tests
 test/interop/node_modules/
 test/interop/package-lock.json
+tmp/
