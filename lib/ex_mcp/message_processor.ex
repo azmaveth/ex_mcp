@@ -9,6 +9,9 @@ defmodule ExMCP.MessageProcessor do
   alias ExMCP.Internal.MessageValidator
   alias ExMCP.Protocol.ErrorCodes
 
+  @supported_protocol_versions ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
+  @default_protocol_version "2025-11-25"
+
   @type t :: module()
   @type opts :: term()
   @type conn :: %__MODULE__.Conn{}
@@ -374,7 +377,7 @@ defmodule ExMCP.MessageProcessor do
     response = %{
       "jsonrpc" => "2.0",
       "result" => %{
-        "protocolVersion" => "2025-06-18",
+        "protocolVersion" => @default_protocol_version,
         "capabilities" => handler_module.get_capabilities(),
         "serverInfo" => server_info
       },
@@ -383,6 +386,62 @@ defmodule ExMCP.MessageProcessor do
 
     put_response(conn, response)
   end
+
+  # Normalize handler initialize results to MCP spec format.
+  # Handles both:
+  #   - Shorthand: %{name: "x", version: "1.0", capabilities: %{...}}
+  #   - Full spec: %{"protocolVersion" => "...", "serverInfo" => %{...}, "capabilities" => %{...}}
+  defp normalize_initialize_result(result, params) when is_map(result) do
+    cond do
+      spec_compliant?(result) -> result
+      has_handler_shorthand?(result) -> build_from_shorthand(result, params)
+      is_map(result["serverInfo"]) -> add_protocol_version(result, params)
+      true -> result
+    end
+  end
+
+  defp normalize_initialize_result(result, _params), do: result
+
+  defp spec_compliant?(result) do
+    is_binary(result["protocolVersion"]) and is_map(result["serverInfo"])
+  end
+
+  defp has_handler_shorthand?(result) do
+    is_binary(result[:name]) or is_binary(result["name"])
+  end
+
+  defp build_from_shorthand(result, params) do
+    name = result[:name] || result["name"] || "unknown"
+    version = result[:version] || result["version"] || "1.0.0"
+    capabilities = result[:capabilities] || result["capabilities"] || %{}
+
+    %{
+      "protocolVersion" => negotiate_version(params),
+      "serverInfo" => %{"name" => name, "version" => version},
+      "capabilities" => stringify_capability_keys(capabilities)
+    }
+  end
+
+  defp add_protocol_version(result, params) do
+    Map.put_new(result, "protocolVersion", negotiate_version(params))
+  end
+
+  defp negotiate_version(%{"protocolVersion" => v}) when is_binary(v) do
+    if v in @supported_protocol_versions, do: v, else: @default_protocol_version
+  end
+
+  defp negotiate_version(_), do: @default_protocol_version
+
+  # Convert atom keys to string keys in capabilities (handlers may use atoms)
+  defp stringify_capability_keys(caps) when is_map(caps) do
+    Map.new(caps, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), stringify_capability_keys(v)}
+      {k, v} when is_map(v) -> {k, stringify_capability_keys(v)}
+      {k, v} -> {k, v}
+    end)
+  end
+
+  defp stringify_capability_keys(other), do: other
 
   defp handle_tools_list(conn, handler_module, id) do
     tools = handler_module.get_tools() |> Map.values()
@@ -565,7 +624,7 @@ defmodule ExMCP.MessageProcessor do
     response = %{
       "jsonrpc" => "2.0",
       "result" => %{
-        "protocolVersion" => "2025-06-18",
+        "protocolVersion" => @default_protocol_version,
         "capabilities" => capabilities,
         "serverInfo" => server_info
       },
@@ -750,9 +809,16 @@ defmodule ExMCP.MessageProcessor do
   defp handle_handler_initialize(conn, server_pid, params, id) do
     case GenServer.call(server_pid, {:initialize, params}, 5000) do
       {:ok, result} ->
+        # Normalize handler result into spec-compliant initialize response.
+        # Handler may return:
+        #   %{name: "...", version: "...", capabilities: %{...}}
+        # or already spec-compliant:
+        #   %{"protocolVersion" => "...", "serverInfo" => %{...}, "capabilities" => %{...}}
+        normalized = normalize_initialize_result(result, params)
+
         response = %{
           "jsonrpc" => "2.0",
-          "result" => result,
+          "result" => normalized,
           "id" => id
         }
 
