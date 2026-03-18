@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "0.8.4"
+  @version "0.9.0"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do

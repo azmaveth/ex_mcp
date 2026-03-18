@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-18
+
+### Added
+- **Pi ACP Adapter** — Full adapter for the Pi coding agent (badlogic/pi-mono) with 25 RPC commands and 14 event types
+  - Text/thinking streaming, tool execution lifecycle, auto-compaction/retry events
+  - Extension UI request/response bridge for dialog flows
+  - Session persistence via `--session` flag, session directory scanning for `session/list`
+  - Image support with data-url prefix stripping
+  - 6 config options routed to native Pi RPC (model, thinking_level, auto_compaction, auto_retry, steering_mode, follow_up_mode)
+- **ACP Spec Compliance** — All stabilized ACP features now implemented
+  - `session/list` method (stabilized March 9, 2026)
+  - All 8 official session update types: `user_message_chunk`, `agent_message_chunk`, `tool_call_update`, `plan_update`, `available_commands_update`, `config_option_update`, `current_mode_update`, `session_info_update`
+  - Content blocks: `audio`, `resource_link`, `resource` (in addition to existing `text`, `image`)
+  - `sessionCapabilities` in agent capabilities
+  - ACP error codes: `-32000` (auth_required), `-32002` (resource_not_found)
+  - Terminal request routing in Client (`terminal/*` methods delegated to handler)
+- **Adapter Behaviour Extensions** — 3 new optional callbacks
+  - `modes/0` — declare supported operational modes (advertised in initialize response)
+  - `config_options/0` — declare supported config options (advertised in initialize response)
+  - `list_sessions/1` — return available sessions for `session/list`
+- **AdapterBridge Enhancements**
+  - `session/list` handler with adapter delegation or empty fallback
+  - `session/set_mode` handler with synthesized OK response
+  - `session/set_config_option` handler routed through adapters
+  - `authenticate` handler with synthesized OK response (RFD draft scaffolding)
+  - Initialize response includes modes, configOptions, sessionCapabilities from adapter callbacks
+- **Authentication Scaffolding** — `Protocol.encode_authenticate/1`, `Client.authenticate/3`, `Types.auth_required_code/0`
+- **Plan Mode Builders** — `Types.plan_entry/3`, `Types.plan_update/2` for structured plan updates
+
+### Changed
+- **Claude Adapter** — Zed-parity tool introspection
+  - Context-aware tool titles: "Read lib/app.ex (10-29)", "Search: defmodule"
+  - Structured metadata: `kind` (read/write/execute/search/think), `locations` (file:line for jump-to-source), `content` (diff/terminal/text)
+  - Tool calls now use spec-compliant `tool_call_update` (was non-standard `tool_call`)
+  - Tool results include `completed`/`failed` status
+  - Project-relative display paths when cwd is known
+  - Usage streaming notification emitted before final result
+  - System event and rate_limit_event forwarding as status notifications
+  - Richer stop reason classification (end_turn, max_tokens, tool_use, error)
+  - Declares `config_options` (model, thinking_budget)
+- **Codex Adapter** — Tool call lifecycle and enrichments
+  - Tool call notifications: `item/created` with `function_call` type
+  - Tool completion: `item/completed` for function_call, function_call_output, patch types
+  - Command execution lifecycle (started/outputDelta/completed)
+  - Web search events (started/completed)
+  - Image content in prompts
+  - Session resume via `session/load` → `thread/start` with threadId
+  - Status notification on turn/completed
+  - Declares `modes` (suggest, auto-edit, full-auto) and `config_options` (model)
+- **Pi Adapter** — Enhanced tool result parsing matching pi-acp reference
+  - Content blocks, diff details, stdout/stderr/exitCode formatting
+  - Replaces simpler `extract_tool_content` with full `extract_tool_result_text`
+
+### Removed
+- Misleading `supportedModes` from Claude and Codex capabilities (removed features that weren't actually implemented)
+
 ## [0.8.4] - 2026-03-10
 
 ### Fixed
