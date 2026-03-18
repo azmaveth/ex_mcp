@@ -261,4 +261,100 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       end
     end
   end
+
+  describe "list_sessions/1" do
+    test "returns empty list when session dir doesn't exist", %{state: state} do
+      state = %{state | session_dir: "/nonexistent/path"}
+      assert {:ok, [], _state} = Pi.list_sessions(state)
+    end
+
+    test "scans session directory for jsonl files" do
+      # Create a temp dir with fake session files
+      tmp_dir =
+        System.tmp_dir!() |> Path.join("pi_test_sessions_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(tmp_dir)
+
+      File.write!(Path.join(tmp_dir, "session-abc.jsonl"), "{}")
+      File.write!(Path.join(tmp_dir, "session-def.jsonl"), "{}")
+      File.write!(Path.join(tmp_dir, "not-a-session.txt"), "ignore")
+
+      {:ok, state} = Pi.init(session_dir: tmp_dir)
+      assert {:ok, sessions, _state} = Pi.list_sessions(state)
+
+      ids = Enum.map(sessions, & &1["sessionId"])
+      assert "session-abc" in ids
+      assert "session-def" in ids
+      assert length(sessions) == 2
+
+      # Each session has updatedAt
+      assert Enum.all?(sessions, &Map.has_key?(&1, "updatedAt"))
+
+      # Cleanup
+      File.rm_rf!(tmp_dir)
+    end
+  end
+
+  describe "tool result text extraction" do
+    test "tool_execution_end with content blocks extracts text", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "type" => "tool_execution_end",
+          "toolCallId" => "tc-1",
+          "toolName" => "read",
+          "result" => %{
+            "content" => [
+              %{"type" => "text", "text" => "file contents here"}
+            ]
+          },
+          "isError" => false
+        })
+
+      assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["content"] == "file contents here"
+    end
+
+    test "tool_execution_end with diff in details", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "type" => "tool_execution_end",
+          "toolCallId" => "tc-2",
+          "toolName" => "edit",
+          "result" => %{
+            "content" => [],
+            "details" => %{"diff" => "--- a/file.ex\n+++ b/file.ex\n@@ -1 +1 @@\n-old\n+new"}
+          },
+          "isError" => false
+        })
+
+      assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["content"] =~ "--- a/file.ex"
+    end
+
+    test "tool_execution_end with stdout/stderr/exitCode", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "type" => "tool_execution_end",
+          "toolCallId" => "tc-3",
+          "toolName" => "bash",
+          "result" => %{
+            "content" => [],
+            "details" => %{
+              "stdout" => "hello world",
+              "stderr" => "warning: something",
+              "exitCode" => 0
+            }
+          },
+          "isError" => false
+        })
+
+      assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["content"] =~ "hello world"
+      assert update["content"] =~ "stderr:"
+      assert update["content"] =~ "exit code: 0"
+    end
+  end
 end

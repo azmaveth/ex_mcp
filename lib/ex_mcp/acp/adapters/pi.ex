@@ -60,6 +60,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
     :session_id,
     :model,
     :session_file,
+    :session_dir,
+    :cwd,
     :thinking_level,
     text_acc: [],
     pending_prompt_id: nil,
@@ -70,6 +72,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
     opts: []
   ]
 
+  @default_session_dir Path.expand("~/.pi/sessions")
+
   # ── Adapter Callbacks ──────────────────────────────────────────
 
   @impl true
@@ -78,7 +82,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
      %__MODULE__{
        opts: opts,
        model: Keyword.get(opts, :model),
-       thinking_level: Keyword.get(opts, :thinking_level, "medium")
+       thinking_level: Keyword.get(opts, :thinking_level, "medium"),
+       session_dir: Keyword.get(opts, :session_dir, @default_session_dir),
+       cwd: Keyword.get(opts, :cwd)
      }}
   end
 
@@ -185,6 +191,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
         "values" => ["all", "one-at-a-time"]
       }
     ]
+  end
+
+  @impl true
+  def list_sessions(state) do
+    sessions = scan_session_dir(state.session_dir, state.cwd)
+    {:ok, sessions, state}
   end
 
   # ── Outbound: ACP → Pi RPC ────────────────────────────────────
@@ -606,7 +618,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
          state
        ) do
     partial = event["partialResult"]
-    content = extract_tool_content(partial)
+    content = extract_tool_result_text(partial)
 
     notification =
       build_session_update(state, %{
@@ -635,7 +647,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     }
 
     result = event["result"]
-    content = extract_tool_content(result)
+    content = extract_tool_result_text(result)
 
     notification =
       build_session_update(state, %{
@@ -909,19 +921,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp detect_mime_type(_), do: "image/png"
 
-  # Extract text content from Pi tool result format
-  defp extract_tool_content(nil), do: ""
-
-  defp extract_tool_content(%{"content" => content}) when is_list(content) do
-    Enum.map_join(content, "\n", fn
-      %{"type" => "text", "text" => text} -> text
-      _ -> ""
-    end)
-  end
-
-  defp extract_tool_content(%{"content" => content}) when is_binary(content), do: content
-  defp extract_tool_content(_), do: ""
-
   # Update session info from get_state responses
   defp maybe_update_session_info(
          %{"command" => "get_state", "data" => data},
@@ -991,4 +990,138 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp translate_config_option(_config_id, _value, state) do
     {:ok, :skip, state}
   end
+
+  # ── Session Directory Scanning ────────────────────────────────
+  # Scans Pi's session directory for .jsonl files, matching pi-acp's listPiSessions.
+
+  defp scan_session_dir(session_dir, filter_cwd) do
+    dir = session_dir || @default_session_dir
+
+    if File.dir?(dir) do
+      dir
+      |> File.ls!()
+      |> Enum.filter(&String.ends_with?(&1, ".jsonl"))
+      |> Enum.map(fn filename ->
+        path = Path.join(dir, filename)
+        session_id = Path.rootname(filename)
+        stat = File.stat(path)
+
+        info = %{
+          "sessionId" => session_id,
+          "name" => session_id
+        }
+
+        case stat do
+          {:ok, %{mtime: mtime}} ->
+            Map.put(info, "updatedAt", format_mtime(mtime))
+
+          _ ->
+            info
+        end
+      end)
+      |> maybe_filter_by_cwd(filter_cwd)
+      |> Enum.sort_by(& &1["updatedAt"], :desc)
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp maybe_filter_by_cwd(sessions, nil), do: sessions
+
+  defp maybe_filter_by_cwd(sessions, cwd) do
+    # Pi session files may contain the cwd in their name or first line.
+    # For now, return all sessions — cwd filtering requires reading each file.
+    # This matches the MVP behavior of pi-acp when no cwd filter is applied.
+    _ = cwd
+    sessions
+  end
+
+  defp format_mtime({{year, month, day}, {hour, min, sec}}) do
+    :io_lib.format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ", [
+      year,
+      month,
+      day,
+      hour,
+      min,
+      sec
+    ])
+    |> IO.iodata_to_binary()
+  end
+
+  defp format_mtime(_), do: nil
+
+  # ── Enhanced Tool Result Parsing ──────────────────────────────
+  # Matches pi-acp's toolResultToText: handles content blocks, diffs,
+  # stdout/stderr/exitCode from Pi's tool result format.
+
+  defp extract_tool_result_text(nil), do: ""
+
+  defp extract_tool_result_text(%{"content" => content, "details" => details})
+       when is_list(content) do
+    text = extract_content_text(content)
+
+    if text != "" do
+      text
+    else
+      extract_details_text(details)
+    end
+  end
+
+  defp extract_tool_result_text(%{"content" => content}) when is_list(content) do
+    extract_content_text(content)
+  end
+
+  defp extract_tool_result_text(%{"details" => details}) when is_map(details) do
+    extract_details_text(details)
+  end
+
+  defp extract_tool_result_text(other) when is_binary(other), do: other
+
+  defp extract_tool_result_text(other) do
+    case Jason.encode(other) do
+      {:ok, json} -> json
+      _ -> inspect(other)
+    end
+  end
+
+  defp extract_content_text(content) when is_list(content) do
+    content
+    |> Enum.flat_map(fn
+      %{"type" => "text", "text" => text} when is_binary(text) -> [text]
+      _ -> []
+    end)
+    |> Enum.join("")
+  end
+
+  defp extract_details_text(nil), do: ""
+
+  defp extract_details_text(details) when is_map(details) do
+    # Check for diff first
+    diff = details["diff"]
+
+    if is_binary(diff) and String.trim(diff) != "" do
+      diff
+    else
+      format_bash_output(details)
+    end
+  end
+
+  defp extract_details_text(_), do: ""
+
+  defp format_bash_output(details) do
+    stdout = details["stdout"] || details["output"] || ""
+    stderr = details["stderr"] || ""
+    exit_code = details["exitCode"] || details["code"]
+
+    parts = []
+    parts = if has_content?(stdout), do: [stdout | parts], else: parts
+    parts = if has_content?(stderr), do: ["stderr:\n#{stderr}" | parts], else: parts
+    parts = if is_integer(exit_code), do: ["exit code: #{exit_code}" | parts], else: parts
+
+    parts |> Enum.reverse() |> Enum.join("\n\n") |> String.trim_trailing()
+  end
+
+  defp has_content?(str), do: is_binary(str) and String.trim(str) != ""
 end
