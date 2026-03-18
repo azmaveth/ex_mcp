@@ -28,8 +28,8 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **DSL and Handler APIs** -- declarative tool/resource/prompt definitions or callback-based handlers
 - **OAuth 2.1** -- Resource Server, JWT client auth (private_key_jwt), enterprise SSO (ID-JAG)
 - **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, telemetry
-- **Agent Client Protocol (ACP)** -- control coding agents (Gemini CLI, Claude Code, Codex, etc.) over stdio
-- **2600+ tests** -- comprehensive suite including TypeScript SDK interop
+- **Agent Client Protocol (ACP)** -- control coding agents (Gemini CLI, Claude Code, Codex, Pi, Hermes, etc.) over stdio
+- **2900+ tests** -- comprehensive suite including TypeScript SDK interop
 
 ## Installation
 
@@ -38,7 +38,7 @@ Add `ex_mcp` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.8.0"}
+    {:ex_mcp, "~> 0.9.0"}
   ]
 end
 ```
@@ -200,17 +200,24 @@ end
 Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control coding agents programmatically:
 
 ```elixir
-# Connect to a native ACP agent (Gemini CLI, OpenCode, Qwen Code, etc.)
+# Native ACP agents (Gemini CLI, Hermes, OpenCode, Qwen Code, etc.)
 {:ok, client} = ExMCP.ACP.start_client(command: ["gemini", "--acp"])
 
 # Create a session and send a prompt
 {:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/my/project")
 {:ok, %{"stopReason" => _}} = ExMCP.ACP.Client.prompt(client, sid, "Fix the failing tests")
 
-# Use adapters for non-native agents (Claude Code, Codex)
+# Adapters for non-native agents (Claude Code, Codex, Pi)
 {:ok, client} = ExMCP.ACP.start_client(
   command: ["claude"],
   adapter: ExMCP.ACP.Adapters.Claude
+)
+
+# Pi coding agent with full RPC support
+{:ok, client} = ExMCP.ACP.start_client(
+  command: ["pi"],
+  adapter: ExMCP.ACP.Adapters.Pi,
+  adapter_opts: [model: "anthropic/claude-sonnet-4"]
 )
 ```
 
