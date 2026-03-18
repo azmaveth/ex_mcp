@@ -302,9 +302,15 @@ defmodule ExMCP.Transport.HTTP do
   defp handle_auth_challenge(_, _, _), do: :no_challenge
 
   # Attempt OAuth discovery and retry if auth_config is available
-  defp maybe_oauth_retry(_headers, _original_body, %{auth_config: nil}) do
-    # No auth config — can't do OAuth
-    :no_challenge
+  defp maybe_oauth_retry(headers, original_body, %{auth_config: nil} = state) do
+    # No explicit auth config — try full OAuth flow (discovery + PKCE)
+    www_auth = find_header(headers, "www-authenticate")
+
+    if www_auth && String.contains?(www_auth, "resource_metadata") do
+      run_full_oauth_flow(www_auth, original_body, state)
+    else
+      :no_challenge
+    end
   end
 
   defp maybe_oauth_retry(_headers, _original_body, %{access_token: token})
@@ -343,6 +349,37 @@ defmodule ExMCP.Transport.HTTP do
 
       {:error, reason} ->
         Logger.warning("OAuth discovery flow failed: #{inspect(reason)}")
+        {:error, {:oauth_failed, reason}}
+    end
+  end
+
+  defp run_full_oauth_flow(www_auth, original_body, state) do
+    Logger.info("Attempting full OAuth flow (authorization code + PKCE)")
+    resource_url = build_url(state, "")
+
+    config = %{
+      resource_url: resource_url,
+      www_authenticate: www_auth
+    }
+
+    case ExMCP.Authorization.FullOAuthFlow.execute(config) do
+      {:ok, token_result} ->
+        access_token = token_result[:access_token] || token_result["access_token"]
+        Logger.info("Full OAuth flow succeeded, retrying request")
+
+        new_state = %{
+          state
+          | access_token: access_token,
+            headers: put_bearer_header(state.headers, access_token)
+        }
+
+        case perform_http_request(original_body, new_state) do
+          {:ok, response} -> {:ok, response, new_state}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, reason} ->
+        Logger.warning("Full OAuth flow failed: #{inspect(reason)}")
         {:error, {:oauth_failed, reason}}
     end
   end
