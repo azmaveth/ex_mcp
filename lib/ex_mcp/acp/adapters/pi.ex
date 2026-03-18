@@ -185,9 +185,18 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   # ── Event Processing ───────────────────────────────────────────
+  # Pi RPC events use a different format than initially assumed.
+  # Key events: message_update (with assistantMessageEvent), message_end,
+  # turn_end, agent_end, response, agent_start, turn_start, message_start.
 
-  # Text streaming
-  defp process_event(%{"type" => "event", "name" => "text_delta", "delta" => delta}, state) do
+  # Text streaming — message_update with text_delta
+  defp process_event(
+         %{
+           "type" => "message_update",
+           "assistantMessageEvent" => %{"type" => "text_delta", "delta" => delta}
+         },
+         state
+       ) do
     state = %{state | text_acc: [delta | state.text_acc]}
 
     notification =
@@ -199,8 +208,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, [notification], state}
   end
 
-  # Thinking/reasoning
-  defp process_event(%{"type" => "event", "name" => "thinking_delta", "delta" => delta}, state) do
+  # Thinking streaming — message_update with thinking_delta
+  defp process_event(
+         %{
+           "type" => "message_update",
+           "assistantMessageEvent" => %{"type" => "thinking_delta", "delta" => delta}
+         },
+         state
+       ) do
     notification =
       build_session_update(state, %{
         "type" => "agent_message_chunk",
@@ -210,54 +225,49 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, [notification], state}
   end
 
-  # Tool call
-  defp process_event(%{"type" => "event", "name" => "tool_call"} = event, state) do
-    tool_data = Map.get(event, "data", %{})
-
+  # Tool call — message_update with tool_call type
+  defp process_event(
+         %{
+           "type" => "message_update",
+           "assistantMessageEvent" => %{"type" => "tool_call"} = tool_event
+         },
+         state
+       ) do
     notification =
       build_session_update(state, %{
         "type" => "agent_message_chunk",
         "content" => %{
           "type" => "tool_call",
-          "name" => tool_data["name"],
-          "arguments" => tool_data["arguments"] || tool_data["args"],
-          "id" => tool_data["id"] || "tc-#{state.msg_counter}"
+          "name" => tool_event["name"],
+          "arguments" => tool_event["arguments"] || tool_event["args"],
+          "id" => tool_event["id"] || "tc-#{state.msg_counter}"
         }
       })
 
-    state = %{state | tool_calls: [tool_data | state.tool_calls]}
+    state = %{state | tool_calls: [tool_event | state.tool_calls]}
     {:messages, [notification], state}
   end
 
-  # Tool result
-  defp process_event(%{"type" => "event", "name" => "tool_result"} = event, state) do
-    result_data = Map.get(event, "data", %{})
-
-    notification =
-      build_session_update(state, %{
-        "type" => "agent_message_chunk",
-        "content" => %{
-          "type" => "tool_result",
-          "name" => result_data["name"],
-          "result" => result_data["result"] || result_data["content"],
-          "id" => result_data["id"]
-        }
-      })
-
-    {:messages, [notification], state}
-  end
-
-  # Turn/agent lifecycle events (internal, no ACP mapping needed)
-  defp process_event(%{"type" => "event", "name" => name}, state)
-       when name in ["agent_start", "turn_start", "message_update"] do
+  # Other message_update events (text_start, text_end, etc.)
+  defp process_event(%{"type" => "message_update"}, state) do
     {:skip, state}
   end
 
-  # Done — send final response
-  defp process_event(%{"type" => "event", "name" => "done"} = event, state) do
+  # Agent end — conversation complete, send final response
+  defp process_event(%{"type" => "agent_end"} = event, state) do
     text = state.text_acc |> Enum.reverse() |> Enum.join("")
 
-    usage = Map.get(event, "usage", %{})
+    # Extract usage from the last assistant message
+    messages = Map.get(event, "messages", [])
+
+    usage =
+      messages
+      |> Enum.filter(fn m -> m["role"] == "assistant" end)
+      |> List.last()
+      |> case do
+        %{"usage" => u} -> u
+        _ -> %{}
+      end
 
     response = %{
       "jsonrpc" => "2.0",
@@ -266,8 +276,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
         "result" => text,
         "sessionId" => state.session_id || "default",
         "usage" => %{
-          "inputTokens" => usage["input_tokens"] || 0,
-          "outputTokens" => usage["output_tokens"] || 0
+          "inputTokens" => usage["input"] || 0,
+          "outputTokens" => usage["output"] || 0,
+          "cost" => get_in(usage, ["cost", "total"])
         }
       }
     }
@@ -276,22 +287,25 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, [response], state}
   end
 
-  # RPC response (success/error for commands)
-  defp process_event(%{"type" => "response", "name" => _name, "success" => true}, state) do
+  # Lifecycle events — skip
+  defp process_event(%{"type" => type}, state)
+       when type in ["agent_start", "turn_start", "turn_end", "message_start", "message_end"] do
     {:skip, state}
   end
 
-  defp process_event(%{"type" => "response", "name" => name, "success" => false} = event, state) do
-    Logger.warning("[Pi Adapter] RPC command failed: #{name} — #{inspect(event["error"])}")
+  # RPC response ack
+  defp process_event(%{"type" => "response", "success" => true}, state) do
+    {:skip, state}
+  end
+
+  defp process_event(%{"type" => "response", "success" => false} = event, state) do
+    Logger.warning("[Pi Adapter] RPC command failed: #{inspect(event["error"])}")
     {:skip, state}
   end
 
   # Catch-all
   defp process_event(event, state) do
-    Logger.debug(
-      "[Pi Adapter] Unhandled event: #{inspect(Map.get(event, "type"))}:#{inspect(Map.get(event, "name"))}"
-    )
-
+    Logger.debug("[Pi Adapter] Unhandled: #{inspect(Map.get(event, "type"))}")
     {:skip, state}
   end
 
