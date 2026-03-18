@@ -54,6 +54,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
   defstruct [
     :session_id,
     :model,
+    :cwd,
     text_acc: [],
     thinking_acc: [],
     thinking_blocks: [],
@@ -68,7 +69,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
   @impl true
   def init(opts) do
-    {:ok, %__MODULE__{opts: opts}}
+    {:ok, %__MODULE__{opts: opts, cwd: Keyword.get(opts, :cwd)}}
   end
 
   @impl true
@@ -423,18 +424,21 @@ defmodule ExMCP.ACP.Adapters.Claude do
     tool_name = block["name"] || "tool"
     input = block["input"] || %{}
 
-    # Build ACP-spec tool_call_update with structured metadata
-    update = %{
-      "sessionUpdate" => "tool_call_update",
-      "title" => tool_call_title(tool_name, input),
-      "toolCallId" => block["id"],
-      "toolName" => tool_name,
-      "status" => "running",
-      "input" => input
-    }
+    # Build full tool info matching Zed's toolInfoFromToolUse pattern
+    tool_info = tool_info_from_use(tool_name, input, block["id"], state.cwd)
 
-    # Add tool-specific metadata for richer UI rendering
-    update = enrich_tool_metadata(update, tool_name, input)
+    update =
+      %{
+        "sessionUpdate" => "tool_call_update",
+        "title" => tool_info.title,
+        "toolCallId" => block["id"],
+        "toolName" => tool_name,
+        "kind" => tool_info.kind,
+        "status" => "running",
+        "input" => input
+      }
+      |> maybe_put_tool("content", non_empty_list(tool_info.content))
+      |> maybe_put_tool("locations", non_empty_list(tool_info.locations))
 
     notification = session_update(state.session_id, update)
 
@@ -633,65 +637,205 @@ defmodule ExMCP.ACP.Adapters.Claude do
   end
 
   # ── Tool Introspection ──────────────────────────────────────────
-  # Parse tool inputs for richer UI display titles and metadata.
+  # Mirrors Zed's toolInfoFromToolUse pattern: parse tool_use inputs to produce
+  # structured title, kind, content (diffs/terminal), and locations (file:line).
+  # All data comes from the same CLI NDJSON — no special SDK access needed.
 
-  # Generate a context-aware title from tool name + input
-  defp tool_call_title("Read", %{"file_path" => path}), do: "Read #{Path.basename(path)}"
-  defp tool_call_title("Write", %{"file_path" => path}), do: "Write #{Path.basename(path)}"
-  defp tool_call_title("Edit", %{"file_path" => path}), do: "Edit #{Path.basename(path)}"
-  defp tool_call_title("Bash", %{"command" => cmd}), do: "Run: #{truncate(cmd, 50)}"
-  defp tool_call_title("Grep", %{"pattern" => pat}), do: "Search: #{truncate(pat, 40)}"
-  defp tool_call_title("Glob", %{"pattern" => pat}), do: "Find: #{truncate(pat, 40)}"
+  # Tool kinds matching ACP ToolKind enum
+  @tool_kinds %{
+    "Read" => "read",
+    "Write" => "write",
+    "Edit" => "write",
+    "Bash" => "execute",
+    "Grep" => "search",
+    "Glob" => "search",
+    "WebFetch" => "search",
+    "WebSearch" => "search",
+    "Agent" => "think",
+    "Task" => "think",
+    "TodoRead" => "read",
+    "TodoWrite" => "write",
+    "NotebookEdit" => "write"
+  }
 
-  defp tool_call_title("WebFetch", %{"url" => url}),
-    do: "Fetch: #{truncate(url, 50)}"
+  defp tool_info_from_use("Read", input, _id, cwd) do
+    path = input["file_path"]
+    display = display_path(path, cwd)
+    line_suffix = format_line_suffix(input)
 
-  defp tool_call_title("WebSearch", %{"query" => q}), do: "Search: #{truncate(q, 40)}"
-  defp tool_call_title("Read", _), do: "Read File"
-  defp tool_call_title("Write", _), do: "Write File"
-  defp tool_call_title("Edit", _), do: "Edit File"
-  defp tool_call_title("Bash", _), do: "Run Command"
-  defp tool_call_title("Grep", _), do: "Search"
-  defp tool_call_title("Glob", _), do: "Find Files"
-  defp tool_call_title("WebFetch", _), do: "Fetch URL"
-  defp tool_call_title("WebSearch", _), do: "Web Search"
-  defp tool_call_title(name, _), do: name
-
-  # Add tool-specific structured metadata to the update
-  defp enrich_tool_metadata(update, "Read", %{"file_path" => path} = input) do
-    update
-    |> Map.put("filePath", path)
-    |> maybe_put_tool("lineRange", format_line_range(input))
+    %{
+      title: "Read #{display}#{line_suffix}",
+      kind: "read",
+      content: [],
+      locations:
+        if(path,
+          do: [%{"path" => path, "line" => input["offset"] || 1}],
+          else: []
+        )
+    }
   end
 
-  defp enrich_tool_metadata(update, "Write", %{"file_path" => path}) do
-    Map.put(update, "filePath", path)
+  defp tool_info_from_use("Write", input, _id, cwd) do
+    path = input["file_path"]
+    display = display_path(path, cwd)
+
+    %{
+      title: "Write #{display}",
+      kind: "write",
+      content:
+        if(path && input["content"],
+          do: [
+            %{"type" => "diff", "path" => path, "oldText" => nil, "newText" => input["content"]}
+          ],
+          else: []
+        ),
+      locations: if(path, do: [%{"path" => path, "line" => 1}], else: [])
+    }
   end
 
-  defp enrich_tool_metadata(update, "Edit", %{"file_path" => path}) do
-    Map.put(update, "filePath", path)
+  defp tool_info_from_use("Edit", input, _id, cwd) do
+    path = input["file_path"]
+    display = display_path(path, cwd)
+
+    %{
+      title: "Edit #{display}",
+      kind: "write",
+      content:
+        if(path && input["old_string"] && input["new_string"],
+          do: [
+            %{
+              "type" => "diff",
+              "path" => path,
+              "oldText" => input["old_string"],
+              "newText" => input["new_string"]
+            }
+          ],
+          else: []
+        ),
+      locations: if(path, do: [%{"path" => path, "line" => 1}], else: [])
+    }
   end
 
-  defp enrich_tool_metadata(update, "Bash", %{"command" => command}) do
-    Map.put(update, "command", command)
+  defp tool_info_from_use("Bash", input, id, _cwd) do
+    command = input["command"] || ""
+
+    %{
+      title: if(command != "", do: truncate(command, 60), else: "Terminal"),
+      kind: "execute",
+      content: [%{"type" => "terminal", "terminalId" => id}],
+      locations: []
+    }
   end
 
-  defp enrich_tool_metadata(update, "Grep", input) do
-    update
-    |> maybe_put_tool("pattern", input["pattern"])
-    |> maybe_put_tool("path", input["path"])
-    |> maybe_put_tool("glob", input["glob"])
+  defp tool_info_from_use("Grep", input, _id, _cwd) do
+    pattern = input["pattern"] || ""
+
+    %{
+      title: "Search: #{truncate(pattern, 40)}",
+      kind: "search",
+      content:
+        if(pattern != "",
+          do: [%{"type" => "content", "content" => %{"type" => "text", "text" => pattern}}],
+          else: []
+        ),
+      locations: []
+    }
   end
 
-  defp enrich_tool_metadata(update, "Glob", %{"pattern" => pattern}) do
-    Map.put(update, "pattern", pattern)
+  defp tool_info_from_use("Glob", input, _id, _cwd) do
+    pattern = input["pattern"] || ""
+
+    %{
+      title: "Find: #{truncate(pattern, 40)}",
+      kind: "search",
+      content: [],
+      locations: []
+    }
   end
 
-  defp enrich_tool_metadata(update, _tool_name, _input), do: update
+  defp tool_info_from_use("WebFetch", input, _id, _cwd) do
+    url = input["url"] || ""
+
+    %{
+      title: "Fetch: #{truncate(url, 50)}",
+      kind: "search",
+      content:
+        if(url != "",
+          do: [%{"type" => "content", "content" => %{"type" => "text", "text" => url}}],
+          else: []
+        ),
+      locations: []
+    }
+  end
+
+  defp tool_info_from_use("WebSearch", input, _id, _cwd) do
+    query = input["query"] || ""
+
+    %{
+      title: "Search: #{truncate(query, 40)}",
+      kind: "search",
+      content: [],
+      locations: []
+    }
+  end
+
+  defp tool_info_from_use("Agent", input, _id, _cwd) do
+    desc = input["description"] || input["prompt"] || "Task"
+
+    %{
+      title: truncate(desc, 60),
+      kind: "think",
+      content:
+        if(input["prompt"],
+          do: [
+            %{"type" => "content", "content" => %{"type" => "text", "text" => input["prompt"]}}
+          ],
+          else: []
+        ),
+      locations: []
+    }
+  end
+
+  defp tool_info_from_use("Task", input, id, cwd),
+    do: tool_info_from_use("Agent", input, id, cwd)
+
+  defp tool_info_from_use(name, _input, _id, _cwd) do
+    %{
+      title: name,
+      kind: Map.get(@tool_kinds, name, "other"),
+      content: [],
+      locations: []
+    }
+  end
+
+  # Convert absolute path to project-relative for display
+  defp display_path(nil, _cwd), do: "File"
+
+  defp display_path(path, cwd) when is_binary(path) and is_binary(cwd) do
+    resolved_cwd = Path.expand(cwd)
+
+    if String.starts_with?(path, resolved_cwd <> "/") do
+      Path.relative_to(path, resolved_cwd)
+    else
+      Path.basename(path)
+    end
+  end
+
+  defp display_path(path, _cwd) when is_binary(path), do: Path.basename(path)
+
+  defp format_line_suffix(%{"limit" => limit, "offset" => offset})
+       when is_integer(limit) and limit > 0 and is_integer(offset) do
+    " (#{offset}-#{offset + limit - 1})"
+  end
+
+  defp format_line_suffix(%{"offset" => offset}) when is_integer(offset) and offset > 1 do
+    " (from line #{offset})"
+  end
+
+  defp format_line_suffix(_), do: ""
 
   # Parse tool result content for structured display
   defp parse_tool_result_content(content) when is_list(content) do
-    # Extract text from content blocks
     Enum.map_join(content, "\n", fn
       %{"type" => "text", "text" => text} -> text
       %{"text" => text} -> text
@@ -703,19 +847,15 @@ defmodule ExMCP.ACP.Adapters.Claude do
   defp parse_tool_result_content(nil), do: ""
   defp parse_tool_result_content(other), do: inspect(other)
 
-  defp format_line_range(%{"offset" => offset, "limit" => limit})
-       when is_integer(offset) and is_integer(limit) do
-    "#{offset}-#{offset + limit}"
-  end
-
-  defp format_line_range(_), do: nil
-
   defp truncate(str, max) when is_binary(str) and byte_size(str) > max do
     String.slice(str, 0, max) <> "..."
   end
 
   defp truncate(str, _max) when is_binary(str), do: str
   defp truncate(_, _), do: ""
+
+  defp non_empty_list([]), do: nil
+  defp non_empty_list(list), do: list
 
   defp maybe_put_tool(map, _key, nil), do: map
   defp maybe_put_tool(map, key, value), do: Map.put(map, key, value)

@@ -372,7 +372,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert update["title"] == "Search: defmodule"
       assert update["toolCallId"] == "toolu_123"
       assert update["status"] == "running"
-      assert update["pattern"] == "defmodule"
+      assert update["kind"] == "search"
+      # Pattern is in content, not flat
+      assert [%{"type" => "content", "content" => %{"type" => "text", "text" => "defmodule"}}] =
+               update["content"]
+
       assert new_state.in_tool_use == true
     end
 
@@ -421,7 +425,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
       update = notification["params"]["update"]
       assert update["title"] == "Read main.ex"
-      assert update["filePath"] == "/src/main.ex"
+      assert update["kind"] == "read"
+      # File path is in locations
+      assert [%{"path" => "/src/main.ex", "line" => 1}] = update["locations"]
     end
 
     test "Bash tool includes command metadata", %{state: state} do
@@ -444,8 +450,124 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["title"] == "Run: mix test --only fast"
-      assert update["command"] == "mix test --only fast"
+      # Bash title is the command itself (matching Zed)
+      assert update["title"] == "mix test --only fast"
+      assert update["kind"] == "execute"
+      # Terminal content with ID for streaming
+      assert [%{"type" => "terminal", "terminalId" => "toolu_bash"}] = update["content"]
+    end
+
+    test "Write tool includes diff content", %{state: state} do
+      state = %{state | session_id: "s1"}
+
+      line =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_write",
+                "name" => "Write",
+                "input" => %{"file_path" => "/src/new.ex", "content" => "defmodule New do\nend"}
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["kind"] == "write"
+
+      assert [
+               %{
+                 "type" => "diff",
+                 "path" => "/src/new.ex",
+                 "oldText" => nil,
+                 "newText" => content
+               }
+             ] = update["content"]
+
+      assert content =~ "defmodule New"
+      assert [%{"path" => "/src/new.ex"}] = update["locations"]
+    end
+
+    test "Edit tool includes diff with old and new text", %{state: state} do
+      state = %{state | session_id: "s1"}
+
+      line =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_edit",
+                "name" => "Edit",
+                "input" => %{
+                  "file_path" => "/src/app.ex",
+                  "old_string" => "def old",
+                  "new_string" => "def new"
+                }
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["kind"] == "write"
+
+      assert [%{"type" => "diff", "oldText" => "def old", "newText" => "def new"}] =
+               update["content"]
+    end
+
+    test "Read with offset includes line range in title", %{state: state} do
+      state = %{state | session_id: "s1"}
+
+      line =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_read2",
+                "name" => "Read",
+                "input" => %{"file_path" => "/src/app.ex", "offset" => 10, "limit" => 20}
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["title"] == "Read app.ex (10-29)"
+      assert [%{"path" => "/src/app.ex", "line" => 10}] = update["locations"]
+    end
+
+    test "display_path uses relative path when cwd is set", %{state: _state} do
+      {:ok, state} = Claude.init(cwd: "/home/user/project")
+      state = %{state | session_id: "s1"}
+
+      line =
+        Jason.encode!(%{
+          "type" => "assistant",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "toolu_rel",
+                "name" => "Read",
+                "input" => %{"file_path" => "/home/user/project/lib/app.ex"}
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
+      update = notification["params"]["update"]
+      assert update["title"] == "Read lib/app.ex"
     end
 
     test "tool_result with error has failed status", %{state: state} do
