@@ -10,7 +10,7 @@ defmodule ExMCP.Client.ConnectionManager do
   # alias ExMCP.TransportManager  # Not using full manager for now
   alias ExMCP.Internal.Protocol
   alias ExMCP.Reliability.Retry
-  alias ExMCP.Transport.{HTTP, Local, ReliabilityWrapper, SSE, Stdio, Test}
+  alias ExMCP.Transport.{HTTP, Local, ReliabilityWrapper, Stdio, Test}
 
   @doc """
   Establishes connection using the provided options and updates client state.
@@ -190,7 +190,8 @@ defmodule ExMCP.Client.ConnectionManager do
         :beam -> {Local, [mode: :beam]}
         :stdio -> {Stdio, []}
         :http -> {HTTP, []}
-        :sse -> {SSE, []}
+        # :sse is an alias for HTTP with SSE streaming enabled
+        :sse -> {HTTP, [use_sse: true]}
         :test -> {Test, []}
         :mock -> {Test, []}
         mod when is_atom(mod) -> {mod, []}

@@ -46,28 +46,43 @@ defmodule ConformanceClient do
   end
 
   defp run_tools_call(server_url) do
-    {:ok, client} = connect(server_url)
+    Logger.info("Connecting to #{server_url}")
 
-    # List tools first
-    {:ok, %{"tools" => tools}} = ExMCP.Client.list_tools(client)
-    Logger.info("Tools: #{inspect(Enum.map(tools, & &1["name"]))}")
+    case connect(server_url) do
+      {:ok, client} ->
+        list_and_call_tools(client)
+        ExMCP.Client.disconnect(client)
 
-    # Call each tool
+      {:error, reason} ->
+        Logger.error("Connect failed: #{inspect(reason)}")
+    end
+  end
+
+  defp list_and_call_tools(client) do
+    Logger.info("Connected, listing tools...")
+
+    case ExMCP.Client.list_tools(client) do
+      {:ok, result} ->
+        tools = result["tools"] || result[:tools] || []
+        call_each_tool(client, tools)
+
+      {:error, reason} ->
+        Logger.error("list_tools failed: #{inspect(reason)}")
+    end
+  end
+
+  defp call_each_tool(client, tools) do
     for tool <- tools do
-      name = tool["name"]
-      # Build minimal valid arguments from schema
-      args = build_args_from_schema(tool["inputSchema"])
+      name = tool["name"] || tool[:name]
+      schema = tool["inputSchema"] || tool[:inputSchema]
+      args = build_args_from_schema(schema)
+      Logger.info("Calling tool #{name} with args: #{inspect(args)}")
 
       case ExMCP.Client.call_tool(client, name, args) do
-        {:ok, result} ->
-          Logger.info("Tool #{name}: #{inspect(result)}")
-
-        {:error, reason} ->
-          Logger.warning("Tool #{name} failed: #{inspect(reason)}")
+        {:ok, result} -> Logger.info("Tool #{name} result: #{inspect(result)}")
+        {:error, reason} -> Logger.warning("Tool #{name} failed: #{inspect(reason)}")
       end
     end
-
-    ExMCP.Client.disconnect(client)
   end
 
   defp run_sse_retry(server_url) do
@@ -107,12 +122,18 @@ defmodule ConformanceClient do
   end
 
   # Connect to the conformance test server via HTTP (Streamable HTTP with SSE).
-  # The conformance framework passes the full URL — no path appending needed.
+  # The framework passes a full URL like http://localhost:PORT/mcp — we need to
+  # split into base_url + endpoint so the HTTP transport posts to the right path.
   defp connect(server_url) do
+    uri = URI.parse(server_url)
+    base_url = "#{uri.scheme}://#{uri.host}:#{uri.port}"
+    endpoint = uri.path || ""
+
     ExMCP.Client.start_link(
       transport: :http,
-      url: server_url,
-      endpoint: "",
+      url: base_url,
+      endpoint: endpoint,
+      use_sse: false,
       client_info: %{
         "name" => "ex_mcp-conformance-client",
         "version" => "0.9.0"
