@@ -107,12 +107,40 @@ defmodule ConformanceClient do
     ExMCP.Client.disconnect(client)
   end
 
-  defp run_auth(server_url, _scenario, _context) do
-    # Auth scenarios — try to connect with auth headers
-    {:ok, client} = connect(server_url)
-    Process.sleep(500)
-    ExMCP.Client.disconnect(client)
+  defp run_auth(server_url, scenario, context) do
+    Logger.info("Auth scenario: #{scenario}, context: #{inspect(context)}")
+
+    # Build auth config from conformance context
+    auth_config = build_auth_config(context)
+
+    case connect(server_url, auth: auth_config) do
+      {:ok, client} ->
+        # Try listing tools to trigger a real authenticated request
+        case ExMCP.Client.list_tools(client) do
+          {:ok, _} -> Logger.info("Auth: list_tools succeeded")
+          {:error, reason} -> Logger.warning("Auth: list_tools failed: #{inspect(reason)}")
+        end
+
+        ExMCP.Client.disconnect(client)
+
+      {:error, reason} ->
+        Logger.error("Auth connect failed: #{inspect(reason)}")
+    end
   end
+
+  defp build_auth_config(%{"client_id" => client_id} = context) do
+    config = %{client_id: client_id}
+
+    config =
+      case context["client_secret"] do
+        nil -> config
+        secret -> Map.merge(config, %{client_secret: secret, auth_method: :client_secret})
+      end
+
+    config
+  end
+
+  defp build_auth_config(_), do: nil
 
   defp run_default(server_url, scenario) do
     Logger.info("Running default scenario: #{scenario}")
@@ -124,12 +152,12 @@ defmodule ConformanceClient do
   # Connect to the conformance test server via HTTP (Streamable HTTP with SSE).
   # The framework passes a full URL like http://localhost:PORT/mcp — we need to
   # split into base_url + endpoint so the HTTP transport posts to the right path.
-  defp connect(server_url) do
+  defp connect(server_url, opts \\ []) do
     uri = URI.parse(server_url)
     base_url = "#{uri.scheme}://#{uri.host}:#{uri.port}"
     endpoint = uri.path || ""
 
-    ExMCP.Client.start_link(
+    connect_opts = [
       transport: :http,
       url: base_url,
       endpoint: endpoint,
@@ -138,7 +166,16 @@ defmodule ConformanceClient do
         "name" => "ex_mcp-conformance-client",
         "version" => "0.9.0"
       }
-    )
+    ]
+
+    # Add auth config if provided
+    connect_opts =
+      case Keyword.get(opts, :auth) do
+        nil -> connect_opts
+        auth -> Keyword.put(connect_opts, :auth, auth)
+      end
+
+    ExMCP.Client.start_link(connect_opts)
   end
 
   # Build minimal valid args from JSON Schema

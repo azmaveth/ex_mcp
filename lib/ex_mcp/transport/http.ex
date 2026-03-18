@@ -96,6 +96,8 @@ defmodule ExMCP.Transport.HTTP do
     :last_response,
     :timeouts,
     :protocol_version,
+    :auth_config,
+    :access_token,
     sse_deferred_attempted: false
   ]
 
@@ -169,6 +171,10 @@ defmodule ExMCP.Transport.HTTP do
       stream_idle: stream_idle_timeout
     }
 
+    # OAuth config for automatic 401 → discover → token → retry flow.
+    # Pass auth: %{client_id: "...", client_secret: "...", ...} to enable.
+    auth_config = Keyword.get(config, :auth)
+
     state = %__MODULE__{
       base_url: base_url,
       headers: all_headers,
@@ -179,7 +185,8 @@ defmodule ExMCP.Transport.HTTP do
       use_sse: use_sse,
       session_id: session_id,
       timeouts: timeouts,
-      protocol_version: protocol_version
+      protocol_version: protocol_version,
+      auth_config: auth_config
     }
 
     # Validate security configuration
@@ -201,9 +208,7 @@ defmodule ExMCP.Transport.HTTP do
   def send_message(message, %__MODULE__{use_sse: true, sse_pid: nil} = state) do
     # SSE configured but not yet started (pre-initialization).
     # Handle synchronously like non-SSE mode, then start SSE if we get a session ID.
-    result = perform_http_request(message, state)
-
-    case result do
+    case perform_and_maybe_auth(message, state) do
       {:ok, response} ->
         case handle_http_response(response, state) do
           {:ok, new_state, response_data} ->
@@ -218,6 +223,20 @@ defmodule ExMCP.Transport.HTTP do
             error
         end
 
+      {:ok, response, new_state} ->
+        case handle_http_response(response, new_state) do
+          {:ok, new_state2, response_data} ->
+            new_state2 = maybe_start_deferred_sse(new_state2)
+            {:ok, new_state2, response_data}
+
+          {:ok, new_state2} ->
+            new_state2 = maybe_start_deferred_sse(new_state2)
+            {:ok, new_state2}
+
+          error ->
+            error
+        end
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -225,11 +244,12 @@ defmodule ExMCP.Transport.HTTP do
 
   def send_message(message, %__MODULE__{use_sse: false} = state) do
     # For non-SSE mode, we handle the request-response synchronously
-    result = perform_http_request(message, state)
-
-    case result do
+    case perform_and_maybe_auth(message, state) do
       {:ok, response} ->
         handle_http_response(response, state)
+
+      {:ok, response, new_state} ->
+        handle_http_response(response, new_state)
 
       {:error, reason} ->
         {:error, reason}
@@ -238,12 +258,109 @@ defmodule ExMCP.Transport.HTTP do
 
   def send_message(message, %__MODULE__{} = state) do
     # SSE mode with active connection — responses arrive via SSE stream
-    result = perform_http_request(message, state)
-
-    case result do
+    case perform_and_maybe_auth(message, state) do
       {:ok, response} -> handle_http_response(response, state)
+      {:ok, response, new_state} -> handle_http_response(response, new_state)
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  # Perform HTTP request with automatic OAuth 401 retry.
+  # On 401, discovers OAuth metadata, obtains token, and retries once.
+  defp perform_and_maybe_auth(body, state) do
+    result = perform_http_request(body, state)
+
+    case result do
+      {:ok, response} ->
+        case handle_auth_challenge(response, body, state) do
+          :no_challenge -> {:ok, response}
+          {:ok, retry_response, new_state} -> {:ok, retry_response, new_state}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Check if the response is a 401 that we can handle with OAuth
+  defp handle_auth_challenge({status_line, headers, _body}, original_body, state) do
+    case status_line do
+      {_, 401, _} ->
+        maybe_oauth_retry(headers, original_body, state)
+
+      _ ->
+        :no_challenge
+    end
+  end
+
+  defp handle_auth_challenge(_, _, _), do: :no_challenge
+
+  # Attempt OAuth discovery and retry if auth_config is available
+  defp maybe_oauth_retry(_headers, _original_body, %{auth_config: nil}) do
+    # No auth config — can't do OAuth
+    :no_challenge
+  end
+
+  defp maybe_oauth_retry(_headers, _original_body, %{access_token: token})
+       when is_binary(token) and token != "" do
+    # Already have a token and still got 401 — token is invalid/expired.
+    # Don't retry to avoid loops. Caller gets the 401.
+    :no_challenge
+  end
+
+  defp maybe_oauth_retry(headers, original_body, state) do
+    Logger.info("Received 401, attempting OAuth discovery flow")
+
+    www_auth = find_header(headers, "www-authenticate")
+    resource_url = build_url(state, "")
+
+    # Build discovery config from auth_config + resource URL
+    discovery_config = build_discovery_config(state.auth_config, resource_url, www_auth)
+
+    case ExMCP.Authorization.DiscoveryFlow.execute(discovery_config) do
+      {:ok, token_result} ->
+        access_token = token_result[:access_token] || token_result["access_token"]
+        Logger.info("OAuth token obtained, retrying request")
+
+        # Update state with token and add Authorization header
+        new_state = %{
+          state
+          | access_token: access_token,
+            headers: put_bearer_header(state.headers, access_token)
+        }
+
+        # Retry the original request with auth headers
+        case perform_http_request(original_body, new_state) do
+          {:ok, response} -> {:ok, response, new_state}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, reason} ->
+        Logger.warning("OAuth discovery flow failed: #{inspect(reason)}")
+        {:error, {:oauth_failed, reason}}
+    end
+  end
+
+  defp build_discovery_config(auth_config, resource_url, _www_auth) when is_map(auth_config) do
+    # Merge auth_config with discovered resource URL
+    auth_config
+    |> Map.put(:resource_url, resource_url)
+    |> Map.put_new(:auth_method, :client_secret)
+  end
+
+  defp build_discovery_config(auth_config, resource_url, _www_auth)
+       when is_list(auth_config) do
+    auth_config
+    |> Map.new()
+    |> Map.put(:resource_url, resource_url)
+    |> Map.put_new(:auth_method, :client_secret)
+  end
+
+  defp put_bearer_header(headers, token) do
+    headers
+    |> Enum.reject(fn {k, _} -> String.downcase(k) == "authorization" end)
+    |> List.insert_at(0, {"Authorization", "Bearer #{token}"})
   end
 
   defp perform_http_request(body, state) do
@@ -357,6 +474,11 @@ defmodule ExMCP.Transport.HTTP do
       {_, 202, _} ->
         # 202 Accepted - notification was accepted, no response body expected
         {:ok, state}
+
+      {_, 401, _} ->
+        # Extract WWW-Authenticate header for OAuth discovery hints
+        www_auth = find_header(headers, "www-authenticate")
+        {:error, {:unauthorized, 401, body_binary, www_auth}}
 
       {_, status, _} ->
         {:error, {:http_error, status, body_binary}}
