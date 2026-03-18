@@ -76,7 +76,8 @@ defmodule ExMCP.SimpleServerTest do
 
   describe "server features" do
     test "server has notification functions" do
-      # Verify the functions exist
+      # Ensure module is loaded before checking exports
+      Code.ensure_loaded!(ExMCP.Server)
       assert function_exported?(ExMCP.Server, :notify_roots_changed, 1)
       assert function_exported?(ExMCP.Server, :notify_resources_changed, 1)
       assert function_exported?(ExMCP.Server, :notify_resource_updated, 2)

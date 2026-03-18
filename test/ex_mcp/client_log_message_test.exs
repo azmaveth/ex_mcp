@@ -9,7 +9,8 @@ defmodule ExMCP.ClientLogMessageTest do
 
   describe "log_message/3,4 basic functionality" do
     test "functions exist with correct arity" do
-      # Verify the functions are exported
+      # Ensure module is loaded before checking exports
+      Code.ensure_loaded!(Client)
       assert function_exported?(Client, :log_message, 3)
       assert function_exported?(Client, :log_message, 4)
     end

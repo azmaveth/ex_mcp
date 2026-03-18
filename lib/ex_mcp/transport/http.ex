@@ -124,10 +124,15 @@ defmodule ExMCP.Transport.HTTP do
 
   @impl true
   def connect(config) do
-    base_url = Keyword.fetch!(config, :url)
+    raw_url = Keyword.fetch!(config, :url)
+
+    # If no explicit endpoint is provided, extract path from URL.
+    # e.g., "http://localhost:3000/mcp" → base_url: "http://localhost:3000", endpoint: "/mcp"
+    {base_url, default_ep} = split_url_path(raw_url)
+
     headers = Keyword.get(config, :headers, [])
     http_client = Keyword.get(config, :http_client, :httpc)
-    endpoint = Keyword.get(config, :endpoint, @default_endpoint)
+    endpoint = Keyword.get(config, :endpoint, default_ep)
     security = Keyword.get(config, :security)
     use_sse = Keyword.get(config, :use_sse, true)
     session_id = Keyword.get(config, :session_id)
@@ -690,6 +695,28 @@ defmodule ExMCP.Transport.HTTP do
 
   defp validate_security(%{security: security}) do
     Security.validate_config(security)
+  end
+
+  # Split a full URL into {base_url, path} so callers can pass a single URL.
+  # "http://localhost:3000/mcp" → {"http://localhost:3000", "/mcp"}
+  # "http://localhost:3000" → {"http://localhost:3000", "/mcp/v1"} (default)
+  defp split_url_path(url) do
+    uri = URI.parse(url)
+
+    case uri.path do
+      nil ->
+        {url, @default_endpoint}
+
+      "/" ->
+        {url, @default_endpoint}
+
+      "" ->
+        {url, @default_endpoint}
+
+      path ->
+        base = "#{uri.scheme}://#{uri.host}#{if uri.port, do: ":#{uri.port}", else: ""}"
+        {base, path}
+    end
   end
 
   defp extract_origin_from_url(url) do
