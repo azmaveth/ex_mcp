@@ -121,7 +121,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
 
       # Check the actual structure returned
       tool = hd(tools)
-      assert tool.name == "test_tool" || tool["name"] == "test_tool"
+      assert tool["name"] == "test_tool"
 
       # Cleanup
       GenServer.stop(server)
@@ -148,9 +148,9 @@ defmodule ExMCP.MessageProcessorValidationTest do
       assert length(tools) == 1
 
       tool = hd(tools)
-      assert tool.name == "test_tool"
-      assert tool.description == "A test tool for DSL server"
-      assert tool.display_name == "Test Tool"
+      assert tool["name"] == "test_tool"
+      assert tool["description"] == "A test tool for DSL server"
+      assert tool["display_name"] == "Test Tool"
     end
 
     test "server type detection is flawed - DSL servers are detected by start_link" do

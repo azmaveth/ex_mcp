@@ -418,7 +418,7 @@ defmodule ExMCP.MessageProcessor do
     %{
       "protocolVersion" => negotiate_version(params),
       "serverInfo" => %{"name" => name, "version" => version},
-      "capabilities" => stringify_capability_keys(capabilities)
+      "capabilities" => deep_stringify_keys(capabilities)
     }
   end
 
@@ -432,19 +432,23 @@ defmodule ExMCP.MessageProcessor do
 
   defp negotiate_version(_), do: @default_protocol_version
 
-  # Convert atom keys to string keys in capabilities (handlers may use atoms)
-  defp stringify_capability_keys(caps) when is_map(caps) do
-    Map.new(caps, fn
-      {k, v} when is_atom(k) -> {Atom.to_string(k), stringify_capability_keys(v)}
-      {k, v} when is_map(v) -> {k, stringify_capability_keys(v)}
-      {k, v} -> {k, v}
+  # Recursively convert atom keys to string keys in maps and lists.
+  # Handlers may use atom keys (%{name: "x"}) but JSON-RPC requires strings.
+  defp deep_stringify_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), deep_stringify_keys(v)}
+      {k, v} -> {k, deep_stringify_keys(v)}
     end)
   end
 
-  defp stringify_capability_keys(other), do: other
+  defp deep_stringify_keys(list) when is_list(list) do
+    Enum.map(list, &deep_stringify_keys/1)
+  end
+
+  defp deep_stringify_keys(other), do: other
 
   defp handle_tools_list(conn, handler_module, id) do
-    tools = handler_module.get_tools() |> Map.values()
+    tools = handler_module.get_tools() |> Map.values() |> deep_stringify_keys()
 
     response = %{
       "jsonrpc" => "2.0",
@@ -639,7 +643,7 @@ defmodule ExMCP.MessageProcessor do
   end
 
   defp handle_tools_list_with_server(conn, server_pid, id) do
-    tools = GenServer.call(server_pid, :get_tools, 5000) |> Map.values()
+    tools = GenServer.call(server_pid, :get_tools, 5000) |> Map.values() |> deep_stringify_keys()
 
     response = %{
       "jsonrpc" => "2.0",
@@ -839,7 +843,7 @@ defmodule ExMCP.MessageProcessor do
 
     case GenServer.call(server_pid, {:list_tools, cursor}, 5000) do
       {:ok, tools, next_cursor, _new_state} ->
-        result = %{"tools" => tools}
+        result = %{"tools" => deep_stringify_keys(tools)}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 
         response = %{
@@ -866,7 +870,7 @@ defmodule ExMCP.MessageProcessor do
 
     case GenServer.call(server_pid, {:call_tool, tool_name, arguments}, 10000) do
       {:ok, result} ->
-        response = success_response(result, id)
+        response = success_response(deep_stringify_keys(result), id)
         put_response(conn, response)
 
       {:error, reason} ->
@@ -884,7 +888,7 @@ defmodule ExMCP.MessageProcessor do
 
     case GenServer.call(server_pid, {:list_resources, cursor}, 5000) do
       {:ok, resources, next_cursor, _new_state} ->
-        result = %{"resources" => resources}
+        result = %{"resources" => deep_stringify_keys(resources)}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 
         response = %{
@@ -912,7 +916,7 @@ defmodule ExMCP.MessageProcessor do
       {:ok, content} ->
         response = %{
           "jsonrpc" => "2.0",
-          "result" => %{"contents" => content},
+          "result" => %{"contents" => deep_stringify_keys(content)},
           "id" => id
         }
 
@@ -969,7 +973,7 @@ defmodule ExMCP.MessageProcessor do
 
     case GenServer.call(server_pid, {:list_prompts, cursor}, 5000) do
       {:ok, prompts, next_cursor, _new_state} ->
-        result = %{"prompts" => prompts}
+        result = %{"prompts" => deep_stringify_keys(prompts)}
         result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
 
         response = %{
@@ -996,7 +1000,7 @@ defmodule ExMCP.MessageProcessor do
 
     case GenServer.call(server_pid, {:get_prompt, prompt_name, arguments}, 10000) do
       {:ok, result} ->
-        response = success_response(result, id)
+        response = success_response(deep_stringify_keys(result), id)
         put_response(conn, response)
 
       {:error, reason} ->
@@ -1038,7 +1042,7 @@ defmodule ExMCP.MessageProcessor do
 
     case GenServer.call(server_pid, {:complete, ref, argument}, 10_000) do
       {:ok, result, _new_state} ->
-        response = success_response(result, id)
+        response = success_response(deep_stringify_keys(result), id)
         put_response(conn, response)
 
       {:error, reason, _new_state} ->
