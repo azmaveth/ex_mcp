@@ -1,7 +1,7 @@
 # HTTP Transport Redesign Roadmap
 
 **Based on:** Audit of MCP TypeScript SDK `StreamableHTTPClientTransport` vs ExMCP `HTTP` transport.
-**Conformance status:** 200/202 client checks passing (99%). Remaining 2 failures are transport architecture issues.
+**Conformance status:** 223/223 client, 39/39 server (100%). All conformance achieved without full redesign — targeted fixes resolved the issues. This document remains as a guide for architectural improvements.
 
 ## Current Architecture
 

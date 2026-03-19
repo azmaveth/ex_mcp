@@ -58,6 +58,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Content blocks, diff details, stdout/stderr/exitCode formatting
   - Replaces simpler `extract_tool_content` with full `extract_tool_result_text`
 
+### MCP Protocol Conformance — 100% Client and Server
+- **Official MCP Conformance** — 223/223 client checks, 39/39 server checks (0 failures, 0 warnings)
+- **Full OAuth 2.1 Authorization Code Flow with PKCE** (`ExMCP.Authorization.FullOAuthFlow`)
+  - Protected Resource Metadata discovery (RFC 9728) with path-based and root fallback
+  - OIDC/OAuth AS metadata discovery with 4 URL patterns (RFC 8414)
+  - Dynamic Client Registration (RFC 7591)
+  - Local redirect server for authorization code callback
+  - Token endpoint auth method selection (client_secret_basic, client_secret_post, none)
+  - Client ID Metadata Document support (CIMD)
+  - Scope negotiation from WWW-Authenticate header and PRM scopes_supported
+  - Scope step-up on 403 insufficient_scope
+  - Resource mismatch validation (RFC 8707)
+- **HTTP Transport OAuth Integration**
+  - Automatic 401/403 → OAuth discovery → token → retry
+  - Auth loop protection (prevents infinite retry)
+  - Unified FullOAuthFlow for both pre-existing credentials and browser auth
+  - SSE POST response parsing with retry field extraction
+  - SSE forced reconnection for pending tool results
+  - Last-Event-ID propagation on reconnection
+- **Elicitation Support**
+  - `ExMCP.Client.ElicitationHandler` — configurable auto-accept/decline
+  - Capability-aware routing (method-not-found when not declared)
+  - `ExMCP.Testing.SchemaGenerator` — generate test values from JSON Schema
+- **Server-Side SSE Sessions** (`ExMCP.Server.SSESession`)
+  - Bidirectional SSE for server→client requests (elicitation, sampling)
+  - ETS-based pending request tracking
+  - GET SSE stream registration and event loop
+- **DNS Rebinding Protection** (`ExMCP.Plugs.DnsRebinding`)
+- **MessageProcessor Fixes**
+  - `deep_stringify_keys` for all handler response paths (atom→string keys)
+  - Initialize response normalization for Handler path
+  - tools/call result wrapping in `{content: [...]}` format
+  - `logging/setLevel` and `completion/complete` handlers
+  - Default protocol version updated to `2025-11-25`
+- **Test Infrastructure**
+  - `scripts/test.sh` — saves output on every run
+  - `scripts/conformance.sh` — runs official MCP conformance framework
+  - `capture_log: true` — logs shown on test failures
+  - Expected-failures baseline for CI
+- **HTTP Transport Improvements**
+  - URL auto-splitting (extract endpoint from URL path)
+  - `:sse` transport alias → HTTP with use_sse: true (was broken)
+  - SSE receive loop stability (waiting_for_session, not_supported_in_sync_mode)
+  - 405 handling for GET SSE (graceful fallback)
+  - SSE retry field parsing and timing buffer
+
 ### Removed
 - Misleading `supportedModes` from Claude and Codex capabilities (removed features that weren't actually implemented)
 

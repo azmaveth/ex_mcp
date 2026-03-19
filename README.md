@@ -29,7 +29,9 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **OAuth 2.1** -- Resource Server, JWT client auth (private_key_jwt), enterprise SSO (ID-JAG)
 - **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, telemetry
 - **Agent Client Protocol (ACP)** -- control coding agents (Gemini CLI, Claude Code, Codex, Pi, Hermes, etc.) over stdio
-- **2900+ tests** -- comprehensive suite including TypeScript SDK interop
+- **100% MCP conformance** -- 223/223 client checks, 39/39 server checks (official test suite)
+- **Full OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD
+- **2900+ tests** -- comprehensive suite including official MCP conformance
 
 ## Installation
 

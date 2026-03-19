@@ -1,7 +1,7 @@
 # Server Conformance Fixtures
 
 **Priority:** High
-**Status:** Planned
+**Status:** COMPLETE (39/39 passing)
 **Reference:** `test/conformance/server.exs` (current scaffold), TypeScript SDK `everythingServer.ts`
 
 ## Current Status

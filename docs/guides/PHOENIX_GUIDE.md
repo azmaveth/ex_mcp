@@ -10,7 +10,7 @@ ExMCP provides seamless integration with Phoenix applications through the `ExMCP
 # In mix.exs
 defp deps do
   [
-    {:ex_mcp, "~> 0.7.4"},
+    {:ex_mcp, "~> 0.9.0"},
     # ... your other dependencies
   ]
 end
