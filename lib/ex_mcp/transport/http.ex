@@ -303,10 +303,10 @@ defmodule ExMCP.Transport.HTTP do
 
   # Attempt OAuth discovery and retry if auth_config is available
   defp maybe_oauth_retry(headers, original_body, %{auth_config: nil} = state) do
-    # No explicit auth config — try full OAuth flow (discovery + PKCE)
+    # No explicit auth config — try full OAuth flow if this looks like an OAuth challenge
     www_auth = find_header(headers, "www-authenticate")
 
-    if www_auth && String.contains?(www_auth, "resource_metadata") do
+    if www_auth && String.starts_with?(www_auth, "Bearer") do
       run_full_oauth_flow(www_auth, original_body, state)
     else
       :no_challenge

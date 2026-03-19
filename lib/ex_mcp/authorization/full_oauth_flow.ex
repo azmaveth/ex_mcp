@@ -29,8 +29,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   alias ExMCP.Authorization.{
     ClientRegistration,
     OAuthFlow,
-    OIDCDiscovery,
-    ProtectedResourceMetadata
+    OIDCDiscovery
   }
 
   @type config :: %{
@@ -65,11 +64,37 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
     case prm_url do
       nil ->
-        ProtectedResourceMetadata.discover(config.resource_url)
+        # No resource_metadata in header — try path-based PRM first, then root
+        discover_prm_with_fallback(config.resource_url)
 
       url ->
         # Fetch PRM directly from the URL provided in WWW-Authenticate header
-        fetch_prm_directly(url)
+        case fetch_prm_directly(url) do
+          {:ok, _} = ok -> ok
+          {:error, _} -> discover_prm_with_fallback(config.resource_url)
+        end
+    end
+  end
+
+  # Try path-based PRM discovery first, then fall back to root well-known.
+  # Per MCP spec, path-based is /.well-known/oauth-protected-resource/mcp
+  # and root is /.well-known/oauth-protected-resource
+  defp discover_prm_with_fallback(resource_url) do
+    uri = URI.parse(resource_url)
+    base = "#{uri.scheme}://#{uri.host}#{if uri.port, do: ":#{uri.port}", else: ""}"
+    path = uri.path || ""
+
+    # Try path-based first (e.g., /.well-known/oauth-protected-resource/mcp)
+    path_based_url = "#{base}/.well-known/oauth-protected-resource#{path}"
+
+    case fetch_prm_directly(path_based_url) do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, _} ->
+        # Fall back to root (e.g., /.well-known/oauth-protected-resource)
+        root_url = "#{base}/.well-known/oauth-protected-resource"
+        fetch_prm_directly(root_url)
     end
   end
 

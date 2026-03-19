@@ -38,17 +38,45 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   def discover(issuer, opts \\ []) do
     http_client = Keyword.get(opts, :http_client)
 
-    # Try OIDC discovery first
-    oidc_url = String.trim_trailing(issuer, "/") <> @oidc_well_known_path
+    # Build candidate URLs in priority order:
+    # 1. OIDC: {issuer}/.well-known/openid-configuration
+    # 2. OAuth (OIDC style): {issuer}/.well-known/oauth-authorization-server
+    # 3. OAuth (RFC 8414 style): {base}/.well-known/oauth-authorization-server{path}
+    # 4. OIDC (RFC 8414 style): {base}/.well-known/openid-configuration{path}
+    urls = build_discovery_urls(issuer)
 
-    case fetch_metadata(oidc_url, http_client) do
-      {:ok, metadata} ->
-        {:ok, metadata}
+    try_urls(urls, http_client)
+  end
 
-      {:error, _} ->
-        # Fall back to OAuth 2.0 AS metadata
-        oauth_url = String.trim_trailing(issuer, "/") <> @oauth_well_known_path
-        fetch_metadata(oauth_url, http_client)
+  defp build_discovery_urls(issuer) do
+    trimmed = String.trim_trailing(issuer, "/")
+    uri = URI.parse(trimmed)
+    path = uri.path || ""
+
+    base =
+      "#{uri.scheme}://#{uri.host}#{if uri.port, do: ":#{uri.port}", else: ""}"
+
+    oidc_appended = trimmed <> @oidc_well_known_path
+    oauth_appended = trimmed <> @oauth_well_known_path
+
+    urls = [oidc_appended, oauth_appended]
+
+    # Add RFC 8414 style if issuer has a path component
+    if path != "" and path != "/" do
+      oauth_rfc8414 = base <> @oauth_well_known_path <> path
+      oidc_rfc8414 = base <> @oidc_well_known_path <> path
+      urls ++ [oauth_rfc8414, oidc_rfc8414]
+    else
+      urls
+    end
+  end
+
+  defp try_urls([], _http_client), do: {:error, :discovery_failed}
+
+  defp try_urls([url | rest], http_client) do
+    case fetch_metadata(url, http_client) do
+      {:ok, metadata} -> {:ok, metadata}
+      {:error, _} -> try_urls(rest, http_client)
     end
   end
 
