@@ -97,15 +97,12 @@ defmodule ConformanceClient do
     # validates the protocol interactions, not our scenario routing.
     case ExMCP.Client.list_tools(client) do
       {:ok, result} ->
-        Logger.info("list_tools result: #{inspect(result, limit: 200)}")
-        # Handle both string and atom keys (atom keys from in-VM paths)
-        tools = result["tools"] || result[:tools] || []
+        tools = result["tools"] || []
         Logger.info("Listed #{length(tools)} tools")
 
         for tool <- tools do
-          name = tool["name"] || tool[:name]
-          schema = tool["inputSchema"] || tool[:inputSchema]
-          args = ExMCP.Testing.SchemaGenerator.generate_args(schema)
+          name = tool["name"]
+          args = ExMCP.Testing.SchemaGenerator.generate_args(tool["inputSchema"])
           Logger.info("Calling tool: #{name}")
 
           case ExMCP.Client.call_tool(client, name, args) do

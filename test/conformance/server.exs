@@ -1,26 +1,34 @@
 # ExMCP Conformance Test Server
 #
-# Implements the "everything server" pattern for MCP conformance testing.
-# Matches the TypeScript SDK's everythingServer.ts fixtures.
+# Implements the "everything server" for MCP conformance testing.
+# Uses library infrastructure (HttpPlug, SSESession, DnsRebinding).
+# Tool/resource/prompt definitions are the only test-specific code.
 #
 # Start with: elixir test/conformance/server.exs [port]
 # Then run:   npx @modelcontextprotocol/conformance server --url http://localhost:PORT/mcp
 
 Mix.install([{:ex_mcp, path: "."}, {:plug_cowboy, "~> 2.7"}, {:jason, "~> 1.4"}])
 
-defmodule ConformanceServer do
+# ── Test Data ────────────────────────────────────────────────────
+
+# 1x1 red PNG pixel
+test_image =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+
+# Minimal WAV file
+test_audio = "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAA="
+
+# Store in application env so handler module can access them
+Application.put_env(:conformance, :test_image, test_image)
+Application.put_env(:conformance, :test_audio, test_audio)
+
+# ── Handler (tools, resources, prompts) ──────────────────────────
+
+defmodule ConformanceHandler do
   use ExMCP.Server.Handler
 
-  # Test data matching TypeScript SDK
-  # 1x1 red PNG pixel
-  @test_image_base64 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
-  # Minimal WAV file
-  @test_audio_base64 "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAA="
-
   @impl true
-  def init(_args) do
-    {:ok, %{subscriptions: MapSet.new()}}
-  end
+  def init(_args), do: {:ok, %{subscriptions: MapSet.new()}}
 
   @impl true
   def handle_initialize(_params, state) do
@@ -38,10 +46,14 @@ defmodule ConformanceServer do
      }, state}
   end
 
-  # ── Tools ──────────────────────────────────────────────────────
+  # ── Tools ────────────────────────────────────────────────────
 
   @impl true
   def handle_list_tools(_cursor, state) do
+    image = Application.get_env(:conformance, :test_image)
+    audio = Application.get_env(:conformance, :test_audio)
+    _ = {image, audio}
+
     tools = [
       %{
         name: "test_simple_text",
@@ -65,12 +77,12 @@ defmodule ConformanceServer do
       },
       %{
         name: "test_multiple_content_types",
-        description: "Tests response with multiple content types (text, image, resource)",
+        description: "Tests response with multiple content types",
         inputSchema: %{type: "object", properties: %{}}
       },
       %{
         name: "test_tool_with_logging",
-        description: "Tests tool that emits log messages during execution",
+        description: "Tests tool that emits log messages",
         inputSchema: %{type: "object", properties: %{}}
       },
       %{
@@ -80,26 +92,36 @@ defmodule ConformanceServer do
       },
       %{
         name: "test_tool_with_progress",
-        description: "Tests tool that reports progress notifications",
+        description: "Tests tool that reports progress",
         inputSchema: %{type: "object", properties: %{}}
       },
       %{
         name: "test_sampling",
-        description: "Tests server-initiated sampling (LLM completion request)",
+        description: "Tests server-initiated sampling",
         inputSchema: %{
           type: "object",
-          properties: %{prompt: %{type: "string", description: "The prompt to send to the LLM"}},
+          properties: %{prompt: %{type: "string"}},
           required: ["prompt"]
         }
       },
       %{
         name: "test_elicitation",
-        description: "Tests server-initiated elicitation (user input request)",
+        description: "Tests server-initiated elicitation",
         inputSchema: %{
           type: "object",
-          properties: %{message: %{type: "string", description: "The message to show the user"}},
+          properties: %{message: %{type: "string"}},
           required: ["message"]
         }
+      },
+      %{
+        name: "test_elicitation_sep1034_defaults",
+        description: "Tests elicitation with defaults",
+        inputSchema: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "test_elicitation_sep1330_enums",
+        description: "Tests elicitation with enums",
+        inputSchema: %{type: "object", properties: %{}}
       }
     ]
 
@@ -112,11 +134,25 @@ defmodule ConformanceServer do
   end
 
   def handle_call_tool("test_image_content", _args, state) do
-    {:ok, [%{type: "image", data: @test_image_base64, mimeType: "image/png"}], state}
+    {:ok,
+     [
+       %{
+         type: "image",
+         data: Application.get_env(:conformance, :test_image),
+         mimeType: "image/png"
+       }
+     ], state}
   end
 
   def handle_call_tool("test_audio_content", _args, state) do
-    {:ok, [%{type: "audio", data: @test_audio_base64, mimeType: "audio/wav"}], state}
+    {:ok,
+     [
+       %{
+         type: "audio",
+         data: Application.get_env(:conformance, :test_audio),
+         mimeType: "audio/wav"
+       }
+     ], state}
   end
 
   def handle_call_tool("test_embedded_resource", _args, state) do
@@ -137,7 +173,11 @@ defmodule ConformanceServer do
     {:ok,
      [
        %{type: "text", text: "Multiple content types test:"},
-       %{type: "image", data: @test_image_base64, mimeType: "image/png"},
+       %{
+         type: "image",
+         data: Application.get_env(:conformance, :test_image),
+         mimeType: "image/png"
+       },
        %{
          type: "resource",
          resource: %{
@@ -149,97 +189,91 @@ defmodule ConformanceServer do
      ], state}
   end
 
-  def handle_call_tool("test_tool_with_logging", _args, state) do
-    # Logging is handled by SSE interceptor in ConformanceRouter
-    {:ok, [%{type: "text", text: "Tool with logging executed successfully"}], state}
-  end
+  # These are handled by SSE router, but we need stubs for tool listing
+  def handle_call_tool("test_tool_with_logging", _args, state),
+    do: {:ok, [%{type: "text", text: "Tool with logging executed successfully"}], state}
 
-  def handle_call_tool("test_error_handling", _args, state) do
-    {:error, "This tool intentionally returns an error for testing", state}
-  end
+  def handle_call_tool("test_tool_with_progress", _args, state),
+    do: {:ok, [%{type: "text", text: "0"}], state}
 
-  def handle_call_tool("test_tool_with_progress", _args, state) do
-    # TODO: emit notifications/progress during execution
-    {:ok, [%{type: "text", text: "0"}], state}
-  end
+  def handle_call_tool("test_sampling", %{"prompt" => p}, state),
+    do: {:ok, [%{type: "text", text: "Sampling: #{p}"}], state}
 
-  def handle_call_tool("test_sampling", %{"prompt" => prompt}, state) do
-    # TODO: send sampling/createMessage to client
-    {:ok, [%{type: "text", text: "Sampling not supported: #{prompt}"}], state}
-  end
+  def handle_call_tool("test_elicitation", %{"message" => m}, state),
+    do: {:ok, [%{type: "text", text: "Elicitation: #{m}"}], state}
 
-  def handle_call_tool("test_elicitation", %{"message" => message}, state) do
-    # TODO: send elicitation/create to client
-    {:ok, [%{type: "text", text: "Elicitation not supported: #{message}"}], state}
-  end
+  def handle_call_tool("test_elicitation_sep1034_defaults", _args, state),
+    do: {:ok, [%{type: "text", text: "Elicitation defaults"}], state}
 
-  def handle_call_tool(name, _args, state) do
-    {:error, "Unknown tool: #{name}", state}
-  end
+  def handle_call_tool("test_elicitation_sep1330_enums", _args, state),
+    do: {:ok, [%{type: "text", text: "Elicitation enums"}], state}
 
-  # ── Resources ──────────────────────────────────────────────────
+  def handle_call_tool("test_error_handling", _args, state),
+    do: {:error, "This tool intentionally returns an error for testing", state}
+
+  def handle_call_tool(name, _args, state), do: {:error, "Unknown tool: #{name}", state}
+
+  # ── Resources ────────────────────────────────────────────────
 
   @impl true
   def handle_list_resources(_cursor, state) do
-    resources = [
-      %{
-        uri: "test://static-text",
-        name: "Static Text Resource",
-        description: "A static text resource for testing",
-        mimeType: "text/plain"
-      },
-      %{
-        uri: "test://static-binary",
-        name: "Static Binary Resource",
-        description: "A static binary resource (image) for testing",
-        mimeType: "image/png"
-      },
-      %{
-        uri: "test://watched-resource",
-        name: "Watched Resource",
-        description: "A resource that can be subscribed to",
-        mimeType: "text/plain"
-      }
-    ]
-
-    {:ok, resources, nil, state}
-  end
-
-  @impl true
-  def handle_read_resource("test://static-text", state) do
     {:ok,
      [
        %{
          uri: "test://static-text",
-         mimeType: "text/plain",
-         text: "This is the content of the static text resource."
-       }
-     ], state}
-  end
-
-  def handle_read_resource("test://static-binary", state) do
-    {:ok,
-     [
+         name: "Static Text Resource",
+         description: "A static text resource",
+         mimeType: "text/plain"
+       },
        %{
          uri: "test://static-binary",
-         mimeType: "image/png",
-         blob: @test_image_base64
-       }
-     ], state}
-  end
-
-  def handle_read_resource("test://watched-resource", state) do
-    {:ok,
-     [
+         name: "Static Binary Resource",
+         description: "A static binary resource",
+         mimeType: "image/png"
+       },
        %{
          uri: "test://watched-resource",
-         mimeType: "text/plain",
-         text: "Watched resource content"
+         name: "Watched Resource",
+         description: "A subscribable resource",
+         mimeType: "text/plain"
        }
-     ], state}
+     ], nil, state}
   end
 
-  # Handle template URIs
+  @impl true
+  def handle_read_resource("test://static-text", state),
+    do:
+      {:ok,
+       [
+         %{
+           uri: "test://static-text",
+           mimeType: "text/plain",
+           text: "This is the content of the static text resource."
+         }
+       ], state}
+
+  def handle_read_resource("test://static-binary", state),
+    do:
+      {:ok,
+       [
+         %{
+           uri: "test://static-binary",
+           mimeType: "image/png",
+           blob: Application.get_env(:conformance, :test_image)
+         }
+       ], state}
+
+  def handle_read_resource("test://watched-resource", state),
+    do:
+      {:ok,
+       [
+         %{
+           uri: "test://watched-resource",
+           mimeType: "text/plain",
+           text: "Watched resource content"
+         }
+       ], state}
+
   def handle_read_resource("test://template/" <> rest, state) do
     id = rest |> String.split("/") |> List.first()
 
@@ -253,73 +287,64 @@ defmodule ConformanceServer do
      ], state}
   end
 
-  def handle_read_resource(uri, state) do
-    {:error, "Resource not found: #{uri}", state}
-  end
-
-  # ── Resource Templates ─────────────────────────────────────────
+  def handle_read_resource(uri, state), do: {:error, "Resource not found: #{uri}", state}
 
   @impl true
   def handle_list_resource_templates(_cursor, state) do
-    templates = [
-      %{
-        uriTemplate: "test://template/{id}/data",
-        name: "Resource Template",
-        description: "A resource template with parameter substitution",
-        mimeType: "application/json"
-      }
-    ]
-
-    {:ok, templates, nil, state}
+    {:ok,
+     [
+       %{
+         uriTemplate: "test://template/{id}/data",
+         name: "Resource Template",
+         description: "A resource template",
+         mimeType: "application/json"
+       }
+     ], nil, state}
   end
 
-  # ── Prompts ────────────────────────────────────────────────────
+  @impl true
+  def handle_subscribe_resource(uri, state),
+    do: {:ok, %{state | subscriptions: MapSet.put(state.subscriptions, uri)}}
+
+  @impl true
+  def handle_unsubscribe_resource(uri, state),
+    do: {:ok, %{state | subscriptions: MapSet.delete(state.subscriptions, uri)}}
+
+  # ── Prompts ────────────────────────────────────────────────
 
   @impl true
   def handle_list_prompts(_cursor, state) do
-    prompts = [
-      %{
-        name: "test_simple_prompt",
-        description: "A simple prompt without arguments"
-      },
-      %{
-        name: "test_prompt_with_arguments",
-        description: "A prompt with required arguments",
-        arguments: [
-          %{name: "arg1", description: "First test argument", required: true},
-          %{name: "arg2", description: "Second test argument", required: true}
-        ]
-      },
-      %{
-        name: "test_prompt_with_embedded_resource",
-        description: "A prompt that includes an embedded resource",
-        arguments: [
-          %{name: "resourceUri", description: "URI of the resource to embed", required: true}
-        ]
-      },
-      %{
-        name: "test_prompt_with_image",
-        description: "A prompt that includes image content"
-      }
-    ]
-
-    {:ok, prompts, nil, state}
+    {:ok,
+     [
+       %{name: "test_simple_prompt", description: "A simple prompt without arguments"},
+       %{
+         name: "test_prompt_with_arguments",
+         description: "A prompt with required arguments",
+         arguments: [
+           %{name: "arg1", description: "First argument", required: true},
+           %{name: "arg2", description: "Second argument", required: true}
+         ]
+       },
+       %{
+         name: "test_prompt_with_embedded_resource",
+         description: "A prompt with embedded resource",
+         arguments: [%{name: "resourceUri", description: "URI of resource", required: true}]
+       },
+       %{name: "test_prompt_with_image", description: "A prompt with image content"}
+     ], nil, state}
   end
 
   @impl true
-  def handle_get_prompt("test_simple_prompt", _args, state) do
-    {:ok,
-     %{
-       messages: [
-         %{role: "user", content: %{type: "text", text: "This is a simple prompt for testing."}}
-       ]
-     }, state}
-  end
+  def handle_get_prompt("test_simple_prompt", _args, state),
+    do:
+      {:ok,
+       %{
+         messages: [
+           %{role: "user", content: %{type: "text", text: "This is a simple prompt for testing."}}
+         ]
+       }, state}
 
   def handle_get_prompt("test_prompt_with_arguments", args, state) do
-    arg1 = Map.get(args, "arg1", "")
-    arg2 = Map.get(args, "arg2", "")
-
     {:ok,
      %{
        messages: [
@@ -327,7 +352,7 @@ defmodule ConformanceServer do
            role: "user",
            content: %{
              type: "text",
-             text: "Prompt with arguments: arg1='#{arg1}', arg2='#{arg2}'"
+             text: "Prompt with arguments: arg1='#{args["arg1"]}', arg2='#{args["arg2"]}'"
            }
          }
        ]
@@ -335,7 +360,7 @@ defmodule ConformanceServer do
   end
 
   def handle_get_prompt("test_prompt_with_embedded_resource", args, state) do
-    resource_uri = Map.get(args, "resourceUri", "test://embedded-resource")
+    uri = args["resourceUri"] || "test://embedded-resource"
 
     {:ok,
      %{
@@ -345,7 +370,7 @@ defmodule ConformanceServer do
            content: %{
              type: "resource",
              resource: %{
-               uri: resource_uri,
+               uri: uri,
                mimeType: "text/plain",
                text: "Embedded resource content for testing."
              }
@@ -353,10 +378,7 @@ defmodule ConformanceServer do
          },
          %{
            role: "user",
-           content: %{
-             type: "text",
-             text: "Please process the embedded resource above."
-           }
+           content: %{type: "text", text: "Please process the embedded resource above."}
          }
        ]
      }, state}
@@ -370,260 +392,124 @@ defmodule ConformanceServer do
            role: "user",
            content: %{
              type: "image",
-             data: @test_image_base64,
+             data: Application.get_env(:conformance, :test_image),
              mimeType: "image/png"
            }
          },
-         %{
-           role: "user",
-           content: %{type: "text", text: "Please analyze the image above."}
-         }
+         %{role: "user", content: %{type: "text", text: "Please analyze the image above."}}
        ]
      }, state}
   end
 
-  def handle_get_prompt(name, _args, state) do
-    {:error, "Unknown prompt: #{name}", state}
-  end
-
-  # ── Subscribe/Unsubscribe ──────────────────────────────────────
-
-  @impl true
-  def handle_subscribe_resource(uri, state) do
-    {:ok, %{state | subscriptions: MapSet.put(state.subscriptions, uri)}}
-  end
-
-  @impl true
-  def handle_unsubscribe_resource(uri, state) do
-    {:ok, %{state | subscriptions: MapSet.delete(state.subscriptions, uri)}}
-  end
+  def handle_get_prompt(name, _args, state), do: {:error, "Unknown prompt: #{name}", state}
 end
 
-# Parse port from args
-port = String.to_integer(List.first(System.argv(), "3001"))
+# ── SSE Router (handles bidirectional tools) ─────────────────────
 
-IO.puts("Starting ExMCP conformance server on port #{port}...")
-
-IO.puts(
-  "Test with: npx @modelcontextprotocol/conformance server --url http://localhost:#{port}/mcp"
-)
-
-# DNS rebinding protection plug
-defmodule DnsRebindingPlug do
-  @behaviour Plug
-  import Plug.Conn
-
-  @impl true
-  def init(opts), do: opts
-
-  @impl true
-  def call(conn, _opts) do
-    host = get_req_header(conn, "host") |> List.first("")
-
-    # Strip port from host header
-    hostname = host |> String.split(":") |> List.first() |> String.downcase()
-
-    if hostname in ["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"] do
-      conn
-    else
-      conn
-      |> put_resp_content_type("text/plain")
-      |> send_resp(403, "Forbidden: Invalid Host header")
-      |> halt()
-    end
-  end
-end
-
-# Compose plugs: DNS protection → custom POST handler → MCP handler
 defmodule ConformanceRouter do
   @behaviour Plug
   import Plug.Conn
   require Logger
 
-  # Tools that need SSE streaming
-  # Tools that need SSE streaming
+  alias ExMCP.Plugs.DnsRebinding
+  alias ExMCP.Server.SSESession
+
   @sse_tools ~w(test_tool_with_logging test_tool_with_progress test_sampling test_elicitation test_elicitation_sep1034_defaults test_elicitation_sep1330_enums)
 
-  # Session state: maps session_id → %{sse_conn: conn, pending: queue}
-  # Using ETS for cross-process state
-  def init_sessions do
-    if :ets.info(:conformance_sessions) == :undefined do
-      :ets.new(:conformance_sessions, [:set, :public, :named_table])
-    end
-  end
-
-  def store_sse_conn(session_id, pid) do
-    :ets.insert(:conformance_sessions, {session_id, pid})
-  end
-
-  def get_sse_pid(session_id) do
-    case :ets.lookup(:conformance_sessions, session_id) do
-      [{_, pid}] -> pid
-      _ -> nil
-    end
-  end
-
-  # ETS for pending server→client requests
-  def ensure_ets do
-    if :ets.info(:conformance_pending) == :undefined do
-      :ets.new(:conformance_pending, [:set, :public, :named_table])
-    end
-  end
-
-  @mcp_plug_opts ExMCP.HttpPlug.init(
-                   handler: ConformanceServer,
-                   server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
-                   sse_enabled: true,
-                   cors_enabled: true
-                 )
+  @mcp_opts ExMCP.HttpPlug.init(
+              handler: ConformanceHandler,
+              server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
+              sse_enabled: true,
+              cors_enabled: true
+            )
 
   @impl true
   def init(_opts), do: []
 
   @impl true
   def call(conn, _opts) do
-    ensure_ets()
+    SSESession.init()
 
-    # DNS rebinding check first
-    conn = DnsRebindingPlug.call(conn, [])
-
-    if conn.halted do
-      conn
-    else
-      case conn.method do
-        "POST" -> handle_post(conn)
-        "GET" -> handle_get(conn)
-        _ -> ExMCP.HttpPlug.call(conn, @mcp_plug_opts)
-      end
-    end
+    # DNS rebinding protection
+    conn = DnsRebinding.call(conn, DnsRebinding.init([]))
+    if conn.halted, do: conn, else: route(conn)
   end
 
-  # Handle GET requests — SSE stream for server→client messages
-  defp handle_get(conn) do
-    accepts_sse =
-      conn
-      |> get_req_header("accept")
-      |> Enum.any?(&String.contains?(&1, "text/event-stream"))
-
-    if accepts_sse do
-      session_id = get_session_id(conn)
-      handle_get_sse(conn, session_id)
-    else
-      ExMCP.HttpPlug.call(conn, @mcp_plug_opts)
-    end
-  end
-
-  # Start GET SSE stream — register this process so tool handlers can send to it
-  defp handle_get_sse(conn, session_id) do
-    conn =
-      conn
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("connection", "keep-alive")
-      |> put_resp_header("mcp-session-id", session_id)
-      |> send_chunked(200)
-
-    # Register this process as the SSE stream for this session
-    :ets.insert(:conformance_pending, {"sse_pid:#{session_id}", self()})
-
-    # Keep connection alive, forwarding messages as SSE events
-    sse_loop(conn, session_id)
-  end
-
-  defp sse_loop(conn, session_id) do
-    receive do
-      {:sse_send, data} ->
-        case chunk(conn, "event: message\ndata: #{Jason.encode!(data)}\n\n") do
-          {:ok, conn} -> sse_loop(conn, session_id)
-          {:error, _} -> conn
-        end
-
-      :sse_close ->
-        conn
-    after
-      60_000 ->
-        # Keep-alive timeout
-        conn
-    end
-  end
-
-  defp handle_post(conn) do
-    {:ok, body, conn} = Plug.Conn.read_body(conn)
+  defp route(%{method: "POST"} = conn) do
+    {:ok, body, conn} = read_body(conn)
 
     case Jason.decode(body) do
-      {:ok, %{"method" => "tools/call", "params" => %{"name" => name}, "id" => id} = request}
+      {:ok, %{"method" => "tools/call", "params" => %{"name" => name}, "id" => id} = req}
       when name in @sse_tools ->
-        handle_sse_tool(conn, name, id, request)
+        handle_sse_tool(conn, name, id, req)
 
-      # Client response to a server-initiated request (has "result" or "error", no "method")
-      {:ok, %{"id" => id, "result" => result}} when is_integer(id) or is_binary(id) ->
-        handle_client_response(conn, id, {:ok, result})
+      {:ok, %{"id" => id, "result" => result}} when not is_nil(id) ->
+        SSESession.handle_response(id, {:ok, result})
+        conn |> put_resp_header("mcp-session-id", session_id(conn)) |> send_resp(202, "")
 
-      {:ok, %{"id" => id, "error" => error}} when is_integer(id) or is_binary(id) ->
-        handle_client_response(conn, id, {:error, error})
+      {:ok, %{"id" => id, "error" => error}} when not is_nil(id) ->
+        SSESession.handle_response(id, {:error, error})
+        conn |> put_resp_header("mcp-session-id", session_id(conn)) |> send_resp(202, "")
 
       _ ->
         handle_normal_post(conn, body)
     end
   end
 
-  # Route client response back to the waiting tool handler
-  defp handle_client_response(conn, id, result) do
-    session_id = get_session_id(conn)
-    key = "pending:#{id}"
+  defp route(%{method: "GET"} = conn) do
+    if Enum.any?(get_req_header(conn, "accept"), &String.contains?(&1, "text/event-stream")) do
+      sid = session_id(conn)
+      SSESession.register_sse_stream(sid)
 
-    case :ets.lookup(:conformance_pending, key) do
-      [{_, pid}] ->
-        :ets.delete(:conformance_pending, key)
-        send(pid, {:client_response, id, result})
-
-        conn
-        |> put_resp_header("mcp-session-id", session_id)
-        |> send_resp(202, "")
-
-      _ ->
-        # No pending request — might be a regular response, pass through
-        handle_normal_post(conn, Jason.encode!(%{id: id, result: result}))
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("mcp-session-id", sid)
+      |> send_chunked(200)
+      |> then(&SSESession.run_sse_loop(&1, sid))
+    else
+      ExMCP.HttpPlug.call(conn, @mcp_opts)
     end
   end
+
+  defp route(conn), do: ExMCP.HttpPlug.call(conn, @mcp_opts)
 
   defp handle_normal_post(conn, body) do
     case Jason.decode(body) do
       {:ok, request} ->
-        session_id = get_session_id(conn)
-
+        sid = session_id(conn)
         mcp_conn = ExMCP.MessageProcessor.new(request, transport: :http)
 
         processed =
           ExMCP.MessageProcessor.process(mcp_conn, %{
-            handler: ConformanceServer,
+            handler: ConformanceHandler,
             server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"}
           })
 
+        req_id = request["id"]
+
         case processed.response do
+          nil when req_id == nil ->
+            conn |> put_resp_header("mcp-session-id", sid) |> send_resp(202, "")
+
           nil ->
-            if Map.get(request, "id") == nil do
-              conn
-              |> put_resp_header("mcp-session-id", session_id)
-              |> send_resp(202, "")
-            else
-              conn
-              |> put_resp_content_type("application/json")
-              |> put_resp_header("mcp-session-id", session_id)
-              |> send_resp(
-                500,
-                Jason.encode!(%{
-                  jsonrpc: "2.0",
-                  error: %{code: -32603, message: "No response"},
-                  id: request["id"]
-                })
-              )
-            end
+            conn
+            |> put_resp_content_type("application/json")
+            |> put_resp_header("mcp-session-id", sid)
+            |> send_resp(
+              500,
+              Jason.encode!(%{
+                jsonrpc: "2.0",
+                error: %{code: -32603, message: "No response"},
+                id: request["id"]
+              })
+            )
 
           response ->
             conn
             |> put_resp_content_type("application/json")
-            |> put_resp_header("mcp-session-id", session_id)
+            |> put_resp_header("mcp-session-id", sid)
             |> put_resp_header("mcp-protocol-version", "2025-11-25")
             |> send_resp(200, Jason.encode!(response))
         end
@@ -638,120 +524,73 @@ defmodule ConformanceRouter do
     end
   end
 
-  defp handle_sse_tool(conn, "test_tool_with_logging", id, _request) do
-    session_id = get_session_id(conn)
+  # ── SSE Tool Handlers ────────────────────────────────────────
+
+  defp handle_sse_tool(conn, name, id, req) do
+    sid = session_id(conn)
 
     conn =
       conn
       |> put_resp_header("content-type", "text/event-stream")
       |> put_resp_header("cache-control", "no-cache")
       |> put_resp_header("connection", "keep-alive")
-      |> put_resp_header("mcp-session-id", session_id)
+      |> put_resp_header("mcp-session-id", sid)
       |> send_chunked(200)
 
-    # Send log notifications
+    do_sse_tool(conn, name, id, req, sid)
+  end
+
+  defp do_sse_tool(conn, "test_tool_with_logging", id, _req, _sid) do
     for msg <- ["Tool execution started", "Tool processing data", "Tool execution completed"] do
-      notification = %{
+      sse_event(conn, %{
         jsonrpc: "2.0",
         method: "notifications/message",
         params: %{level: "info", logger: "conformance-test-server", data: msg}
-      }
+      })
 
-      {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(notification)}\n\n")
       Process.sleep(50)
     end
 
-    # Send result
-    result = %{
+    sse_event(conn, %{
       jsonrpc: "2.0",
       id: id,
       result: %{content: [%{type: "text", text: "Tool with logging executed successfully"}]}
-    }
+    })
 
-    {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(result)}\n\n")
     conn
   end
 
-  defp handle_sse_tool(conn, "test_tool_with_progress", id, request) do
-    session_id = get_session_id(conn)
-    progress_token = get_in(request, ["params", "_meta", "progressToken"]) || 0
+  defp do_sse_tool(conn, "test_tool_with_progress", id, req, _sid) do
+    token = get_in(req, ["params", "_meta", "progressToken"]) || 0
 
-    conn =
-      conn
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("connection", "keep-alive")
-      |> put_resp_header("mcp-session-id", session_id)
-      |> send_chunked(200)
-
-    # Send progress notifications
-    for {progress, total} <- [{0, 100}, {50, 100}, {100, 100}] do
-      notification = %{
+    for {p, t} <- [{0, 100}, {50, 100}, {100, 100}] do
+      sse_event(conn, %{
         jsonrpc: "2.0",
         method: "notifications/progress",
         params: %{
-          progressToken: progress_token,
-          progress: progress,
-          total: total,
-          message: "Completed step #{progress} of #{total}"
+          progressToken: token,
+          progress: p,
+          total: t,
+          message: "Completed step #{p} of #{t}"
         }
-      }
+      })
 
-      {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(notification)}\n\n")
       Process.sleep(50)
     end
 
-    # Send result
-    result = %{
+    sse_event(conn, %{
       jsonrpc: "2.0",
       id: id,
-      result: %{content: [%{type: "text", text: "#{progress_token}"}]}
-    }
+      result: %{content: [%{type: "text", text: "#{token}"}]}
+    })
 
-    {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(result)}\n\n")
     conn
   end
 
-  # Helper: send a request to the client via GET SSE stream and wait for response
-  defp send_server_request(session_id, request_id, method, params) do
-    sse_key = "sse_pid:#{session_id}"
+  defp do_sse_tool(conn, "test_sampling", id, req, sid) do
+    prompt = get_in(req, ["params", "arguments", "prompt"]) || "Test prompt"
 
-    case :ets.lookup(:conformance_pending, sse_key) do
-      [{_, sse_pid}] ->
-        # Register this process to receive the response
-        :ets.insert(:conformance_pending, {"pending:#{request_id}", self()})
-
-        # Send request via SSE stream
-        request = %{jsonrpc: "2.0", id: request_id, method: method, params: params}
-        send(sse_pid, {:sse_send, request})
-
-        # Wait for client response
-        receive do
-          {:client_response, ^request_id, result} -> result
-        after
-          10_000 -> {:error, "Timeout waiting for client response"}
-        end
-
-      _ ->
-        {:error, "No SSE stream for session #{session_id}"}
-    end
-  end
-
-  defp handle_sse_tool(conn, "test_sampling", id, request) do
-    session_id = get_session_id(conn)
-    prompt = get_in(request, ["params", "arguments", "prompt"]) || "Test prompt"
-
-    conn =
-      conn
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("mcp-session-id", session_id)
-      |> send_chunked(200)
-
-    # Send sampling request to client via GET SSE
-    req_id = System.unique_integer([:positive])
-
-    case send_server_request(session_id, req_id, "sampling/createMessage", %{
+    case SSESession.send_request(sid, "sampling/createMessage", %{
            messages: [%{role: "user", content: %{type: "text", text: prompt}}],
            maxTokens: 100
          }) do
@@ -760,41 +599,27 @@ defmodule ConformanceRouter do
           get_in(result, ["content", "text"]) || get_in(result, ["message", "content", "text"]) ||
             "No response"
 
-        tool_result = %{
+        sse_event(conn, %{
           jsonrpc: "2.0",
           id: id,
           result: %{content: [%{type: "text", text: "LLM response: #{text}"}]}
-        }
-
-        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+        })
 
       {:error, reason} ->
-        tool_result = %{
+        sse_event(conn, %{
           jsonrpc: "2.0",
           id: id,
-          result: %{content: [%{type: "text", text: "Sampling error: #{reason}"}]}
-        }
-
-        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+          result: %{content: [%{type: "text", text: "Sampling error: #{inspect(reason)}"}]}
+        })
     end
 
     conn
   end
 
-  defp handle_sse_tool(conn, "test_elicitation", id, request) do
-    session_id = get_session_id(conn)
-    message = get_in(request, ["params", "arguments", "message"]) || "Please provide info"
+  defp do_sse_tool(conn, "test_elicitation", id, req, sid) do
+    message = get_in(req, ["params", "arguments", "message"]) || "Please provide info"
 
-    conn =
-      conn
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("mcp-session-id", session_id)
-      |> send_chunked(200)
-
-    req_id = System.unique_integer([:positive])
-
-    case send_server_request(session_id, req_id, "elicitation/create", %{
+    case SSESession.send_request(sid, "elicitation/create", %{
            message: message,
            requestedSchema: %{
              type: "object",
@@ -803,67 +628,55 @@ defmodule ConformanceRouter do
            }
          }) do
       {:ok, result} ->
-        action = result["action"] || "unknown"
-        content = Jason.encode!(result["content"] || %{})
-
-        tool_result = %{
+        sse_event(conn, %{
           jsonrpc: "2.0",
           id: id,
           result: %{
             content: [
-              %{type: "text", text: "User response: action=#{action}, content=#{content}"}
+              %{
+                type: "text",
+                text:
+                  "User response: action=#{result["action"]}, content=#{Jason.encode!(result["content"] || %{})}"
+              }
             ]
           }
-        }
-
-        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+        })
 
       {:error, reason} ->
-        tool_result = %{
+        sse_event(conn, %{
           jsonrpc: "2.0",
           id: id,
-          result: %{content: [%{type: "text", text: "Elicitation error: #{reason}"}]}
-        }
-
-        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+          result: %{content: [%{type: "text", text: "Elicitation error: #{inspect(reason)}"}]}
+        })
     end
 
     conn
   end
 
-  defp handle_sse_tool(conn, "test_elicitation_sep1034_defaults", id, _request) do
-    session_id = get_session_id(conn)
+  defp do_sse_tool(conn, "test_elicitation_sep1034_defaults", id, _req, sid) do
+    schema = %{
+      type: "object",
+      properties: %{
+        name: %{type: "string", description: "User name", default: "John Doe"},
+        age: %{type: "integer", description: "User age", default: 30},
+        score: %{type: "number", description: "User score", default: 95.5},
+        status: %{
+          type: "string",
+          description: "User status",
+          enum: ["active", "inactive", "pending"],
+          default: "active"
+        },
+        verified: %{type: "boolean", description: "Verification status", default: true}
+      },
+      required: []
+    }
 
-    conn =
-      conn
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("mcp-session-id", session_id)
-      |> send_chunked(200)
-
-    req_id = System.unique_integer([:positive])
-
-    case send_server_request(session_id, req_id, "elicitation/create", %{
+    case SSESession.send_request(sid, "elicitation/create", %{
            message: "Please review and update the form fields with defaults",
-           requestedSchema: %{
-             type: "object",
-             properties: %{
-               name: %{type: "string", description: "User name", default: "John Doe"},
-               age: %{type: "integer", description: "User age", default: 30},
-               score: %{type: "number", description: "User score", default: 95.5},
-               status: %{
-                 type: "string",
-                 description: "User status",
-                 enum: ["active", "inactive", "pending"],
-                 default: "active"
-               },
-               verified: %{type: "boolean", description: "Verification status", default: true}
-             },
-             required: []
-           }
+           requestedSchema: schema
          }) do
       {:ok, result} ->
-        tool_result = %{
+        sse_event(conn, %{
           jsonrpc: "2.0",
           id: id,
           result: %{
@@ -875,86 +688,73 @@ defmodule ConformanceRouter do
               }
             ]
           }
-        }
-
-        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+        })
 
       {:error, reason} ->
-        tool_result = %{
+        sse_event(conn, %{
           jsonrpc: "2.0",
           id: id,
-          result: %{content: [%{type: "text", text: "Error: #{reason}"}]}
-        }
-
-        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+          result: %{content: [%{type: "text", text: "Error: #{inspect(reason)}"}]}
+        })
     end
 
     conn
   end
 
-  defp handle_sse_tool(conn, "test_elicitation_sep1330_enums", id, _request) do
-    session_id = get_session_id(conn)
+  defp do_sse_tool(conn, "test_elicitation_sep1330_enums", id, _req, sid) do
+    schema = %{
+      type: "object",
+      properties: %{
+        untitledSingle: %{
+          type: "string",
+          description: "Select one option",
+          enum: ["option1", "option2", "option3"]
+        },
+        titledSingle: %{
+          type: "string",
+          description: "Select one with titles",
+          oneOf: [
+            %{const: "value1", title: "First Option"},
+            %{const: "value2", title: "Second Option"},
+            %{const: "value3", title: "Third Option"}
+          ]
+        },
+        legacyEnum: %{
+          type: "string",
+          description: "Select one (legacy)",
+          enum: ["opt1", "opt2", "opt3"],
+          enumNames: ["Option One", "Option Two", "Option Three"]
+        },
+        untitledMulti: %{
+          type: "array",
+          description: "Select multiple",
+          minItems: 1,
+          maxItems: 3,
+          items: %{type: "string", enum: ["option1", "option2", "option3"]}
+        },
+        titledMulti: %{
+          type: "array",
+          description: "Select multiple with titles",
+          minItems: 1,
+          maxItems: 3,
+          items: %{
+            anyOf: [
+              %{const: "value1", title: "First Choice"},
+              %{const: "value2", title: "Second Choice"},
+              %{const: "value3", title: "Third Choice"}
+            ]
+          }
+        }
+      },
+      required: []
+    }
 
-    conn =
-      conn
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("mcp-session-id", session_id)
-      |> send_chunked(200)
-
-    req_id = System.unique_integer([:positive])
-
-    case send_server_request(session_id, req_id, "elicitation/create", %{
+    case SSESession.send_request(sid, "elicitation/create", %{
            message: "Please select options from the enum fields",
-           requestedSchema: %{
-             type: "object",
-             properties: %{
-               untitledSingle: %{
-                 type: "string",
-                 description: "Select one option",
-                 enum: ["option1", "option2", "option3"]
-               },
-               titledSingle: %{
-                 type: "string",
-                 description: "Select one with titles",
-                 oneOf: [
-                   %{const: "value1", title: "First Option"},
-                   %{const: "value2", title: "Second Option"},
-                   %{const: "value3", title: "Third Option"}
-                 ]
-               },
-               legacyEnum: %{
-                 type: "string",
-                 description: "Select one (legacy)",
-                 enum: ["opt1", "opt2", "opt3"],
-                 enumNames: ["Option One", "Option Two", "Option Three"]
-               },
-               untitledMulti: %{
-                 type: "array",
-                 description: "Select multiple",
-                 minItems: 1,
-                 maxItems: 3,
-                 items: %{type: "string", enum: ["option1", "option2", "option3"]}
-               },
-               titledMulti: %{
-                 type: "array",
-                 description: "Select multiple with titles",
-                 minItems: 1,
-                 maxItems: 3,
-                 items: %{
-                   anyOf: [
-                     %{const: "value1", title: "First Choice"},
-                     %{const: "value2", title: "Second Choice"},
-                     %{const: "value3", title: "Third Choice"}
-                   ]
-                 }
-               }
-             },
-             required: []
-           }
+           requestedSchema: schema
          }) do
       {:ok, result} ->
-        tool_result = %{
+        sse_event(conn, %{
           jsonrpc: "2.0",
           id: id,
           result: %{
@@ -966,39 +766,35 @@ defmodule ConformanceRouter do
               }
             ]
           }
-        }
-
-        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+        })
 
       {:error, reason} ->
-        tool_result = %{
+        sse_event(conn, %{
           jsonrpc: "2.0",
           id: id,
-          result: %{content: [%{type: "text", text: "Error: #{reason}"}]}
-        }
-
-        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+          result: %{content: [%{type: "text", text: "Error: #{inspect(reason)}"}]}
+        })
     end
 
     conn
   end
 
-  defp get_session_id(conn) do
-    case get_req_header(conn, "mcp-session-id") do
-      [id | _] -> id
-      _ -> "session-#{System.unique_integer([:positive])}"
-    end
-  end
+  defp sse_event(conn, data),
+    do: Plug.Conn.chunk(conn, "event: message\ndata: #{Jason.encode!(data)}\n\n")
+
+  defp session_id(conn),
+    do:
+      get_req_header(conn, "mcp-session-id") |> List.first() ||
+        "session-#{System.unique_integer([:positive])}"
 end
 
-# Start Cowboy
-children = [
-  {Plug.Cowboy, scheme: :http, plug: ConformanceRouter, options: [port: port]}
-]
+# ── Start Server ─────────────────────────────────────────────────
 
+port = String.to_integer(List.first(System.argv(), "3001"))
+IO.puts("Starting ExMCP conformance server on port #{port}...")
+
+children = [{Plug.Cowboy, scheme: :http, plug: ConformanceRouter, options: [port: port]}]
 {:ok, _} = Supervisor.start_link(children, strategy: :one_for_one)
 
 IO.puts("Server ready on http://localhost:#{port}/mcp")
-
-# Keep the process alive
 Process.sleep(:infinity)
