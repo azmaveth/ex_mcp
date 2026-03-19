@@ -250,6 +250,26 @@ defmodule ExMCP.Transport.SSEClient do
     {:noreply, state, {:continue, :connect}}
   end
 
+  # Force reconnect from parent (e.g., POST SSE response closed without result)
+  def handle_info(:force_reconnect, state) do
+    Logger.info("SSE forced reconnect requested")
+
+    if state.ref do
+      :httpc.cancel_request(state.ref, state.httpc_profile)
+    end
+
+    if state.heartbeat_ref do
+      Process.cancel_timer(state.heartbeat_ref)
+    end
+
+    schedule_reconnect(%{state | ref: nil, heartbeat_ref: nil})
+  end
+
+  # Update retry delay from parent (e.g., from POST SSE retry field)
+  def handle_info({:update_retry_delay, delay}, state) when is_integer(delay) do
+    {:noreply, %{state | retry_delay: delay}}
+  end
+
   def handle_info({:change_parent, new_parent}, state) do
     {:noreply, %{state | parent: new_parent}}
   end

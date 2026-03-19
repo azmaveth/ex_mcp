@@ -613,13 +613,17 @@ defmodule ExMCP.Transport.HTTP do
           {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
         {:error, _} ->
-          # SSE had data but it wasn't valid JSON — treat as no response
+          # SSE had data but it wasn't valid JSON — treat as no response.
+          # Close existing GET stream so it reconnects with retry delay.
+          trigger_sse_reconnect(state)
           state = maybe_start_deferred_sse(state)
           {:ok, state}
       end
     else
       # No JSON data in SSE response (just priming events).
       # Result will arrive via GET SSE stream.
+      # Close existing GET stream to trigger reconnection with retry delay.
+      trigger_sse_reconnect(state)
       state = maybe_start_deferred_sse(state)
       {:ok, state}
     end
@@ -782,6 +786,23 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp maybe_start_deferred_sse(state), do: state
+
+  # Trigger SSE reconnection when POST response closes without a result.
+  # Sends a message to SSEClient to close current connection and reconnect
+  # with the server-specified retry delay.
+  defp trigger_sse_reconnect(%{sse_pid: sse_pid, retry_delay: retry_delay})
+       when is_pid(sse_pid) do
+    Logger.info("Triggering SSE reconnection (POST response had no result)")
+    # Tell SSEClient to reconnect — it will close current connection and
+    # schedule a new one with the retry delay
+    if retry_delay do
+      send(sse_pid, {:update_retry_delay, retry_delay})
+    end
+
+    send(sse_pid, :force_reconnect)
+  end
+
+  defp trigger_sse_reconnect(_state), do: :ok
 
   defp start_sse(state) do
     url = build_url(state, "")

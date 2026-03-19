@@ -28,9 +28,6 @@ server:
   - prompts-get-with-image
   - dns-rebinding-protection
 
-# Client: 1 remaining failure
-client:
-  # SSE retry timing: POST SSE stream close should trigger GET reconnection
-  # with server-specified retry delay. Architecture mismatch: POST and GET
-  # streams are independent in ExMCP, need unified lifecycle.
-  - sse-retry
+# Client: ALL PASSING (0 failures)
+# Warning only: sse-retry Last-Event-ID (SHOULD, not MUST)
+client: []
