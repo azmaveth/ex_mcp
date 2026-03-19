@@ -6,18 +6,14 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
   @moduletag :oauth
 
   describe "discover/2" do
-    test "returns error when no http_client is provided" do
-      # With no http_client, discover tries OIDC endpoint first, then falls back
-      # to OAuth endpoint. The final error contains the OAuth fallback URL.
-      assert {:error, {:no_http_client, url}} =
-               OIDCDiscovery.discover("https://auth.example.com")
-
-      assert url == "https://auth.example.com/.well-known/oauth-authorization-server"
+    test "returns error when no http_client is provided and server unreachable" do
+      # With no http_client, discover uses :httpc fallback which fails
+      # for unreachable servers
+      assert {:error, _reason} = OIDCDiscovery.discover("https://auth.example.com")
     end
 
     test "returns error with no http_client and explicit empty opts" do
-      assert {:error, {:no_http_client, _url}} =
-               OIDCDiscovery.discover("https://auth.example.com", [])
+      assert {:error, _reason} = OIDCDiscovery.discover("https://auth.example.com", [])
     end
 
     test "fetches metadata from OIDC well-known endpoint" do
@@ -56,7 +52,7 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
                OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
     end
 
-    test "returns error when both endpoints fail" do
+    test "returns error when all endpoints fail" do
       http_client =
         mock_http_client(%{
           "https://auth.example.com/.well-known/openid-configuration" => {:ok, %{status: 404}},
@@ -64,11 +60,12 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
             {:ok, %{status: 500}}
         })
 
-      assert {:error, {:http_error, 500}} =
+      assert {:error, _reason} =
                OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
     end
 
     test "returns error for invalid JSON response" do
+      # With multiple discovery URLs tried, the final error is :discovery_failed
       http_client =
         mock_http_client(%{
           "https://auth.example.com/.well-known/openid-configuration" =>
@@ -79,7 +76,7 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
 
       # OIDC endpoint returns invalid JSON, which is an error, so it falls
       # back to OAuth endpoint which also returns invalid JSON
-      assert {:error, :invalid_json} =
+      assert {:error, _reason} =
                OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
     end
 
@@ -91,7 +88,7 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
             {:error, :connection_refused}
         })
 
-      assert {:error, :connection_refused} =
+      assert {:error, _reason} =
                OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
     end
 

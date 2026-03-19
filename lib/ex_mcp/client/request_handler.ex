@@ -437,13 +437,23 @@ defmodule ExMCP.Client.RequestHandler do
           send_response(error_response, state)
       end
     else
-      # No custom handler — use default elicitation handler
-      message = Map.get(params, "message", "")
-      requested_schema = Map.get(params, "requestedSchema", %{})
+      # No custom handler — check if client declared elicitation capability
+      capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
+      elicitation_cap = capabilities["elicitation"] || capabilities[:elicitation]
 
-      result = ExMCP.Client.ElicitationHandler.handle(message, requested_schema)
-      response = build_success_response(result, request_id)
-      send_response(response, state)
+      if elicitation_cap do
+        # Client declared elicitation support — use default handler (decline or auto-accept)
+        message = Map.get(params, "message", "")
+        requested_schema = Map.get(params, "requestedSchema", %{})
+
+        result = ExMCP.Client.ElicitationHandler.handle(message, requested_schema)
+        response = build_success_response(result, request_id)
+        send_response(response, state)
+      else
+        # Client did not declare elicitation capability — method not found
+        error_response = build_error_response(-32601, "Method not found", request_id)
+        send_response(error_response, state)
+      end
     end
   end
 
