@@ -257,10 +257,16 @@ defmodule ExMCP.Transport.SSEClient do
     {:noreply, state, {:continue, :connect}}
   end
 
-  # Force reconnect from parent (e.g., POST SSE response closed without result)
+  # Force reconnect from parent (e.g., POST SSE response closed without result).
+  # Delay briefly to let pending :stream messages drain first so we have
+  # the latest last_event_id and retry_delay before reconnecting.
   def handle_info(:force_reconnect, state) do
-    Logger.info("SSE forced reconnect requested")
+    Logger.info("SSE forced reconnect requested, draining pending messages")
+    Process.send_after(self(), :do_force_reconnect, 100)
+    {:noreply, state}
+  end
 
+  def handle_info(:do_force_reconnect, state) do
     if state.ref do
       :httpc.cancel_request(state.ref, state.httpc_profile)
     end
@@ -275,6 +281,11 @@ defmodule ExMCP.Transport.SSEClient do
   # Update retry delay from parent (e.g., from POST SSE retry field)
   def handle_info({:update_retry_delay, delay}, state) when is_integer(delay) do
     {:noreply, %{state | retry_delay: delay}}
+  end
+
+  # Update last event ID from parent (e.g., from SSE event received before force_reconnect)
+  def handle_info({:update_last_event_id, id}, state) when is_binary(id) do
+    {:noreply, %{state | last_event_id: id}}
   end
 
   def handle_info({:change_parent, new_parent}, state) do

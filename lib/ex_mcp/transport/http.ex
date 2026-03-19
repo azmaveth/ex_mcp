@@ -586,12 +586,18 @@ defmodule ExMCP.Transport.HTTP do
   defp handle_sse_post_response(body, state) do
     events = parse_sse_events(body)
 
-    # Extract retry field from any event
+    # Extract retry field and last event ID from events
     state =
       Enum.reduce(events, state, fn event, acc ->
-        case event[:retry] do
+        acc =
+          case event[:retry] do
+            nil -> acc
+            ms -> %{acc | retry_delay: ms}
+          end
+
+        case event[:id] do
           nil -> acc
-          ms -> %{acc | retry_delay: ms}
+          id -> %{acc | last_event_id: id}
         end
       end)
 
@@ -790,15 +796,19 @@ defmodule ExMCP.Transport.HTTP do
   # Trigger SSE reconnection when POST response closes without a result.
   # Sends a message to SSEClient to close current connection and reconnect
   # with the server-specified retry delay.
-  defp trigger_sse_reconnect(%{sse_pid: sse_pid, retry_delay: retry_delay})
+  defp trigger_sse_reconnect(%{
+         sse_pid: sse_pid,
+         retry_delay: retry_delay,
+         last_event_id: last_id
+       })
        when is_pid(sse_pid) do
     Logger.info("Triggering SSE reconnection (POST response had no result)")
-    # Tell SSEClient to reconnect — it will close current connection and
-    # schedule a new one with the retry delay
-    if retry_delay do
-      send(sse_pid, {:update_retry_delay, retry_delay})
-    end
+    if retry_delay, do: send(sse_pid, {:update_retry_delay, retry_delay})
+    if last_id, do: send(sse_pid, {:update_last_event_id, last_id})
+    send(sse_pid, :force_reconnect)
+  end
 
+  defp trigger_sse_reconnect(%{sse_pid: sse_pid}) when is_pid(sse_pid) do
     send(sse_pid, :force_reconnect)
   end
 

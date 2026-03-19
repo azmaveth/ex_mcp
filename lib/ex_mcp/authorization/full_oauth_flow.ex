@@ -58,11 +58,19 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
          :ok <- validate_prm_resource(prm, config),
          {:ok, as_metadata} <- discover_as_metadata(prm, config),
          {:ok, client_info} <- ensure_client_registered(as_metadata, config) do
+      # Merge PRM scopes_supported into config for scope negotiation
+      config =
+        case prm[:scopes_supported] do
+          scopes when is_list(scopes) and scopes != [] ->
+            Map.put_new(config, :prm_scopes, scopes)
+
+          _ ->
+            config
+        end
+
       if has_preexisting_creds do
-        # Pre-existing credentials → client_credentials flow (no browser)
         run_client_credentials_flow(as_metadata, client_info, config)
       else
-        # Dynamic registration or no secret → authorization code + PKCE
         run_auth_code_flow(as_metadata, client_info, config)
       end
     end
@@ -156,9 +164,14 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
               |> Enum.map(fn issuer -> %{issuer: issuer} end)
 
             result = %{authorization_servers: as_list}
-            # Include resource field for validation
+            # Include resource and scopes_supported for validation and scope negotiation
             result =
               if data["resource"], do: Map.put(result, :resource, data["resource"]), else: result
+
+            result =
+              if data["scopes_supported"],
+                do: Map.put(result, :scopes_supported, data["scopes_supported"]),
+                else: result
 
             {:ok, result}
 
@@ -342,14 +355,15 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   end
 
   defp start_flow(client_info, redirect_uri, as_metadata, config) do
-    # Use scopes from: 1) WWW-Authenticate header, 2) AS metadata scopes_supported, 3) empty
+    # Use scopes from: 1) WWW-Authenticate header, 2) PRM scopes_supported,
+    # 3) AS metadata scopes_supported, 4) empty
     scopes =
       case config[:scopes] do
-        scopes when is_list(scopes) and scopes != [] ->
-          scopes
+        s when is_list(s) and s != [] ->
+          s
 
         _ ->
-          as_metadata["scopes_supported"] || []
+          config[:prm_scopes] || as_metadata["scopes_supported"] || []
       end
 
     OAuthFlow.start_authorization_flow(%{
