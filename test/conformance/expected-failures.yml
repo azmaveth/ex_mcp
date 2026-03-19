@@ -28,11 +28,11 @@ server:
   - prompts-get-with-image
   - dns-rebinding-protection
 
-# Client: 3 remaining real failures
+# Client: 2 remaining failures (SSE transport edge cases)
 client:
-  # Elicitation not yet implemented (separate MCP feature)
-  - elicitation-sep1034-client-defaults
-  # SSE reconnection on graceful stream close
+  # SSE retry: need POST SSE stream close to trigger GET reconnection with
+  # proper retry delay. Current architecture separates POST and GET streams.
   - sse-retry
-  # Scope step-up: transport state not propagated for re-auth
+  # Scope step-up: second 401 with insufficient_scope during tools/call
+  # needs transport state threading for re-auth on subsequent requests.
   - auth/scope-step-up
