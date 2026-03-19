@@ -103,8 +103,6 @@ defmodule ExMCP.Transport.HTTP do
     :max_retry_delay,
     :auth_provider,
     :auth_provider_state,
-    :subscriber,
-    :forwarder_pid,
     sse_deferred_attempted: false,
     auth_completed: false
   ]
@@ -902,11 +900,6 @@ defmodule ExMCP.Transport.HTTP do
     # Best-effort session termination before closing
     terminate_session(state)
 
-    # Stop event forwarder if active
-    if is_pid(state.forwarder_pid) and Process.alive?(state.forwarder_pid) do
-      Process.exit(state.forwarder_pid, :normal)
-    end
-
     # Stop SSE connection if active
     if is_pid(state.sse_pid) do
       Process.exit(state.sse_pid, :normal)
@@ -915,33 +908,14 @@ defmodule ExMCP.Transport.HTTP do
     :ok
   end
 
-  @doc """
-  Subscribe a process to receive transport events (push model).
-
-  When subscribed, SSE events are parsed and forwarded to the subscriber
-  as `{:transport_event, message}` instead of requiring `receive_message/1`.
-
-  For non-SSE mode, responses still come from `send_message/2` directly.
-  """
-  @impl true
-  def subscribe(pid, %__MODULE__{} = state) when is_pid(pid) do
-    new_state = %{state | subscriber: pid}
-
-    # If SSE is already running, start the event forwarder
-    new_state =
-      if is_pid(state.sse_pid) do
-        start_event_forwarder(new_state)
-      else
-        new_state
-      end
-
-    {:ok, new_state}
-  end
-
-  @impl true
-  def capabilities(%__MODULE__{}) do
-    [:push]
-  end
+  # NOTE: HTTP transport does NOT implement subscribe/2 (push model) because
+  # bidirectional flows (elicitation, sampling) require the receiver task to
+  # process SSE events while the GenServer is blocked on a synchronous POST.
+  # The push model would deadlock: GenServer blocked in handle_call doing POST,
+  # can't process {:transport_event, elicitation} in handle_info.
+  # The receiver task (separate process) avoids this by forwarding SSE events
+  # as {:transport_message, msg} which queue in the GenServer mailbox.
+  # When :httpc is replaced with an async HTTP client, push mode can be enabled.
 
   # Private functions
 
@@ -967,14 +941,7 @@ defmodule ExMCP.Transport.HTTP do
         receive do
           {:sse_connected, ^sse_pid} ->
             Logger.debug("Deferred SSE connection established")
-            new_state = %{state | sse_pid: sse_pid}
-
-            # If subscriber exists, start the event forwarder
-            if new_state.subscriber do
-              start_event_forwarder(new_state)
-            else
-              new_state
-            end
+            %{state | sse_pid: sse_pid}
 
           {:sse_error, ^sse_pid, reason} ->
             Logger.debug("Deferred SSE connection failed: #{inspect(reason)}, falling back")
@@ -1237,56 +1204,6 @@ defmodule ExMCP.Transport.HTTP do
 
   defp build_ssl_options_from_state(_state) do
     build_ssl_options(%{})
-  end
-
-  # Start a lightweight process that receives SSE events, parses JSON,
-  # and forwards parsed messages as {:transport_event, message} to the subscriber.
-  defp start_event_forwarder(%{sse_pid: sse_pid, subscriber: subscriber} = state)
-       when is_pid(sse_pid) and is_pid(subscriber) do
-    forwarder =
-      spawn_link(fn ->
-        # Redirect SSE events to this forwarder process
-        send(sse_pid, {:change_parent, self()})
-        sse_forwarder_loop(sse_pid, subscriber)
-      end)
-
-    %{state | forwarder_pid: forwarder}
-  end
-
-  defp start_event_forwarder(state), do: state
-
-  defp sse_forwarder_loop(sse_pid, subscriber) do
-    receive do
-      {:sse_event, ^sse_pid, %{data: data} = event} ->
-        event_id = Map.get(event, :id)
-
-        case Jason.decode(data) do
-          {:ok, %{"type" => "keep-alive"}} ->
-            # Skip keep-alive
-            :ok
-
-          {:ok, message} ->
-            send(subscriber, {:transport_event, message})
-
-            if event_id do
-              send(subscriber, {:transport_event_id, event_id})
-            end
-
-          {:error, _reason} ->
-            :ok
-        end
-
-        sse_forwarder_loop(sse_pid, subscriber)
-
-      {:sse_closed, ^sse_pid} ->
-        send(subscriber, {:transport_closed, :normal})
-
-      {:sse_error, ^sse_pid, reason} ->
-        send(subscriber, {:transport_error, reason})
-
-      {:sse_not_supported, ^sse_pid} ->
-        send(subscriber, {:transport_error, :sse_not_supported})
-    end
   end
 
   defp find_header(headers, name) do
