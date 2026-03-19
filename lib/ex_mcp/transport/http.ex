@@ -279,8 +279,41 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
+  def send_message(message, %__MODULE__{use_sse: true, sse_pid: sse_pid} = state)
+      when is_pid(sse_pid) do
+    # SSE mode with active connection — use async POST so the GenServer
+    # can process SSE events (elicitation, sampling) while waiting for
+    # the POST response. The response will arrive as {:async_post_result, ...}.
+    parent = self()
+
+    Task.start(fn ->
+      # Use a dedicated httpc profile for async POST requests to avoid
+      # connection pool conflicts with the pending synchronous request.
+      profile = String.to_atom("async_post_#{:erlang.unique_integer([:positive])}")
+      {:ok, _} = :inets.start(:httpc, [{:profile, profile}])
+      Process.put(:httpc_profile, profile)
+
+      result =
+        try do
+          case perform_and_maybe_auth(message, state) do
+            {:ok, response} -> handle_http_response(response, state)
+            {:ok, response, new_state} -> handle_http_response(response, new_state)
+            {:error, reason} -> {:error, reason}
+          end
+        after
+          :inets.stop(:httpc, profile)
+        end
+
+      send(parent, {:async_post_result, result})
+    end)
+
+    # Return without response data — it will arrive via :async_post_result
+    # or via the GET SSE stream (for SSE-formatted POST responses)
+    {:ok, state}
+  end
+
   def send_message(message, %__MODULE__{} = state) do
-    # SSE mode with active connection — responses arrive via SSE stream
+    # SSE mode without active connection (pre-initialization) or fallback
     case perform_and_maybe_auth(message, state) do
       {:ok, response} -> handle_http_response(response, state)
       {:ok, response, new_state} -> handle_http_response(response, new_state)
@@ -612,7 +645,11 @@ defmodule ExMCP.Transport.HTTP do
         _ -> base_http_opts
       end
 
-    :httpc.request(:post, request, http_opts, [])
+    # Use process dictionary profile if set (for async POST isolation)
+    case Process.get(:httpc_profile) do
+      nil -> :httpc.request(:post, request, http_opts, [])
+      profile -> :httpc.request(:post, request, http_opts, [], profile)
+    end
   end
 
   defp extract_user_id(state) do

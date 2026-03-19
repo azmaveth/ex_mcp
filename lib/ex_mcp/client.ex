@@ -883,6 +883,23 @@ defmodule ExMCP.Client do
     RequestHandler.parse_transport_message(message, state)
   end
 
+  # Async POST result — the HTTP transport spawns a Task for POST requests
+  # in SSE mode to avoid blocking the GenServer during bidirectional flows.
+  def handle_info({:async_post_result, {:ok, _new_ts, response_data}}, state) do
+    # POST response contains data — parse it as a transport message
+    RequestHandler.parse_transport_message(response_data, state)
+  end
+
+  def handle_info({:async_post_result, {:ok, _new_ts}}, state) do
+    # POST returned but no inline data — result will come via SSE stream
+    {:noreply, state}
+  end
+
+  def handle_info({:async_post_result, {:error, reason}}, state) do
+    Logger.error("Async POST failed: #{inspect(reason)}")
+    {:noreply, state}
+  end
+
   # Push model: transport sends pre-parsed messages directly
   def handle_info({:transport_event, message}, state) do
     RequestHandler.parse_transport_message(message, state)
