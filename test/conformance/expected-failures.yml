@@ -28,11 +28,9 @@ server:
   - prompts-get-with-image
   - dns-rebinding-protection
 
-# Client: 2 remaining failures (SSE transport edge cases)
+# Client: 1 remaining failure
 client:
-  # SSE retry: need POST SSE stream close to trigger GET reconnection with
-  # proper retry delay. Current architecture separates POST and GET streams.
+  # SSE retry timing: POST SSE stream close should trigger GET reconnection
+  # with server-specified retry delay. Architecture mismatch: POST and GET
+  # streams are independent in ExMCP, need unified lifecycle.
   - sse-retry
-  # Scope step-up: second 401 with insufficient_scope during tools/call
-  # needs transport state threading for re-auth on subsequent requests.
-  - auth/scope-step-up

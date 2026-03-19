@@ -306,6 +306,10 @@ defmodule ExMCP.Transport.HTTP do
       {_, 401, _} ->
         maybe_oauth_retry(headers, original_body, state)
 
+      {_, 403, _} ->
+        # 403 with insufficient_scope → scope step-up
+        maybe_oauth_retry(headers, original_body, state)
+
       _ ->
         :no_challenge
     end
