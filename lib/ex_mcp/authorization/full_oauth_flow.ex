@@ -28,6 +28,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
   alias ExMCP.Authorization.{
     ClientRegistration,
+    HTTPClient,
     OAuthFlow,
     OIDCDiscovery
   }
@@ -50,10 +51,19 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
+    # Check if caller provided pre-existing credentials (not from dynamic registration)
+    has_preexisting_creds = is_binary(config[:client_id]) and is_binary(config[:client_secret])
+
     with {:ok, prm} <- discover_resource_metadata(config),
          {:ok, as_metadata} <- discover_as_metadata(prm, config),
          {:ok, client_info} <- ensure_client_registered(as_metadata, config) do
-      run_auth_code_flow(as_metadata, client_info, config)
+      if has_preexisting_creds do
+        # Pre-existing credentials → client_credentials flow (no browser)
+        run_client_credentials_flow(as_metadata, client_info, config)
+      else
+        # Dynamic registration or no secret → authorization code + PKCE
+        run_auth_code_flow(as_metadata, client_info, config)
+      end
     end
   end
 
@@ -206,7 +216,35 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     end
   end
 
-  # Step 4: Run authorization code flow with PKCE
+  # Step 4a: Client credentials flow (when we have pre-existing credentials)
+  defp run_client_credentials_flow(as_metadata, client_info, config) do
+    token_endpoint = as_metadata["token_endpoint"]
+
+    if is_nil(token_endpoint) do
+      {:error, :missing_token_endpoint}
+    else
+      supported_methods =
+        as_metadata["token_endpoint_auth_methods_supported"] || ["client_secret_post"]
+
+      token_auth_method = select_token_auth_method(supported_methods)
+
+      Logger.info("Using client_credentials flow with #{token_auth_method} auth")
+
+      HTTPClient.make_token_request(
+        token_endpoint,
+        [
+          grant_type: "client_credentials",
+          client_id: client_info.client_id,
+          client_secret: client_info.client_secret,
+          resource: config[:resource] || config[:resource_url]
+        ]
+        |> Enum.reject(fn {_, v} -> is_nil(v) end),
+        auth_method: token_auth_method
+      )
+    end
+  end
+
+  # Step 4b: Run authorization code flow with PKCE
   defp run_auth_code_flow(as_metadata, client_info, config) do
     authorization_endpoint = as_metadata["authorization_endpoint"]
     token_endpoint = as_metadata["token_endpoint"]
@@ -278,7 +316,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
     with {:ok, _} <- follow_authorization(auth_url),
          {:ok, code} <- wait_for_callback(server_pid) do
-      ExMCP.Authorization.HTTPClient.make_token_request(
+      HTTPClient.make_token_request(
         token_endpoint,
         [
           grant_type: "authorization_code",

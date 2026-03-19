@@ -78,6 +78,7 @@ defmodule ExMCP.Transport.HTTP do
   @behaviour ExMCP.Transport
   require Logger
 
+  alias ExMCP.Authorization.FullOAuthFlow
   alias ExMCP.Internal.{Security, SecurityConfig}
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
@@ -321,15 +322,19 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp maybe_oauth_retry(headers, original_body, state) do
-    Logger.info("Received 401, attempting OAuth discovery flow")
-
+    # Have auth_config with credentials — use FullOAuthFlow which handles
+    # PRM discovery with header fallback and pre-existing credentials
     www_auth = find_header(headers, "www-authenticate")
     resource_url = build_url(state, "")
 
-    # Build discovery config from auth_config + resource URL
-    discovery_config = build_discovery_config(state.auth_config, resource_url, www_auth)
+    config =
+      (state.auth_config || %{})
+      |> Map.put(:resource_url, resource_url)
+      |> Map.put(:www_authenticate, www_auth)
 
-    case ExMCP.Authorization.DiscoveryFlow.execute(discovery_config) do
+    Logger.info("Received 401, attempting OAuth flow with credentials")
+
+    case FullOAuthFlow.execute(config) do
       {:ok, token_result} ->
         access_token = token_result[:access_token] || token_result["access_token"]
         Logger.info("OAuth token obtained, retrying request")
@@ -362,7 +367,7 @@ defmodule ExMCP.Transport.HTTP do
       www_authenticate: www_auth
     }
 
-    case ExMCP.Authorization.FullOAuthFlow.execute(config) do
+    case FullOAuthFlow.execute(config) do
       {:ok, token_result} ->
         access_token = token_result[:access_token] || token_result["access_token"]
         Logger.info("Full OAuth flow succeeded, retrying request")
@@ -382,21 +387,6 @@ defmodule ExMCP.Transport.HTTP do
         Logger.warning("Full OAuth flow failed: #{inspect(reason)}")
         {:error, {:oauth_failed, reason}}
     end
-  end
-
-  defp build_discovery_config(auth_config, resource_url, _www_auth) when is_map(auth_config) do
-    # Merge auth_config with discovered resource URL
-    auth_config
-    |> Map.put(:resource_url, resource_url)
-    |> Map.put_new(:auth_method, :client_secret)
-  end
-
-  defp build_discovery_config(auth_config, resource_url, _www_auth)
-       when is_list(auth_config) do
-    auth_config
-    |> Map.new()
-    |> Map.put(:resource_url, resource_url)
-    |> Map.put_new(:auth_method, :client_secret)
   end
 
   defp put_bearer_header(headers, token) do
