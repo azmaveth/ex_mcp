@@ -172,12 +172,36 @@ defmodule ExMCP.Transport.SSEClient do
       Logger.debug("SSE Client parsed #{length(events)} events from chunk")
     end
 
-    # Send events to parent
-    Enum.each(events, fn event ->
-      process_event(event, state)
-    end)
+    # Process events — extract retry field and send data events to parent
+    new_state =
+      Enum.reduce(events, %{state | buffer: remaining, heartbeat_ref: heartbeat_ref}, fn event,
+                                                                                         acc ->
+        # Check for retry field (SSE spec: sets reconnection delay)
+        acc =
+          case Map.get(event, "retry") do
+            nil ->
+              acc
 
-    {:noreply, %{state | buffer: remaining, heartbeat_ref: heartbeat_ref}}
+            retry_str ->
+              case Integer.parse(retry_str) do
+                {ms, _} when ms >= 0 ->
+                  Logger.debug("SSE retry field set to #{ms}ms")
+                  %{acc | retry_delay: ms}
+
+                _ ->
+                  acc
+              end
+          end
+
+        # Forward data events to parent
+        if Map.has_key?(event, "data") do
+          process_event(event, acc)
+        end
+
+        acc
+      end)
+
+    {:noreply, new_state}
   end
 
   def handle_info({:http, {ref, :stream_end, _headers}}, %{ref: ref} = state) do
@@ -388,9 +412,15 @@ defmodule ExMCP.Transport.SSEClient do
       :httpc.cancel_request(state.ref)
     end
 
-    # Calculate delay with exponential backoff
+    # Use server-specified retry delay, or exponential backoff
     delay = state.retry_delay
-    new_delay = min(delay * 2, @max_retry_delay)
+    # Only apply backoff if using the initial default (not server-specified)
+    new_delay =
+      if delay == @initial_retry_delay do
+        min(delay * 2, @max_retry_delay)
+      else
+        delay
+      end
 
     Logger.info("Scheduling SSE reconnection in #{delay}ms")
 

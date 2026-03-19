@@ -86,6 +86,16 @@ defmodule ExMCP.Client.ConnectionManager do
         send(parent, {:transport_closed, :normal})
         :ok
 
+      {:error, :waiting_for_session} ->
+        # SSE not started yet — retry (SSE will start when server provides session ID)
+        receive_loop(parent, transport_mod, transport_state)
+
+      {:error, :not_supported_in_sync_mode} ->
+        # Non-SSE HTTP mode — responses come from send_message directly.
+        # Keep the loop alive but sleep to avoid busy-waiting.
+        Process.sleep(100)
+        receive_loop(parent, transport_mod, transport_state)
+
       {:error, reason} ->
         Logger.error("Transport error in receive loop: #{inspect(reason)}")
         send(parent, {:transport_closed, reason})

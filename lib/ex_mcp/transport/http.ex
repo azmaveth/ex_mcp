@@ -623,12 +623,23 @@ defmodule ExMCP.Transport.HTTP do
     {:ok, response, %{state | last_response: nil}}
   end
 
-  def receive_message(%__MODULE__{use_sse: true, sse_pid: nil} = _state) do
-    # SSE enabled but no stream started (no session ID yet).
-    # Responses come from POST directly, handled by send_message return.
-    # The receiver loop should wait for SSE to start.
-    Process.sleep(100)
-    {:error, :not_connected}
+  def receive_message(%__MODULE__{use_sse: true, sse_pid: nil} = state) do
+    # SSE enabled but no stream started yet (no session ID from server).
+    # Responses come from POST directly via send_message return value.
+    # Block here waiting for either:
+    # - A response to be stored in last_response (from a POST)
+    # - The SSE stream to start (session ID obtained)
+    # Use a receive with timeout to avoid busy-waiting.
+    receive do
+      {:sse_connected, pid} ->
+        # SSE started — switch to SSE receive mode
+        receive_message(%{state | sse_pid: pid})
+    after
+      # Wait briefly then re-check state — the Client will call us again
+      # with updated state if last_response was set by send_message
+      500 ->
+        {:error, :waiting_for_session}
+    end
   end
 
   def receive_message(%__MODULE__{use_sse: false} = _state) do
