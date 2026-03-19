@@ -437,8 +437,11 @@ defmodule ExMCP.Client.RequestHandler do
           send_response(error_response, state)
       end
     else
-      error_response = build_error_response(-32601, "Method not found", request_id)
-      send_response(error_response, state)
+      # No custom handler — auto-accept with empty content.
+      # Clients that declare elicitation capability should handle it gracefully.
+      result = %{"action" => "accept", "content" => %{}}
+      response = build_success_response(result, request_id)
+      send_response(response, state)
     end
   end
 
