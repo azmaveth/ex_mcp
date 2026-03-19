@@ -150,8 +150,7 @@ defmodule ConformanceServer do
   end
 
   def handle_call_tool("test_tool_with_logging", _args, state) do
-    # TODO: emit notifications/message during execution
-    # For now, return the result directly
+    # Logging is handled by SSE interceptor in ConformanceRouter
     {:ok, [%{type: "text", text: "Tool with logging executed successfully"}], state}
   end
 
@@ -435,18 +434,189 @@ defmodule DnsRebindingPlug do
   end
 end
 
-# Compose plugs: DNS protection → MCP handler
+# Compose plugs: DNS protection → custom POST handler → MCP handler
 defmodule ConformanceRouter do
-  use Plug.Builder
+  @behaviour Plug
+  import Plug.Conn
+  require Logger
 
-  plug(DnsRebindingPlug)
+  # Tools that need SSE streaming
+  @sse_tools ~w(test_tool_with_logging test_tool_with_progress)
 
-  plug(ExMCP.HttpPlug,
-    handler: ConformanceServer,
-    server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
-    sse_enabled: true,
-    cors_enabled: true
-  )
+  @mcp_plug_opts ExMCP.HttpPlug.init(
+                   handler: ConformanceServer,
+                   server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
+                   sse_enabled: true,
+                   cors_enabled: true
+                 )
+
+  @impl true
+  def init(_opts), do: []
+
+  @impl true
+  def call(conn, _opts) do
+    # DNS rebinding check first
+    conn = DnsRebindingPlug.call(conn, [])
+
+    if conn.halted do
+      conn
+    else
+      # For POST: check if it's an SSE tool before delegating to HttpPlug
+      if conn.method == "POST" do
+        handle_post(conn)
+      else
+        ExMCP.HttpPlug.call(conn, @mcp_plug_opts)
+      end
+    end
+  end
+
+  defp handle_post(conn) do
+    {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+    case Jason.decode(body) do
+      {:ok, %{"method" => "tools/call", "params" => %{"name" => name}, "id" => id} = request}
+      when name in @sse_tools ->
+        handle_sse_tool(conn, name, id, request)
+
+      _ ->
+        # Not an SSE tool — reconstruct conn and delegate to HttpPlug
+        # HttpPlug will try to read_body again but it's already consumed.
+        # We need to handle this by processing through MessageProcessor directly.
+        handle_normal_post(conn, body)
+    end
+  end
+
+  defp handle_normal_post(conn, body) do
+    case Jason.decode(body) do
+      {:ok, request} ->
+        session_id = get_session_id(conn)
+
+        mcp_conn = ExMCP.MessageProcessor.new(request, transport: :http)
+
+        processed =
+          ExMCP.MessageProcessor.process(mcp_conn, %{
+            handler: ConformanceServer,
+            server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"}
+          })
+
+        case processed.response do
+          nil ->
+            if Map.get(request, "id") == nil do
+              conn
+              |> put_resp_header("mcp-session-id", session_id)
+              |> send_resp(202, "")
+            else
+              conn
+              |> put_resp_content_type("application/json")
+              |> put_resp_header("mcp-session-id", session_id)
+              |> send_resp(
+                500,
+                Jason.encode!(%{
+                  jsonrpc: "2.0",
+                  error: %{code: -32603, message: "No response"},
+                  id: request["id"]
+                })
+              )
+            end
+
+          response ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> put_resp_header("mcp-session-id", session_id)
+            |> put_resp_header("mcp-protocol-version", "2025-11-25")
+            |> send_resp(200, Jason.encode!(response))
+        end
+
+      {:error, _} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          400,
+          Jason.encode!(%{jsonrpc: "2.0", error: %{code: -32700, message: "Parse error"}})
+        )
+    end
+  end
+
+  defp handle_sse_tool(conn, "test_tool_with_logging", id, _request) do
+    session_id = get_session_id(conn)
+
+    conn =
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("mcp-session-id", session_id)
+      |> send_chunked(200)
+
+    # Send log notifications
+    for msg <- ["Tool execution started", "Tool processing data", "Tool execution completed"] do
+      notification = %{
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: %{level: "info", logger: "conformance-test-server", data: msg}
+      }
+
+      {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(notification)}\n\n")
+      Process.sleep(50)
+    end
+
+    # Send result
+    result = %{
+      jsonrpc: "2.0",
+      id: id,
+      result: %{content: [%{type: "text", text: "Tool with logging executed successfully"}]}
+    }
+
+    {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(result)}\n\n")
+    conn
+  end
+
+  defp handle_sse_tool(conn, "test_tool_with_progress", id, request) do
+    session_id = get_session_id(conn)
+    progress_token = get_in(request, ["params", "_meta", "progressToken"]) || 0
+
+    conn =
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("mcp-session-id", session_id)
+      |> send_chunked(200)
+
+    # Send progress notifications
+    for {progress, total} <- [{0, 100}, {50, 100}, {100, 100}] do
+      notification = %{
+        jsonrpc: "2.0",
+        method: "notifications/progress",
+        params: %{
+          progressToken: progress_token,
+          progress: progress,
+          total: total,
+          message: "Completed step #{progress} of #{total}"
+        }
+      }
+
+      {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(notification)}\n\n")
+      Process.sleep(50)
+    end
+
+    # Send result
+    result = %{
+      jsonrpc: "2.0",
+      id: id,
+      result: %{content: [%{type: "text", text: "#{progress_token}"}]}
+    }
+
+    {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(result)}\n\n")
+    conn
+  end
+
+  defp get_session_id(conn) do
+    case get_req_header(conn, "mcp-session-id") do
+      [id | _] -> id
+      _ -> "session-#{System.unique_integer([:positive])}"
+    end
+  end
 end
 
 # Start Cowboy
