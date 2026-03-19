@@ -422,9 +422,12 @@ defmodule ExMCP.Transport.SSEClient do
         delay
       end
 
-    Logger.info("Scheduling SSE reconnection in #{delay}ms")
+    # Add small buffer to ensure we never reconnect early per spec requirement.
+    # The MCP spec says client MUST wait at least the retry time.
+    buffered_delay = delay + 50
+    Logger.info("Scheduling SSE reconnection in #{buffered_delay}ms (retry: #{delay}ms)")
 
-    reconnect_timer = Process.send_after(self(), :reconnect, delay)
+    reconnect_timer = Process.send_after(self(), :reconnect, buffered_delay)
 
     new_state = %{
       state
