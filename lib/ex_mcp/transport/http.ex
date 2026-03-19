@@ -100,6 +100,9 @@ defmodule ExMCP.Transport.HTTP do
     :auth_config,
     :access_token,
     :retry_delay,
+    :max_retry_delay,
+    :auth_provider,
+    :auth_provider_state,
     sse_deferred_attempted: false,
     auth_completed: false
   ]
@@ -118,7 +121,9 @@ defmodule ExMCP.Transport.HTTP do
           last_response: map() | nil,
           timeouts: map(),
           protocol_version: String.t(),
-          sse_deferred_attempted: boolean()
+          sse_deferred_attempted: boolean(),
+          auth_provider: module() | nil,
+          auth_provider_state: any()
         }
 
   @default_endpoint "/mcp/v1"
@@ -183,6 +188,13 @@ defmodule ExMCP.Transport.HTTP do
     # Pass auth: %{client_id: "...", client_secret: "...", ...} to enable.
     auth_config = Keyword.get(config, :auth)
 
+    # Reconnection options (passed through to SSEClient)
+    max_retry_delay = Keyword.get(config, :max_retry_delay, 60_000)
+
+    # Auth provider: explicit provider tuple, or auto-create from :auth config
+    {auth_provider, auth_provider_state} =
+      init_auth_provider(Keyword.get(config, :auth_provider), auth_config, base_url, endpoint)
+
     state = %__MODULE__{
       base_url: base_url,
       headers: all_headers,
@@ -194,7 +206,10 @@ defmodule ExMCP.Transport.HTTP do
       session_id: session_id,
       timeouts: timeouts,
       protocol_version: protocol_version,
-      auth_config: auth_config
+      auth_config: auth_config,
+      max_retry_delay: max_retry_delay,
+      auth_provider: auth_provider,
+      auth_provider_state: auth_provider_state
     }
 
     # Validate security configuration
@@ -273,9 +288,21 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  # Perform HTTP request with automatic OAuth 401 retry.
-  # Supports scope step-up: if first retry returns 401 with insufficient_scope,
-  # re-authorizes with broader scope (up to max_retries).
+  # Perform HTTP request with automatic OAuth retry via auth provider.
+  defp perform_and_maybe_auth(body, %{auth_provider: provider} = state)
+       when not is_nil(provider) do
+    state = apply_provider_token(state)
+
+    case perform_http_request(body, state) do
+      {:ok, response} ->
+        handle_provider_auth_challenge(response, body, state)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Legacy inline OAuth path (when no auth provider configured)
   defp perform_and_maybe_auth(body, state) do
     result = perform_http_request(body, state)
 
@@ -301,6 +328,94 @@ defmodule ExMCP.Transport.HTTP do
         {:error, reason}
     end
   end
+
+  # Route provider auth challenge based on response status.
+  defp handle_provider_auth_challenge(response, body, state) do
+    case extract_auth_status(response) do
+      {:unauthorized, www_auth} ->
+        provider_authenticate(:handle_unauthorized, www_auth, body, state)
+
+      {:forbidden, www_auth} ->
+        provider_authenticate(:handle_forbidden, www_auth, body, state)
+
+      :ok ->
+        {:ok, response}
+    end
+  end
+
+  # Authenticate via provider, retry request, handle scope step-up on retry.
+  defp provider_authenticate(callback, www_auth, body, state) do
+    provider = state.auth_provider
+    scopes = extract_scope_from_www_auth(www_auth)
+
+    case apply(provider, callback, [www_auth, scopes, state.auth_provider_state]) do
+      {:ok, token, new_ps} ->
+        new_state = state |> Map.put(:auth_provider_state, new_ps) |> apply_token_to_state(token)
+        provider_retry_request(body, new_state)
+
+      {:error, reason, _ps} ->
+        {:error, reason}
+    end
+  end
+
+  # Retry request after auth; if 403 scope step-up, try once more.
+  defp provider_retry_request(body, state) do
+    case perform_http_request(body, state) do
+      {:ok, retry_resp} ->
+        case extract_auth_status(retry_resp) do
+          {:forbidden, www_auth} ->
+            provider_authenticate(:handle_forbidden, www_auth, body, state)
+
+          _ ->
+            {:ok, retry_resp, state}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp extract_auth_status({status_line, headers, _body}) do
+    case status_line do
+      {_, 401, _} -> {:unauthorized, find_header(headers, "www-authenticate")}
+      {_, 403, _} -> {:forbidden, find_header(headers, "www-authenticate")}
+      _ -> :ok
+    end
+  end
+
+  defp extract_auth_status(_), do: :ok
+
+  defp apply_provider_token(%{auth_provider: provider, auth_provider_state: ps} = state) do
+    case provider.get_token(ps) do
+      {:ok, nil, new_ps} ->
+        %{state | auth_provider_state: new_ps}
+
+      {:ok, token, new_ps} ->
+        %{state | auth_provider_state: new_ps, headers: put_bearer_header(state.headers, token)}
+
+      {:error, _} ->
+        state
+    end
+  end
+
+  defp apply_token_to_state(state, token) do
+    %{state | access_token: token, headers: put_bearer_header(state.headers, token)}
+  end
+
+  defp init_auth_provider({mod, provider_config}, _auth_config, _base_url, _endpoint) do
+    case mod.init(provider_config) do
+      {:ok, ps} -> {mod, ps}
+      {:error, _} -> {nil, nil}
+    end
+  end
+
+  defp init_auth_provider(nil, auth_config, base_url, endpoint) when is_map(auth_config) do
+    provider_config = Map.put(auth_config, :resource_url, base_url <> (endpoint || ""))
+    {:ok, ps} = ExMCP.Authorization.Provider.OAuth.init(provider_config)
+    {ExMCP.Authorization.Provider.OAuth, ps}
+  end
+
+  defp init_auth_provider(nil, _auth_config, _base_url, _endpoint), do: {nil, nil}
 
   # Check if the response is a 401 that we can handle with OAuth
   defp handle_auth_challenge({status_line, headers, _body}, original_body, state) do
@@ -737,18 +852,61 @@ defmodule ExMCP.Transport.HTTP do
     {:error, :not_connected}
   end
 
+  @doc """
+  Terminates the server-side session by sending DELETE to the endpoint.
+
+  Per the MCP spec, clients SHOULD send a DELETE request with the session ID
+  to allow the server to clean up session state. This is best-effort — errors
+  are logged but don't prevent client shutdown.
+
+  Returns `:ok` regardless of server response (fire-and-forget).
+  """
+  @spec terminate_session(t()) :: :ok
+  def terminate_session(%__MODULE__{session_id: nil}), do: :ok
+
+  def terminate_session(%__MODULE__{session_id: session_id} = state) when is_binary(session_id) do
+    url = state.base_url <> state.endpoint
+
+    headers = [
+      {@session_header, session_id},
+      {@protocol_version_header, state.protocol_version}
+      | state.headers
+    ]
+
+    charlist_url = String.to_charlist(url)
+
+    charlist_headers =
+      Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
+
+    http_opts = [{:timeout, state.timeouts.connect}]
+
+    case :httpc.request(:delete, {charlist_url, charlist_headers}, http_opts, []) do
+      {:ok, {{_, status, _}, _, _}} when status in [200, 202, 204] ->
+        Logger.debug("Session #{session_id} terminated (HTTP #{status})")
+        :ok
+
+      {:ok, {{_, status, _}, _, _}} ->
+        Logger.debug("Session termination returned HTTP #{status} (non-fatal)")
+        :ok
+
+      {:error, reason} ->
+        Logger.debug("Session termination failed: #{inspect(reason)} (non-fatal)")
+        :ok
+    end
+  end
+
   @impl true
-  def close(%__MODULE__{sse_pid: sse_pid}) when is_pid(sse_pid) do
-    Process.exit(sse_pid, :normal)
+  def close(%__MODULE__{} = state) do
+    # Best-effort session termination before closing
+    terminate_session(state)
+
+    # Stop SSE connection if active
+    if is_pid(state.sse_pid) do
+      Process.exit(state.sse_pid, :normal)
+    end
+
     :ok
   end
-
-  def close(%__MODULE__{use_sse: false}) do
-    # Non-SSE mode - no special cleanup needed
-    :ok
-  end
-
-  def close(%__MODULE__{}), do: :ok
 
   # Private functions
 
@@ -838,6 +996,7 @@ defmodule ExMCP.Transport.HTTP do
       url: url,
       headers: sse_headers,
       initial_retry_delay: state.retry_delay,
+      max_retry_delay: state.max_retry_delay,
       ssl_opts: ssl_opts,
       parent: self(),
       connect_timeout: state.timeouts.connect,

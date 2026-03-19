@@ -37,6 +37,7 @@ defmodule ExMCP.Transport.SSEClient do
     :reconnect_timer,
     :connect_timeout,
     :idle_timeout,
+    :max_retry_delay,
     :httpc_profile
   ]
 
@@ -54,6 +55,7 @@ defmodule ExMCP.Transport.SSEClient do
           reconnect_timer: reference() | nil,
           connect_timeout: non_neg_integer(),
           idle_timeout: non_neg_integer(),
+          max_retry_delay: non_neg_integer(),
           httpc_profile: atom() | nil
         }
 
@@ -67,6 +69,10 @@ defmodule ExMCP.Transport.SSEClient do
   - `:headers` - Additional HTTP headers
   - `:ssl_opts` - SSL options for HTTPS connections
   - `:parent` - Process to send events to (defaults to caller)
+  - `:initial_retry_delay` - Initial reconnection delay in ms (default: #{@initial_retry_delay})
+  - `:max_retry_delay` - Maximum reconnection delay in ms (default: #{@max_retry_delay})
+  - `:connect_timeout` - Connection timeout in ms (default: #{@connection_timeout})
+  - `:idle_timeout` - Idle/heartbeat timeout in ms (default: #{@heartbeat_interval})
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -100,6 +106,7 @@ defmodule ExMCP.Transport.SSEClient do
 
     # Use server-specified retry delay if provided (from POST SSE response)
     initial_delay = Keyword.get(opts, :initial_retry_delay) || @initial_retry_delay
+    max_delay = Keyword.get(opts, :max_retry_delay, @max_retry_delay)
 
     state = %__MODULE__{
       url: url,
@@ -111,6 +118,7 @@ defmodule ExMCP.Transport.SSEClient do
       retry_count: 0,
       connect_timeout: connect_timeout,
       idle_timeout: idle_timeout,
+      max_retry_delay: max_delay,
       httpc_profile: profile
     }
 
@@ -474,7 +482,7 @@ defmodule ExMCP.Transport.SSEClient do
     # Only apply backoff if using the initial default (not server-specified)
     new_delay =
       if delay == @initial_retry_delay do
-        min(delay * 2, @max_retry_delay)
+        min(delay * 2, state.max_retry_delay)
       else
         delay
       end

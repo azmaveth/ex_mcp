@@ -162,6 +162,19 @@ defmodule ExMCP.HttpPlug do
     handle_session_delete(conn, session_id, opts)
   end
 
+  # Per MCP spec, DELETE to the MCP endpoint with Mcp-Session-Id header terminates the session.
+  def call(%Plug.Conn{method: "DELETE"} = conn, opts) do
+    case get_req_header(conn, "mcp-session-id") do
+      [session_id | _] ->
+        handle_session_delete(conn, session_id, opts)
+
+      [] ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(%{error: "Missing Mcp-Session-Id header"}))
+    end
+  end
+
   # Per MCP spec, SSE GET uses the same endpoint as POST.
   # Handle GET requests with Accept: text/event-stream on any path.
   def call(%Plug.Conn{method: "GET"} = conn, opts) do
