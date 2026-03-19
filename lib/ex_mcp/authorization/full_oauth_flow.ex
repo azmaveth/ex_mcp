@@ -205,7 +205,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           server_pid,
           client_info,
           redirect_uri,
-          token_endpoint
+          token_endpoint,
+          config
         )
 
       stop_redirect_server(server_pid)
@@ -235,7 +236,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       redirect_uri: redirect_uri,
       authorization_endpoint: as_metadata["authorization_endpoint"],
       scopes: config[:scopes] || [],
-      resource: config[:resource]
+      resource: config[:resource] || config[:resource_url]
     })
   end
 
@@ -245,7 +246,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
          server_pid,
          client_info,
          redirect_uri,
-         token_endpoint
+         token_endpoint,
+         config
        ) do
     Logger.info("OAuth authorization URL: #{auth_url}")
 
@@ -257,7 +259,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         client_id: client_info.client_id,
         redirect_uri: redirect_uri,
         token_endpoint: token_endpoint,
-        client_secret: client_info[:client_secret]
+        client_secret: client_info[:client_secret],
+        resource: config[:resource] || config[:resource_url]
       })
     end
   end
