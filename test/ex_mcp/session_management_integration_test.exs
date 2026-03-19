@@ -8,7 +8,7 @@ defmodule ExMCP.SessionManagementIntegrationTest do
   - Session termination via DELETE requests
   - Integration with HttpPlug and SSEHandler
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ExMCP.{HttpPlug, SessionManager}
 
@@ -16,7 +16,9 @@ defmodule ExMCP.SessionManagementIntegrationTest do
   import Plug.Conn
 
   setup do
-    # Use the global SessionManager that's already running
+    # Ensure the ExMCP application is started (provides SessionManager)
+    Application.ensure_all_started(:ex_mcp)
+
     # Configure test mode to prevent actual SSE handler startup
     original_test_mode = Application.get_env(:ex_mcp, :test_mode, false)
     Application.put_env(:ex_mcp, :test_mode, true)

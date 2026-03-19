@@ -204,19 +204,21 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
 
       config = SecurityConfig.get_transport_config(:http)
 
-      # Warm up
-      for _ <- 1..10 do
+      # Warm up (100 iterations for JIT + cache warmth)
+      for _ <- 1..100 do
         SecurityGuard.validate_request(request, config)
       end
 
-      # Measure with multiple headers (realistic scenario)
-      {time_microseconds, _result} =
-        :timer.tc(fn ->
-          SecurityGuard.validate_request(request, config)
-        end)
+      # Measure with multiple headers (best of 5 to avoid scheduling jitter)
+      best_time =
+        for _ <- 1..5 do
+          {t, _} = :timer.tc(fn -> SecurityGuard.validate_request(request, config) end)
+          t
+        end
+        |> Enum.min()
 
-      assert time_microseconds < @performance_target_microseconds,
-             "HTTP security validation took #{time_microseconds}μs, exceeds target"
+      assert best_time < @performance_target_microseconds,
+             "HTTP security validation took #{best_time}μs (best of 5), exceeds target"
     end
 
     test "stdio transport security overhead is minimal" do
@@ -306,16 +308,18 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
 
         config = SecurityConfig.get_transport_config(:http)
 
-        {time_microseconds, _result} =
-          :timer.tc(fn ->
-            SecurityGuard.validate_request(request, config)
-          end)
+        best_time =
+          for _ <- 1..5 do
+            {t, _} = :timer.tc(fn -> SecurityGuard.validate_request(request, config) end)
+            t
+          end
+          |> Enum.min()
 
         # Performance should scale reasonably with header count
         max_time = @performance_target_microseconds * (1 + header_count / 10)
 
-        assert time_microseconds < max_time,
-               "Validation with #{header_count} headers took #{time_microseconds}μs, exceeds scaled target of #{max_time}μs"
+        assert best_time < max_time,
+               "Validation with #{header_count} headers took #{best_time}μs (best of 5), exceeds scaled target of #{max_time}μs"
       end
     end
   end

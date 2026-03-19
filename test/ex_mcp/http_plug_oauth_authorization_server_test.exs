@@ -1,5 +1,5 @@
 defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   import Plug.Test
 
   alias ExMCP.HttpPlug
@@ -8,6 +8,10 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
 
   describe "/.well-known/oauth-authorization-server endpoint" do
     setup do
+      on_exit(fn ->
+        Application.delete_env(:ex_mcp, :oauth2_authorization_server_metadata)
+      end)
+
       # Set up valid OAuth configuration for tests
       Application.put_env(:ex_mcp, :oauth2_authorization_server_metadata,
         issuer: "https://auth.test.com",

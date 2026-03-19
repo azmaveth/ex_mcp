@@ -1,5 +1,5 @@
 defmodule ExMCP.FeatureFlagsTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # Clean up application environment after each test to ensure isolation.
   setup do

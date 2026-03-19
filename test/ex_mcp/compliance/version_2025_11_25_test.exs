@@ -6,7 +6,7 @@ defmodule ExMCP.Compliance.Version20251125Test do
   feature registry, and backward compatibility for the 2025-11-25 specification
   which introduces tasks, icons, URL elicitation, and tool calling in sampling.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   @moduletag :compliance
 

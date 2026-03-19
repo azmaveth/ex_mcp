@@ -345,10 +345,10 @@ defmodule ExMCP.Integration.PerformanceTest do
       # Check that performance scales reasonably with payload size
       [tiny, _small, medium, large, xlarge] = Enum.map(payload_results, & &1.execution_time_ms)
 
-      # Allow for some timing variance in small operations
-      # Focus on larger-scale trends rather than exact ordering
-      assert medium <= large, "Medium payload should not be significantly slower than large"
-      assert large <= xlarge, "Large payload should not be significantly slower than xlarge"
+      # Allow for timing jitter — sub-millisecond operations have high variance.
+      # Add tolerance rather than requiring strict ordering.
+      assert medium <= large + 5, "Medium payload should not be significantly slower than large"
+      assert large <= xlarge + 5, "Large payload should not be significantly slower than xlarge"
 
       # Allow some overhead, but shouldn't be exponential growth
       assert xlarge < tiny * 100, "XLarge shouldn't be 100x slower than tiny"

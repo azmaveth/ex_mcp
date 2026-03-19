@@ -9,6 +9,8 @@ defmodule ExMCP.Integration.InteropTest do
   Run with: mix test --include interop
   """
 
+  alias TestConsentHandler, as: TestConsentHandler
+
   use ExUnit.Case, async: false
 
   @moduletag :interop
@@ -33,10 +35,17 @@ defmodule ExMCP.Integration.InteropTest do
           {_, 0} = System.cmd("npm", ["install"], cd: @interop_dir)
         end
 
+        # Ensure ExMCP app is running (ConsentHandler.Test needs it)
+        Application.ensure_all_started(:ex_mcp)
+
+        unless Process.whereis(TestConsentHandler) do
+          TestConsentHandler.start_link()
+        end
+
         # Configure security to use the test consent handler and approve test:// URIs
         user_id = System.get_env("USER") || System.get_env("USERNAME") || "stdio_user"
-        Application.put_env(:ex_mcp, :security, %{consent_handler: ExMCP.ConsentHandler.Test})
-        ExMCP.ConsentHandler.Test.set_consent_response(user_id, "test://greeting", :approved)
+        Application.put_env(:ex_mcp, :security, %{consent_handler: TestConsentHandler})
+        TestConsentHandler.set_consent_response(user_id, "test://greeting", :approved)
 
         on_exit(fn ->
           Application.delete_env(:ex_mcp, :security)

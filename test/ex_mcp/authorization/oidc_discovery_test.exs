@@ -1,5 +1,5 @@
 defmodule ExMCP.Authorization.OIDCDiscoveryTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ExMCP.Authorization.OIDCDiscovery
 

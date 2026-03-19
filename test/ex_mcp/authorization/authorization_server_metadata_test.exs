@@ -1,9 +1,18 @@
 defmodule ExMCP.Authorization.AuthorizationServerMetadataTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ExMCP.Authorization.AuthorizationServerMetadata
 
   @moduletag :oauth
+
+  # Clean up global application config between tests to prevent contamination
+  setup do
+    on_exit(fn ->
+      Application.delete_env(:ex_mcp, :oauth2_authorization_server_metadata)
+    end)
+
+    :ok
+  end
 
   describe "build_metadata/0" do
     test "builds complete metadata from configuration" do

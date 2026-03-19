@@ -1,5 +1,5 @@
 defmodule ExMCP.Client.ConfigurationTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ExMCP.Client.{Configuration, LegacyAdapter, StateMachineAdapter, Wrapper}
 

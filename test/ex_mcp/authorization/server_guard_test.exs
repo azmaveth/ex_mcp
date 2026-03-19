@@ -1,5 +1,5 @@
 defmodule ExMCP.Authorization.ServerGuardTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ExMCP.Authorization.ServerGuard
 
