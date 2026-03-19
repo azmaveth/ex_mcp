@@ -437,22 +437,13 @@ defmodule ExMCP.Client.RequestHandler do
           send_response(error_response, state)
       end
     else
-      # Check if auto-accept is enabled (opt-in, off by default)
-      auto_accept = Application.get_env(:ex_mcp, :elicitation_auto_accept, false)
+      # No custom handler — use default elicitation handler
+      message = Map.get(params, "message", "")
+      requested_schema = Map.get(params, "requestedSchema", %{})
 
-      if auto_accept do
-        # Auto-accept with defaults from schema for automated testing.
-        requested_schema = Map.get(params, "requestedSchema", %{})
-        content = ExMCP.Testing.SchemaGenerator.generate_args(requested_schema)
-        result = %{"action" => "accept", "content" => content}
-        response = build_success_response(result, request_id)
-        send_response(response, state)
-      else
-        # Decline — no handler to present to user
-        result = %{"action" => "decline"}
-        response = build_success_response(result, request_id)
-        send_response(response, state)
-      end
+      result = ExMCP.Client.ElicitationHandler.handle(message, requested_schema)
+      response = build_success_response(result, request_id)
+      send_response(response, state)
     end
   end
 
