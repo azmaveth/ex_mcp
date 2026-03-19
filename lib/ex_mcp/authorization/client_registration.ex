@@ -24,19 +24,20 @@ defmodule ExMCP.Authorization.ClientRegistration do
   """
 
   @type registration_request :: %{
-          registration_endpoint: String.t(),
-          client_name: String.t(),
-          redirect_uris: [String.t()],
-          grant_types: [String.t()],
-          response_types: [String.t()],
-          scope: String.t(),
-          client_uri: String.t() | nil,
-          logo_uri: String.t() | nil,
-          contacts: [String.t()] | nil,
-          tos_uri: String.t() | nil,
-          policy_uri: String.t() | nil,
-          software_id: String.t() | nil,
-          software_version: String.t() | nil
+          required(:registration_endpoint) => String.t(),
+          required(:client_name) => String.t(),
+          required(:redirect_uris) => [String.t()],
+          required(:grant_types) => [String.t()],
+          required(:response_types) => [String.t()],
+          required(:scope) => String.t(),
+          optional(:token_endpoint_auth_method) => String.t(),
+          optional(:client_uri) => String.t() | nil,
+          optional(:logo_uri) => String.t() | nil,
+          optional(:contacts) => [String.t()] | nil,
+          optional(:tos_uri) => String.t() | nil,
+          optional(:policy_uri) => String.t() | nil,
+          optional(:software_id) => String.t() | nil,
+          optional(:software_version) => String.t() | nil
         }
 
   @type client_information :: %{
@@ -201,7 +202,7 @@ defmodule ExMCP.Authorization.ClientRegistration do
       response_types: Map.get(request, :response_types, ["code"]),
       scope: Map.get(request, :scope, ""),
       # PKCE clients don't need client authentication
-      token_endpoint_auth_method: "none"
+      token_endpoint_auth_method: Map.get(request, :token_endpoint_auth_method, "none")
     }
 
     # Add optional fields if present

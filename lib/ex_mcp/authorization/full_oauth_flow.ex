@@ -157,36 +157,52 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     registration_endpoint = as_metadata["registration_endpoint"]
 
     if registration_endpoint do
-      Logger.info("Dynamically registering OAuth client at #{registration_endpoint}")
-      redirect_uri = "http://127.0.0.1:0/callback"
-
-      case ClientRegistration.register_client(%{
-             registration_endpoint: registration_endpoint,
-             client_name: "ex_mcp",
-             redirect_uris: [redirect_uri],
-             grant_types: ["authorization_code"],
-             response_types: ["code"],
-             scope: Enum.join(config[:scopes] || [], " "),
-             client_uri: nil,
-             logo_uri: nil,
-             contacts: nil,
-             tos_uri: nil,
-             policy_uri: nil,
-             software_id: nil,
-             software_version: nil
-           }) do
-        {:ok, reg} ->
-          {:ok,
-           %{
-             client_id: reg[:client_id] || reg["client_id"],
-             client_secret: reg[:client_secret] || reg["client_secret"]
-           }}
-
-        {:error, reason} ->
-          {:error, {:registration_failed, reason}}
-      end
+      do_register_client(registration_endpoint, as_metadata, config)
     else
       {:error, :no_registration_endpoint}
+    end
+  end
+
+  defp do_register_client(registration_endpoint, as_metadata, config) do
+    Logger.info("Dynamically registering OAuth client at #{registration_endpoint}")
+    redirect_uri = "http://127.0.0.1:0/callback"
+    supported = as_metadata["token_endpoint_auth_methods_supported"] || []
+    auth_method = select_registration_auth_method(supported)
+
+    case ClientRegistration.register_client(%{
+           registration_endpoint: registration_endpoint,
+           client_name: "ex_mcp",
+           redirect_uris: [redirect_uri],
+           grant_types: ["authorization_code"],
+           response_types: ["code"],
+           token_endpoint_auth_method: auth_method,
+           scope: Enum.join(config[:scopes] || [], " "),
+           client_uri: nil,
+           logo_uri: nil,
+           contacts: nil,
+           tos_uri: nil,
+           policy_uri: nil,
+           software_id: nil,
+           software_version: nil
+         }) do
+      {:ok, reg} ->
+        {:ok,
+         %{
+           client_id: reg[:client_id] || reg["client_id"],
+           client_secret: reg[:client_secret] || reg["client_secret"]
+         }}
+
+      {:error, reason} ->
+        {:error, {:registration_failed, reason}}
+    end
+  end
+
+  defp select_registration_auth_method(supported) do
+    cond do
+      "none" in supported -> "none"
+      "client_secret_basic" in supported -> "client_secret_basic"
+      "client_secret_post" in supported -> "client_secret_post"
+      true -> "none"
     end
   end
 
@@ -194,6 +210,12 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   defp run_auth_code_flow(as_metadata, client_info, config) do
     authorization_endpoint = as_metadata["authorization_endpoint"]
     token_endpoint = as_metadata["token_endpoint"]
+
+    # Determine token endpoint auth method from AS metadata
+    supported_methods =
+      as_metadata["token_endpoint_auth_methods_supported"] || ["client_secret_post"]
+
+    token_auth_method = select_token_auth_method(supported_methods)
 
     with :ok <- validate_endpoints(authorization_endpoint, token_endpoint),
          {:ok, server_pid, redirect_uri} <- setup_redirect_server(config),
@@ -206,7 +228,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           client_info,
           redirect_uri,
           token_endpoint,
-          config
+          config,
+          token_auth_method
         )
 
       stop_redirect_server(server_pid)
@@ -247,23 +270,41 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
          client_info,
          redirect_uri,
          token_endpoint,
-         config
+         config,
+         token_auth_method
        ) do
     Logger.info("OAuth authorization URL: #{auth_url}")
+    Logger.info("Token endpoint auth method: #{token_auth_method}")
 
     with {:ok, _} <- follow_authorization(auth_url),
          {:ok, code} <- wait_for_callback(server_pid) do
-      OAuthFlow.exchange_code_for_token(%{
-        code: code,
-        code_verifier: state_data.code_verifier,
-        client_id: client_info.client_id,
-        redirect_uri: redirect_uri,
-        token_endpoint: token_endpoint,
-        client_secret: client_info[:client_secret],
-        resource: config[:resource] || config[:resource_url]
-      })
+      ExMCP.Authorization.HTTPClient.make_token_request(
+        token_endpoint,
+        [
+          grant_type: "authorization_code",
+          code: code,
+          redirect_uri: redirect_uri,
+          client_id: client_info.client_id,
+          code_verifier: state_data.code_verifier,
+          client_secret: client_info[:client_secret],
+          resource: config[:resource] || config[:resource_url]
+        ]
+        |> Enum.reject(fn {_, v} -> is_nil(v) end),
+        auth_method: token_auth_method
+      )
     end
   end
+
+  defp select_token_auth_method(supported) when is_list(supported) do
+    cond do
+      "none" in supported -> :none
+      "client_secret_basic" in supported -> :client_secret_basic
+      "client_secret_post" in supported -> :client_secret_post
+      true -> :client_secret_post
+    end
+  end
+
+  defp select_token_auth_method(_), do: :client_secret_post
 
   # Follow the authorization URL and its redirects (for automated testing).
   # The conformance test server auto-approves and redirects to our callback.

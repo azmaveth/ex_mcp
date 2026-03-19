@@ -12,12 +12,19 @@ defmodule ExMCP.Authorization.HTTPClient do
   Handles both token exchange and refresh token requests with proper
   error handling and response parsing.
   """
-  @spec make_token_request(String.t(), keyword() | [{String.t(), String.t()}]) ::
+  @spec make_token_request(String.t(), keyword() | [{String.t(), String.t()}], keyword()) ::
           {:ok, map()} | {:error, term()}
-  def make_token_request(endpoint, body) do
+  def make_token_request(endpoint, body, opts \\ [])
+
+  def make_token_request(endpoint, body, opts) do
+    auth_method = Keyword.get(opts, :auth_method, :client_secret_post)
+
+    {headers, body} = apply_token_auth_method(auth_method, body)
+
     headers = [
       {"content-type", "application/x-www-form-urlencoded"},
       {"accept", "application/json"}
+      | headers
     ]
 
     encoded_body = URI.encode_query(body)
@@ -112,6 +119,40 @@ defmodule ExMCP.Authorization.HTTPClient do
   end
 
   # Private HTTP request implementation
+
+  # Apply token endpoint authentication method per RFC 8414.
+  # Returns {extra_headers, modified_body}.
+  defp apply_token_auth_method(:client_secret_basic, body) do
+    # Extract client_id and client_secret from body, put in Authorization header
+    body_map = Map.new(body)
+    client_id = body_map[:client_id] || body_map["client_id"] || ""
+    client_secret = body_map[:client_secret] || body_map["client_secret"] || ""
+
+    # Remove credentials from body
+    filtered_body =
+      Enum.reject(body, fn {k, _} ->
+        k in [:client_id, :client_secret, "client_id", "client_secret"]
+      end)
+
+    # Add Basic auth header
+    credentials = Base.encode64("#{client_id}:#{client_secret}")
+    {[{"authorization", "Basic #{credentials}"}], filtered_body}
+  end
+
+  defp apply_token_auth_method(:none, body) do
+    # No auth — just remove client_secret from body, keep client_id
+    filtered_body =
+      Enum.reject(body, fn {k, _} ->
+        k in [:client_secret, "client_secret"]
+      end)
+
+    {[], filtered_body}
+  end
+
+  defp apply_token_auth_method(_method, body) do
+    # Default: client_secret_post — credentials in body (no extra headers)
+    {[], body}
+  end
 
   defp make_http_request(method, url, headers, body) do
     # Convert headers to charlist format for httpc
