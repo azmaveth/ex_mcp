@@ -1,33 +1,8 @@
 # Expected conformance test failures.
 # Remove entries as they're fixed — stale entries cause CI failure.
-#
-# Server: need conformance-specific test fixtures
-server:
-  - logging-set-level
-  - completion-complete
-  - tools-call-simple-text
-  - tools-call-image
-  - tools-call-audio
-  - tools-call-embedded-resource
-  - tools-call-mixed-content
-  - tools-call-with-logging
-  - tools-call-error
-  - tools-call-with-progress
-  - tools-call-sampling
-  - tools-call-elicitation
-  - elicitation-sep1034-defaults
-  - elicitation-sep1330-enums
-  - resources-read-text
-  - resources-read-binary
-  - resources-templates-read
-  - resources-subscribe
-  - resources-unsubscribe
-  - prompts-get-simple
-  - prompts-get-with-args
-  - prompts-get-embedded-resource
-  - prompts-get-with-image
-  - dns-rebinding-protection
 
-# Client: ALL PASSING (0 failures)
-# Warning only: sse-retry Last-Event-ID (SHOULD, not MUST)
+# Server: ALL PASSING (39/39)
+server: []
+
+# Client: ALL PASSING (223/223)
 client: []
