@@ -432,6 +432,12 @@ defmodule ExMCP.MessageProcessor do
 
   defp negotiate_version(_), do: @default_protocol_version
 
+  # Wrap tool call result in MCP spec format: {content: [...]}
+  defp wrap_tool_result(%{"content" => _} = result), do: deep_stringify_keys(result)
+  defp wrap_tool_result(%{content: _} = result), do: deep_stringify_keys(result)
+  defp wrap_tool_result(list) when is_list(list), do: %{"content" => deep_stringify_keys(list)}
+  defp wrap_tool_result(other), do: %{"content" => [deep_stringify_keys(other)]}
+
   # Recursively convert atom keys to string keys in maps and lists.
   # Handlers may use atom keys (%{name: "x"}) but JSON-RPC requires strings.
   defp deep_stringify_keys(map) when is_map(map) do
@@ -465,12 +471,18 @@ defmodule ExMCP.MessageProcessor do
 
     case handler_module.handle_tool_call(tool_name, arguments, %{}) do
       {:ok, result} ->
-        response = success_response(result, id)
+        wrapped = wrap_tool_result(result)
+        response = success_response(wrapped, id)
         put_response(conn, response)
 
       {:error, reason} ->
-        error_response = error_response("Tool execution failed", reason, id)
-        put_response(conn, error_response)
+        error_result = %{
+          "content" => [%{"type" => "text", "text" => to_string(reason)}],
+          "isError" => true
+        }
+
+        response = success_response(error_result, id)
+        put_response(conn, response)
     end
   end
 
@@ -664,12 +676,17 @@ defmodule ExMCP.MessageProcessor do
 
     case GenServer.call(server_pid, {:execute_tool, tool_name, arguments}, 10000) do
       {:ok, result} ->
-        response = success_response(result, id)
+        wrapped = wrap_tool_result(result)
+        response = success_response(wrapped, id)
         put_response(conn, response)
 
       {:error, reason} ->
-        error_response = error_response("Tool execution failed", reason, id)
-        put_response(conn, error_response)
+        error_result = %{
+          "content" => [%{"type" => "text", "text" => to_string(reason)}],
+          "isError" => true
+        }
+
+        put_response(conn, success_response(error_result, id))
     end
   rescue
     error ->
@@ -870,12 +887,26 @@ defmodule ExMCP.MessageProcessor do
 
     case GenServer.call(server_pid, {:call_tool, tool_name, arguments}, 10000) do
       {:ok, result} ->
-        response = success_response(deep_stringify_keys(result), id)
+        # MCP spec: tools/call result must be {content: [...]}
+        wrapped =
+          case result do
+            %{"content" => _} -> deep_stringify_keys(result)
+            list when is_list(list) -> %{"content" => deep_stringify_keys(list)}
+            other -> %{"content" => [deep_stringify_keys(other)]}
+          end
+
+        response = success_response(wrapped, id)
         put_response(conn, response)
 
       {:error, reason} ->
-        error_response = error_response("Tool execution failed", reason, id)
-        put_response(conn, error_response)
+        # MCP spec: error tools/call should have isError: true
+        error_result = %{
+          "content" => [%{"type" => "text", "text" => to_string(reason)}],
+          "isError" => true
+        }
+
+        response = success_response(error_result, id)
+        put_response(conn, response)
     end
   rescue
     error ->
