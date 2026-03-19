@@ -272,16 +272,27 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   # Perform HTTP request with automatic OAuth 401 retry.
-  # On 401, discovers OAuth metadata, obtains token, and retries once.
+  # Supports scope step-up: if first retry returns 401 with insufficient_scope,
+  # re-authorizes with broader scope (up to max_retries).
   defp perform_and_maybe_auth(body, state) do
     result = perform_http_request(body, state)
 
     case result do
       {:ok, response} ->
         case handle_auth_challenge(response, body, state) do
-          :no_challenge -> {:ok, response}
-          {:ok, retry_response, new_state} -> {:ok, retry_response, new_state}
-          {:error, reason} -> {:error, reason}
+          :no_challenge ->
+            {:ok, response}
+
+          {:ok, retry_response, new_state} ->
+            # Check if retry got another 401 (scope step-up)
+            case handle_auth_challenge(retry_response, body, new_state) do
+              :no_challenge -> {:ok, retry_response, new_state}
+              {:ok, r, s} -> {:ok, r, s}
+              {:error, reason} -> {:error, reason}
+            end
+
+          {:error, reason} ->
+            {:error, reason}
         end
 
       {:error, reason} ->
@@ -314,11 +325,20 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp maybe_oauth_retry(_headers, _original_body, %{access_token: token})
-       when is_binary(token) and token != "" do
-    # Already have a token and still got 401 — token is invalid/expired.
-    # Don't retry to avoid loops. Caller gets the 401.
-    :no_challenge
+  defp maybe_oauth_retry(headers, original_body, %{access_token: token} = state)
+       when is_binary(token) and byte_size(token) > 0 do
+    # Already have a token but got 401 — check if this is a scope step-up
+    www_auth = find_header(headers, "www-authenticate") || ""
+
+    if String.contains?(www_auth, "insufficient_scope") do
+      # Scope step-up: clear token and re-auth with new scope requirements
+      Logger.info("Scope step-up required, re-authorizing")
+      new_state = %{state | access_token: nil}
+      maybe_oauth_retry(headers, original_body, new_state)
+    else
+      # Token rejected for other reason — don't loop
+      :no_challenge
+    end
   end
 
   defp maybe_oauth_retry(headers, original_body, state) do
@@ -362,9 +382,13 @@ defmodule ExMCP.Transport.HTTP do
     Logger.info("Attempting full OAuth flow (authorization code + PKCE)")
     resource_url = build_url(state, "")
 
+    # Extract scope from WWW-Authenticate header if present
+    scopes = extract_scope_from_www_auth(www_auth)
+
     config = %{
       resource_url: resource_url,
-      www_authenticate: www_auth
+      www_authenticate: www_auth,
+      scopes: scopes
     }
 
     case FullOAuthFlow.execute(config) do
@@ -386,6 +410,15 @@ defmodule ExMCP.Transport.HTTP do
       {:error, reason} ->
         Logger.warning("Full OAuth flow failed: #{inspect(reason)}")
         {:error, {:oauth_failed, reason}}
+    end
+  end
+
+  defp extract_scope_from_www_auth(nil), do: []
+
+  defp extract_scope_from_www_auth(www_auth) when is_binary(www_auth) do
+    case Regex.run(~r/scope="([^"]+)"/, www_auth) do
+      [_, scope_str] -> String.split(scope_str, " ", trim: true)
+      _ -> []
     end
   end
 

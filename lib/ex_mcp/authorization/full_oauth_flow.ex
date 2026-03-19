@@ -55,6 +55,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     has_preexisting_creds = is_binary(config[:client_id]) and is_binary(config[:client_secret])
 
     with {:ok, prm} <- discover_resource_metadata(config),
+         :ok <- validate_prm_resource(prm, config),
          {:ok, as_metadata} <- discover_as_metadata(prm, config),
          {:ok, client_info} <- ensure_client_registered(as_metadata, config) do
       if has_preexisting_creds do
@@ -86,6 +87,37 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     end
   end
 
+  # Validate that PRM resource field matches our server URL (RFC 8707)
+  defp validate_prm_resource(%{resource: prm_resource}, config) when is_binary(prm_resource) do
+    server_url = config[:resource_url] || ""
+
+    if urls_match?(prm_resource, server_url) do
+      :ok
+    else
+      Logger.warning("PRM resource mismatch: #{prm_resource} != #{server_url}")
+      {:error, {:resource_mismatch, prm_resource, server_url}}
+    end
+  end
+
+  defp validate_prm_resource(_, _), do: :ok
+
+  defp urls_match?(url1, url2) do
+    # Normalize and compare — strip trailing slash, compare scheme+host+port+path
+    normalize_url(url1) == normalize_url(url2)
+  end
+
+  defp normalize_url(url) when is_binary(url) do
+    uri = URI.parse(url)
+    path = (uri.path || "/") |> String.trim_trailing("/")
+    "#{uri.scheme}://#{uri.host}:#{uri.port || default_port(uri.scheme)}#{path}"
+  end
+
+  defp normalize_url(_), do: ""
+
+  defp default_port("https"), do: 443
+  defp default_port("http"), do: 80
+  defp default_port(_), do: 80
+
   # Try path-based PRM discovery first, then fall back to root well-known.
   # Per MCP spec, path-based is /.well-known/oauth-protected-resource/mcp
   # and root is /.well-known/oauth-protected-resource
@@ -116,12 +148,16 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
         case Jason.decode(body_str) do
           {:ok, data} ->
-            # Parse authorization_servers from PRM response
             as_list =
               (data["authorization_servers"] || [])
               |> Enum.map(fn issuer -> %{issuer: issuer} end)
 
-            {:ok, %{authorization_servers: as_list}}
+            result = %{authorization_servers: as_list}
+            # Include resource field for validation
+            result =
+              if data["resource"], do: Map.put(result, :resource, data["resource"]), else: result
+
+            {:ok, result}
 
           {:error, reason} ->
             {:error, {:prm_parse_error, reason}}
