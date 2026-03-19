@@ -883,6 +883,23 @@ defmodule ExMCP.Client do
     RequestHandler.parse_transport_message(message, state)
   end
 
+  # Push model: transport sends pre-parsed messages directly
+  def handle_info({:transport_event, message}, state) do
+    RequestHandler.parse_transport_message(message, state)
+  end
+
+  # Push model: event ID tracking (for SSE resumability)
+  def handle_info({:transport_event_id, _event_id}, state) do
+    # Event IDs are tracked by the transport internally
+    {:noreply, state}
+  end
+
+  # Push model: transport error
+  def handle_info({:transport_error, reason}, state) do
+    Logger.warning("Transport error (push): #{inspect(reason)}")
+    {:noreply, state}
+  end
+
   def handle_info(:health_check, state) do
     # Perform health check
     # Note: Health check logic could ping server or check connection status
@@ -895,7 +912,13 @@ defmodule ExMCP.Client do
   def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
       when pid == task_pid do
     Logger.error("Receiver task died: #{inspect(reason)}")
-    # Note: Automatic reconnection logic could be implemented here
+    {:noreply, %{state | connection_status: :disconnected}}
+  end
+
+  # Push mode: forwarder process died
+  def handle_info({:EXIT, _pid, reason}, %{receiver_task: :push} = state)
+      when reason != :normal do
+    Logger.error("Transport forwarder died: #{inspect(reason)}")
     {:noreply, %{state | connection_status: :disconnected}}
   end
 

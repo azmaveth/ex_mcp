@@ -351,9 +351,8 @@ defmodule ExMCP.Client.RequestHandler do
         handle_elicitation_create_request(params, request_id, state)
 
       _ ->
-        # Return method not found error for unsupported requests
-        error_response = build_error_response(-32601, "Method not found", request_id)
-        send_response(error_response, state)
+        # Try generic handler, then fall back to method not found
+        handle_generic_server_request(method, params, request_id, state)
     end
   end
 
@@ -474,6 +473,33 @@ defmodule ExMCP.Client.RequestHandler do
       },
       "id" => request_id
     }
+  end
+
+  defp handle_generic_server_request(method, params, request_id, state) do
+    client_handler = Keyword.get(state.transport_opts, :handler)
+    handler_state_opts = Keyword.get(state.transport_opts, :handler_state, [])
+
+    if client_handler &&
+         function_exported?(client_handler, :handle_server_request, 3) do
+      handler_state =
+        case client_handler.init(handler_state_opts) do
+          {:ok, initial_state} -> initial_state
+          _ -> %{}
+        end
+
+      case client_handler.handle_server_request(method, params, handler_state) do
+        {:ok, result, _new_handler_state} ->
+          response = build_success_response(result, request_id)
+          send_response(response, state)
+
+        {:error, error, _new_handler_state} ->
+          error_response = build_error_response(-32603, error, request_id)
+          send_response(error_response, state)
+      end
+    else
+      error_response = build_error_response(-32601, "Method not found", request_id)
+      send_response(error_response, state)
+    end
   end
 
   defp send_response(response, state) do

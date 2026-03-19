@@ -28,7 +28,7 @@ defmodule ExMCP.Transport.Test do
   alias ExMCP.Transport.Error
 
   # State for server side (when acting as server transport)
-  defstruct [:peer_pid, :role]
+  defstruct [:peer_pid, :role, :subscriber, :forwarder_pid]
 
   @impl true
   def connect(opts) do
@@ -113,6 +113,21 @@ defmodule ExMCP.Transport.Test do
     # Server doesn't have a peer yet, this will happen during initialization
     {:ok, state}
   end
+
+  @doc """
+  Subscribe to receive transport events (push model).
+
+  For the Test transport, the peer already sends `{:transport_message, msg}`
+  to the client process. The Client GenServer handles these directly,
+  so subscribe just signals that no receiver task is needed.
+  """
+  @impl true
+  def subscribe(_pid, %__MODULE__{} = state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def capabilities(%__MODULE__{}), do: [:push]
 
   # Compatibility functions for client expectations
   # Use explicit module reference to avoid conflict with Kernel.send/2

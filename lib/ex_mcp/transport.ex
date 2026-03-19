@@ -32,6 +32,20 @@ defmodule ExMCP.Transport do
         url: "https://api.example.com"
       )
 
+  ## Push vs Pull Model
+
+  Transports support two message delivery models:
+
+  - **Pull (legacy):** Client calls `receive_message/1` in a loop via a receiver task.
+    This is the default and works for all transports.
+
+  - **Push (event-driven):** Client calls `subscribe/2` to register a handler pid.
+    The transport pushes `{:transport_event, message}` messages directly to the handler.
+    This eliminates the receiver task and is more efficient.
+
+  Transports that implement `subscribe/2` should still implement `receive_message/1`
+  for backwards compatibility.
+
   ## Custom Transport Implementation
 
   To implement a custom transport, create a module that implements
@@ -63,6 +77,13 @@ defmodule ExMCP.Transport do
           # Clean up
           :ok
         end
+
+        # Optional: enable push model
+        @impl true
+        def subscribe(pid, state) do
+          # Start pushing {:transport_event, msg} to pid
+          {:ok, %{state | subscriber: pid}}
+        end
       end
   """
 
@@ -92,6 +113,9 @@ defmodule ExMCP.Transport do
 
   This should block until a message is available. Returns
   `{:ok, message, new_state}` where message is a JSON string or raw map.
+
+  Note: When `subscribe/2` is used, `receive_message/1` may not be called.
+  Transports should still implement it for backwards compatibility.
   """
   @callback receive_message(state()) :: {:ok, message(), state()} | {:error, any()}
 
@@ -110,6 +134,21 @@ defmodule ExMCP.Transport do
   @callback connected?(state()) :: boolean()
 
   @doc """
+  Optional: Subscribe a process to receive transport events.
+
+  When implemented, the transport pushes messages to the subscriber pid as:
+  - `{:transport_event, message}` — a received message (JSON string or map)
+  - `{:transport_closed, reason}` — transport connection closed
+  - `{:transport_error, reason}` — transport error occurred
+
+  This enables the push (event-driven) model, eliminating the need for a
+  receiver task that polls `receive_message/1`.
+
+  Returns `{:ok, new_state}` on success.
+  """
+  @callback subscribe(pid(), state()) :: {:ok, state()} | {:error, any()}
+
+  @doc """
   Optional callback to declare transport capabilities.
 
   Returns a list of capability atoms that indicate special features
@@ -119,6 +158,7 @@ defmodule ExMCP.Transport do
   ## Capabilities
 
   - `:raw_terms` - Transport can handle raw Elixir terms without JSON serialization
+  - `:push` - Transport supports `subscribe/2` for event-driven message delivery
   - `:compression` - Transport supports message compression (future)
   - `:encryption` - Transport supports message encryption (future)
 
@@ -128,7 +168,7 @@ defmodule ExMCP.Transport do
       def capabilities(_state), do: [:raw_terms]
 
       # Transport with multiple capabilities
-      def capabilities(_state), do: [:raw_terms, :compression]
+      def capabilities(_state), do: [:raw_terms, :push]
 
       # Transport with no special capabilities (default)
       def capabilities(_state), do: []
@@ -136,7 +176,15 @@ defmodule ExMCP.Transport do
   Default implementation returns an empty list (no special capabilities).
   """
   @callback capabilities(state()) :: [atom()]
-  @optional_callbacks connected?: 1, capabilities: 1
+  @optional_callbacks connected?: 1, capabilities: 1, subscribe: 2
+
+  @doc """
+  Check if a transport module supports the push (subscribe) model.
+  """
+  @spec supports_push?(module()) :: boolean()
+  def supports_push?(transport_mod) do
+    function_exported?(transport_mod, :subscribe, 2)
+  end
 
   @doc """
   Helper to get the appropriate transport module for an atom identifier.

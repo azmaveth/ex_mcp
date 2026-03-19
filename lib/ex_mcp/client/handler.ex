@@ -229,8 +229,31 @@ defmodule ExMCP.Client.Handler do
   """
   @callback terminate(reason :: term(), state) :: :ok
 
+  @doc """
+  Generic handler for any server-initiated request not handled by a specific callback.
+
+  This is called when the server sends a request (e.g., a future MCP method) that
+  doesn't have a dedicated handler callback. Implement this to handle custom or
+  new server methods without waiting for library updates.
+
+  ## Parameters
+
+  - `method` — the JSON-RPC method name (e.g., "sampling/createMessage")
+  - `params` — the request parameters map
+  - `state` — the handler state
+
+  ## Return Values
+
+  - `{:ok, result, new_state}` — success, result is sent back as JSON-RPC response
+  - `{:error, error_info, new_state}` — error, sent as JSON-RPC error response
+  """
+  @callback handle_server_request(method :: String.t(), params :: map(), state) ::
+              {:ok, result :: map(), state}
+              | {:error, error_info, state}
+
   @optional_callbacks terminate: 2,
                       handle_elicitation_create: 3,
                       handle_url_elicitation: 3,
-                      handle_task_status: 2
+                      handle_task_status: 2,
+                      handle_server_request: 3
 end

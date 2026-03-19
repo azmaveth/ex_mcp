@@ -31,7 +31,7 @@ defmodule ExMCP.Transport.Stdio do
   alias ExMCP.Internal.SecurityConfig
   alias ExMCP.Transport.{Error, SecurityGuard}
 
-  defstruct [:port, :buffer, :line_buffer]
+  defstruct [:port, :buffer, :line_buffer, :subscriber, :reader_pid]
 
   @impl true
   def connect(opts) do
@@ -302,7 +302,11 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   @impl true
-  def close(%__MODULE__{port: port}) do
+  def close(%__MODULE__{port: port, reader_pid: reader_pid}) do
+    if is_pid(reader_pid) and Process.alive?(reader_pid) do
+      Process.exit(reader_pid, :normal)
+    end
+
     Port.close(port)
     :ok
   end
@@ -311,6 +315,26 @@ defmodule ExMCP.Transport.Stdio do
   def connected?(%__MODULE__{port: port}) do
     Port.info(port) != nil
   end
+
+  @doc """
+  Subscribe to receive transport events (push model).
+
+  Spawns an internal reader process that takes over port ownership,
+  reads and parses JSON messages, and pushes them to the subscriber.
+  """
+  @impl true
+  def subscribe(pid, %__MODULE__{port: port} = state) when is_pid(pid) do
+    reader =
+      spawn_link(fn ->
+        Port.connect(port, self())
+        stdio_reader_loop(port, "", pid)
+      end)
+
+    {:ok, %{state | subscriber: pid, reader_pid: reader}}
+  end
+
+  @impl true
+  def capabilities(%__MODULE__{}), do: [:push]
 
   # V2 compatibility methods
   def send(state, message) do
@@ -386,6 +410,55 @@ defmodule ExMCP.Transport.Stdio do
       [partial] ->
         # No complete line yet, keep buffering
         receive_loop(%{state | line_buffer: partial})
+    end
+  end
+
+  # Internal reader process for push mode.
+  # Reads port data, buffers lines, parses JSON, pushes to subscriber.
+  defp stdio_reader_loop(port, line_buffer, subscriber) do
+    receive do
+      {^port, {:data, data}} ->
+        binary_data =
+          case data do
+            {:eol, line} -> line <> "\n"
+            binary when is_binary(binary) -> binary
+            _ -> ""
+          end
+
+        new_buffer = line_buffer <> binary_data
+        remaining = process_buffer(new_buffer, subscriber)
+        stdio_reader_loop(port, remaining, subscriber)
+
+      {^port, {:exit_status, status}} ->
+        Kernel.send(subscriber, {:transport_closed, {:process_exited, status}})
+
+      {^port, :eof} ->
+        Kernel.send(subscriber, {:transport_closed, :eof})
+    end
+  end
+
+  # Process buffered data, sending complete JSON messages to subscriber.
+  # Returns remaining incomplete buffer.
+  defp process_buffer(buffer, subscriber) do
+    case String.split(buffer, "\n", parts: 2) do
+      [line, rest] ->
+        trimmed = String.trim(line)
+
+        if trimmed != "" and
+             (String.starts_with?(trimmed, "{") or String.starts_with?(trimmed, "[")) do
+          case Jason.decode(trimmed) do
+            {:ok, message} ->
+              Kernel.send(subscriber, {:transport_event, message})
+
+            {:error, _} ->
+              Logger.debug("Skipping invalid JSON: #{inspect(trimmed)}")
+          end
+        end
+
+        process_buffer(rest, subscriber)
+
+      [partial] ->
+        partial
     end
   end
 

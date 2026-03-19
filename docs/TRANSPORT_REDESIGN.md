@@ -47,11 +47,15 @@ Last-Event-ID properly tracked and sent on GET SSE reconnection.
 
 ## Priority 4: API Design
 
-### 4a. Unified message callback — DEFERRED
-**Reason:** Current model works and passes 100% conformance. Low ROI for the churn.
+### ~~4a. Unified message callback~~ ✅ DONE
+`ExMCP.Client.Handler` now includes `handle_server_request/3` as a generic catch-all callback for server-initiated requests. Dispatched automatically when no specific handler exists for the method. New server methods can be handled without library changes.
 
-### 4b. Receiver loop vs. callback model — DEFERRED
-**Reason:** Polling receiver is functional. Full rewrite risks regressions with insufficient benefit.
+### ~~4b. Event-driven receiver (push model)~~ ✅ DONE
+`ExMCP.Transport` behaviour adds optional `subscribe/2` callback. When implemented, the transport pushes `{:transport_event, message}` directly to the subscriber, eliminating the receiver task polling loop. All built-in transports implement it:
+- **HTTP+SSE**: Event forwarder process receives SSE events, parses JSON, pushes to subscriber
+- **Stdio**: Internal reader process handles port messages, buffers lines, pushes parsed JSON
+- **Test/Local**: No-op subscribe (messages already arrive at client process via peer)
+Client auto-detects push support via `Transport.supports_push?/1` and skips receiver task.
 
 ### ~~4c. Transport state threading~~ ✅ RESOLVED
 **Resolution:** The Provider pattern (2a) encapsulates auth state. Analysis of the receiver loop shows it only receives SSE events — it never makes HTTP requests or uses auth state. The only state it modifies is `last_event_id`. Since auth state changes in `send_message` don't affect the receiver, no ETS/Agent bridge is needed.

@@ -58,7 +58,7 @@ defmodule ExMCP.Transport.Local do
   alias ExMCP.Transport.Error
   require Logger
 
-  defstruct [:server_pid, :mode, :role, :connected, :timeout]
+  defstruct [:server_pid, :mode, :role, :connected, :timeout, :subscriber, :forwarder_pid]
 
   @type t :: %__MODULE__{
           server_pid: pid() | nil,
@@ -142,9 +142,21 @@ defmodule ExMCP.Transport.Local do
     false
   end
 
+  @doc """
+  Subscribe to receive transport events (push model).
+
+  For the Local transport, the peer already sends `{:transport_message, msg}`
+  to the client process. The Client GenServer handles these directly,
+  so subscribe just signals that no receiver task is needed.
+  """
   @impl true
-  def capabilities(%__MODULE__{mode: :native}), do: [:raw_terms]
-  def capabilities(_state), do: []
+  def subscribe(_pid, %__MODULE__{} = state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def capabilities(%__MODULE__{mode: :native}), do: [:raw_terms, :push]
+  def capabilities(_state), do: [:push]
 
   @impl true
   def send_message(message, %__MODULE__{} = transport) do

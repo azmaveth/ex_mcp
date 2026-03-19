@@ -49,12 +49,19 @@ defmodule ExMCP.Client.ConnectionManager do
            do_handshake(transport_mod, transport_state, opts),
          {:ok, state_after_initialized} <-
            send_initialized(transport_mod, state_after_handshake, result),
-         {:ok, receiver_task} <-
+         {:ok, receiver_result} <-
            start_receiver_task(self(), transport_mod, state_after_initialized) do
+      # Push mode returns {:push, updated_transport_state} — extract it
+      {receiver_task, final_transport_state} =
+        case receiver_result do
+          {:push, new_ts} -> {:push, new_ts}
+          task -> {task, state_after_initialized}
+        end
+
       new_state =
         state
         |> Map.put(:transport_mod, transport_mod)
-        |> Map.put(:transport_state, state_after_initialized)
+        |> Map.put(:transport_state, final_transport_state)
         |> Map.put(:receiver_task, receiver_task)
         |> Map.put(:server_capabilities, result["capabilities"])
         |> Map.put(:protocol_version, result["protocolVersion"])
@@ -391,14 +398,37 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp start_receiver_task(parent, transport_mod, transport_state) do
-    # Check if this is HTTP in non-SSE mode
-    if transport_mod == ExMCP.Transport.HTTP and not transport_state.use_sse do
-      # Don't start a receive loop for synchronous HTTP
-      {:ok, nil}
-    else
-      # Start receive loop for SSE or other streaming transports
-      task = Task.async(fn -> __MODULE__.receive_loop(parent, transport_mod, transport_state) end)
-      {:ok, task}
+    cond do
+      # HTTP non-SSE: no receiver needed (responses come from send_message)
+      transport_mod == ExMCP.Transport.HTTP and not transport_state.use_sse ->
+        {:ok, nil}
+
+      # Push mode: subscribe instead of polling
+      ExMCP.Transport.supports_push?(transport_mod) ->
+        case transport_mod.subscribe(parent, transport_state) do
+          {:ok, new_state} ->
+            # Return :push atom as receiver_task to signal push mode is active.
+            # The updated transport_state with subscriber must be stored by caller.
+            {:ok, {:push, new_state}}
+
+          {:error, _reason} ->
+            # Fall back to polling
+            task =
+              Task.async(fn ->
+                __MODULE__.receive_loop(parent, transport_mod, transport_state)
+              end)
+
+            {:ok, task}
+        end
+
+      # Legacy polling mode
+      true ->
+        task =
+          Task.async(fn ->
+            __MODULE__.receive_loop(parent, transport_mod, transport_state)
+          end)
+
+        {:ok, task}
     end
   end
 end

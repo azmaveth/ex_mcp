@@ -260,8 +260,8 @@ defmodule ExMCP.Transport.ReliabilityWrapperTest do
 
       {:ok, wrapped_state} = ReliabilityWrapper.wrap(Test, transport_state, [])
 
-      # Test transport doesn't implement capabilities/1, so should return []
-      assert ReliabilityWrapper.capabilities(wrapped_state) == []
+      # Test transport implements capabilities/1 and returns [:push]
+      assert ReliabilityWrapper.capabilities(wrapped_state) == [:push]
     end
   end
 end
