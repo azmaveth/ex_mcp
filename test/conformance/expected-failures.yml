@@ -28,19 +28,13 @@ server:
   - prompts-get-with-image
   - dns-rebinding-protection
 
-# Client: remaining issues
+# Client: remaining issues (5 real failures)
 client:
-  # Elicitation not implemented
+  # Elicitation not yet implemented (separate feature)
   - elicitation-sep1034-client-defaults
   # SSE reconnection not implemented
   - sse-retry
-  # Token endpoint auth method selection (client_secret_basic vs post)
-  - auth/token-endpoint-auth-basic
-  - auth/token-endpoint-auth-post
-  - auth/token-endpoint-auth-none
-  # Scope step-up (re-auth with additional scopes)
+  # Scope step-up: re-auth with additional scopes on 403 insufficient_scope
   - auth/scope-step-up
-  # Resource parameter in re-auth after resource mismatch
+  # Resource mismatch: validate PRM resource matches server URL
   - auth/resource-mismatch
-  # Pre-registered client flow (skip dynamic registration)
-  - auth/pre-registration
