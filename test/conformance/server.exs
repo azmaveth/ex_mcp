@@ -441,10 +441,8 @@ defmodule ConformanceRouter do
   require Logger
 
   # Tools that need SSE streaming
-  # Tools that need SSE streaming for notifications
-  @sse_tools ~w(test_tool_with_logging test_tool_with_progress)
-  # TODO: These need full bidirectional SSE session (server→client requests):
-  # test_elicitation, test_sampling, test_elicitation_sep1034_defaults, test_elicitation_sep1330_enums
+  # Tools that need SSE streaming
+  @sse_tools ~w(test_tool_with_logging test_tool_with_progress test_sampling test_elicitation test_elicitation_sep1034_defaults test_elicitation_sep1330_enums)
 
   # Session state: maps session_id → %{sse_conn: conn, pending: queue}
   # Using ETS for cross-process state
@@ -465,6 +463,13 @@ defmodule ConformanceRouter do
     end
   end
 
+  # ETS for pending server→client requests
+  def ensure_ets do
+    if :ets.info(:conformance_pending) == :undefined do
+      :ets.new(:conformance_pending, [:set, :public, :named_table])
+    end
+  end
+
   @mcp_plug_opts ExMCP.HttpPlug.init(
                    handler: ConformanceServer,
                    server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
@@ -477,18 +482,68 @@ defmodule ConformanceRouter do
 
   @impl true
   def call(conn, _opts) do
+    ensure_ets()
+
     # DNS rebinding check first
     conn = DnsRebindingPlug.call(conn, [])
 
     if conn.halted do
       conn
     else
-      # For POST: check if it's an SSE tool before delegating to HttpPlug
-      if conn.method == "POST" do
-        handle_post(conn)
-      else
-        ExMCP.HttpPlug.call(conn, @mcp_plug_opts)
+      case conn.method do
+        "POST" -> handle_post(conn)
+        "GET" -> handle_get(conn)
+        _ -> ExMCP.HttpPlug.call(conn, @mcp_plug_opts)
       end
+    end
+  end
+
+  # Handle GET requests — SSE stream for server→client messages
+  defp handle_get(conn) do
+    accepts_sse =
+      conn
+      |> get_req_header("accept")
+      |> Enum.any?(&String.contains?(&1, "text/event-stream"))
+
+    if accepts_sse do
+      session_id = get_session_id(conn)
+      handle_get_sse(conn, session_id)
+    else
+      ExMCP.HttpPlug.call(conn, @mcp_plug_opts)
+    end
+  end
+
+  # Start GET SSE stream — register this process so tool handlers can send to it
+  defp handle_get_sse(conn, session_id) do
+    conn =
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("connection", "keep-alive")
+      |> put_resp_header("mcp-session-id", session_id)
+      |> send_chunked(200)
+
+    # Register this process as the SSE stream for this session
+    :ets.insert(:conformance_pending, {"sse_pid:#{session_id}", self()})
+
+    # Keep connection alive, forwarding messages as SSE events
+    sse_loop(conn, session_id)
+  end
+
+  defp sse_loop(conn, session_id) do
+    receive do
+      {:sse_send, data} ->
+        case chunk(conn, "event: message\ndata: #{Jason.encode!(data)}\n\n") do
+          {:ok, conn} -> sse_loop(conn, session_id)
+          {:error, _} -> conn
+        end
+
+      :sse_close ->
+        conn
+    after
+      60_000 ->
+        # Keep-alive timeout
+        conn
     end
   end
 
@@ -500,11 +555,35 @@ defmodule ConformanceRouter do
       when name in @sse_tools ->
         handle_sse_tool(conn, name, id, request)
 
+      # Client response to a server-initiated request (has "result" or "error", no "method")
+      {:ok, %{"id" => id, "result" => result}} when is_integer(id) or is_binary(id) ->
+        handle_client_response(conn, id, {:ok, result})
+
+      {:ok, %{"id" => id, "error" => error}} when is_integer(id) or is_binary(id) ->
+        handle_client_response(conn, id, {:error, error})
+
       _ ->
-        # Not an SSE tool — reconstruct conn and delegate to HttpPlug
-        # HttpPlug will try to read_body again but it's already consumed.
-        # We need to handle this by processing through MessageProcessor directly.
         handle_normal_post(conn, body)
+    end
+  end
+
+  # Route client response back to the waiting tool handler
+  defp handle_client_response(conn, id, result) do
+    session_id = get_session_id(conn)
+    key = "pending:#{id}"
+
+    case :ets.lookup(:conformance_pending, key) do
+      [{_, pid}] ->
+        :ets.delete(:conformance_pending, key)
+        send(pid, {:client_response, id, result})
+
+        conn
+        |> put_resp_header("mcp-session-id", session_id)
+        |> send_resp(202, "")
+
+      _ ->
+        # No pending request — might be a regular response, pass through
+        handle_normal_post(conn, Jason.encode!(%{id: id, result: result}))
     end
   end
 
@@ -630,6 +709,277 @@ defmodule ConformanceRouter do
     }
 
     {:ok, conn} = chunk(conn, "event: message\ndata: #{Jason.encode!(result)}\n\n")
+    conn
+  end
+
+  # Helper: send a request to the client via GET SSE stream and wait for response
+  defp send_server_request(session_id, request_id, method, params) do
+    sse_key = "sse_pid:#{session_id}"
+
+    case :ets.lookup(:conformance_pending, sse_key) do
+      [{_, sse_pid}] ->
+        # Register this process to receive the response
+        :ets.insert(:conformance_pending, {"pending:#{request_id}", self()})
+
+        # Send request via SSE stream
+        request = %{jsonrpc: "2.0", id: request_id, method: method, params: params}
+        send(sse_pid, {:sse_send, request})
+
+        # Wait for client response
+        receive do
+          {:client_response, ^request_id, result} -> result
+        after
+          10_000 -> {:error, "Timeout waiting for client response"}
+        end
+
+      _ ->
+        {:error, "No SSE stream for session #{session_id}"}
+    end
+  end
+
+  defp handle_sse_tool(conn, "test_sampling", id, request) do
+    session_id = get_session_id(conn)
+    prompt = get_in(request, ["params", "arguments", "prompt"]) || "Test prompt"
+
+    conn =
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("mcp-session-id", session_id)
+      |> send_chunked(200)
+
+    # Send sampling request to client via GET SSE
+    req_id = System.unique_integer([:positive])
+
+    case send_server_request(session_id, req_id, "sampling/createMessage", %{
+           messages: [%{role: "user", content: %{type: "text", text: prompt}}],
+           maxTokens: 100
+         }) do
+      {:ok, result} ->
+        text =
+          get_in(result, ["content", "text"]) || get_in(result, ["message", "content", "text"]) ||
+            "No response"
+
+        tool_result = %{
+          jsonrpc: "2.0",
+          id: id,
+          result: %{content: [%{type: "text", text: "LLM response: #{text}"}]}
+        }
+
+        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+
+      {:error, reason} ->
+        tool_result = %{
+          jsonrpc: "2.0",
+          id: id,
+          result: %{content: [%{type: "text", text: "Sampling error: #{reason}"}]}
+        }
+
+        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+    end
+
+    conn
+  end
+
+  defp handle_sse_tool(conn, "test_elicitation", id, request) do
+    session_id = get_session_id(conn)
+    message = get_in(request, ["params", "arguments", "message"]) || "Please provide info"
+
+    conn =
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("mcp-session-id", session_id)
+      |> send_chunked(200)
+
+    req_id = System.unique_integer([:positive])
+
+    case send_server_request(session_id, req_id, "elicitation/create", %{
+           message: message,
+           requestedSchema: %{
+             type: "object",
+             properties: %{response: %{type: "string", description: "User's response"}},
+             required: ["response"]
+           }
+         }) do
+      {:ok, result} ->
+        action = result["action"] || "unknown"
+        content = Jason.encode!(result["content"] || %{})
+
+        tool_result = %{
+          jsonrpc: "2.0",
+          id: id,
+          result: %{
+            content: [
+              %{type: "text", text: "User response: action=#{action}, content=#{content}"}
+            ]
+          }
+        }
+
+        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+
+      {:error, reason} ->
+        tool_result = %{
+          jsonrpc: "2.0",
+          id: id,
+          result: %{content: [%{type: "text", text: "Elicitation error: #{reason}"}]}
+        }
+
+        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+    end
+
+    conn
+  end
+
+  defp handle_sse_tool(conn, "test_elicitation_sep1034_defaults", id, _request) do
+    session_id = get_session_id(conn)
+
+    conn =
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("mcp-session-id", session_id)
+      |> send_chunked(200)
+
+    req_id = System.unique_integer([:positive])
+
+    case send_server_request(session_id, req_id, "elicitation/create", %{
+           message: "Please review and update the form fields with defaults",
+           requestedSchema: %{
+             type: "object",
+             properties: %{
+               name: %{type: "string", description: "User name", default: "John Doe"},
+               age: %{type: "integer", description: "User age", default: 30},
+               score: %{type: "number", description: "User score", default: 95.5},
+               status: %{
+                 type: "string",
+                 description: "User status",
+                 enum: ["active", "inactive", "pending"],
+                 default: "active"
+               },
+               verified: %{type: "boolean", description: "Verification status", default: true}
+             },
+             required: []
+           }
+         }) do
+      {:ok, result} ->
+        tool_result = %{
+          jsonrpc: "2.0",
+          id: id,
+          result: %{
+            content: [
+              %{
+                type: "text",
+                text:
+                  "Elicitation completed: action=#{result["action"]}, content=#{Jason.encode!(result["content"] || %{})}"
+              }
+            ]
+          }
+        }
+
+        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+
+      {:error, reason} ->
+        tool_result = %{
+          jsonrpc: "2.0",
+          id: id,
+          result: %{content: [%{type: "text", text: "Error: #{reason}"}]}
+        }
+
+        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+    end
+
+    conn
+  end
+
+  defp handle_sse_tool(conn, "test_elicitation_sep1330_enums", id, _request) do
+    session_id = get_session_id(conn)
+
+    conn =
+      conn
+      |> put_resp_header("content-type", "text/event-stream")
+      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("mcp-session-id", session_id)
+      |> send_chunked(200)
+
+    req_id = System.unique_integer([:positive])
+
+    case send_server_request(session_id, req_id, "elicitation/create", %{
+           message: "Please select options from the enum fields",
+           requestedSchema: %{
+             type: "object",
+             properties: %{
+               untitledSingle: %{
+                 type: "string",
+                 description: "Select one option",
+                 enum: ["option1", "option2", "option3"]
+               },
+               titledSingle: %{
+                 type: "string",
+                 description: "Select one with titles",
+                 oneOf: [
+                   %{const: "value1", title: "First Option"},
+                   %{const: "value2", title: "Second Option"},
+                   %{const: "value3", title: "Third Option"}
+                 ]
+               },
+               legacyEnum: %{
+                 type: "string",
+                 description: "Select one (legacy)",
+                 enum: ["opt1", "opt2", "opt3"],
+                 enumNames: ["Option One", "Option Two", "Option Three"]
+               },
+               untitledMulti: %{
+                 type: "array",
+                 description: "Select multiple",
+                 minItems: 1,
+                 maxItems: 3,
+                 items: %{type: "string", enum: ["option1", "option2", "option3"]}
+               },
+               titledMulti: %{
+                 type: "array",
+                 description: "Select multiple with titles",
+                 minItems: 1,
+                 maxItems: 3,
+                 items: %{
+                   anyOf: [
+                     %{const: "value1", title: "First Choice"},
+                     %{const: "value2", title: "Second Choice"},
+                     %{const: "value3", title: "Third Choice"}
+                   ]
+                 }
+               }
+             },
+             required: []
+           }
+         }) do
+      {:ok, result} ->
+        tool_result = %{
+          jsonrpc: "2.0",
+          id: id,
+          result: %{
+            content: [
+              %{
+                type: "text",
+                text:
+                  "Elicitation completed: action=#{result["action"]}, content=#{Jason.encode!(result["content"] || %{})}"
+              }
+            ]
+          }
+        }
+
+        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+
+      {:error, reason} ->
+        tool_result = %{
+          jsonrpc: "2.0",
+          id: id,
+          result: %{content: [%{type: "text", text: "Error: #{reason}"}]}
+        }
+
+        chunk(conn, "event: message\ndata: #{Jason.encode!(tool_result)}\n\n")
+    end
+
     conn
   end
 
