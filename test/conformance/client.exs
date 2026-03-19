@@ -31,6 +31,9 @@ defmodule ConformanceClient do
 
     Logger.info("Conformance client: scenario=#{scenario} url=#{server_url}")
 
+    # Enable elicitation auto-accept for conformance testing
+    Application.put_env(:ex_mcp, :elicitation_auto_accept, true)
+
     # All scenarios follow the same pattern: connect, exercise the API, disconnect.
     # The conformance framework validates protocol behavior by observing the wire traffic.
     # Auth scenarios pass credentials via context; the transport handles 401→OAuth automatically.
@@ -53,9 +56,13 @@ defmodule ConformanceClient do
   # Build connection options. Auth config comes from conformance context;
   # everything else is standard.
   defp build_connect_opts(_scenario, context) do
+    # Per MCP Streamable HTTP spec: always POST, parse SSE responses from POST.
+    # SSE GET stream opened automatically when server provides a session ID.
+    # use_sse: true enables this — the transport falls back gracefully when
+    # no session ID is provided (stateless servers).
     base = [
       transport: :http,
-      use_sse: false,
+      use_sse: true,
       client_info: %{"name" => "ex_mcp-conformance-client", "version" => "0.9.0"},
       capabilities: %{"sampling" => %{}, "elicitation" => %{}}
     ]
@@ -90,6 +97,7 @@ defmodule ConformanceClient do
     # validates the protocol interactions, not our scenario routing.
     case ExMCP.Client.list_tools(client) do
       {:ok, result} ->
+        Logger.info("list_tools result: #{inspect(result, limit: 200)}")
         # Handle both string and atom keys (atom keys from in-VM paths)
         tools = result["tools"] || result[:tools] || []
         Logger.info("Listed #{length(tools)} tools")

@@ -437,11 +437,22 @@ defmodule ExMCP.Client.RequestHandler do
           send_response(error_response, state)
       end
     else
-      # No custom handler — auto-accept with empty content.
-      # Clients that declare elicitation capability should handle it gracefully.
-      result = %{"action" => "accept", "content" => %{}}
-      response = build_success_response(result, request_id)
-      send_response(response, state)
+      # Check if auto-accept is enabled (opt-in, off by default)
+      auto_accept = Application.get_env(:ex_mcp, :elicitation_auto_accept, false)
+
+      if auto_accept do
+        # Auto-accept with defaults from schema for automated testing.
+        requested_schema = Map.get(params, "requestedSchema", %{})
+        content = ExMCP.Testing.SchemaGenerator.generate_args(requested_schema)
+        result = %{"action" => "accept", "content" => content}
+        response = build_success_response(result, request_id)
+        send_response(response, state)
+      else
+        # Decline — no handler to present to user
+        result = %{"action" => "decline"}
+        response = build_success_response(result, request_id)
+        send_response(response, state)
+      end
     end
   end
 

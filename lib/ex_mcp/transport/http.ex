@@ -617,16 +617,22 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  def receive_message(%__MODULE__{use_sse: false, last_response: response} = state)
+  def receive_message(%__MODULE__{last_response: response} = state)
       when response != nil do
-    # Non-SSE mode - return the stored response and clear it
+    # Return stored response (from POST) and clear it
     {:ok, response, %{state | last_response: nil}}
   end
 
+  def receive_message(%__MODULE__{use_sse: true, sse_pid: nil} = _state) do
+    # SSE enabled but no stream started (no session ID yet).
+    # Responses come from POST directly, handled by send_message return.
+    # The receiver loop should wait for SSE to start.
+    Process.sleep(100)
+    {:error, :not_connected}
+  end
+
   def receive_message(%__MODULE__{use_sse: false} = _state) do
-    # Non-SSE mode should not use receive_message in a loop
-    # Instead, responses are returned directly from send_message
-    # Return a special error to indicate this mode doesn't support streaming
+    # Non-SSE mode — responses returned directly from send_message
     {:error, :not_supported_in_sync_mode}
   end
 
