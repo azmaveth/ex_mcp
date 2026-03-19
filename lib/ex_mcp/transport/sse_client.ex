@@ -198,6 +198,13 @@ defmodule ExMCP.Transport.SSEClient do
               end
           end
 
+        # Track last event ID for resumption
+        acc =
+          case Map.get(event, "id") do
+            nil -> acc
+            id -> %{acc | last_event_id: id}
+          end
+
         # Forward data events to parent
         if Map.has_key?(event, "data") do
           process_event(event, acc)

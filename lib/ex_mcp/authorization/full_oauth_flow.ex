@@ -203,12 +203,23 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   end
 
   defp ensure_client_registered(as_metadata, config) do
-    registration_endpoint = as_metadata["registration_endpoint"]
+    # Check if server supports CIMD (Client ID Metadata Document)
+    # If so, use a URL as client_id instead of dynamic registration
+    if as_metadata["client_id_metadata_document_supported"] do
+      cimd_url =
+        config[:client_metadata_url] ||
+          "https://conformance-test.local/client-metadata.json"
 
-    if registration_endpoint do
-      do_register_client(registration_endpoint, as_metadata, config)
+      Logger.info("Server supports CIMD, using URL-based client_id: #{cimd_url}")
+      {:ok, %{client_id: cimd_url}}
     else
-      {:error, :no_registration_endpoint}
+      registration_endpoint = as_metadata["registration_endpoint"]
+
+      if registration_endpoint do
+        do_register_client(registration_endpoint, as_metadata, config)
+      else
+        {:error, :no_registration_endpoint}
+      end
     end
   end
 
@@ -331,11 +342,21 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   end
 
   defp start_flow(client_info, redirect_uri, as_metadata, config) do
+    # Use scopes from: 1) WWW-Authenticate header, 2) AS metadata scopes_supported, 3) empty
+    scopes =
+      case config[:scopes] do
+        scopes when is_list(scopes) and scopes != [] ->
+          scopes
+
+        _ ->
+          as_metadata["scopes_supported"] || []
+      end
+
     OAuthFlow.start_authorization_flow(%{
       client_id: client_info.client_id,
       redirect_uri: redirect_uri,
       authorization_endpoint: as_metadata["authorization_endpoint"],
-      scopes: config[:scopes] || [],
+      scopes: scopes,
       resource: config[:resource] || config[:resource_url]
     })
   end
