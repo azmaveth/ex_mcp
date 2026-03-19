@@ -99,6 +99,7 @@ defmodule ExMCP.Transport.HTTP do
     :protocol_version,
     :auth_config,
     :access_token,
+    :retry_delay,
     sse_deferred_attempted: false,
     auth_completed: false
   ]
@@ -565,31 +566,100 @@ defmodule ExMCP.Transport.HTTP do
   defp handle_non_sse_response(body, headers, state) do
     content_type = find_header(headers, "content-type") || ""
 
-    json_body =
-      if String.contains?(content_type, "text/event-stream") do
-        # Server responded with SSE-formatted events — extract JSON from data lines
-        extract_json_from_sse(body)
-      else
-        body
+    if String.contains?(content_type, "text/event-stream") do
+      handle_sse_post_response(body, state)
+    else
+      case Jason.decode(body) do
+        {:ok, response} ->
+          {:ok, %{state | last_response: response}, Jason.encode!(response)}
+
+        {:error, reason} ->
+          {:error, {:json_decode_error, reason}}
       end
-
-    case Jason.decode(json_body) do
-      {:ok, response} ->
-        # Return response immediately as third element of tuple
-        # This allows the client to process responses synchronously
-        {:ok, %{state | last_response: response}, Jason.encode!(response)}
-
-      {:error, reason} ->
-        {:error, {:json_decode_error, reason}}
     end
   end
 
-  defp extract_json_from_sse(body) do
-    # Parse SSE format: extract data from "data: <json>" lines
+  # Process SSE-formatted POST response.
+  # Extracts JSON data, retry fields, and event IDs.
+  # If no JSON result is found (just priming events), the response
+  # will come via GET SSE stream — start/ensure SSE is connected.
+  defp handle_sse_post_response(body, state) do
+    events = parse_sse_events(body)
+
+    # Extract retry field from any event
+    state =
+      Enum.reduce(events, state, fn event, acc ->
+        case event[:retry] do
+          nil -> acc
+          ms -> %{acc | retry_delay: ms}
+        end
+      end)
+
+    # Find the JSON data event (if any)
+    json_data =
+      events
+      |> Enum.flat_map(fn event ->
+        case event[:data] do
+          nil -> []
+          "" -> []
+          data -> [data]
+        end
+      end)
+      |> Enum.join("")
+
+    if json_data != "" do
+      case Jason.decode(json_data) do
+        {:ok, response} ->
+          {:ok, %{state | last_response: response}, Jason.encode!(response)}
+
+        {:error, _} ->
+          # SSE had data but it wasn't valid JSON — treat as no response
+          state = maybe_start_deferred_sse(state)
+          {:ok, state}
+      end
+    else
+      # No JSON data in SSE response (just priming events).
+      # Result will arrive via GET SSE stream.
+      state = maybe_start_deferred_sse(state)
+      {:ok, state}
+    end
+  end
+
+  # Parse raw SSE text into a list of event maps
+  defp parse_sse_events(body) do
     body
-    |> String.split("\n")
-    |> Enum.filter(&String.starts_with?(&1, "data: "))
-    |> Enum.map_join("", fn "data: " <> data -> data end)
+    |> String.split("\n\n")
+    |> Enum.map(fn block ->
+      block
+      |> String.split("\n")
+      |> Enum.reduce(%{}, fn line, acc ->
+        cond do
+          String.starts_with?(line, "data: ") ->
+            data = String.trim_leading(line, "data: ")
+            Map.update(acc, :data, data, fn existing -> existing <> data end)
+
+          String.starts_with?(line, "data:") ->
+            data = String.trim_leading(line, "data:")
+            Map.update(acc, :data, data, fn existing -> existing <> data end)
+
+          String.starts_with?(line, "id: ") ->
+            Map.put(acc, :id, String.trim_leading(line, "id: "))
+
+          String.starts_with?(line, "retry: ") ->
+            case Integer.parse(String.trim_leading(line, "retry: ")) do
+              {ms, _} -> Map.put(acc, :retry, ms)
+              _ -> acc
+            end
+
+          String.starts_with?(line, "event: ") ->
+            Map.put(acc, :event, String.trim_leading(line, "event: "))
+
+          true ->
+            acc
+        end
+      end)
+    end)
+    |> Enum.reject(&(&1 == %{}))
   end
 
   @impl true
@@ -731,10 +801,12 @@ defmodule ExMCP.Transport.HTTP do
         sse_headers
       end
 
-    # Use the enhanced SSE client with keep-alive and reconnection
+    # Use the enhanced SSE client with keep-alive and reconnection.
+    # Pass retry_delay from POST SSE response if available.
     opts = [
       url: url,
       headers: sse_headers,
+      initial_retry_delay: state.retry_delay,
       ssl_opts: ssl_opts,
       parent: self(),
       connect_timeout: state.timeouts.connect,

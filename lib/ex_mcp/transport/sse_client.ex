@@ -98,13 +98,16 @@ defmodule ExMCP.Transport.SSEClient do
     profile = String.to_atom("sse_#{:erlang.unique_integer([:positive])}")
     {:ok, _} = :inets.start(:httpc, [{:profile, profile}])
 
+    # Use server-specified retry delay if provided (from POST SSE response)
+    initial_delay = Keyword.get(opts, :initial_retry_delay) || @initial_retry_delay
+
     state = %__MODULE__{
       url: url,
       headers: headers,
       ssl_opts: ssl_opts,
       parent: parent,
       buffer: "",
-      retry_delay: @initial_retry_delay,
+      retry_delay: initial_delay,
       retry_count: 0,
       connect_timeout: connect_timeout,
       idle_timeout: idle_timeout,
@@ -145,11 +148,13 @@ defmodule ExMCP.Transport.SSEClient do
     # Process headers for retry suggestions
     retry_after = get_retry_after(headers)
 
+    # Only override retry_delay if server provides Retry-After header.
+    # Preserve current retry_delay (may be set from SSE retry field or initial config).
     new_state =
       if retry_after do
         %{state | retry_delay: retry_after * 1000, heartbeat_ref: heartbeat_ref, retry_count: 0}
       else
-        %{state | retry_delay: @initial_retry_delay, heartbeat_ref: heartbeat_ref, retry_count: 0}
+        %{state | heartbeat_ref: heartbeat_ref, retry_count: 0}
       end
 
     {:noreply, new_state}
