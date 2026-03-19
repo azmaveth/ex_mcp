@@ -1076,13 +1076,14 @@ defmodule ExMCP.MessageProcessor do
         response = success_response(deep_stringify_keys(result), id)
         put_response(conn, response)
 
-      {:error, reason, _new_state} ->
-        error_response = error_response("Completion error", reason, id)
-        put_response(conn, error_response)
+      {:error, _reason, _new_state} ->
+        # Return empty completion on error (some handlers don't implement it)
+        empty = %{"completion" => %{"values" => [], "total" => 0, "hasMore" => false}}
+        put_response(conn, success_response(empty, id))
 
-      error ->
-        error_response = error_response("Completion failed", error, id)
-        put_response(conn, error_response)
+      _error ->
+        empty = %{"completion" => %{"values" => [], "total" => 0, "hasMore" => false}}
+        put_response(conn, success_response(empty, id))
     end
   rescue
     error ->

@@ -409,17 +409,49 @@ IO.puts(
   "Test with: npx @modelcontextprotocol/conformance server --url http://localhost:#{port}/mcp"
 )
 
-# Start Cowboy with our MCP handler
+# DNS rebinding protection plug
+defmodule DnsRebindingPlug do
+  @behaviour Plug
+  import Plug.Conn
+
+  @impl true
+  def init(opts), do: opts
+
+  @impl true
+  def call(conn, _opts) do
+    host = get_req_header(conn, "host") |> List.first("")
+
+    # Strip port from host header
+    hostname = host |> String.split(":") |> List.first() |> String.downcase()
+
+    if hostname in ["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"] do
+      conn
+    else
+      conn
+      |> put_resp_content_type("text/plain")
+      |> send_resp(403, "Forbidden: Invalid Host header")
+      |> halt()
+    end
+  end
+end
+
+# Compose plugs: DNS protection → MCP handler
+defmodule ConformanceRouter do
+  use Plug.Builder
+
+  plug(DnsRebindingPlug)
+
+  plug(ExMCP.HttpPlug,
+    handler: ConformanceServer,
+    server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
+    sse_enabled: true,
+    cors_enabled: true
+  )
+end
+
+# Start Cowboy
 children = [
-  {Plug.Cowboy,
-   scheme: :http,
-   plug:
-     {ExMCP.HttpPlug,
-      handler: ConformanceServer,
-      server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
-      sse_enabled: true,
-      cors_enabled: true},
-   options: [port: port]}
+  {Plug.Cowboy, scheme: :http, plug: ConformanceRouter, options: [port: port]}
 ]
 
 {:ok, _} = Supervisor.start_link(children, strategy: :one_for_one)
