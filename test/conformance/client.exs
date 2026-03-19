@@ -95,7 +95,7 @@ defmodule ConformanceClient do
     # Default: list tools and call each one. This covers tools_call, auth,
     # elicitation, and most other scenarios. The conformance framework
     # validates the protocol interactions, not our scenario routing.
-    case ExMCP.Client.list_tools(client) do
+    case ExMCP.Client.list_tools(client, format: :map) do
       {:ok, result} ->
         tools = result["tools"] || []
         Logger.info("Listed #{length(tools)} tools")
@@ -105,7 +105,7 @@ defmodule ConformanceClient do
           args = ExMCP.Testing.SchemaGenerator.generate_args(tool["inputSchema"])
           Logger.info("Calling tool: #{name}")
 
-          case ExMCP.Client.call_tool(client, name, args) do
+          case ExMCP.Client.call_tool(client, name, args, format: :map) do
             {:ok, _} -> Logger.info("Tool #{name}: OK")
             {:error, reason} -> Logger.warning("Tool #{name} failed: #{inspect(reason)}")
           end
