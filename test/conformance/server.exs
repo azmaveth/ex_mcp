@@ -441,7 +441,29 @@ defmodule ConformanceRouter do
   require Logger
 
   # Tools that need SSE streaming
+  # Tools that need SSE streaming for notifications
   @sse_tools ~w(test_tool_with_logging test_tool_with_progress)
+  # TODO: These need full bidirectional SSE session (server→client requests):
+  # test_elicitation, test_sampling, test_elicitation_sep1034_defaults, test_elicitation_sep1330_enums
+
+  # Session state: maps session_id → %{sse_conn: conn, pending: queue}
+  # Using ETS for cross-process state
+  def init_sessions do
+    if :ets.info(:conformance_sessions) == :undefined do
+      :ets.new(:conformance_sessions, [:set, :public, :named_table])
+    end
+  end
+
+  def store_sse_conn(session_id, pid) do
+    :ets.insert(:conformance_sessions, {session_id, pid})
+  end
+
+  def get_sse_pid(session_id) do
+    case :ets.lookup(:conformance_sessions, session_id) do
+      [{_, pid}] -> pid
+      _ -> nil
+    end
+  end
 
   @mcp_plug_opts ExMCP.HttpPlug.init(
                    handler: ConformanceServer,
