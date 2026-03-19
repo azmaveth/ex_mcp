@@ -1128,6 +1128,10 @@ defmodule ExMCP.MessageProcessor do
       end,
       "completion/complete" => fn conn, server_pid, params, id ->
         handle_handler_completion_complete(conn, server_pid, params, id)
+      end,
+      "logging/setLevel" => fn conn, _server_pid, _params, id ->
+        # Accept and acknowledge — conformance expects empty result
+        put_response(conn, success_response(%{}, id))
       end
     }
   end
@@ -1188,6 +1192,18 @@ defmodule ExMCP.MessageProcessor do
       end,
       "prompts/get" => fn conn, handler_module, _server_info, params, id ->
         handle_prompts_get(conn, handler_module, params, id)
+      end,
+      "logging/setLevel" => fn conn, _handler_module, _server_info, _params, id ->
+        put_response(conn, success_response(%{}, id))
+      end,
+      "completion/complete" => fn conn, _handler_module, _server_info, _params, id ->
+        put_response(
+          conn,
+          success_response(
+            %{"completion" => %{"values" => [], "total" => 0, "hasMore" => false}},
+            id
+          )
+        )
       end
     }
   end

@@ -386,6 +386,18 @@ defmodule ConformanceServer do
   def handle_get_prompt(name, _args, state) do
     {:error, "Unknown prompt: #{name}", state}
   end
+
+  # ── Subscribe/Unsubscribe ──────────────────────────────────────
+
+  @impl true
+  def handle_subscribe_resource(uri, state) do
+    {:ok, %{state | subscriptions: MapSet.put(state.subscriptions, uri)}}
+  end
+
+  @impl true
+  def handle_unsubscribe_resource(uri, state) do
+    {:ok, %{state | subscriptions: MapSet.delete(state.subscriptions, uri)}}
+  end
 end
 
 # Parse port from args
