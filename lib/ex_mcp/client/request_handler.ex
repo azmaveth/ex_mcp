@@ -126,6 +126,10 @@ defmodule ExMCP.Client.RequestHandler do
       {:error, error, id} ->
         handle_single_response({:error, error, id}, state)
 
+      {:notification, "notifications/cancelled", params} ->
+        Logger.info("Received notification: notifications/cancelled")
+        handle_cancellation_notification(params, state)
+
       {:notification, method, _params} ->
         Logger.info("Received notification: #{method}")
         {:noreply, state}
@@ -341,6 +345,9 @@ defmodule ExMCP.Client.RequestHandler do
   """
   def handle_server_request(method, params, request_id, state) do
     case method do
+      "ping" ->
+        handle_ping_request(params, request_id, state)
+
       "roots/list" ->
         handle_roots_list_request(params, request_id, state)
 
@@ -356,10 +363,35 @@ defmodule ExMCP.Client.RequestHandler do
     end
   end
 
+  defp handle_ping_request(_params, request_id, state) do
+    {client_handler, handler_state_opts} = extract_handler_info(state)
+
+    if client_handler && function_exported?(client_handler, :handle_ping, 1) do
+      handler_state =
+        case client_handler.init(handler_state_opts) do
+          {:ok, initial_state} -> initial_state
+          _ -> %{}
+        end
+
+      case client_handler.handle_ping(handler_state) do
+        {:ok, result, _new_handler_state} ->
+          response = build_success_response(result, request_id)
+          send_response(response, state)
+
+        {:error, error, _new_handler_state} ->
+          error_response = build_error_response(-32603, error, request_id)
+          send_response(error_response, state)
+      end
+    else
+      # Ping is a protocol-level operation - always respond with success
+      # regardless of whether a client handler exists
+      response = build_success_response(%{}, request_id)
+      send_response(response, state)
+    end
+  end
+
   defp handle_roots_list_request(_params, request_id, state) do
-    # Extract handler from transport_opts
-    client_handler = Keyword.get(state.transport_opts, :handler)
-    handler_state_opts = Keyword.get(state.transport_opts, :handler_state, [])
+    {client_handler, handler_state_opts} = extract_handler_info(state)
 
     if client_handler && function_exported?(client_handler, :handle_list_roots, 1) do
       # Initialize handler if needed
@@ -387,8 +419,7 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handle_create_message_request(params, request_id, state) do
-    client_handler = Keyword.get(state.transport_opts, :handler)
-    handler_state_opts = Keyword.get(state.transport_opts, :handler_state, [])
+    {client_handler, handler_state_opts} = extract_handler_info(state)
 
     if client_handler && function_exported?(client_handler, :handle_create_message, 2) do
       handler_state =
@@ -403,7 +434,15 @@ defmodule ExMCP.Client.RequestHandler do
           send_response(response, state)
 
         {:error, error, _new_handler_state} ->
-          error_response = build_error_response(-32603, error, request_id)
+          # Extract code and message from error map or use defaults
+          {code, message} =
+            case error do
+              %{"code" => c, "message" => m} -> {c, m}
+              msg when is_binary(msg) -> {-32603, msg}
+              _ -> {-32603, inspect(error)}
+            end
+
+          error_response = build_error_response(code, message, request_id)
           send_response(error_response, state)
       end
     else
@@ -413,8 +452,7 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handle_elicitation_create_request(params, request_id, state) do
-    client_handler = Keyword.get(state.transport_opts, :handler)
-    handler_state_opts = Keyword.get(state.transport_opts, :handler_state, [])
+    {client_handler, handler_state_opts} = extract_handler_info(state)
 
     if client_handler && function_exported?(client_handler, :handle_elicitation_create, 3) do
       handler_state =
@@ -456,6 +494,58 @@ defmodule ExMCP.Client.RequestHandler do
     end
   end
 
+  # Extract module and handler args from the handler option.
+  # The handler can be specified as just a module or as {module, args}.
+  defp extract_handler_info(state) do
+    raw_handler = Keyword.get(state.transport_opts, :handler)
+    default_handler_state = Keyword.get(state.transport_opts, :handler_state, [])
+
+    case raw_handler do
+      {module, args} when is_atom(module) and is_list(args) ->
+        Code.ensure_loaded(module)
+        {module, args}
+
+      module when is_atom(module) and not is_nil(module) ->
+        Code.ensure_loaded(module)
+        {module, default_handler_state}
+
+      _ ->
+        {nil, default_handler_state}
+    end
+  end
+
+  defp handle_cancellation_notification(params, state) do
+    request_id = Map.get(params, "requestId")
+
+    if request_id do
+      # Mark request as cancelled
+      updated_state = %{
+        state
+        | cancelled_requests: MapSet.put(state.cancelled_requests, request_id)
+      }
+
+      # Check if this request is still pending and complete it with :cancelled error
+      case Map.get(state.pending_requests, request_id) do
+        nil ->
+          # Request already completed or doesn't exist
+          {:noreply, updated_state}
+
+        {from, :single} ->
+          # Reply with cancelled error and remove from pending
+          GenServer.reply(from, {:error, :cancelled})
+          new_pending = Map.delete(state.pending_requests, request_id)
+          {:noreply, %{updated_state | pending_requests: new_pending}}
+
+        _ ->
+          # Other types of requests (batch, etc.)
+          {:noreply, updated_state}
+      end
+    else
+      Logger.warning("Received cancellation notification without requestId")
+      {:noreply, state}
+    end
+  end
+
   defp build_success_response(result, request_id) do
     %{
       "jsonrpc" => "2.0",
@@ -476,8 +566,7 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handle_generic_server_request(method, params, request_id, state) do
-    client_handler = Keyword.get(state.transport_opts, :handler)
-    handler_state_opts = Keyword.get(state.transport_opts, :handler_state, [])
+    {client_handler, handler_state_opts} = extract_handler_info(state)
 
     if client_handler &&
          function_exported?(client_handler, :handle_server_request, 3) do

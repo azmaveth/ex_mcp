@@ -118,8 +118,10 @@ defmodule ExMCP.HordeTestHelpers do
       registry_name = ExMCP.HordeTestHelpers.unique_process_name(test, registry_prefix)
 
       # Start Horde processes for the test
-      {:ok, _sup} = Horde.Supervisor.start_link([], name: supervisor_name)
-      {:ok, _reg} = Horde.Registry.start_link([], name: registry_name, keys: :unique)
+      {:ok, _sup} =
+        Horde.DynamicSupervisor.start_link(strategy: :one_for_one, name: supervisor_name)
+
+      {:ok, _reg} = Horde.Registry.start_link(name: registry_name, keys: :unique)
 
       # Ensure processes are stopped after the test.
       on_exit(fn ->

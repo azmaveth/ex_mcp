@@ -74,14 +74,17 @@ defmodule ExMCP.Authorization.ServerGuardTest do
       config: config
     } do
       Bypass.stub(bypass, "POST", "/introspect", fn conn ->
-        {:ok, "token=valid-token", conn} = Plug.Conn.read_body(conn)
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        assert body =~ "token=valid-token"
         Plug.Conn.resp(conn, 200, Jason.encode!(%{active: true, scope: "read write"}))
       end)
 
       headers = [{"authorization", "Bearer valid-token"}]
       required_scopes = ["read"]
 
-      assert ServerGuard.authorize(headers, required_scopes, config) == :ok
+      assert {:ok, token_info} = ServerGuard.authorize(headers, required_scopes, config)
+      assert token_info.active == true
+      assert token_info.scope == "read write"
     end
 
     test "returns error for invalid token", %{bypass: bypass, config: config} do
@@ -95,11 +98,11 @@ defmodule ExMCP.Authorization.ServerGuardTest do
       assert status == 401
 
       assert www_auth ==
-               ~s(Bearer realm="test-realm", error="invalid_token", error_description="The access token provided is invalid.")
+               ~s(Bearer realm="test-realm", error="invalid_token", error_description="The access token is expired, revoked, or malformed.")
 
       assert Jason.decode!(body) == %{
                "error" => "invalid_token",
-               "error_description" => "The access token provided is invalid."
+               "error_description" => "The access token is expired, revoked, or malformed."
              }
     end
 
@@ -117,12 +120,11 @@ defmodule ExMCP.Authorization.ServerGuardTest do
       assert status == 403
 
       assert www_auth ==
-               ~s(Bearer realm="test-realm", error="insufficient_scope", error_description="The access token does not have the required scope.", scope="write")
+               ~s(Bearer realm="test-realm", error="insufficient_scope", error_description="The request requires higher privileges.", scope="write")
 
       assert Jason.decode!(body) == %{
                "error" => "insufficient_scope",
-               "error_description" => "The access token does not have the required scope.",
-               "scope" => "write"
+               "error_description" => "The request requires higher privileges."
              }
     end
 
@@ -160,7 +162,8 @@ defmodule ExMCP.Authorization.ServerGuardTest do
       end)
 
       headers = [{"authorization", "Bearer valid-token"}]
-      assert ServerGuard.authorize(headers, [], config) == :ok
+      assert {:ok, token_info} = ServerGuard.authorize(headers, [], config)
+      assert token_info.active == true
     end
 
     test "allows http for localhost introspection endpoint", %{bypass: bypass, config: config} do
@@ -170,7 +173,8 @@ defmodule ExMCP.Authorization.ServerGuardTest do
 
       headers = [{"authorization", "Bearer valid-token"}]
       # The config from setup already uses http://localhost
-      assert ServerGuard.authorize(headers, [], config) == :ok
+      assert {:ok, token_info} = ServerGuard.authorize(headers, [], config)
+      assert token_info.active == true
     end
   end
 

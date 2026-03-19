@@ -61,6 +61,13 @@ defmodule ExMCP.Client.Operations.Prompts do
       "arguments" => arguments
     }
 
+    # Inject _meta into params if meta: option is provided (MCP spec: _meta at params level)
+    params =
+      case Keyword.get(opts, :meta) do
+        nil -> params
+        meta when is_map(meta) -> Map.put(params, "_meta", meta)
+      end
+
     ExMCP.Client.make_request(client, "prompts/get", params, opts, 5_000)
   end
 end

@@ -184,7 +184,7 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       {:response, response, ^state} = RequestProcessor.process(request, state)
 
       assert response["error"]["code"] == -32000
-      assert response["error"]["message"] == "Tool execution error"
+      assert response["error"]["message"] == "Tool error"
       assert response["error"]["data"]["tool"] == "error_tool"
     end
 
@@ -198,7 +198,7 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       {:response, response, ^state} = RequestProcessor.process(request, state)
 
       assert response["error"]["code"] == -32000
-      assert response["error"]["message"] == "Tool execution error"
+      assert response["error"]["message"] == "Tool not implemented"
       assert response["error"]["data"]["tool"] == "any_tool"
     end
   end
@@ -237,7 +237,7 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       {:response, response, ^state} = RequestProcessor.process(request, state)
 
       assert response["error"]["code"] == -32000
-      assert response["error"]["message"] == "Resource operation error"
+      assert response["error"]["message"] == "Resource reading not implemented"
       assert response["error"]["data"]["uri"] == "any://resource"
     end
   end

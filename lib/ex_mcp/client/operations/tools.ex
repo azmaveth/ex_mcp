@@ -65,6 +65,13 @@ defmodule ExMCP.Client.Operations.Tools do
       "arguments" => arguments
     }
 
+    # Inject _meta into params if meta: option is provided (MCP spec: _meta at params level)
+    params =
+      case Keyword.get(opts, :meta) do
+        nil -> params
+        meta when is_map(meta) -> Map.put(params, "_meta", meta)
+      end
+
     # Add tool_name to opts for proper Response struct construction
     enhanced_opts = Keyword.put(opts, :tool_name, tool_name)
     ExMCP.Client.make_request(client, "tools/call", params, enhanced_opts, 30_000)

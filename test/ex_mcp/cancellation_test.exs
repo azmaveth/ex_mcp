@@ -130,7 +130,7 @@ defmodule ExMCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(:test_server_cancel_1)
+      GenServer.stop(server)
     end
 
     test "client validates cancellation of initialize request" do
@@ -146,15 +146,16 @@ defmodule ExMCP.CancellationTest do
           server: server
         )
 
-      # Try to cancel initialize request - should be ignored
-      :ok = Client.send_cancelled(client, "initialize", "Should be ignored")
+      # Try to cancel initialize request - should return error
+      assert {:error, :cannot_cancel_initialize} =
+               Client.send_cancelled(client, "initialize", "Should be ignored")
 
       # Client should still be functional
       assert {:ok, _tools} = Client.list_tools(client)
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(:test_server_cancel_2)
+      GenServer.stop(server)
     end
 
     test "client ignores cancellation for unknown requests" do
@@ -181,7 +182,7 @@ defmodule ExMCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(:test_server_cancel_3)
+      GenServer.stop(server)
     end
   end
 
@@ -387,7 +388,7 @@ defmodule ExMCP.CancellationTest do
 
       # Cleanup
       GenServer.stop(client)
-      GenServer.stop(:test_server_cancel_8)
+      GenServer.stop(server)
     end
   end
 end

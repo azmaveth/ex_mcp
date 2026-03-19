@@ -98,9 +98,10 @@ defmodule ExMCP.LifecycleEnhancementsTest do
     test "handler can build standard capabilities" do
       capabilities = Capabilities.build_capabilities(FullFeaturedHandler)
 
-      assert capabilities["tools"] == %{}
-      # In 2025-03-26 (default latest), experimental includes batch processing
-      assert capabilities["experimental"]["batchProcessing"] == true
+      # Default version is now 2025-11-25 (latest), which has listChanged for tools
+      assert capabilities["tools"] == %{"listChanged" => true}
+      # 2025-11-25 experimental features
+      assert capabilities["experimental"]["elicitation"] == true
     end
 
     test "handlers can customize capabilities in handle_initialize" do
@@ -241,7 +242,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
       end
     end
 
-    test "client logs warning for unsupported versions but still connects" do
+    test "client accepts server with any protocol version and still connects" do
       {:ok, server} =
         Server.start_link(
           transport: :test,
@@ -249,23 +250,21 @@ defmodule ExMCP.LifecycleEnhancementsTest do
           handler_args: %{version: "9999-12-31"}
         )
 
-      # Capture log to verify warning
-      import ExUnit.CaptureLog
+      # Client connects and accepts the server's version without warning
+      {:ok, client} =
+        Client.start_link(
+          transport: :test,
+          server: server
+        )
 
-      log =
-        capture_log(fn ->
-          {:ok, client} =
-            Client.start_link(
-              transport: :test,
-              server: server
-            )
+      # Should still connect and be functional
+      assert {:ok, _} = Client.ping(client)
 
-          # Should still connect
-          assert {:ok, _} = Client.ping(client)
-          GenServer.stop(client)
-        end)
+      # The negotiated version should reflect what the server returned
+      {:ok, version} = Client.negotiated_version(client)
+      assert version == "9999-12-31"
 
-      assert log =~ "Server returned unsupported protocol version: 9999-12-31"
+      GenServer.stop(client)
       GenServer.stop(server)
     end
   end

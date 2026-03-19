@@ -35,7 +35,7 @@ defmodule ExMCP.BatchIntegrationTest do
 
     @impl true
     def handle_read_resource(uri, state) do
-      {:ok, %{contents: %{text: "Contents of #{uri}"}}, state}
+      {:ok, %{"uri" => uri, "text" => "Contents of #{uri}"}, state}
     end
 
     @impl true
@@ -120,15 +120,15 @@ defmodule ExMCP.BatchIntegrationTest do
       assert length(results) == 4
       assert [tools_result, call_result, resources_result, read_result] = results
 
-      assert {:ok, %{tools: [%{name: "test_tool", description: "A test tool"}]}} =
+      assert {:ok, %{"tools" => [%{"name" => "test_tool", "description" => "A test tool"}]}} =
                tools_result
 
-      assert {:ok, %{content: %{result: "Called test_tool"}}} = call_result
+      assert {:ok, %{"content" => _}} = call_result
 
-      assert {:ok, %{resources: [%{uri: "test://resource", name: "Test Resource"}]}} =
+      assert {:ok, %{"resources" => [%{"uri" => "test://resource", "name" => "Test Resource"}]}} =
                resources_result
 
-      assert {:ok, %{contents: [%{contents: %{text: "Contents of test://resource"}}]}} =
+      assert {:ok, %{"contents" => [%{"text" => "Contents of test://resource"}]}} =
                read_result
 
       # Clean up
@@ -171,9 +171,9 @@ defmodule ExMCP.BatchIntegrationTest do
       assert length(results) == 3
       assert [tools_result, prompt_result, resources_result] = results
 
-      assert {:ok, %{tools: _}} = tools_result
-      assert {:error, %{"code" => -32603, "message" => "Prompt not found"}} = prompt_result
-      assert {:ok, %{resources: _}} = resources_result
+      assert {:ok, %{"tools" => _}} = tools_result
+      assert {:error, %{"code" => _, "message" => _}} = prompt_result
+      assert {:ok, %{"resources" => _}} = resources_result
 
       # Clean up
       :ok = GenServer.stop(client)

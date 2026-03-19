@@ -12,6 +12,16 @@ defmodule ExMCP.Server.Handler.Echo do
 
   alias ExMCP.Protocol.ErrorCodes
 
+  @doc """
+  Initializes the echo handler state.
+  """
+  def init(_args), do: {:ok, %{}}
+
+  @doc """
+  Terminates the echo handler.
+  """
+  def terminate(_reason, _state), do: :ok
+
   @impl true
   def handle_initialize(params, state) do
     # Echo back the protocol version sent by the client

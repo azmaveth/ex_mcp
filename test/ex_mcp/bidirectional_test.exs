@@ -231,7 +231,7 @@ defmodule ExMCP.BidirectionalTest do
       :ok = GenServer.stop(server)
     end
 
-    test "client without handler rejects server requests" do
+    test "client without handler still responds to ping" do
       # Start server
       {:ok, server} =
         Server.start_link(
@@ -251,9 +251,8 @@ defmodule ExMCP.BidirectionalTest do
       # Wait for initialization
       Process.sleep(100)
 
-      # Server tries to ping client - should fail
-      assert {:error, %{"code" => -32601, "message" => "Client does not support server requests"}} =
-               Server.ping(server)
+      # Ping is a protocol-level operation - always succeeds even without handler
+      assert {:ok, %{}} = Server.ping(server)
 
       # Clean up
       :ok = GenServer.stop(client)

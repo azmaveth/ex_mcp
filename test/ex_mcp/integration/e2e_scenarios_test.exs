@@ -248,7 +248,8 @@ defmodule ExMCP.Integration.E2EScenariosTest do
       assert data_resource["name"] == "User Data"
 
       # Step 2: Read configuration resource
-      {:ok, config_content} = Client.read_resource(client, "config://app.json")
+      {:ok, config_response} = Client.read_resource(client, "config://app.json")
+      config_content = hd(config_response.contents)
       assert config_content.mimeType == "application/json"
 
       parsed_config = Jason.decode!(config_content.text)
@@ -256,7 +257,8 @@ defmodule ExMCP.Integration.E2EScenariosTest do
       assert parsed_config["api"]["version"] == "v1"
 
       # Step 3: Read data resource
-      {:ok, data_content} = Client.read_resource(client, "data://users.csv")
+      {:ok, data_response} = Client.read_resource(client, "data://users.csv")
+      data_content = hd(data_response.contents)
       assert data_content.mimeType == "text/csv"
       assert data_content.text =~ "Alice,alice@example.com"
 
@@ -395,7 +397,8 @@ defmodule ExMCP.Integration.E2EScenariosTest do
       assert summary_result.description == "Summarization prompt for given text"
       assert length(summary_result.messages) == 1
 
-      message_content = hd(summary_result.messages)["content"]["text"]
+      first_message = hd(summary_result.messages)
+      message_content = first_message.content.text || first_message["content"]["text"]
       assert message_content =~ "50 words"
       assert message_content =~ "Artificial intelligence"
 
@@ -408,7 +411,11 @@ defmodule ExMCP.Integration.E2EScenariosTest do
         })
 
       assert translate_result.description == "Translation prompt for Spanish"
-      translation_content = hd(translate_result.messages)["content"]["text"]
+      first_translate_message = hd(translate_result.messages)
+
+      translation_content =
+        first_translate_message.content.text || first_translate_message["content"]["text"]
+
       assert translation_content =~ "Spanish"
       assert translation_content =~ "informal"
       assert translation_content =~ "Hello, how are you?"
@@ -718,7 +725,8 @@ defmodule ExMCP.Integration.E2EScenariosTest do
 
       # Step 1: Read configuration resource
       {:ok, config_resource} = Client.read_resource(client, "config://processing.json")
-      config_data = Jason.decode!(config_resource.text)
+      config_content_item = hd(config_resource.contents)
+      config_data = Jason.decode!(config_content_item.text)
       text_config = config_data["text_processor"]
 
       # Step 2: Configure processor using resource data

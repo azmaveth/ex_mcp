@@ -398,24 +398,36 @@ defmodule ExMCP.Error do
   end
 
   def to_json_rpc(%ToolError{} = error) do
+    reason_str =
+      case error.reason do
+        r when is_binary(r) -> r
+        r -> inspect(r)
+      end
+
     %{
       "code" => -32000,
-      "message" => "Tool execution error",
+      "message" => reason_str,
       "data" => %{
         "tool" => error.tool_name,
-        "reason" => inspect(error.reason)
+        "reason" => reason_str
       }
     }
   end
 
   def to_json_rpc(%ResourceError{} = error) do
+    reason_str =
+      case error.reason do
+        r when is_binary(r) -> r
+        r -> inspect(r)
+      end
+
     %{
       "code" => -32000,
-      "message" => "Resource operation error",
+      "message" => reason_str,
       "data" => %{
         "uri" => error.uri,
         "operation" => to_string(error.operation),
-        "reason" => inspect(error.reason)
+        "reason" => reason_str
       }
     }
   end

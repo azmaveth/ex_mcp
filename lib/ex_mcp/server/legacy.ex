@@ -280,20 +280,28 @@ defmodule ExMCP.Server.Legacy do
   end
 
   @impl GenServer
-  def handle_call(:ping, _from, state) do
-    # Send ping to client via transport
+  def handle_call(:ping, from, state) do
+    # Send ping to client via transport and wait for response
+    request_id = System.unique_integer([:positive])
+
     ping_request = %{
       "jsonrpc" => "2.0",
-      "id" => System.unique_integer([:positive]),
+      "id" => request_id,
       "method" => "ping",
       "params" => %{}
     }
 
     case send_message(ping_request, state) do
-      {:ok, _new_state} ->
-        # In a real implementation, we'd wait for the pong response
-        # For testing, we just return success
-        {:reply, {:ok, %{}}, state}
+      {:ok, new_state} ->
+        # Store the request in pending_requests to wait for client response
+        pending_requests =
+          Map.put(new_state.pending_requests, request_id, {from, :server_request})
+
+        final_state = %{new_state | pending_requests: pending_requests}
+
+        # Set up timeout
+        Process.send_after(self(), {:request_timeout, request_id}, 5000)
+        {:noreply, final_state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -331,6 +339,34 @@ defmodule ExMCP.Server.Legacy do
   def handle_call(:list_roots, from, state) do
     # Default timeout of 5 seconds
     handle_call({:list_roots, 5000}, from, state)
+  end
+
+  def handle_call({:create_message, params}, from, state) do
+    # Send sampling/createMessage request to client via transport
+    request_id = System.unique_integer([:positive])
+
+    create_message_request = %{
+      "jsonrpc" => "2.0",
+      "id" => request_id,
+      "method" => "sampling/createMessage",
+      "params" => params
+    }
+
+    case send_message(create_message_request, state) do
+      {:ok, new_state} ->
+        # Store the request in pending_requests to wait for client response
+        pending_requests =
+          Map.put(new_state.pending_requests, request_id, {from, :server_request})
+
+        final_state = %{new_state | pending_requests: pending_requests}
+
+        # Set up timeout
+        Process.send_after(self(), {:request_timeout, request_id}, 5000)
+        {:noreply, final_state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call(request, from, state) do
@@ -707,6 +743,13 @@ defmodule ExMCP.Server.Legacy do
 
       # Add the request_id to arguments for handlers that support cancellation
       enhanced_arguments = Map.put(arguments, "_request_id", id)
+
+      # Pass _meta from params to arguments so handlers can access it
+      enhanced_arguments =
+        case Map.get(params, "_meta") do
+          nil -> enhanced_arguments
+          meta -> Map.put(enhanced_arguments, "_meta", meta)
+        end
 
       case new_state.handler_module.handle_call_tool(
              name,

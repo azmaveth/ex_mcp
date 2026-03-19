@@ -67,9 +67,9 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       {:ok, response} = GenServer.call(server, {:process_request, request})
 
       assert response["error"]["code"] == -32000
-      assert response["error"]["message"] == "Tool execution error"
+      assert response["error"]["message"] == "Tool execution failed"
       assert response["error"]["data"]["tool"] == "test_tool"
-      assert response["error"]["data"]["reason"] == "\"Tool execution failed\""
+      assert response["error"]["data"]["reason"] == "Tool execution failed"
     end
 
     test "resource errors are properly formatted", %{server: server} do
@@ -85,10 +85,10 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       {:ok, response} = GenServer.call(server, {:process_request, request})
 
       assert response["error"]["code"] == -32000
-      assert response["error"]["message"] == "Resource operation error"
+      assert response["error"]["message"] == "Resource not found"
       assert response["error"]["data"]["uri"] == "error://test"
       assert response["error"]["data"]["operation"] == "read"
-      assert response["error"]["data"]["reason"] == "\"Resource not found\""
+      assert response["error"]["data"]["reason"] == "Resource not found"
     end
 
     test "validation errors are properly formatted", %{server: server} do
@@ -123,7 +123,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       {:ok, response} = GenServer.call(server, {:process_request, request})
 
       assert response["error"]["code"] == -32000
-      assert response["error"]["message"] == "Tool execution error"
+      assert response["error"]["message"] == "Something went wrong"
     end
   end
 
@@ -155,7 +155,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       {:ok, response} = GenServer.call(server, {:process_request, request})
 
       assert response["error"]["code"] == -32000
-      assert response["error"]["message"] == "Tool execution error"
+      assert response["error"]["message"] == "Missing tool name"
       assert response["error"]["data"]["tool"] == "unknown"
     end
   end

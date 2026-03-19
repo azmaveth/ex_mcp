@@ -29,7 +29,16 @@ defmodule ExMcp.Transport.SecurityIntegrationTest do
 
   # Reset consent state before each test to ensure isolation.
   setup do
-    # ConsentHandler.Test and ConsentCache are already started by the application
+    # Ensure ConsentHandler.Test and ConsentCache are running.
+    # Other tests may stop the ExMCP application, killing these processes.
+    unless Process.whereis(ExMCP.ConsentHandler.Test) do
+      ExMCP.ConsentHandler.Test.start_link()
+    end
+
+    unless Process.whereis(ExMCP.Internal.ConsentCache) do
+      ExMCP.Internal.ConsentCache.start_link([])
+    end
+
     # Clear both the agent state AND the ETS cache for test isolation
     ConsentHandler.clear_all_consents()
     ConsentCache.clear()

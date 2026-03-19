@@ -115,6 +115,16 @@ defmodule ExMCP.Authorization.ServerGuard do
            scope_str
          )}
 
+      {:error, :token_validation_failed, reason} ->
+        {:error,
+         build_error_response(
+           401,
+           "invalid_token",
+           "Token validation failed: #{reason}",
+           Map.get(config, :realm),
+           nil
+         )}
+
       {:error, reason} ->
         # Handle other errors, like config validation or unexpected validation results
         {:error,

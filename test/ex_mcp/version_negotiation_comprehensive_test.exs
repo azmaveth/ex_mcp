@@ -322,7 +322,9 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
           transport: :test
         )
 
-      # This should fail during initialization
+      # Trap exits so the client's initialization failure doesn't crash the test
+      Process.flag(:trap_exit, true)
+
       result =
         Client.start_link(
           transport: :test,
@@ -336,10 +338,15 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
           assert true
 
         {:ok, client} ->
-          # If client started, it should not be properly initialized
-          Process.sleep(100)
-          assert {:error, _} = Client.list_tools(client)
-          GenServer.stop(client)
+          # Client may have started but will exit shortly due to init failure
+          receive do
+            {:EXIT, ^client, {:initialize_error, _}} -> assert true
+          after
+            1000 ->
+              # If client survived, it should not be properly initialized
+              assert {:error, _} = Client.list_tools(client)
+              GenServer.stop(client)
+          end
       end
 
       GenServer.stop(server)
@@ -386,7 +393,9 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
           transport: :test
         )
 
-      # Client requesting stable version
+      # Trap exits so the client's initialization failure doesn't crash the test
+      Process.flag(:trap_exit, true)
+
       result =
         Client.start_link(
           transport: :test,
@@ -400,10 +409,14 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
           assert true
 
         {:ok, client} ->
-          Process.sleep(100)
-          # Should fail as versions don't match
-          assert {:error, _} = Client.list_tools(client)
-          GenServer.stop(client)
+          # Client may have started but will exit shortly due to init failure
+          receive do
+            {:EXIT, ^client, {:initialize_error, _}} -> assert true
+          after
+            1000 ->
+              assert {:error, _} = Client.list_tools(client)
+              GenServer.stop(client)
+          end
       end
 
       GenServer.stop(server)
@@ -439,20 +452,26 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
 
         case version do
           "2025-06-18" ->
-            # No advanced features
-            refute get_in(caps, ["resources", "subscribe"])
-            refute get_in(caps, ["completion", "hasArguments"])
+            # 2025-06-18 has resources with subscribe and listChanged
+            assert get_in(caps, ["resources", "subscribe"]) == true
+            assert get_in(caps, ["resources", "listChanged"]) == true
+            # Has elicitation in experimental
+            assert get_in(caps, ["experimental", "elicitation"]) == true
+            # Batch processing removed in 2025-06-18
+            assert get_in(caps, ["experimental", "batchProcessing"]) == false
 
           "2025-03-26" ->
-            # Has 2025 features
+            # Has 2025 features including resources with subscribe
             assert get_in(caps, ["resources", "subscribe"]) == true
-            assert get_in(caps, ["completion", "hasArguments"]) == true
+            assert get_in(caps, ["resources", "listChanged"]) == true
+            # Has batch processing in experimental
             assert get_in(caps, ["experimental", "batchProcessing"]) == true
 
           "2024-11-05" ->
-            # Basic features only
-            refute get_in(caps, ["resources", "subscribe"])
-            refute get_in(caps, ["completion", "hasArguments"])
+            # Basic features — resources have subscribe and listChanged
+            assert get_in(caps, ["resources", "subscribe"]) == true
+            assert get_in(caps, ["resources", "listChanged"]) == true
+            # No elicitation in experimental
             refute get_in(caps, ["experimental", "elicitation"])
         end
 
@@ -475,7 +494,9 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
           transport: :test
         )
 
-      # Client only supports newer versions
+      # Trap exits so the client's initialization failure doesn't crash the test
+      Process.flag(:trap_exit, true)
+
       result =
         Client.start_link(
           transport: :test,
@@ -489,10 +510,14 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
           assert true
 
         {:ok, client} ->
-          # If started, operations should fail
-          Process.sleep(100)
-          assert {:error, _} = Client.list_tools(client)
-          GenServer.stop(client)
+          # Client may have started but will exit shortly due to init failure
+          receive do
+            {:EXIT, ^client, {:initialize_error, _}} -> assert true
+          after
+            1000 ->
+              assert {:error, _} = Client.list_tools(client)
+              GenServer.stop(client)
+          end
       end
 
       GenServer.stop(server)
@@ -528,20 +553,23 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
     test "registry correctly identifies feature availability" do
       # Test that version-specific features are properly gated
 
-      # 2025-06-18 features
+      # Elicitation is a 2025-06-18+ feature
       assert VersionRegistry.feature_available?("2025-06-18", :elicitation)
+      assert VersionRegistry.feature_available?("2025-11-25", :elicitation)
       refute VersionRegistry.feature_available?("2025-03-26", :elicitation)
       refute VersionRegistry.feature_available?("2024-11-05", :elicitation)
 
-      # 2025-03-26 features
+      # Resource subscription is a base feature available in all versions
+      assert VersionRegistry.feature_available?("2024-11-05", :resource_subscription)
       assert VersionRegistry.feature_available?("2025-03-26", :resource_subscription)
       assert VersionRegistry.feature_available?("2025-06-18", :resource_subscription)
-      refute VersionRegistry.feature_available?("2025-06-18", :resource_subscription)
+      assert VersionRegistry.feature_available?("2025-11-25", :resource_subscription)
 
-      # Base features available in all
-      assert VersionRegistry.feature_available?("2025-06-18", :tools)
+      # Base features available in all versions
+      assert VersionRegistry.feature_available?("2024-11-05", :tools)
       assert VersionRegistry.feature_available?("2025-03-26", :tools)
       assert VersionRegistry.feature_available?("2025-06-18", :tools)
+      assert VersionRegistry.feature_available?("2025-11-25", :tools)
     end
 
     test "message validation respects version" do
@@ -557,33 +585,39 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
                  "2025-06-18"
                )
 
-      # Only valid for newer versions
+      # resources/subscribe is a base feature available in all versions
       assert :ok =
                validator.(
                  %{"method" => "resources/subscribe"},
                  "2025-03-26"
+               )
+
+      assert :ok =
+               validator.(
+                 %{"method" => "resources/subscribe"},
+                 "2025-06-18"
+               )
+
+      assert :ok =
+               validator.(
+                 %{"method" => "resources/subscribe"},
+                 "2024-11-05"
+               )
+
+      # elicitation/create is only valid for 2025-06-18+
+      assert :ok =
+               validator.(
+                 %{"method" => "elicitation/create"},
+                 "2025-06-18"
                )
 
       assert {:error, msg} =
                validator.(
-                 %{"method" => "resources/subscribe"},
-                 "2025-06-18"
-               )
-
-      assert msg =~ "not available"
-
-      # 2025-06-18-only method
-      assert :ok =
-               validator.(
-                 %{"method" => "elicitation/create"},
-                 "2025-06-18"
-               )
-
-      assert {:error, _} =
-               validator.(
                  %{"method" => "elicitation/create"},
                  "2025-03-26"
                )
+
+      assert msg =~ "not available"
     end
   end
 
