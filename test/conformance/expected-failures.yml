@@ -28,13 +28,11 @@ server:
   - prompts-get-with-image
   - dns-rebinding-protection
 
-# Client: remaining issues (5 real failures)
+# Client: 3 remaining real failures
 client:
-  # Elicitation not yet implemented (separate feature)
+  # Elicitation not yet implemented (separate MCP feature)
   - elicitation-sep1034-client-defaults
-  # SSE reconnection not implemented
+  # SSE reconnection on graceful stream close
   - sse-retry
-  # Scope step-up: re-auth with additional scopes on 403 insufficient_scope
+  # Scope step-up: transport state not propagated for re-auth
   - auth/scope-step-up
-  # Resource mismatch: validate PRM resource matches server URL
-  - auth/resource-mismatch

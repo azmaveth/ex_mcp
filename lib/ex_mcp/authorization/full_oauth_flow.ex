@@ -101,9 +101,12 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
   defp validate_prm_resource(_, _), do: :ok
 
-  defp urls_match?(url1, url2) do
-    # Normalize and compare — strip trailing slash, compare scheme+host+port+path
-    normalize_url(url1) == normalize_url(url2)
+  defp urls_match?(prm_resource, server_url) do
+    # The PRM resource can be the base origin (protects entire origin)
+    # or a specific path. Check if server URL starts with PRM resource.
+    norm_prm = normalize_url(prm_resource)
+    norm_server = normalize_url(server_url)
+    norm_server == norm_prm or String.starts_with?(norm_server, norm_prm <> "/")
   end
 
   defp normalize_url(url) when is_binary(url) do
