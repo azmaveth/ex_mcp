@@ -63,9 +63,41 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     # Try PRM URL from WWW-Authenticate header first
     prm_url = extract_resource_metadata_url(config[:www_authenticate])
 
-    _ = prm_url
-    # Always use well-known discovery based on resource URL
-    ProtectedResourceMetadata.discover(config.resource_url)
+    case prm_url do
+      nil ->
+        ProtectedResourceMetadata.discover(config.resource_url)
+
+      url ->
+        # Fetch PRM directly from the URL provided in WWW-Authenticate header
+        fetch_prm_directly(url)
+    end
+  end
+
+  # Fetch PRM from an explicit URL (from WWW-Authenticate header)
+  defp fetch_prm_directly(url) do
+    case :httpc.request(:get, {String.to_charlist(url), []}, [], []) do
+      {:ok, {{_, 200, _}, _headers, body}} ->
+        body_str = if is_list(body), do: List.to_string(body), else: body
+
+        case Jason.decode(body_str) do
+          {:ok, data} ->
+            # Parse authorization_servers from PRM response
+            as_list =
+              (data["authorization_servers"] || [])
+              |> Enum.map(fn issuer -> %{issuer: issuer} end)
+
+            {:ok, %{authorization_servers: as_list}}
+
+          {:error, reason} ->
+            {:error, {:prm_parse_error, reason}}
+        end
+
+      {:ok, {{_, status, _}, _headers, _body}} ->
+        {:error, {:prm_fetch_error, status}}
+
+      {:error, reason} ->
+        {:error, {:prm_request_failed, reason}}
+    end
   end
 
   # Step 2: Fetch AS metadata
@@ -121,8 +153,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         {:ok, reg} ->
           {:ok,
            %{
-             client_id: reg["client_id"],
-             client_secret: reg["client_secret"]
+             client_id: reg[:client_id] || reg["client_id"],
+             client_secret: reg[:client_secret] || reg["client_secret"]
            }}
 
         {:error, reason} ->
@@ -205,11 +237,12 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     end
   end
 
-  # Follow the authorization URL (for automated testing — real browsers would open this)
+  # Follow the authorization URL and its redirects (for automated testing).
+  # The conformance test server auto-approves and redirects to our callback.
+  # We follow redirects until we hit our callback URL (127.0.0.1).
   defp follow_authorization(url) do
     case :httpc.request(:get, {String.to_charlist(url), []}, [{:autoredirect, false}], []) do
       {:ok, {{_, status, _}, headers, _body}} when status in [301, 302, 303, 307, 308] ->
-        # Follow redirect
         location =
           headers
           |> Enum.find(fn {k, _} -> String.downcase(List.to_string(k)) == "location" end)
@@ -219,13 +252,21 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           end
 
         if location do
-          {:ok, location}
+          if String.contains?(location, "127.0.0.1") do
+            # This redirect goes to our callback server — follow it so the
+            # callback server receives the code
+            Logger.info("Following OAuth redirect to callback: #{location}")
+            :httpc.request(:get, {String.to_charlist(location), []}, [], [])
+            {:ok, location}
+          else
+            # Intermediate redirect — follow it
+            follow_authorization(location)
+          end
         else
           {:error, :no_redirect_location}
         end
 
       {:ok, {{_, 200, _}, _headers, _body}} ->
-        # Some auth servers respond with 200 and a form
         {:ok, url}
 
       {:ok, {{_, status, _}, _headers, body}} ->

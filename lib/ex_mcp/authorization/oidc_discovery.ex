@@ -120,8 +120,22 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   # Private helpers
 
   defp fetch_metadata(url, nil) do
-    # No HTTP client provided - return configuration-based metadata
-    {:error, {:no_http_client, url}}
+    # No HTTP client provided — use :httpc directly
+    case :httpc.request(:get, {String.to_charlist(url), []}, [{:timeout, 10_000}], []) do
+      {:ok, {{_, 200, _}, _headers, body}} ->
+        body_str = if is_list(body), do: List.to_string(body), else: body
+
+        case Jason.decode(body_str) do
+          {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
+          _ -> {:error, :invalid_json}
+        end
+
+      {:ok, {{_, status, _}, _headers, _body}} ->
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        {:error, {:request_failed, reason}}
+    end
   end
 
   defp fetch_metadata(url, http_client) do
