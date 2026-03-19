@@ -210,6 +210,20 @@ defmodule ExMCP.Transport.SSEClient do
     schedule_reconnect(state)
   end
 
+  # Non-streaming HTTP response (e.g., 405 Method Not Allowed)
+  def handle_info({:http, {ref, {{_, 405, _}, _headers, _body}}}, %{ref: ref} = state) do
+    Logger.info("SSE: server returned 405 — SSE not supported, disabling")
+    send(state.parent, {:sse_not_supported, self()})
+    {:noreply, %{state | ref: nil}}
+  end
+
+  def handle_info({:http, {ref, {{_, status, _}, _headers, _body}}}, %{ref: ref} = state)
+      when status >= 400 do
+    Logger.warning("SSE: server returned HTTP #{status}")
+    send(state.parent, {:sse_error, self(), {:http_error, status}})
+    schedule_reconnect(state)
+  end
+
   def handle_info({:http, {ref, {:error, reason}}}, %{ref: ref} = state) do
     Logger.error("SSE error: #{inspect(reason)}")
     send(state.parent, {:sse_error, self(), reason})

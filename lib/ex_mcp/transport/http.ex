@@ -99,7 +99,8 @@ defmodule ExMCP.Transport.HTTP do
     :protocol_version,
     :auth_config,
     :access_token,
-    sse_deferred_attempted: false
+    sse_deferred_attempted: false,
+    auth_completed: false
   ]
 
   @type t :: %__MODULE__{
@@ -331,16 +332,17 @@ defmodule ExMCP.Transport.HTTP do
 
   defp maybe_oauth_retry(headers, original_body, %{access_token: token} = state)
        when is_binary(token) and byte_size(token) > 0 do
-    # Already have a token but got 401 — check if this is a scope step-up
+    # Already have a token but got 401/403 — check if this is a scope step-up
     www_auth = find_header(headers, "www-authenticate") || ""
 
     if String.contains?(www_auth, "insufficient_scope") do
       # Scope step-up: clear token and re-auth with new scope requirements
       Logger.info("Scope step-up required, re-authorizing")
-      new_state = %{state | access_token: nil}
+      new_state = %{state | access_token: nil, auth_completed: false}
       maybe_oauth_retry(headers, original_body, new_state)
     else
-      # Token rejected for other reason — don't loop
+      # Token rejected for other reason — auth loop protection
+      Logger.warning("Auth failed after successful OAuth flow, not retrying")
       :no_challenge
     end
   end
@@ -367,6 +369,7 @@ defmodule ExMCP.Transport.HTTP do
         new_state = %{
           state
           | access_token: access_token,
+            auth_completed: true,
             headers: put_bearer_header(state.headers, access_token)
         }
 
@@ -403,6 +406,7 @@ defmodule ExMCP.Transport.HTTP do
         new_state = %{
           state
           | access_token: access_token,
+            auth_completed: true,
             headers: put_bearer_header(state.headers, access_token)
         }
 
@@ -629,18 +633,16 @@ defmodule ExMCP.Transport.HTTP do
 
   def receive_message(%__MODULE__{use_sse: true, sse_pid: nil} = state) do
     # SSE enabled but no stream started yet (no session ID from server).
-    # Responses come from POST directly via send_message return value.
-    # Block here waiting for either:
-    # - A response to be stored in last_response (from a POST)
-    # - The SSE stream to start (session ID obtained)
-    # Use a receive with timeout to avoid busy-waiting.
+    # Wait for SSE to connect, or a 405/error indicating SSE not supported.
     receive do
       {:sse_connected, pid} ->
-        # SSE started — switch to SSE receive mode
         receive_message(%{state | sse_pid: pid})
+
+      {:sse_not_supported, _pid} ->
+        # Server doesn't support SSE — fall back to sync mode
+        Logger.info("SSE not supported, falling back to sync mode")
+        {:error, :not_supported_in_sync_mode}
     after
-      # Wait briefly then re-check state — the Client will call us again
-      # with updated state if last_response was set by send_message
       500 ->
         {:error, :waiting_for_session}
     end
