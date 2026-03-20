@@ -424,11 +424,9 @@ defmodule ExMCP.Compliance.OAuth21ComplianceTest do
 
       {:ok, auth_url, _state} = Authorization.start_authorization_flow(config)
 
-      # URI.encode_query will encode a list as "key[]=value1&key[]=value2".
-      # While RFC 8707 specifies repeating the key, this is a common implementation
-      # pattern. We test for the actual implementation behavior.
-      assert String.contains?(auth_url, "resource[]=" <> URI.encode_www_form(@resource1))
-      assert String.contains?(auth_url, "resource[]=" <> URI.encode_www_form(@resource2))
+      # RFC 8707 specifies repeating the resource parameter for multiple values
+      assert String.contains?(auth_url, "resource=" <> URI.encode_www_form(@resource1))
+      assert String.contains?(auth_url, "resource=" <> URI.encode_www_form(@resource2))
     end
 
     test "validates resource URI format" do

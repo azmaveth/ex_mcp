@@ -83,7 +83,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
 
       state_data = %{
         code_verifier: code_verifier,
-        state: state,
+        state_param: state,
         redirect_uri: redirect_uri,
         initiated_at: DateTime.utc_now()
       }
@@ -278,7 +278,14 @@ defmodule ExMCP.Authorization.OAuthFlow do
       end
 
     # Add resource parameters
-    maybe_add_resource_params(base_params, params)
+    base_params = maybe_add_resource_params(base_params, params)
+
+    # Add any additional parameters (prompt, access_type, etc.)
+    case params[:additional_params] do
+      nil -> base_params
+      additional when is_map(additional) -> base_params ++ Map.to_list(additional)
+      _ -> base_params
+    end
   end
 
   defp build_token_request_body(params) do
