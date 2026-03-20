@@ -95,6 +95,21 @@ defmodule ConformanceClient do
           })
       end
 
+    # Pass IdP info for cross-app access flow (ext-auth)
+    config =
+      case ctx["idp_id_token"] do
+        nil ->
+          config
+
+        id_token ->
+          Map.merge(config, %{
+            idp_id_token: id_token,
+            idp_issuer: ctx["idp_issuer"],
+            idp_token_endpoint: ctx["idp_token_endpoint"],
+            idp_client_id: ctx["idp_client_id"]
+          })
+      end
+
     config
   end
 

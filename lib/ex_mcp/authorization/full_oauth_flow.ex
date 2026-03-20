@@ -104,12 +104,19 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   # Select grant flow based on AS metadata's grant_types_supported.
   # If the server only supports client_credentials, use that regardless.
   # Otherwise, use auth code if no pre-existing creds, client_credentials if we have them.
+  @jwt_bearer_grant "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
   defp select_and_run_grant_flow(as_metadata, client_info, config, has_preexisting_creds) do
     grant_types = as_metadata["grant_types_supported"] || []
     supports_auth_code = "authorization_code" in grant_types or grant_types == []
     supports_client_creds = "client_credentials" in grant_types
+    supports_jwt_bearer = @jwt_bearer_grant in grant_types
 
     cond do
+      supports_jwt_bearer and config[:idp_id_token] ->
+        # Cross-app access: exchange IdP token for ID-JAG, then JWT bearer grant
+        run_cross_app_flow(as_metadata, client_info, config)
+
       supports_client_creds and not supports_auth_code ->
         # Server only supports client_credentials — must use it
         run_client_credentials_flow(as_metadata, client_info, config)
@@ -457,6 +464,73 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         error ->
           error
       end
+    end
+  end
+
+  # Step 4c: Cross-app access flow (RFC 8693 token exchange + RFC 7523 JWT bearer)
+  # 1. Exchange IdP ID token for an ID-JAG at the IdP's token endpoint
+  # 2. Present the ID-JAG to the AS via JWT bearer grant
+  defp run_cross_app_flow(as_metadata, client_info, config) do
+    token_endpoint = as_metadata["token_endpoint"]
+    idp_token_endpoint = config[:idp_token_endpoint]
+    id_token = config[:idp_id_token]
+    resource = config[:resource] || config[:resource_url]
+
+    Logger.info("Running cross-app access flow (token exchange → JWT bearer)")
+
+    # Step 1: Exchange ID token for ID-JAG at IdP
+    exchange_body = [
+      {"grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"},
+      {"subject_token", id_token},
+      {"subject_token_type", "urn:ietf:params:oauth:token-type:id_token"},
+      {"requested_token_type", "urn:ietf:params:oauth:token-type:id-jag"},
+      {"audience", as_metadata["issuer"] || token_endpoint},
+      {"resource", resource}
+    ]
+
+    # Add client auth if we have IdP client credentials
+    exchange_body =
+      if config[:idp_client_id] do
+        exchange_body ++ [{"client_id", config[:idp_client_id]}]
+      else
+        exchange_body
+      end
+
+    case HTTPClient.make_token_request(idp_token_endpoint, exchange_body, auth_method: :none) do
+      {:ok, exchange_result} ->
+        id_jag = exchange_result[:access_token] || exchange_result["access_token"]
+
+        Logger.info("ID-JAG obtained via token exchange, presenting to AS")
+
+        # Step 2: Present ID-JAG to AS via JWT bearer grant
+        # Use client_secret_basic auth if we have a secret
+        bearer_body = [
+          {"grant_type", @jwt_bearer_grant},
+          {"assertion", id_jag},
+          {"client_id", client_info.client_id},
+          {"client_secret", client_info[:client_secret] || ""},
+          {"resource", resource}
+        ]
+
+        auth_method =
+          if client_info[:client_secret], do: :client_secret_basic, else: :none
+
+        case HTTPClient.make_token_request(token_endpoint, bearer_body, auth_method: auth_method) do
+          {:ok, token_data} ->
+            :telemetry.execute(
+              [:ex_mcp, :auth, :token, :obtained],
+              %{system_time: System.system_time()},
+              %{token_type: "cross_app_access"}
+            )
+
+            {:ok, token_data}
+
+          {:error, reason} ->
+            {:error, {:jwt_bearer_failed, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, {:token_exchange_failed, reason}}
     end
   end
 
