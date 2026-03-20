@@ -318,6 +318,61 @@ defmodule SSEHandler do
 end
 ```
 
+### Push Model and Async POST
+
+For bidirectional flows (elicitation, sampling), the HTTP transport uses async
+POST requests so the GenServer can process SSE events while waiting for responses:
+
+```elixir
+# The transport handles this automatically. When SSE is active, POST requests
+# run in separate Tasks with dedicated :httpc profiles to avoid connection
+# pool contention. No user configuration needed.
+
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://api.example.com",
+  use_sse: true,  # Async POST enabled automatically with SSE
+  max_retry_delay: 60_000  # Configurable reconnection delay
+)
+```
+
+For non-HTTP transports (Test, Local, Stdio), the push model is available via
+the optional `subscribe/2` callback. When supported, the client skips the
+receiver task and handles events directly in the GenServer:
+
+```elixir
+# Check if a transport supports push mode
+ExMCP.Transport.supports_push?(ExMCP.Transport.Stdio)  # true
+ExMCP.Transport.supports_push?(ExMCP.Transport.HTTP)    # false (uses async POST instead)
+```
+
+### OAuth Provider
+
+The HTTP transport supports pluggable auth providers via `auth_provider`:
+
+```elixir
+# Built-in OAuth provider (auto-created when :auth config is provided)
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://protected.example.com/mcp",
+  auth: %{client_id: "my-app", client_secret: "secret"}
+)
+
+# Custom provider
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://protected.example.com/mcp",
+  auth_provider: {MyAuthProvider, api_key: "sk-..."}
+)
+
+# Static bearer token
+{:ok, client} = ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://api.example.com/mcp",
+  auth_provider: {ExMCP.Authorization.Provider.Static, token: "my-token"}
+)
+```
+
 ### HTTP Security Configuration
 
 ```elixir
