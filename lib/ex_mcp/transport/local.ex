@@ -97,6 +97,11 @@ defmodule ExMCP.Transport.Local do
           # Notify server of connection
           Kernel.send(server_pid, {:test_transport_connect, self()})
 
+          :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
+            transport: :beam,
+            mode: mode
+          })
+
           {:ok, transport}
         else
           Error.connection_error(:server_not_available)
@@ -165,12 +170,22 @@ defmodule ExMCP.Transport.Local do
         case transport.role do
           :client ->
             # Client sending to server
+            :telemetry.execute([:ex_mcp, :transport, :message, :sent], %{}, %{
+              transport: :beam,
+              role: transport.role
+            })
+
             Kernel.send(transport.server_pid, {:transport_message, message})
             {:ok, transport}
 
           :server ->
             # Server sending to client
             if transport.server_pid do
+              :telemetry.execute([:ex_mcp, :transport, :message, :sent], %{}, %{
+                transport: :beam,
+                role: transport.role
+              })
+
               Kernel.send(transport.server_pid, {:transport_message, message})
               {:ok, transport}
             else
@@ -194,6 +209,10 @@ defmodule ExMCP.Transport.Local do
       :ok ->
         receive do
           {:transport_message, message} ->
+            :telemetry.execute([:ex_mcp, :transport, :message, :received], %{}, %{
+              transport: :beam
+            })
+
             {:ok, message, transport}
 
           {:test_transport_connect, client_pid} when transport.role == :server ->

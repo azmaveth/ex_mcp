@@ -92,6 +92,11 @@ defmodule ExMCP.Transport.Stdio do
         line_buffer: ""
       }
 
+      :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
+        transport: :stdio,
+        command: hd(command)
+      })
+
       {:ok, state}
     catch
       :error, reason ->
@@ -106,6 +111,10 @@ defmodule ExMCP.Transport.Stdio do
       {:ok, validated_message} ->
         # MCP uses newline-delimited JSON
         data = validated_message <> "\n"
+
+        :telemetry.execute([:ex_mcp, :transport, :message, :sent], %{size: byte_size(message)}, %{
+          transport: :stdio
+        })
 
         try do
           Port.command(port, data)
@@ -303,6 +312,8 @@ defmodule ExMCP.Transport.Stdio do
 
   @impl true
   def close(%__MODULE__{port: port, reader_pid: reader_pid}) do
+    :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{transport: :stdio})
+
     if is_pid(reader_pid) and Process.alive?(reader_pid) do
       Process.exit(reader_pid, :normal)
     end
@@ -404,6 +415,12 @@ defmodule ExMCP.Transport.Stdio do
 
           true ->
             # Return the JSON line and update state
+            :telemetry.execute(
+              [:ex_mcp, :transport, :message, :received],
+              %{size: byte_size(trimmed)},
+              %{transport: :stdio}
+            )
+
             {:ok, trimmed, %{state | line_buffer: rest}}
         end
 

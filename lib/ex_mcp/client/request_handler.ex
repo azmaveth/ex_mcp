@@ -23,9 +23,21 @@ defmodule ExMCP.Client.RequestHandler do
         # Non-SSE HTTP returns response immediately
         case Protocol.parse_message(response_data) do
           {:result, result, _id} ->
+            :telemetry.execute(
+              [:ex_mcp, :client, :request, :completed],
+              %{},
+              %{method: method, request_id: id}
+            )
+
             {:reply, {:ok, result}, updated_state}
 
           {:error, error_data, _id} ->
+            :telemetry.execute(
+              [:ex_mcp, :client, :request, :completed],
+              %{},
+              %{method: method, request_id: id}
+            )
+
             {:reply, {:error, error_data}, updated_state}
 
           _ ->
@@ -200,6 +212,12 @@ defmodule ExMCP.Client.RequestHandler do
       new_state =
         case get_request_info(pending_requests, response_id) do
           {:ok, {from, :single}} ->
+            :telemetry.execute(
+              [:ex_mcp, :client, :request, :completed],
+              %{},
+              %{method: nil, request_id: response_id}
+            )
+
             GenServer.reply(from, response_data)
             new_pending_requests = Map.delete(pending_requests, response_id)
             %{state | pending_requests: new_pending_requests}

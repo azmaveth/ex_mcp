@@ -151,6 +151,13 @@ defmodule ExMCP.HttpPlug do
 
   def call(%Plug.Conn{method: "POST"} = conn, opts) do
     Logger.debug("HttpPlug: POST request to #{conn.request_path}")
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :http, :request],
+      %{},
+      %{method: conn.method, path: conn.request_path}
+    )
+
     handle_mcp_request(conn, opts)
   end
 
@@ -231,6 +238,12 @@ defmodule ExMCP.HttpPlug do
           # Per MCP spec, POST responses MUST contain the result in the body,
           # even when SSE is enabled. The SSE stream is for server-initiated
           # messages only (notifications, progress updates).
+          :telemetry.execute(
+            [:ex_mcp, :server, :http, :response],
+            %{},
+            %{status: 200}
+          )
+
           conn
           |> maybe_add_cors_headers(opts)
           |> add_protocol_version_header()
@@ -240,6 +253,12 @@ defmodule ExMCP.HttpPlug do
 
         {:notification, _} ->
           # Notifications get 202 Accepted with no body
+          :telemetry.execute(
+            [:ex_mcp, :server, :http, :response],
+            %{},
+            %{status: 202}
+          )
+
           conn
           |> maybe_add_cors_headers(opts)
           |> add_protocol_version_header()
@@ -247,6 +266,12 @@ defmodule ExMCP.HttpPlug do
           |> send_resp(202, "")
 
         {:error, :no_response} ->
+          :telemetry.execute(
+            [:ex_mcp, :server, :http, :response],
+            %{},
+            %{status: 500}
+          )
+
           Logger.error("Handler did not provide a response for request: #{inspect(request)}")
 
           error_response = %{
@@ -266,6 +291,12 @@ defmodule ExMCP.HttpPlug do
           |> send_resp(500, Jason.encode!(error_response))
 
         {:error, reason} ->
+          :telemetry.execute(
+            [:ex_mcp, :server, :http, :response],
+            %{},
+            %{status: 500}
+          )
+
           Logger.error("Request processing error: #{inspect(reason)}")
 
           error_response = %{

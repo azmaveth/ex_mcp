@@ -51,28 +51,55 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
+    :telemetry.execute(
+      [:ex_mcp, :auth, :flow, :started],
+      %{system_time: System.system_time()},
+      %{resource_url: config[:resource_url]}
+    )
+
     # Check if caller provided pre-existing credentials (not from dynamic registration)
     has_preexisting_creds = is_binary(config[:client_id]) and is_binary(config[:client_secret])
 
-    with {:ok, prm} <- discover_resource_metadata(config),
-         :ok <- validate_prm_resource(prm, config),
-         {:ok, as_metadata} <- discover_as_metadata(prm, config),
-         {:ok, client_info} <- ensure_client_registered(as_metadata, config) do
-      # Merge PRM scopes_supported into config for scope negotiation
-      config =
-        case prm[:scopes_supported] do
-          scopes when is_list(scopes) and scopes != [] ->
-            Map.put_new(config, :prm_scopes, scopes)
+    result =
+      with {:ok, prm} <- discover_resource_metadata(config),
+           :ok <- validate_prm_resource(prm, config),
+           {:ok, as_metadata} <- discover_as_metadata(prm, config),
+           {:ok, client_info} <- ensure_client_registered(as_metadata, config) do
+        # Merge PRM scopes_supported into config for scope negotiation
+        config =
+          case prm[:scopes_supported] do
+            scopes when is_list(scopes) and scopes != [] ->
+              Map.put_new(config, :prm_scopes, scopes)
 
-          _ ->
-            config
+            _ ->
+              config
+          end
+
+        if has_preexisting_creds do
+          run_client_credentials_flow(as_metadata, client_info, config)
+        else
+          run_auth_code_flow(as_metadata, client_info, config)
         end
-
-      if has_preexisting_creds do
-        run_client_credentials_flow(as_metadata, client_info, config)
-      else
-        run_auth_code_flow(as_metadata, client_info, config)
       end
+
+    case result do
+      {:ok, _} = ok ->
+        :telemetry.execute(
+          [:ex_mcp, :auth, :flow, :completed],
+          %{system_time: System.system_time()},
+          %{resource_url: config[:resource_url]}
+        )
+
+        ok
+
+      {:error, reason} = err ->
+        :telemetry.execute(
+          [:ex_mcp, :auth, :flow, :failed],
+          %{system_time: System.system_time()},
+          %{resource_url: config[:resource_url], reason: reason}
+        )
+
+        err
     end
   end
 
@@ -197,8 +224,17 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
     if as_url do
       case OIDCDiscovery.discover(as_url, http_client: config[:http_client]) do
-        {:ok, metadata} -> {:ok, metadata}
-        {:error, reason} -> {:error, {:as_discovery_failed, reason}}
+        {:ok, metadata} ->
+          :telemetry.execute(
+            [:ex_mcp, :auth, :discovery, :completed],
+            %{system_time: System.system_time()},
+            %{issuer: as_url}
+          )
+
+          {:ok, metadata}
+
+        {:error, reason} ->
+          {:error, {:as_discovery_failed, reason}}
       end
     else
       {:error, :no_authorization_server_found}
@@ -259,9 +295,17 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
            software_version: nil
          }) do
       {:ok, reg} ->
+        client_id = reg[:client_id] || reg["client_id"]
+
+        :telemetry.execute(
+          [:ex_mcp, :auth, :registration, :completed],
+          %{system_time: System.system_time()},
+          %{client_id: client_id}
+        )
+
         {:ok,
          %{
-           client_id: reg[:client_id] || reg["client_id"],
+           client_id: client_id,
            client_secret: reg[:client_secret] || reg["client_secret"]
          }}
 
@@ -293,17 +337,32 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
       Logger.info("Using client_credentials flow with #{token_auth_method} auth")
 
-      HTTPClient.make_token_request(
-        token_endpoint,
-        [
-          grant_type: "client_credentials",
-          client_id: client_info.client_id,
-          client_secret: client_info.client_secret,
-          resource: config[:resource] || config[:resource_url]
-        ]
-        |> Enum.reject(fn {_, v} -> is_nil(v) end),
-        auth_method: token_auth_method
-      )
+      result =
+        HTTPClient.make_token_request(
+          token_endpoint,
+          [
+            grant_type: "client_credentials",
+            client_id: client_info.client_id,
+            client_secret: client_info.client_secret,
+            resource: config[:resource] || config[:resource_url]
+          ]
+          |> Enum.reject(fn {_, v} -> is_nil(v) end),
+          auth_method: token_auth_method
+        )
+
+      case result do
+        {:ok, token_data} ->
+          :telemetry.execute(
+            [:ex_mcp, :auth, :token, :obtained],
+            %{system_time: System.system_time()},
+            %{token_type: token_data[:token_type] || token_data["token_type"]}
+          )
+
+          {:ok, token_data}
+
+        error ->
+          error
+      end
     end
   end
 
@@ -334,7 +393,20 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         )
 
       stop_redirect_server(server_pid)
-      result
+
+      case result do
+        {:ok, token_data} ->
+          :telemetry.execute(
+            [:ex_mcp, :auth, :token, :obtained],
+            %{system_time: System.system_time()},
+            %{token_type: token_data[:token_type] || token_data["token_type"]}
+          )
+
+          {:ok, token_data}
+
+        error ->
+          error
+      end
     end
   end
 

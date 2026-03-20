@@ -119,39 +119,50 @@ defmodule ExMCP.MessageProcessor do
   """
   @spec process(Conn.t(), map()) :: Conn.t()
   def process(%Conn{} = conn, opts) do
+    method = Map.get(conn.request, "method")
+
     # Validate based on message type (request vs notification)
-    if notification?(conn.request) do
-      # For notifications, use the simpler validation that doesn't require "id"
-      case validate_notification(conn.request) do
-        {:ok, _validated_notification} ->
-          process_validated_notification(conn, opts)
+    result =
+      if notification?(conn.request) do
+        # For notifications, use the simpler validation that doesn't require "id"
+        case validate_notification(conn.request) do
+          {:ok, _validated_notification} ->
+            process_validated_notification(conn, opts)
 
-        {:error, error_data} ->
-          # Notifications that fail validation are just logged, no response
-          require Logger
-          Logger.warning("Invalid notification received: #{inspect(error_data)}")
-          conn
+          {:error, error_data} ->
+            # Notifications that fail validation are just logged, no response
+            require Logger
+            Logger.warning("Invalid notification received: #{inspect(error_data)}")
+            conn
+        end
+      else
+        # For requests, use full request validation
+        case MessageValidator.validate_request(conn.request) do
+          {:ok, _validated_request} ->
+            # Request is valid, proceed with processing.
+            process_validated_request(conn, opts)
+
+          {:error, error_data} ->
+            # Request is invalid, construct and return an error response.
+            # Note: for validation errors, the ID might be null or invalid.
+            # We still try to get it to adhere to JSON-RPC, but it might be nil.
+            error_response = %{
+              "jsonrpc" => "2.0",
+              "error" => error_data,
+              "id" => get_request_id(conn.request)
+            }
+
+            put_response(conn, error_response)
+        end
       end
-    else
-      # For requests, use full request validation
-      case MessageValidator.validate_request(conn.request) do
-        {:ok, _validated_request} ->
-          # Request is valid, proceed with processing.
-          process_validated_request(conn, opts)
 
-        {:error, error_data} ->
-          # Request is invalid, construct and return an error response.
-          # Note: for validation errors, the ID might be null or invalid.
-          # We still try to get it to adhere to JSON-RPC, but it might be nil.
-          error_response = %{
-            "jsonrpc" => "2.0",
-            "error" => error_data,
-            "id" => get_request_id(conn.request)
-          }
+    :telemetry.execute(
+      [:ex_mcp, :server, :request, :processed],
+      %{},
+      %{method: method, has_response: result.response != nil}
+    )
 
-          put_response(conn, error_response)
-      end
-    end
+    result
   end
 
   defp process_validated_request(%Conn{} = conn, opts) do

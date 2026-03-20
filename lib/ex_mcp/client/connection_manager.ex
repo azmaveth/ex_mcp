@@ -86,6 +86,12 @@ defmodule ExMCP.Client.ConnectionManager do
   def receive_loop(parent, transport_mod, transport_state) do
     case transport_mod.receive_message(transport_state) do
       {:ok, message, new_state} ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :receiver, :message],
+          %{},
+          %{}
+        )
+
         send(parent, {:transport_message, message})
         receive_loop(parent, transport_mod, new_state)
 
@@ -407,12 +413,24 @@ defmodule ExMCP.Client.ConnectionManager do
       ExMCP.Transport.supports_push?(transport_mod) ->
         case transport_mod.subscribe(parent, transport_state) do
           {:ok, new_state} ->
+            :telemetry.execute(
+              [:ex_mcp, :client, :receiver, :started],
+              %{},
+              %{mode: :push}
+            )
+
             # Return :push atom as receiver_task to signal push mode is active.
             # The updated transport_state with subscriber must be stored by caller.
             {:ok, {:push, new_state}}
 
           {:error, _reason} ->
             # Fall back to polling
+            :telemetry.execute(
+              [:ex_mcp, :client, :receiver, :started],
+              %{},
+              %{mode: :pull}
+            )
+
             task =
               Task.async(fn ->
                 __MODULE__.receive_loop(parent, transport_mod, transport_state)
@@ -423,6 +441,12 @@ defmodule ExMCP.Client.ConnectionManager do
 
       # Legacy polling mode
       true ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :receiver, :started],
+          %{},
+          %{mode: :pull}
+        )
+
         task =
           Task.async(fn ->
             __MODULE__.receive_loop(parent, transport_mod, transport_state)

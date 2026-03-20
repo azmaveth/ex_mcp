@@ -148,6 +148,7 @@ defmodule ExMCP.Transport.SSEClient do
   @impl true
   def handle_info({:http, {ref, :stream_start, headers}}, %{ref: ref} = state) do
     # Connection is now established, send notification
+    :telemetry.execute([:ex_mcp, :transport, :sse, :connected], %{}, %{url: state.url})
     send(state.parent, {:sse_connected, self()})
 
     # Start heartbeat monitoring using configurable idle timeout
@@ -225,6 +226,7 @@ defmodule ExMCP.Transport.SSEClient do
   end
 
   def handle_info({:http, {ref, :stream_end, _headers}}, %{ref: ref} = state) do
+    :telemetry.execute([:ex_mcp, :transport, :sse, :disconnected], %{}, %{url: state.url})
     Logger.info("SSE stream ended, reconnecting...")
     send(state.parent, {:sse_closed, self()})
     schedule_reconnect(state)
@@ -455,6 +457,10 @@ defmodule ExMCP.Transport.SSEClient do
       GenServer.cast(self(), {:update_last_id, id})
     end
 
+    :telemetry.execute([:ex_mcp, :transport, :sse, :event], %{size: byte_size(data)}, %{
+      event_type: event_type
+    })
+
     # Send to parent
     send(
       state.parent,
@@ -468,6 +474,12 @@ defmodule ExMCP.Transport.SSEClient do
   end
 
   defp schedule_reconnect(state) do
+    :telemetry.execute(
+      [:ex_mcp, :transport, :sse, :reconnecting],
+      %{delay_ms: state.retry_delay},
+      %{retry_count: state.retry_count}
+    )
+
     # Cancel existing timers
     if state.heartbeat_ref do
       Process.cancel_timer(state.heartbeat_ref)

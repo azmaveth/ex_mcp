@@ -112,7 +112,27 @@ defmodule ExMCP.ACP.AdapterBridge do
   def handle_call({:send, json}, from, state) do
     case Jason.decode(json) do
       {:ok, msg} ->
-        handle_outbound(msg, json, from, state)
+        method = msg["method"]
+
+        if method do
+          :telemetry.execute(
+            [:ex_mcp, :acp, :request, :received],
+            %{system_time: System.system_time()},
+            %{method: method}
+          )
+        end
+
+        result = handle_outbound(msg, json, from, state)
+
+        if method do
+          :telemetry.execute(
+            [:ex_mcp, :acp, :request, :completed],
+            %{system_time: System.system_time()},
+            %{method: method}
+          )
+        end
+
+        result
 
       {:error, reason} ->
         {:reply, {:error, {:decode_error, reason}}, state}

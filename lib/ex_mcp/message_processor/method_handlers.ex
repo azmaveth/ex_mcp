@@ -94,6 +94,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     tool_name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
 
+    :telemetry.execute(
+      [:ex_mcp, :server, :tool, :called],
+      %{},
+      %{tool_name: tool_name, mode: :direct}
+    )
+
     case handler.handle_tool_call(tool_name, arguments, %{}) do
       {:ok, result} ->
         put_success(conn, wrap_tool_result(result), id)
@@ -106,6 +112,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   def handle_tools_call(conn, server_pid, :genserver, params, id) do
     tool_name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :tool, :called],
+      %{},
+      %{tool_name: tool_name, mode: :genserver}
+    )
 
     case GenServer.call(server_pid, {:execute_tool, tool_name, arguments}, 10000) do
       {:ok, result} ->
@@ -121,6 +133,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   def handle_tools_call(conn, server_pid, :handler, params, id) do
     tool_name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :tool, :called],
+      %{},
+      %{tool_name: tool_name, mode: :handler}
+    )
 
     case GenServer.call(server_pid, {:call_tool, tool_name, arguments}, 10000) do
       {:ok, result} ->
@@ -170,6 +188,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   def handle_resources_read(conn, handler, :direct, params, id) do
     uri = Map.get(params, "uri")
 
+    :telemetry.execute(
+      [:ex_mcp, :server, :resource, :read],
+      %{},
+      %{uri: uri, mode: :direct}
+    )
+
     case handler.handle_resource_read(uri, uri, %{}) do
       {:ok, contents, _state} ->
         put_success(conn, %{"contents" => deep_stringify_keys(List.wrap(contents))}, id)
@@ -181,6 +205,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   def handle_resources_read(conn, server_pid, :genserver, params, id) do
     uri = Map.get(params, "uri")
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :resource, :read],
+      %{},
+      %{uri: uri, mode: :genserver}
+    )
 
     case GenServer.call(server_pid, {:read_resource, uri}, 5000) do
       {:ok, contents} ->
@@ -195,6 +225,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   def handle_resources_read(conn, server_pid, :handler, params, id) do
     uri = Map.get(params, "uri")
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :resource, :read],
+      %{},
+      %{uri: uri, mode: :handler}
+    )
 
     case GenServer.call(server_pid, {:read_resource, uri}, 5000) do
       {:ok, contents, _state} ->
@@ -308,6 +344,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
 
+    :telemetry.execute(
+      [:ex_mcp, :server, :prompt, :rendered],
+      %{},
+      %{name: name, mode: :direct}
+    )
+
     case handler.handle_get_prompt(name, arguments, %{}) do
       {:ok, result, _state} ->
         put_success(conn, deep_stringify_keys(result), id)
@@ -320,6 +362,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   def handle_prompts_get(conn, server_pid, :genserver, params, id) do
     name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :prompt, :rendered],
+      %{},
+      %{name: name, mode: :genserver}
+    )
 
     case GenServer.call(server_pid, {:get_prompt, name, arguments}, 5000) do
       {:ok, result} ->
@@ -335,6 +383,12 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   def handle_prompts_get(conn, server_pid, :handler, params, id) do
     name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :prompt, :rendered],
+      %{},
+      %{name: name, mode: :handler}
+    )
 
     case GenServer.call(server_pid, {:get_prompt, name, arguments}, 5000) do
       {:ok, result, _state} ->

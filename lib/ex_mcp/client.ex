@@ -688,6 +688,12 @@ defmodule ExMCP.Client do
     case ConnectionManager.establish_connection(state, connection_opts) do
       {:ok, updated_state} ->
         # Update connection status to ready after successful handshake
+        :telemetry.execute(
+          [:ex_mcp, :client, :connected],
+          %{},
+          %{transport: updated_state.transport_mod}
+        )
+
         final_state = %{updated_state | connection_status: :ready, initialized: true}
         {:ok, final_state}
 
@@ -741,6 +747,12 @@ defmodule ExMCP.Client do
 
   @impl GenServer
   def handle_call({:request, method, params}, from, state) do
+    :telemetry.execute(
+      [:ex_mcp, :client, :request, :sent],
+      %{},
+      %{method: method}
+    )
+
     RequestHandler.handle_request(method, params, from, state)
   end
 
@@ -757,6 +769,12 @@ defmodule ExMCP.Client do
   end
 
   def handle_call(:disconnect, _from, state) do
+    :telemetry.execute(
+      [:ex_mcp, :client, :disconnected],
+      %{},
+      %{}
+    )
+
     # Cancel health check timer
     if state.health_check_ref do
       Process.cancel_timer(state.health_check_ref)

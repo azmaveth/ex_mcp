@@ -135,12 +135,29 @@ defmodule ExMCP.Server.Legacy do
           # This is a response from client
           handle_client_response(message_data, state)
         else
+          method = Map.get(message_data, "method")
+
+          :telemetry.execute(
+            [:ex_mcp, :server, :request, :received],
+            %{},
+            %{method: method}
+          )
+
           # This is a request from client
           case process_mcp_request(message_data, state) do
             {:response, response, new_state} ->
               case send_message(response, new_state) do
-                {:ok, final_state} -> {:noreply, final_state}
-                {:error, _reason} -> {:noreply, new_state}
+                {:ok, final_state} ->
+                  :telemetry.execute(
+                    [:ex_mcp, :server, :request, :completed],
+                    %{},
+                    %{method: method}
+                  )
+
+                  {:noreply, final_state}
+
+                {:error, _reason} ->
+                  {:noreply, new_state}
               end
 
             {:notification, new_state} ->
@@ -662,6 +679,19 @@ defmodule ExMCP.Server.Legacy do
     case state.handler_module.handle_initialize(params, state.handler_state) do
       {:ok, result, new_handler_state} ->
         response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+
+        server_name =
+          case result do
+            %{"serverInfo" => %{"name" => name}} -> name
+            %{serverInfo: %{name: name}} -> name
+            _ -> "unknown"
+          end
+
+        :telemetry.execute(
+          [:ex_mcp, :server, :initialize, :completed],
+          %{},
+          %{server_name: server_name}
+        )
 
         new_state = %{
           state

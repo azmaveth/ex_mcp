@@ -7,59 +7,116 @@ defmodule ExMCP.Telemetry do
 
   ## Events
 
-  ### Request Processing
+  All events follow the naming convention `[:ex_mcp, :component, :action, :status]`.
 
-  * `[:ex_mcp, :request, :start]` - Emitted when request processing starts
+  ### Client Events
+
+  #### Connection
+  * `[:ex_mcp, :client, :connected]` - Client connection established
+    * Metadata: `%{transport: module()}`
+  * `[:ex_mcp, :client, :disconnected]` - Client disconnected
+    * Metadata: `%{}`
+
+  #### Request Lifecycle
+  * `[:ex_mcp, :client, :request, :sent]` - Request sent to server
+    * Metadata: `%{method: String.t()}`
+  * `[:ex_mcp, :client, :request, :completed]` - Response matched to pending request
+    * Metadata: `%{method: String.t() | nil, request_id: integer()}`
+
+  #### Receiver
+  * `[:ex_mcp, :client, :receiver, :started]` - Receiver task started
+    * Metadata: `%{mode: :push | :pull}`
+  * `[:ex_mcp, :client, :receiver, :message]` - Message received in receive loop
+    * Metadata: `%{}`
+
+  #### State & Progress (via `span/3`)
+  * `[:ex_mcp, :request, :start]` - Request processing starts
     * Measurements: `%{system_time: integer()}`
     * Metadata: `%{request_id: String.t(), method: String.t(), server: atom()}`
-
-  * `[:ex_mcp, :request, :stop]` - Emitted when request processing completes
+  * `[:ex_mcp, :request, :stop]` - Request processing completes
     * Measurements: `%{duration: integer()}`
     * Metadata: `%{request_id: String.t(), method: String.t(), server: atom(), status: :ok | :error}`
-
-  * `[:ex_mcp, :request, :exception]` - Emitted when request processing fails
+  * `[:ex_mcp, :request, :exception]` - Request processing fails
     * Measurements: `%{duration: integer()}`
     * Metadata: `%{request_id: String.t(), method: String.t(), server: atom(), kind: atom(), error: term(), stacktrace: list()}`
 
-  ### Tool Execution
+  ### Server Events
 
-  * `[:ex_mcp, :tool, :start]` - Emitted when tool execution starts
+  #### Request Processing
+  * `[:ex_mcp, :server, :request, :received]` - Transport message arrives (Legacy server)
+    * Metadata: `%{method: String.t()}`
+  * `[:ex_mcp, :server, :request, :completed]` - Response sent back (Legacy server)
+    * Metadata: `%{method: String.t()}`
+  * `[:ex_mcp, :server, :request, :processed]` - MessageProcessor.process/2 completes
+    * Metadata: `%{method: String.t(), has_response: boolean()}`
+  * `[:ex_mcp, :server, :initialize, :completed]` - Server initialization completes
+    * Metadata: `%{server_name: String.t()}`
+
+  #### Tool Execution
+  * `[:ex_mcp, :server, :tool, :called]` - Tool call dispatched
+    * Metadata: `%{tool_name: String.t(), mode: :direct | :genserver | :handler}`
+  * `[:ex_mcp, :tool, :start]` - Tool execution starts (via `span/3`)
     * Measurements: `%{system_time: integer()}`
     * Metadata: `%{tool_name: String.t(), request_id: String.t()}`
-
-  * `[:ex_mcp, :tool, :stop]` - Emitted when tool execution completes
+  * `[:ex_mcp, :tool, :stop]` - Tool execution completes (via `span/3`)
     * Measurements: `%{duration: integer()}`
     * Metadata: `%{tool_name: String.t(), request_id: String.t(), status: :ok | :error}`
 
-  ### Resource Operations
-
-  * `[:ex_mcp, :resource, :read, :start]` - Emitted when resource read starts
+  #### Resource Operations
+  * `[:ex_mcp, :server, :resource, :read]` - Resource read dispatched
+    * Metadata: `%{uri: String.t(), mode: :direct | :genserver | :handler}`
+  * `[:ex_mcp, :resource, :read, :start]` - Resource read starts (via `span/3`)
     * Measurements: `%{system_time: integer()}`
     * Metadata: `%{uri: String.t(), request_id: String.t()}`
-
-  * `[:ex_mcp, :resource, :read, :stop]` - Emitted when resource read completes
+  * `[:ex_mcp, :resource, :read, :stop]` - Resource read completes (via `span/3`)
     * Measurements: `%{duration: integer(), bytes: integer() | nil}`
     * Metadata: `%{uri: String.t(), request_id: String.t(), status: :ok | :error}`
 
-  ### Connection Events
+  #### Prompt Rendering
+  * `[:ex_mcp, :server, :prompt, :rendered]` - Prompt get dispatched
+    * Metadata: `%{name: String.t(), mode: :direct | :genserver | :handler}`
 
-  * `[:ex_mcp, :connection, :established]` - Emitted when connection is established
+  #### HTTP Transport
+  * `[:ex_mcp, :server, :http, :request]` - HTTP request received
+    * Metadata: `%{method: String.t(), path: String.t()}`
+  * `[:ex_mcp, :server, :http, :response]` - HTTP response sent
+    * Metadata: `%{status: integer()}`
+
+  ### Transport Events (via `span/3`)
+
+  * `[:ex_mcp, :connection, :established]` - Connection established
     * Measurements: `%{system_time: integer()}`
     * Metadata: `%{transport: atom(), server: atom()}`
-
-  * `[:ex_mcp, :connection, :lost]` - Emitted when connection is lost
+  * `[:ex_mcp, :connection, :lost]` - Connection lost
     * Measurements: `%{system_time: integer(), uptime: integer()}`
     * Metadata: `%{transport: atom(), server: atom(), reason: term()}`
+
+  ### Authorization Events
+
+  Authorization events are emitted by the OAuth 2.1 subsystem:
+
+  * `[:ex_mcp, :authorization, :flow, :start | :stop]` - OAuth flow lifecycle
+  * `[:ex_mcp, :authorization, :discovery, :start | :stop]` - Metadata discovery
+  * `[:ex_mcp, :authorization, :token, :start | :stop]` - Token exchange
+  * `[:ex_mcp, :authorization, :authorize, :start | :stop]` - Authorization request
+
+  ### ACP Events
+
+  Agent Communication Protocol events:
+
+  * `[:ex_mcp, :acp, :session, :start | :stop]` - ACP session lifecycle
+  * `[:ex_mcp, :acp, :prompt, :start | :stop]` - ACP prompt processing
+  * `[:ex_mcp, :acp, :transport, :start | :stop]` - ACP transport operations
 
   ## Usage
 
       # Attach a simple logger
       ExMCP.Telemetry.attach_default_logger()
-      
+
       # Attach custom handlers
       :telemetry.attach(
         "my-handler",
-        [:ex_mcp, :request, :stop],
+        [:ex_mcp, :server, :tool, :called],
         &MyApp.handle_event/4,
         nil
       )

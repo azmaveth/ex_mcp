@@ -68,6 +68,13 @@ defmodule ExMCP.Authorization.Provider.OAuth do
     if www_authenticate && String.contains?(to_string(www_authenticate), "insufficient_scope") do
       # Scope step-up: clear token and re-auth with broader scope
       Logger.info("Scope step-up required, re-authorizing")
+
+      :telemetry.execute(
+        [:ex_mcp, :auth, :provider, :scope_stepup],
+        %{system_time: System.system_time()},
+        %{scopes: scopes}
+      )
+
       cleared = %{state | access_token: nil, auth_completed: false}
       do_authenticate(www_authenticate, scopes, cleared)
     else
@@ -92,6 +99,12 @@ defmodule ExMCP.Authorization.Provider.OAuth do
       {:ok, token_result} ->
         access_token = token_result[:access_token] || token_result["access_token"]
         Logger.info("OAuth token obtained")
+
+        :telemetry.execute(
+          [:ex_mcp, :auth, :provider, :token_obtained],
+          %{system_time: System.system_time()},
+          %{}
+        )
 
         new_state = %{state | access_token: access_token, auth_completed: true}
         {:ok, access_token, new_state}

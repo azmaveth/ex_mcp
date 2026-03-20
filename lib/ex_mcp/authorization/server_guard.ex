@@ -88,9 +88,21 @@ defmodule ExMCP.Authorization.ServerGuard do
          {:ok, token} <- extract_bearer_token(headers),
          {:ok, token_info} <- validate_token(token, config),
          :ok <- check_scopes(token_info, required_scopes) do
+      :telemetry.execute(
+        [:ex_mcp, :auth, :authorize, :success],
+        %{system_time: System.system_time()},
+        %{scopes: required_scopes}
+      )
+
       {:ok, token_info}
     else
       {:error, :missing_token} ->
+        :telemetry.execute(
+          [:ex_mcp, :auth, :authorize, :failure],
+          %{system_time: System.system_time()},
+          %{reason: :missing_token}
+        )
+
         {:error,
          build_error_response(
            401,
@@ -101,9 +113,21 @@ defmodule ExMCP.Authorization.ServerGuard do
          )}
 
       {:error, :invalid_token, reason} ->
+        :telemetry.execute(
+          [:ex_mcp, :auth, :authorize, :failure],
+          %{system_time: System.system_time()},
+          %{reason: :invalid_token}
+        )
+
         {:error, build_error_response(401, "invalid_token", reason, Map.get(config, :realm), nil)}
 
       {:error, :insufficient_scope} ->
+        :telemetry.execute(
+          [:ex_mcp, :auth, :authorize, :failure],
+          %{system_time: System.system_time()},
+          %{reason: :insufficient_scope}
+        )
+
         scope_str = Enum.join(required_scopes, " ")
 
         {:error,
@@ -116,6 +140,12 @@ defmodule ExMCP.Authorization.ServerGuard do
          )}
 
       {:error, :token_validation_failed, reason} ->
+        :telemetry.execute(
+          [:ex_mcp, :auth, :authorize, :failure],
+          %{system_time: System.system_time()},
+          %{reason: :token_validation_failed}
+        )
+
         {:error,
          build_error_response(
            401,
@@ -126,6 +156,12 @@ defmodule ExMCP.Authorization.ServerGuard do
          )}
 
       {:error, reason} ->
+        :telemetry.execute(
+          [:ex_mcp, :auth, :authorize, :failure],
+          %{system_time: System.system_time()},
+          %{reason: reason}
+        )
+
         # Handle other errors, like config validation or unexpected validation results
         {:error,
          build_error_response(

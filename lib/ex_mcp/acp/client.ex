@@ -142,6 +142,12 @@ defmodule ExMCP.ACP.Client do
     GenServer.call(client, :status)
   end
 
+  @doc "Ends a session (emits telemetry, no protocol message)."
+  @spec end_session(GenServer.server(), String.t()) :: :ok
+  def end_session(client, session_id) do
+    GenServer.call(client, {:end_session, session_id})
+  end
+
   @doc "Disconnects from the agent."
   @spec disconnect(GenServer.server()) :: :ok
   def disconnect(client) do
@@ -185,7 +191,7 @@ defmodule ExMCP.ACP.Client do
   @impl true
   def handle_call({:new_session, cwd, mcp_servers}, from, %{status: :ready} = state) do
     msg = Protocol.encode_session_new(cwd, mcp_servers)
-    send_request(msg, from, state)
+    send_request(msg, from, state, :new_session)
   end
 
   def handle_call({:authenticate, params}, from, %{status: :ready} = state) do
@@ -210,8 +216,14 @@ defmodule ExMCP.ACP.Client do
         blocks when is_list(blocks) -> blocks
       end
 
+    :telemetry.execute(
+      [:ex_mcp, :acp, :prompt, :sent],
+      %{system_time: System.system_time()},
+      %{session_id: session_id}
+    )
+
     msg = Protocol.encode_session_prompt(session_id, blocks)
-    send_request(msg, from, state)
+    send_request(msg, from, state, {:prompt, session_id})
   end
 
   def handle_call({:set_mode, session_id, mode_id}, from, %{status: :ready} = state) do
@@ -234,6 +246,16 @@ defmodule ExMCP.ACP.Client do
 
   def handle_call(:status, _from, state) do
     {:reply, state.status, state}
+  end
+
+  def handle_call({:end_session, session_id}, _from, state) do
+    :telemetry.execute(
+      [:ex_mcp, :acp, :session, :ended],
+      %{system_time: System.system_time()},
+      %{session_id: session_id}
+    )
+
+    {:reply, :ok, state}
   end
 
   def handle_call(:disconnect, _from, state) do
@@ -404,12 +426,12 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
-  defp send_request(msg, from, state) do
+  defp send_request(msg, from, state, telemetry_tag \\ nil) do
     id = msg["id"]
 
     case do_send(msg, state) do
       {:ok, new_state} ->
-        pending = Map.put(state.pending_requests, id, from)
+        pending = Map.put(state.pending_requests, id, {from, telemetry_tag})
         {:noreply, %{new_state | pending_requests: pending}}
 
       {:error, reason} ->
@@ -442,15 +464,45 @@ defmodule ExMCP.ACP.Client do
         Logger.debug("ACP received response for unknown request #{id}")
         state
 
+      {{from, telemetry_tag}, pending} ->
+        emit_resolve_telemetry(telemetry_tag, reply)
+        GenServer.reply(from, reply)
+        %{state | pending_requests: pending}
+
       {from, pending} ->
         GenServer.reply(from, reply)
         %{state | pending_requests: pending}
     end
   end
 
+  defp emit_resolve_telemetry(:new_session, {:ok, result}) do
+    session_id = result["sessionId"]
+
+    :telemetry.execute(
+      [:ex_mcp, :acp, :session, :started],
+      %{system_time: System.system_time()},
+      %{session_id: session_id}
+    )
+  end
+
+  defp emit_resolve_telemetry({:prompt, session_id}, {:ok, result}) do
+    stop_reason = result["stopReason"]
+
+    :telemetry.execute(
+      [:ex_mcp, :acp, :prompt, :completed],
+      %{system_time: System.system_time()},
+      %{session_id: session_id, stop_reason: stop_reason}
+    )
+  end
+
+  defp emit_resolve_telemetry(_, _), do: :ok
+
   defp reply_all_pending(error, state) do
-    for {_id, from} <- state.pending_requests do
-      GenServer.reply(from, error)
+    for {_id, pending} <- state.pending_requests do
+      case pending do
+        {from, _tag} -> GenServer.reply(from, error)
+        from -> GenServer.reply(from, error)
+      end
     end
 
     %{state | pending_requests: %{}}

@@ -223,6 +223,11 @@ defmodule ExMCP.Transport.HTTP do
         Logger.debug("SSE disabled, using synchronous HTTP responses")
       end
 
+      :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
+        transport: :http,
+        url: base_url
+      })
+
       {:ok, state}
     end
   end
@@ -589,6 +594,12 @@ defmodule ExMCP.Transport.HTTP do
     # According to MCP spec, POST directly to the MCP endpoint, not /messages
     url = build_url(state, "")
     Logger.debug("HTTP request to URL: #{url}")
+
+    :telemetry.execute([:ex_mcp, :transport, :message, :sent], %{size: byte_size(body)}, %{
+      transport: :http,
+      endpoint: state.endpoint
+    })
+
     headers = build_request_headers(state)
 
     # Security validation before making external request
@@ -686,6 +697,13 @@ defmodule ExMCP.Transport.HTTP do
   defp handle_http_response({status_line, headers, body}, state) do
     # Convert charlist to binary if needed (httpc returns charlists by default)
     body_binary = if is_list(body), do: List.to_string(body), else: body
+    {_, status_code, _} = status_line
+
+    :telemetry.execute(
+      [:ex_mcp, :transport, :message, :received],
+      %{size: byte_size(body_binary)},
+      %{transport: :http, status: status_code}
+    )
 
     # Extract session ID from server response headers (per MCP spec)
     state = maybe_update_session_id(headers, state)
@@ -919,6 +937,10 @@ defmodule ExMCP.Transport.HTTP do
 
     case :httpc.request(:delete, {charlist_url, charlist_headers}, http_opts, []) do
       {:ok, {{_, status, _}, _, _}} when status in [200, 202, 204] ->
+        :telemetry.execute([:ex_mcp, :transport, :session, :terminated], %{}, %{
+          session_id: session_id
+        })
+
         Logger.debug("Session #{session_id} terminated (HTTP #{status})")
         :ok
 
@@ -934,6 +956,11 @@ defmodule ExMCP.Transport.HTTP do
 
   @impl true
   def close(%__MODULE__{} = state) do
+    :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{
+      transport: :http,
+      session_id: state.session_id
+    })
+
     # Best-effort session termination before closing
     terminate_session(state)
 

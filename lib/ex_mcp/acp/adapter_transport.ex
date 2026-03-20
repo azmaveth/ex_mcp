@@ -43,6 +43,12 @@ defmodule ExMCP.ACP.AdapterTransport do
 
   @impl true
   def send_message(message, %__MODULE__{bridge: bridge} = state) do
+    :telemetry.execute(
+      [:ex_mcp, :acp, :transport, :message_sent],
+      %{size: byte_size(message)},
+      %{}
+    )
+
     case AdapterBridge.send_message(bridge, message) do
       :ok -> {:ok, state}
       {:error, reason} -> {:error, reason}
@@ -55,8 +61,17 @@ defmodule ExMCP.ACP.AdapterTransport do
     timeout = Map.get(state, :receive_timeout, :infinity)
 
     case AdapterBridge.receive_message(bridge, timeout) do
-      {:ok, message} -> {:ok, message, state}
-      {:error, reason} -> {:error, reason}
+      {:ok, message} ->
+        :telemetry.execute(
+          [:ex_mcp, :acp, :transport, :message_received],
+          %{size: byte_size(message)},
+          %{}
+        )
+
+        {:ok, message, state}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

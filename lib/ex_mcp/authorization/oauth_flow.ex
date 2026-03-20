@@ -67,6 +67,12 @@ defmodule ExMCP.Authorization.OAuthFlow do
           scopes: _scopes
         } = params
       ) do
+    :telemetry.execute(
+      [:ex_mcp, :auth, :authorization, :started],
+      %{system_time: System.system_time()},
+      %{client_id: params.client_id}
+    )
+
     with :ok <- Validator.validate_redirect_uri(redirect_uri),
          :ok <- Validator.validate_https_endpoint(auth_endpoint),
          :ok <- Validator.validate_resource_parameters(params) do
@@ -109,7 +115,20 @@ defmodule ExMCP.Authorization.OAuthFlow do
     with :ok <- Validator.validate_https_endpoint(token_endpoint),
          :ok <- Validator.validate_resource_parameters(params) do
       request_body = build_token_request_body(params)
-      HTTPClient.make_token_request(token_endpoint, request_body)
+
+      case HTTPClient.make_token_request(token_endpoint, request_body) do
+        {:ok, _} = ok ->
+          :telemetry.execute(
+            [:ex_mcp, :auth, :token, :exchanged],
+            %{system_time: System.system_time()},
+            %{}
+          )
+
+          ok
+
+        error ->
+          error
+      end
     end
   end
 
