@@ -23,8 +23,6 @@ defmodule ExMCP.DSL.AllUsersIntegrationTest do
     # Uses ExMCP.Server.Handler + ExMCP.Server.Tools
     ExMCP.Server.Tools,
     # Uses ExMCP.Server.Handler
-    ExMCP.Server.ToolsRefactored,
-    # Uses ExMCP.Server.Handler
     ExMCP.Server.Tools.Simplified,
     # Uses ExMCP.Server.Handler
     ExMCP.Compliance.Handlers.Handler20241105,

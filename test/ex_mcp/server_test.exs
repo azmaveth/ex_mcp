@@ -404,8 +404,10 @@ defmodule ExMCP.ServerTest do
       {:ok, pid} = TestServer.start_link()
 
       on_exit(fn ->
-        if Process.alive?(pid) do
-          GenServer.stop(pid)
+        try do
+          if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1000)
+        catch
+          :exit, _ -> :ok
         end
       end)
 

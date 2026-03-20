@@ -9,7 +9,7 @@ defmodule ExMCP.Integration.InteropTest do
   Run with: mix test --include interop
   """
 
-  alias TestConsentHandler, as: TestConsentHandler
+  alias ExMCP.ConsentHandler.Test, as: TestConsentHandler
 
   use ExUnit.Case, async: false
 

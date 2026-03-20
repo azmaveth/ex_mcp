@@ -3,7 +3,7 @@ defmodule ExMCP.CancellationTest do
   @moduletag :integration
   @moduletag :cancellation
 
-  import ExMCP.TestHelpers, only: [wait_until: 1, wait_until: 2]
+  import ExMCP.TestHelpers, only: [wait_until: 1]
 
   alias ExMCP.{Client, Protocol, Server}
   alias ExMCP.Server.Handler
