@@ -93,5 +93,9 @@
   # Token manager refresh_with_jwt_auth - Dialyzer infers ClientAssertion.build_assertion_params
   # always returns error based on the specific keyword args passed, but the function can succeed
   # when valid private_key is provided at runtime
-  {"lib/ex_mcp/authorization/token_manager.ex", :pattern_match}
+  {"lib/ex_mcp/authorization/token_manager.ex", :pattern_match},
+
+  # FullOAuthFlow client_credentials JWT - same issue: Dialyzer infers
+  # build_assertion_params always returns error for specific keyword args
+  {"lib/ex_mcp/authorization/full_oauth_flow.ex", :pattern_match}
 ]

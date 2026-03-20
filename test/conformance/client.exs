@@ -76,10 +76,26 @@ defmodule ConformanceClient do
   defp build_auth_from_context(%{"client_id" => client_id} = ctx) do
     config = %{client_id: client_id}
 
-    case ctx["client_secret"] do
-      nil -> config
-      secret -> Map.merge(config, %{client_secret: secret, auth_method: :client_secret})
-    end
+    config =
+      case ctx["client_secret"] do
+        nil -> config
+        secret -> Map.merge(config, %{client_secret: secret, auth_method: :client_secret})
+      end
+
+    # Pass private key for JWT-based auth (ext-auth client-credentials-jwt)
+    config =
+      case ctx["private_key_pem"] do
+        nil ->
+          config
+
+        pem ->
+          Map.merge(config, %{
+            private_key: pem,
+            signing_algorithm: ctx["signing_algorithm"] || "RS256"
+          })
+      end
+
+    config
   end
 
   defp build_auth_from_context(_), do: nil

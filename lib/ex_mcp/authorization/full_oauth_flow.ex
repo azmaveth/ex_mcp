@@ -434,18 +434,15 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
       Logger.info("Using client_credentials flow with #{token_auth_method} auth")
 
-      result =
-        HTTPClient.make_token_request(
-          token_endpoint,
-          [
-            grant_type: "client_credentials",
-            client_id: client_info.client_id,
-            client_secret: client_info.client_secret,
-            resource: config[:resource] || config[:resource_url]
-          ]
-          |> Enum.reject(fn {_, v} -> is_nil(v) end),
-          auth_method: token_auth_method
-        )
+      # Pass token_endpoint and issuer into config for JWT audience.
+      # Per MCP ext-auth, the JWT aud claim should be the issuer URL.
+      config =
+        config
+        |> Map.put(:token_endpoint, as_metadata["issuer"] || token_endpoint)
+
+      body = build_client_credentials_body(client_info, config, token_auth_method)
+
+      result = HTTPClient.make_token_request(token_endpoint, body, auth_method: token_auth_method)
 
       case result do
         {:ok, token_data} ->
@@ -461,6 +458,47 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           error
       end
     end
+  end
+
+  defp build_client_credentials_body(client_info, config, :private_key_jwt) do
+    # JWT-based client authentication for client_credentials grant
+    token_endpoint = config[:token_endpoint] || ""
+    private_key = config[:private_key] || client_info[:private_key]
+    alg = config[:signing_algorithm] || "ES256"
+
+    case ExMCP.Authorization.ClientAssertion.build_assertion_params(
+           client_id: client_info.client_id,
+           token_endpoint: token_endpoint,
+           private_key: private_key,
+           alg: alg
+         ) do
+      {:ok, assertion_params} ->
+        resource = config[:resource] || config[:resource_url] || ""
+
+        [{"grant_type", "client_credentials"}, {"resource", resource}]
+        |> Enum.concat(assertion_params)
+        |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
+
+      {:error, reason} ->
+        Logger.warning("JWT assertion build failed: #{inspect(reason)}, falling back")
+
+        [
+          grant_type: "client_credentials",
+          client_id: client_info.client_id,
+          resource: config[:resource] || config[:resource_url]
+        ]
+        |> Enum.reject(fn {_, v} -> is_nil(v) end)
+    end
+  end
+
+  defp build_client_credentials_body(client_info, config, _auth_method) do
+    [
+      grant_type: "client_credentials",
+      client_id: client_info.client_id,
+      client_secret: Map.get(client_info, :client_secret),
+      resource: config[:resource] || config[:resource_url]
+    ]
+    |> Enum.reject(fn {_, v} -> is_nil(v) end)
   end
 
   # Step 4b: Run authorization code flow with PKCE
@@ -578,6 +616,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
   defp select_token_auth_method(supported) when is_list(supported) do
     cond do
+      "private_key_jwt" in supported -> :private_key_jwt
       "none" in supported -> :none
       "client_secret_basic" in supported -> :client_secret_basic
       "client_secret_post" in supported -> :client_secret_post

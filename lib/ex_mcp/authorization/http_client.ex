@@ -139,6 +139,17 @@ defmodule ExMCP.Authorization.HTTPClient do
     {[{"authorization", "Basic #{credentials}"}], filtered_body}
   end
 
+  defp apply_token_auth_method(:private_key_jwt, body) do
+    # JWT assertion is already in the body (client_assertion + client_assertion_type).
+    # Remove client_secret if present (not used with JWT auth).
+    filtered_body =
+      Enum.reject(body, fn {k, _} ->
+        k in [:client_secret, "client_secret"]
+      end)
+
+    {[], filtered_body}
+  end
+
   defp apply_token_auth_method(:none, body) do
     # No auth — just remove client_secret from body, keep client_id
     filtered_body =

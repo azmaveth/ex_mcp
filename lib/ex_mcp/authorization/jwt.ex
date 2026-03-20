@@ -105,6 +105,9 @@ defmodule ExMCP.Authorization.JWT do
     header = %{"alg" => alg, "typ" => typ}
     header = if kid, do: Map.put(header, "kid", kid), else: header
 
+    # Auto-load key from PEM string or JWK map if needed
+    jwk = ensure_jwk(jwk)
+
     jws = JOSE.JWS.from_map(header)
     payload = Jason.encode!(claims)
 
@@ -336,4 +339,18 @@ defmodule ExMCP.Authorization.JWT do
       do: :ok,
       else: {:error, {:missing_required_claims, missing}}
   end
+
+  # Convert various key formats to JOSE.JWK
+  defp ensure_jwk(%JOSE.JWK{} = jwk), do: jwk
+
+  defp ensure_jwk(pem) when is_binary(pem) do
+    if String.contains?(pem, "BEGIN") do
+      JOSE.JWK.from_pem(pem)
+    else
+      pem
+    end
+  end
+
+  defp ensure_jwk(%{"kty" => _} = map), do: JOSE.JWK.from_map(map)
+  defp ensure_jwk(other), do: other
 end
