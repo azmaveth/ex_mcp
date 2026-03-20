@@ -41,7 +41,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           optional(:scopes) => [String.t()],
           optional(:resource) => String.t() | [String.t()],
           optional(:http_client) => module(),
-          optional(:www_authenticate) => String.t()
+          optional(:www_authenticate) => String.t(),
+          optional(:protocol_version) => String.t()
         }
 
   @doc """
@@ -75,11 +76,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
               config
           end
 
-        if has_preexisting_creds do
-          run_client_credentials_flow(as_metadata, client_info, config)
-        else
-          run_auth_code_flow(as_metadata, client_info, config)
-        end
+        select_and_run_grant_flow(as_metadata, client_info, config, has_preexisting_creds)
       end
 
     case result do
@@ -104,23 +101,117 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   end
 
   # Step 1: Discover which AS protects the resource
+  # Select grant flow based on AS metadata's grant_types_supported.
+  # If the server only supports client_credentials, use that regardless.
+  # Otherwise, use auth code if no pre-existing creds, client_credentials if we have them.
+  defp select_and_run_grant_flow(as_metadata, client_info, config, has_preexisting_creds) do
+    grant_types = as_metadata["grant_types_supported"] || []
+    supports_auth_code = "authorization_code" in grant_types or grant_types == []
+    supports_client_creds = "client_credentials" in grant_types
+
+    cond do
+      supports_client_creds and not supports_auth_code ->
+        # Server only supports client_credentials — must use it
+        run_client_credentials_flow(as_metadata, client_info, config)
+
+      has_preexisting_creds and supports_client_creds ->
+        # Have credentials and server supports client_credentials
+        run_client_credentials_flow(as_metadata, client_info, config)
+
+      true ->
+        # Default to authorization code flow
+        run_auth_code_flow(as_metadata, client_info, config)
+    end
+  end
+
   defp discover_resource_metadata(config) do
     # Try PRM URL from WWW-Authenticate header first
     prm_url = extract_resource_metadata_url(config[:www_authenticate])
 
-    case prm_url do
-      nil ->
-        # No resource_metadata in header — try path-based PRM first, then root
-        discover_prm_with_fallback(config.resource_url)
+    prm_result =
+      case prm_url do
+        nil ->
+          discover_prm_with_fallback(config.resource_url)
 
-      url ->
-        # Fetch PRM directly from the URL provided in WWW-Authenticate header
-        case fetch_prm_directly(url) do
-          {:ok, _} = ok -> ok
-          {:error, _} -> discover_prm_with_fallback(config.resource_url)
-        end
+        url ->
+          case fetch_prm_directly(url) do
+            {:ok, _} = ok -> ok
+            {:error, _} -> discover_prm_with_fallback(config.resource_url)
+          end
+      end
+
+    case prm_result do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, _} ->
+        # PRM not available — fall back to direct AS metadata discovery.
+        # This is required for 2025-03-26 backcompat where PRM didn't exist,
+        # and is a reasonable fallback for any version when PRM is unavailable.
+        Logger.info("PRM not available, falling back to direct AS discovery")
+        discover_as_from_www_authenticate(config)
     end
   end
+
+  # Fallback when PRM is unavailable: extract AS URL from WWW-Authenticate header
+  # or discover AS metadata directly from the resource origin.
+  # Returns a synthetic PRM with pre-fetched AS metadata to avoid double discovery.
+  defp discover_as_from_www_authenticate(config) do
+    www_auth = config[:www_authenticate] || ""
+
+    # Try to extract AS URL from WWW-Authenticate header
+    as_uri = extract_as_uri_from_www_auth(www_auth)
+
+    if as_uri do
+      {:ok, %{authorization_servers: [%{issuer: as_uri}]}}
+    else
+      # No AS URL in header — try well-known discovery on the resource origin
+      uri = URI.parse(config[:resource_url])
+      base = "#{uri.scheme}://#{uri.host}#{if uri.port, do: ":#{uri.port}", else: ""}"
+
+      case OIDCDiscovery.discover(base) do
+        {:ok, metadata} ->
+          issuer = metadata["issuer"] || base
+          # Store the already-fetched metadata to avoid re-discovery
+          {:ok,
+           %{
+             authorization_servers: [%{issuer: issuer}],
+             _prefetched_as_metadata: metadata
+           }}
+
+        {:error, _} ->
+          # Last resort: construct endpoint URLs from the resource origin.
+          # Per MCP 2025-03-26, when no metadata discovery works, assume
+          # standard OAuth endpoints at the resource origin.
+          Logger.info("No AS metadata found, constructing endpoints from origin: #{base}")
+
+          synthetic_metadata = %{
+            "issuer" => base,
+            "authorization_endpoint" => "#{base}/authorize",
+            "token_endpoint" => "#{base}/token",
+            "registration_endpoint" => "#{base}/register",
+            "response_types_supported" => ["code"],
+            "grant_types_supported" => ["authorization_code"],
+            "code_challenge_methods_supported" => ["S256"]
+          }
+
+          {:ok,
+           %{
+             authorization_servers: [%{issuer: base}],
+             _prefetched_as_metadata: synthetic_metadata
+           }}
+      end
+    end
+  end
+
+  defp extract_as_uri_from_www_auth(www_auth) when is_binary(www_auth) do
+    case Regex.run(~r/as_uri="([^"]+)"/, www_auth) do
+      [_, uri] -> uri
+      _ -> nil
+    end
+  end
+
+  defp extract_as_uri_from_www_auth(_), do: nil
 
   # Validate that PRM resource field matches our server URL (RFC 8707)
   defp validate_prm_resource(%{resource: prm_resource}, config) when is_binary(prm_resource) do
@@ -216,28 +307,34 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
   # Step 2: Fetch AS metadata
   defp discover_as_metadata(prm, config) do
-    as_url =
-      case prm do
-        %{authorization_servers: [%{issuer: issuer} | _]} -> issuer
-        _ -> nil
-      end
+    # Check for prefetched AS metadata (from PRM fallback path)
+    case prm do
+      %{_prefetched_as_metadata: metadata} when is_map(metadata) ->
+        :telemetry.execute(
+          [:ex_mcp, :auth, :discovery, :completed],
+          %{system_time: System.system_time()},
+          %{issuer: metadata["issuer"]}
+        )
 
-    if as_url do
-      case OIDCDiscovery.discover(as_url, http_client: config[:http_client]) do
-        {:ok, metadata} ->
-          :telemetry.execute(
-            [:ex_mcp, :auth, :discovery, :completed],
-            %{system_time: System.system_time()},
-            %{issuer: as_url}
-          )
+        {:ok, metadata}
 
-          {:ok, metadata}
+      %{authorization_servers: [%{issuer: issuer} | _]} ->
+        case OIDCDiscovery.discover(issuer, http_client: config[:http_client]) do
+          {:ok, metadata} ->
+            :telemetry.execute(
+              [:ex_mcp, :auth, :discovery, :completed],
+              %{system_time: System.system_time()},
+              %{issuer: issuer}
+            )
 
-        {:error, reason} ->
-          {:error, {:as_discovery_failed, reason}}
-      end
-    else
-      {:error, :no_authorization_server_found}
+            {:ok, metadata}
+
+          {:error, reason} ->
+            {:error, {:as_discovery_failed, reason}}
+        end
+
+      _ ->
+        {:error, :no_authorization_server_found}
     end
   end
 

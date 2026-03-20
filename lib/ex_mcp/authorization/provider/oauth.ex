@@ -31,6 +31,7 @@ defmodule ExMCP.Authorization.Provider.OAuth do
   defstruct [
     :access_token,
     :resource_url,
+    :protocol_version,
     :auth_config,
     auth_completed: false
   ]
@@ -41,6 +42,7 @@ defmodule ExMCP.Authorization.Provider.OAuth do
 
     state = %__MODULE__{
       resource_url: config[:resource_url],
+      protocol_version: config[:protocol_version],
       auth_config: config
     }
 
@@ -87,6 +89,7 @@ defmodule ExMCP.Authorization.Provider.OAuth do
       (state.auth_config || %{})
       |> Map.put(:resource_url, state.resource_url)
       |> Map.put(:www_authenticate, www_authenticate)
+      |> Map.put(:protocol_version, state.protocol_version)
 
     config =
       if scopes != [] do

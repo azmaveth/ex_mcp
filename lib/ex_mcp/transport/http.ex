@@ -193,7 +193,13 @@ defmodule ExMCP.Transport.HTTP do
 
     # Auth provider: explicit provider tuple, or auto-create from :auth config
     {auth_provider, auth_provider_state} =
-      init_auth_provider(Keyword.get(config, :auth_provider), auth_config, base_url, endpoint)
+      init_auth_provider(
+        Keyword.get(config, :auth_provider),
+        auth_config,
+        base_url,
+        endpoint,
+        protocol_version
+      )
 
     state = %__MODULE__{
       base_url: base_url,
@@ -440,20 +446,25 @@ defmodule ExMCP.Transport.HTTP do
     %{state | access_token: token, headers: put_bearer_header(state.headers, token)}
   end
 
-  defp init_auth_provider({mod, provider_config}, _auth_config, _base_url, _endpoint) do
+  defp init_auth_provider({mod, provider_config}, _auth_config, _base_url, _endpoint, _version) do
     case mod.init(provider_config) do
       {:ok, ps} -> {mod, ps}
       {:error, _} -> {nil, nil}
     end
   end
 
-  defp init_auth_provider(nil, auth_config, base_url, endpoint) when is_map(auth_config) do
-    provider_config = Map.put(auth_config, :resource_url, base_url <> (endpoint || ""))
+  defp init_auth_provider(nil, auth_config, base_url, endpoint, version)
+       when is_map(auth_config) do
+    provider_config =
+      auth_config
+      |> Map.put(:resource_url, base_url <> (endpoint || ""))
+      |> Map.put(:protocol_version, version)
+
     {:ok, ps} = ExMCP.Authorization.Provider.OAuth.init(provider_config)
     {ExMCP.Authorization.Provider.OAuth, ps}
   end
 
-  defp init_auth_provider(nil, _auth_config, _base_url, _endpoint), do: {nil, nil}
+  defp init_auth_provider(nil, _auth_config, _base_url, _endpoint, _version), do: {nil, nil}
 
   # Check if the response is a 401 that we can handle with OAuth
   defp handle_auth_challenge({status_line, headers, _body}, original_body, state) do
@@ -549,7 +560,8 @@ defmodule ExMCP.Transport.HTTP do
     config = %{
       resource_url: resource_url,
       www_authenticate: www_auth,
-      scopes: scopes
+      scopes: scopes,
+      protocol_version: state.protocol_version
     }
 
     case FullOAuthFlow.execute(config) do
