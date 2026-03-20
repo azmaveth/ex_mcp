@@ -698,4 +698,108 @@ defmodule ExMCP.TestHelpers do
       do_wait_until(condition, interval, deadline)
     end
   end
+
+  @doc """
+  Wait for a specific telemetry event (truly event-driven, no polling).
+
+  Attaches a telemetry handler that forwards matching events to the test
+  process, then blocks on `receive` until the event arrives or timeout.
+
+  ## Examples
+
+      # Wait for client connection
+      {:ok, metadata} = wait_for_event([:ex_mcp, :client, :connected])
+
+      # Wait for tool execution with timeout
+      {:ok, metadata} = wait_for_event([:ex_mcp, :server, :tool, :called], timeout: 5000)
+
+      # Wait and check metadata
+      {:ok, %{tool_name: "echo"}} = wait_for_event([:ex_mcp, :server, :tool, :called])
+
+  ## Notes
+
+  Call this BEFORE triggering the action that emits the event.
+  The handler is automatically detached after receiving or timeout.
+  """
+  @spec wait_for_event([atom()], keyword()) :: {:ok, map()} | {:error, :timeout}
+  def wait_for_event(event_name, opts \\ []) do
+    test_pid = self()
+    handler_id = "test_wait_#{inspect(test_pid)}_#{:erlang.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      event_name,
+      fn _event, measurements, metadata, _ ->
+        send(test_pid, {:telemetry_event, event_name, measurements, metadata})
+      end,
+      nil
+    )
+
+    timeout = Keyword.get(opts, :timeout, 1000)
+
+    result =
+      receive do
+        {:telemetry_event, ^event_name, measurements, metadata} ->
+          {:ok, Map.merge(measurements, metadata)}
+      after
+        timeout ->
+          {:error, :timeout}
+      end
+
+    :telemetry.detach(handler_id)
+    result
+  end
+
+  @doc """
+  Assert that a telemetry event is received within the timeout.
+
+  Like `wait_for_event/2` but raises on timeout (for use in test assertions).
+
+  ## Examples
+
+      # Assert connection event fires
+      metadata = assert_event([:ex_mcp, :transport, :connection, :opened])
+      assert metadata.transport == :http
+
+      # Assert with custom timeout
+      metadata = assert_event([:ex_mcp, :server, :tool, :called], timeout: 5000)
+      assert metadata.tool_name == "echo"
+  """
+  @spec assert_event([atom()], keyword()) :: map()
+  def assert_event(event_name, opts \\ []) do
+    case wait_for_event(event_name, opts) do
+      {:ok, metadata} ->
+        metadata
+
+      {:error, :timeout} ->
+        timeout = Keyword.get(opts, :timeout, 1000)
+
+        raise ExUnit.AssertionError,
+          message:
+            "Expected telemetry event #{inspect(event_name)} within #{timeout}ms, but none received"
+    end
+  end
+
+  @doc """
+  Refute that a telemetry event is received within the timeout.
+
+  Useful for asserting that an action does NOT trigger a specific event.
+
+  ## Examples
+
+      # Verify no auth flow triggered for non-auth requests
+      refute_event([:ex_mcp, :auth, :flow, :started], timeout: 200)
+  """
+  @spec refute_event([atom()], keyword()) :: :ok
+  def refute_event(event_name, opts \\ []) do
+    case wait_for_event(event_name, Keyword.put_new(opts, :timeout, 200)) do
+      {:ok, metadata} ->
+        raise ExUnit.AssertionError,
+          message:
+            "Expected no telemetry event #{inspect(event_name)}, but received: #{inspect(metadata)}"
+
+      {:error, :timeout} ->
+        :ok
+    end
+  end
 end
