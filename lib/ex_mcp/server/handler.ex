@@ -495,19 +495,11 @@ defmodule ExMCP.Server.Handler do
               {:ok, state()} | {:error, any(), state()}
 
   # Optional callbacks with defaults provided in __using__
-  @doc """
-  Initialize handler state.
-  """
-  @callback init(args :: any()) :: {:ok, state()} | {:error, any()}
-
-  @doc """
-  Called when the handler process is about to terminate.
-  """
-  @callback terminate(reason :: term(), state()) :: :ok | any()
+  # Note: init/1 and terminate/2 are inherited from GenServer (via `use GenServer`
+  # in __using__). They are NOT declared as Handler callbacks to avoid conflicting
+  # behaviour warnings. Use `@impl true` or `@impl GenServer` in handlers.
 
   @optional_callbacks [
-    init: 1,
-    terminate: 2,
     handle_list_resources: 2,
     handle_read_resource: 2,
     handle_list_prompts: 2,
@@ -536,10 +528,8 @@ defmodule ExMCP.Server.Handler do
       # defoverridable so the Tool DSL's @before_compile can override them.
       @before_compile ExMCP.Server.Handler
 
-      @impl ExMCP.Server.Handler
+      @impl GenServer
       def init(_args), do: {:ok, %{}}
-
-      # terminate/2 default is provided by GenServer via `use GenServer`
 
       # Defaults for optional callbacks — user inline overrides work
       # via defoverridable.

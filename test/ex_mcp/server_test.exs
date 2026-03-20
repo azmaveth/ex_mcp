@@ -1,6 +1,8 @@
 defmodule ExMCP.ServerTest do
   use ExUnit.Case, async: true
 
+  import ExMCP.TestHelpers, only: [start_server!: 1, start_server!: 2]
+
   alias ExMCP.Server
 
   # Test server implementation using the DSL
@@ -360,27 +362,23 @@ defmodule ExMCP.ServerTest do
 
   describe "GenServer behavior" do
     test "can start server with default state" do
-      {:ok, pid} = TestServer.start_link()
+      pid = start_server!(TestServer)
       assert Process.alive?(pid)
 
       state = :sys.get_state(pid)
       assert is_map(state)
-
-      GenServer.stop(pid)
     end
 
     test "can start server with custom initialization" do
-      {:ok, pid} = TestServer.start_link(debug: true, custom_value: "test")
+      pid = start_server!(TestServer, debug: true, custom_value: "test")
 
       state = :sys.get_state(pid)
       assert state.debug == true
       assert Map.has_key?(state, :subscriptions)
-
-      GenServer.stop(pid)
     end
 
     test "default init creates map state from args" do
-      {:ok, pid} = MinimalServer.start_link(key1: "value1", key2: "value2")
+      pid = start_server!(MinimalServer, key1: "value1", key2: "value2")
 
       state = :sys.get_state(pid)
       # Legacy server adds request tracking fields to the handler state
@@ -394,23 +392,12 @@ defmodule ExMCP.ServerTest do
       }
 
       assert state == expected_state
-
-      GenServer.stop(pid)
     end
   end
 
   describe "callback implementations" do
     setup do
-      {:ok, pid} = TestServer.start_link()
-
-      on_exit(fn ->
-        try do
-          if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1000)
-        catch
-          :exit, _ -> :ok
-        end
-      end)
-
+      pid = start_server!(TestServer)
       %{server: pid}
     end
 
@@ -570,7 +557,7 @@ defmodule ExMCP.ServerTest do
 
   describe "default callback implementations" do
     test "minimal server uses default implementations" do
-      {:ok, pid} = MinimalServer.start_link()
+      pid = start_server!(MinimalServer)
       state = :sys.get_state(pid)
 
       # Test default resource list
@@ -594,29 +581,23 @@ defmodule ExMCP.ServerTest do
       # Test default request handler
       {:noreply, new_state} = MinimalServer.handle_request("unknown/method", %{}, state)
       assert new_state == state
-
-      GenServer.stop(pid)
     end
   end
 
   describe "notify_resource_update/2" do
     test "sends cast message to server" do
-      {:ok, pid} = TestServer.start_link()
+      pid = start_server!(TestServer)
 
       # This tests that the function doesn't crash - actual notification
       # handling would require the full MCP server infrastructure
       assert :ok = Server.notify_resource_update(pid, "data://users")
-
-      GenServer.stop(pid)
     end
 
     test "handles named server processes" do
-      {:ok, _pid} = TestServer.start_link()
+      _pid = start_server!(TestServer)
 
       # Test with module name
       assert :ok = Server.notify_resource_update(TestServer, "data://users")
-
-      GenServer.stop(TestServer)
     end
   end
 
@@ -650,15 +631,13 @@ defmodule ExMCP.ServerTest do
         end
       end
 
-      {:ok, pid} = BadServer.start_link()
+      pid = start_server!(BadServer)
       state = :sys.get_state(pid)
 
       # These should return whatever the implementation returns,
       # error handling is done at the protocol level
       result = BadServer.handle_tool_call("test", %{}, state)
       assert result == :invalid_return
-
-      GenServer.stop(pid)
     end
 
     test "resource subscribable detection works correctly" do
@@ -714,7 +693,7 @@ defmodule ExMCP.ServerTest do
 
   describe "integration with content helpers" do
     test "content helper functions are available" do
-      {:ok, pid} = TestServer.start_link()
+      pid = start_server!(TestServer)
       state = :sys.get_state(pid)
 
       # Test that the content helpers work in the callback
@@ -723,12 +702,10 @@ defmodule ExMCP.ServerTest do
       assert %{content: [content]} = result
       assert content["type"] == "text"
       assert is_binary(content["text"])
-
-      GenServer.stop(pid)
     end
 
     test "json content helper works" do
-      {:ok, pid} = TestServer.start_link()
+      pid = start_server!(TestServer)
       state = :sys.get_state(pid)
 
       {:ok, contents, _state} =
@@ -738,12 +715,10 @@ defmodule ExMCP.ServerTest do
       assert content["type"] == "text"
       assert content["format"] == "json"
       assert String.contains?(content["text"], "debug")
-
-      GenServer.stop(pid)
     end
 
     test "user message helper works" do
-      {:ok, pid} = TestServer.start_link()
+      pid = start_server!(TestServer)
       state = :sys.get_state(pid)
 
       {:ok, result, _state} = TestServer.handle_prompt_get("greeting", %{}, state)
@@ -751,8 +726,6 @@ defmodule ExMCP.ServerTest do
       %{messages: [message]} = result
       assert message["role"] == "user"
       assert message["content"]["type"] == "text"
-
-      GenServer.stop(pid)
     end
   end
 end

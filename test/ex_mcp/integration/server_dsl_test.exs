@@ -205,7 +205,20 @@ defmodule ExMCP.Integration.ServerDSLTest do
 
   describe "handler execution" do
     setup do
-      {:ok, pid} = TestServer.start_link()
+      pid =
+        case TestServer.start_link() do
+          {:ok, pid} -> pid
+          {:error, {:already_started, pid}} -> pid
+        end
+
+      on_exit(fn ->
+        try do
+          if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1000)
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+
       %{server: pid}
     end
 

@@ -7,6 +7,8 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
 
   use ExUnit.Case, async: false
 
+  import ExMCP.TestHelpers, only: [start_server!: 1]
+
   describe "compilation performance" do
     @describetag :benchmark
     test "measure DSL compilation time" do
@@ -120,14 +122,7 @@ defmodule ExMCP.Benchmarks.ServerPerformanceTest do
         end
       end
 
-      {:ok, pid} = RuntimeBenchServer.start_link()
-
-      on_exit(fn ->
-        if Process.alive?(pid) do
-          GenServer.stop(pid)
-        end
-      end)
-
+      pid = start_server!(RuntimeBenchServer)
       %{server: pid}
     end
 

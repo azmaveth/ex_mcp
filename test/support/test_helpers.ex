@@ -700,6 +700,36 @@ defmodule ExMCP.TestHelpers do
   end
 
   @doc """
+  Start a named GenServer, handling the case where it's already running.
+
+  Returns the pid regardless of whether it was freshly started or already running.
+  Registers an on_exit callback to stop the server after the test.
+
+  ## Examples
+
+      pid = start_server!(MyServer)
+      pid = start_server!(MyServer, [arg1, arg2])
+  """
+  @spec start_server!(module(), list()) :: pid()
+  def start_server!(module, args \\ []) do
+    pid =
+      case module.start_link(args) do
+        {:ok, pid} -> pid
+        {:error, {:already_started, pid}} -> pid
+      end
+
+    ExUnit.Callbacks.on_exit(fn ->
+      try do
+        if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1000)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
+    pid
+  end
+
+  @doc """
   Wait for a specific telemetry event (truly event-driven, no polling).
 
   Attaches a telemetry handler that forwards matching events to the test

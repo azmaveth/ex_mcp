@@ -7,6 +7,8 @@ defmodule ExMCP.DSL.ActualUsersTest do
 
   use ExUnit.Case, async: false
 
+  import ExMCP.TestHelpers, only: [start_server!: 1]
+
   # Helper function to check if a module has DSL-generated functions
   defp module_has_dsl_functions?(module) do
     exports = module.module_info(:exports)
@@ -169,9 +171,8 @@ defmodule ExMCP.DSL.ActualUsersTest do
       assert capabilities["prompts"]["listChanged"] == true
 
       # Test GenServer start
-      {:ok, pid} = TestDSLServer.start_link()
+      pid = start_server!(TestDSLServer)
       assert Process.alive?(pid)
-      GenServer.stop(pid)
     end
   end
 end

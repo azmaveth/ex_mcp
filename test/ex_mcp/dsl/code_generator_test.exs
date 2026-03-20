@@ -1,6 +1,8 @@
 defmodule ExMCP.DSL.CodeGeneratorTest do
   use ExUnit.Case, async: true
 
+  import ExMCP.TestHelpers, only: [start_server!: 1]
+
   alias ExMCP.DSL.CodeGenerator
 
   describe "generate/1" do
@@ -146,7 +148,7 @@ defmodule ExMCP.DSL.CodeGeneratorTest do
     end
 
     test "generated server can be started and used" do
-      {:ok, pid} = TestServerUsingGenerator.start_link()
+      pid = start_server!(TestServerUsingGenerator)
 
       # Test that the server is running
       assert Process.alive?(pid)
@@ -159,13 +161,10 @@ defmodule ExMCP.DSL.CodeGeneratorTest do
       # Test capabilities
       capabilities = TestServerUsingGenerator.get_capabilities()
       assert Map.has_key?(capabilities, "tools")
-
-      # Stop the server
-      GenServer.stop(pid)
     end
 
     test "generated server handles GenServer calls" do
-      {:ok, pid} = TestServerUsingGenerator.start_link()
+      pid = start_server!(TestServerUsingGenerator)
 
       # Test server info call
       server_info = GenServer.call(pid, :get_server_info)
@@ -179,12 +178,10 @@ defmodule ExMCP.DSL.CodeGeneratorTest do
       # Test tools call
       tools = GenServer.call(pid, :get_tools)
       assert is_map(tools)
-
-      GenServer.stop(pid)
     end
 
     test "generated server processes MCP requests" do
-      {:ok, pid} = TestServerUsingGenerator.start_link()
+      pid = start_server!(TestServerUsingGenerator)
 
       # Connect test transport
       send(pid, {:test_transport_connect, self()})
@@ -205,8 +202,6 @@ defmodule ExMCP.DSL.CodeGeneratorTest do
       assert response["id"] == 123
       assert is_list(response["result"]["tools"])
       assert length(response["result"]["tools"]) == 1
-
-      GenServer.stop(pid)
     end
   end
 

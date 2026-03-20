@@ -215,7 +215,20 @@ defmodule ExMCP.DSL.ComplianceTest do
 
   describe "Handler execution with compliant DSL" do
     setup do
-      {:ok, pid} = DesignCompliantServer.start_link()
+      pid =
+        case DesignCompliantServer.start_link() do
+          {:ok, pid} -> pid
+          {:error, {:already_started, pid}} -> pid
+        end
+
+      on_exit(fn ->
+        try do
+          if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1000)
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+
       %{server: pid}
     end
 

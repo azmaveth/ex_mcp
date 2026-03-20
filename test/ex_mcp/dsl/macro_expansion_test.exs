@@ -8,6 +8,8 @@ defmodule ExMCP.DSL.MacroExpansionTest do
 
   use ExUnit.Case, async: true
 
+  import ExMCP.TestHelpers, only: [start_server!: 1]
+
   # Test modules with various DSL configurations
   defmodule BasicDSLServer do
     use ExMCP.Server
@@ -366,12 +368,10 @@ defmodule ExMCP.DSL.MacroExpansionTest do
     end
 
     test "genserver callbacks are generated correctly" do
-      {:ok, pid} = BasicDSLServer.start_link()
+      pid = start_server!(BasicDSLServer)
 
       # Test that we can make calls through GenServer
       assert Process.alive?(pid)
-
-      GenServer.stop(pid)
     end
   end
 end
