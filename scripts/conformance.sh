@@ -112,9 +112,11 @@ run_client_tests() {
 }
 
 run_all_versions() {
-  # Only versions with conformance tests: 2025-06-18 and 2025-11-25
-  # (2025-03-26 and 2024-11-05 have 0 test scenarios in the framework)
-  local versions=("2025-11-25" "2025-06-18")
+  # All protocol versions ExMCP supports (newest first).
+  # Note: 2025-03-26 currently has 0 test scenarios in the conformance framework,
+  # and 2024-11-05 is not a valid spec-version in the framework.
+  # We test all valid versions to ensure backwards compatibility.
+  local versions=("2025-11-25" "2025-06-18" "2025-03-26")
   local total_passed=0
   local total_failed=0
 
