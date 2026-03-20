@@ -1,7 +1,7 @@
 # Refactored Module Adoption
 
 **Priority:** Medium
-**Status:** Planned (attempted swap — API differences found)
+**Status:** In Progress — Authorization and Content.Validation done, MessageProcessor.Conn extracted
 
 ## Context
 
@@ -41,11 +41,14 @@ For each module:
 4. Extract nested types (like Conn) into separate files
 5. Swap, compile, test
 
-## Decision
+## Progress (2026-03-19)
 
-These are post-1.0 improvements. The originals work fine and are well-tested.
-The refactored versions are valuable for maintainability but the migration
-carries risk that isn't justified before a stable release.
+### Completed
+- **Authorization** — Fresh swap, 822→304 lines. Fixed state_param key, additional_params passthrough.
+- **Content.Validation** — Fresh extraction from original (not swap). 995→293 facade + 490 lines in 6 sub-modules. All 82 tests pass.
+- **MessageProcessor.Conn** — Extracted nested defmodule to separate file.
 
-For 1.0: delete the `_refactored.ex` files (they're dead code that confuses the codebase).
-For 1.1: do the proper migration with full API compatibility verification.
+### Remaining
+- **MessageProcessor handler groups** — 3 duplicated handler modes (~800 lines). Need unified Dispatcher with actual implementations (existing Handlers module is stubs).
+- **Server.Tools** — Refactored version missing `validate_with_schema/2` and `compile_schema/1`. Need to add delegations before swap.
+- Delete `message_processor_refactored.ex` and `server/tools_refactored.ex` after proper migration.
