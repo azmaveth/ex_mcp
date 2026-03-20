@@ -23,15 +23,14 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 ## Key Features
 
 - **Full MCP compliance** -- protocol versions 2024-11-05, 2025-03-26, 2025-06-18, and 2025-11-25
-- **Multiple transports** -- HTTP/SSE, stdio, and native BEAM (~15us local calls)
+- **100% MCP conformance** -- 223/223 client checks, 39/39 server checks (official test suite)
+- **Multiple transports** -- HTTP/SSE, stdio, and native BEAM (~15μs local calls)
 - **Phoenix Plug** -- native Phoenix integration with `ExMCP.HttpPlug`
 - **DSL and Handler APIs** -- declarative tool/resource/prompt definitions or callback-based handlers
-- **OAuth 2.1** -- Resource Server, JWT client auth (private_key_jwt), enterprise SSO (ID-JAG)
-- **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, telemetry
-- **Agent Client Protocol (ACP)** -- control coding agents (Gemini CLI, Claude Code, Codex, Pi, Hermes, etc.) over stdio
-- **100% MCP conformance** -- 223/223 client checks, 39/39 server checks (official test suite)
-- **Full OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD
-- **2900+ tests** -- comprehensive suite including official MCP conformance
+- **OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD, JWT client auth (`private_key_jwt`), enterprise SSO (ID-JAG), token revocation (RFC 7009), pluggable auth providers
+- **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, 88 telemetry events
+- **Agent Client Protocol (ACP)** -- control coding agents (Gemini CLI, Claude Code, Codex, Pi, Hermes, etc.) over any transport
+- **3100+ tests** -- comprehensive suite including official MCP conformance, integration, and performance
 
 ## Installation
 
@@ -199,10 +198,10 @@ end
 
 ### ACP: Control Coding Agents
 
-Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control coding agents programmatically:
+Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control coding agents programmatically. ACP works over any transport (stdio, HTTP/SSE, native BEAM):
 
 ```elixir
-# Native ACP agents (Gemini CLI, Hermes, OpenCode, Qwen Code, etc.)
+# Native ACP agents over stdio (Gemini CLI, Hermes, OpenCode, Qwen Code, etc.)
 {:ok, client} = ExMCP.ACP.start_client(command: ["gemini", "--acp"])
 
 # Create a session and send a prompt
