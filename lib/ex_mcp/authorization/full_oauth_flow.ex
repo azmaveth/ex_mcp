@@ -461,7 +461,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     Logger.info("Token endpoint auth method: #{token_auth_method}")
 
     with {:ok, _} <- follow_authorization(auth_url),
-         {:ok, code} <- wait_for_callback(server_pid) do
+         {:ok, code} <- wait_for_callback(server_pid, state_data.state_param) do
       HTTPClient.make_token_request(
         token_endpoint,
         [
@@ -547,18 +547,33 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           {:ok, socket} ->
             case :gen_tcp.recv(socket, 0, 10_000) do
               {:ok, data} ->
-                # Parse the code from the callback URL
-                code = extract_code_from_request(data)
+                # Validate that the request targets the expected callback path
+                request_path = extract_request_path(data)
 
-                # Send HTTP response
-                response =
-                  "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" <>
-                    "<html><body>Authorization complete. You may close this window.</body></html>"
+                if request_path == "/callback" do
+                  # Parse code and state from the callback URL
+                  code = extract_code_from_request(data)
+                  callback_state = extract_state_from_request(data)
 
-                :gen_tcp.send(socket, response)
-                :gen_tcp.close(socket)
-                :gen_tcp.close(listen_socket)
-                send(parent, {:redirect_callback, {:ok, code}})
+                  # Send HTTP response
+                  response =
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" <>
+                      "<html><body>Authorization complete. You may close this window.</body></html>"
+
+                  :gen_tcp.send(socket, response)
+                  :gen_tcp.close(socket)
+                  :gen_tcp.close(listen_socket)
+                  send(parent, {:redirect_callback, {:ok, code, callback_state}})
+                else
+                  # Reject requests to unexpected paths (open redirect protection)
+                  response =
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid callback path"
+
+                  :gen_tcp.send(socket, response)
+                  :gen_tcp.close(socket)
+                  :gen_tcp.close(listen_socket)
+                  send(parent, {:redirect_callback, {:error, :invalid_callback_path}})
+                end
 
               {:error, reason} ->
                 :gen_tcp.close(socket)
@@ -579,9 +594,22 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     end
   end
 
-  defp wait_for_callback(_server_pid) do
+  defp wait_for_callback(_server_pid, expected_state) do
     receive do
-      {:redirect_callback, result} -> result
+      {:redirect_callback, {:ok, code, callback_state}} ->
+        # Validate the state parameter to prevent CSRF attacks
+        if callback_state == expected_state do
+          {:ok, code}
+        else
+          Logger.warning(
+            "OAuth state mismatch: expected #{inspect(expected_state)}, got #{inspect(callback_state)}"
+          )
+
+          {:error, :state_mismatch}
+        end
+
+      {:redirect_callback, {:error, _reason} = error} ->
+        error
     after
       30_000 -> {:error, :callback_timeout}
     end
@@ -591,10 +619,25 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     if Process.alive?(pid), do: Process.exit(pid, :normal)
   end
 
+  defp extract_request_path(data) do
+    # Parse "GET /callback?code=xxx&state=yyy HTTP/1.1\r\n..."
+    case Regex.run(~r/^(?:GET|POST)\s+([^\s?]+)/, data) do
+      [_, path] -> path
+      _ -> nil
+    end
+  end
+
   defp extract_code_from_request(data) do
     # Parse "GET /callback?code=xxx&state=yyy HTTP/1.1\r\n..."
     case Regex.run(~r/[?&]code=([^&\s]+)/, data) do
       [_, code] -> code
+      _ -> nil
+    end
+  end
+
+  defp extract_state_from_request(data) do
+    case Regex.run(~r/[?&]state=([^&\s]+)/, data) do
+      [_, state] -> URI.decode_www_form(state)
       _ -> nil
     end
   end

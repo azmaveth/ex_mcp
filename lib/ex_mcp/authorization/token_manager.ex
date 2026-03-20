@@ -381,21 +381,33 @@ defmodule ExMCP.Authorization.TokenManager do
   end
 
   defp refresh_with_jwt_auth(state) do
-    alias ExMCP.Authorization.OAuthFlow
+    alias ExMCP.Authorization.{ClientAssertion, HTTPClient}
 
-    params = %{
-      client_id: state.auth_config[:client_id],
-      private_key: state.auth_config[:private_key],
-      token_endpoint: state.auth_config[:token_endpoint]
-    }
+    token_endpoint = state.auth_config[:token_endpoint]
 
-    params =
-      case state.scope do
-        nil -> params
-        scope -> Map.put(params, :scopes, String.split(scope, " ", trim: true))
-      end
+    case ClientAssertion.build_assertion_params(
+           client_id: state.auth_config[:client_id],
+           token_endpoint: token_endpoint,
+           private_key: state.auth_config[:private_key]
+         ) do
+      {:ok, assertion_params} ->
+        body =
+          [
+            {"grant_type", "refresh_token"},
+            {"refresh_token", state.refresh_token}
+          ] ++ assertion_params
 
-    OAuthFlow.client_credentials_jwt_flow(params)
+        body =
+          case state.scope do
+            nil -> body
+            scope -> body ++ [{"scope", scope}]
+          end
+
+        HTTPClient.make_token_request(token_endpoint, body)
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   defp refresh_with_enterprise(state) do

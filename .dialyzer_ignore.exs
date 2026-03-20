@@ -88,5 +88,10 @@
   # Codex adapter - defensive checks for input format (content is always binary from extract_prompt_text,
   # but guard is kept for robustness) and params nil check (params always a map)
   {"lib/ex_mcp/acp/adapters/codex.ex", :pattern_match},
-  {"lib/ex_mcp/acp/adapters/codex.ex", :guard_fail}
+  {"lib/ex_mcp/acp/adapters/codex.ex", :guard_fail},
+
+  # Token manager refresh_with_jwt_auth - Dialyzer infers ClientAssertion.build_assertion_params
+  # always returns error based on the specific keyword args passed, but the function can succeed
+  # when valid private_key is provided at runtime
+  {"lib/ex_mcp/authorization/token_manager.ex", :pattern_match}
 ]
