@@ -2,6 +2,8 @@ defmodule ExMCP.BidirectionalTest do
   use ExUnit.Case
   @moduletag :integration
 
+  import ExMCP.TestHelpers, only: [wait_until: 1]
+
   alias ExMCP.{Client, Server}
 
   defmodule TestClientHandler do
@@ -144,8 +146,8 @@ defmodule ExMCP.BidirectionalTest do
           client_info: %{name: "test_client", version: "1.0"}
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> Process.alive?(client) end)
 
       # Server pings client
       assert {:ok, %{}} = Server.ping(server)
@@ -174,8 +176,8 @@ defmodule ExMCP.BidirectionalTest do
           client_info: %{name: "test_client", version: "1.0"}
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> Process.alive?(client) end)
 
       # Server requests client's roots
       assert {:ok, %{"roots" => roots}} = Server.list_roots(server)
@@ -210,8 +212,8 @@ defmodule ExMCP.BidirectionalTest do
           client_info: %{name: "test_client", version: "1.0"}
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> Process.alive?(client) end)
 
       # Server requests client to sample LLM
       params = %{
@@ -248,8 +250,8 @@ defmodule ExMCP.BidirectionalTest do
           client_info: %{name: "test_client", version: "1.0"}
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> Process.alive?(client) end)
 
       # Ping is a protocol-level operation - always succeeds even without handler
       assert {:ok, %{}} = Server.ping(server)

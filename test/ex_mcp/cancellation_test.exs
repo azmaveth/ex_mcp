@@ -3,6 +3,8 @@ defmodule ExMCP.CancellationTest do
   @moduletag :integration
   @moduletag :cancellation
 
+  import ExMCP.TestHelpers, only: [wait_until: 1, wait_until: 2]
+
   alias ExMCP.{Client, Protocol, Server}
   alias ExMCP.Server.Handler
 
@@ -98,8 +100,8 @@ defmodule ExMCP.CancellationTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Check initially no pending requests
       assert [] = Client.get_pending_requests(client)
@@ -110,8 +112,8 @@ defmodule ExMCP.CancellationTest do
           Client.call_tool(client, "slow_tool", %{})
         end)
 
-      # Give the request time to be sent
-      Process.sleep(100)
+      # Wait for request to be tracked
+      wait_until(fn -> length(Client.get_pending_requests(client)) > 0 end)
 
       # Check we have a pending request
       pending = Client.get_pending_requests(client)
@@ -125,8 +127,7 @@ defmodule ExMCP.CancellationTest do
       assert {:error, :cancelled} = Task.await(task, 1000)
 
       # Request should be removed from pending
-      Process.sleep(100)
-      assert [] = Client.get_pending_requests(client)
+      wait_until(fn -> Client.get_pending_requests(client) == [] end)
 
       # Cleanup
       GenServer.stop(client)
@@ -171,8 +172,8 @@ defmodule ExMCP.CancellationTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Cancel non-existent request - should be ignored
       :ok = Client.send_cancelled(client, "non_existent", "Should be ignored")
@@ -200,8 +201,8 @@ defmodule ExMCP.CancellationTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Start a slow request
       task =
@@ -209,8 +210,8 @@ defmodule ExMCP.CancellationTest do
           Client.call_tool(client, "slow_tool", %{})
         end)
 
-      # Give the request time to be sent
-      Process.sleep(100)
+      # Wait for request to be tracked
+      wait_until(fn -> length(Client.get_pending_requests(client)) > 0 end)
 
       # Get the pending request ID from the client
       [request_id] = Client.get_pending_requests(client)
@@ -252,8 +253,8 @@ defmodule ExMCP.CancellationTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Send cancellation for non-existent request
       GenServer.cast(
@@ -292,8 +293,8 @@ defmodule ExMCP.CancellationTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Start a slow request
       task =
@@ -301,7 +302,7 @@ defmodule ExMCP.CancellationTest do
           Client.call_tool(client, "slow_tool", %{})
         end)
 
-      Process.sleep(100)
+      wait_until(fn -> length(Client.get_pending_requests(client)) > 0 end)
       [request_id] = Client.get_pending_requests(client)
 
       # Send cancellation without reason
@@ -338,8 +339,8 @@ defmodule ExMCP.CancellationTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Send malformed cancellation (missing requestId)
       GenServer.cast(
@@ -377,8 +378,8 @@ defmodule ExMCP.CancellationTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Wait for client to be ready
+      wait_until(fn -> is_list(Client.get_pending_requests(client)) end)
 
       # Client can send cancellation
       :ok = Client.send_cancelled(client, "some_request", "Client cancellation")

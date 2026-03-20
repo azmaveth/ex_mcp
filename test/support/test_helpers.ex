@@ -658,4 +658,44 @@ defmodule ExMCP.TestHelpers do
     :exit, {:shutdown, _} -> :ok
     :exit, _ -> :ok
   end
+
+  @doc """
+  Wait until a condition is true, polling at short intervals.
+
+  Replaces `Process.sleep(N)` patterns with deterministic condition checks.
+  Returns `:ok` when the condition returns a truthy value, or raises after timeout.
+
+  ## Examples
+
+      # Wait for a process to be registered
+      wait_until(fn -> Process.whereis(:my_server) end)
+
+      # Wait for GenServer state to change
+      wait_until(fn -> GenServer.call(pid, :get_status) == :ready end, timeout: 1000)
+
+      # Wait for a message (prefer assert_receive instead)
+      wait_until(fn -> match?({:ok, _}, result) end)
+  """
+  @spec wait_until((-> boolean() | any()), keyword()) :: :ok
+  def wait_until(condition, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 1000)
+    interval = Keyword.get(opts, :interval, 10)
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    do_wait_until(condition, interval, deadline)
+  end
+
+  defp do_wait_until(condition, interval, deadline) do
+    if condition.() do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        raise ExUnit.AssertionError,
+          message: "wait_until timed out after condition was not met"
+      end
+
+      Process.sleep(interval)
+      do_wait_until(condition, interval, deadline)
+    end
+  end
 end
