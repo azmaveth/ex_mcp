@@ -5,7 +5,9 @@ defmodule ExMCP.Plugs.ProtectedResourceMetadataTest do
   Verifies correct HTTP response format, required fields, and default values.
   """
   use ExUnit.Case, async: true
-  use Plug.Test
+
+  import Plug.Test
+  import Plug.Conn
 
   @moduletag :oauth
 

@@ -15,11 +15,13 @@ defmodule ExMCP.Server.Handler.Echo do
   @doc """
   Initializes the echo handler state.
   """
+  @impl true
   def init(_args), do: {:ok, %{}}
 
   @doc """
   Terminates the echo handler.
   """
+  @impl true
   def terminate(_reason, _state), do: :ok
 
   @impl true

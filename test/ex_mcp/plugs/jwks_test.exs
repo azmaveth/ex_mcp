@@ -6,7 +6,9 @@ defmodule ExMCP.Plugs.JWKSTest do
   and empty key handling.
   """
   use ExUnit.Case, async: true
-  use Plug.Test
+
+  import Plug.Test
+  import Plug.Conn
 
   @moduletag :oauth
 

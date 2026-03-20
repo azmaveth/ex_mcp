@@ -195,16 +195,27 @@ defmodule ExMCP.Authorization.TokenRevocationTest do
                TokenRevocation.revoke("token", "http://evil.example.com/revoke")
     end
 
-    test "allows http://localhost" do
-      # This will fail at the network level, but passes endpoint validation
-      result = TokenRevocation.revoke("token", "http://localhost:99999/revoke")
-      # Should NOT be :https_required
-      assert {:error, {:request_failed, _}} = result
+    test "allows http://localhost via Bypass" do
+      # Use Bypass to prove localhost passes validation and reaches HTTP layer
+      bypass = Bypass.open()
+      endpoint = "http://localhost:#{bypass.port}/revoke"
+
+      Bypass.expect_once(bypass, "POST", "/revoke", fn conn ->
+        Plug.Conn.resp(conn, 200, "")
+      end)
+
+      assert {:ok, :revoked} = TokenRevocation.revoke("token", endpoint)
     end
 
-    test "allows http://127.0.0.1" do
-      result = TokenRevocation.revoke("token", "http://127.0.0.1:99999/revoke")
-      assert {:error, {:request_failed, _}} = result
+    test "allows http://127.0.0.1 via Bypass" do
+      bypass = Bypass.open()
+      endpoint = "http://127.0.0.1:#{bypass.port}/revoke"
+
+      Bypass.expect_once(bypass, "POST", "/revoke", fn conn ->
+        Plug.Conn.resp(conn, 200, "")
+      end)
+
+      assert {:ok, :revoked} = TokenRevocation.revoke("token", endpoint)
     end
   end
 end
