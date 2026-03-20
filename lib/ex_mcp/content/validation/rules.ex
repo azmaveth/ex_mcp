@@ -119,11 +119,27 @@ defmodule ExMCP.Content.Validation.Rules do
 
   def apply_rule(content, rule, _opts) when is_atom(rule) do
     case rule do
-      :required_fields -> validate_required_fields(content)
-      :protocol_compliance -> Protocol.validate(content)
-      :scan_malware -> scan_malware(content)
-      :validate_encoding -> validate_encoding(content)
-      _ -> {:error, %{rule: rule, message: "Unknown validation rule", severity: :error}}
+      :required_fields ->
+        validate_required_fields(content)
+
+      :protocol_compliance ->
+        Protocol.validate(content)
+
+      :scan_malware ->
+        scan_malware(content)
+
+      :validate_encoding ->
+        validate_encoding(content)
+
+      _ ->
+        # Check persistent_term for registered custom validators
+        case :persistent_term.get({ExMCP.Content.Validation, :validator, rule}, nil) do
+          nil ->
+            {:error, %{rule: rule, message: "Unknown validation rule", severity: :error}}
+
+          validator_fn when is_function(validator_fn, 1) ->
+            validator_fn.(content)
+        end
     end
   end
 

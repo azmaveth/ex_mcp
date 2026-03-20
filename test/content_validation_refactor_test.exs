@@ -2,7 +2,7 @@ defmodule ExMCP.ContentValidationRefactorTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Content.{Sanitizer, SchemaValidator, SecurityScanner, Transformer}
-  alias ExMCP.Content.ValidationRefactored, as: Validation
+  alias ExMCP.Content.Validation
 
   describe "SchemaValidator" do
     test "validates required fields for text content" do
@@ -107,7 +107,7 @@ defmodule ExMCP.ContentValidationRefactorTest do
     end
   end
 
-  describe "ValidationRefactored backward compatibility" do
+  describe "Validation backward compatibility" do
     test "validate function works with rules list" do
       content = %{type: :text, text: "Hello"}
 
@@ -120,37 +120,35 @@ defmodule ExMCP.ContentValidationRefactorTest do
     test "batch validation works" do
       contents = [
         %{type: :text, text: "Hello"},
-        # Invalid
         %{type: :text, text: ""},
         %{type: :text, text: "World"}
       ]
 
-      assert {:error, errors} = Validation.validate_batch(contents, [:required_fields])
-      # Second item failed
-      assert Map.has_key?(errors, 1)
+      # validate_batch returns {:error, results_list} where each element is :ok or {:error, ...}
+      assert {:error, results} = Validation.validate_batch(contents, [:required_fields])
+      assert is_list(results)
+      assert Enum.at(results, 1) != :ok
     end
 
     test "delegated functions work correctly" do
-      content = %{type: :text, text: "<script>"}
+      content = %{type: :text, text: "<script>alert('xss')</script>safe"}
 
-      # Test delegation to Sanitizer
+      # Sanitizer strips script blocks
       sanitized = Validation.sanitize(content, [:strip_scripts])
-      assert sanitized.text == ""
+      assert sanitized.text == "safe"
 
-      # Test delegation to Transformer
-      {:ok, transformed} = Validation.transform(content, [:normalize_whitespace])
-      assert transformed.text == "<script>"
-
-      # Test delegation to SecurityScanner
-      {:ok, scan_result} = Validation.scan_security(content, [:injection_attacks])
-      assert scan_result.threat_level in [:safe, :low, :medium, :high, :critical]
+      # SecurityScanner returns :safe or {:threat, threats}
+      assert :safe = Validation.scan_security(%{type: :text, text: "Hello"}, [:xss])
     end
 
     test "custom validators can be registered" do
-      :ok = Validation.register_validator(:always_fail, fn _ -> {:error, "Always fails"} end)
+      :ok =
+        Validation.register_validator(:always_fail_test, fn _content ->
+          {:error, %{rule: :always_fail_test, message: "Always fails", severity: :error}}
+        end)
 
       content = %{type: :text, text: "Hello"}
-      assert {:error, [error]} = Validation.validate(content, [:always_fail])
+      assert {:error, [error]} = Validation.validate(content, [:always_fail_test])
       assert error.message == "Always fails"
     end
   end

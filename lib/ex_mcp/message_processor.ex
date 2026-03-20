@@ -16,41 +16,8 @@ defmodule ExMCP.MessageProcessor do
   @type opts :: term()
   @type conn :: %__MODULE__.Conn{}
 
-  defmodule Conn do
-    @moduledoc """
-    Connection struct representing an MCP message processing context.
-    """
-
-    defstruct [
-      # The incoming MCP request
-      :request,
-      # The outgoing MCP response (if any)
-      :response,
-      # Processing state
-      :state,
-      # User-defined assigns
-      :assigns,
-      # Transport information
-      :transport,
-      # Session identifier
-      :session_id,
-      # Progress token for long-running operations (MCP 2025-06-18)
-      :progress_token,
-      # Whether processing should stop
-      :halted
-    ]
-
-    @type t :: %__MODULE__{
-            request: map() | nil,
-            response: map() | nil,
-            state: term(),
-            assigns: map(),
-            transport: atom(),
-            session_id: String.t() | nil,
-            progress_token: String.t() | integer() | nil,
-            halted: boolean()
-          }
-  end
+  # Conn struct is defined in ExMCP.MessageProcessor.Conn
+  alias __MODULE__.Conn
 
   @doc """
   Callback for initializing the plug with options.
