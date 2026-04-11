@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-04-11
+
+### Added
+- **`HttpPlug`: cached body support via `conn.assigns[:raw_body]`** — Upstream
+  plugs (e.g., signature-verification auth pipelines) can now pre-read the
+  request body and stash it in `conn.assigns[:raw_body]`. The HTTP plug
+  checks for a cached body before calling `read_body/1`, avoiding the
+  empty-body issue that occurs when the underlying adapter has already
+  been consumed by an upstream plug.
+
+  Backwards compatible: callers that don't pre-read the body see no change
+  in behavior. The new helper falls through to `read_body/1` when
+  `raw_body` is absent.
+
+  Use case: enables HTTP-authentication plugs that need to verify the body
+  bytes (e.g., per-request request signing) before ExMCP processes the
+  request, without forcing the auth plug to patch ExMCP, swap the conn
+  adapter, or replace `ExMCP.HttpPlug` entirely.
+
 ## [0.9.0] - 2026-03-18
 
 ### Added
