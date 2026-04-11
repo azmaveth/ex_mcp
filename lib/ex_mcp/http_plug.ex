@@ -227,7 +227,7 @@ defmodule ExMCP.HttpPlug do
     session_id = get_or_create_session_id(conn)
 
     with {:ok, conn} <- validate_protocol_version(conn),
-         {:ok, body, conn} <- read_body(conn),
+         {:ok, body, conn} <- read_or_cached_body(conn),
          {:ok, request} <- parse_json(body),
          {:ok, _token_info} <- authorize_request(conn, request, opts),
          result <- process_mcp_request(request, opts) do
@@ -386,6 +386,19 @@ defmodule ExMCP.HttpPlug do
       {:error, _} -> {:error, :parse_error}
     end
   end
+
+  # Allow upstream plugs (e.g., signature-verification auth pipelines) to
+  # pre-read the request body and stash it in `conn.assigns[:raw_body]`.
+  # When present, we use it instead of calling `read_body/1`, which would
+  # otherwise return an empty body since the underlying adapter has already
+  # been consumed. Falls back to normal `read_body/1` when no cached body
+  # is present, preserving existing behaviour for callers that don't pre-read.
+  defp read_or_cached_body(%Plug.Conn{assigns: %{raw_body: body}} = conn)
+       when is_binary(body) do
+    {:ok, body, conn}
+  end
+
+  defp read_or_cached_body(conn), do: read_body(conn)
 
   # Handle session termination via DELETE request
   defp handle_session_delete(conn, session_id, opts) do
