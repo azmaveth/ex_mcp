@@ -54,6 +54,8 @@ defmodule ExMCP.ClientUnifiedAPITest do
 
   describe "API compatibility" do
     test "exports all expected functions" do
+      Code.ensure_loaded!(Client)
+
       # Connection functions
       assert function_exported?(Client, :start_link, 1)
       assert function_exported?(Client, :connect, 1)
