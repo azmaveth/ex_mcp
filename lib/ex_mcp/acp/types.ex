@@ -263,7 +263,7 @@ defmodule ExMCP.ACP.Types do
   # Official ACP spec types (https://agentclientprotocol.com/protocol/schema):
   #   user_message_chunk, agent_message_chunk, tool_call, tool_call_update, plan,
   #   available_commands_update, config_option_update, current_mode_update,
-  #   session_info_update, agent_thought_chunk
+  #   session_info_update, usage_update, agent_thought_chunk
   #
   # Extension types (not in spec, used by adapters):
   #   status, usage, error, rpc_response, rpc_error, extension_ui_request
@@ -284,6 +284,7 @@ defmodule ExMCP.ACP.Types do
           | config_option_update()
           | current_mode_update()
           | session_info_update()
+          | usage_update()
           | thinking_update()
           | status_update()
 
@@ -350,6 +351,13 @@ defmodule ExMCP.ACP.Types do
           required(:sessionUpdate) => :session_info_update,
           optional(:title) => String.t(),
           optional(:updatedAt) => String.t()
+        }
+
+  @type usage_update :: %{
+          required(:sessionUpdate) => :usage_update,
+          required(:used) => non_neg_integer(),
+          required(:size) => non_neg_integer(),
+          optional(:cost) => map()
         }
 
   # ── Extension session update types ─────────────────────────────
@@ -573,6 +581,16 @@ defmodule ExMCP.ACP.Types do
       %{"sessionUpdate" => "session_info_update"}
       |> maybe_put_kw("title", opts)
       |> maybe_put_kw("updatedAt", opts)
+
+    session_update(session_id, update)
+  end
+
+  @doc "Creates a usage_update session update notification."
+  @spec usage_update(String.t(), non_neg_integer(), non_neg_integer(), keyword()) :: map()
+  def usage_update(session_id, used, size, opts \\ []) do
+    update =
+      %{"sessionUpdate" => "usage_update", "used" => used, "size" => size}
+      |> maybe_put_kw("cost", opts)
 
     session_update(session_id, update)
   end

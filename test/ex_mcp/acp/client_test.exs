@@ -118,6 +118,7 @@ defmodule ExMCP.ACP.ClientTest do
     def start(to_client_relay, to_agent_relay, opts \\ []) do
       test_pid = self()
       updates = Keyword.get(opts, :updates, [])
+      load_updates = Keyword.get(opts, :load_updates, [])
       permission_request = Keyword.get(opts, :permission_request)
 
       capabilities =
@@ -142,6 +143,7 @@ defmodule ExMCP.ACP.ClientTest do
           to_client: to_client_relay,
           to_agent: to_agent_relay,
           updates: updates,
+          load_updates: load_updates,
           permission_request: permission_request,
           capabilities: capabilities,
           auth_methods: auth_methods,
@@ -201,7 +203,23 @@ defmodule ExMCP.ACP.ClientTest do
       MessageRelay.push(state.to_client, response)
     end
 
-    defp handle_message(%{"method" => "session/load", "id" => id}, state) do
+    defp handle_message(%{"method" => "session/load", "id" => id, "params" => params}, state) do
+      session_id = params["sessionId"]
+
+      for update <- state.load_updates do
+        notification =
+          Jason.encode!(%{
+            "jsonrpc" => "2.0",
+            "method" => "session/update",
+            "params" => %{
+              "sessionId" => session_id,
+              "update" => update
+            }
+          })
+
+        MessageRelay.push(state.to_client, notification)
+      end
+
       response =
         Jason.encode!(%{
           "jsonrpc" => "2.0",
@@ -589,6 +607,30 @@ defmodule ExMCP.ACP.ClientTest do
 
       assert {:ok, result} = Client.prompt(client, "sess_mock_001", "hi")
       assert result["text"] == "Hello world."
+    end
+
+    test "ignores agent_message_chunk text when no prompt is pending" do
+      load_updates = [
+        %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "history "}
+        }
+      ]
+
+      prompt_updates = [
+        %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "fresh"}
+        }
+      ]
+
+      {client, _agent} = start_client(load_updates: load_updates, updates: prompt_updates)
+
+      assert {:ok, %{"sessionId" => "sess_loaded_001"}} =
+               Client.load_session(client, "sess_mock_001", "/tmp/project")
+
+      assert {:ok, %{"stopReason" => "end_turn", "text" => "fresh"}} =
+               Client.prompt(client, "sess_mock_001", "hello")
     end
   end
 

@@ -85,6 +85,18 @@ HTTP transport client for testing HTTP-based MCP servers.
 ### Simple Test Client (`simple_test_client.exs`)
 Minimal client for quick testing and debugging.
 
+## ACP Examples (`acp/`)
+
+End-to-end Agent Client Protocol examples:
+
+- `echo_agent.exs` - A native Elixir ACP agent over stdio
+- `controller.exs` - An ACP controller that starts the agent, sends a prompt, and prints streamed output
+
+```bash
+mix compile
+mix run examples/acp/controller.exs
+```
+
 ## Advanced Examples
 
 ### OAuth Examples (`advanced/oauth/`)

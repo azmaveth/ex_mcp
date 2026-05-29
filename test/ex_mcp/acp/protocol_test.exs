@@ -198,6 +198,87 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
   end
 
+  describe "agent-side encoders" do
+    test "encodes initialize response" do
+      msg =
+        Protocol.encode_initialize_response(
+          1,
+          %{"name" => "agent", "version" => "1.0.0"},
+          %{"sessionCapabilities" => %{"list" => %{}}},
+          [%{"id" => "api-key", "name" => "API Key"}],
+          1
+        )
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["id"] == 1
+      assert msg["result"]["agentInfo"]["name"] == "agent"
+      assert msg["result"]["agentCapabilities"]["sessionCapabilities"]["list"] == %{}
+      assert msg["result"]["authMethods"] == [%{"id" => "api-key", "name" => "API Key"}]
+      assert msg["result"]["protocolVersion"] == 1
+    end
+
+    test "encodes session and prompt responses" do
+      assert Protocol.encode_session_response(2, "sess_1")["result"] == %{
+               "sessionId" => "sess_1"
+             }
+
+      assert Protocol.encode_session_list_response(3, [%{"sessionId" => "s", "cwd" => "/tmp"}])[
+               "result"
+             ] == %{"sessions" => [%{"sessionId" => "s", "cwd" => "/tmp"}]}
+
+      assert Protocol.encode_prompt_response(4, "end_turn")["result"] == %{
+               "stopReason" => "end_turn"
+             }
+    end
+
+    test "encodes stable session updates" do
+      msg = Protocol.encode_agent_message_chunk("sess_1", "hello")
+
+      assert msg["method"] == "session/update"
+      assert msg["params"]["sessionId"] == "sess_1"
+
+      assert msg["params"]["update"] == %{
+               "sessionUpdate" => "agent_message_chunk",
+               "content" => %{"type" => "text", "text" => "hello"}
+             }
+
+      plan = Protocol.encode_plan("sess_1", [%{"content" => "Do it", "status" => "pending"}])
+      assert plan["params"]["update"]["sessionUpdate"] == "plan"
+
+      usage = Protocol.encode_usage_update("sess_1", 42, 100)
+      assert usage["params"]["update"]["sessionUpdate"] == "usage_update"
+      assert usage["params"]["update"]["used"] == 42
+      assert usage["params"]["update"]["size"] == 100
+    end
+
+    test "encodes agent-to-client requests" do
+      permission =
+        Protocol.encode_permission_request(
+          "sess_1",
+          %{"toolName" => "edit"},
+          [%{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"}]
+        )
+
+      assert permission["method"] == "session/request_permission"
+      assert permission["params"]["toolCall"]["toolName"] == "edit"
+      assert is_integer(permission["id"])
+
+      read = Protocol.encode_file_read_request("sess_1", "/tmp/a.txt", line: 2, limit: 10)
+      assert read["method"] == "fs/read_text_file"
+      assert read["params"]["line"] == 2
+      assert read["params"]["limit"] == 10
+
+      terminal =
+        Protocol.encode_terminal_request("terminal/output", "sess_1", %{
+          "terminalId" => "term_1"
+        })
+
+      assert terminal["method"] == "terminal/output"
+      assert terminal["params"]["sessionId"] == "sess_1"
+      assert terminal["params"]["terminalId"] == "term_1"
+    end
+  end
+
   describe "encode_session_list/1" do
     test "produces valid request" do
       msg = Protocol.encode_session_list()

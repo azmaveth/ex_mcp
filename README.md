@@ -29,7 +29,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **DSL and Handler APIs** -- declarative tool/resource/prompt definitions or callback-based handlers
 - **OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD, JWT client auth (`private_key_jwt`), enterprise SSO (ID-JAG), token revocation (RFC 7009), pluggable auth providers
 - **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, 88 telemetry events
-- **Agent Client Protocol (ACP)** -- control coding agents (Gemini CLI, Claude Code, Codex, Pi, Hermes, etc.) over any transport
+- **Agent Client Protocol (ACP)** -- control coding agents and build native Elixir ACP agents
 - **3100+ tests** -- comprehensive suite including official MCP conformance, integration, and performance
 
 ## Installation
@@ -39,7 +39,7 @@ Add `ex_mcp` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.9.0"}
+    {:ex_mcp, "~> 0.10.0"}
   ]
 end
 ```
@@ -196,9 +196,9 @@ end
 {:ok, tools} = ExMCP.Native.call(:my_tools, "list_tools", %{})
 ```
 
-### ACP: Control Coding Agents
+### ACP: Control and Build Coding Agents
 
-Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control coding agents programmatically. ACP works over any transport (stdio, HTTP/SSE, native BEAM):
+Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control coding agents programmatically or expose an Elixir process as an ACP agent:
 
 ```elixir
 # Native ACP agents over stdio (Gemini CLI, Hermes, OpenCode, Qwen Code, etc.)
@@ -219,6 +219,12 @@ Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control cod
   command: ["pi"],
   adapter: ExMCP.ACP.Adapters.Pi,
   adapter_opts: [model: "anthropic/claude-sonnet-4"]
+)
+
+# Native Elixir ACP agent over stdio
+{:ok, agent} = ExMCP.ACP.start_agent(
+  handler: MyApp.AgentHandler,
+  agent_info: %{"name" => "my-agent", "version" => "1.0.0"}
 )
 ```
 

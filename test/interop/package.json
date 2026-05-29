@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.22.1",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@modelcontextprotocol/server-everything": "^2025.1.13",
     "express": "^5.1.0",

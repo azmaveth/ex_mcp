@@ -221,6 +221,15 @@ defmodule ExMCP.ACP.TypesTest do
       assert update["title"] == "Fix auth"
       assert update["updatedAt"] == "2026-05-28T00:00:00Z"
     end
+
+    test "creates usage update with used and size" do
+      msg = Types.usage_update("sess_1", 42, 100)
+      update = msg["params"]["update"]
+
+      assert update["sessionUpdate"] == "usage_update"
+      assert update["used"] == 42
+      assert update["size"] == 100
+    end
   end
 
   describe "MCP server config builders" do

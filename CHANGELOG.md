@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-05-29
+
+### Added
+- **Native ACP agents** — `ExMCP.ACP.Agent` and `ExMCP.ACP.Agent.Handler` let Elixir applications implement the agent side of the Agent Client Protocol over the same transports as the ACP client.
+- **ACP agent facade helpers** — `ExMCP.ACP.start_agent/1`, `run_agent/1`, and streaming helpers provide a symmetrical API for building controllers and agents.
+- **ACP examples** — Added an end-to-end native Elixir ACP echo agent and controller under `examples/acp`.
+- **ACP cross-SDK interop fixtures** — Added TypeScript SDK agent/client fixtures plus ExMCP integration tests that cover both directions of ACP controller/agent interoperability.
+- **ACP everything-style interop coverage** — Added broad ACP fixtures that exercise auth/logout, session lifecycle, prompt/cancel, mode/config updates, permission requests, filesystem requests, terminal requests, session updates, and rich content blocks.
+- **ACP `usage_update` helpers** — Added protocol, type, and agent helper APIs for emitting stable context-window usage updates.
+
+### Changed
+- **ACP documentation** — Updated README, examples, and the ACP guide to cover both controller-side and agent-side protocol support.
+- **ACP capabilities** — Updated ACP interop agents to use the official schema shape for session capability declarations.
+
+### Fixed
+- **ACP streamed prompt isolation** — `ExMCP.ACP.Client` now accumulates streamed `agent_message_chunk` text only while a matching prompt is pending, preventing out-of-band updates such as `session/load` chunks from leaking into the next prompt result.
+
 ## [0.9.2] - 2026-05-28
 
 ### Added

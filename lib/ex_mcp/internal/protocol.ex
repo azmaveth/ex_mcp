@@ -637,11 +637,12 @@ defmodule ExMCP.Internal.Protocol do
 
   def parse_message(data, session_state \\ nil)
 
-  @spec parse_message_unvalidated(String.t() | map()) ::
+  @spec parse_message_unvalidated(String.t() | map() | list()) ::
           {:request, method(), params(), json_rpc_id()}
           | {:notification, method(), params()}
           | {:result, result(), json_rpc_id()}
           | {:error, error(), json_rpc_id()}
+          | {:batch, list()}
           | {:error, :invalid_message}
   def parse_message(data, session_state) when is_binary(data) do
     case Jason.decode(data) do

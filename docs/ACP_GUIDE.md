@@ -1,6 +1,6 @@
 # ACP Guide
 
-The [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) is a standardized protocol for controlling coding agents programmatically. ExMCP includes a full ACP client implementation, letting you start agent sessions, send prompts, receive streaming updates, and handle permission requests — all from Elixir.
+The [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) is a standardized protocol for controlling coding agents programmatically. ExMCP includes a full ACP client implementation, letting you start agent sessions, send prompts, receive streaming updates, and handle permission requests — all from Elixir. It also includes `ExMCP.ACP.Agent` for building native Elixir ACP agents.
 
 ## Overview
 
@@ -19,6 +19,13 @@ ExMCP.ACP.Client (GenServer)
     │
     └─── Adapted agents (Claude Code, Codex, Pi)
             └── AdapterBridge → Adapter → agent-native protocol
+
+ACP Client
+    │
+    ▼
+ExMCP.ACP.Agent (GenServer)
+    │
+    └─── Your Elixir handler
 ```
 
 ## Quick Start
@@ -42,6 +49,50 @@ ExMCP.ACP.Client.cancel(client, session_id)
 
 # Clean up
 ExMCP.ACP.Client.disconnect(client)
+```
+
+### Native Elixir ACP Agent
+
+Use `ExMCP.ACP.Agent` when your Elixir application is the agent being controlled by an ACP client:
+
+```elixir
+defmodule MyApp.EchoAgent do
+  @behaviour ExMCP.ACP.Agent.Handler
+
+  @impl true
+  def init(_opts), do: {:ok, %{}}
+
+  @impl true
+  def handle_new_session(_params, _ctx, state) do
+    {:reply, %{"sessionId" => "sess_" <> Base.encode16(:crypto.strong_rand_bytes(8))}, state}
+  end
+
+  @impl true
+  def handle_prompt(session_id, prompt, ctx, state) do
+    text = prompt |> List.first() |> Map.get("text", "")
+
+    ExMCP.ACP.Agent.agent_message(ctx.agent, session_id, "Echo: " <> text)
+    {:reply, %{"stopReason" => "end_turn"}, state}
+  end
+end
+
+ExMCP.ACP.run_agent(
+  handler: MyApp.EchoAgent,
+  agent_info: %{"name" => "echo-agent", "version" => "1.0.0"}
+)
+```
+
+Prompt handlers can also stream updates and finish asynchronously:
+
+```elixir
+def handle_prompt(session_id, _prompt, ctx, state) do
+  Task.start(fn ->
+    ExMCP.ACP.Agent.agent_message(ctx.agent, session_id, "Working...")
+    ExMCP.ACP.Agent.finish_prompt(ctx.agent, ctx.prompt_id, "end_turn")
+  end)
+
+  {:noreply, state}
+end
 ```
 
 ### Adapted Agent (Claude Code)
@@ -236,13 +287,14 @@ The ACP spec defines these session update types (all supported by ExMCP):
 | `config_option_update` | Runtime config change notification |
 | `current_mode_update` | Operational mode change |
 | `session_info_update` | Session metadata such as title and updatedAt |
+| `usage_update` | Context window usage and optional cost information |
 
 ExMCP adapters also emit these extension types:
 
 | Type | Description |
 |------|-------------|
 | `status` | Operational status (compacting, retrying, etc.) |
-| `usage` | Token usage tracking |
+| `usage` | Legacy adapter-specific token usage tracking |
 | `error` | Adapter-specific error notification |
 | `rpc_response` / `rpc_error` | Pi extension command responses |
 | `extension_ui_request` | Pi extension UI request bridge |
@@ -455,6 +507,8 @@ Use `ExMCP.ACP.Registry.find_agents/2` to search the decoded registry by agent i
 ## API Reference
 
 - `ExMCP.ACP` — Facade module
+- `ExMCP.ACP.Agent` — GenServer runtime for native Elixir ACP agents
+- `ExMCP.ACP.Agent.Handler` — Agent-side handler behaviour
 - `ExMCP.ACP.Client` — GenServer client with full session API
 - `ExMCP.ACP.Client.Handler` — Handler behaviour
 - `ExMCP.ACP.Protocol` — ACP JSON-RPC message encoding

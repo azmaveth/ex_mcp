@@ -305,6 +305,7 @@ defmodule ExMCP.ACP.Client do
     )
 
     msg = Protocol.encode_session_prompt(session_id, blocks)
+    state = %{state | prompt_text: Map.delete(state.prompt_text, session_id)}
     send_request(msg, from, state, {:prompt, session_id})
   end
 
@@ -605,6 +606,11 @@ defmodule ExMCP.ACP.Client do
     {{:ok, result}, %{state | prompt_text: prompt_text}}
   end
 
+  defp maybe_merge_prompt_text({:prompt, session_id}, reply, state) do
+    {_, prompt_text} = Map.pop(state.prompt_text, session_id)
+    {reply, %{state | prompt_text: prompt_text}}
+  end
+
   defp maybe_merge_prompt_text(_tag, reply, state), do: {reply, state}
 
   defp emit_resolve_telemetry(:new_session, {:ok, result}) do
@@ -722,16 +728,27 @@ defmodule ExMCP.ACP.Client do
          %{"sessionUpdate" => "agent_message_chunk"} = update
        )
        when is_binary(session_id) do
-    case get_in(update, ["content", "text"]) do
-      text when is_binary(text) and text != "" ->
-        %{state | prompt_text: Map.update(state.prompt_text, session_id, text, &(&1 <> text))}
+    if prompt_pending?(state, session_id) do
+      case get_in(update, ["content", "text"]) do
+        text when is_binary(text) and text != "" ->
+          %{state | prompt_text: Map.update(state.prompt_text, session_id, text, &(&1 <> text))}
 
-      _ ->
-        state
+        _ ->
+          state
+      end
+    else
+      state
     end
   end
 
   defp accumulate_prompt_text(state, _session_id, _update), do: state
+
+  defp prompt_pending?(state, session_id) do
+    Enum.any?(state.pending_requests, fn
+      {_id, {_from, {:prompt, ^session_id}}} -> true
+      _ -> false
+    end)
+  end
 
   defp handle_agent_request("session/request_permission", params, id, state) do
     session_id = params["sessionId"]

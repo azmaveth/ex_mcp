@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "0.9.2"
+  @version "0.10.0"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -148,6 +148,8 @@ defmodule ExMCP.MixProject do
         "MCP + Extensions": [ExMCP.Client],
         "Agent Client Protocol (ACP)": [
           ExMCP.ACP,
+          ExMCP.ACP.Agent,
+          ExMCP.ACP.Agent.Handler,
           ExMCP.ACP.Client,
           ExMCP.ACP.Client.Handler,
           ExMCP.ACP.Client.DefaultHandler,
