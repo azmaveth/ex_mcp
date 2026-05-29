@@ -17,8 +17,8 @@ defmodule ExMCP.ACP.Adapter do
 
   - `capabilities/0` — return static agent capabilities
   - `post_connect/1` — called after Port is opened
-  - `modes/0` — return supported operational modes
-  - `config_options/0` — return supported config options
+  - `modes/0` — return supported operational modes for session responses
+  - `config_options/0` — return supported config options for session responses
   - `list_sessions/1` — return available sessions (for `session/list`)
   """
 
@@ -86,7 +86,7 @@ defmodule ExMCP.ACP.Adapter do
   Return the operational modes this agent supports.
 
   Each mode is a map with `"id"`, `"name"`, and optional `"description"`.
-  Returned in the `initialize` response under `agentCapabilities.modes`.
+  Returned in session setup responses under `"modes"`.
 
   Optional — defaults to an empty list.
   """
@@ -95,9 +95,10 @@ defmodule ExMCP.ACP.Adapter do
   @doc """
   Return the config options this agent supports.
 
-  Each option is a map with `"id"`, `"name"`, `"category"` (mode/model/thought_level/other),
-  and optional `"description"`, `"type"`, `"default"`, `"values"`.
-  Returned in the `initialize` response under `agentCapabilities.configOptions`.
+  Each option should follow the stable ACP select shape with `"id"`, `"name"`,
+  `"type"`, `"currentValue"`, `"options"`, and optional `"category"` and
+  `"description"`. Returned in session setup and config responses under
+  `"configOptions"`.
 
   Optional — defaults to an empty list.
   """
@@ -107,7 +108,7 @@ defmodule ExMCP.ACP.Adapter do
   List available sessions for this agent.
 
   Returns `{:ok, sessions, new_state}` where sessions is a list of maps
-  with `"sessionId"` and optional `"name"`, `"createdAt"`.
+  with `"sessionId"`, `"cwd"`, and optional `"title"`, `"updatedAt"`.
 
   Optional — defaults to returning an empty list.
   """

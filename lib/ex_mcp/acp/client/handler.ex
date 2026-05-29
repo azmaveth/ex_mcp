@@ -58,8 +58,27 @@ defmodule ExMCP.ACP.Client.Handler do
               state()
             ) :: {:ok, state()} | {:error, reason :: String.t(), state()}
 
+  @doc """
+  Called when the agent requests a terminal operation.
+
+  The `method` is one of the stable `terminal/*` methods and `params` is the
+  raw ACP params map. Return `{:ok, result, state}` with the method-specific
+  result map, or `{:error, reason, state}` to deny or fail the operation.
+  """
+  @callback handle_terminal_request(
+              method :: String.t(),
+              params :: map(),
+              id :: integer() | String.t(),
+              state()
+            ) :: {:ok, result :: map(), state()} | {:error, reason :: String.t(), state()}
+
   @doc "Called when the handler is being terminated."
   @callback terminate(reason :: any(), state()) :: :ok
 
-  @optional_callbacks [handle_file_read: 4, handle_file_write: 4, terminate: 2]
+  @optional_callbacks [
+    handle_file_read: 4,
+    handle_file_write: 4,
+    handle_terminal_request: 4,
+    terminate: 2
+  ]
 end

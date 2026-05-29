@@ -40,7 +40,11 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   def handle_initialize(conn, server_pid, :handler, params, id, _server_info) do
-    case GenServer.call(server_pid, {:handle_initialize, params}, 5000) do
+    case GenServer.call(server_pid, {:initialize, params}, 5000) do
+      {:ok, result} ->
+        normalized = normalize_initialize_result(result)
+        put_success(conn, deep_stringify_keys(normalized), id)
+
       {:ok, result, _state} ->
         normalized = normalize_initialize_result(result)
         put_success(conn, deep_stringify_keys(normalized), id)
@@ -53,9 +57,23 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   defp normalize_initialize_result(result) do
-    result
-    |> Map.put_new("protocolVersion", @default_protocol_version)
-    |> Map.put_new(:protocolVersion, @default_protocol_version)
+    result =
+      result
+      |> Map.put_new("protocolVersion", @default_protocol_version)
+      |> Map.put_new(:protocolVersion, @default_protocol_version)
+
+    if Map.has_key?(result, "serverInfo") or Map.has_key?(result, :serverInfo) do
+      result
+    else
+      name = Map.get(result, "name") || Map.get(result, :name)
+      version = Map.get(result, "version") || Map.get(result, :version)
+
+      if name && version do
+        Map.put(result, "serverInfo", %{"name" => name, "version" => version})
+      else
+        result
+      end
+    end
   end
 
   # --- tools/list ---
@@ -411,8 +429,9 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   def handle_completion_complete(conn, server_pid, :genserver, params, id) do
-    case GenServer.call(server_pid, {:complete, params}, 5000) do
+    case GenServer.call(server_pid, {:complete, params["ref"], params["argument"]}, 5000) do
       {:ok, result} -> put_success(conn, deep_stringify_keys(result), id)
+      {:ok, result, _state} -> put_success(conn, deep_stringify_keys(result), id)
       {:error, reason} -> put_error(conn, "Completion failed", reason, id)
     end
   rescue
@@ -420,7 +439,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   def handle_completion_complete(conn, server_pid, :handler, params, id) do
-    case GenServer.call(server_pid, {:complete, params}, 5000) do
+    case GenServer.call(server_pid, {:complete, params["ref"], params["argument"]}, 5000) do
       {:ok, result, _state} -> put_success(conn, deep_stringify_keys(result), id)
       {:ok, result} -> put_success(conn, deep_stringify_keys(result), id)
       {:error, reason} -> put_error(conn, "Completion failed", reason, id)

@@ -23,7 +23,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 ## Key Features
 
 - **Full MCP compliance** -- protocol versions 2024-11-05, 2025-03-26, 2025-06-18, and 2025-11-25
-- **100% MCP conformance** -- 223/223 client checks, 39/39 server checks (official test suite)
+- **100% MCP conformance** -- 226/226 client checks, 39/39 server checks (official test suite)
 - **Multiple transports** -- HTTP/SSE, stdio, and native BEAM (~15μs local calls)
 - **Phoenix Plug** -- native Phoenix integration with `ExMCP.HttpPlug`
 - **DSL and Handler APIs** -- declarative tool/resource/prompt definitions or callback-based handlers

@@ -16,10 +16,10 @@ defmodule ExMCP.ACP.Adapters.Claude do
   | Claude Event | ACP Message |
   |---|---|
   | `stream_event` (text_delta) | `session/update` notification (text) |
-  | `stream_event` (thinking_delta) | `session/update` notification (thinking) |
+  | `stream_event` (thinking_delta) | `session/update` (`agent_thought_chunk`) |
   | `assistant` | accumulate content blocks |
-  | `assistant` (tool_use) | `session/update` notification (tool_call) |
-  | `user` (tool_result) | `session/update` notification (tool_result) |
+  | `assistant` (tool_use) | `session/update` (`tool_call`) |
+  | `user` (tool_result) | `session/update` (`tool_call_update`) |
   | `result` | prompt response result |
 
   ## Features
@@ -104,7 +104,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
   @impl true
   def capabilities do
     %{
-      "streaming" => true
+      "_meta" => %{"streaming" => true}
       # Note: Claude CLI supports plan mode via --allowedTools but we don't
       # expose mode switching through the adapter. Session modes would require
       # the bridge to restart the subprocess with different flags.
@@ -113,23 +113,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
   @impl true
   def config_options do
-    [
-      %{
-        "id" => "model",
-        "name" => "Model",
-        "category" => "model",
-        "description" => "Claude model to use",
-        "type" => "string"
-      },
-      %{
-        "id" => "thinking_budget",
-        "name" => "Thinking Budget",
-        "category" => "thought_level",
-        "description" => "Max thinking tokens",
-        "type" => "integer",
-        "default" => 10_000
-      }
-    ]
+    []
   end
 
   # ── Outbound: ACP → Claude CLI ───────────────────────────────
@@ -180,8 +164,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
   # Explicit handlers for ACP methods we don't support —
   # better than silently dropping via catch-all
-  def translate_outbound(%{"method" => "session/setMode"}, state) do
-    Logger.debug("[Claude Adapter] session/setMode not supported (static permissions)")
+  def translate_outbound(%{"method" => "session/set_mode"}, state) do
+    Logger.debug("[Claude Adapter] session/set_mode not supported (static permissions)")
     {:ok, :skip, state}
   end
 
@@ -326,8 +310,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     notification =
       session_update(state.session_id, %{
-        "sessionUpdate" => "thinking",
-        "content" => thinking
+        "sessionUpdate" => "agent_thought_chunk",
+        "content" => %{"type" => "text", "text" => thinking}
       })
 
     {:messages, [notification], state}
@@ -434,7 +418,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
         "toolCallId" => block["id"],
         "toolName" => tool_name,
         "kind" => tool_info.kind,
-        "status" => "running",
+        "status" => "in_progress",
         "input" => input
       }
       |> maybe_put_tool("content", non_empty_list(tool_info.content))
@@ -644,8 +628,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
   # Tool kinds matching ACP ToolKind enum
   @tool_kinds %{
     "Read" => "read",
-    "Write" => "write",
-    "Edit" => "write",
+    "Write" => "edit",
+    "Edit" => "edit",
     "Bash" => "execute",
     "Grep" => "search",
     "Glob" => "search",
@@ -654,8 +638,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
     "Agent" => "think",
     "Task" => "think",
     "TodoRead" => "read",
-    "TodoWrite" => "write",
-    "NotebookEdit" => "write"
+    "TodoWrite" => "edit",
+    "NotebookEdit" => "edit"
   }
 
   defp tool_info_from_use("Read", input, _id, cwd) do
@@ -681,7 +665,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     %{
       title: "Write #{display}",
-      kind: "write",
+      kind: "edit",
       content:
         if(path && input["content"],
           do: [
@@ -699,7 +683,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     %{
       title: "Edit #{display}",
-      kind: "write",
+      kind: "edit",
       content:
         if(path && input["old_string"] && input["new_string"],
           do: [

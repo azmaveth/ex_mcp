@@ -29,15 +29,50 @@ defmodule ExMCP.ACP.TypesTest do
     end
   end
 
+  describe "auth_method/3" do
+    test "creates auth method metadata" do
+      method = Types.auth_method("api-key", "API Key", description: "Use a local API key")
+
+      assert method == %{
+               "id" => "api-key",
+               "name" => "API Key",
+               "description" => "Use a local API key"
+             }
+    end
+  end
+
+  describe "agent_capabilities/1" do
+    test "creates stable ACP capability groups" do
+      caps =
+        Types.agent_capabilities(
+          load_session: true,
+          image: true,
+          http_mcp: true,
+          session_list: true,
+          session_resume: true,
+          session_close: true,
+          logout: true
+        )
+
+      assert caps["loadSession"] == true
+      assert caps["promptCapabilities"]["image"] == true
+      assert caps["mcpCapabilities"]["http"] == true
+      assert caps["sessionCapabilities"]["list"] == %{}
+      assert caps["sessionCapabilities"]["resume"] == %{}
+      assert caps["sessionCapabilities"]["close"] == %{}
+      assert caps["auth"]["logout"] == %{}
+    end
+  end
+
   describe "new_session_params/2" do
     test "creates params with cwd" do
       params = Types.new_session_params("/home/user/project")
-      assert params == %{"cwd" => "/home/user/project"}
+      assert params == %{"cwd" => "/home/user/project", "mcpServers" => []}
     end
 
-    test "creates empty params when no cwd" do
+    test "includes empty mcpServers when no cwd" do
       params = Types.new_session_params()
-      assert params == %{}
+      assert params == %{"mcpServers" => []}
     end
 
     test "includes mcp_servers when provided" do
@@ -101,6 +136,16 @@ defmodule ExMCP.ACP.TypesTest do
     end
   end
 
+  describe "resource_block/2" do
+    test "creates an embedded text resource block" do
+      block = Types.resource_block("file:///src/main.ex", text: "defmodule Main do end")
+
+      assert block["type"] == "resource"
+      assert block["resource"]["uri"] == "file:///src/main.ex"
+      assert block["resource"]["text"] == "defmodule Main do end"
+    end
+  end
+
   describe "plan_entry/3" do
     test "creates a plan entry with defaults" do
       entry = Types.plan_entry("Fix the auth bug")
@@ -117,7 +162,7 @@ defmodule ExMCP.ACP.TypesTest do
   end
 
   describe "plan_update/2" do
-    test "creates a plan_update session update notification" do
+    test "creates a stable plan session update notification" do
       entries = [
         Types.plan_entry("Step 1: Read the code", "high", "completed"),
         Types.plan_entry("Step 2: Write the fix", "high", "in_progress"),
@@ -129,9 +174,86 @@ defmodule ExMCP.ACP.TypesTest do
       assert msg["params"]["sessionId"] == "sess_1"
 
       update = msg["params"]["update"]
-      assert update["sessionUpdate"] == "plan_update"
+      assert update["sessionUpdate"] == "plan"
       assert length(update["entries"]) == 3
       assert hd(update["entries"])["status"] == "completed"
+    end
+  end
+
+  describe "session update builders" do
+    test "creates current mode update with currentModeId" do
+      msg = Types.current_mode_update("sess_1", "code")
+      update = msg["params"]["update"]
+
+      assert update["sessionUpdate"] == "current_mode_update"
+      assert update["currentModeId"] == "code"
+      refute Map.has_key?(update, "modeId")
+    end
+
+    test "creates available commands update with availableCommands" do
+      msg = Types.available_commands_update("sess_1", [%{"name" => "test"}])
+      update = msg["params"]["update"]
+
+      assert update["sessionUpdate"] == "available_commands_update"
+      assert update["availableCommands"] == [%{"name" => "test"}]
+    end
+
+    test "creates config option update with complete configOptions" do
+      option =
+        Types.select_config_option("model", "Model", "fast", [
+          Types.config_option_value("fast", "Fast")
+        ])
+
+      msg = Types.config_option_update("sess_1", [option])
+      update = msg["params"]["update"]
+
+      assert update["sessionUpdate"] == "config_option_update"
+      assert update["configOptions"] == [option]
+    end
+
+    test "creates session info update with title and updatedAt" do
+      msg =
+        Types.session_info_update("sess_1", title: "Fix auth", updatedAt: "2026-05-28T00:00:00Z")
+
+      update = msg["params"]["update"]
+
+      assert update["sessionUpdate"] == "session_info_update"
+      assert update["title"] == "Fix auth"
+      assert update["updatedAt"] == "2026-05-28T00:00:00Z"
+    end
+  end
+
+  describe "MCP server config builders" do
+    test "creates stdio server config" do
+      server =
+        Types.stdio_mcp_server("local", "mcp-server",
+          args: ["--stdio"],
+          env: %{TOKEN: "secret"}
+        )
+
+      assert server["type"] == "stdio"
+      assert server["name"] == "local"
+      assert server["command"] == "mcp-server"
+      assert server["args"] == ["--stdio"]
+      assert server["env"] == [%{"name" => "TOKEN", "value" => "secret"}]
+    end
+
+    test "creates HTTP and SSE server configs" do
+      headers = [{"authorization", "Bearer token"}]
+
+      assert Types.http_mcp_server("remote", "https://example.com/mcp", headers: headers) == %{
+               "type" => "http",
+               "name" => "remote",
+               "url" => "https://example.com/mcp",
+               "headers" => [%{"name" => "authorization", "value" => "Bearer token"}]
+             }
+
+      assert Types.sse_mcp_server("events", "https://example.com/sse") == %{
+               "type" => "sse",
+               "name" => "events",
+               "url" => "https://example.com/sse",
+               "headers" => []
+             }
     end
   end
 end

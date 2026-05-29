@@ -240,32 +240,10 @@ defmodule ExMCP.ACP.AdapterBridge do
         %{}
       end
 
-    # Add modes if adapter declares them
-    caps =
-      if function_exported?(state.adapter_mod, :modes, 0) do
-        case state.adapter_mod.modes() do
-          [] -> caps
-          modes -> Map.put(caps, "modes", modes)
-        end
-      else
-        caps
-      end
-
-    # Add config options if adapter declares them
-    caps =
-      if function_exported?(state.adapter_mod, :config_options, 0) do
-        case state.adapter_mod.config_options() do
-          [] -> caps
-          opts -> Map.put(caps, "configOptions", opts)
-        end
-      else
-        caps
-      end
-
     # Add session listing capability
     caps =
       if function_exported?(state.adapter_mod, :list_sessions, 1) do
-        Map.put(caps, "sessionCapabilities", %{"list" => %{}})
+        put_session_capability(caps, "list", %{})
       else
         caps
       end
@@ -278,6 +256,7 @@ defmodule ExMCP.ACP.AdapterBridge do
           "version" => "1.0.0"
         },
         "agentCapabilities" => caps,
+        "authMethods" => [],
         "protocolVersion" => 1
       },
       "id" => request_id
@@ -285,6 +264,56 @@ defmodule ExMCP.ACP.AdapterBridge do
 
     push_message(state, Jason.encode!(init_result))
   end
+
+  defp put_session_capability(caps, capability, value) do
+    session_caps =
+      caps
+      |> Map.get("sessionCapabilities", %{})
+      |> Map.put(capability, value)
+
+    Map.put(caps, "sessionCapabilities", session_caps)
+  end
+
+  defp session_result(state, session_id) do
+    state
+    |> session_state_result()
+    |> Map.put("sessionId", session_id)
+  end
+
+  defp session_state_result(state) do
+    %{}
+    |> maybe_put_non_empty("modes", session_modes(state))
+    |> maybe_put_non_empty("configOptions", adapter_config_options(state))
+  end
+
+  defp config_options_result(state) do
+    %{"configOptions" => adapter_config_options(state)}
+  end
+
+  defp session_modes(state) do
+    if function_exported?(state.adapter_mod, :modes, 0) do
+      case state.adapter_mod.modes() do
+        [] -> nil
+        modes -> %{"availableModes" => modes, "currentModeId" => current_mode_id(modes)}
+      end
+    end
+  end
+
+  defp adapter_config_options(state) do
+    if function_exported?(state.adapter_mod, :config_options, 0) do
+      state.adapter_mod.config_options()
+    else
+      []
+    end
+  end
+
+  defp current_mode_id([%{"id" => id} | _]), do: id
+  defp current_mode_id([%{id: id} | _]), do: id
+  defp current_mode_id(_), do: nil
+
+  defp maybe_put_non_empty(map, _key, nil), do: map
+  defp maybe_put_non_empty(map, _key, []), do: map
+  defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
 
   defp maybe_post_connect(%{adapter_mod: adapter_mod, adapter_state: adapter_state} = state) do
     if function_exported?(adapter_mod, :post_connect, 1) do
@@ -317,13 +346,28 @@ defmodule ExMCP.ACP.AdapterBridge do
       {:ok, :skip, new_adapter_state} ->
         # No native auth — synthesize OK (agent handles auth externally)
         state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_result(state, id, %{"authenticated" => true})
+        state = synthesize_result(state, id, %{})
         {:reply, :ok, state}
 
       {:ok, data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
         _ = write_to_port(state, data)
-        state = synthesize_result(state, id, %{"authenticated" => true})
+        state = synthesize_result(state, id, %{})
+        {:reply, :ok, state}
+    end
+  end
+
+  defp handle_outbound(%{"method" => "logout", "id" => id} = msg, _json, _from, state) do
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, %{})
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        state = synthesize_result(state, id, %{})
         {:reply, :ok, state}
     end
   end
@@ -348,7 +392,7 @@ defmodule ExMCP.ACP.AdapterBridge do
       {:ok, :skip, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
         session_id = "session_#{System.unique_integer([:positive])}"
-        state = synthesize_result(state, id, %{"sessionId" => session_id})
+        state = synthesize_result(state, id, session_result(state, session_id))
         {:reply, :ok, state}
 
       {:ok, data, new_adapter_state} ->
@@ -362,12 +406,41 @@ defmodule ExMCP.ACP.AdapterBridge do
     case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
       {:ok, :skip, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_result(state, id, nil)
+        state = synthesize_result(state, id, session_state_result(state))
         {:reply, :ok, state}
 
       {:ok, data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
         _ = write_to_port(state, data)
+        {:reply, :ok, state}
+    end
+  end
+
+  defp handle_outbound(%{"method" => "session/resume", "id" => id} = msg, _json, _from, state) do
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, session_state_result(state))
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        {:reply, :ok, state}
+    end
+  end
+
+  defp handle_outbound(%{"method" => "session/close", "id" => id} = msg, _json, _from, state) do
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, %{})
+        {:reply, :ok, state}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        state = synthesize_result(state, id, %{})
         {:reply, :ok, state}
     end
   end
@@ -429,13 +502,13 @@ defmodule ExMCP.ACP.AdapterBridge do
     case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
       {:ok, :skip, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_result(state, id, %{})
+        state = synthesize_result(state, id, config_options_result(state))
         {:reply, :ok, state}
 
       {:ok, data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
         _ = write_to_port(state, data)
-        state = synthesize_result(state, id, %{})
+        state = synthesize_result(state, id, config_options_result(state))
         {:reply, :ok, state}
     end
   end

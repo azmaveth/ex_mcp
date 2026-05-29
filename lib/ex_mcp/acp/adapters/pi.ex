@@ -17,9 +17,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
   | Pi Event | ACP Message |
   |---|---|
   | `message_update` (text_delta) | `session/update` notification (text) |
-  | `message_update` (thinking_delta) | `session/update` notification (thinking) |
-  | `message_update` (tool_call) | `session/update` notification (tool_call) |
-  | `tool_execution_start/end` | `session/update` notification (tool_result) |
+  | `message_update` (thinking_delta) | `session/update` (`agent_thought_chunk`) |
+  | `message_update` (tool_call) | `session/update` (`tool_call`) |
+  | `tool_execution_start/end` | `session/update` (`tool_call_update`) |
   | `agent_end` | prompt response result |
   | `auto_compaction_*` | `session/update` notification (status) |
 
@@ -117,18 +117,20 @@ defmodule ExMCP.ACP.Adapters.Pi do
   @impl true
   def capabilities do
     %{
-      "streaming" => true,
-      "thinkingLevels" => @thinking_levels,
-      "supportedModes" => [
-        %{"id" => "code", "label" => "Code Mode"}
-      ],
-      "features" => %{
-        "steering" => true,
-        "followUp" => true,
-        "compaction" => true,
-        "sessionForking" => true,
-        "modelSwitching" => true,
-        "bash" => true
+      "promptCapabilities" => %{"image" => true},
+      "_meta" => %{
+        "thinkingLevels" => @thinking_levels,
+        "supportedModes" => [
+          %{"id" => "code", "label" => "Code Mode"}
+        ],
+        "features" => %{
+          "steering" => true,
+          "followUp" => true,
+          "compaction" => true,
+          "sessionForking" => true,
+          "modelSwitching" => true,
+          "bash" => true
+        }
       }
     }
   end
@@ -144,51 +146,49 @@ defmodule ExMCP.ACP.Adapters.Pi do
   def config_options do
     [
       %{
-        "id" => "model",
-        "name" => "Model",
-        "category" => "model",
-        "description" => "LLM model to use (provider/model format)",
-        "type" => "string"
-      },
-      %{
         "id" => "thinking_level",
         "name" => "Thinking Level",
         "category" => "thought_level",
         "description" => "Reasoning depth",
-        "type" => "enum",
-        "values" => @thinking_levels
+        "type" => "select",
+        "currentValue" => "medium",
+        "options" => Enum.map(@thinking_levels, &%{"value" => &1, "name" => &1})
       },
       %{
         "id" => "auto_compaction",
         "name" => "Auto Compaction",
         "category" => "other",
         "description" => "Automatically compact context when nearly full",
-        "type" => "boolean",
-        "default" => true
+        "type" => "select",
+        "currentValue" => "true",
+        "options" => boolean_options()
       },
       %{
         "id" => "auto_retry",
         "name" => "Auto Retry",
         "category" => "other",
         "description" => "Automatically retry on transient errors",
-        "type" => "boolean",
-        "default" => true
+        "type" => "select",
+        "currentValue" => "true",
+        "options" => boolean_options()
       },
       %{
         "id" => "steering_mode",
         "name" => "Steering Mode",
         "category" => "other",
         "description" => "How steering messages are delivered",
-        "type" => "enum",
-        "values" => ["all", "one-at-a-time"]
+        "type" => "select",
+        "currentValue" => "all",
+        "options" => mode_options()
       },
       %{
         "id" => "follow_up_mode",
         "name" => "Follow-up Mode",
         "category" => "other",
         "description" => "How follow-up messages are delivered",
-        "type" => "enum",
-        "values" => ["all", "one-at-a-time"]
+        "type" => "select",
+        "currentValue" => "all",
+        "options" => mode_options()
       }
     ]
   end
@@ -506,7 +506,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     notification =
       build_session_update(state, %{
-        "type" => "agent_message_chunk",
+        "sessionUpdate" => "agent_message_chunk",
         "content" => %{"type" => "text", "text" => delta}
       })
 
@@ -523,8 +523,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
        ) do
     notification =
       build_session_update(state, %{
-        "type" => "agent_message_chunk",
-        "content" => %{"type" => "thinking", "text" => delta}
+        "sessionUpdate" => "agent_thought_chunk",
+        "content" => %{"type" => "text", "text" => delta}
       })
 
     {:messages, [notification], state}
@@ -542,13 +542,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     notification =
       build_session_update(state, %{
-        "type" => "agent_message_chunk",
-        "content" => %{
-          "type" => "tool_call",
-          "name" => tool_call["name"] || tool_event["name"],
-          "arguments" => tool_call["arguments"] || tool_call["args"] || %{},
-          "id" => tool_call["id"] || "tc-#{state.msg_counter}"
-        }
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => tool_call["id"] || "tc-#{state.msg_counter}",
+        "title" => tool_call["name"] || tool_event["name"] || "Tool call",
+        "kind" => "other",
+        "status" => "pending",
+        "rawInput" => tool_call["arguments"] || tool_call["args"] || %{}
       })
 
     state = %{state | tool_calls: [tool_call | state.tool_calls]}
@@ -565,13 +564,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
        ) do
     notification =
       build_session_update(state, %{
-        "type" => "agent_message_chunk",
-        "content" => %{
-          "type" => "tool_call",
-          "name" => tool_event["name"],
-          "arguments" => tool_event["arguments"] || tool_event["args"],
-          "id" => tool_event["id"] || "tc-#{state.msg_counter}"
-        }
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => tool_event["id"] || "tc-#{state.msg_counter}",
+        "title" => tool_event["name"] || "Tool call",
+        "kind" => "other",
+        "status" => "pending",
+        "rawInput" => tool_event["arguments"] || tool_event["args"] || %{}
       })
 
     state = %{state | tool_calls: [tool_event | state.tool_calls]}
@@ -598,11 +596,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     notification =
       build_session_update(state, %{
-        "type" => "tool_execution",
-        "status" => "started",
+        "sessionUpdate" => "tool_call_update",
+        "status" => "in_progress",
         "toolCallId" => tool_call_id,
-        "toolName" => tool_name,
-        "arguments" => event["args"]
+        "title" => tool_name,
+        "kind" => "execute",
+        "rawInput" => event["args"]
       })
 
     {:messages, [notification], state}
@@ -622,11 +621,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     notification =
       build_session_update(state, %{
-        "type" => "tool_execution",
-        "status" => "progress",
+        "sessionUpdate" => "tool_call_update",
+        "status" => "in_progress",
         "toolCallId" => tool_call_id,
-        "toolName" => tool_name,
-        "content" => content
+        "title" => tool_name,
+        "content" => text_tool_content(content)
       })
 
     {:messages, [notification], state}
@@ -651,11 +650,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     notification =
       build_session_update(state, %{
-        "type" => "tool_result",
+        "sessionUpdate" => "tool_call_update",
         "toolCallId" => tool_call_id,
-        "toolName" => tool_name,
-        "content" => content,
-        "isError" => event["isError"] || false
+        "title" => tool_name,
+        "status" => if(event["isError"], do: "failed", else: "completed"),
+        "content" => text_tool_content(content),
+        "rawOutput" => result
       })
 
     {:messages, [notification], state}
@@ -686,7 +686,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
       "jsonrpc" => "2.0",
       "id" => state.pending_prompt_id,
       "result" => %{
-        "result" => text,
+        "stopReason" => "end_turn",
+        "text" => text,
         "sessionId" => state.session_id || "default",
         "usage" => %{
           "inputTokens" => usage["input"] || 0,
@@ -836,6 +837,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp build_session_update(state, update) do
+    update =
+      case Map.pop(update, "type") do
+        {nil, update} -> update
+        {type, update} -> Map.put(update, "sessionUpdate", type)
+      end
+
     %{
       "jsonrpc" => "2.0",
       "method" => "session/update",
@@ -900,6 +907,27 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp normalize_image(img), do: img
+
+  defp boolean_options do
+    [
+      %{"value" => "true", "name" => "On"},
+      %{"value" => "false", "name" => "Off"}
+    ]
+  end
+
+  defp mode_options do
+    [
+      %{"value" => "all", "name" => "All"},
+      %{"value" => "one-at-a-time", "name" => "One at a time"}
+    ]
+  end
+
+  defp text_tool_content(nil), do: []
+  defp text_tool_content(""), do: []
+
+  defp text_tool_content(text) when is_binary(text) do
+    [%{"type" => "content", "content" => %{"type" => "text", "text" => text}}]
+  end
 
   # Strip data:image/...;base64, prefix from base64 data
   defp strip_data_url(data) when is_binary(data) do
@@ -970,9 +998,17 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:ok, encode_rpc(rpc_msg), state}
   end
 
+  defp translate_config_option("auto_compaction", value, state) when value in ["true", "false"] do
+    translate_config_option("auto_compaction", value == "true", state)
+  end
+
   defp translate_config_option("auto_retry", value, state) when is_boolean(value) do
     rpc_msg = %{"type" => "set_auto_retry", "enabled" => value}
     {:ok, encode_rpc(rpc_msg), state}
+  end
+
+  defp translate_config_option("auto_retry", value, state) when value in ["true", "false"] do
+    translate_config_option("auto_retry", value == "true", state)
   end
 
   defp translate_config_option("steering_mode", value, state)

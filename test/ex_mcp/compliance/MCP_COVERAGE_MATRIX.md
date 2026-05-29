@@ -2,6 +2,13 @@
 
 This document tracks which MCP specification features are tested in our compliance test suite.
 
+## Current Upstream Status
+
+- Latest stable MCP version tracked by ExMCP: `2025-11-25`.
+- Stable official conformance runner pinned by `scripts/conformance.sh`: `@modelcontextprotocol/conformance@0.1.16`.
+- Draft MCP changes are tracked as guardrails, not implemented as stable behavior. Local tests assert that draft-only methods such as `server/discover` and `subscriptions/listen` are not advertised for `2025-11-25`.
+- Non-gating draft exploration can be run with `./scripts/conformance.sh draft-alpha`.
+
 ## Legend
 
 - ✅ Fully tested

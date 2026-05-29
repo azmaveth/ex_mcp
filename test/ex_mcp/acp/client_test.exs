@@ -120,12 +120,31 @@ defmodule ExMCP.ACP.ClientTest do
       updates = Keyword.get(opts, :updates, [])
       permission_request = Keyword.get(opts, :permission_request)
 
+      capabilities =
+        Keyword.get(opts, :capabilities, %{
+          "streaming" => true,
+          "loadSession" => true,
+          "sessionCapabilities" => %{
+            "list" => %{},
+            "resume" => %{},
+            "close" => %{}
+          },
+          "auth" => %{"logout" => %{}}
+        })
+
+      auth_methods =
+        Keyword.get(opts, :auth_methods, [
+          %{"id" => "api-key", "name" => "API Key"}
+        ])
+
       spawn_link(fn ->
         loop(%{
           to_client: to_client_relay,
           to_agent: to_agent_relay,
           updates: updates,
           permission_request: permission_request,
+          capabilities: capabilities,
+          auth_methods: auth_methods,
           test_pid: test_pid
         })
       end)
@@ -149,7 +168,8 @@ defmodule ExMCP.ACP.ClientTest do
           "jsonrpc" => "2.0",
           "result" => %{
             "agentInfo" => %{"name" => "mock_agent", "version" => "1.0.0"},
-            "agentCapabilities" => %{"streaming" => true},
+            "agentCapabilities" => state.capabilities,
+            "authMethods" => state.auth_methods,
             "protocolVersion" => 1
           },
           "id" => id
@@ -169,11 +189,55 @@ defmodule ExMCP.ACP.ClientTest do
       MessageRelay.push(state.to_client, response)
     end
 
+    defp handle_message(%{"method" => "authenticate", "id" => id, "params" => params}, state) do
+      send(state.test_pid, {:authenticate_request, params})
+      response = Jason.encode!(Protocol.encode_response(%{}, id))
+      MessageRelay.push(state.to_client, response)
+    end
+
+    defp handle_message(%{"method" => "logout", "id" => id}, state) do
+      send(state.test_pid, :logout_request)
+      response = Jason.encode!(Protocol.encode_response(%{}, id))
+      MessageRelay.push(state.to_client, response)
+    end
+
     defp handle_message(%{"method" => "session/load", "id" => id}, state) do
       response =
         Jason.encode!(%{
           "jsonrpc" => "2.0",
           "result" => %{"sessionId" => "sess_loaded_001"},
+          "id" => id
+        })
+
+      MessageRelay.push(state.to_client, response)
+    end
+
+    defp handle_message(%{"method" => "session/resume", "id" => id}, state) do
+      response =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "result" => %{"modes" => nil, "configOptions" => nil},
+          "id" => id
+        })
+
+      MessageRelay.push(state.to_client, response)
+    end
+
+    defp handle_message(%{"method" => "session/list", "id" => id, "params" => params}, state) do
+      send(state.test_pid, {:list_sessions_request, params})
+
+      response =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "result" => %{
+            "sessions" => [
+              %{
+                "sessionId" => "sess_mock_001",
+                "cwd" => "/tmp/project",
+                "title" => "Mock session"
+              }
+            ]
+          },
           "id" => id
         })
 
@@ -243,6 +307,12 @@ defmodule ExMCP.ACP.ClientTest do
       :ok
     end
 
+    defp handle_message(%{"method" => "session/close", "id" => id}, state) do
+      send(state.test_pid, :close_session_request)
+      response = Jason.encode!(Protocol.encode_response(%{}, id))
+      MessageRelay.push(state.to_client, response)
+    end
+
     defp handle_message(%{"method" => "session/set_mode", "id" => id}, state) do
       response = Jason.encode!(Protocol.encode_response(%{}, id))
       MessageRelay.push(state.to_client, response)
@@ -256,7 +326,55 @@ defmodule ExMCP.ACP.ClientTest do
     defp handle_message(_msg, _state), do: :ok
   end
 
-  defp start_client(agent_opts \\ []) do
+  defmodule BlockingUpdateHandler do
+    @behaviour ExMCP.ACP.Client.Handler
+
+    @impl true
+    def init(opts), do: {:ok, %{parent: Keyword.fetch!(opts, :parent)}}
+
+    @impl true
+    def handle_session_update(_session_id, update, state) do
+      send(state.parent, {:blocking_update_handler_started, self(), update})
+
+      receive do
+        :release_update_handler -> {:ok, state}
+      after
+        5_000 -> {:ok, state}
+      end
+    end
+
+    @impl true
+    def handle_permission_request(_session_id, _tool_call, options, state) do
+      option = List.first(options) || %{"optionId" => "allow"}
+      {:ok, %{"outcome" => "selected", "optionId" => option["optionId"]}, state}
+    end
+  end
+
+  defmodule BlockingPermissionHandler do
+    @behaviour ExMCP.ACP.Client.Handler
+
+    @impl true
+    def init(opts), do: {:ok, %{parent: Keyword.fetch!(opts, :parent)}}
+
+    @impl true
+    def handle_session_update(_session_id, _update, state), do: {:ok, state}
+
+    @impl true
+    def handle_permission_request(_session_id, _tool_call, options, state) do
+      send(state.parent, {:blocking_permission_handler_started, self()})
+
+      receive do
+        :release_permission_handler ->
+          option = List.first(options) || %{"optionId" => "allow"}
+          {:ok, %{"outcome" => "selected", "optionId" => option["optionId"]}, state}
+      after
+        5_000 ->
+          {:ok, %{"outcome" => "cancelled"}, state}
+      end
+    end
+  end
+
+  defp start_client(agent_opts \\ [], client_opts \\ []) do
     {:ok, to_client_relay} = MessageRelay.start_link()
     {:ok, to_agent_relay} = MessageRelay.start_link()
 
@@ -264,11 +382,13 @@ defmodule ExMCP.ACP.ClientTest do
 
     {:ok, client} =
       Client.start_link(
-        transport_mod: MockACPTransport,
-        command: ["mock"],
-        agent_pid: agent_pid,
-        to_client_relay: to_client_relay,
-        to_agent_relay: to_agent_relay
+        [
+          transport_mod: MockACPTransport,
+          command: ["mock"],
+          agent_pid: agent_pid,
+          to_client_relay: to_client_relay,
+          to_agent_relay: to_agent_relay
+        ] ++ client_opts
       )
 
     {client, agent_pid}
@@ -280,8 +400,35 @@ defmodule ExMCP.ACP.ClientTest do
 
       assert {:ok, caps} = Client.agent_capabilities(client)
       assert caps["streaming"] == true
+      assert caps["sessionCapabilities"]["resume"] == %{}
+
+      assert {:ok, auth_methods} = Client.auth_methods(client)
+      assert [%{"id" => "api-key"}] = auth_methods
 
       assert Client.status(client) == :ready
+    end
+  end
+
+  describe "authenticate/3 and logout/2" do
+    test "authenticate sends stable methodId params" do
+      {client, _agent} = start_client()
+
+      assert {:ok, %{}} = Client.authenticate(client, "api-key")
+      assert_receive {:authenticate_request, %{"methodId" => "api-key"}}, 5_000
+    end
+
+    test "logout requires and uses auth.logout capability" do
+      {client, _agent} = start_client()
+
+      assert {:ok, %{}} = Client.logout(client)
+      assert_receive :logout_request, 5_000
+    end
+
+    test "logout returns unsupported when capability is not advertised" do
+      {client, _agent} = start_client(capabilities: %{"streaming" => true})
+
+      assert {:error, {:unsupported_capability, :logout}} = Client.logout(client)
+      refute_receive :logout_request, 100
     end
   end
 
@@ -300,6 +447,42 @@ defmodule ExMCP.ACP.ClientTest do
 
       assert {:ok, result} = Client.load_session(client, "old_session_123", "/tmp")
       assert result["sessionId"] == "sess_loaded_001"
+    end
+  end
+
+  describe "resume_session/4" do
+    test "returns resume result when capability is advertised" do
+      {client, _agent} = start_client()
+
+      assert {:ok, result} = Client.resume_session(client, "old_session_123", "/tmp")
+      assert Map.has_key?(result, "modes")
+    end
+
+    test "returns unsupported when capability is not advertised" do
+      {client, _agent} = start_client(capabilities: %{"streaming" => true})
+
+      assert {:error, {:unsupported_capability, :session_resume}} =
+               Client.resume_session(client, "old_session_123", "/tmp")
+    end
+  end
+
+  describe "list_sessions/2" do
+    test "sends cursor and cwd filters when capability is advertised" do
+      {client, _agent} = start_client()
+
+      assert {:ok, %{"sessions" => [session]}} =
+               Client.list_sessions(client, cursor: "page-2", cwd: "/tmp/project")
+
+      assert session["sessionId"] == "sess_mock_001"
+
+      assert_receive {:list_sessions_request, %{"cursor" => "page-2", "cwd" => "/tmp/project"}},
+                     5_000
+    end
+
+    test "returns unsupported when capability is not advertised" do
+      {client, _agent} = start_client(capabilities: %{"streaming" => true})
+
+      assert {:error, {:unsupported_capability, :session_list}} = Client.list_sessions(client)
     end
   end
 
@@ -336,6 +519,37 @@ defmodule ExMCP.ACP.ClientTest do
       assert Client.status(client) == :ready
     end
 
+    test "slow session update handlers do not block prompt completion or event listener" do
+      updates = [
+        %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "streamed"}
+        }
+      ]
+
+      {client, _agent} =
+        start_client(
+          [updates: updates],
+          handler: BlockingUpdateHandler,
+          handler_opts: [parent: self()],
+          event_listener: self()
+        )
+
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      task =
+        Task.async(fn ->
+          Client.prompt(client, "sess_mock_001", "Do something", timeout: 1_000)
+        end)
+
+      assert_receive {:acp_session_update, "sess_mock_001", update}, 500
+      assert update["sessionUpdate"] == "agent_message_chunk"
+      assert_receive {:blocking_update_handler_started, handler_pid, ^update}, 500
+
+      assert {:ok, %{"text" => "streamed"}} = Task.await(task, 1_000)
+      send(handler_pid, :release_update_handler)
+    end
+
     test "accepts string content" do
       {client, _agent} = start_client()
 
@@ -350,6 +564,32 @@ defmodule ExMCP.ACP.ClientTest do
       blocks = [%{"type" => "text", "text" => "Hello"}]
       assert {:ok, _} = Client.prompt(client, "sess_mock_001", blocks)
     end
+
+    test "merges streamed agent_message_chunk text into the prompt result" do
+      # Agents like grok stream the answer via session/update agent_message_chunk
+      # rather than returning it in the prompt result. The client must accumulate
+      # that text and surface it as result["text"]; thought chunks are excluded.
+      updates = [
+        %{
+          "sessionUpdate" => "agent_thought_chunk",
+          "content" => %{"type" => "text", "text" => "thinking"}
+        },
+        %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "Hello "}
+        },
+        %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "world."}
+        }
+      ]
+
+      {client, _agent} = start_client(updates: updates)
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      assert {:ok, result} = Client.prompt(client, "sess_mock_001", "hi")
+      assert result["text"] == "Hello world."
+    end
   end
 
   describe "cancel/2" do
@@ -357,6 +597,40 @@ defmodule ExMCP.ACP.ClientTest do
       {client, _agent} = start_client()
 
       assert :ok = Client.cancel(client, "sess_mock_001")
+    end
+  end
+
+  describe "close_session/3" do
+    test "sends close request when capability is advertised" do
+      {client, _agent} = start_client()
+
+      assert {:ok, %{}} = Client.close_session(client, "sess_mock_001")
+      assert_receive :close_session_request, 5_000
+    end
+
+    test "returns unsupported when capability is not advertised" do
+      {client, _agent} = start_client(capabilities: %{"streaming" => true})
+
+      assert {:error, {:unsupported_capability, :session_close}} =
+               Client.close_session(client, "sess_mock_001")
+
+      refute_receive :close_session_request, 100
+    end
+  end
+
+  describe "end_session/2" do
+    test "uses close when capability is advertised" do
+      {client, _agent} = start_client()
+
+      assert {:ok, %{}} = Client.end_session(client, "sess_mock_001")
+      assert_receive :close_session_request, 5_000
+    end
+
+    test "falls back to local telemetry behavior when close is not advertised" do
+      {client, _agent} = start_client(capabilities: %{"streaming" => true})
+
+      assert :ok = Client.end_session(client, "sess_mock_001")
+      refute_receive :close_session_request, 100
     end
   end
 
@@ -375,8 +649,41 @@ defmodule ExMCP.ACP.ClientTest do
       {:ok, _} = Client.prompt(client, "sess_mock_001", "Write a file")
 
       assert_receive {:permission_response, resp}, 5_000
-      assert resp["result"]["outcome"] == "selected"
-      assert resp["result"]["optionId"] == "allow"
+      assert resp["result"]["outcome"]["outcome"] == "selected"
+      assert resp["result"]["outcome"]["optionId"] == "allow"
+    end
+
+    test "cancel replies cancelled to pending permission requests without waiting for handler" do
+      tool_call = %{"toolName" => "file_write", "arguments" => %{"path" => "/etc/hosts"}}
+
+      options = [
+        %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
+        %{"optionId" => "deny", "name" => "Deny", "kind" => "reject_once"}
+      ]
+
+      {client, _agent} =
+        start_client(
+          [permission_request: {tool_call, options}],
+          handler: BlockingPermissionHandler,
+          handler_opts: [parent: self()]
+        )
+
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      task =
+        Task.async(fn ->
+          Client.prompt(client, "sess_mock_001", "Write a file", timeout: 2_000)
+        end)
+
+      assert_receive {:blocking_permission_handler_started, handler_pid}, 500
+
+      assert :ok = Client.cancel(client, "sess_mock_001")
+      assert_receive {:permission_response, resp}, 1_000
+      assert resp["result"]["outcome"]["outcome"] == "cancelled"
+
+      assert {:ok, _} = Task.await(task, 2_000)
+      send(handler_pid, :release_permission_handler)
+      refute_receive {:permission_response, _late_response}, 200
     end
   end
 

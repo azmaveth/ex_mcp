@@ -15,6 +15,7 @@ defmodule ExMCP.VersionRegistryTest do
 
     test "identifies latest stable version" do
       assert VersionRegistry.latest_version() == "2025-11-25"
+      refute VersionRegistry.supported?("draft")
     end
 
     test "gets preferred version from config" do
@@ -153,6 +154,12 @@ defmodule ExMCP.VersionRegistryTest do
       assert Protocol.method_available?("tools/list", "2024-11-05")
       assert Protocol.method_available?("resources/list", "2024-11-05")
       assert Protocol.method_available?("prompts/list", "2024-11-05")
+
+      # Draft MCP methods are tracked but not advertised as stable.
+      refute Protocol.method_available?("server/discover", "2025-11-25")
+      refute Protocol.method_available?("subscriptions/listen", "2025-11-25")
+      assert Protocol.method_available?("server/discover", "draft")
+      assert Protocol.method_available?("subscriptions/listen", "draft")
     end
 
     test "validates message version compatibility" do

@@ -24,9 +24,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
   | `session/prompt` | `turn/start` request |
   | `session/cancel` | `turn/interrupt` request |
   | `item/agentMessage/delta` | `session/update` (text) |
-  | `item/reasoning/textDelta` | `session/update` (thinking) |
-  | `item/completed` (tool) | `session/update` (tool_call/tool_result) |
-  | `item/commandExecution/*` | `session/update` (tool_output) |
+  | `item/reasoning/textDelta` | `session/update` (`agent_thought_chunk`) |
+  | `item/completed` (tool) | `session/update` (`tool_call_update`) |
+  | `item/commandExecution/*` | `session/update` (`tool_call` / `tool_call_update`) |
   | `turn/completed` | prompt response result |
 
   ## Features
@@ -84,7 +84,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
   @impl true
   def capabilities do
     %{
-      "streaming" => true
+      "promptCapabilities" => %{"image" => true},
+      "loadSession" => true,
+      "sessionCapabilities" => %{"resume" => %{}}
       # Note: Codex supports approval policies (suggest/auto-edit/full-auto)
       # but these are set at thread/start, not switched dynamically.
     }
@@ -113,15 +115,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   @impl true
   def config_options do
-    [
-      %{
-        "id" => "model",
-        "name" => "Model",
-        "category" => "model",
-        "description" => "OpenAI model to use",
-        "type" => "string"
-      }
-    ]
+    []
   end
 
   @impl true
@@ -190,6 +184,13 @@ defmodule ExMCP.ACP.Adapters.Codex do
     else
       {:ok, :skip, state}
     end
+  end
+
+  def translate_outbound(
+        %{"method" => "session/resume", "id" => acp_id, "params" => params},
+        state
+      ) do
+    translate_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state)
   end
 
   def translate_outbound(
@@ -413,8 +414,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     notification =
       session_update(state, %{
-        "sessionUpdate" => "thinking",
-        "content" => delta
+        "sessionUpdate" => "agent_thought_chunk",
+        "content" => %{"type" => "text", "text" => delta}
       })
 
     {:messages, [notification], state}
@@ -432,9 +433,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
       session_update(state, %{
         "sessionUpdate" => "tool_call",
         "toolCallId" => item["callId"] || item["id"],
-        "toolName" => item["name"],
         "title" => item["name"],
-        "input" => item["arguments"],
+        "kind" => codex_tool_kind(item["name"]),
+        "rawInput" => item["arguments"],
         "status" => "pending"
       })
 
@@ -456,11 +457,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_notification("item/commandExecution/started", params, state) do
     notification =
       session_update(state, %{
-        "sessionUpdate" => "tool_execution",
-        "status" => "started",
+        "sessionUpdate" => "tool_call",
         "toolCallId" => params["callId"] || params["itemId"],
-        "toolName" => "command",
-        "command" => params["command"]
+        "title" => command_title(params["command"]),
+        "kind" => "execute",
+        "status" => "in_progress",
+        "rawInput" => %{"command" => params["command"]}
       })
 
     {:messages, [notification], state}
@@ -471,9 +473,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     notification =
       session_update(state, %{
-        "sessionUpdate" => "tool_output",
-        "content" => delta,
-        "itemId" => params["itemId"] || params["item_id"]
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => params["callId"] || params["itemId"] || params["item_id"],
+        "content" => [tool_text_content(delta)]
       })
 
     {:messages, [notification], state}
@@ -482,12 +484,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_notification("item/commandExecution/completed", params, state) do
     notification =
       session_update(state, %{
-        "sessionUpdate" => "tool_execution",
+        "sessionUpdate" => "tool_call_update",
         "status" => "completed",
         "toolCallId" => params["callId"] || params["itemId"],
-        "toolName" => "command",
-        "exitCode" => params["exitCode"],
-        "output" => params["output"]
+        "rawOutput" => %{
+          "exitCode" => params["exitCode"],
+          "output" => params["output"]
+        },
+        "content" => [tool_text_content(params["output"] || "")]
       })
 
     {:messages, [notification], state}
@@ -502,9 +506,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
       session_update(state, %{
         "sessionUpdate" => "tool_call",
         "toolCallId" => patch["id"] || params["itemId"],
-        "toolName" => "patch",
         "title" => "Edit File",
-        "input" => %{
+        "kind" => "edit",
+        "rawInput" => %{
           "path" => patch["path"],
           "diff" => patch["diff"]
         },
@@ -628,11 +632,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_notification("item/webSearch/started", params, state) do
     notification =
       session_update(state, %{
-        "sessionUpdate" => "tool_execution",
-        "status" => "started",
+        "sessionUpdate" => "tool_call",
         "toolCallId" => params["itemId"],
-        "toolName" => "web_search",
-        "query" => params["query"]
+        "title" => "Web Search",
+        "kind" => "fetch",
+        "status" => "in_progress",
+        "rawInput" => %{"query" => params["query"]}
       })
 
     {:messages, [notification], state}
@@ -641,11 +646,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_notification("item/webSearch/completed", params, state) do
     notification =
       session_update(state, %{
-        "sessionUpdate" => "tool_execution",
+        "sessionUpdate" => "tool_call_update",
         "status" => "completed",
         "toolCallId" => params["itemId"],
-        "toolName" => "web_search",
-        "results" => params["results"]
+        "rawOutput" => params["results"],
+        "content" => [tool_text_content(format_web_search_results(params["results"]))]
       })
 
     {:messages, [notification], state}
@@ -677,9 +682,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
       session_update(state, %{
         "sessionUpdate" => "tool_call_update",
         "toolCallId" => item["callId"] || item["id"],
-        "toolName" => item["name"],
         "status" => "completed",
-        "arguments" => item["arguments"]
+        "kind" => codex_tool_kind(item["name"]),
+        "rawInput" => item["arguments"]
       })
 
     {:messages, [notification], state}
@@ -688,10 +693,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_item_completed(%{"type" => "function_call_output"} = item, state) do
     notification =
       session_update(state, %{
-        "sessionUpdate" => "tool_result",
+        "sessionUpdate" => "tool_call_update",
         "toolCallId" => item["callId"] || item["id"],
-        "content" => item["output"] || item["text"] || "",
-        "isError" => item["isError"] || false
+        "status" => if(item["isError"], do: "failed", else: "completed"),
+        "content" => [tool_text_content(item["output"] || item["text"] || "")],
+        "rawOutput" => item["output"] || item["text"] || ""
       })
 
     {:messages, [notification], state}
@@ -700,12 +706,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_item_completed(%{"type" => "patch"} = item, state) do
     notification =
       session_update(state, %{
-        "sessionUpdate" => "tool_result",
+        "sessionUpdate" => "tool_call_update",
         "toolCallId" => item["callId"] || item["id"],
-        "toolName" => "patch",
-        "content" => item["diff"] || item["text"] || "",
-        "filePath" => item["path"],
-        "isError" => false
+        "kind" => "edit",
+        "status" => "completed",
+        "content" => [tool_diff_content(item["path"], item["diff"] || item["text"] || "")]
       })
 
     {:messages, [notification], state}
@@ -723,6 +728,47 @@ defmodule ExMCP.ACP.Adapters.Codex do
     entry = %{type: type, acp_id: acp_id}
     %{state | pending_requests: Map.put(state.pending_requests, id, entry)}
   end
+
+  defp tool_text_content(text) do
+    %{
+      "type" => "content",
+      "content" => %{"type" => "text", "text" => to_string(text || "")}
+    }
+  end
+
+  defp tool_diff_content(path, new_text) do
+    %{
+      "type" => "diff",
+      "path" => path || "",
+      "oldText" => nil,
+      "newText" => to_string(new_text || "")
+    }
+  end
+
+  defp command_title(command) when is_binary(command) and command != "", do: command
+  defp command_title(_), do: "Run Command"
+
+  defp codex_tool_kind(name) when is_binary(name) do
+    name = String.downcase(name)
+
+    cond do
+      String.contains?(name, ["read", "view", "open"]) -> "read"
+      String.contains?(name, ["write", "edit", "patch", "update"]) -> "edit"
+      String.contains?(name, ["delete", "remove"]) -> "delete"
+      String.contains?(name, ["move", "rename"]) -> "move"
+      String.contains?(name, ["search", "grep", "find"]) -> "search"
+      String.contains?(name, ["exec", "command", "bash", "shell"]) -> "execute"
+      String.contains?(name, ["think", "reason"]) -> "think"
+      String.contains?(name, ["fetch", "web"]) -> "fetch"
+      true -> "other"
+    end
+  end
+
+  defp codex_tool_kind(_), do: "other"
+
+  defp format_web_search_results(results) when is_binary(results), do: results
+  defp format_web_search_results(nil), do: ""
+  defp format_web_search_results(results), do: Jason.encode!(results)
 
   defp encode_request(id, method, params) do
     params = if is_map(params) and map_size(params) > 0, do: params, else: %{}

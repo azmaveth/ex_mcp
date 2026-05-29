@@ -103,14 +103,20 @@ ACP sessions represent ongoing conversations with an agent.
 ```elixir
 # Create a new session
 {:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/project",
-  mcp_servers: [%{"name" => "my-server", "url" => "http://localhost:3000"}]
+  mcp_servers: [
+    ExMCP.ACP.Types.http_mcp_server("my-server", "http://localhost:3000/mcp")
+  ]
 )
 
-# Resume an existing session
+# Load an existing session and replay conversation history
 {:ok, _} = ExMCP.ACP.Client.load_session(client, sid, "/project")
 
-# List available sessions (if agent supports it)
-{:ok, %{"sessions" => sessions}} = ExMCP.ACP.Client.list_sessions(client)
+# Resume an existing session without replaying history (if supported)
+{:ok, _} = ExMCP.ACP.Client.resume_session(client, sid, "/project")
+
+# List available sessions with optional filters (if supported)
+{:ok, %{"sessions" => sessions}} =
+  ExMCP.ACP.Client.list_sessions(client, cwd: "/project")
 
 # Send prompts (blocks until agent responds)
 {:ok, result} = ExMCP.ACP.Client.prompt(client, sid, "Add error handling")
@@ -122,8 +128,12 @@ ExMCP.ACP.Client.cancel(client, sid)
 ExMCP.ACP.Client.set_mode(client, sid, "code")
 ExMCP.ACP.Client.set_config_option(client, sid, "model", "claude-sonnet-4")
 
-# Authenticate (if agent requires it)
-ExMCP.ACP.Client.authenticate(client, %{"provider" => "api_key"})
+# Close a session and free agent-side resources (if supported)
+ExMCP.ACP.Client.close_session(client, sid)
+
+# Authenticate or logout (if agent requires/supports it)
+ExMCP.ACP.Client.authenticate(client, "api-key")
+ExMCP.ACP.Client.logout(client)
 ```
 
 ## Handling Session Events
@@ -144,21 +154,21 @@ defmodule MyApp.ACPHandler do
         IO.write(update["content"]["text"])
 
       "tool_call_update" ->
-        status = update["status"]  # "running", "completed", or "failed"
+        status = update["status"]  # "pending", "in_progress", "completed", or "failed"
         IO.puts("[#{status}] #{update["title"]}")
 
         # Rich metadata available for Claude adapter:
-        # update["kind"]      — "read", "write", "execute", "search", "think"
+        # update["kind"]      — "read", "edit", "execute", "search", "think"
         # update["locations"] — [%{"path" => "/src/app.ex", "line" => 10}]
         # update["content"]   — [%{"type" => "diff", "oldText" => ..., "newText" => ...}]
 
-      "plan_update" ->
+      "plan" ->
         for entry <- update["entries"] do
           IO.puts("  [#{entry["status"]}] #{entry["content"]}")
         end
 
-      "thinking" ->
-        IO.write(update["content"])
+      "agent_thought_chunk" ->
+        IO.write(update["content"]["text"])
 
       "usage" ->
         IO.puts("Tokens: #{update["inputTokens"]} in / #{update["outputTokens"]} out")
@@ -173,6 +183,7 @@ defmodule MyApp.ACPHandler do
   @impl true
   def handle_permission_request(_session_id, tool_call, options, state) do
     allow_option = Enum.find(options, &(&1["kind"] == "allow_once")) || List.first(options)
+    # Return the direct outcome; ExMCP wraps it as result.outcome on the wire.
     {:ok, %{"outcome" => "selected", "optionId" => allow_option["optionId"]}, state}
   end
 
@@ -217,22 +228,24 @@ The ACP spec defines these session update types (all supported by ExMCP):
 |------|-------------|
 | `agent_message_chunk` | Streaming text/image content from the agent |
 | `user_message_chunk` | Echo of user input |
-| `tool_call_update` | Tool call lifecycle (running → completed/failed) |
-| `plan_update` | Multi-step execution plan with entry status |
+| `agent_thought_chunk` | Streaming thought content from the agent |
+| `tool_call` | New tool call started |
+| `tool_call_update` | Tool call lifecycle (pending → in_progress → completed/failed) |
+| `plan` | Multi-step execution plan with entry status |
 | `available_commands_update` | Slash commands the agent supports |
 | `config_option_update` | Runtime config change notification |
 | `current_mode_update` | Operational mode change |
-| `session_info_update` | Session metadata (name, etc.) |
+| `session_info_update` | Session metadata such as title and updatedAt |
 
 ExMCP adapters also emit these extension types:
 
 | Type | Description |
 |------|-------------|
-| `thinking` | Agent reasoning/thinking content |
 | `status` | Operational status (compacting, retrying, etc.) |
 | `usage` | Token usage tracking |
-| `tool_execution` | Tool execution progress (Pi adapter) |
-| `tool_result` | Tool output content |
+| `error` | Adapter-specific error notification |
+| `rpc_response` / `rpc_error` | Pi extension command responses |
+| `extension_ui_request` | Pi extension UI request bridge |
 
 ## Writing Custom Adapters
 
@@ -249,7 +262,7 @@ defmodule MyApp.CustomAgentAdapter do
   def command(_opts), do: {"my-agent", ["--json-mode"]}
 
   @impl true
-  def capabilities, do: %{"streaming" => true}
+  def capabilities, do: %{}
 
   # Optional: declare supported modes
   @impl true
@@ -260,7 +273,19 @@ defmodule MyApp.CustomAgentAdapter do
   # Optional: declare config options
   @impl true
   def config_options do
-    [%{"id" => "model", "name" => "Model", "category" => "model", "type" => "string"}]
+    [
+      %{
+        "id" => "model",
+        "name" => "Model",
+        "category" => "model",
+        "type" => "select",
+        "currentValue" => "fast",
+        "options" => [
+          %{"value" => "fast", "name" => "Fast"},
+          %{"value" => "quality", "name" => "Quality"}
+        ]
+      }
+    ]
   end
 
   # Optional: list available sessions
@@ -332,7 +357,7 @@ Translates between ACP and Claude's NDJSON stream-json protocol.
 - Usage tracking with cache token support
 - System event and rate limit forwarding
 
-**Config options:** `model`, `thinking_budget`
+**Startup options:** `model`, `thinking_budget`. Claude does not currently advertise stable runtime ACP config options.
 
 ### Codex (`ExMCP.ACP.Adapters.Codex`)
 
@@ -347,7 +372,7 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 - Image content in prompts
 
 **Modes:** suggest, auto-edit, full-auto
-**Config options:** `model`
+**Config options:** none advertised through stable runtime ACP config options. `model` is a startup adapter option.
 
 ### Pi (`ExMCP.ACP.Adapters.Pi`)
 
@@ -362,7 +387,7 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 - Enhanced tool result parsing (content blocks, diffs, stdout/stderr/exitCode)
 - Image support with data-url prefix stripping
 
-**Config options:** `model`, `thinking_level`, `auto_compaction`, `auto_retry`, `steering_mode`, `follow_up_mode`
+**Config options:** `thinking_level`, `auto_compaction`, `auto_retry`, `steering_mode`, `follow_up_mode`
 
 **Extended commands** (via `pi/*` ACP methods): steer, follow_up, compact, set_thinking_level, set_model, get_state, get_session_stats, switch_session, fork, bash, export_html, and more.
 
@@ -391,7 +416,7 @@ Types.resource_block("file:///src/app.ex", text: "defmodule App do...")
 # Plan entries
 Types.plan_entry("Fix the auth bug", "high", "in_progress")
 
-# Plan update notification
+# Plan update notification (emits the stable "plan" update type)
 Types.plan_update(session_id, [
   Types.plan_entry("Read the code", "high", "completed"),
   Types.plan_entry("Write the fix", "high", "in_progress"),
@@ -406,10 +431,26 @@ ACP agents can use MCP servers as tool providers. Pass MCP server configurations
 ```elixir
 {:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/project",
   mcp_servers: [
-    %{"uri" => "http://localhost:4000/mcp", "name" => "my-tools"}
+    ExMCP.ACP.Types.stdio_mcp_server("local-tools", "my_mcp_server", args: ["--stdio"]),
+    ExMCP.ACP.Types.http_mcp_server("remote-tools", "http://localhost:4000/mcp")
   ]
 )
 ```
+
+## ACP Registry
+
+The public ACP Registry lists ACP-compatible agents and their distribution metadata:
+
+```elixir
+{:ok, registry} = ExMCP.ACP.Registry.fetch()
+
+agent = ExMCP.ACP.Registry.get_agent(registry, "codex-acp")
+{:ok, command} = ExMCP.ACP.Registry.npx_command(agent)
+
+{:ok, client} = ExMCP.ACP.start_client(command: command)
+```
+
+Use `ExMCP.ACP.Registry.find_agents/2` to search the decoded registry by agent id, name, or description.
 
 ## API Reference
 
@@ -418,6 +459,7 @@ ACP agents can use MCP servers as tool providers. Pass MCP server configurations
 - `ExMCP.ACP.Client.Handler` — Handler behaviour
 - `ExMCP.ACP.Protocol` — ACP JSON-RPC message encoding
 - `ExMCP.ACP.Types` — Type specs and builders
+- `ExMCP.ACP.Registry` — Public ACP Registry fetch and lookup helpers
 - `ExMCP.ACP.Adapter` — Adapter behaviour for non-native agents
 - `ExMCP.ACP.AdapterBridge` — GenServer bridge managing Port and message queue
 - `ExMCP.ACP.Adapters.Claude` — Claude Code adapter

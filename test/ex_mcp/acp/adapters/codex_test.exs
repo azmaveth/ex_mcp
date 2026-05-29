@@ -15,9 +15,11 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
   end
 
   describe "capabilities/0" do
-    test "returns streaming capability" do
+    test "returns stable ACP capabilities" do
       caps = Codex.capabilities()
-      assert caps["streaming"] == true
+      assert caps["loadSession"] == true
+      assert caps["promptCapabilities"]["image"] == true
+      assert caps["sessionCapabilities"]["resume"] == %{}
     end
   end
 
@@ -32,10 +34,8 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
   end
 
   describe "config_options/0" do
-    test "returns model option" do
-      opts = Codex.config_options()
-      ids = Enum.map(opts, & &1["id"])
-      assert "model" in ids
+    test "does not advertise non-stable dynamic config options" do
+      assert Codex.config_options() == []
     end
   end
 
@@ -258,8 +258,13 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       assert {:messages, [msg], new_state} = Codex.translate_inbound(line, state)
       assert msg["method"] == "session/update"
-      assert msg["params"]["update"]["sessionUpdate"] == "thinking"
-      assert msg["params"]["update"]["content"] == "Let me think..."
+      assert msg["params"]["update"]["sessionUpdate"] == "agent_thought_chunk"
+
+      assert msg["params"]["update"]["content"] == %{
+               "type" => "text",
+               "text" => "Let me think..."
+             }
+
       assert new_state.accumulated_thinking == ["Let me think..."]
     end
 
@@ -378,7 +383,27 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert msg["params"]["update"]["content"] == "Rate limited"
     end
 
-    test "item/commandExecution/outputDelta produces tool_output", %{state: state} do
+    test "item/commandExecution/started produces stable tool_call", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "method" => "item/commandExecution/started",
+          "params" => %{
+            "command" => "mix test",
+            "itemId" => "item-1",
+            "threadId" => "t-1"
+          }
+        })
+
+      assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
+      update = msg["params"]["update"]
+      assert update["sessionUpdate"] == "tool_call"
+      assert update["toolCallId"] == "item-1"
+      assert update["kind"] == "execute"
+      assert update["status"] == "in_progress"
+      assert update["rawInput"] == %{"command" => "mix test"}
+    end
+
+    test "item/commandExecution/outputDelta produces stable tool_call_update", %{state: state} do
       line =
         Jason.encode!(%{
           "method" => "item/commandExecution/outputDelta",
@@ -390,9 +415,62 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         })
 
       assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
-      assert msg["params"]["update"]["sessionUpdate"] == "tool_output"
-      assert msg["params"]["update"]["content"] == "$ ls\nfoo.txt\n"
-      assert msg["params"]["update"]["itemId"] == "item-1"
+      update = msg["params"]["update"]
+      assert update["sessionUpdate"] == "tool_call_update"
+      assert update["toolCallId"] == "item-1"
+
+      assert update["content"] == [
+               %{
+                 "type" => "content",
+                 "content" => %{"type" => "text", "text" => "$ ls\nfoo.txt\n"}
+               }
+             ]
+    end
+
+    test "item/commandExecution/completed produces stable tool_call_update", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "method" => "item/commandExecution/completed",
+          "params" => %{
+            "output" => "ok\n",
+            "exitCode" => 0,
+            "itemId" => "item-1",
+            "threadId" => "t-1"
+          }
+        })
+
+      assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
+      update = msg["params"]["update"]
+      assert update["sessionUpdate"] == "tool_call_update"
+      assert update["toolCallId"] == "item-1"
+      assert update["status"] == "completed"
+      assert update["rawOutput"] == %{"exitCode" => 0, "output" => "ok\n"}
+    end
+
+    test "item/completed function_call_output produces stable tool_call_update", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "method" => "item/completed",
+          "params" => %{
+            "item" => %{
+              "type" => "function_call_output",
+              "callId" => "call-1",
+              "output" => "done",
+              "isError" => false
+            },
+            "threadId" => "t-1"
+          }
+        })
+
+      assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
+      update = msg["params"]["update"]
+      assert update["sessionUpdate"] == "tool_call_update"
+      assert update["toolCallId"] == "call-1"
+      assert update["status"] == "completed"
+
+      assert update["content"] == [
+               %{"type" => "content", "content" => %{"type" => "text", "text" => "done"}}
+             ]
     end
 
     test "unknown notifications are skipped", %{state: state} do

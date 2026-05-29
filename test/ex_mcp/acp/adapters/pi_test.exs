@@ -36,12 +36,12 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   end
 
   describe "capabilities/0" do
-    test "returns streaming and features" do
+    test "returns stable capabilities and adapter metadata" do
       caps = Pi.capabilities()
-      assert caps["streaming"] == true
-      assert is_map(caps["features"])
-      assert caps["features"]["steering"] == true
-      assert caps["features"]["compaction"] == true
+      assert caps["promptCapabilities"]["image"] == true
+      assert is_map(caps["_meta"]["features"])
+      assert caps["_meta"]["features"]["steering"] == true
+      assert caps["_meta"]["features"]["compaction"] == true
     end
   end
 
@@ -54,10 +54,9 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   end
 
   describe "config_options/0" do
-    test "returns model, thinking_level, and other options" do
+    test "returns stable select options" do
       opts = Pi.config_options()
       ids = Enum.map(opts, & &1["id"])
-      assert "model" in ids
       assert "thinking_level" in ids
       assert "auto_compaction" in ids
       assert "auto_retry" in ids
@@ -68,9 +67,9 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     test "thinking_level has correct values" do
       opts = Pi.config_options()
       tl = Enum.find(opts, &(&1["id"] == "thinking_level"))
-      assert tl["type"] == "enum"
-      assert "off" in tl["values"]
-      assert "high" in tl["values"]
+      assert tl["type"] == "select"
+      assert %{"value" => "off", "name" => "off"} in tl["options"]
+      assert %{"value" => "high", "name" => "high"} in tl["options"]
     end
   end
 
@@ -173,7 +172,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert {:messages, [notification], new_state} = Pi.translate_inbound(line, state)
       assert notification["method"] == "session/update"
       update = notification["params"]["update"]
-      assert update["type"] == "agent_message_chunk"
+      assert update["sessionUpdate"] == "agent_message_chunk"
       assert update["content"]["text"] == "Hello"
       assert new_state.text_acc == ["Hello"]
     end
@@ -187,8 +186,8 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["type"] == "agent_message_chunk"
-      assert update["content"]["type"] == "thinking"
+      assert update["sessionUpdate"] == "agent_thought_chunk"
+      assert update["content"] == %{"type" => "text", "text" => "Let me think..."}
     end
   end
 
@@ -204,7 +203,8 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:messages, [response], new_state} = Pi.translate_inbound(line, state)
       assert response["id"] == 5
-      assert response["result"]["result"] == "Hello world"
+      assert response["result"]["text"] == "Hello world"
+      assert response["result"]["stopReason"] == "end_turn"
       assert new_state.pending_prompt_id == nil
       assert new_state.text_acc == []
     end
@@ -222,9 +222,9 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["type"] == "tool_execution"
-      assert update["status"] == "started"
-      assert update["toolName"] == "bash"
+      assert update["sessionUpdate"] == "tool_call_update"
+      assert update["status"] == "in_progress"
+      assert update["title"] == "bash"
     end
 
     test "tool_execution_end emits tool result", %{state: state} do
@@ -239,9 +239,9 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["type"] == "tool_result"
-      assert update["content"] == "file1.txt"
-      assert update["isError"] == false
+      assert update["sessionUpdate"] == "tool_call_update"
+      assert update["status"] == "completed"
+      assert hd(update["content"])["content"]["text"] == "file1.txt"
     end
   end
 
@@ -312,7 +312,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["content"] == "file contents here"
+      assert hd(update["content"])["content"]["text"] == "file contents here"
     end
 
     test "tool_execution_end with diff in details", %{state: state} do
@@ -330,7 +330,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["content"] =~ "--- a/file.ex"
+      assert hd(update["content"])["content"]["text"] =~ "--- a/file.ex"
     end
 
     test "tool_execution_end with stdout/stderr/exitCode", %{state: state} do
@@ -352,9 +352,10 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["content"] =~ "hello world"
-      assert update["content"] =~ "stderr:"
-      assert update["content"] =~ "exit code: 0"
+      text = hd(update["content"])["content"]["text"]
+      assert text =~ "hello world"
+      assert text =~ "stderr:"
+      assert text =~ "exit code: 0"
     end
   end
 end

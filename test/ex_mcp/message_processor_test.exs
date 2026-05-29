@@ -27,6 +27,39 @@ defmodule ExMCP.MessageProcessorTest do
     end
   end
 
+  defmodule HandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(_args), do: {:ok, %{}}
+
+    @impl true
+    def handle_initialize(_params, state) do
+      {:ok, %{name: "handler-server", version: "1.0.0", capabilities: %{completions: %{}}}, state}
+    end
+
+    @impl true
+    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+
+    @impl true
+    def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
+
+    @impl true
+    def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
+
+    @impl true
+    def handle_complete(ref, argument, state) do
+      {:ok,
+       %{
+         completion: %{
+           values: ["#{ref["name"]}:#{argument["value"]}"],
+           total: 1,
+           hasMore: false
+         }
+       }, state}
+    end
+  end
+
   describe "new/2" do
     test "creates a new connection with request" do
       request = %{"method" => "test", "params" => %{}}
@@ -98,6 +131,48 @@ defmodule ExMCP.MessageProcessorTest do
       assert result_conn.halted == true
       assert result_conn.assigns[:halted_here] == true
       assert result_conn.assigns[:test_key] == nil
+    end
+  end
+
+  describe "process/2 with Server.Handler modules" do
+    test "normalizes initialize replies from handler GenServers" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2025-11-25",
+          "capabilities" => %{},
+          "clientInfo" => %{"name" => "test", "version" => "1.0.0"}
+        },
+        "id" => 1
+      }
+
+      conn =
+        request |> MessageProcessor.new() |> MessageProcessor.process(%{handler: HandlerServer})
+
+      assert conn.response["result"]["serverInfo"] == %{
+               "name" => "handler-server",
+               "version" => "1.0.0"
+             }
+
+      assert conn.response["result"]["protocolVersion"] == "2025-11-25"
+    end
+
+    test "dispatches completion params as ref and argument" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "completion/complete",
+        "params" => %{
+          "ref" => %{"type" => "ref/prompt", "name" => "prompt"},
+          "argument" => %{"name" => "arg", "value" => "par"}
+        },
+        "id" => 2
+      }
+
+      conn =
+        request |> MessageProcessor.new() |> MessageProcessor.process(%{handler: HandlerServer})
+
+      assert conn.response["result"]["completion"]["values"] == ["prompt:par"]
     end
   end
 end

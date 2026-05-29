@@ -12,6 +12,7 @@
 #
 # Environment variables:
 #   CONFORMANCE_SPEC_VERSION  — Test a specific version (e.g., 2025-06-18)
+#   CONFORMANCE_PACKAGE_VERSION — Conformance package version (default: 0.1.16)
 #   CONFORMANCE_PORT          — Server port (default: 3099)
 #   CONFORMANCE_TIMEOUT       — Client timeout in ms (default: 120000)
 #
@@ -21,7 +22,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-CONFORMANCE="npx @modelcontextprotocol/conformance"
+CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_PACKAGE_VERSION:-0.1.16}"
+CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
 SERVER_PORT="${CONFORMANCE_PORT:-3099}"
 SERVER_SCRIPT="$PROJECT_DIR/test/conformance/server.exs"
 CLIENT_SCRIPT="$PROJECT_DIR/test/conformance/client.exs"
@@ -144,6 +146,21 @@ run_all_versions() {
   echo "========================================" | tee -a "$OUTPUT_FILE"
 }
 
+run_draft_alpha() {
+  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.1}"
+  CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
+  SPEC_VERSION="${CONFORMANCE_SPEC_VERSION:-draft}"
+
+  echo "========================================" | tee -a "$OUTPUT_FILE"
+  echo "Running non-gating draft conformance with $CONFORMANCE" | tee -a "$OUTPUT_FILE"
+  echo "========================================" | tee -a "$OUTPUT_FILE"
+
+  run_server_tests "" "$SPEC_VERSION" || true
+  run_client_tests "" "$SPEC_VERSION" || true
+
+  echo "Draft alpha conformance run complete (non-gating)." | tee -a "$OUTPUT_FILE"
+}
+
 # Clear output file
 > "$OUTPUT_FILE"
 echo "MCP Conformance Test Run — $(date)" >> "$OUTPUT_FILE"
@@ -169,17 +186,23 @@ case "$MODE" in
   all-versions)
     run_all_versions
     ;;
+  draft-alpha)
+    run_draft_alpha
+    ;;
   *)
-    echo "Usage: $0 [server|client|all|all-versions] [scenario]"
+    echo "Usage: $0 [server|client|all|all-versions|draft-alpha] [scenario]"
     echo ""
     echo "Modes:"
     echo "  server        Run server conformance tests"
     echo "  client        Run client conformance tests"
     echo "  all           Run both (default)"
-    echo "  all-versions  Test all protocol versions (2024-11-05 through 2025-11-25)"
+    echo "  all-versions  Test conformance-supported versions through 2025-11-25"
+    echo "  draft-alpha   Non-gating draft run using conformance 0.2.0-alpha.1"
     echo ""
     echo "Environment:"
     echo "  CONFORMANCE_SPEC_VERSION=2025-06-18  Test a specific version"
+    echo "  CONFORMANCE_PACKAGE_VERSION=0.1.16   Pin stable conformance package"
+    echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.1  Override draft-alpha package"
     exit 1
     ;;
 esac

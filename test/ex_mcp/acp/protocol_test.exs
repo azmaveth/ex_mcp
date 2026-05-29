@@ -59,6 +59,24 @@ defmodule ExMCP.ACP.ProtocolTest do
 
       assert msg["method"] == "session/load"
       assert msg["params"]["sessionId"] == "sess_abc"
+      assert msg["params"]["mcpServers"] == []
+    end
+  end
+
+  describe "encode_session_resume/3" do
+    test "includes session ID, cwd, and mcp servers" do
+      servers = [%{"type" => "stdio", "name" => "local", "command" => "mcp", "args" => []}]
+      msg = Protocol.encode_session_resume("sess_abc", "/tmp/project", servers)
+
+      assert msg["method"] == "session/resume"
+      assert msg["params"]["sessionId"] == "sess_abc"
+      assert msg["params"]["cwd"] == "/tmp/project"
+      assert msg["params"]["mcpServers"] == servers
+    end
+
+    test "defaults mcp servers to an empty list" do
+      msg = Protocol.encode_session_resume("sess_abc")
+      assert msg["params"]["mcpServers"] == []
     end
   end
 
@@ -84,6 +102,16 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
   end
 
+  describe "encode_session_close/1" do
+    test "produces a request with an id" do
+      msg = Protocol.encode_session_close("sess_1")
+
+      assert msg["method"] == "session/close"
+      assert msg["params"]["sessionId"] == "sess_1"
+      assert is_integer(msg["id"])
+    end
+  end
+
   describe "encode_session_set_mode/2" do
     test "produces valid request" do
       msg = Protocol.encode_session_set_mode("sess_1", "code")
@@ -106,14 +134,14 @@ defmodule ExMCP.ACP.ProtocolTest do
   end
 
   describe "encode_permission_response/2" do
-    test "encodes outcome directly as result" do
+    test "wraps the selected outcome in the stable response shape" do
       msg =
         Protocol.encode_permission_response(42, %{"outcome" => "selected", "optionId" => "allow"})
 
       assert msg["jsonrpc"] == "2.0"
       assert msg["id"] == 42
-      assert msg["result"]["outcome"] == "selected"
-      assert msg["result"]["optionId"] == "allow"
+      assert msg["result"]["outcome"]["outcome"] == "selected"
+      assert msg["result"]["outcome"]["optionId"] == "allow"
     end
   end
 
@@ -127,28 +155,46 @@ defmodule ExMCP.ACP.ProtocolTest do
   end
 
   describe "encode_file_write_response/1" do
-    test "returns null result" do
+    test "returns empty object result" do
       msg = Protocol.encode_file_write_response(9)
 
-      assert msg["result"] == nil
+      assert msg["result"] == %{}
       assert msg["id"] == 9
     end
   end
 
   describe "encode_authenticate/1" do
-    test "produces valid request" do
-      msg = Protocol.encode_authenticate(%{"provider" => "api_key", "key" => "sk-123"})
+    test "wraps method ID strings using the stable ACP shape" do
+      msg = Protocol.encode_authenticate("api-key")
 
       assert msg["jsonrpc"] == "2.0"
       assert msg["method"] == "authenticate"
-      assert msg["params"]["provider"] == "api_key"
+      assert msg["params"]["methodId"] == "api-key"
       assert is_integer(msg["id"])
+    end
+
+    test "passes map params through for adapter compatibility" do
+      msg = Protocol.encode_authenticate(%{"provider" => "api_key", "key" => "sk-123"})
+
+      assert msg["params"]["provider"] == "api_key"
+      assert msg["params"]["key"] == "sk-123"
     end
 
     test "works with empty params" do
       msg = Protocol.encode_authenticate()
       assert msg["method"] == "authenticate"
       assert msg["params"] == %{}
+    end
+  end
+
+  describe "encode_logout/0" do
+    test "produces valid request" do
+      msg = Protocol.encode_logout()
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "logout"
+      assert msg["params"] == %{}
+      assert is_integer(msg["id"])
     end
   end
 
@@ -164,6 +210,11 @@ defmodule ExMCP.ACP.ProtocolTest do
     test "includes cursor when provided" do
       msg = Protocol.encode_session_list(cursor: "page2")
       assert msg["params"]["cursor"] == "page2"
+    end
+
+    test "includes cwd filter when provided" do
+      msg = Protocol.encode_session_list(cwd: "/tmp/project")
+      assert msg["params"]["cwd"] == "/tmp/project"
     end
   end
 

@@ -724,12 +724,19 @@ defmodule ExMCP.Internal.Protocol do
                             "notifications/tasks/status",
                             "notifications/elicitation/complete"
                           ])
+  @methods_draft_only MapSet.new([
+                        "server/discover",
+                        "subscriptions/listen"
+                      ])
   @versions_v20250326_plus MapSet.new(["2025-03-26", "2025-06-18", "2025-11-25"])
   @versions_v20250618_plus MapSet.new(["2025-06-18", "2025-11-25"])
 
   @spec method_available?(String.t(), String.t()) :: boolean()
   def method_available?(method, version) do
     cond do
+      MapSet.member?(@methods_draft_only, method) ->
+        version == "draft"
+
       MapSet.member?(@methods_v20251125_only, method) ->
         version == "2025-11-25"
 

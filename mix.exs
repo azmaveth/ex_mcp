@@ -153,11 +153,13 @@ defmodule ExMCP.MixProject do
           ExMCP.ACP.Client.DefaultHandler,
           ExMCP.ACP.Protocol,
           ExMCP.ACP.Types,
+          ExMCP.ACP.Registry,
           ExMCP.ACP.Adapter,
           ExMCP.ACP.AdapterBridge,
           ExMCP.ACP.AdapterTransport,
           ExMCP.ACP.Adapters.Claude,
-          ExMCP.ACP.Adapters.Codex
+          ExMCP.ACP.Adapters.Codex,
+          ExMCP.ACP.Adapters.Pi
         ],
         "ExMCP Extensions": [
           ExMCP.Transport.Beam,

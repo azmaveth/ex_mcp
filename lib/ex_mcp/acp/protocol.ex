@@ -70,12 +70,12 @@ defmodule ExMCP.ACP.Protocol do
     }
   end
 
-  @doc "Encodes a `session/load` request to resume an existing session."
+  @doc "Encodes a `session/load` request to load an existing session and replay history."
   @spec encode_session_load(String.t(), String.t() | nil, [map()] | nil) :: map()
   def encode_session_load(session_id, cwd \\ nil, mcp_servers \\ nil) do
     params = %{"sessionId" => session_id}
     params = maybe_put(params, "cwd", cwd)
-    params = maybe_put(params, "mcpServers", mcp_servers)
+    params = Map.put(params, "mcpServers", mcp_servers || [])
 
     %{
       "jsonrpc" => "2.0",
@@ -90,6 +90,7 @@ defmodule ExMCP.ACP.Protocol do
   def encode_session_list(opts \\ []) do
     params = %{}
     params = maybe_put(params, "cursor", Keyword.get(opts, :cursor))
+    params = maybe_put(params, "cwd", Keyword.get(opts, :cwd))
 
     %{
       "jsonrpc" => "2.0",
@@ -102,18 +103,51 @@ defmodule ExMCP.ACP.Protocol do
   @doc """
   Encodes an `authenticate` request.
 
-  Authentication is currently in RFD draft stage in the ACP spec.
-  Error code -32000 indicates authentication is required.
+  ACP v1 authentication uses a `"methodId"` selected from the agent's
+  `authMethods` initialize response. A map may still be passed for adapter
+  compatibility.
 
   ## Parameters
 
-  - `params` — authentication parameters (provider-specific)
+  - `method_id_or_params` — auth method ID string or full params map
   """
-  @spec encode_authenticate(map()) :: map()
-  def encode_authenticate(params \\ %{}) do
+  @spec encode_authenticate(String.t() | map()) :: map()
+  def encode_authenticate(method_id_or_params \\ %{})
+
+  def encode_authenticate(method_id) when is_binary(method_id) do
+    encode_authenticate(%{"methodId" => method_id})
+  end
+
+  def encode_authenticate(params) when is_map(params) do
     %{
       "jsonrpc" => "2.0",
       "method" => "authenticate",
+      "params" => params,
+      "id" => generate_id()
+    }
+  end
+
+  @doc "Encodes a `logout` request. Stabilized in ACP spec May 21, 2026."
+  @spec encode_logout() :: map()
+  def encode_logout do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "logout",
+      "params" => %{},
+      "id" => generate_id()
+    }
+  end
+
+  @doc "Encodes a `session/resume` request. Stabilized in ACP spec April 22, 2026."
+  @spec encode_session_resume(String.t(), String.t() | nil, [map()] | nil) :: map()
+  def encode_session_resume(session_id, cwd \\ nil, mcp_servers \\ nil) do
+    params = %{"sessionId" => session_id}
+    params = maybe_put(params, "cwd", cwd)
+    params = Map.put(params, "mcpServers", mcp_servers || [])
+
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "session/resume",
       "params" => params,
       "id" => generate_id()
     }
@@ -140,7 +174,18 @@ defmodule ExMCP.ACP.Protocol do
     }
   end
 
-  @doc "Encodes a `session/setMode` request."
+  @doc "Encodes a `session/close` request. Stabilized in ACP spec April 23, 2026."
+  @spec encode_session_close(String.t()) :: map()
+  def encode_session_close(session_id) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "session/close",
+      "params" => %{"sessionId" => session_id},
+      "id" => generate_id()
+    }
+  end
+
+  @doc "Encodes a `session/set_mode` request."
   @spec encode_session_set_mode(String.t(), String.t()) :: map()
   def encode_session_set_mode(session_id, mode_id) do
     %{
@@ -151,7 +196,7 @@ defmodule ExMCP.ACP.Protocol do
     }
   end
 
-  @doc "Encodes a `session/setConfigOption` request."
+  @doc "Encodes a `session/set_config_option` request."
   @spec encode_session_set_config_option(String.t(), String.t(), any()) :: map()
   def encode_session_set_config_option(session_id, config_id, value) do
     %{
@@ -166,8 +211,12 @@ defmodule ExMCP.ACP.Protocol do
 
   @doc "Encodes a response to a `session/request_permission` request from the agent."
   @spec encode_permission_response(integer() | String.t(), map()) :: map()
+  def encode_permission_response(id, %{"outcome" => %{"outcome" => _}} = response) do
+    encode_response(response, id)
+  end
+
   def encode_permission_response(id, outcome) do
-    encode_response(outcome, id)
+    encode_response(%{"outcome" => outcome}, id)
   end
 
   @doc "Encodes a response to a `fs/read_text_file` request from the agent."
@@ -179,7 +228,7 @@ defmodule ExMCP.ACP.Protocol do
   @doc "Encodes a response to a `fs/write_text_file` request from the agent."
   @spec encode_file_write_response(integer() | String.t()) :: map()
   def encode_file_write_response(id) do
-    encode_response(nil, id)
+    encode_response(%{}, id)
   end
 
   defp maybe_put(map, _key, nil), do: map

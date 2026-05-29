@@ -402,6 +402,11 @@ defmodule ConformanceHandler do
   end
 
   def handle_get_prompt(name, _args, state), do: {:error, "Unknown prompt: #{name}", state}
+
+  @impl true
+  def handle_complete(_ref, _argument, state) do
+    {:ok, %{completion: %{values: [], total: 0, hasMore: false}}, state}
+  end
 end
 
 # ── SSE Router (handles bidirectional tools) ─────────────────────

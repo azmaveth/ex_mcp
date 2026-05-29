@@ -51,19 +51,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
   end
 
   describe "capabilities/0" do
-    test "returns streaming capability" do
+    test "keeps adapter metadata under _meta" do
       caps = Claude.capabilities()
-      assert caps["streaming"] == true
+      assert caps["_meta"]["streaming"] == true
     end
   end
 
   describe "config_options/0" do
-    test "returns model and thinking_budget options" do
-      opts = Claude.config_options()
-      ids = Enum.map(opts, & &1["id"])
-      assert "model" in ids
-      assert "thinking_budget" in ids
-      assert Enum.all?(opts, &Map.has_key?(&1, "category"))
+    test "does not advertise non-stable dynamic config options" do
+      assert Claude.config_options() == []
     end
   end
 
@@ -207,8 +203,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       assert {:messages, [msg], new_state} = Claude.translate_inbound(line, state)
 
-      assert msg["params"]["update"]["sessionUpdate"] == "thinking"
-      assert msg["params"]["update"]["content"] == "Let me think..."
+      assert msg["params"]["update"]["sessionUpdate"] == "agent_thought_chunk"
+
+      assert msg["params"]["update"]["content"] == %{
+               "type" => "text",
+               "text" => "Let me think..."
+             }
+
       assert new_state.current_block_type == :thinking
     end
   end
@@ -371,7 +372,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert update["sessionUpdate"] == "tool_call_update"
       assert update["title"] == "Search: defmodule"
       assert update["toolCallId"] == "toolu_123"
-      assert update["status"] == "running"
+      assert update["status"] == "in_progress"
       assert update["kind"] == "search"
       # Pattern is in content, not flat
       assert [%{"type" => "content", "content" => %{"type" => "text", "text" => "defmodule"}}] =
@@ -477,7 +478,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["kind"] == "write"
+      assert update["kind"] == "edit"
 
       assert [
                %{
@@ -516,7 +517,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
       update = notification["params"]["update"]
-      assert update["kind"] == "write"
+      assert update["kind"] == "edit"
 
       assert [%{"type" => "diff", "oldText" => "def old", "newText" => "def new"}] =
                update["content"]

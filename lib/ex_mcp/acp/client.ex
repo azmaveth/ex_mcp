@@ -33,6 +33,7 @@ defmodule ExMCP.ACP.Client do
   require Logger
 
   alias ExMCP.ACP.Client.DefaultHandler
+  alias ExMCP.ACP.Client.HandlerRunner
   alias ExMCP.ACP.Protocol
   alias ExMCP.Transport.Stdio
 
@@ -42,12 +43,18 @@ defmodule ExMCP.ACP.Client do
     :receiver_pid,
     :agent_info,
     :agent_capabilities,
+    :auth_methods,
     :handler_mod,
-    :handler_state,
+    :handler_pid,
     :event_listener,
     :protocol_version,
     pending_requests: %{},
+    pending_agent_requests: %{},
     sessions: %{},
+    # Accumulates streamed agent_message_chunk text per session so a synchronous
+    # prompt/3 can return it — agents that stream the answer via session/update
+    # otherwise leave the prompt result with no text.
+    prompt_text: %{},
     status: :connecting
   ]
 
@@ -63,13 +70,21 @@ defmodule ExMCP.ACP.Client do
   @doc """
   Authenticates with the agent.
 
-  Authentication is currently in RFD draft stage in the ACP spec.
-  Sends provider-specific authentication parameters.
+  Pass either a method ID advertised in the initialize response's
+  `"authMethods"` list or a full params map for adapter compatibility.
   """
-  @spec authenticate(GenServer.server(), map(), keyword()) :: {:ok, map()} | {:error, any()}
-  def authenticate(client, params \\ %{}, opts \\ []) do
+  @spec authenticate(GenServer.server(), String.t() | map(), keyword()) ::
+          {:ok, map() | nil} | {:error, any()}
+  def authenticate(client, method_id_or_params \\ %{}, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    GenServer.call(client, {:authenticate, params}, timeout)
+    GenServer.call(client, {:authenticate, method_id_or_params}, timeout)
+  end
+
+  @doc "Logs out of the current authenticated state if the agent supports `auth.logout`."
+  @spec logout(GenServer.server(), keyword()) :: {:ok, map() | nil} | {:error, any()}
+  def logout(client, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    GenServer.call(client, :logout, timeout)
   end
 
   @doc "Creates a new agent session."
@@ -81,13 +96,22 @@ defmodule ExMCP.ACP.Client do
     GenServer.call(client, {:new_session, cwd, mcp_servers}, timeout)
   end
 
-  @doc "Loads (resumes) an existing session."
+  @doc "Loads an existing session and replays previous messages when the agent supports it."
   @spec load_session(GenServer.server(), String.t(), String.t() | nil, keyword()) ::
           {:ok, map()} | {:error, any()}
   def load_session(client, session_id, cwd \\ nil, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     mcp_servers = Keyword.get(opts, :mcp_servers)
     GenServer.call(client, {:load_session, session_id, cwd, mcp_servers}, timeout)
+  end
+
+  @doc "Resumes an existing session without replaying previous messages."
+  @spec resume_session(GenServer.server(), String.t(), String.t() | nil, keyword()) ::
+          {:ok, map() | nil} | {:error, any()}
+  def resume_session(client, session_id, cwd \\ nil, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    mcp_servers = Keyword.get(opts, :mcp_servers)
+    GenServer.call(client, {:resume_session, session_id, cwd, mcp_servers}, timeout)
   end
 
   @doc """
@@ -117,6 +141,14 @@ defmodule ExMCP.ACP.Client do
     GenServer.cast(client, {:cancel, session_id})
   end
 
+  @doc "Closes an active session and frees agent-side resources."
+  @spec close_session(GenServer.server(), String.t(), keyword()) ::
+          {:ok, map() | nil} | {:error, any()}
+  def close_session(client, session_id, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    GenServer.call(client, {:close_session, session_id}, timeout)
+  end
+
   @doc "Sets the agent mode for a session."
   @spec set_mode(GenServer.server(), String.t(), String.t()) :: {:ok, map()} | {:error, any()}
   def set_mode(client, session_id, mode_id) do
@@ -136,14 +168,26 @@ defmodule ExMCP.ACP.Client do
     GenServer.call(client, :agent_capabilities)
   end
 
+  @doc "Returns the agent's authentication methods from the initialize handshake."
+  @spec auth_methods(GenServer.server()) :: {:ok, [map()]}
+  def auth_methods(client) do
+    GenServer.call(client, :auth_methods)
+  end
+
   @doc "Returns the client connection status."
   @spec status(GenServer.server()) :: atom()
   def status(client) do
     GenServer.call(client, :status)
   end
 
-  @doc "Ends a session (emits telemetry, no protocol message)."
-  @spec end_session(GenServer.server(), String.t()) :: :ok
+  @doc """
+  Ends a session.
+
+  Uses `session/close` when advertised by the agent, otherwise preserves the
+  historical local telemetry-only behavior.
+  """
+  @spec end_session(GenServer.server(), String.t()) ::
+          :ok | {:ok, map() | nil} | {:error, any()}
   def end_session(client, session_id) do
     GenServer.call(client, {:end_session, session_id})
   end
@@ -163,12 +207,12 @@ defmodule ExMCP.ACP.Client do
     handler_mod = Keyword.get(opts, :handler, DefaultHandler)
     handler_opts = Keyword.get(opts, :handler_opts, [])
 
-    case handler_mod.init(handler_opts) do
-      {:ok, handler_state} ->
+    case HandlerRunner.start_link(handler_mod, handler_opts, self()) do
+      {:ok, handler_pid} ->
         state = %__MODULE__{
           transport_mod: Keyword.get(opts, :transport_mod, Stdio),
           handler_mod: handler_mod,
-          handler_state: handler_state,
+          handler_pid: handler_pid,
           event_listener: Keyword.get(opts, :event_listener),
           protocol_version: Keyword.get(opts, :protocol_version, 1)
         }
@@ -194,19 +238,57 @@ defmodule ExMCP.ACP.Client do
     send_request(msg, from, state, :new_session)
   end
 
-  def handle_call({:authenticate, params}, from, %{status: :ready} = state) do
-    msg = Protocol.encode_authenticate(params)
+  def handle_call({:authenticate, method_id_or_params}, from, %{status: :ready} = state) do
+    msg = Protocol.encode_authenticate(method_id_or_params)
     send_request(msg, from, state)
+  end
+
+  def handle_call(:logout, from, %{status: :ready} = state) do
+    case ensure_capability(state, :logout) do
+      :ok ->
+        msg = Protocol.encode_logout()
+        send_request(msg, from, state)
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:list_sessions, opts}, from, %{status: :ready} = state) do
-    msg = Protocol.encode_session_list(opts)
-    send_request(msg, from, state)
+    case ensure_capability(state, :session_list) do
+      :ok ->
+        msg = Protocol.encode_session_list(opts)
+        send_request(msg, from, state)
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:load_session, session_id, cwd, mcp_servers}, from, %{status: :ready} = state) do
-    msg = Protocol.encode_session_load(session_id, cwd, mcp_servers)
-    send_request(msg, from, state)
+    case ensure_capability(state, :load_session) do
+      :ok ->
+        msg = Protocol.encode_session_load(session_id, cwd, mcp_servers)
+        send_request(msg, from, state)
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(
+        {:resume_session, session_id, cwd, mcp_servers},
+        from,
+        %{status: :ready} = state
+      ) do
+    case ensure_capability(state, :session_resume) do
+      :ok ->
+        msg = Protocol.encode_session_resume(session_id, cwd, mcp_servers)
+        send_request(msg, from, state)
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:prompt, session_id, content}, from, %{status: :ready} = state) do
@@ -244,18 +326,35 @@ defmodule ExMCP.ACP.Client do
     {:reply, {:ok, state.agent_capabilities}, state}
   end
 
+  def handle_call(:auth_methods, _from, state) do
+    {:reply, {:ok, state.auth_methods || []}, state}
+  end
+
   def handle_call(:status, _from, state) do
     {:reply, state.status, state}
   end
 
-  def handle_call({:end_session, session_id}, _from, state) do
-    :telemetry.execute(
-      [:ex_mcp, :acp, :session, :ended],
-      %{system_time: System.system_time()},
-      %{session_id: session_id}
-    )
+  def handle_call({:close_session, session_id}, from, %{status: :ready} = state) do
+    case ensure_capability(state, :session_close) do
+      :ok ->
+        msg = Protocol.encode_session_close(session_id)
+        send_request(msg, from, state, {:close_session, session_id})
 
-    {:reply, :ok, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:end_session, session_id}, from, %{status: :ready} = state) do
+    case ensure_capability(state, :session_close) do
+      :ok ->
+        msg = Protocol.encode_session_close(session_id)
+        send_request(msg, from, state, {:close_session, session_id})
+
+      {:error, {:unsupported_capability, :session_close}} ->
+        emit_session_ended(session_id)
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call(:disconnect, _from, state) do
@@ -270,6 +369,7 @@ defmodule ExMCP.ACP.Client do
 
   @impl true
   def handle_cast({:cancel, session_id}, state) do
+    state = cancel_pending_permissions(session_id, state)
     msg = Protocol.encode_session_cancel(session_id)
     send_to_transport(msg, state)
     {:noreply, state}
@@ -300,6 +400,11 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
+  def handle_info({:acp_handler_result, ref, result}, state) do
+    state = handle_handler_result(ref, result, state)
+    {:noreply, state}
+  end
+
   def handle_info({:transport_closed, _reason}, state) do
     Logger.info("ACP transport closed")
     state = reply_all_pending({:error, :transport_closed}, state)
@@ -313,26 +418,29 @@ defmodule ExMCP.ACP.Client do
   end
 
   def handle_info({:EXIT, pid, reason}, state) do
-    if pid == state.receiver_pid do
-      if reason != :normal do
-        Logger.warning("ACP receiver exited: #{inspect(reason)}")
-      end
+    cond do
+      pid == state.receiver_pid ->
+        if reason != :normal do
+          Logger.warning("ACP receiver exited: #{inspect(reason)}")
+        end
 
-      state = reply_all_pending({:error, :receiver_exited}, state)
-      {:noreply, %{state | status: :disconnected, receiver_pid: nil}}
-    else
-      {:noreply, state}
+        state = reply_all_pending({:error, :receiver_exited}, state)
+        {:noreply, %{state | status: :disconnected, receiver_pid: nil}}
+
+      pid == state.handler_pid ->
+        Logger.warning("ACP handler runner exited: #{inspect(reason)}")
+        state = fail_pending_agent_requests("Handler unavailable", state)
+        {:noreply, %{state | handler_pid: nil}}
+
+      true ->
+        {:noreply, state}
     end
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
-  def terminate(reason, state) do
-    if function_exported?(state.handler_mod, :terminate, 2) do
-      state.handler_mod.terminate(reason, state.handler_state)
-    end
-
+  def terminate(_reason, state) do
     do_disconnect(state)
     :ok
   end
@@ -364,6 +472,7 @@ defmodule ExMCP.ACP.Client do
            state
            | agent_info: result["agentInfo"],
              agent_capabilities: result["agentCapabilities"],
+             auth_methods: result["authMethods"] || [],
              protocol_version: result["protocolVersion"] || state.protocol_version,
              status: :ready
          }}
@@ -465,6 +574,7 @@ defmodule ExMCP.ACP.Client do
         state
 
       {{from, telemetry_tag}, pending} ->
+        {reply, state} = maybe_merge_prompt_text(telemetry_tag, reply, state)
         emit_resolve_telemetry(telemetry_tag, reply)
         GenServer.reply(from, reply)
         %{state | pending_requests: pending}
@@ -474,6 +584,28 @@ defmodule ExMCP.ACP.Client do
         %{state | pending_requests: pending}
     end
   end
+
+  # Fold any streamed agent_message_chunk text into the prompt result and clear the
+  # buffer. Agents that return text inline keep theirs; others get the streamed text.
+  defp maybe_merge_prompt_text({:prompt, session_id}, {:ok, result}, state) when is_map(result) do
+    {buffered, prompt_text} = Map.pop(state.prompt_text, session_id)
+
+    result =
+      case buffered do
+        text when is_binary(text) and text != "" ->
+          case result["text"] do
+            existing when is_binary(existing) and existing != "" -> result
+            _ -> Map.put(result, "text", text)
+          end
+
+        _ ->
+          result
+      end
+
+    {{:ok, result}, %{state | prompt_text: prompt_text}}
+  end
+
+  defp maybe_merge_prompt_text(_tag, reply, state), do: {reply, state}
 
   defp emit_resolve_telemetry(:new_session, {:ok, result}) do
     session_id = result["sessionId"]
@@ -495,7 +627,61 @@ defmodule ExMCP.ACP.Client do
     )
   end
 
+  defp emit_resolve_telemetry({:close_session, session_id}, {:ok, _result}) do
+    emit_session_ended(session_id)
+  end
+
   defp emit_resolve_telemetry(_, _), do: :ok
+
+  defp emit_session_ended(session_id) do
+    :telemetry.execute(
+      [:ex_mcp, :acp, :session, :ended],
+      %{system_time: System.system_time()},
+      %{session_id: session_id}
+    )
+  end
+
+  defp ensure_capability(state, capability) do
+    if capability_supported?(state.agent_capabilities || %{}, capability) do
+      :ok
+    else
+      {:error, {:unsupported_capability, capability}}
+    end
+  end
+
+  defp capability_supported?(caps, :load_session), do: truthy?(map_get(caps, "loadSession"))
+
+  defp capability_supported?(caps, :session_list) do
+    caps |> map_get("sessionCapabilities") |> map_get("list") |> truthy?()
+  end
+
+  defp capability_supported?(caps, :session_resume) do
+    caps |> map_get("sessionCapabilities") |> map_get("resume") |> truthy?()
+  end
+
+  defp capability_supported?(caps, :session_close) do
+    caps |> map_get("sessionCapabilities") |> map_get("close") |> truthy?()
+  end
+
+  defp capability_supported?(caps, :logout) do
+    caps |> map_get("auth") |> map_get("logout") |> truthy?()
+  end
+
+  defp map_get(map, key) when is_map(map) do
+    Map.get(map, key) || Map.get(map, existing_atom(key))
+  end
+
+  defp map_get(_, _), do: nil
+
+  defp existing_atom(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp truthy?(nil), do: false
+  defp truthy?(false), do: false
+  defp truthy?(_), do: true
 
   defp reply_all_pending(error, state) do
     for {_id, pending} <- state.pending_requests do
@@ -505,42 +691,62 @@ defmodule ExMCP.ACP.Client do
       end
     end
 
-    %{state | pending_requests: %{}}
+    %{state | pending_requests: %{}, pending_agent_requests: %{}}
   end
 
   defp handle_session_update(params, state) do
     session_id = params["sessionId"]
     update = params["update"]
 
-    # Notify handler
-    {:ok, new_handler_state} =
-      state.handler_mod.handle_session_update(session_id, update, state.handler_state)
+    # Buffer streamed answer text so prompt/3 can return it (see prompt_text).
+    state = accumulate_prompt_text(state, session_id, update)
 
-    # Notify event listener
+    # Notify event listener from the client process so a slow handler cannot
+    # stall the update stream.
     if state.event_listener do
       send(state.event_listener, {:acp_session_update, session_id, update})
     end
 
-    %{state | handler_state: new_handler_state}
+    if state.handler_pid do
+      HandlerRunner.session_update(state.handler_pid, session_id, update)
+    end
+
+    state
   end
+
+  # Append agent_message_chunk text to the per-session buffer. Only the assistant's
+  # message text is buffered — thought chunks and other update types are ignored.
+  defp accumulate_prompt_text(
+         state,
+         session_id,
+         %{"sessionUpdate" => "agent_message_chunk"} = update
+       )
+       when is_binary(session_id) do
+    case get_in(update, ["content", "text"]) do
+      text when is_binary(text) and text != "" ->
+        %{state | prompt_text: Map.update(state.prompt_text, session_id, text, &(&1 <> text))}
+
+      _ ->
+        state
+    end
+  end
+
+  defp accumulate_prompt_text(state, _session_id, _update), do: state
 
   defp handle_agent_request("session/request_permission", params, id, state) do
     session_id = params["sessionId"]
     tool_call = params["toolCall"]
     options = params["options"] || []
 
-    {:ok, outcome, new_handler_state} =
-      state.handler_mod.handle_permission_request(
-        session_id,
-        tool_call,
-        options,
-        state.handler_state
-      )
-
-    response = Protocol.encode_permission_response(id, outcome)
-    send_to_transport(response, state)
-
-    %{state | handler_state: new_handler_state}
+    if state.handler_pid do
+      ref = make_ref()
+      HandlerRunner.permission_request(state.handler_pid, ref, session_id, tool_call, options)
+      track_agent_request(state, ref, :permission, id, session_id)
+    else
+      response = Protocol.encode_error(-32603, "Handler unavailable", nil, id)
+      send_to_transport(response, state)
+      state
+    end
   end
 
   defp handle_agent_request("fs/read_text_file", params, id, state) do
@@ -548,18 +754,10 @@ defmodule ExMCP.ACP.Client do
     path = params["path"]
     opts = Map.drop(params, ["sessionId", "path"])
 
-    if function_exported?(state.handler_mod, :handle_file_read, 4) do
-      case state.handler_mod.handle_file_read(session_id, path, opts, state.handler_state) do
-        {:ok, content, new_handler_state} ->
-          response = Protocol.encode_file_read_response(id, content)
-          send_to_transport(response, state)
-          %{state | handler_state: new_handler_state}
-
-        {:error, reason, new_handler_state} ->
-          response = Protocol.encode_error(-32603, reason, nil, id)
-          send_to_transport(response, state)
-          %{state | handler_state: new_handler_state}
-      end
+    if state.handler_pid && function_exported?(state.handler_mod, :handle_file_read, 4) do
+      ref = make_ref()
+      HandlerRunner.file_read(state.handler_pid, ref, session_id, path, opts)
+      track_agent_request(state, ref, :file_read, id, session_id)
     else
       response = Protocol.encode_error(-32601, "File read not supported", nil, id)
       send_to_transport(response, state)
@@ -572,18 +770,10 @@ defmodule ExMCP.ACP.Client do
     path = params["path"]
     content = params["content"]
 
-    if function_exported?(state.handler_mod, :handle_file_write, 4) do
-      case state.handler_mod.handle_file_write(session_id, path, content, state.handler_state) do
-        {:ok, new_handler_state} ->
-          response = Protocol.encode_file_write_response(id)
-          send_to_transport(response, state)
-          %{state | handler_state: new_handler_state}
-
-        {:error, reason, new_handler_state} ->
-          response = Protocol.encode_error(-32603, reason, nil, id)
-          send_to_transport(response, state)
-          %{state | handler_state: new_handler_state}
-      end
+    if state.handler_pid && function_exported?(state.handler_mod, :handle_file_write, 4) do
+      ref = make_ref()
+      HandlerRunner.file_write(state.handler_pid, ref, session_id, path, content)
+      track_agent_request(state, ref, :file_write, id, session_id)
     else
       response = Protocol.encode_error(-32601, "File write not supported", nil, id)
       send_to_transport(response, state)
@@ -593,18 +783,10 @@ defmodule ExMCP.ACP.Client do
 
   # Terminal operations — spec-defined but delegated to handler
   defp handle_agent_request("terminal/" <> _ = method, params, id, state) do
-    if function_exported?(state.handler_mod, :handle_terminal_request, 4) do
-      case state.handler_mod.handle_terminal_request(method, params, id, state.handler_state) do
-        {:ok, result, new_handler_state} ->
-          response = Protocol.encode_response(result, id)
-          send_to_transport(response, state)
-          %{state | handler_state: new_handler_state}
-
-        {:error, reason, new_handler_state} ->
-          response = Protocol.encode_error(-32603, reason, nil, id)
-          send_to_transport(response, state)
-          %{state | handler_state: new_handler_state}
-      end
+    if state.handler_pid && function_exported?(state.handler_mod, :handle_terminal_request, 4) do
+      ref = make_ref()
+      HandlerRunner.terminal_request(state.handler_pid, ref, method, params, id)
+      track_agent_request(state, ref, :terminal, id, params["sessionId"])
     else
       response = Protocol.encode_error(-32601, "Terminal operations not supported", nil, id)
       send_to_transport(response, state)
@@ -618,6 +800,79 @@ defmodule ExMCP.ACP.Client do
     send_to_transport(response, state)
     state
   end
+
+  defp handle_handler_result(ref, result, state) do
+    case Map.pop(state.pending_agent_requests, ref) do
+      {nil, _pending} ->
+        state
+
+      {request, pending} ->
+        state = %{state | pending_agent_requests: pending}
+        response = encode_handler_response(request, result)
+        send_to_transport(response, state)
+        state
+    end
+  end
+
+  defp encode_handler_response(%{kind: :permission, id: id}, {:permission, {:ok, outcome}}) do
+    Protocol.encode_permission_response(id, outcome)
+  end
+
+  defp encode_handler_response(%{kind: :file_read, id: id}, {:file_read, {:ok, content}}) do
+    Protocol.encode_file_read_response(id, content)
+  end
+
+  defp encode_handler_response(%{kind: :file_write, id: id}, {:file_write, :ok}) do
+    Protocol.encode_file_write_response(id)
+  end
+
+  defp encode_handler_response(%{kind: :terminal, id: id}, {:terminal, {:ok, result}}) do
+    Protocol.encode_response(result, id)
+  end
+
+  defp encode_handler_response(%{id: id}, {_kind, {:error, reason}}) do
+    Protocol.encode_error(-32603, format_handler_error(reason), nil, id)
+  end
+
+  defp encode_handler_response(%{id: id}, unexpected) do
+    Protocol.encode_error(-32603, "Unexpected handler result: #{inspect(unexpected)}", nil, id)
+  end
+
+  defp track_agent_request(state, ref, kind, id, session_id) do
+    request = %{kind: kind, id: id, session_id: session_id}
+    %{state | pending_agent_requests: Map.put(state.pending_agent_requests, ref, request)}
+  end
+
+  defp fail_pending_agent_requests(reason, state) do
+    Enum.each(state.pending_agent_requests, fn {_ref, request} ->
+      response = Protocol.encode_error(-32603, reason, nil, request.id)
+      send_to_transport(response, state)
+    end)
+
+    %{state | pending_agent_requests: %{}}
+  end
+
+  defp cancel_pending_permissions(session_id, state) do
+    {to_cancel, keep} =
+      Enum.split_with(state.pending_agent_requests, fn {_ref, request} ->
+        request.kind == :permission and request.session_id == session_id
+      end)
+
+    Enum.each(to_cancel, fn {_ref, request} ->
+      response = Protocol.encode_permission_response(request.id, %{"outcome" => "cancelled"})
+      send_to_transport(response, state)
+    end)
+
+    %{state | pending_agent_requests: Map.new(keep)}
+  end
+
+  defp format_handler_error(reason) when is_binary(reason), do: reason
+
+  defp format_handler_error({kind, reason, stack}) when is_list(stack) do
+    Exception.format(kind, reason, stack)
+  end
+
+  defp format_handler_error(reason), do: inspect(reason)
 
   defp do_disconnect(state) do
     if state.receiver_pid && Process.alive?(state.receiver_pid) do

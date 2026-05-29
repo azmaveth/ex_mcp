@@ -3,8 +3,8 @@ defmodule ExMCP.ACP do
   Facade for the Agent Client Protocol (ACP) client.
 
   ACP lets clients control coding agents over stdio using JSON-RPC 2.0 — the same
-  wire format as MCP. 24 of 27 coding agents speak ACP natively (Gemini CLI,
-  OpenCode, Qwen Code, etc.).
+  wire format as MCP. Many coding agents speak ACP natively (Gemini CLI,
+  OpenCode, Qwen Code, etc.), and the public ACP Registry lists current agents.
 
   ## Quick Start
 
