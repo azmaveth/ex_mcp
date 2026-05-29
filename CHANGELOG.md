@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.10.1] - 2026-05-29
 
 ### Fixed
-- **CI test determinism** — Explicitly load `ExMCP.Client` before API export assertions so the unified client API test does not depend on test execution order.
+- **CI test determinism** — Explicitly load target modules before API export assertions so tests do not depend on execution order.
 
 ## [0.10.0] - 2026-05-29
 

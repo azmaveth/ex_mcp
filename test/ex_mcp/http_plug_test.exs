@@ -37,6 +37,8 @@ defmodule ExMCP.HttpPlugTest do
 
   describe "HTTP Plug behavior" do
     test "implements Plug behavior correctly" do
+      Code.ensure_loaded!(HttpPlug)
+
       assert function_exported?(HttpPlug, :init, 1)
       assert function_exported?(HttpPlug, :call, 2)
     end
