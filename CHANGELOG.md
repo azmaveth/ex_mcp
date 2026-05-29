@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-05-28
+
+### Added
+- **ACP Registry helpers** — `ExMCP.ACP.Registry` can fetch, parse, search, and build `npx` commands from the public ACP Registry.
+- **ACP handler runner** — Agent-originated requests and session update handlers now run outside the ACP client process, so slow permission, file, terminal, or update handlers cannot block streamed updates or prompt completion.
+- **MCP 2025-11-25 conformance coverage** — Conformance scripts and tests now cover the latest supported MCP spec version and updated server behaviors.
+
+### Changed
+- **ACP stable spec alignment** — Updated ACP method names, content/resource builders, permission responses, terminal delegation, config options, prompt capabilities, session capabilities, and adapter update shapes to match the current stable ACP v1 schema.
+- **Adapter update normalization** — Claude, Codex, and Pi adapters now emit stable `agent_thought_chunk`, `tool_call`, and `tool_call_update` shapes for core streaming and tool lifecycle events.
+- **Prompt text handling** — `Client.prompt/4` now folds streamed `agent_message_chunk` text into the returned result when agents stream the answer instead of returning inline text.
+
+### Fixed
+- **Permission cancellation** — `Client.cancel/2` now replies to pending `session/request_permission` requests with the required `cancelled` outcome without waiting for a blocked handler.
+- **MCP protocol edge cases** — Updated method handling and version registry tests for newly covered MCP conformance cases.
+
 ## [0.9.1] - 2026-04-11
 
 ### Added
