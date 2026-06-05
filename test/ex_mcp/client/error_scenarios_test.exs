@@ -227,25 +227,35 @@ defmodule ExMCP.Client.ErrorScenariosTest do
     end
 
     test "handles transport closure in ready state", %{client: client} do
-      # Connect and complete handshake
+      # Subscribe to state transitions for this client BEFORE triggering
+      # them. The previous fixed-sleep version (50ms between connect
+      # and respond_to_handshake) flaked on CPU-busy CI runners — the
+      # client hadn't transitioned to :handshaking yet when the
+      # response landed, so the state machine ended up :disconnected
+      # instead of :ready. Telemetry-driven waiting eliminates the
+      # race and the assertion fires the instant the transition lands,
+      # not on the next sleep boundary.
+      attach_state_transition_listener(client)
+
       :ok = StateMachine.connect(client)
-      Process.sleep(50)
+      assert_receive {:state_transition, %{to_state: :handshaking}}, 2_000
 
+      # respond_to_handshake polls internally for the handshake request
+      # to be buffered at the transport — it can race the :handshaking
+      # state transition since the send is scheduled asynchronously.
       TestTransport.respond_to_handshake(client)
-
-      Process.sleep(50)
-
-      # Verify ready state
-      state = StateMachine.get_state(client)
-      assert state.state == :ready
+      assert_receive {:state_transition, %{to_state: :ready}}, 2_000
 
       # Simulate transport closure
       send(client, {:transport_closed, :normal})
-      Process.sleep(50)
 
-      # Should attempt reconnection (may be in reconnecting or already moved to handshaking)
-      state = StateMachine.get_state(client)
-      assert state.state in [:reconnecting, :handshaking]
+      # Should attempt reconnection. Match on `from_state: :ready` so
+      # we look at the transition triggered BY the closure — earlier
+      # transitions (e.g. the initial :disconnected → :connecting that
+      # the first assert_receive skipped past on its way to :handshaking)
+      # are still in the mailbox.
+      assert_receive {:state_transition, %{from_state: :ready, to_state: to}}, 2_000
+      assert to in [:reconnecting, :handshaking]
     end
 
     test "handles transport closure in non-ready states", %{client: client} do
@@ -465,5 +475,38 @@ defmodule ExMCP.Client.ErrorScenariosTest do
       # Should still be alive
       assert Process.alive?(client)
     end
+  end
+
+  # ── Helpers ────────────────────────────────────────────────────────
+
+  # Subscribe the test process to state transitions emitted by `client`.
+  # The handler filters on `metadata.pid` so async tests with multiple
+  # state machines don't see each other's transitions.
+  #
+  # Prefer `assert_receive {:state_transition, %{to_state: X}}, timeout`
+  # over `Process.sleep(N) + assert state.state == X` — the latter is
+  # timing-sensitive on CPU-busy CI runners and has caused flakes.
+  #
+  # The handler is auto-detached on test exit.
+  defp attach_state_transition_listener(client) do
+    handler_id =
+      "state-transition-listener-#{:erlang.unique_integer([:positive])}"
+
+    test_pid = self()
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:ex_mcp, :client, :state_transition],
+        fn _event, _measurements, metadata, _config ->
+          if metadata[:pid] == client do
+            send(test_pid, {:state_transition, metadata})
+          end
+        end,
+        nil
+      )
+
+    ExUnit.Callbacks.on_exit(fn -> :telemetry.detach(handler_id) end)
+    :ok
   end
 end

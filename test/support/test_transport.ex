@@ -141,9 +141,14 @@ defmodule ExMCP.TestHelpers.TestTransport do
     end
   end
 
-  def respond_to_handshake(client_pid) do
-    # Get the last sent message to find the ID to respond to
-    case get_last_sent_id(client_pid) do
+  def respond_to_handshake(client_pid, timeout_ms \\ 2_000) do
+    # The state machine schedules the handshake send asynchronously
+    # (via `Process.send(self(), :start_handshake_internal, ...)` after
+    # entering :handshaking), so an immediate `get_last_sent_id` can
+    # race with the message actually arriving at the transport.
+    # Poll briefly until the handshake request is buffered, then
+    # respond. Default 2s window covers CPU-busy CI runners with margin.
+    case wait_for_sent_id(client_pid, timeout_ms) do
       {:ok, id} ->
         response = %{
           "id" => id,
@@ -158,6 +163,26 @@ defmodule ExMCP.TestHelpers.TestTransport do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp wait_for_sent_id(client_pid, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_for_sent_id(client_pid, deadline)
+  end
+
+  defp do_wait_for_sent_id(client_pid, deadline) do
+    case get_last_sent_id(client_pid) do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, _} = err ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          err
+        else
+          Process.sleep(10)
+          do_wait_for_sent_id(client_pid, deadline)
+        end
     end
   end
 

@@ -97,11 +97,14 @@ defmodule ExMCP.Client.StateMachine do
   def handle_event(:enter, old_state, new_state, _data) do
     Logger.debug("State transition: #{old_state} -> #{new_state}")
 
-    # Emit telemetry event for state transitions
+    # Emit telemetry event for state transitions. `pid: self()` lets
+    # tests filter events by client when multiple state machines run
+    # in parallel (async tests subscribing to the same telemetry event
+    # would otherwise see each other's transitions).
     :telemetry.execute(
       [:ex_mcp, :client, :state_transition],
       %{count: 1},
-      %{from_state: old_state, to_state: new_state}
+      %{from_state: old_state, to_state: new_state, pid: self()}
     )
 
     :keep_state_and_data
