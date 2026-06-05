@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-06-05
+
+### Added
+- **ACP Claude adapter — `sessionId` on prompt response result** — `ExMCP.ACP.Adapters.Claude` now includes `"sessionId"` in the prompt response result map when `state.session_id` is non-nil. The field sits alongside the existing optional `"thinking"` blocks and is omitted entirely when no session id is available, so downstream consumers can rely on `Map.has_key?(result, "sessionId")` as an absence signal. Backwards-compatible — callers that ignore it keep working unchanged. Useful for callers that need to correlate a prompt response with the underlying Claude SDK session, drive `--resume` themselves, or attach the session id to audit / telemetry.
+
 ## [0.10.1] - 2026-05-29
 
 ### Fixed
