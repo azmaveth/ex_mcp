@@ -166,7 +166,15 @@ defmodule ExMCP.TestHelpers.TestTransport do
     end
   end
 
-  defp wait_for_sent_id(client_pid, timeout_ms) do
+  @doc """
+  Poll `get_last_sent_id/1` until it succeeds or the timeout elapses.
+
+  Used by tests that need to read the ID of an outbound request but
+  may be racing the async send. Returns `{:ok, id}` on success,
+  `{:error, reason}` on timeout (the last error reason from
+  `get_last_sent_id/1`).
+  """
+  def wait_for_sent_id(client_pid, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     do_wait_for_sent_id(client_pid, deadline)
   end
