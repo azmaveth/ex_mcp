@@ -490,6 +490,17 @@ defmodule ExMCP.ACP.Adapters.Claude do
           "usage" => format_usage(usage)
         }
 
+        # Surface session_id so callers can correlate this prompt
+        # response with the underlying Claude SDK session. Useful for
+        # multi-turn continuation that bypasses bridge-managed state
+        # (e.g. a caller that wants to drive --resume themselves) and
+        # for audit/telemetry that ties responses back to a session.
+        response_result =
+          case session_id do
+            nil -> response_result
+            id -> Map.put(response_result, "sessionId", id)
+          end
+
         response_result =
           if thinking do
             thinking_data =

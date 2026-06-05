@@ -313,8 +313,23 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert result_msg["result"]["usage"]["inputTokens"] == 100
       assert result_msg["result"]["usage"]["outputTokens"] == 50
 
+      # session_id surfaces in the result so callers can correlate the
+      # prompt response with the underlying Claude SDK session.
+      assert result_msg["result"]["sessionId"] == "s1"
+
       # Pending prompt ID cleared
       assert new_state.pending_prompt_id == nil
+    end
+
+    test "omits sessionId when state.session_id is nil", %{state: state} do
+      state = %{state | text_acc: ["x"], pending_prompt_id: 99, session_id: nil}
+
+      line = Jason.encode!(%{"type" => "result", "usage" => %{}})
+
+      assert {:messages, messages, _state} = Claude.translate_inbound(line, state)
+
+      result_msg = Enum.find(messages, &(&1["id"] == 99))
+      refute Map.has_key?(result_msg["result"], "sessionId")
     end
 
     test "includes thinking in result when available", %{state: state} do
