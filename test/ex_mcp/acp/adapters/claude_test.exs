@@ -70,25 +70,45 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       refute "--permission-mode" in args
     end
 
-    test "permission_mode :ask passes --permission-mode ask, drops bypass flag" do
-      {_cmd, args} = Claude.command(permission_mode: :ask)
+    test "permission_mode :default → --permission-mode default" do
+      {_cmd, args} = Claude.command(permission_mode: :default)
       assert "--permission-mode" in args
-      assert "ask" in args
+      assert "default" in args
       refute "--dangerously-skip-permissions" in args
     end
 
-    test "permission_mode :auto passes --permission-mode auto" do
+    test "permission_mode :accept_edits → --permission-mode acceptEdits (camelCase)" do
+      {_cmd, args} = Claude.command(permission_mode: :accept_edits)
+      assert "acceptEdits" in args
+      refute "accept_edits" in args
+    end
+
+    test "permission_mode :plan → --permission-mode plan" do
+      {_cmd, args} = Claude.command(permission_mode: :plan)
+      assert "plan" in args
+    end
+
+    test "permission_mode :auto → --permission-mode auto" do
       {_cmd, args} = Claude.command(permission_mode: :auto)
-      assert "--permission-mode" in args
       assert "auto" in args
+    end
+
+    test "permission_mode :dont_ask → --permission-mode dontAsk (camelCase)" do
+      {_cmd, args} = Claude.command(permission_mode: :dont_ask)
+      assert "dontAsk" in args
+      refute "dont_ask" in args
+    end
+
+    test "permission_mode :bypass_permissions → --permission-mode bypassPermissions" do
+      {_cmd, args} = Claude.command(permission_mode: :bypass_permissions)
+      assert "bypassPermissions" in args
       refute "--dangerously-skip-permissions" in args
     end
 
-    test "permission_mode :deny passes --permission-mode deny" do
-      {_cmd, args} = Claude.command(permission_mode: :deny)
+    test "permission_mode as binary passes through verbatim" do
+      {_cmd, args} = Claude.command(permission_mode: "customMode")
       assert "--permission-mode" in args
-      assert "deny" in args
-      refute "--dangerously-skip-permissions" in args
+      assert "customMode" in args
     end
 
     test "permission_mode nil passes neither flag" do
@@ -126,16 +146,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert "WebSearch" in args
     end
 
-    test "combined: deny mode + allow + disallow" do
+    test "combined: dont_ask + allow + disallow" do
       {_cmd, args} =
         Claude.command(
-          permission_mode: :deny,
+          permission_mode: :dont_ask,
           allowed_tools: ["WebSearch"],
           disallowed_tools: ["Write", "Edit"]
         )
 
       assert "--permission-mode" in args
-      assert "deny" in args
+      assert "dontAsk" in args
       assert "--allowed-tools" in args
       assert "WebSearch" in args
       assert "--disallowed-tools" in args

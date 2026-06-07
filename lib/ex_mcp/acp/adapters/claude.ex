@@ -42,20 +42,31 @@ defmodule ExMCP.ACP.Adapters.Claude do
   surface:
 
       Claude.command(
-        permission_mode: :deny,
+        permission_mode: :dont_ask,
         allowed_tools: ["WebSearch", "WebFetch"]
       )
 
-  Valid `:permission_mode` values:
+  Valid `:permission_mode` values (snake_case atoms map to Claude
+  CLI's camelCase strings; bare binaries pass through):
+
     * `nil` (default, **2026-06-06 change**) — passes no flag; Claude
-      uses its own default (`:ask` mode). In a non-interactive ACP
-      session this means tool use will block on a permission request
-      the host is expected to handle.
+      uses its built-in `default` mode. In a non-interactive ACP
+      session this means the first tool use will block on a
+      permission request the host is expected to handle.
     * `:bypass` — passes `--dangerously-skip-permissions`. The
       pre-2026-06-06 default. Disables Claude's entire permission
       engine.
-    * `:ask` / `:auto` / `:deny` — passes `--permission-mode <value>`.
-      See Claude CLI docs for semantics.
+    * `:default` — explicit default mode (same as `nil` but emits the
+      flag explicitly).
+    * `:accept_edits` — auto-accepts file edits + common filesystem
+      ops; prompts for other tools.
+    * `:plan` — read-only exploration (file reads + read-only shell).
+    * `:auto` — auto-approves with safety classifier.
+    * `:dont_ask` — **best non-interactive default**: auto-denies all
+      tools except those in `allowed_tools`. Pair with an explicit
+      allow-list for the tools the pipeline actually needs.
+    * `:bypass_permissions` — same effect as `:bypass` via the modern
+      flag form (`--permission-mode bypassPermissions`).
 
   `:allowed_tools` and `:disallowed_tools` accept a list of tool
   names; deny takes precedence over allow per Claude CLI's own
@@ -163,10 +174,34 @@ defmodule ExMCP.ACP.Adapters.Claude do
     case Keyword.get(opts, :permission_mode, nil) do
       nil -> args
       :bypass -> args ++ ["--dangerously-skip-permissions"]
-      mode when mode in [:ask, :auto, :deny] -> args ++ ["--permission-mode", to_string(mode)]
-      other -> raise ArgumentError, "invalid :permission_mode #{inspect(other)}"
+      mode -> args ++ ["--permission-mode", encode_permission_mode(mode)]
     end
   end
+
+  # Claude CLI accepts these `--permission-mode` values (per `claude
+  # --help` and docs at code.claude.com/docs/en/permissions):
+  #
+  #   * `default`            — prompts on first use of each tool
+  #   * `acceptEdits`        — auto-accepts edits + common filesystem ops
+  #   * `plan`               — read-only exploration
+  #   * `auto`               — auto-approves with safety classifier
+  #   * `dontAsk`            — auto-denies; only `allow`-listed tools run
+  #   * `bypassPermissions`  — skips all prompts (mirrors the
+  #                            `--dangerously-skip-permissions` flag)
+  #
+  # Atom inputs use snake_case (Elixir idiom) and get encoded to the
+  # camelCase strings the CLI expects. Strings pass through verbatim
+  # for callers that prefer to use the CLI's native names.
+  defp encode_permission_mode(:default), do: "default"
+  defp encode_permission_mode(:accept_edits), do: "acceptEdits"
+  defp encode_permission_mode(:plan), do: "plan"
+  defp encode_permission_mode(:auto), do: "auto"
+  defp encode_permission_mode(:dont_ask), do: "dontAsk"
+  defp encode_permission_mode(:bypass_permissions), do: "bypassPermissions"
+  defp encode_permission_mode(str) when is_binary(str), do: str
+
+  defp encode_permission_mode(other),
+    do: raise(ArgumentError, "invalid :permission_mode #{inspect(other)}")
 
   defp append_tool_list(args, opts, key, flag) do
     case Keyword.get(opts, key) do
