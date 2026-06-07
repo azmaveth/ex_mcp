@@ -48,6 +48,91 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert "--max-thinking-tokens" in args
       assert "20000" in args
     end
+
+    # Permission control (added 2026-06-06). The pre-2026-06-06 adapter
+    # hardcoded `--dangerously-skip-permissions` with no opt-out, which
+    # meant programmatic Claude CLI sessions ran with the CLI's
+    # permission system fully disabled. These tests guard the new
+    # configurable surface (and ensure the default still matches the
+    # historical behavior).
+    test "permission_mode defaults to :bypass (backward compat)" do
+      {_cmd, args} = Claude.command([])
+      assert "--dangerously-skip-permissions" in args
+      refute "--permission-mode" in args
+    end
+
+    test "permission_mode :ask passes --permission-mode ask, drops bypass flag" do
+      {_cmd, args} = Claude.command(permission_mode: :ask)
+      assert "--permission-mode" in args
+      assert "ask" in args
+      refute "--dangerously-skip-permissions" in args
+    end
+
+    test "permission_mode :auto passes --permission-mode auto" do
+      {_cmd, args} = Claude.command(permission_mode: :auto)
+      assert "--permission-mode" in args
+      assert "auto" in args
+      refute "--dangerously-skip-permissions" in args
+    end
+
+    test "permission_mode :deny passes --permission-mode deny" do
+      {_cmd, args} = Claude.command(permission_mode: :deny)
+      assert "--permission-mode" in args
+      assert "deny" in args
+      refute "--dangerously-skip-permissions" in args
+    end
+
+    test "permission_mode nil passes neither flag" do
+      {_cmd, args} = Claude.command(permission_mode: nil)
+      refute "--dangerously-skip-permissions" in args
+      refute "--permission-mode" in args
+    end
+
+    test "permission_mode invalid raises" do
+      assert_raise ArgumentError, fn ->
+        Claude.command(permission_mode: :nope)
+      end
+    end
+
+    test "allowed_tools list joins on commas" do
+      {_cmd, args} = Claude.command(allowed_tools: ["WebSearch", "WebFetch"])
+      assert "--allowed-tools" in args
+      assert "WebSearch,WebFetch" in args
+    end
+
+    test "disallowed_tools list joins on commas" do
+      {_cmd, args} = Claude.command(disallowed_tools: ["Write", "Edit", "MultiEdit"])
+      assert "--disallowed-tools" in args
+      assert "Write,Edit,MultiEdit" in args
+    end
+
+    test "allowed_tools empty list omits flag" do
+      {_cmd, args} = Claude.command(allowed_tools: [])
+      refute "--allowed-tools" in args
+    end
+
+    test "allowed_tools as binary passes through verbatim" do
+      {_cmd, args} = Claude.command(allowed_tools: "WebSearch")
+      assert "--allowed-tools" in args
+      assert "WebSearch" in args
+    end
+
+    test "combined: deny mode + allow + disallow" do
+      {_cmd, args} =
+        Claude.command(
+          permission_mode: :deny,
+          allowed_tools: ["WebSearch"],
+          disallowed_tools: ["Write", "Edit"]
+        )
+
+      assert "--permission-mode" in args
+      assert "deny" in args
+      assert "--allowed-tools" in args
+      assert "WebSearch" in args
+      assert "--disallowed-tools" in args
+      assert "Write,Edit" in args
+      refute "--dangerously-skip-permissions" in args
+    end
   end
 
   describe "capabilities/0" do

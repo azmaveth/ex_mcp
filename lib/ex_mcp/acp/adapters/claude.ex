@@ -33,9 +33,27 @@ defmodule ExMCP.ACP.Adapters.Claude do
   ## Limitations
 
   - No session persistence/listing (sessions managed by Claude CLI)
-  - No mode switching (Claude CLI uses `--dangerously-skip-permissions`)
   - No session cancel (would need SIGINT to Port subprocess)
   - No runtime config changes (static at launch)
+
+  ## Permission control (added 2026-06-06)
+
+  Pass-through opts on `command/1` let callers narrow Claude's tool
+  surface:
+
+      Claude.command(
+        permission_mode: :deny,
+        allowed_tools: ["WebSearch", "WebFetch"]
+      )
+
+  Valid `:permission_mode` values: `:bypass` (default — preserves
+  pre-2026-06-06 behavior of `--dangerously-skip-permissions`),
+  `:ask`, `:auto`, `:deny`, or `nil` (let Claude CLI's own default
+  apply — useful when running interactively).
+
+  `:allowed_tools` and `:disallowed_tools` accept a list of tool
+  names; deny takes precedence over allow per Claude CLI's own
+  rules.
   """
 
   @behaviour ExMCP.ACP.Adapter
@@ -83,10 +101,10 @@ defmodule ExMCP.ACP.Adapters.Claude do
       "stream-json",
       "--verbose",
       "--max-thinking-tokens",
-      to_string(thinking_budget),
-      "--dangerously-skip-permissions"
+      to_string(thinking_budget)
     ]
 
+    args = append_permission_args(args, opts)
     args = append_optional(args, opts, :model, "--model")
     args = append_optional(args, opts, :system_prompt, "--system-prompt")
 
@@ -99,6 +117,55 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     cli_path = Keyword.get(opts, :cli_path, "claude")
     {cli_path, args}
+  end
+
+  # Permission/tool args. Three opts, evaluated in this order:
+  #
+  #   * `:permission_mode` — `:bypass` (default — passes
+  #     `--dangerously-skip-permissions`), `:ask`, `:auto`, or `:deny`
+  #     (passes `--permission-mode <value>` and skips the bypass flag),
+  #     or `nil` (passes neither, lets Claude use its built-in default).
+  #   * `:allowed_tools` — list of tool names (e.g. `["WebSearch",
+  #     "WebFetch"]`) → joined with commas as `--allowed-tools <list>`.
+  #   * `:disallowed_tools` — same shape, → `--disallowed-tools <list>`.
+  #
+  # Claude CLI's own precedence: deny rules override allow rules, and
+  # `--dangerously-skip-permissions` overrides BOTH (it bypasses the
+  # entire permission engine). The default of `:bypass` preserves the
+  # historical behavior of this adapter — callers that want a real
+  # permission constraint must set `permission_mode: :auto | :ask |
+  # :deny | nil` explicitly.
+  defp append_permission_args(args, opts) do
+    args
+    |> append_permission_mode(opts)
+    |> append_tool_list(opts, :allowed_tools, "--allowed-tools")
+    |> append_tool_list(opts, :disallowed_tools, "--disallowed-tools")
+  end
+
+  defp append_permission_mode(args, opts) do
+    case Keyword.get(opts, :permission_mode, :bypass) do
+      :bypass -> args ++ ["--dangerously-skip-permissions"]
+      mode when mode in [:ask, :auto, :deny] -> args ++ ["--permission-mode", to_string(mode)]
+      nil -> args
+      other -> raise ArgumentError, "invalid :permission_mode #{inspect(other)}"
+    end
+  end
+
+  defp append_tool_list(args, opts, key, flag) do
+    case Keyword.get(opts, key) do
+      nil ->
+        args
+
+      [] ->
+        args
+
+      list when is_list(list) ->
+        joined = Enum.map_join(list, ",", &to_string/1)
+        args ++ [flag, joined]
+
+      str when is_binary(str) ->
+        args ++ [flag, str]
+    end
   end
 
   @impl true
