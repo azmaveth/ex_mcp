@@ -21,6 +21,8 @@ defmodule ExMCP.ACP.Adapter do
   - `modes/0` — return supported operational modes for session responses
   - `config_options/0` — return supported config options for session responses
   - `list_sessions/2` — return available sessions (for `session/list`)
+  - `fork_session/2` — fork an existing session (for `session/fork`)
+  - `auth_methods/1` — return initialize `authMethods` for adapter options
   """
 
   @type state :: term()
@@ -46,6 +48,12 @@ defmodule ExMCP.ACP.Adapter do
   or `{:ok, :skip, new_state}` when no output is needed (e.g., initialize
   is handled internally by the bridge), or `{:reply, result, new_state}`
   when the adapter can produce the JSON-RPC result directly, or
+  `{:messages, messages, new_state}` when the adapter can emit ACP messages
+  without writing to the native process, or
+  `{:messages_and_reply, messages, result, new_state}` when the adapter can
+  emit ACP messages before producing the JSON-RPC result directly, or
+  `{:messages_and_write, messages, iodata, new_state}` when the adapter can
+  emit ACP messages while also writing to the native process, or
   `{:reply_and_write, result, iodata, new_state}` when it can reply while
   also forwarding data to the agent process, or
   `{:error, reason, new_state}` when the request can't be honored (e.g., a
@@ -56,6 +64,9 @@ defmodule ExMCP.ACP.Adapter do
               {:ok, iodata(), state()}
               | {:ok, :skip, state()}
               | {:reply, result :: map(), state()}
+              | {:messages, messages :: [map()], state()}
+              | {:messages_and_reply, messages :: [map()], result :: map(), state()}
+              | {:messages_and_write, messages :: [map()], iodata(), state()}
               | {:reply_and_write, result :: map(), iodata(), state()}
               | {:error, reason :: any(), state()}
               | {:one_shot, function(), state()}
@@ -128,6 +139,13 @@ defmodule ExMCP.ACP.Adapter do
   @callback config_options() :: [map()]
 
   @doc """
+  Return authentication methods advertised in the initialize response.
+
+  Optional — defaults to an empty list.
+  """
+  @callback auth_methods(opts :: keyword()) :: [map()]
+
+  @doc """
   List available sessions for this agent.
 
   Returns `{:ok, sessions, new_state}` where sessions is a list of maps
@@ -141,12 +159,23 @@ defmodule ExMCP.ACP.Adapter do
   @callback list_sessions(params :: map(), state()) ::
               {:ok, [map()], state()} | {:error, any(), state()}
 
+  @doc """
+  Fork an existing session.
+
+  Optional — adapters that implement it are automatically advertised as
+  supporting `session/fork`.
+  """
+  @callback fork_session(params :: map(), state()) ::
+              {:ok, map(), state()} | {:error, any(), state()}
+
   @optional_callbacks [
     capabilities: 0,
     post_connect: 1,
     env: 1,
     modes: 0,
     config_options: 0,
-    list_sessions: 2
+    auth_methods: 1,
+    list_sessions: 2,
+    fork_session: 2
   ]
 end

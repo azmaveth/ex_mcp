@@ -634,6 +634,19 @@ defmodule ExMCP.ACP.Agent do
     )
   end
 
+  defp handle_client_request("session/fork", params, id, state) do
+    optional_capability_callback(
+      :fork_session,
+      :session_fork,
+      :handle_fork_session,
+      id,
+      state,
+      fn ref, ctx ->
+        HandlerRunner.fork_session(state.handler_pid, ref, params, ctx)
+      end
+    )
+  end
+
   defp handle_client_request("session/close", %{"sessionId" => session_id}, id, state) do
     state = cancel_active_prompt(session_id, state)
 
@@ -797,6 +810,7 @@ defmodule ExMCP.ACP.Agent do
   defp method_name(:load_session), do: "session/load"
   defp method_name(:list_sessions), do: "session/list"
   defp method_name(:resume_session), do: "session/resume"
+  defp method_name(:fork_session), do: "session/fork"
   defp method_name(:close_session), do: "session/close"
   defp method_name(:delete_session), do: "session/delete"
   defp method_name(:set_mode), do: "session/set_mode"
@@ -871,7 +885,8 @@ defmodule ExMCP.ACP.Agent do
         state = %{state | pending_callbacks: pending}
         handle_session_result(id, result, state)
 
-      {%{kind: kind, request_id: id}, pending} when kind in [:load_session, :resume_session] ->
+      {%{kind: kind, request_id: id}, pending}
+      when kind in [:load_session, :resume_session, :fork_session] ->
         state = %{state | pending_callbacks: pending}
         handle_session_result(id, result, state)
 

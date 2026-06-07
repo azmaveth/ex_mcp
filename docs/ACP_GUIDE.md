@@ -410,7 +410,9 @@ end
 | `capabilities/0` | No | Return static agent capabilities |
 | `modes/0` | No | Return supported operational modes |
 | `config_options/0` | No | Return supported config options |
+| `auth_methods/1` | No | Return initialize `authMethods` for adapter options |
 | `list_sessions/2` | No | Return available sessions for decoded `session/list` params |
+| `fork_session/2` | No | Fork an existing session for decoded `session/fork` params |
 
 ## Built-in Adapters
 
@@ -425,17 +427,25 @@ protocol. This is the recommended Claude adapter for new code.
 - `session/cancel` via SDK `interrupt`
 - ACP permission requests bridged from Claude SDK `can_use_tool`
 - Runtime model, permission mode, and effort config controls
-- Live session setup/load/resume/close ACP surface
-- Disk-backed `session/list` and `session/delete` for Claude Code's SDK store
+- Live session setup/load/resume/fork/close ACP surface
+- Disk-backed `session/list`, `session/delete`, and `session/fork` for Claude Code's SDK store
+- Full `session/load` replay from persisted Claude JSONL transcripts
+- FIFO prompt queueing with queued prompt cancellation responses
 - Plan updates from `TodoWrite` and task progress events
 - Rich tool metadata, terminal/raw output metadata, and improved stop reasons
+- Official ACP `mcpCapabilities` plus ExMCP `_meta` support for native BEAM MCP transport
 
-`session/list` and `session/delete` read and mutate Claude Code's local
+`session/list`, `session/load`, `session/fork`, and `session/delete` read and mutate Claude Code's local
 `CLAUDE_CONFIG_DIR/projects` JSONL store directly in Elixir, using the same
 project-key derivation, UUID validation, sidechain filtering, and title
-sanitization rules as the official Claude Agent SDK. Full `session/load` history
-replay is not implemented; load/resume start Claude with the selected session id
-without replaying prior ACP updates.
+sanitization rules as the official Claude Agent SDK. `session/load` replays
+persisted transcript entries as ACP `session/update` notifications before the
+load response; `session/resume` keeps the lighter no-replay behavior.
+
+The adapter advertises official ACP MCP support through `mcpCapabilities`
+(`acp`, `http`, and `sse`). ExMCP's native BEAM MCP transport is intentionally
+advertised only under `_meta.ex_mcp.mcpCapabilities`, so other ACP libraries can
+ignore it while ExMCP peers can negotiate and validate native descriptors.
 
 **Startup options:** `model`, `permission_mode`, `max_thinking_tokens`,
 `effort`, `additional_directories`, `mcp_servers`, `session_id`, `resume`,

@@ -6,6 +6,7 @@ defmodule ExMCP.ACP.CapabilitiesTest do
   defmodule HandlerWithOptionalCallbacks do
     def handle_load_session(_params, _ctx, state), do: {:reply, %{}, state}
     def handle_list_sessions(_params, _ctx, state), do: {:reply, [], state}
+    def handle_fork_session(_params, _ctx, state), do: {:reply, %{}, state}
     def handle_delete_session(_session_id, _ctx, state), do: {:reply, %{}, state}
     def handle_logout(_ctx, state), do: {:reply, %{}, state}
   end
@@ -18,6 +19,10 @@ defmodule ExMCP.ACP.CapabilitiesTest do
     def list_sessions(state), do: {:ok, [], state}
   end
 
+  defmodule AdapterWithForkSession2 do
+    def fork_session(_params, state), do: {:ok, %{"sessionId" => "forked"}, state}
+  end
+
   describe "supported?/2" do
     test "reads JSON-shaped capabilities" do
       caps = %{
@@ -25,7 +30,11 @@ defmodule ExMCP.ACP.CapabilitiesTest do
         "sessionCapabilities" => %{
           "list" => %{},
           "resume" => %{},
+          "fork" => %{},
           "additionalDirectories" => %{}
+        },
+        "mcpCapabilities" => %{
+          "_meta" => %{"ex_mcp.mcpCapabilities" => %{"native" => true, "beam" => true}}
         },
         "auth" => %{"logout" => %{}}
       }
@@ -33,7 +42,9 @@ defmodule ExMCP.ACP.CapabilitiesTest do
       assert Capabilities.supported?(caps, :load_session)
       assert Capabilities.supported?(caps, :session_list)
       assert Capabilities.supported?(caps, :session_resume)
+      assert Capabilities.supported?(caps, :session_fork)
       assert Capabilities.supported?(caps, :additional_directories)
+      assert Capabilities.supported?(caps, :mcp_native)
       assert Capabilities.supported?(caps, :logout)
       refute Capabilities.supported?(caps, :session_delete)
     end
@@ -52,6 +63,7 @@ defmodule ExMCP.ACP.CapabilitiesTest do
       assert Capabilities.supported?(caps, :load_session)
       assert Capabilities.supported?(caps, :session_list)
       assert Capabilities.supported?(caps, :session_delete)
+      assert Capabilities.supported?(caps, :session_fork)
       assert Capabilities.supported?(caps, :logout)
       refute Capabilities.supported?(caps, :session_resume)
     end
@@ -67,6 +79,14 @@ defmodule ExMCP.ACP.CapabilitiesTest do
         Capabilities.advertise_adapter_session_list(%{}, AdapterWithLegacyListSessions1)
 
       refute Capabilities.supported?(legacy_caps, :session_list)
+    end
+  end
+
+  describe "advertise_adapter_session_fork/2" do
+    test "advertises adapters with fork_session/2" do
+      caps = Capabilities.advertise_adapter_session_fork(%{}, AdapterWithForkSession2)
+
+      assert Capabilities.supported?(caps, :session_fork)
     end
   end
 end

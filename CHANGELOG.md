@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Claude SDK ACP adapter** — Added `ExMCP.ACP.Adapters.ClaudeSDK`, a new Claude Code adapter that uses the SDK-compatible stream-json control protocol with permission bridging, partial tool-call lifecycle events, SDK interrupt cancellation, runtime model/mode/effort config, richer status updates, plan updates, and SDK launch environment support.
-- **Claude SDK session store** — Added pure Elixir helpers for Claude Code's SDK session store, including SDK-compatible project key derivation, JSONL metadata extraction, sidechain filtering, ACP `session/list`, and validated `session/delete`.
-- **Adapter bridge direct replies** — Adapter implementations can now return direct JSON-RPC results, or reply while also writing to the subprocess, so adapted agents can own session IDs and runtime config responses without bridge-synthesized placeholders.
+- **Claude SDK session store** — Added pure Elixir helpers for Claude Code's SDK session store, including SDK-compatible project key derivation, JSONL metadata extraction, sidechain filtering, transcript reads, ACP `session/list`, disk-backed `session/fork`, and validated `session/delete`.
+- **ACP session fork support** — Added unstable `session/fork` protocol/client/agent/adapter-bridge support, including `ExMCP.ACP.Client.fork_session/4`, native agent `handle_fork_session/3`, adapter `fork_session/2`, and capability auto-advertisement.
+- **Adapter bridge direct replies** — Adapter implementations can now return direct JSON-RPC results, emit ACP messages before direct replies, emit messages from notifications, or reply while also writing to the subprocess, so adapted agents can own session IDs, replay history, and runtime config responses without bridge-synthesized placeholders.
+- **Adapter auth method advertisement** — ACP adapters can implement `auth_methods/1` so the bridge initialize response reflects implemented authentication methods instead of always returning an empty list.
 
 ### Changed
 - **ACP docs** — Updated README and the ACP guide to recommend `ClaudeSDK` for new Claude Code integrations while keeping the legacy `Claude` stream-json adapter documented.
-- **Claude SDK session capabilities** — The new adapter now advertises live session setup/load/resume/close plus disk-backed `session/list` and `session/delete` support for Claude Code's local SDK store.
+- **Claude SDK session capabilities** — The new adapter now advertises live session setup/load/resume/fork/close plus disk-backed `session/list` and `session/delete` support for Claude Code's local SDK store. `session/load` now replays persisted JSONL transcript entries as ACP updates before returning.
+- **Claude SDK MCP capabilities** — Replaced legacy `"mcpServers" => true` advertisement with official ACP `mcpCapabilities` and ExMCP-only `_meta.ex_mcp.mcpCapabilities.native/beam` flags for native BEAM MCP transport negotiation.
+- **Claude SDK prompt lifecycle** — Claude SDK prompts now queue while another prompt is active and drain in FIFO order after the active prompt result; queued prompts for a cancelled/closed/deleted session receive cancelled prompt responses.
 
 ### Breaking Changes
 - **ACP adapter session listing callback** — Custom ACP adapters should implement `list_sessions(params, state)` instead of `list_sessions(state)`. The bridge now forwards decoded `session/list` params directly to adapters and no longer carries the legacy arity.

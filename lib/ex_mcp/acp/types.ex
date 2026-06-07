@@ -94,14 +94,17 @@ defmodule ExMCP.ACP.Types do
             optional(:embeddedContext) => boolean()
           },
           optional(:mcpCapabilities) => %{
+            optional(:acp) => boolean(),
             optional(:http) => boolean(),
-            optional(:sse) => boolean()
+            optional(:sse) => boolean(),
+            optional(:_meta) => map()
           },
           optional(:sessionCapabilities) => %{
             optional(:list) => session_list_capabilities() | nil,
             optional(:resume) => session_resume_capabilities() | nil,
             optional(:close) => session_close_capabilities() | nil,
             optional(:delete) => session_delete_capabilities() | nil,
+            optional(:fork) => session_fork_capabilities() | nil,
             optional(:additionalDirectories) => map() | nil
           }
         }
@@ -110,6 +113,7 @@ defmodule ExMCP.ACP.Types do
   @type session_resume_capabilities :: map()
   @type session_close_capabilities :: map()
   @type session_delete_capabilities :: map()
+  @type session_fork_capabilities :: map()
 
   @type mode :: %{
           required(:id) => String.t(),
@@ -260,6 +264,19 @@ defmodule ExMCP.ACP.Types do
 
   @type delete_session_request :: %{
           required(:sessionId) => String.t()
+        }
+
+  @type fork_session_request :: %{
+          required(:sessionId) => String.t(),
+          required(:cwd) => String.t(),
+          optional(:mcpServers) => [mcp_server()],
+          optional(:additionalDirectories) => [String.t()]
+        }
+
+  @type fork_session_response :: %{
+          required(:sessionId) => String.t(),
+          optional(:modes) => map() | nil,
+          optional(:configOptions) => [config_option()] | nil
         }
 
   @type prompt_request :: %{
@@ -488,9 +505,10 @@ defmodule ExMCP.ACP.Types do
   @doc """
   Creates ACP agent capabilities.
 
-  Supported options: `:load_session`, `:http_mcp`, `:sse_mcp`, `:image`,
-  `:audio`, `:embedded_context`, `:session_list`, `:session_resume`,
-  `:session_close`, `:session_delete`, `:additional_directories`, and `:logout`.
+  Supported options: `:load_session`, `:acp_mcp`, `:http_mcp`, `:sse_mcp`,
+  `:native_mcp`, `:beam_mcp`, `:image`, `:audio`, `:embedded_context`,
+  `:session_list`, `:session_resume`, `:session_close`, `:session_delete`,
+  `:session_fork`, `:additional_directories`, and `:logout`.
   """
   @spec agent_capabilities(keyword()) :: map()
   def agent_capabilities(opts \\ []) do
@@ -516,6 +534,7 @@ defmodule ExMCP.ACP.Types do
       "delete",
       Keyword.get(opts, :delete, Keyword.get(opts, :session_delete))
     )
+    |> maybe_put_capability("fork", Keyword.get(opts, :fork, Keyword.get(opts, :session_fork)))
     |> maybe_put_capability(
       "additionalDirectories",
       Keyword.get(
@@ -722,8 +741,26 @@ defmodule ExMCP.ACP.Types do
 
   defp mcp_capabilities(opts) do
     %{}
+    |> maybe_put_bool("acp", opts, :acp_mcp)
     |> maybe_put_bool("http", opts, :http_mcp)
     |> maybe_put_bool("sse", opts, :sse_mcp)
+    |> maybe_put_native_mcp_meta(opts)
+  end
+
+  defp maybe_put_native_mcp_meta(map, opts) do
+    native? = Keyword.get(opts, :native_mcp)
+    beam? = Keyword.get(opts, :beam_mcp)
+
+    meta =
+      %{}
+      |> maybe_put_bool("native", [native: native?], :native)
+      |> maybe_put_bool("beam", [beam: beam?], :beam)
+
+    if map_size(meta) > 0 do
+      Map.put(map, "_meta", %{"ex_mcp.mcpCapabilities" => meta})
+    else
+      map
+    end
   end
 
   defp auth_capabilities(opts) do

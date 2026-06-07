@@ -53,6 +53,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
       |> append_repeated(opts, :additional_directories, "--add-dir")
       |> append_optional(opts, :resume, "--resume")
       |> append_optional(opts, :resume_session_at, "--resume-session-at")
+      |> append_flag(opts, :fork_session, "--fork-session")
       |> append_optional(opts, :session_id, "--session-id")
       |> append_extra_args(opts)
 

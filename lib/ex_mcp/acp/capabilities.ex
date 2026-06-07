@@ -13,6 +13,7 @@ defmodule ExMCP.ACP.Capabilities do
     session_resume: "resume",
     session_close: "close",
     session_delete: "delete",
+    session_fork: "fork",
     additional_directories: "additionalDirectories"
   }
 
@@ -22,6 +23,7 @@ defmodule ExMCP.ACP.Capabilities do
     session_resume: {:handle_resume_session, 3},
     session_close: {:handle_close_session, 3},
     session_delete: {:handle_delete_session, 3},
+    session_fork: {:handle_fork_session, 3},
     logout: {:handle_logout, 2}
   }
 
@@ -37,6 +39,20 @@ defmodule ExMCP.ACP.Capabilities do
     |> Maps.get("auth")
     |> Maps.get("logout")
     |> Maps.truthy?()
+  end
+
+  def supported?(caps, :mcp_native) do
+    caps
+    |> Maps.get("mcpCapabilities")
+    |> Maps.get("_meta")
+    |> Maps.get("ex_mcp.mcpCapabilities")
+    |> case do
+      native when is_map(native) ->
+        Maps.truthy?(Maps.get(native, "native")) or Maps.truthy?(Maps.get(native, "beam"))
+
+      _ ->
+        false
+    end
   end
 
   def supported?(caps, capability) when is_map_key(@session_keys, capability) do
@@ -94,6 +110,11 @@ defmodule ExMCP.ACP.Capabilities do
   @spec advertise_adapter_session_list(map(), module()) :: map()
   def advertise_adapter_session_list(caps, adapter_mod) do
     put(caps, :session_list, function_exported?(adapter_mod, :list_sessions, 2))
+  end
+
+  @spec advertise_adapter_session_fork(map(), module()) :: map()
+  def advertise_adapter_session_fork(caps, adapter_mod) do
+    put(caps, :session_fork, function_exported?(adapter_mod, :fork_session, 2))
   end
 
   defp session_caps(caps) do

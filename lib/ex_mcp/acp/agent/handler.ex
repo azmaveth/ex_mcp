@@ -67,6 +67,9 @@ defmodule ExMCP.ACP.Agent.Handler do
   @doc "Optionally resume an existing session without replaying history."
   @callback handle_resume_session(params :: map(), context(), state()) :: callback_result()
 
+  @doc "Optionally fork an existing session into a new independent session."
+  @callback handle_fork_session(params :: map(), context(), state()) :: callback_result()
+
   @doc "Optionally close a session."
   @callback handle_close_session(session_id :: String.t(), context(), state()) ::
               callback_result()
@@ -110,6 +113,7 @@ defmodule ExMCP.ACP.Agent.Handler do
     handle_load_session: 3,
     handle_list_sessions: 3,
     handle_resume_session: 3,
+    handle_fork_session: 3,
     handle_close_session: 3,
     handle_delete_session: 3,
     handle_set_mode: 4,

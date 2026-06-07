@@ -131,6 +131,7 @@ defmodule ExMCP.ACP.ClientTest do
             "resume" => %{},
             "close" => %{},
             "delete" => %{},
+            "fork" => %{},
             "additionalDirectories" => %{}
           },
           "auth" => %{"logout" => %{}}
@@ -245,6 +246,19 @@ defmodule ExMCP.ACP.ClientTest do
         Jason.encode!(%{
           "jsonrpc" => "2.0",
           "result" => %{"modes" => nil, "configOptions" => nil},
+          "id" => id
+        })
+
+      MessageRelay.push(state.to_client, response)
+    end
+
+    defp handle_message(%{"method" => "session/fork", "id" => id, "params" => params}, state) do
+      send(state.test_pid, {:fork_session_request, params})
+
+      response =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "result" => %{"sessionId" => "sess_forked_001", "modes" => nil, "configOptions" => nil},
           "id" => id
         })
 
@@ -709,6 +723,39 @@ defmodule ExMCP.ACP.ClientTest do
 
       assert {:error, {:unsupported_capability, :session_resume}} =
                Client.resume_session(client, "old_session_123", "/tmp")
+    end
+  end
+
+  describe "fork_session/4" do
+    test "returns forked session when capability is advertised" do
+      {client, _agent} = start_client()
+
+      assert {:ok, result} = Client.fork_session(client, "old_session_123", "/tmp")
+      assert result["sessionId"] == "sess_forked_001"
+    end
+
+    test "sends additionalDirectories when provided" do
+      {client, _agent} = start_client()
+
+      assert {:ok, _result} =
+               Client.fork_session(client, "old_session_123", "/tmp",
+                 additional_directories: ["/tmp/shared"]
+               )
+
+      assert_receive {:fork_session_request,
+                      %{
+                        "sessionId" => "old_session_123",
+                        "cwd" => "/tmp",
+                        "additionalDirectories" => ["/tmp/shared"]
+                      }},
+                     5_000
+    end
+
+    test "returns unsupported when capability is not advertised" do
+      {client, _agent} = start_client(capabilities: %{"streaming" => true})
+
+      assert {:error, {:unsupported_capability, :session_fork}} =
+               Client.fork_session(client, "old_session_123", "/tmp")
     end
   end
 

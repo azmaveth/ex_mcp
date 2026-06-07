@@ -150,6 +150,66 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStoreTest do
     end
   end
 
+  describe "read_session_messages/2" do
+    test "returns decoded transcript entries in order", %{config_dir: config_dir, cwd: cwd} do
+      write_session(config_dir, cwd, @session_id, [
+        %{"type" => "user", "uuid" => "u1", "message" => %{"role" => "user", "content" => "hi"}},
+        %{
+          "type" => "assistant",
+          "uuid" => "a1",
+          "message" => %{
+            "role" => "assistant",
+            "content" => [%{"type" => "text", "text" => "hello"}]
+          }
+        }
+      ])
+
+      assert {:ok, [first, second]} =
+               SessionStore.read_session_messages(@session_id,
+                 claude_config_dir: config_dir,
+                 cwd: cwd
+               )
+
+      assert first["uuid"] == "u1"
+      assert second["uuid"] == "a1"
+    end
+  end
+
+  describe "fork_session/2" do
+    test "copies a transcript to a new UUID and rewrites session ids", %{
+      config_dir: config_dir,
+      cwd: cwd
+    } do
+      write_session(config_dir, cwd, @session_id, [
+        %{
+          "type" => "summary",
+          "summary" => "fork me",
+          "cwd" => cwd,
+          "session_id" => @session_id,
+          "message" => %{"sessionId" => @session_id}
+        }
+      ])
+
+      assert {:ok, forked_id} =
+               SessionStore.fork_session(@session_id,
+                 claude_config_dir: config_dir,
+                 cwd: cwd
+               )
+
+      assert forked_id != @session_id
+      assert SessionStore.valid_session_id?(forked_id)
+
+      assert {:ok, [entry]} =
+               SessionStore.read_session_messages(forked_id,
+                 claude_config_dir: config_dir,
+                 cwd: cwd
+               )
+
+      assert entry["session_id"] == forked_id
+      assert get_in(entry, ["message", "sessionId"]) == forked_id
+    end
+  end
+
   defp write_session(config_dir, cwd, session_id, entries) do
     project_dir = project_dir(config_dir, cwd)
     File.mkdir_p!(project_dir)

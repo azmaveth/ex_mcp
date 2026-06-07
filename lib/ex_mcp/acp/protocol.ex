@@ -210,6 +210,19 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   @doc """
+  Encodes an unstable `session/fork` request.
+
+  `cwd` is required and must be an absolute path at the client validation
+  boundary. The request shape matches `session/resume`.
+  """
+  @spec encode_session_fork(String.t(), String.t(), keyword() | map() | [map()] | nil) :: map()
+  def encode_session_fork(session_id, cwd, opts \\ nil) when is_binary(cwd) do
+    params = session_lifecycle_params(%{"sessionId" => session_id, "cwd" => cwd}, opts)
+
+    Envelope.request("session/fork", params, generate_id())
+  end
+
+  @doc """
   Encodes a `session/delete` request. Gated by `sessionCapabilities.delete`
   per https://agentclientprotocol.com/protocol/session-list.
   """

@@ -37,5 +37,30 @@ defmodule ExMCP.ACP.LifecycleParamsTest do
       assert {:error, {:invalid_params, :additional_directories_must_be_absolute_paths}} =
                LifecycleParams.validate([additional_directories: ["relative"]], caps)
     end
+
+    test "accepts official MCP server descriptors without ExMCP metadata" do
+      opts = [mcp_servers: [%{"type" => "http", "name" => "docs", "url" => "http://localhost"}]]
+
+      assert :ok = LifecycleParams.validate(opts, %{})
+    end
+
+    test "rejects native MCP descriptors unless ExMCP native support is advertised" do
+      opts = [mcp_servers: [%{"type" => "native", "name" => "local", "service" => :docs}]]
+
+      assert {:error, {:unsupported_capability, :mcp_native}} =
+               LifecycleParams.validate(opts, %{})
+    end
+
+    test "accepts native MCP descriptors when ExMCP native support is advertised" do
+      opts = [mcp_servers: [%{"type" => "beam", "name" => "local", "service" => :docs}]]
+
+      caps = %{
+        "mcpCapabilities" => %{
+          "_meta" => %{"ex_mcp.mcpCapabilities" => %{"native" => true, "beam" => true}}
+        }
+      }
+
+      assert :ok = LifecycleParams.validate(opts, caps)
+    end
   end
 end

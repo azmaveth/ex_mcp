@@ -138,6 +138,24 @@ defmodule ExMCP.ACP.Client do
   end
 
   @doc """
+  Forks an existing session into a new independent session.
+
+  `session/fork` is currently unstable in ACP and requires the agent to
+  advertise `sessionCapabilities.fork`.
+  """
+  @spec fork_session(GenServer.server(), String.t(), String.t(), keyword()) ::
+          {:ok, map() | nil} | {:error, any()}
+  def fork_session(client, session_id, cwd, opts \\ []) when is_binary(cwd) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+
+    GenServer.call(
+      client,
+      {:fork_session, session_id, cwd, LifecycleParams.client_opts(opts)},
+      timeout
+    )
+  end
+
+  @doc """
   Sends a prompt to the agent and blocks until the response arrives.
 
   Streaming `session/update` notifications are delivered to the handler and
@@ -331,6 +349,26 @@ defmodule ExMCP.ACP.Client do
         with :ok <- LifecycleParams.validate_cwd(cwd),
              :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
           msg = Protocol.encode_session_resume(session_id, cwd, lifecycle_opts)
+          send_request(msg, from, state)
+        else
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(
+        {:fork_session, session_id, cwd, lifecycle_opts},
+        from,
+        %{status: :ready} = state
+      ) do
+    case ensure_capability(state, :session_fork) do
+      :ok ->
+        with :ok <- LifecycleParams.validate_cwd(cwd),
+             :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
+          msg = Protocol.encode_session_fork(session_id, cwd, lifecycle_opts)
           send_request(msg, from, state)
         else
           {:error, reason} -> {:reply, {:error, reason}, state}

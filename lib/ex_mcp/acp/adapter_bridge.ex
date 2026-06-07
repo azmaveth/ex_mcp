@@ -238,7 +238,7 @@ defmodule ExMCP.ACP.AdapterBridge do
         %{}
       end
 
-    caps = maybe_add_adapter_session_list_capability(caps, state.adapter_mod)
+    caps = maybe_add_adapter_session_capabilities(caps, state.adapter_mod)
 
     init_result =
       Envelope.response(request_id, %{
@@ -247,15 +247,16 @@ defmodule ExMCP.ACP.AdapterBridge do
           "version" => "1.0.0"
         },
         "agentCapabilities" => caps,
-        "authMethods" => [],
+        "authMethods" => adapter_auth_methods(state),
         "protocolVersion" => 1
       })
 
     push_message(state, Jason.encode!(init_result))
   end
 
-  defp maybe_add_adapter_session_list_capability(caps, adapter_mod) do
+  defp maybe_add_adapter_session_capabilities(caps, adapter_mod) do
     Capabilities.advertise_adapter_session_list(caps, adapter_mod)
+    |> Capabilities.advertise_adapter_session_fork(adapter_mod)
   end
 
   defp advertised_capabilities(state) do
@@ -264,7 +265,7 @@ defmodule ExMCP.ACP.AdapterBridge do
     else
       %{}
     end
-    |> maybe_add_adapter_session_list_capability(state.adapter_mod)
+    |> maybe_add_adapter_session_capabilities(state.adapter_mod)
   end
 
   defp ensure_capability(state, :load_session),
@@ -284,6 +285,17 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   defp ensure_capability(state, :session_delete),
     do: state |> advertised_capabilities() |> Capabilities.supported?(:session_delete)
+
+  defp ensure_capability(state, :session_fork),
+    do: state |> advertised_capabilities() |> Capabilities.supported?(:session_fork)
+
+  defp adapter_auth_methods(state) do
+    if function_exported?(state.adapter_mod, :auth_methods, 1) do
+      state.adapter_mod.auth_methods(state.adapter_opts)
+    else
+      []
+    end
+  end
 
   defp reject_unsupported_method(state, id, method) do
     synthesize_error(state, id, -32_601, "Method not found: #{method}")
@@ -431,6 +443,20 @@ defmodule ExMCP.ACP.AdapterBridge do
             synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
 
           {:reply, :ok, state}
+
+        {:messages_and_reply, messages, result, new_adapter_state} ->
+          state = %{state | adapter_state: new_adapter_state}
+          state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+
+          state =
+            synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
+
+          {:reply, :ok, state}
+
+        {:error, reason, new_adapter_state} ->
+          state = %{state | adapter_state: new_adapter_state}
+          state = synthesize_error(state, id, -32_603, to_string(reason))
+          {:reply, :ok, state}
       end
     else
       {:reply, :ok, reject_unsupported_method(state, id, "session/load")}
@@ -457,9 +483,38 @@ defmodule ExMCP.ACP.AdapterBridge do
             synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
 
           {:reply, :ok, state}
+
+        {:messages_and_reply, messages, result, new_adapter_state} ->
+          state = %{state | adapter_state: new_adapter_state}
+          state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+
+          state =
+            synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
+
+          {:reply, :ok, state}
+
+        {:error, reason, new_adapter_state} ->
+          state = %{state | adapter_state: new_adapter_state}
+          state = synthesize_error(state, id, -32_603, to_string(reason))
+          {:reply, :ok, state}
       end
     else
       {:reply, :ok, reject_unsupported_method(state, id, "session/resume")}
+    end
+  end
+
+  defp handle_outbound(%{"method" => "session/fork", "id" => id} = msg, _json, _from, state) do
+    cond do
+      not ensure_capability(state, :session_fork) ->
+        {:reply, :ok, reject_unsupported_method(state, id, "session/fork")}
+
+      function_exported?(state.adapter_mod, :fork_session, 2) ->
+        handle_adapter_fork_callback(msg, id, state)
+
+      true ->
+        msg
+        |> translate_outbound_message(state)
+        |> handle_fork_translation(id)
     end
   end
 
@@ -575,14 +630,73 @@ defmodule ExMCP.ACP.AdapterBridge do
     |> handle_translated_outbound(msg)
   end
 
+  defp handle_adapter_fork_callback(msg, id, state) do
+    params = Map.get(msg, "params", %{})
+
+    case state.adapter_mod.fork_session(params, state.adapter_state) do
+      {:ok, result, adapter_state} ->
+        state = %{state | adapter_state: adapter_state}
+        {:reply, :ok, synthesize_session_lifecycle_result(state, id, result)}
+
+      {:error, reason, adapter_state} ->
+        state = %{state | adapter_state: adapter_state}
+        {:reply, :ok, synthesize_error(state, id, -32_603, to_string(reason))}
+    end
+  end
+
+  defp handle_fork_translation({:ok, :skip, state}, id),
+    do: {:reply, :ok, synthesize_result(state, id, session_state_result(state))}
+
+  defp handle_fork_translation({:ok, _delivery, state}, _id), do: {:reply, :ok, state}
+
+  defp handle_fork_translation({:messages, messages, state}, id) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    {:reply, :ok, synthesize_result(state, id, session_state_result(state))}
+  end
+
+  defp handle_fork_translation({:reply, result, state}, id),
+    do: {:reply, :ok, synthesize_session_lifecycle_result(state, id, result)}
+
+  defp handle_fork_translation({:messages_and_reply, messages, result, state}, id) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    {:reply, :ok, synthesize_session_lifecycle_result(state, id, result)}
+  end
+
+  defp handle_fork_translation({:messages_and_write, messages, _delivery, state}, _id) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    {:reply, :ok, state}
+  end
+
+  defp handle_fork_translation({:error, reason, state}, id),
+    do: {:reply, :ok, synthesize_error(state, id, -32_603, to_string(reason))}
+
+  defp synthesize_session_lifecycle_result(state, id, result) do
+    synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
+  end
+
   defp handle_translated_outbound({:ok, _delivery, state}, _msg), do: {:reply, :ok, state}
+
+  defp handle_translated_outbound({:messages, messages, state}, _msg) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    {:reply, :ok, state}
+  end
 
   defp handle_translated_outbound({:reply, result, state}, msg) do
     synthesize_translated_reply(msg, result, state)
   end
 
+  defp handle_translated_outbound({:messages_and_reply, messages, result, state}, msg) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    synthesize_translated_reply(msg, result, state)
+  end
+
   defp handle_translated_outbound({:reply_and_write, result, _delivery, state}, msg) do
     synthesize_translated_reply(msg, result, state)
+  end
+
+  defp handle_translated_outbound({:messages_and_write, messages, _delivery, state}, _msg) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    {:reply, :ok, state}
   end
 
   defp handle_translated_outbound({:error, reason, state}, msg) do
@@ -622,8 +736,20 @@ defmodule ExMCP.ACP.AdapterBridge do
       {:reply, result, state} ->
         {:reply, :ok, synthesize_result(state, id, result || result_fun.(state))}
 
+      {:messages, messages, state} ->
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        {:reply, :ok, synthesize_result(state, id, result_fun.(state))}
+
+      {:messages_and_reply, messages, result, state} ->
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        {:reply, :ok, synthesize_result(state, id, result || result_fun.(state))}
+
       {:reply_and_write, result, _delivery, state} ->
         {:reply, :ok, synthesize_result(state, id, result || result_fun.(state))}
+
+      {:messages_and_write, messages, _delivery, state} ->
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        {:reply, :ok, synthesize_result(state, id, result_fun.(state))}
 
       {:error, reason, state} ->
         reply_translation_error(msg, reason, state)
@@ -639,36 +765,64 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp translate_outbound_message(msg, state) do
-    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
-      {:ok, :skip, new_adapter_state} ->
-        {:ok, :skip, %{state | adapter_state: new_adapter_state}}
+    msg
+    |> state.adapter_mod.translate_outbound(state.adapter_state)
+    |> normalize_translated_outbound(state)
+  end
 
-      {:ok, data, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
+  defp normalize_translated_outbound({:ok, :skip, adapter_state}, state),
+    do: {:ok, :skip, %{state | adapter_state: adapter_state}}
 
-        case write_to_port(state, data) do
-          :ok -> {:ok, :sent, state}
-          {:error, reason} -> {:error, reason, state}
-        end
+  defp normalize_translated_outbound({:ok, data, adapter_state}, state) do
+    state = %{state | adapter_state: adapter_state}
+    write_translation_to_port(state, {:ok, :sent}, data)
+  end
 
-      {:reply, result, new_adapter_state} ->
-        {:reply, result, %{state | adapter_state: new_adapter_state}}
+  defp normalize_translated_outbound({:reply, result, adapter_state}, state),
+    do: {:reply, result, %{state | adapter_state: adapter_state}}
 
-      {:reply_and_write, result, data, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
+  defp normalize_translated_outbound({:messages, messages, adapter_state}, state),
+    do: {:messages, messages, %{state | adapter_state: adapter_state}}
 
-        case write_to_port(state, data) do
-          :ok -> {:reply_and_write, result, :sent, state}
-          {:error, reason} -> {:error, reason, state}
-        end
+  defp normalize_translated_outbound(
+         {:messages_and_reply, messages, result, adapter_state},
+         state
+       ),
+       do: {:messages_and_reply, messages, result, %{state | adapter_state: adapter_state}}
 
-      {:error, reason, new_adapter_state} ->
-        {:error, reason, %{state | adapter_state: new_adapter_state}}
+  defp normalize_translated_outbound({:reply_and_write, result, data, adapter_state}, state) do
+    state = %{state | adapter_state: adapter_state}
+    write_translation_to_port(state, {:reply_and_write, result, :sent}, data)
+  end
 
-      {:one_shot, cmd_fn, new_adapter_state} ->
-        {:one_shot, cmd_fn, %{state | adapter_state: new_adapter_state}}
+  defp normalize_translated_outbound(
+         {:messages_and_write, messages, data, adapter_state},
+         state
+       ) do
+    state = %{state | adapter_state: adapter_state}
+    write_translation_to_port(state, {:messages_and_write, messages, :sent}, data)
+  end
+
+  defp normalize_translated_outbound({:error, reason, adapter_state}, state),
+    do: {:error, reason, %{state | adapter_state: adapter_state}}
+
+  defp normalize_translated_outbound({:one_shot, cmd_fn, adapter_state}, state),
+    do: {:one_shot, cmd_fn, %{state | adapter_state: adapter_state}}
+
+  defp write_translation_to_port(state, success, data) do
+    case write_to_port(state, data) do
+      :ok -> translated_write_success(success, state)
+      {:error, reason} -> {:error, reason, state}
     end
   end
+
+  defp translated_write_success({:ok, :sent}, state), do: {:ok, :sent, state}
+
+  defp translated_write_success({:reply_and_write, result, :sent}, state),
+    do: {:reply_and_write, result, :sent, state}
+
+  defp translated_write_success({:messages_and_write, messages, :sent}, state),
+    do: {:messages_and_write, messages, :sent, state}
 
   defp write_to_port(%{port: nil}, _data), do: {:error, :no_port}
 

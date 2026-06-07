@@ -94,6 +94,67 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
     do: {:error, "Invalid Claude sessionId: #{inspect(session_id)}"}
 
   @doc """
+  Reads decoded JSONL transcript entries for a persisted session.
+  """
+  @spec read_session_messages(String.t(), opts()) :: {:ok, [map()]} | {:error, term()}
+  def read_session_messages(session_id, opts \\ [])
+
+  def read_session_messages(session_id, opts) when is_binary(session_id) do
+    with :ok <- validate_session_id(session_id),
+         {:ok, path} <- find_session_path(session_id, opts),
+         {:ok, %File.Stat{size: size}} when size > 0 <- File.stat(path),
+         {:ok, {head, _tail}} <- read_windows(path, size),
+         false <- sidechain?(head),
+         {:ok, contents} <- File.read(path) do
+      {:ok, json_line_maps(contents)}
+    else
+      true -> {:error, "Claude session #{session_id} is a sidechain"}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, "Claude session #{session_id} was not found"}
+    end
+  rescue
+    error ->
+      {:error, Exception.message(error)}
+  end
+
+  def read_session_messages(session_id, _opts),
+    do: {:error, "Invalid Claude sessionId: #{inspect(session_id)}"}
+
+  @doc """
+  Copies a persisted session transcript to a new Claude session UUID.
+
+  This implements ACP `session/fork` for the disk-backed SDK store. The copied
+  transcript is rewritten with the new session id where common Claude JSONL id
+  fields are present, while message UUIDs are preserved so clients can still
+  refer to replayed history.
+  """
+  @spec fork_session(String.t(), opts()) :: {:ok, String.t()} | {:error, term()}
+  def fork_session(session_id, opts \\ [])
+
+  def fork_session(session_id, opts) when is_binary(session_id) do
+    with :ok <- validate_session_id(session_id),
+         {:ok, source_path} <- find_session_path(session_id, opts),
+         {:ok, messages} <- read_session_messages(session_id, opts),
+         new_session_id <- new_session_id(),
+         target_path <- source_path |> Path.dirname() |> Path.join("#{new_session_id}.jsonl"),
+         true <- safe_child?(projects_dir(config_dir(opts)), target_path),
+         false <- File.exists?(target_path),
+         :ok <- write_fork(target_path, messages, new_session_id) do
+      {:ok, new_session_id}
+    else
+      true -> {:error, "Claude fork target already exists"}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, "Claude session #{session_id} could not be forked"}
+    end
+  rescue
+    error ->
+      {:error, Exception.message(error)}
+  end
+
+  def fork_session(session_id, _opts),
+    do: {:error, "Invalid Claude sessionId: #{inspect(session_id)}"}
+
+  @doc """
   Resolves the Claude config directory from adapter options, environment, or
   `~/.claude`.
   """
@@ -133,6 +194,40 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
   @doc false
   @spec valid_session_id?(String.t()) :: boolean()
   def valid_session_id?(session_id), do: Regex.match?(@uuid_re, session_id)
+
+  defp validate_session_id(session_id) do
+    if valid_session_id?(session_id) do
+      :ok
+    else
+      {:error, "Invalid Claude sessionId: #{inspect(session_id)}"}
+    end
+  end
+
+  defp find_session_path(session_id, opts) do
+    config_dir = config_dir(opts)
+    cwd = option(opts, :cwd, "cwd") || option(opts, :dir, "dir")
+    include_worktrees = option(opts, :include_worktrees, "includeWorktrees", true)
+    projects_dir = projects_dir(config_dir)
+
+    result =
+      config_dir
+      |> project_dir_entries(cwd, include_worktrees)
+      |> Enum.find_value(fn %{dir: project_dir} ->
+        path = Path.join(project_dir, "#{session_id}.jsonl")
+
+        with true <- safe_child?(projects_dir, path),
+             {:ok, %File.Stat{type: :regular, size: size}} when size > 0 <- File.lstat(path) do
+          {:ok, path}
+        else
+          _ -> nil
+        end
+      end)
+
+    case result do
+      {:ok, path} -> {:ok, path}
+      nil -> {:error, "Claude session #{session_id} was not found"}
+    end
+  end
 
   defp do_delete_session(session_id, opts) do
     config_dir = config_dir(opts)
@@ -277,6 +372,51 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
     else
       _ -> :skip
     end
+  end
+
+  defp write_fork(path, messages, new_session_id) do
+    contents =
+      messages
+      |> Enum.map_join("\n", fn message ->
+        message
+        |> rewrite_session_ids(new_session_id)
+        |> Jason.encode!()
+      end)
+
+    File.write(path, contents <> "\n", [:write, :exclusive])
+  end
+
+  defp rewrite_session_ids(%{} = map, new_session_id) do
+    map
+    |> Enum.map(fn
+      {key, _value} when key in ["sessionId", "session_id"] ->
+        {key, new_session_id}
+
+      {key, value} ->
+        {key, rewrite_session_ids(value, new_session_id)}
+    end)
+    |> Map.new()
+  end
+
+  defp rewrite_session_ids(list, new_session_id) when is_list(list),
+    do: Enum.map(list, &rewrite_session_ids(&1, new_session_id))
+
+  defp rewrite_session_ids(value, _new_session_id), do: value
+
+  defp new_session_id do
+    <<u0::32, u1::16, u2::16, u3::16, u4::48>> = :crypto.strong_rand_bytes(16)
+    u2 = bor(band(u2, 0x0FFF), 0x4000)
+    u3 = bor(band(u3, 0x3FFF), 0x8000)
+
+    :io_lib.format("~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b", [
+      u0,
+      u1,
+      u2,
+      u3,
+      u4
+    ])
+    |> IO.iodata_to_binary()
+    |> String.downcase()
   end
 
   defp read_windows(path, size) do

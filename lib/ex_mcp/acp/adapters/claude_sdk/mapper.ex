@@ -164,6 +164,18 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   def reduce_message(_event, state), do: {[], [], state}
 
+  @doc """
+  Replays persisted Claude JSONL transcript entries as ACP session updates.
+  """
+  @spec replay_messages([map()], map()) :: {[map()], map()}
+  def replay_messages(events, state) when is_list(events) do
+    Enum.reduce(events, {[], state}, fn event, {messages, acc} ->
+      acc = remember_message_id(event, acc)
+      {replay_messages, acc} = replay_message(event, acc)
+      {messages ++ replay_messages, acc}
+    end)
+  end
+
   @doc "Maps a client JSON-RPC response back into a Claude control response."
   @spec client_response(map(), map()) :: {:ok, iodata(), map()} | :unknown
   def client_response(%{"id" => id, "result" => result}, state) do
@@ -206,6 +218,84 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   def client_response(_msg, _state), do: :unknown
+
+  defp replay_message(%{"type" => "user"} = event, state) do
+    {tool_messages, _writes, state} = reduce_message(event, state)
+    text_messages = replay_user_content(event, state)
+    {text_messages ++ tool_messages, state}
+  end
+
+  defp replay_message(event, state) do
+    {messages, _writes, state} = reduce_message(event, state)
+    {messages, state}
+  end
+
+  defp replay_user_content(event, state) do
+    event
+    |> get_in(["message", "content"])
+    |> replay_content_blocks()
+    |> Enum.map(fn content ->
+      session_update(session_id(state), %{
+        "sessionUpdate" => "user_message_chunk",
+        "content" => content,
+        "_meta" => replay_meta(event)
+      })
+    end)
+  end
+
+  defp replay_content_blocks(content) when is_binary(content),
+    do: [%{"type" => "text", "text" => content}]
+
+  defp replay_content_blocks(content) when is_list(content) do
+    content
+    |> Enum.reject(&(&1["type"] == "tool_result"))
+    |> Enum.flat_map(&replay_content_block/1)
+  end
+
+  defp replay_content_blocks(_content), do: []
+
+  defp replay_content_block(%{"type" => "text", "text" => text}) when is_binary(text),
+    do: [%{"type" => "text", "text" => text}]
+
+  defp replay_content_block(%{"type" => "image", "source" => source}) when is_map(source) do
+    [
+      %{
+        "type" => "image",
+        "mimeType" => source["media_type"] || source["mimeType"] || "image/png",
+        "data" => source["data"] || ""
+      }
+    ]
+  end
+
+  defp replay_content_block(_block), do: []
+
+  defp replay_meta(event) do
+    %{
+      "ex_mcp.claude_sdk" =>
+        %{
+          "replay" => true,
+          "messageUuid" => message_uuid(event),
+          "parentUuid" => event["parentUuid"] || event["parent_uuid"],
+          "timestamp" => event["timestamp"]
+        }
+        |> compact()
+    }
+  end
+
+  defp remember_message_id(event, state) do
+    uuid = message_uuid(event)
+
+    if is_binary(uuid) and Map.has_key?(state, :message_ids) do
+      %{state | message_ids: Map.put(state.message_ids, uuid, event)}
+    else
+      state
+    end
+  end
+
+  defp message_uuid(event) do
+    event["uuid"] || event["message_uuid"] || event["messageUuid"] ||
+      get_in(event, ["message", "id"])
+  end
 
   defp handle_control_response(
          %{"response" => %{"request_id" => request_id, "response" => response}},
@@ -461,6 +551,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     state = %{
       state
       | pending_prompt_id: nil,
+        active_prompt_session_id: nil,
         text_acc: [],
         thinking_acc: [],
         thinking_blocks: [],
@@ -468,7 +559,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         session_id: session_id
     }
 
-    {Enum.reverse(messages), [], state}
+    {writes, state} = start_next_queued_prompt(state)
+
+    {Enum.reverse(messages), writes, state}
   end
 
   defp handle_system(%{"subtype" => "init"} = event, state) do
@@ -868,6 +961,26 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       |> Map.new()
 
     %{state | pending_client_requests: pending}
+  end
+
+  defp start_next_queued_prompt(%{prompt_queue: []} = state), do: {[], state}
+
+  defp start_next_queued_prompt(%{prompt_queue: [queued | rest]} = state) do
+    state =
+      %{
+        state
+        | pending_prompt_id: queued.id,
+          active_prompt_session_id: queued.session_id || state.session_id,
+          session_id: queued.session_id || state.session_id,
+          prompt_queue: rest,
+          text_acc: [],
+          thinking_acc: [],
+          thinking_blocks: [],
+          current_block_type: nil,
+          tool_calls: %{}
+      }
+
+    {[ClaudeProtocol.line(queued.message)], state}
   end
 
   defp session_update(session_id, update), do: AdapterEvents.session_update(session_id, update)

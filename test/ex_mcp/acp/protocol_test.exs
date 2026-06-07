@@ -138,6 +138,32 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
   end
 
+  describe "encode_session_fork/3" do
+    test "includes session ID, cwd, and mcp servers" do
+      msg = Protocol.encode_session_fork("sess_abc", "/tmp/project")
+
+      assert msg["method"] == "session/fork"
+      assert msg["params"]["sessionId"] == "sess_abc"
+      assert msg["params"]["cwd"] == "/tmp/project"
+      assert msg["params"]["mcpServers"] == []
+    end
+
+    test "includes additionalDirectories when provided" do
+      msg =
+        Protocol.encode_session_fork("sess_abc", "/tmp/project",
+          additional_directories: ["/tmp/shared"]
+        )
+
+      assert msg["params"]["additionalDirectories"] == ["/tmp/shared"]
+    end
+
+    test "raises when cwd is nil because cwd is required per ACP lifecycle shape" do
+      assert_raise FunctionClauseError, fn ->
+        Protocol.encode_session_fork("sess_abc", nil)
+      end
+    end
+  end
+
   describe "encode_session_prompt/2" do
     test "produces valid request" do
       blocks = [%{"type" => "text", "text" => "Hello"}]
@@ -177,6 +203,8 @@ defmodule ExMCP.ACP.ProtocolTest do
   # This test pins down the encoder's existence and shape.
   describe "encode_session_delete/1" do
     test "spec regression: encoder exists and produces session/delete request" do
+      Code.ensure_loaded!(Protocol)
+
       assert function_exported?(Protocol, :encode_session_delete, 1),
              "session/delete is in the ACP spec (gated by agentCapabilities.delete) " <>
                "but Protocol.encode_session_delete/1 doesn't exist. Add encoder."

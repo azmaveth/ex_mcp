@@ -166,6 +166,95 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip, state}
   end
 
+  defmodule AuthForkAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    defstruct []
+
+    @impl true
+    def init(_opts), do: {:ok, %__MODULE__{}}
+
+    @impl true
+    def command(_opts), do: {"cat", []}
+
+    @impl true
+    def capabilities, do: %{"sessionCapabilities" => %{}}
+
+    @impl true
+    def auth_methods(_opts), do: [%{"id" => "terminal", "name" => "Terminal login"}]
+
+    @impl true
+    def fork_session(params, state) do
+      {:ok,
+       %{
+         "sessionId" => "forked-#{params["sessionId"]}",
+         "_meta" => %{"cwd" => params["cwd"]}
+       }, state}
+    end
+
+    @impl true
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
+  defmodule SyntheticMessagesAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    defstruct []
+
+    @impl true
+    def init(_opts), do: {:ok, %__MODULE__{}}
+
+    @impl true
+    def command(_opts), do: {"cat", []}
+
+    @impl true
+    def capabilities do
+      %{
+        "sessionCapabilities" => %{
+          "fork" => %{}
+        }
+      }
+    end
+
+    @impl true
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+    def translate_outbound(%{"method" => "authenticate"}, state) do
+      {:messages, [notice("auth-message")], state}
+    end
+
+    def translate_outbound(%{"method" => "session/set_mode"}, state) do
+      {:messages_and_write, [notice("mode-message")], "ignored\n", state}
+    end
+
+    def translate_outbound(%{"method" => "session/fork"}, state) do
+      {:messages, [notice("fork-message")], state}
+    end
+
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+
+    defp notice(text) do
+      %{
+        "jsonrpc" => "2.0",
+        "method" => "session/update",
+        "params" => %{
+          "sessionId" => "adapter-session",
+          "update" => %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{"type" => "text", "text" => text}
+          }
+        }
+      }
+    end
+  end
+
   # Helper to send initialize and drain the synthesized init response
   defp send_initialize(bridge) do
     :ok =
@@ -440,6 +529,122 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       assert session["sessionId"] == "param-session"
       assert session["cwd"] == "/tmp/project"
       assert session["title"] == "page-2"
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
+  describe "authMethods and session/fork" do
+    test "initialize advertises adapter auth methods and fork capability" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: AuthForkAdapter, adapter_opts: [])
+      init = send_initialize(bridge)
+
+      assert init["result"]["authMethods"] == [
+               %{"id" => "terminal", "name" => "Terminal login"}
+             ]
+
+      assert get_in(init, ["result", "agentCapabilities", "sessionCapabilities", "fork"]) == %{}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "forwards session/fork to adapter fork_session/2" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: AuthForkAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      fork_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/fork",
+        "params" => %{"sessionId" => "s1", "cwd" => "/tmp/project"},
+        "id" => 52
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(fork_msg))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+
+      assert msg["id"] == 52
+      assert msg["result"]["sessionId"] == "forked-s1"
+      assert msg["result"]["_meta"]["cwd"] == "/tmp/project"
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
+  describe "synthetic responses with adapter-emitted messages" do
+    test "pushes messages before synthesized authenticate response" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: SyntheticMessagesAdapter, adapter_opts: [])
+
+      _init = send_initialize(bridge)
+
+      auth_msg = %{"jsonrpc" => "2.0", "method" => "authenticate", "params" => %{}, "id" => 53}
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(auth_msg))
+
+      assert {:ok, raw_notice} = AdapterBridge.receive_message(bridge, 5_000)
+      notice = Jason.decode!(raw_notice)
+      assert notice["params"]["update"]["content"]["text"] == "auth-message"
+
+      assert {:ok, raw_response} = AdapterBridge.receive_message(bridge, 5_000)
+      response = Jason.decode!(raw_response)
+      assert response["id"] == 53
+      assert response["result"] == %{}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "pushes messages before synthesized response when writing to the subprocess" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: SyntheticMessagesAdapter, adapter_opts: [])
+
+      _init = send_initialize(bridge)
+
+      mode_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/set_mode",
+        "params" => %{"sessionId" => "s1", "modeId" => "code"},
+        "id" => 54
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(mode_msg))
+
+      assert {:ok, raw_notice} = AdapterBridge.receive_message(bridge, 5_000)
+      notice = Jason.decode!(raw_notice)
+      assert notice["params"]["update"]["content"]["text"] == "mode-message"
+
+      assert {:ok, raw_response} = AdapterBridge.receive_message(bridge, 5_000)
+      response = Jason.decode!(raw_response)
+      assert response["id"] == 54
+      assert response["result"] == %{}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "pushes messages before synthesized fork response" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: SyntheticMessagesAdapter, adapter_opts: [])
+
+      _init = send_initialize(bridge)
+
+      fork_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/fork",
+        "params" => %{"sessionId" => "s1", "cwd" => "/tmp"},
+        "id" => 55
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(fork_msg))
+
+      assert {:ok, raw_notice} = AdapterBridge.receive_message(bridge, 5_000)
+      notice = Jason.decode!(raw_notice)
+      assert notice["params"]["update"]["content"]["text"] == "fork-message"
+
+      assert {:ok, raw_response} = AdapterBridge.receive_message(bridge, 5_000)
+      response = Jason.decode!(raw_response)
+      assert response["id"] == 55
+      assert response["result"] == %{}
 
       AdapterBridge.close(bridge)
     end

@@ -20,19 +20,27 @@ defmodule ExMCP.ACP.LifecycleParams do
   @spec validate(keyword(), map() | nil) :: :ok | {:error, term()}
   def validate(opts, capabilities) do
     additional_directories = Keyword.get(opts, :additional_directories)
+    mcp_servers = mcp_servers(opts)
 
     cond do
+      invalid_mcp_servers?(mcp_servers, capabilities || %{}) ->
+        {:error, {:unsupported_capability, :mcp_native}}
+
+      not Capabilities.supported?(capabilities || %{}, :additional_directories) ->
+        if is_nil(additional_directories) do
+          :ok
+        else
+          {:error, {:unsupported_capability, :additional_directories}}
+        end
+
       is_nil(additional_directories) ->
         :ok
 
-      not Capabilities.supported?(capabilities || %{}, :additional_directories) ->
-        {:error, {:unsupported_capability, :additional_directories}}
-
-      valid_additional_directories?(additional_directories) ->
-        :ok
+      not valid_additional_directories?(additional_directories) ->
+        {:error, {:invalid_params, :additional_directories_must_be_absolute_paths}}
 
       true ->
-        {:error, {:invalid_params, :additional_directories_must_be_absolute_paths}}
+        :ok
     end
   end
 
@@ -101,4 +109,13 @@ defmodule ExMCP.ACP.LifecycleParams do
   defp do_validate_additional_directories!(_directories) do
     raise ArgumentError, "additionalDirectories must be a non-empty list of absolute paths"
   end
+
+  defp invalid_mcp_servers?(servers, capabilities) do
+    Enum.any?(servers, &native_mcp_server?/1) and
+      not Capabilities.supported?(capabilities, :mcp_native)
+  end
+
+  defp native_mcp_server?(%{"type" => type}) when type in ["native", "beam"], do: true
+  defp native_mcp_server?(%{type: type}) when type in [:native, :beam, "native", "beam"], do: true
+  defp native_mcp_server?(_server), do: false
 end

@@ -16,6 +16,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   alias ExMCP.ACP.Adapters.ClaudeSDK.Mapper
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
+  alias ExMCP.ACP.Envelope
 
   defstruct [
     :session_id,
@@ -24,17 +25,20 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     :effort,
     :cwd,
     :pending_prompt_id,
+    :active_prompt_session_id,
     :init_response,
     opts: [],
     pending_controls: %{},
     pending_client_requests: %{},
+    prompt_queue: [],
     available_commands: [],
     available_models: [],
     text_acc: [],
     thinking_acc: [],
     thinking_blocks: [],
     current_block_type: nil,
-    tool_calls: %{}
+    tool_calls: %{},
+    message_ids: %{}
   ]
 
   @impl true
@@ -77,13 +81,24 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         "image" => true,
         "embeddedContext" => true
       },
-      "mcpServers" => true,
+      "mcpCapabilities" => %{
+        "acp" => true,
+        "http" => true,
+        "sse" => true,
+        "_meta" => %{
+          "ex_mcp.mcpCapabilities" => %{
+            "native" => true,
+            "beam" => true
+          }
+        }
+      },
       "sessionCapabilities" => %{
         "list" => %{},
         "resume" => %{},
         "close" => %{},
         "delete" => %{},
-        "additionalDirectories" => true
+        "fork" => %{},
+        "additionalDirectories" => %{}
       },
       "_meta" => %{
         "ex_mcp.claude_sdk" => %{
@@ -94,6 +109,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
       }
     }
   end
+
+  @impl true
+  def auth_methods(_opts), do: []
 
   @impl true
   def modes, do: Mapper.modes()
@@ -120,13 +138,30 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   end
 
   @impl true
+  def fork_session(params, state) do
+    session_id = params["sessionId"] || state.session_id
+
+    params
+    |> session_store_opts(state)
+    |> then(&SessionStore.fork_session(session_id, &1))
+    |> case do
+      {:ok, forked_session_id} ->
+        state = %{state | session_id: forked_session_id, cwd: params["cwd"] || state.cwd}
+        {:ok, Mapper.session_result(state, forked_session_id), state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  @impl true
   def translate_outbound(%{"id" => _id, "method" => method} = msg, state)
       when is_binary(method) do
     handle_request(method, msg, state)
   end
 
-  def translate_outbound(%{"method" => method}, state) when is_binary(method) do
-    handle_notification(method, state)
+  def translate_outbound(%{"method" => method} = msg, state) when is_binary(method) do
+    handle_notification(method, msg, state)
   end
 
   def translate_outbound(%{"id" => _id} = msg, state) do
@@ -147,13 +182,31 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   defp handle_request("session/load", %{"params" => params}, state) do
     session_id = params["sessionId"] || state.session_id || generated_session_id()
     state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
-    {:reply, Mapper.session_result(state, session_id), state}
+
+    case SessionStore.read_session_messages(session_id, session_store_opts(params, state)) do
+      {:ok, events} ->
+        {messages, state} = Mapper.replay_messages(events, state)
+        {:messages_and_reply, messages, Mapper.session_result(state, session_id), state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
   end
 
   defp handle_request("session/resume", %{"params" => params}, state) do
     session_id = params["sessionId"] || state.session_id || generated_session_id()
     state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
     {:reply, Mapper.session_result(state, session_id), state}
+  end
+
+  defp handle_request("session/close", %{"params" => %{"sessionId" => session_id}}, state) do
+    {messages, state} = cleanup_session(state, session_id)
+
+    if messages == [] do
+      {:reply, %{}, state}
+    else
+      {:messages_and_reply, messages, %{}, state}
+    end
   end
 
   defp handle_request("session/close", _msg, state), do: {:reply, %{}, state}
@@ -179,7 +232,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     |> then(&SessionStore.delete_session(session_id, &1))
     |> case do
       :ok ->
-        {:reply, %{}, clear_deleted_session(state, session_id)}
+        {messages, state} = cleanup_session(state, session_id)
+        state = clear_deleted_session(state, session_id)
+
+        if messages == [] do
+          {:reply, %{}, state}
+        else
+          {:messages_and_reply, messages, %{}, state}
+        end
 
       {:error, reason} ->
         {:error, reason, state}
@@ -195,24 +255,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
          %{"id" => id, "params" => %{"sessionId" => session_id, "prompt" => prompt}},
          state
        ) do
-    case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
-      {:ok, message} ->
-        state =
-          %{
-            state
-            | pending_prompt_id: id,
-              session_id: session_id || state.session_id,
-              text_acc: [],
-              thinking_acc: [],
-              thinking_blocks: [],
-              current_block_type: nil,
-              tool_calls: %{}
-          }
-
-        {:ok, ClaudeProtocol.line(message), state}
-
-      {:error, reason} ->
-        {:error, reason, state}
+    if state.pending_prompt_id do
+      case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
+        {:ok, message} -> {:ok, :skip, enqueue_prompt(state, id, session_id, message)}
+        {:error, reason} -> {:error, reason, state}
+      end
+    else
+      start_prompt(id, session_id, prompt, state)
     end
   end
 
@@ -293,7 +342,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   defp handle_request(_method, _msg, state), do: {:ok, :skip, state}
 
-  defp handle_notification("session/cancel", state) do
+  defp handle_notification("session/cancel", %{"params" => params}, state) do
+    session_id = params["sessionId"] || state.active_prompt_session_id || state.session_id
+    {cancelled_messages, state} = cancel_queued_prompts(state, session_id)
     request_id = control_id("interrupt")
     state = %{state | pending_controls: Map.put(state.pending_controls, request_id, :interrupt)}
 
@@ -301,10 +352,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
       ClaudeProtocol.control_request(request_id, %{"subtype" => "interrupt"})
       |> ClaudeProtocol.line()
 
-    {:ok, data, state}
+    if cancelled_messages == [] do
+      {:ok, data, state}
+    else
+      {:messages_and_write, cancelled_messages, data, state}
+    end
   end
 
-  defp handle_notification(_method, state), do: {:ok, :skip, state}
+  defp handle_notification(_method, _msg, state), do: {:ok, :skip, state}
 
   @impl true
   def translate_inbound(line, state) do
@@ -357,6 +412,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
       state
       | session_id: nil,
         pending_prompt_id: nil,
+        active_prompt_session_id: nil,
+        prompt_queue: [],
         text_acc: [],
         thinking_acc: [],
         thinking_blocks: [],
@@ -366,6 +423,92 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   end
 
   defp clear_deleted_session(state, _session_id), do: state
+
+  defp start_prompt(id, session_id, prompt, state) do
+    case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
+      {:ok, message} ->
+        state =
+          %{
+            state
+            | pending_prompt_id: id,
+              active_prompt_session_id: session_id || state.session_id,
+              session_id: session_id || state.session_id,
+              text_acc: [],
+              thinking_acc: [],
+              thinking_blocks: [],
+              current_block_type: nil,
+              tool_calls: %{}
+          }
+
+        {:ok, ClaudeProtocol.line(message), state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  defp enqueue_prompt(state, id, session_id, message) do
+    queued = %{id: id, session_id: session_id, message: message}
+    %{state | prompt_queue: state.prompt_queue ++ [queued]}
+  end
+
+  defp cancel_queued_prompts(state, nil), do: {[], state}
+
+  defp cancel_queued_prompts(state, session_id) do
+    {cancelled, remaining} =
+      Enum.split_with(state.prompt_queue, &(&1.session_id == session_id))
+
+    messages =
+      Enum.map(cancelled, fn %{id: id} ->
+        Envelope.response(id, %{"stopReason" => "cancelled"})
+      end)
+
+    {messages, %{state | prompt_queue: remaining}}
+  end
+
+  defp cleanup_session(state, session_id) do
+    {queued_messages, state} = cancel_queued_prompts(state, session_id)
+    {active_messages, state} = cancel_active_prompt(state, session_id)
+
+    state =
+      if state.session_id == session_id do
+        %{
+          state
+          | session_id: nil,
+            text_acc: [],
+            thinking_acc: [],
+            thinking_blocks: [],
+            current_block_type: nil,
+            tool_calls: %{}
+        }
+      else
+        state
+      end
+
+    {active_messages ++ queued_messages, state}
+  end
+
+  defp cancel_active_prompt(%{pending_prompt_id: nil} = state, _session_id), do: {[], state}
+
+  defp cancel_active_prompt(%{active_prompt_session_id: session_id} = state, session_id) do
+    messages = [Envelope.response(state.pending_prompt_id, %{"stopReason" => "cancelled"})]
+
+    state =
+      %{
+        state
+        | pending_prompt_id: nil,
+          active_prompt_session_id: nil,
+          text_acc: [],
+          thinking_acc: [],
+          thinking_blocks: [],
+          current_block_type: nil,
+          tool_calls: %{}
+      }
+
+    {messages, state}
+  end
+
+  defp cancel_active_prompt(state, _session_id), do: {[], state}
 
   defp encode_permission_mode(:default), do: "default"
   defp encode_permission_mode(:accept_edits), do: "acceptEdits"
