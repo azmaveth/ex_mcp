@@ -399,12 +399,12 @@ defmodule ExMCP.ToolsComplianceTest do
       assert is_list(schema.required)
 
       # Check property definitions
-      assert Map.has_key?(schema.properties, :operation)
-      assert Map.has_key?(schema.properties, :a)
-      assert Map.has_key?(schema.properties, :b)
+      assert Map.has_key?(schema.properties, "operation")
+      assert Map.has_key?(schema.properties, "a")
+      assert Map.has_key?(schema.properties, "b")
 
       # Check operation enum
-      operation_prop = schema.properties.operation
+      operation_prop = schema.properties["operation"]
       assert operation_prop.type == "string"
       assert is_list(operation_prop.enum)
       assert "add" in operation_prop.enum

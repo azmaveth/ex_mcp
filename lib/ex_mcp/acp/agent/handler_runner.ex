@@ -43,6 +43,10 @@ defmodule ExMCP.ACP.Agent.HandlerRunner do
     GenServer.cast(pid, {:callback, ref, :handle_close_session, [session_id, ctx]})
   end
 
+  def delete_session(pid, ref, session_id, ctx) do
+    GenServer.cast(pid, {:callback, ref, :handle_delete_session, [session_id, ctx]})
+  end
+
   def prompt(pid, ref, session_id, prompt, ctx) do
     GenServer.cast(pid, {:callback, ref, :handle_prompt, [session_id, prompt, ctx]})
   end

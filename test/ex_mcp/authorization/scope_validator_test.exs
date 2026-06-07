@@ -17,11 +17,20 @@ defmodule ExMCP.Authorization.ScopeValidatorTest do
                "params" => %{"tool_name" => "my_tool"}
              }) == ["mcp:tools:execute:my_tool"]
 
+      assert ScopeValidator.get_required_scopes(%{
+               "method" => "tools/call",
+               "params" => %{"name" => "my_tool"}
+             }) == ["mcp:tools:execute:my_tool"]
+
       assert ScopeValidator.get_required_scopes(%{"method" => "resources/list"}) == [
                "mcp:resources:list"
              ]
 
       assert ScopeValidator.get_required_scopes(%{"method" => "resources/get"}) == [
+               "mcp:resources:get"
+             ]
+
+      assert ScopeValidator.get_required_scopes(%{"method" => "resources/read"}) == [
                "mcp:resources:get"
              ]
 
@@ -40,14 +49,28 @@ defmodule ExMCP.Authorization.ScopeValidatorTest do
       assert ScopeValidator.get_required_scopes(%{"method" => "prompts/execute"}) == [
                "mcp:prompts:execute"
              ]
+
+      assert ScopeValidator.get_required_scopes(%{"method" => "prompts/get"}) == [
+               "mcp:prompts:get"
+             ]
+
+      assert ScopeValidator.get_required_scopes(%{"method" => "completion/complete"}) == [
+               "mcp:completion:complete"
+             ]
+
+      assert ScopeValidator.get_required_scopes(%{"method" => "session/delete"}) == [
+               "mcp:sessions:delete"
+             ]
     end
 
-    test "returns empty list for unknown methods" do
-      assert ScopeValidator.get_required_scopes(%{"method" => "unknown/method"}) == []
+    test "requires catch-all scope for unknown methods" do
+      assert ScopeValidator.get_required_scopes(%{"method" => "unknown/method"}) == [
+               "mcp:unknown"
+             ]
     end
 
-    test "returns empty list for request without method" do
-      assert ScopeValidator.get_required_scopes(%{"params" => %{}}) == []
+    test "requires catch-all scope for request without method" do
+      assert ScopeValidator.get_required_scopes(%{"params" => %{}}) == ["mcp:unknown"]
     end
 
     test "uses custom mapper when provided" do
@@ -158,7 +181,12 @@ defmodule ExMCP.Authorization.ScopeValidatorTest do
         "mcp:resources:create",
         "mcp:resources:update",
         "mcp:resources:delete",
-        "mcp:prompts:execute"
+        "mcp:prompts:list",
+        "mcp:prompts:get",
+        "mcp:prompts:execute",
+        "mcp:completion:complete",
+        "mcp:sessions:delete",
+        "mcp:unknown"
       ]
 
       assert ScopeValidator.get_all_static_scopes() -- expected_scopes == []

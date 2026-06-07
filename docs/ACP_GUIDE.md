@@ -154,6 +154,7 @@ ACP sessions represent ongoing conversations with an agent.
 ```elixir
 # Create a new session
 {:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/project",
+  additional_directories: ["/shared/docs"],
   mcp_servers: [
     ExMCP.ACP.Types.http_mcp_server("my-server", "http://localhost:3000/mcp")
   ]
@@ -167,7 +168,13 @@ ACP sessions represent ongoing conversations with an agent.
 
 # List available sessions with optional filters (if supported)
 {:ok, %{"sessions" => sessions}} =
-  ExMCP.ACP.Client.list_sessions(client, cwd: "/project")
+  ExMCP.ACP.Client.list_sessions(client,
+    cwd: "/project",
+    additional_directories: ["/shared/docs"]
+  )
+
+# Delete a session from session history (if supported)
+{:ok, %{}} = ExMCP.ACP.Client.delete_session(client, sid)
 
 # Send prompts (blocks until agent responds)
 {:ok, result} = ExMCP.ACP.Client.prompt(client, sid, "Add error handling")
@@ -233,9 +240,13 @@ defmodule MyApp.ACPHandler do
 
   @impl true
   def handle_permission_request(_session_id, tool_call, options, state) do
-    allow_option = Enum.find(options, &(&1["kind"] == "allow_once")) || List.first(options)
+    reject_option = Enum.find(options, &(&1["kind"] == "reject_once")) || List.first(options)
+
     # Return the direct outcome; ExMCP wraps it as result.outcome on the wire.
-    {:ok, %{"outcome" => "selected", "optionId" => allow_option["optionId"]}, state}
+    case reject_option do
+      nil -> {:ok, %{"outcome" => "cancelled"}, state}
+      option -> {:ok, %{"outcome" => "selected", "optionId" => option["optionId"]}, state}
+    end
   end
 
   # Optional: handle file read requests from the agent
@@ -289,15 +300,8 @@ The ACP spec defines these session update types (all supported by ExMCP):
 | `session_info_update` | Session metadata such as title and updatedAt |
 | `usage_update` | Context window usage and optional cost information |
 
-ExMCP adapters also emit these extension types:
-
-| Type | Description |
-|------|-------------|
-| `status` | Operational status (compacting, retrying, etc.) |
-| `usage` | Legacy adapter-specific token usage tracking |
-| `error` | Adapter-specific error notification |
-| `rpc_response` / `rpc_error` | Pi extension command responses |
-| `extension_ui_request` | Pi extension UI request bridge |
+Adapter-specific status, error, and extension bridge details are attached under
+`_meta.ex_mcp` on spec-defined update types, usually `session_info_update`.
 
 ## Writing Custom Adapters
 
@@ -441,7 +445,7 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 
 **Config options:** `thinking_level`, `auto_compaction`, `auto_retry`, `steering_mode`, `follow_up_mode`
 
-**Extended commands** (via `pi/*` ACP methods): steer, follow_up, compact, set_thinking_level, set_model, get_state, get_session_stats, switch_session, fork, bash, export_html, and more.
+**Extended commands** (via `_ex_mcp.pi/*` ACP extension methods): steer, follow_up, compact, set_thinking_level, set_model, get_state, get_session_stats, switch_session, fork, bash, export_html, and more. The adapter still accepts deprecated `pi/*` aliases for older consumers, but only the underscore-prefixed methods are advertised.
 
 ## Content Block Types
 
@@ -482,6 +486,7 @@ ACP agents can use MCP servers as tool providers. Pass MCP server configurations
 
 ```elixir
 {:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/project",
+  additional_directories: ["/shared/docs"],
   mcp_servers: [
     ExMCP.ACP.Types.stdio_mcp_server("local-tools", "my_mcp_server", args: ["--stdio"]),
     ExMCP.ACP.Types.http_mcp_server("remote-tools", "http://localhost:4000/mcp")

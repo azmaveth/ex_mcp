@@ -642,19 +642,13 @@ defmodule ExMCP.Response do
               normalize_item_keys(v)
 
             k == "properties" and is_map(v) ->
-              # Normalize properties map - convert all string keys to atoms and normalize values
+              # JSON schema property names are user-controlled. Keep keys as strings
+              # instead of creating atoms for arbitrary names.
               for {prop_key, prop_value} <- v, into: %{} do
-                normalized_key =
-                  if is_binary(prop_key) do
-                    String.to_atom(prop_key)
-                  else
-                    prop_key
-                  end
-
                 normalized_value =
                   if is_map(prop_value), do: normalize_item_keys(prop_value), else: prop_value
 
-                {normalized_key, normalized_value}
+                {prop_key, normalized_value}
               end
 
             true ->
@@ -662,7 +656,7 @@ defmodule ExMCP.Response do
           end
 
         if is_binary(k) and k in @safe_atom_keys do
-          {String.to_atom(k), normalized_value}
+          {existing_atom_or_string(k), normalized_value}
         else
           {k, normalized_value}
         end
@@ -690,4 +684,10 @@ defmodule ExMCP.Response do
   end
 
   defp normalize_item_keys(item), do: item
+
+  defp existing_atom_or_string(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> key
+  end
 end

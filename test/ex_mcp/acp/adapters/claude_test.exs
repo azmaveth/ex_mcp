@@ -165,9 +165,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
   end
 
   describe "capabilities/0" do
+    test "advertises image prompts because Claude forwards image blocks" do
+      caps = Claude.capabilities()
+
+      assert caps["promptCapabilities"]["image"] == true
+    end
+
     test "keeps adapter metadata under _meta" do
       caps = Claude.capabilities()
-      assert caps["_meta"]["streaming"] == true
+      assert caps["_meta"]["ex_mcp.claude"]["streaming"] == true
     end
   end
 
@@ -507,13 +513,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       result_msg = Enum.find(messages, &(&1["id"] == 42))
       assert result_msg != nil
       assert result_msg["result"]["stopReason"] == "end_turn"
-      assert result_msg["result"]["text"] == "Hello world"
+      assert result_msg["result"]["_meta"]["ex_mcp"]["text"] == "Hello world"
       assert result_msg["result"]["usage"]["inputTokens"] == 100
       assert result_msg["result"]["usage"]["outputTokens"] == 50
 
       # session_id surfaces in the result so callers can correlate the
       # prompt response with the underlying Claude SDK session.
-      assert result_msg["result"]["sessionId"] == "s1"
+      assert result_msg["result"]["_meta"]["ex_mcp"]["sessionId"] == "s1"
 
       # Pending prompt ID cleared
       assert new_state.pending_prompt_id == nil
@@ -543,8 +549,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert {:messages, messages, _state} = Claude.translate_inbound(line, state)
 
       result_msg = Enum.find(messages, &(&1["id"] == 10))
-      assert result_msg["result"]["thinking"] != nil
-      assert length(result_msg["result"]["thinking"]) == 1
+      assert result_msg["result"]["_meta"]["ex_mcp"]["thinking"] != nil
+      assert length(result_msg["result"]["_meta"]["ex_mcp"]["thinking"]) == 1
     end
 
     test "handles error result", %{state: state} do
@@ -555,7 +561,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert {:messages, messages, _state} = Claude.translate_inbound(line, state)
 
       result_msg = Enum.find(messages, &(&1["id"] == 11))
-      assert result_msg["result"]["stopReason"] == "error"
+      assert result_msg["result"]["stopReason"] == "refusal"
     end
 
     # spec regression: the ACP spec
@@ -855,7 +861,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
       update = notification["params"]["update"]
       assert update["status"] == "failed"
-      assert update["isError"] == true
+      assert update["_meta"]["ex_mcp"]["isError"] == true
     end
 
     test "assistant after tool use clears text_acc for final answer", %{state: state} do
@@ -957,7 +963,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert final_state.pending_prompt_id == nil
 
       response = Enum.find(messages, &(&1["id"] == 42))
-      assert response["result"]["text"] == "I found the TrustProfile module."
+      assert response["result"]["_meta"]["ex_mcp"]["text"] == "I found the TrustProfile module."
       assert response["result"]["stopReason"] == "end_turn"
     end
 
@@ -980,8 +986,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
     test "system events emit status notification", %{state: state} do
       line = Jason.encode!(%{"type" => "system", "message" => "hello"})
       assert {:messages, [notification], _state} = Claude.translate_inbound(line, state)
-      assert notification["params"]["update"]["sessionUpdate"] == "status"
-      assert notification["params"]["update"]["message"] == "hello"
+      assert notification["params"]["update"]["sessionUpdate"] == "session_info_update"
+      assert notification["params"]["update"]["_meta"]["ex_mcp"]["message"] == "hello"
     end
 
     test "skips truly unknown event types", %{state: state} do

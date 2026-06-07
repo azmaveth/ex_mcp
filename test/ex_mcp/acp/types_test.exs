@@ -51,6 +51,8 @@ defmodule ExMCP.ACP.TypesTest do
           session_list: true,
           session_resume: true,
           session_close: true,
+          session_delete: true,
+          session_additional_directories: true,
           logout: true
         )
 
@@ -60,6 +62,8 @@ defmodule ExMCP.ACP.TypesTest do
       assert caps["sessionCapabilities"]["list"] == %{}
       assert caps["sessionCapabilities"]["resume"] == %{}
       assert caps["sessionCapabilities"]["close"] == %{}
+      assert caps["sessionCapabilities"]["delete"] == %{}
+      assert caps["sessionCapabilities"]["additionalDirectories"] == %{}
       assert caps["auth"]["logout"] == %{}
     end
   end
@@ -70,11 +74,6 @@ defmodule ExMCP.ACP.TypesTest do
       assert params == %{"cwd" => "/home/user/project", "mcpServers" => []}
     end
 
-    test "includes empty mcpServers when no cwd" do
-      params = Types.new_session_params()
-      assert params == %{"mcpServers" => []}
-    end
-
     test "includes mcp_servers when provided" do
       servers = [%{"uri" => "http://localhost:3000", "name" => "local"}]
       params = Types.new_session_params("/tmp", mcp_servers: servers)
@@ -82,6 +81,16 @@ defmodule ExMCP.ACP.TypesTest do
       assert params == %{
                "cwd" => "/tmp",
                "mcpServers" => servers
+             }
+    end
+
+    test "includes additional_directories when provided" do
+      params = Types.new_session_params("/tmp", additional_directories: ["/tmp/shared"])
+
+      assert params == %{
+               "cwd" => "/tmp",
+               "mcpServers" => [],
+               "additionalDirectories" => ["/tmp/shared"]
              }
     end
   end

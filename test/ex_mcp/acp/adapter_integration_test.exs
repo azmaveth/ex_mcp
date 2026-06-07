@@ -608,9 +608,9 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
       {:messages, messages, _state} = Codex.translate_inbound(completed, state)
       final = Enum.find(messages, &Map.has_key?(&1, "id"))
       assert final["id"] == 11
-      assert final["result"]["text"] == "I'll fix the tests."
+      assert final["result"]["_meta"]["ex_mcp"]["text"] == "I'll fix the tests."
       assert final["result"]["stopReason"] == "end_turn"
-      assert final["result"]["sessionId"] == "thread-42"
+      assert final["result"]["_meta"]["ex_mcp"]["sessionId"] == "thread-42"
     end
   end
 

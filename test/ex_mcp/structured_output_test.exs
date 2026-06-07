@@ -173,7 +173,12 @@ defmodule ExMCP.StructuredOutputTest do
       weather_tool = Enum.find(tools, &(&1.name == "get_weather"))
       assert weather_tool.outputSchema != nil
       assert weather_tool.outputSchema.type == "object"
-      assert weather_tool.outputSchema.properties.temperature.type == "number"
+
+      temperature =
+        weather_tool.outputSchema.properties["temperature"] ||
+          weather_tool.outputSchema.properties.temperature
+
+      assert temperature.type == "number"
       assert weather_tool.outputSchema.required == ["temperature", "conditions"]
 
       calculate_tool = Enum.find(tools, &(&1.name == "calculate"))

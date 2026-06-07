@@ -141,7 +141,12 @@ defmodule ExMCP.Authorization.ScopeValidator do
       "mcp:resources:create",
       "mcp:resources:update",
       "mcp:resources:delete",
-      "mcp:prompts:execute"
+      "mcp:prompts:list",
+      "mcp:prompts:get",
+      "mcp:prompts:execute",
+      "mcp:completion:complete",
+      "mcp:sessions:delete",
+      "mcp:unknown"
     ]
   end
 
@@ -151,6 +156,16 @@ defmodule ExMCP.Authorization.ScopeValidator do
 
   defp default_scope_mapping(%{"method" => "tools/list"}), do: ["mcp:tools:list"]
   defp default_scope_mapping(%{"method" => "tools/get"}), do: ["mcp:tools:get"]
+
+  defp default_scope_mapping(%{
+         "method" => "tools/call",
+         "params" => %{"name" => tool_name}
+       })
+       when is_binary(tool_name) and tool_name != "" do
+    ["mcp:tools:execute:#{tool_name}"]
+  end
+
+  defp default_scope_mapping(%{"method" => "tools/call"}), do: ["mcp:tools:execute"]
 
   defp default_scope_mapping(%{
          "method" => "tools/execute",
@@ -163,14 +178,30 @@ defmodule ExMCP.Authorization.ScopeValidator do
   defp default_scope_mapping(%{"method" => "tools/execute"}), do: ["mcp:tools:execute"]
 
   defp default_scope_mapping(%{"method" => "resources/list"}), do: ["mcp:resources:list"]
+
+  defp default_scope_mapping(%{"method" => "resources/templates/list"}),
+    do: ["mcp:resources:list"]
+
+  defp default_scope_mapping(%{"method" => "resources/read"}), do: ["mcp:resources:get"]
   defp default_scope_mapping(%{"method" => "resources/get"}), do: ["mcp:resources:get"]
   defp default_scope_mapping(%{"method" => "resources/create"}), do: ["mcp:resources:create"]
   defp default_scope_mapping(%{"method" => "resources/update"}), do: ["mcp:resources:update"]
   defp default_scope_mapping(%{"method" => "resources/delete"}), do: ["mcp:resources:delete"]
 
+  defp default_scope_mapping(%{"method" => "prompts/list"}), do: ["mcp:prompts:list"]
+  defp default_scope_mapping(%{"method" => "prompts/get"}), do: ["mcp:prompts:get"]
   defp default_scope_mapping(%{"method" => "prompts/execute"}), do: ["mcp:prompts:execute"]
 
-  defp default_scope_mapping(_request), do: []
+  defp default_scope_mapping(%{"method" => "completion/complete"}),
+    do: ["mcp:completion:complete"]
+
+  defp default_scope_mapping(%{"method" => "session/delete"}), do: ["mcp:sessions:delete"]
+
+  defp default_scope_mapping(%{"method" => method})
+       when method in ["initialize", "initialized", "ping", "notifications/initialized"],
+       do: []
+
+  defp default_scope_mapping(_request), do: ["mcp:unknown"]
 
   defp scope_satisfied?(required_scope, token_scope_set) do
     # A required scope is satisfied if it is present in the token scopes,

@@ -41,6 +41,7 @@ defmodule ExMCP.Authorization.ServerGuard do
   """
 
   alias ExMCP.Authorization
+  alias ExMCP.Authorization.ScopeValidator
   alias ExMCP.FeatureFlags
 
   @type auth_config :: %{
@@ -249,16 +250,10 @@ defmodule ExMCP.Authorization.ServerGuard do
 
   defp check_scopes(token_info, required_scopes) do
     # Per RFC 6749, scope is a space-delimited string.
-    token_scopes_str = Map.get(token_info, :scope, "") || ""
-    token_scopes = String.split(token_scopes_str, " ") |> MapSet.new()
+    token_scopes_str = Map.get(token_info, :scope) || Map.get(token_info, "scope") || ""
+    token_scopes = String.split(token_scopes_str, " ", trim: true)
 
-    required_set = MapSet.new(required_scopes)
-
-    if MapSet.subset?(required_set, token_scopes) do
-      :ok
-    else
-      {:error, :insufficient_scope}
-    end
+    ScopeValidator.validate(token_scopes, required_scopes)
   end
 
   defp build_error_response(status, error_code, description, realm, scope) do

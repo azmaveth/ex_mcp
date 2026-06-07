@@ -27,6 +27,12 @@ defmodule ExMCP.ACP.AgentTest do
 
       {:reply, %{"stopReason" => "end_turn"}, state}
     end
+
+    @impl true
+    def handle_delete_session(session_id, ctx, state) do
+      send(state.test_pid, {:delete_session, session_id, ctx.session_id})
+      {:reply, %{}, state}
+    end
   end
 
   defmodule AsyncAgent do
@@ -70,6 +76,34 @@ defmodule ExMCP.ACP.AgentTest do
     def handle_cancel(session_id, ctx, state) do
       send(state.test_pid, {:cancelled, session_id, ctx.prompt_id})
       {:reply, "cancelled", state}
+    end
+  end
+
+  defmodule CloseCancelAgent do
+    @behaviour ExMCP.ACP.Agent.Handler
+
+    @impl true
+    def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
+
+    @impl true
+    def handle_new_session(_params, _ctx, state), do: {:reply, "sess_close", state}
+
+    @impl true
+    def handle_prompt(session_id, _prompt, ctx, state) do
+      send(state.test_pid, {:close_prompt_waiting, session_id, ctx.prompt_id})
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_cancel(session_id, ctx, state) do
+      send(state.test_pid, {:close_cancelled, session_id, ctx.prompt_id})
+      {:reply, "cancelled", state}
+    end
+
+    @impl true
+    def handle_close_session(session_id, _ctx, state) do
+      send(state.test_pid, {:closed, session_id})
+      {:reply, %{}, state}
     end
   end
 
@@ -294,6 +328,69 @@ defmodule ExMCP.ACP.AgentTest do
       assert {:ok, %{"stopReason" => "refusal"}} = Client.prompt(client, session_id, "read")
 
       assert_receive {:error, {:unsupported_client_capability, :fs_read}}
+    end
+
+    test "supports session/delete when advertised" do
+      {:ok, peer} = Memory.new_pair()
+
+      {:ok, _agent} =
+        Agent.start_link(
+          handler: EchoAgent,
+          handler_opts: [test_pid: self()],
+          transport: {:memory, peer},
+          agent_capabilities: %{"sessionCapabilities" => %{"delete" => %{}}}
+        )
+
+      {:ok, client} =
+        Client.start_link(transport_mod: Memory, peer: peer, role: :client)
+
+      assert {:ok, %{}} = Client.delete_session(client, "sess_echo")
+      assert_receive {:delete_session, "sess_echo", "sess_echo"}
+    end
+
+    test "does not accept optional callbacks when capability is explicitly suppressed" do
+      {:ok, peer} = Memory.new_pair()
+
+      {:ok, _agent} =
+        Agent.start_link(
+          handler: EchoAgent,
+          handler_opts: [test_pid: self()],
+          transport: {:memory, peer},
+          agent_capabilities: %{}
+        )
+
+      {:ok, client} =
+        Client.start_link(transport_mod: Memory, peer: peer, role: :client)
+
+      assert {:error, {:unsupported_capability, :session_delete}} =
+               Client.delete_session(client, "sess_echo")
+
+      refute_receive {:delete_session, _, _}, 100
+    end
+
+    test "session/close cancels an active prompt before closing" do
+      {:ok, peer} = Memory.new_pair()
+
+      {:ok, _agent} =
+        Agent.start_link(
+          handler: CloseCancelAgent,
+          handler_opts: [test_pid: self()],
+          transport: {:memory, peer},
+          agent_capabilities: %{"sessionCapabilities" => %{"close" => %{}}}
+        )
+
+      {:ok, client} =
+        Client.start_link(transport_mod: Memory, peer: peer, role: :client)
+
+      {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp/project")
+
+      task = Task.async(fn -> Client.prompt(client, session_id, "wait") end)
+      assert_receive {:close_prompt_waiting, ^session_id, prompt_id}, 5_000
+
+      assert {:ok, %{}} = Client.close_session(client, session_id)
+      assert {:ok, %{"stopReason" => "cancelled"}} = Task.await(task, 5_000)
+      assert_receive {:close_cancelled, ^session_id, ^prompt_id}
+      assert_receive {:closed, ^session_id}
     end
 
     test "agent stops normally when the transport closes" do

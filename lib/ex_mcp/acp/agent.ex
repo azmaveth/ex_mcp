@@ -25,9 +25,13 @@ defmodule ExMCP.ACP.Agent do
 
   alias ExMCP.ACP.Agent.HandlerRunner
   alias ExMCP.ACP.Agent.Transport.{Memory, Stdio}
+  alias ExMCP.ACP.Capabilities
+  alias ExMCP.ACP.Maps
+  alias ExMCP.ACP.NameValue
   alias ExMCP.ACP.Protocol
 
   @default_protocol_version 1
+  @supported_protocol_versions [1]
   @default_timeout 30_000
 
   defstruct [
@@ -281,7 +285,13 @@ defmodule ExMCP.ACP.Agent do
           params
       end
 
-    msg = Protocol.encode_terminal_request("terminal/create", session_id, stringify_keys(params))
+    msg =
+      Protocol.encode_terminal_request(
+        "terminal/create",
+        session_id,
+        normalize_terminal_params(params)
+      )
+
     GenServer.call(agent, {:client_request, msg, :terminal}, timeout)
   end
 
@@ -385,10 +395,6 @@ defmodule ExMCP.ACP.Agent do
       {:error, error, id} ->
         {:noreply, resolve_client_request(id, {:error, error}, state)}
 
-      {:batch, _messages} ->
-        msg = Protocol.encode_error(-32600, "Batch requests are not supported", nil, nil)
-        {:noreply, send_without_reply(msg, state)}
-
       {:error, :invalid_message} ->
         msg = Protocol.encode_error(-32700, "Parse error", nil, nil)
         {:noreply, send_without_reply(msg, state)}
@@ -450,7 +456,7 @@ defmodule ExMCP.ACP.Agent do
       |> Keyword.drop([:timeout])
       |> Map.new()
       |> Map.put("terminalId", terminal_id)
-      |> stringify_keys()
+      |> Maps.stringify_keys()
 
     msg = Protocol.encode_terminal_request(method, session_id, params)
     GenServer.call(agent, {:client_request, msg, :terminal}, timeout)
@@ -490,7 +496,7 @@ defmodule ExMCP.ACP.Agent do
       Keyword.get(opts, :capabilities) ||
       maybe_handler_static(handler_mod, :agent_capabilities) ||
       maybe_handler_static(handler_mod, :capabilities) ||
-      %{}
+      Capabilities.from_handler(handler_mod)
   end
 
   defp auth_methods(opts, handler_mod) do
@@ -529,11 +535,14 @@ defmodule ExMCP.ACP.Agent do
   end
 
   defp handle_client_request("initialize", params, id, state) do
+    protocol_version =
+      negotiate_protocol_version(params["protocolVersion"] || state.protocol_version)
+
     state = %{
       state
       | client_info: params["clientInfo"],
         client_capabilities: params["clientCapabilities"] || %{},
-        protocol_version: params["protocolVersion"] || state.protocol_version
+        protocol_version: protocol_version
     }
 
     if function_exported?(state.handler_mod, :handle_initialize, 3) do
@@ -566,7 +575,7 @@ defmodule ExMCP.ACP.Agent do
   end
 
   defp handle_client_request("logout", _params, id, state) do
-    optional_callback(:logout, :handle_logout, id, state, fn ref, ctx ->
+    optional_capability_callback(:logout, :logout, :handle_logout, id, state, fn ref, ctx ->
       HandlerRunner.logout(state.handler_pid, ref, ctx)
     end)
   end
@@ -587,32 +596,80 @@ defmodule ExMCP.ACP.Agent do
   end
 
   defp handle_client_request("session/load", params, id, state) do
-    optional_callback(:load_session, :handle_load_session, id, state, fn ref, ctx ->
-      HandlerRunner.load_session(state.handler_pid, ref, params, ctx)
-    end)
+    optional_capability_callback(
+      :load_session,
+      :load_session,
+      :handle_load_session,
+      id,
+      state,
+      fn ref, ctx ->
+        HandlerRunner.load_session(state.handler_pid, ref, params, ctx)
+      end
+    )
   end
 
   defp handle_client_request("session/list", params, id, state) do
-    optional_callback(:list_sessions, :handle_list_sessions, id, state, fn ref, ctx ->
-      HandlerRunner.list_sessions(state.handler_pid, ref, params, ctx)
-    end)
+    optional_capability_callback(
+      :list_sessions,
+      :session_list,
+      :handle_list_sessions,
+      id,
+      state,
+      fn ref, ctx ->
+        HandlerRunner.list_sessions(state.handler_pid, ref, params, ctx)
+      end
+    )
   end
 
   defp handle_client_request("session/resume", params, id, state) do
-    optional_callback(:resume_session, :handle_resume_session, id, state, fn ref, ctx ->
-      HandlerRunner.resume_session(state.handler_pid, ref, params, ctx)
-    end)
+    optional_capability_callback(
+      :resume_session,
+      :session_resume,
+      :handle_resume_session,
+      id,
+      state,
+      fn ref, ctx ->
+        HandlerRunner.resume_session(state.handler_pid, ref, params, ctx)
+      end
+    )
   end
 
   defp handle_client_request("session/close", %{"sessionId" => session_id}, id, state) do
-    optional_callback(:close_session, :handle_close_session, id, state, fn ref, ctx ->
-      HandlerRunner.close_session(
-        state.handler_pid,
-        ref,
-        session_id,
-        Map.put(ctx, :session_id, session_id)
-      )
-    end)
+    state = cancel_active_prompt(session_id, state)
+
+    optional_capability_callback(
+      :close_session,
+      :session_close,
+      :handle_close_session,
+      id,
+      state,
+      fn ref, ctx ->
+        HandlerRunner.close_session(
+          state.handler_pid,
+          ref,
+          session_id,
+          Map.put(ctx, :session_id, session_id)
+        )
+      end
+    )
+  end
+
+  defp handle_client_request("session/delete", %{"sessionId" => session_id}, id, state) do
+    optional_capability_callback(
+      :delete_session,
+      :session_delete,
+      :handle_delete_session,
+      id,
+      state,
+      fn ref, ctx ->
+        HandlerRunner.delete_session(
+          state.handler_pid,
+          ref,
+          session_id,
+          Map.put(ctx, :session_id, session_id)
+        )
+      end
+    )
   end
 
   defp handle_client_request(
@@ -711,6 +768,14 @@ defmodule ExMCP.ACP.Agent do
     send_method_not_found(method, id, state)
   end
 
+  defp optional_capability_callback(kind, capability, callback, id, state, fun) do
+    if Capabilities.supported?(state.agent_capabilities, capability) do
+      optional_callback(kind, callback, id, state, fun)
+    else
+      send_method_not_found(method_name(kind), id, state)
+    end
+  end
+
   defp optional_callback(kind, callback, id, state, fun) do
     if function_exported?(state.handler_mod, callback, callback_arity(callback)) do
       ctx = context(state, id)
@@ -722,6 +787,7 @@ defmodule ExMCP.ACP.Agent do
 
   defp callback_arity(:handle_logout), do: 2
   defp callback_arity(:handle_close_session), do: 3
+  defp callback_arity(:handle_delete_session), do: 3
   defp callback_arity(:handle_set_mode), do: 4
   defp callback_arity(:handle_set_config_option), do: 5
   defp callback_arity(_), do: 3
@@ -732,8 +798,14 @@ defmodule ExMCP.ACP.Agent do
   defp method_name(:list_sessions), do: "session/list"
   defp method_name(:resume_session), do: "session/resume"
   defp method_name(:close_session), do: "session/close"
+  defp method_name(:delete_session), do: "session/delete"
   defp method_name(:set_mode), do: "session/set_mode"
   defp method_name(:set_config_option), do: "session/set_config_option"
+
+  defp negotiate_protocol_version(version) when version in @supported_protocol_versions,
+    do: version
+
+  defp negotiate_protocol_version(_version), do: @default_protocol_version
 
   defp start_callback(kind, request_id, starter, state, extra \\ %{}) do
     ref = make_ref()
@@ -750,6 +822,12 @@ defmodule ExMCP.ACP.Agent do
   end
 
   defp handle_cancel_notification(%{"sessionId" => session_id}, state) do
+    cancel_active_prompt(session_id, state)
+  end
+
+  defp handle_cancel_notification(_params, state), do: state
+
+  defp cancel_active_prompt(session_id, state) do
     case Map.get(state.active_prompts, session_id) do
       nil ->
         state
@@ -779,8 +857,6 @@ defmodule ExMCP.ACP.Agent do
         end
     end
   end
-
-  defp handle_cancel_notification(_params, state), do: state
 
   defp handle_handler_result(ref, result, state) do
     case Map.pop(state.pending_callbacks, ref) do
@@ -960,7 +1036,10 @@ defmodule ExMCP.ACP.Agent do
   defp ensure_client_capability(_state, :permission), do: :ok
 
   defp ensure_client_capability(state, :fs_read) do
-    if truthy?(state.client_capabilities |> map_get("fs") |> map_get("readTextFile")) do
+    if state.client_capabilities
+       |> Maps.get("fs")
+       |> Maps.get("readTextFile")
+       |> Maps.truthy?() do
       :ok
     else
       {:error, {:unsupported_client_capability, :fs_read}}
@@ -968,7 +1047,10 @@ defmodule ExMCP.ACP.Agent do
   end
 
   defp ensure_client_capability(state, :fs_write) do
-    if truthy?(state.client_capabilities |> map_get("fs") |> map_get("writeTextFile")) do
+    if state.client_capabilities
+       |> Maps.get("fs")
+       |> Maps.get("writeTextFile")
+       |> Maps.truthy?() do
       :ok
     else
       {:error, {:unsupported_client_capability, :fs_write}}
@@ -976,7 +1058,7 @@ defmodule ExMCP.ACP.Agent do
   end
 
   defp ensure_client_capability(state, :terminal) do
-    if truthy?(map_get(state.client_capabilities, "terminal")) do
+    if state.client_capabilities |> Maps.get("terminal") |> Maps.truthy?() do
       :ok
     else
       {:error, {:unsupported_client_capability, :terminal}}
@@ -1086,36 +1168,25 @@ defmodule ExMCP.ACP.Agent do
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
 
-  defp map_get(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, existing_atom(key))
-  end
-
-  defp map_get(_, _), do: nil
-
-  defp existing_atom(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> nil
-  end
-
-  defp truthy?(nil), do: false
-  defp truthy?(false), do: false
-  defp truthy?(_), do: true
-
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp stringify_keys(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) ->
-        {key |> Atom.to_string() |> Macro.camelize() |> decapitalize(), value}
+  defp normalize_terminal_params(params) do
+    params = Maps.stringify_keys(params)
 
-      {key, value} ->
-        {key, value}
-    end)
+    case Map.get(params, "env") do
+      nil -> params
+      env -> Map.put(params, "env", normalize_env(env))
+    end
   end
 
-  defp decapitalize(<<first::utf8, rest::binary>>) do
-    String.downcase(<<first::utf8>>) <> rest
+  defp normalize_env(env) when is_map(env) do
+    NameValue.list(env)
   end
+
+  defp normalize_env(env) when is_list(env) do
+    NameValue.list(env)
+  end
+
+  defp normalize_env(env), do: env
 end

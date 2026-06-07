@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { Readable, Writable } from "node:stream";
 
 const UPDATED_AT = "2026-05-29T00:00:00Z";
+const README_PATH = new URL("../../README.md", import.meta.url).pathname;
+const WRITE_PATH = new URL("../../tmp/acp_everything.txt", import.meta.url).pathname;
 
 class EverythingAgent {
   constructor(connection) {
@@ -29,6 +31,7 @@ class EverythingAgent {
           list: {},
           resume: {},
           close: {},
+          delete: {},
         },
       },
       authMethods: [
@@ -48,7 +51,7 @@ class EverythingAgent {
     return {};
   }
 
-  async unstable_logout(_params) {
+  async logout(_params) {
     return {};
   }
 
@@ -85,6 +88,11 @@ class EverythingAgent {
   }
 
   async closeSession(params) {
+    this.sessions.delete(params.sessionId);
+    return {};
+  }
+
+  async deleteSession(params) {
     this.sessions.delete(params.sessionId);
     return {};
   }
@@ -246,8 +254,8 @@ class EverythingAgent {
         title: "Read interop file",
         kind: "read",
         status: "pending",
-        locations: [{ path: "README.md", line: 1 }],
-        rawInput: { path: "README.md" },
+        locations: [{ path: README_PATH, line: 1 }],
+        rawInput: { path: README_PATH },
       },
     });
 
@@ -258,22 +266,22 @@ class EverythingAgent {
         title: "Read interop file",
         kind: "read",
         status: "pending",
-        locations: [{ path: "README.md" }],
-        rawInput: { path: "README.md" },
+        locations: [{ path: README_PATH }],
+        rawInput: { path: README_PATH },
       },
       options: [{ kind: "allow_once", name: "Allow once", optionId: "allow" }],
     });
 
     const read = await this.connection.readTextFile({
       sessionId,
-      path: "README.md",
-      line: 0,
+      path: README_PATH,
+      line: 1,
       limit: 20,
     });
 
     await this.connection.writeTextFile({
       sessionId,
-      path: "tmp/acp_everything.txt",
+      path: WRITE_PATH,
       content: "updated",
     });
 

@@ -22,6 +22,24 @@ defmodule ExMCP.Transport.SSEClient do
   @max_retry_delay 60_000
   @heartbeat_interval 30_000
   @connection_timeout 30_000
+  @httpc_profiles [
+    :sse_0,
+    :sse_1,
+    :sse_2,
+    :sse_3,
+    :sse_4,
+    :sse_5,
+    :sse_6,
+    :sse_7,
+    :sse_8,
+    :sse_9,
+    :sse_10,
+    :sse_11,
+    :sse_12,
+    :sse_13,
+    :sse_14,
+    :sse_15
+  ]
 
   defstruct [
     :url,
@@ -99,10 +117,10 @@ defmodule ExMCP.Transport.SSEClient do
     connect_timeout = Keyword.get(opts, :connect_timeout, @connection_timeout)
     idle_timeout = Keyword.get(opts, :idle_timeout, @heartbeat_interval)
 
-    # Use a separate httpc profile to avoid connection pool conflicts
-    # with POST requests on the default profile
-    profile = String.to_atom("sse_#{:erlang.unique_integer([:positive])}")
-    {:ok, _} = :inets.start(:httpc, [{:profile, profile}])
+    # Use a bounded pool of predeclared httpc profiles to avoid creating
+    # unreclaimable atoms per SSE connection.
+    profile = httpc_profile()
+    ensure_httpc_profile!(profile)
 
     # Use server-specified retry delay if provided (from POST SSE response)
     initial_delay = Keyword.get(opts, :initial_retry_delay) || @initial_retry_delay
@@ -320,11 +338,6 @@ defmodule ExMCP.Transport.SSEClient do
       Process.cancel_timer(state.reconnect_timer)
     end
 
-    # Stop the dedicated httpc profile
-    if state.httpc_profile do
-      :inets.stop(:httpc, state.httpc_profile)
-    end
-
     :ok
   end
 
@@ -363,6 +376,18 @@ defmodule ExMCP.Transport.SSEClient do
       [{:sync, false}, {:stream, :self}],
       state.httpc_profile
     )
+  end
+
+  defp httpc_profile do
+    index = rem(:erlang.unique_integer([:positive, :monotonic]), length(@httpc_profiles))
+    Enum.at(@httpc_profiles, index)
+  end
+
+  defp ensure_httpc_profile!(profile) do
+    case :inets.start(:httpc, [{:profile, profile}]) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
   end
 
   defp build_headers(state) do

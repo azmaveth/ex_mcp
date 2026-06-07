@@ -71,6 +71,10 @@ defmodule ExMCP.ACP.Agent.Handler do
   @callback handle_close_session(session_id :: String.t(), context(), state()) ::
               callback_result()
 
+  @doc "Optionally delete a session from session history."
+  @callback handle_delete_session(session_id :: String.t(), context(), state()) ::
+              callback_result()
+
   @doc "Optionally switch a session mode."
   @callback handle_set_mode(
               session_id :: String.t(),
@@ -107,6 +111,7 @@ defmodule ExMCP.ACP.Agent.Handler do
     handle_list_sessions: 3,
     handle_resume_session: 3,
     handle_close_session: 3,
+    handle_delete_session: 3,
     handle_set_mode: 4,
     handle_set_config_option: 5,
     handle_cancel: 3,

@@ -51,6 +51,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   require Logger
 
+  alias ExMCP.ACP.{AdapterEvents, Envelope}
+
   defstruct [
     :model,
     :mode_id,
@@ -351,11 +353,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     thread_id = thread["id"] || ""
     state = %{state | thread_id: thread_id}
 
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => acp_id,
-      "result" => %{"sessionId" => thread_id, "metadata" => thread}
-    }
+    response = Envelope.response(acp_id, %{"sessionId" => thread_id, "metadata" => thread})
 
     {:messages, [response], state}
   end
@@ -379,11 +377,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp error_response(acp_id, error) do
-    %{
-      "jsonrpc" => "2.0",
-      "id" => acp_id,
-      "error" => normalize_error(error)
-    }
+    Envelope.error(acp_id, normalize_error(error))
   end
 
   # ── Notification Handling ─────────────────────────────────────
@@ -546,8 +540,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
     # Status completed notification
     messages = [
       session_update(state, %{
-        "sessionUpdate" => "status",
-        "status" => "completed"
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "status" => "completed"}}
       })
       | messages
     ]
@@ -561,9 +555,13 @@ defmodule ExMCP.ACP.Adapters.Codex do
       if acp_id do
         result = %{
           "stopReason" => normalize_stop_reason(status),
-          "text" => text,
-          "sessionId" => state.thread_id,
-          "turnId" => state.turn_id
+          "_meta" => %{
+            "ex_mcp" => %{
+              "text" => text,
+              "sessionId" => state.thread_id,
+              "turnId" => state.turn_id
+            }
+          }
         }
 
         result =
@@ -573,7 +571,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
             result
           end
 
-        response = %{"jsonrpc" => "2.0", "id" => acp_id, "result" => result}
+        response = Envelope.response(acp_id, result)
         [response | messages]
       else
         messages
@@ -617,9 +615,16 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     notification =
       session_update(state, %{
-        "sessionUpdate" => "error",
-        "content" => error["message"] || "Unknown error",
-        "code" => error["code"]
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "ex_mcp" => %{
+            "adapter" => "codex",
+            "error" => %{
+              "message" => error["message"] || "Unknown error",
+              "code" => error["code"]
+            }
+          }
+        }
       })
 
     {:messages, [notification], state}
@@ -669,7 +674,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
       session_update(state, %{
         "sessionUpdate" => "agent_message_chunk",
         "content" => %{"type" => "text", "text" => text},
-        "final" => true
+        "_meta" => %{"ex_mcp" => %{"final" => true}}
       })
 
     {:messages, [notification], state}
@@ -783,14 +788,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp session_update(state, update) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => state.thread_id || "default",
-        "update" => update
-      }
-    }
+    AdapterEvents.session_update(state.thread_id, update)
   end
 
   # Extract input items from prompt — supports text and images
@@ -840,8 +838,13 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp normalize_stop_reason("completed"), do: "end_turn"
   defp normalize_stop_reason("cancelled"), do: "cancelled"
   defp normalize_stop_reason("interrupted"), do: "cancelled"
-  defp normalize_stop_reason("errored"), do: "error"
-  defp normalize_stop_reason(other), do: other
+  defp normalize_stop_reason("errored"), do: "refusal"
+
+  defp normalize_stop_reason(other)
+       when other in ["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"],
+       do: other
+
+  defp normalize_stop_reason(_other), do: "end_turn"
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, ""), do: map

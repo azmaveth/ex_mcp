@@ -219,7 +219,12 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       weather_tool = Enum.find(tools, &(&1.name == "weather_tool"))
       assert weather_tool.outputSchema != nil
       assert weather_tool.outputSchema.type == "object"
-      assert weather_tool.outputSchema.properties.temperature.type == "number"
+
+      temperature =
+        weather_tool.outputSchema.properties["temperature"] ||
+          weather_tool.outputSchema.properties.temperature
+
+      assert temperature.type == "number"
       assert weather_tool.outputSchema.required == ["temperature", "conditions"]
 
       legacy_tool = Enum.find(tools, &(&1.name == "legacy_tool"))

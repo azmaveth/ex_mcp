@@ -2,6 +2,7 @@ defmodule ExMCP.ACP.ClientTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.ACP.Client
+  alias ExMCP.ACP.Client.DefaultHandler
   alias ExMCP.ACP.Protocol
 
   # MessageRelay: a simple process-based mailbox shared between mock agent and transport.
@@ -128,7 +129,9 @@ defmodule ExMCP.ACP.ClientTest do
           "sessionCapabilities" => %{
             "list" => %{},
             "resume" => %{},
-            "close" => %{}
+            "close" => %{},
+            "delete" => %{},
+            "additionalDirectories" => %{}
           },
           "auth" => %{"logout" => %{}}
         })
@@ -182,7 +185,9 @@ defmodule ExMCP.ACP.ClientTest do
       MessageRelay.push(state.to_client, response)
     end
 
-    defp handle_message(%{"method" => "session/new", "id" => id}, state) do
+    defp handle_message(%{"method" => "session/new", "id" => id, "params" => params}, state) do
+      send(state.test_pid, {:new_session_request, params})
+
       response =
         Jason.encode!(%{
           "jsonrpc" => "2.0",
@@ -206,6 +211,7 @@ defmodule ExMCP.ACP.ClientTest do
     end
 
     defp handle_message(%{"method" => "session/load", "id" => id, "params" => params}, state) do
+      send(state.test_pid, {:load_session_request, params})
       session_id = params["sessionId"]
 
       for update <- state.load_updates do
@@ -232,7 +238,9 @@ defmodule ExMCP.ACP.ClientTest do
       MessageRelay.push(state.to_client, response)
     end
 
-    defp handle_message(%{"method" => "session/resume", "id" => id}, state) do
+    defp handle_message(%{"method" => "session/resume", "id" => id, "params" => params}, state) do
+      send(state.test_pid, {:resume_session_request, params})
+
       response =
         Jason.encode!(%{
           "jsonrpc" => "2.0",
@@ -329,6 +337,12 @@ defmodule ExMCP.ACP.ClientTest do
 
     defp handle_message(%{"method" => "session/close", "id" => id}, state) do
       send(state.test_pid, :close_session_request)
+      response = Jason.encode!(Protocol.encode_response(%{}, id))
+      MessageRelay.push(state.to_client, response)
+    end
+
+    defp handle_message(%{"method" => "session/delete", "id" => id}, state) do
+      send(state.test_pid, :delete_session_request)
       response = Jason.encode!(Protocol.encode_response(%{}, id))
       MessageRelay.push(state.to_client, response)
     end
@@ -610,6 +624,33 @@ defmodule ExMCP.ACP.ClientTest do
       assert {:ok, result} = Client.new_session(client, "/tmp/project")
       assert result["sessionId"] == "sess_mock_001"
     end
+
+    test "sends additionalDirectories when provided" do
+      {client, _agent} = start_client()
+
+      assert {:ok, _result} =
+               Client.new_session(client, "/tmp/project",
+                 additional_directories: ["/tmp/shared"],
+                 mcp_servers: []
+               )
+
+      assert_receive {:new_session_request,
+                      %{
+                        "cwd" => "/tmp/project",
+                        "additionalDirectories" => ["/tmp/shared"],
+                        "mcpServers" => []
+                      }},
+                     5_000
+    end
+
+    test "rejects additionalDirectories when capability is not advertised" do
+      {client, _agent} = start_client(capabilities: %{"streaming" => true})
+
+      assert {:error, {:unsupported_capability, :additional_directories}} =
+               Client.new_session(client, "/tmp/project", additional_directories: ["/tmp/shared"])
+
+      refute_receive {:new_session_request, _params}, 100
+    end
   end
 
   describe "load_session/4" do
@@ -619,6 +660,23 @@ defmodule ExMCP.ACP.ClientTest do
       assert {:ok, result} = Client.load_session(client, "old_session_123", "/tmp")
       assert result["sessionId"] == "sess_loaded_001"
     end
+
+    test "sends additionalDirectories when provided" do
+      {client, _agent} = start_client()
+
+      assert {:ok, _result} =
+               Client.load_session(client, "old_session_123", "/tmp",
+                 additional_directories: ["/tmp/shared"]
+               )
+
+      assert_receive {:load_session_request,
+                      %{
+                        "sessionId" => "old_session_123",
+                        "cwd" => "/tmp",
+                        "additionalDirectories" => ["/tmp/shared"]
+                      }},
+                     5_000
+    end
   end
 
   describe "resume_session/4" do
@@ -627,6 +685,23 @@ defmodule ExMCP.ACP.ClientTest do
 
       assert {:ok, result} = Client.resume_session(client, "old_session_123", "/tmp")
       assert Map.has_key?(result, "modes")
+    end
+
+    test "sends additionalDirectories when provided" do
+      {client, _agent} = start_client()
+
+      assert {:ok, _result} =
+               Client.resume_session(client, "old_session_123", "/tmp",
+                 additional_directories: ["/tmp/shared"]
+               )
+
+      assert_receive {:resume_session_request,
+                      %{
+                        "sessionId" => "old_session_123",
+                        "cwd" => "/tmp",
+                        "additionalDirectories" => ["/tmp/shared"]
+                      }},
+                     5_000
     end
 
     test "returns unsupported when capability is not advertised" do
@@ -648,6 +723,18 @@ defmodule ExMCP.ACP.ClientTest do
 
       assert_receive {:list_sessions_request, %{"cursor" => "page-2", "cwd" => "/tmp/project"}},
                      5_000
+    end
+
+    test "omits additionalDirectories filter for SDK-compatible schema" do
+      {client, _agent} = start_client()
+
+      assert {:ok, %{"sessions" => [_session]}} =
+               Client.list_sessions(client,
+                 cwd: "/tmp/project",
+                 additional_directories: ["/tmp/shared"]
+               )
+
+      assert_receive {:list_sessions_request, %{"cwd" => "/tmp/project"}}, 5_000
     end
 
     test "returns unsupported when capability is not advertised" do
@@ -736,6 +823,26 @@ defmodule ExMCP.ACP.ClientTest do
       assert {:ok, _} = Client.prompt(client, "sess_mock_001", blocks)
     end
 
+    test "rejects non-string non-list content" do
+      {client, _agent} = start_client()
+
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      assert {:error, {:invalid_params, :prompt_must_be_a_list}} =
+               Client.prompt(client, "sess_mock_001", %{"type" => "text", "text" => "Hello"})
+    end
+
+    test "rejects image blocks when prompt capability is not advertised" do
+      {client, _agent} = start_client()
+
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      assert {:error, {:unsupported_capability, {:prompt, :image}}} =
+               Client.prompt(client, "sess_mock_001", [
+                 %{"type" => "image", "mimeType" => "image/png", "data" => "abc"}
+               ])
+    end
+
     test "merges streamed agent_message_chunk text into the prompt result" do
       # Agents like grok stream the answer via session/update agent_message_chunk
       # rather than returning it in the prompt result. The client must accumulate
@@ -813,6 +920,24 @@ defmodule ExMCP.ACP.ClientTest do
     end
   end
 
+  describe "delete_session/3" do
+    test "sends delete request when capability is advertised" do
+      {client, _agent} = start_client()
+
+      assert {:ok, %{}} = Client.delete_session(client, "sess_mock_001")
+      assert_receive :delete_session_request, 5_000
+    end
+
+    test "returns unsupported when capability is not advertised" do
+      {client, _agent} = start_client(capabilities: %{"streaming" => true})
+
+      assert {:error, {:unsupported_capability, :session_delete}} =
+               Client.delete_session(client, "sess_mock_001")
+
+      refute_receive :delete_session_request, 100
+    end
+  end
+
   describe "end_session/2" do
     test "uses close when capability is advertised" do
       {client, _agent} = start_client()
@@ -831,7 +956,11 @@ defmodule ExMCP.ACP.ClientTest do
 
   describe "permission request handling" do
     test "routes to handler and sends response back" do
-      tool_call = %{"toolName" => "file_write", "arguments" => %{"path" => "/etc/hosts"}}
+      tool_call = %{
+        "toolCallId" => "tc_write",
+        "toolName" => "file_write",
+        "arguments" => %{"path" => "/etc/hosts"}
+      }
 
       options = [
         %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
@@ -845,11 +974,15 @@ defmodule ExMCP.ACP.ClientTest do
 
       assert_receive {:permission_response, resp}, 5_000
       assert resp["result"]["outcome"]["outcome"] == "selected"
-      assert resp["result"]["outcome"]["optionId"] == "allow"
+      assert resp["result"]["outcome"]["optionId"] == "deny"
     end
 
     test "cancel replies cancelled to pending permission requests without waiting for handler" do
-      tool_call = %{"toolName" => "file_write", "arguments" => %{"path" => "/etc/hosts"}}
+      tool_call = %{
+        "toolCallId" => "tc_write",
+        "toolName" => "file_write",
+        "arguments" => %{"path" => "/etc/hosts"}
+      }
 
       options = [
         %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
@@ -879,6 +1012,46 @@ defmodule ExMCP.ACP.ClientTest do
       assert {:ok, _} = Task.await(task, 2_000)
       send(handler_pid, :release_permission_handler)
       refute_receive {:permission_response, _late_response}, 200
+    end
+  end
+
+  describe "DefaultHandler permission policy" do
+    test "denies by default using a reject option when available" do
+      {:ok, state} = DefaultHandler.init([])
+
+      options = [
+        %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
+        %{"optionId" => "deny", "name" => "Deny", "kind" => "reject_once"}
+      ]
+
+      assert {:ok, outcome, _state} =
+               DefaultHandler.handle_permission_request(
+                 "sess",
+                 %{"toolCallId" => "tool"},
+                 options,
+                 state
+               )
+
+      assert outcome == %{"outcome" => "selected", "optionId" => "deny"}
+    end
+
+    test "can explicitly auto-approve for trusted tests" do
+      {:ok, state} = DefaultHandler.init(auto_approve_permissions: true)
+
+      options = [
+        %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
+        %{"optionId" => "deny", "name" => "Deny", "kind" => "reject_once"}
+      ]
+
+      assert {:ok, outcome, _state} =
+               DefaultHandler.handle_permission_request(
+                 "sess",
+                 %{"toolCallId" => "tool"},
+                 options,
+                 state
+               )
+
+      assert outcome == %{"outcome" => "selected", "optionId" => "allow"}
     end
   end
 

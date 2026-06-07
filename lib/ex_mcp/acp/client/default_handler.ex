@@ -1,19 +1,23 @@
 defmodule ExMCP.ACP.Client.DefaultHandler do
   @moduledoc """
-  Default ACP handler that collects events and auto-allows permissions.
+  Default ACP handler that collects events and denies permissions.
 
   Collects all session updates in a list (newest first). Permission requests
-  are auto-approved using the first available option. File access is denied.
+  are denied by default. File access is denied.
 
   Useful for testing and simple use cases. For production, implement
   `ExMCP.ACP.Client.Handler` with custom logic.
+
+  Set `auto_approve_permissions: true` in handler opts only for trusted local
+  tests or demos that intentionally approve the first allow option.
   """
 
   @behaviour ExMCP.ACP.Client.Handler
 
   @impl true
-  def init(_opts) do
-    {:ok, %{events: []}}
+  def init(opts) do
+    {:ok,
+     %{events: [], auto_approve_permissions: Keyword.get(opts, :auto_approve_permissions, false)}}
   end
 
   @impl true
@@ -23,11 +27,24 @@ defmodule ExMCP.ACP.Client.DefaultHandler do
 
   @impl true
   def handle_permission_request(_session_id, _tool_call, options, state) do
-    # Auto-allow: pick the first option (usually "allow" or "allow once")
     outcome =
-      case options do
-        [first | _] -> %{"outcome" => "selected", "optionId" => first["optionId"]}
-        [] -> %{"outcome" => "selected", "optionId" => "allow"}
+      if state.auto_approve_permissions do
+        option =
+          Enum.find(options, &(Map.get(&1, "kind") in ["allow_once", "allow_always"])) ||
+            List.first(options)
+
+        case option do
+          nil -> %{"outcome" => "cancelled"}
+          option -> %{"outcome" => "selected", "optionId" => option["optionId"]}
+        end
+      else
+        option =
+          Enum.find(options, &(Map.get(&1, "kind") in ["reject_once", "reject_always"]))
+
+        case option do
+          nil -> %{"outcome" => "cancelled"}
+          option -> %{"outcome" => "selected", "optionId" => option["optionId"]}
+        end
       end
 
     {:ok, outcome, state}

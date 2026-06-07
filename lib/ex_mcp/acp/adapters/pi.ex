@@ -54,7 +54,40 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   require Logger
 
+  alias ExMCP.ACP.{AdapterEvents, Envelope}
+
   @thinking_levels ~w(off minimal low medium high xhigh)
+  @pi_extension_prefix "_ex_mcp.pi/"
+  @legacy_pi_prefix "pi/"
+  @pi_extension_commands ~w(
+    steer
+    follow_up
+    compact
+    set_thinking_level
+    set_model
+    get_state
+    get_session_stats
+    switch_session
+    fork
+    get_fork_messages
+    bash
+    export_html
+    set_session_name
+    get_commands
+    get_available_models
+    set_auto_compaction
+    get_messages
+    cycle_model
+    cycle_thinking_level
+    set_steering_mode
+    set_follow_up_mode
+    set_auto_retry
+    abort_retry
+    abort_bash
+    get_last_assistant_text
+    extension_ui_response
+  )
+  @pi_extension_methods Enum.map(@pi_extension_commands, &(@pi_extension_prefix <> &1))
 
   defstruct [
     :session_id,
@@ -99,7 +132,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
       |> append_opt(opts, :model, "--model")
       |> append_opt(opts, :cwd, "--cwd")
       |> append_opt(opts, :system_prompt, "--system-prompt")
-      |> append_opt(opts, :api_key, "--api-key")
       |> append_opt(opts, :session_path, "--session")
       |> append_opt(opts, :session_dir, "--session-dir")
 
@@ -119,17 +151,20 @@ defmodule ExMCP.ACP.Adapters.Pi do
     %{
       "promptCapabilities" => %{"image" => true},
       "_meta" => %{
-        "thinkingLevels" => @thinking_levels,
-        "supportedModes" => [
-          %{"id" => "code", "label" => "Code Mode"}
-        ],
-        "features" => %{
-          "steering" => true,
-          "followUp" => true,
-          "compaction" => true,
-          "sessionForking" => true,
-          "modelSwitching" => true,
-          "bash" => true
+        "ex_mcp.pi" => %{
+          "methods" => @pi_extension_methods,
+          "thinkingLevels" => @thinking_levels,
+          "supportedModes" => [
+            %{"id" => "code", "label" => "Code Mode"}
+          ],
+          "features" => %{
+            "steering" => true,
+            "followUp" => true,
+            "compaction" => true,
+            "sessionForking" => true,
+            "modelSwitching" => true,
+            "bash" => true
+          }
         }
       }
     }
@@ -278,6 +313,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   # ── Extended Pi Commands via ACP Extensions ───────────────────
   # These map ACP extension methods to Pi RPC commands.
+
+  def translate_outbound(
+        %{"method" => @pi_extension_prefix <> command} = msg,
+        state
+      )
+      when command in @pi_extension_commands do
+    translate_outbound(%{msg | "method" => @legacy_pi_prefix <> command}, state)
+  end
 
   def translate_outbound(%{"method" => "pi/steer", "params" => params}, state) do
     rpc_msg = %{"type" => "steer", "message" => params["message"]}
@@ -682,22 +725,23 @@ defmodule ExMCP.ACP.Adapters.Pi do
         _ -> %{}
       end
 
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => state.pending_prompt_id,
-      "result" => %{
+    response =
+      Envelope.response(state.pending_prompt_id, %{
         "stopReason" => "end_turn",
-        "text" => text,
-        "sessionId" => state.session_id || "default",
         "usage" => %{
           "inputTokens" => usage["input"] || 0,
           "outputTokens" => usage["output"] || 0,
           "cacheReadTokens" => usage["cacheRead"] || 0,
           "cacheWriteTokens" => usage["cacheWrite"] || 0,
           "cost" => get_in(usage, ["cost", "total"])
+        },
+        "_meta" => %{
+          "ex_mcp" => %{
+            "text" => text,
+            "sessionId" => state.session_id || "default"
+          }
         }
-      }
-    }
+      })
 
     state = %{
       state
@@ -714,9 +758,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp process_event(%{"type" => "auto_compaction_start"} = event, state) do
     notification =
       build_session_update(state, %{
-        "type" => "status",
-        "status" => "compacting",
-        "reason" => event["reason"]
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "ex_mcp" => %{
+            "adapter" => "pi",
+            "status" => "compacting",
+            "reason" => event["reason"]
+          }
+        }
       })
 
     {:messages, [notification], state}
@@ -725,10 +774,15 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp process_event(%{"type" => "auto_compaction_end"} = event, state) do
     notification =
       build_session_update(state, %{
-        "type" => "status",
-        "status" => "compaction_complete",
-        "result" => event["result"],
-        "aborted" => event["aborted"]
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "ex_mcp" => %{
+            "adapter" => "pi",
+            "status" => "compaction_complete",
+            "result" => event["result"],
+            "aborted" => event["aborted"]
+          }
+        }
       })
 
     {:messages, [notification], state}
@@ -738,11 +792,16 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp process_event(%{"type" => "auto_retry_start"} = event, state) do
     notification =
       build_session_update(state, %{
-        "type" => "status",
-        "status" => "retrying",
-        "attempt" => event["attempt"],
-        "maxAttempts" => event["maxAttempts"],
-        "errorMessage" => event["errorMessage"]
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "ex_mcp" => %{
+            "adapter" => "pi",
+            "status" => "retrying",
+            "attempt" => event["attempt"],
+            "maxAttempts" => event["maxAttempts"],
+            "errorMessage" => event["errorMessage"]
+          }
+        }
       })
 
     {:messages, [notification], state}
@@ -751,9 +810,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp process_event(%{"type" => "auto_retry_end"} = event, state) do
     notification =
       build_session_update(state, %{
-        "type" => "status",
-        "status" => if(event["success"], do: "retry_succeeded", else: "retry_failed"),
-        "attempt" => event["attempt"]
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "ex_mcp" => %{
+            "adapter" => "pi",
+            "status" => if(event["success"], do: "retry_succeeded", else: "retry_failed"),
+            "attempt" => event["attempt"]
+          }
+        }
       })
 
     {:messages, [notification], state}
@@ -772,9 +836,13 @@ defmodule ExMCP.ACP.Adapters.Pi do
       data ->
         notification =
           build_session_update(state, %{
-            "type" => "rpc_response",
-            "command" => event["command"],
-            "data" => data
+            "sessionUpdate" => "session_info_update",
+            "_meta" => %{
+              "ex_mcp" => %{
+                "adapter" => "pi",
+                "rpcResponse" => %{"command" => event["command"], "data" => data}
+              }
+            }
           })
 
         {:messages, [notification], state}
@@ -786,9 +854,13 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     notification =
       build_session_update(state, %{
-        "type" => "rpc_error",
-        "command" => event["command"],
-        "error" => event["error"]
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "ex_mcp" => %{
+            "adapter" => "pi",
+            "rpcError" => %{"command" => event["command"], "error" => event["error"]}
+          }
+        }
       })
 
     {:messages, [notification], state}
@@ -798,8 +870,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp process_event(%{"type" => "extension_ui_request"} = event, state) do
     notification =
       build_session_update(state, %{
-        "type" => "extension_ui_request",
-        "request" => event
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "ex_mcp" => %{"adapter" => "pi", "extensionUiRequest" => event}
+        }
       })
 
     {:messages, [notification], state}
@@ -843,14 +917,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
         {type, update} -> Map.put(update, "sessionUpdate", type)
       end
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => state.session_id || "default",
-        "update" => update
-      }
-    }
+    AdapterEvents.session_update(state.session_id, update)
   end
 
   defp append_opt(args, opts, key, flag) do

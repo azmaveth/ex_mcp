@@ -353,6 +353,7 @@ defmodule ExMCP.Integration.ACPInteropTest do
       assert "session/resume" in results["lifecycle"]
       assert "session/set_mode" in results["lifecycle"]
       assert "session/set_config_option" in results["lifecycle"]
+      assert "session/delete" in results["lifecycle"]
       assert "logout" in results["lifecycle"]
 
       assert exit_code == 0,

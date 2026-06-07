@@ -44,6 +44,7 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.Authorization.ScopeValidator
   alias ExMCP.Authorization.ServerGuard
   alias ExMCP.FeatureFlags
+  alias ExMCP.HttpPlug.Core
   alias ExMCP.HttpPlug.SSEHandler
   alias ExMCP.Internal.VersionRegistry
   alias ExMCP.Protocol.ErrorCodes
@@ -70,7 +71,10 @@ defmodule ExMCP.HttpPlug do
       server_info: Keyword.get(opts, :server_info, %{name: "ex_mcp_server", version: "1.0.0"}),
       session_manager: Keyword.get(opts, :session_manager, ExMCP.SessionManager),
       sse_enabled: Keyword.get(opts, :sse_enabled, true),
-      cors_enabled: Keyword.get(opts, :cors_enabled, true),
+      cors_enabled: Keyword.get(opts, :cors_enabled, false),
+      allowed_origins: Keyword.get(opts, :allowed_origins, []),
+      validate_origin: Keyword.get(opts, :validate_origin, true),
+      body_limit: Keyword.get(opts, :body_limit, 1_000_000),
       oauth_enabled: Keyword.get(opts, :oauth_enabled, false),
       auth_config: Keyword.get(opts, :auth_config, %{})
     }
@@ -84,7 +88,7 @@ defmodule ExMCP.HttpPlug do
     Logger.debug("HttpPlug: OPTIONS request")
 
     if opts.cors_enabled do
-      handle_cors_preflight(conn)
+      handle_cors_preflight(conn, opts)
     else
       send_resp(conn, 405, "Method not allowed")
     end
@@ -206,16 +210,20 @@ defmodule ExMCP.HttpPlug do
   end
 
   # CORS preflight handling
-  defp handle_cors_preflight(conn) do
-    conn
-    |> put_resp_header("access-control-allow-origin", "*")
-    |> put_resp_header("access-control-allow-methods", "GET, POST, OPTIONS")
-    |> put_resp_header(
-      "access-control-allow-headers",
-      "content-type, authorization, mcp-protocol-version"
-    )
-    |> put_resp_header("access-control-max-age", "86400")
-    |> send_resp(200, "")
+  defp handle_cors_preflight(conn, opts) do
+    if origin_allowed?(conn, opts) do
+      conn
+      |> maybe_add_cors_headers(opts)
+      |> put_resp_header("access-control-allow-methods", "GET, POST, DELETE, OPTIONS")
+      |> put_resp_header(
+        "access-control-allow-headers",
+        "content-type, authorization, mcp-protocol-version, mcp-session-id"
+      )
+      |> put_resp_header("access-control-max-age", "86400")
+      |> send_resp(200, "")
+    else
+      send_resp(conn, 403, "Origin not allowed")
+    end
   end
 
   # Handle regular MCP JSON-RPC requests
@@ -226,8 +234,9 @@ defmodule ExMCP.HttpPlug do
     # The server provides session IDs to clients via response headers.
     session_id = get_or_create_session_id(conn)
 
-    with {:ok, conn} <- validate_protocol_version(conn),
-         {:ok, body, conn} <- read_or_cached_body(conn),
+    with {:ok, conn} <- validate_request_origin(conn, opts),
+         {:ok, conn} <- validate_protocol_version(conn),
+         {:ok, body, conn} <- read_or_cached_body(conn, opts),
          {:ok, request} <- parse_json(body),
          {:ok, _token_info} <- authorize_request(conn, request, opts),
          result <- process_mcp_request(request, opts) do
@@ -341,6 +350,17 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_header("www-authenticate", www_auth_header)
         |> send_resp(status, body)
 
+      {:error, :oauth_guard_disabled} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_content_type("application/json")
+        |> send_resp(500, Jason.encode!(Core.oauth_guard_disabled_error()))
+
+      {:error, :origin_not_allowed} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(403, "Origin not allowed")
+
       {:error, :parse_error} ->
         error_response = %{
           "jsonrpc" => "2.0",
@@ -357,6 +377,28 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_header("mcp-session-id", session_id)
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(error_response))
+
+      {:error, :invalid_json_rpc_envelope} ->
+        error_response = %{
+          "jsonrpc" => "2.0",
+          "error" => %{
+            "code" => ErrorCodes.invalid_request(),
+            "message" => "Invalid Request"
+          },
+          "id" => nil
+        }
+
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_header("mcp-session-id", session_id)
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(error_response))
+
+      {:error, :body_too_large} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(413, "Request body too large")
 
       {:error, reason} ->
         Logger.error("MCP request processing failed: #{inspect(reason)}")
@@ -381,10 +423,7 @@ defmodule ExMCP.HttpPlug do
 
   # Parse JSON and handle decode errors
   defp parse_json(body) do
-    case Jason.decode(body) do
-      {:ok, json} -> {:ok, json}
-      {:error, _} -> {:error, :parse_error}
-    end
+    Core.parse_json(body)
   end
 
   # Allow upstream plugs (e.g., signature-verification auth pipelines) to
@@ -393,144 +432,192 @@ defmodule ExMCP.HttpPlug do
   # otherwise return an empty body since the underlying adapter has already
   # been consumed. Falls back to normal `read_body/1` when no cached body
   # is present, preserving existing behaviour for callers that don't pre-read.
-  defp read_or_cached_body(%Plug.Conn{assigns: %{raw_body: body}} = conn)
+  defp read_or_cached_body(%Plug.Conn{assigns: %{raw_body: body}} = conn, opts)
        when is_binary(body) do
-    {:ok, body, conn}
+    body_limit = Map.get(opts, :body_limit, 1_000_000)
+
+    if byte_size(body) <= body_limit do
+      {:ok, body, conn}
+    else
+      {:error, :body_too_large}
+    end
   end
 
-  defp read_or_cached_body(conn), do: read_body(conn)
+  defp read_or_cached_body(conn, opts) do
+    body_limit = Map.get(opts, :body_limit, 1_000_000)
+
+    case read_body(conn, length: body_limit, read_length: body_limit) do
+      {:ok, body, conn} -> {:ok, body, conn}
+      {:more, _partial, _conn} -> {:error, :body_too_large}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   # Handle session termination via DELETE request
   defp handle_session_delete(conn, session_id, opts) do
-    case authorize_request(conn, %{}, opts) do
-      {:ok, _token_info} ->
-        # Terminate the session
-        :ok = ExMCP.SessionManager.terminate_session(session_id)
+    with {:ok, conn} <- validate_request_origin(conn, opts),
+         {:ok, _token_info} <- authorize_request(conn, %{"method" => "session/delete"}, opts) do
+      session_manager = ensure_session_manager(opts.session_manager)
 
-        # Try to stop the SSE handler if it exists
-        case lookup_sse_handler(session_id) do
-          {:ok, handler_pid} ->
-            if Process.alive?(handler_pid) do
-              SSEHandler.close(handler_pid)
-            end
+      # Terminate the session
+      :ok = session_manager.terminate_session(session_id)
 
-            cleanup_sse_handler(session_id)
+      # Try to stop the SSE handler if it exists
+      case lookup_sse_handler(session_id) do
+        {:ok, handler_pid} ->
+          if Process.alive?(handler_pid) do
+            SSEHandler.close(handler_pid)
+          end
 
-          {:error, _} ->
-            # Session not found in ETS, but that's OK
-            :ok
-        end
+          cleanup_sse_handler(session_id)
 
-        conn
-        |> maybe_add_cors_headers(opts)
-        |> send_resp(204, "")
+        {:error, _} ->
+          # Session not found in ETS, but that's OK
+          :ok
+      end
 
+      conn
+      |> maybe_add_cors_headers(opts)
+      |> send_resp(204, "")
+    else
       {:error, {:auth_error, {status, www_auth_header, body}}} ->
         conn
         |> maybe_add_cors_headers(opts)
         |> put_resp_header("www-authenticate", www_auth_header)
         |> send_resp(status, body)
+
+      {:error, :oauth_guard_disabled} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_content_type("application/json")
+        |> send_resp(500, Jason.encode!(Core.oauth_guard_disabled_error()))
+
+      {:error, :origin_not_allowed} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(403, "Origin not allowed")
     end
   end
 
   # Handle Server-Sent Events connections
   defp handle_sse_connection(conn, opts) do
-    case authorize_request(conn, %{}, opts) do
-      {:ok, _token_info} ->
-        _original_session_id = get_session_id(conn)
+    with {:ok, conn} <- validate_request_origin(conn, opts),
+         {:ok, _token_info} <- authorize_request(conn, %{}, opts) do
+      _original_session_id = get_session_id(conn)
+      session_manager = ensure_session_manager(opts.session_manager)
 
-        conn =
-          conn
-          |> maybe_add_cors_headers(opts)
-          |> put_resp_header("content-type", "text/event-stream")
-          |> put_resp_header("cache-control", "no-cache")
-          |> put_resp_header("connection", "keep-alive")
-          |> send_chunked(200)
+      conn =
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_header("content-type", "text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("connection", "keep-alive")
+        |> send_chunked(200)
 
-        # Extract client information for session
-        client_info = %{
-          user_agent: get_req_header(conn, "user-agent") |> List.first(),
-          origin: get_req_header(conn, "origin") |> List.first(),
-          referer: get_req_header(conn, "referer") |> List.first(),
-          remote_ip: get_peer_data(conn).address |> :inet.ntoa() |> to_string()
-        }
+      # Extract client information for session
+      client_info = %{
+        user_agent: get_req_header(conn, "user-agent") |> List.first(),
+        origin: get_req_header(conn, "origin") |> List.first(),
+        referer: get_req_header(conn, "referer") |> List.first(),
+        remote_ip: get_peer_data(conn).address |> :inet.ntoa() |> to_string()
+      }
 
-        # Create or get existing session from SessionManager
-        existing_session_id =
-          case get_req_header(conn, "mcp-session-id") do
-            [existing_id] -> existing_id
-            [] -> nil
-          end
-
-        final_session_id =
-          if existing_session_id do
-            # Check if session exists and is valid
-            case ExMCP.SessionManager.get_session(existing_session_id) do
-              {:ok, session} when session.status == :active ->
-                # Update session activity
-                ExMCP.SessionManager.update_session(existing_session_id, %{
-                  client_info: client_info,
-                  transport: :sse
-                })
-
-                existing_session_id
-
-              _ ->
-                # Session doesn't exist or is terminated, create new one
-                ExMCP.SessionManager.create_session(%{
-                  transport: :sse,
-                  client_info: client_info
-                })
-            end
-          else
-            # Create new session
-            ExMCP.SessionManager.create_session(%{
-              transport: :sse,
-              client_info: client_info
-            })
-          end
-
-        # Check if we're in test mode via application environment
-        if Application.get_env(:ex_mcp, :test_mode, false) do
-          # Send a simple connection message and return for testing
-          {:ok, conn} =
-            chunk(conn, "event: connected\ndata: {\"session_id\": \"#{final_session_id}\"}\n\n")
-
-          conn
-        else
-          # Use the new SSE handler with backpressure control
-          {:ok, handler} = SSEHandler.start_link(conn, final_session_id, opts)
-
-          # Register with session manager
-          ExMCP.SessionManager.update_session(final_session_id, %{handler_pid: handler})
-
-          # Also register in our simple ETS registry
-          register_sse_handler(final_session_id, handler)
-
-          # Block until handler exits
-          ref = Process.monitor(handler)
-
-          receive do
-            {:DOWN, ^ref, :process, ^handler, reason} ->
-              # Clean up the session registry when handler exits
-              cleanup_sse_handler(final_session_id)
-
-              # Terminate session in SessionManager if it was a clean shutdown
-              if reason == :normal do
-                ExMCP.SessionManager.terminate_session(final_session_id)
-              end
-
-              conn
-          end
+      # Create or get existing session from SessionManager
+      existing_session_id =
+        case get_req_header(conn, "mcp-session-id") do
+          [existing_id] -> existing_id
+          [] -> nil
         end
 
+      final_session_id =
+        if existing_session_id do
+          # Check if session exists and is valid
+          case session_manager.get_session(existing_session_id) do
+            {:ok, session} when session.status == :active ->
+              # Update session activity
+              session_manager.update_session(existing_session_id, %{
+                client_info: client_info,
+                transport: :sse
+              })
+
+              existing_session_id
+
+            _ ->
+              # Session doesn't exist or is terminated, create new one
+              session_manager.create_session(%{
+                transport: :sse,
+                client_info: client_info
+              })
+          end
+        else
+          # Create new session
+          session_manager.create_session(%{
+            transport: :sse,
+            client_info: client_info
+          })
+        end
+
+      # Check if we're in test mode via application environment
+      if Application.get_env(:ex_mcp, :test_mode, false) do
+        # Send a simple connection message and return for testing
+        {:ok, conn} =
+          chunk(conn, "event: connected\ndata: {\"session_id\": \"#{final_session_id}\"}\n\n")
+
+        conn
+      else
+        # Use the new SSE handler with backpressure control
+        {:ok, handler} = SSEHandler.start_link(conn, final_session_id, opts)
+
+        # Register with session manager
+        session_manager.update_session(final_session_id, %{handler_pid: handler})
+
+        # Also register in our simple ETS registry
+        register_sse_handler(final_session_id, handler, session_manager)
+
+        # Block until handler exits
+        ref = Process.monitor(handler)
+
+        receive do
+          {:DOWN, ^ref, :process, ^handler, reason} ->
+            # Clean up the session registry when handler exits
+            cleanup_sse_handler(final_session_id)
+
+            # Terminate session in SessionManager if it was a clean shutdown
+            if reason == :normal do
+              session_manager.terminate_session(final_session_id)
+            end
+
+            conn
+        end
+      end
+    else
       {:error, {:auth_error, {status, www_auth_header, body}}} ->
         conn
         |> maybe_add_cors_headers(opts)
         |> put_resp_header("www-authenticate", www_auth_header)
         |> send_resp(status, body)
+
+      {:error, :origin_not_allowed} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(403, "Origin not allowed")
     end
   end
+
+  defp ensure_session_manager(ExMCP.SessionManager) do
+    case Process.whereis(ExMCP.SessionManager) do
+      nil ->
+        case ExMCP.SessionManager.start_link([]) do
+          {:ok, _pid} -> ExMCP.SessionManager
+          {:error, {:already_started, _pid}} -> ExMCP.SessionManager
+        end
+
+      _pid ->
+        ExMCP.SessionManager
+    end
+  end
+
+  defp ensure_session_manager(session_manager), do: session_manager
 
   # Process MCP request using the configured handler
   defp process_mcp_request(request, opts) do
@@ -581,17 +668,58 @@ defmodule ExMCP.HttpPlug do
   end
 
   # Add CORS headers if enabled
-  defp maybe_add_cors_headers(conn, %{cors_enabled: true}) do
-    conn
-    |> put_resp_header("access-control-allow-origin", "*")
-    |> put_resp_header("access-control-allow-methods", "GET, POST, OPTIONS")
-    |> put_resp_header(
-      "access-control-allow-headers",
-      "content-type, authorization, mcp-protocol-version"
-    )
+  defp maybe_add_cors_headers(conn, %{cors_enabled: true} = opts) do
+    case cors_response_origin(conn, opts) do
+      nil ->
+        conn
+
+      origin ->
+        conn
+        |> put_resp_header("access-control-allow-origin", origin)
+        |> put_resp_header("access-control-allow-methods", "GET, POST, DELETE, OPTIONS")
+        |> put_resp_header(
+          "access-control-allow-headers",
+          "content-type, authorization, mcp-protocol-version, mcp-session-id"
+        )
+    end
   end
 
   defp maybe_add_cors_headers(conn, _opts), do: conn
+
+  defp validate_request_origin(conn, %{validate_origin: false}), do: {:ok, conn}
+
+  defp validate_request_origin(conn, opts) do
+    if origin_allowed?(conn, opts), do: {:ok, conn}, else: {:error, :origin_not_allowed}
+  end
+
+  defp origin_allowed?(conn, opts) do
+    conn
+    |> origin_context()
+    |> Core.origin_allowed?(opts)
+  end
+
+  defp cors_response_origin(conn, %{allowed_origins: :any}) do
+    conn
+    |> origin_context()
+    |> Core.cors_response_origin(%{allowed_origins: :any})
+  end
+
+  defp cors_response_origin(conn, opts) do
+    conn
+    |> origin_context()
+    |> Core.cors_response_origin(opts)
+  end
+
+  defp request_origin(conn), do: get_req_header(conn, "origin") |> List.first()
+
+  defp origin_context(conn) do
+    %{
+      origin: request_origin(conn),
+      scheme: Atom.to_string(conn.scheme),
+      host: conn.host,
+      port: conn.port
+    }
+  end
 
   # Extract session ID from request or generate a new one.
   # Per MCP spec, the server provides the session ID — the client's first
@@ -619,12 +747,12 @@ defmodule ExMCP.HttpPlug do
   end
 
   # Register SSE handler for a session
-  defp register_sse_handler(session_id, handler_pid) do
+  defp register_sse_handler(session_id, handler_pid, session_manager) do
     :ets.insert(@ets_table, {session_id, handler_pid})
 
-    # Also register with SessionManager if available
-    if function_exported?(ExMCP.SessionManager, :update_session, 2) do
-      ExMCP.SessionManager.update_session(session_id, %{handler_pid: handler_pid})
+    # Also register with the configured session manager if available
+    if function_exported?(session_manager, :update_session, 2) do
+      session_manager.update_session(session_id, %{handler_pid: handler_pid})
     end
   rescue
     ArgumentError ->
@@ -632,9 +760,9 @@ defmodule ExMCP.HttpPlug do
       :ets.new(@ets_table, [:named_table, :public, :set])
       :ets.insert(@ets_table, {session_id, handler_pid})
 
-      # Also register with SessionManager if available
-      if function_exported?(ExMCP.SessionManager, :update_session, 2) do
-        ExMCP.SessionManager.update_session(session_id, %{handler_pid: handler_pid})
+      # Also register with the configured session manager if available
+      if function_exported?(session_manager, :update_session, 2) do
+        session_manager.update_session(session_id, %{handler_pid: handler_pid})
       end
   end
 
@@ -707,10 +835,10 @@ defmodule ExMCP.HttpPlug do
           {:error, {:auth_error, error_response}}
 
         :ok ->
-          # This case happens if ServerGuard's own feature flag (:oauth2_auth) is disabled.
-          # We treat this as a successful authorization because the plug's `oauth_enabled`
-          # is the master switch for this instance.
-          {:ok, nil}
+          # ServerGuard returns :ok only when the global OAuth feature flag is
+          # disabled. If this plug opted into OAuth, fail closed instead of
+          # silently allowing unauthenticated MCP requests.
+          {:error, :oauth_guard_disabled}
       end
     else
       {:ok, nil}

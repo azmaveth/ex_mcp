@@ -55,6 +55,17 @@ defmodule ExMCP.ACP.ProtocolTest do
       assert msg["params"]["mcpServers"] == servers
     end
 
+    test "includes additionalDirectories when provided" do
+      msg =
+        Protocol.encode_session_new("/tmp",
+          mcp_servers: [],
+          additional_directories: ["/tmp/shared"]
+        )
+
+      assert msg["params"]["mcpServers"] == []
+      assert msg["params"]["additionalDirectories"] == ["/tmp/shared"]
+    end
+
     test "always includes mcpServers (defaults to [])" do
       # Some agents (e.g. Gemini) require mcpServers to be present even when
       # empty. The spec also marks it required.
@@ -71,6 +82,15 @@ defmodule ExMCP.ACP.ProtocolTest do
       assert msg["params"]["sessionId"] == "sess_abc"
       assert msg["params"]["cwd"] == "/tmp/project"
       assert msg["params"]["mcpServers"] == []
+    end
+
+    test "includes additionalDirectories when provided" do
+      msg =
+        Protocol.encode_session_load("sess_abc", "/tmp/project",
+          additional_directories: ["/tmp/shared"]
+        )
+
+      assert msg["params"]["additionalDirectories"] == ["/tmp/shared"]
     end
 
     # spec regression: same as encode_session_new — `cwd` is required for
@@ -97,6 +117,15 @@ defmodule ExMCP.ACP.ProtocolTest do
     test "defaults mcp servers to an empty list" do
       msg = Protocol.encode_session_resume("sess_abc", "/tmp/project")
       assert msg["params"]["mcpServers"] == []
+    end
+
+    test "includes additionalDirectories when provided" do
+      msg =
+        Protocol.encode_session_resume("sess_abc", "/tmp/project",
+          additional_directories: ["/tmp/shared"]
+        )
+
+      assert msg["params"]["additionalDirectories"] == ["/tmp/shared"]
     end
 
     # spec regression: per
@@ -209,7 +238,7 @@ defmodule ExMCP.ACP.ProtocolTest do
     # kind="bogus" option that no spec-compliant client would recognize,
     # silently producing a broken permission request.
     test "spec regression: rejects PermissionOption with non-spec kind value" do
-      tool_call = %{"toolName" => "shell.exec"}
+      tool_call = %{"toolName" => "shell.exec", "toolCallId" => "tc_1"}
 
       options = [
         %{"optionId" => "allow", "name" => "Allow", "kind" => "definitely_allow"}
@@ -221,12 +250,26 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
 
     test "accepts all four spec-defined PermissionOption kinds" do
-      tool_call = %{"toolName" => "shell.exec"}
+      tool_call = %{"toolName" => "shell.exec", "toolCallId" => "tc_1"}
 
       for kind <- ["allow_once", "allow_always", "reject_once", "reject_always"] do
         options = [%{"optionId" => "o", "name" => "Opt", "kind" => kind}]
         msg = Protocol.encode_permission_request("sess_1", tool_call, options)
         assert msg["params"]["options"] == options
+      end
+    end
+
+    test "rejects missing SDK-required permission fields" do
+      options = [%{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"}]
+
+      assert_raise ArgumentError, ~r/toolCallId/, fn ->
+        Protocol.encode_permission_request("sess_1", %{"toolName" => "shell.exec"}, options)
+      end
+
+      assert_raise ArgumentError, ~r/name/, fn ->
+        Protocol.encode_permission_request("sess_1", %{"toolCallId" => "tc_1"}, [
+          %{"optionId" => "allow", "kind" => "allow_once"}
+        ])
       end
     end
   end
@@ -329,6 +372,12 @@ defmodule ExMCP.ACP.ProtocolTest do
              }
     end
 
+    test "rejects non-spec prompt stop reasons" do
+      assert_raise ArgumentError, ~r/StopReason "error" is not in the spec enum/, fn ->
+        Protocol.encode_prompt_response(4, "error")
+      end
+    end
+
     test "encodes stable session updates" do
       msg = Protocol.encode_agent_message_chunk("sess_1", "hello")
 
@@ -353,7 +402,7 @@ defmodule ExMCP.ACP.ProtocolTest do
       permission =
         Protocol.encode_permission_request(
           "sess_1",
-          %{"toolName" => "edit"},
+          %{"toolName" => "edit", "toolCallId" => "tc_1"},
           [%{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"}]
         )
 
@@ -395,6 +444,20 @@ defmodule ExMCP.ACP.ProtocolTest do
       msg = Protocol.encode_session_list(cwd: "/tmp/project")
       assert msg["params"]["cwd"] == "/tmp/project"
     end
+
+    test "does not include additionalDirectories filter for SDK-compatible schema" do
+      msg =
+        Protocol.encode_session_list(
+          cwd: "/tmp/project",
+          cursor: "page-2",
+          additional_directories: ["/tmp/shared"]
+        )
+
+      assert msg["params"] == %{
+               "cwd" => "/tmp/project",
+               "cursor" => "page-2"
+             }
+    end
   end
 
   describe "round-trip encoding" do
@@ -422,6 +485,69 @@ defmodule ExMCP.ACP.ProtocolTest do
 
       assert {:result, result, 42} = Protocol.parse_message(json)
       assert result["sessionId"] == "abc"
+    end
+  end
+
+  describe "parse_message/1 validation" do
+    test "rejects messages that mix request and response fields" do
+      assert {:error, :invalid_message} =
+               Protocol.parse_message(%{
+                 "jsonrpc" => "2.0",
+                 "method" => "session/new",
+                 "result" => %{},
+                 "id" => 1
+               })
+
+      assert {:error, :invalid_message} =
+               Protocol.parse_message(%{
+                 "jsonrpc" => "2.0",
+                 "result" => %{},
+                 "error" => %{"code" => -32603, "message" => "boom"},
+                 "id" => 1
+               })
+    end
+
+    test "rejects malformed error responses" do
+      assert {:error, :invalid_message} =
+               Protocol.parse_message(%{
+                 "jsonrpc" => "2.0",
+                 "error" => %{"code" => "bad", "message" => "boom"},
+                 "id" => 1
+               })
+
+      assert {:error, :invalid_message} =
+               Protocol.parse_message(%{
+                 "jsonrpc" => "2.0",
+                 "error" => %{"code" => -32603},
+                 "id" => 1
+               })
+    end
+
+    test "accepts error responses with null id" do
+      assert {:error, %{"code" => -32700, "message" => "parse error"}, nil} =
+               Protocol.parse_message(%{
+                 "jsonrpc" => "2.0",
+                 "error" => %{"code" => -32700, "message" => "parse error"},
+                 "id" => nil
+               })
+    end
+
+    test "rejects non-map params and unsupported request ids" do
+      assert {:error, :invalid_message} =
+               Protocol.parse_message(%{
+                 "jsonrpc" => "2.0",
+                 "method" => "session/new",
+                 "params" => [],
+                 "id" => 1
+               })
+
+      assert {:error, :invalid_message} =
+               Protocol.parse_message(%{
+                 "jsonrpc" => "2.0",
+                 "method" => "session/new",
+                 "params" => %{},
+                 "id" => nil
+               })
     end
   end
 end

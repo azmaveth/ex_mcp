@@ -107,6 +107,31 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip, state}
   end
 
+  defmodule ErrorMockAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    defstruct []
+
+    @impl true
+    def init(_opts), do: {:ok, %__MODULE__{}}
+
+    @impl true
+    def command(_opts), do: {"cat", []}
+
+    @impl true
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+    def translate_outbound(%{"method" => method}, state)
+        when method in ["authenticate", "session/prompt"] do
+      {:error, :adapter_refused, state}
+    end
+
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
   # Helper to send initialize and drain the synthesized init response
   defp send_initialize(bridge) do
     :ok =
@@ -292,8 +317,52 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     end
   end
 
+  describe "adapter translation errors" do
+    test "enqueue a JSON-RPC error for normal request dispatch" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: ErrorMockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      prompt_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/prompt",
+        "params" => %{
+          "sessionId" => "s1",
+          "prompt" => [%{"type" => "text", "text" => "test"}]
+        },
+        "id" => 44
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(prompt_msg))
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+
+      assert msg["id"] == 44
+      assert msg["error"]["code"] == -32603
+      assert msg["error"]["message"] == "adapter_refused"
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "enqueue a JSON-RPC error for synthesized lifecycle helpers" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: ErrorMockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      auth_msg = %{"jsonrpc" => "2.0", "method" => "authenticate", "params" => %{}, "id" => 45}
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(auth_msg))
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+
+      assert msg["id"] == 45
+      assert msg["error"]["code"] == -32603
+      assert msg["error"]["message"] == "adapter_refused"
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
   describe "session/list" do
-    test "returns empty sessions for adapter without list_sessions" do
+    test "returns method-not-found for adapter without list capability" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
       _init = send_initialize(bridge)
 
@@ -309,7 +378,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
       msg = Jason.decode!(raw)
       assert msg["id"] == 50
-      assert msg["result"]["sessions"] == []
+      assert msg["error"]["code"] == -32601
 
       AdapterBridge.close(bridge)
     end
@@ -386,7 +455,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
   end
 
   describe "logout" do
-    test "returns empty OK for adapter without auth" do
+    test "returns method-not-found for adapter without logout capability" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
       _init = send_initialize(bridge)
 
@@ -397,14 +466,14 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
       msg = Jason.decode!(raw)
       assert msg["id"] == 61
-      assert msg["result"] == %{}
+      assert msg["error"]["code"] == -32601
 
       AdapterBridge.close(bridge)
     end
   end
 
   describe "session/resume and session/close" do
-    test "synthesizes responses for adapters that skip them" do
+    test "rejects unadvertised optional methods" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
       _init = send_initialize(bridge)
 
@@ -424,13 +493,15 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
       assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(resume_msg))
       assert {:ok, raw_resume} = AdapterBridge.receive_message(bridge, 5_000)
-      assert Jason.decode!(raw_resume)["id"] == 70
+      resume_response = Jason.decode!(raw_resume)
+      assert resume_response["id"] == 70
+      assert resume_response["error"]["code"] == -32601
 
       assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(close_msg))
       assert {:ok, raw_close} = AdapterBridge.receive_message(bridge, 5_000)
       close_response = Jason.decode!(raw_close)
       assert close_response["id"] == 71
-      assert close_response["result"] == %{}
+      assert close_response["error"]["code"] == -32601
 
       AdapterBridge.close(bridge)
     end

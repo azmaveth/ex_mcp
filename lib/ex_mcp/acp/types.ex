@@ -18,6 +18,8 @@ defmodule ExMCP.ACP.Types do
   send prompts with `prompt_params/2`.
   """
 
+  alias ExMCP.ACP.NameValue
+
   # Content blocks
 
   @type content_block ::
@@ -98,13 +100,16 @@ defmodule ExMCP.ACP.Types do
           optional(:sessionCapabilities) => %{
             optional(:list) => session_list_capabilities() | nil,
             optional(:resume) => session_resume_capabilities() | nil,
-            optional(:close) => session_close_capabilities() | nil
+            optional(:close) => session_close_capabilities() | nil,
+            optional(:delete) => session_delete_capabilities() | nil,
+            optional(:additionalDirectories) => map() | nil
           }
         }
 
   @type session_list_capabilities :: map()
   @type session_resume_capabilities :: map()
   @type session_close_capabilities :: map()
+  @type session_delete_capabilities :: map()
 
   @type mode :: %{
           required(:id) => String.t(),
@@ -209,7 +214,8 @@ defmodule ExMCP.ACP.Types do
 
   @type new_session_request :: %{
           required(:cwd) => String.t(),
-          required(:mcpServers) => [mcp_server()]
+          required(:mcpServers) => [mcp_server()],
+          optional(:additionalDirectories) => [String.t()]
         }
 
   @type new_session_response :: %{
@@ -230,22 +236,29 @@ defmodule ExMCP.ACP.Types do
           required(:sessionId) => String.t(),
           required(:cwd) => String.t(),
           optional(:title) => String.t(),
-          optional(:updatedAt) => String.t()
+          optional(:updatedAt) => String.t(),
+          optional(:additionalDirectories) => [String.t()]
         }
 
   @type load_session_request :: %{
           required(:sessionId) => String.t(),
           required(:cwd) => String.t(),
-          required(:mcpServers) => [mcp_server()]
+          required(:mcpServers) => [mcp_server()],
+          optional(:additionalDirectories) => [String.t()]
         }
 
   @type resume_session_request :: %{
           required(:sessionId) => String.t(),
           required(:cwd) => String.t(),
-          optional(:mcpServers) => [mcp_server()]
+          optional(:mcpServers) => [mcp_server()],
+          optional(:additionalDirectories) => [String.t()]
         }
 
   @type close_session_request :: %{
+          required(:sessionId) => String.t()
+        }
+
+  @type delete_session_request :: %{
           required(:sessionId) => String.t()
         }
 
@@ -264,9 +277,6 @@ defmodule ExMCP.ACP.Types do
   #   user_message_chunk, agent_message_chunk, tool_call, tool_call_update, plan,
   #   available_commands_update, config_option_update, current_mode_update,
   #   session_info_update, usage_update, agent_thought_chunk
-  #
-  # Extension types (not in spec, used by adapters):
-  #   status, usage, error, rpc_response, rpc_error, extension_ui_request
 
   @type session_update_params :: %{
           required(:sessionId) => String.t(),
@@ -285,8 +295,6 @@ defmodule ExMCP.ACP.Types do
           | current_mode_update()
           | session_info_update()
           | usage_update()
-          | thinking_update()
-          | status_update()
 
   # ── Spec-defined session update types ──────────────────────────
 
@@ -358,19 +366,6 @@ defmodule ExMCP.ACP.Types do
           required(:used) => non_neg_integer(),
           required(:size) => non_neg_integer(),
           optional(:cost) => map()
-        }
-
-  # ── Extension session update types ─────────────────────────────
-
-  @type thinking_update :: %{
-          required(:sessionUpdate) => :thinking,
-          required(:content) => String.t()
-        }
-
-  @type status_update :: %{
-          required(:sessionUpdate) => :status,
-          required(:status) => String.t(),
-          optional(:message) => String.t()
         }
 
   # Permission handling
@@ -495,7 +490,7 @@ defmodule ExMCP.ACP.Types do
 
   Supported options: `:load_session`, `:http_mcp`, `:sse_mcp`, `:image`,
   `:audio`, `:embedded_context`, `:session_list`, `:session_resume`,
-  `:session_close`, and `:logout`.
+  `:session_close`, `:session_delete`, `:additional_directories`, and `:logout`.
   """
   @spec agent_capabilities(keyword()) :: map()
   def agent_capabilities(opts \\ []) do
@@ -517,6 +512,18 @@ defmodule ExMCP.ACP.Types do
       Keyword.get(opts, :resume, Keyword.get(opts, :session_resume))
     )
     |> maybe_put_capability("close", Keyword.get(opts, :close, Keyword.get(opts, :session_close)))
+    |> maybe_put_capability(
+      "delete",
+      Keyword.get(opts, :delete, Keyword.get(opts, :session_delete))
+    )
+    |> maybe_put_capability(
+      "additionalDirectories",
+      Keyword.get(
+        opts,
+        :session_additional_directories,
+        Keyword.get(opts, :additional_directories)
+      )
+    )
   end
 
   @doc "Creates a plan entry."
@@ -622,6 +629,7 @@ defmodule ExMCP.ACP.Types do
     %{"sessionId" => session_id, "cwd" => cwd}
     |> maybe_put_kw("title", opts)
     |> maybe_put_kw("updatedAt", opts)
+    |> maybe_put_kw("additionalDirectories", opts, :additional_directories)
   end
 
   @doc "Creates an environment variable entry for a stdio MCP server."
@@ -673,16 +681,18 @@ defmodule ExMCP.ACP.Types do
 
   - `:mcp_servers` - list of MCP server maps, preferably from
     `stdio_mcp_server/3`, `http_mcp_server/3`, or `sse_mcp_server/3`
+  - `:additional_directories` - extra absolute workspace root paths
   """
-  @spec new_session_params(String.t() | nil, keyword()) :: map()
-  def new_session_params(cwd \\ nil, opts \\ []) do
-    params = %{}
-    params = if cwd, do: Map.put(params, "cwd", cwd), else: params
-
-    case Keyword.get(opts, :mcp_servers) do
-      nil -> Map.put(params, "mcpServers", [])
-      servers -> Map.put(params, "mcpServers", servers)
-    end
+  @spec new_session_params(String.t(), keyword()) :: map()
+  def new_session_params(cwd, opts \\ []) when is_binary(cwd) do
+    %{"cwd" => cwd}
+    |> then(fn params ->
+      case Keyword.get(opts, :mcp_servers) do
+        nil -> Map.put(params, "mcpServers", [])
+        servers -> Map.put(params, "mcpServers", servers)
+      end
+    end)
+    |> maybe_put_kw("additionalDirectories", opts, :additional_directories)
   end
 
   @doc """
@@ -743,32 +753,25 @@ defmodule ExMCP.ACP.Types do
   defp maybe_put_capability(map, _key, false), do: map
   defp maybe_put_capability(map, key, true), do: Map.put(map, key, %{})
   defp maybe_put_capability(map, key, value) when is_map(value), do: Map.put(map, key, value)
+  defp maybe_put_capability(map, key, _value), do: Map.put(map, key, %{})
 
   defp put_if_not_empty(map, _key, value) when value == %{}, do: map
   defp put_if_not_empty(map, key, value), do: Map.put(map, key, value)
 
   defp normalize_env(env) when is_map(env) do
-    Enum.map(env, fn {name, value} -> env_variable(to_string(name), to_string(value)) end)
+    NameValue.list(env, &env_variable/2)
   end
 
   defp normalize_env(env) when is_list(env) do
-    Enum.map(env, fn
-      %{"name" => _, "value" => _} = item -> item
-      %{name: name, value: value} -> env_variable(to_string(name), to_string(value))
-      {name, value} -> env_variable(to_string(name), to_string(value))
-    end)
+    NameValue.list(env, &env_variable/2)
   end
 
   defp normalize_headers(headers) when is_map(headers) do
-    Enum.map(headers, fn {name, value} -> http_header(to_string(name), to_string(value)) end)
+    NameValue.list(headers, &http_header/2)
   end
 
   defp normalize_headers(headers) when is_list(headers) do
-    Enum.map(headers, fn
-      %{"name" => _, "value" => _} = item -> item
-      %{name: name, value: value} -> http_header(to_string(name), to_string(value))
-      {name, value} -> http_header(to_string(name), to_string(value))
-    end)
+    NameValue.list(headers, &http_header/2)
   end
 
   defp maybe_put_kw(map, key, opts) do
@@ -780,5 +783,12 @@ defmodule ExMCP.ACP.Types do
     end
   rescue
     ArgumentError -> map
+  end
+
+  defp maybe_put_kw(map, key, opts, opt_key) do
+    case Keyword.get(opts, opt_key) do
+      nil -> map
+      value -> Map.put(map, key, value)
+    end
   end
 end

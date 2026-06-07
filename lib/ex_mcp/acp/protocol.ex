@@ -8,9 +8,11 @@ defmodule ExMCP.ACP.Protocol do
   ACP uses integer protocol versions (default: 1) rather than MCP's date-based strings.
   """
 
+  alias ExMCP.ACP.{Envelope, LifecycleParams, Maps, Meta}
   alias ExMCP.Internal.Protocol
 
   @default_protocol_version 1
+  @stop_reasons ~w(end_turn max_tokens max_turn_requests refusal cancelled)
 
   @doc "Generates a unique request ID."
   defdelegate generate_id, to: Protocol
@@ -21,8 +23,85 @@ defmodule ExMCP.ACP.Protocol do
   @doc "Encodes a JSON-RPC error response."
   defdelegate encode_error(code, message, data \\ nil, id), to: Protocol
 
-  @doc "Parses a raw JSON-RPC message without validation."
-  defdelegate parse_message(data), to: Protocol, as: :parse_message_unvalidated
+  @doc "Parses a raw ACP JSON-RPC message with structural validation."
+  @spec parse_message(String.t() | map()) ::
+          {:request, String.t(), map(), integer() | String.t()}
+          | {:notification, String.t(), map()}
+          | {:result, any(), integer() | String.t()}
+          | {:error, map(), integer() | String.t() | nil}
+          | {:error, :invalid_message}
+  def parse_message(data) when is_binary(data) do
+    case Jason.decode(data) do
+      {:ok, decoded} -> parse_message(decoded)
+      {:error, _} -> {:error, :invalid_message}
+    end
+  end
+
+  def parse_message(%{"jsonrpc" => "2.0"} = message) do
+    cond do
+      mixed_request_response?(message) ->
+        {:error, :invalid_message}
+
+      Map.has_key?(message, "method") ->
+        parse_method_message(message)
+
+      Map.has_key?(message, "result") ->
+        parse_result_message(message)
+
+      Map.has_key?(message, "error") ->
+        parse_error_message(message)
+
+      true ->
+        {:error, :invalid_message}
+    end
+  end
+
+  def parse_message(_), do: {:error, :invalid_message}
+
+  defp mixed_request_response?(message) do
+    (Map.has_key?(message, "method") and
+       (Map.has_key?(message, "result") or Map.has_key?(message, "error"))) or
+      (Map.has_key?(message, "result") and Map.has_key?(message, "error"))
+  end
+
+  defp parse_method_message(%{"method" => method, "id" => id} = message)
+       when is_binary(method) and (is_integer(id) or is_binary(id)) do
+    case Map.get(message, "params", %{}) do
+      params when is_map(params) -> {:request, method, params, id}
+      _ -> {:error, :invalid_message}
+    end
+  end
+
+  defp parse_method_message(%{"method" => method, "id" => _id}) when is_binary(method) do
+    {:error, :invalid_message}
+  end
+
+  defp parse_method_message(%{"method" => method} = message) when is_binary(method) do
+    case Map.get(message, "params", %{}) do
+      params when is_map(params) -> {:notification, method, params}
+      _ -> {:error, :invalid_message}
+    end
+  end
+
+  defp parse_method_message(_), do: {:error, :invalid_message}
+
+  defp parse_result_message(%{"result" => result, "id" => id})
+       when is_integer(id) or is_binary(id) do
+    {:result, result, id}
+  end
+
+  defp parse_result_message(_), do: {:error, :invalid_message}
+
+  defp parse_error_message(%{
+         "error" => %{"code" => code, "message" => message} = error,
+         "id" => id
+       })
+       when is_integer(code) and is_binary(message) and
+              (is_integer(id) or is_binary(id) or is_nil(id)) do
+    {:error, error, id}
+  end
+
+  defp parse_error_message(_), do: {:error, :invalid_message}
 
   # ACP Request Encoding
 
@@ -46,12 +125,7 @@ defmodule ExMCP.ACP.Protocol do
     params =
       if capabilities, do: Map.put(params, "clientCapabilities", capabilities), else: params
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "initialize",
-      "params" => params,
-      "id" => generate_id()
-    }
+    Envelope.request("initialize", params, generate_id())
   end
 
   @doc """
@@ -61,18 +135,11 @@ defmodule ExMCP.ACP.Protocol do
   (https://agentclientprotocol.com/protocol/session-setup) and must be an
   absolute path string. Passing `nil` raises `FunctionClauseError`.
   """
-  @spec encode_session_new(String.t(), [map()] | nil) :: map()
-  def encode_session_new(cwd, mcp_servers \\ nil) when is_binary(cwd) do
-    params = %{"cwd" => cwd}
-    # Always include mcpServers (some agents like Gemini require it even if empty)
-    params = Map.put(params, "mcpServers", mcp_servers || [])
+  @spec encode_session_new(String.t(), keyword() | map() | [map()] | nil) :: map()
+  def encode_session_new(cwd, opts \\ nil) when is_binary(cwd) do
+    params = session_lifecycle_params(%{"cwd" => cwd}, opts)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/new",
-      "params" => params,
-      "id" => generate_id()
-    }
+    Envelope.request("session/new", params, generate_id())
   end
 
   @doc """
@@ -82,32 +149,21 @@ defmodule ExMCP.ACP.Protocol do
   (https://agentclientprotocol.com/protocol/session-setup) and must be an
   absolute path string. Passing `nil` raises `FunctionClauseError`.
   """
-  @spec encode_session_load(String.t(), String.t(), [map()] | nil) :: map()
-  def encode_session_load(session_id, cwd, mcp_servers \\ nil) when is_binary(cwd) do
-    params = %{"sessionId" => session_id, "cwd" => cwd}
-    params = Map.put(params, "mcpServers", mcp_servers || [])
+  @spec encode_session_load(String.t(), String.t(), keyword() | map() | [map()] | nil) :: map()
+  def encode_session_load(session_id, cwd, opts \\ nil) when is_binary(cwd) do
+    params = session_lifecycle_params(%{"sessionId" => session_id, "cwd" => cwd}, opts)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/load",
-      "params" => params,
-      "id" => generate_id()
-    }
+    Envelope.request("session/load", params, generate_id())
   end
 
   @doc "Encodes a `session/list` request. Stabilized in ACP spec March 9, 2026."
   @spec encode_session_list(keyword()) :: map()
   def encode_session_list(opts \\ []) do
     params = %{}
-    params = maybe_put(params, "cursor", Keyword.get(opts, :cursor))
-    params = maybe_put(params, "cwd", Keyword.get(opts, :cwd))
+    params = maybe_put(params, "cursor", option_value(opts, :cursor, "cursor"))
+    params = maybe_put(params, "cwd", option_value(opts, :cwd, "cwd"))
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/list",
-      "params" => params,
-      "id" => generate_id()
-    }
+    Envelope.request("session/list", params, generate_id())
   end
 
   @doc """
@@ -129,23 +185,13 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   def encode_authenticate(params) when is_map(params) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "authenticate",
-      "params" => params,
-      "id" => generate_id()
-    }
+    Envelope.request("authenticate", params, generate_id())
   end
 
   @doc "Encodes a `logout` request. Stabilized in ACP spec May 21, 2026."
   @spec encode_logout() :: map()
   def encode_logout do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "logout",
-      "params" => %{},
-      "id" => generate_id()
-    }
+    Envelope.request("logout", %{}, generate_id())
   end
 
   @doc """
@@ -155,85 +201,63 @@ defmodule ExMCP.ACP.Protocol do
   https://agentclientprotocol.com/protocol/session-list). Passing `nil`
   raises `FunctionClauseError`.
   """
-  @spec encode_session_resume(String.t(), String.t(), [map()] | nil) :: map()
-  def encode_session_resume(session_id, cwd, mcp_servers \\ nil) when is_binary(cwd) do
-    params = %{"sessionId" => session_id, "cwd" => cwd}
-    params = Map.put(params, "mcpServers", mcp_servers || [])
+  @spec encode_session_resume(String.t(), String.t(), keyword() | map() | [map()] | nil) ::
+          map()
+  def encode_session_resume(session_id, cwd, opts \\ nil) when is_binary(cwd) do
+    params = session_lifecycle_params(%{"sessionId" => session_id, "cwd" => cwd}, opts)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/resume",
-      "params" => params,
-      "id" => generate_id()
-    }
+    Envelope.request("session/resume", params, generate_id())
   end
 
   @doc """
-  Encodes a `session/delete` request. Gated by `agentCapabilities.delete`
+  Encodes a `session/delete` request. Gated by `sessionCapabilities.delete`
   per https://agentclientprotocol.com/protocol/session-list.
   """
   @spec encode_session_delete(String.t()) :: map()
   def encode_session_delete(session_id) when is_binary(session_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/delete",
-      "params" => %{"sessionId" => session_id},
-      "id" => generate_id()
-    }
+    Envelope.request("session/delete", %{"sessionId" => session_id}, generate_id())
   end
 
   @doc "Encodes a `session/prompt` request."
   @spec encode_session_prompt(String.t(), [map()]) :: map()
   def encode_session_prompt(session_id, content_blocks) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/prompt",
-      "params" => %{"sessionId" => session_id, "prompt" => content_blocks},
-      "id" => generate_id()
-    }
+    Envelope.request(
+      "session/prompt",
+      %{"sessionId" => session_id, "prompt" => content_blocks},
+      generate_id()
+    )
   end
 
   @doc "Encodes a `session/cancel` notification (no id field)."
   @spec encode_session_cancel(String.t()) :: map()
   def encode_session_cancel(session_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/cancel",
-      "params" => %{"sessionId" => session_id}
-    }
+    Envelope.notification("session/cancel", %{"sessionId" => session_id})
   end
 
   @doc "Encodes a `session/close` request. Stabilized in ACP spec April 23, 2026."
   @spec encode_session_close(String.t()) :: map()
   def encode_session_close(session_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/close",
-      "params" => %{"sessionId" => session_id},
-      "id" => generate_id()
-    }
+    Envelope.request("session/close", %{"sessionId" => session_id}, generate_id())
   end
 
   @doc "Encodes a `session/set_mode` request."
   @spec encode_session_set_mode(String.t(), String.t()) :: map()
   def encode_session_set_mode(session_id, mode_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/set_mode",
-      "params" => %{"sessionId" => session_id, "modeId" => mode_id},
-      "id" => generate_id()
-    }
+    Envelope.request(
+      "session/set_mode",
+      %{"sessionId" => session_id, "modeId" => mode_id},
+      generate_id()
+    )
   end
 
   @doc "Encodes a `session/set_config_option` request."
   @spec encode_session_set_config_option(String.t(), String.t(), any()) :: map()
   def encode_session_set_config_option(session_id, config_id, value) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/set_config_option",
-      "params" => %{"sessionId" => session_id, "configId" => config_id, "value" => value},
-      "id" => generate_id()
-    }
+    Envelope.request(
+      "session/set_config_option",
+      %{"sessionId" => session_id, "configId" => config_id, "value" => value},
+      generate_id()
+    )
   end
 
   # Agent response and notification encoding
@@ -282,7 +306,7 @@ defmodule ExMCP.ACP.Protocol do
   @doc "Encodes a `session/prompt` response."
   @spec encode_prompt_response(integer() | String.t(), String.t() | map()) :: map()
   def encode_prompt_response(id, stop_reason) when is_binary(stop_reason) do
-    encode_response(%{"stopReason" => stop_reason}, id)
+    encode_response(%{"stopReason" => validate_stop_reason!(stop_reason)}, id)
   end
 
   def encode_prompt_response(id, result) when is_map(result) do
@@ -292,14 +316,10 @@ defmodule ExMCP.ACP.Protocol do
   @doc "Encodes a stable ACP `session/update` notification."
   @spec encode_session_update(String.t(), map()) :: map()
   def encode_session_update(session_id, update) when is_binary(session_id) and is_map(update) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id,
-        "update" => update
-      }
-    }
+    Envelope.notification("session/update", %{
+      "sessionId" => session_id,
+      "update" => update
+    })
   end
 
   @doc "Encodes an `agent_message_chunk` update notification."
@@ -411,33 +431,65 @@ defmodule ExMCP.ACP.Protocol do
   """
   @spec encode_permission_request(String.t(), map(), [map()]) :: map()
   def encode_permission_request(session_id, tool_call, options) when is_list(options) do
-    Enum.each(options, &validate_permission_option_kind!/1)
+    tool_call = validate_permission_tool_call!(tool_call)
+    options = Enum.map(options, &validate_permission_option!/1)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/request_permission",
-      "params" => %{
+    Envelope.request(
+      "session/request_permission",
+      %{
         "sessionId" => session_id,
         "toolCall" => tool_call,
         "options" => options
       },
-      "id" => generate_id()
-    }
+      generate_id()
+    )
   end
 
-  defp validate_permission_option_kind!(%{"kind" => kind}) when kind in @permission_option_kinds,
-    do: :ok
+  defp validate_permission_tool_call!(tool_call) when is_map(tool_call) do
+    tool_call = Maps.stringify_keys(tool_call)
 
-  defp validate_permission_option_kind!(%{"kind" => kind}) do
+    case tool_call do
+      %{"toolCallId" => id} when is_binary(id) and id != "" ->
+        tool_call
+
+      _ ->
+        raise ArgumentError,
+              "Permission toolCall is missing required `toolCallId`: #{inspect(tool_call)}"
+    end
+  end
+
+  defp validate_permission_tool_call!(tool_call) do
+    raise ArgumentError, "Permission toolCall must be a map: #{inspect(tool_call)}"
+  end
+
+  defp validate_permission_option!(option) when is_map(option) do
+    option = Maps.stringify_keys(option)
+
+    case option do
+      %{"kind" => kind, "name" => name, "optionId" => option_id}
+      when kind in @permission_option_kinds and is_binary(name) and name != "" and
+             is_binary(option_id) and option_id != "" ->
+        option
+
+      %{"kind" => kind} when kind not in @permission_option_kinds ->
+        raise_invalid_permission_kind!(kind)
+
+      _ ->
+        raise ArgumentError,
+              "PermissionOption must include required `kind`, `name`, and `optionId` fields: " <>
+                inspect(option)
+    end
+  end
+
+  defp validate_permission_option!(option) do
+    raise ArgumentError, "PermissionOption must be a map: #{inspect(option)}"
+  end
+
+  defp raise_invalid_permission_kind!(kind) do
     raise ArgumentError,
           "PermissionOption.kind #{inspect(kind)} is not in the spec enum " <>
             "(#{Enum.join(@permission_option_kinds, ", ")}). " <>
             "See https://agentclientprotocol.com/protocol/tool-calls."
-  end
-
-  defp validate_permission_option_kind!(option) do
-    raise ArgumentError,
-          "PermissionOption is missing the required `kind` field: #{inspect(option)}"
   end
 
   @doc "Encodes an `fs/read_text_file` request from agent to client."
@@ -448,35 +500,24 @@ defmodule ExMCP.ACP.Protocol do
       |> maybe_put("line", option_value(opts, :line, "line"))
       |> maybe_put("limit", option_value(opts, :limit, "limit"))
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "fs/read_text_file",
-      "params" => params,
-      "id" => generate_id()
-    }
+    Envelope.request("fs/read_text_file", params, generate_id())
   end
 
   @doc "Encodes an `fs/write_text_file` request from agent to client."
   @spec encode_file_write_request(String.t(), String.t(), String.t()) :: map()
   def encode_file_write_request(session_id, path, content) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "fs/write_text_file",
-      "params" => %{"sessionId" => session_id, "path" => path, "content" => content},
-      "id" => generate_id()
-    }
+    Envelope.request(
+      "fs/write_text_file",
+      %{"sessionId" => session_id, "path" => path, "content" => content},
+      generate_id()
+    )
   end
 
   @doc "Encodes a stable `terminal/*` request from agent to client."
   @spec encode_terminal_request(String.t(), String.t(), map()) :: map()
   def encode_terminal_request(method, session_id, params)
       when is_binary(method) and is_binary(session_id) and is_map(params) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => method,
-      "params" => Map.put_new(params, "sessionId", session_id),
-      "id" => generate_id()
-    }
+    Envelope.request(method, Map.put_new(params, "sessionId", session_id), generate_id())
   end
 
   # Responses to agent requests
@@ -506,36 +547,50 @@ defmodule ExMCP.ACP.Protocol do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp normalize_prompt_result(%{"stopReason" => _} = result), do: result
-  defp normalize_prompt_result(%{stopReason: _} = result), do: stringify_keys(result)
+  defp session_lifecycle_params(params, opts) do
+    params
+    # Always include mcpServers (some agents like Gemini require it even if empty)
+    |> LifecycleParams.normalize(opts)
+  end
+
+  defp normalize_prompt_result(%{"stopReason" => reason} = result) do
+    result
+    |> Map.put("stopReason", validate_stop_reason!(reason))
+    |> move_prompt_response_extensions()
+  end
+
+  defp normalize_prompt_result(%{stopReason: _} = result) do
+    result
+    |> Maps.stringify_keys()
+    |> normalize_prompt_result()
+  end
 
   defp normalize_prompt_result(%{stop_reason: reason} = result) do
     result
     |> Map.delete(:stop_reason)
-    |> stringify_keys()
-    |> Map.put("stopReason", reason)
+    |> Maps.stringify_keys()
+    |> Map.put("stopReason", validate_stop_reason!(reason))
   end
 
   defp normalize_prompt_result(result), do: result
+
+  defp validate_stop_reason!(reason) when reason in @stop_reasons, do: reason
+
+  defp validate_stop_reason!(reason) do
+    raise ArgumentError,
+          "StopReason #{inspect(reason)} is not in the spec enum " <>
+            "(#{Enum.join(@stop_reasons, ", ")}). " <>
+            "See https://agentclientprotocol.com/protocol/prompt-turn."
+  end
+
+  defp move_prompt_response_extensions(result) do
+    Meta.move_extensions(result, ["_meta", "stopReason", "usage"])
+  end
 
   defp option_value(opts, atom_key, _string_key) when is_list(opts),
     do: Keyword.get(opts, atom_key)
 
   defp option_value(opts, atom_key, string_key) when is_map(opts) do
     Map.get(opts, string_key) || Map.get(opts, atom_key)
-  end
-
-  defp stringify_keys(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {camelize_atom(key), value}
-      {key, value} -> {key, value}
-    end)
-  end
-
-  defp camelize_atom(:stopReason), do: "stopReason"
-  defp camelize_atom(atom), do: atom |> Atom.to_string() |> Macro.camelize() |> decapitalize()
-
-  defp decapitalize(<<first::utf8, rest::binary>>) do
-    String.downcase(<<first::utf8>>) <> rest
   end
 end

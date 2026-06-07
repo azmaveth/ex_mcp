@@ -29,6 +29,12 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert "/tmp/session.jsonl" in args
     end
 
+    test "does not pass api key through process argv" do
+      {_cmd, args} = Pi.command(api_key: "secret")
+      refute "--api-key" in args
+      refute "secret" in args
+    end
+
     test "includes no-session flag" do
       {_cmd, args} = Pi.command(no_session: true)
       assert "--no-session" in args
@@ -38,10 +44,14 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   describe "capabilities/0" do
     test "returns stable capabilities and adapter metadata" do
       caps = Pi.capabilities()
+      pi_meta = caps["_meta"]["ex_mcp.pi"]
+
       assert caps["promptCapabilities"]["image"] == true
-      assert is_map(caps["_meta"]["features"])
-      assert caps["_meta"]["features"]["steering"] == true
-      assert caps["_meta"]["features"]["compaction"] == true
+      assert is_map(pi_meta["features"])
+      assert "_ex_mcp.pi/steer" in pi_meta["methods"]
+      assert "_ex_mcp.pi/compact" in pi_meta["methods"]
+      assert pi_meta["features"]["steering"] == true
+      assert pi_meta["features"]["compaction"] == true
     end
   end
 
@@ -160,6 +170,20 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
   end
 
+  describe "translate_outbound/2 — extension methods" do
+    test "supports ACP-compliant namespaced Pi methods", %{state: state} do
+      msg = %{
+        "method" => "_ex_mcp.pi/steer",
+        "params" => %{"message" => "look at the current diff"}
+      }
+
+      assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
+      decoded = Jason.decode!(String.trim(IO.iodata_to_binary(data)))
+      assert decoded["type"] == "steer"
+      assert decoded["message"] == "look at the current diff"
+    end
+  end
+
   describe "translate_outbound/2 — prompting" do
     test "session/prompt produces Pi RPC prompt", %{state: state} do
       msg = %{
@@ -225,7 +249,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:messages, [response], new_state} = Pi.translate_inbound(line, state)
       assert response["id"] == 5
-      assert response["result"]["text"] == "Hello world"
+      assert response["result"]["_meta"]["ex_mcp"]["text"] == "Hello world"
       assert response["result"]["stopReason"] == "end_turn"
       assert new_state.pending_prompt_id == nil
       assert new_state.text_acc == []

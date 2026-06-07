@@ -1,5 +1,5 @@
 defmodule ExMCP.HttpPlugTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   import Plug.Test
   import Plug.Conn
 
@@ -35,6 +35,41 @@ defmodule ExMCP.HttpPlugTest do
     end
   end
 
+  defmodule TrackingSessionManager do
+    @table :http_plug_test_session_manager
+
+    def start_link(owner) do
+      if :ets.whereis(@table) != :undefined do
+        :ets.delete(@table)
+      end
+
+      :ets.new(@table, [:named_table, :public, :set])
+      :ets.insert(@table, {:owner, owner})
+      {:ok, self()}
+    end
+
+    def get_session(_session_id), do: {:error, :not_found}
+
+    def create_session(_attrs), do: "tracked_session"
+
+    def update_session(session_id, attrs) do
+      notify({:session_updated, session_id, attrs})
+    end
+
+    def terminate_session(session_id) do
+      notify({:session_terminated, session_id})
+    end
+
+    defp notify(message) do
+      case :ets.lookup(@table, :owner) do
+        [{:owner, owner}] -> send(owner, message)
+        [] -> :ok
+      end
+
+      :ok
+    end
+  end
+
   describe "HTTP Plug behavior" do
     test "implements Plug behavior correctly" do
       Code.ensure_loaded!(HttpPlug)
@@ -54,19 +89,39 @@ defmodule ExMCP.HttpPlugTest do
       assert config.handler == TestServer
       assert config.server_info.name == "test"
       assert config.sse_enabled == true
-      assert config.cors_enabled == true
+      assert config.cors_enabled == false
+      assert config.validate_origin == true
+      assert config.allowed_origins == []
+      assert config.body_limit == 1_000_000
+    end
+  end
+
+  describe "session deletion" do
+    test "uses the configured session manager" do
+      {:ok, _} = TrackingSessionManager.start_link(self())
+
+      conn =
+        conn(:delete, "/mcp")
+        |> put_req_header("mcp-session-id", "custom-session")
+        |> HttpPlug.call(HttpPlug.init(session_manager: TrackingSessionManager))
+
+      assert conn.status == 204
+      assert_received {:session_terminated, "custom-session"}
     end
   end
 
   describe "CORS handling" do
-    test "handles OPTIONS preflight request" do
+    test "handles OPTIONS preflight request for explicitly allowed wildcard CORS" do
       conn =
         conn(:options, "/")
-        |> HttpPlug.call(HttpPlug.init(cors_enabled: true))
+        |> HttpPlug.call(HttpPlug.init(cors_enabled: true, allowed_origins: :any))
 
       assert conn.status == 200
       assert get_resp_header(conn, "access-control-allow-origin") == ["*"]
-      assert get_resp_header(conn, "access-control-allow-methods") == ["GET, POST, OPTIONS"]
+
+      assert get_resp_header(conn, "access-control-allow-methods") == [
+               "GET, POST, DELETE, OPTIONS"
+             ]
     end
 
     test "rejects OPTIONS when CORS disabled" do
@@ -75,6 +130,52 @@ defmodule ExMCP.HttpPlugTest do
         |> HttpPlug.call(HttpPlug.init(cors_enabled: false))
 
       assert conn.status == 405
+    end
+
+    test "rejects browser origins unless explicitly allowed or same-origin" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "id" => 1
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("origin", "https://evil.example")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 403
+      assert conn.resp_body == "Origin not allowed"
+    end
+
+    test "allows explicitly configured browser origins" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2025-06-18",
+          "capabilities" => %{},
+          "clientInfo" => %{name: "test-client", version: "1.0.0"}
+        },
+        "id" => 1
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("origin", "https://client.example")
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            sse_enabled: false,
+            cors_enabled: true,
+            allowed_origins: ["https://client.example"]
+          )
+        )
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "access-control-allow-origin") == ["https://client.example"]
     end
   end
 
@@ -163,6 +264,55 @@ defmodule ExMCP.HttpPlugTest do
       assert response["jsonrpc"] == "2.0"
       assert response["error"]["code"] == -32700
       assert response["error"]["message"] == "Parse error"
+    end
+
+    test "rejects non-object JSON envelopes" do
+      conn =
+        conn(:post, "/", Jason.encode!("not a request"))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer))
+
+      assert conn.status == 400
+
+      {:ok, response} = Jason.decode(conn.resp_body)
+      assert response["error"]["code"] == -32600
+      assert response["error"]["message"] == "Invalid Request"
+    end
+
+    test "rejects oversized request bodies" do
+      body = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "initialize", "id" => 1})
+
+      conn =
+        conn(:post, "/", body)
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, body_limit: 8))
+
+      assert conn.status == 413
+      assert conn.resp_body == "Request body too large"
+    end
+
+    test "oauth_enabled fails closed when OAuth authorization feature is disabled" do
+      Application.put_env(:ex_mcp, :oauth2_enabled, false)
+
+      on_exit(fn ->
+        Application.delete_env(:ex_mcp, :oauth2_enabled)
+      end)
+
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "id" => 1
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, oauth_enabled: true))
+
+      assert conn.status == 500
+
+      {:ok, response} = Jason.decode(conn.resp_body)
+      assert response["error"] == "server_error"
     end
 
     test "handles unknown method" do

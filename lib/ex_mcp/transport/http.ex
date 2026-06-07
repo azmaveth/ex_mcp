@@ -83,6 +83,25 @@ defmodule ExMCP.Transport.HTTP do
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
 
+  @async_post_profiles [
+    :ex_mcp_async_post_0,
+    :ex_mcp_async_post_1,
+    :ex_mcp_async_post_2,
+    :ex_mcp_async_post_3,
+    :ex_mcp_async_post_4,
+    :ex_mcp_async_post_5,
+    :ex_mcp_async_post_6,
+    :ex_mcp_async_post_7,
+    :ex_mcp_async_post_8,
+    :ex_mcp_async_post_9,
+    :ex_mcp_async_post_10,
+    :ex_mcp_async_post_11,
+    :ex_mcp_async_post_12,
+    :ex_mcp_async_post_13,
+    :ex_mcp_async_post_14,
+    :ex_mcp_async_post_15
+  ]
+
   defstruct [
     :base_url,
     :headers,
@@ -298,21 +317,18 @@ defmodule ExMCP.Transport.HTTP do
     parent = self()
 
     Task.start(fn ->
-      # Use a dedicated httpc profile for async POST requests to avoid
-      # connection pool conflicts with the pending synchronous request.
-      profile = String.to_atom("async_post_#{:erlang.unique_integer([:positive])}")
-      {:ok, _} = :inets.start(:httpc, [{:profile, profile}])
+      # Use a bounded pool of predeclared httpc profiles for async POST
+      # requests. Creating fresh atoms per request would exhaust the VM atom
+      # table under repeated connections.
+      profile = async_post_profile()
+      ensure_httpc_profile!(profile)
       Process.put(:httpc_profile, profile)
 
       result =
-        try do
-          case perform_and_maybe_auth(message, state) do
-            {:ok, response} -> handle_http_response(response, state)
-            {:ok, response, new_state} -> handle_http_response(response, new_state)
-            {:error, reason} -> {:error, reason}
-          end
-        after
-          :inets.stop(:httpc, profile)
+        case perform_and_maybe_auth(message, state) do
+          {:ok, response} -> handle_http_response(response, state)
+          {:ok, response, new_state} -> handle_http_response(response, new_state)
+          {:error, reason} -> {:error, reason}
         end
 
       send(parent, {:async_post_result, result})
@@ -672,6 +688,18 @@ defmodule ExMCP.Transport.HTTP do
     case Process.get(:httpc_profile) do
       nil -> :httpc.request(:post, request, http_opts, [])
       profile -> :httpc.request(:post, request, http_opts, [], profile)
+    end
+  end
+
+  defp async_post_profile do
+    index = rem(:erlang.unique_integer([:positive, :monotonic]), length(@async_post_profiles))
+    Enum.at(@async_post_profiles, index)
+  end
+
+  defp ensure_httpc_profile!(profile) do
+    case :inets.start(:httpc, [{:profile, profile}]) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
     end
   end
 

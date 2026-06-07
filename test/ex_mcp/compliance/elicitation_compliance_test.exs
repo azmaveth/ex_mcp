@@ -294,12 +294,18 @@ defmodule ExMCP.Compliance.ElicitationComplianceTest do
       assert Map.has_key?(schema, :required)
 
       # Check each property type
-      assert schema.properties.name.type == "string"
-      assert schema.properties.age.type == "number"
-      assert schema.properties.count.type == "integer"
-      assert schema.properties.subscribe.type == "boolean"
-      assert schema.properties.country.enum == ["US", "CA", "UK"]
-      assert schema.properties.email.format == "email"
+      properties = schema.properties
+
+      get_property = fn key ->
+        Map.get(properties, key) || Map.get(properties, String.to_atom(key))
+      end
+
+      assert get_property.("name").type == "string"
+      assert get_property.("age").type == "number"
+      assert get_property.("count").type == "integer"
+      assert get_property.("subscribe").type == "boolean"
+      assert get_property.("country").enum == ["US", "CA", "UK"]
+      assert get_property.("email").format == "email"
     end
 
     test "elicitation schema validation constraints" do

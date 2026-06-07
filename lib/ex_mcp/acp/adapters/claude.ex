@@ -86,13 +86,15 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
   require Logger
 
+  alias ExMCP.ACP.{AdapterEvents, Envelope}
+
   # Stop reason classification matching Zed's error semantics
   @stop_reasons %{
     "end_turn" => "end_turn",
     "stop" => "end_turn",
     "max_tokens" => "max_tokens",
-    "tool_use" => "tool_use",
-    "error" => "error"
+    "tool_use" => "end_turn",
+    "error" => "refusal"
   }
 
   defstruct [
@@ -223,7 +225,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
   @impl true
   def capabilities do
     %{
-      "_meta" => %{"streaming" => true}
+      "promptCapabilities" => %{"image" => true},
+      "_meta" => %{"ex_mcp.claude" => %{"streaming" => true}}
       # Note: Claude CLI supports plan mode via --allowedTools but we don't
       # expose mode switching through the adapter. Session modes would require
       # the bridge to restart the subprocess with different flags.
@@ -368,9 +371,10 @@ defmodule ExMCP.ACP.Adapters.Claude do
       message ->
         notification =
           session_update(state.session_id, %{
-            "sessionUpdate" => "status",
-            "status" => "info",
-            "message" => message
+            "sessionUpdate" => "session_info_update",
+            "_meta" => %{
+              "ex_mcp" => %{"adapter" => "claude", "status" => "info", "message" => message}
+            }
           })
 
         {:messages, [notification], state}
@@ -381,9 +385,14 @@ defmodule ExMCP.ACP.Adapters.Claude do
   defp process_event(%{"type" => "rate_limit_event"} = event, state) do
     notification =
       session_update(state.session_id, %{
-        "sessionUpdate" => "status",
-        "status" => "rate_limited",
-        "retryAfter" => event["retry_after"]
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "ex_mcp" => %{
+            "adapter" => "claude",
+            "status" => "rate_limited",
+            "retryAfter" => event["retry_after"]
+          }
+        }
       })
 
     {:messages, [notification], state}
@@ -543,10 +552,10 @@ defmodule ExMCP.ACP.Adapters.Claude do
         "sessionUpdate" => "tool_call_update",
         "title" => tool_info.title,
         "toolCallId" => block["id"],
-        "toolName" => tool_name,
         "kind" => tool_info.kind,
         "status" => "in_progress",
-        "input" => input
+        "rawInput" => input,
+        "_meta" => %{"ex_mcp" => %{"toolName" => tool_name}}
       }
       |> maybe_put_tool("content", non_empty_list(tool_info.content))
       |> maybe_put_tool("locations", non_empty_list(tool_info.locations))
@@ -598,7 +607,10 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
     # Status update
     messages = [
-      session_update(session_id, %{"sessionUpdate" => "status", "status" => "completed"})
+      session_update(session_id, %{
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{"ex_mcp" => %{"adapter" => "claude", "status" => "completed"}}
+      })
       | messages
     ]
 
@@ -609,8 +621,8 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
         response_result = %{
           "stopReason" => stop_reason,
-          "text" => text,
-          "usage" => format_usage(usage)
+          "usage" => format_usage(usage),
+          "_meta" => %{"ex_mcp" => %{"text" => text}}
         }
 
         # Surface session_id so callers can correlate this prompt
@@ -618,11 +630,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
         # multi-turn continuation that bypasses bridge-managed state
         # (e.g. a caller that wants to drive --resume themselves) and
         # for audit/telemetry that ties responses back to a session.
-        response_result =
-          case session_id do
-            nil -> response_result
-            id -> Map.put(response_result, "sessionId", id)
-          end
+        response_result = put_in(response_result, ["_meta", "ex_mcp", "sessionId"], session_id)
 
         response_result =
           if thinking do
@@ -631,16 +639,12 @@ defmodule ExMCP.ACP.Adapters.Claude do
                 %{"text" => block.text, "signature" => block[:signature]}
               end)
 
-            Map.put(response_result, "thinking", thinking_data)
+            put_in(response_result, ["_meta", "ex_mcp", "thinking"], thinking_data)
           else
             response_result
           end
 
-        response = %{
-          "jsonrpc" => "2.0",
-          "result" => response_result,
-          "id" => state.pending_prompt_id
-        }
+        response = Envelope.response(state.pending_prompt_id, response_result)
 
         [response | messages]
       else
@@ -694,7 +698,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
         "toolCallId" => result["tool_use_id"],
         "status" => if(is_error, do: "failed", else: "completed"),
         "content" => parse_tool_result_content(result["content"]),
-        "isError" => is_error
+        "_meta" => %{"ex_mcp" => %{"isError" => is_error}}
       }
 
       session_update(state.session_id, update)
@@ -739,10 +743,10 @@ defmodule ExMCP.ACP.Adapters.Claude do
   defp classify_stop_reason(result) do
     cond do
       result["is_error"] ->
-        "error"
+        "refusal"
 
       result["stop_reason"] ->
-        Map.get(@stop_reasons, result["stop_reason"], result["stop_reason"])
+        Map.get(@stop_reasons, result["stop_reason"], "end_turn")
 
       # Check for max tokens by examining the result text
       result["usage"] && result["usage"]["output_tokens"] &&
@@ -979,14 +983,7 @@ defmodule ExMCP.ACP.Adapters.Claude do
   defp maybe_put_tool(map, key, value), do: Map.put(map, key, value)
 
   defp session_update(session_id, update) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id || "default",
-        "update" => update
-      }
-    }
+    AdapterEvents.session_update(session_id, update)
   end
 
   # Convert ACP ContentBlock list into Claude CLI stream-json input shape.

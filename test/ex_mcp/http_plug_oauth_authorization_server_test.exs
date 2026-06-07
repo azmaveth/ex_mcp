@@ -30,7 +30,8 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
           handler: nil,
           server_info: %{name: "test-server", version: "1.0.0"},
           oauth_enabled: true,
-          cors_enabled: true
+          cors_enabled: true,
+          allowed_origins: :any
         )
 
       {:ok, opts: opts}
@@ -69,7 +70,8 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
 
       assert result_conn.status == 200
       assert {"access-control-allow-origin", "*"} in result_conn.resp_headers
-      assert {"access-control-allow-methods", "GET, POST, OPTIONS"} in result_conn.resp_headers
+
+      assert {"access-control-allow-methods", "GET, POST, DELETE, OPTIONS"} in result_conn.resp_headers
     end
 
     test "returns 404 when OAuth is disabled" do

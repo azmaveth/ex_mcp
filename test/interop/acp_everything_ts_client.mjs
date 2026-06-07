@@ -211,7 +211,10 @@ try {
   await connection.closeSession({ sessionId: sessionResult.sessionId });
   results.lifecycle.push("session/close");
 
-  await connection.unstable_logout({});
+  await connection.deleteSession({ sessionId: sessionResult.sessionId });
+  results.lifecycle.push("session/delete");
+
+  await connection.logout({});
   results.lifecycle.push("logout");
 
   const expectedUpdates = [

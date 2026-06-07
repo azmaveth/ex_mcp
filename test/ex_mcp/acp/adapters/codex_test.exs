@@ -375,7 +375,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
       assert msg["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
-      assert msg["params"]["update"]["final"] == true
+      assert msg["params"]["update"]["_meta"]["ex_mcp"]["final"] == true
       assert msg["params"]["update"]["content"] == %{"type" => "text", "text" => "Done!"}
     end
 
@@ -415,11 +415,11 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       status = Enum.find(messages, &(&1["method"] == "session/update"))
 
       assert response["id"] == 5
-      assert response["result"]["text"] == "Hello world"
+      assert response["result"]["_meta"]["ex_mcp"]["text"] == "Hello world"
       assert response["result"]["stopReason"] == "end_turn"
-      assert response["result"]["sessionId"] == "t-1"
-      assert status["params"]["update"]["sessionUpdate"] == "status"
-      assert status["params"]["update"]["status"] == "completed"
+      assert response["result"]["_meta"]["ex_mcp"]["sessionId"] == "t-1"
+      assert status["params"]["update"]["sessionUpdate"] == "session_info_update"
+      assert status["params"]["update"]["_meta"]["ex_mcp"]["status"] == "completed"
       assert new_state.accumulated_text == []
       assert new_state.turn_id == nil
     end
@@ -442,7 +442,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       assert {:messages, messages, _state} = Codex.translate_inbound(line, state)
       response = Enum.find(messages, &Map.has_key?(&1, "id"))
-      assert response["result"]["stopReason"] == "error"
+      assert response["result"]["stopReason"] == "refusal"
     end
 
     # spec regression: the ACP spec
@@ -506,8 +506,8 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         })
 
       assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
-      assert msg["params"]["update"]["sessionUpdate"] == "error"
-      assert msg["params"]["update"]["content"] == "Rate limited"
+      assert msg["params"]["update"]["sessionUpdate"] == "session_info_update"
+      assert msg["params"]["update"]["_meta"]["ex_mcp"]["error"]["message"] == "Rate limited"
     end
 
     test "item/commandExecution/started produces stable tool_call", %{state: state} do
@@ -657,7 +657,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         )
 
       response = Enum.find(messages, &Map.has_key?(&1, "id"))
-      assert response["result"]["text"] == "Hello world!"
+      assert response["result"]["_meta"]["ex_mcp"]["text"] == "Hello world!"
     end
   end
 end

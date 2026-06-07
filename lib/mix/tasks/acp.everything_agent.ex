@@ -36,6 +36,8 @@ defmodule Mix.Tasks.Acp.EverythingAgent do
             session_list: true,
             session_resume: true,
             session_close: true,
+            session_delete: true,
+            session_additional_directories: true,
             logout: true
           )
       )
@@ -110,6 +112,11 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
   end
 
   @impl true
+  def handle_delete_session(session_id, _ctx, state) do
+    {:reply, %{}, %{state | sessions: Map.delete(state.sessions, session_id)}}
+  end
+
+  @impl true
   def handle_set_mode(session_id, mode_id, ctx, state) do
     :ok = Agent.current_mode(ctx.agent, session_id, mode_id)
     {:reply, %{}, %{state | mode_id: mode_id}}
@@ -168,8 +175,8 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
           "title" => "Read interop file",
           "kind" => "read",
           "status" => "pending",
-          "locations" => [%{"path" => "README.md", "line" => 1}],
-          "rawInput" => %{"path" => "README.md"}
+          "locations" => [%{"path" => readme_path(), "line" => 1}],
+          "rawInput" => %{"path" => readme_path()}
         })
 
       {:ok, permission} =
@@ -181,17 +188,17 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
             "title" => "Read interop file",
             "kind" => "read",
             "status" => "pending",
-            "locations" => [%{"path" => "README.md"}],
-            "rawInput" => %{"path" => "README.md"}
+            "locations" => [%{"path" => readme_path()}],
+            "rawInput" => %{"path" => readme_path()}
           },
           [%{"kind" => "allow_once", "name" => "Allow once", "optionId" => "allow"}]
         )
 
       {:ok, %{"content" => file_content}} =
-        Agent.read_text_file(ctx.agent, session_id, "README.md", line: 0, limit: 20)
+        Agent.read_text_file(ctx.agent, session_id, readme_path(), line: 1, limit: 20)
 
       {:ok, _} =
-        Agent.write_text_file(ctx.agent, session_id, "tmp/acp_everything.txt", "updated")
+        Agent.write_text_file(ctx.agent, session_id, write_path(), "updated")
 
       {:ok, %{"terminalId" => terminal_id}} =
         Agent.terminal_create(ctx.agent, session_id, %{
@@ -248,6 +255,9 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
     |> Enum.filter(&(&1["type"] == "text"))
     |> Enum.map_join("", &Map.get(&1, "text", ""))
   end
+
+  defp readme_path, do: Path.expand("README.md")
+  defp write_path, do: Path.expand("tmp/acp_everything.txt")
 
   defp session_response(state) do
     %{"modes" => mode_state(state), "configOptions" => config_options(state)}

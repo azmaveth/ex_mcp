@@ -233,11 +233,11 @@ defmodule ExMCP.SessionManager do
       storage_backend: Keyword.get(opts, :storage_backend, @default_storage_backend)
     }
 
-    # Create ETS tables for session and event storage
-    # Use unique table names for test isolation
-    table_suffix = System.unique_integer([:positive])
-    sessions_table = :ets.new(:"#{@sessions_table}_#{table_suffix}", [:set, :public])
-    events_table = :ets.new(:"#{@events_table}_#{table_suffix}", [:ordered_set, :public])
+    # Create unnamed ETS tables for session and event storage. The returned
+    # table identifiers are process-owned, so tests remain isolated without
+    # creating unreclaimable dynamic atoms for table names.
+    sessions_table = :ets.new(@sessions_table, [:set, :protected])
+    events_table = :ets.new(@events_table, [:ordered_set, :protected])
 
     # Start cleanup timer
     cleanup_timer =

@@ -32,10 +32,13 @@ defmodule ExMCP.ACP.Client do
 
   require Logger
 
+  alias ExMCP.ACP.{Capabilities, LifecycleParams, Maps}
   alias ExMCP.ACP.Client.DefaultHandler
   alias ExMCP.ACP.Client.HandlerRunner
   alias ExMCP.ACP.Protocol
   alias ExMCP.Transport.Stdio
+
+  @supported_protocol_versions [1]
 
   defstruct [
     :transport_mod,
@@ -97,8 +100,7 @@ defmodule ExMCP.ACP.Client do
           {:ok, map()} | {:error, any()}
   def new_session(client, cwd, opts \\ []) when is_binary(cwd) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    mcp_servers = Keyword.get(opts, :mcp_servers)
-    GenServer.call(client, {:new_session, cwd, mcp_servers}, timeout)
+    GenServer.call(client, {:new_session, cwd, LifecycleParams.client_opts(opts)}, timeout)
   end
 
   @doc """
@@ -110,8 +112,12 @@ defmodule ExMCP.ACP.Client do
           {:ok, map()} | {:error, any()}
   def load_session(client, session_id, cwd, opts \\ []) when is_binary(cwd) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    mcp_servers = Keyword.get(opts, :mcp_servers)
-    GenServer.call(client, {:load_session, session_id, cwd, mcp_servers}, timeout)
+
+    GenServer.call(
+      client,
+      {:load_session, session_id, cwd, LifecycleParams.client_opts(opts)},
+      timeout
+    )
   end
 
   @doc """
@@ -123,8 +129,12 @@ defmodule ExMCP.ACP.Client do
           {:ok, map() | nil} | {:error, any()}
   def resume_session(client, session_id, cwd, opts \\ []) when is_binary(cwd) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    mcp_servers = Keyword.get(opts, :mcp_servers)
-    GenServer.call(client, {:resume_session, session_id, cwd, mcp_servers}, timeout)
+
+    GenServer.call(
+      client,
+      {:resume_session, session_id, cwd, LifecycleParams.client_opts(opts)},
+      timeout
+    )
   end
 
   @doc """
@@ -160,6 +170,14 @@ defmodule ExMCP.ACP.Client do
   def close_session(client, session_id, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     GenServer.call(client, {:close_session, session_id}, timeout)
+  end
+
+  @doc "Deletes a session from the agent's session history."
+  @spec delete_session(GenServer.server(), String.t(), keyword()) ::
+          {:ok, map() | nil} | {:error, any()}
+  def delete_session(client, session_id, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    GenServer.call(client, {:delete_session, session_id}, timeout)
   end
 
   @doc "Sets the agent mode for a session."
@@ -246,9 +264,14 @@ defmodule ExMCP.ACP.Client do
   end
 
   @impl true
-  def handle_call({:new_session, cwd, mcp_servers}, from, %{status: :ready} = state) do
-    msg = Protocol.encode_session_new(cwd, mcp_servers)
-    send_request(msg, from, state, :new_session)
+  def handle_call({:new_session, cwd, lifecycle_opts}, from, %{status: :ready} = state) do
+    with :ok <- LifecycleParams.validate_cwd(cwd),
+         :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
+      msg = Protocol.encode_session_new(cwd, lifecycle_opts)
+      send_request(msg, from, state, :new_session)
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:authenticate, method_id_or_params}, from, %{status: :ready} = state) do
@@ -278,11 +301,20 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
-  def handle_call({:load_session, session_id, cwd, mcp_servers}, from, %{status: :ready} = state) do
+  def handle_call(
+        {:load_session, session_id, cwd, lifecycle_opts},
+        from,
+        %{status: :ready} = state
+      ) do
     case ensure_capability(state, :load_session) do
       :ok ->
-        msg = Protocol.encode_session_load(session_id, cwd, mcp_servers)
-        send_request(msg, from, state)
+        with :ok <- LifecycleParams.validate_cwd(cwd),
+             :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
+          msg = Protocol.encode_session_load(session_id, cwd, lifecycle_opts)
+          send_request(msg, from, state)
+        else
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -290,14 +322,19 @@ defmodule ExMCP.ACP.Client do
   end
 
   def handle_call(
-        {:resume_session, session_id, cwd, mcp_servers},
+        {:resume_session, session_id, cwd, lifecycle_opts},
         from,
         %{status: :ready} = state
       ) do
     case ensure_capability(state, :session_resume) do
       :ok ->
-        msg = Protocol.encode_session_resume(session_id, cwd, mcp_servers)
-        send_request(msg, from, state)
+        with :ok <- LifecycleParams.validate_cwd(cwd),
+             :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
+          msg = Protocol.encode_session_resume(session_id, cwd, lifecycle_opts)
+          send_request(msg, from, state)
+        else
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -305,21 +342,21 @@ defmodule ExMCP.ACP.Client do
   end
 
   def handle_call({:prompt, session_id, content}, from, %{status: :ready} = state) do
-    blocks =
-      case content do
-        text when is_binary(text) -> [%{"type" => "text", "text" => text}]
-        blocks when is_list(blocks) -> blocks
-      end
+    with {:ok, blocks} <- prompt_blocks(content),
+         :ok <- validate_prompt_blocks(state, blocks) do
+      :telemetry.execute(
+        [:ex_mcp, :acp, :prompt, :sent],
+        %{system_time: System.system_time()},
+        %{session_id: session_id}
+      )
 
-    :telemetry.execute(
-      [:ex_mcp, :acp, :prompt, :sent],
-      %{system_time: System.system_time()},
-      %{session_id: session_id}
-    )
-
-    msg = Protocol.encode_session_prompt(session_id, blocks)
-    state = %{state | prompt_text: Map.delete(state.prompt_text, session_id)}
-    send_request(msg, from, state, {:prompt, session_id})
+      msg = Protocol.encode_session_prompt(session_id, blocks)
+      state = %{state | prompt_text: Map.delete(state.prompt_text, session_id)}
+      send_request(msg, from, state, {:prompt, session_id})
+    else
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:set_mode, session_id, mode_id}, from, %{status: :ready} = state) do
@@ -353,6 +390,17 @@ defmodule ExMCP.ACP.Client do
       :ok ->
         msg = Protocol.encode_session_close(session_id)
         send_request(msg, from, state, {:close_session, session_id})
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:delete_session, session_id}, from, %{status: :ready} = state) do
+    case ensure_capability(state, :session_delete) do
+      :ok ->
+        msg = Protocol.encode_session_delete(session_id)
+        send_request(msg, from, state)
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -482,21 +530,28 @@ defmodule ExMCP.ACP.Client do
       # answer. Explicit :capabilities opt takes precedence.
       auto_capabilities = auto_advertise_capabilities(state.handler_mod)
       explicit_capabilities = Keyword.get(opts, :capabilities)
-      capabilities = merge_capabilities(auto_capabilities, explicit_capabilities)
+      capabilities = Capabilities.merge(auto_capabilities, explicit_capabilities)
 
       init_msg = Protocol.encode_initialize(client_info, capabilities, state.protocol_version)
 
       with {:ok, _} <- do_send(init_msg, state),
            {:ok, result} <- receive_init_response(init_msg["id"]) do
-        {:ok,
-         %{
-           state
-           | agent_info: result["agentInfo"],
-             agent_capabilities: result["agentCapabilities"],
-             auth_methods: result["authMethods"] || [],
-             protocol_version: result["protocolVersion"] || state.protocol_version,
-             status: :ready
-         }}
+        protocol_version = result["protocolVersion"] || state.protocol_version
+
+        if protocol_version in @supported_protocol_versions do
+          {:ok,
+           %{
+             state
+             | agent_info: result["agentInfo"],
+               agent_capabilities: result["agentCapabilities"],
+               auth_methods: result["authMethods"] || [],
+               protocol_version: protocol_version,
+               status: :ready
+           }}
+        else
+          do_disconnect(state)
+          {:error, {:unsupported_protocol_version, protocol_version}}
+        end
       end
     end
   end
@@ -610,6 +665,7 @@ defmodule ExMCP.ACP.Client do
   # buffer. Agents that return text inline keep theirs; others get the streamed text.
   defp maybe_merge_prompt_text({:prompt, session_id}, {:ok, result}, state) when is_map(result) do
     {buffered, prompt_text} = Map.pop(state.prompt_text, session_id)
+    meta_text = get_in(result, ["_meta", "ex_mcp", "text"])
 
     result =
       case buffered do
@@ -620,7 +676,11 @@ defmodule ExMCP.ACP.Client do
           end
 
         _ ->
-          result
+          if is_binary(meta_text) and meta_text != "" do
+            Map.put_new(result, "text", meta_text)
+          else
+            result
+          end
       end
 
     {{:ok, result}, %{state | prompt_text: prompt_text}}
@@ -694,9 +754,6 @@ defmodule ExMCP.ACP.Client do
   # contract that `capabilities: %{}` means "advertise nothing" —
   # otherwise auto-fill from handler exports would override a caller's
   # explicit suppression.
-  defp merge_capabilities(auto, nil), do: auto
-  defp merge_capabilities(_auto, explicit), do: explicit
-
   defp emit_session_ended(session_id) do
     :telemetry.execute(
       [:ex_mcp, :acp, :session, :ended],
@@ -706,46 +763,50 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp ensure_capability(state, capability) do
-    if capability_supported?(state.agent_capabilities || %{}, capability) do
+    Capabilities.ensure(state.agent_capabilities || %{}, capability)
+  end
+
+  defp prompt_blocks(text) when is_binary(text), do: {:ok, [%{"type" => "text", "text" => text}]}
+  defp prompt_blocks(blocks) when is_list(blocks), do: {:ok, blocks}
+  defp prompt_blocks(_content), do: {:error, {:invalid_params, :prompt_must_be_a_list}}
+
+  defp validate_prompt_blocks(state, blocks) when is_list(blocks) do
+    Enum.reduce_while(blocks, :ok, fn block, :ok ->
+      case validate_prompt_block(state.agent_capabilities || %{}, block) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp validate_prompt_block(_caps, %{"type" => type}) when type in ["text", "resource_link"],
+    do: :ok
+
+  defp validate_prompt_block(caps, %{"type" => "image"}) do
+    validate_prompt_capability(caps, "image", :image)
+  end
+
+  defp validate_prompt_block(caps, %{"type" => "audio"}) do
+    validate_prompt_capability(caps, "audio", :audio)
+  end
+
+  defp validate_prompt_block(caps, %{"type" => "resource"}) do
+    validate_prompt_capability(caps, "embeddedContext", :embedded_context)
+  end
+
+  defp validate_prompt_block(_caps, %{"type" => type}) do
+    {:error, {:unsupported_prompt_content, type}}
+  end
+
+  defp validate_prompt_block(_caps, _block), do: {:error, {:invalid_params, :prompt_block}}
+
+  defp validate_prompt_capability(caps, key, capability) do
+    if caps |> Maps.get("promptCapabilities") |> Maps.get(key) |> Maps.truthy?() do
       :ok
     else
-      {:error, {:unsupported_capability, capability}}
+      {:error, {:unsupported_capability, {:prompt, capability}}}
     end
   end
-
-  defp capability_supported?(caps, :load_session), do: truthy?(map_get(caps, "loadSession"))
-
-  defp capability_supported?(caps, :session_list) do
-    caps |> map_get("sessionCapabilities") |> map_get("list") |> truthy?()
-  end
-
-  defp capability_supported?(caps, :session_resume) do
-    caps |> map_get("sessionCapabilities") |> map_get("resume") |> truthy?()
-  end
-
-  defp capability_supported?(caps, :session_close) do
-    caps |> map_get("sessionCapabilities") |> map_get("close") |> truthy?()
-  end
-
-  defp capability_supported?(caps, :logout) do
-    caps |> map_get("auth") |> map_get("logout") |> truthy?()
-  end
-
-  defp map_get(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, existing_atom(key))
-  end
-
-  defp map_get(_, _), do: nil
-
-  defp existing_atom(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> nil
-  end
-
-  defp truthy?(nil), do: false
-  defp truthy?(false), do: false
-  defp truthy?(_), do: true
 
   defp reply_all_pending(error, state) do
     for {_id, pending} <- state.pending_requests do
@@ -861,7 +922,7 @@ defmodule ExMCP.ACP.Client do
     if state.handler_pid && function_exported?(state.handler_mod, :handle_terminal_request, 4) do
       ref = make_ref()
       HandlerRunner.terminal_request(state.handler_pid, ref, method, params, id)
-      track_agent_request(state, ref, :terminal, id, params["sessionId"])
+      track_agent_request(state, ref, :terminal, id, params["sessionId"], %{method: method})
     else
       response = Protocol.encode_error(-32601, "Terminal operations not supported", nil, id)
       send_to_transport(response, state)
@@ -901,6 +962,14 @@ defmodule ExMCP.ACP.Client do
     Protocol.encode_file_write_response(id)
   end
 
+  defp encode_handler_response(
+         %{kind: :terminal, id: id, method: "terminal/output"},
+         {:terminal, {:ok, result}}
+       )
+       when is_map(result) do
+    Protocol.encode_response(Map.put_new(result, "truncated", false), id)
+  end
+
   defp encode_handler_response(%{kind: :terminal, id: id}, {:terminal, {:ok, result}}) do
     Protocol.encode_response(result, id)
   end
@@ -913,8 +982,8 @@ defmodule ExMCP.ACP.Client do
     Protocol.encode_error(-32603, "Unexpected handler result: #{inspect(unexpected)}", nil, id)
   end
 
-  defp track_agent_request(state, ref, kind, id, session_id) do
-    request = %{kind: kind, id: id, session_id: session_id}
+  defp track_agent_request(state, ref, kind, id, session_id, extra \\ %{}) do
+    request = Map.merge(%{kind: kind, id: id, session_id: session_id}, extra)
     %{state | pending_agent_requests: Map.put(state.pending_agent_requests, ref, request)}
   end
 
