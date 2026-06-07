@@ -54,11 +54,16 @@ defmodule ExMCP.ACP.Protocol do
     }
   end
 
-  @doc "Encodes a `session/new` request."
-  @spec encode_session_new(String.t() | nil, [map()] | nil) :: map()
-  def encode_session_new(cwd \\ nil, mcp_servers \\ nil) do
-    params = %{}
-    params = maybe_put(params, "cwd", cwd)
+  @doc """
+  Encodes a `session/new` request.
+
+  `cwd` is required by the ACP spec
+  (https://agentclientprotocol.com/protocol/session-setup) and must be an
+  absolute path string. Passing `nil` raises `FunctionClauseError`.
+  """
+  @spec encode_session_new(String.t(), [map()] | nil) :: map()
+  def encode_session_new(cwd, mcp_servers \\ nil) when is_binary(cwd) do
+    params = %{"cwd" => cwd}
     # Always include mcpServers (some agents like Gemini require it even if empty)
     params = Map.put(params, "mcpServers", mcp_servers || [])
 
@@ -70,11 +75,16 @@ defmodule ExMCP.ACP.Protocol do
     }
   end
 
-  @doc "Encodes a `session/load` request to load an existing session and replay history."
-  @spec encode_session_load(String.t(), String.t() | nil, [map()] | nil) :: map()
-  def encode_session_load(session_id, cwd \\ nil, mcp_servers \\ nil) do
-    params = %{"sessionId" => session_id}
-    params = maybe_put(params, "cwd", cwd)
+  @doc """
+  Encodes a `session/load` request to load an existing session and replay history.
+
+  `cwd` is required by the ACP spec
+  (https://agentclientprotocol.com/protocol/session-setup) and must be an
+  absolute path string. Passing `nil` raises `FunctionClauseError`.
+  """
+  @spec encode_session_load(String.t(), String.t(), [map()] | nil) :: map()
+  def encode_session_load(session_id, cwd, mcp_servers \\ nil) when is_binary(cwd) do
+    params = %{"sessionId" => session_id, "cwd" => cwd}
     params = Map.put(params, "mcpServers", mcp_servers || [])
 
     %{
@@ -138,17 +148,36 @@ defmodule ExMCP.ACP.Protocol do
     }
   end
 
-  @doc "Encodes a `session/resume` request. Stabilized in ACP spec April 22, 2026."
-  @spec encode_session_resume(String.t(), String.t() | nil, [map()] | nil) :: map()
-  def encode_session_resume(session_id, cwd \\ nil, mcp_servers \\ nil) do
-    params = %{"sessionId" => session_id}
-    params = maybe_put(params, "cwd", cwd)
+  @doc """
+  Encodes a `session/resume` request. Stabilized in ACP spec April 22, 2026.
+
+  `cwd` is required (same shape as `session/load` per
+  https://agentclientprotocol.com/protocol/session-list). Passing `nil`
+  raises `FunctionClauseError`.
+  """
+  @spec encode_session_resume(String.t(), String.t(), [map()] | nil) :: map()
+  def encode_session_resume(session_id, cwd, mcp_servers \\ nil) when is_binary(cwd) do
+    params = %{"sessionId" => session_id, "cwd" => cwd}
     params = Map.put(params, "mcpServers", mcp_servers || [])
 
     %{
       "jsonrpc" => "2.0",
       "method" => "session/resume",
       "params" => params,
+      "id" => generate_id()
+    }
+  end
+
+  @doc """
+  Encodes a `session/delete` request. Gated by `agentCapabilities.delete`
+  per https://agentclientprotocol.com/protocol/session-list.
+  """
+  @spec encode_session_delete(String.t()) :: map()
+  def encode_session_delete(session_id) when is_binary(session_id) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "session/delete",
+      "params" => %{"sessionId" => session_id},
       "id" => generate_id()
     }
   end
@@ -367,9 +396,23 @@ defmodule ExMCP.ACP.Protocol do
 
   # Agent requests to the client
 
-  @doc "Encodes a `session/request_permission` request from agent to client."
+  # Spec-defined PermissionOption.kind enum
+  # (https://agentclientprotocol.com/protocol/tool-calls).
+  @permission_option_kinds ~w(allow_once allow_always reject_once reject_always)
+
+  @doc """
+  Encodes a `session/request_permission` request from agent to client.
+
+  Each option's `kind` must be one of the spec enums
+  `allow_once`, `allow_always`, `reject_once`, `reject_always`
+  per https://agentclientprotocol.com/protocol/tool-calls. Non-spec
+  values raise `ArgumentError` — a client receiving an unrecognized
+  kind cannot render the correct UI affordance.
+  """
   @spec encode_permission_request(String.t(), map(), [map()]) :: map()
-  def encode_permission_request(session_id, tool_call, options) do
+  def encode_permission_request(session_id, tool_call, options) when is_list(options) do
+    Enum.each(options, &validate_permission_option_kind!/1)
+
     %{
       "jsonrpc" => "2.0",
       "method" => "session/request_permission",
@@ -380,6 +423,21 @@ defmodule ExMCP.ACP.Protocol do
       },
       "id" => generate_id()
     }
+  end
+
+  defp validate_permission_option_kind!(%{"kind" => kind}) when kind in @permission_option_kinds,
+    do: :ok
+
+  defp validate_permission_option_kind!(%{"kind" => kind}) do
+    raise ArgumentError,
+          "PermissionOption.kind #{inspect(kind)} is not in the spec enum " <>
+            "(#{Enum.join(@permission_option_kinds, ", ")}). " <>
+            "See https://agentclientprotocol.com/protocol/tool-calls."
+  end
+
+  defp validate_permission_option_kind!(option) do
+    raise ArgumentError,
+          "PermissionOption is missing the required `kind` field: #{inspect(option)}"
   end
 
   @doc "Encodes an `fs/read_text_file` request from agent to client."

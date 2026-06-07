@@ -51,6 +51,72 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
     end
   end
 
+  describe "session/set_mode" do
+    # spec regression: Codex advertises three modes (`suggest`, `auto-edit`,
+    # `full-auto`) via `modes/0`. Per ACP spec
+    # (https://agentclientprotocol.com/protocol/session-modes), advertising
+    # a mode is a promise that `session/set_mode` actually applies it.
+    #
+    # The previous implementation discarded the modeId in the set_mode
+    # handler (`{:ok, :skip, state}` with no state mutation) and then never
+    # read state.mode_id from `session/new` — so the advertised modes had
+    # no effect. Any ACP client that trusts the advertisement would silently
+    # get the wrong approval policy.
+    #
+    # The contract this test pins down: after `set_mode("suggest")`, the
+    # next `session/new` MUST send `approvalPolicy: "suggest"` on the wire
+    # (unless overridden by an explicit params["approvalPolicy"]).
+    test "spec regression: set_mode stores modeId so it applies to next session/new",
+         %{state: state} do
+      set_mode_msg = %{
+        "method" => "session/set_mode",
+        "params" => %{"sessionId" => "ignored", "modeId" => "suggest"}
+      }
+
+      assert {:ok, :skip, state_after_set} = Codex.translate_outbound(set_mode_msg, state)
+
+      # The mode MUST be stored in state — otherwise it cannot apply to
+      # the next session/new.
+      assert state_after_set.mode_id == "suggest",
+             "set_mode must persist modeId in state. Codex advertises modes; storing nothing " <>
+               "breaks the advertise→apply contract."
+
+      # The next session/new MUST forward the stored mode as approvalPolicy
+      # on the wire, unless params explicitly overrides it.
+      session_new_msg = %{
+        "method" => "session/new",
+        "id" => 99,
+        "params" => %{"cwd" => "/tmp/proj"}
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(session_new_msg, state_after_set)
+      {:ok, codex_msg} = Jason.decode(IO.iodata_to_binary(data))
+
+      assert codex_msg["params"]["approvalPolicy"] == "suggest",
+             ~s|After set_mode("suggest"), session/new must send approvalPolicy="suggest" | <>
+               "to match the advertised mode. The adapter currently discards the modeId."
+    end
+
+    test "spec regression: explicit approvalPolicy in session/new params wins over stored mode",
+         %{state: state} do
+      # Caller-explicit > adapter-stored. This is the precedence ACP clients
+      # will expect — if you pass approvalPolicy in session/new, it must
+      # override the stored mode rather than the other way around.
+      state_after_set = %{state | mode_id: "full-auto"}
+
+      session_new_msg = %{
+        "method" => "session/new",
+        "id" => 100,
+        "params" => %{"cwd" => "/tmp/proj", "approvalPolicy" => "suggest"}
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(session_new_msg, state_after_set)
+      {:ok, codex_msg} = Jason.decode(IO.iodata_to_binary(data))
+
+      assert codex_msg["params"]["approvalPolicy"] == "suggest"
+    end
+  end
+
   describe "init/1" do
     test "stores model from opts" do
       {:ok, state} = Codex.init(model: "gpt-5")
@@ -100,7 +166,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       msg = %{
         "method" => "session/new",
         "id" => 2,
-        "params" => %{"model" => "gpt-4o"}
+        "params" => %{"model" => "gpt-4o", "cwd" => "/tmp/proj"}
       }
 
       assert {:ok, data, new_state} = Codex.translate_outbound(msg, state)
@@ -110,6 +176,35 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert codex_msg["params"]["model"] == "gpt-4o"
       assert new_state.pending_requests[new_state.next_id - 1].type == :thread_start
       assert new_state.pending_requests[new_state.next_id - 1].acp_id == 2
+    end
+
+    # spec regression: the previous implementation used
+    # `state.model || params["model"]` — meaning state's model (set via
+    # adapter init or set_config_option) would override an explicit
+    # caller-supplied model on `session/new`. That's the reverse of the
+    # expected precedence: caller-explicit > adapter-default.
+    #
+    # This is the same bug class as Claude's `permission_mode`: the
+    # caller supplies a value, the adapter returns `:ok`, but the wire
+    # carries a different value than the caller asked for.
+    test "spec regression: caller-supplied session/new params.model wins over state.model",
+         %{state: state} do
+      # State has a "default" model (from init opts or a prior set_config_option).
+      state = %{state | model: "gpt-4o"}
+
+      # Caller explicitly asks for gpt-5 in this session/new.
+      msg = %{
+        "method" => "session/new",
+        "id" => 7,
+        "params" => %{"model" => "gpt-5", "cwd" => "/tmp/proj"}
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(msg, state)
+      {:ok, codex_msg} = Jason.decode(IO.iodata_to_binary(data))
+
+      assert codex_msg["params"]["model"] == "gpt-5",
+             "Caller-explicit model in session/new params must win over state.model. " <>
+               "The reverse precedence silently downgrades the caller's intent."
     end
 
     test "session/prompt sends turn/start", %{state: state} do
@@ -350,7 +445,18 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert response["result"]["stopReason"] == "error"
     end
 
-    test "thread/tokenUsage/updated produces usage update", %{state: state} do
+    # spec regression: the ACP spec
+    # (https://agentclientprotocol.com/protocol/prompt-turn) defines
+    # `sessionUpdate: "usage_update"` with `used`/`size`/`cost?` fields —
+    # NOT `"usage"` with `inputTokens`/`outputTokens`. The previous
+    # implementation emitted a non-spec discriminator that other ACP
+    # clients (TypeScript reference, Zed, etc.) cannot recognize.
+    #
+    # If we want to surface input/output token billing data, the spec
+    # offers `_meta` on every type, OR the prompt response result's
+    # `usage` extension (which Pi already uses).
+    test "spec regression: thread/tokenUsage/updated emits spec-compliant usage_update or nothing",
+         %{state: state} do
       line =
         Jason.encode!(%{
           "method" => "thread/tokenUsage/updated",
@@ -362,10 +468,31 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
           }
         })
 
-      assert {:messages, [msg], _state} = Codex.translate_inbound(line, state)
-      assert msg["params"]["update"]["sessionUpdate"] == "usage"
-      assert msg["params"]["update"]["content"]["inputTokens"] == 100
-      assert msg["params"]["update"]["content"]["outputTokens"] == 50
+      result = Codex.translate_inbound(line, state)
+
+      # Either the adapter drops the non-spec emission entirely...
+      case result do
+        {:skip, _state} ->
+          :ok
+
+        {:messages, msgs, _state} ->
+          # ...or every emitted session/update must use a spec-stable
+          # discriminator. The non-spec "usage" is the bug.
+          for msg <- msgs, msg["method"] == "session/update" do
+            discriminator = msg["params"]["update"]["sessionUpdate"]
+
+            refute discriminator == "usage",
+                   "Non-spec sessionUpdate discriminator. Use \"usage_update\" with " <>
+                     "used/size/cost per https://agentclientprotocol.com/protocol/prompt-turn"
+
+            # If the adapter emits usage_update, it must have the spec fields.
+            if discriminator == "usage_update" do
+              update = msg["params"]["update"]
+              assert Map.has_key?(update, "used"), "usage_update requires `used` per spec"
+              assert Map.has_key?(update, "size"), "usage_update requires `size` per spec"
+            end
+          end
+      end
     end
 
     test "error notification produces error update", %{state: state} do

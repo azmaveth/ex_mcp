@@ -87,28 +87,41 @@ defmodule ExMCP.ACP.Client do
     GenServer.call(client, :logout, timeout)
   end
 
-  @doc "Creates a new agent session."
-  @spec new_session(GenServer.server(), String.t() | nil, keyword()) ::
+  @doc """
+  Creates a new agent session.
+
+  `cwd` is required per ACP spec
+  (https://agentclientprotocol.com/protocol/session-setup).
+  """
+  @spec new_session(GenServer.server(), String.t(), keyword()) ::
           {:ok, map()} | {:error, any()}
-  def new_session(client, cwd \\ nil, opts \\ []) do
+  def new_session(client, cwd, opts \\ []) when is_binary(cwd) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     mcp_servers = Keyword.get(opts, :mcp_servers)
     GenServer.call(client, {:new_session, cwd, mcp_servers}, timeout)
   end
 
-  @doc "Loads an existing session and replays previous messages when the agent supports it."
-  @spec load_session(GenServer.server(), String.t(), String.t() | nil, keyword()) ::
+  @doc """
+  Loads an existing session and replays previous messages when the agent supports it.
+
+  `cwd` is required per ACP spec.
+  """
+  @spec load_session(GenServer.server(), String.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, any()}
-  def load_session(client, session_id, cwd \\ nil, opts \\ []) do
+  def load_session(client, session_id, cwd, opts \\ []) when is_binary(cwd) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     mcp_servers = Keyword.get(opts, :mcp_servers)
     GenServer.call(client, {:load_session, session_id, cwd, mcp_servers}, timeout)
   end
 
-  @doc "Resumes an existing session without replaying previous messages."
-  @spec resume_session(GenServer.server(), String.t(), String.t() | nil, keyword()) ::
+  @doc """
+  Resumes an existing session without replaying previous messages.
+
+  `cwd` is required per ACP spec.
+  """
+  @spec resume_session(GenServer.server(), String.t(), String.t(), keyword()) ::
           {:ok, map() | nil} | {:error, any()}
-  def resume_session(client, session_id, cwd \\ nil, opts \\ []) do
+  def resume_session(client, session_id, cwd, opts \\ []) when is_binary(cwd) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     mcp_servers = Keyword.get(opts, :mcp_servers)
     GenServer.call(client, {:resume_session, session_id, cwd, mcp_servers}, timeout)
@@ -462,7 +475,14 @@ defmodule ExMCP.ACP.Client do
       client_info =
         Keyword.get(opts, :client_info, %{"name" => "ex_mcp", "version" => "0.1.0"})
 
-      capabilities = Keyword.get(opts, :capabilities)
+      # Per ACP spec: "capabilities omitted in initialize MUST be treated
+      # as UNSUPPORTED." Auto-advertise fs/terminal capabilities based on
+      # whether the handler module exports the corresponding callbacks —
+      # otherwise the agent will never call them even if the handler can
+      # answer. Explicit :capabilities opt takes precedence.
+      auto_capabilities = auto_advertise_capabilities(state.handler_mod)
+      explicit_capabilities = Keyword.get(opts, :capabilities)
+      capabilities = merge_capabilities(auto_capabilities, explicit_capabilities)
 
       init_msg = Protocol.encode_initialize(client_info, capabilities, state.protocol_version)
 
@@ -638,6 +658,44 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp emit_resolve_telemetry(_, _), do: :ok
+
+  # Build a clientCapabilities map reflecting which optional ACP callbacks
+  # the handler module actually exports. Per spec, capabilities omitted in
+  # initialize MUST be treated as unsupported — so a missing advertisement
+  # means the agent will never invoke that capability.
+  defp auto_advertise_capabilities(nil), do: nil
+
+  defp auto_advertise_capabilities(handler_mod) when is_atom(handler_mod) do
+    Code.ensure_loaded(handler_mod)
+
+    fs =
+      %{}
+      |> maybe_put_cap("readTextFile", function_exported?(handler_mod, :handle_file_read, 4))
+      |> maybe_put_cap("writeTextFile", function_exported?(handler_mod, :handle_file_write, 4))
+
+    caps = %{}
+    caps = if map_size(fs) > 0, do: Map.put(caps, "fs", fs), else: caps
+
+    caps =
+      if function_exported?(handler_mod, :handle_terminal_request, 4) do
+        Map.put(caps, "terminal", true)
+      else
+        caps
+      end
+
+    if map_size(caps) > 0, do: caps, else: nil
+  end
+
+  defp maybe_put_cap(map, _key, false), do: map
+  defp maybe_put_cap(map, key, true), do: Map.put(map, key, true)
+
+  # Explicit :capabilities opt fully replaces auto-detected. Auto only
+  # fills in when no explicit caps are passed. This preserves the
+  # contract that `capabilities: %{}` means "advertise nothing" —
+  # otherwise auto-fill from handler exports would override a caller's
+  # explicit suppression.
+  defp merge_capabilities(auto, nil), do: auto
+  defp merge_capabilities(_auto, explicit), do: explicit
 
   defp emit_session_ended(session_id) do
     :telemetry.execute(

@@ -258,19 +258,27 @@ defmodule ExMCP.ACP.Adapters.Claude do
         %{"method" => "session/prompt", "id" => id, "params" => params},
         state
       ) do
-    content = extract_prompt_text(params["prompt"])
-    session_id = params["sessionId"] || state.session_id || "default"
+    case extract_prompt_content(params["prompt"]) do
+      {:ok, content} ->
+        session_id = params["sessionId"] || state.session_id || "default"
 
-    stdin_msg = %{
-      "type" => "user",
-      "message" => %{"role" => "user", "content" => content},
-      "session_id" => session_id
-    }
+        stdin_msg = %{
+          "type" => "user",
+          "message" => %{"role" => "user", "content" => content},
+          "session_id" => session_id
+        }
 
-    data = Jason.encode!(stdin_msg) <> "\n"
+        data = Jason.encode!(stdin_msg) <> "\n"
 
-    state = reset_accumulators(%{state | pending_prompt_id: id, session_id: session_id})
-    {:ok, data, state}
+        state = reset_accumulators(%{state | pending_prompt_id: id, session_id: session_id})
+        {:ok, data, state}
+
+      {:error, reason} ->
+        # Don't silently drop non-supported content blocks — that's the
+        # bug class. Audio / resource blocks aren't supported by Claude
+        # CLI, so callers MUST learn we couldn't send their prompt.
+        {:error, reason, state}
+    end
   end
 
   def translate_outbound(%{"method" => "session/cancel"}, state) do
@@ -580,17 +588,13 @@ defmodule ExMCP.ACP.Adapters.Claude do
     # Build ACP response messages
     messages = []
 
-    # Usage update notification (emit before final result so clients can display it)
-    messages = [
-      session_update(session_id, %{
-        "sessionUpdate" => "usage",
-        "inputTokens" => usage.input_tokens,
-        "outputTokens" => usage.output_tokens,
-        "cacheReadTokens" => usage.cache_read_tokens,
-        "cacheCreationTokens" => usage.cache_creation_tokens
-      })
-      | messages
-    ]
+    # Token usage rides on the prompt response result's `usage` extension
+    # (see `format_usage/1` below) — not as a separate `session/update`.
+    # The spec's `usage_update` discriminator
+    # (https://agentclientprotocol.com/protocol/prompt-turn) is for
+    # context-window fill, not input/output token billing; emitting
+    # `sessionUpdate: "usage"` with token counts is non-spec and other
+    # ACP clients can't recognize it.
 
     # Status update
     messages = [
@@ -985,15 +989,51 @@ defmodule ExMCP.ACP.Adapters.Claude do
     }
   end
 
-  defp extract_prompt_text(nil), do: ""
+  # Convert ACP ContentBlock list into Claude CLI stream-json input shape.
+  # Text-only blocks collapse to a single string for prompt brevity.
+  # Mixed text+image blocks emit Anthropic Messages API content-block
+  # list (multimodal). Audio / resource blocks return {:error, _} —
+  # Claude CLI doesn't accept them; silently dropping was the bug.
+  defp extract_prompt_content(nil), do: {:ok, ""}
+  defp extract_prompt_content(text) when is_binary(text), do: {:ok, text}
 
-  defp extract_prompt_text(blocks) when is_list(blocks) do
-    blocks
-    |> Enum.filter(&(&1["type"] == "text"))
-    |> Enum.map_join("\n", &(&1["text"] || ""))
+  defp extract_prompt_content(blocks) when is_list(blocks) do
+    case Enum.find(blocks, &unsupported_block?/1) do
+      nil ->
+        if Enum.all?(blocks, &(&1["type"] == "text")) do
+          text = Enum.map_join(blocks, "\n", &(&1["text"] || ""))
+          {:ok, text}
+        else
+          # Multimodal: emit Anthropic-format content block list.
+          content = Enum.map(blocks, &to_anthropic_content_block/1)
+          {:ok, content}
+        end
+
+      unsupported ->
+        {:error, "Claude does not support content block type=#{inspect(unsupported["type"])}"}
+    end
   end
 
-  defp extract_prompt_text(text) when is_binary(text), do: text
+  defp unsupported_block?(%{"type" => type})
+       when type in ["audio", "resource_link", "resource"],
+       do: true
+
+  defp unsupported_block?(_), do: false
+
+  defp to_anthropic_content_block(%{"type" => "text"} = block) do
+    %{"type" => "text", "text" => block["text"] || ""}
+  end
+
+  defp to_anthropic_content_block(%{"type" => "image"} = block) do
+    %{
+      "type" => "image",
+      "source" => %{
+        "type" => "base64",
+        "media_type" => block["mimeType"] || "image/png",
+        "data" => block["data"] || ""
+      }
+    }
+  end
 
   defp maybe_set(state, _key, nil), do: state
   defp maybe_set(state, key, value), do: Map.put(state, key, value)

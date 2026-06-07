@@ -232,6 +232,16 @@ defmodule ExMCP.ACP.AdapterBridge do
     push_message(state, Jason.encode!(response))
   end
 
+  defp synthesize_error(state, request_id, code, message) do
+    response = %{
+      "jsonrpc" => "2.0",
+      "error" => %{"code" => code, "message" => message},
+      "id" => request_id
+    }
+
+    push_message(state, Jason.encode!(response))
+  end
+
   defp synthesize_init_response(state, request_id) do
     caps =
       if function_exported?(state.adapter_mod, :capabilities, 0) do
@@ -509,6 +519,14 @@ defmodule ExMCP.ACP.AdapterBridge do
         state = %{state | adapter_state: new_adapter_state}
         _ = write_to_port(state, data)
         state = synthesize_result(state, id, config_options_result(state))
+        {:reply, :ok, state}
+
+      {:error, reason, new_adapter_state} ->
+        # JSON-RPC -32602 = Invalid params. A config value outside the
+        # adapter's enum (e.g. Pi's thinking_level) is invalid params from
+        # the client's perspective.
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_error(state, id, -32_602, to_string(reason))
         {:reply, :ok, state}
     end
   end

@@ -53,6 +53,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defstruct [
     :model,
+    :mode_id,
     :thread_id,
     :turn_id,
     :current_prompt_acp_id,
@@ -151,11 +152,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
       ) do
     {id, state} = next_request_id(state)
 
+    # Precedence: caller-explicit params > adapter state > nil.
+    # The reverse (state || params) would silently override a caller's
+    # explicit choice with the adapter's default.
     wire_params =
       %{}
-      |> maybe_put("model", state.model || params["model"])
+      |> maybe_put("model", params["model"] || state.model)
       |> maybe_put("cwd", params["cwd"] || Keyword.get(state.opts, :cwd))
-      |> maybe_put("approvalPolicy", params["approvalPolicy"])
+      |> maybe_put("approvalPolicy", params["approvalPolicy"] || state.mode_id)
       |> maybe_put("sandbox", params["sandbox"])
 
     request = encode_request(id, "thread/start", wire_params)
@@ -251,14 +255,19 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
-  # ACP spec: session/set_mode — Codex uses approvalPolicy at thread/start
-  # We track it in state for the next thread/start call
+  # ACP spec: session/set_mode — Codex uses approvalPolicy at thread/start.
+  # We persist the modeId in state so the next session/new uses it as the
+  # default approvalPolicy. Codex's approval policy is set at thread boundary
+  # so a mid-session set_mode can't take effect immediately, but discarding
+  # the modeId entirely (the previous behavior) broke the
+  # advertise → set_mode → apply contract for an adapter that advertises
+  # three modes.
   def translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
-    Logger.debug(
-      "[Codex Adapter] Mode change stored: #{params["modeId"]} (applies on next session)"
-    )
+    mode_id = params["modeId"]
 
-    {:ok, :skip, state}
+    Logger.debug("[Codex Adapter] mode stored: #{inspect(mode_id)} (applies on next session/new)")
+
+    {:ok, :skip, %{state | mode_id: mode_id}}
   end
 
   def translate_outbound(%{"method" => "session/set_mode"}, state) do
@@ -534,20 +543,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     messages = []
 
-    # Emit usage update if we have accumulated usage
-    messages =
-      if state.accumulated_usage do
-        [
-          session_update(state, %{
-            "sessionUpdate" => "usage",
-            "content" => state.accumulated_usage
-          })
-          | messages
-        ]
-      else
-        messages
-      end
-
     # Status completed notification
     messages = [
       session_update(state, %{
@@ -557,20 +552,28 @@ defmodule ExMCP.ACP.Adapters.Codex do
       | messages
     ]
 
-    # Prompt response
+    # Prompt response. Token usage rides on the response result's `usage`
+    # extension (same as Claude's adapter) — emitting it as a separate
+    # `sessionUpdate: "usage"` would be non-spec; the spec's
+    # `usage_update` discriminator is for context-window fill, not
+    # input/output token billing.
     messages =
       if acp_id do
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => acp_id,
-          "result" => %{
-            "stopReason" => normalize_stop_reason(status),
-            "text" => text,
-            "sessionId" => state.thread_id,
-            "turnId" => state.turn_id
-          }
+        result = %{
+          "stopReason" => normalize_stop_reason(status),
+          "text" => text,
+          "sessionId" => state.thread_id,
+          "turnId" => state.turn_id
         }
 
+        result =
+          if state.accumulated_usage do
+            Map.put(result, "usage", state.accumulated_usage)
+          else
+            result
+          end
+
+        response = %{"jsonrpc" => "2.0", "id" => acp_id, "result" => result}
         [response | messages]
       else
         messages
@@ -600,16 +603,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "cachedInputTokens" => total["cachedInputTokens"] || 0
     }
 
-    # Accumulate usage for turn/completed response
-    state = %{state | accumulated_usage: usage_data}
-
-    notification =
-      session_update(state, %{
-        "sessionUpdate" => "usage",
-        "content" => usage_data
-      })
-
-    {:messages, [notification], state}
+    # Accumulate for the turn/completed response. We don't emit a
+    # streaming sessionUpdate here — ACP's spec `usage_update` is for
+    # context-window fill, not input/output token billing. Billing data
+    # surfaces on the prompt response result's `usage` extension instead.
+    {:skip, %{state | accumulated_usage: usage_data}}
   end
 
   # ── Error Notifications ───────────────────────────────────────

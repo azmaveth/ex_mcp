@@ -37,12 +37,15 @@ defmodule ExMCP.ACP.ProtocolTest do
       assert is_integer(msg["id"])
     end
 
-    test "omits nil fields but always includes mcpServers" do
-      msg = Protocol.encode_session_new()
-
-      refute Map.has_key?(msg["params"], "cwd")
-      # mcpServers is always present (some agents like Gemini require it)
-      assert msg["params"]["mcpServers"] == []
+    # spec regression: ACP spec
+    # (https://agentclientprotocol.com/protocol/session-setup) marks `cwd` as
+    # required (and absolute) for `session/new`. The previous implementation
+    # silently dropped `cwd` when nil, producing an off-spec request that
+    # other ACP agents would reject.
+    test "spec regression: raises when cwd is nil — cwd is required per spec" do
+      assert_raise FunctionClauseError, fn ->
+        Protocol.encode_session_new(nil)
+      end
     end
 
     test "includes mcp_servers" do
@@ -51,15 +54,32 @@ defmodule ExMCP.ACP.ProtocolTest do
 
       assert msg["params"]["mcpServers"] == servers
     end
+
+    test "always includes mcpServers (defaults to [])" do
+      # Some agents (e.g. Gemini) require mcpServers to be present even when
+      # empty. The spec also marks it required.
+      msg = Protocol.encode_session_new("/tmp")
+      assert msg["params"]["mcpServers"] == []
+    end
   end
 
   describe "encode_session_load/3" do
-    test "includes session ID" do
-      msg = Protocol.encode_session_load("sess_abc")
+    test "includes session ID, cwd, and mcp servers" do
+      msg = Protocol.encode_session_load("sess_abc", "/tmp/project")
 
       assert msg["method"] == "session/load"
       assert msg["params"]["sessionId"] == "sess_abc"
+      assert msg["params"]["cwd"] == "/tmp/project"
       assert msg["params"]["mcpServers"] == []
+    end
+
+    # spec regression: same as encode_session_new — `cwd` is required for
+    # session/load per
+    # https://agentclientprotocol.com/protocol/session-setup
+    test "spec regression: raises when cwd is nil — cwd is required per spec" do
+      assert_raise FunctionClauseError, fn ->
+        Protocol.encode_session_load("sess_abc", nil)
+      end
     end
   end
 
@@ -75,8 +95,17 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
 
     test "defaults mcp servers to an empty list" do
-      msg = Protocol.encode_session_resume("sess_abc")
+      msg = Protocol.encode_session_resume("sess_abc", "/tmp/project")
       assert msg["params"]["mcpServers"] == []
+    end
+
+    # spec regression: per
+    # https://agentclientprotocol.com/protocol/session-list, session/resume
+    # has the same param shape as session/load — cwd is required.
+    test "spec regression: raises when cwd is nil — cwd is required per spec" do
+      assert_raise FunctionClauseError, fn ->
+        Protocol.encode_session_resume("sess_abc", nil)
+      end
     end
   end
 
@@ -112,6 +141,26 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
   end
 
+  # spec regression: `session/delete` is in the ACP spec
+  # (https://agentclientprotocol.com/protocol/session-list) gated by
+  # `agentCapabilities.delete`. There is currently no encoder, so the
+  # library can't send the request even when an agent advertises support.
+  # This test pins down the encoder's existence and shape.
+  describe "encode_session_delete/1" do
+    test "spec regression: encoder exists and produces session/delete request" do
+      assert function_exported?(Protocol, :encode_session_delete, 1),
+             "session/delete is in the ACP spec (gated by agentCapabilities.delete) " <>
+               "but Protocol.encode_session_delete/1 doesn't exist. Add encoder."
+
+      msg = Protocol.encode_session_delete("sess_1")
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "session/delete"
+      assert msg["params"]["sessionId"] == "sess_1"
+      assert is_integer(msg["id"])
+    end
+  end
+
   describe "encode_session_set_mode/2" do
     test "produces valid request" do
       msg = Protocol.encode_session_set_mode("sess_1", "code")
@@ -130,6 +179,55 @@ defmodule ExMCP.ACP.ProtocolTest do
       assert msg["params"]["sessionId"] == "sess_1"
       assert msg["params"]["configId"] == "theme"
       assert msg["params"]["value"] == "dark"
+    end
+  end
+
+  describe "encode_permission_request/3" do
+    test "produces valid request with all required params" do
+      tool_call = %{"toolName" => "shell.exec", "toolCallId" => "tc_1"}
+
+      options = [
+        %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
+        %{"optionId" => "reject", "name" => "Reject", "kind" => "reject_once"}
+      ]
+
+      msg = Protocol.encode_permission_request("sess_1", tool_call, options)
+
+      assert msg["jsonrpc"] == "2.0"
+      assert msg["method"] == "session/request_permission"
+      assert msg["params"]["sessionId"] == "sess_1"
+      assert msg["params"]["toolCall"] == tool_call
+      assert msg["params"]["options"] == options
+      assert is_integer(msg["id"])
+    end
+
+    # spec regression: ACP spec
+    # (https://agentclientprotocol.com/protocol/tool-calls) defines
+    # `PermissionOption.kind` as a closed enum:
+    # `allow_once`, `allow_always`, `reject_once`, `reject_always`.
+    # The previous encoder accepted any string — an agent could send a
+    # kind="bogus" option that no spec-compliant client would recognize,
+    # silently producing a broken permission request.
+    test "spec regression: rejects PermissionOption with non-spec kind value" do
+      tool_call = %{"toolName" => "shell.exec"}
+
+      options = [
+        %{"optionId" => "allow", "name" => "Allow", "kind" => "definitely_allow"}
+      ]
+
+      assert_raise ArgumentError, ~r/kind/i, fn ->
+        Protocol.encode_permission_request("sess_1", tool_call, options)
+      end
+    end
+
+    test "accepts all four spec-defined PermissionOption kinds" do
+      tool_call = %{"toolName" => "shell.exec"}
+
+      for kind <- ["allow_once", "allow_always", "reject_once", "reject_always"] do
+        options = [%{"optionId" => "o", "name" => "Opt", "kind" => kind}]
+        msg = Protocol.encode_permission_request("sess_1", tool_call, options)
+        assert msg["params"]["options"] == options
+      end
     end
   end
 

@@ -232,6 +232,90 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert new_state.pending_prompt_id == 3
     end
 
+    # spec regression: ACP spec defines five `ContentBlock` types — text,
+    # image, audio, resource_link, embedded resource
+    # (https://agentclientprotocol.com/protocol/prompt-turn). The previous
+    # `extract_prompt_text/1` implementation kept only `type == "text"`,
+    # silently dropping image/audio/resource blocks. Same bug class as
+    # the original `permission_mode` regression: caller supplies value,
+    # adapter returns `:ok`, wire carries something different.
+    #
+    # The right behavior for Claude depends on what its CLI supports —
+    # Claude Code's stream-json input accepts images, but not audio. So
+    # the contract this test pins down: image blocks MUST be forwarded
+    # (Claude can handle them); audio/resource blocks MUST return an
+    # error (Claude cannot — silent drop is the bug).
+    test "spec regression: session/prompt with image block forwards it (Claude supports images)",
+         %{state: state} do
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 21,
+        "params" => %{
+          "sessionId" => "s1",
+          "prompt" => [
+            %{"type" => "text", "text" => "What do you see?"},
+            %{
+              "type" => "image",
+              "mimeType" => "image/png",
+              "data" => "base64encodedimagedata"
+            }
+          ]
+        }
+      }
+
+      result = Claude.translate_outbound(msg, state)
+      assert {:ok, data, _state} = result
+
+      json_str = IO.iodata_to_binary(data)
+      # Claude CLI stream-json input format supports multimodal content.
+      # The image data must appear somewhere in the forwarded payload.
+      refute is_nil(json_str)
+
+      assert json_str =~ "base64encodedimagedata",
+             "Claude CLI supports image content blocks in stream-json input — adapter " <>
+               "must forward image blocks, not silently drop them. " <>
+               "See https://agentclientprotocol.com/protocol/prompt-turn for ContentBlock types."
+    end
+
+    test "spec regression: session/prompt with audio block surfaces an error (Claude can't handle audio)",
+         %{state: state} do
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 22,
+        "params" => %{
+          "sessionId" => "s1",
+          "prompt" => [
+            %{"type" => "text", "text" => "Transcribe:"},
+            %{"type" => "audio", "mimeType" => "audio/wav", "data" => "base64audiodata"}
+          ]
+        }
+      }
+
+      # Claude does NOT advertise promptCapabilities.audio. Per spec,
+      # capabilities omitted in initialize MUST be treated as unsupported —
+      # so callers SHOULDN'T send audio blocks. But the adapter must still
+      # behave correctly when they do: surface an error rather than silently
+      # dropping content the caller will assume was sent.
+      result = Claude.translate_outbound(msg, state)
+
+      case result do
+        {:ok, data, _state} ->
+          json_str = IO.iodata_to_binary(data)
+
+          refute String.contains?(json_str, "\"Transcribe:\"") and
+                   not String.contains?(json_str, "base64audiodata"),
+                 "Audio block silently dropped. Adapter forwarded text but not the audio. " <>
+                   "Either forward audio (Claude doesn't support it) or return {:error, _, _}."
+
+        {:error, _reason, _state} ->
+          # Acceptable: caller learns the prompt couldn't be sent as-is.
+          :ok
+
+        other ->
+          flunk("Unexpected translate_outbound result: #{inspect(other)}")
+      end
+    end
+
     test "resets accumulators on new prompt", %{state: state} do
       # Simulate accumulated state
       state = %{state | text_acc: ["old text"], thinking_acc: ["old think"]}
@@ -472,6 +556,56 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
 
       result_msg = Enum.find(messages, &(&1["id"] == 11))
       assert result_msg["result"]["stopReason"] == "error"
+    end
+
+    # spec regression: the ACP spec
+    # (https://agentclientprotocol.com/protocol/prompt-turn) defines
+    # `sessionUpdate: "usage_update"` with `used`/`size`/`cost?` fields —
+    # NOT `"usage"` with `inputTokens`/`outputTokens`. The previous
+    # implementation emitted a non-spec discriminator alongside the result
+    # message, which other ACP clients (TypeScript reference, Zed, etc.)
+    # cannot recognize.
+    #
+    # The input/output token billing data is already surfaced in the prompt
+    # response result's `usage` extension (Pi does this; Claude does too at
+    # result_msg["result"]["usage"]). The separate `sessionUpdate: "usage"`
+    # notification is duplicate AND non-spec.
+    test "spec regression: result event does not emit non-spec usage sessionUpdate", %{
+      state: state
+    } do
+      state = %{state | text_acc: ["hi"], pending_prompt_id: 77, session_id: "s1"}
+
+      line =
+        Jason.encode!(%{
+          "type" => "result",
+          "session_id" => "s1",
+          "usage" => %{
+            "input_tokens" => 100,
+            "output_tokens" => 50,
+            "cache_read_input_tokens" => 10
+          }
+        })
+
+      assert {:messages, messages, _state} = Claude.translate_inbound(line, state)
+
+      # Every session/update notification emitted must use a spec-stable
+      # discriminator. "usage" is not in the spec discriminator set;
+      # "usage_update" is.
+      for msg <- messages, msg["method"] == "session/update" do
+        discriminator = msg["params"]["update"]["sessionUpdate"]
+
+        refute discriminator == "usage",
+               "Non-spec sessionUpdate discriminator emitted. Spec defines " <>
+                 "\"usage_update\" with used/size/cost? — see " <>
+                 "https://agentclientprotocol.com/protocol/prompt-turn. " <>
+                 "Token billing data belongs in result[\"usage\"], not a separate session/update."
+
+        if discriminator == "usage_update" do
+          update = msg["params"]["update"]
+          assert Map.has_key?(update, "used"), "usage_update requires `used` per spec"
+          assert Map.has_key?(update, "size"), "usage_update requires `size` per spec"
+        end
+      end
     end
   end
 

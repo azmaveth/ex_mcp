@@ -989,7 +989,16 @@ defmodule ExMCP.ACP.Adapters.Pi do
       state = %{state | thinking_level: value}
       {:ok, encode_rpc(rpc_msg), state}
     else
-      {:ok, :skip, state}
+      # Returning {:ok, :skip, state} for an invalid value would silently
+      # discard the caller's intent — the same bug-class as the original
+      # Claude `permission_mode` regression. Surface a distinguishable
+      # error so callers can react. State is NOT mutated with the
+      # invalid value.
+      reason =
+        "invalid thinking_level: #{inspect(value)} " <>
+          "(must be one of #{Enum.join(@thinking_levels, ", ")})"
+
+      {:error, reason, state}
     end
   end
 

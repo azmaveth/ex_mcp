@@ -43,10 +43,15 @@ defmodule ExMCP.ACP.Adapter do
 
   Returns `{:ok, iodata, new_state}` to write data to stdin,
   or `{:ok, :skip, new_state}` when no output is needed (e.g., initialize
-  is handled internally by the bridge).
+  is handled internally by the bridge), or `{:error, reason, new_state}`
+  when the request can't be honored (e.g., a config value outside the
+  adapter's enum). The bridge translates `{:error, _, _}` into a JSON-RPC
+  error response back to the ACP client.
   """
   @callback translate_outbound(acp_message :: map(), state()) ::
-              {:ok, iodata(), state()} | {:ok, :skip, state()}
+              {:ok, iodata(), state()}
+              | {:ok, :skip, state()}
+              | {:error, reason :: any(), state()}
 
   @doc """
   Translate one line of native CLI output to zero or more ACP messages.

@@ -100,13 +100,35 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert new_state.thinking_level == "high"
     end
 
-    test "invalid thinking_level is skipped", %{state: state} do
+    # spec regression: the previous implementation accepted any value for
+    # `thinking_level` and silently returned `{:ok, :skip, state}` for
+    # values outside the @thinking_levels whitelist. The caller had no
+    # way to know the value was discarded — indistinguishable from
+    # success. This is the same bug shape as the original Claude
+    # `permission_mode` regression.
+    #
+    # Pin down: invalid values must surface a distinguishable error
+    # tuple so callers can react. `{:error, reason, state}` is the
+    # symmetric counterpart to `{:ok, data, state}` / `{:ok, :skip, state}`.
+    test "spec regression: invalid thinking_level returns an error, not silent :skip",
+         %{state: state} do
       msg = %{
         "method" => "session/set_config_option",
         "params" => %{"configId" => "thinking_level", "value" => "invalid"}
       }
 
-      assert {:ok, :skip, _state} = Pi.translate_outbound(msg, state)
+      result = Pi.translate_outbound(msg, state)
+
+      refute match?({:ok, :skip, _}, result),
+             "Invalid thinking_level must NOT silently :skip — caller has no way to detect " <>
+               "the value was discarded. Return {:error, reason, state} so callers can react."
+
+      assert match?({:error, _, _}, result),
+             "Expected {:error, reason, state} for invalid thinking_level; got #{inspect(result)}"
+
+      # State must NOT be mutated with the invalid value.
+      {:error, _reason, new_state} = result
+      refute new_state.thinking_level == "invalid"
     end
 
     test "auto_compaction routes to set_auto_compaction", %{state: state} do

@@ -164,7 +164,9 @@ defmodule ExMCP.ACP.ClientTest do
       end
     end
 
-    defp handle_message(%{"method" => "initialize", "id" => id}, state) do
+    defp handle_message(%{"method" => "initialize", "id" => id} = msg, state) do
+      send(state.test_pid, {:initialize_request, msg["params"] || %{}})
+
       response =
         Jason.encode!(%{
           "jsonrpc" => "2.0",
@@ -392,6 +394,59 @@ defmodule ExMCP.ACP.ClientTest do
     end
   end
 
+  # Handler that implements file_read but NOT file_write or terminal.
+  # Used to assert capability auto-advertisement reflects per-callback support.
+  defmodule FileReadOnlyHandler do
+    @behaviour ExMCP.ACP.Client.Handler
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+
+    @impl true
+    def handle_session_update(_session_id, _update, state), do: {:ok, state}
+
+    @impl true
+    def handle_permission_request(_session_id, _tool_call, _options, state) do
+      {:ok, %{"outcome" => "cancelled"}, state}
+    end
+
+    @impl true
+    def handle_file_read(_session_id, _path, _opts, state) do
+      {:ok, "file content", state}
+    end
+  end
+
+  # Handler that implements file_read, file_write, AND terminal.
+  defmodule FullCapabilityHandler do
+    @behaviour ExMCP.ACP.Client.Handler
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+
+    @impl true
+    def handle_session_update(_session_id, _update, state), do: {:ok, state}
+
+    @impl true
+    def handle_permission_request(_session_id, _tool_call, _options, state) do
+      {:ok, %{"outcome" => "cancelled"}, state}
+    end
+
+    @impl true
+    def handle_file_read(_session_id, _path, _opts, state) do
+      {:ok, "content", state}
+    end
+
+    @impl true
+    def handle_file_write(_session_id, _path, _content, state) do
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_terminal_request(_session_id, _method, _params, state) do
+      {:ok, %{}, state}
+    end
+  end
+
   defp start_client(agent_opts \\ [], client_opts \\ []) do
     {:ok, to_client_relay} = MessageRelay.start_link()
     {:ok, to_agent_relay} = MessageRelay.start_link()
@@ -424,6 +479,104 @@ defmodule ExMCP.ACP.ClientTest do
       assert [%{"id" => "api-key"}] = auth_methods
 
       assert Client.status(client) == :ready
+    end
+  end
+
+  # spec regression: ACP spec
+  # (https://agentclientprotocol.com/protocol/initialization) states:
+  # "capabilities omitted in the initialize request MUST be treated as
+  # UNSUPPORTED." So if the client never advertises
+  # `clientCapabilities.fs.readTextFile`, the agent MUST NOT call
+  # `fs/read_text_file` — even if the client's handler is fully capable
+  # of answering it.
+  #
+  # The previous implementation only set these capabilities from manually
+  # passed `:capabilities` opts. A user wiring up a handler that exports
+  # `handle_file_read/4` but forgetting to manually advertise the
+  # capability would get a silently broken integration: the handler is
+  # ready, but the agent never asks. The fix is to auto-advertise FS and
+  # terminal capabilities based on the handler's exported callbacks.
+  describe "spec regression: capability auto-advertisement from handler exports" do
+    test "advertises fs.readTextFile when handler exports handle_file_read/4" do
+      {_client, _agent} =
+        start_client([],
+          handler: FileReadOnlyHandler,
+          handler_opts: []
+        )
+
+      assert_receive {:initialize_request, params}, 5_000
+
+      caps = params["clientCapabilities"] || %{}
+
+      assert get_in(caps, ["fs", "readTextFile"]) == true,
+             "Handler exports handle_file_read/4 but client did not advertise " <>
+               "clientCapabilities.fs.readTextFile. Per spec, the agent will treat " <>
+               "fs/read_text_file as unsupported. Auto-advertise based on " <>
+               "function_exported?(handler, :handle_file_read, 4). Got: #{inspect(caps)}"
+    end
+
+    test "does NOT advertise fs.writeTextFile when handler does not export handle_file_write/4" do
+      {_client, _agent} =
+        start_client([],
+          handler: FileReadOnlyHandler,
+          handler_opts: []
+        )
+
+      assert_receive {:initialize_request, params}, 5_000
+
+      caps = params["clientCapabilities"] || %{}
+
+      # Per spec, omitted == unsupported. So either absent or explicitly false is fine;
+      # `true` would be a lie (handler can't answer).
+      refute get_in(caps, ["fs", "writeTextFile"]) == true,
+             "Client advertised fs.writeTextFile but handler does not export " <>
+               "handle_file_write/4. Auto-advertisement must reflect actual handler support."
+    end
+
+    test "does NOT advertise terminal when handler does not export handle_terminal_request/4" do
+      {_client, _agent} =
+        start_client([],
+          handler: FileReadOnlyHandler,
+          handler_opts: []
+        )
+
+      assert_receive {:initialize_request, params}, 5_000
+      caps = params["clientCapabilities"] || %{}
+
+      refute caps["terminal"] == true,
+             "Client advertised terminal but handler does not export " <>
+               "handle_terminal_request/4."
+    end
+
+    test "advertises fs.readTextFile, fs.writeTextFile, and terminal when handler exports all three" do
+      {_client, _agent} =
+        start_client([],
+          handler: FullCapabilityHandler,
+          handler_opts: []
+        )
+
+      assert_receive {:initialize_request, params}, 5_000
+      caps = params["clientCapabilities"] || %{}
+
+      assert get_in(caps, ["fs", "readTextFile"]) == true
+      assert get_in(caps, ["fs", "writeTextFile"]) == true
+      assert caps["terminal"] == true
+    end
+
+    test "explicit :capabilities opt overrides auto-advertisement" do
+      # If the caller explicitly passes :capabilities, that wins. The
+      # auto-advertisement is a sensible default, not a forced policy.
+      {_client, _agent} =
+        start_client([],
+          handler: FileReadOnlyHandler,
+          handler_opts: [],
+          capabilities: %{"fs" => %{"readTextFile" => false}}
+        )
+
+      assert_receive {:initialize_request, params}, 5_000
+
+      assert get_in(params["clientCapabilities"], ["fs", "readTextFile"]) == false,
+             "Explicit :capabilities opt must override auto-advertisement."
     end
   end
 
