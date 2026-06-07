@@ -17,7 +17,10 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
       assert "stream-json" in args
       assert "--input-format" in args
       assert "--verbose" in args
-      assert "--dangerously-skip-permissions" in args
+      # 2026-06-06: default permission_mode is `nil` (no flag); callers
+      # that need the historical bypass behavior must opt in explicitly.
+      refute "--dangerously-skip-permissions" in args
+      refute "--permission-mode" in args
     end
 
     test "includes model when specified" do
@@ -55,8 +58,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeTest do
     # permission system fully disabled. These tests guard the new
     # configurable surface (and ensure the default still matches the
     # historical behavior).
-    test "permission_mode defaults to :bypass (backward compat)" do
+    test "permission_mode defaults to nil (safe-by-default 2026-06-06)" do
       {_cmd, args} = Claude.command([])
+      refute "--dangerously-skip-permissions" in args
+      refute "--permission-mode" in args
+    end
+
+    test "permission_mode :bypass passes the dangerously-skip flag explicitly" do
+      {_cmd, args} = Claude.command(permission_mode: :bypass)
       assert "--dangerously-skip-permissions" in args
       refute "--permission-mode" in args
     end

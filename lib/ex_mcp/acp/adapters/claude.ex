@@ -46,14 +46,29 @@ defmodule ExMCP.ACP.Adapters.Claude do
         allowed_tools: ["WebSearch", "WebFetch"]
       )
 
-  Valid `:permission_mode` values: `:bypass` (default — preserves
-  pre-2026-06-06 behavior of `--dangerously-skip-permissions`),
-  `:ask`, `:auto`, `:deny`, or `nil` (let Claude CLI's own default
-  apply — useful when running interactively).
+  Valid `:permission_mode` values:
+    * `nil` (default, **2026-06-06 change**) — passes no flag; Claude
+      uses its own default (`:ask` mode). In a non-interactive ACP
+      session this means tool use will block on a permission request
+      the host is expected to handle.
+    * `:bypass` — passes `--dangerously-skip-permissions`. The
+      pre-2026-06-06 default. Disables Claude's entire permission
+      engine.
+    * `:ask` / `:auto` / `:deny` — passes `--permission-mode <value>`.
+      See Claude CLI docs for semantics.
 
   `:allowed_tools` and `:disallowed_tools` accept a list of tool
   names; deny takes precedence over allow per Claude CLI's own
   rules.
+
+  ## Breaking change 2026-06-06
+
+  The default `:permission_mode` is now `nil` rather than `:bypass`.
+  Callers that relied on the historical unrestricted behavior must
+  explicitly pass `permission_mode: :bypass`. The flip is to align
+  the default with the principle of least privilege: a host that
+  spawns Claude with no opinion should NOT silently disable Claude's
+  built-in safety system.
   """
 
   @behaviour ExMCP.ACP.Adapter
@@ -121,20 +136,22 @@ defmodule ExMCP.ACP.Adapters.Claude do
 
   # Permission/tool args. Three opts, evaluated in this order:
   #
-  #   * `:permission_mode` — `:bypass` (default — passes
-  #     `--dangerously-skip-permissions`), `:ask`, `:auto`, or `:deny`
-  #     (passes `--permission-mode <value>` and skips the bypass flag),
-  #     or `nil` (passes neither, lets Claude use its built-in default).
+  #   * `:permission_mode` — `nil` (default, 2026-06-06 — passes no
+  #     flag; Claude uses its own `:ask` default), `:bypass` (passes
+  #     `--dangerously-skip-permissions`), or `:ask` / `:auto` /
+  #     `:deny` (passes `--permission-mode <value>`).
   #   * `:allowed_tools` — list of tool names (e.g. `["WebSearch",
   #     "WebFetch"]`) → joined with commas as `--allowed-tools <list>`.
   #   * `:disallowed_tools` — same shape, → `--disallowed-tools <list>`.
   #
   # Claude CLI's own precedence: deny rules override allow rules, and
   # `--dangerously-skip-permissions` overrides BOTH (it bypasses the
-  # entire permission engine). The default of `:bypass` preserves the
-  # historical behavior of this adapter — callers that want a real
-  # permission constraint must set `permission_mode: :auto | :ask |
-  # :deny | nil` explicitly.
+  # entire permission engine).
+  #
+  # Default flipped from `:bypass` to `nil` on 2026-06-06 (see
+  # moduledoc "Breaking change 2026-06-06"). The principle: a host
+  # with no permission opinion shouldn't silently disable Claude's
+  # built-in safety system.
   defp append_permission_args(args, opts) do
     args
     |> append_permission_mode(opts)
@@ -143,10 +160,10 @@ defmodule ExMCP.ACP.Adapters.Claude do
   end
 
   defp append_permission_mode(args, opts) do
-    case Keyword.get(opts, :permission_mode, :bypass) do
+    case Keyword.get(opts, :permission_mode, nil) do
+      nil -> args
       :bypass -> args ++ ["--dangerously-skip-permissions"]
       mode when mode in [:ask, :auto, :deny] -> args ++ ["--permission-mode", to_string(mode)]
-      nil -> args
       other -> raise ArgumentError, "invalid :permission_mode #{inspect(other)}"
     end
   end
