@@ -399,8 +399,8 @@ ExMCP follows [Semantic Versioning](https://semver.org/):
 - [ ] Security audit passes
 
 #### Release
-- [ ] Tag release: `git tag v0.6.1`
-- [ ] Push tag: `git push origin v0.6.1`
+- [ ] Tag release: `git tag vX.Y.Z`
+- [ ] Push tag: `git push origin vX.Y.Z`
 - [ ] GitHub release with changelog
 - [ ] Publish to Hex: `mix hex.publish`
 

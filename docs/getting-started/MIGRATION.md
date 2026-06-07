@@ -197,8 +197,8 @@ If you encounter issues during migration:
 
 ## Version Support
 
-- **v0.6.x**: Current stable version with full MCP 2025-06-18 support
-- **v0.5.x**: Previous stable version, still supported
-- **v0.4.x**: Legacy version, upgrade recommended
+- **v0.12.x**: Current stable version with MCP 2025-11-25 support and stable ACP v1 alignment
+- **v0.11.x**: Previous stable version
+- **v0.10.x and earlier**: Legacy versions, upgrade recommended
 
 Keep your ExMCP version up to date to benefit from the latest MCP protocol features and security improvements.

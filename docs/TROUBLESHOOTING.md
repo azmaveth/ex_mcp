@@ -45,7 +45,7 @@ System.put_env("ELIXIR_LOG_LEVEL", "emergency")
 Application.put_env(:logger, :level, :emergency)
 
 Mix.install([
-  {:ex_mcp, "~> 0.1"}
+  {:ex_mcp, "~> 0.12.0"}
 ], verbose: false)
 
 # Your server code here...
@@ -57,7 +57,7 @@ Mix.install([
 2. **Use StdioLauncher**: Helper module that handles startup properly
    ```elixir
    ExMCP.StdioLauncher.start(MyServer, [
-     {:ex_mcp, "~> 0.1"}
+     {:ex_mcp, "~> 0.12.0"}
    ])
    ```
 

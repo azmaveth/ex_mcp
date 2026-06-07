@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-06-07
+
+### Added
+- **ACP functional cores** — Added focused ACP modules for capabilities, lifecycle params, envelopes, metadata, map helpers, name/value normalization, and adapter event normalization. These keep protocol transformation logic pure and easier to test while preserving the existing facade APIs.
+- **ACP interoperability coverage** — Expanded integration fixtures and tests for official ACP TypeScript libraries, including everything-style agent/client flows, prompt lifecycle events, auth/logout, permissions, session list/resume/close/delete, and rich content blocks.
+
+### Changed
+- **ACP stable spec alignment** — Updated ACP protocol encoding/decoding, session lifecycle params, prompt/session updates, capability builders, MCP server config shapes, extension method names, and adapter output to match the current stable ACP schema.
+- **ACP adapter behavior** — Claude, Codex, and Pi adapters now produce normalized stable update events for tool calls, tool call progress, usage, plan/config/mode/session info, and streaming message chunks. Deprecated Pi extension aliases are still accepted, but only `_ex_mcp.pi/*` methods are advertised.
+- **Claude adapter permission defaults** — The Claude adapter no longer defaults to `--permission-mode bypassPermissions`; it now inherits the Claude CLI default unless a permission mode is configured explicitly. Permission mode atoms now map to Claude CLI's real mode names.
+- **HTTP Plug internals** — Extracted request parsing, session resolution, CORS/origin checks, response shaping, and SSE handling into a smaller functional core so side effects stay at the Plug boundary.
+
+### Fixed
+- **Official ACP library compatibility** — Fixed response result shapes, session id propagation, update discriminators, error responses, prompt capability handling, and adapter bridge request handling that prevented clean interop with official ACP SDK clients and agents.
+- **MCP HTTP/SSE edge cases** — Hardened streamable HTTP and SSE parsing, session manager selection, response conversion, and structured output wrapping across conformance and integration paths.
+- **Client state-machine tests** — Reworked timing-sensitive client tests to use telemetry-driven synchronization instead of sleeps.
+
+### Security
+- **MCP HTTP hardening** — OAuth and HTTP guard paths now fail closed on invalid auth state, validate scopes consistently, preserve configured session managers, enforce origin/CORS decisions at the boundary, and keep request body handling bounded.
+- **ACP adapter hardening** — Adapter process startup now avoids leaking configured API keys into child environments unless explicitly required, and adapter error responses are normalized before crossing the ACP boundary.
+
 ## [0.11.0] - 2026-06-05
 
 ### Added
