@@ -159,6 +159,8 @@ defmodule ExMCP.MixProject do
           ExMCP.ACP.Adapter,
           ExMCP.ACP.AdapterBridge,
           ExMCP.ACP.AdapterTransport,
+          ExMCP.ACP.Adapters.ClaudeSDK,
+          ExMCP.ACP.Adapters.ClaudeSDK.SessionStore,
           ExMCP.ACP.Adapters.Claude,
           ExMCP.ACP.Adapters.Codex,
           ExMCP.ACP.Adapters.Pi

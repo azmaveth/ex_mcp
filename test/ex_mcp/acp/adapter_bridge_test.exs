@@ -132,6 +132,40 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip, state}
   end
 
+  defmodule ParamListAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    defstruct []
+
+    @impl true
+    def init(_opts), do: {:ok, %__MODULE__{}}
+
+    @impl true
+    def command(_opts), do: {"cat", []}
+
+    @impl true
+    def capabilities, do: %{"sessionCapabilities" => %{}}
+
+    @impl true
+    def list_sessions(params, state) do
+      {:ok,
+       [
+         %{
+           "sessionId" => "param-session",
+           "cwd" => params["cwd"],
+           "title" => params["cursor"]
+         }
+       ], state}
+    end
+
+    @impl true
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
   # Helper to send initialize and drain the synthesized init response
   defp send_initialize(bridge) do
     :ok =
@@ -382,6 +416,33 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
       AdapterBridge.close(bridge)
     end
+
+    test "forwards ACP list params to adapter list_sessions/2" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: ParamListAdapter, adapter_opts: [])
+      init = send_initialize(bridge)
+
+      assert get_in(init, ["result", "agentCapabilities", "sessionCapabilities", "list"]) == %{}
+
+      list_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/list",
+        "params" => %{"cwd" => "/tmp/project", "cursor" => "page-2"},
+        "id" => 51
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(list_msg))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+      session = msg["result"]["sessions"] |> List.first()
+
+      assert msg["id"] == 51
+      assert session["sessionId"] == "param-session"
+      assert session["cwd"] == "/tmp/project"
+      assert session["title"] == "page-2"
+
+      AdapterBridge.close(bridge)
+    end
   end
 
   describe "session/set_mode" do
@@ -575,6 +636,140 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       assert msg["result"]["modes"]["currentModeId"] == "code"
       assert hd(msg["result"]["modes"]["availableModes"])["id"] == "code"
       assert hd(msg["result"]["configOptions"])["id"] == "model"
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
+  describe "adapter direct replies" do
+    defmodule DirectReplyAdapter do
+      @behaviour ExMCP.ACP.Adapter
+
+      defstruct []
+
+      @impl true
+      def init(_opts), do: {:ok, %__MODULE__{}}
+
+      @impl true
+      def command(_opts), do: {"cat", []}
+
+      @impl true
+      def capabilities do
+        %{
+          "sessionCapabilities" => %{
+            "delete" => %{}
+          }
+        }
+      end
+
+      @impl true
+      def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+      def translate_outbound(%{"method" => "session/new"}, state) do
+        {:reply, %{"sessionId" => "adapter-session", "extra" => true}, state}
+      end
+
+      def translate_outbound(%{"method" => "session/delete"}, state) do
+        {:reply, %{"deleted" => true}, state}
+      end
+
+      def translate_outbound(%{"method" => "session/set_config_option"}, state) do
+        data = Jason.encode!(%{"type" => "config_echo", "ok" => true}) <> "\n"
+        {:reply_and_write, %{"configOptions" => [%{"id" => "model"}]}, data, state}
+      end
+
+      def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+      @impl true
+      def translate_inbound(line, state) do
+        case Jason.decode(String.trim(line)) do
+          {:ok, %{"type" => "config_echo"}} ->
+            {:messages,
+             [
+               %{
+                 "jsonrpc" => "2.0",
+                 "method" => "session/update",
+                 "params" => %{
+                   "sessionId" => "adapter-session",
+                   "update" => %{"sessionUpdate" => "config_option_update", "configOptions" => []}
+                 }
+               }
+             ], state}
+
+          _ ->
+            {:skip, state}
+        end
+      end
+    end
+
+    test "uses adapter-provided session/new result instead of synthesizing an id" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: DirectReplyAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      new_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/new",
+        "params" => %{"cwd" => "/tmp"},
+        "id" => 90
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(new_msg))
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+
+      assert msg["id"] == 90
+      assert msg["result"]["sessionId"] == "adapter-session"
+      assert msg["result"]["extra"] == true
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "supports session/delete when advertised" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: DirectReplyAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      delete_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/delete",
+        "params" => %{"sessionId" => "adapter-session"},
+        "id" => 91
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(delete_msg))
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+
+      assert msg["id"] == 91
+      assert msg["result"] == %{"deleted" => true}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "reply_and_write responds and still forwards data to the subprocess" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: DirectReplyAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      config_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/set_config_option",
+        "params" => %{
+          "sessionId" => "adapter-session",
+          "configId" => "model",
+          "value" => "sonnet"
+        },
+        "id" => 92
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(config_msg))
+      assert {:ok, raw_response} = AdapterBridge.receive_message(bridge, 5_000)
+      response = Jason.decode!(raw_response)
+      assert response["id"] == 92
+      assert response["result"]["configOptions"] == [%{"id" => "model"}]
+
+      assert {:ok, raw_update} = AdapterBridge.receive_message(bridge, 5_000)
+      update = Jason.decode!(raw_update)
+      assert update["method"] == "session/update"
+      assert update["params"]["update"]["sessionUpdate"] == "config_option_update"
 
       AdapterBridge.close(bridge)
     end

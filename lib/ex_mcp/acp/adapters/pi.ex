@@ -229,7 +229,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   @impl true
-  def list_sessions(state) do
+  def list_sessions(_params, state) do
     sessions = scan_session_dir(state.session_dir, state.cwd)
     {:ok, sessions, state}
   end

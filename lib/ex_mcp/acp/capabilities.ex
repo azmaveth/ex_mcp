@@ -93,7 +93,7 @@ defmodule ExMCP.ACP.Capabilities do
 
   @spec advertise_adapter_session_list(map(), module()) :: map()
   def advertise_adapter_session_list(caps, adapter_mod) do
-    put(caps, :session_list, function_exported?(adapter_mod, :list_sessions, 1))
+    put(caps, :session_list, function_exported?(adapter_mod, :list_sessions, 2))
   end
 
   defp session_caps(caps) do

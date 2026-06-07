@@ -100,13 +100,20 @@ end
 ```elixir
 {:ok, client} = ExMCP.ACP.start_client(
   command: ["claude"],
-  adapter: ExMCP.ACP.Adapters.Claude,
+  adapter: ExMCP.ACP.Adapters.ClaudeSDK,
   adapter_opts: [model: "sonnet", cwd: "/my/project"]
 )
 
 {:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/my/project")
 {:ok, result} = ExMCP.ACP.Client.prompt(client, sid, "Refactor the auth module")
 ```
+
+Use `ExMCP.ACP.Adapters.ClaudeSDK` for new Claude Code integrations. It speaks
+the same SDK-style control protocol used by the official Claude Agent SDK, so it
+can bridge permission prompts, partial tool lifecycle events, cancellation,
+session setup, model/mode config, and richer status updates. The older
+`ExMCP.ACP.Adapters.Claude` stream-json adapter remains available for legacy
+callers.
 
 ### Adapted Agent (Codex)
 
@@ -346,8 +353,15 @@ defmodule MyApp.CustomAgentAdapter do
 
   # Optional: list available sessions
   @impl true
-  def list_sessions(state) do
-    sessions = [%{"sessionId" => "sess-1", "name" => "My Session"}]
+  def list_sessions(params, state) do
+    sessions = [
+      %{
+        "sessionId" => "sess-1",
+        "cwd" => params["cwd"] || state.cwd,
+        "title" => "My Session"
+      }
+    ]
+
     {:ok, sessions, state}
   end
 
@@ -392,16 +406,46 @@ end
 | `translate_outbound/2` | Yes | Convert ACP message to native format |
 | `translate_inbound/2` | Yes | Convert native output to ACP messages |
 | `post_connect/1` | No | Send initial data after port opens |
+| `env/1` | No | Return child-process environment variables |
 | `capabilities/0` | No | Return static agent capabilities |
 | `modes/0` | No | Return supported operational modes |
 | `config_options/0` | No | Return supported config options |
-| `list_sessions/1` | No | Return available sessions |
+| `list_sessions/2` | No | Return available sessions for decoded `session/list` params |
 
 ## Built-in Adapters
 
+### Claude Code SDK (`ExMCP.ACP.Adapters.ClaudeSDK`)
+
+Translates between ACP and Claude Code's SDK-compatible stream-json control
+protocol. This is the recommended Claude adapter for new code.
+
+**Features:**
+- SDK entrypoint launch environment and `--permission-prompt-tool stdio`
+- Partial message and pending tool-call lifecycle mapping
+- `session/cancel` via SDK `interrupt`
+- ACP permission requests bridged from Claude SDK `can_use_tool`
+- Runtime model, permission mode, and effort config controls
+- Live session setup/load/resume/close ACP surface
+- Disk-backed `session/list` and `session/delete` for Claude Code's SDK store
+- Plan updates from `TodoWrite` and task progress events
+- Rich tool metadata, terminal/raw output metadata, and improved stop reasons
+
+`session/list` and `session/delete` read and mutate Claude Code's local
+`CLAUDE_CONFIG_DIR/projects` JSONL store directly in Elixir, using the same
+project-key derivation, UUID validation, sidechain filtering, and title
+sanitization rules as the official Claude Agent SDK. Full `session/load` history
+replay is not implemented; load/resume start Claude with the selected session id
+without replaying prior ACP updates.
+
+**Startup options:** `model`, `permission_mode`, `max_thinking_tokens`,
+`effort`, `additional_directories`, `mcp_servers`, `session_id`, `resume`,
+`resume_session_at`, `allowed_tools`, `disallowed_tools`, `tools`,
+`strict_mcp_config`, `include_partial_messages`, and `cli_path`.
+
 ### Claude Code (`ExMCP.ACP.Adapters.Claude`)
 
-Translates between ACP and Claude's NDJSON stream-json protocol.
+Translates between ACP and Claude's simpler NDJSON stream-json protocol. Prefer
+`ExMCP.ACP.Adapters.ClaudeSDK` unless you specifically need this legacy path.
 
 **Features:**
 - Streaming text and thinking blocks with deduplication
@@ -439,7 +483,7 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 - All 14 Pi event types (text/thinking streaming, tool execution, compaction, retry)
 - Extension UI request/response bridge for dialog flows
 - Session persistence via `--session` flag
-- Session directory scanning for `list_sessions`
+- Session directory scanning for `session/list`
 - Enhanced tool result parsing (content blocks, diffs, stdout/stderr/exitCode)
 - Image support with data-url prefix stripping
 
@@ -521,6 +565,7 @@ Use `ExMCP.ACP.Registry.find_agents/2` to search the decoded registry by agent i
 - `ExMCP.ACP.Registry` — Public ACP Registry fetch and lookup helpers
 - `ExMCP.ACP.Adapter` — Adapter behaviour for non-native agents
 - `ExMCP.ACP.AdapterBridge` — GenServer bridge managing Port and message queue
+- `ExMCP.ACP.Adapters.ClaudeSDK` — Claude Code SDK-protocol adapter
 - `ExMCP.ACP.Adapters.Claude` — Claude Code adapter
 - `ExMCP.ACP.Adapters.Codex` — Codex adapter
 - `ExMCP.ACP.Adapters.Pi` — Pi adapter

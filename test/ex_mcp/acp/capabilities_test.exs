@@ -10,6 +10,14 @@ defmodule ExMCP.ACP.CapabilitiesTest do
     def handle_logout(_ctx, state), do: {:reply, %{}, state}
   end
 
+  defmodule AdapterWithListSessions2 do
+    def list_sessions(_params, state), do: {:ok, [], state}
+  end
+
+  defmodule AdapterWithLegacyListSessions1 do
+    def list_sessions(state), do: {:ok, [], state}
+  end
+
   describe "supported?/2" do
     test "reads JSON-shaped capabilities" do
       caps = %{
@@ -46,6 +54,19 @@ defmodule ExMCP.ACP.CapabilitiesTest do
       assert Capabilities.supported?(caps, :session_delete)
       assert Capabilities.supported?(caps, :logout)
       refute Capabilities.supported?(caps, :session_resume)
+    end
+  end
+
+  describe "advertise_adapter_session_list/2" do
+    test "advertises only the param-aware adapter callback" do
+      caps = Capabilities.advertise_adapter_session_list(%{}, AdapterWithListSessions2)
+
+      assert Capabilities.supported?(caps, :session_list)
+
+      legacy_caps =
+        Capabilities.advertise_adapter_session_list(%{}, AdapterWithLegacyListSessions1)
+
+      refute Capabilities.supported?(legacy_caps, :session_list)
     end
   end
 end

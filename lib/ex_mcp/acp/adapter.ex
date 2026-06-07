@@ -17,9 +17,10 @@ defmodule ExMCP.ACP.Adapter do
 
   - `capabilities/0` — return static agent capabilities
   - `post_connect/1` — called after Port is opened
+  - `env/1` — return child-process environment variables
   - `modes/0` — return supported operational modes for session responses
   - `config_options/0` — return supported config options for session responses
-  - `list_sessions/1` — return available sessions (for `session/list`)
+  - `list_sessions/2` — return available sessions (for `session/list`)
   """
 
   @type state :: term()
@@ -43,15 +44,21 @@ defmodule ExMCP.ACP.Adapter do
 
   Returns `{:ok, iodata, new_state}` to write data to stdin,
   or `{:ok, :skip, new_state}` when no output is needed (e.g., initialize
-  is handled internally by the bridge), or `{:error, reason, new_state}`
-  when the request can't be honored (e.g., a config value outside the
-  adapter's enum). The bridge translates `{:error, _, _}` into a JSON-RPC
-  error response back to the ACP client.
+  is handled internally by the bridge), or `{:reply, result, new_state}`
+  when the adapter can produce the JSON-RPC result directly, or
+  `{:reply_and_write, result, iodata, new_state}` when it can reply while
+  also forwarding data to the agent process, or
+  `{:error, reason, new_state}` when the request can't be honored (e.g., a
+  config value outside the adapter's enum). The bridge translates
+  `{:error, _, _}` into a JSON-RPC error response back to the ACP client.
   """
   @callback translate_outbound(acp_message :: map(), state()) ::
               {:ok, iodata(), state()}
               | {:ok, :skip, state()}
+              | {:reply, result :: map(), state()}
+              | {:reply_and_write, result :: map(), iodata(), state()}
               | {:error, reason :: any(), state()}
+              | {:one_shot, function(), state()}
 
   @doc """
   Translate one line of native CLI output to zero or more ACP messages.
@@ -79,6 +86,17 @@ defmodule ExMCP.ACP.Adapter do
   Optional — defaults to no-op.
   """
   @callback post_connect(state()) :: {:ok, iodata(), state()} | {:ok, state()}
+
+  @doc """
+  Return environment variables for the child process.
+
+  Values are merged with `adapter_opts[:env]`, with explicit adapter options
+  taking precedence. The bridge still clears known session-secret variables
+  before applying this environment.
+
+  Optional — defaults to an empty map.
+  """
+  @callback env(opts :: keyword()) :: map() | keyword()
 
   @doc """
   Return static agent capabilities for the initialize response.
@@ -114,16 +132,21 @@ defmodule ExMCP.ACP.Adapter do
 
   Returns `{:ok, sessions, new_state}` where sessions is a list of maps
   with `"sessionId"`, `"cwd"`, and optional `"title"`, `"updatedAt"`.
+  `params` is the decoded `session/list` params map, including optional
+  `"cwd"` and `"cursor"` values.
 
-  Optional — defaults to returning an empty list.
+  Optional — adapters that implement it are automatically advertised as
+  supporting `session/list`.
   """
-  @callback list_sessions(state()) :: {:ok, [map()], state()}
+  @callback list_sessions(params :: map(), state()) ::
+              {:ok, [map()], state()} | {:error, any(), state()}
 
   @optional_callbacks [
     capabilities: 0,
     post_connect: 1,
+    env: 1,
     modes: 0,
     config_options: 0,
-    list_sessions: 1
+    list_sessions: 2
   ]
 end

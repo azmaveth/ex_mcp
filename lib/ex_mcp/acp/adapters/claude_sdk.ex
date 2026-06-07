@@ -1,0 +1,379 @@
+defmodule ExMCP.ACP.Adapters.ClaudeSDK do
+  @moduledoc """
+  Adapter for Claude Code using the Claude Agent SDK process protocol.
+
+  This adapter launches Claude Code with the same stream-json flags used by
+  `@anthropic-ai/claude-agent-sdk`, including the SDK entrypoint environment and
+  stdio permission prompt control channel. It is separate from
+  `ExMCP.ACP.Adapters.Claude`, which preserves the simpler legacy stream-json
+  adapter.
+  """
+
+  @behaviour ExMCP.ACP.Adapter
+
+  require Logger
+
+  alias ExMCP.ACP.Adapters.ClaudeSDK.Mapper
+  alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
+  alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
+
+  defstruct [
+    :session_id,
+    :model,
+    :permission_mode,
+    :effort,
+    :cwd,
+    :pending_prompt_id,
+    :init_response,
+    opts: [],
+    pending_controls: %{},
+    pending_client_requests: %{},
+    available_commands: [],
+    available_models: [],
+    text_acc: [],
+    thinking_acc: [],
+    thinking_blocks: [],
+    current_block_type: nil,
+    tool_calls: %{}
+  ]
+
+  @impl true
+  def init(opts) do
+    {:ok,
+     %__MODULE__{
+       opts: opts,
+       cwd: Keyword.get(opts, :cwd),
+       session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
+       model: Keyword.get(opts, :model),
+       permission_mode: encode_permission_mode(Keyword.get(opts, :permission_mode, :default)),
+       effort: Keyword.get(opts, :effort)
+     }}
+  end
+
+  @impl true
+  def command(opts), do: ClaudeProtocol.command(opts)
+
+  @impl true
+  def env(opts), do: ClaudeProtocol.env(opts)
+
+  @impl true
+  def post_connect(state) do
+    request_id = control_id("initialize")
+
+    state = %{
+      state
+      | pending_controls: Map.put(state.pending_controls, request_id, :initialize)
+    }
+
+    {:ok, ClaudeProtocol.initialize_request(state.opts, request_id) |> ClaudeProtocol.line(),
+     state}
+  end
+
+  @impl true
+  def capabilities do
+    %{
+      "loadSession" => true,
+      "promptCapabilities" => %{
+        "image" => true,
+        "embeddedContext" => true
+      },
+      "mcpServers" => true,
+      "sessionCapabilities" => %{
+        "list" => %{},
+        "resume" => %{},
+        "close" => %{},
+        "delete" => %{},
+        "additionalDirectories" => true
+      },
+      "_meta" => %{
+        "ex_mcp.claude_sdk" => %{
+          "streaming" => true,
+          "controlProtocol" => true,
+          "legacyAdapter" => "ExMCP.ACP.Adapters.Claude"
+        }
+      }
+    }
+  end
+
+  @impl true
+  def modes, do: Mapper.modes()
+
+  @impl true
+  def config_options do
+    Mapper.config_options(%{
+      available_models: [],
+      model: "default",
+      permission_mode: "default",
+      effort: "medium"
+    })
+  end
+
+  @impl true
+  def list_sessions(params, state) do
+    params
+    |> session_store_opts(state)
+    |> SessionStore.list_acp_sessions()
+    |> case do
+      {:ok, sessions} -> {:ok, sessions, state}
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  @impl true
+  def translate_outbound(%{"id" => _id, "method" => method} = msg, state)
+      when is_binary(method) do
+    handle_request(method, msg, state)
+  end
+
+  def translate_outbound(%{"method" => method}, state) when is_binary(method) do
+    handle_notification(method, state)
+  end
+
+  def translate_outbound(%{"id" => _id} = msg, state) do
+    case Mapper.client_response(msg, state) do
+      {:ok, data, state} -> {:ok, data, state}
+      :unknown -> {:ok, :skip, state}
+    end
+  end
+
+  def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+  defp handle_request("session/new", %{"id" => _id, "params" => params}, state) do
+    session_id = state.session_id || params["sessionId"] || generated_session_id()
+    state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
+    {:reply, Mapper.session_result(state, session_id), state}
+  end
+
+  defp handle_request("session/load", %{"params" => params}, state) do
+    session_id = params["sessionId"] || state.session_id || generated_session_id()
+    state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
+    {:reply, Mapper.session_result(state, session_id), state}
+  end
+
+  defp handle_request("session/resume", %{"params" => params}, state) do
+    session_id = params["sessionId"] || state.session_id || generated_session_id()
+    state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
+    {:reply, Mapper.session_result(state, session_id), state}
+  end
+
+  defp handle_request("session/close", _msg, state), do: {:reply, %{}, state}
+
+  defp handle_request("session/list", %{"params" => params}, state) do
+    case list_sessions(params, state) do
+      {:ok, sessions, state} -> {:reply, %{"sessions" => sessions}, state}
+      {:error, reason, state} -> {:error, reason, state}
+    end
+  end
+
+  defp handle_request("session/list", _msg, state) do
+    handle_request("session/list", %{"params" => %{}}, state)
+  end
+
+  defp handle_request(
+         "session/delete",
+         %{"params" => %{"sessionId" => session_id} = params},
+         state
+       ) do
+    params
+    |> session_store_opts(state)
+    |> then(&SessionStore.delete_session(session_id, &1))
+    |> case do
+      :ok ->
+        {:reply, %{}, clear_deleted_session(state, session_id)}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  defp handle_request("session/delete", _msg, state) do
+    {:error, "session/delete requires params.sessionId", state}
+  end
+
+  defp handle_request(
+         "session/prompt",
+         %{"id" => id, "params" => %{"sessionId" => session_id, "prompt" => prompt}},
+         state
+       ) do
+    case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
+      {:ok, message} ->
+        state =
+          %{
+            state
+            | pending_prompt_id: id,
+              session_id: session_id || state.session_id,
+              text_acc: [],
+              thinking_acc: [],
+              thinking_blocks: [],
+              current_block_type: nil,
+              tool_calls: %{}
+          }
+
+        {:ok, ClaudeProtocol.line(message), state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  defp handle_request("session/set_mode", %{"params" => %{"modeId" => mode_id}}, state) do
+    permission_mode = encode_permission_mode(mode_id)
+    request_id = control_id("set_permission_mode")
+
+    state = %{
+      state
+      | permission_mode: permission_mode,
+        pending_controls: Map.put(state.pending_controls, request_id, :set_permission_mode)
+    }
+
+    data =
+      ClaudeProtocol.control_request(request_id, %{
+        "subtype" => "set_permission_mode",
+        "mode" => permission_mode
+      })
+      |> ClaudeProtocol.line()
+
+    {:reply_and_write, %{"modes" => Mapper.modes_result(state)}, data, state}
+  end
+
+  defp handle_request(
+         "session/set_config_option",
+         %{"params" => %{"configId" => "model", "value" => model}},
+         state
+       ) do
+    request_id = control_id("set_model")
+
+    state = %{
+      state
+      | model: model,
+        pending_controls: Map.put(state.pending_controls, request_id, :set_model)
+    }
+
+    data =
+      ClaudeProtocol.control_request(request_id, %{"subtype" => "set_model", "model" => model})
+      |> ClaudeProtocol.line()
+
+    {:reply_and_write, %{"configOptions" => Mapper.config_options(state)}, data, state}
+  end
+
+  defp handle_request(
+         "session/set_config_option",
+         %{"params" => %{"configId" => "permission_mode", "value" => mode}},
+         state
+       ) do
+    handle_request("session/set_mode", %{"params" => %{"modeId" => mode}}, state)
+  end
+
+  defp handle_request(
+         "session/set_config_option",
+         %{"params" => %{"configId" => "effort", "value" => effort}},
+         state
+       ) do
+    request_id = control_id("apply_flag_settings")
+
+    state = %{
+      state
+      | effort: effort,
+        pending_controls: Map.put(state.pending_controls, request_id, :apply_flag_settings)
+    }
+
+    data =
+      ClaudeProtocol.control_request(request_id, %{
+        "subtype" => "apply_flag_settings",
+        "settings" => %{"effort" => effort}
+      })
+      |> ClaudeProtocol.line()
+
+    {:reply_and_write, %{"configOptions" => Mapper.config_options(state)}, data, state}
+  end
+
+  defp handle_request("session/set_config_option", _msg, state) do
+    {:reply, %{"configOptions" => Mapper.config_options(state)}, state}
+  end
+
+  defp handle_request(_method, _msg, state), do: {:ok, :skip, state}
+
+  defp handle_notification("session/cancel", state) do
+    request_id = control_id("interrupt")
+    state = %{state | pending_controls: Map.put(state.pending_controls, request_id, :interrupt)}
+
+    data =
+      ClaudeProtocol.control_request(request_id, %{"subtype" => "interrupt"})
+      |> ClaudeProtocol.line()
+
+    {:ok, data, state}
+  end
+
+  defp handle_notification(_method, state), do: {:ok, :skip, state}
+
+  @impl true
+  def translate_inbound(line, state) do
+    trimmed = String.trim(line)
+
+    with false <- trimmed == "",
+         {:ok, event} <- Jason.decode(trimmed) do
+      {messages, writes, state} = Mapper.reduce_message(event, state)
+      return_inbound(messages, writes, state)
+    else
+      true ->
+        {:skip, state}
+
+      {:error, _reason} ->
+        Logger.debug("[ClaudeSDK Adapter] Non-JSON line: #{String.slice(trimmed, 0, 120)}")
+        {:skip, state}
+    end
+  end
+
+  defp return_inbound([], [], state), do: {:skip, state}
+  defp return_inbound([], [write], state), do: {:skip_and_write, write, state}
+  defp return_inbound([], writes, state), do: {:skip_and_write, writes, state}
+  defp return_inbound(messages, [], state), do: {:messages, messages, state}
+  defp return_inbound(messages, writes, state), do: {:messages_and_write, messages, writes, state}
+
+  defp control_id(prefix),
+    do: "ex_mcp_#{prefix}_#{System.unique_integer([:positive, :monotonic])}"
+
+  defp generated_session_id do
+    "claude_sdk_#{System.unique_integer([:positive, :monotonic])}"
+  end
+
+  defp session_store_opts(params, state) do
+    params = params || %{}
+
+    %{
+      cwd: params["cwd"] || params[:cwd] || state.cwd || Keyword.get(state.opts, :cwd),
+      cursor: params["cursor"] || params[:cursor],
+      limit: params["limit"] || params[:limit],
+      offset: params["offset"] || params[:offset],
+      claude_config_dir: Keyword.get(state.opts, :claude_config_dir),
+      env: Keyword.get(state.opts, :env, [])
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp clear_deleted_session(%{session_id: session_id} = state, session_id) do
+    %{
+      state
+      | session_id: nil,
+        pending_prompt_id: nil,
+        text_acc: [],
+        thinking_acc: [],
+        thinking_blocks: [],
+        current_block_type: nil,
+        tool_calls: %{}
+    }
+  end
+
+  defp clear_deleted_session(state, _session_id), do: state
+
+  defp encode_permission_mode(:default), do: "default"
+  defp encode_permission_mode(:accept_edits), do: "acceptEdits"
+  defp encode_permission_mode(:plan), do: "plan"
+  defp encode_permission_mode(:auto), do: "auto"
+  defp encode_permission_mode(:dont_ask), do: "dontAsk"
+  defp encode_permission_mode(:bypass), do: "bypassPermissions"
+  defp encode_permission_mode(:bypass_permissions), do: "bypassPermissions"
+  defp encode_permission_mode(mode) when is_binary(mode), do: mode
+  defp encode_permission_mode(nil), do: "default"
+end

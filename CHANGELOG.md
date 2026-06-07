@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Claude SDK ACP adapter** — Added `ExMCP.ACP.Adapters.ClaudeSDK`, a new Claude Code adapter that uses the SDK-compatible stream-json control protocol with permission bridging, partial tool-call lifecycle events, SDK interrupt cancellation, runtime model/mode/effort config, richer status updates, plan updates, and SDK launch environment support.
+- **Claude SDK session store** — Added pure Elixir helpers for Claude Code's SDK session store, including SDK-compatible project key derivation, JSONL metadata extraction, sidechain filtering, ACP `session/list`, and validated `session/delete`.
+- **Adapter bridge direct replies** — Adapter implementations can now return direct JSON-RPC results, or reply while also writing to the subprocess, so adapted agents can own session IDs and runtime config responses without bridge-synthesized placeholders.
+
+### Changed
+- **ACP docs** — Updated README and the ACP guide to recommend `ClaudeSDK` for new Claude Code integrations while keeping the legacy `Claude` stream-json adapter documented.
+- **Claude SDK session capabilities** — The new adapter now advertises live session setup/load/resume/close plus disk-backed `session/list` and `session/delete` support for Claude Code's local SDK store.
+
+### Breaking Changes
+- **ACP adapter session listing callback** — Custom ACP adapters should implement `list_sessions(params, state)` instead of `list_sessions(state)`. The bridge now forwards decoded `session/list` params directly to adapters and no longer carries the legacy arity.
+
 ## [0.12.0] - 2026-06-07
 
 ### Added

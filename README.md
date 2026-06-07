@@ -208,11 +208,14 @@ Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control cod
 {:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/my/project")
 {:ok, %{"stopReason" => _}} = ExMCP.ACP.Client.prompt(client, sid, "Fix the failing tests")
 
-# Adapters for non-native agents (Claude Code, Codex, Pi)
+# Claude Code via the SDK-compatible adapter
 {:ok, client} = ExMCP.ACP.start_client(
   command: ["claude"],
-  adapter: ExMCP.ACP.Adapters.Claude
+  adapter: ExMCP.ACP.Adapters.ClaudeSDK,
+  adapter_opts: [model: "sonnet", cwd: "/my/project"]
 )
+
+# Legacy Claude stream-json adapter remains available as ExMCP.ACP.Adapters.Claude.
 
 # Pi coding agent with full RPC support
 {:ok, client} = ExMCP.ACP.start_client(

@@ -308,10 +308,10 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
   end
 
-  describe "list_sessions/1" do
+  describe "list_sessions/2" do
     test "returns empty list when session dir doesn't exist", %{state: state} do
       state = %{state | session_dir: "/nonexistent/path"}
-      assert {:ok, [], _state} = Pi.list_sessions(state)
+      assert {:ok, [], _state} = Pi.list_sessions(%{}, state)
     end
 
     test "scans session directory for jsonl files" do
@@ -326,7 +326,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       File.write!(Path.join(tmp_dir, "not-a-session.txt"), "ignore")
 
       {:ok, state} = Pi.init(session_dir: tmp_dir)
-      assert {:ok, sessions, _state} = Pi.list_sessions(state)
+      assert {:ok, sessions, _state} = Pi.list_sessions(%{}, state)
 
       ids = Enum.map(sessions, & &1["sessionId"])
       assert "session-abc" in ids
