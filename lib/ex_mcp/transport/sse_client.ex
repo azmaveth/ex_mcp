@@ -18,6 +18,8 @@ defmodule ExMCP.Transport.SSEClient do
   use GenServer
   require Logger
 
+  alias ExMCP.Internal.SSE
+
   @initial_retry_delay 1_000
   @max_retry_delay 60_000
   @heartbeat_interval 30_000
@@ -197,7 +199,7 @@ defmodule ExMCP.Transport.SSEClient do
 
     # Process the chunk
     buffer = state.buffer <> chunk
-    {events, remaining} = parse_events(buffer)
+    {events, remaining} = SSE.parse_stream(buffer)
 
     # Debug logging
     if length(events) > 0 do
@@ -407,64 +409,6 @@ defmodule ExMCP.Transport.SSEClient do
 
     # Merge with user-provided headers
     Enum.uniq_by(state.headers ++ headers_with_id, fn {k, _} -> k end)
-  end
-
-  defp parse_events(buffer) do
-    lines = String.split(buffer, "\n")
-    parse_events(lines, [], %{}, [])
-  end
-
-  defp parse_events([], events, current_event, acc) do
-    # Return accumulated events and any incomplete data
-    buffer =
-      if map_size(current_event) > 0 do
-        # Reconstruct incomplete event
-        current_event
-        |> Enum.map_join("\n", fn {k, v} -> "#{k}: #{v}" end)
-      else
-        Enum.join(acc, "\n")
-      end
-
-    {Enum.reverse(events), buffer}
-  end
-
-  defp parse_events(["" | rest], events, current_event, _acc) when map_size(current_event) > 0 do
-    # Empty line marks end of event
-    parse_events(rest, [current_event | events], %{}, [])
-  end
-
-  defp parse_events([line | rest], events, current_event, acc) do
-    case parse_field(line) do
-      {:ok, key, value} ->
-        updated_event =
-          Map.update(current_event, key, value, fn existing ->
-            existing <> "\n" <> value
-          end)
-
-        parse_events(rest, events, updated_event, [])
-
-      :ignore ->
-        parse_events(rest, events, current_event, [])
-
-      :incomplete ->
-        # Line doesn't contain a complete field, accumulate it
-        parse_events(rest, events, current_event, [line | acc])
-    end
-  end
-
-  defp parse_field(":" <> _comment), do: :ignore
-  defp parse_field(""), do: :ignore
-
-  defp parse_field(line) do
-    case String.split(line, ":", parts: 2) do
-      [field, value] ->
-        # Remove leading space from value if present
-        value = String.trim_leading(value)
-        {:ok, field, value}
-
-      _ ->
-        :incomplete
-    end
   end
 
   defp process_event(event, state) do

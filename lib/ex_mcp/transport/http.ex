@@ -79,7 +79,7 @@ defmodule ExMCP.Transport.HTTP do
   require Logger
 
   alias ExMCP.Authorization.FullOAuthFlow
-  alias ExMCP.Internal.{Headers, Security, SecurityConfig}
+  alias ExMCP.Internal.{Headers, Security, SecurityConfig, SSE}
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
 
@@ -794,7 +794,7 @@ defmodule ExMCP.Transport.HTTP do
   # If no JSON result is found (just priming events), the response
   # will come via GET SSE stream — start/ensure SSE is connected.
   defp handle_sse_post_response(body, state) do
-    events = parse_sse_events(body)
+    events = SSE.parse_complete(body)
 
     # Extract retry field and last event ID from events
     state =
@@ -843,43 +843,6 @@ defmodule ExMCP.Transport.HTTP do
       state = maybe_start_deferred_sse(state)
       {:ok, state}
     end
-  end
-
-  # Parse raw SSE text into a list of event maps
-  defp parse_sse_events(body) do
-    body
-    |> String.split("\n\n")
-    |> Enum.map(fn block ->
-      block
-      |> String.split("\n")
-      |> Enum.reduce(%{}, fn line, acc ->
-        cond do
-          String.starts_with?(line, "data: ") ->
-            data = String.trim_leading(line, "data: ")
-            Map.update(acc, :data, data, fn existing -> existing <> data end)
-
-          String.starts_with?(line, "data:") ->
-            data = String.trim_leading(line, "data:")
-            Map.update(acc, :data, data, fn existing -> existing <> data end)
-
-          String.starts_with?(line, "id: ") ->
-            Map.put(acc, :id, String.trim_leading(line, "id: "))
-
-          String.starts_with?(line, "retry: ") ->
-            case Integer.parse(String.trim_leading(line, "retry: ")) do
-              {ms, _} -> Map.put(acc, :retry, ms)
-              _ -> acc
-            end
-
-          String.starts_with?(line, "event: ") ->
-            Map.put(acc, :event, String.trim_leading(line, "event: "))
-
-          true ->
-            acc
-        end
-      end)
-    end)
-    |> Enum.reject(&(&1 == %{}))
   end
 
   @impl true
