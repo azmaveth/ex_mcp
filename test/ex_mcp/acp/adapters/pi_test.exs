@@ -4,8 +4,27 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   alias ExMCP.ACP.Adapters.Pi
 
   setup do
-    {:ok, state} = Pi.init([])
-    %{state: state}
+    tmp_dir = Path.join(System.tmp_dir!(), "pi_test_#{System.unique_integer([:positive])}")
+    session_dir = Path.join(tmp_dir, "sessions")
+    session_map_path = Path.join(tmp_dir, "session-map.json")
+
+    File.mkdir_p!(session_dir)
+
+    {:ok, state} =
+      Pi.init(
+        cwd: tmp_dir,
+        session_dir: session_dir,
+        session_map_path: session_map_path
+      )
+
+    on_exit(fn -> File.rm_rf!(tmp_dir) end)
+
+    %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_dir: session_dir,
+      session_map_path: session_map_path
+    }
   end
 
   describe "command/1" do
@@ -42,103 +61,281 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   end
 
   describe "capabilities/0" do
-    test "returns stable capabilities and adapter metadata" do
+    test "returns ACP-native capabilities and adapter metadata" do
       caps = Pi.capabilities()
       pi_meta = caps["_meta"]["ex_mcp.pi"]
 
+      assert caps["loadSession"] == true
       assert caps["promptCapabilities"]["image"] == true
-      assert is_map(pi_meta["features"])
-      assert "_ex_mcp.pi/steer" in pi_meta["methods"]
-      assert "_ex_mcp.pi/compact" in pi_meta["methods"]
-      assert pi_meta["features"]["steering"] == true
-      assert pi_meta["features"]["compaction"] == true
+      assert caps["promptCapabilities"]["audio"] == false
+      assert caps["mcpCapabilities"] == %{"http" => false, "sse" => false}
+      refute Map.has_key?(pi_meta, "methods")
+      assert pi_meta["features"]["slashCommands"] == true
+      assert pi_meta["features"]["terminalAuth"] == true
+      assert pi_meta["features"]["modelSelection"] == true
+    end
+  end
+
+  describe "auth_methods/1" do
+    test "advertises terminal login" do
+      assert [%{"id" => "pi_terminal_login", "type" => "terminal"} = auth] =
+               Pi.auth_methods(cli_path: "/bin/pi")
+
+      assert auth["_meta"]["terminal-auth"]["command"] == "/bin/pi"
     end
   end
 
   describe "modes/0" do
-    test "returns code mode" do
-      modes = Pi.modes()
-      assert length(modes) == 1
-      assert hd(modes)["id"] == "code"
+    test "returns Pi thinking levels as ACP modes" do
+      ids = Pi.modes() |> Enum.map(& &1["id"])
+      assert ids == ["off", "minimal", "low", "medium", "high", "xhigh"]
     end
   end
 
   describe "config_options/0" do
-    test "returns stable select options" do
-      opts = Pi.config_options()
-      ids = Enum.map(opts, & &1["id"])
-      assert "thinking_level" in ids
+    test "returns Pi runtime config options but not model or thinking selectors" do
+      ids = Pi.config_options() |> Enum.map(& &1["id"])
+
       assert "auto_compaction" in ids
       assert "auto_retry" in ids
       assert "steering_mode" in ids
       assert "follow_up_mode" in ids
-    end
-
-    test "thinking_level has correct values" do
-      opts = Pi.config_options()
-      tl = Enum.find(opts, &(&1["id"] == "thinking_level"))
-      assert tl["type"] == "select"
-      assert %{"value" => "off", "name" => "off"} in tl["options"]
-      assert %{"value" => "high", "name" => "high"} in tl["options"]
+      refute "model" in ids
+      refute "thinking_level" in ids
     end
   end
 
-  describe "translate_outbound/2 — session/set_config_option" do
-    test "model routes to set_model RPC", %{state: state} do
-      msg = %{
-        "method" => "session/set_config_option",
-        "params" => %{"configId" => "model", "value" => "anthropic/claude-sonnet-4"}
-      }
-
-      assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
-      decoded = Jason.decode!(String.trim(IO.iodata_to_binary(data)))
-      assert decoded["type"] == "set_model"
-      assert decoded["provider"] == "anthropic"
-      assert decoded["modelId"] == "claude-sonnet-4"
+  describe "list_sessions/2" do
+    test "returns empty list when session dir doesn't exist", %{state: state} do
+      state = %{state | session_dir: "/nonexistent/path"}
+      assert {:ok, [], _state} = Pi.list_sessions(%{}, state)
     end
 
-    test "thinking_level routes to set_thinking_level", %{state: state} do
+    test "scans Pi jsonl session files and omits private file paths", %{
+      state: state,
+      session_dir: session_dir,
+      tmp_dir: tmp_dir
+    } do
+      write_session(session_dir, "s1", tmp_dir, "First prompt", "Project session")
+      write_session(session_dir, "s2", "/other/project", "Other prompt", nil)
+
+      assert {:ok, sessions, _state} = Pi.list_sessions(%{}, state)
+
+      assert Enum.map(sessions, & &1["sessionId"]) |> Enum.sort() == ["s1", "s2"]
+      assert Enum.all?(sessions, &(not Map.has_key?(&1, "sessionFile")))
+      assert Enum.any?(sessions, &(&1["title"] == "Project session"))
+    end
+
+    test "filters by cwd", %{state: state, session_dir: session_dir, tmp_dir: tmp_dir} do
+      write_session(session_dir, "s1", tmp_dir, "First prompt", nil)
+      write_session(session_dir, "s2", "/other/project", "Other prompt", nil)
+
+      assert {:ok, [%{"sessionId" => "s1"}], _state} =
+               Pi.list_sessions(%{"cwd" => tmp_dir}, state)
+    end
+  end
+
+  describe "translate_outbound/2 — session lifecycle" do
+    test "session/new sends Pi control requests and completes from correlated responses", %{
+      state: state,
+      tmp_dir: tmp_dir
+    } do
+      msg = %{"method" => "session/new", "id" => 11, "params" => %{"cwd" => tmp_dir}}
+
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      requests = decode_many(data)
+
+      assert Enum.map(requests, & &1["type"]) == [
+               "new_session",
+               "get_state",
+               "get_available_models",
+               "get_commands"
+             ]
+
+      ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
+
+      state =
+        respond(state, ids_by_type["new_session"], "new_session", %{})
+        |> respond(ids_by_type["get_state"], "get_state", %{
+          "sessionId" => "pi-session",
+          "sessionFile" => Path.join(tmp_dir, "pi-session.jsonl"),
+          "cwd" => tmp_dir,
+          "thinkingLevel" => "high",
+          "model" => %{"provider" => "anthropic", "id" => "claude-sonnet-4"}
+        })
+        |> respond(ids_by_type["get_available_models"], "get_available_models", %{
+          "models" => [
+            %{"provider" => "anthropic", "id" => "claude-sonnet-4", "name" => "Claude Sonnet 4"}
+          ]
+        })
+
+      assert {:messages, [response, commands_update], state} =
+               Pi.translate_inbound(
+                 response_line(ids_by_type["get_commands"], "get_commands", %{
+                   "commands" => [
+                     %{
+                       "name" => "model",
+                       "description" => "Model picker",
+                       "source" => "extension"
+                     }
+                   ]
+                 }),
+                 state
+               )
+
+      assert response["id"] == 11
+      assert response["result"]["sessionId"] == "pi-session"
+      assert response["result"]["modes"]["currentModeId"] == "high"
+      assert response["result"]["models"]["currentModelId"] == "anthropic/claude-sonnet-4"
+      assert commands_update["params"]["update"]["sessionUpdate"] == "available_commands_update"
+      assert state.session_id == "pi-session"
+
+      assert state.available_models == [
+               %{
+                 "modelId" => "anthropic/claude-sonnet-4",
+                 "name" => "anthropic/Claude Sonnet 4",
+                 "description" => nil
+               }
+             ]
+    end
+
+    test "session/new maps empty model list to auth-required", %{state: state, tmp_dir: tmp_dir} do
+      msg = %{"method" => "session/new", "id" => 12, "params" => %{"cwd" => tmp_dir}}
+
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      ids_by_type = data |> decode_many() |> Map.new(&{&1["type"], &1["id"]})
+
+      state =
+        respond(state, ids_by_type["new_session"], "new_session", %{})
+        |> respond(ids_by_type["get_state"], "get_state", %{
+          "sessionId" => "pi-session",
+          "cwd" => tmp_dir
+        })
+        |> respond(ids_by_type["get_commands"], "get_commands", %{"commands" => []})
+
+      assert {:messages, [error], _state} =
+               Pi.translate_inbound(
+                 response_line(ids_by_type["get_available_models"], "get_available_models", %{
+                   "models" => []
+                 }),
+                 state
+               )
+
+      assert error["id"] == 12
+      assert error["error"]["data"]["authMethods"] != []
+    end
+
+    test "session/load uses the local session map and replays messages", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_map_path: session_map_path
+    } do
+      session_file = Path.join(tmp_dir, "mapped.jsonl")
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "mapped-session" => %{
+              "sessionId" => "mapped-session",
+              "cwd" => tmp_dir,
+              "sessionFile" => session_file
+            }
+          }
+        })
+      )
+
       msg = %{
-        "method" => "session/set_config_option",
-        "params" => %{"configId" => "thinking_level", "value" => "high"}
+        "method" => "session/load",
+        "id" => 13,
+        "params" => %{"sessionId" => "mapped-session", "cwd" => tmp_dir}
+      }
+
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      requests = decode_many(data)
+      assert Enum.find(requests, &(&1["type"] == "switch_session"))["sessionPath"] == session_file
+      ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
+
+      state =
+        respond(state, ids_by_type["switch_session"], "switch_session", %{})
+        |> respond(ids_by_type["get_state"], "get_state", %{
+          "sessionId" => "mapped-session",
+          "cwd" => tmp_dir
+        })
+        |> respond(ids_by_type["get_available_models"], "get_available_models", %{
+          "models" => [%{"provider" => "openai", "id" => "gpt-5.1"}]
+        })
+        |> respond(ids_by_type["get_commands"], "get_commands", %{"commands" => []})
+
+      assert {:messages, messages, _state} =
+               Pi.translate_inbound(
+                 response_line(ids_by_type["get_messages"], "get_messages", %{
+                   "messages" => [
+                     %{"role" => "user", "content" => "Hello"},
+                     %{"role" => "assistant", "content" => "Hi"}
+                   ]
+                 }),
+                 state
+               )
+
+      assert Enum.any?(
+               messages,
+               &(get_in(&1, ["params", "update", "sessionUpdate"]) == "user_message_chunk")
+             )
+
+      assert Enum.any?(messages, &(&1["id"] == 13))
+    end
+  end
+
+  describe "translate_outbound/2 — model, mode, and config" do
+    test "session/set_model routes full ACP model IDs to Pi set_model", %{state: state} do
+      msg = %{
+        "method" => "session/set_model",
+        "params" => %{"modelId" => "anthropic/claude-sonnet-4"}
       }
 
       assert {:ok, data, new_state} = Pi.translate_outbound(msg, state)
-      decoded = Jason.decode!(String.trim(IO.iodata_to_binary(data)))
-      assert decoded["type"] == "set_thinking_level"
-      assert decoded["level"] == "high"
+      decoded = decode_one(data)
+      assert decoded["type"] == "set_model"
+      assert decoded["provider"] == "anthropic"
+      assert decoded["modelId"] == "claude-sonnet-4"
+      assert new_state.current_model_id == "anthropic/claude-sonnet-4"
+    end
+
+    test "session/set_model resolves bare model IDs from available models", %{state: state} do
+      state = %{state | available_models: [%{"modelId" => "openai/gpt-5.1"}]}
+      msg = %{"method" => "session/set_model", "params" => %{"modelId" => "gpt-5.1"}}
+
+      assert {:ok, data, new_state} = Pi.translate_outbound(msg, state)
+      decoded = decode_one(data)
+      assert decoded["provider"] == "openai"
+      assert decoded["modelId"] == "gpt-5.1"
+      assert new_state.current_model_id == "openai/gpt-5.1"
+    end
+
+    test "session/set_model rejects unknown bare IDs", %{state: state} do
+      msg = %{"method" => "session/set_model", "params" => %{"modelId" => "missing-model"}}
+
+      assert {:error, "Unknown modelId: missing-model", ^state} =
+               Pi.translate_outbound(msg, state)
+    end
+
+    test "session/set_mode routes thinking level and emits current_mode_update", %{state: state} do
+      msg = %{
+        "method" => "session/set_mode",
+        "params" => %{"sessionId" => "s1", "modeId" => "high"}
+      }
+
+      assert {:messages_and_write, [update], data, new_state} = Pi.translate_outbound(msg, state)
+      assert update["params"]["update"]["currentModeId"] == "high"
+      assert decode_one(data)["type"] == "set_thinking_level"
       assert new_state.thinking_level == "high"
     end
 
-    # spec regression: the previous implementation accepted any value for
-    # `thinking_level` and silently returned `{:ok, :skip, state}` for
-    # values outside the @thinking_levels whitelist. The caller had no
-    # way to know the value was discarded — indistinguishable from
-    # success. This is the same bug shape as the original Claude
-    # `permission_mode` regression.
-    #
-    # Pin down: invalid values must surface a distinguishable error
-    # tuple so callers can react. `{:error, reason, state}` is the
-    # symmetric counterpart to `{:ok, data, state}` / `{:ok, :skip, state}`.
-    test "spec regression: invalid thinking_level returns an error, not silent :skip",
-         %{state: state} do
-      msg = %{
-        "method" => "session/set_config_option",
-        "params" => %{"configId" => "thinking_level", "value" => "invalid"}
-      }
-
-      result = Pi.translate_outbound(msg, state)
-
-      refute match?({:ok, :skip, _}, result),
-             "Invalid thinking_level must NOT silently :skip — caller has no way to detect " <>
-               "the value was discarded. Return {:error, reason, state} so callers can react."
-
-      assert match?({:error, _, _}, result),
-             "Expected {:error, reason, state} for invalid thinking_level; got #{inspect(result)}"
-
-      # State must NOT be mutated with the invalid value.
-      {:error, _reason, new_state} = result
-      refute new_state.thinking_level == "invalid"
+    test "session/set_mode rejects invalid thinking levels", %{state: state} do
+      msg = %{"method" => "session/set_mode", "params" => %{"modeId" => "invalid"}}
+      assert {:error, "Unknown modeId: \"invalid\"", ^state} = Pi.translate_outbound(msg, state)
     end
 
     test "auto_compaction routes to set_auto_compaction", %{state: state} do
@@ -148,62 +345,177 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       }
 
       assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
-      decoded = Jason.decode!(String.trim(IO.iodata_to_binary(data)))
-      assert decoded["type"] == "set_auto_compaction"
-      assert decoded["enabled"] == false
+      assert decode_one(data) == %{"type" => "set_auto_compaction", "enabled" => false}
     end
 
-    test "unknown config option is skipped", %{state: state} do
+    test "unknown config option returns an error", %{state: state} do
       msg = %{
         "method" => "session/set_config_option",
         "params" => %{"configId" => "nonexistent", "value" => "x"}
       }
 
-      assert {:ok, :skip, _state} = Pi.translate_outbound(msg, state)
+      assert {:error, "Unknown Pi config option: nonexistent", ^state} =
+               Pi.translate_outbound(msg, state)
     end
   end
 
-  describe "translate_outbound/2 — session/set_mode" do
-    test "is a no-op for Pi (single mode)", %{state: state} do
-      msg = %{"method" => "session/set_mode", "params" => %{"modeId" => "code"}}
-      assert {:ok, :skip, _state} = Pi.translate_outbound(msg, state)
-    end
-  end
-
-  describe "translate_outbound/2 — extension methods" do
-    test "supports ACP-compliant namespaced Pi methods", %{state: state} do
-      msg = %{
-        "method" => "_ex_mcp.pi/steer",
-        "params" => %{"message" => "look at the current diff"}
-      }
-
-      assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
-      decoded = Jason.decode!(String.trim(IO.iodata_to_binary(data)))
-      assert decoded["type"] == "steer"
-      assert decoded["message"] == "look at the current diff"
-    end
-  end
-
-  describe "translate_outbound/2 — prompting" do
-    test "session/prompt produces Pi RPC prompt", %{state: state} do
+  describe "translate_outbound/2 — prompting and slash commands" do
+    test "session/prompt produces Pi RPC prompt with content block normalization", %{state: state} do
       msg = %{
         "method" => "session/prompt",
-        "id" => 1,
-        "params" => %{"prompt" => "Hello"}
+        "id" => 21,
+        "params" => %{
+          "sessionId" => "s1",
+          "prompt" => [
+            %{"type" => "text", "text" => "Hello"},
+            %{"type" => "resource_link", "uri" => "file:///tmp/example.ex"},
+            %{"type" => "audio", "mimeType" => "audio/wav", "data" => "abc"}
+          ]
+        }
       }
 
       assert {:ok, data, new_state} = Pi.translate_outbound(msg, state)
-      decoded = Jason.decode!(String.trim(IO.iodata_to_binary(data)))
+      decoded = decode_one(data)
       assert decoded["type"] == "prompt"
-      assert decoded["message"] == "Hello"
-      assert new_state.pending_prompt_id == 1
+      assert decoded["message"] =~ "Hello"
+      assert decoded["message"] =~ "[Context] file:///tmp/example.ex"
+      assert decoded["message"] =~ "[Audio]"
+      assert new_state.pending_prompt.acp_id == 21
     end
 
-    test "session/cancel produces abort", %{state: state} do
-      msg = %{"method" => "session/cancel"}
+    test "image prompts pass normalized images to Pi", %{state: state} do
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 22,
+        "params" => %{
+          "prompt" => [
+            %{"type" => "text", "text" => "What is this?"},
+            %{
+              "type" => "image",
+              "mimeType" => "image/png",
+              "data" => "data:image/png;base64,abc123"
+            }
+          ]
+        }
+      }
+
       assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
-      decoded = Jason.decode!(String.trim(IO.iodata_to_binary(data)))
-      assert decoded["type"] == "abort"
+      decoded = decode_one(data)
+
+      assert decoded["images"] == [
+               %{"type" => "image", "mimeType" => "image/png", "data" => "abc123"}
+             ]
+    end
+
+    test "queued prompts stay pending and run after the active turn ends", %{state: state} do
+      state = %{
+        state
+        | pending_prompt: %{acp_id: 1, msg_id: "msg-1", cancel_requested: false},
+          session_id: "s1"
+      }
+
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 23,
+        "params" => %{"sessionId" => "s1", "prompt" => "second"}
+      }
+
+      assert {:messages, [_notice, _info], queued_state} = Pi.translate_outbound(msg, state)
+      assert :queue.len(queued_state.prompt_queue) == 1
+
+      assert {:messages_and_write, [first_response, _start_notice, _queue_info], data, next_state} =
+               Pi.translate_inbound(
+                 Jason.encode!(%{"type" => "agent_end", "messages" => []}),
+                 queued_state
+               )
+
+      assert first_response["id"] == 1
+      assert decode_one(data)["message"] == "second"
+      assert next_state.pending_prompt.acp_id == 23
+    end
+
+    test "session/cancel cancels queued prompts and marks active prompt", %{state: state} do
+      queue =
+        :queue.in(%{acp_id: 31, message: "queued", images: [], params: %{}}, :queue.new())
+
+      state = %{
+        state
+        | session_id: "s1",
+          pending_prompt: %{acp_id: 30, msg_id: "msg-1", cancel_requested: false},
+          prompt_queue: queue
+      }
+
+      assert {:messages_and_write, messages, data, new_state} =
+               Pi.translate_outbound(%{"method" => "session/cancel"}, state)
+
+      assert Enum.any?(messages, &(&1["id"] == 31))
+
+      assert Enum.any?(
+               messages,
+               &(get_in(&1, ["params", "update", "content", "text"]) == "Cleared queued prompts.")
+             )
+
+      assert decode_one(data)["type"] == "abort"
+      assert new_state.pending_prompt.cancel_requested == true
+      assert :queue.is_empty(new_state.prompt_queue)
+    end
+
+    test "slash compact maps to Pi compact and replies after control response", %{state: state} do
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 24,
+        "params" => %{"sessionId" => "s1", "prompt" => "/compact keep tests"}
+      }
+
+      assert {:ok, data, state} = Pi.translate_outbound(msg, %{state | session_id: "s1"})
+      request = decode_one(data)
+      assert request["type"] == "compact"
+      assert request["customInstructions"] == "keep tests"
+
+      assert {:messages, [message, response], _state} =
+               Pi.translate_inbound(
+                 response_line(request["id"], "compact", %{
+                   "summary" => "done",
+                   "tokensBefore" => 12
+                 }),
+                 state
+               )
+
+      assert get_in(message, ["params", "update", "content", "text"]) =~ "Compaction completed."
+      assert response["id"] == 24
+      assert response["result"]["stopReason"] == "end_turn"
+    end
+
+    test "file slash commands expand to prompts", %{state: state, tmp_dir: tmp_dir} do
+      prompts_dir = Path.join([tmp_dir, ".pi", "prompts"])
+      File.mkdir_p!(prompts_dir)
+      File.write!(Path.join(prompts_dir, "review.md"), "Review $1 and $@")
+
+      msg = %{"method" => "session/new", "id" => 25, "params" => %{"cwd" => tmp_dir}}
+      assert {:ok, _data, state} = Pi.translate_outbound(msg, state)
+
+      state = %{
+        state
+        | file_commands:
+            state.control_groups |> Map.values() |> hd() |> Map.fetch!(:file_commands)
+      }
+
+      prompt_msg = %{
+        "method" => "session/prompt",
+        "id" => 26,
+        "params" => %{"prompt" => "/review src all files"}
+      }
+
+      assert {:ok, data, _state} = Pi.translate_outbound(prompt_msg, state)
+      assert decode_one(data)["message"] == "Review src and src all files"
+    end
+
+    test "removed extension methods return explicit errors", %{state: state} do
+      msg = %{"method" => "_ex_mcp.pi/steer", "params" => %{"message" => "look at diff"}}
+
+      assert {:error,
+              "Pi extension methods were removed; use ACP session methods or slash commands",
+              ^state} = Pi.translate_outbound(msg, state)
     end
   end
 
@@ -238,39 +550,85 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   end
 
   describe "translate_inbound/2 — agent_end" do
-    test "produces prompt response with accumulated text", %{state: state} do
-      state = %{state | pending_prompt_id: 5, text_acc: ["world", "Hello "]}
+    test "produces prompt response with accumulated text and usage", %{state: state} do
+      state = %{
+        state
+        | session_id: "s1",
+          pending_prompt: %{acp_id: 5, msg_id: "msg-1", cancel_requested: false},
+          text_acc: ["world", "Hello "]
+      }
 
       line =
         Jason.encode!(%{
           "type" => "agent_end",
-          "messages" => []
+          "messages" => [%{"role" => "assistant", "usage" => %{"input" => 10, "output" => 2}}]
         })
 
       assert {:messages, [response], new_state} = Pi.translate_inbound(line, state)
       assert response["id"] == 5
       assert response["result"]["_meta"]["ex_mcp"]["text"] == "Hello world"
+      assert response["result"]["usage"]["inputTokens"] == 10
       assert response["result"]["stopReason"] == "end_turn"
-      assert new_state.pending_prompt_id == nil
+      assert new_state.pending_prompt == nil
       assert new_state.text_acc == []
     end
   end
 
   describe "translate_inbound/2 — tool execution" do
-    test "tool_execution_start emits notification", %{state: state} do
+    test "tool_execution_start emits a new tool call with locations", %{
+      state: state,
+      tmp_dir: tmp_dir
+    } do
       line =
         Jason.encode!(%{
           "type" => "tool_execution_start",
           "toolCallId" => "tc-1",
-          "toolName" => "bash",
-          "args" => %{"command" => "ls"}
+          "toolName" => "read",
+          "args" => %{"path" => "lib/example.ex"}
         })
 
-      assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
+      assert {:messages, [notification], _state} =
+               Pi.translate_inbound(line, %{state | cwd: tmp_dir})
+
       update = notification["params"]["update"]
-      assert update["sessionUpdate"] == "tool_call_update"
+      assert update["sessionUpdate"] == "tool_call"
       assert update["status"] == "in_progress"
-      assert update["title"] == "bash"
+      assert update["title"] == "read"
+      assert hd(update["locations"])["path"] == Path.join(tmp_dir, "lib/example.ex")
+    end
+
+    test "toolcall_start and toolcall_delta emit call then update", %{state: state} do
+      start =
+        Jason.encode!(%{
+          "type" => "message_update",
+          "assistantMessageEvent" => %{
+            "type" => "toolcall_start",
+            "toolCall" => %{
+              "id" => "tc-stream",
+              "name" => "bash",
+              "arguments" => %{"command" => "ls"}
+            }
+          }
+        })
+
+      assert {:messages, [call], state} = Pi.translate_inbound(start, state)
+      assert call["params"]["update"]["sessionUpdate"] == "tool_call"
+
+      delta =
+        Jason.encode!(%{
+          "type" => "message_update",
+          "assistantMessageEvent" => %{
+            "type" => "toolcall_delta",
+            "toolCall" => %{
+              "id" => "tc-stream",
+              "name" => "bash",
+              "arguments" => %{"command" => "ls -la"}
+            }
+          }
+        })
+
+      assert {:messages, [update], _state} = Pi.translate_inbound(delta, state)
+      assert update["params"]["update"]["sessionUpdate"] == "tool_call_update"
     end
 
     test "tool_execution_end emits tool result", %{state: state} do
@@ -288,6 +646,39 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert update["sessionUpdate"] == "tool_call_update"
       assert update["status"] == "completed"
       assert hd(update["content"])["content"]["text"] == "file1.txt"
+    end
+
+    test "edit tool completion emits structured diff when the file changed", %{
+      state: state,
+      tmp_dir: tmp_dir
+    } do
+      path = Path.join(tmp_dir, "example.txt")
+      File.write!(path, "old\n")
+
+      start =
+        Jason.encode!(%{
+          "type" => "tool_execution_start",
+          "toolCallId" => "edit-1",
+          "toolName" => "edit",
+          "args" => %{"path" => path, "oldText" => "old"}
+        })
+
+      assert {:messages, [_notification], state} = Pi.translate_inbound(start, state)
+      File.write!(path, "new\n")
+
+      finish =
+        Jason.encode!(%{
+          "type" => "tool_execution_end",
+          "toolCallId" => "edit-1",
+          "result" => %{"content" => [%{"type" => "text", "text" => "updated"}]},
+          "isError" => false
+        })
+
+      assert {:messages, [notification], _state} = Pi.translate_inbound(finish, state)
+      update = notification["params"]["update"]
+      assert hd(update["content"])["type"] == "diff"
+      assert hd(update["content"])["oldText"] == "old\n"
+      assert hd(update["content"])["newText"] == "new\n"
     end
   end
 
@@ -308,100 +699,48 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
   end
 
-  describe "list_sessions/2" do
-    test "returns empty list when session dir doesn't exist", %{state: state} do
-      state = %{state | session_dir: "/nonexistent/path"}
-      assert {:ok, [], _state} = Pi.list_sessions(%{}, state)
-    end
-
-    test "scans session directory for jsonl files" do
-      # Create a temp dir with fake session files
-      tmp_dir =
-        System.tmp_dir!() |> Path.join("pi_test_sessions_#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(tmp_dir)
-
-      File.write!(Path.join(tmp_dir, "session-abc.jsonl"), "{}")
-      File.write!(Path.join(tmp_dir, "session-def.jsonl"), "{}")
-      File.write!(Path.join(tmp_dir, "not-a-session.txt"), "ignore")
-
-      {:ok, state} = Pi.init(session_dir: tmp_dir)
-      assert {:ok, sessions, _state} = Pi.list_sessions(%{}, state)
-
-      ids = Enum.map(sessions, & &1["sessionId"])
-      assert "session-abc" in ids
-      assert "session-def" in ids
-      assert length(sessions) == 2
-
-      # Each session has updatedAt
-      assert Enum.all?(sessions, &Map.has_key?(&1, "updatedAt"))
-
-      # Cleanup
-      File.rm_rf!(tmp_dir)
-    end
+  defp decode_many(data) do
+    data
+    |> IO.iodata_to_binary()
+    |> String.split("\n", trim: true)
+    |> Enum.map(&Jason.decode!/1)
   end
 
-  describe "tool result text extraction" do
-    test "tool_execution_end with content blocks extracts text", %{state: state} do
-      line =
-        Jason.encode!(%{
-          "type" => "tool_execution_end",
-          "toolCallId" => "tc-1",
-          "toolName" => "read",
-          "result" => %{
-            "content" => [
-              %{"type" => "text", "text" => "file contents here"}
-            ]
-          },
-          "isError" => false
-        })
+  defp decode_one(data), do: data |> decode_many() |> List.first()
 
-      assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
-      update = notification["params"]["update"]
-      assert hd(update["content"])["content"]["text"] == "file contents here"
-    end
+  defp response_line(id, command, data) do
+    Jason.encode!(%{
+      "type" => "response",
+      "id" => id,
+      "command" => command,
+      "success" => true,
+      "data" => data
+    })
+  end
 
-    test "tool_execution_end with diff in details", %{state: state} do
-      line =
-        Jason.encode!(%{
-          "type" => "tool_execution_end",
-          "toolCallId" => "tc-2",
-          "toolName" => "edit",
-          "result" => %{
-            "content" => [],
-            "details" => %{"diff" => "--- a/file.ex\n+++ b/file.ex\n@@ -1 +1 @@\n-old\n+new"}
-          },
-          "isError" => false
-        })
+  defp respond(state, id, command, data) do
+    assert {:skip, state} = Pi.translate_inbound(response_line(id, command, data), state)
+    state
+  end
 
-      assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
-      update = notification["params"]["update"]
-      assert hd(update["content"])["content"]["text"] =~ "--- a/file.ex"
-    end
+  defp write_session(session_dir, id, cwd, first_prompt, name) do
+    file = Path.join(session_dir, "#{id}.jsonl")
 
-    test "tool_execution_end with stdout/stderr/exitCode", %{state: state} do
-      line =
-        Jason.encode!(%{
-          "type" => "tool_execution_end",
-          "toolCallId" => "tc-3",
-          "toolName" => "bash",
-          "result" => %{
-            "content" => [],
-            "details" => %{
-              "stdout" => "hello world",
-              "stderr" => "warning: something",
-              "exitCode" => 0
-            }
-          },
-          "isError" => false
-        })
+    lines =
+      [
+        %{"type" => "session", "id" => id, "cwd" => cwd, "timestamp" => "2026-01-01T00:00:00Z"},
+        %{
+          "type" => "message",
+          "timestamp" => "2026-01-01T00:00:01Z",
+          "message" => %{"role" => "user", "content" => first_prompt}
+        },
+        if(name,
+          do: %{"type" => "session_info", "name" => name, "timestamp" => "2026-01-01T00:00:02Z"}
+        )
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.map_join("\n", &Jason.encode!/1)
 
-      assert {:messages, [notification], _state} = Pi.translate_inbound(line, state)
-      update = notification["params"]["update"]
-      text = hd(update["content"])["content"]["text"]
-      assert text =~ "hello world"
-      assert text =~ "stderr:"
-      assert text =~ "exit code: 0"
-    end
+    File.write!(file, lines <> "\n")
   end
 end

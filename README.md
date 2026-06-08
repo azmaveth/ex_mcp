@@ -217,11 +217,11 @@ Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control cod
 
 # Legacy Claude stream-json adapter remains available as ExMCP.ACP.Adapters.Claude.
 
-# Pi coding agent with full RPC support
+# Pi coding agent through the ACP-native adapter
 {:ok, client} = ExMCP.ACP.start_client(
   command: ["pi"],
   adapter: ExMCP.ACP.Adapters.Pi,
-  adapter_opts: [model: "anthropic/claude-sonnet-4"]
+  adapter_opts: [model: "anthropic/claude-sonnet-4", thinking_level: "medium"]
 )
 
 # Native Elixir ACP agent over stdio

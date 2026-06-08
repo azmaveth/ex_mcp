@@ -190,8 +190,9 @@ ACP sessions represent ongoing conversations with an agent.
 ExMCP.ACP.Client.cancel(client, sid)
 
 # Configure the agent at runtime
-ExMCP.ACP.Client.set_mode(client, sid, "code")
-ExMCP.ACP.Client.set_config_option(client, sid, "model", "claude-sonnet-4")
+ExMCP.ACP.Client.set_mode(client, sid, "high")
+ExMCP.ACP.Client.set_model(client, sid, "anthropic/claude-sonnet-4")
+ExMCP.ACP.Client.set_config_option(client, sid, "auto_retry", false)
 
 # Close a session and free agent-side resources (if supported)
 ExMCP.ACP.Client.close_session(client, sid)
@@ -497,17 +498,22 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 Translates between ACP and Pi's RPC NDJSON protocol.
 
 **Features:**
-- All 25 Pi RPC commands (prompt, steer, follow_up, compact, model switching, etc.)
-- All 14 Pi event types (text/thinking streaming, tool execution, compaction, retry)
-- Extension UI request/response bridge for dialog flows
-- Session persistence via `--session` flag
-- Session directory scanning for `session/list`
-- Enhanced tool result parsing (content blocks, diffs, stdout/stderr/exitCode)
+- ACP-native `session/new`, `session/load`, `session/list`, `session/prompt`, `session/cancel`, `session/set_model`, and `session/set_mode`
+- Terminal authentication method advertisement through `authMethods`
+- Pi session discovery from JSONL files plus a local ExMCP session map at `~/.ex_mcp/pi/session-map.json`
+- Prompt queuing while another Pi turn is active
+- Markdown slash commands loaded from `~/.pi/agent/prompts` and `<cwd>/.pi/prompts`
+- Built-in slash commands: `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/steering`, and `/follow-up`
+- Text/thinking streaming, tool-call streaming, tool execution lifecycle, compaction, retry, and extension UI metadata events
+- Enhanced tool result parsing with content blocks, structured edit diffs, stdout/stderr/exitCode formatting, and file locations
 - Image support with data-url prefix stripping
+- Resource links and embedded text resources folded into Pi prompt text; audio blocks are represented as unsupported markers
 
-**Config options:** `thinking_level`, `auto_compaction`, `auto_retry`, `steering_mode`, `follow_up_mode`
+**Modes:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh` map to Pi thinking levels through ACP `session/set_mode`.
 
-**Extended commands** (via `_ex_mcp.pi/*` ACP extension methods): steer, follow_up, compact, set_thinking_level, set_model, get_state, get_session_stats, switch_session, fork, bash, export_html, and more. The adapter still accepts deprecated `pi/*` aliases for older consumers, but only the underscore-prefixed methods are advertised.
+**Config options:** `auto_compaction`, `auto_retry`, `steering_mode`, `follow_up_mode`. Model changes use `ExMCP.ACP.Client.set_model/3` rather than a config option.
+
+**Breaking change:** Pi-specific `_ex_mcp.pi/*` and legacy `pi/*` extension methods are no longer implemented. Use the ACP session methods above or slash commands in prompts.
 
 ## Content Block Types
 

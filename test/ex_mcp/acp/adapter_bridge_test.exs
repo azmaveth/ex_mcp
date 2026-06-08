@@ -704,6 +704,30 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     end
   end
 
+  describe "session/set_model" do
+    test "returns method-not-found when adapter skips set_model" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      model_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/set_model",
+        "params" => %{"sessionId" => "s1", "modelId" => "gpt-5.1-codex"},
+        "id" => 56
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(model_msg))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+      assert msg["id"] == 56
+      assert msg["error"]["code"] == -32601
+      assert msg["error"]["message"] == "Method not found: session/set_model"
+
+      AdapterBridge.close(bridge)
+    end
+  end
+
   describe "session/set_config_option" do
     test "returns OK response" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])

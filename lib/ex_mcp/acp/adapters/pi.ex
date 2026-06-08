@@ -1,122 +1,54 @@
 defmodule ExMCP.ACP.Adapters.Pi do
   @moduledoc """
-  ACP adapter for the Pi coding agent (badlogic/pi-mono).
+  ACP adapter for the Pi coding agent.
 
-  Translates between ACP JSON-RPC and Pi's RPC NDJSON protocol.
-  Pi runs as a subprocess in `--mode rpc` and communicates via
-  JSONL on stdin/stdout.
-
-  ## Pi RPC Protocol
-
-  - **Input:** JSONL on stdin: `{"type":"prompt","id":"msg-1","message":"..."}`
-  - **Output:** JSONL on stdout with event types: message_update, agent_end,
-    tool_execution_start/update/end, auto_compaction_start/end, etc.
-
-  ## ACP Mapping
-
-  | Pi Event | ACP Message |
-  |---|---|
-  | `message_update` (text_delta) | `session/update` notification (text) |
-  | `message_update` (thinking_delta) | `session/update` (`agent_thought_chunk`) |
-  | `message_update` (tool_call) | `session/update` (`tool_call`) |
-  | `tool_execution_start/end` | `session/update` (`tool_call_update`) |
-  | `agent_end` | prompt response result |
-  | `auto_compaction_*` | `session/update` notification (status) |
-
-  ## Features
-
-  - Session persistence via `--session <path>` flag
-  - Thinking level control (off/minimal/low/medium/high/xhigh)
-  - Steering and follow-up message queuing
-  - Image support with data-url prefix stripping
-  - Tool execution streaming with progress updates
-  - Context compaction (manual and auto)
-  - Session forking and switching
-  - Model switching mid-session
-
-  ## Configuration
-
-      config :arbor_ai, :acp_providers, %{
-        pi: %{
-          transport_mod: ExMCP.ACP.AdapterTransport,
-          adapter: ExMCP.ACP.Adapters.Pi,
-          adapter_opts: [
-            cli_path: "pi",
-            model: "anthropic/claude-sonnet-4-20250514",
-            thinking_level: "medium",
-            session_path: "/path/to/session.jsonl"
-          ]
-        }
-      }
+  The adapter translates ACP JSON-RPC to Pi's RPC NDJSON protocol. Pi runs as a
+  persistent subprocess in `--mode rpc` and the adapter correlates Pi RPC
+  responses with ACP lifecycle/control requests.
   """
 
   @behaviour ExMCP.ACP.Adapter
 
   require Logger
 
-  alias ExMCP.ACP.{AdapterEvents, Envelope}
+  alias ExMCP.ACP.{AdapterEvents, Envelope, Types}
+  alias ExMCP.ACP.Adapters.Pi.{Prompt, SessionStore, SlashCommands, Tools}
 
   @thinking_levels ~w(off minimal low medium high xhigh)
-  @pi_extension_prefix "_ex_mcp.pi/"
-  @legacy_pi_prefix "pi/"
-  @pi_extension_commands ~w(
-    steer
-    follow_up
-    compact
-    set_thinking_level
-    set_model
-    get_state
-    get_session_stats
-    switch_session
-    fork
-    get_fork_messages
-    bash
-    export_html
-    set_session_name
-    get_commands
-    get_available_models
-    set_auto_compaction
-    get_messages
-    cycle_model
-    cycle_thinking_level
-    set_steering_mode
-    set_follow_up_mode
-    set_auto_retry
-    abort_retry
-    abort_bash
-    get_last_assistant_text
-    extension_ui_response
-  )
-  @pi_extension_methods Enum.map(@pi_extension_commands, &(@pi_extension_prefix <> &1))
+  @auth_method_id "pi_terminal_login"
+  @default_thinking_level "medium"
 
   defstruct [
     :session_id,
-    :model,
     :session_file,
     :session_dir,
+    :session_map_path,
     :cwd,
     :thinking_level,
+    :current_model_id,
+    opts: [],
+    available_models: [],
+    file_commands: [],
+    available_commands: [],
     text_acc: [],
-    pending_prompt_id: nil,
-    tool_calls: [],
+    pending_prompt: nil,
+    prompt_queue: :queue.new(),
     active_tool_executions: %{},
-    msg_counter: 0,
-    is_streaming: false,
-    opts: []
+    current_tool_calls: %{},
+    edit_snapshots: %{},
+    pending_controls: %{},
+    control_groups: %{},
+    msg_counter: 0
   ]
-
-  @default_session_dir Path.expand("~/.pi/sessions")
-
-  # ── Adapter Callbacks ──────────────────────────────────────────
 
   @impl true
   def init(opts) do
     {:ok,
      %__MODULE__{
        opts: opts,
-       model: Keyword.get(opts, :model),
-       thinking_level: Keyword.get(opts, :thinking_level, "medium"),
-       session_dir: Keyword.get(opts, :session_dir, @default_session_dir),
+       thinking_level: Keyword.get(opts, :thinking_level, @default_thinking_level),
+       session_dir: Keyword.get(opts, :session_dir),
+       session_map_path: Keyword.get(opts, :session_map_path, SessionStore.default_map_path()),
        cwd: Keyword.get(opts, :cwd)
      }}
   end
@@ -125,45 +57,38 @@ defmodule ExMCP.ACP.Adapters.Pi do
   def command(opts) do
     cli_path = Keyword.get(opts, :cli_path, "pi")
 
-    args = ["--mode", "rpc", "--no-themes"]
-
     args =
-      args
+      ["--mode", "rpc", "--no-themes"]
       |> append_opt(opts, :model, "--model")
       |> append_opt(opts, :cwd, "--cwd")
       |> append_opt(opts, :system_prompt, "--system-prompt")
       |> append_opt(opts, :session_path, "--session")
       |> append_opt(opts, :session_dir, "--session-dir")
 
-    # Disable session persistence if requested
-    args =
-      if Keyword.get(opts, :no_session, false) do
-        args ++ ["--no-session"]
-      else
-        args
-      end
-
+    args = if Keyword.get(opts, :no_session, false), do: args ++ ["--no-session"], else: args
     {cli_path, args}
   end
 
   @impl true
   def capabilities do
     %{
-      "promptCapabilities" => %{"image" => true},
+      "loadSession" => true,
+      "mcpCapabilities" => %{"http" => false, "sse" => false},
+      "promptCapabilities" => %{
+        "image" => true,
+        "audio" => false,
+        "embeddedContext" => System.get_env("PI_ACP_ENABLE_EMBEDDED_CONTEXT") == "true"
+      },
       "_meta" => %{
         "ex_mcp.pi" => %{
-          "methods" => @pi_extension_methods,
+          "sessionStore" => SessionStore.default_map_path(),
           "thinkingLevels" => @thinking_levels,
-          "supportedModes" => [
-            %{"id" => "code", "label" => "Code Mode"}
-          ],
           "features" => %{
-            "steering" => true,
-            "followUp" => true,
-            "compaction" => true,
-            "sessionForking" => true,
-            "modelSwitching" => true,
-            "bash" => true
+            "slashCommands" => true,
+            "terminalAuth" => true,
+            "modelSelection" => true,
+            "sessionLoad" => true,
+            "structuredDiffs" => true
           }
         }
       }
@@ -171,24 +96,38 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   @impl true
-  def modes do
+  def auth_methods(opts) do
+    command = Keyword.get(opts, :cli_path, "pi")
+
     [
-      %{"id" => "code", "name" => "Code Mode", "description" => "Default coding mode"}
+      %{
+        "id" => @auth_method_id,
+        "name" => "Launch pi in the terminal",
+        "description" => "Start pi interactively to configure API keys or login",
+        "type" => "terminal",
+        "args" => [],
+        "env" => %{},
+        "_meta" => %{
+          "terminal-auth" => %{
+            "command" => command,
+            "args" => [],
+            "label" => "Launch pi"
+          }
+        }
+      }
     ]
+  end
+
+  @impl true
+  def modes do
+    Enum.map(@thinking_levels, fn level ->
+      %{"id" => level, "name" => "Thinking: #{level}", "description" => nil}
+    end)
   end
 
   @impl true
   def config_options do
     [
-      %{
-        "id" => "thinking_level",
-        "name" => "Thinking Level",
-        "category" => "thought_level",
-        "description" => "Reasoning depth",
-        "type" => "select",
-        "currentValue" => "medium",
-        "options" => Enum.map(@thinking_levels, &%{"value" => &1, "name" => &1})
-      },
       %{
         "id" => "auto_compaction",
         "name" => "Auto Compaction",
@@ -229,293 +168,136 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   @impl true
-  def list_sessions(_params, state) do
-    sessions = scan_session_dir(state.session_dir, state.cwd)
+  def list_sessions(params, state) do
+    cursor = params["cursor"] || "0"
+    offset = parse_cursor(cursor)
+    page_size = 50
+    cwd = params["cwd"]
+
+    sessions =
+      [session_dir: state.session_dir]
+      |> SessionStore.list_pi_sessions()
+      |> filter_sessions_by_cwd(cwd)
+      |> Enum.slice(offset, page_size)
+      |> Enum.map(&Map.drop(&1, ["sessionFile"]))
+
     {:ok, sessions, state}
   end
 
-  # ── Outbound: ACP → Pi RPC ────────────────────────────────────
-
   @impl true
-  def translate_outbound(%{"method" => "initialize"}, state) do
-    {:ok, :skip, state}
+  def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+  def translate_outbound(%{"method" => "authenticate"}, state), do: {:reply, %{}, state}
+
+  def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
+    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
+
+    case require_absolute_cwd(cwd) do
+      :ok -> start_session_new(acp_id, cwd, state)
+      {:error, reason} -> {:error, reason, state}
+    end
   end
 
-  def translate_outbound(%{"method" => "session/new", "id" => _id}, state) do
-    # Send new_session to Pi to start fresh
-    rpc_msg = %{"type" => "new_session"}
-    data = encode_rpc(rpc_msg)
-    {:ok, data, state}
-  end
+  def translate_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state) do
+    session_id = params["sessionId"]
+    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
 
-  def translate_outbound(%{"method" => "session/load"}, state) do
-    # Session loading is handled via --session flag at startup
-    {:ok, :skip, state}
+    with :ok <- require_absolute_cwd(cwd),
+         session_file when is_binary(session_file) <- find_session_file(session_id, state) do
+      file_commands = SlashCommands.load(cwd)
+
+      {switch_id, switch_session} = rpc("switch_session", %{"sessionPath" => session_file})
+      {messages_id, get_messages} = rpc("get_messages")
+      {state_id, get_state} = rpc("get_state")
+      {models_id, get_models} = rpc("get_available_models")
+      {commands_id, get_commands} = rpc("get_commands")
+
+      group = %{
+        type: :session_load,
+        acp_id: acp_id,
+        session_id: session_id,
+        cwd: cwd,
+        session_file: session_file,
+        file_commands: file_commands,
+        refs: MapSet.new([switch_id, messages_id, state_id, models_id, commands_id]),
+        responses: %{}
+      }
+
+      state =
+        state
+        |> put_group(group)
+        |> put_control(switch_id, :switch, group)
+        |> put_control(messages_id, :messages, group)
+        |> put_control(state_id, :state, group)
+        |> put_control(models_id, :models, group)
+        |> put_control(commands_id, :commands, group)
+
+      {:ok, encode_many([switch_session, get_messages, get_state, get_models, get_commands]),
+       state}
+    else
+      {:error, reason} -> {:error, reason, state}
+      _ -> {:error, "Unknown sessionId: #{session_id}", state}
+    end
   end
 
   def translate_outbound(
-        %{"method" => "session/prompt", "id" => id, "params" => params},
+        %{"method" => "session/prompt", "id" => acp_id, "params" => params},
         state
       ) do
-    content = extract_prompt_text(params["prompt"])
-    msg_id = "msg-#{state.msg_counter + 1}"
-
-    rpc_msg = %{
-      "type" => "prompt",
-      "id" => msg_id,
-      "message" => content
-    }
-
-    # Add images if present (with data-url stripping)
-    images = extract_images(params["prompt"])
-    rpc_msg = if images != [], do: Map.put(rpc_msg, "images", images), else: rpc_msg
-
-    # Support streaming behavior (steer vs follow-up)
-    rpc_msg =
-      case params["streamingBehavior"] do
-        nil -> rpc_msg
-        behavior -> Map.put(rpc_msg, "streamingBehavior", behavior)
-      end
-
-    data = encode_rpc(rpc_msg)
-
-    state = %{
-      state
-      | pending_prompt_id: id,
-        msg_counter: state.msg_counter + 1,
-        text_acc: [],
-        tool_calls: [],
-        is_streaming: true
-    }
-
-    {:ok, data, state}
+    {message, images} = Prompt.to_pi_message(params["prompt"])
+    translate_prompt_message(message, images, acp_id, params, state)
   end
 
   def translate_outbound(%{"method" => "session/cancel"}, state) do
-    # Send abort to Pi
-    rpc_msg = %{"type" => "abort"}
-    data = encode_rpc(rpc_msg)
-    {:ok, data, state}
+    had_queued = not :queue.is_empty(state.prompt_queue)
+    {queued_responses, state} = cancel_queued_prompts(state)
+    state = mark_pending_cancel_requested(state)
+    messages = queued_responses ++ queue_cleared_messages(state, had_queued)
+    {:messages_and_write, messages, encode_rpc(%{"type" => "abort"}), state}
   end
 
-  # ACP spec: session/set_mode — Pi only has one mode (code), so this is a no-op
-  def translate_outbound(%{"method" => "session/set_mode"}, state) do
-    {:ok, :skip, state}
+  def translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
+    mode = params["modeId"]
+
+    if mode in @thinking_levels do
+      state = %{state | thinking_level: mode}
+
+      update =
+        AdapterEvents.session_update(params["sessionId"] || state.session_id, %{
+          "sessionUpdate" => "current_mode_update",
+          "currentModeId" => mode
+        })
+
+      {:messages_and_write, [update],
+       encode_rpc(%{"type" => "set_thinking_level", "level" => mode}), state}
+    else
+      {:error, "Unknown modeId: #{inspect(mode)}", state}
+    end
   end
 
-  # ACP spec: session/set_config_option — route to appropriate Pi RPC command
-  def translate_outbound(
-        %{"method" => "session/set_config_option", "params" => params},
-        state
-      ) do
+  def translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
+    case resolve_model(params["modelId"], state.available_models) do
+      {:ok, provider, model_id, current_model_id} ->
+        rpc_msg = %{"type" => "set_model", "provider" => provider, "modelId" => model_id}
+        {:ok, encode_rpc(rpc_msg), %{state | current_model_id: current_model_id}}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  def translate_outbound(%{"method" => "session/set_config_option", "params" => params}, state) do
     translate_config_option(params["configId"], params["value"], state)
   end
 
-  # ── Extended Pi Commands via ACP Extensions ───────────────────
-  # These map ACP extension methods to Pi RPC commands.
-
-  def translate_outbound(
-        %{"method" => @pi_extension_prefix <> command} = msg,
-        state
-      )
-      when command in @pi_extension_commands do
-    translate_outbound(%{msg | "method" => @legacy_pi_prefix <> command}, state)
-  end
-
-  def translate_outbound(%{"method" => "pi/steer", "params" => params}, state) do
-    rpc_msg = %{"type" => "steer", "message" => params["message"]}
-
-    rpc_msg =
-      case params["images"] do
-        nil -> rpc_msg
-        images -> Map.put(rpc_msg, "images", normalize_images(images))
-      end
-
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/follow_up", "params" => params}, state) do
-    rpc_msg = %{"type" => "follow_up", "message" => params["message"]}
-
-    rpc_msg =
-      case params["images"] do
-        nil -> rpc_msg
-        images -> Map.put(rpc_msg, "images", normalize_images(images))
-      end
-
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/compact", "params" => params}, state) do
-    rpc_msg = %{"type" => "compact"}
-
-    rpc_msg =
-      case params["customInstructions"] do
-        nil -> rpc_msg
-        instr -> Map.put(rpc_msg, "customInstructions", instr)
-      end
-
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/compact"}, state) do
-    {:ok, encode_rpc(%{"type" => "compact"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/set_thinking_level", "params" => params}, state) do
-    level = params["level"]
-
-    if level in @thinking_levels do
-      rpc_msg = %{"type" => "set_thinking_level", "level" => level}
-      state = %{state | thinking_level: level}
-      {:ok, encode_rpc(rpc_msg), state}
+  def translate_outbound(%{"method" => method}, state) do
+    if String.starts_with?(method, "_ex_mcp.pi/") or String.starts_with?(method, "pi/") do
+      {:error, "Pi extension methods were removed; use ACP session methods or slash commands",
+       state}
     else
       {:ok, :skip, state}
     end
   end
-
-  def translate_outbound(%{"method" => "pi/set_model", "params" => params}, state) do
-    rpc_msg = %{
-      "type" => "set_model",
-      "provider" => params["provider"],
-      "modelId" => params["modelId"]
-    }
-
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/get_state"}, state) do
-    {:ok, encode_rpc(%{"type" => "get_state"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/get_session_stats"}, state) do
-    {:ok, encode_rpc(%{"type" => "get_session_stats"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/switch_session", "params" => params}, state) do
-    rpc_msg = %{"type" => "switch_session", "sessionPath" => params["sessionPath"]}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/fork", "params" => params}, state) do
-    rpc_msg = %{"type" => "fork", "entryId" => params["entryId"]}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/get_fork_messages"}, state) do
-    {:ok, encode_rpc(%{"type" => "get_fork_messages"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/bash", "params" => params}, state) do
-    rpc_msg = %{"type" => "bash", "command" => params["command"]}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/export_html", "params" => params}, state) do
-    rpc_msg = %{"type" => "export_html"}
-
-    rpc_msg =
-      case params["outputPath"] do
-        nil -> rpc_msg
-        path -> Map.put(rpc_msg, "outputPath", path)
-      end
-
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/export_html"}, state) do
-    {:ok, encode_rpc(%{"type" => "export_html"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/set_session_name", "params" => params}, state) do
-    rpc_msg = %{"type" => "set_session_name", "name" => params["name"]}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/get_commands"}, state) do
-    {:ok, encode_rpc(%{"type" => "get_commands"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/get_available_models"}, state) do
-    {:ok, encode_rpc(%{"type" => "get_available_models"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/set_auto_compaction", "params" => params}, state) do
-    rpc_msg = %{"type" => "set_auto_compaction", "enabled" => params["enabled"]}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/get_messages"}, state) do
-    {:ok, encode_rpc(%{"type" => "get_messages"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/cycle_model"}, state) do
-    {:ok, encode_rpc(%{"type" => "cycle_model"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/cycle_thinking_level"}, state) do
-    {:ok, encode_rpc(%{"type" => "cycle_thinking_level"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/set_steering_mode", "params" => params}, state) do
-    rpc_msg = %{"type" => "set_steering_mode", "mode" => params["mode"]}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/set_follow_up_mode", "params" => params}, state) do
-    rpc_msg = %{"type" => "set_follow_up_mode", "mode" => params["mode"]}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/set_auto_retry", "params" => params}, state) do
-    rpc_msg = %{"type" => "set_auto_retry", "enabled" => params["enabled"]}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/abort_retry"}, state) do
-    {:ok, encode_rpc(%{"type" => "abort_retry"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/abort_bash"}, state) do
-    {:ok, encode_rpc(%{"type" => "abort_bash"}), state}
-  end
-
-  def translate_outbound(%{"method" => "pi/get_last_assistant_text"}, state) do
-    {:ok, encode_rpc(%{"type" => "get_last_assistant_text"}), state}
-  end
-
-  # Extension UI response — CRITICAL: forwards dialog responses back to Pi
-  # When Pi sends extension_ui_request (select/confirm/input/editor),
-  # the host must send back extension_ui_response via this method.
-  def translate_outbound(
-        %{"method" => "pi/extension_ui_response", "params" => params},
-        state
-      ) do
-    rpc_msg = %{"type" => "extension_ui_response", "id" => params["id"]}
-
-    rpc_msg =
-      cond do
-        Map.has_key?(params, "value") ->
-          Map.put(rpc_msg, "value", params["value"])
-
-        Map.has_key?(params, "confirmed") ->
-          Map.put(rpc_msg, "confirmed", params["confirmed"])
-
-        Map.has_key?(params, "cancelled") ->
-          Map.put(rpc_msg, "cancelled", true)
-
-        true ->
-          Map.put(rpc_msg, "cancelled", true)
-      end
-
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  def translate_outbound(_msg, state) do
-    {:ok, :skip, state}
-  end
-
-  # ── Inbound: Pi RPC → ACP ─────────────────────────────────────
 
   @impl true
   def translate_inbound(line, state) do
@@ -525,19 +307,349 @@ defmodule ExMCP.ACP.Adapters.Pi do
       {:skip, state}
     else
       case Jason.decode(trimmed) do
-        {:ok, event} ->
-          process_event(event, state)
-
-        {:error, _reason} ->
-          Logger.debug("[Pi Adapter] Non-JSON line: #{String.slice(trimmed, 0..100)}")
-          {:skip, state}
+        {:ok, event} -> process_event(event, state)
+        {:error, _reason} -> {:skip, state}
       end
     end
   end
 
-  # ── Event Processing ───────────────────────────────────────────
+  defp translate_prompt_message(message, images, acp_id, params, state) do
+    slash = if images == [], do: SlashCommands.parse(message), else: :error
 
-  # Text streaming — message_update with text_delta
+    cond do
+      state.pending_prompt ->
+        queued = %{acp_id: acp_id, message: message, images: images, params: params}
+        queue = :queue.in(queued, state.prompt_queue)
+
+        notice =
+          AdapterEvents.session_update(params["sessionId"] || state.session_id, %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{
+              "type" => "text",
+              "text" => "Queued message (position #{:queue.len(queue)})."
+            }
+          })
+
+        info =
+          AdapterEvents.session_update(params["sessionId"] || state.session_id, %{
+            "sessionUpdate" => "session_info_update",
+            "_meta" => %{
+              "ex_mcp" => %{"pi" => %{"queueDepth" => :queue.len(queue), "running" => true}}
+            }
+          })
+
+        {:messages, [notice, info], %{state | prompt_queue: queue}}
+
+      match?({:ok, _, _}, slash) ->
+        translate_slash_command(slash, acp_id, params, state)
+
+      true ->
+        start_prompt(acp_id, message, images, params, state)
+    end
+  end
+
+  defp start_prompt(acp_id, message, images, params, state) do
+    msg_id = "msg-#{state.msg_counter + 1}"
+
+    rpc_msg =
+      %{"type" => "prompt", "id" => msg_id, "message" => message}
+      |> maybe_put_non_empty("images", images)
+      |> maybe_put_present("streamingBehavior", params["streamingBehavior"])
+
+    state = %{
+      state
+      | session_id: params["sessionId"] || state.session_id,
+        pending_prompt: %{acp_id: acp_id, msg_id: msg_id, cancel_requested: false},
+        text_acc: [],
+        msg_counter: state.msg_counter + 1
+    }
+
+    {:ok, encode_rpc(rpc_msg), state}
+  end
+
+  defp start_session_new(acp_id, cwd, state) do
+    file_commands = SlashCommands.load(cwd)
+
+    {new_id, new_session} = rpc("new_session")
+    {state_id, get_state} = rpc("get_state")
+    {models_id, get_models} = rpc("get_available_models")
+    {commands_id, get_commands} = rpc("get_commands")
+
+    group = %{
+      type: :session_new,
+      acp_id: acp_id,
+      cwd: cwd,
+      file_commands: file_commands,
+      refs: MapSet.new([new_id, state_id, models_id, commands_id]),
+      responses: %{}
+    }
+
+    state =
+      state
+      |> put_group(group)
+      |> put_control(new_id, :new_session, group)
+      |> put_control(state_id, :state, group)
+      |> put_control(models_id, :models, group)
+      |> put_control(commands_id, :commands, group)
+
+    {:ok, encode_many([new_session, get_state, get_models, get_commands]), state}
+  end
+
+  defp translate_slash_command({:ok, name, args}, acp_id, params, state) do
+    context = %{
+      acp_id: acp_id,
+      params: params,
+      session_id: params["sessionId"] || state.session_id
+    }
+
+    route_slash_command(name, args, context, state)
+  end
+
+  defp route_slash_command(name, args, context, state)
+       when name in ["compact", "autocompact", "export", "session", "name"] do
+    case name do
+      "compact" -> slash_compact(args, context, state)
+      "autocompact" -> slash_autocompact(args, context, state)
+      "export" -> slash_export(context, state)
+      "session" -> slash_session(context, state)
+      "name" -> slash_name(args, context, state)
+    end
+  end
+
+  defp route_slash_command(name, args, context, state)
+       when name in ["steering", "follow-up", "model", "thinking"] do
+    case name do
+      "steering" -> slash_steering(args, context, state)
+      "follow-up" -> slash_follow_up(args, context, state)
+      "model" -> slash_model_notice(context, state)
+      "thinking" -> slash_thinking_notice(context, state)
+    end
+  end
+
+  defp route_slash_command(name, args, context, state) do
+    slash_file_or_prompt(name, args, context, state)
+  end
+
+  defp slash_compact(args, context, state) do
+    custom = args |> Enum.join(" ") |> blank_to_nil()
+
+    start_control_command(
+      :slash_compact,
+      context.acp_id,
+      context.session_id,
+      "compact",
+      %{"customInstructions" => custom},
+      state
+    )
+  end
+
+  defp slash_autocompact([mode | _], context, state)
+       when mode in ["on", "true", "enable", "enabled"] do
+    start_control_command(
+      :slash_autocompact_on,
+      context.acp_id,
+      context.session_id,
+      "set_auto_compaction",
+      %{"enabled" => true},
+      state
+    )
+  end
+
+  defp slash_autocompact([mode | _], context, state)
+       when mode in ["off", "false", "disable", "disabled"] do
+    start_control_command(
+      :slash_autocompact_off,
+      context.acp_id,
+      context.session_id,
+      "set_auto_compaction",
+      %{"enabled" => false},
+      state
+    )
+  end
+
+  defp slash_autocompact(_args, context, state) do
+    start_control_command(
+      :slash_autocompact_toggle_get,
+      context.acp_id,
+      context.session_id,
+      "get_state",
+      %{},
+      state
+    )
+  end
+
+  defp slash_export(context, state) do
+    safe_id = (context.session_id || "default") |> String.replace(~r/[^A-Za-z0-9_-]/, "_")
+    output_path = Path.join(state.cwd || File.cwd!(), "pi-session-#{safe_id}.html")
+
+    start_control_command(
+      :slash_export,
+      context.acp_id,
+      context.session_id,
+      "export_html",
+      %{"outputPath" => output_path},
+      state
+    )
+  end
+
+  defp slash_session(context, state) do
+    start_control_command(
+      :slash_session,
+      context.acp_id,
+      context.session_id,
+      "get_session_stats",
+      %{},
+      state
+    )
+  end
+
+  defp slash_name([], context, state) do
+    prompt_message(context.acp_id, context.session_id, "Usage: /name <name>", state)
+  end
+
+  defp slash_name(name_parts, context, state) do
+    name_value = Enum.join(name_parts, " ")
+
+    start_control_command(
+      :slash_name,
+      context.acp_id,
+      context.session_id,
+      "set_session_name",
+      %{"name" => name_value},
+      state
+    )
+  end
+
+  defp slash_steering([], context, state) do
+    start_control_command(
+      :slash_steering_get,
+      context.acp_id,
+      context.session_id,
+      "get_state",
+      %{},
+      state
+    )
+  end
+
+  defp slash_steering([mode | _], context, state) when mode in ["all", "one-at-a-time"] do
+    start_control_command(
+      :slash_steering_set,
+      context.acp_id,
+      context.session_id,
+      "set_steering_mode",
+      %{"mode" => mode},
+      state
+    )
+  end
+
+  defp slash_steering(_args, context, state) do
+    prompt_message(
+      context.acp_id,
+      context.session_id,
+      "Usage: /steering all | /steering one-at-a-time",
+      state
+    )
+  end
+
+  defp slash_follow_up([], context, state) do
+    start_control_command(
+      :slash_follow_up_get,
+      context.acp_id,
+      context.session_id,
+      "get_state",
+      %{},
+      state
+    )
+  end
+
+  defp slash_follow_up([mode | _], context, state) when mode in ["all", "one-at-a-time"] do
+    start_control_command(
+      :slash_follow_up_set,
+      context.acp_id,
+      context.session_id,
+      "set_follow_up_mode",
+      %{"mode" => mode},
+      state
+    )
+  end
+
+  defp slash_follow_up(_args, context, state) do
+    prompt_message(
+      context.acp_id,
+      context.session_id,
+      "Usage: /follow-up all | /follow-up one-at-a-time",
+      state
+    )
+  end
+
+  defp slash_model_notice(context, state) do
+    prompt_message(
+      context.acp_id,
+      context.session_id,
+      "Use the ACP model selector to change models.",
+      state
+    )
+  end
+
+  defp slash_thinking_notice(context, state) do
+    prompt_message(
+      context.acp_id,
+      context.session_id,
+      "Use the ACP mode selector to change thinking level.",
+      state
+    )
+  end
+
+  defp slash_file_or_prompt(name, args, context, state) do
+    case SlashCommands.expand_file_command(name, args, state.file_commands) do
+      nil ->
+        start_prompt(context.acp_id, "/" <> name <> slash_args(args), [], context.params, state)
+
+      expanded ->
+        start_prompt(context.acp_id, expanded, [], context.params, state)
+    end
+  end
+
+  defp start_control_command(type, acp_id, session_id, command, params, state) do
+    {rpc_id, rpc_msg} = rpc(command, compact(params))
+
+    group = %{
+      type: type,
+      acp_id: acp_id,
+      session_id: session_id,
+      refs: MapSet.new([rpc_id]),
+      responses: %{}
+    }
+
+    state =
+      state
+      |> put_group(group)
+      |> put_control(rpc_id, :result, group)
+
+    {:ok, encode_rpc(rpc_msg), state}
+  end
+
+  defp prompt_message(_acp_id, session_id, text, state) do
+    message =
+      AdapterEvents.session_update(session_id, %{
+        "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => text}
+      })
+
+    {:messages_and_reply, [message], %{"stopReason" => "end_turn"}, state}
+  end
+
+  defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
+    case Map.pop(state.pending_controls, id) do
+      {nil, pending_controls} ->
+        process_untracked_response(event, %{state | pending_controls: pending_controls})
+
+      {control, pending_controls} ->
+        state = %{state | pending_controls: pending_controls}
+        handle_control_response(control, event, state)
+    end
+  end
+
   defp process_event(
          %{
            "type" => "message_update",
@@ -548,7 +660,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     state = %{state | text_acc: [delta | state.text_acc]}
 
     notification =
-      build_session_update(state, %{
+      AdapterEvents.session_update(state.session_id, %{
         "sessionUpdate" => "agent_message_chunk",
         "content" => %{"type" => "text", "text" => delta}
       })
@@ -556,7 +668,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, [notification], state}
   end
 
-  # Thinking streaming — message_update with thinking_delta
   defp process_event(
          %{
            "type" => "message_update",
@@ -565,7 +676,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
          state
        ) do
     notification =
-      build_session_update(state, %{
+      AdapterEvents.session_update(state.session_id, %{
         "sessionUpdate" => "agent_thought_chunk",
         "content" => %{"type" => "text", "text" => delta}
       })
@@ -573,53 +684,23 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, [notification], state}
   end
 
-  # Tool call start — message_update with toolcall_end (contains full tool call)
   defp process_event(
          %{
            "type" => "message_update",
-           "assistantMessageEvent" => %{"type" => "toolcall_end"} = tool_event
+           "assistantMessageEvent" => %{"type" => type} = tool_event
          },
          state
-       ) do
-    tool_call = tool_event["toolCall"] || %{}
+       )
+       when type in ["toolcall_start", "toolcall_delta", "toolcall_end", "tool_call"] do
+    {notification, state} = tool_call_stream_update(tool_event, state)
 
-    notification =
-      build_session_update(state, %{
-        "sessionUpdate" => "tool_call",
-        "toolCallId" => tool_call["id"] || "tc-#{state.msg_counter}",
-        "title" => tool_call["name"] || tool_event["name"] || "Tool call",
-        "kind" => "other",
-        "status" => "pending",
-        "rawInput" => tool_call["arguments"] || tool_call["args"] || %{}
-      })
-
-    state = %{state | tool_calls: [tool_call | state.tool_calls]}
-    {:messages, [notification], state}
+    if notification do
+      {:messages, [notification], state}
+    else
+      {:skip, state}
+    end
   end
 
-  # Tool call — message_update with tool_call type (legacy format)
-  defp process_event(
-         %{
-           "type" => "message_update",
-           "assistantMessageEvent" => %{"type" => "tool_call"} = tool_event
-         },
-         state
-       ) do
-    notification =
-      build_session_update(state, %{
-        "sessionUpdate" => "tool_call",
-        "toolCallId" => tool_event["id"] || "tc-#{state.msg_counter}",
-        "title" => tool_event["name"] || "Tool call",
-        "kind" => "other",
-        "status" => "pending",
-        "rawInput" => tool_event["arguments"] || tool_event["args"] || %{}
-      })
-
-    state = %{state | tool_calls: [tool_event | state.tool_calls]}
-    {:messages, [notification], state}
-  end
-
-  # Tool execution start — emit tool execution notification
   defp process_event(
          %{
            "type" => "tool_execution_start",
@@ -628,297 +709,880 @@ defmodule ExMCP.ACP.Adapters.Pi do
          } = event,
          state
        ) do
+    args = event["args"] || %{}
+    {line, state} = maybe_snapshot_edit(tool_call_id, tool_name, args, state)
+    locations = Tools.locations(args, state.cwd, line)
+
+    update = %{
+      "toolCallId" => tool_call_id,
+      "title" => tool_name,
+      "kind" => Tools.kind(tool_name),
+      "status" => "in_progress",
+      "locations" => locations,
+      "rawInput" => args
+    }
+
+    {session_update, current_tool_calls} =
+      if Map.has_key?(state.current_tool_calls, tool_call_id) do
+        {Map.put(update, "sessionUpdate", "tool_call_update"),
+         Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
+      else
+        {Map.put(update, "sessionUpdate", "tool_call"),
+         Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
+      end
+
+    notification = AdapterEvents.session_update(state.session_id, compact(session_update))
+
     state = %{
       state
       | active_tool_executions:
-          Map.put(state.active_tool_executions, tool_call_id, %{
-            name: tool_name,
-            args: event["args"]
-          })
+          Map.put(state.active_tool_executions, tool_call_id, %{name: tool_name, args: args}),
+        current_tool_calls: current_tool_calls
     }
-
-    notification =
-      build_session_update(state, %{
-        "sessionUpdate" => "tool_call_update",
-        "status" => "in_progress",
-        "toolCallId" => tool_call_id,
-        "title" => tool_name,
-        "kind" => "execute",
-        "rawInput" => event["args"]
-      })
 
     {:messages, [notification], state}
   end
 
-  # Tool execution progress update
   defp process_event(
          %{
            "type" => "tool_execution_update",
-           "toolCallId" => tool_call_id,
-           "toolName" => tool_name
+           "toolCallId" => tool_call_id
          } = event,
          state
        ) do
-    partial = event["partialResult"]
-    content = extract_tool_result_text(partial)
+    text = Tools.result_text(event["partialResult"])
 
     notification =
-      build_session_update(state, %{
+      AdapterEvents.session_update(state.session_id, %{
         "sessionUpdate" => "tool_call_update",
-        "status" => "in_progress",
         "toolCallId" => tool_call_id,
-        "title" => tool_name,
-        "content" => text_tool_content(content)
+        "status" => "in_progress",
+        "content" => Tools.text_content(text),
+        "rawOutput" => event["partialResult"]
       })
 
-    {:messages, [notification], state}
+    {:messages, [compact(notification)], state}
   end
 
-  # Tool execution end — emit tool result
   defp process_event(
          %{
            "type" => "tool_execution_end",
-           "toolCallId" => tool_call_id,
-           "toolName" => tool_name
+           "toolCallId" => tool_call_id
          } = event,
          state
        ) do
-    state = %{
-      state
-      | active_tool_executions: Map.delete(state.active_tool_executions, tool_call_id)
-    }
-
     result = event["result"]
-    content = extract_tool_result_text(result)
+    is_error = event["isError"] == true
+    text = Tools.result_text(result)
+    {content, state} = tool_result_content(tool_call_id, text, is_error, state)
 
     notification =
-      build_session_update(state, %{
+      AdapterEvents.session_update(state.session_id, %{
         "sessionUpdate" => "tool_call_update",
         "toolCallId" => tool_call_id,
-        "title" => tool_name,
-        "status" => if(event["isError"], do: "failed", else: "completed"),
-        "content" => text_tool_content(content),
+        "status" => if(is_error, do: "failed", else: "completed"),
+        "content" => content,
         "rawOutput" => result
       })
 
-    {:messages, [notification], state}
-  end
-
-  # Other message_update events (text_start, text_end, toolcall_start, toolcall_delta, etc.)
-  defp process_event(%{"type" => "message_update"}, state) do
-    {:skip, state}
-  end
-
-  # Agent end — conversation complete, send final response
-  defp process_event(%{"type" => "agent_end"} = event, state) do
-    text = state.text_acc |> Enum.reverse() |> Enum.join("")
-
-    # Extract usage from the last assistant message
-    messages = Map.get(event, "messages", [])
-
-    usage =
-      messages
-      |> Enum.filter(fn m -> m["role"] == "assistant" end)
-      |> List.last()
-      |> case do
-        %{"usage" => u} -> u
-        _ -> %{}
-      end
-
-    response =
-      Envelope.response(state.pending_prompt_id, %{
-        "stopReason" => "end_turn",
-        "usage" => %{
-          "inputTokens" => usage["input"] || 0,
-          "outputTokens" => usage["output"] || 0,
-          "cacheReadTokens" => usage["cacheRead"] || 0,
-          "cacheWriteTokens" => usage["cacheWrite"] || 0,
-          "cost" => get_in(usage, ["cost", "total"])
-        },
-        "_meta" => %{
-          "ex_mcp" => %{
-            "text" => text,
-            "sessionId" => state.session_id || "default"
-          }
-        }
-      })
-
     state = %{
       state
-      | text_acc: [],
-        pending_prompt_id: nil,
-        tool_calls: [],
-        is_streaming: false
+      | active_tool_executions: Map.delete(state.active_tool_executions, tool_call_id),
+        current_tool_calls: Map.delete(state.current_tool_calls, tool_call_id)
     }
 
-    {:messages, [response], state}
+    {:messages, [compact(notification)], state}
   end
 
-  # Auto-compaction events — notify via session/update
-  defp process_event(%{"type" => "auto_compaction_start"} = event, state) do
-    notification =
-      build_session_update(state, %{
-        "sessionUpdate" => "session_info_update",
-        "_meta" => %{
-          "ex_mcp" => %{
-            "adapter" => "pi",
-            "status" => "compacting",
-            "reason" => event["reason"]
-          }
-        }
+  defp process_event(%{"type" => "agent_end"} = event, state) do
+    text = state.text_acc |> Enum.reverse() |> Enum.join("")
+    usage = usage_from_agent_end(event)
+
+    stop_reason =
+      if state.pending_prompt && state.pending_prompt.cancel_requested,
+        do: "cancelled",
+        else: "end_turn"
+
+    acp_id = get_in(state.pending_prompt, [:acp_id])
+
+    response =
+      Envelope.response(acp_id, %{
+        "stopReason" => stop_reason,
+        "usage" => usage,
+        "_meta" => %{"ex_mcp" => %{"text" => text, "sessionId" => state.session_id || "default"}}
       })
 
-    {:messages, [notification], state}
-  end
+    state = %{state | pending_prompt: nil, text_acc: []}
 
-  defp process_event(%{"type" => "auto_compaction_end"} = event, state) do
-    notification =
-      build_session_update(state, %{
-        "sessionUpdate" => "session_info_update",
-        "_meta" => %{
-          "ex_mcp" => %{
-            "adapter" => "pi",
-            "status" => "compaction_complete",
-            "result" => event["result"],
-            "aborted" => event["aborted"]
-          }
-        }
-      })
+    case start_next_queued_prompt(state) do
+      {:ok, messages, write_data, state} ->
+        {:messages_and_write, [response | messages], write_data, state}
 
-    {:messages, [notification], state}
-  end
-
-  # Auto-retry events
-  defp process_event(%{"type" => "auto_retry_start"} = event, state) do
-    notification =
-      build_session_update(state, %{
-        "sessionUpdate" => "session_info_update",
-        "_meta" => %{
-          "ex_mcp" => %{
-            "adapter" => "pi",
-            "status" => "retrying",
-            "attempt" => event["attempt"],
-            "maxAttempts" => event["maxAttempts"],
-            "errorMessage" => event["errorMessage"]
-          }
-        }
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp process_event(%{"type" => "auto_retry_end"} = event, state) do
-    notification =
-      build_session_update(state, %{
-        "sessionUpdate" => "session_info_update",
-        "_meta" => %{
-          "ex_mcp" => %{
-            "adapter" => "pi",
-            "status" => if(event["success"], do: "retry_succeeded", else: "retry_failed"),
-            "attempt" => event["attempt"]
-          }
-        }
-      })
-
-    {:messages, [notification], state}
-  end
-
-  # RPC response — pass through as-is for pi/* method responses
-  defp process_event(%{"type" => "response", "success" => true} = event, state) do
-    # Extract session info from get_state responses
-    state = maybe_update_session_info(event, state)
-
-    # If there's data in the response, wrap it as a notification
-    case event["data"] do
-      nil ->
-        {:skip, state}
-
-      data ->
-        notification =
-          build_session_update(state, %{
-            "sessionUpdate" => "session_info_update",
-            "_meta" => %{
-              "ex_mcp" => %{
-                "adapter" => "pi",
-                "rpcResponse" => %{"command" => event["command"], "data" => data}
-              }
-            }
-          })
-
-        {:messages, [notification], state}
+      :empty ->
+        {:messages, [response], state}
     end
   end
 
-  defp process_event(%{"type" => "response", "success" => false} = event, state) do
-    Logger.warning("[Pi Adapter] RPC command failed: #{inspect(event["error"])}")
-
+  defp process_event(%{"type" => type} = event, state)
+       when type in [
+              "auto_compaction_start",
+              "auto_compaction_end",
+              "auto_retry_start",
+              "auto_retry_end"
+            ] do
     notification =
-      build_session_update(state, %{
+      AdapterEvents.session_update(state.session_id, %{
         "sessionUpdate" => "session_info_update",
-        "_meta" => %{
-          "ex_mcp" => %{
-            "adapter" => "pi",
-            "rpcError" => %{"command" => event["command"], "error" => event["error"]}
-          }
-        }
+        "_meta" => %{"ex_mcp" => %{"pi" => event}}
       })
 
     {:messages, [notification], state}
   end
 
-  # Extension UI requests — pass through for the host to handle
   defp process_event(%{"type" => "extension_ui_request"} = event, state) do
     notification =
-      build_session_update(state, %{
+      AdapterEvents.session_update(state.session_id, %{
         "sessionUpdate" => "session_info_update",
-        "_meta" => %{
-          "ex_mcp" => %{"adapter" => "pi", "extensionUiRequest" => event}
-        }
+        "_meta" => %{"ex_mcp" => %{"pi" => %{"extensionUiRequest" => event}}}
       })
 
     {:messages, [notification], state}
   end
 
-  # Extension errors
-  defp process_event(%{"type" => "extension_error"} = event, state) do
-    Logger.warning("[Pi Adapter] Extension error: #{event["extensionPath"]} — #{event["error"]}")
-
-    {:skip, state}
-  end
-
-  # Lifecycle events — skip
   defp process_event(%{"type" => type}, state)
        when type in [
               "agent_start",
               "turn_start",
               "turn_end",
               "message_start",
-              "message_end"
+              "message_end",
+              "message_update"
             ] do
     {:skip, state}
   end
 
-  # Catch-all
   defp process_event(event, state) do
-    Logger.debug("[Pi Adapter] Unhandled: #{inspect(Map.get(event, "type"))}")
+    Logger.debug("[Pi Adapter] Unhandled event: #{inspect(event["type"])}")
     {:skip, state}
   end
 
-  # ── Helpers ────────────────────────────────────────────────────
+  defp handle_control_response(%{group_id: group_id, kind: kind, rpc_id: rpc_id}, event, state) do
+    group = Map.fetch!(state.control_groups, group_id)
 
-  defp encode_rpc(msg) do
-    Jason.encode!(msg) <> "\n"
+    cond do
+      event["success"] == false and auth_error?(event["error"]) ->
+        finish_control_error(group, auth_required_error(group.acp_id, state), state)
+
+      event["success"] == false ->
+        finish_control_error(
+          group,
+          Envelope.error(group.acp_id, -32_603, to_string(event["error"])),
+          state
+        )
+
+      true ->
+        group =
+          group
+          |> update_in([:responses], &Map.put(&1, kind, event["data"] || %{}))
+          |> update_in([:refs], &MapSet.delete(&1, rpc_id))
+
+        state = %{state | control_groups: Map.put(state.control_groups, group_id, group)}
+        maybe_finish_control_group(group, state)
+    end
   end
 
-  defp build_session_update(state, update) do
-    update =
-      case Map.pop(update, "type") do
-        {nil, update} -> update
-        {type, update} -> Map.put(update, "sessionUpdate", type)
+  defp maybe_finish_control_group(%{refs: refs} = group, state) do
+    if MapSet.size(refs) == 0 do
+      finish_control_group(group, state)
+    else
+      {:skip, state}
+    end
+  end
+
+  defp finish_control_group(%{type: :session_new} = group, state) do
+    state = delete_group(state, group)
+    state_data = group.responses[:state] || %{}
+    models_data = group.responses[:models] || %{}
+
+    if empty_models?(models_data) do
+      {:messages, [auth_required_error(group.acp_id, state)], state}
+    else
+      session_id = state_data["sessionId"] || "pi-#{System.unique_integer([:positive])}"
+      session_file = state_data["sessionFile"]
+      cwd = state_data["cwd"] || group.cwd
+      models = model_state(models_data, state_data)
+      modes = thinking_state(state_data)
+      commands = command_state(group.responses[:commands], group.file_commands)
+
+      maybe_store_session(state.session_map_path, session_id, cwd, session_file)
+
+      state = %{
+        state
+        | session_id: session_id,
+          session_file: session_file,
+          cwd: cwd,
+          thinking_level: modes["currentModeId"],
+          current_model_id: get_in(models, ["currentModelId"]),
+          available_models: Map.get(models || %{}, "availableModels", []),
+          file_commands: group.file_commands,
+          available_commands: commands
+      }
+
+      response =
+        Envelope.response(group.acp_id, %{
+          "sessionId" => session_id,
+          "models" => models,
+          "modes" => modes,
+          "_meta" => %{"ex_mcp" => %{"pi" => compact(%{"sessionFile" => session_file})}}
+        })
+
+      commands_update = available_commands_update(session_id, commands)
+      {:messages, [response, commands_update], state}
+    end
+  end
+
+  defp finish_control_group(%{type: :session_load} = group, state) do
+    state = delete_group(state, group)
+    state_data = group.responses[:state] || %{}
+    models_data = group.responses[:models] || %{}
+    session_id = group.session_id
+    cwd = state_data["cwd"] || group.cwd
+    session_file = state_data["sessionFile"] || group.session_file
+    models = model_state(models_data, state_data)
+    modes = thinking_state(state_data)
+    commands = command_state(group.responses[:commands], group.file_commands)
+
+    maybe_store_session(state.session_map_path, session_id, cwd, session_file)
+
+    state = %{
+      state
+      | session_id: session_id,
+        session_file: session_file,
+        cwd: cwd,
+        thinking_level: modes["currentModeId"],
+        current_model_id: get_in(models, ["currentModelId"]),
+        available_models: Map.get(models || %{}, "availableModels", []),
+        file_commands: group.file_commands,
+        available_commands: commands
+    }
+
+    replay = replay_messages(group.responses[:messages], session_id)
+
+    response =
+      Envelope.response(group.acp_id, %{
+        "sessionId" => session_id,
+        "models" => models,
+        "modes" => modes,
+        "_meta" => %{"ex_mcp" => %{"pi" => compact(%{"sessionFile" => session_file})}}
+      })
+
+    {:messages, replay ++ [response, available_commands_update(session_id, commands)], state}
+  end
+
+  defp finish_control_group(%{type: :slash_autocompact_toggle_get} = group, state) do
+    data = group.responses[:result] || %{}
+    enabled = not truthy?(data["autoCompactionEnabled"])
+    {rpc_id, rpc_msg} = rpc("set_auto_compaction", %{"enabled" => enabled})
+
+    group =
+      group
+      |> Map.put(:type, :slash_autocompact_toggle_set)
+      |> Map.put(:enabled, enabled)
+      |> Map.put(:refs, MapSet.new([rpc_id]))
+      |> Map.put(:responses, %{})
+
+    state =
+      state
+      |> put_group(group)
+      |> put_control(rpc_id, :result, group)
+
+    {:skip_and_write, encode_rpc(rpc_msg), state}
+  end
+
+  defp finish_control_group(group, state) do
+    state = delete_group(state, group)
+    text = slash_result_text(group)
+
+    messages =
+      [
+        AdapterEvents.session_update(group.session_id || state.session_id, %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => text}
+        })
+      ]
+      |> maybe_add_name_update(group, state)
+
+    response = Envelope.response(group.acp_id, %{"stopReason" => "end_turn"})
+    {:messages, messages ++ [response], state}
+  end
+
+  defp finish_control_error(group, error, state) do
+    state = delete_group(state, group)
+    {:messages, [error], state}
+  end
+
+  defp process_untracked_response(%{"command" => "get_state", "data" => data}, state)
+       when is_map(data) do
+    {:skip, update_session_state_from_pi(data, state)}
+  end
+
+  defp process_untracked_response(_event, state), do: {:skip, state}
+
+  defp tool_call_stream_update(tool_event, state) do
+    tool_call =
+      tool_event["toolCall"] ||
+        get_in(tool_event, ["partial", "content", tool_event["contentIndex"] || 0]) ||
+        tool_event
+
+    tool_call_id = tool_call["id"] || tool_event["id"]
+    tool_name = tool_call["name"] || tool_event["name"] || "tool"
+
+    if is_binary(tool_call_id) and tool_call_id != "" do
+      raw_input = tool_raw_input(tool_call)
+      locations = Tools.locations(raw_input, state.cwd)
+      existing_status = state.current_tool_calls[tool_call_id]
+      status = existing_status || "pending"
+
+      update =
+        %{
+          "toolCallId" => tool_call_id,
+          "title" => tool_name,
+          "kind" => Tools.kind(tool_name),
+          "status" => status,
+          "locations" => locations,
+          "rawInput" => raw_input
+        }
+        |> compact()
+
+      if existing_status do
+        {AdapterEvents.session_update(
+           state.session_id,
+           Map.put(update, "sessionUpdate", "tool_call_update")
+         ), state}
+      else
+        state = %{
+          state
+          | current_tool_calls: Map.put(state.current_tool_calls, tool_call_id, "pending")
+        }
+
+        {AdapterEvents.session_update(
+           state.session_id,
+           Map.put(update, "sessionUpdate", "tool_call")
+         ), state}
+      end
+    else
+      {nil, state}
+    end
+  end
+
+  defp tool_raw_input(%{"arguments" => args}) when is_map(args), do: args
+  defp tool_raw_input(%{"args" => args}) when is_map(args), do: args
+
+  defp tool_raw_input(%{"partialArgs" => partial}) when is_binary(partial) do
+    case Jason.decode(partial) do
+      {:ok, args} when is_map(args) -> args
+      _ -> %{"partialArgs" => partial}
+    end
+  end
+
+  defp tool_raw_input(_tool_call), do: %{}
+
+  defp maybe_snapshot_edit(tool_call_id, "edit", %{"path" => path} = args, state)
+       when is_binary(path) do
+    abs =
+      if Path.type(path) == :absolute, do: path, else: Path.expand(path, state.cwd || File.cwd!())
+
+    case File.read(abs) do
+      {:ok, old_text} ->
+        line = Tools.find_unique_line_number(old_text, args["oldText"] || "")
+        snapshot = %{path: path, old_text: old_text}
+        {line, %{state | edit_snapshots: Map.put(state.edit_snapshots, tool_call_id, snapshot)}}
+
+      _ ->
+        {nil, state}
+    end
+  end
+
+  defp maybe_snapshot_edit(_tool_call_id, _tool_name, _args, state), do: {nil, state}
+
+  defp tool_result_content(tool_call_id, text, is_error, state) do
+    snapshot = state.edit_snapshots[tool_call_id]
+    state = %{state | edit_snapshots: Map.delete(state.edit_snapshots, tool_call_id)}
+
+    content =
+      if !is_error && snapshot do
+        abs =
+          if Path.type(snapshot.path) == :absolute,
+            do: snapshot.path,
+            else: Path.expand(snapshot.path, state.cwd || File.cwd!())
+
+        case File.read(abs) do
+          {:ok, new_text} when new_text != snapshot.old_text ->
+            [
+              %{
+                "type" => "diff",
+                "path" => snapshot.path,
+                "oldText" => snapshot.old_text,
+                "newText" => new_text
+              }
+            ] ++ (Tools.text_content(text) || [])
+
+          _ ->
+            Tools.text_content(text)
+        end
+      else
+        Tools.text_content(text)
       end
 
-    AdapterEvents.session_update(state.session_id, update)
+    {content, state}
   end
+
+  defp replay_messages(data, session_id) do
+    messages = if is_map(data) and is_list(data["messages"]), do: data["messages"], else: []
+
+    Enum.flat_map(messages, fn message ->
+      case message["role"] do
+        "user" ->
+          replay_text_update(
+            session_id,
+            "user_message_chunk",
+            normalize_message_text(message["content"])
+          )
+
+        "assistant" ->
+          replay_text_update(
+            session_id,
+            "agent_message_chunk",
+            normalize_message_text(message["content"])
+          )
+
+        "toolResult" ->
+          tool_name = message["toolName"] || "tool"
+          tool_call_id = message["toolCallId"] || "tool-#{System.unique_integer([:positive])}"
+          text = Tools.result_text(message)
+
+          [
+            AdapterEvents.session_update(session_id, %{
+              "sessionUpdate" => "tool_call",
+              "toolCallId" => tool_call_id,
+              "title" => tool_name,
+              "kind" => Tools.kind(tool_name),
+              "status" => "completed",
+              "rawOutput" => message
+            }),
+            AdapterEvents.session_update(session_id, %{
+              "sessionUpdate" => "tool_call_update",
+              "toolCallId" => tool_call_id,
+              "status" => if(message["isError"], do: "failed", else: "completed"),
+              "content" => Tools.text_content(text),
+              "rawOutput" => message
+            })
+            |> compact()
+          ]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp replay_text_update(_session_id, _type, ""), do: []
+
+  defp replay_text_update(session_id, type, text) do
+    [
+      AdapterEvents.session_update(session_id, %{
+        "sessionUpdate" => type,
+        "content" => %{"type" => "text", "text" => text}
+      })
+    ]
+  end
+
+  defp normalize_message_text(content) when is_binary(content), do: content
+
+  defp normalize_message_text(content) when is_list(content) do
+    content
+    |> Enum.flat_map(fn
+      %{"type" => "text", "text" => text} when is_binary(text) -> [text]
+      _ -> []
+    end)
+    |> Enum.join("")
+  end
+
+  defp normalize_message_text(_content), do: ""
+
+  defp start_next_queued_prompt(state) do
+    case :queue.out(state.prompt_queue) do
+      {{:value, queued}, rest} ->
+        state = %{state | prompt_queue: rest}
+
+        {:ok, data, state} =
+          start_prompt(queued.acp_id, queued.message, queued.images, queued.params, state)
+
+        messages = [
+          AdapterEvents.session_update(state.session_id, %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{
+              "type" => "text",
+              "text" => "Starting queued message. (#{:queue.len(rest)} remaining)"
+            }
+          }),
+          AdapterEvents.session_update(state.session_id, %{
+            "sessionUpdate" => "session_info_update",
+            "_meta" => %{
+              "ex_mcp" => %{"pi" => %{"queueDepth" => :queue.len(rest), "running" => true}}
+            }
+          })
+        ]
+
+        {:ok, messages, data, state}
+
+      {:empty, _} ->
+        :empty
+    end
+  end
+
+  defp cancel_queued_prompts(state) do
+    {queued, queue} = :queue.to_list(state.prompt_queue) |> then(&{&1, :queue.new()})
+
+    responses =
+      Enum.map(queued, fn queued ->
+        Envelope.response(queued.acp_id, %{"stopReason" => "cancelled"})
+      end)
+
+    {responses, %{state | prompt_queue: queue}}
+  end
+
+  defp mark_pending_cancel_requested(%{pending_prompt: nil} = state), do: state
+
+  defp mark_pending_cancel_requested(state) do
+    put_in(state.pending_prompt[:cancel_requested], true)
+  end
+
+  defp queue_cleared_messages(state, had_queued) do
+    if had_queued do
+      [
+        AdapterEvents.session_update(state.session_id, %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "Cleared queued prompts."}
+        }),
+        AdapterEvents.session_update(state.session_id, %{
+          "sessionUpdate" => "session_info_update",
+          "_meta" => %{
+            "ex_mcp" => %{
+              "pi" => %{"queueDepth" => 0, "running" => not is_nil(state.pending_prompt)}
+            }
+          }
+        })
+      ]
+    else
+      []
+    end
+  end
+
+  defp usage_from_agent_end(event) do
+    usage =
+      event
+      |> Map.get("messages", [])
+      |> Enum.filter(&(&1["role"] == "assistant"))
+      |> List.last()
+      |> case do
+        %{"usage" => usage} -> usage
+        _ -> %{}
+      end
+
+    %{
+      "inputTokens" => usage["input"] || 0,
+      "outputTokens" => usage["output"] || 0,
+      "cacheReadTokens" => usage["cacheRead"] || 0,
+      "cacheWriteTokens" => usage["cacheWrite"] || 0,
+      "cost" => get_in(usage, ["cost", "total"])
+    }
+  end
+
+  defp slash_result_text(%{type: :slash_compact, responses: %{result: result}}) do
+    summary = if is_map(result), do: result["summary"], else: nil
+    tokens = if is_map(result), do: result["tokensBefore"], else: nil
+
+    [
+      "Compaction completed.",
+      if(is_number(tokens), do: "Tokens before: #{tokens}", else: nil),
+      summary
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+  end
+
+  defp slash_result_text(%{type: :slash_autocompact_on}), do: "Auto-compaction enabled."
+  defp slash_result_text(%{type: :slash_autocompact_off}), do: "Auto-compaction disabled."
+
+  defp slash_result_text(%{type: :slash_autocompact_toggle_set, enabled: enabled}),
+    do: "Auto-compaction #{if(enabled, do: "enabled", else: "disabled")}."
+
+  defp slash_result_text(%{type: :slash_export, responses: %{result: result}}) do
+    path = if is_map(result), do: result["path"], else: nil
+
+    if is_binary(path) and path != "",
+      do: "Session exported: file://#{path}",
+      else: "Session export completed."
+  end
+
+  defp slash_result_text(%{type: :slash_session, responses: %{result: stats}})
+       when is_map(stats) do
+    [
+      maybe_line("Session", stats["sessionId"]),
+      maybe_line("Session file", stats["sessionFile"]),
+      maybe_line("Messages", stats["totalMessages"]),
+      maybe_line("Cost", stats["cost"])
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> "Session stats:\n#{Jason.encode!(stats, pretty: true)}"
+      lines -> Enum.join(lines, "\n")
+    end
+  end
+
+  defp slash_result_text(%{type: :slash_name}), do: "Session name set."
+
+  defp slash_result_text(%{type: :slash_steering_get, responses: %{result: state}}),
+    do: "Steering mode: #{state["steeringMode"] || "unknown"}"
+
+  defp slash_result_text(%{type: :slash_steering_set}), do: "Steering mode updated."
+
+  defp slash_result_text(%{type: :slash_follow_up_get, responses: %{result: state}}),
+    do: "Follow-up mode: #{state["followUpMode"] || "unknown"}"
+
+  defp slash_result_text(%{type: :slash_follow_up_set}), do: "Follow-up mode updated."
+  defp slash_result_text(_group), do: "Command completed."
+
+  defp maybe_add_name_update(
+         messages,
+         %{type: :slash_name, session_id: session_id, responses: %{result: result}},
+         _state
+       ) do
+    title = if is_map(result), do: result["name"], else: nil
+
+    if is_binary(title) and title != "" do
+      [
+        AdapterEvents.session_update(session_id, %{
+          "sessionUpdate" => "session_info_update",
+          "title" => title,
+          "updatedAt" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+        })
+        | messages
+      ]
+    else
+      messages
+    end
+  end
+
+  defp maybe_add_name_update(messages, _group, _state), do: messages
+
+  defp model_state(data, state_data) do
+    available =
+      data
+      |> Map.get("models", [])
+      |> Enum.flat_map(fn model ->
+        provider = model["provider"] |> to_string_or_nil()
+        id = model["id"] |> to_string_or_nil()
+
+        if provider && id do
+          name = model["name"] || id
+
+          [
+            %{
+              "modelId" => "#{provider}/#{id}",
+              "name" => "#{provider}/#{name}",
+              "description" => nil
+            }
+          ]
+        else
+          []
+        end
+      end)
+
+    current =
+      case state_data["model"] do
+        %{"provider" => provider, "id" => id} when is_binary(provider) and is_binary(id) ->
+          "#{provider}/#{id}"
+
+        _ ->
+          get_in(available, [Access.at(0), "modelId"])
+      end
+
+    if available == [] and is_nil(current) do
+      nil
+    else
+      %{"availableModels" => available, "currentModelId" => current || "default"}
+    end
+  end
+
+  defp thinking_state(state_data) do
+    current = state_data["thinkingLevel"] || @default_thinking_level
+    current = if current in @thinking_levels, do: current, else: @default_thinking_level
+    %{"availableModes" => modes(), "currentModeId" => current}
+  end
+
+  defp command_state(data, file_commands) do
+    pi_commands =
+      data
+      |> pi_commands()
+      |> Enum.reject(&(&1["source"] == "extension"))
+      |> Enum.map(fn command ->
+        %{"name" => command["name"], "description" => command["description"] || "(command)"}
+      end)
+
+    (pi_commands ++ SlashCommands.available_commands(file_commands))
+    |> Enum.reduce({MapSet.new(), []}, fn command, {seen, acc} ->
+      name = command["name"]
+
+      if is_binary(name) and name != "" and not MapSet.member?(seen, name) do
+        {MapSet.put(seen, name), [command | acc]}
+      else
+        {seen, acc}
+      end
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+  end
+
+  defp pi_commands(%{"commands" => commands}) when is_list(commands), do: commands
+  defp pi_commands(%{"data" => %{"commands" => commands}}) when is_list(commands), do: commands
+  defp pi_commands(_data), do: []
+
+  defp available_commands_update(session_id, commands) do
+    AdapterEvents.session_update(session_id, %{
+      "sessionUpdate" => "available_commands_update",
+      "availableCommands" => commands
+    })
+  end
+
+  defp empty_models?(%{"models" => models}) when is_list(models), do: models == []
+  defp empty_models?(_data), do: false
+
+  defp update_session_state_from_pi(data, state) do
+    state
+    |> maybe_set(:session_id, data["sessionId"])
+    |> maybe_set(:session_file, data["sessionFile"])
+    |> maybe_set(:thinking_level, data["thinkingLevel"])
+  end
+
+  defp resolve_model(model_id, _available_models)
+       when not is_binary(model_id) or model_id == "" do
+    {:error, "session/set_model requires modelId"}
+  end
+
+  defp resolve_model(model_id, available_models) when is_binary(model_id) do
+    if String.contains?(model_id, "/") do
+      [provider | rest] = String.split(model_id, "/")
+      model = Enum.join(rest, "/")
+      {:ok, provider, model, model_id}
+    else
+      case find_available_model(model_id, available_models) do
+        {:ok, current_model_id} -> resolve_model(current_model_id, available_models)
+        :error -> {:error, "Unknown modelId: #{model_id}"}
+      end
+    end
+  end
+
+  defp find_available_model(model_id, available_models) when is_list(available_models) do
+    Enum.find_value(available_models, :error, fn model ->
+      advertised_id = model["modelId"]
+
+      cond do
+        advertised_id == model_id ->
+          {:ok, advertised_id}
+
+        is_binary(advertised_id) and List.last(String.split(advertised_id, "/")) == model_id ->
+          {:ok, advertised_id}
+
+        true ->
+          false
+      end
+    end)
+  end
+
+  defp find_available_model(_model_id, _available_models), do: :error
+
+  defp require_absolute_cwd(cwd) when is_binary(cwd) do
+    if Path.type(cwd) == :absolute,
+      do: :ok,
+      else: {:error, "cwd must be an absolute path: #{cwd}"}
+  end
+
+  defp require_absolute_cwd(_cwd), do: {:error, "cwd is required"}
+
+  defp find_session_file(session_id, state) when is_binary(session_id) do
+    case SessionStore.get(state.session_map_path, session_id) do
+      %{"sessionFile" => session_file} when is_binary(session_file) ->
+        session_file
+
+      _ ->
+        SessionStore.find_pi_session_file(session_id, session_dir: state.session_dir)
+    end
+  end
+
+  defp find_session_file(_session_id, _state), do: nil
+
+  defp maybe_store_session(_map_path, _session_id, _cwd, nil), do: :ok
+
+  defp maybe_store_session(map_path, session_id, cwd, session_file) do
+    SessionStore.upsert(map_path, %{
+      "sessionId" => session_id,
+      "cwd" => cwd,
+      "sessionFile" => session_file
+    })
+  end
+
+  defp put_group(state, group) do
+    group_id =
+      Map.get(group, :group_id) || "group-#{System.unique_integer([:positive, :monotonic])}"
+
+    group = Map.put(group, :group_id, group_id)
+    %{state | control_groups: Map.put(state.control_groups, group_id, group)}
+  end
+
+  defp put_control(state, rpc_id, kind, group) do
+    group_id = group[:group_id] || latest_group_id(state, group)
+
+    control = %{
+      rpc_id: rpc_id,
+      kind: kind,
+      group_id: group_id,
+      inserted_at: System.monotonic_time(:millisecond)
+    }
+
+    %{state | pending_controls: Map.put(state.pending_controls, rpc_id, control)}
+  end
+
+  defp latest_group_id(state, group) do
+    state.control_groups
+    |> Enum.find_value(fn {id, existing} ->
+      if existing.acp_id == group.acp_id and existing.type == group.type, do: id
+    end)
+  end
+
+  defp delete_group(state, group) do
+    refs = group.refs || MapSet.new()
+
+    pending_controls =
+      Enum.reduce(refs, state.pending_controls, fn rpc_id, pending ->
+        Map.delete(pending, rpc_id)
+      end)
+
+    %{
+      state
+      | pending_controls: pending_controls,
+        control_groups: Map.delete(state.control_groups, group.group_id)
+    }
+  end
+
+  defp rpc(type, fields \\ %{}) do
+    id = "pi-#{System.unique_integer([:positive, :monotonic])}"
+    {id, fields |> Map.put("type", type) |> Map.put("id", id)}
+  end
+
+  defp encode_many(messages), do: messages |> Enum.map(&encode_rpc/1) |> IO.iodata_to_binary()
+  defp encode_rpc(msg), do: Jason.encode!(compact(msg)) <> "\n"
 
   defp append_opt(args, opts, key, flag) do
     case Keyword.get(opts, key) do
@@ -927,59 +1591,65 @@ defmodule ExMCP.ACP.Adapters.Pi do
     end
   end
 
-  defp extract_prompt_text(prompt) when is_binary(prompt), do: prompt
-
-  defp extract_prompt_text(prompt) when is_list(prompt) do
-    prompt
-    |> Enum.filter(fn
-      %{"type" => "text"} -> true
-      _ -> false
-    end)
-    |> Enum.map_join("\n", fn %{"text" => text} -> text end)
+  defp translate_config_option("auto_compaction", value, state) when is_boolean(value) do
+    {:ok, encode_rpc(%{"type" => "set_auto_compaction", "enabled" => value}), state}
   end
 
-  defp extract_prompt_text(%{"content" => content}), do: extract_prompt_text(content)
-  defp extract_prompt_text(_), do: ""
+  defp translate_config_option("auto_compaction", value, state) when value in ["true", "false"],
+    do: translate_config_option("auto_compaction", value == "true", state)
 
-  defp extract_images(prompt) when is_list(prompt) do
-    Enum.flat_map(prompt, fn
-      %{"type" => "image"} = img ->
-        [normalize_image(img)]
-
-      _ ->
-        []
-    end)
+  defp translate_config_option("auto_retry", value, state) when is_boolean(value) do
+    {:ok, encode_rpc(%{"type" => "set_auto_retry", "enabled" => value}), state}
   end
 
-  defp extract_images(_), do: []
+  defp translate_config_option("auto_retry", value, state) when value in ["true", "false"],
+    do: translate_config_option("auto_retry", value == "true", state)
 
-  defp normalize_images(images) when is_list(images), do: Enum.map(images, &normalize_image/1)
-  defp normalize_images(_), do: []
-
-  # Normalize image content: strip data-url prefix if present, ensure Pi format
-  defp normalize_image(%{"data" => data, "mimeType" => mime_type}) do
-    %{
-      "type" => "image",
-      "data" => strip_data_url(data),
-      "mimeType" => mime_type
-    }
+  defp translate_config_option("steering_mode", value, state)
+       when value in ["all", "one-at-a-time"] do
+    {:ok, encode_rpc(%{"type" => "set_steering_mode", "mode" => value}), state}
   end
 
-  defp normalize_image(%{"data" => data} = img) do
-    %{
-      "type" => "image",
-      "data" => strip_data_url(data),
-      "mimeType" => img["mimeType"] || detect_mime_type(data)
-    }
+  defp translate_config_option("follow_up_mode", value, state)
+       when value in ["all", "one-at-a-time"] do
+    {:ok, encode_rpc(%{"type" => "set_follow_up_mode", "mode" => value}), state}
   end
 
-  defp normalize_image(img), do: img
+  defp translate_config_option(config_id, _value, state),
+    do: {:error, "Unknown Pi config option: #{config_id}", state}
+
+  defp filter_sessions_by_cwd(sessions, nil), do: sessions
+  defp filter_sessions_by_cwd(sessions, cwd), do: Enum.filter(sessions, &(&1["cwd"] == cwd))
+
+  defp parse_cursor(cursor) when is_binary(cursor) do
+    case Integer.parse(cursor) do
+      {offset, ""} when offset > 0 -> offset
+      _ -> 0
+    end
+  end
+
+  defp parse_cursor(_cursor), do: 0
+
+  defp maybe_put_present(map, _key, nil), do: map
+  defp maybe_put_present(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put_non_empty(map, _key, []), do: map
+  defp maybe_put_non_empty(map, _key, nil), do: map
+  defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_set(state, _key, nil), do: state
+  defp maybe_set(state, key, value), do: Map.put(state, key, value)
+
+  defp compact(map) when is_map(map) do
+    map
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp compact(value), do: value
 
   defp boolean_options do
-    [
-      %{"value" => "true", "name" => "On"},
-      %{"value" => "false", "name" => "Off"}
-    ]
+    [%{"value" => "true", "name" => "On"}, %{"value" => "false", "name" => "Off"}]
   end
 
   defp mode_options do
@@ -989,251 +1659,47 @@ defmodule ExMCP.ACP.Adapters.Pi do
     ]
   end
 
-  defp text_tool_content(nil), do: []
-  defp text_tool_content(""), do: []
-
-  defp text_tool_content(text) when is_binary(text) do
-    [%{"type" => "content", "content" => %{"type" => "text", "text" => text}}]
+  defp auth_required_error(id, state) do
+    Envelope.error(
+      id,
+      Types.auth_required_code(),
+      "Configure an API key or log in with an OAuth provider.",
+      %{"authMethods" => auth_methods(state.opts)}
+    )
   end
 
-  # Strip data:image/...;base64, prefix from base64 data
-  defp strip_data_url(data) when is_binary(data) do
-    case Regex.run(~r/^data:[^;]+;base64,(.+)$/s, data) do
-      [_, base64] -> base64
-      _ -> data
-    end
+  defp auth_error?(message) do
+    text = message |> to_string() |> String.downcase()
+
+    Enum.any?(
+      [
+        "api key",
+        "apikey",
+        "missing key",
+        "no key",
+        "not configured",
+        "unauthorized",
+        "authentication",
+        "permission denied",
+        "forbidden",
+        "401",
+        "403"
+      ],
+      &String.contains?(text, &1)
+    )
   end
 
-  defp strip_data_url(data), do: data
+  defp truthy?(value), do: value in [true, "true", 1, "1"]
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
 
-  defp detect_mime_type(data) when is_binary(data) do
-    # Try to detect from data-url prefix
-    case Regex.run(~r/^data:([^;]+);base64,/, data) do
-      [_, mime] -> mime
-      _ -> "image/png"
-    end
-  end
+  defp slash_args([]), do: ""
+  defp slash_args(args), do: " " <> Enum.join(args, " ")
 
-  defp detect_mime_type(_), do: "image/png"
+  defp maybe_line(_label, nil), do: nil
+  defp maybe_line(label, value), do: "#{label}: #{value}"
 
-  # Update session info from get_state responses
-  defp maybe_update_session_info(
-         %{"command" => "get_state", "data" => data},
-         state
-       )
-       when is_map(data) do
-    state
-    |> maybe_set(:session_file, data["sessionFile"])
-    |> maybe_set(:session_id, data["sessionId"])
-    |> maybe_set(:thinking_level, data["thinkingLevel"])
-  end
-
-  defp maybe_update_session_info(_, state), do: state
-
-  defp maybe_set(state, _key, nil), do: state
-  defp maybe_set(state, key, value), do: Map.put(state, key, value)
-
-  # ── Config Option Routing ─────────────────────────────────────
-  # Maps ACP session/set_config_option to Pi RPC commands
-
-  defp translate_config_option("model", value, state) when is_binary(value) do
-    # Pi model format: "provider/modelId" — split and send set_model
-    case String.split(value, "/", parts: 2) do
-      [provider, model_id] ->
-        rpc_msg = %{"type" => "set_model", "provider" => provider, "modelId" => model_id}
-        {:ok, encode_rpc(rpc_msg), state}
-
-      [model_id] ->
-        # No provider specified — use as modelId directly
-        rpc_msg = %{"type" => "set_model", "modelId" => model_id}
-        {:ok, encode_rpc(rpc_msg), state}
-    end
-  end
-
-  defp translate_config_option("thinking_level", value, state) when is_binary(value) do
-    if value in @thinking_levels do
-      rpc_msg = %{"type" => "set_thinking_level", "level" => value}
-      state = %{state | thinking_level: value}
-      {:ok, encode_rpc(rpc_msg), state}
-    else
-      # Returning {:ok, :skip, state} for an invalid value would silently
-      # discard the caller's intent — the same bug-class as the original
-      # Claude `permission_mode` regression. Surface a distinguishable
-      # error so callers can react. State is NOT mutated with the
-      # invalid value.
-      reason =
-        "invalid thinking_level: #{inspect(value)} " <>
-          "(must be one of #{Enum.join(@thinking_levels, ", ")})"
-
-      {:error, reason, state}
-    end
-  end
-
-  defp translate_config_option("auto_compaction", value, state) when is_boolean(value) do
-    rpc_msg = %{"type" => "set_auto_compaction", "enabled" => value}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  defp translate_config_option("auto_compaction", value, state) when value in ["true", "false"] do
-    translate_config_option("auto_compaction", value == "true", state)
-  end
-
-  defp translate_config_option("auto_retry", value, state) when is_boolean(value) do
-    rpc_msg = %{"type" => "set_auto_retry", "enabled" => value}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  defp translate_config_option("auto_retry", value, state) when value in ["true", "false"] do
-    translate_config_option("auto_retry", value == "true", state)
-  end
-
-  defp translate_config_option("steering_mode", value, state)
-       when value in ["all", "one-at-a-time"] do
-    rpc_msg = %{"type" => "set_steering_mode", "mode" => value}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  defp translate_config_option("follow_up_mode", value, state)
-       when value in ["all", "one-at-a-time"] do
-    rpc_msg = %{"type" => "set_follow_up_mode", "mode" => value}
-    {:ok, encode_rpc(rpc_msg), state}
-  end
-
-  defp translate_config_option(_config_id, _value, state) do
-    {:ok, :skip, state}
-  end
-
-  # ── Session Directory Scanning ────────────────────────────────
-  # Scans Pi's session directory for .jsonl files, matching pi-acp's listPiSessions.
-
-  defp scan_session_dir(session_dir, filter_cwd) do
-    dir = session_dir || @default_session_dir
-
-    if File.dir?(dir) do
-      dir
-      |> File.ls!()
-      |> Enum.filter(&String.ends_with?(&1, ".jsonl"))
-      |> Enum.map(fn filename ->
-        path = Path.join(dir, filename)
-        session_id = Path.rootname(filename)
-        stat = File.stat(path)
-
-        info = %{
-          "sessionId" => session_id,
-          "name" => session_id
-        }
-
-        case stat do
-          {:ok, %{mtime: mtime}} ->
-            Map.put(info, "updatedAt", format_mtime(mtime))
-
-          _ ->
-            info
-        end
-      end)
-      |> maybe_filter_by_cwd(filter_cwd)
-      |> Enum.sort_by(& &1["updatedAt"], :desc)
-    else
-      []
-    end
-  rescue
-    _ -> []
-  end
-
-  defp maybe_filter_by_cwd(sessions, nil), do: sessions
-
-  defp maybe_filter_by_cwd(sessions, cwd) do
-    # Pi session files may contain the cwd in their name or first line.
-    # For now, return all sessions — cwd filtering requires reading each file.
-    # This matches the MVP behavior of pi-acp when no cwd filter is applied.
-    _ = cwd
-    sessions
-  end
-
-  defp format_mtime({{year, month, day}, {hour, min, sec}}) do
-    :io_lib.format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ", [
-      year,
-      month,
-      day,
-      hour,
-      min,
-      sec
-    ])
-    |> IO.iodata_to_binary()
-  end
-
-  defp format_mtime(_), do: nil
-
-  # ── Enhanced Tool Result Parsing ──────────────────────────────
-  # Matches pi-acp's toolResultToText: handles content blocks, diffs,
-  # stdout/stderr/exitCode from Pi's tool result format.
-
-  defp extract_tool_result_text(nil), do: ""
-
-  defp extract_tool_result_text(%{"content" => content, "details" => details})
-       when is_list(content) do
-    text = extract_content_text(content)
-
-    if text != "" do
-      text
-    else
-      extract_details_text(details)
-    end
-  end
-
-  defp extract_tool_result_text(%{"content" => content}) when is_list(content) do
-    extract_content_text(content)
-  end
-
-  defp extract_tool_result_text(%{"details" => details}) when is_map(details) do
-    extract_details_text(details)
-  end
-
-  defp extract_tool_result_text(other) when is_binary(other), do: other
-
-  defp extract_tool_result_text(other) do
-    case Jason.encode(other) do
-      {:ok, json} -> json
-      _ -> inspect(other)
-    end
-  end
-
-  defp extract_content_text(content) when is_list(content) do
-    content
-    |> Enum.flat_map(fn
-      %{"type" => "text", "text" => text} when is_binary(text) -> [text]
-      _ -> []
-    end)
-    |> Enum.join("")
-  end
-
-  defp extract_details_text(nil), do: ""
-
-  defp extract_details_text(details) when is_map(details) do
-    # Check for diff first
-    diff = details["diff"]
-
-    if is_binary(diff) and String.trim(diff) != "" do
-      diff
-    else
-      format_bash_output(details)
-    end
-  end
-
-  defp extract_details_text(_), do: ""
-
-  defp format_bash_output(details) do
-    stdout = details["stdout"] || details["output"] || ""
-    stderr = details["stderr"] || ""
-    exit_code = details["exitCode"] || details["code"]
-
-    parts = []
-    parts = if has_content?(stdout), do: [stdout | parts], else: parts
-    parts = if has_content?(stderr), do: ["stderr:\n#{stderr}" | parts], else: parts
-    parts = if is_integer(exit_code), do: ["exit code: #{exit_code}" | parts], else: parts
-
-    parts |> Enum.reverse() |> Enum.join("\n\n") |> String.trim_trailing()
-  end
-
-  defp has_content?(str), do: is_binary(str) and String.trim(str) != ""
+  defp to_string_or_nil(nil), do: nil
+  defp to_string_or_nil(""), do: nil
+  defp to_string_or_nil(value), do: to_string(value)
 end

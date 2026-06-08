@@ -424,6 +424,29 @@ defmodule ExMCP.ACP.AdapterBridge do
           synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
 
         {:reply, :ok, state}
+
+      {:messages_and_reply, messages, result, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+
+        state =
+          synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
+
+        {:reply, :ok, state}
+
+      {:reply_and_write, result, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+
+        state =
+          synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
+
+        {:reply, :ok, state}
+
+      {:error, reason, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_error(state, id, -32_602, to_string(reason))
+        {:reply, :ok, state}
     end
   end
 
@@ -595,7 +618,13 @@ defmodule ExMCP.ACP.AdapterBridge do
          _from,
          state
        ) do
-    synthesize_after_translate(msg, id, state, fn _state -> %{} end)
+    case translate_outbound_message(msg, state) do
+      {:ok, :skip, state} ->
+        {:reply, :ok, synthesize_error(state, id, -32_601, "Method not found: session/set_model")}
+
+      translated ->
+        synthesize_after_translated(translated, msg, id, fn _state -> %{} end)
+    end
   end
 
   defp handle_outbound(
@@ -789,7 +818,13 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp synthesize_after_translate(msg, id, state, result_fun) do
-    case translate_outbound_message(msg, state) do
+    msg
+    |> translate_outbound_message(state)
+    |> synthesize_after_translated(msg, id, result_fun)
+  end
+
+  defp synthesize_after_translated(translated, msg, id, result_fun) do
+    case translated do
       {:ok, _delivery, state} ->
         {:reply, :ok, synthesize_result(state, id, result_fun.(state))}
 
