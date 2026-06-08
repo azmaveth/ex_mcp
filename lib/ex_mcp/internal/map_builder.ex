@@ -7,14 +7,11 @@ defmodule ExMCP.Internal.MapBuilder do
   """
 
   @spec put_if_present(map(), any(), any()) :: map()
-  def put_if_present(map, _key, nil), do: map
-  def put_if_present(map, key, value), do: Map.put(map, key, value)
+  defdelegate put_if_present(map, key, value), to: ExMCP.Internal.Maps, as: :put_present
 
   @spec put_if_truthy(map(), any(), any()) :: map()
-  def put_if_truthy(map, _key, value) when value in [nil, false], do: map
-  def put_if_truthy(map, key, value), do: Map.put(map, key, value)
+  defdelegate put_if_truthy(map, key, value), to: ExMCP.Internal.Maps, as: :put_truthy
 
   @spec put_unless(map(), any(), any(), any()) :: map()
-  def put_unless(map, _key, value, value), do: map
-  def put_unless(map, key, value, _skip_value), do: Map.put(map, key, value)
+  defdelegate put_unless(map, key, value, skip_value), to: ExMCP.Internal.Maps
 end

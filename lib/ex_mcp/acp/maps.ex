@@ -29,15 +29,13 @@ defmodule ExMCP.ACP.Maps do
   def truthy?(_value), do: true
 
   @spec put_present(map(), any(), any()) :: map()
-  def put_present(map, _key, nil), do: map
-  def put_present(map, key, value), do: Map.put(map, key, value)
+  defdelegate put_present(map, key, value), to: ExMCP.Internal.Maps
 
   @spec put_non_empty(map(), any(), any()) :: map()
-  def put_non_empty(map, _key, nil), do: map
-  def put_non_empty(map, _key, ""), do: map
-  def put_non_empty(map, _key, []), do: map
-  def put_non_empty(map, _key, empty) when empty == %{}, do: map
-  def put_non_empty(map, key, value), do: Map.put(map, key, value)
+  defdelegate put_non_empty(map, key, value), to: ExMCP.Internal.Maps
+
+  @spec put_unless(map(), any(), any(), any()) :: map()
+  defdelegate put_unless(map, key, value, skip_value), to: ExMCP.Internal.Maps
 
   @spec stringify_keys(map()) :: map()
   def stringify_keys(map) when is_map(map) do

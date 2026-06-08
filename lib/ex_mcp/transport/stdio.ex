@@ -28,7 +28,7 @@ defmodule ExMCP.Transport.Stdio do
 
   require Logger
 
-  alias ExMCP.Internal.SecurityConfig
+  alias ExMCP.Internal.{LineBuffer, SecurityConfig}
   alias ExMCP.Transport.{Error, SecurityGuard}
 
   defstruct [:port, :buffer, :line_buffer, :subscriber, :reader_pid]
@@ -457,26 +457,17 @@ defmodule ExMCP.Transport.Stdio do
   # Process buffered data, sending complete JSON messages to subscriber.
   # Returns remaining incomplete buffer.
   defp process_buffer(buffer, subscriber) do
-    case String.split(buffer, "\n", parts: 2) do
-      [line, rest] ->
-        trimmed = String.trim(line)
+    {messages, invalid_lines, partial} = LineBuffer.drain_json(buffer)
 
-        if trimmed != "" and
-             (String.starts_with?(trimmed, "{") or String.starts_with?(trimmed, "[")) do
-          case Jason.decode(trimmed) do
-            {:ok, message} ->
-              Kernel.send(subscriber, {:transport_event, message})
+    Enum.each(messages, fn message ->
+      Kernel.send(subscriber, {:transport_event, message})
+    end)
 
-            {:error, _} ->
-              Logger.debug("Skipping invalid JSON: #{inspect(trimmed)}")
-          end
-        end
+    Enum.each(invalid_lines, fn {:invalid_json, line} ->
+      Logger.debug("Skipping invalid JSON: #{inspect(line)}")
+    end)
 
-        process_buffer(rest, subscriber)
-
-      [partial] ->
-        partial
-    end
+    partial
   end
 
   defp format_env(env) do

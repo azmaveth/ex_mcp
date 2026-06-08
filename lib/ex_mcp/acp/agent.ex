@@ -29,6 +29,7 @@ defmodule ExMCP.ACP.Agent do
   alias ExMCP.ACP.Capabilities
   alias ExMCP.ACP.Maps
   alias ExMCP.ACP.NameValue
+  alias ExMCP.ACP.PendingRequests
   alias ExMCP.ACP.Protocol
 
   @default_protocol_version 1
@@ -223,7 +224,7 @@ defmodule ExMCP.ACP.Agent do
   def usage(agent, session_id, used, size, opts \\ []) do
     update =
       %{"sessionUpdate" => "usage_update", "used" => used, "size" => size}
-      |> maybe_put("cost", Keyword.get(opts, :cost))
+      |> Maps.put_present("cost", Keyword.get(opts, :cost))
 
     session_update(agent, session_id, update, Keyword.drop(opts, [:cost]))
   end
@@ -1047,7 +1048,7 @@ defmodule ExMCP.ACP.Agent do
 
     case do_send(msg, state) do
       {:ok, state} ->
-        pending = Map.put(state.pending_client_requests, id, from)
+        pending = PendingRequests.put(state.pending_client_requests, id, from)
         {:noreply, %{state | pending_client_requests: pending}}
 
       {:error, reason} ->
@@ -1056,7 +1057,7 @@ defmodule ExMCP.ACP.Agent do
   end
 
   defp resolve_client_request(id, reply, state) do
-    case Map.pop(state.pending_client_requests, id) do
+    case PendingRequests.pop(state.pending_client_requests, id) do
       {nil, _pending} ->
         Logger.debug("ACP agent received response for unknown client request #{inspect(id)}")
         state
@@ -1172,14 +1173,14 @@ defmodule ExMCP.ACP.Agent do
   end
 
   defp reply_all_pending(reply, state) do
-    Enum.each(state.pending_client_requests, fn {_id, from} ->
+    Enum.each(PendingRequests.values(state.pending_client_requests), fn from ->
       GenServer.reply(from, reply)
     end)
 
     reply
     |> elem(1)
     |> fail_pending_callbacks(state)
-    |> Map.put(:pending_client_requests, %{})
+    |> Map.put(:pending_client_requests, PendingRequests.empty())
   end
 
   defp fail_pending_callbacks(reason, state) do
@@ -1201,9 +1202,6 @@ defmodule ExMCP.ACP.Agent do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp normalize_terminal_params(params) do
     params = Maps.stringify_keys(params)

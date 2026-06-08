@@ -27,6 +27,7 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   alias ExMCP.ACP.AdapterBridge.PortRunner
   alias ExMCP.ACP.{Capabilities, Envelope}
+  alias ExMCP.Internal.Maps
 
   @type t :: GenServer.server()
 
@@ -291,8 +292,8 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   defp session_state_result(state) do
     %{}
-    |> maybe_put_non_empty("modes", session_modes(state))
-    |> maybe_put_non_empty("configOptions", adapter_config_options(state))
+    |> Maps.put_non_empty("modes", session_modes(state))
+    |> Maps.put_non_empty("configOptions", adapter_config_options(state))
   end
 
   defp config_options_result(state) do
@@ -319,10 +320,6 @@ defmodule ExMCP.ACP.AdapterBridge do
   defp current_mode_id([%{"id" => id} | _]), do: id
   defp current_mode_id([%{id: id} | _]), do: id
   defp current_mode_id(_), do: nil
-
-  defp maybe_put_non_empty(map, _key, nil), do: map
-  defp maybe_put_non_empty(map, _key, []), do: map
-  defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
 
   defp maybe_post_connect(%{adapter_mod: adapter_mod, adapter_state: adapter_state} = state) do
     if function_exported?(adapter_mod, :post_connect, 1) do

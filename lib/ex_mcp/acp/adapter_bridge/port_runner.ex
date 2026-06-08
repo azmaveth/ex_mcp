@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.AdapterBridge.PortRunner do
   @moduledoc false
 
-  alias ExMCP.ACP.NameValue
+  alias ExMCP.Internal.NameValue
 
   @session_vars_to_clear ~w(
     CLAUDE_CODE_ENTRYPOINT CLAUDE_SESSION_ID CLAUDE_CONFIG_DIR
@@ -75,7 +75,7 @@ defmodule ExMCP.ACP.AdapterBridge.PortRunner do
     |> normalize_env()
     |> Map.merge(opts |> Keyword.get(:env, []) |> normalize_env())
     |> maybe_put_api_key(Keyword.get(opts, :api_key))
-    |> Enum.map(fn {name, value} -> {to_charlist(name), to_charlist(value)} end)
+    |> NameValue.charlist_pairs()
   end
 
   defp normalize_env(env) when is_map(env), do: NameValue.map(env)

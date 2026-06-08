@@ -7,6 +7,7 @@ defmodule ExMCP.Protocol.ResponseBuilder do
   """
 
   alias ExMCP.Error
+  alias ExMCP.Internal.JSONRPC
   alias ExMCP.Protocol.ErrorCodes
 
   @doc """
@@ -23,11 +24,7 @@ defmodule ExMCP.Protocol.ResponseBuilder do
   """
   @spec build_success_response(any(), any()) :: map()
   def build_success_response(result, id) do
-    %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "result" => result
-    }
+    JSONRPC.response(id, result)
   end
 
   @doc """
@@ -79,11 +76,7 @@ defmodule ExMCP.Protocol.ResponseBuilder do
              Error.ResourceError,
              Error.ValidationError
            ] do
-    %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "error" => Error.to_json_rpc(error)
-    }
+    JSONRPC.error(id, Error.to_json_rpc(error))
   end
 
   def build_error_response(code, message, data \\ nil, id) do
@@ -94,11 +87,7 @@ defmodule ExMCP.Protocol.ResponseBuilder do
 
     error = if data, do: Map.put(error, "data", data), else: error
 
-    %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "error" => error
-    }
+    JSONRPC.error(id, error)
   end
 
   @doc """
@@ -115,11 +104,7 @@ defmodule ExMCP.Protocol.ResponseBuilder do
   """
   @spec build_notification(String.t(), map()) :: map()
   def build_notification(method, params) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => method,
-      "params" => params
-    }
+    JSONRPC.notification(method, params)
   end
 
   @doc """
@@ -137,12 +122,7 @@ defmodule ExMCP.Protocol.ResponseBuilder do
   """
   @spec build_request(String.t(), map(), any()) :: map()
   def build_request(method, params, id) do
-    %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "method" => method,
-      "params" => params
-    }
+    JSONRPC.request(method, params, id)
   end
 
   @doc """

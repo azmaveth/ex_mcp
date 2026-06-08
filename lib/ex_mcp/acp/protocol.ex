@@ -2,26 +2,30 @@ defmodule ExMCP.ACP.Protocol do
   @moduledoc """
   ACP-specific message encoding.
 
-  Delegates JSON-RPC 2.0 framing to `ExMCP.Internal.Protocol` and adds
+  Delegates JSON-RPC 2.0 framing to `ExMCP.Internal.JSONRPC` and adds
   ACP method-specific encoding on top.
 
   ACP uses integer protocol versions (default: 1) rather than MCP's date-based strings.
   """
 
   alias ExMCP.ACP.{AdapterEvents, Envelope, LifecycleParams, Maps, Meta}
-  alias ExMCP.Internal.Protocol
+  alias ExMCP.Internal.JSONRPC
 
   @default_protocol_version 1
   @stop_reasons ~w(end_turn max_tokens max_turn_requests refusal cancelled)
 
   @doc "Generates a unique request ID."
-  defdelegate generate_id, to: Protocol
+  defdelegate generate_id, to: JSONRPC
 
   @doc "Encodes a JSON-RPC success response."
-  defdelegate encode_response(result, id), to: Protocol
+  def encode_response(result, id), do: JSONRPC.response(id, result)
 
   @doc "Encodes a JSON-RPC error response."
-  defdelegate encode_error(code, message, data \\ nil, id), to: Protocol
+  def encode_error(code, message, data \\ nil, id) do
+    error = %{"code" => code, "message" => message}
+    error = if data, do: Map.put(error, "data", data), else: error
+    JSONRPC.error(id, error)
+  end
 
   @doc "Parses a raw ACP JSON-RPC message with structural validation."
   @spec parse_message(String.t() | map()) ::
@@ -160,8 +164,8 @@ defmodule ExMCP.ACP.Protocol do
   @spec encode_session_list(keyword()) :: map()
   def encode_session_list(opts \\ []) do
     params = %{}
-    params = maybe_put(params, "cursor", option_value(opts, :cursor, "cursor"))
-    params = maybe_put(params, "cwd", option_value(opts, :cwd, "cwd"))
+    params = Maps.put_present(params, "cursor", option_value(opts, :cursor, "cursor"))
+    params = Maps.put_present(params, "cwd", option_value(opts, :cwd, "cwd"))
 
     Envelope.request("session/list", params, generate_id())
   end
@@ -302,8 +306,8 @@ defmodule ExMCP.ACP.Protocol do
       ) do
     result =
       %{"agentInfo" => agent_info, "protocolVersion" => protocol_version}
-      |> maybe_put("agentCapabilities", capabilities)
-      |> maybe_put("authMethods", auth_methods)
+      |> Maps.put_present("agentCapabilities", capabilities)
+      |> Maps.put_present("authMethods", auth_methods)
 
     encode_response(result, id)
   end
@@ -322,7 +326,7 @@ defmodule ExMCP.ACP.Protocol do
   @spec encode_session_list_response(integer() | String.t(), [map()], String.t() | nil) :: map()
   def encode_session_list_response(id, sessions, next_cursor \\ nil) when is_list(sessions) do
     %{"sessions" => sessions}
-    |> maybe_put("nextCursor", next_cursor)
+    |> Maps.put_present("nextCursor", next_cursor)
     |> encode_response(id)
   end
 
@@ -429,7 +433,7 @@ defmodule ExMCP.ACP.Protocol do
       when is_integer(used) and used >= 0 and is_integer(size) and size >= 0 do
     update =
       %{"sessionUpdate" => "usage_update", "used" => used, "size" => size}
-      |> maybe_put("cost", cost)
+      |> Maps.put_present("cost", cost)
 
     encode_session_update(session_id, update)
   end
@@ -517,8 +521,8 @@ defmodule ExMCP.ACP.Protocol do
   def encode_file_read_request(session_id, path, opts \\ []) do
     params =
       %{"sessionId" => session_id, "path" => path}
-      |> maybe_put("line", option_value(opts, :line, "line"))
-      |> maybe_put("limit", option_value(opts, :limit, "limit"))
+      |> Maps.put_present("line", option_value(opts, :line, "line"))
+      |> Maps.put_present("limit", option_value(opts, :limit, "limit"))
 
     Envelope.request("fs/read_text_file", params, generate_id())
   end
@@ -563,9 +567,6 @@ defmodule ExMCP.ACP.Protocol do
   def encode_file_write_response(id) do
     encode_response(%{}, id)
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp session_lifecycle_params(params, opts) do
     params

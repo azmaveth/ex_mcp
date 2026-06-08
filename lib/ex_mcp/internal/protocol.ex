@@ -15,7 +15,7 @@ defmodule ExMCP.Internal.Protocol do
   #
   # All methods in this module are part of the official MCP specification.
 
-  alias ExMCP.Internal.{MapBuilder, MessageValidator, RequestParams, VersionRegistry}
+  alias ExMCP.Internal.{JSONRPC, MapBuilder, MessageValidator, RequestParams, VersionRegistry}
 
   @type json_rpc_id :: String.t() | integer()
   @type method :: String.t()
@@ -256,11 +256,7 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_response(result(), json_rpc_id()) :: map()
   def encode_response(result, id) do
-    %{
-      "jsonrpc" => "2.0",
-      "result" => result,
-      "id" => id
-    }
+    JSONRPC.response(id, result)
   end
 
   @doc """
@@ -275,11 +271,7 @@ defmodule ExMCP.Internal.Protocol do
 
     error = if data, do: Map.put(error, "data", data), else: error
 
-    %{
-      "jsonrpc" => "2.0",
-      "error" => error,
-      "id" => id
-    }
+    JSONRPC.error(id, error)
   end
 
   @doc """
@@ -287,11 +279,7 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_notification(method(), params()) :: map()
   def encode_notification(method, params) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => method,
-      "params" => params
-    }
+    JSONRPC.notification(method, params)
   end
 
   @doc """
@@ -646,38 +634,10 @@ defmodule ExMCP.Internal.Protocol do
   end
 
   def parse_message_unvalidated(data) when is_binary(data) do
-    case Jason.decode(data) do
-      {:ok, decoded} -> parse_message_unvalidated(decoded)
-      {:error, _} -> {:error, :invalid_message}
-    end
+    JSONRPC.parse_unvalidated(data)
   end
 
-  def parse_message_unvalidated(%{
-        "jsonrpc" => "2.0",
-        "method" => method,
-        "params" => params,
-        "id" => id
-      }) do
-    {:request, method, params, id}
-  end
-
-  def parse_message_unvalidated(%{"jsonrpc" => "2.0", "method" => method, "params" => params}) do
-    {:notification, method, params}
-  end
-
-  def parse_message_unvalidated(%{"jsonrpc" => "2.0", "result" => result, "id" => id}) do
-    {:result, result, id}
-  end
-
-  def parse_message_unvalidated(%{"jsonrpc" => "2.0", "error" => error, "id" => id}) do
-    {:error, error, id}
-  end
-
-  def parse_message_unvalidated(messages) when is_list(messages) do
-    {:batch, messages}
-  end
-
-  def parse_message_unvalidated(_), do: {:error, :invalid_message}
+  def parse_message_unvalidated(message), do: JSONRPC.parse_unvalidated(message)
 
   # Version-specific utilities
 
@@ -778,9 +738,7 @@ defmodule ExMCP.Internal.Protocol do
   Generates a unique ID for requests.
   """
   @spec generate_id() :: integer()
-  def generate_id do
-    System.unique_integer([:positive, :monotonic])
-  end
+  defdelegate generate_id, to: JSONRPC
 
   # Error Codes (from JSON-RPC spec)
   @parse_error -32700

@@ -3,18 +3,14 @@ defmodule ExMCP.ACP.AdapterEvents do
   Pure ACP event builders for agent adapters.
   """
 
-  alias ExMCP.ACP.Meta
+  alias ExMCP.ACP.{Envelope, Maps, Meta}
 
   @spec session_update(String.t(), map()) :: map()
   def session_update(session_id, update) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id || "default",
-        "update" => update
-      }
-    }
+    Envelope.notification("session/update", %{
+      "sessionId" => session_id || "default",
+      "update" => update
+    })
   end
 
   @spec agent_message_chunk(String.t(), String.t(), keyword()) :: map()
@@ -41,7 +37,7 @@ defmodule ExMCP.ACP.AdapterEvents do
   def resource_link_chunk(session_id, uri, opts \\ []) do
     content =
       %{"type" => "resource_link", "uri" => uri}
-      |> maybe_put("name", Keyword.get(opts, :name))
+      |> Maps.put_present("name", Keyword.get(opts, :name))
 
     session_update_type(session_id, "agent_message_chunk", %{"content" => content}, opts)
   end
@@ -88,7 +84,7 @@ defmodule ExMCP.ACP.AdapterEvents do
     update =
       attrs
       |> Map.put("sessionUpdate", type)
-      |> maybe_put("_meta", Keyword.get(opts, :meta))
+      |> Maps.put_present("_meta", Keyword.get(opts, :meta))
 
     session_update(session_id, update)
   end
@@ -107,15 +103,14 @@ defmodule ExMCP.ACP.AdapterEvents do
   def prompt_response(id, stop_reason, opts \\ []) do
     result =
       %{"stopReason" => stop_reason}
-      |> maybe_put("usage", Keyword.get(opts, :usage))
+      |> Maps.put_present("usage", Keyword.get(opts, :usage))
       |> Meta.put_ex_mcp(Keyword.get(opts, :meta, %{}))
 
-    %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+    Envelope.response(id, result)
   end
 
   @spec maybe_put(map(), any(), any()) :: map()
-  def maybe_put(map, _key, nil), do: map
-  def maybe_put(map, key, value), do: Map.put(map, key, value)
+  defdelegate maybe_put(map, key, value), to: Maps, as: :put_present
 
   defp text_chunk(session_id, type, text, opts) do
     content_chunk(session_id, type, %{"type" => "text", "text" => text}, opts)

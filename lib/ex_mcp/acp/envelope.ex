@@ -10,60 +10,32 @@ defmodule ExMCP.ACP.Envelope do
       |> Envelope.with_id(id)
   """
 
-  alias ExMCP.ACP.Maps
-
-  @jsonrpc "2.0"
+  alias ExMCP.Internal.JSONRPC
 
   @spec request(String.t()) :: map()
-  def request(method) when is_binary(method) do
-    %{"jsonrpc" => @jsonrpc, "method" => method}
-  end
+  defdelegate request(method), to: JSONRPC
 
   @spec request(String.t(), map()) :: map()
-  def request(method, params) when is_map(params) do
-    method
-    |> request()
-    |> with_params(params)
-  end
+  defdelegate request(method, params), to: JSONRPC
 
   @spec request(String.t(), map(), integer() | String.t()) :: map()
-  def request(method, params, id) when is_map(params) do
-    method
-    |> request(params)
-    |> with_id(id)
-  end
+  defdelegate request(method, params, id), to: JSONRPC
 
   @spec notification(String.t(), map()) :: map()
-  def notification(method, params \\ %{}) when is_binary(method) and is_map(params) do
-    request(method, params)
-  end
+  defdelegate notification(method, params \\ %{}), to: JSONRPC
 
   @spec response(integer() | String.t(), any()) :: map()
-  def response(id, result) do
-    %{"jsonrpc" => @jsonrpc, "result" => result, "id" => id}
-  end
+  defdelegate response(id, result), to: JSONRPC
 
   @spec error(integer() | String.t() | nil, map()) :: map()
-  def error(id, %{} = error) do
-    %{"jsonrpc" => @jsonrpc, "error" => error, "id" => id}
-  end
+  defdelegate error(id, error), to: JSONRPC
 
   @spec error(integer() | String.t() | nil, integer(), String.t(), any()) :: map()
-  def error(id, code, message, data \\ nil) when is_integer(code) and is_binary(message) do
-    error =
-      %{"code" => code, "message" => message}
-      |> Maps.put_present("data", data)
-
-    error(id, error)
-  end
+  defdelegate error(id, code, message, data \\ nil), to: JSONRPC
 
   @spec with_params(map(), map()) :: map()
-  def with_params(envelope, params) when is_map(envelope) and is_map(params) do
-    Map.put(envelope, "params", params)
-  end
+  defdelegate with_params(envelope, params), to: JSONRPC
 
   @spec with_id(map(), integer() | String.t() | nil) :: map()
-  def with_id(envelope, id) when is_map(envelope) do
-    Map.put(envelope, "id", id)
-  end
+  defdelegate with_id(envelope, id), to: JSONRPC
 end

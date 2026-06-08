@@ -18,7 +18,7 @@ defmodule ExMCP.ACP.Types do
   send prompts with `prompt_params/2`.
   """
 
-  alias ExMCP.ACP.NameValue
+  alias ExMCP.ACP.{Envelope, Maps, NameValue}
 
   # Content blocks
 
@@ -514,10 +514,10 @@ defmodule ExMCP.ACP.Types do
   def agent_capabilities(opts \\ []) do
     %{}
     |> maybe_put_bool("loadSession", opts, :load_session)
-    |> put_if_not_empty("promptCapabilities", prompt_capabilities(opts))
-    |> put_if_not_empty("mcpCapabilities", mcp_capabilities(opts))
-    |> put_if_not_empty("sessionCapabilities", session_capabilities(opts))
-    |> put_if_not_empty("auth", auth_capabilities(opts))
+    |> Maps.put_unless("promptCapabilities", prompt_capabilities(opts), %{})
+    |> Maps.put_unless("mcpCapabilities", mcp_capabilities(opts), %{})
+    |> Maps.put_unless("sessionCapabilities", session_capabilities(opts), %{})
+    |> Maps.put_unless("auth", auth_capabilities(opts), %{})
   end
 
   @doc "Creates session capability metadata."
@@ -554,17 +554,10 @@ defmodule ExMCP.ACP.Types do
   @doc "Creates a stable ACP `plan` session update notification."
   @spec plan(String.t(), [map()]) :: map()
   def plan(session_id, entries) when is_list(entries) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id,
-        "update" => %{
-          "sessionUpdate" => "plan",
-          "entries" => entries
-        }
-      }
-    }
+    session_update(session_id, %{
+      "sessionUpdate" => "plan",
+      "entries" => entries
+    })
   end
 
   @doc "Creates a stable ACP `plan` session update notification."
@@ -769,14 +762,10 @@ defmodule ExMCP.ACP.Types do
   end
 
   defp session_update(session_id, update) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "session/update",
-      "params" => %{
-        "sessionId" => session_id,
-        "update" => update
-      }
-    }
+    Envelope.notification("session/update", %{
+      "sessionId" => session_id,
+      "update" => update
+    })
   end
 
   defp maybe_put_bool(map, key, opts, opt_key) do
@@ -791,9 +780,6 @@ defmodule ExMCP.ACP.Types do
   defp maybe_put_capability(map, key, true), do: Map.put(map, key, %{})
   defp maybe_put_capability(map, key, value) when is_map(value), do: Map.put(map, key, value)
   defp maybe_put_capability(map, key, _value), do: Map.put(map, key, %{})
-
-  defp put_if_not_empty(map, _key, value) when value == %{}, do: map
-  defp put_if_not_empty(map, key, value), do: Map.put(map, key, value)
 
   defp normalize_env(env) when is_map(env) do
     NameValue.list(env, &env_variable/2)

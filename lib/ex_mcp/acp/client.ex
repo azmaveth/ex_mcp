@@ -32,7 +32,7 @@ defmodule ExMCP.ACP.Client do
 
   require Logger
 
-  alias ExMCP.ACP.{Capabilities, LifecycleParams, Maps}
+  alias ExMCP.ACP.{Capabilities, LifecycleParams, Maps, PendingRequests}
   alias ExMCP.ACP.Client.DefaultHandler
   alias ExMCP.ACP.Client.HandlerRunner
   alias ExMCP.ACP.Protocol
@@ -665,7 +665,7 @@ defmodule ExMCP.ACP.Client do
 
     case do_send(msg, state) do
       {:ok, new_state} ->
-        pending = Map.put(state.pending_requests, id, {from, telemetry_tag})
+        pending = PendingRequests.put(state.pending_requests, id, {from, telemetry_tag})
         {:noreply, %{new_state | pending_requests: pending}}
 
       {:error, reason} ->
@@ -693,7 +693,7 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp resolve_pending(id, reply, state) do
-    case Map.pop(state.pending_requests, id) do
+    case PendingRequests.pop(state.pending_requests, id) do
       {nil, _pending} ->
         Logger.debug("ACP received response for unknown request #{id}")
         state
@@ -858,14 +858,14 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp reply_all_pending(error, state) do
-    for {_id, pending} <- state.pending_requests do
+    for pending <- PendingRequests.values(state.pending_requests) do
       case pending do
         {from, _tag} -> GenServer.reply(from, error)
         from -> GenServer.reply(from, error)
       end
     end
 
-    %{state | pending_requests: %{}, pending_agent_requests: %{}}
+    %{state | pending_requests: PendingRequests.empty(), pending_agent_requests: %{}}
   end
 
   defp handle_session_update(params, state) do
@@ -987,7 +987,7 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp handle_handler_result(ref, result, state) do
-    case Map.pop(state.pending_agent_requests, ref) do
+    case PendingRequests.pop(state.pending_agent_requests, ref) do
       {nil, _pending} ->
         state
 
@@ -1033,7 +1033,11 @@ defmodule ExMCP.ACP.Client do
 
   defp track_agent_request(state, ref, kind, id, session_id, extra \\ %{}) do
     request = Map.merge(%{kind: kind, id: id, session_id: session_id}, extra)
-    %{state | pending_agent_requests: Map.put(state.pending_agent_requests, ref, request)}
+
+    %{
+      state
+      | pending_agent_requests: PendingRequests.put(state.pending_agent_requests, ref, request)
+    }
   end
 
   defp fail_pending_agent_requests(reason, state) do
