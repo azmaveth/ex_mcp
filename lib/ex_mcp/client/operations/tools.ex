@@ -7,6 +7,7 @@ defmodule ExMCP.Client.Operations.Tools do
   """
 
   alias ExMCP.Client.Types
+  alias ExMCP.Internal.RequestParams
 
   @doc """
   Lists all available tools from the MCP server.
@@ -23,7 +24,13 @@ defmodule ExMCP.Client.Operations.Tools do
   """
   @spec list_tools(Types.client(), Types.request_opts()) :: Types.mcp_response()
   def list_tools(client, opts \\ []) do
-    ExMCP.Client.make_request(client, "tools/list", %{}, opts, 5_000)
+    ExMCP.Client.make_request(
+      client,
+      "tools/list",
+      RequestParams.cursor_from_opts(opts),
+      opts,
+      5_000
+    )
   end
 
   @doc """
@@ -60,17 +67,10 @@ defmodule ExMCP.Client.Operations.Tools do
   end
 
   def call_tool(client, tool_name, arguments, opts) when is_list(opts) do
-    params = %{
-      "name" => tool_name,
-      "arguments" => arguments
-    }
-
-    # Inject _meta into params if meta: option is provided (MCP spec: _meta at params level)
     params =
-      case Keyword.get(opts, :meta) do
-        nil -> params
-        meta when is_map(meta) -> Map.put(params, "_meta", meta)
-      end
+      tool_name
+      |> RequestParams.named(arguments)
+      |> RequestParams.with_opts_meta(opts)
 
     # Add tool_name to opts for proper Response struct construction
     enhanced_opts = Keyword.put(opts, :tool_name, tool_name)

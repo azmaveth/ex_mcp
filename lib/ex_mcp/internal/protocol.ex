@@ -15,7 +15,7 @@ defmodule ExMCP.Internal.Protocol do
   #
   # All methods in this module are part of the official MCP specification.
 
-  alias ExMCP.Internal.{MapBuilder, MessageValidator, VersionRegistry}
+  alias ExMCP.Internal.{MapBuilder, MessageValidator, RequestParams, VersionRegistry}
 
   @type json_rpc_id :: String.t() | integer()
   @type method :: String.t()
@@ -67,8 +67,10 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_list_tools(String.t() | nil, map() | nil) :: map()
   def encode_list_tools(cursor \\ nil, meta \\ nil) do
-    params = if cursor, do: %{"cursor" => cursor}, else: %{}
-    params = maybe_add_meta(params, meta)
+    params =
+      cursor
+      |> RequestParams.cursor()
+      |> RequestParams.with_non_empty_meta(meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -90,25 +92,10 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_call_tool(String.t(), map(), ExMCP.Types.progress_token() | nil | map()) :: map()
   def encode_call_tool(name, arguments, meta_or_progress_token \\ nil) do
-    params = %{
-      "name" => name,
-      "arguments" => arguments
-    }
-
-    # Support both progress_token string/integer and full meta map
-    meta =
-      case meta_or_progress_token do
-        nil ->
-          nil
-
-        token when is_binary(token) or is_integer(token) ->
-          %{"progressToken" => token}
-
-        meta when is_map(meta) ->
-          meta
-      end
-
-    params = maybe_add_meta(params, meta)
+    params =
+      name
+      |> RequestParams.named(arguments)
+      |> RequestParams.with_progress_or_meta(meta_or_progress_token)
 
     %{
       "jsonrpc" => "2.0",
@@ -123,8 +110,10 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_list_resources(String.t() | nil, map() | nil) :: map()
   def encode_list_resources(cursor \\ nil, meta \\ nil) do
-    params = if cursor, do: %{"cursor" => cursor}, else: %{}
-    params = maybe_add_meta(params, meta)
+    params =
+      cursor
+      |> RequestParams.cursor()
+      |> RequestParams.with_non_empty_meta(meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -142,9 +131,7 @@ defmodule ExMCP.Internal.Protocol do
     %{
       "jsonrpc" => "2.0",
       "method" => "resources/read",
-      "params" => %{
-        "uri" => uri
-      },
+      "params" => RequestParams.uri(uri),
       "id" => generate_id()
     }
   end
@@ -154,8 +141,10 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_list_prompts(String.t() | nil, map() | nil) :: map()
   def encode_list_prompts(cursor \\ nil, meta \\ nil) do
-    params = if cursor, do: %{"cursor" => cursor}, else: %{}
-    params = maybe_add_meta(params, meta)
+    params =
+      cursor
+      |> RequestParams.cursor()
+      |> RequestParams.with_non_empty_meta(meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -170,12 +159,10 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_get_prompt(String.t(), map(), map() | nil) :: map()
   def encode_get_prompt(name, arguments \\ %{}, meta \\ nil) do
-    params = %{
-      "name" => name,
-      "arguments" => arguments
-    }
-
-    params = maybe_add_meta(params, meta)
+    params =
+      name
+      |> RequestParams.named(arguments)
+      |> RequestParams.with_non_empty_meta(meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -191,12 +178,10 @@ defmodule ExMCP.Internal.Protocol do
   @spec encode_complete(ExMCP.Types.complete_ref(), ExMCP.Types.complete_argument(), map() | nil) ::
           map()
   def encode_complete(ref, argument, meta \\ nil) do
-    params = %{
-      "ref" => ref,
-      "argument" => argument
-    }
-
-    params = maybe_add_meta(params, meta)
+    params =
+      ref
+      |> RequestParams.completion(argument)
+      |> RequestParams.with_non_empty_meta(meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -211,7 +196,7 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_create_message(ExMCP.Types.create_message_params(), map() | nil) :: map()
   def encode_create_message(params, meta \\ nil) do
-    params = maybe_add_meta(params, meta)
+    params = RequestParams.with_non_empty_meta(params, meta)
 
     %{
       "jsonrpc" => "2.0",
@@ -242,7 +227,7 @@ defmodule ExMCP.Internal.Protocol do
     %{
       "jsonrpc" => "2.0",
       "method" => "resources/subscribe",
-      "params" => %{"uri" => uri},
+      "params" => RequestParams.uri(uri),
       "id" => generate_id()
     }
   end
@@ -259,7 +244,7 @@ defmodule ExMCP.Internal.Protocol do
     %{
       "jsonrpc" => "2.0",
       "method" => "resources/unsubscribe",
-      "params" => %{"uri" => uri},
+      "params" => RequestParams.uri(uri),
       "id" => generate_id()
     }
   end
@@ -366,15 +351,6 @@ defmodule ExMCP.Internal.Protocol do
     encode_notification("notifications/progress", params)
   end
 
-  # Add _meta field to params if provided
-  defp maybe_add_meta(params, nil), do: params
-
-  defp maybe_add_meta(params, meta) when is_map(meta) and map_size(meta) > 0 do
-    Map.put(params, "_meta", meta)
-  end
-
-  defp maybe_add_meta(params, _), do: params
-
   @doc """
   Encodes a roots list changed notification.
   """
@@ -452,7 +428,7 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_list_resource_templates(String.t() | nil) :: map()
   def encode_list_resource_templates(cursor \\ nil) do
-    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    params = RequestParams.cursor(cursor)
 
     %{
       "jsonrpc" => "2.0",
@@ -574,7 +550,7 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_task_list(String.t() | nil) :: map()
   def encode_task_list(cursor \\ nil) do
-    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    params = RequestParams.cursor(cursor)
 
     %{
       "jsonrpc" => "2.0",

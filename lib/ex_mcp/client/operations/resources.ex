@@ -7,6 +7,7 @@ defmodule ExMCP.Client.Operations.Resources do
   """
 
   alias ExMCP.Client.Types
+  alias ExMCP.Internal.RequestParams
 
   @doc """
   Lists all available resources from the MCP server.
@@ -22,7 +23,13 @@ defmodule ExMCP.Client.Operations.Resources do
   """
   @spec list_resources(Types.client(), Types.request_opts()) :: Types.mcp_response()
   def list_resources(client, opts \\ []) do
-    ExMCP.Client.make_request(client, "resources/list", %{}, opts, 5_000)
+    ExMCP.Client.make_request(
+      client,
+      "resources/list",
+      RequestParams.cursor_from_opts(opts),
+      opts,
+      5_000
+    )
   end
 
   @doc """
@@ -44,8 +51,7 @@ defmodule ExMCP.Client.Operations.Resources do
   """
   @spec read_resource(Types.client(), Types.uri(), Types.request_opts()) :: Types.mcp_response()
   def read_resource(client, uri, opts \\ []) do
-    params = %{"uri" => uri}
-    ExMCP.Client.make_request(client, "resources/read", params, opts, 10_000)
+    ExMCP.Client.make_request(client, "resources/read", RequestParams.uri(uri), opts, 10_000)
   end
 
   @doc """
@@ -70,8 +76,7 @@ defmodule ExMCP.Client.Operations.Resources do
   @spec subscribe_resource(Types.client(), Types.uri(), Types.request_opts()) ::
           Types.mcp_response()
   def subscribe_resource(client, uri, opts \\ []) do
-    params = %{"uri" => uri}
-    ExMCP.Client.make_request(client, "resources/subscribe", params, opts, 5_000)
+    ExMCP.Client.make_request(client, "resources/subscribe", RequestParams.uri(uri), opts, 5_000)
   end
 
   @doc """
@@ -94,7 +99,12 @@ defmodule ExMCP.Client.Operations.Resources do
   @spec unsubscribe_resource(Types.client(), Types.uri(), Types.request_opts()) ::
           Types.mcp_response()
   def unsubscribe_resource(client, uri, opts \\ []) do
-    params = %{"uri" => uri}
-    ExMCP.Client.make_request(client, "resources/unsubscribe", params, opts, 5_000)
+    ExMCP.Client.make_request(
+      client,
+      "resources/unsubscribe",
+      RequestParams.uri(uri),
+      opts,
+      5_000
+    )
   end
 end

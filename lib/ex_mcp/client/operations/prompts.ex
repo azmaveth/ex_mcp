@@ -7,6 +7,7 @@ defmodule ExMCP.Client.Operations.Prompts do
   """
 
   alias ExMCP.Client.Types
+  alias ExMCP.Internal.RequestParams
 
   @doc """
   Lists all available prompts from the MCP server.
@@ -24,13 +25,13 @@ defmodule ExMCP.Client.Operations.Prompts do
   """
   @spec list_prompts(Types.client(), Types.request_opts()) :: Types.mcp_response()
   def list_prompts(client, opts \\ []) do
-    params =
-      case Keyword.get(opts, :cursor) do
-        nil -> %{}
-        cursor -> %{"cursor" => cursor}
-      end
-
-    ExMCP.Client.make_request(client, "prompts/list", params, opts, 5_000)
+    ExMCP.Client.make_request(
+      client,
+      "prompts/list",
+      RequestParams.cursor_from_opts(opts),
+      opts,
+      5_000
+    )
   end
 
   @doc """
@@ -56,17 +57,10 @@ defmodule ExMCP.Client.Operations.Prompts do
   @spec get_prompt(Types.client(), String.t(), map(), Types.request_opts()) ::
           Types.mcp_response()
   def get_prompt(client, prompt_name, arguments \\ %{}, opts \\ []) do
-    params = %{
-      "name" => prompt_name,
-      "arguments" => arguments
-    }
-
-    # Inject _meta into params if meta: option is provided (MCP spec: _meta at params level)
     params =
-      case Keyword.get(opts, :meta) do
-        nil -> params
-        meta when is_map(meta) -> Map.put(params, "_meta", meta)
-      end
+      prompt_name
+      |> RequestParams.named(arguments)
+      |> RequestParams.with_opts_meta(opts)
 
     ExMCP.Client.make_request(client, "prompts/get", params, opts, 5_000)
   end

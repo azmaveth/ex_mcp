@@ -37,7 +37,7 @@ defmodule ExMCP.Client do
 
   alias ExMCP.Client.{ConnectionManager, RequestHandler}
   alias ExMCP.Client.Operations.{Prompts, Resources, Tools}
-  alias ExMCP.Internal.Protocol
+  alias ExMCP.Internal.{Protocol, RequestParams}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
 
@@ -215,8 +215,7 @@ defmodule ExMCP.Client do
   end
 
   def list_tools(client, opts) when is_list(opts) do
-    {cursor, opts} = Keyword.pop(opts, :cursor)
-    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    {params, opts} = RequestParams.take_cursor(opts)
     make_request(client, "tools/list", params, opts, 5_000)
   end
 
@@ -323,8 +322,7 @@ defmodule ExMCP.Client do
   end
 
   def list_resources(client, opts) when is_list(opts) do
-    {cursor, opts} = Keyword.pop(opts, :cursor)
-    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    {params, opts} = RequestParams.take_cursor(opts)
     make_request(client, "resources/list", params, opts, 5_000)
   end
 
@@ -361,8 +359,7 @@ defmodule ExMCP.Client do
   end
 
   def list_resource_templates(client, opts) when is_list(opts) do
-    {cursor, opts} = Keyword.pop(opts, :cursor)
-    params = if cursor, do: %{"cursor" => cursor}, else: %{}
+    {params, opts} = RequestParams.take_cursor(opts)
     make_request(client, "resources/templates/list", params, opts, 5_000)
   end
 
@@ -1294,17 +1291,10 @@ defmodule ExMCP.Client do
   """
   @spec complete(t(), map(), map(), keyword()) :: {:ok, map()} | {:error, any()}
   def complete(client, ref, argument, opts \\ []) do
-    params = %{
-      "ref" => ref,
-      "argument" => argument
-    }
-
-    # Inject _meta into params if meta: option is provided (MCP spec: _meta at params level)
     params =
-      case Keyword.get(opts, :meta) do
-        nil -> params
-        meta when is_map(meta) -> Map.put(params, "_meta", meta)
-      end
+      ref
+      |> RequestParams.completion(argument)
+      |> RequestParams.with_opts_meta(opts)
 
     make_request(client, "completion/complete", params, opts, 5_000)
   end
