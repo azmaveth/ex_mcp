@@ -171,7 +171,7 @@ For network communication with optional Server-Sent Events:
 )
 ```
 
-### Native BEAM Transport
+### BEAM-Local MCP
 
 For high-performance intra-cluster communication:
 
@@ -490,7 +490,7 @@ ExMCP.Logging.critical(server, "System component failure")
 )
 ```
 
-### Native BEAM Optimization
+### BEAM-Local Optimization
 
 ```elixir
 # Default: local Registry (zero deps, single-node)
@@ -555,7 +555,7 @@ config :logger_json, :backend,
   json_encoder: Jason,
   formatter: LoggerJSON.Formatters.GoogleCloudLogger
 
-# Native BEAM registry (default: local, use Horde for distributed)
+# BEAM-local registry (default: local, use Horde for distributed)
 # config :ex_mcp, :service_registry, ExMCP.ServiceRegistry.Horde
 
 # SSL/TLS configuration
@@ -711,7 +711,7 @@ ExMCP.Config.validate_transport_config(:http, options)
 iex> ExMCP.Config.test_config()
 %{
   protocol_version: "2025-11-25",
-  transports: [:stdio, :http, :native],
+  transports: [:stdio, :http, :beam],
   security: %{...},
   valid: true
 }

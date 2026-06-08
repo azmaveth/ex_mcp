@@ -59,7 +59,8 @@ defmodule ExMCP.Server.HandlerServer do
 
   * `:handler` - Module implementing `ExMCP.Server.Handler` behaviour (required)
   * `:transport` - Transport type (`:test`, `:stdio`, `:http`, etc.)
-  * Other options are passed to the transport and handler
+  * `:handler_args` - Optional term passed to `handler.init/1` (default: `[]`)
+  * Other options are passed to the transport
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -77,18 +78,7 @@ defmodule ExMCP.Server.HandlerServer do
     handler_module = Keyword.fetch!(opts, :handler)
     transport_type = Keyword.get(opts, :transport, :test)
 
-    # Initialize the handler with handler_args or legacy options
-    handler_args =
-      case Keyword.get(opts, :handler_args) do
-        nil ->
-          # Legacy mode: pass all opts except system keys
-          opts
-          |> Keyword.drop([:handler, :transport, :name])
-
-        args ->
-          # New mode: pass explicit handler_args
-          args
-      end
+    handler_args = Keyword.get(opts, :handler_args, [])
 
     case handler_module.init(handler_args) do
       {:ok, handler_state} ->
@@ -130,7 +120,7 @@ defmodule ExMCP.Server.HandlerServer do
   end
 
   def handle_info({:transport_message, message}, state) do
-    case Jason.decode(message) do
+    case decode_transport_message(message) do
       {:ok, requests} when is_list(requests) ->
         handle_batch_request(requests, state)
 
@@ -239,6 +229,11 @@ defmodule ExMCP.Server.HandlerServer do
         {:noreply, state}
     end
   end
+
+  defp decode_transport_message(message) when is_binary(message), do: Jason.decode(message)
+  defp decode_transport_message(message) when is_map(message), do: {:ok, message}
+  defp decode_transport_message(messages) when is_list(messages), do: {:ok, messages}
+  defp decode_transport_message(_message), do: {:error, :invalid_message}
 
   # Handle batch requests according to JSON-RPC 2.0 specification
   defp handle_batch_request([], state) do
@@ -1209,9 +1204,14 @@ defmodule ExMCP.Server.HandlerServer do
   defp normalize_error_key(result), do: result
 
   defp send_message(message, state) do
-    json_message = Jason.encode!(message)
+    outbound_message =
+      if state.transport == ExMCP.Transport.Local do
+        message
+      else
+        Jason.encode!(message)
+      end
 
-    case state.transport.send_message(json_message, state.transport_state) do
+    case state.transport.send_message(outbound_message, state.transport_state) do
       {:ok, new_transport_state} ->
         {:ok, %{state | transport_state: new_transport_state}}
 

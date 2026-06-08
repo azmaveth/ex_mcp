@@ -88,7 +88,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         "sse" => true,
         "_meta" => %{
           "ex_mcp.mcpCapabilities" => %{
-            "native" => true,
             "beam" => true
           }
         }

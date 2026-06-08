@@ -3,7 +3,7 @@ defmodule ExMCP.PingTest do
 
   alias ExMCP.Client
   alias ExMCP.Client.Handler, as: ClientHandler
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol
   alias ExMCP.Server.Handler
   alias ExMCP.Server.HandlerServer, as: Server
 

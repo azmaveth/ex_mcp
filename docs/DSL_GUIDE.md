@@ -21,7 +21,8 @@ end
 
 This generates the standard `ExMCP.Server.Handler` callbacks for listing and
 dispatching declared capabilities. The generated `start_link/1` supports
-`:native`, `:test`, `:beam`, `:stdio`, `:http`, and `:sse` transports.
+`:beam`, `:test`, `:stdio`, and `:http` transports. Use `transport: :http`
+with `sse_enabled: true` when serving HTTP responses with SSE streaming.
 
 ## Tools
 

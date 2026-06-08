@@ -3,19 +3,19 @@ defmodule ExMCP.ACP.Adapters.Codex.ConfigTest do
 
   alias ExMCP.ACP.Adapters.Codex.Config
 
-  test "normalizes current and legacy mode ids" do
+  test "normalizes current mode ids" do
     assert Config.normalize_mode_id(nil) == "auto"
     assert Config.normalize_mode_id("read-only") == "read-only"
-    assert Config.normalize_mode_id("suggest") == "read-only"
-    assert Config.normalize_mode_id("auto-edit") == "auto"
-    assert Config.normalize_mode_id("full-auto") == "full-access"
+    assert Config.normalize_mode_id("auto") == "auto"
+    assert Config.normalize_mode_id("full-access") == "full-access"
   end
 
   test "validates requested modes" do
     assert Config.normalize_requested_mode("full-access") == {:ok, "full-access"}
-    assert Config.normalize_requested_mode("full-auto") == {:ok, "full-access"}
     assert {:error, reason} = Config.normalize_requested_mode("unknown")
     assert reason =~ "Unsupported Codex mode"
+    assert {:error, legacy_reason} = Config.normalize_requested_mode("full-auto")
+    assert legacy_reason =~ "Unsupported Codex mode"
   end
 
   test "merges mode wire params" do

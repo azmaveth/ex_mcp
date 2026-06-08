@@ -333,7 +333,7 @@ defmodule ExMCP.Client.TelemetryTest do
 
   describe "telemetry configuration" do
     test "can retrieve all telemetry events" do
-      events = ExMCP.Client.Configuration.telemetry_events()
+      events = StateMachine.telemetry_events()
 
       # Verify we have all expected event types
       assert [:ex_mcp, :client, :state_transition] in events

@@ -33,7 +33,8 @@ defmodule ExMCP.Compliance.Features.Cancellation do
   # Import test helpers
   import ExUnit.Assertions
   import ExMCP.ComplianceTestHelpers
-  alias ExMCP.{Client, Protocol}
+  alias ExMCP.Client
+  alias ExMCP.Internal.Protocol
 
   # Actual test implementations
   def test_request_cancellation(version) do

@@ -31,8 +31,8 @@ ExMCP is a production-ready Elixir implementation of the Model Context Protocol 
 
 ### Key Features
 
-- **🚀 Ultra-fast**: Native BEAM transport with ~15μs local calls
-- **🔌 Transport flexible**: HTTP, stdio, and native BEAM support  
+- **🚀 Ultra-fast**: BEAM-local MCP with ~15μs local calls
+- **🔌 Transport flexible**: HTTP, stdio, and BEAM-local support
 - **🔐 Secure**: Complete OAuth 2.1 Resource Server implementation
 - **🎯 MCP compliant**: Full support for MCP 2025-06-18 specification
 - **🧪 Well tested**: Comprehensive test suite with 500+ tests
@@ -43,7 +43,7 @@ ExMCP is a production-ready Elixir implementation of the Model Context Protocol 
 ```
 Transport     Latency    Best For
 ─────────────────────────────────────────────
-Native BEAM   ~15μs      Internal services
+BEAM-local    ~15μs      Internal services
 stdio         ~1-5ms     External tools  
 HTTP          ~5-20ms    Network clients
 ```

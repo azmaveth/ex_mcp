@@ -2,7 +2,7 @@ defmodule ExMCP.Server.BeamServer do
   @moduledoc """
   BEAM transport server for MCP protocol.
 
-  This server handles the MCP protocol layer for BEAM/native transport,
+  This server handles the MCP protocol layer for BEAM-local transport,
   routing requests to services registered with ExMCP.Native.
   """
 
@@ -44,9 +44,9 @@ defmodule ExMCP.Server.BeamServer do
     # Initialize transport in server mode
     transport_opts =
       case transport_opts do
-        opts when is_list(opts) -> Keyword.put(opts, :mode, :beam)
-        atom when is_atom(atom) -> [type: atom, mode: :beam]
-        _ -> [mode: :beam]
+        opts when is_list(opts) -> opts
+        atom when is_atom(atom) -> [type: atom]
+        _ -> []
       end
 
     case Local.connect(transport_opts) do
@@ -85,12 +85,7 @@ defmodule ExMCP.Server.BeamServer do
 
   @impl true
   def handle_info({:transport_message, message}, state) do
-    # First try to decode the message as it might be a JSON string
-    decoded =
-      case Jason.decode(message) do
-        {:ok, decoded_msg} -> decoded_msg
-        {:error, _} -> message
-      end
+    decoded = decode_transport_message(message)
 
     # Check if decoded message is a batch (array)
     case decoded do
@@ -99,8 +94,7 @@ defmodule ExMCP.Server.BeamServer do
         handle_batch_request(messages, state)
 
       _ ->
-        # Handle single message - use the original message for parse_message
-        case Protocol.parse_message(message) do
+        case Protocol.parse_message(decoded) do
           {:request, method, params, id} ->
             handle_request(method, params, id, state)
 
@@ -130,6 +124,15 @@ defmodule ExMCP.Server.BeamServer do
   def handle_info(_msg, state) do
     {:noreply, state}
   end
+
+  defp decode_transport_message(message) when is_binary(message) do
+    case Jason.decode(message) do
+      {:ok, decoded_msg} -> decoded_msg
+      {:error, _} -> message
+    end
+  end
+
+  defp decode_transport_message(message), do: message
 
   @impl true
   def handle_call(:get_notifications, _from, state) do
@@ -296,8 +299,7 @@ defmodule ExMCP.Server.BeamServer do
   end
 
   defp send_response(response, state) do
-    {:ok, encoded} = Protocol.encode_to_string(response)
-    {:ok, new_transport_state} = Local.send_message(encoded, state.transport_state)
+    {:ok, new_transport_state} = Local.send_message(response, state.transport_state)
     %{state | transport_state: new_transport_state}
   end
 

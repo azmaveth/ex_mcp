@@ -193,22 +193,15 @@ defmodule ExMCP.Error do
     end
   end
 
-  # Wrapper functions for backward compatibility with tests
-  # These handle the different call patterns between the exception-based API
-  # and the struct-based API expected by tests
-
-  # Pattern 1: tool_error(details) - struct API
   def tool_error(details) when is_binary(details) do
-    ExMCP.ErrorHelpers.tool_error(details, nil, [])
+    tool_error_struct(details, nil, [])
   end
 
-  # Pattern 3: tool_error(details, tool_name) - struct API (needs to come first)
   def tool_error(details, tool_name)
       when is_binary(details) and (is_binary(tool_name) or is_nil(tool_name)) do
-    ExMCP.ErrorHelpers.tool_error(details, tool_name, [])
+    tool_error_struct(details, tool_name, [])
   end
 
-  # Pattern 2: tool_error(tool_name, reason) - exception API
   def tool_error(tool_name, reason) when is_atom(tool_name) do
     %ToolError{
       tool_name: tool_name,
@@ -224,13 +217,11 @@ defmodule ExMCP.Error do
   def tool_error(_tool_name, %ResourceError{} = error), do: error
   def tool_error(_tool_name, %ValidationError{} = error), do: error
 
-  # Pattern 5: tool_error(details, tool_name, opts) - struct API with options (needs to come first)
   def tool_error(details, tool_name, opts)
       when is_binary(details) and is_binary(tool_name) and is_list(opts) do
-    ExMCP.ErrorHelpers.tool_error(details, tool_name, opts)
+    tool_error_struct(details, tool_name, opts)
   end
 
-  # Pattern 4: tool_error(tool_name, reason, arguments) - exception API with optional arguments
   def tool_error(tool_name, reason, arguments) when is_atom(tool_name) or is_binary(tool_name) do
     %ToolError{
       tool_name: tool_name,
@@ -239,9 +230,8 @@ defmodule ExMCP.Error do
     }
   end
 
-  # resource_error patterns
   def resource_error(details, uri) when is_binary(details) and is_binary(uri) do
-    ExMCP.ErrorHelpers.resource_error(details, uri, [])
+    resource_error_struct(details, uri, [])
   end
 
   def resource_error(uri, operation, reason) when is_atom(operation) do
@@ -254,7 +244,7 @@ defmodule ExMCP.Error do
 
   def resource_error(details, uri, opts)
       when is_binary(details) and is_binary(uri) and is_list(opts) do
-    ExMCP.ErrorHelpers.resource_error(details, uri, opts)
+    resource_error_struct(details, uri, opts)
   end
 
   def authentication_error(details) when is_binary(details) do
@@ -297,18 +287,162 @@ defmodule ExMCP.Error do
     }
   end
 
-  # Delegate functions for backward compatibility with tests
-  defdelegate from_json_rpc_error(json_error, opts \\ []), to: ExMCP.ErrorHelpers
-  defdelegate parse_error(details \\ "", opts \\ []), to: ExMCP.ErrorHelpers
-  defdelegate invalid_request(details, opts \\ []), to: ExMCP.ErrorHelpers
-  defdelegate method_not_found(method, opts \\ []), to: ExMCP.ErrorHelpers
-  defdelegate invalid_params(details, opts \\ []), to: ExMCP.ErrorHelpers
-  defdelegate internal_error(details, opts \\ []), to: ExMCP.ErrorHelpers
-  defdelegate prompt_error(details, prompt_name, opts \\ []), to: ExMCP.ErrorHelpers
+  @doc """
+  Creates an error struct from a JSON-RPC error response.
+  """
+  def from_json_rpc_error(json_error, opts \\ []) do
+    %__MODULE__{
+      code: Map.get(json_error, "code"),
+      message: Map.get(json_error, "message", "Unknown error"),
+      data: Map.get(json_error, "data"),
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
 
-  # This delegate creates the Error struct for tests
-  defdelegate connection_error(details), to: ExMCP.ErrorHelpers
-  defdelegate connection_error(details, opts), to: ExMCP.ErrorHelpers
+  @doc """
+  Creates a JSON-RPC parse error.
+  """
+  def parse_error(details \\ "", opts \\ []) do
+    message =
+      if details == "" do
+        "Parse error"
+      else
+        "Parse error: #{details}"
+      end
+
+    %__MODULE__{
+      code: -32700,
+      message: message,
+      data: Keyword.get(opts, :data),
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
+
+  @doc """
+  Creates a JSON-RPC invalid request error.
+  """
+  def invalid_request(details, opts \\ []) do
+    %__MODULE__{
+      code: -32600,
+      message: "Invalid request: #{details}",
+      data: Keyword.get(opts, :data),
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
+
+  @doc """
+  Creates a JSON-RPC method not found error.
+  """
+  def method_not_found(method, opts \\ []) do
+    %__MODULE__{
+      code: -32601,
+      message: "Method not found: #{method}",
+      data: Keyword.get(opts, :data),
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
+
+  @doc """
+  Creates a JSON-RPC invalid params error.
+  """
+  def invalid_params(details, opts \\ []) do
+    %__MODULE__{
+      code: -32602,
+      message: "Invalid params: #{details}",
+      data: Keyword.get(opts, :data),
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
+
+  @doc """
+  Creates a JSON-RPC internal error.
+  """
+  def internal_error(details, opts \\ []) do
+    %ProtocolError{
+      code: -32603,
+      message: "Internal error: #{details}",
+      data: Keyword.get(opts, :data)
+    }
+  end
+
+  @doc """
+  Creates an MCP prompt error.
+  """
+  def prompt_error(details, prompt_name, opts \\ []) do
+    data =
+      case Keyword.get(opts, :data) do
+        nil -> %{prompt_name: prompt_name}
+        custom_data -> custom_data
+      end
+
+    %__MODULE__{
+      code: -32002,
+      message: "Prompt error in '#{prompt_name}': #{details}",
+      data: data,
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
+
+  @doc """
+  Creates a connection error.
+  """
+  def connection_error(details), do: connection_error(details, [])
+
+  def connection_error(details, opts) when is_list(opts) do
+    %__MODULE__{
+      code: :connection_error,
+      message: "Connection error: #{details}",
+      data: Keyword.get(opts, :data),
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
+
+  defp tool_error_struct(details, tool_name, opts) do
+    message =
+      if tool_name do
+        "Tool error in '#{tool_name}': #{details}"
+      else
+        "Tool error: #{details}"
+      end
+
+    data =
+      case Keyword.get(opts, :data) do
+        nil when tool_name != nil -> %{tool_name: tool_name}
+        nil -> nil
+        custom_data -> custom_data
+      end
+
+    %__MODULE__{
+      code: -32000,
+      message: message,
+      data: data,
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
+
+  defp resource_error_struct(details, uri, opts) do
+    data =
+      case Keyword.get(opts, :data) do
+        nil -> %{resource_uri: uri}
+        custom_data -> custom_data
+      end
+
+    %__MODULE__{
+      code: -32001,
+      message: "Resource error for '#{uri}': #{details}",
+      data: data,
+      request_id: Keyword.get(opts, :request_id),
+      __exception__: true
+    }
+  end
 
   # Classification functions for Error structs
   def json_rpc_error?(%__MODULE__{code: code}) when is_integer(code), do: true

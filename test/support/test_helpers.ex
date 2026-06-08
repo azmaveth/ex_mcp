@@ -79,10 +79,10 @@ defmodule ExMCP.TestHelpers do
   end
 
   @doc """
-  Starts a test server with native/beam transport.
+  Starts a test server with BEAM transport.
   """
-  def start_native_server(opts \\ []) do
-    server_opts = [transport: :native] ++ opts
+  def start_beam_server(opts \\ []) do
+    server_opts = [transport: :beam] ++ opts
     ensure_test_server_loaded()
     ExMCP.TestServer.start_link(server_opts)
   end
@@ -380,8 +380,8 @@ defmodule ExMCP.TestHelpers do
 
   ## Options
 
-  - `:transport` - The transport to use. Can be `:http`, `:stdio`, or `:native`.
-    Defaults to `:native`.
+  - `:transport` - The transport to use. Can be `:http`, `:stdio`, or `:beam`.
+    Defaults to `:beam`.
 
   ## Return Value
 
@@ -424,7 +424,7 @@ defmodule ExMCP.TestHelpers do
       Application.put_env(:ex_mcp, :horde_supervisor, horde_config.supervisor_name)
 
       # 3. Start the server with the correct transport.
-      transport = Keyword.get(unquote(opts), :transport, :native)
+      transport = Keyword.get(unquote(opts), :transport, :beam)
       server_opts = unquote(opts)
 
       # Delegate to a private helper to start the server and set up its cleanup.
@@ -468,10 +468,10 @@ defmodule ExMCP.TestHelpers do
             error
         end
 
-      :native ->
-        case start_native_server(opts) do
+      :beam ->
+        case start_beam_server(opts) do
           {:ok, pid} ->
-            {:ok, %{pid: pid, transport: :native}}
+            {:ok, %{pid: pid, transport: :beam}}
 
           error ->
             error

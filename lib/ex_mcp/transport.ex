@@ -13,8 +13,7 @@ defmodule ExMCP.Transport do
   - **`:stdio`** - Standard I/O communication (MCP specification)
   - **`:http`** - HTTP with optional SSE streaming (MCP specification)
   - **`:test`** - In-memory transport for testing
-  - **`:beam`** - JSON-compliant transport for BEAM-to-BEAM communication.
-  - **`:native`** - High-performance transport for BEAM-to-BEAM communication using raw Elixir terms.
+  - **`:beam`** - BEAM-local transport carrying MCP-shaped messages as Elixir terms.
 
   ## Using Transports
 
@@ -88,7 +87,7 @@ defmodule ExMCP.Transport do
   """
 
   @type state :: any()
-  @type message :: String.t() | map()
+  @type message :: String.t() | map() | list()
   @type opts :: keyword()
 
   @doc """
@@ -102,8 +101,8 @@ defmodule ExMCP.Transport do
   @doc """
   Sends a message through the transport.
 
-  The message will be a JSON-encoded string, or a raw map if the
-  transport supports the `:raw_terms` capability. Should return
+  The message will be a JSON-encoded string for wire transports, or an
+  MCP-shaped map/list for local BEAM transports. Should return
   `{:ok, new_state}` on success.
   """
   @callback send_message(message(), state()) :: {:ok, state()} | {:error, any()}
@@ -112,7 +111,7 @@ defmodule ExMCP.Transport do
   Receives a message from the transport.
 
   This should block until a message is available. Returns
-  `{:ok, message, new_state}` where message is a JSON string or raw map.
+  `{:ok, message, new_state}` where message is a JSON string or MCP-shaped term.
 
   Note: When `subscribe/2` is used, `receive_message/1` may not be called.
   Transports should still implement it for backwards compatibility.
@@ -157,18 +156,14 @@ defmodule ExMCP.Transport do
 
   ## Capabilities
 
-  - `:raw_terms` - Transport can handle raw Elixir terms without JSON serialization
   - `:push` - Transport supports `subscribe/2` for event-driven message delivery
   - `:compression` - Transport supports message compression (future)
   - `:encryption` - Transport supports message encryption (future)
 
   ## Examples
 
-      # Transport that supports raw term passing
-      def capabilities(_state), do: [:raw_terms]
-
-      # Transport with multiple capabilities
-      def capabilities(_state), do: [:raw_terms, :push]
+      # Transport with push delivery
+      def capabilities(_state), do: [:push]
 
       # Transport with no special capabilities (default)
       def capabilities(_state), do: []
@@ -193,16 +188,14 @@ defmodule ExMCP.Transport do
   - `:stdio` - Standard I/O transport (official MCP transport)
   - `:http` - Streamable HTTP transport with SSE (official MCP transport)
   - `:test` - In-memory transport for testing (non-standard)
-  - `:beam` - JSON-compliant transport for BEAM-to-BEAM communication.
-  - `:native` - High-performance transport for BEAM-to-BEAM communication using raw Elixir terms.
+  - `:beam` - BEAM-local transport carrying MCP-shaped messages as Elixir terms.
 
   Note: For direct Elixir service communication, use ExMCP.Native for service registration.
   """
-  @spec get_transport(:stdio | :http | :test | :beam | :native | module()) :: module()
+  @spec get_transport(:stdio | :http | :test | :beam | module()) :: module()
   def get_transport(:stdio), do: ExMCP.Transport.Stdio
   def get_transport(:http), do: ExMCP.Transport.HTTP
   def get_transport(:test), do: ExMCP.Transport.Test
   def get_transport(:beam), do: ExMCP.Transport.Local
-  def get_transport(:native), do: ExMCP.Transport.Local
   def get_transport(module) when is_atom(module), do: module
 end

@@ -53,7 +53,7 @@ defmodule ExMCP do
         transport: :stdio
       )
 
-  ### Native BEAM Communication
+  ### BEAM-Local Communication
 
       # High-performance service-to-service calls
       {:ok, result} = ExMCP.Native.call(:my_service, "method", %{})
@@ -77,13 +77,13 @@ defmodule ExMCP do
   - **Subscriptions** - Monitor resources for changes
   - **Progress** - Track long-running operations
   - **Notifications** - Real-time updates for changes
-  - **Native BEAM** - High-performance Elixir-to-Elixir communication
+  - **BEAM-local MCP** - High-performance Elixir-to-Elixir communication
 
   ## Transport Options
 
   - **stdio** - Process communication (standard MCP)
   - **HTTP/SSE** - Web-friendly transport (standard MCP)
-  - **Native BEAM** - Direct Erlang process communication (ExMCP extension)
+  - **BEAM-local MCP** - Direct Erlang process communication (ExMCP extension)
 
   ## Examples
 
@@ -117,7 +117,7 @@ defmodule ExMCP do
 
       {:ok, server} = ExMCP.start_server(handler: MyHandler, transport: :stdio)
 
-  ### Native BEAM Service
+  ### BEAM-Local Service
 
       defmodule MyService do
         use ExMCP.Service, name: :my_service
@@ -507,7 +507,7 @@ defmodule ExMCP do
     %{
       version: version(),
       protocol_versions: supported_versions(),
-      transports: [:http, :stdio, :sse, :native],
+      transports: [:http, :stdio, :beam],
       features: [
         :structured_responses,
         :backward_compatibility,

@@ -55,7 +55,6 @@ defmodule ExMCP.ACP.TypesTest do
           session_delete: true,
           session_fork: true,
           session_additional_directories: true,
-          native_mcp: true,
           beam_mcp: true,
           logout: true
         )
@@ -64,9 +63,6 @@ defmodule ExMCP.ACP.TypesTest do
       assert caps["promptCapabilities"]["image"] == true
       assert caps["mcpCapabilities"]["acp"] == true
       assert caps["mcpCapabilities"]["http"] == true
-
-      assert get_in(caps, ["mcpCapabilities", "_meta", "ex_mcp.mcpCapabilities", "native"]) ==
-               true
 
       assert get_in(caps, ["mcpCapabilities", "_meta", "ex_mcp.mcpCapabilities", "beam"]) == true
       assert caps["sessionCapabilities"]["list"] == %{}

@@ -42,7 +42,8 @@ defmodule ExMCP.Compliance.Features.Batch do
 
   # Import test helpers
   import ExUnit.Assertions
-  alias ExMCP.{Client, Protocol}
+  alias ExMCP.Client
+  alias ExMCP.Internal.Protocol
   import ExMCP.ComplianceTestHelpers
 
   # Actual test implementations

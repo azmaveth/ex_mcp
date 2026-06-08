@@ -77,23 +77,28 @@ config :ex_mcp,
 - Enhanced resource metadata
 - Improved security features
 
-### 5. Native Service Dispatcher Updates
+### 5. BEAM-Local Transport Updates
 
-If you were using experimental `:beam` transport, migrate to the Native Service Dispatcher:
+Use `:beam` for BEAM-local MCP clients and servers:
 
 ```elixir
-# Before (deprecated :beam transport)
-ExMCP.Client.start_link(transport: :beam, ...)
+# BEAM-local MCP transport
+ExMCP.Client.start_link(transport: :beam, server: server_pid)
+MyServer.start_link(transport: :beam)
+```
 
-# After (Native Service Dispatcher)
+For direct service-dispatcher calls outside the client transport API, `ExMCP.Native`
+remains available:
+
+```elixir
 defmodule MyService do
   use ExMCP.Service
-  
+
   # Service automatically registered with the configured registry
 end
 
-# Call services with zero serialization overhead
-ExMCP.Native.call_service(:my_service, "tool_name", %{args: "here"})
+# Direct dispatcher call
+ExMCP.Native.call(:my_service, "tool_name", %{args: "here"})
 ```
 
 ### 6. Python MCP SDK Interoperability
@@ -122,7 +127,7 @@ ExMCP.Client.start_link(transport: :http, ...)
 MyServer.start_link(transport: :http, ...)
 ```
 
-**Rationale:** The `:sse` transport was renamed to `:http` to better reflect that it supports both regular HTTP and Server-Sent Events.
+**Rationale:** The `:sse` transport was renamed to `:http` to better reflect that it supports both regular HTTP and Server-Sent Events. In current ExMCP versions, `:sse` has been removed; use `transport: :http` with `use_sse: true` or `sse_enabled: true` when streaming is required.
 
 ### 2. Authorization API Changes
 

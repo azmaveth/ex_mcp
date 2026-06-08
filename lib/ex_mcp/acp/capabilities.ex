@@ -41,14 +41,14 @@ defmodule ExMCP.ACP.Capabilities do
     |> Maps.truthy?()
   end
 
-  def supported?(caps, :mcp_native) do
+  def supported?(caps, :mcp_beam) do
     caps
     |> Maps.get("mcpCapabilities")
     |> Maps.get("_meta")
     |> Maps.get("ex_mcp.mcpCapabilities")
     |> case do
-      native when is_map(native) ->
-        Maps.truthy?(Maps.get(native, "native")) or Maps.truthy?(Maps.get(native, "beam"))
+      beam when is_map(beam) ->
+        Maps.truthy?(Maps.get(beam, "beam"))
 
       _ ->
         false

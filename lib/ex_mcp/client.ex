@@ -57,7 +57,6 @@ defmodule ExMCP.Client do
     :last_activity,
     :reconnect_attempts,
     :client_info,
-    :raw_terms_enabled,
     :server_capabilities,
     :initialized,
     :default_retry_policy,
@@ -75,7 +74,7 @@ defmodule ExMCP.Client do
 
   ## Options
 
-  - `:transport` - Transport type (:stdio, :http, :sse, etc.)
+  - `:transport` - Transport type (:stdio, :http, :beam, etc.)
   - `:transports` - List of transports for fallback
   - `:name` - Optional GenServer name
   - `:health_check_interval` - Interval for health checks (default: 30_000)

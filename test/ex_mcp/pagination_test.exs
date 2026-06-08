@@ -4,7 +4,7 @@ defmodule ExMCP.PaginationTest do
   @moduletag :resources
 
   alias ExMCP.Client
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol
   alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestPaginationHandler do

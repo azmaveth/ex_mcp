@@ -6,7 +6,7 @@ defmodule ExMCP.CancellationTest do
   import ExMCP.TestHelpers, only: [wait_until: 1]
 
   alias ExMCP.Client
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol
   alias ExMCP.Server.Handler
   alias ExMCP.Server.HandlerServer, as: Server
 

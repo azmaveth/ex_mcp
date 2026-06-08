@@ -7,7 +7,7 @@ This guide provides comprehensive information about ExMCP's transport layers, he
 1. [Transport Overview](#transport-overview)
 2. [stdio Transport](#stdio-transport)
 3. [HTTP Transport (Streamable HTTP)](#http-transport-streamable-http)
-4. [Native BEAM Transport](#native-beam-transport)
+4. [BEAM-Local MCP](#beam-local-mcp)
 5. [Transport Comparison](#transport-comparison)
 6. [Performance Optimization](#performance-optimization)
 7. [Security Considerations](#security-considerations)
@@ -19,13 +19,13 @@ ExMCP supports three transport layers, each optimized for different use cases:
 
 | Transport | Latency | Best For | Security Model |
 |-----------|---------|----------|----------------|
-| **Native BEAM** | ~15μs | Internal services | Process isolation + Erlang distribution |
+| **BEAM-local** | ~15μs | Internal services | Process isolation + Erlang distribution |
 | **stdio** | ~1-5ms | External tools | Process isolation |
 | **HTTP/SSE** | ~5-20ms | Network clients | TLS + Authentication headers |
 
 ### Choosing the Right Transport
 
-**Use Native BEAM when:**
+**Use BEAM-local MCP when:**
 - Communicating within trusted Elixir clusters
 - Need ultra-low latency (~15μs)
 - Want zero serialization overhead
@@ -403,7 +403,7 @@ The HTTP transport supports pluggable auth providers via `auth_provider`:
 )
 ```
 
-## Native BEAM Transport
+## BEAM-Local MCP
 
 Ultra-fast service dispatcher for trusted Elixir clusters.
 
@@ -608,7 +608,7 @@ protected_call = ExMCP.Resilience.protect(
 
 ### Performance Benchmarks
 
-| Operation | Native BEAM | stdio | HTTP |
+| Operation | BEAM-local | stdio | HTTP |
 |-----------|-------------|-------|------|
 | **Simple tool call** | ~15μs | ~1-2ms | ~5-10ms |
 | **Large payload (1MB)** | ~100μs | ~10-20ms | ~50-100ms |
@@ -621,7 +621,7 @@ protected_call = ExMCP.Resilience.protect(
 
 | Transport | Per Connection | Serialization | Notes |
 |-----------|----------------|---------------|-------|
-| **Native BEAM** | ~1KB | None | Registry entry only |
+| **BEAM-local** | ~1KB | None | Registry entry only |
 | **stdio** | ~10KB | JSON | Process + pipes |
 | **HTTP** | ~5KB | JSON | HTTP connection state |
 
@@ -629,13 +629,13 @@ protected_call = ExMCP.Resilience.protect(
 
 | Transport | Max Connections | Bottlenecks |
 |-----------|-----------------|-------------|
-| **Native BEAM** | ~1M processes | VM process limit |
+| **BEAM-local** | ~1M processes | VM process limit |
 | **stdio** | ~1K processes | OS process limit |
 | **HTTP** | ~10K connections | TCP/socket limits |
 
 ## Performance Optimization
 
-### Native BEAM Optimization
+### BEAM-Local Optimization
 
 ```elixir
 # Optimize for high-throughput scenarios
@@ -717,7 +717,7 @@ end
 
 ### Transport Security Matrix
 
-| Feature | Native BEAM | stdio | HTTP |
+| Feature | BEAM-local | stdio | HTTP |
 |---------|-------------|-------|------|
 | **Process Isolation** | ✅ | ✅ | ✅ |
 | **Network Encryption** | ✅* | ❌ | ✅ |
@@ -726,7 +726,7 @@ end
 
 *Via Erlang distribution TLS
 
-### Native BEAM Security
+### BEAM-Local Security
 
 ```elixir
 # Secure service registration
@@ -839,7 +839,7 @@ config :ssl,
 
 ### Common Issues
 
-#### Native BEAM Issues
+#### BEAM-Local Issues
 
 **Service not found:**
 ```elixir
@@ -930,7 +930,7 @@ config :ex_mcp,
   log_level: :debug,
   
   # Transport-specific debugging
-  debug_transports: [:stdio, :http, :native],
+  debug_transports: [:stdio, :http, :beam],
   
   # Log all requests/responses
   log_requests: true,
@@ -943,10 +943,10 @@ config :ex_mcp,
 # Monitor transport performance
 defmodule TransportMonitor do
   def start_monitoring() do
-    # Native BEAM monitoring
-    :telemetry.attach("native-calls", 
-      [:ex_mcp, :native, :call], 
-      &handle_native_call/4, nil)
+    # BEAM-local transport monitoring
+    :telemetry.attach("beam-calls",
+      [:ex_mcp, :transport, :beam, :message],
+      &handle_beam_call/4, nil)
     
     # HTTP monitoring
     :telemetry.attach("http-requests", 
@@ -954,8 +954,8 @@ defmodule TransportMonitor do
       &handle_http_request/4, nil)
   end
   
-  def handle_native_call(_event, measurements, metadata, _config) do
-    IO.puts("Native call: #{metadata.method} took #{measurements.duration}μs")
+  def handle_beam_call(_event, measurements, metadata, _config) do
+    IO.puts("BEAM call: #{metadata.method} took #{measurements.duration}μs")
   end
   
   def handle_http_request(_event, measurements, metadata, _config) do

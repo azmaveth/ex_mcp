@@ -12,12 +12,6 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
     "full-access" => %{permissions: ":danger-no-sandbox", approval: "never"}
   }
 
-  @legacy_mode_aliases %{
-    "suggest" => "read-only",
-    "auto-edit" => "auto",
-    "full-auto" => "full-access"
-  }
-
   @reasoning_efforts [
     {"minimal", "Minimal"},
     {"low", "Low"},
@@ -70,8 +64,7 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
   def normalize_mode_id(nil), do: @default_mode
 
   def normalize_mode_id(mode_id) do
-    mode_id = to_string(mode_id)
-    Map.get(@legacy_mode_aliases, mode_id, mode_id)
+    to_string(mode_id)
   end
 
   @spec merge_mode_wire_params(map(), String.t() | nil) :: map()

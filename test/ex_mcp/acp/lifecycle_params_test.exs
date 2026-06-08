@@ -44,19 +44,19 @@ defmodule ExMCP.ACP.LifecycleParamsTest do
       assert :ok = LifecycleParams.validate(opts, %{})
     end
 
-    test "rejects native MCP descriptors unless ExMCP native support is advertised" do
+    test "rejects removed native MCP descriptors" do
       opts = [mcp_servers: [%{"type" => "native", "name" => "local", "service" => :docs}]]
 
-      assert {:error, {:unsupported_capability, :mcp_native}} =
+      assert {:error, {:invalid_params, :native_mcp_removed}} =
                LifecycleParams.validate(opts, %{})
     end
 
-    test "accepts native MCP descriptors when ExMCP native support is advertised" do
+    test "accepts BEAM MCP descriptors when ExMCP BEAM support is advertised" do
       opts = [mcp_servers: [%{"type" => "beam", "name" => "local", "service" => :docs}]]
 
       caps = %{
         "mcpCapabilities" => %{
-          "_meta" => %{"ex_mcp.mcpCapabilities" => %{"native" => true, "beam" => true}}
+          "_meta" => %{"ex_mcp.mcpCapabilities" => %{"beam" => true}}
         }
       }
 

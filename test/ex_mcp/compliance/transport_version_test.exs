@@ -27,11 +27,11 @@ defmodule ExMCP.Compliance.TransportVersionTest do
           |> Keyword.put_new(:handler, __MODULE__)
           |> HandlerServer.start_link()
 
-        transport when transport in [:http, :sse, :stdio] ->
+        transport when transport in [:http, :stdio] ->
           Transport.start_server(__MODULE__, @server_info, [], opts)
 
-        :native ->
-          GenServer.start_link(__MODULE__, opts)
+        transport ->
+          {:error, {:unsupported_transport, transport}}
       end
     end
 

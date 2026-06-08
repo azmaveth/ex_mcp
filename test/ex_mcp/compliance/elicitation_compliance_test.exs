@@ -498,7 +498,7 @@ defmodule ExMCP.Compliance.ElicitationComplianceTest do
         }
       }
 
-      encoded = ExMCP.Protocol.encode_elicitation_create(message, requested_schema)
+      encoded = ExMCP.Internal.Protocol.encode_elicitation_create(message, requested_schema)
 
       assert encoded["jsonrpc"] == "2.0"
       assert encoded["method"] == "elicitation/create"
@@ -525,7 +525,7 @@ defmodule ExMCP.Compliance.ElicitationComplianceTest do
       }
 
       # 2. Request is encoded
-      encoded_request = ExMCP.Protocol.encode_elicitation_create(message, schema)
+      encoded_request = ExMCP.Internal.Protocol.encode_elicitation_create(message, schema)
       assert encoded_request["method"] == "elicitation/create"
 
       # 3. Client handler processes request

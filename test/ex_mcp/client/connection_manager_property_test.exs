@@ -28,8 +28,28 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
   end
 
   describe "transport configuration property tests" do
+    test "removed transport aliases are rejected" do
+      assert {:error, native_reason} =
+               ConnectionManager.prepare_transport_config(transport: :native)
+
+      assert native_reason =~ "Unsupported transport :native"
+
+      assert {:error, sse_reason} =
+               ConnectionManager.prepare_transport_config(transport: :sse)
+
+      assert sse_reason =~ "Unsupported transport :sse"
+
+      for removed_transport <- [:native, :sse] do
+        assert {:error, _reason} =
+                 ConnectionManager.prepare_transport_config(transport: {removed_transport, []})
+
+        assert {:error, _reason} =
+                 ConnectionManager.prepare_transport_config(transport: [type: removed_transport])
+      end
+    end
+
     property "normalize_transport_spec handles all atom transport types" do
-      forall transport_atom <- oneof([:stdio, :http, :sse, :test, :mock, :native, :beam]) do
+      forall transport_atom <- oneof([:stdio, :http, :test, :mock, :beam]) do
         forall opts <- list({atom(), term()}) do
           case TestWrapper.normalize_transport_spec(transport_atom, opts) do
             {transport_mod, merged_opts} when is_atom(transport_mod) and is_list(merged_opts) ->
@@ -51,7 +71,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
 
     property "normalize_transport_spec handles tuple transport specifications" do
       forall {transport_atom, transport_opts} <- {
-               oneof([:stdio, :http, :sse, :test, :mock, :native, :beam]),
+               oneof([:stdio, :http, :test, :mock, :beam]),
                list({atom(), term()})
              } do
         case TestWrapper.normalize_transport_spec({transport_atom, transport_opts}, []) do
@@ -72,9 +92,9 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
       forall transport_spec <-
                oneof([
                  # With explicit type
-                 [{:type, oneof([:stdio, :http, :sse, :test, :mock])}, {:server_pid, make_ref()}],
+                 [{:type, oneof([:stdio, :http, :test, :mock])}, {:server_pid, make_ref()}],
                  [
-                   {:type, oneof([:stdio, :http, :sse, :test, :mock])},
+                   {:type, oneof([:stdio, :http, :test, :mock])},
                    {:timeout, choose(1000, 60000)}
                  ],
                  # Without explicit type - inferred from keys
@@ -119,7 +139,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
 
     property "options merging preserves provided options" do
       forall {transport_atom, timeout, retry_count} <- {
-               oneof([:stdio, :http, :sse, :test, :mock]),
+               oneof([:stdio, :http, :test, :mock]),
                choose(1000, 60000),
                choose(1, 10)
              } do

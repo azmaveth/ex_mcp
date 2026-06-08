@@ -4,14 +4,14 @@ defmodule ExMCP.DebugServiceTest do
 
   @moduletag :requires_beam
 
-  # This setup block starts an ExMCP.TestServer using the :native transport
+  # This setup block starts an ExMCP.TestServer using the :beam transport
   # and registers it with the service registry for discovery.
   setup do
     # Ensure the ExMCP application is started (provides ServiceRegistry)
     Application.ensure_all_started(:ex_mcp)
 
-    # Start the server with the native transport
-    case ExMCP.TestHelpers.__setup_server_by_transport__(:native, transport: :native) do
+    # Start the server with the BEAM transport
+    case ExMCP.TestHelpers.__setup_server_by_transport__(:beam, transport: :beam) do
       {:ok, server_config} ->
         pid = server_config.pid
         service_name = ExMCP.TestServer

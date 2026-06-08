@@ -394,7 +394,7 @@ defmodule ExMCP.Server.DSL do
       Starts this MCP handler using the requested transport.
       """
       def start_link(opts \\ []) do
-        case Keyword.get(opts, :transport, :native) do
+        case Keyword.get(opts, :transport, :beam) do
           :test ->
             opts
             |> Keyword.put_new(:handler, __MODULE__)
@@ -406,7 +406,7 @@ defmodule ExMCP.Server.DSL do
             |> Keyword.put_new(:handler, __MODULE__)
             |> HandlerServer.start_link()
 
-          transport when transport in [:http, :sse, :stdio] ->
+          transport when transport in [:http, :stdio] ->
             Transport.start_server(
               __MODULE__,
               unquote(Macro.escape(server_info)),
@@ -414,14 +414,8 @@ defmodule ExMCP.Server.DSL do
               opts
             )
 
-          :native ->
-            genserver_opts =
-              case Keyword.get(opts, :name) do
-                nil -> []
-                name -> [name: name]
-              end
-
-            GenServer.start_link(__MODULE__, opts, genserver_opts)
+          transport ->
+            {:error, {:unsupported_transport, transport}}
         end
       end
     end

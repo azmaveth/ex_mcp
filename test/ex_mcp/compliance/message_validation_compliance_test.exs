@@ -11,7 +11,7 @@ defmodule ExMCP.Compliance.MessageValidationComplianceTest do
 
   # Note: Aliases commented out as they're for future implementation
   # alias ExMCP.Client
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol
 
   defmodule ValidationTestHandler do
     @moduledoc false

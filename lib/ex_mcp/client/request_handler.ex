@@ -320,8 +320,8 @@ defmodule ExMCP.Client.RequestHandler do
     if transport_mod == nil or transport_state == nil do
       {:error, :not_connected}
     else
-      with {:ok, encoded_message} <- Protocol.encode_to_string(message) do
-        case transport_mod.send_message(encoded_message, transport_state) do
+      with {:ok, outbound_message} <- encode_for_transport(transport_mod, message) do
+        case transport_mod.send_message(outbound_message, transport_state) do
           {:ok, new_transport_state, response_data} ->
             # Non-SSE HTTP returns response immediately
             {:ok, %{state | transport_state: new_transport_state}, response_data}
@@ -336,6 +336,9 @@ defmodule ExMCP.Client.RequestHandler do
       end
     end
   end
+
+  defp encode_for_transport(ExMCP.Transport.Local, message), do: {:ok, message}
+  defp encode_for_transport(_transport_mod, message), do: Protocol.encode_to_string(message)
 
   defp find_pending_batch_request(pending_requests) do
     Enum.find(pending_requests, fn

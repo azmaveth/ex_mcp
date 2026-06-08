@@ -144,9 +144,9 @@ Logger.configure(level: :debug)
 
 ### Check Server State
 
-Use the native transport for debugging:
+Use the BEAM transport for debugging:
 ```elixir
-{:ok, server} = MyServer.start_link(transport: :native)
+{:ok, server} = MyServer.start_link(transport: :beam)
 :sys.get_state(server)
 ```
 

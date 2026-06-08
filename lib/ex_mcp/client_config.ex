@@ -73,11 +73,11 @@ defmodule ExMCP.ClientConfig do
   - `:production` - For production with robust retry policies
   - `:http` - HTTP transport with sensible defaults
   - `:stdio` - Stdio transport configuration
-  - `:native` - Native BEAM transport configuration
+  - `:beam` - BEAM-local transport configuration
   """
 
   @type profile :: atom()
-  @type transport_type :: :http | :stdio | :sse | :native | :beam
+  @type transport_type :: :http | :stdio | :beam
   @type auth_type :: :none | :bearer | :basic | :oauth | :custom
   @type log_level :: :debug | :info | :warn | :error | :none
 
@@ -570,7 +570,7 @@ defmodule ExMCP.ClientConfig do
   # Private Implementation
 
   defp transport_type?(atom) do
-    atom in [:http, :stdio, :sse, :native, :beam]
+    atom in [:http, :stdio, :beam]
   end
 
   defp apply_profile(config, profile) do
@@ -580,7 +580,7 @@ defmodule ExMCP.ClientConfig do
       :production -> apply_production_profile(config)
       :http -> apply_http_profile(config)
       :stdio -> apply_stdio_profile(config)
-      :native -> apply_native_profile(config)
+      :beam -> apply_beam_profile(config)
       _ -> config
     end
     |> Map.put(:profile, profile)
@@ -656,9 +656,9 @@ defmodule ExMCP.ClientConfig do
     |> put_transport(:stdio, command: "mcp-server")
   end
 
-  defp apply_native_profile(config) do
+  defp apply_beam_profile(config) do
     config
-    |> put_transport(:native)
+    |> put_transport(:beam)
   end
 
   defp apply_custom_options(config, opts) do
@@ -892,7 +892,7 @@ defmodule ExMCP.ClientConfig do
 
   defp validate_transport(%{type: type, url: url, command: command}, errors) do
     errors =
-      if type in [:http, :sse] and is_nil(url),
+      if type == :http and is_nil(url),
         do: ["HTTP transport requires URL" | errors],
         else: errors
 

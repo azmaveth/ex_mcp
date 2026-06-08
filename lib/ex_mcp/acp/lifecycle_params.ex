@@ -23,8 +23,11 @@ defmodule ExMCP.ACP.LifecycleParams do
     mcp_servers = mcp_servers(opts)
 
     cond do
-      invalid_mcp_servers?(mcp_servers, capabilities || %{}) ->
-        {:error, {:unsupported_capability, :mcp_native}}
+      removed_native_mcp_servers?(mcp_servers) ->
+        {:error, {:invalid_params, :native_mcp_removed}}
+
+      invalid_beam_mcp_servers?(mcp_servers, capabilities || %{}) ->
+        {:error, {:unsupported_capability, :mcp_beam}}
 
       not Capabilities.supported?(capabilities || %{}, :additional_directories) ->
         if is_nil(additional_directories) do
@@ -110,12 +113,18 @@ defmodule ExMCP.ACP.LifecycleParams do
     raise ArgumentError, "additionalDirectories must be a non-empty list of absolute paths"
   end
 
-  defp invalid_mcp_servers?(servers, capabilities) do
-    Enum.any?(servers, &native_mcp_server?/1) and
-      not Capabilities.supported?(capabilities, :mcp_native)
+  defp invalid_beam_mcp_servers?(servers, capabilities) do
+    Enum.any?(servers, &beam_mcp_server?/1) and
+      not Capabilities.supported?(capabilities, :mcp_beam)
   end
 
-  defp native_mcp_server?(%{"type" => type}) when type in ["native", "beam"], do: true
-  defp native_mcp_server?(%{type: type}) when type in [:native, :beam, "native", "beam"], do: true
+  defp beam_mcp_server?(%{"type" => type}) when type in ["beam"], do: true
+  defp beam_mcp_server?(%{type: type}) when type in [:beam, "beam"], do: true
+  defp beam_mcp_server?(_server), do: false
+
+  defp removed_native_mcp_servers?(servers), do: Enum.any?(servers, &native_mcp_server?/1)
+
+  defp native_mcp_server?(%{"type" => type}) when type in ["native"], do: true
+  defp native_mcp_server?(%{type: type}) when type in [:native, "native"], do: true
   defp native_mcp_server?(_server), do: false
 end

@@ -119,7 +119,7 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
       Server.start_link(
         transport: :test,
         handler: MultiVersionHandler,
-        supported_version: version
+        handler_args: [supported_version: version]
       )
 
     # Allow server to start its message loop
@@ -144,7 +144,7 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
         Server.start_link(
           transport: :test,
           handler: MultiVersionHandler,
-          supported_version: "2024-11-05"
+          handler_args: [supported_version: "2024-11-05"]
         )
 
       # Allow server to start its message loop

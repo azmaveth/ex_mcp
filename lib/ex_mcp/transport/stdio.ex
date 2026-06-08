@@ -347,26 +347,6 @@ defmodule ExMCP.Transport.Stdio do
   @impl true
   def capabilities(%__MODULE__{}), do: [:push]
 
-  # V2 compatibility methods
-  def send(state, message) do
-    send_message(message, state)
-  end
-
-  def recv(state, timeout \\ 5_000) do
-    task = Task.async(fn -> receive_message(state) end)
-
-    case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, {:ok, message, new_state}} ->
-        {:ok, message, new_state}
-
-      {:ok, {:error, reason}} ->
-        Error.normalize_error({:error, reason})
-
-      nil ->
-        Error.timeout_error(:receive_timeout)
-    end
-  end
-
   # Testing support - expose process_data for unit tests
   @doc false
   def process_data(data, state), do: do_process_data(data, state)

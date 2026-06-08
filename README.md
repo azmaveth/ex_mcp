@@ -24,7 +24,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 
 - **Full MCP compliance** -- protocol versions 2024-11-05, 2025-03-26, 2025-06-18, and 2025-11-25
 - **100% MCP conformance** -- 226/226 client checks, 39/39 server checks (official test suite)
-- **Multiple transports** -- HTTP/SSE, stdio, and native BEAM (~15μs local calls)
+- **Multiple transports** -- HTTP/SSE, stdio, and BEAM-local MCP (~15μs local calls)
 - **Phoenix Plug** -- native Phoenix integration with `ExMCP.HttpPlug`
 - **DSL and Handler APIs** -- declarative tool/resource/prompt definitions or callback-based handlers
 - **OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD, JWT client auth (`private_key_jwt`), enterprise SSO (ID-JAG), token revocation (RFC 7009), pluggable auth providers
@@ -163,9 +163,9 @@ See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/azmavet
 })
 ```
 
-### Native BEAM Transport
+### BEAM-Local MCP
 
-For trusted Elixir clusters, use the native BEAM transport:
+For trusted Elixir clusters, use BEAM-local MCP services:
 
 ```elixir
 defmodule MyToolService do
@@ -237,7 +237,7 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 
 | Transport | Latency | Best For |
 |-----------|---------|----------|
-| **Native BEAM** | ~15us | Elixir cluster communication |
+| **BEAM-local** | ~15us | Elixir cluster communication |
 | **stdio** | ~1-5ms | Subprocess communication |
 | **HTTP/SSE** | ~5-20ms | Web applications, remote APIs |
 

@@ -10,7 +10,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.Client
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol
   alias ExMCP.Server.Handler
   alias ExMCP.Server.HandlerServer, as: Server
 

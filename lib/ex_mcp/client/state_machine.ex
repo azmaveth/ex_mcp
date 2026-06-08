@@ -80,6 +80,34 @@ defmodule ExMCP.Client.StateMachine do
     GenStateMachine.call(client, :get_internal_state)
   end
 
+  @doc """
+  Returns telemetry events emitted by the state machine client.
+  """
+  def telemetry_events do
+    [
+      [:ex_mcp, :client, :state_transition],
+      [:ex_mcp, :client, :request, :start],
+      [:ex_mcp, :client, :request, :success],
+      [:ex_mcp, :client, :request, :error],
+      [:ex_mcp, :client, :connection, :success],
+      [:ex_mcp, :client, :transport, :error],
+      [:ex_mcp, :client, :transport, :closed],
+      [:ex_mcp, :client, :handshake, :start],
+      [:ex_mcp, :client, :handshake, :success],
+      [:ex_mcp, :client, :handshake, :error],
+      [:ex_mcp, :client, :reconnect, :attempt],
+      [:ex_mcp, :client, :reconnect, :success],
+      [:ex_mcp, :client, :reconnect, :error],
+      [:ex_mcp, :client, :reconnect, :timeout],
+      [:ex_mcp, :client, :progress, :update],
+      [:ex_mcp, :client, :progress, :unknown_token],
+      [:ex_mcp, :client, :progress, :rate_limited],
+      [:ex_mcp, :client, :progress, :not_increasing],
+      [:ex_mcp, :client, :progress, :error],
+      [:ex_mcp, :client, :progress, :untracked]
+    ]
+  end
+
   # GenStateMachine callbacks
 
   @impl true

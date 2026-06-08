@@ -78,7 +78,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
                "mcpCapabilities",
                "_meta",
                "ex_mcp.mcpCapabilities",
-               "native"
+               "beam"
              ]) == true
     end
   end

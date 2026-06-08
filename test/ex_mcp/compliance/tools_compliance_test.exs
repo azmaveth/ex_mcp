@@ -4,7 +4,7 @@ defmodule ExMCP.ToolsComplianceTest do
   @moduletag :compliance
 
   alias ExMCP.Client
-  alias ExMCP.Protocol
+  alias ExMCP.Internal.Protocol
   alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestToolsServer do

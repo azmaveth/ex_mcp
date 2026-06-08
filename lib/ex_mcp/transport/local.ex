@@ -1,54 +1,28 @@
 defmodule ExMCP.Transport.Local do
-  import Kernel, except: [send: 2]
-
   @moduledoc """
-  Unified BEAM transport for ExMCP, supporting both raw terms and JSON.
+  Local BEAM transport for ExMCP.
 
   This module provides a high-performance transport for BEAM-based communication.
-  It operates in two modes:
-
-  - **`:native` mode**: Passes raw Elixir terms directly for maximum performance.
-    This is ideal for trusted, local BEAM communication. It reports the
-    `:raw_terms` capability.
-
-  - **`:beam` mode**: Enforces MCP specification compliance by serializing all
-    messages to/from JSON. This is safer for distributed or less-trusted
-    scenarios.
-
-  The mode is selected automatically by the `ExMCP.Client` based on the
-  transport specified (`:native` or `:beam`).
+  It carries MCP-shaped JSON-RPC messages as Elixir terms between local
+  processes. The transport itself does not JSON encode or decode messages.
 
   ## Features
 
-  - Dual-mode operation (raw terms or JSON)
+  - MCP-shaped message passing without JSON serialization
   - Direct process-to-process communication
   - Built-in fault tolerance
   - Low latency for local communication
-
-  ## Security Notice
-
-  > ⚠️ **SECURITY WARNING**: The `:native` mode is designed ONLY for trusted,
-  > local BEAM communication. It bypasses JSON validation. For distributed or
-  > untrusted scenarios, the `:beam` mode should be used.
 
   ## Configuration
 
   This transport is configured via `ExMCP.Client.start_link/1`:
 
-      # For native (raw term) mode
-      {:ok, client} = ExMCP.Client.start_link(
-        transport: :native,
-        service_name: :my_service
-      )
-
-      # For beam (JSON) mode
       {:ok, client} = ExMCP.Client.start_link(
         transport: :beam,
-        service_name: :my_service
+        server: server_pid
       )
 
   Options:
-  - `:service_name` - Required for client mode. The service to connect to.
   - `:server` - Required for client mode if connecting to a server process.
   - `:timeout` - Optional. Call timeout in milliseconds (default: 5000).
   """
@@ -56,13 +30,10 @@ defmodule ExMCP.Transport.Local do
   @behaviour ExMCP.Transport
 
   alias ExMCP.Transport.Error
-  require Logger
-
-  defstruct [:server_pid, :mode, :role, :connected, :timeout, :subscriber, :forwarder_pid]
+  defstruct [:server_pid, :role, :connected, :timeout, :subscriber, :forwarder_pid]
 
   @type t :: %__MODULE__{
           server_pid: pid() | nil,
-          mode: :beam | :native,
           role: :client | :server,
           connected: boolean(),
           timeout: pos_integer()
@@ -72,11 +43,6 @@ defmodule ExMCP.Transport.Local do
 
   @impl true
   def connect(opts) do
-    mode =
-      Keyword.get(opts, :mode) ||
-        raise ArgumentError,
-              "Missing required option :mode for Local transport. This should be set by ExMCP.Client."
-
     timeout = Keyword.get(opts, :timeout, @default_timeout)
 
     # Determine if this is client or server mode
@@ -88,7 +54,6 @@ defmodule ExMCP.Transport.Local do
         if is_pid(server_pid) && Process.alive?(server_pid) do
           transport = %__MODULE__{
             server_pid: server_pid,
-            mode: mode,
             role: :client,
             connected: true,
             timeout: timeout
@@ -98,8 +63,7 @@ defmodule ExMCP.Transport.Local do
           Kernel.send(server_pid, {:test_transport_connect, self()})
 
           :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
-            transport: :beam,
-            mode: mode
+            transport: :beam
           })
 
           {:ok, transport}
@@ -119,7 +83,6 @@ defmodule ExMCP.Transport.Local do
       true ->
         transport = %__MODULE__{
           server_pid: nil,
-          mode: mode,
           role: :server,
           connected: false,
           timeout: timeout
@@ -160,7 +123,6 @@ defmodule ExMCP.Transport.Local do
   end
 
   @impl true
-  def capabilities(%__MODULE__{mode: :native}), do: [:raw_terms, :push]
   def capabilities(_state), do: [:push]
 
   @impl true
@@ -228,18 +190,5 @@ defmodule ExMCP.Transport.Local do
       error ->
         error
     end
-  end
-
-  # Compatibility methods
-  def send(transport, message) do
-    send_message(message, transport)
-  end
-
-  def recv(%__MODULE__{} = transport, timeout) do
-    receive_message(transport, timeout)
-  end
-
-  def receive(%__MODULE__{} = transport) do
-    receive_message(transport)
   end
 end

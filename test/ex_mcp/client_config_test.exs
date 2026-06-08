@@ -66,10 +66,10 @@ defmodule ExMCP.ClientConfigTest do
       assert config.transport.command == "mcp-server"
     end
 
-    test "creates native profile" do
-      config = ClientConfig.new(:native)
+    test "creates BEAM profile" do
+      config = ClientConfig.new(:beam)
 
-      assert config.transport.type == :native
+      assert config.transport.type == :beam
     end
   end
 
@@ -537,12 +537,12 @@ defmodule ExMCP.ClientConfigTest do
     test "test configuration with minimal settings" do
       config =
         ClientConfig.new(:test)
-        |> ClientConfig.put_transport(:native)
+        |> ClientConfig.put_transport(:beam)
 
       assert ClientConfig.validate(config) == :ok
 
       opts = ClientConfig.to_client_opts(config)
-      assert Keyword.get(opts, :transport) == :native
+      assert Keyword.get(opts, :transport) == :beam
       # Fast test timeout
       assert Keyword.get(opts, :timeout) == 1_000
     end

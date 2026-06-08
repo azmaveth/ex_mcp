@@ -3,7 +3,7 @@ defmodule ExMCP.Server.Transport do
   Transport configuration and lifecycle management for ExMCP servers.
 
   This module provides unified transport startup and configuration for MCP servers,
-  supporting stdio, HTTP, and Server-Sent Events (SSE) transports.
+  supporting stdio, HTTP, BEAM-local, and test transports.
 
   ## Usage
 
@@ -13,8 +13,12 @@ defmodule ExMCP.Server.Transport do
       # Start with stdio transport
       {:ok, _pid} = ExMCP.Server.Transport.start_server(MyServer, server_info, tools, transport: :stdio)
 
-      # Start with SSE-enabled HTTP transport
-      {:ok, _pid} = ExMCP.Server.Transport.start_server(MyServer, server_info, tools, transport: :sse, port: 8080)
+      # Start HTTP with SSE enabled
+      {:ok, _pid} = ExMCP.Server.Transport.start_server(MyServer, server_info, tools,
+        transport: :http,
+        sse_enabled: true,
+        port: 8080
+      )
   """
 
   require Logger
@@ -27,11 +31,11 @@ defmodule ExMCP.Server.Transport do
 
   ## Options
 
-  * `:transport` - The transport type (`:stdio`, `:http`, `:sse`, `:native`, `:test`)
-  * `:port` - Port number for HTTP/SSE transports (default: 4000)
-  * `:host` - Host for HTTP/SSE transports (default: "localhost")
+  * `:transport` - The transport type (`:stdio`, `:http`, `:beam`, `:test`)
+  * `:port` - Port number for HTTP transports (default: 4000)
+  * `:host` - Host for HTTP transports (default: "localhost")
   * `:cors_enabled` - Enable CORS for HTTP transports (default: true)
-  * `:sse_enabled` - Enable SSE for HTTP transports (default: false, true for :sse transport)
+  * `:sse_enabled` - Enable SSE for HTTP transports (default: false)
 
   ## Examples
 
@@ -55,11 +59,8 @@ defmodule ExMCP.Server.Transport do
       :http ->
         start_http_server(module, server_info, tools, opts)
 
-      :sse ->
-        start_http_server(module, server_info, tools, Keyword.put(opts, :sse_enabled, true))
-
-      :native ->
-        start_native_server(module, server_info, tools, opts)
+      :beam ->
+        start_beam_server(module, server_info, tools, opts)
 
       :test ->
         start_test_server(module, server_info, tools, opts)
@@ -167,28 +168,28 @@ defmodule ExMCP.Server.Transport do
   end
 
   @doc """
-  Starts a native Erlang process-based MCP server.
+  Starts a BEAM-local MCP server.
 
-  The native transport uses Erlang message passing for high-performance
-  local communication between processes.
+  The BEAM transport uses Erlang message passing for high-performance local
+  communication between processes while preserving MCP-shaped messages.
   """
-  @spec start_native_server(module(), map(), list(), keyword()) ::
+  @spec start_beam_server(module(), map(), list(), keyword()) ::
           {:ok, pid()} | {:error, term()}
-  def start_native_server(module, _server_info, _tools, opts) do
-    Logger.info("Starting MCP native server: #{module}")
+  def start_beam_server(module, _server_info, _tools, opts) do
+    Logger.info("Starting MCP BEAM server: #{module}")
 
     # Start the server module directly as a GenServer
     case module.start_link(opts) do
       {:ok, pid} ->
-        Logger.info("MCP native server started successfully")
+        Logger.info("MCP BEAM server started successfully")
         {:ok, pid}
 
       {:error, {:already_started, pid}} ->
-        Logger.info("MCP native server already running")
+        Logger.info("MCP BEAM server already running")
         {:ok, pid}
 
       {:error, reason} ->
-        Logger.error("Failed to start MCP native server: #{inspect(reason)}")
+        Logger.error("Failed to start MCP BEAM server: #{inspect(reason)}")
         {:error, reason}
     end
   end
@@ -264,13 +265,9 @@ defmodule ExMCP.Server.Transport do
         available: Code.ensure_loaded?(Plug.Cowboy),
         description: "HTTP transport with REST-like API"
       },
-      sse: %{
-        available: Code.ensure_loaded?(Plug.Cowboy),
-        description: "Server-Sent Events over HTTP for real-time communication"
-      },
-      native: %{
+      beam: %{
         available: true,
-        description: "Native Erlang process communication"
+        description: "BEAM-local MCP transport"
       },
       test: %{
         available: true,

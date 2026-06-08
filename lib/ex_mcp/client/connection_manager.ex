@@ -207,20 +207,31 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp normalize_transport_spec(transport, opts) when is_atom(transport) do
-    {transport_mod, mode_opts} =
-      case transport do
-        :native -> {Local, [mode: :native]}
-        :beam -> {Local, [mode: :beam]}
-        :stdio -> {Stdio, []}
-        :http -> {HTTP, []}
-        # :sse is an alias for HTTP with SSE streaming enabled
-        :sse -> {HTTP, [use_sse: true]}
-        :test -> {Test, []}
-        :mock -> {Test, []}
-        mod when is_atom(mod) -> {mod, []}
-      end
+    case transport do
+      :native ->
+        {:error, "Unsupported transport :native. Use :beam for local BEAM MCP transport."}
 
-    {transport_mod, Keyword.merge(mode_opts, opts)}
+      :sse ->
+        {:error, "Unsupported transport :sse. Use :http with use_sse: true."}
+
+      :beam ->
+        {Local, opts}
+
+      :stdio ->
+        {Stdio, opts}
+
+      :http ->
+        {HTTP, opts}
+
+      :test ->
+        {Test, opts}
+
+      :mock ->
+        {Test, opts}
+
+      mod when is_atom(mod) ->
+        {mod, opts}
+    end
   end
 
   defp normalize_transport_spec({transport, transport_opts}, _opts) do
@@ -279,13 +290,11 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp do_handshake(transport_mod, transport_state, opts) do
-    raw_terms_enabled = check_transport_capabilities(transport_mod, transport_state)
     protocol_version = Keyword.get(opts, :protocol_version)
 
     case send_initialize_request(
            transport_mod,
            transport_state,
-           raw_terms_enabled,
            protocol_version
          ) do
       {:ok, state_after_send, response_data} ->
@@ -304,15 +313,9 @@ defmodule ExMCP.Client.ConnectionManager do
     end
   end
 
-  defp check_transport_capabilities(transport_mod, transport_state) do
-    function_exported?(transport_mod, :supports_raw_terms?, 1) and
-      transport_mod.supports_raw_terms?(transport_state)
-  end
-
   defp send_initialize_request(
          transport_mod,
          transport_state,
-         raw_terms_enabled,
          protocol_version
        ) do
     client_info = %{
@@ -320,18 +323,10 @@ defmodule ExMCP.Client.ConnectionManager do
       "version" => "0.8.0"
     }
 
-    capabilities =
-      if raw_terms_enabled do
-        %{"experimental" => %{"rawTerms" => true}}
-      else
-        %{}
-      end
+    request = Protocol.encode_initialize(client_info, %{}, protocol_version)
 
-    request = Protocol.encode_initialize(client_info, capabilities, protocol_version)
-
-    # Encode the request to JSON string before sending
-    with {:ok, encoded_request} <- Protocol.encode_to_string(request) do
-      case transport_mod.send_message(encoded_request, transport_state) do
+    with {:ok, outbound_request} <- encode_for_transport(transport_mod, request) do
+      case transport_mod.send_message(outbound_request, transport_state) do
         {:ok, new_state, response_data} ->
           # Non-SSE HTTP mode returns response immediately
           {:ok, new_state, response_data}
@@ -345,6 +340,9 @@ defmodule ExMCP.Client.ConnectionManager do
       end
     end
   end
+
+  defp encode_for_transport(Local, message), do: {:ok, message}
+  defp encode_for_transport(_transport_mod, message), do: Protocol.encode_to_string(message)
 
   defp receive_handshake_message(transport_mod, transport_state) do
     # Note: Transport behaviour doesn't support timeout parameter
@@ -386,9 +384,8 @@ defmodule ExMCP.Client.ConnectionManager do
   defp send_initialized(transport_mod, transport_state, _result) do
     notification = Protocol.encode_initialized()
 
-    # Encode the notification to JSON string before sending
-    with {:ok, encoded_notification} <- Protocol.encode_to_string(notification) do
-      case transport_mod.send_message(encoded_notification, transport_state) do
+    with {:ok, outbound_notification} <- encode_for_transport(transport_mod, notification) do
+      case transport_mod.send_message(outbound_notification, transport_state) do
         {:ok, new_state, _response_data} ->
           # Non-SSE HTTP mode may return response (ignore it for notifications)
           {:ok, new_state}

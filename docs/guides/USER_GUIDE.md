@@ -556,7 +556,7 @@ result = ExMCP.Resilience.call_with_fallback(
 
 ### Performance Optimization
 
-Native BEAM services are optimized for performance:
+BEAM-local services are optimized for performance:
 
 ```elixir
 # Measure performance
@@ -937,7 +937,7 @@ Best for local process communication:
 
 For HTTP-based communication with optional Server-Sent Events (SSE) streaming.
 
-> **Note:** Use `transport: :http` for the HTTP transport with Server-Sent Events support. The `:sse` transport name is deprecated.
+> **Note:** Use `transport: :http` for the HTTP transport with Server-Sent Events support. The `:sse` transport name has been removed.
 
 ```elixir
 # Server

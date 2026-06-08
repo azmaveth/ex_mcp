@@ -37,11 +37,11 @@ defmodule ExMCP.Server.TransportTest do
   end
 
   describe "start_server/4" do
-    test "starts native transport by default" do
+    test "starts BEAM transport" do
       {:ok, pid} =
         Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
-          transport: :native,
-          name: :test_native_server
+          transport: :beam,
+          name: :test_beam_server
         )
 
       assert Process.alive?(pid)
@@ -73,11 +73,12 @@ defmodule ExMCP.Server.TransportTest do
     end
 
     @tag :requires_http
-    test "starts SSE transport" do
+    test "starts HTTP transport with SSE enabled" do
       if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
         {:ok, pid} =
           Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
-            transport: :sse,
+            transport: :http,
+            sse_enabled: true,
             port: 0
           )
 
@@ -102,9 +103,9 @@ defmodule ExMCP.Server.TransportTest do
   end
 
   describe "individual transport functions" do
-    test "start_native_server/4" do
+    test "start_beam_server/4" do
       {:ok, pid} =
-        Transport.start_native_server(TestServer, %{}, [], name: :test_native_individual)
+        Transport.start_beam_server(TestServer, %{}, [], name: :test_beam_individual)
 
       assert Process.alive?(pid)
       GenServer.stop(pid)
@@ -133,7 +134,7 @@ defmodule ExMCP.Server.TransportTest do
 
   describe "server management" do
     test "stop_server/1 with pid" do
-      {:ok, pid} = Transport.start_native_server(TestServer, %{}, [], name: :test_stop_pid)
+      {:ok, pid} = Transport.start_beam_server(TestServer, %{}, [], name: :test_stop_pid)
 
       assert Process.alive?(pid)
       assert :ok = Transport.stop_server(pid)
@@ -141,7 +142,7 @@ defmodule ExMCP.Server.TransportTest do
     end
 
     test "stop_server/1 with atom" do
-      {:ok, pid} = Transport.start_native_server(TestServer, %{}, [], name: :test_stop_atom)
+      {:ok, pid} = Transport.start_beam_server(TestServer, %{}, [], name: :test_stop_atom)
 
       # Wait for process to be registered
       Process.sleep(10)
@@ -158,7 +159,7 @@ defmodule ExMCP.Server.TransportTest do
     end
 
     test "server_info/1" do
-      {:ok, pid} = Transport.start_native_server(TestServer, %{}, [], name: :test_info)
+      {:ok, pid} = Transport.start_beam_server(TestServer, %{}, [], name: :test_info)
 
       # The server info depends on the implementation
       # For now, just test that it doesn't crash
@@ -176,22 +177,20 @@ defmodule ExMCP.Server.TransportTest do
       assert is_map(transports)
       assert Map.has_key?(transports, :stdio)
       assert Map.has_key?(transports, :http)
-      assert Map.has_key?(transports, :sse)
-      assert Map.has_key?(transports, :native)
+      assert Map.has_key?(transports, :beam)
 
-      # Native should always be available
-      assert transports.native.available == true
+      # BEAM should always be available
+      assert transports.beam.available == true
 
       # Others depend on dependencies
       assert is_boolean(transports.stdio.available)
       assert is_boolean(transports.http.available)
-      assert is_boolean(transports.sse.available)
     end
   end
 
   describe "Server integration" do
-    test "start_link with transport: :native" do
-      {:ok, pid} = TestServer.start_link(transport: :native, name: :test_server_native)
+    test "start_link with transport: :beam" do
+      {:ok, pid} = TestServer.start_link(transport: :beam, name: :test_server_beam)
 
       assert Process.alive?(pid)
       GenServer.stop(pid)
@@ -209,7 +208,7 @@ defmodule ExMCP.Server.TransportTest do
       end
     end
 
-    test "start_link defaults to native transport" do
+    test "start_link defaults to BEAM transport" do
       {:ok, pid} = TestServer.start_link(name: :test_server_default)
 
       assert Process.alive?(pid)
@@ -217,10 +216,10 @@ defmodule ExMCP.Server.TransportTest do
     end
 
     test "child_spec/1" do
-      spec = TestServer.child_spec(transport: :native)
+      spec = TestServer.child_spec(transport: :beam)
 
       assert spec.id == TestServer
-      assert spec.start == {TestServer, :start_link, [[transport: :native]]}
+      assert spec.start == {TestServer, :start_link, [[transport: :beam]]}
       assert spec.type == :worker
       assert spec.restart == :permanent
       assert spec.shutdown == 500

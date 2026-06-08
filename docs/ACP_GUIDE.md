@@ -436,7 +436,7 @@ protocol. This is the recommended Claude adapter for new code.
 - FIFO prompt queueing with queued prompt cancellation responses
 - Plan updates from `TodoWrite` and task progress events
 - Rich tool metadata, terminal/raw output metadata, and improved stop reasons
-- Official ACP `mcpCapabilities` plus ExMCP `_meta` support for native BEAM MCP transport
+- Official ACP `mcpCapabilities` plus ExMCP `_meta` support for BEAM-local MCP transport
 
 `session/list`, `session/load`, `session/fork`, and `session/delete` read and mutate Claude Code's local
 `CLAUDE_CONFIG_DIR/projects` JSONL store directly in Elixir, using the same
@@ -446,9 +446,9 @@ persisted transcript entries as ACP `session/update` notifications before the
 load response; `session/resume` keeps the lighter no-replay behavior.
 
 The adapter advertises official ACP MCP support through `mcpCapabilities`
-(`acp`, `http`, and `sse`). ExMCP's native BEAM MCP transport is intentionally
-advertised only under `_meta.ex_mcp.mcpCapabilities`, so other ACP libraries can
-ignore it while ExMCP peers can negotiate and validate native descriptors.
+(`acp`, `http`, and `sse`). ExMCP's BEAM-local MCP transport is intentionally
+advertised only as `_meta.ex_mcp.mcpCapabilities.beam`, so other ACP libraries can
+ignore it while ExMCP peers can negotiate and validate BEAM-local descriptors.
 
 **Startup options:** `model`, `permission_mode`, `max_thinking_tokens`,
 `effort`, `additional_directories`, `mcp_servers`, `session_id`, `resume`,

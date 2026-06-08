@@ -506,7 +506,7 @@ defmodule ExMCP.ACP.Types do
   Creates ACP agent capabilities.
 
   Supported options: `:load_session`, `:acp_mcp`, `:http_mcp`, `:sse_mcp`,
-  `:native_mcp`, `:beam_mcp`, `:image`, `:audio`, `:embedded_context`,
+  `:beam_mcp`, `:image`, `:audio`, `:embedded_context`,
   `:session_list`, `:session_resume`, `:session_close`, `:session_delete`,
   `:session_fork`, `:additional_directories`, and `:logout`.
   """
@@ -737,16 +737,14 @@ defmodule ExMCP.ACP.Types do
     |> maybe_put_bool("acp", opts, :acp_mcp)
     |> maybe_put_bool("http", opts, :http_mcp)
     |> maybe_put_bool("sse", opts, :sse_mcp)
-    |> maybe_put_native_mcp_meta(opts)
+    |> maybe_put_beam_mcp_meta(opts)
   end
 
-  defp maybe_put_native_mcp_meta(map, opts) do
-    native? = Keyword.get(opts, :native_mcp)
+  defp maybe_put_beam_mcp_meta(map, opts) do
     beam? = Keyword.get(opts, :beam_mcp)
 
     meta =
       %{}
-      |> maybe_put_bool("native", [native: native?], :native)
       |> maybe_put_bool("beam", [beam: beam?], :beam)
 
     if map_size(meta) > 0 do

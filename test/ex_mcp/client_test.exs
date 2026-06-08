@@ -762,7 +762,7 @@ defmodule ExMCP.ClientTest do
       {:ok, client} = Client.start_link(transport: MockTransport)
 
       # Start a request but don't wait for completion
-      _task =
+      task =
         Task.async(fn ->
           Client.list_tools(client, timeout: 5000)
         end)
@@ -774,6 +774,8 @@ defmodule ExMCP.ClientTest do
 
       # Should have at least one pending request (or it completed very quickly)
       assert status.pending_requests >= 0
+      assert {:ok, %{tools: tools}} = Task.await(task, 5000)
+      assert is_list(tools)
 
       if Process.alive?(client), do: GenServer.stop(client)
     end
