@@ -2,8 +2,8 @@ defmodule ExMCP.ACP.Protocol do
   @moduledoc """
   ACP-specific message encoding.
 
-  Delegates JSON-RPC 2.0 framing to `ExMCP.Internal.JSONRPC` and adds
-  ACP method-specific encoding on top.
+  Delegates JSON-RPC 2.0 framing to internal helpers and adds ACP
+  method-specific encoding on top.
 
   ACP uses integer protocol versions (default: 1) rather than MCP's date-based strings.
   """

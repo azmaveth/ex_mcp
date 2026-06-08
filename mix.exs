@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "0.12.0"
+  @version "1.0.0-rc.0"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -93,7 +93,24 @@ defmodule ExMCP.MixProject do
         "MCP Spec" => "https://modelcontextprotocol.io",
         "ACP Spec" => "https://agentclientprotocol.com"
       },
-      files: ~w(lib .formatter.exs mix.exs README.md LICENSE CHANGELOG.md)
+      files: ~w(
+          lib
+          .formatter.exs
+          mix.exs
+          README.md
+          LICENSE
+          CHANGELOG.md
+          docs/ACP_GUIDE.md
+          docs/ARCHITECTURE.md
+          docs/CONFIGURATION.md
+          docs/DEVELOPMENT.md
+          docs/DSL_GUIDE.md
+          docs/SECURITY.md
+          docs/TRANSPORT_GUIDE.md
+          docs/TROUBLESHOOTING.md
+          docs/getting-started
+          docs/guides
+        )
     ]
   end
 
@@ -138,12 +155,20 @@ defmodule ExMCP.MixProject do
       ],
       groups_for_modules: [
         "MCP Specification": [
-          ExMCP.Protocol,
           ExMCP.Types,
           ExMCP.Server,
           ExMCP.Server.Handler,
+          ExMCP.Protocol.ErrorCodes,
+          ExMCP.Protocol.RequestProcessor,
+          ExMCP.Protocol.RequestTracker,
+          ExMCP.Protocol.ResponseBuilder,
+          ExMCP.Protocol.VersionNegotiator
+        ],
+        "MCP Transports": [
+          ExMCP.Transport,
           ExMCP.Transport.Stdio,
-          ExMCP.Transport.SSE
+          ExMCP.Transport.HTTP,
+          ExMCP.Transport.SSEClient
         ],
         "MCP + Extensions": [ExMCP.Client],
         "Agent Client Protocol (ACP)": [

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.0] - 2026-06-08
+
 ### Added
 - **Claude SDK ACP adapter** — Added `ExMCP.ACP.Adapters.ClaudeSDK`, a new Claude Code adapter that uses the SDK-compatible stream-json control protocol with permission bridging, partial tool-call lifecycle events, SDK interrupt cancellation, runtime model/mode/effort config, richer status updates, plan updates, and SDK launch environment support.
 - **Claude SDK session store** — Added pure Elixir helpers for Claude Code's SDK session store, including SDK-compatible project key derivation, JSONL metadata extraction, sidechain filtering, transcript reads, ACP `session/list`, disk-backed `session/fork`, and validated `session/delete`.
@@ -29,12 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pi destructive defaults** — Pi `session/delete` removes ExMCP session-map state by default and only deletes backing Pi JSONL files when `delete_session_files: true` is configured. Pi registry update notices are opt-in through `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true`.
 - **Adapter bridge set_model behavior** — `AdapterBridge` now returns method-not-found when an adapter skips `session/set_model`, instead of synthesizing a successful empty result for an unimplemented model change.
 
+### Fixed
+- **HexDocs package contents** — Included the public guide docs in the Hex package and updated ExDoc module grouping so the 1.0 RC documentation builds against current public modules.
+
 ### Breaking Changes
-- **MCP server DSL compatibility removal** — Removed the legacy `use ExMCP.Server` macro, `deftool`/`defresource`/`defprompt` declarations, generated getter APIs (`get_tools/0`, `get_resources/0`, `get_prompts/0`), `ExMCP.DSL.*` modules, and `ExMCP.Server.start_link/1`. Server implementations should use `ExMCP.Server.Handler` directly, optionally combined with `ExMCP.Server.DSL`, and start handler processes with `MyServer.start_link/1`, `ExMCP.Server.HandlerServer.start_link/1`, or `ExMCP.start_server/1`.
+- **MCP server DSL compatibility removal** — Removed the legacy `use ExMCP.Server` macro, `deftool`/`defresource`/`defprompt` declarations, generated getter APIs (`get_tools/0`, `get_resources/0`, `get_prompts/0`), `ExMCP.DSL.*` modules, and the old `ExMCP.Server.start_link` helper. Server implementations should use `ExMCP.Server.Handler` directly, optionally combined with `ExMCP.Server.DSL`, and start handler processes with `MyServer.start_link/1`, `ExMCP.Server.HandlerServer.start_link/1`, or `ExMCP.start_server/1`.
 - **MCP handler server rename** — Renamed `ExMCP.Server.Legacy` to `ExMCP.Server.HandlerServer` and removed migration-only `MessageProcessor` dispatcher/handler facades for direct/genserver legacy server modes.
-- **Server notification spelling** — Removed the legacy `ExMCP.Server.notify_resource_updated/2` alias. Use `ExMCP.Server.notify_resource_update/2`.
-- **Refactor compatibility helpers removed** — Removed unused `ExMCP.Server.RefactorHelpers`, old DSL-oriented `ExMCP.ContentHelpers`, `ExMCP.ErrorHelpers`, `ExMCP.Transport.Stdio.send/2`/`recv/2`, and `ExMCP.Transport.Local.send/2`/`recv/2`/`receive/1` compatibility aliases. Use `ExMCP.Protocol.ResponseBuilder`, `ExMCP.Content`, `ExMCP.Error`, and transport `send_message/2`/`receive_message/1` respectively.
-- **Root protocol wrapper removed** — Removed deprecated `ExMCP.Protocol`. Low-level protocol construction/parsing remains internal as `ExMCP.Internal.Protocol`; public protocol utility modules under `ExMCP.Protocol.*` remain available.
+- **Server notification spelling** — Removed the legacy `notify_resource_updated` alias. Use `ExMCP.Server.notify_resource_update/2`.
+- **Refactor compatibility helpers removed** — Removed unused `ExMCP.Server.RefactorHelpers`, old DSL-oriented `ExMCP.ContentHelpers`, `ExMCP.ErrorHelpers`, and transport `send`/`recv` compatibility aliases. Use `ExMCP.Protocol.ResponseBuilder`, `ExMCP.Content`, `ExMCP.Error`, and transport `send_message/2`/`receive_message/1` respectively.
+- **Root protocol wrapper removed** — Removed deprecated `ExMCP.Protocol`. Low-level protocol construction/parsing remains internal; public protocol utility modules under `ExMCP.Protocol.*` remain available.
 - **Client adapter switching layer removed** — Removed `ExMCP.Client.Adapter`, `ExMCP.Client.LegacyAdapter`, `ExMCP.Client.StateMachineAdapter`, `ExMCP.Client.Wrapper`, and `ExMCP.Client.Configuration`. Use `ExMCP.Client` as the supported public client API.
 - **Handler init arguments are explicit** — `ExMCP.Server.HandlerServer` no longer passes leftover transport/system options to `handler.init/1`. Use `handler_args: term` when a handler needs initialization data.
 - **Transport aliases removed** — Removed public `transport: :sse` and `transport: :native`. Use `transport: :http, use_sse: true` for HTTP SSE streaming and `transport: :beam` for BEAM-local MCP transport. BEAM transport now carries MCP-shaped maps/lists as Elixir terms without JSON serialization.
@@ -153,7 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `session/set_config_option` handler routed through adapters
   - `authenticate` handler with synthesized OK response (RFD draft scaffolding)
   - Initialize response includes modes, configOptions, sessionCapabilities from adapter callbacks
-- **Authentication Scaffolding** — `Protocol.encode_authenticate/1`, `Client.authenticate/3`, `Types.auth_required_code/0`
+- **Authentication Scaffolding** — protocol authentication encoding, `Client.authenticate/3`, and `Types.auth_required_code/0`
 - **Plan Mode Builders** — `Types.plan_entry/3`, `Types.plan_update/2` for structured plan updates
 
 ### Changed

@@ -8,7 +8,8 @@ defmodule ExMCP.Client.ElicitationHandler do
 
   ## Usage
 
-  Implement `ExMCP.Client.Handler.handle_elicitation_create/3` in your handler:
+  Implement the `c:ExMCP.Client.Handler.handle_elicitation_create/3` callback in
+  your handler:
 
       defmodule MyApp.MCPHandler do
         use ExMCP.Client.Handler

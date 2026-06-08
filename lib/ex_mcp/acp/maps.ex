@@ -28,12 +28,15 @@ defmodule ExMCP.ACP.Maps do
   def truthy?(false), do: false
   def truthy?(_value), do: true
 
+  @doc "Puts `value` into `map` when the value is not `nil`."
   @spec put_present(map(), any(), any()) :: map()
   defdelegate put_present(map, key, value), to: ExMCP.Internal.Maps
 
+  @doc "Puts `value` into `map` when the value is present and not empty."
   @spec put_non_empty(map(), any(), any()) :: map()
   defdelegate put_non_empty(map, key, value), to: ExMCP.Internal.Maps
 
+  @doc "Puts `value` into `map` unless it equals `skip_value`."
   @spec put_unless(map(), any(), any(), any()) :: map()
   defdelegate put_unless(map, key, value, skip_value), to: ExMCP.Internal.Maps
 

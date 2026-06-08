@@ -159,7 +159,7 @@ The former `use ExMCP.Server` macro and `deftool`, `defresource`, and
    and colocated `read` handlers.
 4. Replacing `defprompt` blocks with `prompt` blocks and colocated `render`
    handlers.
-5. Replacing `ExMCP.Server.start_link/1` with `MyServer.start_link/1`,
+5. Replacing the removed `ExMCP.Server.start_link` helper with `MyServer.start_link/1`,
    `ExMCP.Server.HandlerServer.start_link/1`, or `ExMCP.start_server/1`.
 
 Old generated getters such as `get_tools/0`, `get_resources/0`, and

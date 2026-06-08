@@ -11,7 +11,7 @@ Add ExMCP to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 0.12.0"}
+    {:ex_mcp, "~> 1.0.0-rc.0"}
   ]
 end
 ```
