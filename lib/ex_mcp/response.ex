@@ -58,6 +58,8 @@ defmodule ExMCP.Response do
   - Protection against atom exhaustion attacks
   """
 
+  alias ExMCP.Internal.MapBuilder
+
   defstruct [
     :content,
     :meta,
@@ -384,8 +386,8 @@ defmodule ExMCP.Response do
     base = %{"content" => content}
 
     base
-    |> maybe_put("meta", response.meta)
-    |> maybe_put("isError", response.is_error)
+    |> MapBuilder.put_if_truthy("meta", response.meta)
+    |> MapBuilder.put_if_truthy("isError", response.is_error)
   end
 
   @doc """
@@ -507,14 +509,10 @@ defmodule ExMCP.Response do
     base = %{"type" => type}
 
     base
-    |> maybe_put("text", item.text)
-    |> maybe_put("data", item.data)
-    |> maybe_put("annotations", item.annotations)
+    |> MapBuilder.put_if_truthy("text", item.text)
+    |> MapBuilder.put_if_truthy("data", item.data)
+    |> MapBuilder.put_if_truthy("annotations", item.annotations)
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, _key, false), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   # Note: Protocol data is kept as strings to maintain compatibility with MCP
   # and avoid atom exhaustion issues. Use accessor functions for convenience.

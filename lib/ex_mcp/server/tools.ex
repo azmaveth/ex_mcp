@@ -50,6 +50,8 @@ defmodule ExMCP.Server.Tools do
       end
   """
 
+  alias ExMCP.Server.Tools.ResponseNormalizer
+
   defmacro __using__(_opts) do
     quote do
       import ExMCP.Server.Tools
@@ -138,93 +140,14 @@ defmodule ExMCP.Server.Tools do
   end
 
   @doc false
-  def __normalize_response__({:ok, response}, state) when is_binary(response) do
-    {:ok, %{content: [%{type: "text", text: response}]}, state}
-  end
+  def __normalize_response__({:ok, response}, state),
+    do: {:ok, ResponseNormalizer.normalize(response), state}
 
-  def __normalize_response__({:ok, %{text: text}}, state) do
-    {:ok, %{content: [%{type: "text", text: text}]}, state}
-  end
+  def __normalize_response__({:ok, response, new_state}, _state),
+    do: {:ok, ResponseNormalizer.normalize(response), new_state}
 
-  def __normalize_response__({:ok, [text: text]}, state) do
-    # Handle keyword list response
-    {:ok, %{content: [%{type: "text", text: text}]}, state}
-  end
-
-  def __normalize_response__({:ok, response}, state) when is_map(response) do
-    # Ensure response has proper structure for MCP 2025-06-18 spec
-    normalized_response = normalize_response_structure(response)
-    {:ok, normalized_response, state}
-  end
-
-  def __normalize_response__({:ok, response, new_state}, _state) when is_binary(response) do
-    {:ok, %{content: [%{type: "text", text: response}]}, new_state}
-  end
-
-  def __normalize_response__({:ok, %{text: text}, new_state}, _state) do
-    {:ok, %{content: [%{type: "text", text: text}]}, new_state}
-  end
-
-  def __normalize_response__({:ok, response, new_state}, _state) do
-    # Ensure response has proper structure for MCP 2025-06-18 spec
-    normalized_response = normalize_response_structure(response)
-    {:ok, normalized_response, new_state}
-  end
-
-  def __normalize_response__({:error, reason}, state) when is_binary(reason) do
-    {:ok, %{content: [%{type: "text", text: reason}], isError: true}, state}
-  end
-
-  def __normalize_response__({:error, reason}, state) do
-    {:ok, %{content: [%{type: "text", text: inspect(reason)}], isError: true}, state}
-  end
-
-  # Helper function to normalize response structure for MCP 2025-06-18 spec compliance
-  defp normalize_response_structure(response) when is_map(response) do
-    response
-    |> ensure_content_field()
-    |> preserve_structured_output()
-    |> preserve_other_fields()
-  end
-
-  defp ensure_content_field(%{content: _} = response), do: response
-
-  defp ensure_content_field(%{structuredOutput: _} = response) do
-    # If only structuredOutput is present, add empty content array
-    Map.put_new(response, :content, [])
-  end
-
-  defp ensure_content_field(response) do
-    # If neither content nor structuredOutput, add empty content array
-    Map.put_new(response, :content, [])
-  end
-
-  defp preserve_structured_output(%{structuredOutput: _} = response), do: response
-
-  defp preserve_structured_output(%{structuredContent: structured_content} = response) do
-    # Support legacy structuredContent field by mapping to structuredOutput
-    response
-    |> Map.put(:structuredOutput, structured_content)
-    |> Map.delete(:structuredContent)
-  end
-
-  defp preserve_structured_output(response), do: response
-
-  defp preserve_other_fields(response) do
-    # Preserve all other fields like isError, resourceLinks, metadata, etc.
-    response
-    |> ensure_resource_links_format()
-  end
-
-  defp ensure_resource_links_format(%{resourceLinks: links} = response) when is_list(links) do
-    # Ensure resource links are properly formatted for 2025-06-18 spec
-    response
-  end
-
-  defp ensure_resource_links_format(response) do
-    # No resource links or not a list, leave as is
-    response
-  end
+  def __normalize_response__({:error, reason}, state),
+    do: {:ok, ResponseNormalizer.normalize_error(reason), state}
 
   @doc false
   def compile_schema(nil), do: nil

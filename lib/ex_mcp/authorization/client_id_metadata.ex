@@ -12,6 +12,8 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
   Available in protocol version 2025-11-25.
   """
 
+  alias ExMCP.Internal.MapBuilder
+
   @type client_metadata :: %{String.t() => term()}
 
   @doc """
@@ -76,12 +78,12 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
       "client_name" => Keyword.fetch!(opts, :client_name),
       "redirect_uris" => Keyword.fetch!(opts, :redirect_uris)
     }
-    |> maybe_put("client_uri", Keyword.get(opts, :client_uri))
-    |> maybe_put("logo_uri", Keyword.get(opts, :logo_uri))
-    |> maybe_put("scope", Keyword.get(opts, :scope))
-    |> maybe_put("contacts", Keyword.get(opts, :contacts))
-    |> maybe_put("tos_uri", Keyword.get(opts, :tos_uri))
-    |> maybe_put("policy_uri", Keyword.get(opts, :policy_uri))
+    |> MapBuilder.put_if_present("client_uri", Keyword.get(opts, :client_uri))
+    |> MapBuilder.put_if_present("logo_uri", Keyword.get(opts, :logo_uri))
+    |> MapBuilder.put_if_present("scope", Keyword.get(opts, :scope))
+    |> MapBuilder.put_if_present("contacts", Keyword.get(opts, :contacts))
+    |> MapBuilder.put_if_present("tos_uri", Keyword.get(opts, :tos_uri))
+    |> MapBuilder.put_if_present("policy_uri", Keyword.get(opts, :policy_uri))
   end
 
   # Private helpers
@@ -121,7 +123,4 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
       [field | _] -> {:error, {:missing_required_field, field}}
     end
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

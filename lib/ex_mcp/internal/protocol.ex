@@ -15,7 +15,7 @@ defmodule ExMCP.Internal.Protocol do
   #
   # All methods in this module are part of the official MCP specification.
 
-  alias ExMCP.Internal.{MessageValidator, VersionRegistry}
+  alias ExMCP.Internal.{MapBuilder, MessageValidator, VersionRegistry}
 
   @type json_rpc_id :: String.t() | integer()
   @type method :: String.t()
@@ -360,14 +360,11 @@ defmodule ExMCP.Internal.Protocol do
 
     params =
       params
-      |> maybe_put("total", total)
-      |> maybe_put("message", message)
+      |> MapBuilder.put_if_present("total", total)
+      |> MapBuilder.put_if_present("message", message)
 
     encode_notification("notifications/progress", params)
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   # Add _meta field to params if provided
   defp maybe_add_meta(params, nil), do: params

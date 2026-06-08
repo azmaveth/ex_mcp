@@ -8,6 +8,7 @@ defmodule ExMCP.MessageProcessor do
 
   alias ExMCP.Internal.MessageValidator
   alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Protocol.ResponseBuilder
 
   # Protocol version constants used by MethodHandlers
   # @supported_protocol_versions ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
@@ -316,7 +317,7 @@ defmodule ExMCP.MessageProcessor do
     case method do
       "ping" -> handle_ping(conn, id)
       "initialize" -> handle_initialize_dispatch(conn, handler, mode, params, id)
-      "logging/setLevel" -> put_response(conn, success_response(%{}, id))
+      "logging/setLevel" -> put_response(conn, ResponseBuilder.build_success_response(%{}, id))
       _ -> dispatch_method(method, conn, handler, mode, params, id)
     end
   end
@@ -356,7 +357,7 @@ defmodule ExMCP.MessageProcessor do
   end
 
   defp handle_ping(conn, id) do
-    response = success_response(%{}, id)
+    response = ResponseBuilder.build_success_response(%{}, id)
     put_response(conn, response)
   end
 
@@ -364,14 +365,6 @@ defmodule ExMCP.MessageProcessor do
     # server_info comes from the conn's assigns (set during process routing)
     server_info = Map.get(conn.assigns || %{}, :server_info, %{})
     MethodHandlers.handle_initialize(conn, handler, mode, params, id, server_info)
-  end
-
-  defp success_response(result, id) do
-    %{
-      "jsonrpc" => "2.0",
-      "result" => result,
-      "id" => id
-    }
   end
 
   defp get_request_id(request) when is_map(request), do: Map.get(request, "id")

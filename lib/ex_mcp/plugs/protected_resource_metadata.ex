@@ -29,6 +29,8 @@ defmodule ExMCP.Plugs.ProtectedResourceMetadata do
   @behaviour Plug
 
   import Plug.Conn
+
+  alias ExMCP.Internal.MapBuilder
   require Logger
 
   @impl true
@@ -81,16 +83,13 @@ defmodule ExMCP.Plugs.ProtectedResourceMetadata do
     }
 
     base
-    |> maybe_put(
+    |> MapBuilder.put_if_present(
       "resource_signing_alg_values_supported",
       opts[:resource_signing_alg_values_supported]
     )
-    |> maybe_put("resource_documentation", opts[:resource_documentation])
+    |> MapBuilder.put_if_present("resource_documentation", opts[:resource_documentation])
     |> Map.merge(opts.extra_metadata)
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp default_scopes do
     ExMCP.Authorization.ScopeValidator.get_all_static_scopes()

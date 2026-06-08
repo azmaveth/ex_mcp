@@ -7,6 +7,8 @@ defmodule ExMCP.HttpPlug.Core do
   reusable protocol and origin decisions as data transformations.
   """
 
+  alias ExMCP.Protocol.ResponseBuilder
+
   @type origin_context :: %{
           optional(:origin) => String.t() | nil,
           optional(:scheme) => String.t(),
@@ -55,11 +57,7 @@ defmodule ExMCP.HttpPlug.Core do
 
   @spec json_rpc_error(integer(), String.t(), any(), map() | nil) :: map()
   def json_rpc_error(code, message, id \\ nil, data \\ nil) do
-    error =
-      %{"code" => code, "message" => message}
-      |> maybe_put("data", data)
-
-    %{"jsonrpc" => "2.0", "error" => error, "id" => id}
+    ResponseBuilder.build_error_response(code, message, data, id)
   end
 
   @spec oauth_guard_disabled_error() :: map()
@@ -84,7 +82,4 @@ defmodule ExMCP.HttpPlug.Core do
         false
     end
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

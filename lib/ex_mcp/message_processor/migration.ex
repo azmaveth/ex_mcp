@@ -9,6 +9,7 @@ defmodule ExMCP.MessageProcessor.Migration do
 
   alias ExMCP.MessageProcessor.Dispatcher
   alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Protocol.ResponseBuilder
 
   @doc """
   Replaces the three dispatch maps with a single unified dispatcher call.
@@ -63,25 +64,13 @@ defmodule ExMCP.MessageProcessor.Migration do
   Helper to create backward-compatible response format.
   """
   def success_response(result, id) do
-    %{
-      "jsonrpc" => "2.0",
-      "result" => result,
-      "id" => id
-    }
+    ResponseBuilder.build_success_response(result, id)
   end
 
   @doc """
   Helper to create backward-compatible error response format.
   """
   def error_response(message, data, id) do
-    %{
-      "jsonrpc" => "2.0",
-      "error" => %{
-        "code" => ErrorCodes.internal_error(),
-        "message" => message,
-        "data" => data
-      },
-      "id" => id
-    }
+    ResponseBuilder.build_error_response(ErrorCodes.internal_error(), message, data, id)
   end
 end

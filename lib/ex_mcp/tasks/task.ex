@@ -24,6 +24,8 @@ defmodule ExMCP.Tasks.Task do
       {:ok, task} = ExMCP.Tasks.Task.transition(task, :completed)
   """
 
+  alias ExMCP.Internal.MapBuilder
+
   @type t :: %__MODULE__{
           id: String.t(),
           state: state(),
@@ -167,14 +169,14 @@ defmodule ExMCP.Tasks.Task do
     }
 
     base
-    |> maybe_put("arguments", task.arguments, %{})
-    |> maybe_put("createdAt", task.created_at)
-    |> maybe_put("lastUpdatedAt", task.last_updated_at)
-    |> maybe_put("ttl", task.ttl)
-    |> maybe_put("pollInterval", task.poll_interval)
-    |> maybe_put("statusMessage", task.status_message)
-    |> maybe_put("result", task.result)
-    |> maybe_put("metadata", task.metadata, %{})
+    |> MapBuilder.put_unless("arguments", task.arguments, %{})
+    |> MapBuilder.put_if_present("createdAt", task.created_at)
+    |> MapBuilder.put_if_present("lastUpdatedAt", task.last_updated_at)
+    |> MapBuilder.put_if_present("ttl", task.ttl)
+    |> MapBuilder.put_if_present("pollInterval", task.poll_interval)
+    |> MapBuilder.put_if_present("statusMessage", task.status_message)
+    |> MapBuilder.put_if_present("result", task.result)
+    |> MapBuilder.put_unless("metadata", task.metadata, %{})
   end
 
   @doc """
@@ -193,10 +195,4 @@ defmodule ExMCP.Tasks.Task do
   defp generate_id do
     "task_#{:erlang.unique_integer([:positive, :monotonic])}_#{:rand.uniform(999_999)}"
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp maybe_put(map, _key, empty, empty), do: map
-  defp maybe_put(map, key, value, _default), do: Map.put(map, key, value)
 end

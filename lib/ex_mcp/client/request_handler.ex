@@ -8,6 +8,7 @@ defmodule ExMCP.Client.RequestHandler do
 
   require Logger
   alias ExMCP.Internal.Protocol
+  alias ExMCP.Protocol.ResponseBuilder
 
   @doc """
   Handles individual MCP requests.
@@ -565,22 +566,11 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp build_success_response(result, request_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "result" => result,
-      "id" => request_id
-    }
+    ResponseBuilder.build_success_response(result, request_id)
   end
 
   defp build_error_response(code, message, request_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "error" => %{
-        "code" => code,
-        "message" => message
-      },
-      "id" => request_id
-    }
+    ResponseBuilder.build_error_response(code, message, nil, request_id)
   end
 
   defp handle_generic_server_request(method, params, request_id, state) do
