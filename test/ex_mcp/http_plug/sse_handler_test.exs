@@ -85,9 +85,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
       assert_receive {:DOWN, ^ref, :process, ^handler, :normal}, 1000
 
       # Request should return error (process no longer exists)
-      catch_exit do
-        SSEHandler.request_send(handler)
-      end
+      assert catch_exit(SSEHandler.request_send(handler))
     end
   end
 
