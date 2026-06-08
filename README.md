@@ -102,45 +102,47 @@ end
 
 ### DSL Server
 
-Define tools, resources, and prompts declaratively:
+Define tools, resources, and prompts next to their handlers:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
 
-  deftool "greet" do
-    meta do
-      name "Greet"
-      description "Greets a person by name"
+  tool "greet", "Greets a person by name" do
+    title "Greeting"
+    param :name, :string, required: true, description: "Person to greet"
+
+    run fn %{name: name}, state ->
+      {:ok, %{text: "Hello, #{name}!"}, state}
     end
-
-    input_schema %{
-      type: "object",
-      properties: %{name: %{type: "string", description: "Person to greet"}},
-      required: ["name"]
-    }
   end
 
-  defresource "info://about" do
-    meta do
-      name "About"
-      description "Server information"
-    end
-
+  resource "info://about", "Server information" do
+    title "About"
     mime_type "text/plain"
+
+    read fn %{uri: uri}, state ->
+      {:ok, %{uri: uri, text: "MyServer v1.0", mimeType: "text/plain"}, state}
+    end
   end
 
-  @impl true
-  def handle_tool_call("greet", %{"name" => name}, state) do
-    {:ok, %{content: [text("Hello, #{name}!")]}, state}
-  end
+  prompt "motivate", "Create a short motivational message" do
+    arg :topic, required: true, description: "Topic to encourage"
 
-  @impl true
-  def handle_resource_read("info://about", _uri, state) do
-    {:ok, [text("MyServer v1.0")], state}
+    render fn %{topic: topic}, state ->
+      {:ok,
+       %{
+         messages: [
+           %{role: "user", content: %{type: "text", text: "Encourage me about #{topic}"}}
+         ]
+       }, state}
+    end
   end
 end
 ```
+
+The older `use ExMCP.Server` DSL with `deftool`, `defresource`, and `defprompt` remains supported for compatibility.
 
 See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) for more patterns.
 

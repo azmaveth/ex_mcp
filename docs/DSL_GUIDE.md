@@ -2,7 +2,63 @@
 
 ## Overview
 
-ExMCP provides a powerful Domain-Specific Language (DSL) for defining MCP tools, resources, and prompts. The DSL is designed around three core principles:
+ExMCP provides a modern Domain-Specific Language (DSL) for defining MCP tools,
+resources, resource templates, and prompts next to their handlers. New code
+should prefer `ExMCP.Server.DSL` with `ExMCP.Server.Handler`.
+
+```elixir
+defmodule MyServer do
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
+
+  tool "echo", "Echo back the input" do
+    title "Echo"
+    param :message, :string, required: true
+
+    run fn %{message: message}, state ->
+      {:ok, %{text: message}, state}
+    end
+  end
+
+  resource "config://app", "Application configuration" do
+    title "App Config"
+    mime_type "application/json"
+
+    read fn %{uri: uri}, state ->
+      {:ok, %{uri: uri, text: Jason.encode!(%{enabled: true})}, state}
+    end
+  end
+
+  resource_template "file:///{path}", "File contents" do
+    title "File"
+    mime_type "text/plain"
+    param :path, :string
+
+    read fn %{path: path}, state ->
+      {:ok, "contents for #{path}", state}
+    end
+  end
+
+  prompt "code_review", "Review code" do
+    title "Code Review"
+    arg :code, required: true, description: "Code to review"
+
+    render fn %{code: code}, state ->
+      {:ok,
+       %{
+         messages: [
+           %{role: "user", content: %{type: "text", text: "Review this code:\n#{code}"}}
+         ]
+       }, state}
+    end
+  end
+end
+```
+
+The legacy `use ExMCP.Server` DSL with `deftool`, `defresource`, and
+`defprompt` remains supported. It is documented below for compatibility.
+
+The DSL is designed around three core principles:
 
 1. **Consistency** - Same syntax patterns across all DSL types
 2. **Developer Experience** - Clean, intuitive syntax that feels natural in Elixir
