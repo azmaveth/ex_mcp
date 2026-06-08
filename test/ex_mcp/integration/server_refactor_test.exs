@@ -78,6 +78,8 @@ defmodule ExMCP.Integration.ServerRefactorTest do
 
   describe "server DSL callbacks" do
     test "server DSL exposes handler callbacks with expected entries" do
+      Code.ensure_compiled!(@handler)
+
       assert function_exported?(@handler, :handle_list_tools, 2)
       assert function_exported?(@handler, :handle_list_resources, 2)
       assert function_exported?(@handler, :handle_list_prompts, 2)
