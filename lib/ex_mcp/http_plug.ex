@@ -46,7 +46,7 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.FeatureFlags
   alias ExMCP.HttpPlug.Core
   alias ExMCP.HttpPlug.SSEHandler
-  alias ExMCP.Internal.VersionRegistry
+  alias ExMCP.Internal.{JSONRPC, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
 
   # Simple session registry using ETS
@@ -283,14 +283,12 @@ defmodule ExMCP.HttpPlug do
 
           Logger.error("Handler did not provide a response for request: #{inspect(request)}")
 
-          error_response = %{
-            "jsonrpc" => "2.0",
-            "error" => %{
-              "code" => ErrorCodes.internal_error(),
-              "message" => "Internal error: no response from handler"
-            },
-            "id" => Map.get(request, "id")
-          }
+          error_response =
+            JSONRPC.error(
+              Map.get(request, "id"),
+              ErrorCodes.internal_error(),
+              "Internal error: no response from handler"
+            )
 
           conn
           |> maybe_add_cors_headers(opts)
@@ -308,14 +306,12 @@ defmodule ExMCP.HttpPlug do
 
           Logger.error("Request processing error: #{inspect(reason)}")
 
-          error_response = %{
-            "jsonrpc" => "2.0",
-            "error" => %{
-              "code" => ErrorCodes.internal_error(),
-              "message" => "Internal error"
-            },
-            "id" => Map.get(request, "id")
-          }
+          error_response =
+            JSONRPC.error(
+              Map.get(request, "id"),
+              ErrorCodes.internal_error(),
+              "Internal error"
+            )
 
           conn
           |> maybe_add_cors_headers(opts)
@@ -326,16 +322,13 @@ defmodule ExMCP.HttpPlug do
       end
     else
       {:error, {:protocol_version_mismatch, message}} ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            # Invalid Request
-            "code" => ErrorCodes.invalid_request(),
-            "message" => message,
-            "data" => %{"expectedVersion" => VersionRegistry.latest_version()}
-          },
-          "id" => nil
-        }
+        error_response =
+          JSONRPC.error(
+            nil,
+            ErrorCodes.invalid_request(),
+            message,
+            %{"expectedVersion" => VersionRegistry.latest_version()}
+          )
 
         conn
         |> maybe_add_cors_headers(opts)
@@ -362,14 +355,7 @@ defmodule ExMCP.HttpPlug do
         |> send_resp(403, "Origin not allowed")
 
       {:error, :parse_error} ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.parse_error(),
-            "message" => "Parse error"
-          },
-          "id" => nil
-        }
+        error_response = JSONRPC.error(nil, ErrorCodes.parse_error(), "Parse error")
 
         conn
         |> maybe_add_cors_headers(opts)
@@ -379,14 +365,7 @@ defmodule ExMCP.HttpPlug do
         |> send_resp(400, Jason.encode!(error_response))
 
       {:error, :invalid_json_rpc_envelope} ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.invalid_request(),
-            "message" => "Invalid Request"
-          },
-          "id" => nil
-        }
+        error_response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid Request")
 
         conn
         |> maybe_add_cors_headers(opts)
@@ -403,14 +382,7 @@ defmodule ExMCP.HttpPlug do
       {:error, reason} ->
         Logger.error("MCP request processing failed: #{inspect(reason)}")
 
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.internal_error(),
-            "message" => "Internal error"
-          },
-          "id" => nil
-        }
+        error_response = JSONRPC.error(nil, ErrorCodes.internal_error(), "Internal error")
 
         conn
         |> maybe_add_cors_headers(opts)

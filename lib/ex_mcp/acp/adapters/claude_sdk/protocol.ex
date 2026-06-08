@@ -8,6 +8,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
   """
 
   alias ExMCP.ACP.Maps
+  alias ExMCP.Internal.Maps, as: MapHelpers
 
   @sdk_version "0.3.165"
 
@@ -379,7 +380,5 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
   defp system_prompt(prompt) when is_list(prompt), do: prompt
   defp system_prompt(prompt) when is_binary(prompt), do: [prompt]
 
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, _key, []), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+  defp maybe_put(map, key, value), do: MapHelpers.put_present_non_empty_list(map, key, value)
 end

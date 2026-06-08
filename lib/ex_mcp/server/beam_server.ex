@@ -9,7 +9,7 @@ defmodule ExMCP.Server.BeamServer do
   use GenServer
   require Logger
 
-  alias ExMCP.Internal.Protocol
+  alias ExMCP.Internal.{JSONRPC, Protocol}
   alias ExMCP.Transport.Local
 
   defstruct [
@@ -178,11 +178,7 @@ defmodule ExMCP.Server.BeamServer do
       "serverInfo" => state.server_info
     }
 
-    response = %{
-      "jsonrpc" => "2.0",
-      "result" => result,
-      "id" => id
-    }
+    response = JSONRPC.response(id, result)
 
     send_response(response, state)
 
@@ -218,18 +214,10 @@ defmodule ExMCP.Server.BeamServer do
     response =
       case result do
         {:ok, data} ->
-          %{
-            "jsonrpc" => "2.0",
-            "result" => data,
-            "id" => id
-          }
+          JSONRPC.response(id, data)
 
         {:error, error} ->
-          %{
-            "jsonrpc" => "2.0",
-            "error" => error,
-            "id" => id
-          }
+          JSONRPC.error(id, error)
       end
 
     send_response(response, new_state)
@@ -327,29 +315,18 @@ defmodule ExMCP.Server.BeamServer do
             response =
               case result do
                 {:ok, data} ->
-                  %{
-                    "jsonrpc" => "2.0",
-                    "result" => data,
-                    "id" => id
-                  }
+                  JSONRPC.response(id, data)
 
                 {:error, error} ->
-                  %{
-                    "jsonrpc" => "2.0",
-                    "error" => error,
-                    "id" => id
-                  }
+                  JSONRPC.error(id, error)
               end
 
             {response, new_state}
 
           _ ->
             # Invalid message in batch
-            response = %{
-              "jsonrpc" => "2.0",
-              "error" => %{"code" => -32600, "message" => "Invalid Request"},
-              "id" => Map.get(msg, "id", nil)
-            }
+            response =
+              JSONRPC.error(Map.get(msg, "id", nil), -32600, "Invalid Request")
 
             {response, current_state}
         end

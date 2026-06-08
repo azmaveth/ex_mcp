@@ -6,7 +6,7 @@ defmodule ExMCP.MessageProcessor do
   It follows the Plug specification pattern used throughout the Elixir ecosystem.
   """
 
-  alias ExMCP.Internal.MessageValidator
+  alias ExMCP.Internal.{JSONRPC, MessageValidator}
   alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Protocol.ResponseBuilder
 
@@ -147,11 +147,7 @@ defmodule ExMCP.MessageProcessor do
             # Request is invalid, construct and return an error response.
             # Note: for validation errors, the ID might be null or invalid.
             # We still try to get it to adhere to JSON-RPC, but it might be nil.
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "error" => error_data,
-              "id" => get_request_id(conn.request)
-            }
+            error_response = JSONRPC.error(get_request_id(conn.request), error_data)
 
             put_response(conn, error_response)
         end
@@ -199,28 +195,24 @@ defmodule ExMCP.MessageProcessor do
             end
 
           _ ->
-            error_response = %{
-              "jsonrpc" => "2.0",
-              "error" => %{
-                "code" => ErrorCodes.internal_error(),
-                "message" => "Invalid handler type"
-              },
-              "id" => get_request_id(conn.request)
-            }
+            error_response =
+              JSONRPC.error(
+                get_request_id(conn.request),
+                ErrorCodes.internal_error(),
+                "Invalid handler type"
+              )
 
             put_response(conn, error_response)
         end
 
       # No handler or server configured
       true ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.internal_error(),
-            "message" => "No handler configured"
-          },
-          "id" => get_request_id(conn.request)
-        }
+        error_response =
+          JSONRPC.error(
+            get_request_id(conn.request),
+            ErrorCodes.internal_error(),
+            "No handler configured"
+          )
 
         put_response(conn, error_response)
     end
@@ -241,15 +233,13 @@ defmodule ExMCP.MessageProcessor do
         end
 
       {:error, reason} ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.internal_error(),
-            "message" => "Failed to start server instance",
-            "data" => %{"reason" => inspect(reason)}
-          },
-          "id" => get_request_id(conn.request)
-        }
+        error_response =
+          JSONRPC.error(
+            get_request_id(conn.request),
+            ErrorCodes.internal_error(),
+            "Failed to start server instance",
+            %{"reason" => inspect(reason)}
+          )
 
         put_response(conn, error_response)
     end
@@ -271,15 +261,13 @@ defmodule ExMCP.MessageProcessor do
         end
 
       {:error, reason} ->
-        error_response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => ErrorCodes.internal_error(),
-            "message" => "Failed to start handler server",
-            "data" => %{"reason" => inspect(reason)}
-          },
-          "id" => get_request_id(conn.request)
-        }
+        error_response =
+          JSONRPC.error(
+            get_request_id(conn.request),
+            ErrorCodes.internal_error(),
+            "Failed to start handler server",
+            %{"reason" => inspect(reason)}
+          )
 
         put_response(conn, error_response)
     end

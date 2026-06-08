@@ -9,6 +9,8 @@ defmodule ExMCP.ACP.Registry do
 
   @default_url "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
 
+  alias ExMCP.Internal.NameValue
+
   @type agent :: map()
   @type registry :: map()
 
@@ -124,11 +126,5 @@ defmodule ExMCP.ACP.Registry do
     :ok
   end
 
-  defp normalize_headers(headers) do
-    Enum.map(headers, fn
-      {name, value} -> {String.to_charlist(to_string(name)), String.to_charlist(to_string(value))}
-      %{"name" => name, "value" => value} -> {String.to_charlist(name), String.to_charlist(value)}
-      %{name: name, value: value} -> {String.to_charlist(name), String.to_charlist(value)}
-    end)
-  end
+  defp normalize_headers(headers), do: NameValue.charlist_pairs(headers)
 end

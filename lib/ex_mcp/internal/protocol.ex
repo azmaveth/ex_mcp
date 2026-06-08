@@ -35,15 +35,11 @@ defmodule ExMCP.Internal.Protocol do
     protocol_version = version || VersionRegistry.preferred_version()
 
     %{
-      "jsonrpc" => "2.0",
-      "method" => "initialize",
-      "params" => %{
-        "protocolVersion" => protocol_version,
-        "capabilities" => caps,
-        "clientInfo" => client_info
-      },
-      "id" => generate_id()
+      "protocolVersion" => protocol_version,
+      "capabilities" => caps,
+      "clientInfo" => client_info
     }
+    |> jsonrpc_request("initialize")
   end
 
   @doc """
@@ -51,11 +47,7 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_initialized() :: map()
   def encode_initialized do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "notifications/initialized",
-      "params" => %{}
-    }
+    encode_notification("notifications/initialized", %{})
   end
 
   @doc """
@@ -72,12 +64,7 @@ defmodule ExMCP.Internal.Protocol do
       |> RequestParams.cursor()
       |> RequestParams.with_non_empty_meta(meta)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "tools/list",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "tools/list")
   end
 
   @doc """
@@ -97,12 +84,7 @@ defmodule ExMCP.Internal.Protocol do
       |> RequestParams.named(arguments)
       |> RequestParams.with_progress_or_meta(meta_or_progress_token)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "tools/call",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "tools/call")
   end
 
   @doc """
@@ -115,12 +97,7 @@ defmodule ExMCP.Internal.Protocol do
       |> RequestParams.cursor()
       |> RequestParams.with_non_empty_meta(meta)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "resources/list",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "resources/list")
   end
 
   @doc """
@@ -128,12 +105,9 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_read_resource(String.t()) :: map()
   def encode_read_resource(uri) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "resources/read",
-      "params" => RequestParams.uri(uri),
-      "id" => generate_id()
-    }
+    uri
+    |> RequestParams.uri()
+    |> jsonrpc_request("resources/read")
   end
 
   @doc """
@@ -146,12 +120,7 @@ defmodule ExMCP.Internal.Protocol do
       |> RequestParams.cursor()
       |> RequestParams.with_non_empty_meta(meta)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "prompts/list",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "prompts/list")
   end
 
   @doc """
@@ -164,12 +133,7 @@ defmodule ExMCP.Internal.Protocol do
       |> RequestParams.named(arguments)
       |> RequestParams.with_non_empty_meta(meta)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "prompts/get",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "prompts/get")
   end
 
   @doc """
@@ -183,12 +147,7 @@ defmodule ExMCP.Internal.Protocol do
       |> RequestParams.completion(argument)
       |> RequestParams.with_non_empty_meta(meta)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "completion/complete",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "completion/complete")
   end
 
   @doc """
@@ -198,12 +157,7 @@ defmodule ExMCP.Internal.Protocol do
   def encode_create_message(params, meta \\ nil) do
     params = RequestParams.with_non_empty_meta(params, meta)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "sampling/createMessage",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "sampling/createMessage")
   end
 
   @doc """
@@ -211,12 +165,7 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_list_roots() :: map()
   def encode_list_roots do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "roots/list",
-      "params" => %{},
-      "id" => generate_id()
-    }
+    jsonrpc_request(%{}, "roots/list")
   end
 
   @doc """
@@ -224,12 +173,9 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_subscribe_resource(String.t()) :: map()
   def encode_subscribe_resource(uri) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "resources/subscribe",
-      "params" => RequestParams.uri(uri),
-      "id" => generate_id()
-    }
+    uri
+    |> RequestParams.uri()
+    |> jsonrpc_request("resources/subscribe")
   end
 
   @doc """
@@ -241,12 +187,9 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_unsubscribe_resource(String.t()) :: map()
   def encode_unsubscribe_resource(uri) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "resources/unsubscribe",
-      "params" => RequestParams.uri(uri),
-      "id" => generate_id()
-    }
+    uri
+    |> RequestParams.uri()
+    |> jsonrpc_request("resources/unsubscribe")
   end
 
   # Server Response Encoding
@@ -395,12 +338,7 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_ping() :: map()
   def encode_ping do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "ping",
-      "params" => %{},
-      "id" => generate_id()
-    }
+    jsonrpc_request(%{}, "ping")
   end
 
   @doc """
@@ -418,12 +356,7 @@ defmodule ExMCP.Internal.Protocol do
   def encode_list_resource_templates(cursor \\ nil) do
     params = RequestParams.cursor(cursor)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "resources/templates/list",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "resources/templates/list")
   end
 
   @doc """
@@ -445,12 +378,8 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_set_log_level(String.t()) :: map()
   def encode_set_log_level(level) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "logging/setLevel",
-      "params" => %{"level" => level},
-      "id" => generate_id()
-    }
+    %{"level" => level}
+    |> jsonrpc_request("logging/setLevel")
   end
 
   @doc """
@@ -461,14 +390,10 @@ defmodule ExMCP.Internal.Protocol do
   @spec encode_elicitation_create(String.t(), map()) :: map()
   def encode_elicitation_create(message, requested_schema) do
     %{
-      "jsonrpc" => "2.0",
-      "method" => "elicitation/create",
-      "params" => %{
-        "message" => message,
-        "requestedSchema" => requested_schema
-      },
-      "id" => generate_id()
+      "message" => message,
+      "requestedSchema" => requested_schema
     }
+    |> jsonrpc_request("elicitation/create")
   end
 
   @doc """
@@ -480,16 +405,12 @@ defmodule ExMCP.Internal.Protocol do
   @spec encode_elicitation_create_url(String.t(), String.t(), keyword()) :: map()
   def encode_elicitation_create_url(message, url, _opts \\ []) do
     %{
-      "jsonrpc" => "2.0",
-      "method" => "elicitation/create",
-      "params" => %{
-        "message" => message,
-        "url" => url,
-        "mode" => "url",
-        "elicitationId" => "elicit-#{generate_id()}"
-      },
-      "id" => generate_id()
+      "message" => message,
+      "url" => url,
+      "mode" => "url",
+      "elicitationId" => "elicit-#{generate_id()}"
     }
+    |> jsonrpc_request("elicitation/create")
   end
 
   @doc """
@@ -512,12 +433,8 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_task_get(String.t()) :: map()
   def encode_task_get(task_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "tasks/get",
-      "params" => %{"taskId" => task_id},
-      "id" => generate_id()
-    }
+    %{"taskId" => task_id}
+    |> jsonrpc_request("tasks/get")
   end
 
   @doc """
@@ -525,12 +442,8 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_task_result(String.t()) :: map()
   def encode_task_result(task_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "tasks/result",
-      "params" => %{"taskId" => task_id},
-      "id" => generate_id()
-    }
+    %{"taskId" => task_id}
+    |> jsonrpc_request("tasks/result")
   end
 
   @doc """
@@ -540,12 +453,7 @@ defmodule ExMCP.Internal.Protocol do
   def encode_task_list(cursor \\ nil) do
     params = RequestParams.cursor(cursor)
 
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "tasks/list",
-      "params" => params,
-      "id" => generate_id()
-    }
+    jsonrpc_request(params, "tasks/list")
   end
 
   @doc """
@@ -553,12 +461,8 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec encode_task_cancel(String.t()) :: map()
   def encode_task_cancel(task_id) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => "tasks/cancel",
-      "params" => %{"taskId" => task_id},
-      "id" => generate_id()
-    }
+    %{"taskId" => task_id}
+    |> jsonrpc_request("tasks/cancel")
   end
 
   @doc """
@@ -739,6 +643,10 @@ defmodule ExMCP.Internal.Protocol do
   """
   @spec generate_id() :: integer()
   defdelegate generate_id, to: JSONRPC
+
+  defp jsonrpc_request(params, method) when is_map(params) and is_binary(method) do
+    JSONRPC.request(method, params, generate_id())
+  end
 
   # Error Codes (from JSON-RPC spec)
   @parse_error -32700

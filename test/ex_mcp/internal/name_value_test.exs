@@ -22,4 +22,11 @@ defmodule ExMCP.Internal.NameValueTest do
   test "converts normalized values into charlist pairs" do
     assert NameValue.charlist_pairs(%{TERM: :dumb}) == [{~c"TERM", ~c"dumb"}]
   end
+
+  test "preserves list order and duplicate names for charlist pairs" do
+    assert NameValue.charlist_pairs([{"x-test", "a"}, {"x-test", "b"}]) == [
+             {~c"x-test", ~c"a"},
+             {~c"x-test", ~c"b"}
+           ]
+  end
 end

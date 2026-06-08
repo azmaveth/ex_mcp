@@ -7,7 +7,7 @@ defmodule ExMCP.Client.RequestHandler do
   """
 
   require Logger
-  alias ExMCP.Internal.Protocol
+  alias ExMCP.Internal.{JSONRPC, Maps, Protocol}
   alias ExMCP.Protocol.ResponseBuilder
 
   @doc """
@@ -345,18 +345,9 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp build_request(method, params, id) do
-    %{
-      "jsonrpc" => "2.0",
-      "method" => method,
-      "params" => params || %{}
-    }
-    |> then(fn req ->
-      if id do
-        Map.put(req, "id", id)
-      else
-        req
-      end
-    end)
+    method
+    |> JSONRPC.request(params || %{})
+    |> Maps.put_present("id", id)
   end
 
   @doc """

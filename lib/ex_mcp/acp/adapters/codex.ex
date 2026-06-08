@@ -12,7 +12,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
   require Logger
 
   alias ExMCP.ACP.Adapters.Codex.{Config, Events, Sessions, SlashCommands}
-  alias ExMCP.ACP.{AdapterEvents, Envelope}
+  alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests}
+  alias ExMCP.Internal.{Maps, NameValue}
 
   defstruct [
     :model,
@@ -388,7 +389,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   def translate_outbound(%{"id" => response_id} = response, state) do
-    case Map.pop(state.pending_client_requests, response_id) do
+    case PendingRequests.pop(state.pending_client_requests, response_id) do
       {nil, _pending} ->
         {:ok, :skip, state}
 
@@ -583,7 +584,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_inbound_message(_msg, state), do: {:skip, state}
 
   defp handle_response(state, id, reply) do
-    case Map.pop(state.pending_requests, id) do
+    case PendingRequests.pop(state.pending_requests, id) do
       {nil, _} ->
         {:skip, state}
 
@@ -1178,13 +1179,17 @@ defmodule ExMCP.ACP.Adapters.Codex do
         acp_id
       )
 
-    state =
-      put_in(state.pending_client_requests[acp_id], %{
-        codex_id: codex_id,
-        method: method,
-        params: params,
-        session_id: session_id
-      })
+    entry = %{
+      codex_id: codex_id,
+      method: method,
+      params: params,
+      session_id: session_id
+    }
+
+    state = %{
+      state
+      | pending_client_requests: PendingRequests.put(state.pending_client_requests, acp_id, entry)
+    }
 
     {:messages, [request], state}
   end
@@ -2037,19 +2042,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp explicit_env_value(opts, name) do
     opts
     |> Keyword.get(:env, [])
-    |> normalize_env_map()
+    |> NameValue.map()
     |> Map.get(name)
   end
-
-  defp normalize_env_map(env) when is_map(env) do
-    Map.new(env, fn {key, value} -> {to_string(key), to_string(value)} end)
-  end
-
-  defp normalize_env_map(env) when is_list(env) do
-    Map.new(env, fn {key, value} -> {to_string(key), to_string(value)} end)
-  end
-
-  defp normalize_env_map(_env), do: %{}
 
   # MCP mapping
 
@@ -2356,7 +2351,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp track_request(state, id, type, acp_id, meta \\ %{}) do
     entry = %{type: type, acp_id: acp_id, meta: meta}
-    %{state | pending_requests: Map.put(state.pending_requests, id, entry)}
+    %{state | pending_requests: PendingRequests.put(state.pending_requests, id, entry)}
   end
 
   defp error_response(acp_id, error), do: Envelope.error(acp_id, normalize_error(error))
@@ -2395,11 +2390,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     [Jason.encode!(msg), "\n"]
   end
 
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, _key, ""), do: map
-  defp maybe_put(map, _key, value) when value == %{}, do: map
-  defp maybe_put(map, _key, value) when value == [], do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+  defp maybe_put(map, key, value), do: Maps.put_non_empty(map, key, value)
 
   defp reject_nil_values(map) do
     Map.reject(map, fn {_key, value} -> is_nil(value) end)

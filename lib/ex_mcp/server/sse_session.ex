@@ -27,7 +27,7 @@ defmodule ExMCP.Server.SSESession do
       SSESession.handle_response(session_id, request_id, result)
   """
 
-  require Logger
+  alias ExMCP.Internal.JSONRPC
 
   @ets_table :ex_mcp_sse_sessions
 
@@ -66,12 +66,7 @@ defmodule ExMCP.Server.SSESession do
         :ets.insert(@ets_table, {"pending:#{request_id}", self()})
 
         # Send request via SSE stream
-        request = %{
-          "jsonrpc" => "2.0",
-          "id" => request_id,
-          "method" => method,
-          "params" => params
-        }
+        request = JSONRPC.request(method, params, request_id)
 
         send(sse_pid, {:sse_send, request})
 

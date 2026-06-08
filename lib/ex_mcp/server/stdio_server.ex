@@ -61,7 +61,7 @@ defmodule ExMCP.Server.StdioServer do
   use GenServer
   require Logger
 
-  alias ExMCP.Internal.{StdioLoggerConfig, VersionRegistry}
+  alias ExMCP.Internal.{JSONRPC, StdioLoggerConfig, VersionRegistry}
 
   @doc """
   Starts the STDIO server.
@@ -207,15 +207,12 @@ defmodule ExMCP.Server.StdioServer do
         false -> %{name: to_string(state.handler_module), version: "1.0.0"}
       end
 
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "result" => %{
+    response =
+      JSONRPC.response(id, %{
         "protocolVersion" => negotiated_version,
         "capabilities" => capabilities,
         "serverInfo" => server_info
-      }
-    }
+      })
 
     send_response(response, state)
     # Store the negotiated version in state for future use
@@ -242,11 +239,7 @@ defmodule ExMCP.Server.StdioServer do
           []
       end
 
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "result" => %{"tools" => tools}
-    }
+    response = JSONRPC.response(id, %{"tools" => tools})
 
     send_response(response, state)
     {:noreply, state}
@@ -261,11 +254,7 @@ defmodule ExMCP.Server.StdioServer do
       true ->
         case state.handler_module.handle_tool_call(tool_name, arguments, state.handler_state) do
           {:ok, result, new_handler_state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => result
-            }
+            response = JSONRPC.response(id, result)
 
             send_response(response, state)
             new_state = %{state | handler_state: new_handler_state}
@@ -304,11 +293,7 @@ defmodule ExMCP.Server.StdioServer do
           []
       end
 
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "result" => %{"resources" => resources}
-    }
+    response = JSONRPC.response(id, %{"resources" => resources})
 
     send_response(response, state)
     {:noreply, state}
@@ -324,11 +309,7 @@ defmodule ExMCP.Server.StdioServer do
 
         case state.handler_module.handle_request(method, params, state.handler_state) do
           {:reply, result, new_handler_state} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => result
-            }
+            response = JSONRPC.response(id, result)
 
             send_response(response, state)
             new_state = %{state | handler_state: new_handler_state}
@@ -358,14 +339,7 @@ defmodule ExMCP.Server.StdioServer do
 
   # Send an error response
   defp send_error_response(code, message, id, _state) do
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "error" => %{
-        "code" => code,
-        "message" => message
-      }
-    }
+    response = JSONRPC.error(id, code, message)
 
     json = Jason.encode!(response)
     IO.puts(json)

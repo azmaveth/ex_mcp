@@ -29,6 +29,7 @@ defmodule ExMCP.Client.StateMachine do
 
   alias ExMCP.Client.States
   alias ExMCP.Client.Transitions
+  alias ExMCP.Internal.JSONRPC
 
   @type state_name :: :disconnected | :connecting | :handshaking | :ready | :reconnecting
 
@@ -524,30 +525,26 @@ defmodule ExMCP.Client.StateMachine do
     )
 
     # Send initialize request
-    initialize_request = %{
-      "jsonrpc" => "2.0",
-      "method" => "initialize",
-      "params" => %{
-        "protocolVersion" => client_info["protocolVersion"],
-        "capabilities" => client_info["capabilities"],
-        "clientInfo" => %{
-          "name" => client_info["name"],
-          "version" => client_info["version"]
-        }
-      },
-      "id" => "init_#{System.unique_integer([:positive])}"
-    }
+    initialize_request =
+      JSONRPC.request(
+        "initialize",
+        %{
+          "protocolVersion" => client_info["protocolVersion"],
+          "capabilities" => client_info["capabilities"],
+          "clientInfo" => %{
+            "name" => client_info["name"],
+            "version" => client_info["version"]
+          }
+        },
+        "init_#{System.unique_integer([:positive])}"
+      )
 
     Logger.debug("Sending initialize request: #{inspect(initialize_request)}")
 
     case send_and_receive_response(transport_module, transport_state, initialize_request) do
       {:ok, %{"result" => result}} ->
         # Send initialized notification
-        initialized_notification = %{
-          "jsonrpc" => "2.0",
-          "method" => "notifications/initialized",
-          "params" => %{}
-        }
+        initialized_notification = JSONRPC.notification("notifications/initialized", %{})
 
         case transport_module.send_message(
                Jason.encode!(initialized_notification),
@@ -606,12 +603,7 @@ defmodule ExMCP.Client.StateMachine do
         {:error, :request_not_found}
 
       request ->
-        message = %{
-          "jsonrpc" => "2.0",
-          "method" => request.method,
-          "params" => request.params,
-          "id" => request_id
-        }
+        message = JSONRPC.request(request.method, request.params, request_id)
 
         case transport_module.send_message(Jason.encode!(message), transport_state) do
           {:ok, _new_transport_state} ->
@@ -904,11 +896,7 @@ defmodule ExMCP.Client.StateMachine do
          id
        ) do
     # Respond with pong
-    response = %{
-      "jsonrpc" => "2.0",
-      "result" => %{},
-      "id" => id
-    }
+    response = JSONRPC.response(id, %{})
 
     case transport_module.send_message(Jason.encode!(response), transport_state) do
       {:ok, _} ->
@@ -940,21 +928,13 @@ defmodule ExMCP.Client.StateMachine do
 
         case handler.handle_create_message(params, handler_state) do
           {:ok, result, _new_handler_state} ->
-            %{"jsonrpc" => "2.0", "result" => result, "id" => id}
+            JSONRPC.response(id, result)
 
           {:error, error, _new_handler_state} ->
-            %{
-              "jsonrpc" => "2.0",
-              "error" => %{"code" => -32603, "message" => error},
-              "id" => id
-            }
+            JSONRPC.error(id, -32603, error)
         end
       else
-        %{
-          "jsonrpc" => "2.0",
-          "error" => %{"code" => -32601, "message" => "Method not found"},
-          "id" => id
-        }
+        JSONRPC.error(id, -32601, "Method not found")
       end
 
     case transport_module.send_message(Jason.encode!(response), transport_state) do
@@ -990,21 +970,13 @@ defmodule ExMCP.Client.StateMachine do
 
         case handler.handle_elicitation_create(message, requested_schema, handler_state) do
           {:ok, result, _new_handler_state} ->
-            %{"jsonrpc" => "2.0", "result" => result, "id" => id}
+            JSONRPC.response(id, result)
 
           {:error, error, _new_handler_state} ->
-            %{
-              "jsonrpc" => "2.0",
-              "error" => %{"code" => -32603, "message" => error},
-              "id" => id
-            }
+            JSONRPC.error(id, -32603, error)
         end
       else
-        %{
-          "jsonrpc" => "2.0",
-          "error" => %{"code" => -32601, "message" => "Method not found"},
-          "id" => id
-        }
+        JSONRPC.error(id, -32601, "Method not found")
       end
 
     case transport_module.send_message(Jason.encode!(response), transport_state) do
@@ -1024,11 +996,7 @@ defmodule ExMCP.Client.StateMachine do
     # Send method not found error response if transport available
     case data do
       %{transport: {transport_module, transport_state, _}} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "error" => %{"code" => -32601, "message" => "Method not found"},
-          "id" => id
-        }
+        response = JSONRPC.error(id, -32601, "Method not found")
 
         case transport_module.send_message(Jason.encode!(response), transport_state) do
           {:ok, _} -> :ok

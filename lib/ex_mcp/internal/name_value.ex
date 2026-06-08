@@ -41,12 +41,23 @@ defmodule ExMCP.Internal.NameValue do
   def map(_values), do: %{}
 
   @spec charlist_pairs(map() | list()) :: [{charlist(), charlist()}]
-  def charlist_pairs(values) do
-    values
-    |> map()
-    |> Enum.map(fn {name, value} -> {to_charlist(name), to_charlist(value)} end)
+  def charlist_pairs(values) when is_map(values) do
+    Enum.map(values, fn {name, value} -> charlist_pair(name, value) end)
   end
+
+  def charlist_pairs(values) when is_list(values) do
+    Enum.map(values, fn
+      %{"name" => name, "value" => value} -> charlist_pair(name, value)
+      %{name: name, value: value} -> charlist_pair(name, value)
+      {name, value} -> charlist_pair(name, value)
+    end)
+  end
+
+  def charlist_pairs(_values), do: []
 
   @spec entry(String.t(), String.t()) :: map()
   def entry(name, value), do: %{"name" => name, "value" => value}
+
+  defp charlist_pair(name, value),
+    do: {to_charlist(to_string(name)), to_charlist(to_string(value))}
 end

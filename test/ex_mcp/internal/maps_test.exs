@@ -19,6 +19,17 @@ defmodule ExMCP.Internal.MapsTest do
            |> Maps.put_non_empty("zero", 0) == %{"false" => false, "zero" => 0}
   end
 
+  test "puts values except nil and empty lists" do
+    assert %{}
+           |> Maps.put_present_non_empty_list("nil", nil)
+           |> Maps.put_present_non_empty_list("empty_list", [])
+           |> Maps.put_present_non_empty_list("empty_string", "")
+           |> Maps.put_present_non_empty_list("empty_map", %{}) == %{
+             "empty_string" => "",
+             "empty_map" => %{}
+           }
+  end
+
   test "puts truthy values" do
     assert %{}
            |> Maps.put_truthy("nil", nil)

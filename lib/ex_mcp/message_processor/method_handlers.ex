@@ -4,7 +4,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # Each handler fetches data via the appropriate mode, then builds
   # a standard JSON-RPC response.
 
-  require Logger
+  alias ExMCP.Internal.JSONRPC
 
   @default_protocol_version "2025-11-25"
 
@@ -493,35 +493,15 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # --- Response helpers ---
 
   defp put_success(conn, result, id) do
-    response = %{"jsonrpc" => "2.0", "result" => result, "id" => id}
-    %{conn | response: response}
+    %{conn | response: JSONRPC.response(id, result)}
   end
 
   defp put_error(conn, message, reason, id) do
-    response = %{
-      "jsonrpc" => "2.0",
-      "error" => %{
-        "code" => -32603,
-        "message" => message,
-        "data" => %{"reason" => inspect(reason)}
-      },
-      "id" => id
-    }
-
-    %{conn | response: response}
+    %{conn | response: JSONRPC.error(id, -32603, message, %{"reason" => inspect(reason)})}
   end
 
   defp put_method_not_found(conn, id) do
-    response = %{
-      "jsonrpc" => "2.0",
-      "error" => %{
-        "code" => -32601,
-        "message" => "Method not found"
-      },
-      "id" => id
-    }
-
-    %{conn | response: response}
+    %{conn | response: JSONRPC.error(id, -32601, "Method not found")}
   end
 
   defp wrap_tool_result(result) when is_list(result) do

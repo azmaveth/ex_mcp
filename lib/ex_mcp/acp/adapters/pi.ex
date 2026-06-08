@@ -14,6 +14,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   alias ExMCP.ACP.AdapterBridge.PortRunner
   alias ExMCP.ACP.Adapters.Pi.{Prompt, SessionStore, Settings, SlashCommands, Startup, Tools}
   alias ExMCP.ACP.{AdapterEvents, Envelope, PromptQueue, Types}
+  alias ExMCP.Internal.Maps
 
   @thinking_levels ~w(off minimal low medium high xhigh)
   @auth_method_id "pi_terminal_login"
@@ -681,8 +682,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     rpc_msg =
       %{"type" => "prompt", "id" => msg_id, "message" => message}
-      |> maybe_put_non_empty("images", images)
-      |> maybe_put_present("streamingBehavior", params["streamingBehavior"])
+      |> Maps.put_non_empty("images", images)
+      |> Maps.put_present("streamingBehavior", params["streamingBehavior"])
 
     state = %{
       state
@@ -2106,13 +2107,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp parse_cursor(_cursor), do: 0
-
-  defp maybe_put_present(map, _key, nil), do: map
-  defp maybe_put_present(map, key, value), do: Map.put(map, key, value)
-
-  defp maybe_put_non_empty(map, _key, []), do: map
-  defp maybe_put_non_empty(map, _key, nil), do: map
-  defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
 
   defp maybe_set(state, _key, nil), do: state
   defp maybe_set(state, key, value), do: Map.put(state, key, value)

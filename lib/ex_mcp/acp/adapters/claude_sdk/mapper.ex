@@ -6,7 +6,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias ExMCP.ACP.Adapters.ClaudeSDK.ToolInfo
   alias ExMCP.ACP.Protocol, as: ACPProtocol
-  alias ExMCP.ACP.{AdapterEvents, Envelope, PromptQueue}
+  alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests, PromptQueue}
 
   @stop_reasons %{
     "end_turn" => "end_turn",
@@ -891,7 +891,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp put_pending_client_request(state, acp_id, request_id, kind, request) do
     pending =
-      Map.put(state.pending_client_requests, acp_id, %{
+      PendingRequests.put(state.pending_client_requests, acp_id, %{
         request_id: request_id,
         kind: kind,
         request: request
@@ -901,7 +901,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp pop_pending_client_request(state, acp_id) do
-    {request, pending} = Map.pop(state.pending_client_requests, acp_id)
+    {request, pending} = PendingRequests.pop(state.pending_client_requests, acp_id)
     {request, %{state | pending_client_requests: pending}}
   end
 

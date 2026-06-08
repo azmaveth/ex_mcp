@@ -12,6 +12,11 @@ defmodule ExMCP.Internal.Maps do
   def put_non_empty(map, _key, empty) when empty == %{}, do: map
   def put_non_empty(map, key, value), do: Map.put(map, key, value)
 
+  @spec put_present_non_empty_list(map(), any(), any()) :: map()
+  def put_present_non_empty_list(map, _key, nil), do: map
+  def put_present_non_empty_list(map, _key, []), do: map
+  def put_present_non_empty_list(map, key, value), do: Map.put(map, key, value)
+
   @spec put_truthy(map(), any(), any()) :: map()
   def put_truthy(map, _key, value) when value in [nil, false], do: map
   def put_truthy(map, key, value), do: Map.put(map, key, value)
