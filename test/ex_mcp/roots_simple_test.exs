@@ -3,8 +3,9 @@ defmodule ExMCP.RootsSimpleTest do
 
   @moduletag :roots
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
   alias ExMCP.Client.DefaultHandler
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule SimpleServerHandler do
     use ExMCP.Server.Handler
@@ -112,7 +113,7 @@ defmodule ExMCP.RootsSimpleTest do
       Process.sleep(100)
 
       # Server can request roots (this tests the protocol flow)
-      case Server.list_roots(server, 1000) do
+      case ExMCP.Server.list_roots(server, 1000) do
         {:ok, result} ->
           received_roots = result["roots"]
           assert length(received_roots) == 1
@@ -173,8 +174,8 @@ defmodule ExMCP.RootsSimpleTest do
       Process.sleep(100)
 
       # Both servers can request roots
-      {:ok, result1} = Server.list_roots(server1, 1000)
-      {:ok, result2} = Server.list_roots(server2, 1000)
+      {:ok, result1} = ExMCP.Server.list_roots(server1, 1000)
+      {:ok, result2} = ExMCP.Server.list_roots(server2, 1000)
 
       assert result1["roots"] == result2["roots"]
       assert length(result1["roots"]) == 1

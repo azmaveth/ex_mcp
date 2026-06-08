@@ -10,7 +10,8 @@ defmodule ExMCP.Compliance.MessageValidationComplianceTest do
   @moduletag :compliance
 
   # Note: Aliases commented out as they're for future implementation
-  # alias ExMCP.{Client, Protocol, Server}
+  # alias ExMCP.Client
+  alias ExMCP.Protocol
 
   defmodule ValidationTestHandler do
     @moduledoc false

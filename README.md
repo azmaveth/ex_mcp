@@ -142,8 +142,6 @@ defmodule MyServer do
 end
 ```
 
-The older `use ExMCP.Server` DSL with `deftool`, `defresource`, and `defprompt` remains supported for compatibility.
-
 See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) for more patterns.
 
 ### Standalone Client

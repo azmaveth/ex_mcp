@@ -42,7 +42,8 @@ defmodule ExMCP.Compliance.Features.Resources do
   # Import test helpers
   import ExUnit.Assertions
   import ExMCP.ComplianceTestHelpers
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server
 
   # Actual test implementations
   def test_basic_resources_list(version) do

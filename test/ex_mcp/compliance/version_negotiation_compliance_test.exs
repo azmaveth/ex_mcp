@@ -9,7 +9,8 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule VersionTestHandler do
     use ExMCP.Server.Handler

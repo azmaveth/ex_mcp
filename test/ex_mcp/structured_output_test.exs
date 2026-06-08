@@ -5,7 +5,7 @@ defmodule ExMCP.StructuredOutputTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Client
-  alias ExMCP.Server
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestHandler do
     @behaviour ExMCP.Server.Handler

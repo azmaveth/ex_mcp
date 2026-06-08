@@ -1,9 +1,11 @@
 defmodule ExMCP.PingTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Protocol, Server}
+  alias ExMCP.Client
   alias ExMCP.Client.Handler, as: ClientHandler
+  alias ExMCP.Protocol
   alias ExMCP.Server.Handler
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestServerHandler do
     @behaviour Handler
@@ -164,11 +166,11 @@ defmodule ExMCP.PingTest do
       Process.sleep(100)
 
       # Server pings client
-      assert {:ok, %{}} = Server.ping(server)
+      assert {:ok, %{}} = ExMCP.Server.ping(server)
 
       # Multiple pings should work
-      assert {:ok, %{}} = Server.ping(server)
-      assert {:ok, %{}} = Server.ping(server)
+      assert {:ok, %{}} = ExMCP.Server.ping(server)
+      assert {:ok, %{}} = ExMCP.Server.ping(server)
 
       # Cleanup
       GenServer.stop(client)
@@ -193,7 +195,7 @@ defmodule ExMCP.PingTest do
       Process.sleep(100)
 
       # Server ping should succeed with default handler
-      assert {:ok, _} = Server.ping(server)
+      assert {:ok, _} = ExMCP.Server.ping(server)
 
       # Cleanup
       GenServer.stop(client)
@@ -224,11 +226,11 @@ defmodule ExMCP.PingTest do
       assert {:ok, %{}} = Client.ping(client)
 
       # Server pings client
-      assert {:ok, %{}} = Server.ping(server)
+      assert {:ok, %{}} = ExMCP.Server.ping(server)
 
       # Interleaved pings
       assert {:ok, %{}} = Client.ping(client)
-      assert {:ok, %{}} = Server.ping(server)
+      assert {:ok, %{}} = ExMCP.Server.ping(server)
       assert {:ok, %{}} = Client.ping(client)
 
       # Cleanup

@@ -1,7 +1,8 @@
 defmodule ExMCP.UtilitiesTest do
   use ExUnit.Case, async: true
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestUtilitiesHandler do
     use ExMCP.Server.Handler

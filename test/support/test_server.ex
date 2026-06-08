@@ -58,14 +58,14 @@ defmodule ExMCP.TestServer do
   end
 
   @impl true
-  def handle_call({:handle_tool_call, tool_name, arguments}, _from, state) do
-    result = do_handle_tool_call(tool_name, arguments, state)
+  def handle_call({:handle_call_tool, tool_name, arguments}, _from, state) do
+    result = do_handle_call_tool(tool_name, arguments, state)
     {:reply, result, state}
   end
 
   @impl true
-  def handle_call({:handle_resource_read, uri, full_uri}, _from, state) do
-    case do_handle_resource_read(uri, full_uri, state) do
+  def handle_call({:handle_read_resource, uri, full_uri}, _from, state) do
+    case do_handle_read_resource(uri, full_uri, state) do
       {:ok, content, new_state} ->
         {:reply, {:ok, content, new_state}, new_state}
 
@@ -75,8 +75,8 @@ defmodule ExMCP.TestServer do
   end
 
   @impl true
-  def handle_call({:handle_prompt_get, prompt_name, arguments}, _from, state) do
-    result = do_handle_prompt_get(prompt_name, arguments, state)
+  def handle_call({:handle_get_prompt, prompt_name, arguments}, _from, state) do
+    result = do_handle_get_prompt(prompt_name, arguments, state)
     {:reply, result, state}
   end
 
@@ -194,27 +194,27 @@ defmodule ExMCP.TestServer do
   # Private handler implementations
   #
 
-  defp do_handle_tool_call("echo", %{"message" => message}, state) do
+  defp do_handle_call_tool("echo", %{"message" => message}, state) do
     result = %{content: [text("Echo: #{message}")]}
     {:ok, result, state}
   end
 
-  defp do_handle_tool_call("add", %{"a" => a, "b" => b}, state) do
+  defp do_handle_call_tool("add", %{"a" => a, "b" => b}, state) do
     sum = a + b
     result = %{content: [text("#{a} + #{b} = #{sum}")]}
     {:ok, result, state}
   end
 
-  defp do_handle_tool_call("greet", %{"name" => name}, state) do
+  defp do_handle_call_tool("greet", %{"name" => name}, state) do
     result = %{content: [text("Hello, #{name}!")]}
     {:ok, result, state}
   end
 
-  defp do_handle_tool_call(_name, _args, state) do
+  defp do_handle_call_tool(_name, _args, state) do
     {:error, "Unknown tool", state}
   end
 
-  defp do_handle_resource_read("test://config", _uri, state) do
+  defp do_handle_read_resource("test://config", _uri, state) do
     config =
       json(%{
         environment: "test",
@@ -226,21 +226,21 @@ defmodule ExMCP.TestServer do
     {:ok, [config], state}
   end
 
-  defp do_handle_resource_read("test://data.txt", _uri, state) do
+  defp do_handle_read_resource("test://data.txt", _uri, state) do
     content = [text("This is test data from the test server.\nLine 2 of test data.")]
     {:ok, content, state}
   end
 
-  defp do_handle_resource_read("test://logs/" <> filename, _uri, state) do
+  defp do_handle_read_resource("test://logs/" <> filename, _uri, state) do
     content = [text("Log file: #{filename}\n[INFO] Test log entry 1\n[WARN] Test log entry 2")]
     {:ok, content, state}
   end
 
-  defp do_handle_resource_read(_uri, _original_uri, state) do
+  defp do_handle_read_resource(_uri, _original_uri, state) do
     {:error, "Resource not found", state}
   end
 
-  defp do_handle_prompt_get("greeting", args, state) do
+  defp do_handle_get_prompt("greeting", args, state) do
     name = Map.get(args, "name", "friend")
     style = Map.get(args, "style", "casual")
 
@@ -258,7 +258,7 @@ defmodule ExMCP.TestServer do
     {:ok, %{messages: messages}, state}
   end
 
-  defp do_handle_prompt_get("code_review", args, state) do
+  defp do_handle_get_prompt("code_review", args, state) do
     code = Map.get(args, "code", "")
     language = Map.get(args, "language", "unknown")
 

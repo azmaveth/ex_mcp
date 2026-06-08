@@ -194,44 +194,24 @@ defmodule ExMCPTest do
     end
   end
 
-  describe "use ExMCP.Server macro" do
-    test "allows using ExMCP.Server as alias for ExMCP.Server" do
-      # Create a temporary module to test the macro
+  describe "server DSL composition" do
+    test "allows composing Handler and Server.DSL" do
       code = """
-      defmodule TestServerAlias do
-        use ExMCP.Server
+      defmodule TestServerDSLComposition do
+        use ExMCP.Server.Handler
+        use ExMCP.Server.DSL
 
-        deftool "test" do
-          meta do
-            description "Test tool"
-          end
+        tool "test", "Test tool" do
           input_schema %{type: "object"}
-        end
-
-        @impl true
-        def handle_tool_call("test", _args, state) do
-          {:ok, %{content: []}, state}
-        end
-
-        @impl true
-        def handle_resource_read(_uri, _original_uri, state) do
-          {:error, "Not implemented", state}
-        end
-
-        @impl true
-        def handle_prompt_get(_name, _args, state) do
-          {:error, "Not implemented", state}
+          run fn _args, state -> {:ok, %{content: []}, state} end
         end
       end
       """
 
-      # Compile and check it works
       [{module, _}] = Code.compile_string(code)
 
-      # Verify the module has the expected behavior
-      assert function_exported?(module, :get_tools, 0)
-      tools = module.get_tools()
-      assert Map.has_key?(tools, "test")
+      assert function_exported?(module, :handle_list_tools, 2)
+      assert {:ok, [%{name: "test"}], nil, %{}} = module.handle_list_tools(nil, %{})
     end
   end
 end

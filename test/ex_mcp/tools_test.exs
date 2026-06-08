@@ -2,7 +2,8 @@ defmodule ExMCP.ToolsTest do
   use ExUnit.Case, async: true
   # Removed unused import
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestToolsHandler do
     use ExMCP.Server.Handler
@@ -246,7 +247,7 @@ defmodule ExMCP.ToolsTest do
           for i <- 1..steps do
             Process.sleep(div(duration * 1000, steps))
             progress = div(i * 100, steps)
-            Server.notify_progress(self(), progress_token, progress, 100)
+            ExMCP.Server.notify_progress(self(), progress_token, progress, 100)
           end
         end)
       end

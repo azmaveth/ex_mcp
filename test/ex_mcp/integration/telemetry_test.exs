@@ -6,15 +6,11 @@ defmodule ExMCP.Integration.TelemetryTest do
   use ExUnit.Case, async: true
   require Logger
 
+  alias ExMCP.Protocol.RequestProcessor
   alias ExMCP.TestHelpers
 
-  setup do
-    {:ok, server} = TestHelpers.start_test_server(TestHelpers.RefactoredTestServer)
-    {:ok, server: server}
-  end
-
   describe "telemetry integration" do
-    test "emits events for complete request lifecycle", %{server: server} do
+    test "emits events for complete request lifecycle" do
       # Set up telemetry handler
       events_ref = make_ref()
       events_pid = self()
@@ -48,27 +44,27 @@ defmodule ExMCP.Integration.TelemetryTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(TestHelpers.RefactoredTestServer, request)
 
       # Wait for events — match on specific metadata fields to avoid picking up
       # telemetry events from concurrent async tests (telemetry handlers are global)
       assert_receive {^events_ref, [:ex_mcp, :request, :start], measurements,
-                      %{request_id: "1", method: "tools/call"} = metadata}
+                      %{request_id: "1", method: "tools/call"}}
 
       assert measurements.system_time
 
       assert_receive {^events_ref, [:ex_mcp, :tool, :start], measurements,
-                      %{tool_name: "test_tool", request_id: "1"} = metadata}
+                      %{tool_name: "test_tool", request_id: "1"}}
 
       assert measurements.system_time
 
       assert_receive {^events_ref, [:ex_mcp, :tool, :stop], measurements,
-                      %{tool_name: "test_tool", status: :ok} = metadata}
+                      %{tool_name: "test_tool", status: :ok}}
 
       assert measurements.duration > 0
 
       assert_receive {^events_ref, [:ex_mcp, :request, :stop], measurements,
-                      %{request_id: "1", status: :ok} = metadata}
+                      %{request_id: "1", status: :ok}}
 
       assert measurements.duration > 0
 
@@ -79,7 +75,7 @@ defmodule ExMCP.Integration.TelemetryTest do
       assert response["result"]["content"] == [%{"type" => "text", "text" => "Tool executed"}]
     end
 
-    test "emits events for resource operations", %{server: server} do
+    test "emits events for resource operations" do
       # Set up telemetry handler
       events_ref = make_ref()
       events_pid = self()
@@ -110,16 +106,16 @@ defmodule ExMCP.Integration.TelemetryTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(TestHelpers.RefactoredTestServer, request)
 
       # Wait for events — match on specific metadata to avoid cross-test interference
       assert_receive {^events_ref, [:ex_mcp, :resource, :read, :start], measurements,
-                      %{uri: "test://resource", request_id: "2"} = metadata}
+                      %{uri: "test://resource", request_id: "2"}}
 
       assert measurements.system_time
 
       assert_receive {^events_ref, [:ex_mcp, :resource, :read, :stop], measurements,
-                      %{uri: "test://resource", status: :ok} = metadata}
+                      %{uri: "test://resource", status: :ok}}
 
       assert measurements.duration > 0
 
@@ -131,8 +127,6 @@ defmodule ExMCP.Integration.TelemetryTest do
     end
 
     test "emits exception events on errors", %{} do
-      # Use ErrorTestServer for this test
-      {:ok, server} = TestHelpers.start_test_server(TestHelpers.ErrorTestServer)
       # Set up telemetry handler
       events_ref = make_ref()
       events_pid = self()
@@ -166,7 +160,7 @@ defmodule ExMCP.Integration.TelemetryTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(TestHelpers.ErrorTestServer, request)
 
       # Wait for events — match on specific metadata to avoid cross-test interference
       assert_receive {^events_ref, [:ex_mcp, :request, :start], _measurements,
@@ -267,6 +261,15 @@ defmodule ExMCP.Integration.TelemetryTest do
 
       # Clean up
       :telemetry.detach(handler_id)
+    end
+  end
+
+  defp process_request(module, request) do
+    Code.ensure_compiled!(module)
+
+    case RequestProcessor.process(request, %{__module__: module}) do
+      {:response, response, _state} -> response
+      {:notification, _state} -> :ok
     end
   end
 end

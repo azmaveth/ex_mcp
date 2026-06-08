@@ -43,9 +43,9 @@ defmodule ExMCP.Telemetry do
   ### Server Events
 
   #### Request Processing
-  * `[:ex_mcp, :server, :request, :received]` - Transport message arrives (Legacy server)
+  * `[:ex_mcp, :server, :request, :received]` - Transport message arrives
     * Metadata: `%{method: String.t()}`
-  * `[:ex_mcp, :server, :request, :completed]` - Response sent back (Legacy server)
+  * `[:ex_mcp, :server, :request, :completed]` - Response sent back
     * Metadata: `%{method: String.t()}`
   * `[:ex_mcp, :server, :request, :processed]` - MessageProcessor.process/2 completes
     * Metadata: `%{method: String.t(), has_response: boolean()}`
@@ -54,7 +54,7 @@ defmodule ExMCP.Telemetry do
 
   #### Tool Execution
   * `[:ex_mcp, :server, :tool, :called]` - Tool call dispatched
-    * Metadata: `%{tool_name: String.t(), mode: :direct | :genserver | :handler}`
+    * Metadata: `%{tool_name: String.t(), mode: :handler}`
   * `[:ex_mcp, :tool, :start]` - Tool execution starts (via `span/3`)
     * Measurements: `%{system_time: integer()}`
     * Metadata: `%{tool_name: String.t(), request_id: String.t()}`
@@ -64,7 +64,7 @@ defmodule ExMCP.Telemetry do
 
   #### Resource Operations
   * `[:ex_mcp, :server, :resource, :read]` - Resource read dispatched
-    * Metadata: `%{uri: String.t(), mode: :direct | :genserver | :handler}`
+    * Metadata: `%{uri: String.t(), mode: :handler}`
   * `[:ex_mcp, :resource, :read, :start]` - Resource read starts (via `span/3`)
     * Measurements: `%{system_time: integer()}`
     * Metadata: `%{uri: String.t(), request_id: String.t()}`
@@ -74,7 +74,7 @@ defmodule ExMCP.Telemetry do
 
   #### Prompt Rendering
   * `[:ex_mcp, :server, :prompt, :rendered]` - Prompt get dispatched
-    * Metadata: `%{name: String.t(), mode: :direct | :genserver | :handler}`
+    * Metadata: `%{name: String.t(), mode: :handler}`
 
   #### HTTP Transport
   * `[:ex_mcp, :server, :http, :request]` - HTTP request received

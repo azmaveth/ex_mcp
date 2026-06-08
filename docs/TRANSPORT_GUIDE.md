@@ -51,8 +51,7 @@ Best for subprocess communication and external tool integration.
 
 ```elixir
 # Basic stdio server
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :stdio
 )
 ```
@@ -158,8 +157,7 @@ For network communication with optional Server-Sent Events (SSE) streaming.
 
 ```elixir
 # Basic HTTP server
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   port: 8080,
   path: "/mcp"
@@ -170,8 +168,7 @@ For network communication with optional Server-Sent Events (SSE) streaming.
 
 ```elixir
 # Production HTTP server with all features
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   
   # Basic settings
@@ -276,8 +273,7 @@ SSE enables real-time streaming for notifications and progress updates:
 
 ```elixir
 # Server with SSE support
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   
   # Enable SSE
@@ -377,8 +373,7 @@ The HTTP transport supports pluggable auth providers via `auth_provider`:
 
 ```elixir
 # Server with comprehensive security
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   
   # Basic security
@@ -799,8 +794,7 @@ config :ssl,
 
 ```elixir
 # Comprehensive HTTP security
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   
   # TLS configuration

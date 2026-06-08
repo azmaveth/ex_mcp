@@ -3,7 +3,8 @@ defmodule ExMCP.ProgressIntegrationTest do
 
   @moduletag :progress
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestProgressHandler do
     use ExMCP.Server.Handler
@@ -101,7 +102,7 @@ defmodule ExMCP.ProgressIntegrationTest do
           for i <- 1..steps do
             Process.sleep(delay)
             progress = div(i * 100, steps)
-            Server.notify_progress(self(), progress_token, progress, 100)
+            ExMCP.Server.notify_progress(self(), progress_token, progress, 100)
             Logger.debug("Progress #{progress_token}: #{progress}%")
           end
         end)
@@ -126,7 +127,7 @@ defmodule ExMCP.ProgressIntegrationTest do
           for i <- 1..chunks do
             Process.sleep(100)
             downloaded = i * chunk_size
-            Server.notify_progress(self(), progress_token, downloaded, size)
+            ExMCP.Server.notify_progress(self(), progress_token, downloaded, size)
             Logger.debug("Download #{progress_token}: #{downloaded}/#{size} bytes")
           end
         end)
@@ -151,7 +152,7 @@ defmodule ExMCP.ProgressIntegrationTest do
           |> Enum.with_index(1)
           |> Enum.each(fn {_item, index} ->
             Process.sleep(50)
-            Server.notify_progress(self(), progress_token, index, total)
+            ExMCP.Server.notify_progress(self(), progress_token, index, total)
             Logger.debug("Batch #{progress_token}: #{index}/#{total}")
           end)
         end)

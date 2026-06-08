@@ -2,9 +2,16 @@ defmodule DebugVersionNegotiationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer
 
   defmodule TestServerV2024 do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+
+    def start_link(opts \\ []) do
+      opts
+      |> Keyword.put_new(:handler, __MODULE__)
+      |> HandlerServer.start_link()
+    end
 
     @impl true
     def handle_initialize(params, state) do
@@ -29,7 +36,13 @@ defmodule DebugVersionNegotiationTest do
   end
 
   defmodule TestServerV2025 do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+
+    def start_link(opts \\ []) do
+      opts
+      |> Keyword.put_new(:handler, __MODULE__)
+      |> HandlerServer.start_link()
+    end
 
     @impl true
     def handle_initialize(params, state) do
@@ -71,7 +84,7 @@ defmodule DebugVersionNegotiationTest do
     # The client should fail to start due to version mismatch
     case result do
       {:error, {:initialize_error, %{"code" => -32600}}} ->
-        IO.puts("✅ Connection correctly failed with version negotiation error")
+        assert true
 
       other ->
         flunk("Expected version negotiation failure, got: #{inspect(other)}")
@@ -96,7 +109,6 @@ defmodule DebugVersionNegotiationTest do
     {:ok, status} = Client.get_status(client)
     assert status.connection_status == :ready
     Client.stop(client)
-    IO.puts("✅ Connection correctly succeeded")
 
     GenServer.stop(server)
   end

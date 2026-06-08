@@ -3,7 +3,9 @@ defmodule ExMCP.PromptsComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.{Client, Protocol, Server}
+  alias ExMCP.Client
+  alias ExMCP.Protocol
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestPromptsServer do
     use ExMCP.Server.Handler

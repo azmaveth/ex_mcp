@@ -64,7 +64,7 @@ defmodule ExMCP.Server.Handler do
         end
 
         @impl true
-        def handle_list_tools(state) do
+        def handle_list_tools(_cursor, state) do
           tools = [
             %{
               name: "calculate",
@@ -233,7 +233,7 @@ defmodule ExMCP.Server.Handler do
       def update_resource(server, uri) do
         # Update the resource
         # Then notify clients
-        ExMCP.Server.notify_resource_updated(server, uri)
+        ExMCP.Server.notify_resource_update(server, uri)
       end
 
   ## Callback Reference

@@ -14,7 +14,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
   @moduletag :progress
   @moduletag :slow
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule ComprehensiveHandler do
     use ExMCP.Server.Handler
@@ -202,7 +203,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
           for i <- 1..5 do
             Process.sleep(100)
-            Server.notify_progress(self(), token, i, 5)
+            ExMCP.Server.notify_progress(self(), token, i, 5)
           end
         end)
       end
@@ -265,7 +266,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
           for i <- 1..steps do
             Process.sleep(step_duration)
-            Server.notify_progress(self(), token, i, steps)
+            ExMCP.Server.notify_progress(self(), token, i, steps)
           end
         end)
       end
@@ -303,7 +304,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       Task.start(fn ->
         for i <- 1..count do
           Process.sleep(50)
-          Server.notify_progress(self(), token, i, count)
+          ExMCP.Server.notify_progress(self(), token, i, count)
         end
       end)
     end

@@ -106,8 +106,7 @@ For subprocess communication:
 
 ```elixir
 # Server configuration
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :stdio
 )
 
@@ -132,8 +131,7 @@ For network communication with optional Server-Sent Events:
 
 ```elixir
 # Server configuration
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   port: 8080,
   path: "/mcp",
@@ -296,8 +294,7 @@ For enterprise SSO via ID-JAG (RFC 8693 token exchange + RFC 7523 JWT bearer gra
 
 ```elixir
 # Server with TLS
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   port: 8443,
   
@@ -328,8 +325,7 @@ For enterprise SSO via ID-JAG (RFC 8693 token exchange + RFC 7523 JWT bearer gra
 
 ```elixir
 # Server with CORS
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   
   # CORS settings

@@ -11,7 +11,7 @@ defmodule ExMCP.Transport.Test do
   ## Usage
 
       # Start a server with test transport
-      {:ok, server} = ExMCP.Server.start_link(
+      {:ok, server} = ExMCP.Server.HandlerServer.start_link(
         transport: :test,
         handler: MyHandler
       )

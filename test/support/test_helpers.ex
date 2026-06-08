@@ -128,145 +128,74 @@ defmodule ExMCP.TestHelpers do
     due to the DSL generating comprehensive pattern matches. These warnings are
     benign and can be ignored.
     """
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL, name: "api-test-server", version: "1.0.0"
 
-    deftool "echo" do
-      meta do
-        description("Echoes the input message")
+    tool "echo", "Echoes the input message" do
+      input_schema(%{
+        "type" => "object",
+        "properties" => %{"message" => %{"type" => "string"}},
+        "required" => ["message"]
+      })
 
-        input_schema(%{
-          "type" => "object",
-          "properties" => %{"message" => %{"type" => "string"}},
-          "required" => ["message"]
-        })
-      end
+      run(fn %{"message" => message}, state when is_binary(message) ->
+        {:ok, %{content: [%{type: "text", text: "Echo: #{message}"}]}, state}
+      end)
     end
 
-    deftool "add" do
-      meta do
-        description("Adds two numbers")
+    tool "add", "Adds two numbers" do
+      input_schema(%{
+        "type" => "object",
+        "properties" => %{
+          "a" => %{"type" => "number"},
+          "b" => %{"type" => "number"}
+        },
+        "required" => ["a", "b"]
+      })
 
-        input_schema(%{
-          "type" => "object",
-          "properties" => %{
-            "a" => %{"type" => "number"},
-            "b" => %{"type" => "number"}
-          },
-          "required" => ["a", "b"]
-        })
-      end
+      run(fn %{"a" => a, "b" => b}, state when is_number(a) and is_number(b) ->
+        {:ok, %{content: [%{type: "text", text: "#{a} + #{b} = #{a + b}"}]}, state}
+      end)
     end
 
-    deftool "greet" do
-      meta do
-        description("Greets someone")
+    tool "greet", "Greets someone" do
+      input_schema(%{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}},
+        "required" => ["name"]
+      })
 
-        input_schema(%{
-          "type" => "object",
-          "properties" => %{"name" => %{"type" => "string"}},
-          "required" => ["name"]
-        })
-      end
+      run(fn %{"name" => name}, state when is_binary(name) ->
+        {:ok, %{content: [%{type: "text", text: "Hello, #{name}!"}]}, state}
+      end)
     end
 
-    defresource "test://config" do
-      meta do
-        name("Test Config")
-        description("Test configuration resource")
-      end
-
+    resource "test://config", "Test configuration resource" do
+      title("Test Config")
       mime_type("application/json")
+
+      read(fn _params, state ->
+        {:ok, %{text: Jason.encode!(%{test: true, port: 8080})}, state}
+      end)
     end
 
-    defprompt "test_prompt" do
-      meta do
-        name("Test Prompt")
-        description("A test prompt for API testing")
-      end
+    prompt "test_prompt", "A test prompt for API testing" do
+      title("Test Prompt")
+      arg(:message, required: true, description: "The message to process")
 
-      arguments do
-        arg(:message, required: true, description: "The message to process")
-      end
-    end
+      render(fn arguments, state ->
+        message = Map.get(arguments, "message", "default")
 
-    @impl true
-    def handle_prompt_get("test_prompt", arguments, state) do
-      message = Map.get(arguments, "message", "default")
-
-      result = %{
-        messages: [
-          %{
-            role: "user",
-            content: %{type: "text", text: "Test prompt with message: #{message}"}
-          }
-        ]
-      }
-
-      {:ok, result, state}
-    end
-
-    @impl true
-    def handle_prompt_get(_prompt_name, _arguments, state) do
-      {:error, "Prompt not found", state}
-    end
-
-    @impl true
-    def handle_resource_read("test://config", _full_uri, state) do
-      content = %{
-        type: "text",
-        text: Jason.encode!(%{test: true, port: 8080})
-      }
-
-      {:ok, content, state}
-    end
-
-    @impl true
-    def handle_resource_read(_uri, _full_uri, state) do
-      {:error, "Resource not found", state}
-    end
-
-    @impl true
-    def handle_tool_call("echo", %{"message" => message}, state) when is_binary(message) do
-      result = %{content: [%{type: "text", text: "Echo: #{message}"}]}
-      {:ok, result, state}
-    end
-
-    @impl true
-    def handle_tool_call("add", %{"a" => a, "b" => b}, state)
-        when is_number(a) and is_number(b) do
-      result = %{content: [%{type: "text", text: "#{a} + #{b} = #{a + b}"}]}
-      {:ok, result, state}
-    end
-
-    @impl true
-    def handle_tool_call("greet", %{"name" => name}, state) when is_binary(name) do
-      result = %{content: [%{type: "text", text: "Hello, #{name}!"}]}
-      {:ok, result, state}
-    end
-
-    @impl true
-    def handle_tool_call(_tool_name, _arguments, state) do
-      {:error, "Tool not implemented or invalid arguments", state}
-    end
-
-    @impl true
-    def handle_initialize(params, state) do
-      # Add some basic validation to make error pattern reachable
-      case Map.get(params, "protocolVersion") do
-        nil ->
-          {:error, "Protocol version required", state}
-
-        version when version in ["2025-03-26", "2024-11-05"] ->
-          {:ok,
-           %{
-             protocolVersion: version,
-             serverInfo: %{name: "api-test-server", version: "1.0.0"},
-             capabilities: %{tools: %{}, resources: %{}, prompts: %{}}
-           }, state}
-
-        _unsupported ->
-          {:error, "Unsupported protocol version", state}
-      end
+        {:ok,
+         %{
+           messages: [
+             %{
+               role: "user",
+               content: %{type: "text", text: "Test prompt with message: #{message}"}
+             }
+           ]
+         }, state}
+      end)
     end
   end
 

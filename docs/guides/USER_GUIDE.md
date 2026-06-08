@@ -67,30 +67,15 @@ mix deps.get
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
 
-  @impl true
-  def init(_args) do
-    {:ok, %{}}
-  end
+  tool "hello", "Says hello to someone" do
+    param :name, :string, required: true, description: "Name to greet"
 
-  deftool "hello" do
-    meta do
-      description "Says hello to someone"
+    run fn %{name: name}, state ->
+      {:ok, "Hello, #{name}!", state}
     end
-
-    input_schema %{
-      type: "object",
-      properties: %{
-        name: %{type: "string", description: "Name to greet"}
-      },
-      required: ["name"]
-    }
-  end
-
-  @impl true
-  def handle_tool_call("hello", %{"name" => name}, state) do
-    {:ok, %{content: [text("Hello, #{name}!")]}, state}
   end
 end
 
@@ -158,127 +143,84 @@ All MCP interactions follow JSON-RPC 2.0:
 
 ## Building MCP Servers
 
-ExMCP provides a declarative DSL for building servers. Use `use ExMCP.Server` and the `deftool`, `defresource`, and `defprompt` macros to declare capabilities, then implement callbacks to handle requests.
+ExMCP provides a declarative DSL for building servers. Combine `use ExMCP.Server.Handler` with `use ExMCP.Server.DSL` to declare capabilities next to their handlers.
 
 ### Implementing Tools
 
-Tools allow clients to execute functions. Declare them with `deftool` and handle calls with `handle_tool_call/3`:
+Tools allow clients to execute functions. Declare them with `tool` and a colocated `run` handler:
 
 ```elixir
 defmodule FileSearchServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
 
-  @impl true
-  def init(_args), do: {:ok, %{}}
+  tool "file_search", "Search for files by pattern" do
+    param :pattern, :string, required: true, description: "Glob pattern"
+    param :path, :string, default: ".", description: "Search path"
+    annotations readOnlyHint: true, destructiveHint: false
 
-  deftool "file_search" do
-    meta do
-      description "Search for files by pattern"
+    run fn %{pattern: pattern, path: path}, state ->
+      files = Path.wildcard(Path.join(path, pattern))
+      {:ok, "Found #{length(files)} files:\n#{Enum.join(files, "\n")}", state}
     end
-
-    input_schema %{
-      type: "object",
-      properties: %{
-        pattern: %{type: "string", description: "Glob pattern"},
-        path: %{type: "string", description: "Search path"}
-      },
-      required: ["pattern"]
-    }
-
-    # Optional: tool annotations (MCP 2025-03-26)
-    tool_annotations %{
-      readOnlyHint: true,
-      destructiveHint: false
-    }
-  end
-
-  @impl true
-  def handle_tool_call("file_search", args, state) do
-    pattern = args["pattern"]
-    path = args["path"] || "."
-
-    files = Path.wildcard(Path.join(path, pattern))
-
-    {:ok, %{content: [
-      text("Found #{length(files)} files:\n#{Enum.join(files, "\n")}")
-    ]}, state}
   end
 end
 ```
 
 ### Implementing Resources
 
-Resources provide data that clients can read. Declare with `defresource` and handle reads with `handle_resource_read/3`:
+Resources provide data that clients can read. Declare with `resource` and a colocated `read` handler:
 
 ```elixir
 defmodule ConfigServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
 
-  @impl true
-  def init(_args), do: {:ok, %{}}
-
-  defresource "file:///config.json" do
-    meta do
-      name "Configuration"
-      description "Application configuration"
-    end
+  resource "file:///config.json", "Application configuration" do
+    title "Configuration"
     mime_type "application/json"
-  end
 
-  defresource "file:///status" do
-    meta do
-      name "Server Status"
-      description "Current server status"
+    read fn _params, state ->
+      {:ok, %{text: Jason.encode!(Jason.decode!(File.read!("config.json")))}, state}
     end
+  end
+
+  resource "file:///status", "Current server status" do
+    title "Server Status"
     mime_type "text/plain"
-  end
 
-  @impl true
-  def handle_resource_read("file:///config.json", _uri, state) do
-    {:ok, [json(Jason.decode!(File.read!("config.json")))], state}
-  end
-
-  @impl true
-  def handle_resource_read("file:///status", _uri, state) do
-    {:ok, [text("Server is running")], state}
+    read fn _params, state ->
+      {:ok, "Server is running", state}
+    end
   end
 end
 ```
 
 ### Implementing Prompts
 
-Prompts are templates for model interactions. Declare with `defprompt` and handle with `handle_prompt_get/3`:
+Prompts are templates for model interactions. Declare with `prompt` and a colocated `render` handler:
 
 ```elixir
 defmodule CodeReviewServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
 
-  @impl true
-  def init(_args), do: {:ok, %{}}
+  prompt "code_review", "Review code for best practices" do
+    title "Code Review"
+    arg :language, required: true, description: "Programming language"
+    arg :focus, description: "Area to focus on"
 
-  defprompt "code_review" do
-    meta do
-      name "Code Review"
-      description "Review code for best practices"
+    render fn %{language: lang} = args, state ->
+      focus = Map.get(args, :focus, "general best practices")
+
+      {:ok,
+       %{
+         messages: [
+           %{role: "system", content: %{type: "text", text: "You are an expert #{lang} code reviewer focusing on #{focus}."}},
+           %{role: "user", content: %{type: "text", text: "Please review the following #{lang} code:"}}
+         ]
+       }, state}
     end
-
-    arguments do
-      arg :language, required: true, description: "Programming language"
-      arg :focus, required: false, description: "Area to focus on (security, performance, style)"
-    end
-  end
-
-  @impl true
-  def handle_prompt_get("code_review", args, state) do
-    lang = args["language"]
-    focus = Map.get(args, "focus", "general best practices")
-
-    messages = [
-      system("You are an expert #{lang} code reviewer focusing on #{focus}."),
-      user("Please review the following #{lang} code:")
-    ]
-
-    {:ok, %{messages: messages}, state}
   end
 end
 ```
@@ -289,62 +231,38 @@ A single server can declare any combination:
 
 ```elixir
 defmodule MyFullServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
 
   @impl true
   def init(_args), do: {:ok, %{request_count: 0}}
 
-  # Tools
-  deftool "greet" do
-    meta do
-      description "Greets a person"
+  tool "greet", "Greets a person" do
+    param :name, :string, required: true
+
+    run fn %{name: name}, state ->
+      new_state = %{state | request_count: state.request_count + 1}
+      {:ok, "Hello, #{name}!", new_state}
     end
-    input_schema %{
-      type: "object",
-      properties: %{name: %{type: "string"}},
-      required: ["name"]
-    }
   end
 
-  # Resources
-  defresource "app://stats" do
-    meta do
-      name "Server Stats"
-      description "Request statistics"
-    end
+  resource "app://stats", "Request statistics" do
+    title "Server Stats"
     mime_type "application/json"
-  end
 
-  # Prompts
-  defprompt "summarize" do
-    meta do
-      name "Summarize"
-      description "Summarize text content"
-    end
-    arguments do
-      arg :style, required: false, description: "Summary style (brief, detailed)"
+    read fn _params, state ->
+      {:ok, %{text: Jason.encode!(%{requests: state.request_count})}, state}
     end
   end
 
-  @impl true
-  def handle_tool_call("greet", %{"name" => name}, state) do
-    new_state = %{state | request_count: state.request_count + 1}
-    {:ok, %{content: [text("Hello, #{name}!")]}, new_state}
-  end
+  prompt "summarize", "Summarize text content" do
+    title "Summarize"
+    arg :style, description: "Summary style"
 
-  @impl true
-  def handle_resource_read("app://stats", _uri, state) do
-    {:ok, [json(%{requests: state.request_count})], state}
-  end
-
-  @impl true
-  def handle_prompt_get("summarize", args, state) do
-    style = Map.get(args, "style", "brief")
-    messages = [
-      system("Provide a #{style} summary of the content the user shares."),
-      user("Please summarize the following:")
-    ]
-    {:ok, %{messages: messages}, state}
+    render fn args, state ->
+      style = Map.get(args, :style, "brief")
+      {:ok, "Provide a #{style} summary of the content the user shares.", state}
+    end
   end
 end
 
@@ -352,28 +270,12 @@ end
 {:ok, _} = MyFullServer.start_link(transport: :stdio)
 ```
 
-### Content Helpers
+### Content Responses
 
-The DSL provides helpers for building response content:
-
-```elixir
-# Text content
-text("Hello, world!")
-
-# JSON content (auto-encoded)
-json(%{key: "value", count: 42})
-
-# Image content (base64)
-image(base64_data, "image/png")
-
-# Audio content (base64)
-audio(base64_data, "audio/wav")
-
-# Prompt message helpers
-system("You are a helpful assistant.")
-user("What is Elixir?")
-assistant("Elixir is a functional programming language...")
-```
+Tool handlers can return strings, `%{text: text}`, or full MCP result maps.
+Resource handlers can return strings, `%{text: text}`, `%{blob: blob}`, or full
+resource content maps. Prompt handlers can return strings, message lists, or
+full `%{messages: messages}` maps.
 
 ### Resource Subscriptions
 
@@ -387,7 +289,7 @@ def handle_resource_subscribe(uri, state) do
 end
 
 # When a resource changes, notify subscribers
-MyServer.notify_resource_update(server, "file:///config.json")
+ExMCP.Server.notify_resource_update(server, "file:///config.json")
 ```
 
 ### Progress Notifications
@@ -396,15 +298,15 @@ For long-running operations:
 
 ```elixir
 @impl true
-def handle_tool_call("long_task", %{"_progressToken" => token}, state) do
+def handle_call_tool("long_task", %{"_progressToken" => token}, state) do
   Task.start(fn ->
     for i <- 1..100 do
-      MyServer.notify_progress(self(), token, i, 100)
+      ExMCP.Server.notify_progress(self(), token, i, 100)
       Process.sleep(100)
     end
   end)
 
-  {:ok, %{content: [text("Task started")]}, state}
+  {:ok, %{content: [%{type: "text", text: "Task started"}]}, state}
 end
 ```
 
@@ -452,7 +354,7 @@ defmodule MyLowLevelServer do
   end
 
   @impl true
-  def handle_list_tools(state) do
+  def handle_list_tools(_cursor, state) do
     tools = [
       %{
         name: "echo",
@@ -466,7 +368,7 @@ defmodule MyLowLevelServer do
         }
       }
     ]
-    {:ok, tools, state}
+    {:ok, tools, nil, state}
   end
 
   @impl true
@@ -475,10 +377,14 @@ defmodule MyLowLevelServer do
   end
 end
 
-{:ok, _} = ExMCP.Server.start_link(handler: MyLowLevelServer, transport: :stdio)
+{:ok, _} =
+  ExMCP.Server.HandlerServer.start_link(
+    handler: MyLowLevelServer,
+    transport: :test
+  )
 ```
 
-> The DSL approach (`use ExMCP.Server`) is recommended for most use cases. It auto-generates capability detection, tool/resource/prompt listings, and provides a cleaner API. Use the Handler behaviour only when you need dynamic capability negotiation or non-standard request handling.
+> The DSL approach (`use ExMCP.Server.Handler` plus `use ExMCP.Server.DSL`) is recommended for most use cases. Use hand-written handler callbacks when you need dynamic capability negotiation or non-standard request handling.
 
 ## Using the Native Service Dispatcher
 
@@ -1018,10 +924,7 @@ Best for local process communication:
 
 ```elixir
 # Server
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
-  transport: :stdio
-)
+{:ok, server} = MyServer.start_link(transport: :stdio)
 
 # Client
 {:ok, client} = ExMCP.Client.start_link(
@@ -1038,8 +941,7 @@ For HTTP-based communication with optional Server-Sent Events (SSE) streaming.
 
 ```elixir
 # Server
-{:ok, server} = ExMCP.Server.start_link(
-  handler: MyHandler,
+{:ok, server} = MyServer.start_link(
   transport: :http,
   port: 8080,
   path: "/mcp"
@@ -1142,7 +1044,7 @@ Keep server state immutable and use proper OTP patterns:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
 
   defstruct [:db_conn, :cache, subscriptions: MapSet.new()]
 
@@ -1160,10 +1062,10 @@ Always return proper error tuples:
 
 ```elixir
 @impl true
-def handle_tool_call("database_query", %{"sql" => sql}, state) do
+def handle_call_tool("database_query", %{"sql" => sql}, state) do
   case Database.query(state.db_conn, sql) do
     {:ok, results} ->
-      {:ok, %{content: [json(results)]}, state}
+      {:ok, %{structuredContent: %{results: results}, content: []}, state}
 
     {:error, :invalid_sql} ->
       {:error, "Invalid SQL syntax", state}
@@ -1180,18 +1082,14 @@ Make tools focused and composable:
 
 ```elixir
 # Good: Focused tools
-deftool "list_files" do
-  meta do
-    description "List files in directory"
-  end
-  input_schema %{type: "object", properties: %{path: %{type: "string"}}}
+tool "list_files", "List files in directory" do
+  param :path, :string
+  run fn %{path: path}, state -> {:ok, list_files(path), state} end
 end
 
-deftool "read_file" do
-  meta do
-    description "Read file contents"
-  end
-  input_schema %{type: "object", properties: %{path: %{type: "string"}}, required: ["path"]}
+tool "read_file", "Read file contents" do
+  param :path, :string, required: true
+  run fn %{path: path}, state -> {:ok, File.read!(path), state} end
 end
 
 # Bad: One monolithic tool that does everything
@@ -1219,29 +1117,24 @@ resources = [
 
 ### 5. Capability Declaration
 
-With the DSL, capabilities are auto-detected from your declarations. If you define `deftool` blocks, the server automatically advertises tool support. If you define `defresource` blocks, resource support is advertised. No manual capability wiring needed.
+With the DSL, capabilities are auto-detected from your declarations. If you define `tool` blocks, the server automatically advertises tool support. If you define `resource` blocks, resource support is advertised. No manual capability wiring needed.
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
 
   # Capabilities auto-detected: tools + resources
-  deftool "search" do
-    meta do
-      description "Search for items"
-    end
-    input_schema %{type: "object", properties: %{query: %{type: "string"}}}
+  tool "search", "Search for items" do
+    param :query, :string
+    run fn %{query: query}, state -> {:ok, search(query), state} end
   end
 
-  defresource "app://data" do
-    meta do
-      name "Data"
-      description "Application data"
-    end
+  resource "app://data", "Application data" do
+    title "Data"
     mime_type "application/json"
+    read fn _params, state -> {:ok, load_data(), state} end
   end
-
-  # ...callbacks
 end
 ```
 

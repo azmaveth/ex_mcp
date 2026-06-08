@@ -6,16 +6,12 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Error
+  alias ExMCP.Protocol.RequestProcessor
   alias ExMCP.Protocol.ResponseBuilder
   alias ExMCP.TestHelpers
 
-  setup do
-    {:ok, server} = TestHelpers.start_test_server(TestHelpers.ErrorTestServer)
-    {:ok, server: server}
-  end
-
   describe "error type handling" do
-    test "protocol errors are properly formatted", %{server: server} do
+    test "protocol errors are properly formatted" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "tools/call",
@@ -26,14 +22,14 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(request)
 
       assert response["error"]["code"] == -32602
       assert response["error"]["message"] == "MCP Protocol Error (-32602): Invalid parameters"
       assert response["error"]["data"] == %{"field" => "name"}
     end
 
-    test "transport errors are properly formatted", %{server: server} do
+    test "transport errors are properly formatted" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "tools/call",
@@ -44,7 +40,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(request)
 
       assert response["error"]["code"] == -32000
       assert response["error"]["message"] == "Transport error"
@@ -53,7 +49,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       assert response["error"]["data"]["details"] == %{"attempts" => 3}
     end
 
-    test "tool errors are properly formatted", %{server: server} do
+    test "tool errors are properly formatted" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "tools/call",
@@ -64,7 +60,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(request)
 
       assert response["error"]["code"] == -32000
       assert response["error"]["message"] == "Tool execution failed"
@@ -72,7 +68,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       assert response["error"]["data"]["reason"] == "Tool execution failed"
     end
 
-    test "resource errors are properly formatted", %{server: server} do
+    test "resource errors are properly formatted" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "resources/read",
@@ -82,7 +78,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(request)
 
       assert response["error"]["code"] == -32000
       assert response["error"]["message"] == "Resource not found"
@@ -91,7 +87,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       assert response["error"]["data"]["reason"] == "Resource not found"
     end
 
-    test "validation errors are properly formatted", %{server: server} do
+    test "validation errors are properly formatted" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "tools/call",
@@ -102,14 +98,14 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(request)
 
       assert response["error"]["code"] == -32000
       assert response["error"]["message"] == "Tool execution error"
       assert response["error"]["data"]["tool"] == "validation_error"
     end
 
-    test "generic errors are handled gracefully", %{server: server} do
+    test "generic errors are handled gracefully" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "tools/call",
@@ -120,7 +116,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(request)
 
       assert response["error"]["code"] == -32000
       assert response["error"]["message"] == "Something went wrong"
@@ -128,7 +124,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
   end
 
   describe "error propagation" do
-    test "errors in request processing are caught and formatted", %{server: server} do
+    test "errors in request processing are caught and formatted" do
       # Send invalid request
       request = %{
         "jsonrpc" => "2.0",
@@ -136,13 +132,13 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
         "id" => 7
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(request)
 
       assert response["error"]["code"] == -32601
       assert response["error"]["message"] =~ "Method not found"
     end
 
-    test "missing tool name results in proper error", %{server: server} do
+    test "missing tool name results in proper error" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "tools/call",
@@ -152,7 +148,7 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
         }
       }
 
-      {:ok, response} = GenServer.call(server, {:process_request, request})
+      response = process_request(request)
 
       assert response["error"]["code"] == -32000
       assert response["error"]["message"] == "Missing tool name"
@@ -217,6 +213,15 @@ defmodule ExMCP.Integration.ErrorHandlingTest do
       assert error.code == -32700
       assert error.message == "Parse error"
       assert error.data == %{"line" => 5}
+    end
+  end
+
+  defp process_request(request) do
+    Code.ensure_compiled!(TestHelpers.ErrorTestServer)
+
+    case RequestProcessor.process(request, %{__module__: TestHelpers.ErrorTestServer}) do
+      {:response, response, _state} -> response
+      {:notification, _state} -> :ok
     end
   end
 end

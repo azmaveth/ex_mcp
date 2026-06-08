@@ -22,23 +22,12 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
 
   # A simple MCP server handler for testing
   defmodule ComplianceTestServer do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    deftool "echo" do
-      meta do
-        description("Echoes the input message")
-
-        input_schema(%{
-          type: "object",
-          properties: %{message: %{type: "string"}},
-          required: ["message"]
-        })
-      end
-    end
-
-    @impl true
-    def handle_tool_call("echo", %{"message" => msg}, state) do
-      {:ok, %{content: [%{"type" => "text", "text" => "Echo: #{msg}"}]}, state}
+    tool "echo", "Echoes the input message" do
+      param(:message, :string, required: true)
+      run(fn %{message: message}, state -> {:ok, "Echo: #{message}", state} end)
     end
   end
 

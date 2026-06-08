@@ -20,21 +20,36 @@ defmodule ExMCP.Server.DSL do
 
   alias ExMCP.Server.DSL.Builder
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
     quote do
       import ExMCP.Server.DSL
       alias ExMCP.Server.DSL.Result, as: ToolResult
 
+      @ex_mcp_dsl_opts unquote(Macro.escape(opts))
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_tools, accumulate: true)
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_resources, accumulate: true)
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_resource_templates, accumulate: true)
       Module.register_attribute(__MODULE__, :ex_mcp_dsl_prompts, accumulate: true)
+
+      @doc false
+      def child_spec(opts) do
+        %{
+          id: Keyword.get(opts, :id, __MODULE__),
+          start: {__MODULE__, :start_link, [opts]},
+          type: :worker,
+          restart: :permanent,
+          shutdown: 500
+        }
+      end
+
+      defoverridable child_spec: 1
 
       @before_compile ExMCP.Server.DSL
     end
   end
 
   defmacro __before_compile__(env) do
+    opts = Module.get_attribute(env.module, :ex_mcp_dsl_opts, [])
     tools = env.module |> Module.get_attribute(:ex_mcp_dsl_tools, []) |> Enum.reverse()
     resources = env.module |> Module.get_attribute(:ex_mcp_dsl_resources, []) |> Enum.reverse()
 
@@ -46,6 +61,10 @@ defmodule ExMCP.Server.DSL do
     prompts = env.module |> Module.get_attribute(:ex_mcp_dsl_prompts, []) |> Enum.reverse()
 
     quote do
+      unquote(
+        generate_server_callbacks(env.module, opts, tools, resources, resource_templates, prompts)
+      )
+
       unquote_splicing(generate_tool_handlers(tools))
       unquote(generate_tool_callbacks(tools))
 
@@ -355,6 +374,90 @@ defmodule ExMCP.Server.DSL do
     end)
   end
 
+  defp generate_server_callbacks(module, opts, tools, resources, resource_templates, prompts) do
+    server_info = server_info(module, opts)
+    capabilities = capabilities(tools, resources, resource_templates, prompts)
+    start_link_callback = generate_start_link_callback(server_info)
+    initialize_callback = generate_initialize_callback(server_info, capabilities)
+
+    quote do
+      unquote(start_link_callback)
+      unquote(initialize_callback)
+    end
+  end
+
+  defp generate_start_link_callback(server_info) do
+    quote do
+      alias ExMCP.Server.{HandlerServer, Transport}
+
+      @doc """
+      Starts this MCP handler using the requested transport.
+      """
+      def start_link(opts \\ []) do
+        case Keyword.get(opts, :transport, :native) do
+          :test ->
+            opts
+            |> Keyword.put_new(:handler, __MODULE__)
+            |> HandlerServer.start_link()
+
+          :beam ->
+            opts
+            |> Keyword.put(:transport, :test)
+            |> Keyword.put_new(:handler, __MODULE__)
+            |> HandlerServer.start_link()
+
+          transport when transport in [:http, :sse, :stdio] ->
+            Transport.start_server(
+              __MODULE__,
+              unquote(Macro.escape(server_info)),
+              [],
+              opts
+            )
+
+          :native ->
+            genserver_opts =
+              case Keyword.get(opts, :name) do
+                nil -> []
+                name -> [name: name]
+              end
+
+            GenServer.start_link(__MODULE__, opts, genserver_opts)
+        end
+      end
+    end
+  end
+
+  defp generate_initialize_callback(server_info, capabilities) do
+    quote do
+      alias ExMCP.Internal.VersionRegistry
+
+      @impl ExMCP.Server.Handler
+      def handle_initialize(params, state) do
+        client_version =
+          Map.get(params, "protocolVersion") ||
+            Map.get(params, :protocolVersion) ||
+            VersionRegistry.latest_version()
+
+        protocol_version =
+          case VersionRegistry.negotiate_version(
+                 client_version,
+                 VersionRegistry.supported_versions()
+               ) do
+            {:ok, version} -> version
+            {:error, _reason} -> VersionRegistry.latest_version()
+          end
+
+        result = %{
+          "protocolVersion" => protocol_version,
+          "serverInfo" => unquote(Macro.escape(server_info)),
+          "capabilities" => unquote(Macro.escape(capabilities))
+        }
+
+        {:ok, result, Map.put(state, :protocol_version, protocol_version)}
+      end
+    end
+  end
+
   defp generate_tool_callbacks([]), do: nil
 
   defp generate_tool_callbacks(tools) do
@@ -612,4 +715,32 @@ defmodule ExMCP.Server.DSL do
 
   defp maybe_add_callback(callbacks, true, callback), do: [callback | callbacks]
   defp maybe_add_callback(callbacks, false, _callback), do: callbacks
+
+  defp server_info(module, opts) do
+    case Keyword.get(opts, :server_info) do
+      nil ->
+        %{
+          "name" => to_string(Keyword.get(opts, :name, module)),
+          "version" => to_string(Keyword.get(opts, :version, "1.0.0"))
+        }
+
+      server_info ->
+        server_info
+        |> Map.new(fn {key, value} -> {to_string(key), value} end)
+        |> Map.update("name", to_string(module), &to_string/1)
+        |> Map.update("version", "1.0.0", &to_string/1)
+    end
+  end
+
+  defp capabilities(tools, resources, resource_templates, prompts) do
+    %{}
+    |> maybe_put_capability(tools != [], "tools", %{})
+    |> maybe_put_capability(resources != [] or resource_templates != [], "resources", %{})
+    |> maybe_put_capability(prompts != [], "prompts", %{})
+  end
+
+  defp maybe_put_capability(capabilities, true, key, value),
+    do: Map.put(capabilities, key, value)
+
+  defp maybe_put_capability(capabilities, false, _key, _value), do: capabilities
 end

@@ -6,13 +6,10 @@ defmodule ExMCP.HttpPlugTest do
   alias ExMCP.HttpPlug
 
   defmodule TestServer do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL, name: "test", version: "1.0.0"
 
-    deftool "test_tool" do
-      meta do
-        description("A test tool")
-      end
-
+    tool "test_tool", "A test tool" do
       input_schema(%{
         type: "object",
         properties: %{
@@ -20,18 +17,10 @@ defmodule ExMCP.HttpPlugTest do
         },
         required: ["message"]
       })
-    end
 
-    @impl true
-    def handle_tool_call("test_tool", %{"message" => message}, state) do
-      result = %{content: [%{"type" => "text", "text" => "Echo: #{message}"}]}
-      {:ok, result, state}
-    end
-
-    @impl true
-    def handle_request(_method, _params, state) do
-      # Return unrecognized pattern to trigger handle_method_not_found
-      {:unknown_method, state}
+      run(fn %{"message" => message}, state ->
+        {:ok, %{content: [%{"type" => "text", "text" => "Echo: #{message}"}]}, state}
+      end)
     end
   end
 

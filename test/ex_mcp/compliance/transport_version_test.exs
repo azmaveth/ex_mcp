@@ -4,18 +4,34 @@ defmodule ExMCP.Compliance.TransportVersionTest do
   # Aliases
   alias ExMCP.Client
   alias ExMCP.Protocol.VersionNegotiator
+  alias ExMCP.Server.HandlerServer
+  alias ExMCP.Server.Transport
   alias ExMCP.Transport.HTTP
 
   # A server module for testing version negotiation.
-  # Using `use ExMCP.Server` is the modern pattern and provides consistent
-  # start/stop behavior across transports.
   defmodule VersionTestServer do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
 
-    deftool "ping" do
-      meta do
-        description("A simple ping tool")
-        input_schema(%{})
+    @server_info %{"name" => "version-test-server", "version" => "1.0.0"}
+
+    def start_link(opts \\ []) do
+      case Keyword.get(opts, :transport, :test) do
+        :test ->
+          opts
+          |> Keyword.put_new(:handler, __MODULE__)
+          |> HandlerServer.start_link()
+
+        :beam ->
+          opts
+          |> Keyword.put(:transport, :test)
+          |> Keyword.put_new(:handler, __MODULE__)
+          |> HandlerServer.start_link()
+
+        transport when transport in [:http, :sse, :stdio] ->
+          Transport.start_server(__MODULE__, @server_info, [], opts)
+
+        :native ->
+          GenServer.start_link(__MODULE__, opts)
       end
     end
 
@@ -28,17 +44,29 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       else
         result = %{
           "protocolVersion" => params["protocolVersion"],
-          "serverInfo" => %{"name" => "version-test-server", "version" => "1.0.0"},
-          "capabilities" => %{}
+          "serverInfo" => @server_info,
+          "capabilities" => %{"tools" => %{}}
         }
 
         {:ok, result, state}
       end
     end
 
-    # A simple tool to ensure requests are processed
     @impl true
-    def handle_tool_call("ping", _args, state) do
+    def handle_list_tools(_cursor, state) do
+      tools = [
+        %{
+          name: "ping",
+          description: "A simple ping tool",
+          inputSchema: %{}
+        }
+      ]
+
+      {:ok, tools, nil, state}
+    end
+
+    @impl true
+    def handle_call_tool("ping", _args, state) do
       {:ok, %{content: [%{"type" => "text", "text" => "pong"}]}, state}
     end
   end
@@ -116,7 +144,6 @@ defmodule ExMCP.Compliance.TransportVersionTest do
 
       # The negotiated version should match what we requested
       {:ok, server_info} = Client.server_info(client)
-      # With `use ExMCP.Server`, the server_info name is the module name
       assert is_binary(server_info["name"])
 
       # The transport state should also reflect this
@@ -131,11 +158,9 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       # Trap exits in case the client process exits with an error
       Process.flag(:trap_exit, true)
 
-      # The client's `start_link` may fail or succeed depending on how the
-      # server handles unsupported versions. With `use ExMCP.Server`, the
-      # MessageProcessor handles initialize directly without calling the
-      # handler's handle_initialize, so version rejection depends on the
-      # transport layer (protocol version header plug).
+      # The client's `start_link` may fail or succeed depending on whether
+      # the transport layer rejects the unsupported protocol version before
+      # initialization completes.
       result =
         Client.start_link(
           transport: :http,
@@ -244,7 +269,6 @@ defmodule ExMCP.Compliance.TransportVersionTest do
 
       # Check negotiated version
       {:ok, server_info} = Client.server_info(client)
-      # With `use ExMCP.Server`, the server_info name is the module name
       assert is_binary(server_info["name"])
 
       # Check transport state for SSE-specifics

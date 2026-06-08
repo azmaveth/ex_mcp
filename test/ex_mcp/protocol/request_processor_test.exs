@@ -6,43 +6,52 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
   defmodule TestHandler do
     def get_server_info_from_opts, do: %{"name" => "test-server", "version" => "1.0"}
     def get_capabilities, do: %{"tools" => true}
-    def get_tools, do: %{"test_tool" => %{"name" => "test_tool", "description" => "Test"}}
-    def get_resources, do: %{"test://resource" => %{"uri" => "test://resource", "name" => "Test"}}
-    def get_prompts, do: %{"test_prompt" => %{"name" => "test_prompt", "description" => "Test"}}
 
     def handle_initialize(_params, state) do
       {:ok, %{"custom" => true}, state}
     end
 
-    def handle_tool_call("test_tool", args, state) do
+    def handle_list_tools(_cursor, state) do
+      {:ok, [%{"name" => "test_tool", "description" => "Test"}], nil, state}
+    end
+
+    def handle_call_tool("test_tool", args, state) do
       {:ok, %{content: [%{"type" => "text", "text" => "Result: #{inspect(args)}"}]}, state}
     end
 
-    def handle_tool_call("error_tool", _args, state) do
+    def handle_call_tool("error_tool", _args, state) do
       {:error, "Tool error", state}
     end
 
-    def handle_tool_call(nil, _args, state) do
+    def handle_call_tool(nil, _args, state) do
       {:error, "No tool name provided", state}
     end
 
-    def handle_tool_call(_other, _args, state) do
+    def handle_call_tool(_other, _args, state) do
       {:error, "Unknown tool", state}
     end
 
-    def handle_resource_read("test://resource", _uri, state) do
+    def handle_list_resources(_cursor, state) do
+      {:ok, [%{"uri" => "test://resource", "name" => "Test"}], nil, state}
+    end
+
+    def handle_read_resource("test://resource", state) do
       {:ok, %{"type" => "text", "text" => "Resource content"}, state}
     end
 
-    def handle_resource_read(_uri, _full_uri, state) do
+    def handle_read_resource(_uri, state) do
       {:error, "Unknown resource", state}
     end
 
-    def handle_prompt_get("test_prompt", args, state) do
+    def handle_list_prompts(_cursor, state) do
+      {:ok, [%{"name" => "test_prompt", "description" => "Test"}], nil, state}
+    end
+
+    def handle_get_prompt("test_prompt", args, state) do
       {:ok, %{messages: [%{"role" => "user", "content" => "Prompt: #{inspect(args)}"}]}, state}
     end
 
-    def handle_prompt_get(_name, _args, state) do
+    def handle_get_prompt(_name, _args, state) do
       {:error, "Unknown prompt", state}
     end
   end
@@ -265,9 +274,7 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
 
       {:response, response, ^state} = RequestProcessor.process(request, state)
 
-      # The handler returns a map with atom keys
-      assert response["result"][:messages]
-      assert [message] = response["result"][:messages]
+      assert [message] = response["result"]["messages"]
       assert message["content"] =~ "Prompt:"
       assert message["content"] =~ "style"
     end

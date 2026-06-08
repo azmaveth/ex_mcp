@@ -136,7 +136,6 @@ defmodule ExMCP do
   alias ExMCP.Client
   alias ExMCP.Error
   alias ExMCP.Response
-  alias ExMCP.Server
 
   @doc """
   Starts an ACP client connected to an agent subprocess.
@@ -174,7 +173,7 @@ defmodule ExMCP do
   @doc """
   Convenience function to start an MCP server.
 
-  This is equivalent to `ExMCP.Server.start_link/1` but provides a simpler
+  This is equivalent to `ExMCP.Server.HandlerServer.start_link/1` but provides a simpler
   entry point for common use cases.
 
   ## Examples
@@ -187,7 +186,7 @@ defmodule ExMCP do
   """
   @spec start_server(keyword()) :: {:ok, pid()} | {:error, term()}
   def start_server(opts) do
-    Server.start_link(opts)
+    ExMCP.Server.HandlerServer.start_link(opts)
   end
 
   @doc """
@@ -214,29 +213,6 @@ defmodule ExMCP do
   @spec supported_versions() :: [String.t()]
   def supported_versions do
     ["2024-11-05", "2025-03-26", "2025-06-18"]
-  end
-
-  # Server Convenience Macros
-
-  @doc """
-  Convenience macro that aliases `use ExMCP.Server`.
-
-  This provides backward compatibility and a simpler import path for new users.
-
-  ## Examples
-
-      defmodule MyServer do
-        use ExMCP.Server  # Same as `use ExMCP.Server`
-
-        deftool "hello" do
-          description "Says hello"
-        end
-      end
-  """
-  defmacro __using__(opts) do
-    quote do
-      use ExMCP.Server, unquote(opts)
-    end
   end
 
   # Convenience Functions

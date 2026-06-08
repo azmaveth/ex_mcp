@@ -9,7 +9,8 @@ defmodule ExMCP.Compliance.RootsComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule ComplianceHandler do
     use ExMCP.Server.Handler
@@ -119,7 +120,7 @@ defmodule ExMCP.Compliance.RootsComplianceTest do
 
     test "roots change notification can be sent", %{server: server} do
       # Server can send roots changed notification
-      assert :ok = Server.notify_roots_changed(server)
+      assert :ok = ExMCP.Server.notify_roots_changed(server)
     end
   end
 

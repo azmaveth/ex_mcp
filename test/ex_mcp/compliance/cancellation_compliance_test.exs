@@ -8,7 +8,8 @@ defmodule ExMCP.Compliance.CancellationComplianceTest do
 
   @moduletag :compliance
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule CancellationHandler do
     use ExMCP.Server.Handler

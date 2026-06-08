@@ -7,7 +7,7 @@ defmodule ExMCP.LifecycleTest do
   @moduletag :integration
 
   alias ExMCP.Client
-  alias ExMCP.Server
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestHandler do
     use ExMCP.Server.Handler

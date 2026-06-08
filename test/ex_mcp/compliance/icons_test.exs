@@ -2,13 +2,9 @@ defmodule ExMCP.Compliance.IconsTest do
   @moduledoc """
   Compliance tests for icons support in MCP 2025-11-25.
 
-  Verifies that tools, resources, and prompts defined with the `icons` macro
-  in the DSL correctly include icon metadata, and that definitions without
-  icons do not include the icons key.
-
-  Note: Because `use ExMCP.Server` imports ExMCP.DSL.Tool, ExMCP.DSL.Resource,
-  and ExMCP.DSL.Prompt -- all of which define an `icons/1` macro -- calls to
-  `icons` must be fully qualified to avoid ambiguity.
+  Verifies that tools, resources, and prompts defined with the server DSL
+  correctly include icon metadata, and that definitions without icons do not
+  include the icons key.
   """
 
   # credo:disable-for-this-file Credo.Check.Design.AliasUsage
@@ -16,40 +12,31 @@ defmodule ExMCP.Compliance.IconsTest do
 
   @moduletag :compliance
 
-  # --- Test Modules ---
-
   defmodule ToolWithIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    deftool "wrench_tool" do
-      meta do
-        description("A tool with an emoji icon")
-      end
-
-      ExMCP.DSL.Tool.icons([%{src: "\u{1F527}"}])
+    tool "wrench_tool", "A tool with an emoji icon" do
+      icons([%{src: "\u{1F527}"}])
 
       input_schema(%{
         type: "object",
         properties: %{input: %{type: "string"}},
         required: ["input"]
       })
-    end
 
-    @impl true
-    def handle_tool_call("wrench_tool", %{"input" => input}, state) do
-      {:ok, %{content: [text("Processed: #{input}")]}, state}
+      run(fn %{input: input}, state ->
+        {:ok, %{text: "Processed: #{input}"}, state}
+      end)
     end
   end
 
   defmodule ToolWithMultipleIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    deftool "multi_icon_tool" do
-      meta do
-        description("A tool with multiple icon types")
-      end
-
-      ExMCP.DSL.Tool.icons([
+    tool "multi_icon_tool", "A tool with multiple icon types" do
+      icons([
         %{src: "\u{1F4E6}"},
         %{src: "https://example.com/tool-icon.svg", mimeType: "image/svg+xml"}
       ])
@@ -59,240 +46,159 @@ defmodule ExMCP.Compliance.IconsTest do
         properties: %{data: %{type: "string"}},
         required: ["data"]
       })
-    end
 
-    @impl true
-    def handle_tool_call("multi_icon_tool", _params, state) do
-      {:ok, %{content: [text("done")]}, state}
+      run(fn _params, state -> {:ok, %{text: "done"}, state} end)
     end
   end
 
   defmodule ToolWithoutIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    deftool "plain_tool" do
-      meta do
-        description("A tool with no icons defined")
-      end
-
+    tool "plain_tool", "A tool with no icons defined" do
       input_schema(%{
         type: "object",
         properties: %{value: %{type: "string"}},
         required: ["value"]
       })
-    end
 
-    @impl true
-    def handle_tool_call("plain_tool", _params, state) do
-      {:ok, %{content: [text("ok")]}, state}
+      run(fn _params, state -> {:ok, %{text: "ok"}, state} end)
     end
   end
 
   defmodule ResourceWithIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    defresource "config://app/database" do
-      meta do
-        name("Database Config")
-        description("Database configuration resource")
-      end
-
+    resource "config://app/database", "Database configuration resource" do
+      name("Database Config")
       mime_type("application/json")
+      icons([%{src: "\u{1F5C4}\u{FE0F}"}])
 
-      ExMCP.DSL.Resource.icons([%{src: "\u{1F5C4}\u{FE0F}"}])
-    end
-
-    @impl true
-    def handle_resource_read(_uri, _full_uri, state) do
-      {:ok, [json(%{host: "localhost"})], state}
+      read(fn _params, state -> {:ok, %{json: %{host: "localhost"}}, state} end)
     end
   end
 
   defmodule ResourceWithSvgIcon do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    defresource "file:///data/report.csv" do
-      meta do
-        name("Report Data")
-        description("CSV report data resource")
-      end
-
+    resource "file:///data/report.csv", "CSV report data resource" do
+      name("Report Data")
       mime_type("text/csv")
 
-      ExMCP.DSL.Resource.icons([
+      icons([
         %{src: "https://example.com/csv-icon.svg", mimeType: "image/svg+xml"}
       ])
-    end
 
-    @impl true
-    def handle_resource_read(_uri, _full_uri, state) do
-      {:ok, [text("col1,col2\nval1,val2")], state}
+      read(fn _params, state -> {:ok, "col1,col2\nval1,val2", state} end)
     end
   end
 
   defmodule ResourceWithoutIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    defresource "config://app/settings" do
-      meta do
-        name("App Settings")
-        description("Application settings without icons")
-      end
-
+    resource "config://app/settings", "Application settings without icons" do
+      name("App Settings")
       mime_type("application/json")
-    end
 
-    @impl true
-    def handle_resource_read(_uri, _full_uri, state) do
-      {:ok, [json(%{debug: false})], state}
+      read(fn _params, state -> {:ok, %{json: %{debug: false}}, state} end)
     end
   end
 
   defmodule PromptWithIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    defprompt "code_review" do
-      meta do
-        name("Code Review")
-        description("Review code for best practices")
-      end
+    prompt "code_review", "Review code for best practices" do
+      title("Code Review")
+      icons([%{src: "\u{1F50D}"}])
+      arg(:code, required: true, description: "Code to review")
 
-      ExMCP.DSL.Prompt.icons([%{src: "\u{1F50D}"}])
-
-      arguments do
-        arg(:code, required: true, description: "Code to review")
-      end
-    end
-
-    @impl true
-    def handle_prompt_get("code_review", args, state) do
-      {:ok, %{messages: [user("Review: #{args["code"]}")]}, state}
+      render(fn %{code: code}, state ->
+        {:ok, %{messages: [%{role: "user", content: %{type: "text", text: "Review: #{code}"}}]},
+         state}
+      end)
     end
   end
 
   defmodule PromptWithMultipleIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    defprompt "summarize" do
-      meta do
-        name("Summarizer")
-        description("Summarize text content")
-      end
+    prompt "summarize", "Summarize text content" do
+      title("Summarizer")
 
-      ExMCP.DSL.Prompt.icons([
+      icons([
         %{src: "\u{1F4DD}"},
         %{src: "https://example.com/summarize.png", mimeType: "image/png"}
       ])
 
-      arguments do
-        arg(:text, required: true, description: "Text to summarize")
-        arg(:max_length, description: "Maximum summary length")
-      end
-    end
+      arg(:text, required: true, description: "Text to summarize")
+      arg(:max_length, description: "Maximum summary length")
 
-    @impl true
-    def handle_prompt_get("summarize", _args, state) do
-      {:ok, %{messages: [user("Summarize this")]}, state}
+      render(fn _params, state ->
+        {:ok, %{messages: [%{role: "user", content: %{type: "text", text: "Summarize this"}}]},
+         state}
+      end)
     end
   end
 
   defmodule PromptWithoutIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    defprompt "greeting" do
-      meta do
-        name("Greeting")
-        description("A simple greeting prompt without icons")
-      end
-    end
+    prompt "greeting", "A simple greeting prompt without icons" do
+      title("Greeting")
 
-    @impl true
-    def handle_prompt_get("greeting", _args, state) do
-      {:ok, %{messages: [user("Hello!")]}, state}
+      render(fn _params, state ->
+        {:ok, %{messages: [%{role: "user", content: %{type: "text", text: "Hello!"}}]}, state}
+      end)
     end
   end
 
   defmodule ServerWithMixedIcons do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL
 
-    deftool "icon_tool" do
-      meta do
-        description("Tool with icon")
-      end
-
-      ExMCP.DSL.Tool.icons([%{src: "\u{2699}\u{FE0F}"}])
-
-      input_schema(%{
-        type: "object",
-        properties: %{x: %{type: "string"}}
-      })
+    tool "icon_tool", "Tool with icon" do
+      icons([%{src: "\u{2699}\u{FE0F}"}])
+      input_schema(%{type: "object", properties: %{x: %{type: "string"}}})
+      run(fn _params, state -> {:ok, %{text: "ok"}, state} end)
     end
 
-    deftool "no_icon_tool" do
-      meta do
-        description("Tool without icon")
-      end
-
-      input_schema(%{
-        type: "object",
-        properties: %{y: %{type: "string"}}
-      })
+    tool "no_icon_tool", "Tool without icon" do
+      input_schema(%{type: "object", properties: %{y: %{type: "string"}}})
+      run(fn _params, state -> {:ok, %{text: "ok"}, state} end)
     end
 
-    defresource "res://with-icon" do
-      meta do
-        name("With Icon")
-        description("Resource with icon")
-      end
-
-      ExMCP.DSL.Resource.icons([%{src: "\u{1F4C1}"}])
+    resource "res://with-icon", "Resource with icon" do
+      name("With Icon")
+      icons([%{src: "\u{1F4C1}"}])
+      read(fn _params, state -> {:ok, "data", state} end)
     end
 
-    defresource "res://without-icon" do
-      meta do
-        name("Without Icon")
-        description("Resource without icon")
-      end
+    resource "res://without-icon", "Resource without icon" do
+      name("Without Icon")
+      read(fn _params, state -> {:ok, "data", state} end)
     end
 
-    defprompt "icon_prompt" do
-      meta do
-        name("Icon Prompt")
-        description("Prompt with icon")
-      end
-
-      ExMCP.DSL.Prompt.icons([%{src: "\u{1F4AC}"}])
+    prompt "icon_prompt", "Prompt with icon" do
+      title("Icon Prompt")
+      icons([%{src: "\u{1F4AC}"}])
+      render(fn _params, state -> {:ok, %{messages: []}, state} end)
     end
 
-    defprompt "no_icon_prompt" do
-      meta do
-        name("No Icon Prompt")
-        description("Prompt without icon")
-      end
-    end
-
-    @impl true
-    def handle_tool_call(_name, _params, state) do
-      {:ok, %{content: [text("ok")]}, state}
-    end
-
-    @impl true
-    def handle_resource_read(_uri, _full_uri, state) do
-      {:ok, [text("data")], state}
-    end
-
-    @impl true
-    def handle_prompt_get(_name, _args, state) do
-      {:ok, %{messages: [user("msg")]}, state}
+    prompt "no_icon_prompt", "Prompt without icon" do
+      title("No Icon Prompt")
+      render(fn _params, state -> {:ok, %{messages: []}, state} end)
     end
   end
 
-  # --- Tests ---
-
   describe "tool icons compliance" do
     test "tool defined with icons macro has icons in metadata" do
-      tools = ToolWithIcons.get_tools()
-      tool = tools["wrench_tool"]
+      tool = tool!(ToolWithIcons, "wrench_tool")
 
       assert Map.has_key?(tool, :icons)
       assert is_list(tool.icons)
@@ -303,8 +209,7 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "tool with multiple icon types has all icons in metadata" do
-      tools = ToolWithMultipleIcons.get_tools()
-      tool = tools["multi_icon_tool"]
+      tool = tool!(ToolWithMultipleIcons, "multi_icon_tool")
 
       assert Map.has_key?(tool, :icons)
       assert is_list(tool.icons)
@@ -319,27 +224,24 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "tool without icons macro does not have icons key" do
-      tools = ToolWithoutIcons.get_tools()
-      tool = tools["plain_tool"]
+      tool = tool!(ToolWithoutIcons, "plain_tool")
 
       refute Map.has_key?(tool, :icons)
     end
 
     test "tool with icons still has all other required fields" do
-      tools = ToolWithIcons.get_tools()
-      tool = tools["wrench_tool"]
+      tool = tool!(ToolWithIcons, "wrench_tool")
 
       assert tool.name == "wrench_tool"
       assert tool.description == "A tool with an emoji icon"
-      assert is_map(tool.input_schema)
-      assert tool.input_schema["type"] == "object"
+      assert is_map(tool.inputSchema)
+      assert tool.inputSchema.type == "object"
     end
   end
 
   describe "resource icons compliance" do
     test "resource defined with icons macro has icons in metadata" do
-      resources = ResourceWithIcons.get_resources()
-      resource = resources["config://app/database"]
+      resource = resource!(ResourceWithIcons, "config://app/database")
 
       assert Map.has_key?(resource, :icons)
       assert is_list(resource.icons)
@@ -350,8 +252,7 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "resource with SVG icon has correct icon metadata" do
-      resources = ResourceWithSvgIcon.get_resources()
-      resource = resources["file:///data/report.csv"]
+      resource = resource!(ResourceWithSvgIcon, "file:///data/report.csv")
 
       assert Map.has_key?(resource, :icons)
       assert is_list(resource.icons)
@@ -363,27 +264,24 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "resource without icons macro does not have icons key" do
-      resources = ResourceWithoutIcons.get_resources()
-      resource = resources["config://app/settings"]
+      resource = resource!(ResourceWithoutIcons, "config://app/settings")
 
       refute Map.has_key?(resource, :icons)
     end
 
     test "resource with icons still has all other required fields" do
-      resources = ResourceWithIcons.get_resources()
-      resource = resources["config://app/database"]
+      resource = resource!(ResourceWithIcons, "config://app/database")
 
       assert resource.name == "Database Config"
       assert resource.description == "Database configuration resource"
       assert resource.uri == "config://app/database"
-      assert resource.mime_type == "application/json"
+      assert resource.mimeType == "application/json"
     end
   end
 
   describe "prompt icons compliance" do
     test "prompt defined with icons macro has icons in metadata" do
-      prompts = PromptWithIcons.get_prompts()
-      prompt = prompts["code_review"]
+      prompt = prompt!(PromptWithIcons, "code_review")
 
       assert Map.has_key?(prompt, :icons)
       assert is_list(prompt.icons)
@@ -394,8 +292,7 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "prompt with multiple icon types has all icons in metadata" do
-      prompts = PromptWithMultipleIcons.get_prompts()
-      prompt = prompts["summarize"]
+      prompt = prompt!(PromptWithMultipleIcons, "summarize")
 
       assert Map.has_key?(prompt, :icons)
       assert is_list(prompt.icons)
@@ -410,18 +307,16 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "prompt without icons macro does not have icons key" do
-      prompts = PromptWithoutIcons.get_prompts()
-      prompt = prompts["greeting"]
+      prompt = prompt!(PromptWithoutIcons, "greeting")
 
       refute Map.has_key?(prompt, :icons)
     end
 
     test "prompt with icons still has all other required fields" do
-      prompts = PromptWithIcons.get_prompts()
-      prompt = prompts["code_review"]
+      prompt = prompt!(PromptWithIcons, "code_review")
 
       assert prompt.name == "code_review"
-      assert prompt.display_name == "Code Review"
+      assert prompt.title == "Code Review"
       assert prompt.description == "Review code for best practices"
       assert is_list(prompt.arguments)
       assert length(prompt.arguments) == 1
@@ -430,7 +325,7 @@ defmodule ExMCP.Compliance.IconsTest do
 
   describe "mixed icons in a single server" do
     test "tools with and without icons coexist correctly" do
-      tools = ServerWithMixedIcons.get_tools()
+      tools = tools(ServerWithMixedIcons)
 
       icon_tool = tools["icon_tool"]
       assert Map.has_key?(icon_tool, :icons)
@@ -442,7 +337,7 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "resources with and without icons coexist correctly" do
-      resources = ServerWithMixedIcons.get_resources()
+      resources = resources(ServerWithMixedIcons)
 
       icon_resource = resources["res://with-icon"]
       assert Map.has_key?(icon_resource, :icons)
@@ -454,7 +349,7 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "prompts with and without icons coexist correctly" do
-      prompts = ServerWithMixedIcons.get_prompts()
+      prompts = prompts(ServerWithMixedIcons)
 
       icon_prompt = prompts["icon_prompt"]
       assert Map.has_key?(icon_prompt, :icons)
@@ -468,8 +363,7 @@ defmodule ExMCP.Compliance.IconsTest do
 
   describe "icon structure validation" do
     test "emoji icon has required src field" do
-      tools = ToolWithIcons.get_tools()
-      [icon] = tools["wrench_tool"].icons
+      [icon] = tool!(ToolWithIcons, "wrench_tool").icons
 
       assert Map.has_key?(icon, :src)
       refute Map.has_key?(icon, :type)
@@ -478,10 +372,11 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "URL-based icon has src and mimeType fields" do
-      tools = ToolWithMultipleIcons.get_tools()
-
       svg_icon =
-        Enum.find(tools["multi_icon_tool"].icons, &String.starts_with?(&1.src, "https://"))
+        ToolWithMultipleIcons
+        |> tool!("multi_icon_tool")
+        |> Map.fetch!(:icons)
+        |> Enum.find(&String.starts_with?(&1.src, "https://"))
 
       assert Map.has_key?(svg_icon, :src)
       assert Map.has_key?(svg_icon, :mimeType)
@@ -493,14 +388,9 @@ defmodule ExMCP.Compliance.IconsTest do
     end
 
     test "icons list is always a list when present" do
-      tools = ToolWithIcons.get_tools()
-      assert is_list(tools["wrench_tool"].icons)
-
-      resources = ResourceWithIcons.get_resources()
-      assert is_list(resources["config://app/database"].icons)
-
-      prompts = PromptWithIcons.get_prompts()
-      assert is_list(prompts["code_review"].icons)
+      assert is_list(tool!(ToolWithIcons, "wrench_tool").icons)
+      assert is_list(resource!(ResourceWithIcons, "config://app/database").icons)
+      assert is_list(prompt!(PromptWithIcons, "code_review").icons)
     end
 
     test "icon with sizes field includes size descriptors" do
@@ -517,51 +407,24 @@ defmodule ExMCP.Compliance.IconsTest do
       assert is_list(icon.sizes)
       assert Enum.all?(icon.sizes, &is_binary/1)
     end
+  end
 
-    test "icon with theme field specifies light or dark theme" do
-      # Theme field per MCP 2025-11-25 spec: "light" | "dark"
-      light_icon = %{
-        src: "https://example.com/icon-light.svg",
-        mimeType: "image/svg+xml",
-        theme: "light"
-      }
+  defp tool!(module, name), do: Map.fetch!(tools(module), name)
+  defp resource!(module, uri), do: Map.fetch!(resources(module), uri)
+  defp prompt!(module, name), do: Map.fetch!(prompts(module), name)
 
-      dark_icon = %{
-        src: "https://example.com/icon-dark.svg",
-        mimeType: "image/svg+xml",
-        theme: "dark"
-      }
+  defp tools(module) do
+    {:ok, tools, nil, %{}} = module.handle_list_tools(nil, %{})
+    Map.new(tools, &{&1.name, &1})
+  end
 
-      assert light_icon.theme == "light"
-      assert dark_icon.theme == "dark"
-      assert light_icon.src == "https://example.com/icon-light.svg"
-      assert dark_icon.src == "https://example.com/icon-dark.svg"
-    end
+  defp resources(module) do
+    {:ok, resources, nil, %{}} = module.handle_list_resources(nil, %{})
+    Map.new(resources, &{&1.uri, &1})
+  end
 
-    test "icon with all optional fields populated" do
-      # Full Icon struct per MCP 2025-11-25 spec
-      icon = %{
-        src: "https://example.com/icon.png",
-        mimeType: "image/png",
-        sizes: ["48x48", "96x96", "any"],
-        theme: "dark"
-      }
-
-      assert icon.src == "https://example.com/icon.png"
-      assert icon.mimeType == "image/png"
-      assert icon.sizes == ["48x48", "96x96", "any"]
-      assert icon.theme == "dark"
-    end
-
-    test "icon with data URI as src" do
-      # Data URIs are valid per MCP 2025-11-25 spec
-      data_uri =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-
-      icon = %{src: data_uri, mimeType: "image/png"}
-
-      assert String.starts_with?(icon.src, "data:")
-      assert icon.mimeType == "image/png"
-    end
+  defp prompts(module) do
+    {:ok, prompts, nil, %{}} = module.handle_list_prompts(nil, %{})
+    Map.new(prompts, &{&1.name, &1})
   end
 end

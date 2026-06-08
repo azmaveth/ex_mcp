@@ -80,7 +80,7 @@ defmodule ExMCP.SimpleServerTest do
       Code.ensure_loaded!(ExMCP.Server)
       assert function_exported?(ExMCP.Server, :notify_roots_changed, 1)
       assert function_exported?(ExMCP.Server, :notify_resources_changed, 1)
-      assert function_exported?(ExMCP.Server, :notify_resource_updated, 2)
+      assert function_exported?(ExMCP.Server, :notify_resource_update, 2)
       assert function_exported?(ExMCP.Server, :notify_tools_changed, 1)
       assert function_exported?(ExMCP.Server, :notify_prompts_changed, 1)
       assert function_exported?(ExMCP.Server, :notify_progress, 3)

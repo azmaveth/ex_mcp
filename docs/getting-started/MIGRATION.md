@@ -115,11 +115,11 @@ The biggest breaking change in v0.5.0 was transport renaming:
 ```elixir
 # Before (v0.4.x)
 ExMCP.Client.start_link(transport: :sse, ...)
-ExMCP.Server.start_link(transport: :sse, ...)
+MyServer.start_link(transport: :sse, ...)
 
 # After (v0.5.x+)
 ExMCP.Client.start_link(transport: :http, ...)
-ExMCP.Server.start_link(transport: :http, ...)
+MyServer.start_link(transport: :http, ...)
 ```
 
 **Rationale:** The `:sse` transport was renamed to `:http` to better reflect that it supports both regular HTTP and Server-Sent Events.

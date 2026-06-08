@@ -1,10 +1,9 @@
-defmodule ExMCP.Server.Legacy do
+defmodule ExMCP.Server.HandlerServer do
   @moduledoc """
-  Legacy handler-based server implementation.
+  Transport-aware process for `ExMCP.Server.Handler` modules.
 
-  This module provides compatibility for the old handler-based server API
-  that uses the `ExMCP.Server.Handler` behaviour. It's primarily used for
-  testing and legacy code that hasn't been migrated to the DSL-based approach.
+  This module runs a handler module behind the MCP transports that need a
+  server process, including the in-memory test transport.
 
   ## Usage
 
@@ -35,7 +34,7 @@ defmodule ExMCP.Server.Legacy do
       end
 
       # Start the server
-      {:ok, server} = ExMCP.Server.start_link(transport: :test, handler: MyHandler)
+      {:ok, server} = ExMCP.Server.HandlerServer.start_link(transport: :test, handler: MyHandler)
   """
 
   use GenServer
@@ -54,7 +53,7 @@ defmodule ExMCP.Server.Legacy do
         }
 
   @doc """
-  Starts a legacy handler-based server.
+  Starts a handler-based server.
 
   ## Options
 
@@ -64,7 +63,13 @@ defmodule ExMCP.Server.Legacy do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts)
+    genserver_opts =
+      case Keyword.get(opts, :name) do
+        nil -> []
+        name -> [name: name]
+      end
+
+    GenServer.start_link(__MODULE__, opts, genserver_opts)
   end
 
   @impl GenServer

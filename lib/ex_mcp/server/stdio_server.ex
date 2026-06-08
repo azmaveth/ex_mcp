@@ -34,23 +34,12 @@ defmodule ExMCP.Server.StdioServer do
   ## Usage
 
       defmodule MyStdioServer do
-        use ExMCP.Server
+        use ExMCP.Server.Handler
+        use ExMCP.Server.DSL, name: "my-stdio-server", version: "1.0.0"
 
-        deftool "hello" do
-          meta do
-            description "Says hello"
-          end
-
-          input_schema %{
-            type: "object",
-            properties: %{name: %{type: "string"}},
-            required: ["name"]
-          }
-        end
-
-        @impl true
-        def handle_tool_call("hello", %{"name" => name}, state) do
-          {:ok, %{content: [text("Hello, \#{name}!")]}, state}
+        tool "hello", "Says hello" do
+          param :name, :string, required: true
+          run fn %{name: name}, state -> {:ok, "Hello, \#{name}!", state} end
         end
       end
 
@@ -194,55 +183,44 @@ defmodule ExMCP.Server.StdioServer do
           VersionRegistry.latest_version()
       end
 
-    # Get capabilities from handler module
-    capabilities =
-      case function_exported?(state.handler_module, :get_capabilities, 0) do
-        true -> state.handler_module.get_capabilities()
-        false -> %{}
-      end
+    params = Map.put(params, "protocolVersion", negotiated_version)
 
-    server_info =
-      case function_exported?(state.handler_module, :__server_info__, 0) do
-        true -> state.handler_module.__server_info__()
-        false -> %{name: to_string(state.handler_module), version: "1.0.0"}
-      end
+    case state.handler_module.handle_initialize(params, state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = JSONRPC.response(id, result)
+        send_response(response, state)
 
-    response =
-      JSONRPC.response(id, %{
-        "protocolVersion" => negotiated_version,
-        "capabilities" => capabilities,
-        "serverInfo" => server_info
-      })
+        new_state =
+          state
+          |> Map.put(:protocol_version, negotiated_version)
+          |> Map.put(:handler_state, new_handler_state)
 
-    send_response(response, state)
-    # Store the negotiated version in state for future use
-    {:noreply, Map.put(state, :protocol_version, negotiated_version)}
+        {:noreply, new_state}
+
+      {:error, reason, new_handler_state} ->
+        send_error_response(-32000, "Initialize error: #{inspect(reason)}", id, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+    end
   end
 
   defp handle_request(%{"method" => "tools/list"} = request, state) do
     id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    cursor = Map.get(params, "cursor")
 
-    tools =
-      case function_exported?(state.handler_module, :get_tools, 0) do
-        true ->
-          state.handler_module.get_tools()
-          |> Map.values()
-          |> Enum.map(fn tool ->
-            %{
-              "name" => tool.name,
-              "description" => tool.description,
-              "inputSchema" => tool.input_schema
-            }
-          end)
+    case state.handler_module.handle_list_tools(cursor, state.handler_state) do
+      {:ok, tools, next_cursor, new_handler_state} ->
+        result = %{"tools" => tools}
+        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+        response = JSONRPC.response(id, result)
 
-        false ->
-          []
-      end
+        send_response(response, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
 
-    response = JSONRPC.response(id, %{"tools" => tools})
-
-    send_response(response, state)
-    {:noreply, state}
+      {:error, reason, new_handler_state} ->
+        send_error_response(-32000, "List tools error: #{inspect(reason)}", id, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+    end
   end
 
   defp handle_request(%{"method" => "tools/call", "params" => params} = request, state) do
@@ -250,53 +228,89 @@ defmodule ExMCP.Server.StdioServer do
     tool_name = Map.get(params, "name")
     arguments = Map.get(params, "arguments", %{})
 
-    case function_exported?(state.handler_module, :handle_tool_call, 3) do
-      true ->
-        case state.handler_module.handle_tool_call(tool_name, arguments, state.handler_state) do
-          {:ok, result, new_handler_state} ->
-            response = JSONRPC.response(id, result)
+    case state.handler_module.handle_call_tool(tool_name, arguments, state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = JSONRPC.response(id, result)
+        send_response(response, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
 
-            send_response(response, state)
-            new_state = %{state | handler_state: new_handler_state}
-            {:noreply, new_state}
-
-          {:error, error, new_handler_state} ->
-            send_error_response(-32000, "Tool error: #{inspect(error)}", id, state)
-            new_state = %{state | handler_state: new_handler_state}
-            {:noreply, new_state}
-        end
-
-      false ->
-        send_error_response(-32601, "Method not found", id, state)
-        {:noreply, state}
+      {:error, error, new_handler_state} ->
+        send_error_response(-32000, "Tool error: #{inspect(error)}", id, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
     end
   end
 
   defp handle_request(%{"method" => "resources/list"} = request, state) do
     id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    cursor = Map.get(params, "cursor")
 
-    resources =
-      case function_exported?(state.handler_module, :get_resources, 0) do
-        true ->
-          state.handler_module.get_resources()
-          |> Map.values()
-          |> Enum.map(fn resource ->
-            %{
-              "uri" => resource.uri || "unknown",
-              "name" => resource.name,
-              "description" => resource.description,
-              "mimeType" => resource.mime_type
-            }
-          end)
+    case state.handler_module.handle_list_resources(cursor, state.handler_state) do
+      {:ok, resources, next_cursor, new_handler_state} ->
+        result = %{"resources" => resources}
+        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+        response = JSONRPC.response(id, result)
 
-        false ->
-          []
-      end
+        send_response(response, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
 
-    response = JSONRPC.response(id, %{"resources" => resources})
+      {:error, reason, new_handler_state} ->
+        send_error_response(-32000, "List resources error: #{inspect(reason)}", id, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+    end
+  end
 
-    send_response(response, state)
-    {:noreply, state}
+  defp handle_request(%{"method" => "resources/read", "params" => params} = request, state) do
+    id = Map.get(request, "id")
+    uri = Map.get(params, "uri")
+
+    case state.handler_module.handle_read_resource(uri, state.handler_state) do
+      {:ok, content, new_handler_state} ->
+        response = JSONRPC.response(id, %{"contents" => List.wrap(content)})
+        send_response(response, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+
+      {:error, reason, new_handler_state} ->
+        send_error_response(-32000, "Read resource error: #{inspect(reason)}", id, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+    end
+  end
+
+  defp handle_request(%{"method" => "prompts/list"} = request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+    cursor = Map.get(params, "cursor")
+
+    case state.handler_module.handle_list_prompts(cursor, state.handler_state) do
+      {:ok, prompts, next_cursor, new_handler_state} ->
+        result = %{"prompts" => prompts}
+        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+        response = JSONRPC.response(id, result)
+
+        send_response(response, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+
+      {:error, reason, new_handler_state} ->
+        send_error_response(-32000, "List prompts error: #{inspect(reason)}", id, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+    end
+  end
+
+  defp handle_request(%{"method" => "prompts/get", "params" => params} = request, state) do
+    id = Map.get(request, "id")
+    name = Map.get(params, "name")
+    arguments = Map.get(params, "arguments", %{})
+
+    case state.handler_module.handle_get_prompt(name, arguments, state.handler_state) do
+      {:ok, result, new_handler_state} ->
+        response = JSONRPC.response(id, result)
+        send_response(response, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+
+      {:error, reason, new_handler_state} ->
+        send_error_response(-32000, "Get prompt error: #{inspect(reason)}", id, state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+    end
   end
 
   defp handle_request(%{"method" => method} = request, state) do

@@ -36,7 +36,8 @@ defmodule ExMCP.Compliance.Features.Roots do
   # Import test helpers
   import ExUnit.Assertions
   import ExMCP.ComplianceTestHelpers
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server
 
   # Actual test implementations
   def test_list_roots(version) do

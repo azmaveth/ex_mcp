@@ -23,7 +23,6 @@ defmodule ExMCP.Protocol.RequestProcessor do
   alias ExMCP.Error
   alias ExMCP.Internal.VersionRegistry
   alias ExMCP.Protocol.ResponseBuilder
-  require Logger
 
   @type request :: map()
   @type state :: map()
@@ -145,10 +144,25 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
   # Tools list request
   defp process_tools_list(%{"id" => id}, state) do
-    tools = get_tools(state) |> Map.values()
-    result = %{"tools" => tools}
-    response = ResponseBuilder.build_success_response(result, id)
-    {:response, response, state}
+    module = state.__module__
+
+    if function_exported?(module, :handle_list_tools, 2) do
+      case module.handle_list_tools(nil, state) do
+        {:ok, tools, next_cursor, new_state} ->
+          result = %{"tools" => deep_stringify_keys(tools)}
+          result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+          response = ResponseBuilder.build_success_response(result, id)
+          {:response, response, new_state}
+
+        {:error, reason, new_state} ->
+          error = Error.protocol_error(-32000, to_string(reason))
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
+      end
+    else
+      response = ResponseBuilder.build_success_response(%{"tools" => []}, id)
+      {:response, response, state}
+    end
   end
 
   # Tools call request - delegates to handle_call for async processing
@@ -158,8 +172,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
     arguments = Map.get(params, "arguments", %{})
     module = state.__module__
 
-    # Check if the module has custom handle_tool_call implementation
-    if function_exported?(module, :handle_tool_call, 3) do
+    if function_exported?(module, :handle_call_tool, 3) do
       execute_tool_call(module, tool_name, arguments, id, state)
     else
       # No custom implementation, return default error
@@ -183,7 +196,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
     result =
       ExMCP.Telemetry.span([:ex_mcp, :tool], metadata, fn ->
-        module.handle_tool_call(tool_name, arguments, state)
+        module.handle_call_tool(tool_name, arguments, state)
       end)
 
     handle_tool_result(result, tool_name, id)
@@ -191,13 +204,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
   # Handle tool execution result
   defp handle_tool_result({:ok, result, new_state}, _tool_name, id) do
-    # Build tool response with proper structure
-    tool_result =
-      Map.merge(
-        %{"content" => result.content},
-        if(Map.get(result, :is_error?, false), do: %{"isError" => true}, else: %{})
-      )
-
+    tool_result = normalize_tool_result(result)
     response = ResponseBuilder.build_success_response(tool_result, id)
     {:response, response, new_state}
   end
@@ -207,6 +214,28 @@ defmodule ExMCP.Protocol.RequestProcessor do
     error_response = ResponseBuilder.build_error_response(error, id)
     {:response, error_response, new_state}
   end
+
+  defp normalize_tool_result(result) when is_list(result) do
+    %{"content" => deep_stringify_keys(result)}
+  end
+
+  defp normalize_tool_result(%{content: content} = result) do
+    result
+    |> Map.delete(:content)
+    |> Map.put("content", deep_stringify_keys(List.wrap(content)))
+    |> maybe_put_is_error()
+    |> deep_stringify_keys()
+  end
+
+  defp normalize_tool_result(%{"content" => _content} = result), do: deep_stringify_keys(result)
+
+  defp normalize_tool_result(result) when is_binary(result),
+    do: %{"content" => [%{"type" => "text", "text" => result}]}
+
+  defp normalize_tool_result(result) when is_map(result), do: deep_stringify_keys(result)
+
+  defp maybe_put_is_error(%{is_error?: true} = result), do: Map.put(result, "isError", true)
+  defp maybe_put_is_error(result), do: result
 
   # Normalize various error formats to Error structs
   defp normalize_error(%Error.ProtocolError{} = err, _tool_name), do: err
@@ -226,10 +255,25 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
   # Resources list request
   defp process_resources_list(%{"id" => id}, state) do
-    resources = get_resources(state) |> Map.values()
-    result = %{"resources" => resources}
-    response = ResponseBuilder.build_success_response(result, id)
-    {:response, response, state}
+    module = state.__module__
+
+    if function_exported?(module, :handle_list_resources, 2) do
+      case module.handle_list_resources(nil, state) do
+        {:ok, resources, next_cursor, new_state} ->
+          result = %{"resources" => deep_stringify_keys(resources)}
+          result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+          response = ResponseBuilder.build_success_response(result, id)
+          {:response, response, new_state}
+
+        {:error, reason, new_state} ->
+          error = Error.protocol_error(-32000, to_string(reason))
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
+      end
+    else
+      response = ResponseBuilder.build_success_response(%{"resources" => []}, id)
+      {:response, response, state}
+    end
   end
 
   # Resources read request
@@ -238,8 +282,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
     uri = Map.get(params, "uri")
     module = state.__module__
 
-    # Check if the module has custom handle_resource_read implementation
-    if function_exported?(module, :handle_resource_read, 3) do
+    if function_exported?(module, :handle_read_resource, 2) do
       metadata = %{
         uri: uri || "unknown",
         request_id: to_string(id)
@@ -247,7 +290,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
       result =
         ExMCP.Telemetry.span([:ex_mcp, :resource, :read], metadata, fn ->
-          module.handle_resource_read(uri, uri, state)
+          module.handle_read_resource(uri, state)
         end)
 
       case result do
@@ -267,7 +310,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
             )
           end
 
-          result = %{"contents" => [content]}
+          result = %{"contents" => deep_stringify_keys(List.wrap(content))}
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
 
@@ -286,10 +329,25 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
   # Prompts list request
   defp process_prompts_list(%{"id" => id}, state) do
-    prompts = get_prompts(state) |> Map.values()
-    result = %{"prompts" => prompts}
-    response = ResponseBuilder.build_success_response(result, id)
-    {:response, response, state}
+    module = state.__module__
+
+    if function_exported?(module, :handle_list_prompts, 2) do
+      case module.handle_list_prompts(nil, state) do
+        {:ok, prompts, next_cursor, new_state} ->
+          result = %{"prompts" => deep_stringify_keys(prompts)}
+          result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
+          response = ResponseBuilder.build_success_response(result, id)
+          {:response, response, new_state}
+
+        {:error, reason, new_state} ->
+          error = Error.protocol_error(-32000, to_string(reason))
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
+      end
+    else
+      response = ResponseBuilder.build_success_response(%{"prompts" => []}, id)
+      {:response, response, state}
+    end
   end
 
   # Prompts get request
@@ -300,10 +358,10 @@ defmodule ExMCP.Protocol.RequestProcessor do
     module = state.__module__
 
     # Check if custom implementation exists
-    if function_exported?(module, :handle_prompt_get, 3) do
-      case module.handle_prompt_get(prompt_name, arguments, state) do
+    if function_exported?(module, :handle_get_prompt, 3) do
+      case module.handle_get_prompt(prompt_name, arguments, state) do
         {:ok, result, new_state} ->
-          response = ResponseBuilder.build_success_response(result, id)
+          response = ResponseBuilder.build_success_response(deep_stringify_keys(result), id)
           {:response, response, new_state}
 
         {:error, reason, new_state} ->
@@ -450,9 +508,6 @@ defmodule ExMCP.Protocol.RequestProcessor do
     {:response, error_response, state}
   end
 
-  # Helper functions to get data from state
-  # These assume the state has these functions available from the DSL
-
   defp get_server_info(state) do
     if function_exported?(state.__module__, :get_server_info_from_opts, 0) do
       state.__module__.get_server_info_from_opts()
@@ -469,27 +524,16 @@ defmodule ExMCP.Protocol.RequestProcessor do
     end
   end
 
-  defp get_tools(state) do
-    if function_exported?(state.__module__, :get_tools, 0) do
-      state.__module__.get_tools()
-    else
-      %{}
-    end
+  defp deep_stringify_keys(list) when is_list(list) do
+    Enum.map(list, &deep_stringify_keys/1)
   end
 
-  defp get_resources(state) do
-    if function_exported?(state.__module__, :get_resources, 0) do
-      state.__module__.get_resources()
-    else
-      %{}
-    end
+  defp deep_stringify_keys(map) when is_map(map) and not is_struct(map) do
+    Map.new(map, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), deep_stringify_keys(value)}
+      {key, value} -> {key, deep_stringify_keys(value)}
+    end)
   end
 
-  defp get_prompts(state) do
-    if function_exported?(state.__module__, :get_prompts, 0) do
-      state.__module__.get_prompts()
-    else
-      %{}
-    end
-  end
+  defp deep_stringify_keys(value), do: value
 end

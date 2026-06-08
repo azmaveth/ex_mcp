@@ -8,7 +8,7 @@ defmodule ExMCP.LoggingSetLevelTest do
   @moduletag :logging
 
   alias ExMCP.Client
-  alias ExMCP.Server
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestHandler do
     use ExMCP.Server.Handler

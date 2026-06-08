@@ -7,9 +7,9 @@ defmodule ExMCP.LifecycleEnhancementsTest do
   @moduletag :integration
 
   alias ExMCP.Client
-  alias ExMCP.Server
   alias ExMCP.Server.Capabilities
   alias ExMCP.Server.Handler
+  alias ExMCP.Server.HandlerServer, as: Server
 
   describe "dynamic server capabilities" do
     defmodule FullFeaturedHandler do

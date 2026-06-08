@@ -17,8 +17,9 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
 
   @moduletag :compliance
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
   alias ExMCP.Internal.Protocol
+  alias ExMCP.Server.HandlerServer, as: Server
 
   # A test handler that simulates a server supporting only one specific
   # protocol version. This allows testing how the system behaves when

@@ -245,7 +245,7 @@ defmodule ExMCP.Internal.ServerManager do
   end
 
   defp start_server_process(%{module: ExMCP.Server} = spec) do
-    ExMCP.Server.start_link(spec.config)
+    ExMCP.Server.HandlerServer.start_link(spec.config)
   end
 
   defp start_server_process(_spec) do

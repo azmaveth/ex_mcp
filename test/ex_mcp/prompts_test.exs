@@ -3,7 +3,8 @@ defmodule ExMCP.PromptsTest do
 
   @moduletag :prompts
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestPromptsHandler do
     use ExMCP.Server.Handler

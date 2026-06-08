@@ -22,117 +22,56 @@ Run `mix deps.get` to install.
 
 ### 1. MCP Server with DSL (stdio transport)
 
-Define tools, resources, and prompts declaratively with the DSL, then implement handlers:
+Define tools, resources, and prompts with colocated handlers:
 
 ```elixir
 defmodule MyMCPServer do
-  use ExMCP.Server, name: "my-server", version: "1.0.0"
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
 
-  # Declare tools with the DSL
-  deftool "echo" do
-    meta do
-      description("Echoes back the input message")
+  tool "echo", "Echoes back the input message" do
+    param :message, :string, required: true, description: "Message to echo"
 
-      input_schema(%{
-        "type" => "object",
-        "properties" => %{
-          "message" => %{"type" => "string", "description" => "Message to echo"}
-        },
-        "required" => ["message"]
-      })
+    run fn %{message: message}, state ->
+      {:ok, "Echo: #{message}", state}
     end
   end
 
-  deftool "add" do
-    meta do
-      description("Adds two numbers together")
+  tool "add", "Adds two numbers together" do
+    param :a, :number, required: true
+    param :b, :number, required: true
 
-      input_schema(%{
-        "type" => "object",
-        "properties" => %{
-          "a" => %{"type" => "number"},
-          "b" => %{"type" => "number"}
-        },
-        "required" => ["a", "b"]
-      })
+    run fn %{a: a, b: b}, state ->
+      {:ok, "#{a + b}", state}
     end
   end
 
-  # Declare resources
-  defresource "config://app/settings" do
-    meta do
-      name("App Settings")
-      description("Current application configuration")
-    end
+  resource "config://app/settings", "Current application configuration" do
+    title "App Settings"
+    mime_type "application/json"
 
-    mime_type("application/json")
-  end
-
-  # Declare prompts
-  defprompt "summarize" do
-    meta do
-      name("Summarizer")
-      description("Summarize content in a given style")
-    end
-
-    arguments do
-      arg(:text, required: true, description: "Text to summarize")
-      arg(:style, description: "Summary style (concise, detailed, bullet)")
+    read fn _params, state ->
+      {:ok, %{text: Jason.encode!(%{debug: false, log_level: "info"})}, state}
     end
   end
 
-  # Implement tool handlers
-  @impl true
-  def handle_tool_call("echo", %{"message" => message}, state) do
-    {:ok, %{content: [%{type: "text", text: "Echo: #{message}"}]}, state}
-  end
+  prompt "summarize", "Summarize content in a given style" do
+    title "Summarizer"
+    arg :text, required: true, description: "Text to summarize"
+    arg :style, description: "Summary style"
 
-  @impl true
-  def handle_tool_call("add", %{"a" => a, "b" => b}, state) do
-    {:ok, %{content: [%{type: "text", text: "#{a + b}"}]}, state}
-  end
-
-  # Implement resource handler
-  @impl true
-  def handle_resource_read("config://app/settings", _uri, state) do
-    config = Jason.encode!(%{debug: false, log_level: "info"})
-    {:ok, %{type: "text", text: config}, state}
-  end
-
-  # Implement prompt handler
-  @impl true
-  def handle_prompt_get("summarize", args, state) do
-    style = Map.get(args, "style", "concise")
-
-    {:ok, %{
-      messages: [
-        %{role: "user", content: %{
-          type: "text",
-          text: "Please provide a #{style} summary of: #{args["text"]}"
-        }}
-      ]
-    }, state}
-  end
-
-  # Implement initialization
-  @impl true
-  def handle_initialize(params, state) do
-    {:ok, %{
-      "protocolVersion" => params["protocolVersion"],
-      "serverInfo" => %{"name" => "my-server", "version" => "1.0.0"},
-      "capabilities" => get_capabilities()
-    }, state}
+    render fn %{text: text} = args, state ->
+      style = Map.get(args, :style, "concise")
+      {:ok, "Please provide a #{style} summary of: #{text}", state}
+    end
   end
 end
 
 # Start the server
-{:ok, server} = ExMCP.Server.start_link(
-  transport: :stdio,
-  handler: MyMCPServer
-)
+{:ok, server} = MyMCPServer.start_link(transport: :stdio)
 ```
 
-The DSL automatically generates `handle_list_tools`, `handle_list_resources`, and `handle_list_prompts` from your declarations. You only need to implement the execution callbacks.
+The DSL automatically generates `handle_list_tools/2`, `handle_list_resources/2`, `handle_list_prompts/2`, and protocol initialization from your declarations.
 
 ### 2. Native Service Dispatcher (ultra-fast)
 

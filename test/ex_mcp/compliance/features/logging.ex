@@ -44,7 +44,8 @@ defmodule ExMCP.Compliance.Features.Logging do
   # Import test helpers
   import ExUnit.Assertions
   import ExMCP.ComplianceTestHelpers
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server
 
   # Log levels in order of severity
   @log_levels ["debug", "info", "warning", "error"]

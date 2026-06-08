@@ -3,7 +3,8 @@ defmodule ExMCP.BatchIntegrationTest do
   @moduletag :integration
   @moduletag :batch
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestHandler do
     @behaviour ExMCP.Server.Handler

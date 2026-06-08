@@ -4,7 +4,8 @@ defmodule ExMCP.BidirectionalTest do
 
   import ExMCP.TestHelpers, only: [wait_until: 1]
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestClientHandler do
     @behaviour ExMCP.Client.Handler
@@ -150,7 +151,7 @@ defmodule ExMCP.BidirectionalTest do
       wait_until(fn -> Process.alive?(client) end)
 
       # Server pings client
-      assert {:ok, %{}} = Server.ping(server)
+      assert {:ok, %{}} = ExMCP.Server.ping(server)
 
       # Clean up
       :ok = GenServer.stop(client)
@@ -180,7 +181,7 @@ defmodule ExMCP.BidirectionalTest do
       wait_until(fn -> Process.alive?(client) end)
 
       # Server requests client's roots
-      assert {:ok, %{"roots" => roots}} = Server.list_roots(server)
+      assert {:ok, %{"roots" => roots}} = ExMCP.Server.list_roots(server)
       assert length(roots) == 2
 
       assert [
@@ -223,7 +224,7 @@ defmodule ExMCP.BidirectionalTest do
         "temperature" => 0.7
       }
 
-      assert {:ok, result} = Server.create_message(server, params)
+      assert {:ok, result} = ExMCP.Server.create_message(server, params)
       assert result["role"] == "assistant"
       assert result["content"]["type"] == "text"
       assert result["model"] == "test-model"
@@ -254,7 +255,7 @@ defmodule ExMCP.BidirectionalTest do
       wait_until(fn -> Process.alive?(client) end)
 
       # Ping is a protocol-level operation - always succeeds even without handler
-      assert {:ok, %{}} = Server.ping(server)
+      assert {:ok, %{}} = ExMCP.Server.ping(server)
 
       # Clean up
       :ok = GenServer.stop(client)

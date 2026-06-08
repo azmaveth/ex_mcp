@@ -66,18 +66,6 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
     {:reply, capabilities, state}
   end
 
-  def handle_call(:get_tools, _from, state) do
-    {:reply, get_tools(), state}
-  end
-
-  def handle_call(:get_resources, _from, state) do
-    {:reply, get_resources(), state}
-  end
-
-  def handle_call(:get_prompts, _from, state) do
-    {:reply, get_prompts(), state}
-  end
-
   # Handler behaviour callbacks
   def handle_initialize(_params, state) do
     {:ok,
@@ -131,43 +119,6 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
   def handle_call_tool(_name, _args, state) do
     {:error, "Unknown tool", state}
   end
-
-  # DSL server compatibility methods
-  def get_capabilities do
-    %{
-      "tools" => %{},
-      "resources" => %{},
-      "prompts" => %{}
-    }
-  end
-
-  def get_tools do
-    %{
-      "slow_operation" => %{
-        "name" => "slow_operation",
-        "description" => "Simulates a slow operation",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "duration" => %{"type" => "integer", "description" => "Duration in ms"}
-          },
-          "required" => ["duration"]
-        }
-      },
-      "fast_operation" => %{
-        "name" => "fast_operation",
-        "description" => "Simulates a fast operation",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{},
-          "required" => []
-        }
-      }
-    }
-  end
-
-  def get_resources, do: %{}
-  def get_prompts, do: %{}
 end
 
 defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
@@ -236,18 +187,6 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
     {:reply, capabilities, state}
   end
 
-  def handle_call(:get_tools, _from, state) do
-    {:reply, get_tools(), state}
-  end
-
-  def handle_call(:get_resources, _from, state) do
-    {:reply, get_resources(), state}
-  end
-
-  def handle_call(:get_prompts, _from, state) do
-    {:reply, get_prompts(), state}
-  end
-
   # Handler behaviour callbacks
   def handle_initialize(_params, state) do
     {:ok,
@@ -289,26 +228,6 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
   def handle_read_resource(_uri, state), do: {:error, "Not found", state}
   def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
   def handle_get_prompt(_name, _params, state), do: {:error, "Not found", state}
-
-  # DSL server compatibility methods
-  def get_capabilities do
-    %{
-      "tools" => %{}
-    }
-  end
-
-  def get_tools do
-    %{
-      "unreliable" => %{
-        "name" => "unreliable",
-        "description" => "Sometimes fails",
-        "inputSchema" => %{"type" => "object", "properties" => %{}}
-      }
-    }
-  end
-
-  def get_resources, do: %{}
-  def get_prompts, do: %{}
 end
 
 defmodule ExMCP.Integration.ConcurrentClientsTest do

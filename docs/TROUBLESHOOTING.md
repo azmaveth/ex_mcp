@@ -93,10 +93,10 @@ MyServer.start_link(transport: :stdio)
 
 **Cause**: Missing or incorrect callback implementation.
 
-**Solution**: Ensure you implement the `handle_tool_call/3` callback:
+**Solution**: Ensure you implement the `handle_call_tool/3` callback:
 ```elixir
 @impl true
-def handle_tool_call(tool_name, args, state) do
+def handle_call_tool(tool_name, args, state) do
   # Handle the tool call
   {:ok, result, state}
 end

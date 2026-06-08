@@ -59,7 +59,7 @@ if Code.ensure_loaded?(Plug) do
     import Plug.Conn
     require Logger
 
-    alias ExMCP.Server
+    alias ExMCP.Server.HandlerServer, as: Server
     alias ExMCP.Internal.{Protocol, Security}
 
     @behaviour Plug
@@ -226,7 +226,7 @@ if Code.ensure_loaded?(Plug) do
       # Start a temporary server for this request
       Server.start_link(
         handler: handler,
-        transport: :beam
+        transport: :test
         # No name - let it be anonymous
       )
     end

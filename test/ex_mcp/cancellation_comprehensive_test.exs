@@ -9,8 +9,10 @@ defmodule ExMCP.CancellationComprehensiveTest do
 
   use ExUnit.Case, async: false
 
-  alias ExMCP.{Client, Protocol, Server}
+  alias ExMCP.Client
+  alias ExMCP.Protocol
   alias ExMCP.Server.Handler
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule SlowHandler do
     @behaviour Handler

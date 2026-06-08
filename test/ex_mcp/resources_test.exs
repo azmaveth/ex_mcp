@@ -3,7 +3,8 @@ defmodule ExMCP.ResourcesTest do
 
   @moduletag :resources
 
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestResourcesHandler do
     use ExMCP.Server.Handler

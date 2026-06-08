@@ -5,7 +5,8 @@ defmodule ExMCP.ComplianceTestHelpers do
   """
 
   import ExUnit.Assertions
-  alias ExMCP.{Client, Server}
+  alias ExMCP.Client
+  alias ExMCP.Server.HandlerServer, as: Server
 
   @doc """
   Sets up a test client for the specified MCP version.

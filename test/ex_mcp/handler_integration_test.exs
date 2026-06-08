@@ -7,7 +7,7 @@ defmodule ExMCP.HandlerIntegrationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Client
-  alias ExMCP.Server
+  alias ExMCP.Server.HandlerServer, as: Server
 
   # Handler-based test server
   defmodule TestHandlerServer do
@@ -117,47 +117,6 @@ defmodule ExMCP.HandlerIntegrationTest do
         _ ->
           {:ok, %{completion: %{values: [], total: 0, hasMore: false}}, state}
       end
-    end
-
-    # GenServer callbacks for message processor
-    def handle_call({:handle_initialize, params}, _from, state) do
-      {:ok, result, new_state} = handle_initialize(params, state)
-      {:reply, {:ok, result, new_state}, new_state}
-    end
-
-    def handle_call({:handle_list_tools, cursor}, _from, state) do
-      {:ok, tools, next_cursor, new_state} = handle_list_tools(cursor, state)
-      {:reply, {:ok, tools, next_cursor, new_state}, new_state}
-    end
-
-    def handle_call({:handle_call_tool, name, args}, _from, state) do
-      result = handle_call_tool(name, args, state)
-      {:reply, result, state}
-    end
-
-    def handle_call({:handle_list_prompts, cursor}, _from, state) do
-      {:ok, prompts, next_cursor, new_state} = handle_list_prompts(cursor, state)
-      {:reply, {:ok, prompts, next_cursor, new_state}, new_state}
-    end
-
-    def handle_call({:handle_get_prompt, name, args}, _from, state) do
-      result = handle_get_prompt(name, args, state)
-      {:reply, result, state}
-    end
-
-    def handle_call({:handle_list_resources, cursor}, _from, state) do
-      {:ok, resources, next_cursor, new_state} = handle_list_resources(cursor, state)
-      {:reply, {:ok, resources, next_cursor, new_state}, new_state}
-    end
-
-    def handle_call({:handle_read_resource, uri}, _from, state) do
-      result = handle_read_resource(uri, state)
-      {:reply, result, state}
-    end
-
-    def handle_call({:handle_complete, ref, argument}, _from, state) do
-      result = handle_complete(ref, argument, state)
-      {:reply, result, state}
     end
   end
 

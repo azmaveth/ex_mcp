@@ -25,119 +25,92 @@ defmodule Mix.Tasks.StdioServer do
     # Define the server inline to avoid compilation issues
     Code.eval_string("""
     defmodule ExampleStdioServer do
-      use ExMCP.Server
+      use ExMCP.Server.Handler
+      use ExMCP.Server.DSL, name: "ExampleStdioServer", version: "1.0.0"
 
-      deftool "say_hello" do
-        meta do
-          description "Say hello to someone via stdio"
-        end
-
-        input_schema %{
+      tool "say_hello", "Say hello to someone via stdio" do
+        input_schema(%{
           type: "object",
           properties: %{
             name: %{type: "string", description: "Name to greet"}
           },
           required: ["name"]
-        }
+        })
+
+        run fn %{"name" => name}, state ->
+          content = [%{type: "text", text: "Hello, \#{name}! Welcome to ExMCP via stdio! 📝✨"}]
+          {:ok, %{content: content}, state}
+        end
       end
 
-      deftool "echo" do
-        meta do
-          description "Echo back the input message"
-        end
-
-        input_schema %{
+      tool "echo", "Echo back the input message" do
+        input_schema(%{
           type: "object",
           properties: %{
             message: %{type: "string", description: "Message to echo"},
             uppercase: %{type: "boolean", default: false, description: "Convert to uppercase"}
           },
           required: ["message"]
-        }
+        })
+
+        run fn %{"message" => message} = args, state ->
+          result_message =
+            if Map.get(args, "uppercase", false), do: String.upcase(message), else: message
+
+          {:ok, %{content: [%{type: "text", text: "Echo: \#{result_message}"}]}, state}
+        end
       end
 
-      defresource "config://server/info" do
-        meta do
-          name "Server Information"
-          description "Information about this stdio server"
-        end
+      resource "config://server/info", "Information about this stdio server" do
+        title "Server Information"
         mime_type "application/json"
-      end
 
-      defprompt "greeting_style" do
-        meta do
-          name "Greeting Style Prompt"
-          description "Generate greetings in different styles"
-        end
+        read fn _params, state ->
+          server_info = %{
+            name: "ExampleStdioServer",
+            version: "1.0.0",
+            capabilities: %{"tools" => %{}, "resources" => %{}, "prompts" => %{}}
+          }
 
-        arguments do
-          arg(:style, required: true, description: "Greeting style (formal, casual, funny)")
-          arg(:name, required: true, description: "Name to greet")
+          {:ok, %{text: Jason.encode!(server_info)}, state}
         end
       end
 
-      @impl true
-      def handle_tool_call("say_hello", %{"name" => name}, state) do
-        content = [text("Hello, \#{name}! Welcome to ExMCP via stdio! 📝✨")]
-        {:ok, %{content: content}, state}
-      end
+      prompt "greeting_style", "Generate greetings in different styles" do
+        title "Greeting Style Prompt"
+        arg(:style, required: true, description: "Greeting style (formal, casual, funny)")
+        arg(:name, required: true, description: "Name to greet")
 
-      @impl true
-      def handle_tool_call("echo", %{"message" => message, "uppercase" => uppercase}, state) do
-        result_message = if uppercase, do: String.upcase(message), else: message
-        content = [text("Echo: \#{result_message}")]
-        {:ok, %{content: content}, state}
-      end
+        render fn args, state ->
+          style = Map.get(args, "style", "casual")
+          name = Map.get(args, "name", "Friend")
 
-      def handle_tool_call("echo", %{"message" => message}, state) do
-        handle_tool_call("echo", %{"message" => message, "uppercase" => false}, state)
-      end
+          messages =
+            case style do
+              "formal" ->
+                [
+                  %{role: "system", content: %{type: "text", text: "You are a formal and professional assistant."}},
+                  %{role: "user", content: %{type: "text", text: "Please provide a formal greeting for \#{name}"}},
+                  %{role: "assistant", content: %{type: "text", text: "Good day, \#{name}. I hope this message finds you well."}}
+                ]
 
-      @impl true
-      def handle_resource_read("config://server/info", _uri, state) do
-        server_info = %{
-          name: "ExampleStdioServer",
-          version: "1.0.0",
-          capabilities: get_capabilities()
-        }
+              "funny" ->
+                [
+                  %{role: "system", content: %{type: "text", text: "You are a humorous and playful assistant."}},
+                  %{role: "user", content: %{type: "text", text: "Give \#{name} a funny greeting"}},
+                  %{role: "assistant", content: %{type: "text", text: "Hey there, \#{name}! *tips hat* Ready to conquer the world... or at least this conversation? 😄"}}
+                ]
 
-        content = [json(server_info)]
-        {:ok, content, state}
-      end
+              _ ->
+                [
+                  %{role: "system", content: %{type: "text", text: "You are a friendly and casual assistant."}},
+                  %{role: "user", content: %{type: "text", text: "Say hi to \#{name} in a casual way"}},
+                  %{role: "assistant", content: %{type: "text", text: "Hey \#{name}! How's it going? Great to see you here! 👋"}}
+                ]
+            end
 
-      @impl true
-      def handle_prompt_get("greeting_style", args, state) do
-        style = Map.get(args, "style", "casual")
-        name = Map.get(args, "name", "Friend")
-
-        messages =
-          case style do
-            "formal" ->
-              [
-                system("You are a formal and professional assistant."),
-                user("Please provide a formal greeting for \#{name}"),
-                assistant("Good day, \#{name}. I hope this message finds you well.")
-              ]
-
-            "funny" ->
-              [
-                system("You are a humorous and playful assistant."),
-                user("Give \#{name} a funny greeting"),
-                assistant(
-                  "Hey there, \#{name}! *tips hat* Ready to conquer the world... or at least this conversation? 😄"
-                )
-              ]
-
-            # casual
-            _ ->
-              [
-                system("You are a friendly and casual assistant."),
-                user("Say hi to \#{name} in a casual way"),
-                assistant("Hey \#{name}! How's it going? Great to see you here! 👋")
-              ]
-          end
-
-        {:ok, %{messages: messages}, state}
+          {:ok, %{messages: messages}, state}
+        end
       end
     end
     """)

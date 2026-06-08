@@ -2,6 +2,12 @@ defmodule ExMCP.HITLIntegrationTest do
   use ExUnit.Case, async: true
   @moduletag :integration
 
+  alias ExMCP.Client
+  alias ExMCP.Client.DefaultHandler
+  alias ExMCP.Server
+  alias ExMCP.Server.Handler.Echo
+  alias ExMCP.Server.HandlerServer
+
   defmodule MockApprovalHandler do
     @behaviour ExMCP.Approval
 
@@ -23,18 +29,18 @@ defmodule ExMCP.HITLIntegrationTest do
     test "server requests createMessage and gets approved response" do
       # Start server
       {:ok, server} =
-        ExMCP.Server.start_link(
+        HandlerServer.start_link(
           transport: :test,
-          handler: ExMCP.Server.Handler.Echo
+          handler: Echo
         )
 
       # Start client with default handler and mock approval
       {:ok, _client} =
-        ExMCP.Client.start_link(
+        Client.start_link(
           transport: :test,
           server: server,
           handler:
-            {ExMCP.Client.DefaultHandler,
+            {DefaultHandler,
              [
                approval_handler: MockApprovalHandler
              ]}
@@ -61,7 +67,7 @@ defmodule ExMCP.HITLIntegrationTest do
       }
 
       # Server calls createMessage on client
-      {:ok, result} = ExMCP.Server.create_message(server, params)
+      {:ok, result} = Server.create_message(server, params)
 
       # Verify the response structure
       assert result["role"] == "assistant"
@@ -100,14 +106,14 @@ defmodule ExMCP.HITLIntegrationTest do
 
       # Start server
       {:ok, server} =
-        ExMCP.Server.start_link(
+        HandlerServer.start_link(
           transport: :test,
-          handler: ExMCP.Server.Handler.Echo
+          handler: Echo
         )
 
       # Start client with denying handler
       {:ok, _client} =
-        ExMCP.Client.start_link(
+        Client.start_link(
           transport: :test,
           server: server,
           handler: DenyingHandler
@@ -124,7 +130,7 @@ defmodule ExMCP.HITLIntegrationTest do
       }
 
       # Server calls createMessage on client - should get error
-      {:error, error} = ExMCP.Server.create_message(server, params)
+      {:error, error} = Server.create_message(server, params)
       assert error["code"] == -32603
       assert error["message"] =~ "denied"
     end
@@ -161,18 +167,18 @@ defmodule ExMCP.HITLIntegrationTest do
 
       # Start server
       {:ok, server} =
-        ExMCP.Server.start_link(
+        HandlerServer.start_link(
           transport: :test,
-          handler: ExMCP.Server.Handler.Echo
+          handler: Echo
         )
 
       # Start client with tracking handler
       {:ok, _client} =
-        ExMCP.Client.start_link(
+        Client.start_link(
           transport: :test,
           server: server,
           handler:
-            {ExMCP.Client.DefaultHandler,
+            {DefaultHandler,
              [
                approval_handler: TrackingApprovalHandler,
                test_pid: test_pid
@@ -190,7 +196,7 @@ defmodule ExMCP.HITLIntegrationTest do
       }
 
       # Server calls createMessage
-      {:ok, result} = ExMCP.Server.create_message(server, params)
+      {:ok, result} = Server.create_message(server, params)
 
       # Should have received sampling approval request
       assert_receive {:approval, :sampling, ^params, _opts}

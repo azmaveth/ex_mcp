@@ -18,13 +18,10 @@ defmodule ExMCP.Server.TransportTest do
   end
 
   defmodule TestServer do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL, name: "test", version: "1.0.0"
 
-    deftool "test_tool" do
-      meta do
-        description("A test tool")
-      end
-
+    tool "test_tool", "A test tool" do
       input_schema(%{
         type: "object",
         properties: %{
@@ -32,12 +29,10 @@ defmodule ExMCP.Server.TransportTest do
         },
         required: ["message"]
       })
-    end
 
-    @impl true
-    def handle_tool_call("test_tool", %{"message" => message}, state) do
-      result = %{content: [%{"type" => "text", "text" => "Echo: #{message}"}]}
-      {:ok, result, state}
+      run(fn %{"message" => message}, state ->
+        {:ok, %{content: [%{"type" => "text", "text" => "Echo: #{message}"}]}, state}
+      end)
     end
   end
 

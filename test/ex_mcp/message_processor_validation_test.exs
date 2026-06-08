@@ -10,6 +10,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.MessageProcessor
+  alias ExMCP.Server.HandlerServer
 
   # Minimal handler-based server
   defmodule MinimalHandler do
@@ -61,26 +62,20 @@ defmodule ExMCP.MessageProcessorValidationTest do
 
   # Minimal DSL-based server
   defmodule MinimalDslServer do
-    use ExMCP.Server
+    use ExMCP.Server.Handler
+    use ExMCP.Server.DSL, name: "minimal-dsl", version: "1.0.0"
 
-    deftool "test_tool" do
-      meta do
-        name("Test Tool")
-        description("A test tool for DSL server")
-      end
+    tool "test_tool", "A test tool for DSL server" do
+      title("Test Tool")
 
       input_schema(%{
         type: "object",
         properties: %{}
       })
-    end
 
-    @impl true
-    def init(_args), do: {:ok, %{name: "minimal-dsl"}}
-
-    @impl true
-    def handle_tool_call("test_tool", args, state) do
-      {:ok, %{content: [%{type: "text", text: "DSL called with #{inspect(args)}"}]}, state}
+      run(fn args, state ->
+        {:ok, %{content: [%{type: "text", text: "DSL called with #{inspect(args)}"}]}, state}
+      end)
     end
   end
 
@@ -88,7 +83,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
     test "handler server works correctly with new routing" do
       # Start the handler server first
       {:ok, server} =
-        ExMCP.Server.start_link(
+        HandlerServer.start_link(
           transport: :test,
           handler: MinimalHandler,
           handler_args: []
@@ -143,33 +138,27 @@ defmodule ExMCP.MessageProcessorValidationTest do
       # This should work because DSL servers have the expected functions
       result = MessageProcessor.process(conn, opts)
 
-      # DSL server returns the tool with all metadata
+      # DSL server returns the tool with metadata
       tools = result.response["result"]["tools"]
       assert length(tools) == 1
 
       tool = hd(tools)
       assert tool["name"] == "test_tool"
       assert tool["description"] == "A test tool for DSL server"
-      assert tool["display_name"] == "Test Tool"
+      assert tool["title"] == "Test Tool"
     end
 
-    test "server type detection is flawed - DSL servers are detected by start_link" do
-      # DSL servers have start_link because they use GenServer
+    test "new DSL servers expose handler callbacks and generated start_link" do
       assert function_exported?(MinimalDslServer, :start_link, 1)
-
-      # Handler servers don't inherently have start_link
-      refute function_exported?(MinimalHandler, :start_link, 1)
-
-      # The detection logic in message_processor.ex lines 137-138 uses this
-      # to differentiate, but it's not a reliable method
+      assert function_exported?(MinimalDslServer, :handle_list_tools, 2)
+      assert function_exported?(MinimalDslServer, :handle_call_tool, 3)
     end
 
-    test "handler server has correct callbacks but message processor doesn't use them" do
+    test "handler server has correct callbacks without old getter functions" do
       # Handler has the correct MCP protocol callbacks
       assert function_exported?(MinimalHandler, :handle_list_tools, 2)
       assert function_exported?(MinimalHandler, :handle_call_tool, 3)
 
-      # But message processor expects DSL-style functions
       refute function_exported?(MinimalHandler, :get_tools, 0)
       refute function_exported?(MinimalHandler, :get_prompts, 0)
       refute function_exported?(MinimalHandler, :get_resources, 0)
@@ -178,7 +167,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
     test "handler routing works for multiple MCP methods" do
       # Start the handler server first
       {:ok, server} =
-        ExMCP.Server.start_link(
+        HandlerServer.start_link(
           transport: :test,
           handler: MinimalHandler,
           handler_args: []
@@ -245,28 +234,16 @@ defmodule ExMCP.MessageProcessorValidationTest do
     end
   end
 
-  describe "routing comparison table" do
-    test "document the routing mismatch" do
-      routing_comparison = %{
-        "tools/list" => %{
-          handler_expects: "GenServer.call(pid, {:handle_list_tools, cursor})",
-          processor_calls: "handler_module.get_tools() at line 250",
-          result: "UndefinedFunctionError"
-        },
-        "prompts/list" => %{
-          handler_expects: "GenServer.call(pid, {:handle_list_prompts, cursor})",
-          processor_calls: "handler_module.get_prompts() at line 308",
-          result: "UndefinedFunctionError"
-        },
-        "resources/list" => %{
-          handler_expects: "GenServer.call(pid, {:handle_list_resources, cursor})",
-          processor_calls: "handler_module.get_resources() at line 277",
-          result: "UndefinedFunctionError"
-        }
-      }
+  describe "routing behavior" do
+    test "message processor routes handler modules through GenServer callbacks" do
+      request = %{"jsonrpc" => "2.0", "method" => "tools/list", "params" => %{}, "id" => 10}
 
-      # Verify our understanding is correct
-      assert routing_comparison["tools/list"].result == "UndefinedFunctionError"
+      result =
+        request
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: MinimalHandler})
+
+      assert [%{"name" => "test_tool"}] = result.response["result"]["tools"]
     end
   end
 end

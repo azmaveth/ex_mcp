@@ -87,31 +87,6 @@ defmodule ExMCP.MessageProcessor do
     end)
   end
 
-  # Detect the type of server based on exported functions.
-  # Returns:
-  # - :dsl_server - Server uses the DSL pattern (has get_tools/0, etc.)
-  # - :handler_server - Server uses the handler pattern (has handle_list_tools/2, etc.)
-  # - :unknown - Cannot determine server type
-  @spec detect_server_type(module()) :: :dsl_server | :handler_server | :unknown
-  defp detect_server_type(handler_module) do
-    cond do
-      # DSL servers have getter functions
-      function_exported?(handler_module, :get_tools, 0) and
-        function_exported?(handler_module, :get_prompts, 0) and
-          function_exported?(handler_module, :get_resources, 0) ->
-        :dsl_server
-
-      # Handler servers have handler callbacks
-      function_exported?(handler_module, :handle_list_tools, 2) and
-        function_exported?(handler_module, :handle_list_prompts, 2) and
-          function_exported?(handler_module, :handle_list_resources, 2) ->
-        :handler_server
-
-      true ->
-        :unknown
-    end
-  end
-
   @doc """
   Process an MCP request using a handler module.
 
@@ -176,23 +151,7 @@ defmodule ExMCP.MessageProcessor do
       handler != nil ->
         case handler do
           handler_module when is_atom(handler_module) ->
-            # Detect server type based on exported functions
-            case detect_server_type(handler_module) do
-              :dsl_server ->
-                process_with_dsl_server(conn, handler_module, server_info)
-
-              :handler_server ->
-                process_with_handler_genserver(conn, handler_module, server_info)
-
-              :unknown ->
-                # Fallback to original detection for backward compatibility
-                if function_exported?(handler_module, :start_link, 1) and
-                     function_exported?(handler_module, :handle_resource_read, 3) do
-                  process_with_dsl_server(conn, handler_module, server_info)
-                else
-                  process_with_handler(conn, handler_module, server_info)
-                end
-            end
+            process_with_handler_genserver(conn, handler_module, server_info)
 
           _ ->
             error_response =
@@ -212,33 +171,6 @@ defmodule ExMCP.MessageProcessor do
             get_request_id(conn.request),
             ErrorCodes.internal_error(),
             "No handler configured"
-          )
-
-        put_response(conn, error_response)
-    end
-  end
-
-  # Process request using DSL Server with temporary GenServer instance
-  defp process_with_dsl_server(conn, handler_module, server_info) do
-    # Start a temporary server instance for this request
-    case start_temporary_server(handler_module) do
-      {:ok, server_pid} ->
-        try do
-          process_with_server_pid(conn, server_pid, server_info)
-        after
-          # Clean up the temporary server
-          if Process.alive?(server_pid) do
-            GenServer.stop(server_pid, :normal, 1000)
-          end
-        end
-
-      {:error, reason} ->
-        error_response =
-          JSONRPC.error(
-            get_request_id(conn.request),
-            ErrorCodes.internal_error(),
-            "Failed to start server instance",
-            %{"reason" => inspect(reason)}
           )
 
         put_response(conn, error_response)
@@ -275,28 +207,12 @@ defmodule ExMCP.MessageProcessor do
 
   # Process handler request through GenServer calls
   defp process_handler_request(conn, server_pid, _server_info) do
-    dispatch_to_method_handlers(conn, server_pid, :handler)
-  end
-
-  # Process request using running GenServer instance
-  defp process_with_server_pid(conn, server_pid, _server_info) do
-    dispatch_to_method_handlers(conn, server_pid, :genserver)
-  end
-
-  defp start_temporary_server(handler_module) do
-    # Start a temporary GenServer instance
-    handler_module.start_link([])
-  end
-
-  # Process request using Server handler (direct DSL module calls)
-  defp process_with_handler(conn, handler_module, _server_info) do
-    dispatch_to_method_handlers(conn, handler_module, :direct)
+    dispatch_to_method_handlers(conn, server_pid)
   end
 
   alias ExMCP.MessageProcessor.MethodHandlers
 
-  # Unified method dispatch — routes to MethodHandlers with the appropriate mode
-  defp dispatch_to_method_handlers(conn, handler, mode) do
+  defp dispatch_to_method_handlers(conn, handler) do
     request = conn.request
     method = Map.get(request, "method")
     params = Map.get(request, "params", %{})
@@ -304,43 +220,43 @@ defmodule ExMCP.MessageProcessor do
 
     case method do
       "ping" -> handle_ping(conn, id)
-      "initialize" -> handle_initialize_dispatch(conn, handler, mode, params, id)
+      "initialize" -> handle_initialize_dispatch(conn, handler, params, id)
       "logging/setLevel" -> put_response(conn, ResponseBuilder.build_success_response(%{}, id))
-      _ -> dispatch_method(method, conn, handler, mode, params, id)
+      _ -> dispatch_method(method, conn, handler, params, id)
     end
   end
 
-  defp dispatch_method(method, conn, handler, mode, params, id) do
+  defp dispatch_method(method, conn, handler, params, id) do
     case method do
       "tools/list" ->
-        MethodHandlers.handle_tools_list(conn, handler, mode, params, id)
+        MethodHandlers.handle_tools_list(conn, handler, params, id)
 
       "tools/call" ->
-        MethodHandlers.handle_tools_call(conn, handler, mode, params, id)
+        MethodHandlers.handle_tools_call(conn, handler, params, id)
 
       "resources/list" ->
-        MethodHandlers.handle_resources_list(conn, handler, mode, params, id)
+        MethodHandlers.handle_resources_list(conn, handler, params, id)
 
       "resources/read" ->
-        MethodHandlers.handle_resources_read(conn, handler, mode, params, id)
+        MethodHandlers.handle_resources_read(conn, handler, params, id)
 
       "resources/subscribe" ->
-        MethodHandlers.handle_resources_subscribe(conn, handler, mode, params, id)
+        MethodHandlers.handle_resources_subscribe(conn, handler, params, id)
 
       "resources/unsubscribe" ->
-        MethodHandlers.handle_resources_unsubscribe(conn, handler, mode, params, id)
+        MethodHandlers.handle_resources_unsubscribe(conn, handler, params, id)
 
       "prompts/list" ->
-        MethodHandlers.handle_prompts_list(conn, handler, mode, params, id)
+        MethodHandlers.handle_prompts_list(conn, handler, params, id)
 
       "prompts/get" ->
-        MethodHandlers.handle_prompts_get(conn, handler, mode, params, id)
+        MethodHandlers.handle_prompts_get(conn, handler, params, id)
 
       "completion/complete" ->
-        MethodHandlers.handle_completion_complete(conn, handler, mode, params, id)
+        MethodHandlers.handle_completion_complete(conn, handler, params, id)
 
       _ ->
-        MethodHandlers.handle_custom_method(conn, handler, mode, method, params, id)
+        MethodHandlers.handle_custom_method(conn, handler, method, params, id)
     end
   end
 
@@ -349,10 +265,10 @@ defmodule ExMCP.MessageProcessor do
     put_response(conn, response)
   end
 
-  defp handle_initialize_dispatch(conn, handler, mode, params, id) do
+  defp handle_initialize_dispatch(conn, handler, params, id) do
     # server_info comes from the conn's assigns (set during process routing)
     server_info = Map.get(conn.assigns || %{}, :server_info, %{})
-    MethodHandlers.handle_initialize(conn, handler, mode, params, id, server_info)
+    MethodHandlers.handle_initialize(conn, handler, params, id, server_info)
   end
 
   defp get_request_id(request) when is_map(request), do: Map.get(request, "id")
