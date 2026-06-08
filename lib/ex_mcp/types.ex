@@ -119,12 +119,15 @@ defmodule ExMCP.Types do
   @type tool :: %{
           required(:name) => String.t(),
           optional(:description) => String.t(),
+          optional(:title) => String.t(),
           required(:inputSchema) => json_schema(),
           # Output schema (stable in 2025-06-18)
           optional(:outputSchema) => json_schema(),
           optional(:annotations) => tool_annotations(),
           # Icons (new in 2025-11-25)
-          optional(:icons) => [icon()]
+          optional(:icons) => [icon()],
+          optional(:execution) => map(),
+          optional(:_meta) => map()
         }
 
   # Content types
@@ -171,20 +174,25 @@ defmodule ExMCP.Types do
   @type resource :: %{
           required(:uri) => String.t(),
           required(:name) => String.t(),
+          optional(:title) => String.t(),
           optional(:description) => String.t(),
           optional(:mimeType) => String.t(),
           optional(:annotations) => annotations(),
           optional(:size) => integer(),
           # Icons (new in 2025-11-25)
-          optional(:icons) => [icon()]
+          optional(:icons) => [icon()],
+          optional(:_meta) => map()
         }
 
   @type resource_template :: %{
           required(:uriTemplate) => String.t(),
           required(:name) => String.t(),
+          optional(:title) => String.t(),
           optional(:description) => String.t(),
           optional(:mimeType) => String.t(),
-          optional(:annotations) => annotations()
+          optional(:annotations) => annotations(),
+          optional(:icons) => [icon()],
+          optional(:_meta) => map()
         }
 
   @type text_resource_contents :: %{
@@ -216,10 +224,12 @@ defmodule ExMCP.Types do
 
   @type prompt :: %{
           required(:name) => String.t(),
+          optional(:title) => String.t(),
           optional(:description) => String.t(),
-          optional(:arguments) => [prompt_argument()],
+          optional(:arguments) => [prompt_argument() | map()],
           # Icons (new in 2025-11-25)
-          optional(:icons) => [icon()]
+          optional(:icons) => [icon()],
+          optional(:_meta) => map()
         }
 
   @type prompt_message :: %{
@@ -347,12 +357,16 @@ defmodule ExMCP.Types do
           required(:clientInfo) => client_info()
         }
 
-  @type initialize_result :: %{
+  @type atom_initialize_result :: %{
           required(:protocolVersion) => String.t(),
           required(:capabilities) => server_capabilities(),
           required(:serverInfo) => server_info(),
           optional(:instructions) => String.t()
         }
+
+  @type wire_initialize_result :: %{required(String.t()) => any()}
+
+  @type initialize_result :: atom_initialize_result() | wire_initialize_result()
 
   # Paginated results
   @type paginated_result :: %{

@@ -131,11 +131,11 @@ defmodule ExMCP.TestHelpers.ErrorTestServer do
 
   @impl true
   def handle_subscribe_resource(_uri, state) do
-    {:ok, state}
+    {:ok, %{}, state}
   end
 
   @impl true
   def handle_unsubscribe_resource(_uri, state) do
-    {:ok, state}
+    {:ok, %{}, state}
   end
 end

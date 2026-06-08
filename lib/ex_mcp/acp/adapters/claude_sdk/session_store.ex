@@ -242,9 +242,10 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
       session_file = Path.join(project_dir, "#{session_id}.jsonl")
       session_dir = Path.join(project_dir, session_id)
 
-      with true <- safe_child?(projects_dir, session_file),
+      with {:ok, %File.Stat{type: :regular, size: size}} <-
+             removable_session_file(projects_dir, session_file),
+           true <- size > 0,
            true <- safe_child?(projects_dir, session_dir),
-           {:ok, %File.Stat{type: :regular, size: size}} when size > 0 <- File.lstat(session_file),
            :ok <- File.rm(session_file),
            {:ok, _removed} <- File.rm_rf(session_dir) do
         :ok
@@ -255,6 +256,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
     |> case do
       :ok -> :ok
       nil -> {:error, "Claude session #{session_id} was not found"}
+    end
+  end
+
+  defp removable_session_file(projects_dir, session_file) do
+    with true <- safe_child?(projects_dir, session_file) do
+      File.lstat(session_file)
     end
   end
 

@@ -2143,8 +2143,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
        when method in ["item/commandExecution/requestApproval", "execCommandApproval"],
        do: "execute"
 
-  defp permission_tool_kind(method)
-       when method in ["item/fileChange/requestApproval", "applyPatchApproval"], do: "edit"
+  defp permission_tool_kind("item/fileChange/requestApproval"), do: "edit"
+  defp permission_tool_kind("applyPatchApproval"), do: "edit"
 
   defp permission_tool_kind("mcpServer/elicitation/request"), do: "other"
   defp permission_tool_kind(_method), do: "other"

@@ -1382,9 +1382,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
 
-    {:messages,
-     replay ++ [response] ++ startup_messages ++ [available_commands_update(session_id, commands)],
-     state}
+    messages =
+      replay ++
+        [response] ++ startup_messages ++ [available_commands_update(session_id, commands)]
+
+    {:messages, messages, state}
   end
 
   defp finish_control_error(group, error, state) do
