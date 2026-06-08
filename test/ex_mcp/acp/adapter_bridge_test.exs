@@ -231,6 +231,10 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       {:messages_and_write, [notice("mode-message")], "ignored\n", state}
     end
 
+    def translate_outbound(%{"method" => "session/set_model"}, state) do
+      {:messages_and_write, [notice("model-message")], "ignored\n", state}
+    end
+
     def translate_outbound(%{"method" => "session/fork"}, state) do
       {:messages, [notice("fork-message")], state}
     end
@@ -617,6 +621,33 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       assert {:ok, raw_response} = AdapterBridge.receive_message(bridge, 5_000)
       response = Jason.decode!(raw_response)
       assert response["id"] == 54
+      assert response["result"] == %{}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "pushes messages before synthesized set_model response" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: SyntheticMessagesAdapter, adapter_opts: [])
+
+      _init = send_initialize(bridge)
+
+      model_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/set_model",
+        "params" => %{"sessionId" => "s1", "modelId" => "gpt-5.1-codex"},
+        "id" => 55
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(model_msg))
+
+      assert {:ok, raw_notice} = AdapterBridge.receive_message(bridge, 5_000)
+      notice = Jason.decode!(raw_notice)
+      assert notice["params"]["update"]["content"]["text"] == "model-message"
+
+      assert {:ok, raw_response} = AdapterBridge.receive_message(bridge, 5_000)
+      response = Jason.decode!(raw_response)
+      assert response["id"] == 55
       assert response["result"] == %{}
 
       AdapterBridge.close(bridge)

@@ -518,8 +518,15 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
       init_response = Jason.encode!(%{"id" => 1, "result" => %{"capabilities" => %{}}})
       {:skip_and_write, initialized_data, state} = Codex.translate_inbound(init_response, state)
       assert state.phase == :ready
-      initialized_json = IO.iodata_to_binary(initialized_data)
-      assert Jason.decode!(initialized_json)["method"] == "initialized"
+
+      [initialized_msg, model_list_msg] =
+        initialized_data
+        |> IO.iodata_to_binary()
+        |> String.split("\n", trim: true)
+        |> Enum.map(&Jason.decode!/1)
+
+      assert initialized_msg["method"] == "initialized"
+      assert model_list_msg["method"] == "model/list"
 
       # session/new → thread/start
       {:ok, thread_data, state} =

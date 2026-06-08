@@ -228,6 +228,16 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
   end
 
+  describe "encode_session_set_model/2" do
+    test "produces valid request" do
+      msg = Protocol.encode_session_set_model("sess_1", "gpt-5.1-codex")
+
+      assert msg["method"] == "session/set_model"
+      assert msg["params"]["sessionId"] == "sess_1"
+      assert msg["params"]["modelId"] == "gpt-5.1-codex"
+    end
+  end
+
   describe "encode_session_set_config_option/3" do
     test "produces valid request" do
       msg = Protocol.encode_session_set_config_option("sess_1", "theme", "dark")

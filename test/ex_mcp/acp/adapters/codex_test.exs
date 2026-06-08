@@ -19,6 +19,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert caps["loadSession"] == true
       assert caps["promptCapabilities"] == %{"image" => true, "embeddedContext" => true}
       assert caps["mcpCapabilities"]["http"] == true
+      assert caps["sessionCapabilities"]["setModel"] == %{}
       assert caps["sessionCapabilities"]["list"] == %{}
       assert caps["sessionCapabilities"]["resume"] == %{}
       assert caps["sessionCapabilities"]["close"] == %{}
@@ -205,6 +206,49 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert session.accumulated_text == []
     end
 
+    test "session/prompt maps slash compact to native app-server request", %{state: state} do
+      state = put_test_session(state, "thread-1")
+
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 8,
+        "params" => %{
+          "sessionId" => "thread-1",
+          "prompt" => [%{"type" => "text", "text" => "/compact"}]
+        }
+      }
+
+      assert {:ok, data, new_state} = Codex.translate_outbound(msg, state)
+      codex_msg = decode(data)
+
+      assert codex_msg["method"] == "thread/compact/start"
+      assert codex_msg["params"] == %{"threadId" => "thread-1"}
+      assert new_state.sessions["thread-1"].active_prompt_acp_id == 8
+      assert new_state.pending_requests[new_state.next_id - 1].type == :prompt_command_start
+    end
+
+    test "session/prompt maps slash review targets to review/start", %{state: state} do
+      state = put_test_session(state, "thread-1")
+
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 9,
+        "params" => %{
+          "sessionId" => "thread-1",
+          "prompt" => [%{"type" => "text", "text" => "/review-branch main"}]
+        }
+      }
+
+      assert {:ok, data, new_state} = Codex.translate_outbound(msg, state)
+      codex_msg = decode(data)
+
+      assert codex_msg["method"] == "review/start"
+      assert codex_msg["params"]["threadId"] == "thread-1"
+      assert codex_msg["params"]["delivery"] == "inline"
+      assert codex_msg["params"]["target"] == %{"type" => "baseBranch", "branch" => "main"}
+      assert new_state.sessions["thread-1"].active_prompt_acp_id == 9
+    end
+
     test "session/cancel sends turn/interrupt for active turn", %{state: state} do
       state = put_test_session(state, "thread-1", %{turn_id: "turn-1"})
 
@@ -240,6 +284,30 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert update["params"]["update"]["sessionUpdate"] == "current_mode_update"
       assert update["params"]["update"]["currentModeId"] == "full-access"
       assert new_state.sessions["thread-1"].mode_id == "full-access"
+    end
+
+    test "session/set_model updates model and reasoning effort from catalog", %{state: state} do
+      state =
+        state
+        |> put_catalog_models()
+        |> put_test_session("thread-1", %{model: "gpt-5-codex", reasoning_effort: "medium"})
+
+      msg = %{
+        "method" => "session/set_model",
+        "id" => 9,
+        "params" => %{"sessionId" => "thread-1", "modelId" => "codex-mini/high"}
+      }
+
+      assert {:reply_and_write, result, data, new_state} = Codex.translate_outbound(msg, state)
+      codex_msg = decode(data)
+
+      assert codex_msg["method"] == "thread/settings/update"
+      assert codex_msg["params"]["model"] == "gpt-5-codex"
+      assert codex_msg["params"]["effort"] == "high"
+      assert result["models"]["currentModelId"] == "codex-mini/high"
+      assert Enum.any?(result["models"]["availableModels"], &(&1["modelId"] == "codex-mini/high"))
+      assert new_state.sessions["thread-1"].model == "gpt-5-codex"
+      assert new_state.sessions["thread-1"].model_id == "codex-mini/high"
     end
 
     test "session/set_config_option updates model and returns current options", %{state: state} do
@@ -306,15 +374,55 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
   end
 
   describe "inbound responses" do
-    test "initialize response triggers initialized write-back", %{state: state} do
-      state = %{state | pending_requests: %{1 => %{type: :initialize, acp_id: nil, meta: %{}}}}
+    test "initialize response triggers initialized write-back and model catalog request", %{
+      state: state
+    } do
+      state = %{
+        state
+        | next_id: 2,
+          pending_requests: %{1 => %{type: :initialize, acp_id: nil, meta: %{}}}
+      }
 
       line = Jason.encode!(%{"id" => 1, "result" => %{"capabilities" => %{}}})
       assert {:skip_and_write, data, new_state} = Codex.translate_inbound(line, state)
 
-      assert decode(data)["method"] == "initialized"
+      [initialized, model_list] = decode_lines(data)
+      assert initialized["method"] == "initialized"
+      assert model_list["method"] == "model/list"
+      assert model_list["params"] == %{"includeHidden" => false}
       assert new_state.phase == :ready
-      assert new_state.pending_requests == %{}
+      assert new_state.pending_requests == %{2 => %{type: :model_list, acp_id: nil, meta: %{}}}
+    end
+
+    test "model/list response stores normalized catalog", %{state: state} do
+      state = %{state | pending_requests: %{2 => %{type: :model_list, acp_id: nil, meta: %{}}}}
+
+      line =
+        Jason.encode!(%{
+          "id" => 2,
+          "result" => %{
+            "data" => [
+              %{
+                "id" => "codex-mini",
+                "model" => "gpt-5-codex",
+                "displayName" => "Codex Mini",
+                "description" => "Fast coding model",
+                "hidden" => false,
+                "defaultReasoningEffort" => "medium",
+                "supportedReasoningEfforts" => [
+                  %{"reasoningEffort" => "medium", "description" => "Balanced"},
+                  %{"reasoningEffort" => "xhigh", "description" => "Deep"}
+                ]
+              }
+            ],
+            "nextCursor" => nil
+          }
+        })
+
+      assert {:skip, new_state} = Codex.translate_inbound(line, state)
+      assert [model] = new_state.models
+      assert model["id"] == "codex-mini"
+      assert [%{"value" => "medium"}, %{"value" => "xhigh"}] = model["supportedReasoningEfforts"]
     end
 
     test "thread/start response produces ACP session result and stores session", %{state: state} do
@@ -343,6 +451,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       refute Map.has_key?(msg["result"], "metadata")
       assert get_in(msg, ["result", "_meta", "ex_mcp", "codex", "thread", "id"]) == "thread-abc"
       assert msg["result"]["modes"]["currentModeId"] == "auto"
+      assert msg["result"]["models"]["currentModelId"] == "gpt-5"
       assert Enum.any?(msg["result"]["configOptions"], &(&1["id"] == "model"))
       assert new_state.sessions["thread-abc"].model == "gpt-5"
     end
@@ -510,6 +619,47 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert done_msg["params"]["update"]["rawOutput"] == %{"exitCode" => 0, "output" => "ok"}
     end
 
+    test "current Codex item events map commandExecution and fileChange variants", %{state: state} do
+      started =
+        Jason.encode!(%{
+          "method" => "item/started",
+          "params" => %{
+            "threadId" => "thread-1",
+            "item" => %{
+              "type" => "commandExecution",
+              "id" => "cmd-1",
+              "command" => "mix test",
+              "status" => "running"
+            }
+          }
+        })
+
+      completed =
+        Jason.encode!(%{
+          "method" => "item/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "item" => %{
+              "type" => "fileChange",
+              "id" => "edit-1",
+              "status" => "completed",
+              "changes" => [%{"path" => "lib/a.ex", "diff" => "@@ diff"}]
+            }
+          }
+        })
+
+      assert {:messages, [start_msg], state} = Codex.translate_inbound(started, state)
+      assert start_msg["params"]["update"]["sessionUpdate"] == "tool_call"
+      assert start_msg["params"]["update"]["toolCallId"] == "cmd-1"
+      assert start_msg["params"]["update"]["status"] == "in_progress"
+
+      assert {:messages, [done_msg], _state} = Codex.translate_inbound(completed, state)
+      assert done_msg["params"]["update"]["sessionUpdate"] == "tool_call_update"
+      assert done_msg["params"]["update"]["toolCallId"] == "edit-1"
+      assert [diff] = done_msg["params"]["update"]["content"]
+      assert diff["type"] == "diff"
+    end
+
     test "token usage is accumulated for the prompt response instead of emitted as non-spec update",
          %{
            state: state
@@ -581,6 +731,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         id: session_id,
         cwd: "/tmp/project",
         model: nil,
+        model_id: nil,
         mode_id: "auto",
         reasoning_effort: "medium",
         accumulated_text: [],
@@ -592,6 +743,27 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       |> Map.merge(attrs)
 
     %{state | sessions: Map.put(state.sessions, session_id, session)}
+  end
+
+  defp put_catalog_models(state) do
+    %{state | models: catalog_models()}
+  end
+
+  defp catalog_models do
+    [
+      %{
+        "id" => "codex-mini",
+        "model" => "gpt-5-codex",
+        "displayName" => "Codex Mini",
+        "description" => "Fast coding model",
+        "hidden" => false,
+        "defaultReasoningEffort" => "medium",
+        "supportedReasoningEfforts" => [
+          %{"value" => "medium", "name" => "Medium", "description" => "Balanced"},
+          %{"value" => "high", "name" => "High", "description" => "Deep"}
+        ]
+      }
+    ]
   end
 
   defp decode(data) do

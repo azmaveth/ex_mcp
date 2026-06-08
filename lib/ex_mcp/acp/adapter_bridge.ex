@@ -590,6 +590,15 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp handle_outbound(
+         %{"method" => "session/set_model", "id" => id} = msg,
+         _json,
+         _from,
+         state
+       ) do
+    synthesize_after_translate(msg, id, state, fn _state -> %{} end)
+  end
+
+  defp handle_outbound(
          %{"method" => "session/set_config_option", "id" => id} = msg,
          _json,
          _from,

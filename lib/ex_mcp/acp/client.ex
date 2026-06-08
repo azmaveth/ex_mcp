@@ -204,6 +204,12 @@ defmodule ExMCP.ACP.Client do
     GenServer.call(client, {:set_mode, session_id, mode_id})
   end
 
+  @doc "Sets the model for a session."
+  @spec set_model(GenServer.server(), String.t(), String.t()) :: {:ok, map()} | {:error, any()}
+  def set_model(client, session_id, model_id) do
+    GenServer.call(client, {:set_model, session_id, model_id})
+  end
+
   @doc "Sets a config option for a session."
   @spec set_config_option(GenServer.server(), String.t(), String.t(), any()) ::
           {:ok, map()} | {:error, any()}
@@ -399,6 +405,11 @@ defmodule ExMCP.ACP.Client do
 
   def handle_call({:set_mode, session_id, mode_id}, from, %{status: :ready} = state) do
     msg = Protocol.encode_session_set_mode(session_id, mode_id)
+    send_request(msg, from, state)
+  end
+
+  def handle_call({:set_model, session_id, model_id}, from, %{status: :ready} = state) do
+    msg = Protocol.encode_session_set_model(session_id, model_id)
     send_request(msg, from, state)
   end
 

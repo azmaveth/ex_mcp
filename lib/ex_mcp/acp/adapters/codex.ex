@@ -35,10 +35,77 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {"high", "High"}
   ]
 
+  @slash_commands %{
+    "compact" => :compact,
+    "init" => :init,
+    "review" => :review,
+    "review-branch" => :"review-branch",
+    "review-commit" => :"review-commit",
+    "logout" => :logout
+  }
+
+  @tool_status_aliases %{
+    "pending" => "pending",
+    "queued" => "pending",
+    "running" => "in_progress",
+    "in_progress" => "in_progress",
+    "completed" => "completed",
+    "success" => "completed",
+    "succeeded" => "completed",
+    "failed" => "failed",
+    "errored" => "failed",
+    "cancelled" => "cancelled",
+    "canceled" => "cancelled"
+  }
+
+  @init_command_prompt """
+  Generate a file named AGENTS.md that serves as a contributor guide for this repository.
+  Your goal is to produce a clear, concise, and well-structured document with descriptive headings and actionable explanations for each section.
+  Follow the outline below, but adapt as needed - add sections if relevant, and omit those that do not apply to this project.
+
+  Document Requirements
+
+  - Title the document "Repository Guidelines".
+  - Use Markdown headings (#, ##, etc.) for structure.
+  - Keep the document concise. 200-400 words is optimal.
+  - Keep explanations short, direct, and specific to this repository.
+  - Provide examples where helpful (commands, directory paths, naming patterns).
+  - Maintain a professional, instructional tone.
+
+  Recommended Sections
+
+  Project Structure & Module Organization
+
+  - Outline the project structure, including where the source code, tests, and assets are located.
+
+  Build, Test, and Development Commands
+
+  - List key commands for building, testing, and running locally (e.g., npm test, make build).
+  - Briefly explain what each command does.
+
+  Coding Style & Naming Conventions
+
+  - Specify indentation rules, language-specific style preferences, and naming patterns.
+  - Include any formatting or linting tools used.
+
+  Testing Guidelines
+
+  - Identify testing frameworks and coverage requirements.
+  - State test naming conventions and how to run tests.
+
+  Commit & Pull Request Guidelines
+
+  - Summarize commit message conventions found in the project's Git history.
+  - Outline pull request requirements (descriptions, linked issues, screenshots, etc.).
+
+  (Optional) Add other sections if relevant, such as Security & Configuration Tips, Architecture Overview, or Agent-Specific Instructions.
+  """
+
   defstruct [
     :model,
     :mode_id,
     :reasoning_effort,
+    models: [],
     next_id: 1,
     phase: :initializing,
     pending_requests: %{},
@@ -74,7 +141,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "sessionCapabilities" => %{
         "list" => %{},
         "resume" => %{},
-        "close" => %{}
+        "close" => %{},
+        "setModel" => %{}
       }
     }
   end
@@ -300,31 +368,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
       ) do
     with {:ok, session_id} <- fetch_session_id(params),
          {:ok, session} <- fetch_session(state, session_id) do
-      {id, state} = next_request_id(state)
+      input_items = extract_input_items(params["prompt"])
 
-      wire_params =
-        %{
-          "threadId" => session_id,
-          "input" => extract_input_items(params["prompt"])
-        }
-        |> maybe_put("model", params["model"] || session[:model] || state.model)
-        |> maybe_put("cwd", params["cwd"] || session[:cwd] || Keyword.get(state.opts, :cwd))
+      case slash_command(input_items) do
+        {:ok, command} ->
+          translate_slash_command(command, acp_id, session_id, session, params, state)
 
-      request = encode_request(id, "turn/start", wire_params)
-
-      session =
-        session
-        |> Map.put(:active_prompt_acp_id, acp_id)
-        |> Map.put(:accumulated_text, [])
-        |> Map.put(:accumulated_thinking, [])
-        |> Map.put(:accumulated_usage, nil)
-
-      state =
-        state
-        |> put_session(session_id, session)
-        |> track_request(id, :turn_start, acp_id, %{session_id: session_id})
-
-      {:ok, request, state}
+        :error ->
+          translate_user_prompt(input_items, acp_id, session_id, session, params, state)
+      end
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -383,10 +435,41 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
+  def translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
+    with {:ok, session_id} <- fetch_session_id(params),
+         {:ok, session} <- fetch_session(state, session_id),
+         {:ok, selection} <- model_selection(params["modelId"], session, state) do
+      {id, state} = next_request_id(state)
+
+      request =
+        encode_request(
+          id,
+          "thread/settings/update",
+          %{"threadId" => session_id}
+          |> Map.put("model", selection.model)
+          |> maybe_put("effort", selection.effort)
+        )
+
+      session = Map.merge(session, selection.session)
+      result = session_config_result(session, state)
+
+      state =
+        state
+        |> put_session(session_id, session)
+        |> Map.put(:model, selection.model)
+        |> Map.put(:reasoning_effort, selection.effort || state.reasoning_effort)
+        |> track_request(id, :settings_update, nil, %{session_id: session_id})
+
+      {:reply_and_write, result, request, state}
+    else
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
   def translate_outbound(%{"method" => "session/set_config_option", "params" => params}, state) do
     with {:ok, session_id} <- fetch_session_id(params),
          {:ok, session} <- fetch_session(state, session_id),
-         {:ok, update} <- config_update(params) do
+         {:ok, update} <- config_update(params, session, state) do
       {id, state} = next_request_id(state)
 
       request =
@@ -397,11 +480,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
         )
 
       session = Map.merge(session, update.session)
-      result = %{"configOptions" => config_options_for_session(session, state)}
+      result = session_config_result(session, state)
 
       state =
         state
         |> put_session(session_id, session)
+        |> Map.merge(update.state)
         |> track_request(id, :settings_update, nil, %{session_id: session_id})
 
       {:reply_and_write, result, request, state}
@@ -422,6 +506,154 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+  defp translate_user_prompt(input_items, acp_id, session_id, session, params, state) do
+    {id, state} = next_request_id(state)
+
+    wire_params =
+      %{
+        "threadId" => session_id,
+        "input" => input_items
+      }
+      |> maybe_put("model", params["model"] || session[:model] || state.model)
+      |> maybe_put("cwd", params["cwd"] || session[:cwd] || Keyword.get(state.opts, :cwd))
+
+    request = encode_request(id, "turn/start", wire_params)
+
+    state =
+      state
+      |> put_session(session_id, reset_prompt_accumulators(session, acp_id))
+      |> track_request(id, :turn_start, acp_id, %{session_id: session_id})
+
+    {:ok, request, state}
+  end
+
+  defp translate_slash_command({:compact, _rest}, acp_id, session_id, session, _params, state) do
+    track_prompt_command(acp_id, session_id, session, state, "thread/compact/start", %{
+      "threadId" => session_id
+    })
+  end
+
+  defp translate_slash_command({:init, _rest}, acp_id, session_id, session, params, state) do
+    input_items = [%{"type" => "text", "text" => @init_command_prompt}]
+    translate_user_prompt(input_items, acp_id, session_id, session, params, state)
+  end
+
+  defp translate_slash_command({:review, rest}, acp_id, session_id, session, _params, state) do
+    target =
+      case String.trim(rest) do
+        "" -> %{"type" => "uncommittedChanges"}
+        instructions -> %{"type" => "custom", "instructions" => instructions}
+      end
+
+    review_command(acp_id, session_id, session, state, target)
+  end
+
+  defp translate_slash_command(
+         {:"review-branch", rest},
+         acp_id,
+         session_id,
+         session,
+         _params,
+         state
+       ) do
+    case String.trim(rest) do
+      "" ->
+        translate_user_prompt(
+          [%{"type" => "text", "text" => "/review-branch #{rest}"}],
+          acp_id,
+          session_id,
+          session,
+          %{},
+          state
+        )
+
+      branch ->
+        review_command(acp_id, session_id, session, state, %{
+          "type" => "baseBranch",
+          "branch" => branch
+        })
+    end
+  end
+
+  defp translate_slash_command(
+         {:"review-commit", rest},
+         acp_id,
+         session_id,
+         session,
+         _params,
+         state
+       ) do
+    case String.trim(rest) do
+      "" ->
+        translate_user_prompt(
+          [%{"type" => "text", "text" => "/review-commit #{rest}"}],
+          acp_id,
+          session_id,
+          session,
+          %{},
+          state
+        )
+
+      sha ->
+        review_command(acp_id, session_id, session, state, %{
+          "type" => "commit",
+          "sha" => sha,
+          "title" => nil
+        })
+    end
+  end
+
+  defp translate_slash_command({:logout, _rest}, acp_id, session_id, session, _params, state) do
+    {id, state} = next_request_id(state)
+    request = encode_request(id, "account/logout", %{})
+
+    state =
+      state
+      |> put_session(session_id, reset_prompt_accumulators(session, acp_id))
+      |> track_request(id, :logout, nil, %{session_id: session_id})
+
+    result = %{
+      "stopReason" => "refusal",
+      "_meta" => %{
+        "ex_mcp" => %{
+          "adapter" => "codex",
+          "authRequired" => true,
+          "message" => "Codex logout completed; authenticate again before prompting."
+        }
+      }
+    }
+
+    {:reply_and_write, result, request, state}
+  end
+
+  defp review_command(acp_id, session_id, session, state, target) do
+    track_prompt_command(acp_id, session_id, session, state, "review/start", %{
+      "threadId" => session_id,
+      "target" => target,
+      "delivery" => "inline"
+    })
+  end
+
+  defp track_prompt_command(acp_id, session_id, session, state, method, params) do
+    {id, state} = next_request_id(state)
+    request = encode_request(id, method, params)
+
+    state =
+      state
+      |> put_session(session_id, reset_prompt_accumulators(session, acp_id))
+      |> track_request(id, :prompt_command_start, acp_id, %{session_id: session_id})
+
+    {:ok, request, state}
+  end
+
+  defp reset_prompt_accumulators(session, acp_id) do
+    session
+    |> Map.put(:active_prompt_acp_id, acp_id)
+    |> Map.put(:accumulated_text, [])
+    |> Map.put(:accumulated_thinking, [])
+    |> Map.put(:accumulated_usage, nil)
+  end
 
   # Inbound: Codex app-server -> ACP
 
@@ -469,9 +701,17 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp handle_typed_response(:initialize, _entry, _reply, state) do
-    state = %{state | phase: :ready}
-    {:skip_and_write, encode_notification("initialized"), state}
+    {id, state} = next_request_id(%{state | phase: :ready})
+    request = encode_request(id, "model/list", %{"includeHidden" => false})
+    state = track_request(state, id, :model_list, nil)
+    {:skip_and_write, [encode_notification("initialized"), request], state}
   end
+
+  defp handle_typed_response(:model_list, _entry, {:ok, result}, state) do
+    {:skip, %{state | models: normalize_model_catalog(result["data"] || [])}}
+  end
+
+  defp handle_typed_response(:model_list, _entry, {:error, _error}, state), do: {:skip, state}
 
   defp handle_typed_response(:authenticate, %{acp_id: acp_id}, {:ok, result}, state) do
     response =
@@ -548,6 +788,13 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [error_response(acp_id, error)], state}
   end
 
+  defp handle_typed_response(:prompt_command_start, _entry, {:ok, _result}, state),
+    do: {:skip, state}
+
+  defp handle_typed_response(:prompt_command_start, %{acp_id: acp_id}, {:error, error}, state) do
+    {:messages, [error_response(acp_id, error)], state}
+  end
+
   defp handle_typed_response(:turn_interrupt, _entry, _reply, state), do: {:skip, state}
   defp handle_typed_response(:settings_update, _entry, _reply, state), do: {:skip, state}
   defp handle_typed_response(:thread_unsubscribe, _entry, _reply, state), do: {:skip, state}
@@ -563,15 +810,24 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp handle_notification("thread/settings/updated", %{"threadId" => session_id} = params, state) do
+    settings = params["threadSettings"] || params["settings"] || %{}
+
     state =
       update_session(state, session_id, fn session ->
+        effort = settings["effort"] || settings["reasoningEffort"] || session[:reasoning_effort]
+        model = settings["model"] || session[:model]
+
         session
-        |> Map.put(:model, params["settings"]["model"] || session[:model])
+        |> Map.put(:model, model)
+        |> Map.put(:reasoning_effort, effort)
         |> Map.put(
-          :reasoning_effort,
-          params["settings"]["reasoningEffort"] || session[:reasoning_effort]
+          :model_id,
+          model_id_for_session(%{session | model: model, reasoning_effort: effort}, state)
         )
-        |> Map.put(:mode_id, mode_id_from_result(params) || session[:mode_id])
+        |> Map.put(
+          :mode_id,
+          mode_id_from_result(params) || mode_id_from_result(settings) || session[:mode_id]
+        )
       end)
 
     {:skip, state}
@@ -629,6 +885,19 @@ defmodule ExMCP.ACP.Adapters.Codex do
      ], state}
   end
 
+  defp handle_notification("item/reasoning/summaryTextDelta", params, state),
+    do: handle_notification("item/reasoning/textDelta", params, state)
+
+  defp handle_notification("item/reasoning/summaryPartAdded", params, state) do
+    text = params["text"] || params["summary"] || params["part"] || ""
+    handle_notification("item/reasoning/textDelta", Map.put(params, "delta", text), state)
+  end
+
+  defp handle_notification("item/started", %{"item" => item} = params, state) do
+    session_id = session_id_from_params(params, state)
+    handle_item_started(session_id, item, params, state)
+  end
+
   defp handle_notification(
          "item/created",
          %{"item" => %{"type" => "function_call"} = item} = params,
@@ -675,6 +944,21 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [notification], state}
   end
 
+  defp handle_notification("item/commandExecution/terminalInteraction", params, state) do
+    session_id = session_id_from_params(params, state)
+    text = params["text"] || params["input"] || params["delta"] || format_raw(params)
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => params["callId"] || params["itemId"] || params["item_id"],
+        "content" => [tool_text_content(text)],
+        "rawOutput" => params
+      })
+
+    {:messages, [notification], state}
+  end
+
   defp handle_notification("item/commandExecution/completed", params, state) do
     session_id = session_id_from_params(params, state)
 
@@ -691,6 +975,69 @@ defmodule ExMCP.ACP.Adapters.Codex do
       })
 
     {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/fileChange/outputDelta", params, state) do
+    session_id = session_id_from_params(params, state)
+    delta = params["delta"] || params["text"] || params["output"] || ""
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => params["callId"] || params["itemId"],
+        "content" => [tool_text_content(delta)],
+        "rawOutput" => params
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/fileChange/patchUpdated", params, state) do
+    session_id = session_id_from_params(params, state)
+    patch = params["patch"] || params
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => params["callId"] || params["itemId"] || patch["id"],
+        "kind" => "edit",
+        "content" => [
+          tool_diff_content(
+            patch["path"] || params["path"],
+            patch["diff"] || patch["text"] || params["delta"] || ""
+          )
+        ],
+        "rawOutput" => params
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("item/mcpToolCall/progress", params, state) do
+    session_id = session_id_from_params(params, state)
+    text = params["message"] || params["delta"] || format_raw(params["progress"] || params)
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => params["callId"] || params["itemId"],
+        "status" => "in_progress",
+        "content" => [tool_text_content(text)],
+        "rawOutput" => params
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_notification("serverRequest/resolved", params, state) do
+    request_id = params["requestId"]
+
+    pending =
+      Map.reject(state.pending_client_requests, fn {_acp_id, entry} ->
+        entry.codex_id == request_id
+      end)
+
+    {:skip, %{state | pending_client_requests: pending}}
   end
 
   defp handle_notification("item/patch/created", params, state) do
@@ -804,6 +1151,22 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [notification], state}
   end
 
+  defp handle_notification("warning", params, state) do
+    session_id = session_id_from_params(params, state)
+    text = params["message"] || params["warning"] || format_raw(params)
+
+    {:messages,
+     [
+       session_update(session_id, %{
+         "sessionUpdate" => "agent_message_chunk",
+         "content" => %{"type" => "text", "text" => text}
+       })
+     ], state}
+  end
+
+  defp handle_notification("guardianWarning", params, state),
+    do: handle_notification("warning", params, state)
+
   defp handle_notification("item/webSearch/started", params, state) do
     session_id = session_id_from_params(params, state)
 
@@ -844,6 +1207,88 @@ defmodule ExMCP.ACP.Adapters.Codex do
        session_update(session_id, %{
          "sessionUpdate" => "plan",
          "entries" => entries
+       })
+     ], state}
+  end
+
+  defp handle_notification("turn/plan/updated", params, state),
+    do: handle_notification("thread/plan/updated", params, state)
+
+  defp handle_notification("item/plan/delta", params, state) do
+    session_id = session_id_from_params(params, state)
+    delta = params["delta"] || params["text"] || ""
+
+    {:messages,
+     [
+       session_update(session_id, %{
+         "sessionUpdate" => "agent_thought_chunk",
+         "content" => %{"type" => "text", "text" => delta}
+       })
+     ], state}
+  end
+
+  defp handle_notification("thread/compacted", params, state) do
+    session_id = session_id_from_params(params, state)
+
+    {:messages,
+     [
+       session_update(session_id, %{
+         "sessionUpdate" => "agent_message_chunk",
+         "content" => %{"type" => "text", "text" => "Context compacted\n"}
+       })
+     ], state}
+  end
+
+  defp handle_notification("thread/status/changed", params, state) do
+    session_id = session_id_from_params(params, state)
+
+    {:messages,
+     [
+       session_update(session_id, %{
+         "sessionUpdate" => "session_info_update",
+         "_meta" => %{
+           "ex_mcp" => %{
+             "adapter" => "codex",
+             "status" => params["status"] || params["threadStatus"] || params["state"]
+           }
+         }
+       })
+     ], state}
+  end
+
+  defp handle_notification("thread/goal/updated", params, state) do
+    session_id = session_id_from_params(params, state)
+
+    {:messages,
+     [
+       session_update(session_id, %{
+         "sessionUpdate" => "session_info_update",
+         "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "goal" => params["goal"] || params}}
+       })
+     ], state}
+  end
+
+  defp handle_notification("thread/goal/cleared", params, state) do
+    session_id = session_id_from_params(params, state)
+
+    {:messages,
+     [
+       session_update(session_id, %{
+         "sessionUpdate" => "session_info_update",
+         "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "goalCleared" => true}}
+       })
+     ], state}
+  end
+
+  defp handle_notification(method, params, state)
+       when method in ["model/rerouted", "model/verification", "turn/moderationMetadata"] do
+    session_id = session_id_from_params(params, state)
+
+    {:messages,
+     [
+       session_update(session_id, %{
+         "sessionUpdate" => "session_info_update",
+         "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "event" => method, "params" => params}}
        })
      ], state}
   end
@@ -903,6 +1348,19 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [request], state}
   end
 
+  defp handle_server_request(codex_id, method, _params, state)
+       when method in [
+              "item/tool/requestUserInput",
+              "item/tool/call",
+              "account/chatgptAuthTokens/refresh",
+              "attestation/generate"
+            ] do
+    Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
+
+    {:skip_and_write,
+     encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+  end
+
   defp handle_server_request(codex_id, method, _params, state) do
     Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
 
@@ -912,12 +1370,120 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   # Item completion / replay helpers
 
+  defp handle_item_started(session_id, item, params, state) do
+    case item_type(item) do
+      type when type in ["function_call", "functionCall"] ->
+        {:messages, [tool_call_started(session_id, item)], state}
+
+      "commandExecution" ->
+        notification =
+          session_update(session_id, %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => item_id(params, item),
+            "title" => command_title(item["command"]),
+            "kind" => "execute",
+            "status" => normalize_tool_status(item["status"], "in_progress"),
+            "rawInput" => %{"command" => item["command"], "cwd" => item["cwd"]}
+          })
+
+        {:messages, [notification], state}
+
+      "fileChange" ->
+        notification =
+          session_update(session_id, %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => item_id(params, item),
+            "title" => "Edit File",
+            "kind" => "edit",
+            "status" => normalize_tool_status(item["status"], "in_progress"),
+            "rawInput" => %{"changes" => item["changes"]}
+          })
+
+        {:messages, [notification], state}
+
+      "mcpToolCall" ->
+        notification =
+          session_update(session_id, %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => item_id(params, item),
+            "title" => mcp_tool_title(item),
+            "kind" => "other",
+            "status" => normalize_tool_status(item["status"], "in_progress"),
+            "rawInput" => item["arguments"]
+          })
+
+        {:messages, [notification], state}
+
+      "dynamicToolCall" ->
+        notification =
+          session_update(session_id, %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => item_id(params, item),
+            "title" => dynamic_tool_title(item),
+            "kind" => codex_tool_kind(item["tool"]),
+            "status" => normalize_tool_status(item["status"], "in_progress"),
+            "rawInput" => item["arguments"]
+          })
+
+        {:messages, [notification], state}
+
+      "webSearch" ->
+        notification =
+          session_update(session_id, %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => item_id(params, item),
+            "title" => "Web Search",
+            "kind" => "fetch",
+            "status" => "in_progress",
+            "rawInput" => %{"query" => item["query"], "action" => item["action"]}
+          })
+
+        {:messages, [notification], state}
+
+      "imageGeneration" ->
+        notification =
+          session_update(session_id, %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => item_id(params, item),
+            "title" => "Generate Image",
+            "kind" => "other",
+            "status" => normalize_tool_status(item["status"], "in_progress"),
+            "rawInput" => %{"revisedPrompt" => item["revisedPrompt"]}
+          })
+
+        {:messages, [notification], state}
+
+      _ ->
+        {:skip, state}
+    end
+  end
+
   defp handle_item_completed(session_id, %{"type" => "agent_message"} = item, state) do
     text = item["text"] || item["message"] || ""
 
     notification =
       session_update(session_id, %{
         "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => text},
+        "_meta" => %{"ex_mcp" => %{"final" => true}}
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "agentMessage"} = item, state) do
+    handle_item_completed(session_id, Map.put(item, "type", "agent_message"), state)
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "reasoning"} = item, state) do
+    text =
+      (item["content"] || item["summary"] || [])
+      |> List.wrap()
+      |> Enum.join("\n")
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "agent_thought_chunk",
         "content" => %{"type" => "text", "text" => text},
         "_meta" => %{"ex_mcp" => %{"final" => true}}
       })
@@ -938,6 +1504,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [notification], state}
   end
 
+  defp handle_item_completed(session_id, %{"type" => "functionCall"} = item, state) do
+    handle_item_completed(session_id, Map.put(item, "type", "function_call"), state)
+  end
+
   defp handle_item_completed(session_id, %{"type" => "function_call_output"} = item, state) do
     notification =
       session_update(session_id, %{
@@ -946,6 +1516,23 @@ defmodule ExMCP.ACP.Adapters.Codex do
         "status" => if(item["isError"], do: "failed", else: "completed"),
         "content" => [tool_text_content(item["output"] || item["text"] || "")],
         "rawOutput" => item["output"] || item["text"] || ""
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "commandExecution"} = item, state) do
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => item["id"],
+        "status" => normalize_tool_status(item["status"], "completed"),
+        "rawOutput" => %{
+          "exitCode" => item["exitCode"],
+          "output" => item["aggregatedOutput"],
+          "durationMs" => item["durationMs"]
+        },
+        "content" => [tool_text_content(item["aggregatedOutput"] || "")]
       })
 
     {:messages, [notification], state}
@@ -962,6 +1549,98 @@ defmodule ExMCP.ACP.Adapters.Codex do
       })
 
     {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "fileChange"} = item, state) do
+    changes = item["changes"] || []
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => item["id"],
+        "kind" => "edit",
+        "status" => normalize_tool_status(item["status"], "completed"),
+        "content" => Enum.map(changes, &file_change_content/1),
+        "rawOutput" => %{"changes" => changes, "status" => item["status"]}
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "mcpToolCall"} = item, state) do
+    output = item["result"] || item["error"] || %{}
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => item["id"],
+        "status" =>
+          normalize_tool_status(
+            item["status"],
+            if(item["error"], do: "failed", else: "completed")
+          ),
+        "content" => [tool_text_content(format_raw(output))],
+        "rawOutput" => output
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "dynamicToolCall"} = item, state) do
+    output = item["contentItems"] || []
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => item["id"],
+        "status" =>
+          normalize_tool_status(
+            item["status"],
+            if(item["success"] == false, do: "failed", else: "completed")
+          ),
+        "content" => dynamic_tool_content(output),
+        "rawOutput" => output
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "webSearch"} = item, state) do
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => item["id"],
+        "status" => "completed",
+        "rawOutput" => item,
+        "content" => [tool_text_content(item["query"] || format_raw(item["action"] || item))]
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "imageGeneration"} = item, state) do
+    text = item["savedPath"] || item["result"] || item["revisedPrompt"] || ""
+
+    notification =
+      session_update(session_id, %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => item["id"],
+        "status" => normalize_tool_status(item["status"], "completed"),
+        "content" => [tool_text_content(text)],
+        "rawOutput" => item
+      })
+
+    {:messages, [notification], state}
+  end
+
+  defp handle_item_completed(session_id, %{"type" => "contextCompaction"} = _item, state) do
+    {:messages,
+     [
+       session_update(session_id, %{
+         "sessionUpdate" => "agent_message_chunk",
+         "content" => %{"type" => "text", "text" => "Context compacted\n"}
+       })
+     ], state}
   end
 
   defp handle_item_completed(_session_id, _item, state), do: {:skip, state}
@@ -999,7 +1678,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
     ]
   end
 
-  defp replay_item(_session_id, _item), do: []
+  defp replay_item(session_id, item) do
+    case handle_item_completed(session_id, item, nil) do
+      {:messages, messages, _state} -> Enum.map(messages, &mark_replay/1)
+      {:skip, _state} -> []
+    end
+  end
 
   # State helpers
 
@@ -1007,6 +1691,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     %{
       id: session_id,
       model: state.model,
+      model_id: nil,
       mode_id: state.mode_id || @default_mode,
       reasoning_effort: state.reasoning_effort || @default_reasoning_effort,
       accumulated_text: [],
@@ -1018,15 +1703,18 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp session_from_result(session_id, result, state) do
     thread = result["thread"] || %{}
 
-    empty_session(session_id, state)
-    |> Map.merge(%{
-      id: session_id,
-      thread: thread,
-      cwd: result["cwd"] || thread["cwd"],
-      model: result["model"] || state.model,
-      reasoning_effort:
-        result["reasoningEffort"] || state.reasoning_effort || @default_reasoning_effort
-    })
+    session =
+      empty_session(session_id, state)
+      |> Map.merge(%{
+        id: session_id,
+        thread: thread,
+        cwd: result["cwd"] || thread["cwd"],
+        model: result["model"] || state.model,
+        reasoning_effort:
+          result["reasoningEffort"] || state.reasoning_effort || @default_reasoning_effort
+      })
+
+    Map.put(session, :model_id, model_id_for_session(session, state))
   end
 
   defp fetch_session_id(%{"sessionId" => session_id})
@@ -1084,8 +1772,16 @@ defmodule ExMCP.ACP.Adapters.Codex do
         "availableModes" => modes(),
         "currentModeId" => session[:mode_id] || state.mode_id || @default_mode
       },
+      "models" => models_for_session(session, state),
       "configOptions" => config_options_for_session(session, state),
       "_meta" => %{"ex_mcp" => %{"codex" => %{"thread" => result["thread"] || %{}}}}
+    }
+  end
+
+  defp session_config_result(session, state) do
+    %{
+      "models" => models_for_session(session, state),
+      "configOptions" => config_options_for_session(session, state)
     }
   end
 
@@ -1131,14 +1827,38 @@ defmodule ExMCP.ACP.Adapters.Codex do
     effort = session[:reasoning_effort] || state.reasoning_effort || @default_reasoning_effort
 
     []
-    |> maybe_add_model_option(model)
-    |> Kernel.++([reasoning_effort_option(effort)])
+    |> Kernel.++([mode_option(session[:mode_id] || state.mode_id || @default_mode)])
+    |> maybe_add_model_option(model, state)
+    |> maybe_add_reasoning_effort_option(effort, session, state)
   end
 
-  defp maybe_add_model_option(options, nil), do: options
-  defp maybe_add_model_option(options, ""), do: options
+  defp mode_option(current) do
+    %{
+      "id" => "mode",
+      "name" => "Approval Preset",
+      "type" => "select",
+      "category" => "mode",
+      "currentValue" => current || @default_mode,
+      "description" => "Choose an approval and sandboxing preset for your session",
+      "options" =>
+        Enum.map(modes(), fn mode ->
+          %{
+            "value" => mode["id"],
+            "name" => mode["name"],
+            "description" => mode["description"]
+          }
+        end)
+    }
+  end
 
-  defp maybe_add_model_option(options, model) do
+  defp maybe_add_model_option(options, nil, %{models: []}), do: options
+  defp maybe_add_model_option(options, "", %{models: []}), do: options
+
+  defp maybe_add_model_option(options, model, state) do
+    select_options =
+      model_select_options(model, state)
+      |> ensure_current_model_option(model)
+
     options ++
       [
         %{
@@ -1146,41 +1866,388 @@ defmodule ExMCP.ACP.Adapters.Codex do
           "name" => "Model",
           "type" => "select",
           "category" => "model",
+          "description" => "Choose which model Codex should use",
           "currentValue" => model,
-          "options" => [%{"value" => model, "name" => model}]
+          "options" => select_options
         }
       ]
   end
 
-  defp reasoning_effort_option(current) do
+  defp maybe_add_reasoning_effort_option(options, current, session, state) do
+    options ++ [reasoning_effort_option(current, session, state)]
+  end
+
+  defp reasoning_effort_option(current, session, state) do
+    efforts =
+      case current_model(session, state) do
+        nil -> []
+        model -> model_reasoning_efforts(model)
+      end
+      |> case do
+        [] ->
+          Enum.map(@reasoning_efforts, fn {value, name} ->
+            %{"value" => value, "name" => name}
+          end)
+
+        efforts ->
+          Enum.map(efforts, fn effort ->
+            %{
+              "value" => effort["value"],
+              "name" => effort["name"] || humanize_option(effort["value"]),
+              "description" => effort["description"]
+            }
+            |> reject_nil_values()
+          end)
+      end
+
     %{
       "id" => "reasoning_effort",
       "name" => "Reasoning Effort",
       "type" => "select",
       "category" => "thought_level",
       "currentValue" => current || @default_reasoning_effort,
-      "options" =>
-        Enum.map(@reasoning_efforts, fn {value, name} ->
-          %{"value" => value, "name" => name}
-        end)
+      "description" => "Choose how much reasoning effort the model should use",
+      "options" => efforts
     }
   end
 
-  defp config_update(%{"configId" => "model", "value" => value}) when is_binary(value) do
-    {:ok, %{wire: %{"model" => value}, session: %{model: value}}}
+  defp config_update(%{"configId" => "mode", "value" => value}, _session, _state)
+       when is_binary(value) do
+    case normalize_requested_mode(value) do
+      {:ok, mode_id} ->
+        {:ok,
+         %{
+           wire: merge_mode_wire_params(%{}, mode_id),
+           session: %{mode_id: mode_id},
+           state: %{mode_id: mode_id}
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
-  defp config_update(%{"configId" => "reasoning_effort", "value" => value})
+  defp config_update(%{"configId" => "model", "value" => value}, session, state)
        when is_binary(value) do
-    if value in Enum.map(@reasoning_efforts, &elem(&1, 0)) do
-      {:ok, %{wire: %{"effort" => value}, session: %{reasoning_effort: value}}}
+    case model_selection(value, session, state) do
+      {:ok, selection} ->
+        {:ok,
+         %{
+           wire: %{"model" => selection.model} |> maybe_put("effort", selection.effort),
+           session: selection.session,
+           state: %{
+             model: selection.model,
+             reasoning_effort: selection.effort || state.reasoning_effort
+           }
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp config_update(%{"configId" => "reasoning_effort", "value" => value}, session, state)
+       when is_binary(value) do
+    if reasoning_effort_supported?(value, session, state) do
+      {:ok,
+       %{
+         wire: %{"effort" => value},
+         session: %{
+           reasoning_effort: value,
+           model_id: model_id_for_session(%{session | reasoning_effort: value}, state)
+         },
+         state: %{reasoning_effort: value}
+       }}
     else
       {:error, "Unsupported reasoning_effort: #{value}"}
     end
   end
 
-  defp config_update(%{"configId" => id}), do: {:error, "Unsupported Codex config option: #{id}"}
-  defp config_update(_params), do: {:error, "configId and value are required"}
+  defp config_update(%{"configId" => id}, _session, _state),
+    do: {:error, "Unsupported Codex config option: #{id}"}
+
+  defp config_update(_params, _session, _state), do: {:error, "configId and value are required"}
+
+  # Model catalog mapping
+
+  defp normalize_model_catalog(models) when is_list(models) do
+    models
+    |> Enum.map(&normalize_model/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_model_catalog(_models), do: []
+
+  defp normalize_model(%{"id" => id} = model) when is_binary(id) and id != "" do
+    %{
+      "id" => id,
+      "model" => model["model"] || id,
+      "displayName" => model["displayName"] || model["display_name"] || id,
+      "description" => model["description"],
+      "hidden" => model["hidden"] || false,
+      "defaultReasoningEffort" =>
+        model["defaultReasoningEffort"] || model["default_reasoning_effort"],
+      "supportedReasoningEfforts" =>
+        model
+        |> Map.get("supportedReasoningEfforts", model["supported_reasoning_efforts"] || [])
+        |> normalize_reasoning_efforts()
+    }
+  end
+
+  defp normalize_model(_model), do: nil
+
+  defp normalize_reasoning_efforts(efforts) when is_list(efforts) do
+    efforts
+    |> Enum.map(&normalize_reasoning_effort/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_reasoning_efforts(_efforts), do: []
+
+  defp normalize_reasoning_effort(%{} = effort) do
+    value = effort["reasoningEffort"] || effort["effort"] || effort["value"]
+
+    if is_binary(value) and value != "" do
+      %{
+        "value" => value,
+        "name" => effort["name"] || humanize_option(value),
+        "description" => effort["description"]
+      }
+      |> reject_nil_values()
+    end
+  end
+
+  defp normalize_reasoning_effort(value) when is_binary(value) and value != "" do
+    %{"value" => value, "name" => humanize_option(value)}
+  end
+
+  defp normalize_reasoning_effort(_effort), do: nil
+
+  defp model_selection(model_id, session, state) when is_binary(model_id) do
+    model_id = String.trim(model_id)
+
+    if model_id == "",
+      do: {:error, "modelId is required"},
+      else: do_model_selection(model_id, session, state)
+  end
+
+  defp model_selection(_model_id, _session, _state), do: {:error, "modelId is required"}
+
+  defp do_model_selection(model_id, session, state) do
+    case parse_catalog_model_id(model_id) do
+      {catalog_id, effort} ->
+        case find_model_by_id(state.models, catalog_id) do
+          nil ->
+            raw_model_selection(model_id, session, state)
+
+          model ->
+            effort = supported_or_default_effort(model, effort, session, state)
+            catalog_model_selection(model, effort)
+        end
+
+      nil ->
+        case find_model_by_id(state.models, model_id) ||
+               find_model_by_wire(state.models, model_id) do
+          nil ->
+            raw_model_selection(model_id, session, state)
+
+          model ->
+            effort =
+              supported_or_default_effort(model, session[:reasoning_effort], session, state)
+
+            catalog_model_selection(model, effort)
+        end
+    end
+  end
+
+  defp catalog_model_selection(model, effort) do
+    wire_model = model["model"] || model["id"]
+    model_id = catalog_model_id(model, effort)
+
+    {:ok,
+     %{
+       model: wire_model,
+       effort: effort,
+       session: %{model: wire_model, model_id: model_id, reasoning_effort: effort}
+     }}
+  end
+
+  defp raw_model_selection(model_id, session, state) do
+    effort = session[:reasoning_effort] || state.reasoning_effort
+
+    {:ok,
+     %{
+       model: model_id,
+       effort: effort,
+       session: %{model: model_id, model_id: model_id, reasoning_effort: effort}
+     }}
+  end
+
+  defp parse_catalog_model_id(model_id) when is_binary(model_id) do
+    case String.split(model_id, "/", parts: 2) do
+      [catalog_id, effort] when catalog_id != "" and effort != "" -> {catalog_id, effort}
+      _ -> nil
+    end
+  end
+
+  defp parse_catalog_model_id(_model_id), do: nil
+
+  defp model_select_options(current_model, state) do
+    state.models
+    |> Enum.filter(&visible_model?(&1, current_model))
+    |> Enum.map(fn model ->
+      %{
+        "value" => model["id"],
+        "name" => model["displayName"] || model["id"],
+        "description" => model["description"]
+      }
+      |> reject_nil_values()
+    end)
+  end
+
+  defp ensure_current_model_option(options, nil), do: options
+  defp ensure_current_model_option(options, ""), do: options
+
+  defp ensure_current_model_option(options, current_model) do
+    if Enum.any?(options, &(&1["value"] == current_model)) do
+      options
+    else
+      [%{"value" => current_model, "name" => current_model} | options]
+    end
+  end
+
+  defp models_for_session(session, state) do
+    current = model_id_for_session(session, state)
+
+    available =
+      case state.models do
+        [] ->
+          if current, do: [%{"modelId" => current, "name" => current}], else: []
+
+        models ->
+          models
+          |> Enum.filter(&visible_model?(&1, session[:model] || state.model))
+          |> Enum.flat_map(&model_infos/1)
+          |> ensure_current_model_info(current)
+      end
+
+    %{
+      "currentModelId" => current,
+      "availableModels" => available
+    }
+    |> reject_nil_values()
+  end
+
+  defp model_infos(model) do
+    case model_reasoning_efforts(model) do
+      [] ->
+        [
+          %{
+            "modelId" => model["id"],
+            "name" => model["displayName"] || model["id"],
+            "description" => model["description"]
+          }
+          |> reject_nil_values()
+        ]
+
+      efforts ->
+        Enum.map(efforts, fn effort ->
+          %{
+            "modelId" => catalog_model_id(model, effort["value"]),
+            "name" => "#{model["displayName"] || model["id"]} (#{effort["value"]})",
+            "description" =>
+              [model["description"], effort["description"]]
+              |> Enum.reject(&is_nil/1)
+              |> Enum.join(" ")
+          }
+          |> reject_nil_values()
+        end)
+    end
+  end
+
+  defp ensure_current_model_info(options, nil), do: options
+
+  defp ensure_current_model_info(options, current) do
+    if Enum.any?(options, &(&1["modelId"] == current)) do
+      options
+    else
+      [%{"modelId" => current, "name" => current} | options]
+    end
+  end
+
+  defp model_id_for_session(session, state) do
+    session[:model_id] ||
+      case current_model(session, state) do
+        nil ->
+          session[:model] || state.model
+
+        model ->
+          catalog_model_id(
+            model,
+            supported_or_default_effort(model, session[:reasoning_effort], session, state)
+          )
+      end
+  end
+
+  defp catalog_model_id(model, nil), do: model["id"]
+  defp catalog_model_id(model, effort), do: "#{model["id"]}/#{effort}"
+
+  defp current_model(session, state) do
+    find_model_by_wire(state.models, session[:model] || state.model) ||
+      find_model_by_id(state.models, session[:model_id]) ||
+      session[:model_id]
+      |> parse_catalog_model_id()
+      |> case do
+        {catalog_id, _effort} -> find_model_by_id(state.models, catalog_id)
+        nil -> nil
+      end
+  end
+
+  defp find_model_by_id(models, id) when is_binary(id) do
+    Enum.find(models, &(&1["id"] == id))
+  end
+
+  defp find_model_by_id(_models, _id), do: nil
+
+  defp find_model_by_wire(models, model) when is_binary(model) do
+    Enum.find(models, &(&1["model"] == model || &1["id"] == model))
+  end
+
+  defp find_model_by_wire(_models, _model), do: nil
+
+  defp visible_model?(model, current_model) do
+    model["hidden"] != true || model["model"] == current_model || model["id"] == current_model
+  end
+
+  defp model_reasoning_efforts(model) do
+    model["supportedReasoningEfforts"] || []
+  end
+
+  defp supported_or_default_effort(model, requested, session, state) do
+    supported = model_reasoning_efforts(model)
+    values = Enum.map(supported, & &1["value"])
+    current = requested || session[:reasoning_effort] || state.reasoning_effort
+
+    cond do
+      current in values -> current
+      model["defaultReasoningEffort"] in values -> model["defaultReasoningEffort"]
+      values != [] -> hd(values)
+      true -> nil
+    end
+  end
+
+  defp reasoning_effort_supported?(value, session, state) do
+    case current_model(session, state) do
+      nil ->
+        value in Enum.map(@reasoning_efforts, &elem(&1, 0))
+
+      model ->
+        case model_reasoning_efforts(model) do
+          [] -> true
+          efforts -> value in Enum.map(efforts, & &1["value"])
+        end
+    end
+  end
 
   # Auth helpers
 
@@ -1571,6 +2638,22 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp extract_input_items(_), do: [%{"type" => "text", "text" => ""}]
 
+  defp slash_command([%{"type" => "text", "text" => text} | _]) when is_binary(text) do
+    case Regex.run(~r/^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+(.*))?$/s, String.trim_leading(text)) do
+      [_, name | rest] -> slash_command_result(name, List.first(rest) || "")
+      _ -> :error
+    end
+  end
+
+  defp slash_command(_items), do: :error
+
+  defp slash_command_result(name, rest) do
+    case Map.fetch(@slash_commands, name) do
+      {:ok, command} -> {:ok, {command, rest}}
+      :error -> :error
+    end
+  end
+
   defp format_uri_as_link(name, uri) when is_binary(name) and name != "", do: "[@#{name}](#{uri})"
 
   defp format_uri_as_link(_name, "file://" <> path = uri) do
@@ -1604,6 +2687,64 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "status" => "pending"
     })
   end
+
+  defp item_type(%{"type" => type}) when is_binary(type), do: type
+  defp item_type(_item), do: nil
+
+  defp item_id(params, item) do
+    params["callId"] || params["itemId"] || params["item_id"] || item["callId"] || item["id"]
+  end
+
+  defp normalize_tool_status(status, fallback) when is_binary(status) do
+    Map.get(@tool_status_aliases, status, fallback)
+  end
+
+  defp normalize_tool_status(_status, fallback), do: fallback
+
+  defp mcp_tool_title(%{"server" => server, "tool" => tool})
+       when is_binary(server) and is_binary(tool),
+       do: "#{server}:#{tool}"
+
+  defp mcp_tool_title(%{"tool" => tool}) when is_binary(tool), do: tool
+  defp mcp_tool_title(_item), do: "MCP Tool"
+
+  defp dynamic_tool_title(%{"namespace" => namespace, "tool" => tool})
+       when is_binary(namespace) and is_binary(tool),
+       do: "#{namespace}:#{tool}"
+
+  defp dynamic_tool_title(%{"tool" => tool}) when is_binary(tool), do: tool
+  defp dynamic_tool_title(_item), do: "Tool Call"
+
+  defp file_change_content(%{"path" => path, "newText" => new_text}) do
+    tool_diff_content(path, new_text || "")
+  end
+
+  defp file_change_content(%{"path" => path, "diff" => diff}) do
+    tool_diff_content(path, diff || "")
+  end
+
+  defp file_change_content(change), do: tool_text_content(format_raw(change))
+
+  defp dynamic_tool_content(items) when is_list(items) do
+    Enum.map(items, fn
+      %{"text" => text} -> tool_text_content(text)
+      %{"content" => %{"text" => text}} -> tool_text_content(text)
+      item -> tool_text_content(format_raw(item))
+    end)
+  end
+
+  defp dynamic_tool_content(value), do: [tool_text_content(format_raw(value))]
+
+  defp mark_replay(%{"params" => %{"update" => update}} = message) do
+    meta =
+      update
+      |> Map.get("_meta", %{})
+      |> Map.update("ex_mcp", %{"replay" => true}, &Map.put(&1, "replay", true))
+
+    put_in(message, ["params", "update"], Map.put(update, "_meta", meta))
+  end
+
+  defp mark_replay(message), do: message
 
   defp tool_text_content(text) do
     %{
@@ -1645,6 +2786,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp format_web_search_results(results) when is_binary(results), do: results
   defp format_web_search_results(nil), do: ""
   defp format_web_search_results(results), do: Jason.encode!(results)
+
+  defp format_raw(value) when is_binary(value), do: value
+  defp format_raw(nil), do: ""
+
+  defp format_raw(value) do
+    Jason.encode!(value)
+  rescue
+    _ -> inspect(value)
+  end
 
   defp session_update(session_id, update), do: AdapterEvents.session_update(session_id, update)
 

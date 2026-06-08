@@ -263,6 +263,16 @@ defmodule ExMCP.ACP.Protocol do
     )
   end
 
+  @doc "Encodes a `session/set_model` request."
+  @spec encode_session_set_model(String.t(), String.t()) :: map()
+  def encode_session_set_model(session_id, model_id) do
+    Envelope.request(
+      "session/set_model",
+      %{"sessionId" => session_id, "modelId" => model_id},
+      generate_id()
+    )
+  end
+
   @doc "Encodes a `session/set_config_option` request."
   @spec encode_session_set_config_option(String.t(), String.t(), any()) :: map()
   def encode_session_set_config_option(session_id, config_id, value) do

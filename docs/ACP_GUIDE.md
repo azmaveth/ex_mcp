@@ -475,17 +475,22 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 
 **Features:**
 - Initialize handshake with `post_connect/1`
-- Tool call lifecycle: creation, completion, output, patch events
+- Model catalog loading from Codex `model/list`, ACP `session/set_model`, and per-session `models` state
+- Tool call lifecycle: creation, completion, output, patch events, and current camelCase app-server item variants
 - Command execution streaming (started/outputDelta/completed)
-- Web search events
+- Web search, MCP tool, dynamic tool, file change, image generation, plan, status, goal, and compaction events
 - Session list/load/resume/close through Codex app-server thread APIs
-- Load-history replay from returned Codex turns when available
+- Load-history replay from returned Codex turns when available, including tool history
 - Image content, resource links, and embedded text resources in prompts
+- Codex slash commands in prompts: `/compact`, `/init`, `/review`, `/review-branch`, `/review-commit`, and `/logout`
 - ACP HTTP and stdio MCP server descriptors forwarded into Codex session config
 - Codex auth methods for ChatGPT login and explicit `CODEX_API_KEY`/`OPENAI_API_KEY` adapter env
+- Approval and MCP elicitation requests bridged through ACP `session/request_permission`
 
 **Modes:** read-only, auto, full-access. Legacy `suggest`, `auto-edit`, and `full-auto` aliases are still accepted by the adapter but are no longer advertised.
-**Config options:** `model` and `reasoning_effort` are returned with Codex session responses and updated with `thread/settings/update`.
+**Config options:** `mode`, `model`, and `reasoning_effort` are returned with Codex session responses and updated with `thread/settings/update`.
+
+**Unsupported Codex app-server requests:** Dynamic tool calls, request-user-input prompts, ChatGPT token refresh, and attestation generation are rejected explicitly because ACP does not provide compatible structured responses for those app-server request schemas.
 
 ### Pi (`ExMCP.ACP.Adapters.Pi`)
 

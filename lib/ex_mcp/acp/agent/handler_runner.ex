@@ -59,6 +59,10 @@ defmodule ExMCP.ACP.Agent.HandlerRunner do
     GenServer.cast(pid, {:callback, ref, :handle_set_mode, [session_id, mode_id, ctx]})
   end
 
+  def set_model(pid, ref, session_id, model_id, ctx) do
+    GenServer.cast(pid, {:callback, ref, :handle_set_model, [session_id, model_id, ctx]})
+  end
+
   def set_config_option(pid, ref, session_id, config_id, value, ctx) do
     GenServer.cast(
       pid,

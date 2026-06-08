@@ -86,6 +86,14 @@ defmodule ExMCP.ACP.Agent.Handler do
               state()
             ) :: callback_result()
 
+  @doc "Optionally switch a session model."
+  @callback handle_set_model(
+              session_id :: String.t(),
+              model_id :: String.t(),
+              context(),
+              state()
+            ) :: callback_result()
+
   @doc "Optionally update a session config option."
   @callback handle_set_config_option(
               session_id :: String.t(),
@@ -117,6 +125,7 @@ defmodule ExMCP.ACP.Agent.Handler do
     handle_close_session: 3,
     handle_delete_session: 3,
     handle_set_mode: 4,
+    handle_set_model: 4,
     handle_set_config_option: 5,
     handle_cancel: 3,
     terminate: 2

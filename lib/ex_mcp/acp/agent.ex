@@ -757,6 +757,25 @@ defmodule ExMCP.ACP.Agent do
     end
   end
 
+  defp handle_client_request("session/set_model", params, id, state) do
+    case params do
+      %{"sessionId" => session_id, "modelId" => model_id} ->
+        optional_callback(:set_model, :handle_set_model, id, state, fn ref, ctx ->
+          HandlerRunner.set_model(
+            state.handler_pid,
+            ref,
+            session_id,
+            model_id,
+            Map.put(ctx, :session_id, session_id)
+          )
+        end)
+
+      _ ->
+        msg = Protocol.encode_error(-32602, "Invalid session/set_model params", nil, id)
+        {:noreply, send_without_reply(msg, state)}
+    end
+  end
+
   defp handle_client_request("session/set_config_option", params, id, state) do
     case params do
       %{"sessionId" => session_id, "configId" => config_id, "value" => value} ->
@@ -802,6 +821,7 @@ defmodule ExMCP.ACP.Agent do
   defp callback_arity(:handle_close_session), do: 3
   defp callback_arity(:handle_delete_session), do: 3
   defp callback_arity(:handle_set_mode), do: 4
+  defp callback_arity(:handle_set_model), do: 4
   defp callback_arity(:handle_set_config_option), do: 5
   defp callback_arity(_), do: 3
 
@@ -814,6 +834,7 @@ defmodule ExMCP.ACP.Agent do
   defp method_name(:close_session), do: "session/close"
   defp method_name(:delete_session), do: "session/delete"
   defp method_name(:set_mode), do: "session/set_mode"
+  defp method_name(:set_model), do: "session/set_model"
   defp method_name(:set_config_option), do: "session/set_config_option"
 
   defp negotiate_protocol_version(version) when version in @supported_protocol_versions,
