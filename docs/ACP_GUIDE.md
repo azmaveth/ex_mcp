@@ -478,11 +478,14 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 - Tool call lifecycle: creation, completion, output, patch events
 - Command execution streaming (started/outputDelta/completed)
 - Web search events
-- Session resume via `session/load` → `thread/start` with threadId
-- Image content in prompts
+- Session list/load/resume/close through Codex app-server thread APIs
+- Load-history replay from returned Codex turns when available
+- Image content, resource links, and embedded text resources in prompts
+- ACP HTTP and stdio MCP server descriptors forwarded into Codex session config
+- Codex auth methods for ChatGPT login and explicit `CODEX_API_KEY`/`OPENAI_API_KEY` adapter env
 
-**Modes:** suggest, auto-edit, full-auto
-**Config options:** none advertised through stable runtime ACP config options. `model` is a startup adapter option.
+**Modes:** read-only, auto, full-access. Legacy `suggest`, `auto-edit`, and `full-auto` aliases are still accepted by the adapter but are no longer advertised.
+**Config options:** `model` and `reasoning_effort` are returned with Codex session responses and updated with `thread/settings/update`.
 
 ### Pi (`ExMCP.ACP.Adapters.Pi`)
 

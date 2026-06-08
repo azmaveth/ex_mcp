@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Claude SDK ACP adapter** — Added `ExMCP.ACP.Adapters.ClaudeSDK`, a new Claude Code adapter that uses the SDK-compatible stream-json control protocol with permission bridging, partial tool-call lifecycle events, SDK interrupt cancellation, runtime model/mode/effort config, richer status updates, plan updates, and SDK launch environment support.
 - **Claude SDK session store** — Added pure Elixir helpers for Claude Code's SDK session store, including SDK-compatible project key derivation, JSONL metadata extraction, sidechain filtering, transcript reads, ACP `session/list`, disk-backed `session/fork`, and validated `session/delete`.
+- **Codex ACP parity** — Expanded `ExMCP.ACP.Adapters.Codex` with app-server-backed `session/list`, `session/load`/resume replay, `session/close`, embedded-context prompts, ACP HTTP/stdio MCP descriptor forwarding, Codex auth methods, runtime model/reasoning config updates, and permission request bridging for Codex approval prompts.
 - **ACP session fork support** — Added unstable `session/fork` protocol/client/agent/adapter-bridge support, including `ExMCP.ACP.Client.fork_session/4`, native agent `handle_fork_session/3`, adapter `fork_session/2`, and capability auto-advertisement.
 - **Adapter bridge direct replies** — Adapter implementations can now return direct JSON-RPC results, emit ACP messages before direct replies, emit messages from notifications, or reply while also writing to the subprocess, so adapted agents can own session IDs, replay history, and runtime config responses without bridge-synthesized placeholders.
 - **Adapter auth method advertisement** — ACP adapters can implement `auth_methods/1` so the bridge initialize response reflects implemented authentication methods instead of always returning an empty list.
@@ -19,9 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Claude SDK session capabilities** — The new adapter now advertises live session setup/load/resume/fork/close plus disk-backed `session/list` and `session/delete` support for Claude Code's local SDK store. `session/load` now replays persisted JSONL transcript entries as ACP updates before returning.
 - **Claude SDK MCP capabilities** — Replaced legacy `"mcpServers" => true` advertisement with official ACP `mcpCapabilities` and ExMCP-only `_meta.ex_mcp.mcpCapabilities.native/beam` flags for native BEAM MCP transport negotiation.
 - **Claude SDK prompt lifecycle** — Claude SDK prompts now queue while another prompt is active and drain in FIFO order after the active prompt result; queued prompts for a cancelled/closed/deleted session receive cancelled prompt responses.
+- **Codex adapter session safety** — Codex prompt, cancel, mode, and config requests now require an explicit known `sessionId` instead of falling back to the last active thread. Codex-specific session metadata now lives under `_meta.ex_mcp.codex` instead of a non-spec root `metadata` field.
 
 ### Breaking Changes
 - **ACP adapter session listing callback** — Custom ACP adapters should implement `list_sessions(params, state)` instead of `list_sessions(state)`. The bridge now forwards decoded `session/list` params directly to adapters and no longer carries the legacy arity.
+- **Codex ACP mode IDs** — `ExMCP.ACP.Adapters.Codex` now advertises Zed-compatible mode IDs: `read-only`, `auto`, and `full-access`. The old `suggest`, `auto-edit`, and `full-auto` mode IDs remain accepted as aliases but are no longer advertised.
+- **Adapter authenticate behavior** — `AdapterBridge` no longer returns `{}` for `authenticate` when an adapter skips the request. Unimplemented auth now returns method-not-found or invalid-params, while adapters that write to their subprocess can produce the eventual auth response themselves.
 
 ## [0.12.0] - 2026-06-07
 

@@ -698,7 +698,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
   end
 
   describe "authenticate" do
-    test "returns empty OK for adapter without auth" do
+    test "returns method-not-found for adapter without auth" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
       _init = send_initialize(bridge)
 
@@ -714,7 +714,8 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
       msg = Jason.decode!(raw)
       assert msg["id"] == 60
-      assert msg["result"] == %{}
+      assert msg["error"]["code"] == -32601
+      assert msg["error"]["message"] == "Method not found: authenticate"
 
       AdapterBridge.close(bridge)
     end

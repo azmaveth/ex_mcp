@@ -368,8 +368,12 @@ defmodule ExMCP.ACP.AdapterBridge do
   # The Client sends these as normal JSON-RPC requests and expects matching responses.
 
   defp handle_outbound(%{"method" => "authenticate", "id" => id} = msg, _json, _from, state) do
-    # Delegate to adapter — it may have native auth support or handle internally
-    synthesize_after_translate(msg, id, state, fn _state -> %{} end)
+    # Delegate to adapter. If it writes to the native process, the adapter is
+    # responsible for producing the eventual ACP response from the native
+    # response. A plain `:skip` is not a successful authentication.
+    msg
+    |> translate_outbound_message(state)
+    |> handle_authenticate_translation_result(msg, id)
   end
 
   defp handle_outbound(%{"method" => "logout", "id" => id} = msg, _json, _from, state) do
@@ -629,6 +633,53 @@ defmodule ExMCP.ACP.AdapterBridge do
     |> translate_outbound_message(state)
     |> handle_translated_outbound(msg)
   end
+
+  defp handle_authenticate_translation_result({:ok, :skip, state}, _msg, id) do
+    if adapter_auth_methods(state) == [] do
+      {:reply, :ok, reject_unsupported_method(state, id, "authenticate")}
+    else
+      {:reply, :ok, synthesize_error(state, id, -32_602, "Unsupported authenticate request")}
+    end
+  end
+
+  defp handle_authenticate_translation_result({:ok, _sent, state}, _msg, _id),
+    do: {:reply, :ok, state}
+
+  defp handle_authenticate_translation_result({:reply, result, state}, _msg, id),
+    do: {:reply, :ok, synthesize_result(state, id, result || %{})}
+
+  defp handle_authenticate_translation_result({:messages, messages, state}, _msg, id) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    {:reply, :ok, synthesize_result(state, id, %{})}
+  end
+
+  defp handle_authenticate_translation_result(
+         {:messages_and_reply, messages, result, state},
+         _msg,
+         id
+       ) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    {:reply, :ok, synthesize_result(state, id, result || %{})}
+  end
+
+  defp handle_authenticate_translation_result(
+         {:reply_and_write, result, _delivery, state},
+         _msg,
+         id
+       ),
+       do: {:reply, :ok, synthesize_result(state, id, result || %{})}
+
+  defp handle_authenticate_translation_result(
+         {:messages_and_write, messages, _delivery, state},
+         _msg,
+         id
+       ) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    {:reply, :ok, synthesize_result(state, id, %{})}
+  end
+
+  defp handle_authenticate_translation_result({:error, reason, state}, msg, _id),
+    do: reply_translation_error(msg, reason, state)
 
   defp handle_adapter_fork_callback(msg, id, state) do
     params = Map.get(msg, "params", %{})
@@ -926,7 +977,7 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   @session_vars_to_clear ~w(
     CLAUDE_CODE_ENTRYPOINT CLAUDE_SESSION_ID CLAUDE_CONFIG_DIR
-    CLAUDECODE OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY
+    CLAUDECODE CODEX_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY
     GOOGLE_API_KEY PI_API_KEY
   )
 

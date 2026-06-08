@@ -543,7 +543,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
       {:messages, [new_resp], state} = Codex.translate_inbound(thread_response, state)
       assert new_resp["id"] == 10
       assert new_resp["result"]["sessionId"] == "thread-42"
-      assert state.thread_id == "thread-42"
+      assert state.sessions["thread-42"].id == "thread-42"
 
       # session/prompt → turn/start
       {:ok, turn_data, state} =
@@ -573,7 +573,7 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
         })
 
       {:skip, state} = Codex.translate_inbound(turn_response, state)
-      assert state.turn_id == "turn-99"
+      assert state.sessions["thread-42"].turn_id == "turn-99"
 
       # Simulate streaming text delta
       delta1 =
