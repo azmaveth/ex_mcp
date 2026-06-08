@@ -373,11 +373,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     mode = params["modeId"]
 
     if mode in @thinking_levels do
-      update =
-        AdapterEvents.session_update(params["sessionId"] || state.session_id, %{
-          "sessionUpdate" => "current_mode_update",
-          "currentModeId" => mode
-        })
+      update = AdapterEvents.current_mode_update(params["sessionId"] || state.session_id, mode)
 
       state = %{state | thinking_level: mode}
 
@@ -656,21 +652,18 @@ defmodule ExMCP.ACP.Adapters.Pi do
         queued = %{acp_id: acp_id, message: message, images: images, params: params}
         queue = :queue.in(queued, state.prompt_queue)
 
+        session_id = params["sessionId"] || state.session_id
+        queue_depth = :queue.len(queue)
+
         notice =
-          AdapterEvents.session_update(params["sessionId"] || state.session_id, %{
-            "sessionUpdate" => "agent_message_chunk",
-            "content" => %{
-              "type" => "text",
-              "text" => "Queued message (position #{:queue.len(queue)})."
-            }
-          })
+          AdapterEvents.agent_message_chunk(
+            session_id,
+            "Queued message (position #{queue_depth})."
+          )
 
         info =
-          AdapterEvents.session_update(params["sessionId"] || state.session_id, %{
-            "sessionUpdate" => "session_info_update",
-            "_meta" => %{
-              "ex_mcp" => %{"pi" => %{"queueDepth" => :queue.len(queue), "running" => true}}
-            }
+          AdapterEvents.session_info_update(session_id, %{
+            "_meta" => %{"ex_mcp" => %{"pi" => %{"queueDepth" => queue_depth, "running" => true}}}
           })
 
         {:messages, [notice, info], %{state | prompt_queue: queue}}
@@ -987,11 +980,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp prompt_message(_acp_id, session_id, text, state) do
-    message =
-      AdapterEvents.session_update(session_id, %{
-        "sessionUpdate" => "agent_message_chunk",
-        "content" => %{"type" => "text", "text" => text}
-      })
+    message = AdapterEvents.agent_message_chunk(session_id, text)
 
     {:messages_and_reply, [message], %{"stopReason" => "end_turn"}, state}
   end
@@ -1020,11 +1009,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
        ) do
     state = %{state | text_acc: [delta | state.text_acc]}
 
-    notification =
-      AdapterEvents.session_update(state.session_id, %{
-        "sessionUpdate" => "agent_message_chunk",
-        "content" => %{"type" => "text", "text" => delta}
-      })
+    notification = AdapterEvents.agent_message_chunk(state.session_id, delta)
 
     {:messages, [notification], state}
   end
@@ -1036,11 +1021,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
          },
          state
        ) do
-    notification =
-      AdapterEvents.session_update(state.session_id, %{
-        "sessionUpdate" => "agent_thought_chunk",
-        "content" => %{"type" => "text", "text" => delta}
-      })
+    notification = AdapterEvents.agent_thought_chunk(state.session_id, delta)
 
     {:messages, [notification], state}
   end
@@ -1083,16 +1064,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
       "rawInput" => args
     }
 
-    {session_update, current_tool_calls} =
+    {notification, current_tool_calls} =
       if Map.has_key?(state.current_tool_calls, tool_call_id) do
-        {Map.put(update, "sessionUpdate", "tool_call_update"),
+        {AdapterEvents.tool_call_update(state.session_id, compact(update)),
          Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
       else
-        {Map.put(update, "sessionUpdate", "tool_call"),
+        {AdapterEvents.tool_call(state.session_id, compact(update)),
          Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
       end
-
-    notification = AdapterEvents.session_update(state.session_id, compact(session_update))
 
     state = %{
       state
@@ -1114,8 +1093,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     text = Tools.result_text(event["partialResult"])
 
     notification =
-      AdapterEvents.session_update(state.session_id, %{
-        "sessionUpdate" => "tool_call_update",
+      AdapterEvents.tool_call_update(state.session_id, %{
         "toolCallId" => tool_call_id,
         "status" => "in_progress",
         "content" => Tools.text_content(text),
@@ -1138,8 +1116,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {content, state} = tool_result_content(tool_call_id, text, is_error, state)
 
     notification =
-      AdapterEvents.session_update(state.session_id, %{
-        "sessionUpdate" => "tool_call_update",
+      AdapterEvents.tool_call_update(state.session_id, %{
         "toolCallId" => tool_call_id,
         "status" => if(is_error, do: "failed", else: "completed"),
         "content" => content,
@@ -1195,8 +1172,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
               "auto_retry_end"
             ] do
     info =
-      AdapterEvents.session_update(state.session_id, %{
-        "sessionUpdate" => "session_info_update",
+      AdapterEvents.session_info_update(state.session_id, %{
         "_meta" => %{"ex_mcp" => %{"pi" => event}}
       })
 
@@ -1207,10 +1183,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
         text ->
           [
-            AdapterEvents.session_update(state.session_id, %{
-              "sessionUpdate" => "agent_message_chunk",
-              "content" => %{"type" => "text", "text" => text}
-            }),
+            AdapterEvents.agent_message_chunk(state.session_id, text),
             info
           ]
       end
@@ -1220,8 +1193,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp process_event(%{"type" => "extension_ui_request"} = event, state) do
     notification =
-      AdapterEvents.session_update(state.session_id, %{
-        "sessionUpdate" => "session_info_update",
+      AdapterEvents.session_info_update(state.session_id, %{
         "_meta" => %{"ex_mcp" => %{"pi" => %{"extensionUiRequest" => event}}}
       })
 
@@ -1477,20 +1449,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
         |> compact()
 
       if existing_status do
-        {AdapterEvents.session_update(
-           state.session_id,
-           Map.put(update, "sessionUpdate", "tool_call_update")
-         ), state}
+        {AdapterEvents.tool_call_update(state.session_id, update), state}
       else
         state = %{
           state
           | current_tool_calls: Map.put(state.current_tool_calls, tool_call_id, "pending")
         }
 
-        {AdapterEvents.session_update(
-           state.session_id,
-           Map.put(update, "sessionUpdate", "tool_call")
-         ), state}
+        {AdapterEvents.tool_call(state.session_id, update), state}
       end
     else
       {nil, state}
@@ -1584,16 +1550,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
           text = Tools.result_text(message)
 
           [
-            AdapterEvents.session_update(session_id, %{
-              "sessionUpdate" => "tool_call",
+            AdapterEvents.tool_call(session_id, %{
               "toolCallId" => tool_call_id,
               "title" => tool_name,
               "kind" => Tools.kind(tool_name),
               "status" => "completed",
               "rawOutput" => message
             }),
-            AdapterEvents.session_update(session_id, %{
-              "sessionUpdate" => "tool_call_update",
+            AdapterEvents.tool_call_update(session_id, %{
               "toolCallId" => tool_call_id,
               "status" => if(message["isError"], do: "failed", else: "completed"),
               "content" => Tools.text_content(text),
@@ -1612,8 +1576,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp replay_text_update(session_id, type, text) do
     [
-      AdapterEvents.session_update(session_id, %{
-        "sessionUpdate" => type,
+      AdapterEvents.session_update_type(session_id, type, %{
         "content" => %{"type" => "text", "text" => text}
       })
     ]
@@ -1642,19 +1605,15 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
         write_data = if data == :pending, do: nil, else: data
 
+        queue_depth = :queue.len(rest)
+
         messages = [
-          AdapterEvents.session_update(state.session_id, %{
-            "sessionUpdate" => "agent_message_chunk",
-            "content" => %{
-              "type" => "text",
-              "text" => "Starting queued message. (#{:queue.len(rest)} remaining)"
-            }
-          }),
-          AdapterEvents.session_update(state.session_id, %{
-            "sessionUpdate" => "session_info_update",
-            "_meta" => %{
-              "ex_mcp" => %{"pi" => %{"queueDepth" => :queue.len(rest), "running" => true}}
-            }
+          AdapterEvents.agent_message_chunk(
+            state.session_id,
+            "Starting queued message. (#{queue_depth} remaining)"
+          ),
+          AdapterEvents.session_info_update(state.session_id, %{
+            "_meta" => %{"ex_mcp" => %{"pi" => %{"queueDepth" => queue_depth, "running" => true}}}
           })
         ]
 
@@ -1685,12 +1644,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp queue_cleared_messages(state, had_queued) do
     if had_queued do
       [
-        AdapterEvents.session_update(state.session_id, %{
-          "sessionUpdate" => "agent_message_chunk",
-          "content" => %{"type" => "text", "text" => "Cleared queued prompts."}
-        }),
-        AdapterEvents.session_update(state.session_id, %{
-          "sessionUpdate" => "session_info_update",
+        AdapterEvents.agent_message_chunk(state.session_id, "Cleared queued prompts."),
+        AdapterEvents.session_info_update(state.session_id, %{
           "_meta" => %{
             "ex_mcp" => %{
               "pi" => %{"queueDepth" => 0, "running" => not is_nil(state.pending_prompt)}
@@ -1727,22 +1682,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
     text = slash_result_text(group)
     path = get_in(group.responses, [:result, "path"])
 
-    text_message =
-      AdapterEvents.session_update(session_id, %{
-        "sessionUpdate" => "agent_message_chunk",
-        "content" => %{"type" => "text", "text" => text}
-      })
+    text_message = AdapterEvents.agent_message_chunk(session_id, text)
 
     link_message =
       if is_binary(path) and path != "" do
-        AdapterEvents.session_update(session_id, %{
-          "sessionUpdate" => "agent_message_chunk",
-          "content" => %{
-            "type" => "resource_link",
-            "uri" => "file://#{path}",
-            "name" => Path.basename(path)
-          }
-        })
+        AdapterEvents.resource_link_chunk(session_id, "file://#{path}", name: Path.basename(path))
       end
 
     [text_message, link_message] |> Enum.reject(&is_nil/1)
@@ -1750,10 +1694,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp slash_result_messages(group, state) do
     [
-      AdapterEvents.session_update(group.session_id || state.session_id, %{
-        "sessionUpdate" => "agent_message_chunk",
-        "content" => %{"type" => "text", "text" => slash_result_text(group)}
-      })
+      AdapterEvents.agent_message_chunk(
+        group.session_id || state.session_id,
+        slash_result_text(group)
+      )
     ]
   end
 
@@ -1828,8 +1772,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     if is_binary(title) and title != "" do
       [
-        AdapterEvents.session_update(session_id, %{
-          "sessionUpdate" => "session_info_update",
+        AdapterEvents.session_info_update(session_id, %{
           "title" => title,
           "updatedAt" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
         })
@@ -1940,21 +1883,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
         {[], %{state | startup_sent?: true}}
 
       text ->
-        message =
-          AdapterEvents.session_update(session_id, %{
-            "sessionUpdate" => "agent_message_chunk",
-            "content" => %{"type" => "text", "text" => text}
-          })
+        message = AdapterEvents.agent_message_chunk(session_id, text)
 
         {[message], %{state | startup_sent?: true}}
     end
   end
 
   defp available_commands_update(session_id, commands) do
-    AdapterEvents.session_update(session_id, %{
-      "sessionUpdate" => "available_commands_update",
-      "availableCommands" => commands
-    })
+    AdapterEvents.available_commands_update(session_id, commands)
   end
 
   defp empty_models?(%{"models" => models}) when is_list(models), do: models == []

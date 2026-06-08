@@ -122,7 +122,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   def reduce_message(%{"type" => "tool_progress"} = event, state) do
     update =
       %{
-        "sessionUpdate" => "tool_call_update",
         "toolCallId" => event["tool_use_id"],
         "status" => "in_progress",
         "_meta" => %{
@@ -135,22 +134,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       }
       |> compact()
 
-    {[session_update(session_id(state), update)], [], state}
+    {[AdapterEvents.tool_call_update(session_id(state), update)], [], state}
   end
 
   def reduce_message(%{"type" => "tool_use_summary"} = event, state) do
-    update =
-      %{
-        "sessionUpdate" => "session_info_update",
-        "_meta" => %{"ex_mcp.claude_sdk" => %{"toolUseSummary" => event["summary"]}}
-      }
+    update = %{"_meta" => %{"ex_mcp.claude_sdk" => %{"toolUseSummary" => event["summary"]}}}
 
-    {[session_update(session_id(state), update)], [], state}
+    {[AdapterEvents.session_info_update(session_id(state), update)], [], state}
   end
 
   def reduce_message(%{"type" => "rate_limit_event"} = event, state) do
     update = %{
-      "sessionUpdate" => "session_info_update",
       "_meta" => %{
         "ex_mcp.claude_sdk" => %{
           "status" => "rate_limited",
@@ -159,7 +153,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       }
     }
 
-    {[session_update(session_id(state), update)], [], state}
+    {[AdapterEvents.session_info_update(session_id(state), update)], [], state}
   end
 
   def reduce_message(_event, state), do: {[], [], state}
@@ -235,11 +229,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     |> get_in(["message", "content"])
     |> replay_content_blocks()
     |> Enum.map(fn content ->
-      session_update(session_id(state), %{
-        "sessionUpdate" => "user_message_chunk",
-        "content" => content,
-        "_meta" => replay_meta(event)
-      })
+      AdapterEvents.content_chunk(session_id(state), "user_message_chunk", content,
+        meta: replay_meta(event)
+      )
     end)
   end
 
@@ -383,12 +375,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       %{"type" => "text_delta", "text" => text} ->
         state = %{state | text_acc: [text | state.text_acc]}
 
-        update = %{
-          "sessionUpdate" => "agent_message_chunk",
-          "content" => %{"type" => "text", "text" => text}
-        }
-
-        {[session_update(session_id(state), update)], [], state}
+        {[AdapterEvents.agent_message_chunk(session_id(state), text)], [], state}
 
       %{"type" => "thinking_delta", "thinking" => thinking} ->
         state = %{
@@ -397,12 +384,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
             current_block_type: "thinking"
         }
 
-        update = %{
-          "sessionUpdate" => "agent_thought_chunk",
-          "content" => %{"type" => "text", "text" => thinking}
-        }
-
-        {[session_update(session_id(state), update)], [], state}
+        {[AdapterEvents.agent_thought_chunk(session_id(state), thinking)], [], state}
 
       %{"type" => "input_json_delta"} ->
         {[], [], state}
@@ -440,12 +422,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         state
       end
 
-    update = %{
-      "sessionUpdate" => "agent_message_chunk",
-      "content" => %{"type" => "text", "text" => text}
-    }
-
-    {[session_update(session_id(state), update)], [], state}
+    {[AdapterEvents.agent_message_chunk(session_id(state), text)], [], state}
   end
 
   defp handle_assistant_block(%{"type" => "thinking", "thinking" => thinking}, state) do
@@ -488,7 +465,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
         update =
           %{
-            "sessionUpdate" => "tool_call_update",
             "toolCallId" => result["tool_use_id"],
             "status" => if(is_error, do: "failed", else: "completed"),
             "content" => parse_tool_result_content(result["content"]),
@@ -497,7 +473,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
           }
           |> compact()
 
-        session_update(session_id(state), update)
+        AdapterEvents.tool_call_update(session_id(state), update)
       end)
 
     {messages, [], state}
@@ -535,8 +511,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     messages =
       [
-        session_update(session_id, %{
-          "sessionUpdate" => "session_info_update",
+        AdapterEvents.session_info_update(session_id, %{
           "_meta" => %{"ex_mcp.claude_sdk" => %{"status" => "completed"}}
         })
       ]
@@ -573,8 +548,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     updates =
       [
-        session_update(session_id(state), %{
-          "sessionUpdate" => "session_info_update",
+        AdapterEvents.session_info_update(session_id(state), %{
           "_meta" => %{
             "ex_mcp.claude_sdk" =>
               %{
@@ -601,7 +575,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     update =
       %{
-        "sessionUpdate" => "session_info_update",
         "_meta" => %{
           "ex_mcp.claude_sdk" =>
             %{
@@ -614,19 +587,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       }
 
     messages =
-      [session_update(session_id(state), update), current_mode_update(state)]
+      [AdapterEvents.session_info_update(session_id(state), update), current_mode_update(state)]
       |> Enum.reject(&is_nil/1)
 
     {messages, [], state}
   end
 
   defp handle_system(%{"subtype" => "session_state_changed"} = event, state) do
-    update = %{
-      "sessionUpdate" => "session_info_update",
-      "_meta" => %{"ex_mcp.claude_sdk" => %{"sessionState" => event["state"]}}
-    }
+    update = %{"_meta" => %{"ex_mcp.claude_sdk" => %{"sessionState" => event["state"]}}}
 
-    {[session_update(session_id(state), update)], [], state}
+    {[AdapterEvents.session_info_update(session_id(state), update)], [], state}
   end
 
   defp handle_system(%{"subtype" => "commands_changed", "commands" => commands}, state) do
@@ -647,7 +617,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp handle_system(%{"subtype" => "permission_denied"} = event, state) do
     update =
       %{
-        "sessionUpdate" => "tool_call_update",
         "toolCallId" => event["tool_use_id"],
         "status" => "failed",
         "rawOutput" => event["message"],
@@ -662,17 +631,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         }
       }
 
-    {[session_update(session_id(state), update)], [], state}
+    {[AdapterEvents.tool_call_update(session_id(state), update)], [], state}
   end
 
   defp handle_system(%{"subtype" => subtype} = event, state) do
-    update =
-      %{
-        "sessionUpdate" => "session_info_update",
-        "_meta" => %{"ex_mcp.claude_sdk" => %{"systemSubtype" => subtype, "event" => event}}
-      }
+    update = %{
+      "_meta" => %{"ex_mcp.claude_sdk" => %{"systemSubtype" => subtype, "event" => event}}
+    }
 
-    {[session_update(session_id(state), update)], [], state}
+    {[AdapterEvents.session_info_update(session_id(state), update)], [], state}
   end
 
   defp emit_tool_pending(%{"id" => id, "name" => name, "input" => input}, state) do
@@ -684,7 +651,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       update =
         info
         |> Map.take(["title", "kind", "content", "locations", "rawInput", "_meta"])
-        |> Map.put("sessionUpdate", "tool_call")
         |> Map.put("toolCallId", id)
         |> Map.put("status", "pending")
         |> compact()
@@ -694,7 +660,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         | tool_calls: Map.put(state.tool_calls, id, %{name: name, input: input || %{}})
       }
 
-      {[session_update(session_id(state), update)], state}
+      {[AdapterEvents.tool_call(session_id(state), update)], state}
     end
   end
 
@@ -706,12 +672,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     update =
       info
       |> Map.take(["title", "kind", "content", "locations", "rawInput", "_meta"])
-      |> Map.put("sessionUpdate", "tool_call_update")
       |> Map.put("toolCallId", id)
       |> Map.put("status", "in_progress")
       |> compact()
 
-    {[session_update(session_id(state), update)], state}
+    {[AdapterEvents.tool_call_update(session_id(state), update)], state}
   end
 
   defp emit_tool_update(_block, state), do: {[], state}
@@ -793,10 +758,10 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp current_mode_update(state) do
-    session_update(session_id(state), %{
-      "sessionUpdate" => "current_mode_update",
-      "currentModeId" => permission_mode_to_mode(state.permission_mode || "default")
-    })
+    AdapterEvents.current_mode_update(
+      session_id(state),
+      permission_mode_to_mode(state.permission_mode || "default")
+    )
   end
 
   defp config_option_update(state) do
@@ -809,10 +774,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp available_commands_update(_state, []), do: nil
 
   defp available_commands_update(state, commands) do
-    session_update(session_id(state), %{
-      "sessionUpdate" => "available_commands_update",
-      "availableCommands" => normalize_commands(commands)
-    })
+    AdapterEvents.available_commands_update(session_id(state), normalize_commands(commands))
   end
 
   defp normalize_commands(commands) do
