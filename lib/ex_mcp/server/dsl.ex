@@ -484,7 +484,12 @@ defmodule ExMCP.Server.DSL do
 
             case Result.normalize_tool(result, state) do
               {:ok, response, new_state} ->
-                case ExMCP.Server.DSL.validate_tool_response(response, output_schema) do
+                validation =
+                  response
+                  |> ExMCP.Server.DSL.validate_tool_response(output_schema)
+                  |> __ex_mcp_dsl_widen_validation__()
+
+                case validation do
                   {:ok, response} -> {:ok, response, new_state}
                   {:error, reason} -> {:ok, Result.error(reason), new_state}
                 end
@@ -494,6 +499,8 @@ defmodule ExMCP.Server.DSL do
             {:ok, Result.error("Unknown tool: #{name}"), state}
         end
       end
+
+      defp __ex_mcp_dsl_widen_validation__(validation), do: validation
     end
   end
 
