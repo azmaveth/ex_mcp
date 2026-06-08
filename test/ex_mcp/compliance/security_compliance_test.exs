@@ -159,6 +159,13 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
       assert :ok = Security.validate_request(headers, config)
     end
 
+    test "validates case-insensitive charlist request headers" do
+      headers = [{~c"Origin", ~c"https://example.com"}, {~c"Host", ~c"api.example.com"}]
+      config = %{validate_origin: true, allowed_origins: ["https://example.com"]}
+
+      assert :ok = Security.validate_request(headers, config)
+    end
+
     test "fails when origin header missing and validation enabled" do
       # MCP spec: missing origin should be rejected when validation enabled
       headers = [{"host", "api.example.com"}]

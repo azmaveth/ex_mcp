@@ -16,6 +16,8 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
       {:ok, auth_metadata} = Authorization.discover_server_metadata(auth_server.issuer)
   """
 
+  alias ExMCP.Internal.Headers
+
   @type authorization_server :: %{
           issuer: String.t(),
           metadata_endpoint: String.t() | nil,
@@ -168,11 +170,14 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
   end
 
   defp find_www_authenticate_header(headers) do
-    case List.keyfind(headers, ~c"www-authenticate", 0) do
-      {_, value} ->
-        {:ok, List.to_string(value)}
+    case Headers.get(headers, "www-authenticate") do
+      value when is_binary(value) ->
+        {:ok, value}
 
       nil ->
+        :error
+
+      _ ->
         :error
     end
   end

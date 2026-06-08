@@ -6,6 +6,8 @@ defmodule ExMCP.Security.Validation do
   incoming requests and security configurations meet the required policies.
   """
 
+  alias ExMCP.Internal.Headers
+
   @typedoc """
   Security configuration map for transport-level security.
 
@@ -103,7 +105,7 @@ defmodule ExMCP.Security.Validation do
   end
 
   defp validate_request_origin_header(headers, %{validate_origin: true} = config) do
-    case find_header(headers, "origin") do
+    case Headers.get(headers, "origin") do
       nil ->
         # Origin header is required when origin validation is enabled
         {:error, :origin_header_required}
@@ -117,7 +119,7 @@ defmodule ExMCP.Security.Validation do
   defp validate_request_origin_header(_headers, _config), do: :ok
 
   defp validate_host_header(headers, config) do
-    case find_header(headers, "host") do
+    case Headers.get(headers, "host") do
       nil ->
         {:error, :host_header_required}
 
@@ -144,13 +146,13 @@ defmodule ExMCP.Security.Validation do
 
   defp validate_https_requirement(headers, %{enforce_https: true}) do
     # Check if this is an HTTPS request
-    case find_header(headers, "x-forwarded-proto") do
+    case Headers.get(headers, "x-forwarded-proto") do
       "https" ->
         :ok
 
       nil ->
         # If no x-forwarded-proto, check if this is localhost
-        case find_header(headers, "host") do
+        case Headers.get(headers, "host") do
           host when host in ["localhost", "127.0.0.1", "[::1]"] -> :ok
           _ -> {:error, :https_required}
         end
@@ -161,25 +163,6 @@ defmodule ExMCP.Security.Validation do
   end
 
   defp validate_https_requirement(_headers, _config), do: :ok
-
-  defp find_header(headers, name) do
-    name_lower = String.downcase(name)
-
-    Enum.find_value(headers, fn
-      {key, value} when is_binary(key) ->
-        if String.downcase(key) == name_lower do
-          value
-        end
-
-      {key, value} when is_list(key) ->
-        if String.downcase(to_string(key)) == name_lower do
-          to_string(value)
-        end
-
-      _ ->
-        nil
-    end)
-  end
 
   @doc """
   Validates TLS/SSL configuration.

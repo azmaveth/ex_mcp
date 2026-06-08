@@ -20,6 +20,19 @@ defmodule ExMCP.Authorization.IncrementalScopeTest do
       assert retry_info.current_scopes == ["mcp:tools:list"]
     end
 
+    test "extracts required scopes from case-insensitive charlist WWW-Authenticate header" do
+      headers = [
+        {~c"WWW-Authenticate", ~c"Bearer scope=\"mcp:write\""}
+      ]
+
+      state = %{scopes: "mcp:read"}
+
+      assert {:retry, retry_info} = ErrorHandler.handle_auth_error(403, headers, "", state)
+      assert retry_info.action == :scope_upgrade
+      assert retry_info.required_scopes == ["mcp:write"]
+      assert retry_info.current_scopes == ["mcp:read"]
+    end
+
     test "extracts required scopes from error body with insufficient_scope" do
       headers = [{"content-type", "application/json"}]
 

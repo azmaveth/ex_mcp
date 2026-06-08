@@ -79,7 +79,7 @@ defmodule ExMCP.Transport.HTTP do
   require Logger
 
   alias ExMCP.Authorization.FullOAuthFlow
-  alias ExMCP.Internal.{Security, SecurityConfig}
+  alias ExMCP.Internal.{Headers, Security, SecurityConfig}
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
 
@@ -437,8 +437,8 @@ defmodule ExMCP.Transport.HTTP do
 
   defp extract_auth_status({status_line, headers, _body}) do
     case status_line do
-      {_, 401, _} -> {:unauthorized, find_header(headers, "www-authenticate")}
-      {_, 403, _} -> {:forbidden, find_header(headers, "www-authenticate")}
+      {_, 401, _} -> {:unauthorized, Headers.get(headers, "www-authenticate")}
+      {_, 403, _} -> {:forbidden, Headers.get(headers, "www-authenticate")}
       _ -> :ok
     end
   end
@@ -502,7 +502,7 @@ defmodule ExMCP.Transport.HTTP do
   # Attempt OAuth discovery and retry if auth_config is available
   defp maybe_oauth_retry(headers, original_body, %{auth_config: nil} = state) do
     # No explicit auth config — try full OAuth flow if this looks like an OAuth challenge
-    www_auth = find_header(headers, "www-authenticate")
+    www_auth = Headers.get(headers, "www-authenticate")
 
     if www_auth && String.starts_with?(www_auth, "Bearer") do
       run_full_oauth_flow(www_auth, original_body, state)
@@ -514,7 +514,7 @@ defmodule ExMCP.Transport.HTTP do
   defp maybe_oauth_retry(headers, original_body, %{access_token: token} = state)
        when is_binary(token) and byte_size(token) > 0 do
     # Already have a token but got 401/403 — check if this is a scope step-up
-    www_auth = find_header(headers, "www-authenticate") || ""
+    www_auth = Headers.get(headers, "www-authenticate") || ""
 
     if String.contains?(www_auth, "insufficient_scope") do
       # Scope step-up: clear token and re-auth with new scope requirements
@@ -531,7 +531,7 @@ defmodule ExMCP.Transport.HTTP do
   defp maybe_oauth_retry(headers, original_body, state) do
     # Have auth_config with credentials — use FullOAuthFlow which handles
     # PRM discovery with header fallback and pre-existing credentials
-    www_auth = find_header(headers, "www-authenticate")
+    www_auth = Headers.get(headers, "www-authenticate")
     resource_url = build_url(state, "")
 
     config =
@@ -614,7 +614,7 @@ defmodule ExMCP.Transport.HTTP do
 
   defp put_bearer_header(headers, token) do
     headers
-    |> Enum.reject(fn {k, _} -> String.downcase(k) == "authorization" end)
+    |> Headers.delete("authorization")
     |> List.insert_at(0, {"Authorization", "Bearer #{token}"})
   end
 
@@ -761,7 +761,7 @@ defmodule ExMCP.Transport.HTTP do
 
       {_, 401, _} ->
         # Extract WWW-Authenticate header for OAuth discovery hints
-        www_auth = find_header(headers, "www-authenticate")
+        www_auth = Headers.get(headers, "www-authenticate")
         {:error, {:unauthorized, 401, body_binary, www_auth}}
 
       {_, status, _} ->
@@ -774,7 +774,7 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp handle_non_sse_response(body, headers, state) do
-    content_type = find_header(headers, "content-type") || ""
+    content_type = Headers.get(headers, "content-type") || ""
 
     if String.contains?(content_type, "text/event-stream") do
       handle_sse_post_response(body, state)
@@ -1024,7 +1024,7 @@ defmodule ExMCP.Transport.HTTP do
   # Private functions
 
   defp maybe_update_session_id(headers, state) do
-    case find_header(headers, @session_header) do
+    case Headers.get(headers, @session_header) do
       nil -> state
       session_id -> %{state | session_id: session_id}
     end
@@ -1308,24 +1308,5 @@ defmodule ExMCP.Transport.HTTP do
 
   defp build_ssl_options_from_state(_state) do
     build_ssl_options(%{})
-  end
-
-  defp find_header(headers, name) do
-    name_lower = String.downcase(name)
-
-    Enum.find_value(headers, fn
-      {key, value} when is_list(key) ->
-        if String.downcase(to_string(key)) == name_lower do
-          to_string(value)
-        end
-
-      {key, value} when is_binary(key) ->
-        if String.downcase(key) == name_lower do
-          value
-        end
-
-      _ ->
-        nil
-    end)
   end
 end

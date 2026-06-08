@@ -207,6 +207,16 @@ defmodule ExMCP.Authorization.ServerGuardTest do
       assert ServerGuard.extract_bearer_token(headers) == {:ok, "my-secret-token"}
     end
 
+    test "extracts token from charlist header key and value" do
+      headers = [{~c"authorization", ~c"Bearer my-secret-token"}]
+      assert ServerGuard.extract_bearer_token(headers) == {:ok, "my-secret-token"}
+    end
+
+    test "extracts token from atom-keyed map" do
+      headers = %{authorization: "Bearer my-secret-token"}
+      assert ServerGuard.extract_bearer_token(headers) == {:ok, "my-secret-token"}
+    end
+
     test "returns error for missing header" do
       headers = []
       assert ServerGuard.extract_bearer_token(headers) == {:error, :missing_token}

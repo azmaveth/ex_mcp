@@ -9,6 +9,8 @@ defmodule ExMCP.Authorization.ErrorHandler do
 
   require Logger
 
+  alias ExMCP.Internal.Headers
+
   @doc """
   Handles HTTP authorization errors according to MCP specification.
 
@@ -143,11 +145,14 @@ defmodule ExMCP.Authorization.ErrorHandler do
   end
 
   defp extract_www_authenticate(headers) do
-    case List.keyfind(headers, "www-authenticate", 0) do
-      {_, value} ->
+    case Headers.get(headers, "www-authenticate") do
+      value when is_binary(value) ->
         parse_www_authenticate(value)
 
       nil ->
+        :error
+
+      _ ->
         :error
     end
   end

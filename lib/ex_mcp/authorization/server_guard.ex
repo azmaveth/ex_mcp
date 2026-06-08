@@ -43,6 +43,7 @@ defmodule ExMCP.Authorization.ServerGuard do
   alias ExMCP.Authorization
   alias ExMCP.Authorization.ScopeValidator
   alias ExMCP.FeatureFlags
+  alias ExMCP.Internal.Headers
 
   @type auth_config :: %{
           required(:introspection_endpoint) => String.t(),
@@ -192,7 +193,7 @@ defmodule ExMCP.Authorization.ServerGuard do
   """
   @spec extract_bearer_token(map() | list()) :: {:ok, String.t()} | {:error, :missing_token}
   def extract_bearer_token(headers) do
-    auth_header = find_header(headers, "authorization")
+    auth_header = Headers.get(headers, "authorization")
 
     case auth_header do
       "Bearer " <> token ->
@@ -201,35 +202,6 @@ defmodule ExMCP.Authorization.ServerGuard do
       _ ->
         {:error, :missing_token}
     end
-  end
-
-  defp find_header(headers, key) when is_list(headers) do
-    # Case-insensitive header lookup
-    key_lower = String.downcase(key)
-
-    Enum.find_value(headers, nil, fn
-      {header_key, value} when is_binary(header_key) ->
-        if String.downcase(header_key) == key_lower, do: value, else: nil
-
-      _ ->
-        nil
-    end)
-  end
-
-  defp find_header(headers, key) when is_map(headers) do
-    # Case-insensitive header lookup for maps
-    key_lower = String.downcase(key)
-
-    Enum.find_value(headers, nil, fn
-      {header_key, value} when is_binary(header_key) ->
-        if String.downcase(header_key) == key_lower, do: value, else: nil
-
-      {header_key, value} when is_atom(header_key) ->
-        if String.downcase(Atom.to_string(header_key)) == key_lower, do: value, else: nil
-
-      _ ->
-        nil
-    end)
   end
 
   defp validate_token(token, config) do
