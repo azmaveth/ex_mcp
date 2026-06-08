@@ -193,7 +193,6 @@ defmodule ExMCP.Server.Tools.Helpers do
 
   defp get_data_type(data) when is_integer(data), do: "integer"
   defp get_data_type(data) when is_float(data), do: "number"
-  defp get_data_type(data) when is_number(data), do: "number"
   defp get_data_type(data) when is_binary(data), do: "string"
   defp get_data_type(data) when is_boolean(data), do: "boolean"
   defp get_data_type(data) when is_list(data), do: "array"

@@ -304,7 +304,6 @@ defmodule ExMcp.Test.Support.Transports.Http do
   """
 
   use GenServer
-  require Logger
 
   alias ExMCP.Transport.SecurityGuard
 
@@ -504,7 +503,6 @@ defmodule ExMcp.Test.Support.Transports.Stdio do
   """
 
   use GenServer
-  require Logger
 
   alias ExMCP.Transport.SecurityGuard
 
@@ -654,7 +652,6 @@ defmodule ExMcp.Test.Support.Transports.Beam do
   """
 
   use GenServer
-  require Logger
 
   alias ExMCP.Transport.SecurityGuard
 

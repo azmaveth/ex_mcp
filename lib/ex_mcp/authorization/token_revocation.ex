@@ -24,8 +24,6 @@ defmodule ExMCP.Authorization.TokenRevocation do
       )
   """
 
-  require Logger
-
   @type revocation_opts :: [
           token_type_hint: String.t(),
           client_id: String.t(),

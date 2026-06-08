@@ -757,7 +757,55 @@ defmodule ExMCP.Server.Handler do
   end
 
   @doc false
-  defmacro __before_compile__(_env) do
+  defmacro __before_compile__(env) do
+    defaults =
+      [
+        unless Module.defines?(env.module, {:handle_initialize, 2}, :def) do
+          quote do
+            @impl ExMCP.Server.Handler
+            def handle_initialize(_params, state) do
+              {:ok,
+               %{
+                 protocolVersion: "2025-03-26",
+                 serverInfo: %{name: "ex_mcp", version: "0.1.0"},
+                 capabilities: %{}
+               }, state}
+            end
+          end
+        end,
+        unless Module.defines?(env.module, {:handle_list_tools, 2}, :def) do
+          quote do
+            @impl ExMCP.Server.Handler
+            def handle_list_tools(_cursor, state) do
+              {:ok, [], nil, state}
+            end
+          end
+        end,
+        unless Module.defines?(env.module, {:handle_call_tool, 3}, :def) do
+          quote do
+            @impl ExMCP.Server.Handler
+            def handle_call_tool(_name, _arguments, state) do
+              {:error, "Tool not found", state}
+            end
+          end
+        end
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    overridable =
+      [
+        unless(Module.defines?(env.module, {:handle_initialize, 2}, :def),
+          do: {:handle_initialize, 2}
+        ),
+        unless(Module.defines?(env.module, {:handle_list_tools, 2}, :def),
+          do: {:handle_list_tools, 2}
+        ),
+        unless(Module.defines?(env.module, {:handle_call_tool, 3}, :def),
+          do: {:handle_call_tool, 3}
+        )
+      ]
+      |> Enum.reject(&is_nil/1)
+
     quote do
       # =================================================================
       # Required callback defaults (injected via @before_compile)
@@ -767,29 +815,8 @@ defmodule ExMCP.Server.Handler do
       # defs also override these since inline defs beat @before_compile.
       # =================================================================
 
-      @impl ExMCP.Server.Handler
-      def handle_initialize(_params, state) do
-        {:ok,
-         %{
-           protocolVersion: "2025-03-26",
-           serverInfo: %{name: "ex_mcp", version: "0.1.0"},
-           capabilities: %{}
-         }, state}
-      end
-
-      @impl ExMCP.Server.Handler
-      def handle_list_tools(_cursor, state) do
-        {:ok, [], nil, state}
-      end
-
-      @impl ExMCP.Server.Handler
-      def handle_call_tool(_name, _arguments, state) do
-        {:error, "Tool not found", state}
-      end
-
-      defoverridable handle_initialize: 2,
-                     handle_list_tools: 2,
-                     handle_call_tool: 3
+      unquote_splicing(defaults)
+      defoverridable unquote(overridable)
     end
   end
 

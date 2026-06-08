@@ -60,9 +60,9 @@ defmodule ExMCP.Server.Tools.ASTValidator do
   # Allow literals
   defp validate_node(literal) when is_binary(literal), do: :ok
   defp validate_node(literal) when is_number(literal), do: :ok
-  defp validate_node(literal) when is_atom(literal), do: :ok
   defp validate_node(literal) when is_boolean(literal), do: :ok
   defp validate_node(nil), do: :ok
+  defp validate_node(literal) when is_atom(literal), do: :ok
 
   # Validate lists
   defp validate_node(list) when is_list(list) do

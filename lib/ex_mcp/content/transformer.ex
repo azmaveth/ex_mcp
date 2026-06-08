@@ -86,13 +86,13 @@ defmodule ExMCP.Content.Transformer do
   @spec extract_text(Protocol.content()) :: {:ok, String.t()} | {:error, String.t()}
   def extract_text(%{type: :text, text: text, format: :plain}), do: {:ok, text}
 
-  def extract_text(%{type: :text, text: text}) when is_binary(text), do: {:ok, text}
-
-  def extract_text(%{type: :text, text: html, format: :html}) do
+  def extract_text(%{type: :text, text: html, format: :html}) when is_binary(html) do
     # Simple HTML tag removal - in production, use a proper HTML parser
     text = String.replace(html, ~r/<[^>]+>/, " ")
     {:ok, normalize_whitespace(text)}
   end
+
+  def extract_text(%{type: :text, text: text}) when is_binary(text), do: {:ok, text}
 
   # Handle HTML content type directly
   def extract_text(%{type: :html, text: html}) when is_binary(html) do

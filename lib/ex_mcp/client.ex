@@ -1085,10 +1085,6 @@ defmodule ExMCP.Client do
     Process.send_after(self(), :health_check, interval)
   end
 
-  defp format_response(response, :map, _opts) do
-    {:ok, response}
-  end
-
   defp format_response(response, :struct, opts) do
     # Use the proper Response.from_raw_response/2 constructor
     response_opts = [

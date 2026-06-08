@@ -31,8 +31,6 @@ defmodule ExMCP.Plugs.ProtectedResourceMetadata do
   import Plug.Conn
 
   alias ExMCP.Internal.MapBuilder
-  require Logger
-
   @impl true
   def init(opts) do
     resource = Keyword.get(opts, :resource)

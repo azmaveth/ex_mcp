@@ -40,8 +40,6 @@ defmodule ExMCP.ClientConfigEnhanced do
   import ExMCP.ClientConfig.Macros
 
   # Import logging for error reporting
-  require Logger
-
   # Re-export all original types
   @type profile :: ClientConfig.profile()
   @type transport_type :: ClientConfig.transport_type()

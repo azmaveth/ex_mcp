@@ -27,12 +27,6 @@ defmodule ExMCP.Internal.StdioLoggerConfig do
     # Configure OTP logger
     :logger.set_primary_config(:level, :emergency)
 
-    # Try to configure console backend to use stderr
-    try do
-      Logger.configure_backend(:console, device: :stderr, level: :emergency)
-    rescue
-      # Backend might not be available
-      _ -> :ok
-    end
+    :ok
   end
 end

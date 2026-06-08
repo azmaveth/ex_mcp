@@ -113,19 +113,22 @@ defmodule ExMCP.ComplianceTestHelpers do
     end
   end
 
-  defp validate_tool_annotations(result, true) do
-    # Tool annotations should be present in newer versions
-    assert Map.has_key?(result, :annotations) or
-             (is_list(result) and Enum.any?(result, &Map.has_key?(&1, :annotations)))
+  defp validate_tool_annotations(result, true) when is_list(result) do
+    assert Enum.any?(result, &Map.has_key?(&1, :annotations))
   end
 
-  defp validate_tool_annotations(result, false) do
+  defp validate_tool_annotations(result, true) when is_map(result) do
+    # Tool annotations should be present in newer versions
+    assert Map.has_key?(result, :annotations)
+  end
+
+  defp validate_tool_annotations(result, false) when is_list(result) do
+    refute Enum.any?(result, &Map.has_key?(&1, :annotations))
+  end
+
+  defp validate_tool_annotations(result, false) when is_map(result) do
     # Tool annotations should NOT be present in earlier versions
     refute Map.has_key?(result, :annotations)
-
-    if is_list(result) do
-      refute Enum.any?(result, &Map.has_key?(&1, :annotations))
-    end
   end
 
   defp validate_batch_processing(result, true) do
