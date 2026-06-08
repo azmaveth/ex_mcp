@@ -13,7 +13,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   alias ExMCP.ACP.AdapterBridge.PortRunner
   alias ExMCP.ACP.Adapters.Pi.{Prompt, SessionStore, Settings, SlashCommands, Startup, Tools}
-  alias ExMCP.ACP.{AdapterEvents, Envelope, Types}
+  alias ExMCP.ACP.{AdapterEvents, Envelope, PromptQueue, Types}
 
   @thinking_levels ~w(off minimal low medium high xhigh)
   @auth_method_id "pi_terminal_login"
@@ -41,7 +41,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     last_session_cwd: nil,
     settings: %{},
     pending_prompt: nil,
-    prompt_queue: :queue.new(),
+    prompt_queue: PromptQueue.new(),
     active_tool_executions: %{},
     current_tool_calls: %{},
     edit_snapshots: %{},
@@ -333,7 +333,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   def translate_outbound(%{"method" => "session/cancel"}, state) do
-    had_queued = not :queue.is_empty(state.prompt_queue)
+    had_queued = not PromptQueue.empty?(state.prompt_queue)
     {queued_responses, state} = cancel_queued_prompts(state)
     state = mark_pending_cancel_requested(state)
     messages = queued_responses ++ queue_cleared_messages(state, had_queued)
@@ -517,7 +517,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     %{
       state
       | pending_prompt: nil,
-        prompt_queue: :queue.new(),
+        prompt_queue: PromptQueue.new(),
         text_acc: [],
         pending_controls: %{},
         control_groups: %{},
@@ -629,7 +629,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     queued_messages =
       state.prompt_queue
-      |> :queue.to_list()
+      |> PromptQueue.to_list()
       |> Enum.map(&Envelope.response(&1.acp_id, %{"stopReason" => "cancelled"}))
 
     prompt_messages ++ control_messages ++ queued_messages
@@ -650,10 +650,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
     cond do
       state.pending_prompt ->
         queued = %{acp_id: acp_id, message: message, images: images, params: params}
-        queue = :queue.in(queued, state.prompt_queue)
+        queue = PromptQueue.enqueue(state.prompt_queue, queued)
 
         session_id = params["sessionId"] || state.session_id
-        queue_depth = :queue.len(queue)
+        queue_depth = PromptQueue.len(queue)
 
         notice =
           AdapterEvents.agent_message_chunk(
@@ -1596,8 +1596,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp normalize_message_text(_content), do: ""
 
   defp start_next_queued_prompt(state) do
-    case :queue.out(state.prompt_queue) do
-      {{:value, queued}, rest} ->
+    case PromptQueue.pop(state.prompt_queue) do
+      {:value, queued, rest} ->
         state = %{state | prompt_queue: rest}
 
         {:ok, data, state} =
@@ -1605,7 +1605,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
         write_data = if data == :pending, do: nil, else: data
 
-        queue_depth = :queue.len(rest)
+        queue_depth = PromptQueue.len(rest)
 
         messages = [
           AdapterEvents.agent_message_chunk(
@@ -1619,13 +1619,13 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
         {:ok, messages, write_data, state}
 
-      {:empty, _} ->
+      :empty ->
         :empty
     end
   end
 
   defp cancel_queued_prompts(state) do
-    {queued, queue} = :queue.to_list(state.prompt_queue) |> then(&{&1, :queue.new()})
+    {queued, queue} = PromptQueue.drain(state.prompt_queue)
 
     responses =
       Enum.map(queued, fn queued ->

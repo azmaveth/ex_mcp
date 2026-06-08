@@ -23,6 +23,7 @@ defmodule ExMCP.ACP.Agent do
 
   require Logger
 
+  alias ExMCP.ACP.AdapterEvents
   alias ExMCP.ACP.Agent.HandlerRunner
   alias ExMCP.ACP.Agent.Transport.{Memory, Stdio}
   alias ExMCP.ACP.Capabilities
@@ -169,7 +170,8 @@ defmodule ExMCP.ACP.Agent do
   @doc "Sends a `plan` update."
   @spec plan(GenServer.server(), String.t(), [map()], keyword()) :: :ok | {:error, any()}
   def plan(agent, session_id, entries, opts \\ []) do
-    session_update(agent, session_id, %{"sessionUpdate" => "plan", "entries" => entries}, opts)
+    update = get_in(AdapterEvents.plan(session_id, entries), ["params", "update"])
+    session_update(agent, session_id, update, opts)
   end
 
   @doc "Sends an `available_commands_update` update."
@@ -200,12 +202,8 @@ defmodule ExMCP.ACP.Agent do
   @spec config_options(GenServer.server(), String.t(), [map()], keyword()) ::
           :ok | {:error, any()}
   def config_options(agent, session_id, options, opts \\ []) do
-    session_update(
-      agent,
-      session_id,
-      %{"sessionUpdate" => "config_option_update", "configOptions" => options},
-      opts
-    )
+    update = get_in(AdapterEvents.config_option_update(session_id, options), ["params", "update"])
+    session_update(agent, session_id, update, opts)
   end
 
   @doc "Sends a `session_info_update` update."

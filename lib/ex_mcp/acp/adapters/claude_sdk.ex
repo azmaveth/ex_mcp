@@ -17,6 +17,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
   alias ExMCP.ACP.Envelope
+  alias ExMCP.ACP.PromptQueue
 
   defstruct [
     :session_id,
@@ -30,7 +31,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     opts: [],
     pending_controls: %{},
     pending_client_requests: %{},
-    prompt_queue: [],
+    prompt_queue: PromptQueue.new(),
     available_commands: [],
     available_models: [],
     text_acc: [],
@@ -413,7 +414,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
       | session_id: nil,
         pending_prompt_id: nil,
         active_prompt_session_id: nil,
-        prompt_queue: [],
+        prompt_queue: PromptQueue.new(),
         text_acc: [],
         thinking_acc: [],
         thinking_blocks: [],
@@ -449,14 +450,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   defp enqueue_prompt(state, id, session_id, message) do
     queued = %{id: id, session_id: session_id, message: message}
-    %{state | prompt_queue: state.prompt_queue ++ [queued]}
+    %{state | prompt_queue: PromptQueue.enqueue(state.prompt_queue, queued)}
   end
 
   defp cancel_queued_prompts(state, nil), do: {[], state}
 
   defp cancel_queued_prompts(state, session_id) do
     {cancelled, remaining} =
-      Enum.split_with(state.prompt_queue, &(&1.session_id == session_id))
+      PromptQueue.split(state.prompt_queue, &(&1.session_id == session_id))
 
     messages =
       Enum.map(cancelled, fn %{id: id} ->

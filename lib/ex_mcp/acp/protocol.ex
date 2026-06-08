@@ -8,7 +8,7 @@ defmodule ExMCP.ACP.Protocol do
   ACP uses integer protocol versions (default: 1) rather than MCP's date-based strings.
   """
 
-  alias ExMCP.ACP.{Envelope, LifecycleParams, Maps, Meta}
+  alias ExMCP.ACP.{AdapterEvents, Envelope, LifecycleParams, Maps, Meta}
   alias ExMCP.Internal.Protocol
 
   @default_protocol_version 1
@@ -389,7 +389,7 @@ defmodule ExMCP.ACP.Protocol do
   @doc "Encodes an ACP `plan` update notification."
   @spec encode_plan(String.t(), [map()]) :: map()
   def encode_plan(session_id, entries) when is_list(entries) do
-    encode_session_update(session_id, %{"sessionUpdate" => "plan", "entries" => entries})
+    AdapterEvents.plan(session_id, entries)
   end
 
   @doc "Encodes an `available_commands_update` notification."
@@ -413,10 +413,7 @@ defmodule ExMCP.ACP.Protocol do
   @doc "Encodes a `config_option_update` notification."
   @spec encode_config_option_update(String.t(), [map()]) :: map()
   def encode_config_option_update(session_id, config_options) when is_list(config_options) do
-    encode_session_update(session_id, %{
-      "sessionUpdate" => "config_option_update",
-      "configOptions" => config_options
-    })
+    AdapterEvents.config_option_update(session_id, config_options)
   end
 
   @doc "Encodes a `session_info_update` notification."

@@ -58,6 +58,16 @@ defmodule ExMCP.ACP.AdapterEvents do
     })
   end
 
+  @spec plan(String.t(), [map()]) :: map()
+  def plan(session_id, entries) do
+    session_update_type(session_id, "plan", %{"entries" => entries})
+  end
+
+  @spec config_option_update(String.t(), [map()]) :: map()
+  def config_option_update(session_id, options) do
+    session_update_type(session_id, "config_option_update", %{"configOptions" => options})
+  end
+
   @spec session_info_update(String.t(), map()) :: map()
   def session_info_update(session_id, attrs \\ %{}) do
     session_update_type(session_id, "session_info_update", attrs)

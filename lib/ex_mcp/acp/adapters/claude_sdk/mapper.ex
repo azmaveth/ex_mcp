@@ -6,7 +6,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias ExMCP.ACP.Adapters.ClaudeSDK.ToolInfo
   alias ExMCP.ACP.Protocol, as: ACPProtocol
-  alias ExMCP.ACP.{AdapterEvents, Envelope}
+  alias ExMCP.ACP.{AdapterEvents, Envelope, PromptQueue}
 
   @stop_reasons %{
     "end_turn" => "end_turn",
@@ -444,9 +444,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
         if entries == [],
           do: [],
-          else: [
-            session_update(session_id(state), %{"sessionUpdate" => "plan", "entries" => entries})
-          ]
+          else: [AdapterEvents.plan(session_id(state), entries)]
       else
         []
       end
@@ -605,13 +603,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp handle_system(%{"subtype" => subtype} = event, state)
        when subtype in ["task_started", "task_progress", "task_updated", "task_notification"] do
-    update =
-      %{
-        "sessionUpdate" => "plan",
-        "entries" => task_plan_entries(event)
-      }
-
-    {[session_update(session_id(state), update)], [], state}
+    {[AdapterEvents.plan(session_id(state), task_plan_entries(event))], [], state}
   end
 
   defp handle_system(%{"subtype" => "permission_denied"} = event, state) do
@@ -765,10 +757,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp config_option_update(state) do
-    session_update(session_id(state), %{
-      "sessionUpdate" => "config_option_update",
-      "configOptions" => config_options(state)
-    })
+    AdapterEvents.config_option_update(session_id(state), config_options(state))
   end
 
   defp available_commands_update(_state, []), do: nil
@@ -925,27 +914,29 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     %{state | pending_client_requests: pending}
   end
 
-  defp start_next_queued_prompt(%{prompt_queue: []} = state), do: {[], state}
+  defp start_next_queued_prompt(state) do
+    case PromptQueue.pop(state.prompt_queue) do
+      {:value, queued, rest} ->
+        state =
+          %{
+            state
+            | pending_prompt_id: queued.id,
+              active_prompt_session_id: queued.session_id || state.session_id,
+              session_id: queued.session_id || state.session_id,
+              prompt_queue: rest,
+              text_acc: [],
+              thinking_acc: [],
+              thinking_blocks: [],
+              current_block_type: nil,
+              tool_calls: %{}
+          }
 
-  defp start_next_queued_prompt(%{prompt_queue: [queued | rest]} = state) do
-    state =
-      %{
-        state
-        | pending_prompt_id: queued.id,
-          active_prompt_session_id: queued.session_id || state.session_id,
-          session_id: queued.session_id || state.session_id,
-          prompt_queue: rest,
-          text_acc: [],
-          thinking_acc: [],
-          thinking_blocks: [],
-          current_block_type: nil,
-          tool_calls: %{}
-      }
+        {[ClaudeProtocol.line(queued.message)], state}
 
-    {[ClaudeProtocol.line(queued.message)], state}
+      :empty ->
+        {[], state}
+    end
   end
-
-  defp session_update(session_id, update), do: AdapterEvents.session_update(session_id, update)
 
   defp session_id(%{session_id: nil}), do: "default"
   defp session_id(%{session_id: session_id}), do: session_id

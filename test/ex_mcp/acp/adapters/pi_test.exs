@@ -2,6 +2,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.ACP.Adapters.Pi
+  alias ExMCP.ACP.PromptQueue
 
   setup do
     tmp_dir = Path.join(System.tmp_dir!(), "pi_test_#{System.unique_integer([:positive])}")
@@ -374,7 +375,8 @@ defmodule ExMCP.ACP.Adapters.PiTest do
         | session_id: "s1",
           pending_prompt: %{acp_id: 1, msg_id: "msg-1", cancel_requested: false},
           prompt_queue:
-            :queue.in(%{acp_id: 2, message: "queued", images: [], params: %{}}, :queue.new())
+            PromptQueue.new()
+            |> PromptQueue.enqueue(%{acp_id: 2, message: "queued", images: [], params: %{}})
       }
 
       assert {:reply, %{}, new_state} =
@@ -384,7 +386,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
                )
 
       assert new_state.pending_prompt == nil
-      assert :queue.is_empty(new_state.prompt_queue)
+      assert PromptQueue.empty?(new_state.prompt_queue)
     end
 
     test "session/delete removes local map but leaves Pi session file by default", %{
@@ -555,7 +557,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       }
 
       assert {:messages, [_notice, _info], queued_state} = Pi.translate_outbound(msg, state)
-      assert :queue.len(queued_state.prompt_queue) == 1
+      assert PromptQueue.len(queued_state.prompt_queue) == 1
 
       assert {:messages_and_write, [first_response, _start_notice, _queue_info], data, next_state} =
                Pi.translate_inbound(
@@ -570,7 +572,8 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
     test "session/cancel cancels queued prompts and marks active prompt", %{state: state} do
       queue =
-        :queue.in(%{acp_id: 31, message: "queued", images: [], params: %{}}, :queue.new())
+        PromptQueue.new()
+        |> PromptQueue.enqueue(%{acp_id: 31, message: "queued", images: [], params: %{}})
 
       state = %{
         state
@@ -591,7 +594,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert decode_one(data)["type"] == "abort"
       assert new_state.pending_prompt.cancel_requested == true
-      assert :queue.is_empty(new_state.prompt_queue)
+      assert PromptQueue.empty?(new_state.prompt_queue)
     end
 
     test "slash compact maps to Pi compact and replies after control response", %{state: state} do

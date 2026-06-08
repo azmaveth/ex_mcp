@@ -3,6 +3,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
 
   alias ExMCP.ACP.Adapters.ClaudeSDK
   alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
+  alias ExMCP.ACP.PromptQueue
 
   setup do
     {:ok, state} = ClaudeSDK.init(cwd: "/tmp/project", model: "sonnet")
@@ -248,7 +249,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
 
       assert {:ok, _line, state} = ClaudeSDK.translate_outbound(first, state)
       assert {:ok, :skip, state} = ClaudeSDK.translate_outbound(second, state)
-      assert length(state.prompt_queue) == 1
+      assert PromptQueue.len(state.prompt_queue) == 1
 
       result = %{
         "type" => "result",
@@ -264,7 +265,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert Enum.any?(messages, &(&1["id"] == 10))
       assert Jason.decode!(write)["message"]["content"] == [%{"type" => "text", "text" => "two"}]
       assert state.pending_prompt_id == 11
-      assert state.prompt_queue == []
+      assert PromptQueue.empty?(state.prompt_queue)
     end
   end
 

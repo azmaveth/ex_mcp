@@ -77,6 +77,24 @@ defmodule ExMCP.ACP.AdapterEventsTest do
            }
   end
 
+  test "builds plan and config option updates" do
+    entries = [%{"content" => "Inspect", "status" => "pending"}]
+    options = [%{"id" => "mode", "type" => "select"}]
+
+    assert get_in(AdapterEvents.plan("session-1", entries), ["params", "update"]) == %{
+             "sessionUpdate" => "plan",
+             "entries" => entries
+           }
+
+    assert get_in(AdapterEvents.config_option_update("session-1", options), [
+             "params",
+             "update"
+           ]) == %{
+             "sessionUpdate" => "config_option_update",
+             "configOptions" => options
+           }
+  end
+
   test "builds tool call updates" do
     attrs = %{"toolCallId" => "call-1", "status" => "completed"}
 
