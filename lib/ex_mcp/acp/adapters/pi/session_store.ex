@@ -15,6 +15,14 @@ defmodule ExMCP.ACP.Adapters.Pi.SessionStore do
     |> get_in(["sessions", session_id])
   end
 
+  @spec delete(String.t(), String.t()) :: map() | nil
+  def delete(path, session_id) when is_binary(session_id) do
+    db = load(path)
+    {entry, db} = pop_in(db, ["sessions", session_id])
+    save(path, db)
+    entry
+  end
+
   @spec upsert(String.t(), map()) :: :ok
   def upsert(path, %{"sessionId" => session_id, "cwd" => cwd, "sessionFile" => session_file})
       when is_binary(session_id) and is_binary(cwd) and is_binary(session_file) do

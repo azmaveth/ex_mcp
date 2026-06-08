@@ -10,6 +10,7 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   - **Persistent** (default) — opens a Port on init, keeps it alive
   - **One-shot** — adapter manages subprocess per prompt (Codex pattern)
+  - **Adapter-managed** — adapter owns one or more persistent subprocess Ports
 
   ## Usage
 
@@ -24,7 +25,8 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   use GenServer
 
-  alias ExMCP.ACP.{Capabilities, Envelope, NameValue}
+  alias ExMCP.ACP.AdapterBridge.PortRunner
+  alias ExMCP.ACP.{Capabilities, Envelope}
 
   @type t :: GenServer.server()
 
@@ -89,6 +91,9 @@ defmodule ExMCP.ACP.AdapterBridge do
       :one_shot ->
         # One-shot adapters don't open a Port on init
         # Init response is synthesized when the Client sends the initialize request
+        {:ok, %{state | status: :ready}}
+
+      :adapter_managed ->
         {:ok, %{state | status: :ready}}
 
       {cmd, args} ->
@@ -185,7 +190,9 @@ defmodule ExMCP.ACP.AdapterBridge do
     {:noreply, state}
   end
 
-  def handle_info(_msg, state), do: {:noreply, state}
+  def handle_info(msg, state) do
+    {:noreply, handle_adapter_message(msg, state)}
+  end
 
   @impl true
   def terminate(_reason, state) do
@@ -195,32 +202,7 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   # Private helpers
 
-  defp open_port(cmd, args, opts, adapter_mod) do
-    executable = System.find_executable(cmd)
-
-    if executable do
-      cwd = Keyword.get(opts, :cwd, File.cwd!())
-
-      port_opts = [
-        :binary,
-        :exit_status,
-        :use_stdio,
-        :stderr_to_stdout,
-        args: Enum.map(args, &to_charlist/1),
-        cd: to_charlist(cwd),
-        env: safe_env(opts, adapter_mod)
-      ]
-
-      try do
-        port = Port.open({:spawn_executable, to_charlist(executable)}, port_opts)
-        {:ok, port}
-      catch
-        :error, reason -> {:error, {:port_open_failed, reason}}
-      end
-    else
-      {:error, {:executable_not_found, cmd}}
-    end
-  end
+  defp open_port(cmd, args, opts, adapter_mod), do: PortRunner.open(cmd, args, opts, adapter_mod)
 
   defp synthesize_result(state, request_id, result) do
     push_message(state, request_id |> Envelope.response(result) |> Jason.encode!())
@@ -391,6 +373,10 @@ defmodule ExMCP.ACP.AdapterBridge do
         state = synthesize_init_response(state, id)
         {:reply, :ok, state}
 
+      {:ok, :pending, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        {:reply, :ok, state}
+
       {:ok, data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
         state = synthesize_init_response(state, id)
@@ -411,6 +397,9 @@ defmodule ExMCP.ACP.AdapterBridge do
         session_id = "session_#{System.unique_integer([:positive])}"
         state = synthesize_result(state, id, session_result(state, session_id))
         {:reply, :ok, state}
+
+      {:ok, :pending, new_adapter_state} ->
+        {:reply, :ok, %{state | adapter_state: new_adapter_state}}
 
       {:ok, data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
@@ -458,6 +447,9 @@ defmodule ExMCP.ACP.AdapterBridge do
           state = synthesize_result(state, id, session_state_result(state))
           {:reply, :ok, state}
 
+        {:ok, :pending, new_adapter_state} ->
+          {:reply, :ok, %{state | adapter_state: new_adapter_state}}
+
         {:ok, data, new_adapter_state} ->
           state = %{state | adapter_state: new_adapter_state}
           _ = write_to_port(state, data)
@@ -497,6 +489,9 @@ defmodule ExMCP.ACP.AdapterBridge do
           state = %{state | adapter_state: new_adapter_state}
           state = synthesize_result(state, id, session_state_result(state))
           {:reply, :ok, state}
+
+        {:ok, :pending, new_adapter_state} ->
+          {:reply, :ok, %{state | adapter_state: new_adapter_state}}
 
         {:ok, data, new_adapter_state} ->
           state = %{state | adapter_state: new_adapter_state}
@@ -570,9 +565,9 @@ defmodule ExMCP.ACP.AdapterBridge do
         params = Map.get(msg, "params", %{})
 
         case state.adapter_mod.list_sessions(params, state.adapter_state) do
-          {:ok, sessions, new_adapter_state} ->
+          {:ok, result, new_adapter_state} ->
             state = %{state | adapter_state: new_adapter_state}
-            state = synthesize_result(state, id, %{"sessions" => sessions})
+            state = synthesize_result(state, id, list_sessions_result(result))
             {:reply, :ok, state}
 
           {:error, reason, new_adapter_state} ->
@@ -588,6 +583,9 @@ defmodule ExMCP.ACP.AdapterBridge do
             state = %{state | adapter_state: new_adapter_state}
             state = synthesize_result(state, id, %{"sessions" => []})
             {:reply, :ok, state}
+
+          {:ok, :pending, new_adapter_state} ->
+            {:reply, :ok, %{state | adapter_state: new_adapter_state}}
 
           {:ok, data, new_adapter_state} ->
             state = %{state | adapter_state: new_adapter_state}
@@ -763,6 +761,19 @@ defmodule ExMCP.ACP.AdapterBridge do
     synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
   end
 
+  defp list_sessions_result(result) when is_list(result), do: %{"sessions" => result}
+
+  defp list_sessions_result(%{"sessions" => sessions} = result) when is_list(sessions),
+    do: result
+
+  defp list_sessions_result(%{sessions: sessions} = result) when is_list(sessions) do
+    result
+    |> Enum.map(fn {key, value} -> {to_string(key), value} end)
+    |> Map.new()
+  end
+
+  defp list_sessions_result(_result), do: %{"sessions" => []}
+
   defp handle_translated_outbound({:ok, _delivery, state}, _msg), do: {:reply, :ok, state}
 
   defp handle_translated_outbound({:messages, messages, state}, _msg) do
@@ -868,6 +879,9 @@ defmodule ExMCP.ACP.AdapterBridge do
   defp normalize_translated_outbound({:ok, :skip, adapter_state}, state),
     do: {:ok, :skip, %{state | adapter_state: adapter_state}}
 
+  defp normalize_translated_outbound({:ok, :pending, adapter_state}, state),
+    do: {:ok, :pending, %{state | adapter_state: adapter_state}}
+
   defp normalize_translated_outbound({:ok, data, adapter_state}, state) do
     state = %{state | adapter_state: adapter_state}
     write_translation_to_port(state, {:ok, :sent}, data)
@@ -922,10 +936,7 @@ defmodule ExMCP.ACP.AdapterBridge do
   defp write_to_port(%{port: nil}, _data), do: {:error, :no_port}
 
   defp write_to_port(%{port: port}, data) do
-    Port.command(port, data)
-    :ok
-  catch
-    :error, reason -> {:error, reason}
+    PortRunner.command(port, data)
   end
 
   defp process_port_data(state, data) do
@@ -1006,57 +1017,48 @@ defmodule ExMCP.ACP.AdapterBridge do
     %{state | waiters: :queue.new()}
   end
 
-  defp do_close(%{port: nil} = state), do: %{state | status: :closed}
+  defp handle_adapter_message(msg, state) do
+    if function_exported?(state.adapter_mod, :handle_adapter_message, 2) do
+      case state.adapter_mod.handle_adapter_message(msg, state.adapter_state) do
+        {:messages, messages, adapter_state} ->
+          state
+          |> Map.put(:adapter_state, adapter_state)
+          |> push_messages(Enum.map(messages, &Jason.encode!/1))
+
+        {:partial, adapter_state} ->
+          %{state | adapter_state: adapter_state}
+
+        {:skip, adapter_state} ->
+          %{state | adapter_state: adapter_state}
+      end
+    else
+      state
+    end
+  end
+
+  defp do_close(%{port: nil} = state) do
+    state
+    |> shutdown_adapter()
+    |> reply_error_to_waiters(:closed)
+    |> Map.put(:status, :closed)
+  end
 
   defp do_close(%{port: port} = state) do
-    try do
-      Port.close(port)
-    catch
-      :error, _ -> :ok
-    end
+    PortRunner.close(port)
 
-    state = reply_error_to_waiters(state, :closed)
+    state =
+      state
+      |> shutdown_adapter()
+      |> reply_error_to_waiters(:closed)
+
     %{state | port: nil, status: :closed}
   end
 
-  @session_vars_to_clear ~w(
-    CLAUDE_CODE_ENTRYPOINT CLAUDE_SESSION_ID CLAUDE_CONFIG_DIR
-    CLAUDECODE CODEX_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY
-    GOOGLE_API_KEY PI_API_KEY
-  )
-
-  defp safe_env(opts, adapter_mod) do
-    cleared = Enum.map(@session_vars_to_clear, &{to_charlist(&1), false})
-    explicit_env = adapter_env(opts, adapter_mod)
-    [{~c"TERM", ~c"dumb"} | cleared] ++ explicit_env
+  defp shutdown_adapter(state) do
+    if function_exported?(state.adapter_mod, :shutdown, 1) do
+      %{state | adapter_state: state.adapter_mod.shutdown(state.adapter_state)}
+    else
+      state
+    end
   end
-
-  defp adapter_env(opts, adapter_mod) do
-    adapter_default_env =
-      if function_exported?(adapter_mod, :env, 1) do
-        adapter_mod.env(opts)
-      else
-        []
-      end
-
-    adapter_default_env
-    |> normalize_env()
-    |> Map.merge(opts |> Keyword.get(:env, []) |> normalize_env())
-    |> normalize_env()
-    |> maybe_put_api_key(Keyword.get(opts, :api_key))
-    |> Enum.map(fn {name, value} -> {to_charlist(name), to_charlist(value)} end)
-  end
-
-  defp normalize_env(env) when is_map(env) do
-    NameValue.map(env)
-  end
-
-  defp normalize_env(env) when is_list(env) do
-    NameValue.map(env)
-  end
-
-  defp normalize_env(_env), do: %{}
-
-  defp maybe_put_api_key(env, nil), do: env
-  defp maybe_put_api_key(env, api_key), do: Map.put(env, "PI_API_KEY", to_string(api_key))
 end

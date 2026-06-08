@@ -132,6 +132,50 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip, state}
   end
 
+  defmodule ManagedMockAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    defstruct [:test_pid, shutdown?: false]
+
+    @impl true
+    def init(opts), do: {:ok, %__MODULE__{test_pid: Keyword.fetch!(opts, :test_pid)}}
+
+    @impl true
+    def command(_opts), do: :adapter_managed
+
+    @impl true
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+    def translate_outbound(_msg, state), do: {:ok, :pending, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+
+    @impl true
+    def handle_adapter_message({:managed_emit, text}, state) do
+      message = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/update",
+        "params" => %{
+          "sessionId" => "managed-session",
+          "update" => %{
+            "sessionUpdate" => "agent_message_chunk",
+            "content" => %{"type" => "text", "text" => text}
+          }
+        }
+      }
+
+      {:messages, [message], state}
+    end
+
+    def handle_adapter_message(_message, state), do: {:skip, state}
+
+    @impl true
+    def shutdown(state) do
+      send(state.test_pid, :managed_shutdown)
+      %{state | shutdown?: true}
+    end
+  end
+
   defmodule ParamListAdapter do
     @behaviour ExMCP.ACP.Adapter
 
@@ -149,13 +193,17 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     @impl true
     def list_sessions(params, state) do
       {:ok,
-       [
-         %{
-           "sessionId" => "param-session",
-           "cwd" => params["cwd"],
-           "title" => params["cursor"]
-         }
-       ], state}
+       %{
+         "sessions" => [
+           %{
+             "sessionId" => "param-session",
+             "cwd" => params["cwd"],
+             "title" => params["cursor"]
+           }
+         ],
+         "nextCursor" => "next-page",
+         "_meta" => %{}
+       }, state}
     end
 
     @impl true
@@ -358,6 +406,27 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     end
   end
 
+  describe "adapter-managed adapter" do
+    test "forwards unmanaged messages and calls shutdown on close" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: ManagedMockAdapter, adapter_opts: [test_pid: self()])
+
+      _init = send_initialize(bridge)
+
+      send(bridge, {:managed_emit, "managed hello"})
+
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+
+      assert msg["method"] == "session/update"
+      assert msg["params"]["sessionId"] == "managed-session"
+      assert msg["params"]["update"]["content"]["text"] == "managed hello"
+
+      AdapterBridge.close(bridge)
+      assert_receive :managed_shutdown
+    end
+  end
+
   describe "waiter queue" do
     test "receive blocks until message available" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
@@ -533,6 +602,8 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       assert session["sessionId"] == "param-session"
       assert session["cwd"] == "/tmp/project"
       assert session["title"] == "page-2"
+      assert msg["result"]["nextCursor"] == "next-page"
+      assert msg["result"]["_meta"] == %{}
 
       AdapterBridge.close(bridge)
     end

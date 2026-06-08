@@ -14,7 +14,8 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       Pi.init(
         cwd: tmp_dir,
         session_dir: session_dir,
-        session_map_path: session_map_path
+        session_map_path: session_map_path,
+        managed: false
       )
 
     on_exit(fn -> File.rm_rf!(tmp_dir) end)
@@ -28,8 +29,12 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   end
 
   describe "command/1" do
-    test "returns pi with rpc mode" do
-      {cmd, args} = Pi.command([])
+    test "uses adapter-managed bridge mode" do
+      assert Pi.command([]) == :adapter_managed
+    end
+
+    test "returns pi cli command with rpc mode" do
+      {cmd, args} = Pi.cli_command([])
       assert cmd == "pi"
       assert "--mode" in args
       assert "rpc" in args
@@ -37,25 +42,25 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
 
     test "includes model flag" do
-      {_cmd, args} = Pi.command(model: "anthropic/claude-sonnet-4")
+      {_cmd, args} = Pi.cli_command(model: "anthropic/claude-sonnet-4")
       assert "--model" in args
       assert "anthropic/claude-sonnet-4" in args
     end
 
     test "includes session path" do
-      {_cmd, args} = Pi.command(session_path: "/tmp/session.jsonl")
+      {_cmd, args} = Pi.cli_command(session_path: "/tmp/session.jsonl")
       assert "--session" in args
       assert "/tmp/session.jsonl" in args
     end
 
     test "does not pass api key through process argv" do
-      {_cmd, args} = Pi.command(api_key: "secret")
+      {_cmd, args} = Pi.cli_command(api_key: "secret")
       refute "--api-key" in args
       refute "secret" in args
     end
 
     test "includes no-session flag" do
-      {_cmd, args} = Pi.command(no_session: true)
+      {_cmd, args} = Pi.cli_command(no_session: true)
       assert "--no-session" in args
     end
   end
@@ -69,6 +74,10 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert caps["promptCapabilities"]["image"] == true
       assert caps["promptCapabilities"]["audio"] == false
       assert caps["mcpCapabilities"] == %{"http" => false, "sse" => false}
+      assert caps["sessionCapabilities"]["list"] == %{}
+      assert caps["sessionCapabilities"]["resume"] == %{}
+      assert caps["sessionCapabilities"]["close"] == %{}
+      assert caps["sessionCapabilities"]["delete"] == %{}
       refute Map.has_key?(pi_meta, "methods")
       assert pi_meta["features"]["slashCommands"] == true
       assert pi_meta["features"]["terminalAuth"] == true
@@ -108,7 +117,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   describe "list_sessions/2" do
     test "returns empty list when session dir doesn't exist", %{state: state} do
       state = %{state | session_dir: "/nonexistent/path"}
-      assert {:ok, [], _state} = Pi.list_sessions(%{}, state)
+      assert {:ok, %{"sessions" => [], "_meta" => %{}}, _state} = Pi.list_sessions(%{}, state)
     end
 
     test "scans Pi jsonl session files and omits private file paths", %{
@@ -119,7 +128,9 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       write_session(session_dir, "s1", tmp_dir, "First prompt", "Project session")
       write_session(session_dir, "s2", "/other/project", "Other prompt", nil)
 
-      assert {:ok, sessions, _state} = Pi.list_sessions(%{}, state)
+      state = %{state | last_session_cwd: nil}
+
+      assert {:ok, %{"sessions" => sessions}, _state} = Pi.list_sessions(%{}, state)
 
       assert Enum.map(sessions, & &1["sessionId"]) |> Enum.sort() == ["s1", "s2"]
       assert Enum.all?(sessions, &(not Map.has_key?(&1, "sessionFile")))
@@ -130,8 +141,22 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       write_session(session_dir, "s1", tmp_dir, "First prompt", nil)
       write_session(session_dir, "s2", "/other/project", "Other prompt", nil)
 
-      assert {:ok, [%{"sessionId" => "s1"}], _state} =
+      assert {:ok, %{"sessions" => [%{"sessionId" => "s1"}]}, _state} =
                Pi.list_sessions(%{"cwd" => tmp_dir}, state)
+    end
+
+    test "defaults empty list requests to last session cwd", %{
+      state: state,
+      session_dir: session_dir,
+      tmp_dir: tmp_dir
+    } do
+      write_session(session_dir, "s1", tmp_dir, "First prompt", nil)
+      write_session(session_dir, "s2", "/other/project", "Other prompt", nil)
+
+      state = %{state | last_session_cwd: tmp_dir}
+
+      assert {:ok, %{"sessions" => [%{"sessionId" => "s1"}]}, _state} =
+               Pi.list_sessions(%{}, state)
     end
   end
 
@@ -285,6 +310,115 @@ defmodule ExMCP.ACP.Adapters.PiTest do
              )
 
       assert Enum.any?(messages, &(&1["id"] == 13))
+    end
+
+    test "session/resume loads session state without replaying messages", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_map_path: session_map_path
+    } do
+      session_file = Path.join(tmp_dir, "mapped.jsonl")
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "mapped-session" => %{
+              "sessionId" => "mapped-session",
+              "cwd" => tmp_dir,
+              "sessionFile" => session_file
+            }
+          }
+        })
+      )
+
+      msg = %{
+        "method" => "session/resume",
+        "id" => 14,
+        "params" => %{"sessionId" => "mapped-session", "cwd" => tmp_dir}
+      }
+
+      assert {:ok, data, state} = Pi.translate_outbound(msg, state)
+      requests = decode_many(data)
+      refute Enum.any?(requests, &(&1["type"] == "get_messages"))
+      ids_by_type = Map.new(requests, &{&1["type"], &1["id"]})
+
+      state =
+        respond(state, ids_by_type["switch_session"], "switch_session", %{})
+        |> respond(ids_by_type["get_state"], "get_state", %{
+          "sessionId" => "mapped-session",
+          "cwd" => tmp_dir
+        })
+        |> respond(ids_by_type["get_available_models"], "get_available_models", %{
+          "models" => [%{"provider" => "openai", "id" => "gpt-5.1"}]
+        })
+
+      assert {:messages, messages, _state} =
+               Pi.translate_inbound(
+                 response_line(ids_by_type["get_commands"], "get_commands", %{"commands" => []}),
+                 state
+               )
+
+      refute Enum.any?(
+               messages,
+               &(get_in(&1, ["params", "update", "sessionUpdate"]) == "user_message_chunk")
+             )
+
+      assert Enum.any?(messages, &(&1["id"] == 14))
+    end
+
+    test "session/close clears active runtime state", %{state: state} do
+      state = %{
+        state
+        | session_id: "s1",
+          pending_prompt: %{acp_id: 1, msg_id: "msg-1", cancel_requested: false},
+          prompt_queue:
+            :queue.in(%{acp_id: 2, message: "queued", images: [], params: %{}}, :queue.new())
+      }
+
+      assert {:reply, %{}, new_state} =
+               Pi.translate_outbound(
+                 %{"method" => "session/close", "params" => %{"sessionId" => "s1"}},
+                 state
+               )
+
+      assert new_state.pending_prompt == nil
+      assert :queue.is_empty(new_state.prompt_queue)
+    end
+
+    test "session/delete removes local map but leaves Pi session file by default", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_map_path: session_map_path
+    } do
+      session_file = Path.join(tmp_dir, "mapped.jsonl")
+      File.write!(session_file, "")
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "mapped-session" => %{
+              "sessionId" => "mapped-session",
+              "cwd" => tmp_dir,
+              "sessionFile" => session_file
+            }
+          }
+        })
+      )
+
+      assert {:reply, %{}, _state} =
+               Pi.translate_outbound(
+                 %{"method" => "session/delete", "params" => %{"sessionId" => "mapped-session"}},
+                 state
+               )
+
+      assert File.exists?(session_file)
+
+      assert {:ok, %{"sessions" => []}, _state} =
+               Pi.list_sessions(%{"cwd" => tmp_dir}, %{state | last_session_cwd: nil})
     end
   end
 

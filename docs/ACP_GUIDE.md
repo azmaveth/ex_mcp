@@ -403,16 +403,18 @@ end
 | Callback | Required | Description |
 |----------|----------|-------------|
 | `init/1` | Yes | Initialize adapter state |
-| `command/1` | Yes | Return `{executable, args}` or `:one_shot` |
+| `command/1` | Yes | Return `{executable, args}`, `:one_shot`, or `:adapter_managed` |
 | `translate_outbound/2` | Yes | Convert ACP message to native format |
 | `translate_inbound/2` | Yes | Convert native output to ACP messages |
 | `post_connect/1` | No | Send initial data after port opens |
+| `handle_adapter_message/2` | No | Handle Port/process messages for adapter-managed subprocesses |
+| `shutdown/1` | No | Clean up adapter-managed resources when the bridge closes |
 | `env/1` | No | Return child-process environment variables |
 | `capabilities/0` | No | Return static agent capabilities |
 | `modes/0` | No | Return supported operational modes |
 | `config_options/0` | No | Return supported config options |
 | `auth_methods/1` | No | Return initialize `authMethods` for adapter options |
-| `list_sessions/2` | No | Return available sessions for decoded `session/list` params |
+| `list_sessions/2` | No | Return a sessions list or full ACP `session/list` result for decoded params |
 | `fork_session/2` | No | Fork an existing session for decoded `session/fork` params |
 
 ## Built-in Adapters
@@ -498,12 +500,15 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 Translates between ACP and Pi's RPC NDJSON protocol.
 
 **Features:**
-- ACP-native `session/new`, `session/load`, `session/list`, `session/prompt`, `session/cancel`, `session/set_model`, and `session/set_mode`
+- Adapter-managed Pi subprocesses for ACP `session/new`, `session/load`, and `session/resume`
+- ACP-native `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`, `session/set_model`, and `session/set_mode`
 - Terminal authentication method advertisement through `authMethods`
-- Pi session discovery from JSONL files plus a local ExMCP session map at `~/.ex_mcp/pi/session-map.json`
+- Pi session discovery from JSONL files plus a local ExMCP session map at `~/.ex_mcp/pi/session-map.json`, with cursor pagination and last-cwd default filtering
 - Prompt queuing while another Pi turn is active
+- Global/project Pi settings merge for skill command filtering and quiet startup
+- Startup info for Pi version, context, prompts, skills, extensions, and captured CLI prelude; registry update notices are opt-in
 - Markdown slash commands loaded from `~/.pi/agent/prompts` and `<cwd>/.pi/prompts`
-- Built-in slash commands: `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/steering`, and `/follow-up`
+- Built-in slash commands: `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/steering`, `/follow-up`, and `/changelog`
 - Text/thinking streaming, tool-call streaming, tool execution lifecycle, compaction, retry, and extension UI metadata events
 - Enhanced tool result parsing with content blocks, structured edit diffs, stdout/stderr/exitCode formatting, and file locations
 - Image support with data-url prefix stripping
@@ -512,6 +517,8 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 **Modes:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh` map to Pi thinking levels through ACP `session/set_mode`.
 
 **Config options:** `auto_compaction`, `auto_retry`, `steering_mode`, `follow_up_mode`. Model changes use `ExMCP.ACP.Client.set_model/3` rather than a config option.
+
+**Startup options:** `cli_path`/`pi_command`, `session_dir`, `session_map_path`, `delete_session_files`, and `update_notice`. `session/delete` removes ExMCP session-map state by default; backing Pi JSONL files are deleted only when `delete_session_files: true` is set and the file is under the configured Pi session directory. Registry update checks are disabled unless `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true` is set.
 
 **Breaking change:** Pi-specific `_ex_mcp.pi/*` and legacy `pi/*` extension methods are no longer implemented. Use the ACP session methods above or slash commands in prompts.
 

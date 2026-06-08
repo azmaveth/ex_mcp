@@ -2,13 +2,30 @@ defmodule ExMCP.ACP.Adapters.Pi.SlashCommands do
   @moduledoc false
 
   @builtin_commands [
-    %{"name" => "compact", "description" => "Manually compact the session context"},
-    %{"name" => "autocompact", "description" => "Toggle automatic context compaction"},
+    %{
+      "name" => "compact",
+      "description" => "Manually compact the session context",
+      "input" => "optional instructions"
+    },
+    %{
+      "name" => "autocompact",
+      "description" => "Toggle automatic context compaction",
+      "input" => "on | off"
+    },
     %{"name" => "export", "description" => "Export session to HTML"},
     %{"name" => "session", "description" => "Show session stats"},
-    %{"name" => "name", "description" => "Set session display name"},
-    %{"name" => "steering", "description" => "Get or set Pi steering mode"},
-    %{"name" => "follow-up", "description" => "Get or set Pi follow-up mode"}
+    %{"name" => "name", "description" => "Set session display name", "input" => "name"},
+    %{
+      "name" => "steering",
+      "description" => "Get or set Pi steering mode",
+      "input" => "all | one-at-a-time"
+    },
+    %{
+      "name" => "follow-up",
+      "description" => "Get or set Pi follow-up mode",
+      "input" => "all | one-at-a-time"
+    },
+    %{"name" => "changelog", "description" => "Show Pi changelog"}
   ]
 
   @spec builtin_commands() :: [map()]
@@ -32,8 +49,7 @@ defmodule ExMCP.ACP.Adapters.Pi.SlashCommands do
       name = command["name"]
 
       if is_binary(name) and not MapSet.member?(seen, name) do
-        {MapSet.put(seen, name),
-         [%{"name" => name, "description" => command["description"] || "(command)"} | acc]}
+        {MapSet.put(seen, name), [Map.take(command, ["name", "description", "input"]) | acc]}
       else
         {seen, acc}
       end

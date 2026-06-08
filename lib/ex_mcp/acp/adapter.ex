@@ -17,6 +17,8 @@ defmodule ExMCP.ACP.Adapter do
 
   - `capabilities/0` — return static agent capabilities
   - `post_connect/1` — called after Port is opened
+  - `handle_adapter_message/2` — handle process messages for adapter-managed subprocesses
+  - `shutdown/1` — clean up adapter-managed resources when the bridge closes
   - `env/1` — return child-process environment variables
   - `modes/0` — return supported operational modes for session responses
   - `config_options/0` — return supported config options for session responses
@@ -36,10 +38,12 @@ defmodule ExMCP.ACP.Adapter do
   Return the command and arguments to launch the agent subprocess.
 
   The bridge uses this to open a Port. For one-shot adapters that manage
-  their own subprocess lifecycle, return `:one_shot` instead.
+  their own subprocess lifecycle, return `:one_shot` instead. For adapters
+  that keep persistent subprocesses but need to own more than one Port, return
+  `:adapter_managed` and implement `handle_adapter_message/2`.
   """
   @callback command(opts :: keyword()) ::
-              {executable :: String.t(), args :: [String.t()]} | :one_shot
+              {executable :: String.t(), args :: [String.t()]} | :one_shot | :adapter_managed
 
   @doc """
   Translate an outbound ACP JSON-RPC message to the native CLI format.
@@ -59,10 +63,14 @@ defmodule ExMCP.ACP.Adapter do
   `{:error, reason, new_state}` when the request can't be honored (e.g., a
   config value outside the adapter's enum). The bridge translates
   `{:error, _, _}` into a JSON-RPC error response back to the ACP client.
+  Adapter-managed implementations may return `{:ok, :pending, state}` after
+  writing to one of their own subprocesses when the ACP response will be
+  emitted later from `handle_adapter_message/2`.
   """
   @callback translate_outbound(acp_message :: map(), state()) ::
               {:ok, iodata(), state()}
               | {:ok, :skip, state()}
+              | {:ok, :pending, state()}
               | {:reply, result :: map(), state()}
               | {:messages, messages :: [map()], state()}
               | {:messages_and_reply, messages :: [map()], result :: map(), state()}
@@ -87,6 +95,28 @@ defmodule ExMCP.ACP.Adapter do
               | {:skip_and_write, iodata(), state()}
               | {:partial, state()}
               | {:skip, state()}
+
+  @doc """
+  Handle raw messages for adapter-managed subprocesses.
+
+  The bridge calls this for messages it does not own, including Port data,
+  exit-status, and close notifications. The adapter is responsible for routing
+  writes back to the correct subprocess and may return ACP messages to emit.
+
+  Optional — only used by adapters whose `command/1` returns
+  `:adapter_managed`.
+  """
+  @callback handle_adapter_message(message :: term(), state()) ::
+              {:messages, [map()], state()}
+              | {:partial, state()}
+              | {:skip, state()}
+
+  @doc """
+  Clean up adapter-managed resources before the bridge exits.
+
+  Optional — defaults to no-op.
+  """
+  @callback shutdown(state()) :: state()
 
   @doc """
   Called after the Port is opened, before any ACP messages are processed.
@@ -176,6 +206,8 @@ defmodule ExMCP.ACP.Adapter do
     config_options: 0,
     auth_methods: 1,
     list_sessions: 2,
-    fork_session: 2
+    fork_session: 2,
+    handle_adapter_message: 2,
+    shutdown: 1
   ]
 end
