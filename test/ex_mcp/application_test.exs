@@ -25,17 +25,20 @@ defmodule ExMCP.ApplicationTest do
       Process.exit(pid, :normal)
     end
 
-    test "starts the service registry" do
+    test "starts runtime infrastructure" do
       # Start the application
       {:ok, sup_pid} = ExMCP.Application.start(:normal, [])
 
       # Give it a moment to start children
       Process.sleep(50)
 
-      # Verify the registry is running (default Local adapter)
-      registry_pid = Process.whereis(ExMCP.ServiceRegistry.Local.Registry)
-      assert is_pid(registry_pid)
-      assert Process.alive?(registry_pid)
+      session_manager_pid = Process.whereis(ExMCP.SessionManager)
+      progress_tracker_pid = Process.whereis(ExMCP.ProgressTracker)
+
+      assert is_pid(session_manager_pid)
+      assert Process.alive?(session_manager_pid)
+      assert is_pid(progress_tracker_pid)
+      assert Process.alive?(progress_tracker_pid)
 
       # Clean up
       Process.exit(sup_pid, :normal)
@@ -83,9 +86,9 @@ defmodule ExMCP.ApplicationTest do
       # Verify we have children
       assert length(sup_info) > 0
 
-      # Verify the registry is among the children (default Local adapter)
+      # Verify core runtime children are supervised.
       assert Enum.any?(sup_info, fn {id, _child, _type, _modules} ->
-               id == ExMCP.ServiceRegistry.Local.Registry
+               id == ExMCP.SessionManager
              end)
 
       # Clean up

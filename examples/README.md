@@ -1,220 +1,75 @@
 # ExMCP Examples
 
-This directory contains example implementations showing how to use ExMCP to build MCP (Model Context Protocol) servers and clients.
+This directory contains runnable examples for the current ExMCP API.
 
-## 🚀 Getting Started (`getting_started/`)
+## Getting Started
 
-**New to ExMCP? Start here!** This directory contains a complete demonstration of all transport types:
+`getting_started/` demonstrates the supported transports:
 
-- **STDIO Server** - Simple tool using subprocess communication
-- **HTTP Server** - Resources via standard HTTP
-- **HTTP+SSE Server** - Prompts with real-time streaming
-- **Native BEAM Server** - Full features with Erlang process communication
-- **Demo Client** - Connects to all servers and demonstrates their features
+- `01_stdio_server.exs` - stdio server with a `hello` tool
+- `02_http_server.exs` - HTTP server with resources
+- `03_http_sse_server.exs` - HTTP server with SSE enabled
+- `04_beam_server.exs` - BEAM-local server
+- `demo_client.exs` - self-contained client demo for stdio, HTTP, HTTP+SSE, and BEAM-local
 
 ```bash
 cd examples/getting_started
-./run_demo.sh  # Run the complete demo
+./run_demo.sh
 ```
 
-## Server Examples (Using DSL)
+## Server Examples
 
-All server examples use ExMCP's DSL (Domain Specific Language) for clean, declarative server definitions.
+All server examples use:
 
-### 🎯 Basic DSL Server (`basic_dsl_server.exs`)
+```elixir
+use ExMCP.Server.Handler
+use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+```
 
-The simplest example showing core DSL features:
-- Tool definition with `deftool`
-- Resource definition with `defresource`
-- Prompt definition with `defprompt`
-- Basic handler implementations
+- `basic_dsl_server.exs` - minimal tool, resource, and prompt
+- `advanced_dsl_server.exs` - typed parameters, structured output, templates, and metadata
+- `weather_service.exs` - practical simulated weather tools and resources
+- `file_manager.exs` - sandboxed file operations and file resources
+
+Run a server directly:
 
 ```bash
 elixir examples/basic_dsl_server.exs
 ```
 
-### 🚀 Advanced DSL Server (`advanced_dsl_server.exs`)
+Server examples use stdio by default unless their filename calls out another transport.
 
-Demonstrates advanced DSL capabilities:
-- Complex argument schemas with nested objects
-- Field validation (enums, ranges, patterns)
-- Resource patterns and subscriptions
-- Meta blocks for better organization
-- Content helpers (text, json, image)
-- State management
+## Client Example
+
+- `basic_client.exs` - starts a BEAM-local server in-process, connects a client, lists tools/resources, and calls a tool
 
 ```bash
-elixir examples/advanced_dsl_server.exs
-```
-
-### 🌤️ Weather Service (`weather_service.exs`)
-
-A practical example showing a weather information service:
-- Multiple related tools (current weather, forecast, comparison)
-- Caching and state management
-- Resource subscriptions for real-time updates
-- Prompts for weather-based planning
-- Realistic data simulation
-
-```bash
-elixir examples/weather_service.exs
-```
-
-### 📁 File Manager (`file_manager.exs`)
-
-File management service demonstrating:
-- File operations (list, read, write, search)
-- Resource patterns for dynamic file access
-- File watching and subscriptions
-- Security considerations (sandboxed root)
-- Metadata and file analysis
-- Binary content handling
-
-```bash
-elixir examples/file_manager.exs
-```
-
-## Client Examples
-
-### Basic Client (`basic_client.exs`)
-Simple client showing how to connect and use MCP servers.
-
-### Test HTTP Client (`test_http_client.exs`)
-HTTP transport client for testing HTTP-based MCP servers.
-
-### Simple Test Client (`simple_test_client.exs`)
-Minimal client for quick testing and debugging.
-
-## ACP Examples (`acp/`)
-
-End-to-end Agent Client Protocol examples:
-
-- `echo_agent.exs` - A native Elixir ACP agent over stdio
-- `controller.exs` - An ACP controller that starts the agent, sends a prompt, and prints streamed output
-
-```bash
-mix compile
-mix run examples/acp/controller.exs
-```
-
-## Advanced Examples
-
-### OAuth Examples (`advanced/oauth/`)
-- `full_flow.exs` - Complete OAuth 2.1 authorization flow
-- `basic_pkce.exs` - PKCE implementation for public clients
-
-### Sampling Example (`advanced/sampling/`)
-- Note: Sampling examples are being updated for the latest MCP specification
-
-## Utility Examples
-
-### Error Handling (`utilities/error_handling.exs`)
-Demonstrates proper error handling patterns in MCP.
-
-### Client Configuration (`utilities/client_config.exs`)
-Shows various client configuration options.
-
-### Structured Responses (`utilities/structured_responses.exs`)
-Working with ExMCP's structured response types.
-
-## Running the Examples
-
-1. Make sure you have Elixir installed (1.15+ recommended)
-2. Clone the ExMCP repository
-3. From the repository root, run any example:
-
-```bash
-# Run a server example
-elixir examples/weather_service.exs
-
-# In another terminal, connect a client
 elixir examples/basic_client.exs
 ```
 
-## DSL Quick Reference
+## ACP Examples
 
-### Tool Definition
-```elixir
-deftool "tool_name" do
-  description "What this tool does"
-  
-  args do
-    field :param1, :string, required: true
-    field :param2, :integer, default: 10
-  end
-end
+- `acp/echo_agent.exs` - native Elixir ACP agent over stdio
+- `acp/controller.exs` - ACP controller that starts the agent and streams a prompt result
+
+```bash
+mix run examples/acp/controller.exs
 ```
 
-### Resource Definition
-```elixir
-defresource "protocol://path" do
-  name "Resource Name"
-  description "What this resource provides"
-  mime_type "application/json"
-  subscribable true
-end
-```
+## OAuth And Utility Examples
 
-### Prompt Definition
-```elixir
-defprompt "prompt_name" do
-  name "Prompt Display Name"
-  description "What this prompt helps with"
-  
-  arguments do
-    arg :param1, required: true
-    arg :param2, description: "Optional parameter"
-  end
-end
-```
+- `advanced/oauth/basic_pkce.exs` - offline OAuth 2.1 PKCE helper flow
+- `utilities/client_config.exs` - pipe-friendly client configuration
+- `utilities/error_handling.exs` - response and error helpers
+- `utilities/structured_responses.exs` - structured response helpers
 
-### Content Helpers
-```elixir
-# In handler implementations
-{:ok, %{content: [
-  text("Plain text content"),
-  json(%{data: "structured"}),
-  image(base64_data, "image/png"),
-  blob(binary_data, "application/pdf")
-]}, state}
-```
+## Transport Names
 
-## Best Practices
+Current public transports are:
 
-1. **Use the DSL** - It provides better validation, documentation, and cleaner code
-2. **Handle errors gracefully** - Return `{:error, reason, state}` for failures
-3. **Manage state properly** - Return updated state from handlers
-4. **Use content helpers** - They ensure proper MCP message formatting
-5. **Validate inputs** - Use the schema validation in field definitions
-6. **Document your API** - Use descriptions in your DSL definitions
+- `:stdio` for subprocess JSON-RPC
+- `:http` for Streamable HTTP, with `use_sse: true` when SSE is needed
+- `:beam` for BEAM-local client/server processes in the same VM
+- `:test` for in-memory tests
 
-## Learning Path
-
-1. **Beginners**: Start with `basic_dsl_server.exs` to learn the DSL basics
-2. **Intermediate**: Study `advanced_dsl_server.exs` for complex schemas and patterns
-3. **Practical Examples**: Explore `weather_service.exs` or `file_manager.exs` for real-world patterns
-4. **Client Development**: Check client examples for connecting to servers
-
-## Transport Types
-
-ExMCP supports multiple transport types:
-
-- **STDIO** - Standard input/output (default for most examples)
-- **HTTP** - HTTP with JSON-RPC
-- **SSE** - Server-Sent Events for streaming
-- **Native** - Direct Erlang process communication
-
-## Need Help?
-
-- Check the [main ExMCP documentation](../README.md)
-- Look at the test files for more examples
-- Explore the DSL modules in `lib/ex_mcp/dsl/`
-
-## Contributing
-
-When adding new examples:
-1. Use the DSL for all server implementations
-2. Include clear comments explaining the concepts
-3. Make examples self-contained and runnable
-4. Add appropriate error handling
-5. Update this README with your example
+The old public `:native` alias and direct dispatcher API were removed before 1.0.

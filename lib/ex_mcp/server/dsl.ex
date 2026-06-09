@@ -402,7 +402,6 @@ defmodule ExMCP.Server.DSL do
 
           :beam ->
             opts
-            |> Keyword.put(:transport, :test)
             |> Keyword.put_new(:handler, __MODULE__)
             |> HandlerServer.start_link()
 

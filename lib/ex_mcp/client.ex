@@ -124,7 +124,7 @@ defmodule ExMCP.Client do
   The `:retry_policy` option accepts a keyword list with the following options:
 
   - `:max_attempts` - Maximum number of retry attempts (default: 3)
-  - `:initial_delay` - Initial delay between retries in milliseconds (default: 100)
+  - `:initial_delay` - Initial delay between retries in milliseconds (default: 200)
   - `:max_delay` - Maximum delay between retries in milliseconds (default: 5000)
   - `:backoff_factor` - Exponential backoff multiplier (default: 2)
   - `:jitter` - Add random jitter to prevent thundering herd (default: true)

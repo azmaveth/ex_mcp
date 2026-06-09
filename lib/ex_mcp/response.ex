@@ -3,8 +3,8 @@ defmodule ExMCP.Response do
   Structured response types for MCP operations.
 
   This module provides structured response handling for MCP tool calls,
-  resource reads, and other operations. It represents a key improvement in v2,
-  providing type-safe responses instead of raw maps.
+  resource reads, and other operations, giving callers type-safe responses
+  instead of raw maps.
 
   ## Response Types
 

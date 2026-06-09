@@ -1,6 +1,6 @@
 defmodule ExMCP.RegistryTest do
   use ExUnit.Case, async: false
-  import ExMCP.HordeTestHelpers
+  import ExMCP.TestHelpers, only: [unique_process_name: 2]
 
   alias ExMCP.Registry
 

@@ -1,178 +1,124 @@
 # ExMCP Troubleshooting Guide
 
-This guide covers common issues and their solutions when working with ExMCP.
+## stdio
 
-## STDIO Transport Issues
+### Unexpected end of JSON input
 
-### "Unexpected end of JSON input" Error
+The stdio transport requires stdout to contain only newline-delimited JSON-RPC.
+Avoid `IO.puts/1`, normal Logger output, or noisy startup scripts on stdout.
 
-**Problem**: When using STDIO transport with MCP Inspector or other clients, you see:
-```
-Error from MCP server: SyntaxError: Unexpected end of JSON input
-```
-
-**Cause**: The MCP STDIO protocol requires that ONLY valid JSON-RPC messages appear on stdout. Any other output (logs, Mix.install messages, etc.) contaminates the stream.
-
-**Status**: ✅ **FIXED** - ExMCP now handles non-JSON lines gracefully during startup.
-
-**Common Sources of Contamination**:
-1. `Mix.install` output (e.g., "==> ex_mcp", "Compiling...")
-2. Logger messages going to stdout instead of stderr
-3. Horde registry/supervisor startup logs
-4. Any `IO.puts` calls without specifying `:stderr`
-
-**What We Fixed**:
-- STDIO server now ignores non-JSON lines instead of sending error responses
-- Implemented protocol version negotiation between client and server
-- Added configurable startup delay for Mix.install output
-- Improved logging configuration for STDIO transport
-
-**Solutions**:
-
-#### For Scripts Using Mix.install
-
-Configure logging BEFORE calling Mix.install:
+Use stderr for diagnostics:
 
 ```elixir
-#!/usr/bin/env elixir
+IO.puts(:stderr, "debug")
+```
 
-# CRITICAL: Configure before Mix.install
+For scripts with `Mix.install/2`, configure logging before installing deps:
+
+```elixir
 Application.put_env(:ex_mcp, :stdio_mode, true)
-Application.put_env(:ex_mcp, :stdio_startup_delay, 500)  # ms
-
-# Suppress all logging
-System.put_env("ELIXIR_LOG_LEVEL", "emergency")
 Application.put_env(:logger, :level, :emergency)
 
-Mix.install([
-  {:ex_mcp, "~> 1.0.0-rc.0"}
-], verbose: false)
-
-# Your server code here...
+Mix.install([{:ex_mcp, "~> 1.0.0-rc.0"}], verbose: false)
 ```
 
-#### For Production Servers
+### Server hangs after starting
 
-1. **Use Releases**: Build a release that doesn't need Mix.install (recommended)
-2. **Use StdioLauncher**: Helper module that handles startup properly
-   ```elixir
-   ExMCP.StdioLauncher.start(MyServer, [
-     {:ex_mcp, "~> 1.0.0-rc.0"}
-   ])
-   ```
+Start stdio servers with:
 
-**Note**: While ExMCP now gracefully handles non-JSON output during startup, Mix.install may still produce some stdout output that cannot be completely suppressed. For absolute zero contamination in production, use compiled releases.
-
-#### Debugging Output
-
-Always send debug output to stderr:
-```elixir
-# Good
-IO.puts(:stderr, "Debug message")
-
-# Bad - contaminates stdout
-IO.puts("Debug message")
-```
-
-### Server Hangs After Starting
-
-**Problem**: The STDIO server starts but doesn't respond to requests.
-
-**Cause**: The server isn't properly entering STDIO transport mode.
-
-**Solution**: Ensure you're using `transport: :stdio` when starting:
 ```elixir
 MyServer.start_link(transport: :stdio)
 ```
 
-## DSL Issues
+For clients, `command` must be a list:
 
-### Tools Not Appearing
-
-**Problem**: Defined tools don't show up when client lists them.
-
-**Cause**: Missing or incorrect callback implementation.
-
-**Solution**: Ensure you implement the `handle_call_tool/3` callback:
 ```elixir
-@impl true
-def handle_call_tool(tool_name, args, state) do
-  # Handle the tool call
-  {:ok, result, state}
-end
+ExMCP.Client.start_link(transport: :stdio, command: ["node", "server.js"])
 ```
 
-### "Unknown Key" Warnings
+## HTTP
 
-**Problem**: Client shows warnings about `__unknown_key__` in responses.
+### Connection refused
 
-**Cause**: This was a bug in older versions where protocol data was being atomized incorrectly.
+Check the URL and endpoint path. If the path is included in `url`, ExMCP uses
+that as the default endpoint:
 
-**Solution**: Update to the latest version of ExMCP. Protocol data is now kept as strings.
-
-## HTTP Transport Issues
-
-### Port Already in Use
-
-**Problem**: Starting HTTP server fails with "address already in use".
-
-**Solution**: 
-1. Check if another server is running on the port
-2. Use a different port: `MyServer.start_link(transport: :http, port: 8080)`
-3. Kill the existing process using the port
-
-### CORS Errors
-
-**Problem**: Browser clients get CORS errors when connecting.
-
-**Solution**: CORS is enabled by default. If still having issues:
 ```elixir
-MyServer.start_link(
+ExMCP.Client.start_link(transport: :http, url: "http://localhost:4000/mcp")
+```
+
+Or provide it explicitly:
+
+```elixir
+ExMCP.Client.start_link(
   transport: :http,
-  cors_enabled: true
+  url: "http://localhost:4000",
+  endpoint: "/mcp"
 )
 ```
 
-## General Debugging Tips
+### CORS errors
 
-### Enable Debug Logging
+For Phoenix/Plug servers, configure CORS in your Plug pipeline or pass
+`cors_enabled: true` to `ExMCP.HttpPlug`.
 
-For non-STDIO transports, enable debug logging:
+### SSE stream does not start
+
+Confirm the server has SSE enabled and the client uses `use_sse: true`. Increase
+`stream_handshake_timeout` for slow deployments.
+
+## BEAM-Local
+
+### Client cannot connect
+
+`transport: :beam` requires a live server PID:
+
+```elixir
+{:ok, server} = MyServer.start_link(transport: :beam)
+Process.alive?(server)
+
+{:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
+```
+
+Do not use `transport: :native`; it was removed in the 1.0 API cleanup.
+
+## DSL
+
+### Tools do not appear
+
+Use `ExMCP.Server.Handler` and `ExMCP.Server.DSL` together, and make sure the
+server starts through a supported transport:
+
+```elixir
+defmodule MyServer do
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
+
+  tool "ping", "Health check" do
+    run fn _args, state ->
+      {:ok, %{content: [%{type: "text", text: "pong"}]}, state}
+    end
+  end
+end
+```
+
+## Debugging
+
+Enable debug logging for non-stdio transports:
+
 ```elixir
 Logger.configure(level: :debug)
 ```
 
-### Check Server State
+Inspect local server state when using BEAM-local tests:
 
-Use the BEAM transport for debugging:
 ```elixir
-{:ok, server} = MyServer.start_link(transport: :beam)
 :sys.get_state(server)
 ```
 
-### Test with Simple Client
+Run focused tests:
 
-Use the ExMCP client to test your server:
-```elixir
-{:ok, client} = ExMCP.Client.connect(url: "stdio://path/to/server.exs")
-{:ok, response} = ExMCP.Client.call_tool(client, "tool_name", %{arg: "value"})
+```bash
+mix test test/ex_mcp/client_beam_transport_test.exs
+mix test test/ex_mcp/server/transport_test.exs
 ```
-
-## Common Mistakes
-
-1. **Using atoms for protocol keys**: Protocol data should use string keys
-2. **Not implementing callbacks**: Ensure all required callbacks are implemented
-3. **Logging to stdout in STDIO mode**: Always use `:stderr` for STDIO servers
-4. **Not handling errors**: Always return proper error tuples from handlers
-
-## Getting Help
-
-If you're still having issues:
-
-1. Check the examples in `examples/getting_started/`
-2. Review the test files for usage patterns
-3. Open an issue on GitHub with:
-   - ExMCP version
-   - Elixir/OTP versions
-   - Minimal reproduction code
-   - Full error messages

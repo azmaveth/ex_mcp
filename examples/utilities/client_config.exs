@@ -1,16 +1,17 @@
 #!/usr/bin/env elixir
 
 # ClientConfig Builder Example
-# Demonstrates the v2 configuration API
+# Demonstrates pipe-friendly client configuration
 
-# Add lib to path
-Code.prepend_path("_build/dev/lib/ex_mcp/ebin")
+Mix.install([
+  {:ex_mcp, path: Path.expand("../..", __DIR__)}
+])
 
 alias ExMCP.ClientConfig
 
 IO.puts("""
 ==========================================
-ExMCP v2 ClientConfig Builder Demo
+ExMCP ClientConfig Builder Demo
 ==========================================
 """)
 
@@ -113,9 +114,10 @@ case ClientConfig.validate(valid_config) do
   {:error, errors} -> IO.puts("✗ Errors: #{inspect(errors)}")
 end
 
-# Invalid configuration (missing URL for HTTP)
-invalid_config = ClientConfig.new()
-                 |> ClientConfig.put_transport(:http)
+# Invalid configuration
+invalid_config =
+  ClientConfig.new()
+  |> ClientConfig.put_retry_policy(max_attempts: 0, base_interval: -100)
 
 case ClientConfig.validate(invalid_config) do
   :ok -> IO.puts("✓ Valid configuration")

@@ -7,7 +7,7 @@ defmodule ExMCPTest do
 
   describe "version and metadata functions" do
     test "protocol_version/0 returns current protocol version" do
-      assert ExMCP.protocol_version() == "2025-03-26"
+      assert ExMCP.protocol_version() == "2025-11-25"
     end
 
     test "version/0 returns library version" do
@@ -19,6 +19,7 @@ defmodule ExMCPTest do
     test "supported_versions/0 returns list of supported versions" do
       versions = ExMCP.supported_versions()
       assert is_list(versions)
+      assert "2025-11-25" in versions
       assert "2025-06-18" in versions
       assert "2025-03-26" in versions
     end

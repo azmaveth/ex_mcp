@@ -1,620 +1,230 @@
 #!/usr/bin/env elixir
 
-# File Manager MCP Server
-#
-# This example shows how to build a file management service
-# using ExMCP's DSL. It demonstrates working with resources,
-# subscriptions, and file-based operations.
+# Sandboxed file manager MCP server using the modern ExMCP Handler + DSL API.
 
 Mix.install([
   {:ex_mcp, path: Path.expand("..", __DIR__)}
 ])
 
 defmodule FileManager do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "file-manager", version: "1.0.0"
 
   @impl true
   def init(args) do
-    # SECURITY: Never default to current working directory in production
-    # Always explicitly set a secure, sandboxed root_dir
-    root_dir = case Keyword.get(args, :root_dir) do
-      nil ->
-        # Create a secure temporary directory for this session
-        tmp_dir = Path.join(System.tmp_dir!(), "file_manager_#{:rand.uniform(999999)}")
-        File.mkdir_p!(tmp_dir)
-        IO.puts(:stderr, "WARNING: No :root_dir specified. Using temporary directory: #{tmp_dir}")
-        IO.puts(:stderr, "WARNING: In production, always explicitly set a secure :root_dir option")
-        tmp_dir
-      dir -> dir
-    end
+    root_dir =
+      args
+      |> Keyword.get_lazy(:root_dir, &default_root_dir/0)
+      |> Path.expand()
 
-    {:ok, %{
-      root_dir: root_dir,
-      watchers: %{},
-      file_locks: %{}
-    }}
+    File.mkdir_p!(root_dir)
+    {:ok, %{root_dir: root_dir}}
   end
 
-  # File Operations Tools
+  tool "list_files", "Lists files under the sandbox root" do
+    title "List Files"
+    param :path, :string, default: "."
+    param :recursive, :boolean, default: false
 
-  deftool "list_files" do
-    meta do
-      description "List files in a directory"
+    run fn %{path: path, recursive: recursive}, state ->
+      with {:ok, full_path} <- safe_path(state.root_dir, path),
+           {:ok, files} <- list_files(full_path, state.root_dir, recursive) do
+        {:ok,
+         ToolResult.structured("Found #{length(files)} entries.", %{
+           root: state.root_dir,
+           path: path,
+           files: files
+         }), state}
+      else
+        {:error, reason} -> {:error, reason, state}
+      end
     end
-
-    input_schema %{
-      type: "object",
-      properties: %{
-        path: %{type: "string", default: ".", description: "Directory path (relative to root)"},
-        pattern: %{type: "string", description: "Filter pattern (e.g., '*.txt')"},
-        recursive: %{type: "boolean", default: false, description: "Include subdirectories"},
-        include_hidden: %{type: "boolean", default: false, description: "Include hidden files"}
-      }
-    }
   end
 
-  deftool "read_file" do
-    meta do
-      description "Read file contents"
-    end
+  tool "read_file", "Reads a text file from the sandbox" do
+    title "Read File"
+    param :path, :string, required: true
 
-    input_schema %{
-      type: "object",
-      properties: %{
-        path: %{type: "string"},
-        encoding: %{
-          type: "string",
-          enum: ["utf8", "binary", "base64"],
-          default: "utf8"
-        },
-        lines: %{
-          type: "object",
-          properties: %{
-            from: %{type: "integer", minimum: 1},
-            to: %{type: "integer", minimum: 1}
-          }
-        }
-      },
-      required: ["path"]
-    }
+    run fn %{path: path}, state ->
+      with {:ok, full_path} <- safe_path(state.root_dir, path),
+           {:ok, content} <- File.read(full_path) do
+        {:ok, content, state}
+      else
+        {:error, reason} -> {:error, "Could not read #{path}: #{inspect(reason)}", state}
+      end
+    end
   end
 
-  deftool "write_file" do
-    meta do
-      description "Write content to a file"
-    end
+  tool "write_file", "Writes a text file inside the sandbox" do
+    title "Write File"
+    param :path, :string, required: true
+    param :content, :string, required: true
+    param :mode, :string, default: "write", description: "write, append, or create"
 
-    input_schema %{
-      type: "object",
-      properties: %{
-        path: %{type: "string"},
-        content: %{type: "string"},
-        mode: %{
-          type: "string",
-          enum: ["write", "append", "create"],
-          default: "write",
-          description: "Write mode"
-        },
-        encoding: %{
-          type: "string",
-          enum: ["utf8", "binary", "base64"],
-          default: "utf8"
-        }
-      },
-      required: ["path", "content"]
-    }
+    run fn %{path: path, content: content, mode: mode}, state ->
+      with {:ok, full_path} <- safe_path(state.root_dir, path),
+           :ok <- File.mkdir_p(Path.dirname(full_path)),
+           :ok <- write_file(full_path, content, mode) do
+        {:ok, "Wrote #{path}.", state}
+      else
+        {:error, reason} -> {:error, "Could not write #{path}: #{inspect(reason)}", state}
+      end
+    end
   end
 
-  deftool "file_info" do
-    meta do
-      description "Get detailed file information"
-    end
+  tool "file_info", "Returns metadata for a sandboxed file" do
+    title "File Info"
+    param :path, :string, required: true
 
-    input_schema %{
-      type: "object",
-      properties: %{
-        path: %{type: "string"},
-        include_checksum: %{type: "boolean", default: false}
-      },
-      required: ["path"]
-    }
+    run fn %{path: path}, state ->
+      with {:ok, full_path} <- safe_path(state.root_dir, path),
+           {:ok, info} <- file_info(full_path, state.root_dir) do
+        {:ok, ToolResult.structured("Metadata for #{path}.", info), state}
+      else
+        {:error, reason} -> {:error, "Could not inspect #{path}: #{inspect(reason)}", state}
+      end
+    end
   end
 
-  deftool "search_files" do
-    meta do
-      description "Search for files by content"
-    end
+  resource_template "file:///{path}", "Reads a text file from the sandbox" do
+    title "Sandbox File"
+    mime_type "text/plain"
+    param :path, :string
 
-    input_schema %{
-      type: "object",
-      properties: %{
-        query: %{type: "string"},
-        path: %{type: "string", default: "."},
-        file_pattern: %{type: "string", default: "*"},
-        case_sensitive: %{type: "boolean", default: false},
-        max_results: %{type: "integer", default: 50, minimum: 1, maximum: 1000}
-      },
-      required: ["query"]
-    }
+    read fn %{path: path, uri: uri}, state ->
+      with {:ok, full_path} <- safe_path(state.root_dir, path),
+           {:ok, content} <- File.read(full_path) do
+        {:ok, %{uri: uri, text: content}, state}
+      else
+        {:error, reason} -> {:error, "Could not read #{path}: #{inspect(reason)}", state}
+      end
+    end
   end
 
-  # File Resources
-
-  defresource "file://*" do
-    meta do
-      name "File System"
-      description "Access files in the managed directory"
-    end
-
-    mime_type "application/octet-stream"
-    list_pattern true
-    subscribable true
-  end
-
-  defresource "file://metadata/*" do
-    meta do
-      name "File Metadata"
-      description "File metadata and properties"
-    end
-
+  resource_template "file-metadata:///{path}", "Returns file metadata as JSON" do
+    title "File Metadata"
     mime_type "application/json"
-    list_pattern true
-  end
+    param :path, :string
 
-  # File Management Prompts
-
-  defprompt "organize_files" do
-    meta do
-      name "File Organization Assistant"
-      description "Helps organize and categorize files"
-    end
-
-    arguments do
-      arg :directory, required: true, description: "Directory to organize"
-      arg :strategy, description: "Organization strategy (by type, date, etc.)"
-      arg :rules, description: "Custom organization rules"
-    end
-  end
-
-  defprompt "file_analyzer" do
-    meta do
-      name "File Content Analyzer"
-      description "Analyzes file contents and suggests actions"
-    end
-
-    arguments do
-      arg :file_path, required: true
-      arg :analysis_type, description: "Type of analysis needed"
-    end
-  end
-
-  # Handler Implementations
-
-  @impl true
-  def handle_tool_call("list_files", args, state) do
-    path = Map.get(args, "path", ".")
-    pattern = Map.get(args, "pattern", "*")
-    recursive = Map.get(args, "recursive", false)
-    include_hidden = Map.get(args, "include_hidden", false)
-
-    full_path = Path.join(state.root_dir, path)
-
-    files = list_directory(full_path, pattern, recursive, include_hidden)
-
-    content = [
-      text("Found #{length(files)} files"),
-      json(%{
-        path: path,
-        files: files,
-        total: length(files)
-      })
-    ]
-
-    {:ok, %{content: content}, state}
-  end
-
-  @impl true
-  def handle_tool_call("read_file", args, state) do
-    path = args["path"]
-    encoding = Map.get(args, "encoding", "utf8")
-    lines = Map.get(args, "lines")
-
-    case validate_path_security(state.root_dir, path) do
-      {:ok, full_path} ->
-        case read_file_safe(full_path, encoding, lines) do
-          {:ok, content} ->
-            {:ok, %{content: [text(content)]}, state}
-          {:error, reason} ->
-            {:error, "Failed to read file: #{reason}", state}
-        end
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-
-  @impl true
-  def handle_tool_call("write_file", args, state) do
-    path = args["path"]
-    content = args["content"]
-    mode = Map.get(args, "mode", "write")
-    encoding = Map.get(args, "encoding", "utf8")
-
-    case validate_path_security(state.root_dir, path) do
-      {:ok, full_path} ->
-        # Check if file is locked
-        if Map.get(state.file_locks, path) do
-          {:error, "File is locked: #{path}", state}
-        else
-          case write_file_safe(full_path, content, mode, encoding) do
-            :ok ->
-              # Notify watchers
-              notify_watchers(path, :modified, state)
-              {:ok, %{content: [text("File written successfully")]}, state}
-            {:error, reason} ->
-              {:error, "Failed to write file: #{reason}", state}
-          end
-        end
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-
-  @impl true
-  def handle_tool_call("file_info", args, state) do
-    path = args["path"]
-    include_checksum = Map.get(args, "include_checksum", false)
-
-    case validate_path_security(state.root_dir, path) do
-      {:ok, full_path} ->
-        case get_file_info(full_path, include_checksum) do
-          {:ok, info} ->
-            content = [
-              text("File information for: #{path}"),
-              json(info)
-            ]
-            {:ok, %{content: content}, state}
-          {:error, reason} ->
-            {:error, "Failed to get file info: #{reason}", state}
-        end
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-
-  @impl true
-  def handle_tool_call("search_files", args, state) do
-    query = args["query"]
-    path = Map.get(args, "path", ".")
-    pattern = Map.get(args, "file_pattern", "*")
-    case_sensitive = Map.get(args, "case_sensitive", false)
-    max_results = Map.get(args, "max_results", 50)
-
-    case validate_path_security(state.root_dir, path) do
-      {:ok, full_path} ->
-        results = search_in_files(
-          full_path,
-          query,
-          pattern,
-          case_sensitive,
-          max_results
-        )
-
-        content = [
-          text("Search results for '#{query}': #{length(results)} matches"),
-          json(%{query: query, results: results, count: length(results)})
-        ]
-
-        {:ok, %{content: content}, state}
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-
-  @impl true
-  def handle_resource_read("file://" <> path, _uri, state) do
-    case validate_path_security(state.root_dir, path) do
-      {:ok, full_path} ->
-        case File.read(full_path) do
-          {:ok, content} ->
-            mime_type = get_mime_type(path)
-            if String.starts_with?(mime_type, "text/") do
-              {:ok, [text(content)], state}
-            else
-              {:ok, [blob(Base.encode64(content), mime_type)], state}
-            end
-          {:error, reason} ->
-            {:error, "Cannot read file: #{reason}", state}
-        end
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-
-  @impl true
-  def handle_resource_read("file://metadata/" <> path, _uri, state) do
-    case validate_path_security(state.root_dir, path) do
-      {:ok, full_path} ->
-        case get_file_info(full_path, true) do
-          {:ok, metadata} ->
-            {:ok, [json(metadata)], state}
-          {:error, reason} ->
-            {:error, "Cannot get metadata: #{reason}", state}
-        end
-      {:error, reason} ->
-        {:error, reason, state}
-    end
-  end
-
-  @impl true
-  def handle_resource_subscribe("file://" <> path, state) do
-    # Set up file watching
-    watchers = Map.put(state.watchers, path, true)
-    new_state = %{state | watchers: watchers}
-
-    # In production, use file system events
-    IO.puts("Watching for changes: #{path}")
-
-    {:ok, new_state}
-  end
-
-  @impl true
-  def handle_prompt_get("organize_files", args, state) do
-    directory = args["directory"]
-    strategy = Map.get(args, "strategy", "by file type")
-    rules = Map.get(args, "rules", "standard organization")
-
-    messages = [
-      system("You are a file organization expert. Suggest efficient file organization strategies."),
-      user("""
-      Please help me organize files in #{directory}.
-      Strategy: #{strategy}
-      Rules: #{rules}
-
-      What's the best way to organize these files?
-      """),
-      assistant("I'll help you organize the files in #{directory} using a #{strategy} approach. Let me analyze the current structure and suggest an organization plan.")
-    ]
-
-    {:ok, %{messages: messages}, state}
-  end
-
-  @impl true
-  def handle_prompt_get("file_analyzer", args, state) do
-    file_path = args["file_path"]
-    analysis_type = Map.get(args, "analysis_type", "general content analysis")
-
-    messages = [
-      system("You are a file content analyst. Provide insights about file contents and suggest appropriate actions."),
-      user("Analyze this file: #{file_path} for #{analysis_type}"),
-      assistant("I'll analyze #{file_path} focusing on #{analysis_type}. Let me examine the content and provide insights.")
-    ]
-
-    {:ok, %{messages: messages}, state}
-  end
-
-  # Helper Functions
-
-  defp list_directory(path, pattern, recursive, include_hidden) do
-    wildcard = if recursive, do: "**/" <> pattern, else: pattern
-
-    Path.wildcard(Path.join(path, wildcard))
-    |> Enum.map(&Path.relative_to(&1, path))
-    |> Enum.reject(fn file ->
-      not include_hidden and String.starts_with?(Path.basename(file), ".")
-    end)
-    |> Enum.map(fn file ->
-      full = Path.join(path, file)
-      stat = File.stat!(full)
-
-      %{
-        name: file,
-        type: if(stat.type == :directory, do: "directory", else: "file"),
-        size: stat.size,
-        modified: stat.mtime |> elem(0) |> DateTime.from_unix!() |> DateTime.to_iso8601()
-      }
-    end)
-  end
-
-  defp read_file_safe(path, encoding, lines) do
-    with {:ok, content} <- File.read(path) do
-      content = case encoding do
-        "base64" -> Base.encode64(content)
-        "binary" -> content
-        _ -> content
-      end
-
-      if lines do
-        lines_list = String.split(content, "\n")
-        from = Map.get(lines, "from", 1) - 1
-        to = Map.get(lines, "to", length(lines_list))
-        selected = Enum.slice(lines_list, from, to - from)
-        {:ok, Enum.join(selected, "\n")}
+    read fn %{path: path, uri: uri}, state ->
+      with {:ok, full_path} <- safe_path(state.root_dir, path),
+           {:ok, info} <- file_info(full_path, state.root_dir) do
+        {:ok, %{uri: uri, text: Jason.encode!(info)}, state}
       else
-        {:ok, content}
+        {:error, reason} -> {:error, "Could not inspect #{path}: #{inspect(reason)}", state}
       end
     end
   end
 
-  defp write_file_safe(path, content, mode, encoding) do
-    content = case encoding do
-      "base64" -> Base.decode64!(content)
-      _ -> content
-    end
+  prompt "organize_files", "Creates a file organization prompt" do
+    title "Organize Files"
+    arg :directory, required: true
+    arg :strategy
 
-    case mode do
-      "append" -> File.write(path, content, [:append])
-      "create" ->
-        if File.exists?(path) do
-          {:error, "File already exists"}
-        else
-          File.write(path, content)
-        end
-      _ -> File.write(path, content)
-    end
-  end
+    render fn %{directory: directory} = args, state ->
+      strategy = Map.get(args, :strategy, "by type and purpose")
 
-  defp get_file_info(path, include_checksum) do
-    with {:ok, stat} <- File.stat(path) do
-      info = %{
-        name: Path.basename(path),
-        path: path,
-        size: stat.size,
-        type: stat.type,
-        permissions: stat.mode,
-        created: stat.ctime |> elem(0) |> DateTime.from_unix!() |> DateTime.to_iso8601(),
-        modified: stat.mtime |> elem(0) |> DateTime.from_unix!() |> DateTime.to_iso8601(),
-        accessed: stat.atime |> elem(0) |> DateTime.from_unix!() |> DateTime.to_iso8601()
-      }
-
-      info = if include_checksum and stat.type == :regular do
-        {:ok, content} = File.read(path)
-        checksum = :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
-        Map.put(info, :checksum, checksum)
-      else
-        info
-      end
-
-      {:ok, info}
+      {:ok,
+       %{
+         messages: [
+           %{
+             role: "user",
+             content: %{
+               type: "text",
+               text: "Suggest a #{strategy} organization plan for #{directory}."
+             }
+           }
+         ]
+       }, state}
     end
   end
 
-  defp search_in_files(path, query, pattern, case_sensitive, max_results) do
-    query = if case_sensitive, do: query, else: String.downcase(query)
-
-    Path.wildcard(Path.join(path, pattern))
-    |> Enum.take(max_results)
-    |> Enum.reduce([], fn file, acc ->
-      # Only search in files smaller than 10MB to prevent memory issues
-      case File.stat(file) do
-        {:ok, %{size: size}} when size > 10_000_000 ->
-          IO.puts(:stderr, "Skipping large file: #{file} (#{div(size, 1_000_000)}MB)")
-          acc
-        {:ok, _} ->
-          case File.read(file) do
-            {:ok, content} ->
-              content = if case_sensitive, do: content, else: String.downcase(content)
-              if String.contains?(content, query) do
-                [%{
-                  file: Path.relative_to(file, path),
-                  matches: count_matches(content, query)
-                } | acc]
-              else
-                acc
-              end
-            _ -> acc
-          end
-        _ -> acc
-      end
-    end)
-    |> Enum.reverse()
+  defp default_root_dir do
+    root = Path.join(System.tmp_dir!(), "ex_mcp_file_manager_example")
+    File.mkdir_p!(root)
+    File.write!(Path.join(root, "readme.txt"), "Welcome to the File Manager example.\n")
+    root
   end
 
-  defp count_matches(content, query) do
-    case Regex.compile(Regex.escape(query)) do
-      {:ok, regex} ->
-        Regex.scan(regex, content) |> length()
-      {:error, _} ->
-        max(0, length(String.split(content, query)) - 1)
+  defp safe_path(root_dir, requested_path) do
+    root = Path.expand(root_dir)
+    path = Path.expand(Path.join(root, requested_path))
+
+    if path == root or String.starts_with?(path, root <> "/") do
+      {:ok, path}
+    else
+      {:error, :outside_root}
     end
   end
 
-  defp get_mime_type(path) do
-    case Path.extname(path) do
-      ".txt" -> "text/plain"
-      ".json" -> "application/json"
-      ".xml" -> "application/xml"
-      ".html" -> "text/html"
-      ".css" -> "text/css"
-      ".js" -> "text/javascript"
-      ".ex" -> "text/x-elixir"
-      ".exs" -> "text/x-elixir"
-      ".png" -> "image/png"
-      ".jpg" -> "image/jpeg"
-      ".jpeg" -> "image/jpeg"
-      ".gif" -> "image/gif"
-      ".pdf" -> "application/pdf"
-      _ -> "application/octet-stream"
+  defp list_files(path, root, false) do
+    with {:ok, entries} <- File.ls(path) do
+      files =
+        entries
+        |> Enum.map(&Path.join(path, &1))
+        |> Enum.map(&file_summary(&1, root))
+
+      {:ok, files}
     end
   end
 
-  defp notify_watchers(path, event, state) do
-    Enum.each(state.watchers, fn {watched_path, _} ->
-      if String.starts_with?(path, watched_path) do
-        IO.puts("File event: #{event} on #{path}")
-      end
-    end)
+  defp list_files(path, root, true) do
+    files =
+      path
+      |> Path.join("**/*")
+      |> Path.wildcard()
+      |> Enum.map(&file_summary(&1, root))
+
+    {:ok, files}
   end
 
-  defp blob(data, mime_type) do
+  defp file_summary(path, root) do
+    {:ok, stat} = File.stat(path)
+
     %{
-      type: "blob",
-      data: data,
-      mimeType: mime_type
+      path: Path.relative_to(path, root),
+      type: Atom.to_string(stat.type),
+      size: stat.size
     }
   end
 
-  # SECURITY: Validate that the requested path stays within the root directory
-  defp validate_path_security(root_dir, requested_path) do
-    root_canonical = Path.expand(root_dir)
-    target_path_raw = Path.join(root_dir, requested_path)
-    target_path_canonical = Path.expand(target_path_raw)
-
-    if String.starts_with?(target_path_canonical, root_canonical <> "/") or
-       target_path_canonical == root_canonical do
-      {:ok, target_path_canonical}
-    else
-      {:error, "Access denied: Path '#{requested_path}' is outside the allowed root directory"}
+  defp file_info(path, root) do
+    with {:ok, stat} <- File.stat(path) do
+      {:ok,
+       %{
+         path: Path.relative_to(path, root),
+         type: Atom.to_string(stat.type),
+         size: stat.size,
+         modified: format_time(stat.mtime)
+       }}
     end
   end
+
+  defp format_time({date, time}) do
+    {:ok, naive} = NaiveDateTime.new(Date.from_erl!(date), Time.from_erl!(time))
+    NaiveDateTime.to_iso8601(naive)
+  end
+
+  defp write_file(path, content, "append"), do: File.write(path, content, [:append])
+
+  defp write_file(path, content, "create") do
+    if File.exists?(path), do: {:error, :exists}, else: File.write(path, content)
+  end
+
+  defp write_file(path, content, _mode), do: File.write(path, content)
 end
 
-# Server Runner
 defmodule FileManagerRunner do
   def run do
-    IO.puts("Starting File Manager MCP Server...")
-    IO.puts("=" <> String.duplicate("=", 50))
+    root = Path.join(System.tmp_dir!(), "ex_mcp_file_manager_example")
+    IO.puts("Starting File Manager MCP Server on stdio.")
+    IO.puts("Sandbox root: #{root}")
 
-    # Create a safe sandbox directory
-    sandbox = Path.join(System.tmp_dir!(), "mcp_file_manager_example")
-    File.mkdir_p!(sandbox)
-
-    # Create some example files
-    File.write!(Path.join(sandbox, "readme.txt"), "Welcome to File Manager!")
-    File.write!(Path.join(sandbox, "data.json"), Jason.encode!(%{example: true}))
-    File.mkdir_p!(Path.join(sandbox, "documents"))
-    File.write!(Path.join(sandbox, "documents/note.txt"), "Example note")
-
-    {:ok, _server} = FileManager.start_link(
-      transport: :stdio,
-      name: :file_manager,
-      root_dir: sandbox
-    )
-
-    IO.puts("\nFile Manager is running!")
-    IO.puts("Root directory: #{sandbox}")
-
-    IO.puts("\nAvailable Tools:")
-    IO.puts("  - list_files: Browse directory contents")
-    IO.puts("  - read_file: Read file contents")
-    IO.puts("  - write_file: Write or append to files")
-    IO.puts("  - file_info: Get detailed file information")
-    IO.puts("  - search_files: Search files by content")
-
-    IO.puts("\nAvailable Resources:")
-    IO.puts("  - file://*: Direct file access")
-    IO.puts("  - file://metadata/*: File metadata")
-
-    IO.puts("\nAvailable Prompts:")
-    IO.puts("  - organize_files: File organization help")
-    IO.puts("  - file_analyzer: Content analysis")
-
-    IO.puts("\nServer is ready for connections!")
-
+    {:ok, _server} = FileManager.start_link(transport: :stdio, handler_args: [root_dir: root])
     Process.sleep(:infinity)
   end
 end
 
-# Run if executed directly
-if System.get_env("MIX_ENV") != "test" do
+if System.get_env("MCP_ENV") != "test" do
   FileManagerRunner.run()
 end

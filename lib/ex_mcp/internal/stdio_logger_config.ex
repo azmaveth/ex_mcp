@@ -20,10 +20,6 @@ defmodule ExMCP.Internal.StdioLoggerConfig do
     # Configure application-level logging
     Application.put_env(:logger, :level, :emergency)
 
-    if Code.ensure_loaded?(Horde) do
-      Application.put_env(:horde, :log_level, :emergency)
-    end
-
     # Configure OTP logger
     :logger.set_primary_config(:level, :emergency)
 

@@ -30,27 +30,30 @@ defmodule ExMCP.Transport.HTTPServerWithVersion do
       end
   """
 
-  use Plug.Builder
-
+  alias ExMCP.Plugs.ProtocolVersion
   alias ExMCP.Transport.HTTPServer
 
-  # Add the protocol version plug to the pipeline
-  plug(ExMCP.Plugs.ProtocolVersion)
+  @behaviour Plug
 
   @doc """
   Initialize with HTTPServer options.
   """
+  @impl Plug
   def init(opts) do
-    # This wrapper passes through all options to HTTPServer
     opts
   end
 
   @doc """
   Call implementation that forwards to HTTPServer after protocol validation.
   """
+  @impl Plug
   def call(conn, opts) do
-    # The protocol version plug has already run via the plug macro
-    # Now forward to the HTTPServer
-    HTTPServer.call(conn, HTTPServer.init(opts))
+    conn = ProtocolVersion.call(conn, ProtocolVersion.init([]))
+
+    if conn.halted do
+      conn
+    else
+      HTTPServer.call(conn, HTTPServer.init(opts))
+    end
   end
 end

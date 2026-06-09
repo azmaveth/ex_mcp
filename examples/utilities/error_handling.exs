@@ -1,18 +1,18 @@
 #!/usr/bin/env elixir
 
 # Error Handling Example
-# Demonstrates v2 error handling patterns
+# Demonstrates Response and Error helper patterns
 
-# Add lib to path
-Code.prepend_path("_build/dev/lib/ex_mcp/ebin")
-Code.prepend_path("_build/dev/lib/jason/ebin")
+Mix.install([
+  {:ex_mcp, path: Path.expand("../..", __DIR__)}
+])
 
 alias ExMCP.Response
 alias ExMCP.Error
 
 IO.puts("""
 ==========================================
-ExMCP v2 Error Handling Demo
+ExMCP Error Handling Demo
 ==========================================
 """)
 
@@ -104,17 +104,17 @@ defmodule ErrorPatterns do
   
   def handle_response(response) do
     if response.is_error do
-      IO.puts("❌ Error: #{ExMCP.Response.text_content(response)}")
+      IO.puts("Error: #{ExMCP.Response.text_content(response)}")
     else
       data = ExMCP.Response.data_content(response)
       if data && Map.has_key?(data, "result") do
-        IO.puts("✓ Success: Result = #{data["result"]}")
+        IO.puts("Success: Result = #{data["result"]}")
       else
         text = ExMCP.Response.text_content(response)
         if text do
-          IO.puts("✓ Success: #{text}")
+          IO.puts("Success: #{text}")
         else
-          IO.puts("✓ Success: #{inspect(response)}")
+          IO.puts("Success: #{inspect(response)}")
         end
       end
     end

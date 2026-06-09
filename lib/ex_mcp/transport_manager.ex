@@ -19,8 +19,7 @@ defmodule ExMCP.TransportManager do
       opts = [
         transports: [
           {ExMCP.Transport.HTTP, [url: "http://localhost:8080"]},
-          {ExMCP.Transport.Stdio, [command: "my-server"]},
-          {ExMCP.Transport.SSE, [url: "http://localhost:8080/events"]}
+          {ExMCP.Transport.Stdio, [command: "my-server"]}
         ],
         fallback_strategy: :sequential,
         health_check_timeout: 5_000
@@ -95,8 +94,7 @@ defmodule ExMCP.TransportManager do
     [
       transports: [
         {ExMCP.Transport.HTTP, [url: "http://localhost:8080"]},
-        {ExMCP.Transport.Stdio, [command: "mcp-server"]},
-        {ExMCP.Transport.Native, [server_module: MyApp.MCPServer]}
+        {ExMCP.Transport.Stdio, [command: "mcp-server"]}
       ],
       fallback_strategy: :sequential,
       health_check_timeout: 3_000
@@ -107,7 +105,7 @@ defmodule ExMCP.TransportManager do
     [
       transports: [
         {ExMCP.Transport.HTTP, [url: System.get_env("MCP_SERVER_URL")]},
-        {ExMCP.Transport.SSE, [url: System.get_env("MCP_SSE_URL")]}
+        {ExMCP.Transport.HTTP, [url: System.get_env("MCP_SSE_URL"), use_sse: true]}
       ],
       fallback_strategy: :sequential,
       health_check_timeout: 10_000,
@@ -118,7 +116,7 @@ defmodule ExMCP.TransportManager do
   def default_config(:testing) do
     [
       transports: [
-        {ExMCP.Transport.Native, [server_module: TestServer]}
+        {ExMCP.Transport.Test, []}
       ],
       fallback_strategy: :sequential,
       health_check_timeout: 1_000

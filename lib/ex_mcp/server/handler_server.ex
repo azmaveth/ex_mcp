@@ -41,7 +41,7 @@ defmodule ExMCP.Server.HandlerServer do
   require Logger
 
   alias ExMCP.Protocol.ErrorCodes
-  alias ExMCP.Transport.Test
+  alias ExMCP.Transport.{Local, Test}
 
   @type handler_module :: module()
   @type state :: %{
@@ -94,12 +94,6 @@ defmodule ExMCP.Server.HandlerServer do
               pending_requests: %{},
               cancelled_requests: MapSet.new()
             }
-
-            # For test transport, handle connection setup
-            if transport_type == :test do
-              # Start listening for messages
-              send(self(), :start_message_loop)
-            end
 
             {:ok, state}
 
@@ -173,14 +167,14 @@ defmodule ExMCP.Server.HandlerServer do
   end
 
   def handle_info({:test_transport_connect, client_pid}, state) do
-    # Update transport state to include the connected client
-    if state.transport == Test do
-      new_transport_state = %{state.transport_state | peer_pid: client_pid}
-      new_state = %{state | transport_state: new_transport_state}
-      {:noreply, new_state}
-    else
-      {:noreply, state}
-    end
+    new_transport_state =
+      case state.transport do
+        Test -> %{state.transport_state | peer_pid: client_pid}
+        Local -> %{state.transport_state | server_pid: client_pid, connected: true}
+        _ -> state.transport_state
+      end
+
+    {:noreply, %{state | transport_state: new_transport_state}}
   end
 
   def handle_info({:transport_closed}, state) do
@@ -656,6 +650,13 @@ defmodule ExMCP.Server.HandlerServer do
     end
   end
 
+  defp connect_transport(:beam, opts) do
+    case Local.connect(opts) do
+      {:ok, transport_state} -> {:ok, {Local, transport_state}}
+      error -> error
+    end
+  end
+
   defp connect_transport(transport_type, _opts) do
     {:error, {:unsupported_transport, transport_type}}
   end
@@ -787,18 +788,7 @@ defmodule ExMCP.Server.HandlerServer do
              new_state.handler_state
            ) do
         {:ok, result, new_handler_state} ->
-          # Handle different result formats
-          response_result =
-            case result do
-              # If result is already a map with content field, normalize it
-              %{content: _} = structured_result ->
-                normalize_error_key(structured_result)
-
-              # If result is just content, wrap it
-              _ ->
-                %{"content" => normalize_error_key(result)}
-            end
-
+          response_result = normalize_tool_result(result)
           response = %{"jsonrpc" => "2.0", "id" => id, "result" => response_result}
           final_state = %{new_state | handler_state: new_handler_state}
           # Remove from pending requests when complete
@@ -1194,14 +1184,23 @@ defmodule ExMCP.Server.HandlerServer do
     {:response, response, state}
   end
 
-  defp normalize_error_key(%{is_error: error_value} = result) when is_map(result) do
-    # Convert atom key is_error: to string key "isError" for MCP compatibility
-    result
-    |> Map.put("isError", error_value)
-    |> Map.delete(:is_error)
+  defp normalize_tool_result(%{"content" => _} = result), do: deep_stringify_keys(result)
+  defp normalize_tool_result(%{content: _} = result), do: deep_stringify_keys(result)
+  defp normalize_tool_result(result), do: %{"content" => deep_stringify_keys(result)}
+
+  defp deep_stringify_keys(list) when is_list(list), do: Enum.map(list, &deep_stringify_keys/1)
+
+  defp deep_stringify_keys(map) when is_map(map) and not is_struct(map) do
+    Map.new(map, fn
+      {key, value} when is_atom(key) -> {stringify_key(key), deep_stringify_keys(value)}
+      {key, value} -> {key, deep_stringify_keys(value)}
+    end)
   end
 
-  defp normalize_error_key(result), do: result
+  defp deep_stringify_keys(value), do: value
+
+  defp stringify_key(:is_error), do: "isError"
+  defp stringify_key(key), do: Atom.to_string(key)
 
   defp send_message(message, state) do
     outbound_message =

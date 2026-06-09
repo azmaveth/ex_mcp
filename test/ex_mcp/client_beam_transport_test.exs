@@ -2,473 +2,271 @@ defmodule ExMCP.ClientBeamTransportTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.Client
-  alias ExMCP.Server.BeamServer
+  alias ExMCP.Server.HandlerServer
 
-  defmodule TestCalculatorService do
-    use ExMCP.Service, name: :beam_transport_calculator_service
+  defmodule CalculatorHandler do
+    use ExMCP.Server.Handler
 
     @impl true
-    def handle_mcp_request("initialize", _params, state) do
-      # Handle the initialize request
+    def init(initial_state), do: {:ok, Map.new(initial_state)}
+
+    @impl true
+    def handle_initialize(_params, state) do
       {:ok,
        %{
          "protocolVersion" => "2025-03-26",
-         "capabilities" => %{},
+         "capabilities" => %{"tools" => %{}},
          "serverInfo" => %{
-           "name" => "TestCalculatorService",
+           "name" => "CalculatorHandler",
            "version" => "1.0.0"
          }
        }, state}
     end
 
-    # Handle tools/list to list available tools
-    def handle_mcp_request("tools/list", _params, state) do
+    @impl true
+    def handle_list_tools(_cursor, state) do
       tools = [
-        %{
-          "name" => "add",
-          "description" => "Add two numbers",
-          "inputSchema" => %{
-            "type" => "object",
-            "properties" => %{
-              "a" => %{"type" => "number"},
-              "b" => %{"type" => "number"}
-            },
-            "required" => ["a", "b"]
-          }
-        },
-        %{
-          "name" => "subtract",
-          "description" => "Subtract two numbers",
-          "inputSchema" => %{
-            "type" => "object",
-            "properties" => %{
-              "a" => %{"type" => "number"},
-              "b" => %{"type" => "number"}
-            },
-            "required" => ["a", "b"]
-          }
-        },
-        %{
-          "name" => "divide",
-          "description" => "Divide two numbers",
-          "inputSchema" => %{
-            "type" => "object",
-            "properties" => %{
-              "a" => %{"type" => "number"},
-              "b" => %{"type" => "number"}
-            },
-            "required" => ["a", "b"]
-          }
-        },
+        tool("add", "Add two numbers"),
+        tool("subtract", "Subtract two numbers"),
+        tool("divide", "Divide two numbers"),
         %{
           "name" => "slow_operation",
           "description" => "A slow operation for testing timeouts",
-          "inputSchema" => %{
-            "type" => "object",
-            "properties" => %{}
-          }
+          "inputSchema" => %{"type" => "object", "properties" => %{}}
         }
       ]
 
-      {:ok, %{"tools" => tools}, state}
+      {:ok, tools, nil, state}
     end
 
-    # Handle tools/call - extract tool name and delegate
-    def handle_mcp_request("tools/call", %{"name" => tool_name, "arguments" => args}, state) do
-      result =
-        case {tool_name, args} do
-          {"add", %{"a" => a, "b" => b}} ->
-            %{"result" => a + b}
-
-          {"subtract", %{"a" => a, "b" => b}} ->
-            %{"result" => a - b}
-
-          {"divide", %{"a" => _a, "b" => 0}} ->
-            {:error, %{"code" => -32602, "message" => "Division by zero"}}
-
-          {"divide", %{"a" => a, "b" => b}} ->
-            %{"result" => a / b}
-
-          {"slow_operation", _} ->
-            # Simulate slow operation
-            Process.sleep(100)
-            %{"result" => "completed"}
-
-          _ ->
-            {:error, %{"code" => -32601, "message" => "Tool not found: #{tool_name}"}}
-        end
-
-      case result do
-        {:error, error} -> {:error, error, state}
-        _ -> {:ok, result, state}
-      end
+    @impl true
+    def handle_call_tool("add", %{"a" => a, "b" => b}, state) do
+      {:ok, structured_result(%{"result" => a + b}), state}
     end
 
-    # Handle notifications in the same callback
-    def handle_mcp_request("notifications/initialized", _params, state) do
-      {:ok, %{}, state}
+    def handle_call_tool("subtract", %{"a" => a, "b" => b}, state) do
+      {:ok, structured_result(%{"result" => a - b}), state}
     end
 
-    def handle_mcp_request("log", %{"message" => message}, state) do
-      # Store notifications in state for testing
-      notifications = Map.get(state, :notifications, [])
-      {:ok, %{}, Map.put(state, :notifications, [message | notifications])}
+    def handle_call_tool("divide", %{"b" => 0}, state) do
+      {:error, "Division by zero", state}
     end
 
-    def handle_mcp_request(_method, _params, state) do
-      {:error, %{"code" => -32601, "message" => "Method not found"}, state}
+    def handle_call_tool("divide", %{"a" => a, "b" => b}, state) do
+      {:ok, structured_result(%{"result" => a / b}), state}
     end
 
-    # Helper to retrieve notifications for testing
-    def get_notifications(pid) do
-      GenServer.call(pid, :get_notifications)
+    def handle_call_tool("slow_operation", _args, state) do
+      Process.sleep(100)
+      {:ok, structured_result(%{"result" => "completed"}), state}
     end
 
-    def handle_call(:get_notifications, _from, state) do
-      {:reply, Enum.reverse(Map.get(state, :notifications, [])), state}
+    def handle_call_tool("counter", _args, state) do
+      count = Map.get(state, :counter, 0) + 1
+      {:ok, structured_result(%{"count" => count}), Map.put(state, :counter, count)}
+    end
+
+    def handle_call_tool(name, _args, state) do
+      {:error, "Tool not found: #{name}", state}
+    end
+
+    defp tool(name, description) do
+      %{
+        "name" => name,
+        "description" => description,
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "a" => %{"type" => "number"},
+            "b" => %{"type" => "number"}
+          },
+          "required" => ["a", "b"]
+        }
+      }
+    end
+
+    defp structured_result(data) do
+      %{
+        "content" => [%{"type" => "text", "text" => Jason.encode!(data)}],
+        "structuredContent" => data
+      }
     end
   end
 
-  defmodule TestBatchService do
-    use ExMCP.Service, name: :beam_batch_service
+  defmodule BatchHandler do
+    use ExMCP.Server.Handler
 
     @impl true
-    def handle_mcp_request("initialize", _params, state) do
+    def handle_initialize(_params, state) do
       {:ok,
        %{
          "protocolVersion" => "2025-03-26",
-         "capabilities" => %{},
-         "serverInfo" => %{
-           "name" => "TestBatchService",
-           "version" => "1.0.0"
-         }
+         "capabilities" => %{"tools" => %{}},
+         "serverInfo" => %{"name" => "BatchHandler", "version" => "1.0.0"}
        }, state}
     end
-
-    def handle_mcp_request("tools/list", _params, state) do
-      tools = [
-        %{
-          "name" => "multiply",
-          "description" => "Multiply two numbers",
-          "inputSchema" => %{
-            "type" => "object",
-            "properties" => %{
-              "a" => %{"type" => "number"},
-              "b" => %{"type" => "number"}
-            },
-            "required" => ["a", "b"]
-          }
-        }
-      ]
-
-      {:ok, %{"tools" => tools}, state}
-    end
-
-    def handle_mcp_request(
-          "tools/call",
-          %{"name" => "multiply", "arguments" => %{"a" => a, "b" => b}},
-          state
-        ) do
-      {:ok, %{"result" => a * b}, state}
-    end
-
-    def handle_mcp_request(_method, _params, state) do
-      {:error, %{"code" => -32601, "message" => "Method not found"}, state}
-    end
-  end
-
-  defmodule TestConcurrentService do
-    use ExMCP.Service, name: :beam_concurrent_service
 
     @impl true
-    def handle_mcp_request("initialize", _params, state) do
+    def handle_list_tools(_cursor, state) do
+      tool = %{
+        "name" => "multiply",
+        "description" => "Multiply two numbers",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "a" => %{"type" => "number"},
+            "b" => %{"type" => "number"}
+          },
+          "required" => ["a", "b"]
+        }
+      }
+
+      {:ok, [tool], nil, state}
+    end
+
+    @impl true
+    def handle_call_tool("multiply", %{"a" => a, "b" => b}, state) do
       {:ok,
        %{
-         "protocolVersion" => "2025-03-26",
-         "capabilities" => %{},
-         "serverInfo" => %{
-           "name" => "TestConcurrentService",
-           "version" => "1.0.0"
-         }
+         "content" => [%{"type" => "text", "text" => "#{a * b}"}],
+         "structuredContent" => %{"result" => a * b}
        }, state}
     end
 
-    def handle_mcp_request("tools/list", _params, state) do
-      tools = [
-        %{
-          "name" => "counter",
-          "description" => "Increment and return counter",
-          "inputSchema" => %{
-            "type" => "object",
-            "properties" => %{}
-          }
-        }
-      ]
-
-      {:ok, %{"tools" => tools}, state}
-    end
-
-    def handle_mcp_request("tools/call", %{"name" => "counter"}, state) do
-      # Thread-safe counter using state
-      counter = Map.get(state, :counter, 0) + 1
-      new_state = Map.put(state, :counter, counter)
-      {:ok, %{"count" => counter}, new_state}
-    end
-
-    def handle_mcp_request(_method, _params, state) do
-      {:error, %{"code" => -32601, "message" => "Method not found"}, state}
+    def handle_call_tool(name, _args, state) do
+      {:error, "Tool not found: #{name}", state}
     end
   end
 
   describe "Client with BEAM transport" do
     setup do
-      # Start application for this test suite
-      {:ok, _} = Application.ensure_all_started(:ex_mcp)
-
-      on_exit(fn ->
-        Application.stop(:ex_mcp)
-      end)
-
-      # Clean up any existing service first
-      ExMCP.Native.unregister_service(:beam_transport_calculator_service)
-
-      # Start the service with a map as initial state
-      {:ok, service_pid} = TestCalculatorService.start_link(%{notifications: []})
-
-      # Start a BEAM server that will handle the MCP protocol
       {:ok, server_pid} =
-        BeamServer.start_link(
-          handler: TestCalculatorService,
-          handler_state: %{notifications: []}
+        HandlerServer.start_link(
+          transport: :beam,
+          handler: CalculatorHandler,
+          handler_args: %{counter: 0}
         )
 
-      on_exit(fn ->
-        ExMCP.Native.unregister_service(:beam_transport_calculator_service)
-      end)
+      on_exit(fn -> if Process.alive?(server_pid), do: GenServer.stop(server_pid) end)
 
-      {:ok, service_pid: service_pid, server_pid: server_pid}
+      {:ok, server_pid: server_pid}
     end
 
-    test "connects to BEAM service", %{server_pid: server_pid} do
-      # Start client with BEAM transport connecting to the server
-      {:ok, client} =
-        Client.start_link(
-          transport: :beam,
-          server: server_pid
-        )
+    test "connects to BEAM server", %{server_pid: server_pid} do
+      {:ok, client} = Client.start_link(transport: :beam, server: server_pid)
 
-      # Verify connection
       {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
     end
 
     test "calls tools via BEAM transport", %{server_pid: server_pid} do
-      {:ok, client} =
-        Client.start_link(
-          transport: :beam,
-          server: server_pid
-        )
+      {:ok, client} = Client.start_link(transport: :beam, server: server_pid)
 
-      # Test successful calls
-      assert {:ok, %{"result" => 5}} =
+      assert {:ok, %{"structuredContent" => %{"result" => 5}}} =
                Client.call_tool(client, "add", %{"a" => 2, "b" => 3}, format: :map)
 
-      assert {:ok, %{"result" => 10}} =
+      assert {:ok, %{"structuredContent" => %{"result" => 10}}} =
                Client.call_tool(client, "subtract", %{"a" => 15, "b" => 5}, format: :map)
 
-      assert {:ok, %{"result" => 2.5}} =
+      assert {:ok, %{"structuredContent" => %{"result" => 2.5}}} =
                Client.call_tool(client, "divide", %{"a" => 5, "b" => 2}, format: :map)
     end
 
     test "handles errors via BEAM transport", %{server_pid: server_pid} do
-      {:ok, client} =
-        Client.start_link(
-          transport: :beam,
-          server: server_pid
-        )
+      {:ok, client} = Client.start_link(transport: :beam, server: server_pid)
 
-      # Test error responses
-      assert {:error, %{"code" => -32602, "message" => "Division by zero"}} =
+      assert {:error, %{"code" => -32000, "message" => divide_error}} =
                Client.call_tool(client, "divide", %{"a" => 10, "b" => 0}, format: :map)
 
-      assert {:error, %{"code" => -32601, "message" => "Tool not found: unknown_method"}} =
+      assert divide_error =~ "Division by zero"
+
+      assert {:error, %{"code" => -32000, "message" => unknown_error}} =
                Client.call_tool(client, "unknown_method", %{}, format: :map)
-    end
 
-    test "handles notifications via BEAM transport", %{
-      service_pid: _service_pid,
-      server_pid: server_pid
-    } do
-      {:ok, client} =
-        Client.start_link(
-          transport: :beam,
-          server: server_pid
-        )
-
-      # Send notifications
-      :ok = Client.notify(client, "log", %{"message" => "Test log 1"})
-      :ok = Client.notify(client, "log", %{"message" => "Test log 2"})
-
-      # Give notifications time to process
-      Process.sleep(50)
-
-      # Verify notifications were received
-      # Call the server pid which will forward to the service
-      notifications = GenServer.call(server_pid, :get_notifications)
-      assert notifications == ["Test log 1", "Test log 2"]
+      assert unknown_error =~ "Tool not found: unknown_method"
     end
 
     test "respects timeout settings", %{server_pid: server_pid} do
-      {:ok, client} =
-        Client.start_link(
-          transport: :beam,
-          server: server_pid,
-          # 50ms timeout
-          timeout: 50
-        )
+      {:ok, client} = Client.start_link(transport: :beam, server: server_pid, timeout: 50)
 
-      # This should timeout since slow_operation takes 100ms
       assert {:error, :timeout} = Client.call_tool(client, "slow_operation", %{}, format: :map)
     end
 
-    test "handles service not found" do
-      # Try to connect to non-existent service
-      # The client process will exit if connection fails
+    test "requires a server process" do
       Process.flag(:trap_exit, true)
 
-      result =
-        Client.start_link(
-          transport: :beam,
-          service_name: :nonexistent_service
-        )
-
-      # The error can be either not_supported or connection_failed
-      assert match?({:error, _}, result)
-    end
-
-    test "supports cross-node communication" do
-      # This test would require multiple nodes, skipping for now
-      # but the transport supports it via {service_name, node} tuples
-      :ok
+      assert {:error, _reason} =
+               Client.start_link(
+                 transport: :beam,
+                 service_name: :nonexistent_service
+               )
     end
   end
 
   describe "Client with batch operations over BEAM transport" do
     setup do
-      # Start application for this test suite
-      {:ok, _} = Application.ensure_all_started(:ex_mcp)
-
-      on_exit(fn ->
-        Application.stop(:ex_mcp)
-      end)
-
-      # Clean up any existing service first
-      ExMCP.Native.unregister_service(:beam_batch_service)
-
-      # Start the service
-      {:ok, service_pid} = TestBatchService.start_link(%{})
-
-      # Start a BEAM server
-      {:ok, server_pid} =
-        BeamServer.start_link(
-          handler: TestBatchService,
-          handler_state: %{}
-        )
-
-      on_exit(fn ->
-        ExMCP.Native.unregister_service(:beam_batch_service)
-      end)
-
-      {:ok, service_pid: service_pid, server_pid: server_pid}
+      {:ok, server_pid} = HandlerServer.start_link(transport: :beam, handler: BatchHandler)
+      on_exit(fn -> if Process.alive?(server_pid), do: GenServer.stop(server_pid) end)
+      {:ok, server_pid: server_pid}
     end
 
     test "handles batch requests via BEAM transport", %{server_pid: server_pid} do
-      {:ok, client} =
-        Client.start_link(
-          transport: :beam,
-          server: server_pid
-        )
+      {:ok, client} = Client.start_link(transport: :beam, server: server_pid)
 
-      # Prepare batch requests
       requests = [
         {"tools/call", %{"name" => "multiply", "arguments" => %{"a" => 2, "b" => 3}}},
         {"tools/call", %{"name" => "multiply", "arguments" => %{"a" => 4, "b" => 5}}},
         {"tools/call", %{"name" => "multiply", "arguments" => %{"a" => 6, "b" => 7}}}
       ]
 
-      # Send batch request
-      {:ok, results} = Client.batch_request(client, requests)
+      assert {:ok, results} = Client.batch_request(client, requests)
 
-      # Verify results
-      assert length(results) == 3
-      assert {:ok, %{"result" => 6}} = Enum.at(results, 0)
-      assert {:ok, %{"result" => 20}} = Enum.at(results, 1)
-      assert {:ok, %{"result" => 42}} = Enum.at(results, 2)
+      assert [
+               {:ok, %{"structuredContent" => %{"result" => 6}}},
+               {:ok, %{"structuredContent" => %{"result" => 20}}},
+               {:ok, %{"structuredContent" => %{"result" => 42}}}
+             ] = results
     end
   end
 
   describe "Client with concurrent operations over BEAM transport" do
     setup do
-      # Start application for this test suite
-      {:ok, _} = Application.ensure_all_started(:ex_mcp)
-
-      on_exit(fn ->
-        Application.stop(:ex_mcp)
-      end)
-
-      # Service for concurrent testing
-      # Clean up any existing service first
-      ExMCP.Native.unregister_service(:beam_concurrent_service)
-
-      # Start the service
-      {:ok, service_pid} = TestConcurrentService.start_link(%{})
-
-      # Start a BEAM server
       {:ok, server_pid} =
-        BeamServer.start_link(
-          handler: TestConcurrentService,
-          handler_state: %{}
+        HandlerServer.start_link(
+          transport: :beam,
+          handler: CalculatorHandler,
+          handler_args: %{counter: 0}
         )
 
-      on_exit(fn ->
-        ExMCP.Native.unregister_service(:beam_concurrent_service)
-      end)
+      on_exit(fn -> if Process.alive?(server_pid), do: GenServer.stop(server_pid) end)
 
-      {:ok, service_pid: service_pid, server_pid: server_pid}
+      {:ok, server_pid: server_pid}
     end
 
     test "handles concurrent requests via BEAM transport", %{server_pid: server_pid} do
-      {:ok, client} =
-        Client.start_link(
-          transport: :beam,
-          server: server_pid
-        )
+      {:ok, client} = Client.start_link(transport: :beam, server: server_pid)
 
-      # Spawn 100 concurrent requests
-      tasks =
-        for _ <- 1..100 do
-          Task.async(fn ->
-            Client.call_tool(client, "counter", %{}, format: :map)
-          end)
-        end
+      results =
+        1..100
+        |> Enum.map(fn _ ->
+          Task.async(fn -> Client.call_tool(client, "counter", %{}, format: :map) end)
+        end)
+        |> Task.await_many(15_000)
 
-      # Collect all results with explicit timeout
-      results = Task.await_many(tasks, 15_000)
-
-      # All should succeed
       assert Enum.all?(results, fn
-               {:ok, %{"count" => _count}} -> true
-               _ -> false
+               {:ok, %{"structuredContent" => %{"count" => count}}} when is_integer(count) ->
+                 true
+
+               _ ->
+                 false
              end)
 
-      # Extract counts
       counts =
         results
-        |> Enum.map(fn {:ok, %{"count" => count}} -> count end)
+        |> Enum.map(fn {:ok, %{"structuredContent" => %{"count" => count}}} -> count end)
         |> Enum.sort()
 
-      # Should have sequential counts from 1 to 100 (though order may vary)
-      assert length(Enum.uniq(counts)) == 100
+      assert counts == Enum.to_list(1..100)
     end
   end
 end

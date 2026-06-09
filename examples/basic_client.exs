@@ -1,83 +1,56 @@
 #!/usr/bin/env elixir
 
-# Basic ExMCP Client Example
-#
-# This example demonstrates the simplified client API with:
-# - Configuration builder pattern
-# - Structured responses
-# - Convenience functions
-#
-# To test this client:
-# 1. Run a DSL server in another terminal:
-#    elixir getting_started/dsl_server.exs
-# 2. Update the command below to connect to your server
+# Basic ExMCP client example. It starts an in-process BEAM server so the
+# example is self-contained.
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("../..", __DIR__)}
+  {:ex_mcp, path: Path.expand("..", __DIR__)}
 ])
 
-# Create client configuration using the builder pattern
-config = ExMCP.ClientConfig.new()
-         |> ExMCP.ClientConfig.put_transport(:stdio, command: ["elixir", "getting_started/hello_server_stdio.exs"])
+defmodule BasicClientServer do
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "basic-client-server", version: "1.0.0"
 
-IO.puts("Connecting to MCP server...")
+  tool "echo", "Echoes the provided message" do
+    title "Echo"
+    param :message, :string, required: true
 
-# Connect using the convenience function
-case ExMCP.connect(config) do
-  {:ok, client} ->
-    IO.puts("✓ Connected successfully!")
-
-    # List available tools using the unified API
-    IO.puts("\nListing tools...")
-    case ExMCP.tools(client) do
-      tools when is_list(tools) ->
-        IO.puts("Found #{length(tools)} tools:")
-
-        for tool <- tools do
-          IO.puts("  - #{tool["name"]}: #{tool["description"]}")
-        end
-
-        # Call a tool if available
-        if first_tool = List.first(tools) do
-          IO.puts("\nCalling tool: #{first_tool["name"]}")
-
-          # Example arguments (adjust based on your tool)
-          args = %{"input" => "Hello from ExMCP!"}
-
-          case ExMCP.call(client, first_tool["name"], args) do
-            result when is_binary(result) ->
-              IO.puts("Tool response: #{result}")
-
-            {:error, error} ->
-              IO.puts("Tool call failed: #{inspect(error)}")
-
-            other ->
-              IO.puts("Tool response: #{inspect(other)}")
-          end
-        end
-
-      {:error, error} ->
-        IO.puts("Failed to list tools: #{inspect(error)}")
+    run fn %{message: message}, state ->
+      {:ok, "Echo: #{message}", state}
     end
+  end
 
-    # List resources using the unified API
-    IO.puts("\nListing resources...")
-    case ExMCP.resources(client) do
-      resources when is_list(resources) ->
-        IO.puts("Found #{length(resources)} resources:")
-        for resource <- resources do
-          IO.puts("  - #{resource["uri"]}: #{resource["name"]}")
-        end
+  resource "demo://readme", "Demo resource" do
+    title "Demo Readme"
+    mime_type "text/plain"
 
-      {:error, error} ->
-        IO.puts("Failed to list resources: #{inspect(error)}")
+    read fn %{uri: uri}, state ->
+      {:ok, %{uri: uri, text: "This resource came from a BEAM-local MCP server."}, state}
     end
-
-    # Disconnect
-    IO.puts("\nDisconnecting...")
-    ExMCP.disconnect(client)
-    IO.puts("✓ Disconnected")
-
-  {:error, reason} ->
-    IO.puts("Failed to connect: #{inspect(reason)}")
+  end
 end
+
+{:ok, server} = BasicClientServer.start_link(transport: :beam)
+{:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
+
+field = fn map, key -> Map.get(map, Atom.to_string(key)) || Map.get(map, key) end
+
+{:ok, %{"tools" => tools}} = ExMCP.Client.list_tools(client, format: :map)
+IO.puts("Tools: #{Enum.map_join(tools, ", ", &field.(&1, :name))}")
+
+{:ok, result} =
+  ExMCP.Client.call_tool(client, "echo", %{"message" => "Hello from ExMCP."}, format: :map)
+
+[%{"text" => tool_text} | _] = result["content"]
+IO.puts("Tool result: #{tool_text}")
+
+{:ok, %{"resources" => resources}} = ExMCP.Client.list_resources(client, format: :map)
+IO.puts("Resources: #{Enum.map_join(resources, ", ", &field.(&1, :uri))}")
+
+{:ok, %{"contents" => [resource]}} =
+  ExMCP.Client.read_resource(client, "demo://readme", format: :map)
+
+IO.puts("Resource text: #{field.(resource, :text)}")
+
+ExMCP.Client.stop(client)
+GenServer.stop(server)

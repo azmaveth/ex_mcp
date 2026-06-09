@@ -1,373 +1,175 @@
 #!/usr/bin/env elixir
 
-# Advanced MCP Server using DSL
-#
-# This example demonstrates advanced DSL features including:
-# - Complex JSON Schema definitions with nested objects
-# - Resource patterns and subscriptions
-# - Meta blocks for organization
-# - Content helpers (text, json, image, etc.)
-# - Advanced prompt configurations
+# Advanced MCP server using the modern ExMCP Handler + DSL API.
 
 Mix.install([
   {:ex_mcp, path: Path.expand("..", __DIR__)}
 ])
 
 defmodule AdvancedServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "advanced-server", version: "1.0.0"
 
   @impl true
   def init(_args) do
-    # Initialize with some state
-    {:ok, %{
-      documents: %{
-        "readme" => "# Project README\n\nWelcome to the project!",
-        "config" => %{api_key: "secret", port: 8080}
-      },
-      subscriptions: %{}
-    }}
+    {:ok,
+     %{
+       documents: %{
+         "readme" => "# Project README\n\nWelcome to the project.",
+         "config" => ~s({"port":8080,"enabled":true})
+       }
+     }}
   end
 
-  # Tools Section
+  tool "analyze_data", "Analyzes a list of numbers" do
+    title "Analyze Data"
+    param :data, :array, required: true, description: "Numbers to analyze"
+    param :method, :string, default: "all", description: "mean, median, or all"
+    param :precision, :integer, default: 2
 
-  deftool "analyze_data" do
-    meta do
-      description "Analyzes data with various options"
-    end
-
-    input_schema %{
+    output_schema %{
       type: "object",
       properties: %{
-        data: %{
-          type: "array",
-          items: %{type: "number"},
-          description: "Array of numbers to analyze"
-        },
-        options: %{
-          type: "object",
-          properties: %{
-            method: %{
-              type: "string",
-              enum: ["mean", "median", "mode", "all"],
-              default: "mean",
-              description: "Analysis method"
-            },
-            precision: %{
-              type: "integer",
-              minimum: 0,
-              maximum: 10,
-              default: 2
-            },
-            include_metadata: %{
-              type: "boolean",
-              default: false
-            }
-          }
-        }
+        count: %{type: "integer"},
+        result: %{type: "object"}
       },
-      required: ["data"]
+      required: ["count", "result"]
     }
+
+    run fn %{data: data, method: method, precision: precision}, state ->
+      result =
+        data
+        |> Enum.map(&to_number/1)
+        |> analyze(method, precision)
+
+      {:ok,
+       ToolResult.structured("Analyzed #{length(data)} values.", %{
+         count: length(data),
+         result: result
+       }), state}
+    end
   end
 
-  deftool "transform_text" do
-    meta do
-      description "Transform text with various operations"
-    end
+  tool "transform_text", "Transforms text through a list of operations" do
+    title "Transform Text"
+    param :text, :string, required: true
+    param :operations, :array, default: ["uppercase"]
 
-    input_schema %{
-      type: "object",
-      properties: %{
-        text: %{type: "string", minLength: 1},
-        operations: %{
-          type: "array",
-          items: %{
-            type: "object",
-            properties: %{
-              type: %{
-                type: "string",
-                enum: ["uppercase", "lowercase", "reverse", "base64"]
-              },
-              params: %{type: "object"}
-            },
-            required: ["type"]
-          }
-        }
-      },
-      required: ["text"]
-    }
+    run fn %{text: text, operations: operations}, state ->
+      transformed =
+        operations
+        |> List.wrap()
+        |> Enum.reduce(text, &apply_operation/2)
+
+      {:ok,
+       ToolResult.structured("Transformation complete.", %{
+         original: text,
+         transformed: transformed,
+         operations: operations
+       }), state}
+    end
   end
 
-  # Resources Section
-
-  defresource "doc://project/*" do
-    meta do
-      name "Project Documents"
-      description "Access project documentation"
-    end
-
+  resource_template "doc://project/{name}", "Project documents" do
+    title "Project Document"
     mime_type "text/plain"
-    list_pattern true
-    subscribable true
+    param :name, :string
+
+    read fn %{name: name, uri: uri}, state ->
+      case Map.fetch(state.documents, name) do
+        {:ok, content} -> {:ok, %{uri: uri, text: content}, state}
+        :error -> {:error, "Unknown document: #{name}", state}
+      end
+    end
   end
 
-  defresource "config://app" do
-    meta do
-      name "Application Config"
-      description "Current application configuration"
-    end
-
+  resource "config://app", "Application configuration" do
+    title "Application Config"
     mime_type "application/json"
-    annotations %{
-      security: "sensitive",
-      cache_ttl: 300
+    annotations %{audience: ["assistant"], priority: 0.8}
+
+    read fn %{uri: uri}, state ->
+      {:ok, %{uri: uri, text: state.documents["config"]}, state}
+    end
+  end
+
+  prompt "code_assistant", "Creates a coding assistant prompt" do
+    title "Code Assistant"
+    arg :language, required: true, description: "Programming language"
+    arg :task, required: true, description: "What to implement"
+    arg :style, description: "Coding style preferences"
+
+    render fn %{language: language, task: task} = args, state ->
+      style = Map.get(args, :style, "clean and readable")
+
+      {:ok,
+       %{
+         messages: [
+           %{
+             role: "user",
+             content: %{
+               type: "text",
+               text: "Write #{style} #{language} code for this task:\n\n#{task}"
+             }
+           }
+         ]
+       }, state}
+    end
+  end
+
+  defp to_number(value) when is_number(value), do: value
+  defp to_number(value) when is_binary(value), do: String.to_float(value)
+
+  defp analyze([], _method, _precision), do: %{}
+
+  defp analyze(data, "mean", precision), do: %{mean: mean(data, precision)}
+  defp analyze(data, "median", precision), do: %{median: median(data, precision)}
+
+  defp analyze(data, _method, precision) do
+    %{
+      mean: mean(data, precision),
+      median: median(data, precision),
+      min: Enum.min(data),
+      max: Enum.max(data)
     }
   end
 
-  # Prompts Section
-
-  defprompt "code_assistant" do
-    meta do
-      name "Code Writing Assistant"
-      description "Helps write code in various languages"
-    end
-
-    arguments do
-      arg :language, required: true, description: "Programming language"
-      arg :task, required: true, description: "What to implement"
-      arg :style, description: "Coding style preferences"
-      arg :constraints, description: "Any constraints or requirements"
-    end
+  defp mean(data, precision) do
+    data
+    |> Enum.sum()
+    |> Kernel./(length(data))
+    |> Float.round(precision)
   end
 
-  defprompt "data_analyst" do
-    meta do
-      name "Data Analysis Expert"
-      description "Analyzes data and provides insights"
-    end
-
-    arguments do
-      arg :data_description, required: true
-      arg :analysis_type
-      arg :output_format, description: "Desired output format"
-    end
-  end
-
-  # Handler Implementations
-
-  @impl true
-  def handle_tool_call("analyze_data", args, state) do
-    data = Map.get(args, "data", [])
-    options = Map.get(args, "options", %{})
-    method = Map.get(options, "method", "mean")
-    precision = Map.get(options, "precision", 2)
-    include_metadata = Map.get(options, "include_metadata", false)
-
-    result = case method do
-      "mean" -> calculate_mean(data, precision)
-      "median" -> calculate_median(data, precision)
-      "mode" -> calculate_mode(data)
-      "all" -> %{
-        mean: calculate_mean(data, precision),
-        median: calculate_median(data, precision),
-        mode: calculate_mode(data)
-      }
-    end
-
-    content = if include_metadata do
-      [
-        text("Analysis complete!"),
-        json(%{
-          result: result,
-          metadata: %{
-            count: length(data),
-            method: method,
-            timestamp: DateTime.utc_now()
-          }
-        })
-      ]
-    else
-      [json(%{result: result})]
-    end
-
-    {:ok, %{content: content}, state}
-  end
-
-  @impl true
-  def handle_tool_call("transform_text", %{"text" => text, "operations" => ops}, state) do
-    transformed = Enum.reduce(ops, text, fn op, acc ->
-      apply_operation(acc, op["type"], op["params"])
-    end)
-
-    result = %{
-      content: [
-        text("Transformation complete"),
-        json(%{
-          original: text,
-          transformed: transformed,
-          operations_applied: length(ops)
-        })
-      ]
-    }
-
-    {:ok, result, state}
-  end
-
-  @impl true
-  def handle_resource_read("doc://project/" <> doc_name, _uri, state) do
-    case Map.get(state.documents, doc_name) do
-      nil ->
-        {:error, "Document not found: #{doc_name}", state}
-      content when is_binary(content) ->
-        {:ok, [text(content)], state}
-      content ->
-        {:ok, [json(content)], state}
-    end
-  end
-
-  @impl true
-  def handle_resource_read("config://app", _uri, state) do
-    config = Map.get(state.documents, "config", %{})
-    {:ok, [json(config)], state}
-  end
-
-  @impl true
-  def handle_resource_list(state) do
-    # List all available documents
-    doc_resources = state.documents
-      |> Map.keys()
-      |> Enum.map(fn name ->
-        %{
-          uri: "doc://project/#{name}",
-          name: String.capitalize(name),
-          mimeType: if(String.ends_with?(name, ".json"), do: "application/json", else: "text/plain")
-        }
-      end)
-
-    resources = [
-      %{
-        uri: "config://app",
-        name: "Application Config",
-        mimeType: "application/json"
-      } | doc_resources
-    ]
-
-    {:ok, resources, state}
-  end
-
-  @impl true
-  def handle_resource_subscribe("doc://project/" <> doc_name = uri, state) do
-    # Add subscription
-    subscriptions = Map.put(state.subscriptions, uri, true)
-    new_state = %{state | subscriptions: subscriptions}
-
-    # Send initial notification
-    spawn(fn ->
-      Process.sleep(1000)
-      # In a real implementation, this would notify about changes
-      IO.puts("Subscribed to changes for: #{doc_name}")
-    end)
-
-    {:ok, new_state}
-  end
-
-  @impl true
-  def handle_prompt_get("code_assistant", args, state) do
-    language = args["language"]
-    task = args["task"]
-    style = Map.get(args, "style", "clean and readable")
-    constraints = Map.get(args, "constraints", "none")
-
-    messages = [
-      system("You are an expert #{language} programmer. Write #{style} code."),
-      user("""
-      Please write #{language} code to: #{task}
-
-      Constraints: #{constraints}
-      """),
-      assistant("I'll help you write #{language} code for that task. Let me create a solution that follows #{style} style guidelines.")
-    ]
-
-    {:ok, %{messages: messages}, state}
-  end
-
-  @impl true
-  def handle_prompt_get("data_analyst", args, state) do
-    messages = [
-      system("You are a data analysis expert. Provide clear, actionable insights."),
-      user("Analyze this data: #{args["data_description"]}"),
-      assistant("I'll analyze the data and provide insights in #{Map.get(args, "output_format", "a clear format")}.")
-    ]
-
-    {:ok, %{messages: messages}, state}
-  end
-
-  # Helper functions
-
-  defp calculate_mean([], _precision), do: nil
-  defp calculate_mean(data, precision) do
-    sum = Enum.sum(data)
-    Float.round(sum / length(data), precision)
-  end
-
-  defp calculate_median([], _precision), do: nil
-  defp calculate_median(data, precision) do
+  defp median(data, precision) do
     sorted = Enum.sort(data)
-    mid = div(length(sorted), 2)
+    middle = div(length(sorted), 2)
 
-    if rem(length(sorted), 2) == 0 do
-      Float.round((Enum.at(sorted, mid - 1) + Enum.at(sorted, mid)) / 2, precision)
-    else
-      Enum.at(sorted, mid)
+    case rem(length(sorted), 2) do
+      0 -> Float.round((Enum.at(sorted, middle - 1) + Enum.at(sorted, middle)) / 2, precision)
+      1 -> Enum.at(sorted, middle)
     end
   end
 
-  defp calculate_mode([]), do: nil
-  defp calculate_mode(data) do
-    frequencies = Enum.frequencies(data)
-    max_freq = frequencies |> Map.values() |> Enum.max()
-
-    frequencies
-    |> Enum.filter(fn {_, freq} -> freq == max_freq end)
-    |> Enum.map(fn {val, _} -> val end)
-    |> List.first()
-  end
-
-  defp apply_operation(text, "uppercase", _), do: String.upcase(text)
-  defp apply_operation(text, "lowercase", _), do: String.downcase(text)
-  defp apply_operation(text, "reverse", _), do: String.reverse(text)
-  defp apply_operation(text, "base64", _), do: Base.encode64(text)
-  defp apply_operation(text, _, _), do: text
+  defp apply_operation("uppercase", text), do: String.upcase(text)
+  defp apply_operation("lowercase", text), do: String.downcase(text)
+  defp apply_operation("reverse", text), do: String.reverse(text)
+  defp apply_operation("base64", text), do: Base.encode64(text)
+  defp apply_operation(_unknown, text), do: text
 end
 
-# Start the server
 defmodule AdvancedServerRunner do
   def run do
-    IO.puts("Starting Advanced MCP Server with DSL...")
-    IO.puts("This server demonstrates advanced DSL features.\n")
+    IO.puts("Starting Advanced MCP Server on stdio.")
+    IO.puts("Tools: analyze_data, transform_text")
+    IO.puts("Resources: config://app, doc://project/{name}")
+    IO.puts("Prompt: code_assistant")
 
-    # Start server on stdio transport
-    {:ok, _server} = AdvancedServer.start_link(
-      transport: :stdio,
-      name: :advanced_server
-    )
-
-    IO.puts("Server is running with advanced features:")
-    IO.puts("\nTools:")
-    IO.puts("- analyze_data: Statistical analysis with options")
-    IO.puts("- transform_text: Text transformation pipeline")
-    IO.puts("\nResources:")
-    IO.puts("- doc://project/* (pattern-based, subscribable)")
-    IO.puts("- config://app (annotated)")
-    IO.puts("\nPrompts:")
-    IO.puts("- code_assistant: Multi-argument code generation")
-    IO.puts("- data_analyst: Data analysis assistance")
-
-    # Keep the server running
+    {:ok, _server} = AdvancedServer.start_link(transport: :stdio)
     Process.sleep(:infinity)
   end
 end
 
-# Run if executed directly
-if System.get_env("MIX_ENV") != "test" do
+if System.get_env("MCP_ENV") != "test" do
   AdvancedServerRunner.run()
 end

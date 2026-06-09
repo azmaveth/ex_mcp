@@ -1,18 +1,18 @@
 #!/usr/bin/env elixir
 
 # Structured Responses Example
-# Demonstrates the v2 Response and Error types
+# Demonstrates Response and Error helpers
 
-# Add lib to path
-Code.prepend_path("_build/dev/lib/ex_mcp/ebin")
-Code.prepend_path("_build/dev/lib/jason/ebin")
+Mix.install([
+  {:ex_mcp, path: Path.expand("../..", __DIR__)}
+])
 
 alias ExMCP.Response
 alias ExMCP.Error
 
 IO.puts("""
 ==========================================
-ExMCP v2 Structured Responses Demo
+ExMCP Structured Responses Demo
 ==========================================
 """)
 
@@ -20,7 +20,7 @@ ExMCP v2 Structured Responses Demo
 IO.puts("1. Creating Responses:\n")
 
 # Text response
-text_resp = Response.text("Hello from ExMCP v2!", "greeting_tool")
+text_resp = Response.text("Hello from ExMCP!", "greeting_tool")
 IO.inspect(text_resp, label: "Text response")
 
 # JSON response  

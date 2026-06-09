@@ -4,8 +4,7 @@ defmodule ExMCP.TestServer do
 
   This server is a pure GenServer that mimics the behavior of a real MCP
   server for integration testing purposes. It avoids the `use ExMCP.Server`
-  macro to prevent global process registration (e.g., ServiceRegistry)
-  during tests, ensuring test isolation.
+  macro when tests need complete process isolation.
   """
   use GenServer
 

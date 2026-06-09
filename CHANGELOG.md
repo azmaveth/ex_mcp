@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BEAM-local MCP cleanup** — Removed the public `ExMCP.Native` direct dispatcher stack, `ExMCP.Service`, and `ExMCP.ServiceRegistry.*`. BEAM-local MCP now uses `transport: :beam` with a server pid, preserving MCP initialization, capabilities, request ids, and tool/resource/prompt semantics.
+- **Examples and docs refresh** — Updated README, guides, getting-started docs, and examples to use `ExMCP.Server.Handler` plus `ExMCP.Server.DSL`; removed stale debug/test examples and the placeholder OAuth full-flow script.
+
+### Removed
+- **Optional Horde dependency** — Removed the old optional Horde dependency and registry wiring because the Native dispatcher API no longer exists.
+
 ## [1.0.0-rc.0] - 2026-06-08
 
 ### Added

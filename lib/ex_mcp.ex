@@ -13,13 +13,14 @@ defmodule ExMCP do
   ### Core Modules
   - `ExMCP` - This module (convenience functions and metadata)
   - `ExMCP.Client` - MCP client implementation
-  - `ExMCP.Server` - MCP server implementation
-  - `ExMCP.Native` - High-performance BEAM service dispatcher
-  - `ExMCP.Service` - Macro for automatic service registration
+  - `ExMCP.Server` - MCP server helper functions
+  - `ExMCP.Server.Handler` - Callback behaviour for MCP servers
+  - `ExMCP.Server.DSL` - Declarative tool/resource/prompt definitions
   - `ExMCP.Transport` - Transport behaviour definition
 
   ### Optional Features
   - `ExMCP.Authorization` - OAuth 2.1 authorization flows (MCP optional feature)
+  - `ExMCP.ACP` - Agent Client Protocol client and native agent helpers
 
   ### Supporting Modules
   - `ExMCP.Content` - Content type helpers
@@ -55,15 +56,22 @@ defmodule ExMCP do
 
   ### BEAM-Local Communication
 
-      # High-performance service-to-service calls
-      {:ok, result} = ExMCP.Native.call(:my_service, "method", %{})
+      {:ok, server} = MyServer.start_link(transport: :beam)
+
+      {:ok, client} = ExMCP.start_client(
+        transport: :beam,
+        server: server
+      )
+
+      {:ok, tools} = ExMCP.Client.list_tools(client)
 
   ## Protocol Versions
 
   ExMCP supports multiple MCP protocol versions:
   - **2024-11-05** - Base MCP features
   - **2025-03-26** - Previous stable (subscriptions, roots, logging, batch support)
-  - **2025-06-18** - Current stable (structured output, OAuth 2.1, elicitation, no batch)
+  - **2025-06-18** - Structured output, OAuth 2.1, elicitation, no batch
+  - **2025-11-25** - Current latest supported version (tasks, icons, URL elicitation)
 
   See the README.md for a complete feature comparison chart.
 
@@ -120,21 +128,24 @@ defmodule ExMCP do
   ### BEAM-Local Service
 
       defmodule MyService do
-        use ExMCP.Service, name: :my_service
+        use ExMCP.Server.Handler
+        use ExMCP.Server.DSL
 
-        @impl true
-        def handle_mcp_request("ping", _params, state) do
-          {:ok, %{"response" => "pong"}, state}
+        tool "ping", "Health check" do
+          run fn _args, state ->
+            {:ok, %{content: [%{type: "text", text: "pong"}]}, state}
+          end
         end
       end
 
-      # Automatic registration and discovery
-      {:ok, _} = MyService.start_link()
-      {:ok, result} = ExMCP.Native.call(:my_service, "ping", %{})
+      {:ok, server} = MyService.start_link(transport: :beam)
+      {:ok, client} = ExMCP.start_client(transport: :beam, server: server)
+      {:ok, result} = ExMCP.Client.call_tool(client, "ping", %{})
   """
 
   alias ExMCP.Client
   alias ExMCP.Error
+  alias ExMCP.Internal.VersionRegistry
   alias ExMCP.Response
 
   @doc """
@@ -196,7 +207,7 @@ defmodule ExMCP do
   """
   @spec protocol_version() :: String.t()
   def protocol_version do
-    "2025-03-26"
+    VersionRegistry.latest_version()
   end
 
   @doc """
@@ -212,7 +223,7 @@ defmodule ExMCP do
   """
   @spec supported_versions() :: [String.t()]
   def supported_versions do
-    ["2024-11-05", "2025-03-26", "2025-06-18"]
+    VersionRegistry.supported_versions()
   end
 
   # Convenience Functions

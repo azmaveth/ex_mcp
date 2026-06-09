@@ -4,6 +4,15 @@ Application.put_env(:ex_mcp, :stdio_mode, true)
 Logger.configure(level: :emergency)
 :logger.set_primary_config(:level, :emergency)
 
+unless Code.ensure_loaded?(ExMCP.ACP) do
+  Mix.install(
+    [
+      {:ex_mcp, path: Path.expand("../..", __DIR__)}
+    ],
+    verbose: false
+  )
+end
+
 defmodule EchoAgent do
   @behaviour ExMCP.ACP.Agent.Handler
 
@@ -39,8 +48,10 @@ defmodule EchoAgent do
   end
 end
 
-ExMCP.ACP.run_agent(
-  handler: EchoAgent,
-  agent_info: %{"name" => "ex-mcp-echo-agent", "version" => "1.0.0"},
-  capabilities: %{"sessionCapabilities" => %{"close" => true}}
-)
+if System.get_env("MCP_ENV") != "test" do
+  ExMCP.ACP.run_agent(
+    handler: EchoAgent,
+    agent_info: %{"name" => "ex-mcp-echo-agent", "version" => "1.0.0"},
+    capabilities: %{"sessionCapabilities" => %{"close" => true}}
+  )
+end

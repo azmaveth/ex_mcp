@@ -7,29 +7,24 @@ defmodule ExMCP.Application do
 
   @impl true
   def start(_type, _args) do
-    # Check if STDIO transport is being used and configure logging appropriately
-    # This MUST happen before defining children to prevent Horde from logging
+    # Check if STDIO transport is being used and configure logging appropriately.
     if Application.get_env(:ex_mcp, :stdio_mode, false) do
       configure_stdio_logging()
     end
 
-    # Start the configured service registry adapter
-    registry_children = ExMCP.ServiceRegistry.adapter().child_specs([])
-
     children =
-      registry_children ++
-        [
-          # Dynamic supervisor for runtime components
-          {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
-          # Start the Consent Cache for security features
-          ExMCP.Internal.ConsentCache,
-          # Start the Session Manager for streamable HTTP sessions
-          ExMCP.SessionManager,
-          # Start the Progress Tracker for 2025-06-18 progress notifications
-          ExMCP.ProgressTracker,
-          # Start the Reliability Supervisor for circuit breakers and health checks
-          {ExMCP.Reliability.Supervisor, name: ExMCP.Reliability.Supervisor}
-        ]
+      [
+        # Dynamic supervisor for runtime components
+        {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
+        # Start the Consent Cache for security features
+        ExMCP.Internal.ConsentCache,
+        # Start the Session Manager for streamable HTTP sessions
+        ExMCP.SessionManager,
+        # Start the Progress Tracker for 2025-06-18 progress notifications
+        ExMCP.ProgressTracker,
+        # Start the Reliability Supervisor for circuit breakers and health checks
+        {ExMCP.Reliability.Supervisor, name: ExMCP.Reliability.Supervisor}
+      ]
 
     opts = [strategy: :one_for_one, name: ExMCP.Supervisor]
     Supervisor.start_link(children, opts)

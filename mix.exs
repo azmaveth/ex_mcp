@@ -55,7 +55,6 @@ defmodule ExMCP.MixProject do
       {:mint, "~> 1.6"},
       {:mint_web_socket, "~> 1.0"},
       {:castore, "~> 1.0"},
-      {:horde, "~> 0.8", optional: true},
       {:telemetry, "~> 1.2"},
       {:ex_doc, "~> 0.36", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
@@ -67,7 +66,7 @@ defmodule ExMCP.MixProject do
       {:plug_cowboy, "~> 2.7"},
       {:plug, "~> 1.16"},
       {:fuse, "~> 2.4", optional: true},
-      # ExMCP v2 dependencies
+      # MCP protocol support
       {:ex_json_schema, "~> 0.10"},
       {:html_entities, "~> 0.5", only: [:dev, :test]},
       {:propcheck, "~> 1.4", only: :test},

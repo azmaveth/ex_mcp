@@ -64,12 +64,12 @@ config :ex_mcp, :oauth2_server_config,
 
 ### 4. MCP 2025-06-18 Protocol Support
 
-v0.6.0 adds support for the latest MCP protocol version. Existing servers continue working, but you can opt into new features:
+v0.6.0 added support for the MCP 2025-06-18 protocol version. Current ExMCP versions support MCP 2025-11-25 as the latest version.
 
 ```elixir
 # In your configuration
 config :ex_mcp,
-  protocol_version: "2025-06-18"  # Latest version
+  protocol_version: "2025-11-25"
 ```
 
 **New features available:**
@@ -87,19 +87,7 @@ ExMCP.Client.start_link(transport: :beam, server: server_pid)
 MyServer.start_link(transport: :beam)
 ```
 
-For direct service-dispatcher calls outside the client transport API, `ExMCP.Native`
-remains available:
-
-```elixir
-defmodule MyService do
-  use ExMCP.Service
-
-  # Service automatically registered with the configured registry
-end
-
-# Direct dispatcher call
-ExMCP.Native.call(:my_service, "tool_name", %{args: "here"})
-```
+The old `ExMCP.Native` direct dispatcher and public `:native` transport alias were removed before 1.0. Use `transport: :beam` with a server pid for BEAM-local MCP.
 
 ### 6. Python MCP SDK Interoperability
 
@@ -175,7 +163,7 @@ Review your `config/config.exs` for new configuration options:
 ```elixir
 # Common configuration to review
 config :ex_mcp,
-  protocol_version: "2025-06-18",  # Latest protocol version
+  protocol_version: "2025-11-25",  # Latest protocol version
   oauth2_enabled: true,            # If using OAuth
   structured_output_enabled: true # New in v0.6.0
 ```
@@ -188,7 +176,7 @@ Check the `examples/` directory for updated patterns and new integration example
 
 Each version includes performance improvements. Consider:
 
-- Using Native Service Dispatcher for ~15μs local calls
+- Using `transport: :beam` for local client/server calls in the same BEAM VM
 - HTTP transport for network communication
 - stdio transport for external tool integration
 

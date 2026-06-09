@@ -74,8 +74,8 @@ defmodule MyApp.MCPHandler do
   @impl true
   def handle_initialize(_params, state) do
     {:ok, %{
-      name: "my-phoenix-app",
-      version: "1.0.0",
+      protocolVersion: ExMCP.protocol_version(),
+      serverInfo: %{name: "my-phoenix-app", version: "1.0.0"},
       capabilities: %{tools: %{}, resources: %{}}
     }, state}
   end
@@ -95,7 +95,7 @@ defmodule MyApp.MCPHandler do
   @impl true
   def handle_call_tool("get_user_count", _args, state) do
     count = MyApp.Accounts.count_users()
-    {:ok, [%{type: "text", text: "Total users: #{count}"}], state}
+    {:ok, %{content: [%{type: "text", text: "Total users: #{count}"}]}, state}
   end
 end
 ```
@@ -165,35 +165,32 @@ See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/azmavet
 
 ### BEAM-Local MCP
 
-For trusted Elixir clusters, use BEAM-local MCP services:
+For trusted Elixir processes in the same VM, use the BEAM-local transport. It
+carries MCP-shaped messages as Elixir terms, so local calls avoid JSON
+encode/decode while still using the normal MCP client/server lifecycle.
 
 ```elixir
 defmodule MyToolService do
-  use ExMCP.Service, name: :my_tools
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
 
-  @impl true
-  def handle_mcp_request("list_tools", _params, state) do
-    tools = [
-      %{
-        "name" => "ping",
-        "description" => "Test tool",
-        "inputSchema" => %{"type" => "object", "properties" => %{}}
-      }
-    ]
-    {:ok, %{"tools" => tools}, state}
-  end
-
-  @impl true
-  def handle_mcp_request("tools/call", %{"name" => "ping"}, state) do
-    {:ok, %{"content" => [%{"type" => "text", "text" => "Pong!"}]}, state}
+  tool "ping", "Test tool" do
+    run fn _args, state ->
+      {:ok, %{content: [%{type: "text", text: "Pong!"}]}, state}
+    end
   end
 end
 
-# Start your service (automatically registers with ExMCP.Native)
-{:ok, _} = MyToolService.start_link()
+{:ok, server} = MyToolService.start_link(transport: :beam)
 
-# Direct service calls (~15us latency)
-{:ok, tools} = ExMCP.Native.call(:my_tools, "list_tools", %{})
+{:ok, client} =
+  ExMCP.Client.start_link(
+    transport: :beam,
+    server: server
+  )
+
+{:ok, tools} = ExMCP.Client.list_tools(client)
+{:ok, result} = ExMCP.Client.call_tool(client, "ping", %{})
 ```
 
 ### ACP: Control and Build Coding Agents
@@ -215,8 +212,6 @@ Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control cod
   adapter_opts: [model: "sonnet", cwd: "/my/project"]
 )
 
-# Legacy Claude stream-json adapter remains available as ExMCP.ACP.Adapters.Claude.
-
 # Pi coding agent through the ACP-native adapter
 {:ok, client} = ExMCP.ACP.start_client(
   command: ["pi"],
@@ -237,7 +232,7 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 
 | Transport | Latency | Best For |
 |-----------|---------|----------|
-| **BEAM-local** | ~15us | Elixir cluster communication |
+| **BEAM-local** | ~15us | Local Elixir processes in one VM |
 | **stdio** | ~1-5ms | Subprocess communication |
 | **HTTP/SSE** | ~5-20ms | Web applications, remote APIs |
 

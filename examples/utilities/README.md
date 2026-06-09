@@ -1,11 +1,11 @@
-# ExMCP v2 Utility Examples
+# ExMCP Utility Examples
 
-This directory contains utility examples that demonstrate specific v2 features in isolation.
+This directory contains utility examples that demonstrate focused ExMCP features in isolation.
 
 ## Examples
 
 ### structured_responses.exs
-Understanding the v2 Response and Error types:
+Understanding the Response and Error helpers:
 - Creating text, JSON, and error responses
 - Extracting content from responses
 - Error types and categories
@@ -40,4 +40,4 @@ elixir <example_name>.exs
 - **Before building a server** - Understand response types
 - **When debugging** - See how errors should be structured
 - **Client development** - Learn configuration options
-- **Learning v2 API** - See patterns in isolation
+- **Learning the API** - See patterns in isolation

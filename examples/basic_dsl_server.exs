@@ -1,121 +1,74 @@
 #!/usr/bin/env elixir
 
-# Basic MCP Server using DSL
-#
-# This example demonstrates the simplest way to create an MCP server
-# using ExMCP's DSL (Domain Specific Language) features.
+# Basic MCP server using the modern ExMCP Handler + DSL API.
 
 Mix.install([
   {:ex_mcp, path: Path.expand("..", __DIR__)}
 ])
 
 defmodule BasicServer do
-  use ExMCP.Server
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "basic-server", version: "1.0.0"
 
-  # Define a simple tool
-  deftool "greet" do
-    meta do
-      description "Greets a person by name"
+  tool "greet", "Greets a person by name" do
+    title "Greet"
+    param :name, :string, required: true, description: "Name of the person to greet"
+
+    run fn %{name: name}, state ->
+      {:ok, "Hello, #{name}. Welcome to ExMCP.", state}
     end
-
-    input_schema %{
-      type: "object",
-      properties: %{
-        name: %{type: "string", description: "Name of the person to greet"}
-      },
-      required: ["name"]
-    }
   end
 
-  # Define a resource
-  defresource "info://about" do
-    meta do
-      name "About This Server"
-      description "Information about this MCP server"
-    end
-
+  resource "info://about", "Information about this MCP server" do
+    title "About This Server"
     mime_type "text/plain"
-  end
 
-  # Define a prompt
-  defprompt "motivate" do
-    meta do
-      name "Motivational Message"
-      description "Generates a motivational message"
+    read fn %{uri: uri}, state ->
+      {:ok,
+       %{
+         uri: uri,
+         text: """
+         Basic MCP Server Example
+
+         This server demonstrates a tool, resource, and prompt using the
+         modern ExMCP server DSL.
+         """
+       }, state}
     end
+  end
 
-    arguments do
-      arg :topic, description: "Topic for motivation (optional)"
+  prompt "motivate", "Creates a short motivational prompt" do
+    title "Motivational Message"
+    arg :topic, description: "Topic for motivation"
+
+    render fn args, state ->
+      topic = Map.get(args, :topic, "your goals")
+
+      {:ok,
+       %{
+         messages: [
+           %{
+             role: "user",
+             content: %{type: "text", text: "Give me one practical encouragement about #{topic}."}
+           }
+         ]
+       }, state}
     end
-  end
-
-  # Tool handler implementation
-  @impl true
-  def handle_tool_call("greet", %{"name" => name}, state) do
-    result = %{
-      content: [text("Hello, #{name}! Welcome to ExMCP!")]
-    }
-    {:ok, result, state}
-  end
-
-  # Resource handler implementation
-  @impl true
-  def handle_resource_read("info://about", _uri, state) do
-    content = [
-      text("""
-      Basic MCP Server Example
-      Version: 1.0.0
-
-      This server demonstrates:
-      - Simple tool definition using deftool
-      - Resource definition using defresource
-      - Prompt definition using defprompt
-
-      Built with ExMCP's DSL for clean, declarative server definitions.
-      """)
-    ]
-    {:ok, content, state}
-  end
-
-  # Prompt handler implementation
-  @impl true
-  def handle_prompt_get("motivate", args, state) do
-    topic = Map.get(args, "topic", "your goals")
-
-    messages = [
-      user("I need motivation about #{topic}"),
-      assistant("You've got this! Every step forward in #{topic} is progress. Keep going!")
-    ]
-
-    {:ok, %{messages: messages}, state}
   end
 end
 
-# Start the server
 defmodule BasicServerRunner do
   def run do
-    IO.puts("Starting Basic MCP Server with DSL...")
-    IO.puts("This server demonstrates simple tool, resource, and prompt definitions.\n")
+    IO.puts("Starting Basic MCP Server on stdio.")
+    IO.puts("Available tool: greet")
+    IO.puts("Available resource: info://about")
+    IO.puts("Available prompt: motivate")
 
-    # Start server on stdio transport
-    {:ok, _server} = BasicServer.start_link(
-      transport: :stdio,
-      name: :basic_server
-    )
-
-    IO.puts("Server is running on stdio transport")
-    IO.puts("You can connect a client to test the functionality")
-    IO.puts("\nAvailable features:")
-    IO.puts("- Tool: greet (takes a name parameter)")
-    IO.puts("- Resource: info://about")
-    IO.puts("- Prompt: motivate (optional topic parameter)")
-
-    # Keep the server running
+    {:ok, _server} = BasicServer.start_link(transport: :stdio)
     Process.sleep(:infinity)
   end
 end
 
-# Run if executed directly
-if System.get_env("MIX_ENV") != "test" do
+if System.get_env("MCP_ENV") != "test" do
   BasicServerRunner.run()
 end

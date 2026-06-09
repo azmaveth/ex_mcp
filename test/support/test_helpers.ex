@@ -94,29 +94,6 @@ defmodule ExMCP.TestHelpers do
     GenServer.start_link(server_module, opts)
   end
 
-  @doc """
-  Waits for a service to be registered with the native service registry.
-
-  This helper is useful in tests to avoid race conditions where a test
-  tries to use a service before its registration is complete. It uses
-  an exponential backoff strategy to poll for service availability.
-
-  ## Parameters
-  - `service_name`: The atom name of the service to wait for.
-  - `max_wait_ms`: The maximum time to wait in milliseconds. Defaults to 5000.
-
-  ## Return Value
-  - `{:ok, service_name}` if the service becomes available within the timeout.
-  - `{:error, :timeout}` if the service does not become available.
-  """
-  @spec wait_for_service_registration(atom(), non_neg_integer()) ::
-          {:ok, atom()} | {:error, :timeout}
-  def wait_for_service_registration(service_name, max_wait_ms \\ 5000) do
-    start_time = System.monotonic_time(:millisecond)
-    initial_delay = 10
-    do_wait_for_service_registration(service_name, start_time, max_wait_ms, initial_delay)
-  end
-
   defmodule ApiTestServer do
     @moduledoc """
     Test server for API integration testing.
@@ -207,9 +184,8 @@ defmodule ExMCP.TestHelpers do
   - Tearing down the server process on test exit.
   - Returning a context map with `:http_url` for the test to use.
 
-  This is a simplified helper that does **not** use Horde, making it suitable
-  for tests that only need to verify basic HTTP API interactions without
-  distributed features.
+  This helper is suitable for tests that only need to verify basic HTTP API
+  interactions.
 
   **NOTE:** Tests using this helper should be marked with `async: false`.
 
@@ -230,7 +206,6 @@ defmodule ExMCP.TestHelpers do
       end
   """
   def start_test_servers_for_api(context) do
-    # This is a simplified, non-Horde version for basic API tests.
     ensure_ranch_started()
     ensure_session_manager_started()
 
@@ -363,148 +338,7 @@ defmodule ExMCP.TestHelpers do
     :exit, _ -> :ok
   end
 
-  @doc """
-  Sets up isolated test servers for integration testing.
-
-  This macro simplifies the setup of test servers with different transports
-  while ensuring process isolation using HordeTestHelpers. It should be
-  called within a `setup` block in tests that require a running MCP server.
-
-  It handles:
-  - Setting up an isolated Horde registry and supervisor.
-  - Starting the `ExMCP.TestServer` with the specified transport.
-  - Configuring the application environment to use the isolated Horde instance.
-  - Tearing down all started processes on test exit.
-
-  **NOTE:** Tests using this helper should be marked with `async: false`.
-
-  ## Options
-
-  - `:transport` - The transport to use. Can be `:http`, `:stdio`, or `:beam`.
-    Defaults to `:beam`.
-
-  ## Return Value
-
-  On success, returns `{:ok, config}` where `config` is a map containing
-  details about the started server and Horde processes, for example:
-  - `:pid` - The PID of the server process.
-  - `:transport` - The transport used.
-  - `:port` - The port number (for `:http` transport).
-  - `:supervisor_name` - The name of the isolated Horde supervisor.
-  - `:registry_name` - The name of the isolated Horde registry.
-
-  ## Example
-
-      defmodule MyServerTest do
-        use ExUnit.Case, async: false
-        import ExMCP.TestHelpers
-
-        setup do
-          {:ok, server_config} = setup_test_servers(transport: :http)
-          %{server_config: server_config}
-        end
-
-        test "communicates with the server", %{server_config: config} do
-          # use config.port or config.pid to connect to the server
-        end
-      end
-  """
-  defmacro setup_test_servers(opts \\ []) do
-    quote do
-      # Ensure Horde helpers are available for the test module
-      import ExMCP.HordeTestHelpers
-
-      # 1. Setup isolated Horde instance using the helper macro.
-      # This starts unique Horde processes and registers on_exit cleanup.
-      {:ok, horde_config} = setup_test_horde()
-
-      # 2. Configure the application to use the isolated Horde processes.
-      # This assumes the server reads these names from the application environment.
-      Application.put_env(:ex_mcp, :horde_registry, horde_config.registry_name)
-      Application.put_env(:ex_mcp, :horde_supervisor, horde_config.supervisor_name)
-
-      # 3. Start the server with the correct transport.
-      transport = Keyword.get(unquote(opts), :transport, :beam)
-      server_opts = unquote(opts)
-
-      # Delegate to a private helper to start the server and set up its cleanup.
-      case ExMCP.TestHelpers.__setup_server_by_transport__(transport, server_opts) do
-        {:ok, server_config} ->
-          # Register on_exit for the server process
-          pid = server_config.pid
-          on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid, :shutdown, 500) end)
-
-          # 4. Combine configs and return for use in the test.
-          config = Map.merge(horde_config, server_config)
-          {:ok, config}
-
-        error ->
-          error
-      end
-    end
-  end
-
-  @doc false
-  # Private helper to start a server based on transport and set up teardown.
-  # This function is intended to be called from the `setup_test_servers` macro
-  # and runs within the context of a test's `setup` block.
-  def __setup_server_by_transport__(transport, opts) do
-    case transport do
-      :http ->
-        case start_http_server(opts) do
-          {:ok, pid, port} ->
-            {:ok, %{pid: pid, port: port, transport: :http}}
-
-          error ->
-            error
-        end
-
-      :stdio ->
-        case start_stdio_server(opts) do
-          {:ok, pid} ->
-            {:ok, %{pid: pid, transport: :stdio}}
-
-          error ->
-            error
-        end
-
-      :beam ->
-        case start_beam_server(opts) do
-          {:ok, pid} ->
-            {:ok, %{pid: pid, transport: :beam}}
-
-          error ->
-            error
-        end
-
-      _ ->
-        {:error, {:invalid_transport, transport}}
-    end
-  end
-
   # Private helpers
-
-  defp do_wait_for_service_registration(service_name, start_time, max_wait_ms, delay) do
-    if ExMCP.Native.service_available?(service_name) do
-      {:ok, service_name}
-    else
-      elapsed_ms = System.monotonic_time(:millisecond) - start_time
-
-      if elapsed_ms + delay > max_wait_ms do
-        # Check one last time before timing out
-        if ExMCP.Native.service_available?(service_name) do
-          {:ok, service_name}
-        else
-          {:error, :timeout}
-        end
-      else
-        Process.sleep(delay)
-        # Exponential backoff, capped to prevent excessively long sleeps
-        next_delay = min(delay * 2, 500)
-        do_wait_for_service_registration(service_name, start_time, max_wait_ms, next_delay)
-      end
-    end
-  end
 
   defp ensure_ranch_started do
     case Application.ensure_all_started(:ranch) do
@@ -561,6 +395,27 @@ defmodule ExMCP.TestHelpers do
       {:error, reason} ->
         {:error, {:server_not_ready, reason}}
     end
+  end
+
+  @doc """
+  Generates a unique atom name for a process in a test.
+
+  The generated name includes the test name and a monotonic unique integer so
+  named processes do not collide across cases.
+  """
+  @spec unique_process_name(atom(), String.t()) :: atom()
+  def unique_process_name(test, prefix) when is_atom(test) and is_binary(prefix) do
+    unique_id = :erlang.unique_integer([:positive])
+
+    test_name =
+      test
+      |> Atom.to_string()
+      |> String.replace(~r/[^a-zA-Z0-9_]/, "_")
+      |> String.replace(~r/_+/, "_")
+      |> String.trim("_")
+
+    "ExMCP.Test.#{String.capitalize(prefix)}.#{test_name}_#{unique_id}"
+    |> String.to_atom()
   end
 
   @doc """

@@ -189,8 +189,6 @@ defmodule ExMCP.Transport do
   - `:http` - Streamable HTTP transport with SSE (official MCP transport)
   - `:test` - In-memory transport for testing (non-standard)
   - `:beam` - BEAM-local transport carrying MCP-shaped messages as Elixir terms.
-
-  Note: For direct Elixir service communication, use ExMCP.Native for service registration.
   """
   @spec get_transport(:stdio | :http | :test | :beam | module()) :: module()
   def get_transport(:stdio), do: ExMCP.Transport.Stdio

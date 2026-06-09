@@ -1,355 +1,160 @@
 # ExMCP Architecture Guide
 
-## Overview
+ExMCP is organized around protocol boundaries: clients, servers, transports,
+HTTP Plug integration, ACP, authorization, and internal protocol helpers. Public
+APIs stay small; cross-cutting work is kept at transport or Plug boundaries.
 
-ExMCP's architecture focuses on developer experience, type safety, and production readiness. This guide explains the architectural decisions and design patterns.
+## Public Layers
 
-## Core Design Principles
+### MCP Client
 
-### 1. Structured Responses
+`ExMCP.Client` owns the client process, initialization handshake, request IDs,
+server capability state, retries, and request/response formatting.
 
-v2 introduces dedicated response types (`ExMCP.Response` and `ExMCP.Error`) to provide:
-- **Type safety** - Clear response types instead of raw maps
-- **Consistency** - All operations return the same response structure
-- **Discoverability** - Helper functions for content extraction
+Client operation modules under `lib/ex_mcp/client/operations/` keep tool,
+resource, and prompt calls focused while `ExMCP.Client.ConnectionManager`
+normalizes transport startup.
 
-```elixir
-# v1: Raw maps with unclear structure
-{:ok, %{"tools" => tools}} = Client.list_tools(client)
+### MCP Server
 
-# v2: Structured responses with helpers
-{:ok, response} = Client.list_tools(client)
-tools = ExMCP.Response.tools(response)
-```
-
-### 2. Configuration Builder Pattern
-
-The `ExMCP.ClientConfig` module provides a fluent interface for client configuration:
+Server implementations use `ExMCP.Server.Handler`. Most applications should add
+`ExMCP.Server.DSL` for declarative tools, resources, and prompts:
 
 ```elixir
-config = ExMCP.ClientConfig.new()
-         |> ExMCP.ClientConfig.put_transport(:http)
-         |> ExMCP.ClientConfig.put_url("https://api.example.com")
-         |> ExMCP.ClientConfig.put_transport_options(timeout: 30_000)
-```
+defmodule MyServer do
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL
 
-Benefits:
-- Compile-time validation of configuration
-- Clear documentation of available options
-- Immutable configuration objects
-- Easy to extend with new options
+  tool "echo", "Echo input" do
+    param :message, :string, required: true
 
-### 3. Enhanced DSL
-
-The v2 DSL modules provide:
-- **Compile-time validation** of tool/resource/prompt definitions
-- **Clear separation** between metadata and implementation
-- **Consistent naming** aligned with MCP specification
-
-```elixir
-# Clear, declarative syntax
-tool "search" do
-  description "Search the web"
-  input_schema %{...}  # JSON Schema validation
-  handler fn args -> ... end
-end
-```
-
-## Module Organization
-
-### Core Modules
-
-```
-lib/ex_mcp_v2/
-├── client.ex              # Main client implementation
-├── client_config.ex       # Configuration builder
-├── response.ex            # Structured response type
-├── error.ex              # Structured error type
-├── server_v2.ex          # Enhanced server with transport support
-├── http_plug.ex          # HTTP/SSE transport integration
-└── message_processor.ex   # Core protocol handling (renamed from Plug)
-```
-
-### DSL Modules
-
-```
-lib/ex_mcp_v2/dsl/
-├── tool.ex      # Tool definition DSL
-├── resource.ex  # Resource definition DSL
-├── prompt.ex    # Prompt definition DSL
-└── advanced.ex  # Advanced DSL features
-```
-
-### Support Modules
-
-```
-lib/ex_mcp_v2/
-├── transport_manager.ex     # Transport lifecycle management
-├── simple_client.ex        # Simplified client for testing
-├── convenience_client.ex   # Top-level convenience functions
-└── helpers.ex             # Shared utilities
-```
-
-## Key Architectural Patterns
-
-### 1. Transport Abstraction
-
-The transport layer is completely abstracted from the protocol layer:
-
-```elixir
-# Transport manager handles connection lifecycle
-defmodule TransportManager do
-  def connect(config) do
-    case config.transport do
-      :stdio -> StdioTransport.connect(config)
-      :http -> HttpTransport.connect(config)
+    run fn %{message: message}, state ->
+      {:ok, %{content: [%{type: "text", text: message}]}, state}
     end
   end
 end
 ```
 
-### 2. Message Processing Pipeline
+`ExMCP.Server.HandlerServer` is the transport-aware process for in-memory and
+BEAM-local handler execution. HTTP and stdio servers are started through
+`ExMCP.Server.Transport` or the DSL-generated `start_link/1`.
 
-```
-Request → Transport → MessageProcessor → Handler → Response → Transport
-```
+### Transports
 
-The `MessageProcessor` (formerly Plug) handles:
-- JSON-RPC protocol encoding/decoding
-- Method routing
-- Error handling
-- Response formatting
+Transport modules implement `ExMCP.Transport`:
 
-### 3. HTTP/SSE Integration
+- `ExMCP.Transport.Stdio` for newline-delimited JSON-RPC over subprocess stdio.
+- `ExMCP.Transport.HTTP` for streamable HTTP with optional SSE.
+- `ExMCP.Transport.Local` for BEAM-local MCP maps/lists passed as Elixir terms.
+- `ExMCP.Transport.Test` for in-memory tests.
 
-The `HttpPlug` module provides:
-- Standard HTTP POST for requests
-- SSE endpoint for server-initiated messages
-- Backpressure control for slow clients
-- Connection resumption via Last-Event-ID
+BEAM-local MCP is selected with `transport: :beam` and requires a server PID:
 
 ```elixir
-# Automatic SSE support
-plug ExMCP.HttpPlug,
-  handler: MyHandler,
-  server_info: %{name: "server", version: "1.0.0"}
+{:ok, server} = MyServer.start_link(transport: :beam)
+{:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
 ```
 
-### 4. Error Handling Strategy
+The removed `:native` alias and direct dispatcher API are not part of the 1.0
+public architecture.
 
-Errors are categorized into three types:
+### HTTP Plug
 
-1. **Protocol Errors** - JSON-RPC level errors
-2. **Application Errors** - Tool/resource execution errors  
-3. **Transport Errors** - Connection/network errors
+`ExMCP.HttpPlug` is the HTTP server boundary. Request parsing, session
+resolution, CORS/origin handling, response shaping, and SSE handling are split
+under `lib/ex_mcp/http_plug/`.
+
+Use normal Phoenix/Plug composition for HTTP edge concerns:
 
 ```elixir
-# Consistent error handling
-case Client.call_tool(client, "tool", args) do
-  {:ok, response} when response.type == :error ->
-    # Application error (tool returned error)
-    handle_app_error(response.content)
-    
-  {:ok, response} ->
-    # Success
-    process_response(response)
-    
-  {:error, error} ->
-    # Protocol or transport error
-    handle_protocol_error(error)
+pipeline :mcp do
+  plug ExMCP.Plugs.DnsRebinding
+  plug MyApp.AuthenticateMCP
+end
+
+scope "/mcp" do
+  pipe_through :mcp
+
+  forward "/", ExMCP.HttpPlug,
+    handler: MyApp.MCPServer,
+    server_info: %{name: "my-app", version: "1.0.0"},
+    sse_enabled: true
 end
 ```
 
-## Production Features
+### ACP
 
-### 1. SSE Backpressure Control
+ACP modules live under `lib/ex_mcp/acp/`. `ExMCP.ACP.Client` controls ACP
+agents, `ExMCP.ACP.Agent` exposes native Elixir ACP agents, and adapter modules
+bridge external CLIs such as Claude Code, Codex, and Pi.
 
-The SSE handler implements sophisticated flow control:
+ACP pooling is intentionally left to consumers. ExMCP provides the protocol,
+transport, adapter, and native-agent building blocks.
 
-```elixir
-defmodule SSEHandler do
-  @max_mailbox_size 1000
-  
-  def handle_call(:request_send, from, state) do
-    {:message_queue_len, queue_len} = Process.info(self(), :message_queue_len)
-    
-    if queue_len > @max_mailbox_size do
-      # Block producer until mailbox drains
-      {:noreply, %{state | producers: MapSet.put(state.producers, from)}}
-    else
-      {:reply, :ok, state}
-    end
-  end
-end
-```
+## Internal Functional Cores
 
-### 2. Connection Resilience
+Pure transformation and validation logic is kept separate from process and I/O
+boundaries:
 
-- Automatic reconnection with exponential backoff
-- Connection state tracking
-- Graceful degradation on errors
+- Internal protocol and version modules handle message construction, parsing,
+  and version rules.
+- The message processor modules provide a Plug-like processing pipeline for
+  server request dispatch.
+- `ExMCP.Content.*` modules normalize content, sanitize inputs, and validate
+  schema-related data.
+- ACP mapper/protocol/session modules keep adapter-specific decoding separate
+  from subprocess ports.
 
-### 3. Deprecation Management
+This structure keeps side effects at the edges: GenServers, Ports, HTTP
+requests, Plug connections, filesystem-backed session stores, and telemetry.
 
-v2 includes comprehensive deprecation warnings with source location:
+## Resilience And Pipelines
 
-```elixir
-defmacro tool_description(desc) do
-  caller = __CALLER__
-  Logger.warning(
-    "tool_description/1 is deprecated. Use description/1 instead.",
-    file: Path.relative_to_cwd(caller.file),
-    line: caller.line
-  )
-end
+ExMCP currently has three pipeline-style boundaries:
+
+- HTTP server requests: normal Plug/Phoenix pipelines around `ExMCP.HttpPlug`.
+- Server message processing: `ExMCP.MessageProcessor.run/2` for internal
+  Plug-like request processing.
+- Transport reliability: `ExMCP.Transport.ReliabilityWrapper`, client
+  `retry_policy`, and `ExMCP.Reliability.*` components.
+
+HTTP client connection handling is transport-owned today. If ExMCP later adds a
+public client middleware API, it should wrap request construction and transport
+send/receive at the `ExMCP.Client` boundary rather than inside HTTP-specific
+code, so stdio, HTTP, and BEAM-local can share the same cross-cutting behavior.
+
+## Module Map
+
+```text
+lib/ex_mcp/
+  acp/                 ACP protocol, client, native agent, adapters
+  authorization/       OAuth 2.1 and auth provider flows
+  client/              Client operations, handlers, state, connection setup
+  content/             Content builders, validation, sanitization
+  http_plug/           HTTP Plug functional core and SSE handling
+  internal/            Private protocol, map, version, and security helpers
+  message_processor/   Plug-like MCP request processing
+  plugs/               Reusable Plug security/auth components
+  protocol/            Public protocol utility modules
+  reliability/         Retry, circuit breaker, health check supervisor
+  server/              Handler behavior, DSL, transport startup
+  transport/           Stdio, HTTP, BEAM-local, test transports
 ```
 
 ## Testing Architecture
 
-### 1. Test Helpers
+The test suite covers unit, integration, interop, conformance, security, and
+transport behavior. `ExMCP.Transport.Test` and `transport: :beam` keep local
+server/client tests fast without starting subprocesses or network listeners.
 
-```elixir
-defmodule ExMCP.TestHelpers do
-  def start_test_server(opts) do
-    # Creates an in-memory test server
-  end
-  
-  def connect_test_client(server) do
-    # Connects directly without transport
-  end
-end
-```
+External conformance scripts live in `scripts/` and should be run for each
+supported MCP spec version before release.
 
-### 2. Property-Based Testing
+## Design Rules
 
-v2 includes property-based tests for:
-- Protocol encoding/decoding
-- Response type conversions
-- Error categorization
-
-### 3. Integration Testing
-
-Comprehensive integration tests cover:
-- Concurrent client connections
-- SSE streaming behavior
-- Error propagation
-- Performance characteristics
-
-## Performance Considerations
-
-### 1. Zero-Copy Message Passing
-
-When using stdio transport within the same BEAM:
-- Messages are passed by reference
-- No serialization overhead
-- ~15μs latency for local calls
-
-### 2. Connection Pooling
-
-HTTP transport supports connection pooling:
-```elixir
-config |> ExMCP.ClientConfig.put_transport_options(
-  pool_size: 10,
-  pool_timeout: 5000
-)
-```
-
-### 3. Streaming Support
-
-SSE enables efficient streaming of:
-- Progress updates
-- Resource notifications
-- Large responses
-
-## Migration Path
-
-### 1. Compatibility Layer
-
-v2 maintains backwards compatibility through:
-- Deprecated function warnings
-- Automatic response conversion
-- Legacy DSL support
-
-### 2. Incremental Migration
-
-Applications can migrate incrementally:
-1. Update client code to use v2 API
-2. Migrate DSL definitions
-3. Update error handling
-4. Remove deprecated calls
-
-### 3. Feature Detection
-
-```elixir
-# Check for v2 features
-if function_exported?(ExMCP, :client_config, 0) do
-  # Use v2 API
-else
-  # Fall back to v1
-end
-```
-
-## Future Extensibility
-
-### 1. Custom Response Types
-
-v2 response system is extensible:
-
-```elixir
-defmodule MyApp.CustomResponse do
-  def custom_type(data, source) do
-    %ExMCP.Response{
-      type: :custom,
-      content: data,
-      source: source
-    }
-  end
-end
-```
-
-### 2. Transport Plugins
-
-New transports can be added by implementing the behaviour:
-
-```elixir
-defmodule MyTransport do
-  @behaviour ExMCP.Transport
-  
-  def connect(opts), do: ...
-  def send_message(msg, state), do: ...
-  def receive_message(state), do: ...
-  def close(state), do: ...
-end
-```
-
-### 3. Middleware Support
-
-Future versions will support middleware:
-
-```elixir
-config |> ExMCP.ClientConfig.put_middleware([
-  ExMCP.Middleware.Logger,
-  ExMCP.Middleware.Retry,
-  MyApp.CustomMiddleware
-])
-```
-
-## Best Practices
-
-1. **Always use structured responses** in handlers
-2. **Configure timeouts** appropriately for your use case
-3. **Monitor SSE connections** for backpressure
-4. **Use the DSL** for cleaner, validated definitions
-5. **Handle errors** at the appropriate level
-6. **Test with property-based tests** for edge cases
-7. **Profile performance** for production workloads
-
-## Conclusion
-
-ExMCP's architecture prioritizes:
-- **Developer experience** through clear APIs and helpful errors
-- **Type safety** with structured responses
-- **Production readiness** with backpressure and monitoring
-- **Extensibility** for future enhancements
-
-The modular design allows teams to adopt v2 features incrementally while maintaining compatibility with existing code.
+- Prefer `ExMCP.Server.Handler` plus `ExMCP.Server.DSL` for servers.
+- Use `transport: :beam` for local BEAM MCP, not a separate service dispatcher.
+- Put HTTP authorization, origin, and request-signing checks in Plug pipelines.
+- Put transport failure handling in client retry/reliability options.
+- Keep pure protocol transformations in functional modules and side effects in
+  GenServer, Port, Plug, or filesystem boundaries.
