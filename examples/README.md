@@ -2,6 +2,14 @@
 
 This directory contains runnable examples for the current ExMCP API.
 
+**Note on first runs:** The self-contained `.exs` files (e.g. `elixir examples/basic_dsl_server.exs`) perform a `Mix.install/1` of the local `ex_mcp` on every invocation. This can take 30s–3+ minutes on a cold cache (subsequent runs are much faster). For the quickest "brand new user" experience, start with the utilities or the `demo_client.exs` (which orchestrates the getting-started servers).
+
+Fast alias (recommended for repo developers after `mix compile`):
+
+```bash
+mix examples.getting_started
+```
+
 ## Getting Started
 
 `getting_started/` demonstrates the supported transports:
@@ -31,13 +39,15 @@ use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
 - `weather_service.exs` - practical simulated weather tools and resources
 - `file_manager.exs` - sandboxed file operations and file resources
 
-Run a server directly:
+Run a server directly (see note above about first-run time):
 
 ```bash
 elixir examples/basic_dsl_server.exs
 ```
 
 Server examples use stdio by default unless their filename calls out another transport.
+
+**For developers** (after `mix compile` in the repo root): you can drive these servers from a client without re-installing on every run by using a small harness or the patterns in `test/doc_regression_test.exs`. The `demo_client.exs` in `getting_started/` is the recommended way to exercise all transports at once.
 
 ## Client Example
 
@@ -55,6 +65,8 @@ elixir examples/basic_client.exs
 ```bash
 mix run examples/acp/controller.exs
 ```
+
+(This one often runs well under `mix run` because the agent script handles its own setup.)
 
 ## OAuth And Utility Examples
 

@@ -91,7 +91,7 @@ local processes. It does not JSON encode/decode in the transport, but it still
 uses MCP initialize, request IDs, capabilities, and handler callbacks.
 
 ```elixir
-{:ok, server} = MyServer.start_link(transport: :beam)
+{:ok, server} = MyServer.start_link(transport: :beam)  # DSL modules provide start_link/1; for raw handlers use HandlerServer or ExMCP.start_server
 
 {:ok, client} =
   ExMCP.Client.start_link(
@@ -104,6 +104,8 @@ Supported options:
 
 - server side: `transport: :beam` on a DSL/handler server.
 - client side: `transport: :beam`, `server: pid`, optional `timeout`.
+
+**Tip:** For a fast local verification of these BEAM + DSL + Client patterns (no re-installs), run `mix examples.getting_started` from the project root after `mix compile`.
 
 BEAM-local does not provide service discovery or distributed registry behavior.
 If you need a pool or registry of server processes, keep that in your

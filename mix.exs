@@ -24,7 +24,21 @@ defmodule ExMCP.MixProject do
         list_unused_filters: false,
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts"
-      ]
+      ],
+      aliases: aliases()
+    ]
+  end
+
+  defp aliases do
+    [
+      # Quick entry points for examples (see examples/README.md).
+      # Individual .exs files do Mix.install and can be slow on first run.
+      examples: [
+        "run -e 'IO.puts(\"ExMCP Examples — see examples/README.md\") ; IO.puts(\"Quick starts: elixir examples/utilities/*.exs or examples/getting_started/demo_client.exs\") ; IO.puts(\"Full demo: cd examples/getting_started && ./run_demo.sh\") ; IO.puts(\"Fast alias: mix examples.getting_started\")'"
+      ],
+      # Fast (no re-Mix.install) version of the getting-started patterns.
+      # See examples/getting_started/README.md and the main examples/README.md.
+      "examples.getting_started": ["run -r examples/support/getting_started.exs"]
     ]
   end
 

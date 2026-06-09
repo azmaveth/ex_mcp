@@ -18,43 +18,83 @@ end
 
 ### 2. Create an MCP Handler
 
-Create a handler module that implements your MCP server logic:
+Create a handler module that implements your MCP server logic.
+For most Phoenix apps the **DSL** (shown first) is the easiest approach.
+Raw callbacks are also supported when you need fully dynamic behavior.
+
+#### Recommended: DSL Handler
 
 ```elixir
 # lib/my_app/mcp_handler.ex
 defmodule MyApp.MCPHandler do
   use ExMCP.Server.Handler
-  
+  use ExMCP.Server.DSL, name: "my-phoenix-app", version: "1.0.0"
+
+  tool "get_user_count", "Get the total number of registered users" do
+    run fn _args, state ->
+      count = MyApp.Accounts.count_users()
+      {:ok, %{content: [%{type: "text", text: "Total users: #{count}"}]}, state}
+    end
+  end
+
+  tool "search_posts", "Search blog posts" do
+    param :query, :string, required: true, description: "Search query"
+    param :limit, :integer, default: 10
+
+    run fn %{query: query, limit: limit}, state ->
+      posts = MyApp.Blog.search_posts(query, limit: limit)
+
+      results =
+        Enum.map(posts, fn post ->
+          %{type: "text", text: "**#{post.title}**\n#{post.excerpt}\nPublished: #{post.published_at}"}
+        end)
+
+      {:ok, %{content: results}, state}
+    end
+  end
+end
+```
+
+#### Alternative: Raw Handler Callbacks
+
+Use this style only when you need completely dynamic tool/resource lists.
+
+```elixir
+# lib/my_app/mcp_handler.ex
+defmodule MyApp.MCPHandler do
+  use ExMCP.Server.Handler
+
   @impl true
   def init(_args), do: {:ok, %{}}
-  
+
   @impl true
   def handle_initialize(_params, state) do
-    {:ok, %{
-      name: Application.get_env(:my_app, :app_name, "my-phoenix-app"),
-      version: Application.spec(:my_app, :vsn) |> to_string(),
-      capabilities: %{
-        tools: %{},
-        resources: %{}
-      }
-    }, state}
+    {:ok,
+     %{
+       protocolVersion: ExMCP.protocol_version(),
+       serverInfo: %{
+         name: Application.get_env(:my_app, :app_name, "my-phoenix-app"),
+         version: Application.spec(:my_app, :vsn) |> to_string()
+       },
+       capabilities: %{
+         tools: %{},
+         resources: %{}
+       }
+     }, state}
   end
-  
+
   @impl true
-  def handle_list_tools(state) do
+  def handle_list_tools(_cursor, state) do
     tools = [
       %{
         name: "get_user_count",
         description: "Get the total number of registered users",
-        input_schema: %{
-          type: "object",
-          properties: %{}
-        }
+        inputSchema: %{type: "object", properties: %{}}
       },
       %{
         name: "search_posts",
         description: "Search blog posts",
-        input_schema: %{
+        inputSchema: %{
           type: "object",
           properties: %{
             query: %{type: "string", description: "Search query"},
@@ -64,64 +104,62 @@ defmodule MyApp.MCPHandler do
         }
       }
     ]
-    {:ok, tools, state}
+
+    {:ok, tools, nil, state}
   end
-  
+
   @impl true
   def handle_call_tool("get_user_count", _args, state) do
     count = MyApp.Accounts.count_users()
-    
-    result = [
-      %{
-        type: "text", 
-        text: "Total registered users: #{count}"
-      }
-    ]
-    
-    {:ok, result, state}
+
+    {:ok,
+     %{
+       content: [
+         %{type: "text", text: "Total registered users: #{count}"}
+       ]
+     }, state}
   end
-  
+
   def handle_call_tool("search_posts", args, state) do
     query = Map.get(args, "query")
     limit = Map.get(args, "limit", 10)
-    
+
     posts = MyApp.Blog.search_posts(query, limit: limit)
-    
-    results = Enum.map(posts, fn post ->
-      %{
-        type: "text",
-        text: "**#{post.title}**\n#{post.excerpt}\nPublished: #{post.published_at}"
-      }
-    end)
-    
-    {:ok, results, state}
+
+    results =
+      Enum.map(posts, fn post ->
+        %{
+          type: "text",
+          text: "**#{post.title}**\n#{post.excerpt}\nPublished: #{post.published_at}"
+        }
+      end)
+
+    {:ok, %{content: results}, state}
   end
-  
+
   def handle_call_tool(tool_name, _args, state) do
-    error = %{
-      code: -32601,
-      message: "Unknown tool: #{tool_name}"
-    }
-    {:error, error, state}
+    {:ok,
+     %{
+       content: [%{type: "text", text: "Unknown tool: #{tool_name}"}],
+       isError: true
+     }, state}
   end
-  
-  # Implement other required callbacks
+
+  # Other callbacks (provide sensible defaults or implementations)
   @impl true
-  def handle_list_resources(state), do: {:ok, [], state}
-  
+  def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
+
   @impl true
   def handle_read_resource(_uri, state) do
-    error = %{code: -32601, message: "Resources not implemented"}
-    {:error, error, state}
+    {:error, "Resources not implemented", state}
   end
-  
+
   @impl true
-  def handle_list_prompts(state), do: {:ok, [], state}
-  
+  def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
+
   @impl true
   def handle_get_prompt(_name, _args, state) do
-    error = %{code: -32601, message: "Prompts not implemented"}
-    {:error, error, state}
+    {:error, "Prompts not implemented", state}
   end
 end
 ```
@@ -320,7 +358,7 @@ Expose your Phoenix application data as MCP resources:
 
 ```elixir
 @impl true
-def handle_list_resources(state) do
+def handle_list_resources(_cursor, state) do
   resources = [
     %{
       uri: "phoenix://users",
@@ -335,7 +373,7 @@ def handle_list_resources(state) do
       mimeType: "application/json"
     }
   ]
-  {:ok, resources, state}
+  {:ok, resources, nil, state}
 end
 
 @impl true
@@ -451,12 +489,12 @@ end
 ```elixir
 # Expose product search and order management
 @impl true
-def handle_list_tools(state) do
+def handle_list_tools(_cursor, state) do
   tools = [
     %{
       name: "search_products",
       description: "Search for products in the catalog",
-      input_schema: %{
+      inputSchema: %{
         type: "object",
         properties: %{
           query: %{type: "string"},
@@ -468,7 +506,7 @@ def handle_list_tools(state) do
     %{
       name: "get_order_status", 
       description: "Get the status of an order",
-      input_schema: %{
+      inputSchema: %{
         type: "object",
         properties: %{
           order_id: %{type: "string"}
@@ -477,7 +515,7 @@ def handle_list_tools(state) do
       }
     }
   ]
-  {:ok, tools, state}
+  {:ok, tools, nil, state}
 end
 ```
 

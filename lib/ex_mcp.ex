@@ -108,13 +108,41 @@ defmodule ExMCP do
 
   ### Basic Server Usage
 
+  > #### Tip
+  > Most servers are easier to write with the DSL:
+  >
+  > ```elixir
+  > defmodule MyServer do
+  >   use ExMCP.Server.Handler
+  >   use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+  >
+  >   tool "echo", "Echo the message" do
+  >     param :message, :string, required: true
+  >     run fn %{message: msg}, state ->
+  >       {:ok, %{content: [%{type: "text", text: msg}]}, state}
+  >     end
+  >   end
+  > end
+  >
+  > {:ok, server} = MyServer.start_link(transport: :stdio)
+  > ```
+
       defmodule MyHandler do
         use ExMCP.Server.Handler
 
         @impl true
-        def handle_list_tools(state) do
-          tools = [%{name: "echo", description: "Echo input"}]
-          {:ok, tools, state}
+        def handle_initialize(_params, state) do
+          {:ok, %{
+            protocolVersion: ExMCP.protocol_version(),
+            serverInfo: %{name: "my-handler", version: "1.0.0"},
+            capabilities: %{tools: %{}}
+          }, state}
+        end
+
+        @impl true
+        def handle_list_tools(_cursor, state) do
+          tools = [%{name: "echo", description: "Echo input", inputSchema: %{type: "object"}}]
+          {:ok, tools, nil, state}
         end
 
         @impl true

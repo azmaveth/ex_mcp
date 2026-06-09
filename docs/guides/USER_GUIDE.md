@@ -71,8 +71,25 @@ Start it with the transport you need:
 
 ## Low-Level Handlers
 
-Use handwritten callbacks when capabilities are dynamic or you need custom
-behavior:
+Use handwritten callbacks when capabilities are fully dynamic or you need
+custom behavior. For nearly all cases, the DSL is simpler and recommended:
+
+```elixir
+defmodule MyServer do
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+
+  tool "ping", "Health check" do
+    run fn _args, state ->
+      {:ok, %{content: [%{type: "text", text: "pong"}]}, state}
+    end
+  end
+end
+
+{:ok, server} = MyServer.start_link(transport: :beam)
+```
+
+### Raw Callback Example
 
 ```elixir
 defmodule DynamicServer do
@@ -103,14 +120,24 @@ defmodule DynamicServer do
 
   @impl true
   def handle_call_tool("ping", _args, state) do
-    {:ok, [%{type: "text", text: "pong"}], state}
+    {:ok, %{content: [%{type: "text", text: "pong"}]}, state}
   end
 end
+
+# Start a raw handler (no DSL):
+{:ok, server} =
+  ExMCP.Server.HandlerServer.start_link(
+    handler: DynamicServer,
+    transport: :beam
+  )
+# Or the convenience:
+# {:ok, server} = ExMCP.start_server(handler: DynamicServer, transport: :beam)
 ```
 
 ## BEAM-Local MCP
 
-Use `transport: :beam` when both sides are Elixir processes in the same VM:
+Use `transport: :beam` when both sides are Elixir processes in the same VM.
+When using the DSL the server module gets a `start_link/1`:
 
 ```elixir
 {:ok, server} = MyServer.start_link(transport: :beam)
@@ -124,6 +151,10 @@ Use `transport: :beam` when both sides are Elixir processes in the same VM:
 {:ok, tools} = ExMCP.Client.list_tools(client)
 {:ok, result} = ExMCP.Client.call_tool(client, "echo", %{"message" => "hello"})
 ```
+
+For a raw handler (no DSL) use `ExMCP.Server.HandlerServer.start_link(handler: MyHandler, ...)` (or `ExMCP.start_server/1`).
+
+**Tip:** `mix examples.getting_started` (after `mix compile`) gives a fast local run of these DSL + Client patterns for quick verification.
 
 BEAM-local MCP uses the normal initialize handshake, request IDs, capabilities,
 and handler callbacks. The transport passes MCP-shaped maps/lists as Elixir

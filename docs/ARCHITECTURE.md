@@ -51,7 +51,7 @@ Transport modules implement `ExMCP.Transport`:
 BEAM-local MCP is selected with `transport: :beam` and requires a server PID:
 
 ```elixir
-{:ok, server} = MyServer.start_link(transport: :beam)
+{:ok, server} = MyServer.start_link(transport: :beam)  # or HandlerServer.start_link(handler: MyHandler, ...)
 {:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
 ```
 

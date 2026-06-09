@@ -116,7 +116,7 @@ Supported options include:
 ## BEAM-Local
 
 ```elixir
-{:ok, server} = MyServer.start_link(transport: :beam)
+{:ok, server} = MyServer.start_link(transport: :beam)  # works when using DSL; otherwise use HandlerServer.start_link(handler: MyServer, ...)
 
 {:ok, client} =
   ExMCP.Client.start_link(
@@ -131,12 +131,17 @@ pooling, service discovery, or process selection in your application layer.
 
 ## Server Configuration
 
-DSL/handler servers can be started with:
+Servers (DSL or raw handlers) can be started with:
 
 ```elixir
-MyServer.start_link(transport: :beam)
+MyServer.start_link(transport: :beam)                    # DSL modules get this
 MyServer.start_link(transport: :stdio)
 MyServer.start_link(transport: :http, port: 4000, sse_enabled: true)
+
+# For a raw handler module (no DSL):
+ExMCP.Server.HandlerServer.start_link(handler: MyHandler, transport: :beam)
+# or the convenience:
+ExMCP.start_server(handler: MyHandler, transport: :stdio)
 ```
 
 Phoenix/Plug applications usually mount `ExMCP.HttpPlug`:

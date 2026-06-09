@@ -74,7 +74,7 @@ Confirm the server has SSE enabled and the client uses `use_sse: true`. Increase
 `transport: :beam` requires a live server PID:
 
 ```elixir
-{:ok, server} = MyServer.start_link(transport: :beam)
+{:ok, server} = MyServer.start_link(transport: :beam)  # DSL provides start_link; raw handlers use HandlerServer
 Process.alive?(server)
 
 {:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)

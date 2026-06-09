@@ -100,6 +100,8 @@ defmodule MyApp.MCPHandler do
 end
 ```
 
+> **Note:** The example above uses raw `ExMCP.Server.Handler` callbacks (useful for dynamic capabilities). Most Phoenix apps will be simpler with the DSL — see the "DSL Server" section below and the [Phoenix Guide](docs/guides/PHOENIX_GUIDE.md).
+
 ### DSL Server
 
 Define tools, resources, and prompts next to their handlers:
@@ -192,6 +194,8 @@ end
 {:ok, tools} = ExMCP.Client.list_tools(client)
 {:ok, result} = ExMCP.Client.call_tool(client, "ping", %{})
 ```
+
+**Fast verification:** From the repo root (after `mix compile`), run `mix examples.getting_started` for a quick in-process demo of these patterns.
 
 ### ACP: Control and Build Coding Agents
 

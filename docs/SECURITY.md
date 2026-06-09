@@ -79,7 +79,7 @@ Best practices:
 `transport: :beam` is for trusted local Elixir processes:
 
 ```elixir
-{:ok, server} = MyServer.start_link(transport: :beam)
+{:ok, server} = MyServer.start_link(transport: :beam)   # requires use of DSL, or use HandlerServer
 {:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
 ```
 

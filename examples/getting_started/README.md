@@ -23,6 +23,16 @@ or:
 elixir demo_client.exs
 ```
 
+**First-run note:** Expect 1–3+ minutes on initial execution due to `Mix.install` inside the server scripts (cached runs are fast). This is the most complete single-command way to see all transports working.
+
+For a fast version of the core patterns (using the compiled library, no repeated installs):
+
+```bash
+mix examples.getting_started
+```
+
+(See the main [examples/README.md](../README.md) for more options. The implementation lives in `../support/getting_started.exs`.)
+
 ## Start Servers Individually
 
 ```bash

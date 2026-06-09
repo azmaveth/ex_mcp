@@ -48,9 +48,13 @@ tool "add", "Adds two numbers" do
 end
 ```
 
-Tool handlers can return a string, `%{text: text}`, a full MCP tool result, or
-`{:error, reason}`. Declared params are normalized so handlers can use atom keys
-and defaults.
+`ToolResult` is an alias for `ExMCP.Server.DSL.Result` that is automatically
+imported when you `use ExMCP.Server.DSL`. It provides `text/1`, `error/1`,
+and `structured/2` helpers. You can also return a plain string, `%{text: "..."}`,
+a full `%{content: [...], structuredContent: ...}` map, or `{:error, reason}` from
+your `run` (or `read` / `render`) functions. The DSL normalizes the result for you.
+
+Declared params are normalized so handlers can use atom keys and defaults.
 
 ## Resources
 
@@ -146,6 +150,8 @@ For a hand-written handler without the DSL:
 
 `ExMCP.start_server/1` is also available as a top-level convenience wrapper for
 `ExMCP.Server.HandlerServer.start_link/1`.
+
+**Fast verification tip:** After `mix compile`, `mix examples.getting_started` runs a quick in-process demo of the DSL + client patterns shown throughout this guide (and in QUICKSTART.md).
 
 ## Migration From The Removed Legacy DSL
 

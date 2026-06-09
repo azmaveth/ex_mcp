@@ -55,8 +55,13 @@ mix coveralls.html    # Generate coverage report
 MIX_ENV=test mix compile              # Compile for test environment
 
 # Documentation
-mix docs              # Generate documentation
+mix docs              # Generate documentation (also verifies rewritten moduledocs + guides render)
 iex -S mix            # Start interactive shell with project loaded
+
+# After doc or example changes, re-verify key snippets and the getting-started demo:
+#   mix run -e '...'   (see DOCS_EXAMPLES_AUDIT_PLAN.md for example verifiers)
+#   elixir examples/getting_started/demo_client.exs
+#   mix examples.getting_started   # fast alias (see examples/README.md)
 
 ```
 

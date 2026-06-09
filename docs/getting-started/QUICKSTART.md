@@ -95,6 +95,10 @@ Use `transport: :beam` when both the client and server are Elixir processes in t
 
 BEAM-local MCP still uses the standard initialize handshake, request IDs, capabilities, and handler callbacks. The transport simply passes MCP-shaped maps/lists as Elixir terms between local processes.
 
+> **Note for raw handlers:** If you are not using the DSL, start with `ExMCP.Server.HandlerServer.start_link(handler: YourHandler, transport: :beam)` (or `ExMCP.start_server/1`). DSL modules automatically provide `start_link/1`.
+
+For a fast (compiled) run of the patterns in this guide, use `mix examples.getting_started` from the repo root.
+
 ## Choosing A Transport
 
 | Transport | Best For |

@@ -33,6 +33,27 @@ defmodule ExMCP.Server.Handler do
 
   ## Basic Example
 
+  > #### Tip
+  > For most servers, prefer the declarative DSL instead of implementing
+  > these callbacks by hand:
+  >
+  > ```elixir
+  > defmodule MyServer do
+  >   use ExMCP.Server.Handler
+  >   use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+  >
+  >   tool "calculate", "Perform calculations" do
+  >     param :expression, :string, required: true
+  >     run fn %{expression: expr}, state ->
+  >       # ... compute ...
+  >       {:ok, %{content: [%{type: "text", text: "Result: ..."}]}, state}
+  >     end
+  >   end
+  > end
+  > ```
+  >
+  > Raw callbacks are useful when capabilities are fully dynamic.
+
       defmodule MyServer do
         use ExMCP.Server.Handler
 
@@ -78,7 +99,7 @@ defmodule ExMCP.Server.Handler do
               }
             }
           ]
-          {:ok, tools, state}
+          {:ok, tools, nil, state}
         end
 
         @impl true
