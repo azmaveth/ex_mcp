@@ -7,7 +7,7 @@ This guide covers the supported configuration surfaces for ExMCP 1.0.
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.0"}
+    {:ex_mcp, "~> 1.0.0-rc.1"}
   ]
 end
 ```
