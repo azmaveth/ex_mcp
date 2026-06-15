@@ -7,7 +7,7 @@ defmodule ExMCP.ACP.AdapterTransport do
 
       {:ok, client} = ACP.Client.start_link(
         transport_mod: AdapterTransport,
-        adapter: Adapters.Claude,
+        adapter: Adapters.ClaudeSDK,
         adapter_opts: [model: "sonnet"]
       )
 

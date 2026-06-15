@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - **Optional Horde dependency** — Removed the old optional Horde dependency and registry wiring because the Native dispatcher API no longer exists.
+- **Legacy Claude ACP adapter** — Removed `ExMCP.ACP.Adapters.Claude`; Claude Code integrations now use `ExMCP.ACP.Adapters.ClaudeSDK`.
+- **Unused public cleanup modules** — Removed `ExMCP.ClientConfigEnhanced`, `ExMCP.ClientConfig.Macros`, and the old distributed `ExMCP.Transport.Beam.*` cluster namespace. The active BEAM-local MCP path remains `transport: :beam`.
 
 ## [1.0.0-rc.0] - 2026-06-08
 

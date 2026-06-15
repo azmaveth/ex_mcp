@@ -199,14 +199,8 @@ defmodule ExMCP.MixProject do
           ExMCP.ACP.AdapterTransport,
           ExMCP.ACP.Adapters.ClaudeSDK,
           ExMCP.ACP.Adapters.ClaudeSDK.SessionStore,
-          ExMCP.ACP.Adapters.Claude,
           ExMCP.ACP.Adapters.Codex,
           ExMCP.ACP.Adapters.Pi
-        ],
-        "ExMCP Extensions": [
-          ExMCP.Transport.Beam,
-          ExMCP.ServerManager,
-          ExMCP.Discovery
         ],
         Internal: [ExMCP.Transport, ExMCP.Application]
       ],

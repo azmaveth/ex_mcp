@@ -1,6 +1,6 @@
 defmodule ExMCP.Reliability.CircuitBreaker do
   @moduledoc """
-  Circuit breaker GenServer wrapper for ExMCP.Transport.Beam.CircuitBreaker.
+  Circuit breaker GenServer wrapper.
 
   Provides a GenServer-based interface to the circuit breaker pattern for
   protecting MCP services from cascading failures.
@@ -8,7 +8,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   use GenServer
 
-  alias ExMCP.Transport.Beam.CircuitBreaker, as: CB
+  alias ExMCP.Reliability.CircuitBreaker.Core
 
   @type options :: [
           failure_threshold: non_neg_integer(),
@@ -46,7 +46,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   @doc """
   Gets the current state of the circuit breaker.
   """
-  @spec get_state(GenServer.server()) :: CB.state()
+  @spec get_state(GenServer.server()) :: Core.state()
   def get_state(server) do
     GenServer.call(server, :get_state)
   end
@@ -97,7 +97,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   @impl GenServer
   def init(opts) do
     {error_filter, cb_opts} = Keyword.pop(opts, :error_filter, fn _ -> true end)
-    circuit_breaker = CB.new(Map.new(cb_opts))
+    circuit_breaker = Core.new(Map.new(cb_opts))
 
     state = %{
       circuit_breaker: circuit_breaker,
@@ -109,7 +109,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   @impl GenServer
   def handle_call({:execute, fun}, _from, state) do
-    {allowed, updated_cb} = CB.allow_request_with_state?(state.circuit_breaker)
+    {allowed, updated_cb} = Core.allow_request_with_state?(state.circuit_breaker)
     updated_state = %{state | circuit_breaker: updated_cb}
 
     if allowed do
@@ -121,31 +121,31 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   def handle_call(:get_state, _from, state) do
     # Check for state transitions and update the GenServer state
-    {_allowed, updated_cb} = CB.allow_request_with_state?(state.circuit_breaker)
+    {_allowed, updated_cb} = Core.allow_request_with_state?(state.circuit_breaker)
     updated_state = %{state | circuit_breaker: updated_cb}
 
     # Get fresh stats from the updated circuit breaker
-    stats = CB.get_stats(updated_cb)
+    stats = Core.get_stats(updated_cb)
     {:reply, stats, updated_state}
   end
 
   def handle_call(:get_stats, _from, state) do
-    stats = CB.get_stats(state.circuit_breaker)
+    stats = Core.get_stats(state.circuit_breaker)
     {:reply, stats, state}
   end
 
   def handle_call(:open, _from, state) do
-    updated_cb = CB.force_state(state.circuit_breaker, :open)
+    updated_cb = Core.force_state(state.circuit_breaker, :open)
     {:reply, :ok, %{state | circuit_breaker: updated_cb}}
   end
 
   def handle_call(:close, _from, state) do
-    updated_cb = CB.force_state(state.circuit_breaker, :closed)
+    updated_cb = Core.force_state(state.circuit_breaker, :closed)
     {:reply, :ok, %{state | circuit_breaker: updated_cb}}
   end
 
   def handle_call(:reset, _from, state) do
-    updated_cb = CB.reset(state.circuit_breaker)
+    updated_cb = Core.reset(state.circuit_breaker)
     {:reply, :ok, %{state | circuit_breaker: updated_cb}}
   end
 
@@ -159,11 +159,11 @@ defmodule ExMCP.Reliability.CircuitBreaker do
         handle_execution_error(error, state)
     catch
       :throw, value ->
-        updated_cb = CB.record_failure(state.circuit_breaker)
+        updated_cb = Core.record_failure(state.circuit_breaker)
         {:reply, {:error, {:throw, value}}, %{state | circuit_breaker: updated_cb}}
 
       :exit, reason ->
-        updated_cb = CB.record_failure(state.circuit_breaker)
+        updated_cb = Core.record_failure(state.circuit_breaker)
         {:reply, {:error, {:exit, reason}}, %{state | circuit_breaker: updated_cb}}
     end
   end
@@ -184,7 +184,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   end
 
   defp handle_execution_result({:error, :timeout}, state) do
-    updated_cb = CB.record_failure(state.circuit_breaker)
+    updated_cb = Core.record_failure(state.circuit_breaker)
     {:reply, {:error, :timeout}, %{state | circuit_breaker: updated_cb}}
   end
 
@@ -193,7 +193,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
     updated_cb =
       if should_count_error do
-        CB.record_failure(state.circuit_breaker)
+        Core.record_failure(state.circuit_breaker)
       else
         state.circuit_breaker
       end
@@ -202,7 +202,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   end
 
   defp handle_execution_result(success_result, state) do
-    updated_cb = CB.record_success(state.circuit_breaker)
+    updated_cb = Core.record_success(state.circuit_breaker)
     {:reply, success_result, %{state | circuit_breaker: updated_cb}}
   end
 
@@ -211,7 +211,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
     updated_cb =
       if should_count_error do
-        CB.record_failure(state.circuit_breaker)
+        Core.record_failure(state.circuit_breaker)
       else
         state.circuit_breaker
       end
@@ -221,17 +221,17 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   @impl GenServer
   def handle_cast(:open, state) do
-    updated_cb = CB.force_state(state.circuit_breaker, :open)
+    updated_cb = Core.force_state(state.circuit_breaker, :open)
     {:noreply, %{state | circuit_breaker: updated_cb}}
   end
 
   def handle_cast(:close, state) do
-    updated_cb = CB.force_state(state.circuit_breaker, :closed)
+    updated_cb = Core.force_state(state.circuit_breaker, :closed)
     {:noreply, %{state | circuit_breaker: updated_cb}}
   end
 
   def handle_cast(:reset, state) do
-    updated_cb = CB.reset(state.circuit_breaker)
+    updated_cb = Core.reset(state.circuit_breaker)
     {:noreply, %{state | circuit_breaker: updated_cb}}
   end
 

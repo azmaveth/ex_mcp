@@ -20,13 +20,13 @@ defmodule ExMCP.Internal.Discovery do
   # ## Examples
   #
   #     # Discover all servers using default methods
-  #     servers = ExMCP.Discovery.discover_servers()
+  #     servers = ExMCP.Internal.Discovery.discover_servers()
   #
   #     # Discover using specific methods
-  #     servers = ExMCP.Discovery.discover_servers(methods: [:npm, :env, :config])
+  #     servers = ExMCP.Internal.Discovery.discover_servers(methods: [:npm, :env, :config])
   #
   #     # Test if a server is reachable
-  #     ExMCP.Discovery.test_server(server_config)
+  #     ExMCP.Internal.Discovery.test_server(server_config)
 
   import Bitwise
   require Logger
@@ -153,10 +153,10 @@ defmodule ExMCP.Internal.Discovery do
 
   ## Examples
 
-      iex> ExMCP.Discovery.test_server(%{command: ["node", "server.js"]})
+      iex> ExMCP.Internal.Discovery.test_server(%{command: ["node", "server.js"]})
       false
 
-      iex> ExMCP.Discovery.test_server(%{url: "http://localhost:8080"})
+      iex> ExMCP.Internal.Discovery.test_server(%{url: "http://localhost:8080"})
       true
   """
   @spec test_server(map()) :: boolean()

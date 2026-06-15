@@ -1,43 +1,6 @@
-defmodule ExMCP.Transport.Beam.CircuitBreaker do
+defmodule ExMCP.Reliability.CircuitBreaker.Core do
   @moduledoc """
-  Circuit breaker implementation for MCP service protection in BEAM transport clustering.
-
-  Implements the circuit breaker pattern to protect services from cascading failures.
-  Tracks failure rates and automatically opens circuits when thresholds are exceeded,
-  preventing requests from reaching failing services.
-
-  ## Circuit States
-
-  - `:closed` - Normal operation, requests flow through
-  - `:open` - Circuit is open, requests are failed fast
-  - `:half_open` - Testing if service has recovered
-
-  ## Configuration Options
-
-  - `failure_threshold` - Number of failures before opening circuit
-  - `success_threshold` - Number of successes needed to close circuit from half-open
-  - `timeout` - Time to wait before transitioning from open to half-open
-  - `failure_rate_threshold` - Percentage of failures that triggers circuit opening
-  - `minimum_throughput` - Minimum requests before considering failure rate
-
-  ## Example Usage
-
-      # Create a circuit breaker
-      circuit_breaker = CircuitBreaker.new(%{
-        failure_threshold: 5,
-        timeout: 60000,
-        success_threshold: 3
-      })
-
-      # Record failures and successes
-      updated_cb = CircuitBreaker.record_failure(circuit_breaker)
-      updated_cb = CircuitBreaker.record_success(circuit_breaker)
-
-      # Check if requests should be allowed
-      case CircuitBreaker.allow_request?(updated_cb) do
-        true -> # Make request
-        false -> # Fail fast
-      end
+  Pure circuit-breaker state machine used by `ExMCP.Reliability.CircuitBreaker`.
   """
 
   defstruct [
@@ -75,7 +38,7 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
   @default_config %{
     failure_threshold: 5,
     success_threshold: 3,
-    timeout: 60000,
+    timeout: 60_000,
     failure_rate_threshold: 0.5,
     minimum_throughput: 10,
     reset_timeout: 300_000
@@ -105,30 +68,18 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
   """
   @spec allow_request?(t()) :: boolean()
   def allow_request?(%__MODULE__{} = circuit_breaker) do
-    updated_cb = check_state_transitions(circuit_breaker)
-
-    case updated_cb.state do
-      :closed -> true
-      :half_open -> true
-      :open -> false
-    end
+    circuit_breaker
+    |> check_state_transitions()
+    |> allowed?()
   end
 
   @doc """
-  Checks if a request should be allowed and returns both the result and updated circuit breaker.
+  Checks if a request should be allowed and returns both the result and updated state.
   """
   @spec allow_request_with_state?(t()) :: {boolean(), t()}
   def allow_request_with_state?(%__MODULE__{} = circuit_breaker) do
     updated_cb = check_state_transitions(circuit_breaker)
-
-    allowed =
-      case updated_cb.state do
-        :closed -> true
-        :half_open -> true
-        :open -> false
-      end
-
-    {allowed, updated_cb}
+    {allowed?(updated_cb), updated_cb}
   end
 
   @doc """
@@ -145,7 +96,6 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
         stats: update_stats(circuit_breaker.stats, :total_successes, 1)
     }
 
-    # Check if we should close the circuit
     case updated_cb.state do
       :half_open ->
         if updated_cb.success_count >= updated_cb.config.success_threshold do
@@ -155,7 +105,6 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
         end
 
       :open ->
-        # Reset success count when circuit is open
         %{updated_cb | success_count: 0}
 
       :closed ->
@@ -177,13 +126,10 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
         stats: update_stats(circuit_breaker.stats, :total_failures, 1)
     }
 
-    # Check if we should open the circuit
-    case should_open_circuit?(updated_cb) do
-      true ->
-        open_circuit(updated_cb)
-
-      false ->
-        updated_cb
+    if should_open_circuit?(updated_cb) do
+      open_circuit(updated_cb)
+    else
+      updated_cb
     end
   end
 
@@ -194,36 +140,33 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
   def force_state(%__MODULE__{} = circuit_breaker, new_state) do
     current_time = System.system_time(:millisecond)
 
-    updated_cb =
-      case new_state do
-        :open ->
-          %{
-            circuit_breaker
-            | state: :open,
-              opened_at: current_time,
-              stats: update_stats(circuit_breaker.stats, :manual_opens, 1)
-          }
+    case new_state do
+      :open ->
+        %{
+          circuit_breaker
+          | state: :open,
+            opened_at: current_time,
+            stats: update_stats(circuit_breaker.stats, :manual_opens, 1)
+        }
 
-        :closed ->
-          %{
-            circuit_breaker
-            | state: :closed,
-              failure_count: 0,
-              success_count: 0,
-              opened_at: nil,
-              stats: update_stats(circuit_breaker.stats, :manual_closes, 1)
-          }
+      :closed ->
+        %{
+          circuit_breaker
+          | state: :closed,
+            failure_count: 0,
+            success_count: 0,
+            opened_at: nil,
+            stats: update_stats(circuit_breaker.stats, :manual_closes, 1)
+        }
 
-        :half_open ->
-          %{
-            circuit_breaker
-            | state: :half_open,
-              success_count: 0,
-              stats: update_stats(circuit_breaker.stats, :manual_half_opens, 1)
-          }
-      end
-
-    updated_cb
+      :half_open ->
+        %{
+          circuit_breaker
+          | state: :half_open,
+            success_count: 0,
+            stats: update_stats(circuit_breaker.stats, :manual_half_opens, 1)
+        }
+    end
   end
 
   @doc """
@@ -231,8 +174,9 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
   """
   @spec get_state(t()) :: state()
   def get_state(%__MODULE__{} = circuit_breaker) do
-    updated_cb = check_state_transitions(circuit_breaker)
-    updated_cb.state
+    circuit_breaker
+    |> check_state_transitions()
+    |> Map.fetch!(:state)
   end
 
   @doc """
@@ -250,19 +194,14 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
       end
 
     Map.merge(circuit_breaker.stats, %{
-      # For test compatibility
       state: circuit_breaker.state,
       current_state: circuit_breaker.state,
       failure_count: circuit_breaker.failure_count,
       success_count: circuit_breaker.success_count,
-      # For test compatibility
       successful_calls: circuit_breaker.stats.total_successes,
-      # For test compatibility
       failed_calls: circuit_breaker.stats.total_failures,
-      # For test compatibility - would need separate tracking
       rejected_calls: 0,
       total_requests: total_requests,
-      # Alias for compatibility
       total_calls: total_requests,
       failure_rate: failure_rate,
       last_failure_time: circuit_breaker.last_failure_time,
@@ -288,14 +227,14 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
     }
   end
 
-  # Private helper functions
+  defp allowed?(%__MODULE__{state: :open}), do: false
+  defp allowed?(%__MODULE__{}), do: true
 
   defp check_state_transitions(%__MODULE__{state: :open} = circuit_breaker) do
     current_time = System.system_time(:millisecond)
 
     if circuit_breaker.opened_at != nil and
          current_time - circuit_breaker.opened_at >= circuit_breaker.config.reset_timeout do
-      # Transition to half-open
       %{
         circuit_breaker
         | state: :half_open,
@@ -308,12 +247,10 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
   end
 
   defp check_state_transitions(%__MODULE__{state: :half_open} = circuit_breaker) do
-    # Check if we should reset due to timeout
     current_time = System.system_time(:millisecond)
 
     if circuit_breaker.last_success_time != nil and
          current_time - circuit_breaker.last_success_time >= circuit_breaker.config.reset_timeout do
-      # Reset to closed state due to inactivity
       close_circuit(circuit_breaker)
     else
       circuit_breaker
@@ -323,11 +260,9 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
   defp check_state_transitions(circuit_breaker), do: circuit_breaker
 
   defp should_open_circuit?(%__MODULE__{} = circuit_breaker) do
-    # Check failure threshold
     failure_threshold_exceeded =
       circuit_breaker.failure_count >= circuit_breaker.config.failure_threshold
 
-    # Check failure rate
     total_requests = circuit_breaker.stats.total_successes + circuit_breaker.stats.total_failures
     minimum_throughput_met = total_requests >= circuit_breaker.config.minimum_throughput
 
@@ -339,8 +274,7 @@ defmodule ExMCP.Transport.Beam.CircuitBreaker do
       end
 
     failure_rate_exceeded =
-      minimum_throughput_met and
-        failure_rate >= circuit_breaker.config.failure_rate_threshold
+      minimum_throughput_met and failure_rate >= circuit_breaker.config.failure_rate_threshold
 
     failure_threshold_exceeded or failure_rate_exceeded
   end

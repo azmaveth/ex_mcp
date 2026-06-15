@@ -111,9 +111,7 @@ end
 Use `ExMCP.ACP.Adapters.ClaudeSDK` for new Claude Code integrations. It speaks
 the same SDK-style control protocol used by the official Claude Agent SDK, so it
 can bridge permission prompts, partial tool lifecycle events, cancellation,
-session setup, model/mode config, and richer status updates. The older
-`ExMCP.ACP.Adapters.Claude` stream-json adapter remains available for legacy
-callers.
+session setup, model/mode config, and richer status updates.
 
 ### Adapted Agent (Codex)
 
@@ -223,7 +221,7 @@ defmodule MyApp.ACPHandler do
         status = update["status"]  # "pending", "in_progress", "completed", or "failed"
         IO.puts("[#{status}] #{update["title"]}")
 
-        # Rich metadata available for Claude adapter:
+        # Rich metadata available for ClaudeSDK/Codex/Pi adapters:
         # update["kind"]      — "read", "edit", "execute", "search", "think"
         # update["locations"] — [%{"path" => "/src/app.ex", "line" => 10}]
         # update["content"]   — [%{"type" => "diff", "oldText" => ..., "newText" => ...}]
@@ -455,23 +453,6 @@ ignore it while ExMCP peers can negotiate and validate BEAM-local descriptors.
 `resume_session_at`, `allowed_tools`, `disallowed_tools`, `tools`,
 `strict_mcp_config`, `include_partial_messages`, and `cli_path`.
 
-### Claude Code (`ExMCP.ACP.Adapters.Claude`)
-
-Translates between ACP and Claude's simpler NDJSON stream-json protocol. Prefer
-`ExMCP.ACP.Adapters.ClaudeSDK` unless you specifically need this legacy path.
-
-**Features:**
-- Streaming text and thinking blocks with deduplication
-- Multi-turn tool use cycle tracking
-- Zed-parity tool introspection: `kind`, `locations` (file:line), `content` (diff/terminal)
-- Context-aware tool titles: "Read lib/app.ex (10-29)", "Search: defmodule"
-- Project-relative display paths when cwd is known
-- Stop reason classification: end_turn, max_tokens, tool_use, error
-- Usage tracking with cache token support
-- System event and rate limit forwarding
-
-**Startup options:** `model`, `thinking_budget`. Claude does not currently advertise stable runtime ACP config options.
-
 ### Codex (`ExMCP.ACP.Adapters.Codex`)
 
 Translates between ACP and Codex's app-server JSON-RPC protocol.
@@ -490,7 +471,7 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 - Codex auth methods for ChatGPT login and explicit `CODEX_API_KEY`/`OPENAI_API_KEY` adapter env
 - Approval and MCP elicitation requests bridged through ACP `session/request_permission`
 
-**Modes:** read-only, auto, full-access. Legacy `suggest`, `auto-edit`, and `full-auto` aliases are still accepted by the adapter but are no longer advertised.
+**Modes:** read-only, auto, full-access. Legacy `suggest`, `auto-edit`, and `full-auto` aliases are no longer accepted.
 **Config options:** `mode`, `model`, and `reasoning_effort` are returned with Codex session responses and updated with `thread/settings/update`.
 
 **Unsupported Codex app-server requests:** Dynamic tool calls, request-user-input prompts, ChatGPT token refresh, and attestation generation are rejected explicitly because ACP does not provide compatible structured responses for those app-server request schemas.
@@ -597,6 +578,5 @@ Use `ExMCP.ACP.Registry.find_agents/2` to search the decoded registry by agent i
 - `ExMCP.ACP.Adapter` — Adapter behaviour for non-native agents
 - `ExMCP.ACP.AdapterBridge` — GenServer bridge managing Port and message queue
 - `ExMCP.ACP.Adapters.ClaudeSDK` — Claude Code SDK-protocol adapter
-- `ExMCP.ACP.Adapters.Claude` — Claude Code adapter
 - `ExMCP.ACP.Adapters.Codex` — Codex adapter
 - `ExMCP.ACP.Adapters.Pi` — Pi adapter

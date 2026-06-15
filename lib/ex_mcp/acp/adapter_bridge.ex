@@ -15,7 +15,7 @@ defmodule ExMCP.ACP.AdapterBridge do
   ## Usage
 
       {:ok, bridge} = AdapterBridge.start_link(
-        adapter: ExMCP.ACP.Adapters.Claude,
+        adapter: ExMCP.ACP.Adapters.ClaudeSDK,
         adapter_opts: [model: "sonnet"]
       )
 

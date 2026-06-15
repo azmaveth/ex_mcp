@@ -4,9 +4,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   This adapter launches Claude Code with the same stream-json flags used by
   `@anthropic-ai/claude-agent-sdk`, including the SDK entrypoint environment and
-  stdio permission prompt control channel. It is separate from
-  `ExMCP.ACP.Adapters.Claude`, which preserves the simpler legacy stream-json
-  adapter.
+  stdio permission prompt control channel.
   """
 
   @behaviour ExMCP.ACP.Adapter
@@ -103,8 +101,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
       "_meta" => %{
         "ex_mcp.claude_sdk" => %{
           "streaming" => true,
-          "controlProtocol" => true,
-          "legacyAdapter" => "ExMCP.ACP.Adapters.Claude"
+          "controlProtocol" => true
         }
       }
     }
