@@ -147,7 +147,7 @@ defmodule ExMCP.ClientBeamTransportTest do
           handler_args: %{counter: 0}
         )
 
-      on_exit(fn -> if Process.alive?(server_pid), do: GenServer.stop(server_pid) end)
+      on_exit(fn -> stop_if_alive(server_pid) end)
 
       {:ok, server_pid: server_pid}
     end
@@ -206,7 +206,7 @@ defmodule ExMCP.ClientBeamTransportTest do
   describe "Client with batch operations over BEAM transport" do
     setup do
       {:ok, server_pid} = HandlerServer.start_link(transport: :beam, handler: BatchHandler)
-      on_exit(fn -> if Process.alive?(server_pid), do: GenServer.stop(server_pid) end)
+      on_exit(fn -> stop_if_alive(server_pid) end)
       {:ok, server_pid: server_pid}
     end
 
@@ -238,7 +238,7 @@ defmodule ExMCP.ClientBeamTransportTest do
           handler_args: %{counter: 0}
         )
 
-      on_exit(fn -> if Process.alive?(server_pid), do: GenServer.stop(server_pid) end)
+      on_exit(fn -> stop_if_alive(server_pid) end)
 
       {:ok, server_pid: server_pid}
     end
@@ -268,5 +268,12 @@ defmodule ExMCP.ClientBeamTransportTest do
 
       assert counts == Enum.to_list(1..100)
     end
+  end
+
+  defp stop_if_alive(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: GenServer.stop(pid)
+  catch
+    :exit, :noproc -> :ok
+    :exit, {:noproc, _} -> :ok
   end
 end
