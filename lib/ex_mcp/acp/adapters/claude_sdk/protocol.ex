@@ -10,7 +10,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
   alias ExMCP.ACP.Maps
   alias ExMCP.Internal.Maps, as: MapHelpers
 
-  @sdk_version "0.3.165"
+  @sdk_version "0.3.198"
 
   @permission_modes %{
     default: "default",
@@ -58,7 +58,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
       |> append_optional(opts, :session_id, "--session-id")
       |> append_extra_args(opts)
 
-    {Keyword.get(opts, :cli_path, "claude"), args}
+    {cli_path(opts), args}
+  end
+
+  @doc "Returns the Claude Code executable path used for SDK-style sessions."
+  @spec cli_path(keyword()) :: String.t()
+  def cli_path(opts) do
+    Keyword.get(opts, :cli_path) || System.get_env("CLAUDE_CODE_EXECUTABLE") || "claude"
   end
 
   @doc "Environment required for Claude Code's SDK entrypoint."
@@ -145,14 +151,21 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
 
   def prompt_content(blocks) when is_list(blocks) do
     blocks
-    |> Enum.reduce_while({:ok, []}, fn block, {:ok, acc} ->
+    |> Enum.reduce_while({:ok, [], []}, fn block, {:ok, content_acc, context_acc} ->
       case content_block(block) do
-        {:ok, converted} -> {:cont, {:ok, [converted | acc]}}
-        {:error, reason} -> {:halt, {:error, reason}}
+        {:ok, {converted, context}} ->
+          {:cont,
+           {:ok, prepend_content(content_acc, converted), prepend_content(context_acc, context)}}
+
+        {:ok, converted} ->
+          {:cont, {:ok, prepend_content(content_acc, converted), context_acc}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
       end
     end)
     |> case do
-      {:ok, converted} -> {:ok, Enum.reverse(converted)}
+      {:ok, content, context} -> {:ok, Enum.reverse(content) ++ Enum.reverse(context)}
       error -> error
     end
   end
@@ -235,7 +248,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
   end
 
   defp content_block(%{"type" => "text"} = block) do
-    {:ok, %{"type" => "text", "text" => block["text"] || ""}}
+    text = rewrite_mcp_slash_command(block["text"] || "")
+    {:ok, %{"type" => "text", "text" => text}}
+  end
+
+  defp content_block(%{"type" => "image", "uri" => "http" <> _ = uri}) do
+    {:ok, %{"type" => "image", "source" => %{"type" => "url", "url" => uri}}}
   end
 
   defp content_block(%{"type" => "image"} = block) do
@@ -252,15 +270,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
 
   defp content_block(%{"type" => "resource_link"} = block) do
     uri = block["uri"] || get_in(block, ["resource", "uri"])
-    name = block["name"] || block["title"] || uri
-    {:ok, %{"type" => "text", "text" => "@#{uri || name}"}}
+    {:ok, %{"type" => "text", "text" => format_uri_as_link(block["name"] || block["title"], uri)}}
   end
 
   defp content_block(%{"type" => "resource"} = block) do
     resource = block["resource"] || %{}
     uri = resource["uri"] || block["uri"] || "resource"
     text = resource["text"] || block["text"] || resource["blob"] || ""
-    {:ok, %{"type" => "text", "text" => "Context from #{uri}:\n#{text}"}}
+
+    {:ok,
+     {[%{"type" => "text", "text" => format_uri_as_link(nil, uri)}],
+      [%{"type" => "text", "text" => "\n<context ref=\"#{uri}\">\n#{text}\n</context>"}]}}
   end
 
   defp content_block(%{"type" => type}),
@@ -268,6 +288,27 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
 
   defp content_block(block) when is_binary(block), do: {:ok, %{"type" => "text", "text" => block}}
   defp content_block(block), do: {:error, "Unsupported Claude content block: #{inspect(block)}"}
+
+  defp rewrite_mcp_slash_command(text) when is_binary(text) do
+    case Regex.run(~r/^\/mcp:([^:\s]+):(\S+)(?:\s(.*))?$/, text) do
+      [_, server, command] -> "/#{server}:#{command} (MCP)"
+      [_, server, command, args] -> "/#{server}:#{command} (MCP) #{args}"
+      _ -> text
+    end
+  end
+
+  defp format_uri_as_link(name, uri) when is_binary(name) and name != "", do: "[@#{name}](#{uri})"
+
+  defp format_uri_as_link(_name, "file://" <> path = uri) do
+    name = path |> String.trim_trailing("/") |> Path.basename()
+    "[@#{name}](#{uri})"
+  end
+
+  defp format_uri_as_link(_name, uri) when is_binary(uri), do: uri
+  defp format_uri_as_link(_name, nil), do: ""
+
+  defp prepend_content(acc, items) when is_list(items), do: Enum.reverse(items) ++ acc
+  defp prepend_content(acc, item), do: [item | acc]
 
   defp append_thinking(args, opts) do
     cond do

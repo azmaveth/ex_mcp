@@ -34,9 +34,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   @spec config_options(map()) :: [map()]
   def config_options(state) do
     [
+      mode_option(state),
       model_option(state),
-      permission_mode_option(state),
-      effort_option(state)
+      effort_option(state),
+      fast_mode_option(state),
+      agent_option(state)
     ]
     |> Enum.reject(&is_nil/1)
   end
@@ -54,11 +56,31 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   @spec modes() :: [map()]
   def modes do
     [
-      %{"id" => "default", "name" => "Default"},
-      %{"id" => "acceptEdits", "name" => "Accept Edits"},
-      %{"id" => "plan", "name" => "Plan"},
-      %{"id" => "auto", "name" => "Auto"},
-      %{"id" => "dontAsk", "name" => "Don't Ask"}
+      %{
+        "id" => "default",
+        "name" => "Default",
+        "description" => "Standard behavior, prompts for dangerous operations"
+      },
+      %{
+        "id" => "acceptEdits",
+        "name" => "Accept Edits",
+        "description" => "Auto-accept file edit operations"
+      },
+      %{
+        "id" => "plan",
+        "name" => "Plan Mode",
+        "description" => "Planning mode, no actual tool execution"
+      },
+      %{
+        "id" => "auto",
+        "name" => "Auto",
+        "description" => "Use a model classifier to approve/deny permission prompts"
+      },
+      %{
+        "id" => "dontAsk",
+        "name" => "Don't Ask",
+        "description" => "Don't prompt for permissions, deny if not pre-approved"
+      }
     ]
   end
 
@@ -321,13 +343,30 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     acp_id = ACPProtocol.generate_id()
     tool_call = ClaudeProtocol.permission_tool_call(request, state.cwd)
     options = ClaudeProtocol.permission_options(request)
+    tool_call_id = tool_call["toolCallId"]
 
     message =
       ACPProtocol.encode_permission_request(session_id(state), tool_call, options)
       |> Map.put("id", acp_id)
 
-    state = put_pending_client_request(state, acp_id, request_id, :permission, request)
-    {[message], [], state}
+    tool_message =
+      if Map.has_key?(state.tool_calls, tool_call_id) do
+        nil
+      else
+        AdapterEvents.tool_call(session_id(state), Map.put(tool_call, "status", "pending"))
+      end
+
+    state =
+      state
+      |> put_pending_client_request(acp_id, request_id, :permission, request)
+      |> Map.update!(:tool_calls, fn tool_calls ->
+        Map.put_new(tool_calls, tool_call_id, %{
+          name: request["tool_name"],
+          input: request["input"] || %{}
+        })
+      end)
+
+    {[tool_message, message] |> Enum.reject(&is_nil/1), [], state}
   end
 
   defp handle_control_request(request_id, %{"subtype" => "read_file"} = request, state) do
@@ -455,33 +494,34 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp handle_assistant_block(_block, state), do: {[], [], state}
 
   defp handle_user(%{"content" => content}, state) when is_list(content) do
-    messages =
+    {messages, state} =
       content
       |> Enum.filter(&(&1["type"] == "tool_result"))
-      |> Enum.map(fn result ->
-        is_error = result["is_error"] || false
+      |> Enum.reduce({[], state}, fn result, {messages, acc} ->
+        tool_call_id = result["tool_use_id"]
+        tool = Map.get(acc.tool_calls, tool_call_id, %{})
+        update = tool_result_update(result, tool)
+        acc = %{acc | tool_calls: Map.delete(acc.tool_calls, tool_call_id)}
 
-        update =
-          %{
-            "toolCallId" => result["tool_use_id"],
-            "status" => if(is_error, do: "failed", else: "completed"),
-            "content" => parse_tool_result_content(result["content"]),
-            "rawOutput" => parse_tool_result_raw(result["content"]),
-            "_meta" => %{"ex_mcp.claude_sdk" => %{"isError" => is_error}}
-          }
-          |> compact()
-
-        AdapterEvents.tool_call_update(session_id(state), update)
+        {[AdapterEvents.tool_call_update(session_id(acc), update) | messages], acc}
       end)
 
-    {messages, [], state}
+    {Enum.reverse(messages), [], state}
   end
 
   defp handle_user(_message, state), do: {[], [], state}
 
   defp handle_result(result, state) do
-    state = finalize_block(state)
+    state =
+      state
+      |> finalize_block()
+      |> Map.put(
+        :fast_mode_enabled,
+        fast_mode_enabled?(result["fast_mode_state"], state.fast_mode_enabled)
+      )
+
     session_id = result["session_id"] || state.session_id || "default"
+    usage = format_usage(result["usage"] || %{})
 
     text =
       case state.text_acc do
@@ -492,7 +532,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     response =
       %{
         "stopReason" => stop_reason(result),
-        "usage" => format_usage(result["usage"] || %{}),
+        "usage" => usage,
         "_meta" => %{
           "ex_mcp.claude_sdk" =>
             %{
@@ -509,10 +549,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     messages =
       [
+        usage_update(session_id, usage, result, state),
+        config_option_update(state),
         AdapterEvents.session_info_update(session_id, %{
           "_meta" => %{"ex_mcp.claude_sdk" => %{"status" => "completed"}}
         })
       ]
+      |> Enum.reject(&is_nil/1)
 
     messages =
       if state.pending_prompt_id do
@@ -543,6 +586,10 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       |> maybe_set(:session_id, event["session_id"])
       |> maybe_set(:model, event["model"])
       |> maybe_set(:permission_mode, event["permissionMode"])
+      |> Map.put(
+        :fast_mode_enabled,
+        fast_mode_enabled?(event["fast_mode_state"], state.fast_mode_enabled)
+      )
 
     updates =
       [
@@ -673,6 +720,51 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp emit_tool_update(_block, state), do: {[], state}
 
+  defp tool_result_update(result, %{name: "Bash"}) do
+    is_error = result["is_error"] || false
+    output = parse_tool_result_raw(result["content"]) || ""
+    exit_code = bash_exit_code(result["content"], is_error)
+    tool_call_id = result["tool_use_id"]
+
+    %{
+      "toolCallId" => tool_call_id,
+      "status" => if(is_error, do: "failed", else: "completed"),
+      "content" => [%{"type" => "terminal", "terminalId" => tool_call_id}],
+      "rawOutput" => output,
+      "_meta" => %{
+        "terminal_output" => %{"terminal_id" => tool_call_id, "data" => output},
+        "terminal_exit" => %{
+          "terminal_id" => tool_call_id,
+          "exit_code" => exit_code,
+          "signal" => nil
+        },
+        "ex_mcp.claude_sdk" => %{"isError" => is_error}
+      }
+    }
+    |> compact()
+  end
+
+  defp tool_result_update(result, tool) do
+    is_error = result["is_error"] || false
+
+    %{
+      "toolCallId" => result["tool_use_id"],
+      "status" => if(is_error, do: "failed", else: "completed"),
+      "content" => parse_tool_result_content(result["content"]),
+      "rawOutput" => parse_tool_result_raw(result["content"]),
+      "_meta" =>
+        %{
+          "ex_mcp.claude_sdk" => %{
+            "isError" => is_error,
+            "toolName" => tool[:name],
+            "toolInput" => tool[:input]
+          }
+        }
+        |> compact()
+    }
+    |> compact()
+  end
+
   defp initialization_updates(%{session_id: nil}), do: []
 
   defp initialization_updates(state) do
@@ -689,7 +781,31 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       state
       | init_response: response,
         available_commands: normalize_commands(response["commands"] || []),
-        available_models: response["models"] || []
+        available_models: response["models"] || [],
+        available_agents:
+          normalize_agents(response["agents"] || response["supportedAgents"] || []),
+        fast_mode_enabled:
+          fast_mode_enabled?(response["fast_mode_state"], state.fast_mode_enabled)
+    }
+  end
+
+  defp mode_option(state) do
+    %{
+      "id" => "mode",
+      "name" => "Mode",
+      "description" => "Session permission mode",
+      "category" => "mode",
+      "type" => "select",
+      "currentValue" => permission_mode_to_mode(state.permission_mode || "default"),
+      "options" =>
+        Enum.map(modes(), fn mode ->
+          %{
+            "name" => mode["name"],
+            "value" => mode["id"],
+            "description" => mode["description"]
+          }
+          |> compact()
+        end)
     }
   end
 
@@ -706,8 +822,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         models ->
           Enum.map(models, fn model ->
             %{
-              "name" => model["display_name"] || model["name"] || model["id"],
-              "value" => model["id"] || model["name"]
+              "name" =>
+                model["displayName"] || model["display_name"] || model["name"] || model["id"] ||
+                  model["value"],
+              "value" => model["value"] || model["id"] || model["name"],
+              "description" => model["description"]
             }
             |> compact()
           end)
@@ -716,38 +835,101 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     %{
       "id" => "model",
       "name" => "Model",
+      "description" => "AI model to use",
+      "category" => "model",
       "type" => "select",
       "currentValue" => state.model || "default",
       "options" => options
     }
   end
 
-  defp permission_mode_option(state) do
-    %{
-      "id" => "permission_mode",
-      "name" => "Permission Mode",
-      "type" => "select",
-      "currentValue" => state.permission_mode || "default",
-      "options" =>
-        Enum.map(modes(), fn mode ->
-          %{"name" => mode["name"], "value" => mode["id"]}
-        end)
-    }
-  end
-
   defp effort_option(state) do
+    model = current_model_info(state)
+    levels = model["supportedEffortLevels"] || model["supported_effort_levels"] || []
+
+    options =
+      if levels == [] do
+        [
+          %{"name" => "Default", "value" => "default"},
+          %{"name" => "Low", "value" => "low"},
+          %{"name" => "Medium", "value" => "medium"},
+          %{"name" => "High", "value" => "high"}
+        ]
+      else
+        [%{"name" => "Default", "value" => "default"}] ++
+          Enum.map(levels, fn level ->
+            %{"name" => humanize_config_value(level), "value" => level}
+          end)
+      end
+
     %{
       "id" => "effort",
       "name" => "Effort",
+      "description" => "Available effort levels for this model",
+      "category" => "thought_level",
       "type" => "select",
-      "currentValue" => state.effort || "medium",
-      "options" => [
-        %{"name" => "Low", "value" => "low"},
-        %{"name" => "Medium", "value" => "medium"},
-        %{"name" => "High", "value" => "high"}
-      ]
+      "currentValue" => state.effort || "default",
+      "options" => options
     }
   end
+
+  defp fast_mode_option(state) do
+    model = current_model_info(state)
+
+    if model["supportsFastMode"] == true or model["supports_fast_mode"] == true do
+      if client_supports_boolean_config?(state.client_capabilities) do
+        %{
+          "id" => "fast",
+          "name" => "Fast mode",
+          "description" => "Faster responses on supported models",
+          "category" => "model_config",
+          "type" => "boolean",
+          "currentValue" => state.fast_mode_enabled == true
+        }
+      else
+        %{
+          "id" => "fast",
+          "name" => "Fast mode",
+          "description" => "Faster responses on supported models",
+          "category" => "model_config",
+          "type" => "select",
+          "currentValue" => if(state.fast_mode_enabled == true, do: "on", else: "off"),
+          "options" => [
+            %{"name" => "On", "value" => "on"},
+            %{"name" => "Off", "value" => "off"}
+          ]
+        }
+      end
+    end
+  end
+
+  defp agent_option(%{available_agents: agents} = state) when is_list(agents) and agents != [] do
+    %{
+      "id" => "agent",
+      "name" => "Agent",
+      "description" => "Main-thread agent persona",
+      "type" => "select",
+      "currentValue" => state.current_agent || "default",
+      "options" =>
+        [
+          %{
+            "name" => "Default",
+            "value" => "default",
+            "description" => "Standard Claude Code agent"
+          }
+        ] ++
+          Enum.map(agents, fn agent ->
+            %{
+              "name" => agent["name"],
+              "value" => agent["name"],
+              "description" => agent["description"]
+            }
+            |> compact()
+          end)
+    }
+  end
+
+  defp agent_option(_state), do: nil
 
   defp current_mode_update(state) do
     AdapterEvents.current_mode_update(
@@ -781,6 +963,67 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         %{"name" => inspect(other), "description" => inspect(other)}
     end)
   end
+
+  defp normalize_agents(agents) do
+    agents
+    |> Enum.map(fn
+      %{"name" => name} = agent when is_binary(name) ->
+        agent
+
+      %{name: name} = agent when is_binary(name) ->
+        agent
+        |> Enum.map(fn {key, value} -> {to_string(key), value} end)
+        |> Map.new()
+
+      name when is_binary(name) ->
+        %{"name" => name}
+
+      _other ->
+        nil
+    end)
+    |> Enum.reject(fn
+      nil ->
+        true
+
+      agent ->
+        agent["name"] in [
+          "claude",
+          "general-purpose",
+          "Explore",
+          "Plan",
+          "statusline-setup",
+          "default"
+        ]
+    end)
+  end
+
+  defp current_model_info(state) do
+    current = state.model || "default"
+
+    Enum.find(state.available_models || [], fn model ->
+      (model["value"] || model["id"] || model["name"]) == current
+    end) || %{}
+  end
+
+  defp fast_mode_enabled?("off", _fallback), do: false
+  defp fast_mode_enabled?(state, _fallback) when state in ["on", "cooldown"], do: true
+  defp fast_mode_enabled?(nil, fallback), do: fallback == true
+  defp fast_mode_enabled?(_, fallback), do: fallback == true
+
+  defp client_supports_boolean_config?(capabilities) do
+    get_in(capabilities || %{}, ["session", "configOptions", "boolean"]) != nil
+  end
+
+  defp humanize_config_value(value) when is_binary(value) do
+    value
+    |> String.split(~r/[_-]+/, trim: true)
+    |> Enum.map_join(" ", fn
+      <<first::binary-size(1), rest::binary>> -> String.upcase(first) <> rest
+      "" -> ""
+    end)
+  end
+
+  defp humanize_config_value(value), do: to_string(value)
 
   defp task_plan_entries(%{"subtype" => "task_started"} = event) do
     [
@@ -861,6 +1104,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp parse_tool_result_raw(content) when is_binary(content), do: content
 
+  defp parse_tool_result_raw(%{"type" => "bash_code_execution_result"} = content) do
+    [content["stdout"], content["stderr"]]
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.join("\n")
+  end
+
   defp parse_tool_result_raw(content) when is_list(content) do
     Enum.map_join(content, "\n", fn
       %{"text" => text} -> text
@@ -870,6 +1119,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp parse_tool_result_raw(_), do: nil
 
+  defp bash_exit_code(%{"type" => "bash_code_execution_result", "return_code" => code}, _is_error)
+       when is_integer(code),
+       do: code
+
+  defp bash_exit_code(_content, true), do: 1
+  defp bash_exit_code(_content, _is_error), do: 0
+
   defp format_usage(raw) do
     %{
       "inputTokens" => raw["input_tokens"] || 0,
@@ -877,6 +1133,55 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       "cacheReadTokens" => raw["cache_read_input_tokens"] || 0,
       "cacheCreationTokens" => raw["cache_creation_input_tokens"] || 0
     }
+  end
+
+  defp usage_update(session_id, usage, result, state) do
+    used =
+      usage
+      |> Map.values()
+      |> Enum.filter(&is_integer/1)
+      |> Enum.sum()
+
+    size = context_window_size(result, state)
+
+    if used > 0 and is_integer(size) and size > 0 do
+      AdapterEvents.session_update_type(session_id, "usage_update", %{
+        "used" => used,
+        "size" => size
+      })
+    end
+  end
+
+  defp context_window_size(%{"modelUsage" => model_usage}, state) when is_map(model_usage) do
+    current_model = state.model || "default"
+
+    model_usage
+    |> Enum.find_value(fn {model, usage} ->
+      if String.starts_with?(to_string(model), to_string(current_model)) and is_map(usage) do
+        usage["contextWindow"] || usage["context_window"]
+      end
+    end)
+    |> case do
+      nil ->
+        model_usage
+        |> Map.values()
+        |> Enum.find_value(fn
+          %{"contextWindow" => size} -> size
+          %{"context_window" => size} -> size
+          _ -> nil
+        end)
+
+      size ->
+        size
+    end
+  end
+
+  defp context_window_size(_result, state) do
+    model = current_model_info(state)
+
+    [state.model, model["displayName"], model["display_name"], model["description"]]
+    |> Enum.any?(fn text -> is_binary(text) and String.match?(text, ~r/\b1m\b/i) end)
+    |> if(do: 1_000_000, else: nil)
   end
 
   defp maybe_put_error_meta(response, %{"error" => error}) when error in @auth_errors do

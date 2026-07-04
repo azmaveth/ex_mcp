@@ -25,6 +25,7 @@ defmodule ExMCP.ACP.Adapter do
   - `list_sessions/2` — return available sessions (for `session/list`)
   - `fork_session/2` — fork an existing session (for `session/fork`)
   - `auth_methods/1` — return initialize `authMethods` for adapter options
+  - `auth_methods/2` — optionally return auth methods using adapter state
   """
 
   @type state :: term()
@@ -174,6 +175,7 @@ defmodule ExMCP.ACP.Adapter do
   Optional — defaults to an empty list.
   """
   @callback auth_methods(opts :: keyword()) :: [map()]
+  @callback auth_methods(opts :: keyword(), state()) :: [map()]
 
   @doc """
   List available sessions for this agent.
@@ -205,6 +207,7 @@ defmodule ExMCP.ACP.Adapter do
     modes: 0,
     config_options: 0,
     auth_methods: 1,
+    auth_methods: 2,
     list_sessions: 2,
     fork_session: 2,
     handle_adapter_message: 2,

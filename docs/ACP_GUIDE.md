@@ -423,17 +423,19 @@ Translates between ACP and Claude Code's SDK-compatible stream-json control
 protocol. This is the recommended Claude adapter for new code.
 
 **Features:**
-- SDK entrypoint launch environment and `--permission-prompt-tool stdio`
+- SDK entrypoint launch environment and `--permission-prompt-tool stdio`, tracking Claude Agent SDK `0.3.198`
 - Partial message and pending tool-call lifecycle mapping
 - `session/cancel` via SDK `interrupt`
-- ACP permission requests bridged from Claude SDK `can_use_tool`
-- Runtime model, permission mode, and effort config controls
+- ACP permission requests bridged from Claude SDK `can_use_tool`, with pending `tool_call` emitted before the permission request
+- Runtime mode, model, effort, fast-mode, and agent config controls where supported by the SDK session
+- Initialize-aware terminal login auth methods, opt-in gateway auth methods, and ACP `auth.logout`
 - Live session setup/load/resume/fork/close ACP surface
 - Disk-backed `session/list`, `session/delete`, and `session/fork` for Claude Code's SDK store
 - Full `session/load` replay from persisted Claude JSONL transcripts
 - FIFO prompt queueing with queued prompt cancellation responses
 - Plan updates from `TodoWrite` and task progress events
-- Rich tool metadata, terminal/raw output metadata, and improved stop reasons
+- Resource links, embedded text resources, HTTP/base64 images, and MCP slash-command prompt rewriting
+- Rich tool metadata, Codex-style Bash terminal metadata, result usage updates, and improved stop reasons
 - Official ACP `mcpCapabilities` plus ExMCP `_meta` support for BEAM-local MCP transport
 
 `session/list`, `session/load`, `session/fork`, and `session/delete` read and mutate Claude Code's local
@@ -448,8 +450,10 @@ The adapter advertises official ACP MCP support through `mcpCapabilities`
 advertised only as `_meta.ex_mcp.mcpCapabilities.beam`, so other ACP libraries can
 ignore it while ExMCP peers can negotiate and validate BEAM-local descriptors.
 
+**Config options:** `mode`, `model`, `effort`, `fast` (when the selected model supports fast mode), and `agent` (when custom main-thread agents are available). The legacy inbound `permission_mode` config id is still accepted as an alias for `mode`.
+
 **Startup options:** `model`, `permission_mode`, `max_thinking_tokens`,
-`effort`, `additional_directories`, `mcp_servers`, `session_id`, `resume`,
+`effort`, `fast_mode`, `agent`, `additional_directories`, `mcp_servers`, `session_id`, `resume`,
 `resume_session_at`, `allowed_tools`, `disallowed_tools`, `tools`,
 `strict_mcp_config`, `include_partial_messages`, and `cli_path`.
 

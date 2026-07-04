@@ -23,6 +23,10 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     :permission_mode,
     :effort,
     :cwd,
+    :client_capabilities,
+    :gateway_auth,
+    :fast_mode_enabled,
+    :current_agent,
     :pending_prompt_id,
     :active_prompt_session_id,
     :init_response,
@@ -32,6 +36,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     prompt_queue: PromptQueue.new(),
     available_commands: [],
     available_models: [],
+    available_agents: [],
     text_acc: [],
     thinking_acc: [],
     thinking_blocks: [],
@@ -49,7 +54,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
        session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
        model: Keyword.get(opts, :model),
        permission_mode: encode_permission_mode(Keyword.get(opts, :permission_mode, :default)),
-       effort: Keyword.get(opts, :effort)
+       effort: Keyword.get(opts, :effort),
+       fast_mode_enabled: Keyword.get(opts, :fast_mode, false),
+       current_agent: Keyword.get(opts, :agent, "default")
      }}
   end
 
@@ -90,6 +97,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
           }
         }
       },
+      "auth" => %{
+        "logout" => %{}
+      },
       "sessionCapabilities" => %{
         "list" => %{},
         "resume" => %{},
@@ -108,7 +118,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   end
 
   @impl true
-  def auth_methods(_opts), do: []
+  def auth_methods(opts), do: auth_methods(opts, %__MODULE__{})
+
+  @impl true
+  def auth_methods(opts, state) do
+    []
+    |> maybe_add_terminal_auth_methods(opts, state)
+    |> maybe_add_gateway_auth_methods(opts, state)
+  end
 
   @impl true
   def modes, do: Mapper.modes()
@@ -174,6 +191,47 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     session_id = state.session_id || params["sessionId"] || generated_session_id()
     state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
     {:reply, Mapper.session_result(state, session_id), state}
+  end
+
+  defp handle_request("initialize", %{"params" => params}, state) do
+    {:ok, :skip, %{state | client_capabilities: params["clientCapabilities"] || %{}}}
+  end
+
+  defp handle_request("authenticate", %{"params" => %{"methodId" => method_id} = params}, state)
+       when method_id in ["gateway", "gateway-bedrock"] do
+    {:reply, %{}, %{state | gateway_auth: params}}
+  end
+
+  defp handle_request("authenticate", %{"params" => %{"methodId" => method_id}}, state)
+       when method_id in ["claude-login", "claude-ai-login", "console-login"] do
+    {:reply, %{}, state}
+  end
+
+  defp handle_request("authenticate", %{"params" => %{"methodId" => method_id}}, state) do
+    {:error, "Unsupported Claude auth method: #{method_id}", state}
+  end
+
+  defp handle_request("authenticate", _msg, state) do
+    {:error, "authenticate requires params.methodId", state}
+  end
+
+  defp handle_request("logout", _msg, state) do
+    state = %{state | gateway_auth: nil}
+
+    if Keyword.get(state.opts, :logout_cli, true) do
+      case System.cmd(ClaudeProtocol.cli_path(state.opts), ["auth", "logout"],
+             stderr_to_stdout: true
+           ) do
+        {_output, 0} ->
+          {:reply, %{}, state}
+
+        {output, status} ->
+          {:error, "claude auth logout failed with status #{status}: #{String.trim(output)}",
+           state}
+      end
+    else
+      {:reply, %{}, state}
+    end
   end
 
   defp handle_request("session/load", %{"params" => params}, state) do
@@ -304,6 +362,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   defp handle_request(
          "session/set_config_option",
+         %{"params" => %{"configId" => "mode", "value" => mode}},
+         state
+       ) do
+    handle_request("session/set_mode", %{"params" => %{"modeId" => mode}}, state)
+  end
+
+  defp handle_request(
+         "session/set_config_option",
          %{"params" => %{"configId" => "permission_mode", "value" => mode}},
          state
        ) do
@@ -326,7 +392,61 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     data =
       ClaudeProtocol.control_request(request_id, %{
         "subtype" => "apply_flag_settings",
-        "settings" => %{"effort" => effort}
+        "settings" => %{"effortLevel" => to_sdk_effort_level(effort)}
+      })
+      |> ClaudeProtocol.line()
+
+    {:reply_and_write, %{"configOptions" => Mapper.config_options(state)}, data, state}
+  end
+
+  defp handle_request(
+         "session/set_config_option",
+         %{"params" => %{"configId" => "fast"} = params},
+         state
+       ) do
+    case resolve_fast_mode_enabled(params) do
+      {:ok, fast_mode_enabled} ->
+        request_id = control_id("apply_flag_settings")
+
+        state = %{
+          state
+          | fast_mode_enabled: fast_mode_enabled,
+            pending_controls: Map.put(state.pending_controls, request_id, :apply_flag_settings)
+        }
+
+        data =
+          ClaudeProtocol.control_request(request_id, %{
+            "subtype" => "apply_flag_settings",
+            "settings" => %{"fastMode" => fast_mode_enabled}
+          })
+          |> ClaudeProtocol.line()
+
+        {:reply_and_write, %{"configOptions" => Mapper.config_options(state)}, data, state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  defp handle_request(
+         "session/set_config_option",
+         %{"params" => %{"configId" => "agent", "value" => agent}},
+         state
+       ) do
+    request_id = control_id("apply_flag_settings")
+    agent = to_string(agent)
+    sdk_agent = if agent == "default", do: nil, else: agent
+
+    state = %{
+      state
+      | current_agent: agent,
+        pending_controls: Map.put(state.pending_controls, request_id, :apply_flag_settings)
+    }
+
+    data =
+      ClaudeProtocol.control_request(request_id, %{
+        "subtype" => "apply_flag_settings",
+        "settings" => %{"agent" => sdk_agent}
       })
       |> ClaudeProtocol.line()
 
@@ -516,4 +636,122 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   defp encode_permission_mode(:bypass_permissions), do: "bypassPermissions"
   defp encode_permission_mode(mode) when is_binary(mode), do: mode
   defp encode_permission_mode(nil), do: "default"
+
+  defp maybe_add_terminal_auth_methods(methods, opts, state) do
+    caps = state.client_capabilities || %{}
+
+    if terminal_auth_supported?(caps) do
+      methods ++ terminal_auth_methods(opts, meta_terminal_auth_supported?(caps))
+    else
+      methods
+    end
+  end
+
+  defp maybe_add_gateway_auth_methods(methods, opts, state) do
+    if Keyword.get(opts, :gateway_auth, false) and
+         get_in(state.client_capabilities || %{}, ["auth", "_meta", "gateway"]) == true do
+      methods ++
+        [
+          %{
+            "id" => "gateway",
+            "name" => "Custom model gateway",
+            "description" => "Use a custom gateway to authenticate and access models",
+            "_meta" => %{"gateway" => %{"protocol" => "anthropic"}}
+          },
+          %{
+            "id" => "gateway-bedrock",
+            "name" => "Custom model gateway",
+            "description" => "Use a custom gateway to authenticate and access models",
+            "_meta" => %{"gateway" => %{"protocol" => "bedrock"}}
+          }
+        ]
+    else
+      methods
+    end
+  end
+
+  defp terminal_auth_supported?(caps) do
+    get_in(caps, ["auth", "terminal"]) == true or meta_terminal_auth_supported?(caps)
+  end
+
+  defp meta_terminal_auth_supported?(caps), do: get_in(caps, ["_meta", "terminal-auth"]) == true
+
+  defp terminal_auth_methods(opts, include_meta?) do
+    cli_path = ClaudeProtocol.cli_path(opts)
+
+    if remote_environment?() do
+      [
+        terminal_auth_method(
+          "claude-login",
+          "Log in with Claude",
+          "Run `claude /login` in the terminal",
+          cli_path,
+          [],
+          "Claude Login",
+          include_meta?
+        )
+      ]
+    else
+      [
+        terminal_auth_method(
+          "claude-ai-login",
+          "Claude Subscription",
+          "Use Claude subscription",
+          cli_path,
+          ["auth", "login", "--claudeai"],
+          "Claude Login",
+          include_meta?
+        ),
+        terminal_auth_method(
+          "console-login",
+          "Anthropic Console",
+          "Use Anthropic Console (API usage billing)",
+          cli_path,
+          ["auth", "login", "--console"],
+          "Anthropic Console Login",
+          include_meta?
+        )
+      ]
+    end
+  end
+
+  defp terminal_auth_method(id, name, description, command, args, label, include_meta?) do
+    method = %{
+      "id" => id,
+      "name" => name,
+      "description" => description,
+      "type" => "terminal",
+      "args" => args
+    }
+
+    if include_meta? do
+      Map.put(method, "_meta", %{
+        "terminal-auth" => %{
+          "command" => command,
+          "args" => args,
+          "label" => label
+        }
+      })
+    else
+      method
+    end
+  end
+
+  defp remote_environment? do
+    Enum.any?(
+      ~w(NO_BROWSER SSH_CONNECTION SSH_CLIENT SSH_TTY CLAUDE_CODE_REMOTE),
+      &System.get_env/1
+    )
+  end
+
+  defp resolve_fast_mode_enabled(%{"value" => value}) when is_boolean(value), do: {:ok, value}
+  defp resolve_fast_mode_enabled(%{"value" => "on"}), do: {:ok, true}
+  defp resolve_fast_mode_enabled(%{"value" => "off"}), do: {:ok, false}
+
+  defp resolve_fast_mode_enabled(%{"value" => other}),
+    do: {:error, "Invalid fast mode value: #{inspect(other)}"}
+
+  defp to_sdk_effort_level("default"), do: nil
+  defp to_sdk_effort_level(nil), do: nil
+  defp to_sdk_effort_level(effort), do: effort
 end

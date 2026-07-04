@@ -273,10 +273,15 @@ defmodule ExMCP.ACP.AdapterBridge do
     do: state |> advertised_capabilities() |> Capabilities.supported?(:session_fork)
 
   defp adapter_auth_methods(state) do
-    if function_exported?(state.adapter_mod, :auth_methods, 1) do
-      state.adapter_mod.auth_methods(state.adapter_opts)
-    else
-      []
+    cond do
+      function_exported?(state.adapter_mod, :auth_methods, 2) ->
+        state.adapter_mod.auth_methods(state.adapter_opts, state.adapter_state)
+
+      function_exported?(state.adapter_mod, :auth_methods, 1) ->
+        state.adapter_mod.auth_methods(state.adapter_opts)
+
+      true ->
+        []
     end
   end
 

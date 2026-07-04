@@ -123,7 +123,10 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.ToolInfo do
       "title" => if(command != "", do: truncate(command, 80), else: "Terminal"),
       "kind" => "execute",
       "content" => [%{"type" => "terminal", "terminalId" => id}],
-      "_meta" => %{"ex_mcp.claude_sdk" => %{"terminal" => true, "command" => command}}
+      "_meta" => %{
+        "terminal_info" => %{"terminal_id" => id},
+        "ex_mcp.claude_sdk" => %{"terminal" => true, "command" => command}
+      }
     }
   end
 

@@ -2,6 +2,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.ACP.Adapters.ClaudeSDK
+  alias ExMCP.ACP.Adapters.ClaudeSDK.Mapper
   alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
   alias ExMCP.ACP.PromptQueue
 
@@ -28,7 +29,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
     test "exposes SDK entrypoint env" do
       assert ClaudeSDK.env([]) == %{
                "CLAUDE_CODE_ENTRYPOINT" => "sdk-ts",
-               "CLAUDE_AGENT_SDK_VERSION" => "0.3.165"
+               "CLAUDE_AGENT_SDK_VERSION" => "0.3.198"
              }
     end
 
@@ -70,6 +71,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert Map.has_key?(session_capabilities, "resume")
       assert Map.has_key?(session_capabilities, "close")
       assert Map.has_key?(session_capabilities, "fork")
+      assert capabilities["auth"]["logout"] == %{}
       assert capabilities["mcpCapabilities"]["acp"] == true
       assert capabilities["mcpCapabilities"]["http"] == true
       assert capabilities["mcpCapabilities"]["sse"] == true
@@ -91,6 +93,35 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert decoded["type"] == "control_request"
       assert decoded["request"]["subtype"] == "initialize"
       assert Map.has_key?(state.pending_controls, decoded["request_id"])
+    end
+
+    test "captures client capabilities for initialize-dependent auth methods", %{state: state} do
+      msg = %{
+        "id" => 1,
+        "method" => "initialize",
+        "params" => %{
+          "clientCapabilities" => %{
+            "auth" => %{"terminal" => true, "_meta" => %{"gateway" => true}},
+            "_meta" => %{"terminal-auth" => true}
+          }
+        }
+      }
+
+      assert {:ok, :skip, state} = ClaudeSDK.translate_outbound(msg, state)
+      ids = ClaudeSDK.auth_methods([gateway_auth: true], state) |> Enum.map(& &1["id"])
+
+      assert "claude-ai-login" in ids
+      assert "console-login" in ids
+      assert "gateway" in ids
+      assert "gateway-bedrock" in ids
+
+      console =
+        Enum.find(
+          ClaudeSDK.auth_methods([gateway_auth: true], state),
+          &(&1["id"] == "console-login")
+        )
+
+      assert get_in(console, ["_meta", "terminal-auth", "command"]) == "claude"
     end
   end
 
@@ -203,6 +234,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert decoded["request"]["subtype"] == "interrupt"
       assert Map.has_key?(state.pending_controls, decoded["request_id"])
     end
+
+    test "logout clears adapter auth state without CLI side effects when disabled", %{
+      state: state
+    } do
+      state = %{state | gateway_auth: %{"methodId" => "gateway"}, opts: [logout_cli: false]}
+      msg = %{"id" => 14, "method" => "logout", "params" => %{}}
+
+      assert {:reply, %{}, state} = ClaudeSDK.translate_outbound(msg, state)
+      assert state.gateway_auth == nil
+    end
   end
 
   describe "prompt translation" do
@@ -214,7 +255,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
           "sessionId" => "s1",
           "prompt" => [
             %{"type" => "text", "text" => "hello"},
-            %{"type" => "resource_link", "uri" => "file:///tmp/project/lib/a.ex"}
+            %{"type" => "text", "text" => "/mcp:docs:search query"},
+            %{"type" => "resource_link", "uri" => "file:///tmp/project/lib/a.ex"},
+            %{
+              "type" => "resource",
+              "resource" => %{
+                "uri" => "file:///tmp/project/README.md",
+                "text" => "project docs"
+              }
+            },
+            %{"type" => "image", "uri" => "https://example.test/image.png"}
           ]
         }
       }
@@ -226,8 +276,19 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert decoded["session_id"] == "s1"
       assert get_in(decoded, ["message", "content", Access.at(0), "text"]) == "hello"
 
-      assert get_in(decoded, ["message", "content", Access.at(1), "text"]) =~
-               "file:///tmp/project/lib/a.ex"
+      assert get_in(decoded, ["message", "content", Access.at(1), "text"]) ==
+               "/docs:search (MCP) query"
+
+      assert get_in(decoded, ["message", "content", Access.at(2), "text"]) ==
+               "[@a.ex](file:///tmp/project/lib/a.ex)"
+
+      assert get_in(decoded, ["message", "content", Access.at(3), "text"]) ==
+               "[@README.md](file:///tmp/project/README.md)"
+
+      assert get_in(decoded, ["message", "content", Access.at(4), "source", "type"]) == "url"
+
+      assert get_in(decoded, ["message", "content", Access.at(5), "text"]) =~
+               ~s(<context ref="file:///tmp/project/README.md">)
 
       assert state.pending_prompt_id == 10
     end
@@ -283,9 +344,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
         }
       }
 
-      assert {:messages, [permission], state} =
+      assert {:messages, [tool_call, permission], state} =
                ClaudeSDK.translate_inbound(Jason.encode!(event), state)
 
+      assert get_in(tool_call, ["params", "update", "sessionUpdate"]) == "tool_call"
+      assert get_in(tool_call, ["params", "update", "status"]) == "pending"
       assert permission["method"] == "session/request_permission"
       assert permission["params"]["toolCall"]["toolCallId"] == "toolu_1"
       assert Enum.any?(permission["params"]["options"], &(&1["kind"] == "allow_once"))
@@ -301,6 +364,58 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert decoded["type"] == "control_response"
       assert decoded["response"]["request_id"] == "perm_1"
       assert decoded["response"]["response"]["behavior"] == "allow"
+    end
+  end
+
+  describe "runtime config controls" do
+    test "advertises upstream config ids and applies fast and agent settings", %{state: state} do
+      state = %{
+        state
+        | available_models: [
+            %{
+              "value" => "sonnet",
+              "displayName" => "Claude Sonnet",
+              "supportsFastMode" => true
+            }
+          ],
+          available_agents: [%{"name" => "reviewer", "description" => "Review code"}],
+          client_capabilities: %{"session" => %{"configOptions" => %{"boolean" => %{}}}}
+      }
+
+      ids = Mapper.config_options(state) |> Enum.map(& &1["id"])
+
+      assert "mode" in ids
+      assert "model" in ids
+      assert "fast" in ids
+      assert "agent" in ids
+      refute "permission_mode" in ids
+
+      fast = %{
+        "id" => 30,
+        "method" => "session/set_config_option",
+        "params" => %{"sessionId" => "s1", "configId" => "fast", "value" => true}
+      }
+
+      assert {:reply_and_write, %{"configOptions" => _}, line, state} =
+               ClaudeSDK.translate_outbound(fast, state)
+
+      decoded = Jason.decode!(line)
+      assert decoded["request"]["subtype"] == "apply_flag_settings"
+      assert decoded["request"]["settings"] == %{"fastMode" => true}
+      assert state.fast_mode_enabled == true
+
+      agent = %{
+        "id" => 31,
+        "method" => "session/set_config_option",
+        "params" => %{"sessionId" => "s1", "configId" => "agent", "value" => "reviewer"}
+      }
+
+      assert {:reply_and_write, %{"configOptions" => _}, line, state} =
+               ClaudeSDK.translate_outbound(agent, state)
+
+      decoded = Jason.decode!(line)
+      assert decoded["request"]["settings"] == %{"agent" => "reviewer"}
+      assert state.current_agent == "reviewer"
     end
   end
 
@@ -402,6 +517,52 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert response["result"]["usage"]["inputTokens"] == 1
       assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "text"]) == "hello world"
       assert state.pending_prompt_id == nil
+    end
+
+    test "maps Bash tool results to terminal output metadata", %{state: state} do
+      state = %{
+        state
+        | session_id: "s1",
+          tool_calls: %{"toolu_bash" => %{name: "Bash", input: %{"command" => "ls"}}}
+      }
+
+      event = %{
+        "type" => "user",
+        "session_id" => "s1",
+        "message" => %{
+          "content" => [
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => "toolu_bash",
+              "content" => %{
+                "type" => "bash_code_execution_result",
+                "stdout" => "ok",
+                "stderr" => "",
+                "return_code" => 0
+              }
+            }
+          ]
+        }
+      }
+
+      assert {:messages, [message], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(event), state)
+
+      update = message["params"]["update"]
+      assert update["content"] == [%{"type" => "terminal", "terminalId" => "toolu_bash"}]
+
+      assert get_in(update, ["_meta", "terminal_output"]) == %{
+               "terminal_id" => "toolu_bash",
+               "data" => "ok"
+             }
+
+      assert get_in(update, ["_meta", "terminal_exit"]) == %{
+               "terminal_id" => "toolu_bash",
+               "exit_code" => 0,
+               "signal" => nil
+             }
+
+      refute Map.has_key?(state.tool_calls, "toolu_bash")
     end
   end
 
