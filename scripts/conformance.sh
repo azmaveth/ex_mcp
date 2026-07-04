@@ -3,7 +3,7 @@
 # Uses the official modelcontextprotocol/conformance framework.
 #
 # Usage:
-#   ./scripts/conformance.sh                    # Run both client and server (latest version)
+#   ./scripts/conformance.sh                    # Run both client and server (latest stable)
 #   ./scripts/conformance.sh server             # Server tests only
 #   ./scripts/conformance.sh client             # Client tests only
 #   ./scripts/conformance.sh server <scenario>  # Single server scenario
@@ -13,7 +13,7 @@
 # Environment variables:
 #   CONFORMANCE_SPEC_VERSION  — Test a specific version (e.g., 2025-06-18)
 #   CONFORMANCE_PACKAGE_VERSION — Stable conformance package version (default: 0.1.16)
-#   CONFORMANCE_ALPHA_VERSION   — Alpha conformance package version (default: 0.2.0-alpha.2)
+#   CONFORMANCE_ALPHA_VERSION   — Alpha conformance package version (default: 0.2.0-alpha.9)
 #   CONFORMANCE_PORT          — Server port (default: 3099)
 #   CONFORMANCE_TIMEOUT       — Client timeout in ms (default: 120000)
 #
@@ -161,7 +161,7 @@ run_all_versions() {
 }
 
 run_draft_alpha() {
-  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.2}"
+  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.9}"
   CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
   SPEC_VERSION="${CONFORMANCE_SPEC_VERSION:-draft}"
 
@@ -211,12 +211,12 @@ case "$MODE" in
     echo "  client        Run client conformance tests"
     echo "  all           Run both (default)"
     echo "  all-versions  Test conformance-supported versions through 2025-11-25"
-    echo "  draft-alpha   Non-gating draft run using conformance 0.2.0-alpha.2"
+    echo "  draft-alpha   Non-gating draft run using conformance 0.2.0-alpha.9"
     echo ""
     echo "Environment:"
     echo "  CONFORMANCE_SPEC_VERSION=2025-06-18  Test a specific version"
     echo "  CONFORMANCE_PACKAGE_VERSION=0.1.16   Pin stable conformance package"
-    echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.2  Override draft-alpha package"
+    echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.9  Override draft-alpha package"
     exit 1
     ;;
 esac
