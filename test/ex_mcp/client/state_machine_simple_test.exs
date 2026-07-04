@@ -6,12 +6,13 @@ defmodule ExMCP.Client.StateMachineSimpleTest do
   defmodule SimpleTransport do
     @behaviour ExMCP.Transport
 
-    defstruct [:test_pid]
+    defstruct [:test_pid, :receive_timeout]
 
     @impl true
     def connect(opts) do
       test_pid = Keyword.get(opts, :test_pid)
-      {:ok, %__MODULE__{test_pid: test_pid}}
+      receive_timeout = Keyword.get(opts, :receive_timeout, 5_000)
+      {:ok, %__MODULE__{test_pid: test_pid, receive_timeout: receive_timeout}}
     end
 
     @impl true
@@ -21,12 +22,12 @@ defmodule ExMCP.Client.StateMachineSimpleTest do
     end
 
     @impl true
-    def receive_message(%__MODULE__{} = state) do
+    def receive_message(%__MODULE__{receive_timeout: receive_timeout} = state) do
       receive do
         {:mock_message, message} ->
           {:ok, message, state}
       after
-        100 ->
+        receive_timeout ->
           {:error, :timeout}
       end
     end
@@ -80,11 +81,8 @@ defmodule ExMCP.Client.StateMachineSimpleTest do
       assert initialized["method"] == "notifications/initialized"
       assert initialized["params"] == %{}
 
-      # Wait for state to stabilize
-      Process.sleep(50)
-
       # Should be in ready state
-      state_info = StateMachine.get_state(client)
+      state_info = assert_state(client, :ready)
       assert state_info.state == :ready
       assert state_info.connected == true
     end
@@ -117,6 +115,7 @@ defmodule ExMCP.Client.StateMachineSimpleTest do
 
       send(client, {:transport_message, Jason.encode!(init_response)})
       assert_receive {:sent_message, _initialized_msg}, 1000
+      assert_state(client, :ready)
 
       # Now send a request
       task =
@@ -174,17 +173,14 @@ defmodule ExMCP.Client.StateMachineSimpleTest do
       assert_receive {:sent_message, _initialized_msg}, 1000
 
       # Verify we're in ready state
-      state_info = StateMachine.get_state(client)
+      state_info = assert_state(client, :ready)
       assert state_info.state == :ready
 
       # Send transport error
       send(client, {:transport_error, :connection_lost})
 
-      # Give it time to process
-      Process.sleep(50)
-
       # Should be disconnected
-      state_info = StateMachine.get_state(client)
+      state_info = assert_state(client, :disconnected)
       assert state_info.state == :disconnected
     end
 
@@ -193,7 +189,8 @@ defmodule ExMCP.Client.StateMachineSimpleTest do
 
       config = %{
         transport: SimpleTransport,
-        test_pid: test_pid
+        test_pid: test_pid,
+        max_reconnect_attempts: 1
       }
 
       {:ok, client} = StateMachine.start_link(config)
@@ -217,30 +214,51 @@ defmodule ExMCP.Client.StateMachineSimpleTest do
       assert_receive {:sent_message, _initialized_msg}, 1000
 
       # Verify we're in ready state
-      state_info = StateMachine.get_state(client)
+      state_info = assert_state(client, :ready)
       assert state_info.state == :ready
 
       # Send transport closed (should trigger reconnection)
       send(client, {:transport_closed, :connection_lost})
 
-      # Give it time to process
-      Process.sleep(50)
-
       # Should be reconnecting
-      state_info = StateMachine.get_state(client)
+      state_info = assert_state(client, :reconnecting)
       assert state_info.state == :reconnecting
 
-      # Wait for the reconnection backoff (default is 1000ms)
-      # plus extra time for the reconnection attempt
-      Process.sleep(1200)
+      # Wait for the reconnection backoff and observe the retry handshake.
+      assert_receive {:sent_message, reconnect_init_msg}, 1500
+      {:ok, reconnect_init_request} = Jason.decode(reconnect_init_msg)
+      assert reconnect_init_request["method"] == "initialize"
 
-      # The SimpleTransport reconnection will fail due to handshake timeout,
-      # so it should end up in disconnected state
-      state_info = StateMachine.get_state(client)
+      send(client, {:transport_error, :reconnect_failed})
+
+      # With max_reconnect_attempts set to 1, the failed retry should give up.
+      state_info = assert_state(client, :disconnected)
       assert state_info.state == :disconnected
 
       # This test demonstrates that reconnection is triggered properly
       # More comprehensive reconnection testing is done in integration tests
+    end
+  end
+
+  defp assert_state(client, expected_state, timeout \\ 1_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_assert_state(client, expected_state, deadline)
+  end
+
+  defp do_assert_state(client, expected_state, deadline) do
+    state_info = StateMachine.get_state(client)
+
+    if state_info.state == expected_state do
+      state_info
+    else
+      remaining = deadline - System.monotonic_time(:millisecond)
+
+      if remaining <= 0 do
+        flunk("expected #{inspect(expected_state)}, got #{inspect(state_info.state)}")
+      else
+        Process.sleep(min(10, remaining))
+        do_assert_state(client, expected_state, deadline)
+      end
     end
   end
 end
