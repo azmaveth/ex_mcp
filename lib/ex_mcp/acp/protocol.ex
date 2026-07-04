@@ -12,6 +12,7 @@ defmodule ExMCP.ACP.Protocol do
   alias ExMCP.Internal.JSONRPC
 
   @default_protocol_version 1
+  @request_cancelled_error_code -32_800
   @stop_reasons ~w(end_turn max_tokens max_turn_requests refusal cancelled)
 
   @doc "Generates a unique request ID."
@@ -25,6 +26,12 @@ defmodule ExMCP.ACP.Protocol do
     error = %{"code" => code, "message" => message}
     error = if data, do: Map.put(error, "data", data), else: error
     JSONRPC.error(id, error)
+  end
+
+  @doc "Encodes the ACP/JSON-RPC request-cancelled error response."
+  @spec encode_request_cancelled_error(integer() | String.t() | nil) :: map()
+  def encode_request_cancelled_error(id) do
+    encode_error(@request_cancelled_error_code, "Request cancelled", nil, id)
   end
 
   @doc "Parses a raw ACP JSON-RPC message with structural validation."
@@ -251,6 +258,12 @@ defmodule ExMCP.ACP.Protocol do
     Envelope.notification("session/cancel", %{"sessionId" => session_id})
   end
 
+  @doc "Encodes a `$/cancel_request` notification for a specific JSON-RPC request."
+  @spec encode_cancel_request(integer() | String.t() | nil) :: map()
+  def encode_cancel_request(request_id) do
+    Envelope.notification("$/cancel_request", %{"requestId" => request_id})
+  end
+
   @doc "Encodes a `session/close` request. Stabilized in ACP spec April 23, 2026."
   @spec encode_session_close(String.t()) :: map()
   def encode_session_close(session_id) do
@@ -350,29 +363,39 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   @doc "Encodes an `agent_message_chunk` update notification."
-  @spec encode_agent_message_chunk(String.t(), String.t() | map()) :: map()
-  def encode_agent_message_chunk(session_id, text) when is_binary(text) do
-    encode_agent_message_chunk(session_id, %{"type" => "text", "text" => text})
+  @spec encode_agent_message_chunk(String.t(), String.t() | map(), keyword() | map()) :: map()
+  def encode_agent_message_chunk(session_id, content, opts \\ [])
+
+  def encode_agent_message_chunk(session_id, text, opts) when is_binary(text) do
+    encode_agent_message_chunk(session_id, %{"type" => "text", "text" => text}, opts)
   end
 
-  def encode_agent_message_chunk(session_id, content) when is_map(content) do
-    encode_session_update(session_id, %{
-      "sessionUpdate" => "agent_message_chunk",
-      "content" => content
-    })
+  def encode_agent_message_chunk(session_id, content, opts) when is_map(content) do
+    encode_session_update(session_id, content_chunk_update("agent_message_chunk", content, opts))
   end
 
   @doc "Encodes an `agent_thought_chunk` update notification."
-  @spec encode_agent_thought_chunk(String.t(), String.t() | map()) :: map()
-  def encode_agent_thought_chunk(session_id, text) when is_binary(text) do
-    encode_agent_thought_chunk(session_id, %{"type" => "text", "text" => text})
+  @spec encode_agent_thought_chunk(String.t(), String.t() | map(), keyword() | map()) :: map()
+  def encode_agent_thought_chunk(session_id, content, opts \\ [])
+
+  def encode_agent_thought_chunk(session_id, text, opts) when is_binary(text) do
+    encode_agent_thought_chunk(session_id, %{"type" => "text", "text" => text}, opts)
   end
 
-  def encode_agent_thought_chunk(session_id, content) when is_map(content) do
-    encode_session_update(session_id, %{
-      "sessionUpdate" => "agent_thought_chunk",
-      "content" => content
-    })
+  def encode_agent_thought_chunk(session_id, content, opts) when is_map(content) do
+    encode_session_update(session_id, content_chunk_update("agent_thought_chunk", content, opts))
+  end
+
+  @doc "Encodes a `user_message_chunk` update notification."
+  @spec encode_user_message_chunk(String.t(), String.t() | map(), keyword() | map()) :: map()
+  def encode_user_message_chunk(session_id, content, opts \\ [])
+
+  def encode_user_message_chunk(session_id, text, opts) when is_binary(text) do
+    encode_user_message_chunk(session_id, %{"type" => "text", "text" => text}, opts)
+  end
+
+  def encode_user_message_chunk(session_id, content, opts) when is_map(content) do
+    encode_session_update(session_id, content_chunk_update("user_message_chunk", content, opts))
   end
 
   @doc "Encodes a `tool_call` update notification."
@@ -607,6 +630,21 @@ defmodule ExMCP.ACP.Protocol do
   defp move_prompt_response_extensions(result) do
     Meta.move_extensions(result, ["_meta", "stopReason", "usage"])
   end
+
+  defp content_chunk_update(type, content, opts) do
+    %{"sessionUpdate" => type, "content" => content}
+    |> Maps.put_present("messageId", message_id_option(opts))
+  end
+
+  defp message_id_option(opts) when is_list(opts) do
+    Keyword.get(opts, :message_id) || Keyword.get(opts, :messageId)
+  end
+
+  defp message_id_option(opts) when is_map(opts) do
+    Map.get(opts, "messageId") || Map.get(opts, :message_id) || Map.get(opts, :messageId)
+  end
+
+  defp message_id_option(_opts), do: nil
 
   defp option_value(opts, atom_key, _string_key) when is_list(opts),
     do: Keyword.get(opts, atom_key)

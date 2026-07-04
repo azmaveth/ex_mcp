@@ -28,9 +28,13 @@ defmodule ExMCP.ACP.AdapterEvents do
     text_chunk(session_id, "user_message_chunk", text, opts)
   end
 
-  @spec content_chunk(String.t(), String.t(), map(), keyword()) :: map()
+  @spec content_chunk(String.t(), String.t(), map(), keyword() | map()) :: map()
   def content_chunk(session_id, type, content, opts \\ []) do
-    session_update_type(session_id, type, %{"content" => content}, opts)
+    attrs =
+      %{"content" => content}
+      |> Maps.put_present("messageId", message_id_option(opts))
+
+    session_update_type(session_id, type, attrs, opts)
   end
 
   @spec resource_link_chunk(String.t(), String.t(), keyword()) :: map()
@@ -39,7 +43,7 @@ defmodule ExMCP.ACP.AdapterEvents do
       %{"type" => "resource_link", "uri" => uri}
       |> Maps.put_present("name", Keyword.get(opts, :name))
 
-    session_update_type(session_id, "agent_message_chunk", %{"content" => content}, opts)
+    content_chunk(session_id, "agent_message_chunk", content, opts)
   end
 
   @spec current_mode_update(String.t(), String.t()) :: map()
@@ -115,4 +119,14 @@ defmodule ExMCP.ACP.AdapterEvents do
   defp text_chunk(session_id, type, text, opts) do
     content_chunk(session_id, type, %{"type" => "text", "text" => text}, opts)
   end
+
+  defp message_id_option(opts) when is_list(opts) do
+    Keyword.get(opts, :message_id) || Keyword.get(opts, :messageId)
+  end
+
+  defp message_id_option(opts) when is_map(opts) do
+    Map.get(opts, "messageId") || Map.get(opts, :message_id) || Map.get(opts, :messageId)
+  end
+
+  defp message_id_option(_opts), do: nil
 end

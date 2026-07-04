@@ -137,6 +137,7 @@ defmodule ExMCP.ACP.Types do
   # ACP-specific:
   @auth_required_code -32_000
   @resource_not_found_code -32_002
+  @request_cancelled_code -32_800
 
   @doc "Error code indicating authentication is required."
   @spec auth_required_code() :: integer()
@@ -145,6 +146,10 @@ defmodule ExMCP.ACP.Types do
   @doc "Error code indicating a resource was not found."
   @spec resource_not_found_code() :: integer()
   def resource_not_found_code, do: @resource_not_found_code
+
+  @doc "Error code indicating a request was cancelled."
+  @spec request_cancelled_code() :: integer()
+  def request_cancelled_code, do: @request_cancelled_code
 
   # Initialize
 

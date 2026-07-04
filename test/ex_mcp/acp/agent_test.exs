@@ -273,6 +273,30 @@ defmodule ExMCP.ACP.AgentTest do
       assert_receive {:cancelled, ^session_id, ^prompt_id}
     end
 
+    test "completes request-scoped cancellation with cancelled stop reason" do
+      {:ok, peer} = Memory.new_pair()
+
+      {:ok, _agent} =
+        Agent.start_link(
+          handler: CancelAgent,
+          handler_opts: [test_pid: self()],
+          transport: {:memory, peer}
+        )
+
+      {:ok, client} =
+        Client.start_link(transport_mod: Memory, peer: peer, role: :client)
+
+      {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp/project")
+
+      task = Task.async(fn -> Client.prompt(client, session_id, "wait") end)
+      assert_receive {:prompt_waiting, prompt_id}
+
+      :ok = Client.cancel_request(client, prompt_id)
+
+      assert {:ok, %{"stopReason" => "cancelled"}} = Task.await(task)
+      assert_receive {:cancelled, ^session_id, ^prompt_id}
+    end
+
     test "agent can request permission, filesystem, and terminal operations from client" do
       {:ok, peer} = Memory.new_pair()
 

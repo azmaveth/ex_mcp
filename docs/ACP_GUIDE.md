@@ -189,9 +189,12 @@ ACP sessions represent ongoing conversations with an agent.
 # Cancel a running prompt
 ExMCP.ACP.Client.cancel(client, sid)
 
+# Cancel a specific JSON-RPC request when you have its request id
+ExMCP.ACP.Client.cancel_request(client, request_id)
+
 # Configure the agent at runtime
 ExMCP.ACP.Client.set_mode(client, sid, "high")
-ExMCP.ACP.Client.set_model(client, sid, "anthropic/claude-sonnet-4")
+ExMCP.ACP.Client.set_config_option(client, sid, "model", "anthropic/claude-sonnet-4")
 ExMCP.ACP.Client.set_config_option(client, sid, "auto_retry", false)
 
 # Close a session and free agent-side resources (if supported)
@@ -310,6 +313,8 @@ The ACP spec defines these session update types (all supported by ExMCP):
 
 Adapter-specific status, error, and extension bridge details are attached under
 `_meta.ex_mcp` on spec-defined update types, usually `session_info_update`.
+Content chunks may include ACP's optional `messageId` field so clients can group
+streamed chunks into logical messages.
 
 ## Writing Custom Adapters
 
@@ -465,7 +470,7 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 
 **Features:**
 - Initialize handshake with `post_connect/1`
-- Model catalog loading from Codex `model/list`, ACP `session/set_model`, and per-session `models` state
+- Model catalog loading from Codex `model/list`, ACP `model` config options, legacy `session/set_model` compatibility, and per-session `models` state
 - Tool call lifecycle: creation, completion, output, patch events, and current camelCase app-server item variants
 - Command execution streaming with ACP terminal metadata
 - Web search, MCP tool, dynamic tool, file change, image view, image generation, guardian review, fuzzy file search, plan, status, goal, usage, and compaction events
@@ -488,7 +493,7 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 
 **Features:**
 - Adapter-managed Pi subprocesses for ACP `session/new`, `session/load`, and `session/resume`
-- ACP-native `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`, `session/set_model`, and `session/set_mode`
+- ACP-native `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`, `session/set_config_option`, and `session/set_mode`, with legacy `session/set_model` compatibility
 - Terminal authentication method advertisement through `authMethods`
 - Pi session discovery from JSONL files plus a local ExMCP session map at `~/.ex_mcp/pi/session-map.json`, with cursor pagination and last-cwd default filtering
 - Prompt queuing while another Pi turn is active
@@ -504,7 +509,7 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 
 **Modes:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh` map to Pi thinking levels through ACP `session/set_mode`.
 
-**Config options:** Session responses include upstream-compatible `model` and `thought_level` selectors, plus ExMCP's existing `auto_compaction`, `auto_retry`, `steering_mode`, and `follow_up_mode` controls. Model changes can use either `ExMCP.ACP.Client.set_model/3` or `set_config_option/4` with config id `model`.
+**Config options:** Session responses include upstream-compatible `model` and `thought_level` selectors, plus ExMCP's existing `auto_compaction`, `auto_retry`, `steering_mode`, and `follow_up_mode` controls. Prefer `set_config_option/4` with config id `model` for model changes; `ExMCP.ACP.Client.set_model/3` is retained for compatibility with older adapters.
 
 **Startup options:** `cli_path`/`pi_command`, `session_path`, `session_dir`, `session_map_path`, `delete_session_files`, and `update_notice`. The live Pi subprocess is started like upstream `pi-acp`, with `--mode rpc --no-themes` and optional `--session <path>`; cwd is applied as the child process working directory. `session/delete` removes ExMCP session-map state by default; backing Pi JSONL files are deleted only when `delete_session_files: true` is set and the file is under the configured Pi session directory. Registry update checks are disabled unless `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true` is set.
 

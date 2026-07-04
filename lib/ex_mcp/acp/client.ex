@@ -182,6 +182,12 @@ defmodule ExMCP.ACP.Client do
     GenServer.cast(client, {:cancel, session_id})
   end
 
+  @doc "Sends a `$/cancel_request` notification for a specific JSON-RPC request."
+  @spec cancel_request(GenServer.server(), integer() | String.t() | nil) :: :ok
+  def cancel_request(client, request_id) do
+    GenServer.cast(client, {:cancel_request, request_id})
+  end
+
   @doc "Closes an active session and frees agent-side resources."
   @spec close_session(GenServer.server(), String.t(), keyword()) ::
           {:ok, map() | nil} | {:error, any()}
@@ -486,6 +492,12 @@ defmodule ExMCP.ACP.Client do
     {:noreply, state}
   end
 
+  def handle_cast({:cancel_request, request_id}, state) do
+    msg = Protocol.encode_cancel_request(request_id)
+    send_to_transport(msg, state)
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info({:transport_message, raw_message}, state) do
     case Protocol.parse_message(raw_message) do
@@ -499,6 +511,10 @@ defmodule ExMCP.ACP.Client do
 
       {:notification, "session/update", params} ->
         state = handle_session_update(params, state)
+        {:noreply, state}
+
+      {:notification, "$/cancel_request", params} ->
+        state = handle_cancel_request_notification(params, state)
         {:noreply, state}
 
       {:request, method, params, id} ->
@@ -1062,6 +1078,22 @@ defmodule ExMCP.ACP.Client do
 
     %{state | pending_agent_requests: Map.new(keep)}
   end
+
+  defp handle_cancel_request_notification(%{"requestId" => request_id}, state) do
+    {to_cancel, keep} =
+      Enum.split_with(state.pending_agent_requests, fn {_ref, request} ->
+        request.id == request_id
+      end)
+
+    Enum.each(to_cancel, fn {_ref, request} ->
+      response = Protocol.encode_request_cancelled_error(request.id)
+      send_to_transport(response, state)
+    end)
+
+    %{state | pending_agent_requests: Map.new(keep)}
+  end
+
+  defp handle_cancel_request_notification(_params, state), do: state
 
   defp format_handler_error(reason) when is_binary(reason), do: reason
 

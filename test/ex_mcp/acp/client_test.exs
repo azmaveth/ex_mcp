@@ -121,6 +121,7 @@ defmodule ExMCP.ACP.ClientTest do
       updates = Keyword.get(opts, :updates, [])
       load_updates = Keyword.get(opts, :load_updates, [])
       permission_request = Keyword.get(opts, :permission_request)
+      cancel_permission_request = Keyword.get(opts, :cancel_permission_request, false)
 
       capabilities =
         Keyword.get(opts, :capabilities, %{
@@ -149,6 +150,7 @@ defmodule ExMCP.ACP.ClientTest do
           updates: updates,
           load_updates: load_updates,
           permission_request: permission_request,
+          cancel_permission_request: cancel_permission_request,
           capabilities: capabilities,
           auth_methods: auth_methods,
           test_pid: test_pid
@@ -322,6 +324,11 @@ defmodule ExMCP.ACP.ClientTest do
           })
 
         MessageRelay.push(state.to_client, perm_request)
+
+        if state.cancel_permission_request do
+          cancel_request = Jason.encode!(Protocol.encode_cancel_request(perm_id))
+          MessageRelay.push(state.to_client, cancel_request)
+        end
 
         # Wait for the permission response
         case MessageRelay.pop(state.to_agent) do
@@ -1055,6 +1062,45 @@ defmodule ExMCP.ACP.ClientTest do
       assert :ok = Client.cancel(client, "sess_mock_001")
       assert_receive {:permission_response, resp}, 1_000
       assert resp["result"]["outcome"]["outcome"] == "cancelled"
+
+      assert {:ok, _} = Task.await(task, 2_000)
+      send(handler_pid, :release_permission_handler)
+      refute_receive {:permission_response, _late_response}, 200
+    end
+
+    test "$/cancel_request replies request-cancelled to pending agent requests" do
+      tool_call = %{
+        "toolCallId" => "tc_write",
+        "toolName" => "file_write",
+        "arguments" => %{"path" => "/etc/hosts"}
+      }
+
+      options = [
+        %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
+        %{"optionId" => "deny", "name" => "Deny", "kind" => "reject_once"}
+      ]
+
+      {client, _agent} =
+        start_client(
+          [
+            permission_request: {tool_call, options},
+            cancel_permission_request: true
+          ],
+          handler: BlockingPermissionHandler,
+          handler_opts: [parent: self()]
+        )
+
+      {:ok, _} = Client.new_session(client, "/tmp")
+
+      task =
+        Task.async(fn ->
+          Client.prompt(client, "sess_mock_001", "Write a file", timeout: 2_000)
+        end)
+
+      assert_receive {:blocking_permission_handler_started, handler_pid}, 500
+      assert_receive {:permission_response, resp}, 1_000
+      assert resp["error"]["code"] == -32_800
+      assert resp["error"]["message"] == "Request cancelled"
 
       assert {:ok, _} = Task.await(task, 2_000)
       send(handler_pid, :release_permission_handler)

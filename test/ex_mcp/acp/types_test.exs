@@ -134,6 +134,10 @@ defmodule ExMCP.ACP.TypesTest do
     test "resource_not_found_code returns -32002" do
       assert Types.resource_not_found_code() == -32_002
     end
+
+    test "request_cancelled_code returns -32800" do
+      assert Types.request_cancelled_code() == -32_800
+    end
   end
 
   describe "audio_block/2" do

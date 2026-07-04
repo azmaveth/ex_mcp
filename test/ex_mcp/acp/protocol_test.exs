@@ -186,6 +186,16 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
   end
 
+  describe "encode_cancel_request/1" do
+    test "produces a request-scoped cancellation notification" do
+      msg = Protocol.encode_cancel_request(123)
+
+      assert msg["method"] == "$/cancel_request"
+      assert msg["params"] == %{"requestId" => 123}
+      refute Map.has_key?(msg, "id")
+    end
+  end
+
   describe "encode_session_close/1" do
     test "produces a request with an id" do
       msg = Protocol.encode_session_close("sess_1")
@@ -436,6 +446,31 @@ defmodule ExMCP.ACP.ProtocolTest do
       assert usage["params"]["update"]["size"] == 100
     end
 
+    test "encodes optional messageId on streamed content chunks" do
+      assert get_in(
+               Protocol.encode_agent_message_chunk("sess_1", "hello", message_id: "msg_1"),
+               ["params", "update", "messageId"]
+             ) == "msg_1"
+
+      assert get_in(
+               Protocol.encode_agent_thought_chunk("sess_1", "thinking", messageId: "msg_2"),
+               ["params", "update", "messageId"]
+             ) == "msg_2"
+
+      assert get_in(
+               Protocol.encode_user_message_chunk("sess_1", "question", %{"messageId" => "msg_3"}),
+               ["params", "update", "messageId"]
+             ) == "msg_3"
+    end
+
+    test "encodes request-cancelled errors with ACP error code" do
+      msg = Protocol.encode_request_cancelled_error("req_1")
+
+      assert msg["id"] == "req_1"
+      assert msg["error"]["code"] == -32_800
+      assert msg["error"]["message"] == "Request cancelled"
+    end
+
     test "encodes agent-to-client requests" do
       permission =
         Protocol.encode_permission_request(
@@ -515,6 +550,15 @@ defmodule ExMCP.ACP.ProtocolTest do
 
       assert {:notification, "session/cancel", params} = Protocol.parse_message(decoded)
       assert params["sessionId"] == "s1"
+    end
+
+    test "request cancellation notification round-trip has no id" do
+      msg = Protocol.encode_cancel_request("req_1")
+      json = Jason.encode!(msg)
+      {:ok, decoded} = Jason.decode(json)
+
+      assert {:notification, "$/cancel_request", params} = Protocol.parse_message(decoded)
+      assert params["requestId"] == "req_1"
     end
 
     test "response round-trip" do

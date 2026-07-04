@@ -127,8 +127,8 @@ defmodule ExMCP.ACP.Agent do
     session_update(
       agent,
       session_id,
-      %{"sessionUpdate" => "agent_message_chunk", "content" => update},
-      opts
+      content_chunk_update("agent_message_chunk", update, opts),
+      Keyword.drop(opts, [:message_id, :messageId])
     )
   end
 
@@ -145,8 +145,8 @@ defmodule ExMCP.ACP.Agent do
     session_update(
       agent,
       session_id,
-      %{"sessionUpdate" => "agent_thought_chunk", "content" => update},
-      opts
+      content_chunk_update("agent_thought_chunk", update, opts),
+      Keyword.drop(opts, [:message_id, :messageId])
     )
   end
 
@@ -383,6 +383,9 @@ defmodule ExMCP.ACP.Agent do
 
       {:notification, "session/cancel", params} ->
         {:noreply, handle_cancel_notification(params, state)}
+
+      {:notification, "$/cancel_request", params} ->
+        {:noreply, handle_cancel_request_notification(params, state)}
 
       {:notification, method, _params} ->
         Logger.debug("ACP agent received unsupported notification: #{method}")
@@ -861,6 +864,36 @@ defmodule ExMCP.ACP.Agent do
 
   defp handle_cancel_notification(_params, state), do: state
 
+  defp handle_cancel_request_notification(%{"requestId" => request_id}, state) do
+    if Map.has_key?(state.pending_prompts, request_id) do
+      cancel_prompt_request(request_id, state)
+    else
+      cancel_pending_callback_request(request_id, state)
+    end
+  end
+
+  defp handle_cancel_request_notification(_params, state), do: state
+
+  defp cancel_prompt_request(prompt_id, state) do
+    case Map.get(state.pending_prompts, prompt_id) do
+      %{session_id: session_id} -> cancel_active_prompt(session_id, state)
+      nil -> state
+    end
+  end
+
+  defp cancel_pending_callback_request(request_id, state) do
+    {to_cancel, keep} =
+      Enum.split_with(state.pending_callbacks, fn {_ref, callback} ->
+        callback.request_id == request_id
+      end)
+
+    state = %{state | pending_callbacks: Map.new(keep)}
+
+    Enum.reduce(to_cancel, state, fn {_ref, callback}, acc ->
+      send_without_reply(Protocol.encode_request_cancelled_error(callback.request_id), acc)
+    end)
+  end
+
   defp cancel_active_prompt(session_id, state) do
     case Map.get(state.active_prompts, session_id) do
       nil ->
@@ -1119,6 +1152,21 @@ defmodule ExMCP.ACP.Agent do
       protocol_version: state.protocol_version
     }
   end
+
+  defp content_chunk_update(type, content, opts) do
+    %{"sessionUpdate" => type, "content" => content}
+    |> Maps.put_present("messageId", message_id_option(opts))
+  end
+
+  defp message_id_option(opts) when is_list(opts) do
+    Keyword.get(opts, :message_id) || Keyword.get(opts, :messageId)
+  end
+
+  defp message_id_option(opts) when is_map(opts) do
+    Map.get(opts, "messageId") || Map.get(opts, :message_id) || Map.get(opts, :messageId)
+  end
+
+  defp message_id_option(_opts), do: nil
 
   defp reply_with_send(msg, state) do
     case do_send(msg, state) do

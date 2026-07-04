@@ -38,6 +38,18 @@ defmodule ExMCP.ACP.AdapterEventsTest do
            ) == %{"ex_mcp" => %{"final" => true}}
   end
 
+  test "builds text updates with message IDs" do
+    assert get_in(
+             AdapterEvents.agent_message_chunk("session-1", "done", message_id: "msg-1"),
+             ["params", "update", "messageId"]
+           ) == "msg-1"
+
+    assert get_in(
+             AdapterEvents.user_message_chunk("session-1", "replay", messageId: "msg-2"),
+             ["params", "update", "messageId"]
+           ) == "msg-2"
+  end
+
   test "builds arbitrary content chunks" do
     content = %{"type" => "image", "uri" => "file:///tmp/image.png"}
 
@@ -54,10 +66,22 @@ defmodule ExMCP.ACP.AdapterEventsTest do
   end
 
   test "builds resource link chunks" do
-    assert get_in(
-             AdapterEvents.resource_link_chunk("session-1", "file:///tmp/out.md", name: "out.md"),
-             ["params", "update", "content"]
-           ) == %{"type" => "resource_link", "uri" => "file:///tmp/out.md", "name" => "out.md"}
+    update =
+      get_in(
+        AdapterEvents.resource_link_chunk("session-1", "file:///tmp/out.md",
+          name: "out.md",
+          message_id: "msg-3"
+        ),
+        ["params", "update"]
+      )
+
+    assert update["content"] == %{
+             "type" => "resource_link",
+             "uri" => "file:///tmp/out.md",
+             "name" => "out.md"
+           }
+
+    assert update["messageId"] == "msg-3"
   end
 
   test "builds selector and command updates" do
