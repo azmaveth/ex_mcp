@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-07-03
+
 ### Changed
+- **ACP protocol updates** — Added current ACP request cancellation support, propagated prompt `messageId` values through client/agent/protocol helpers, and refreshed adapter chunk handling for upstream-compatible message streaming.
 - **Codex ACP upstream sync** — Synced `ExMCP.ACP.Adapters.Codex` with `agentclientprotocol/codex-acp` v1.1.0 behavior, including upstream auth ids (`api-key`, `chat-gpt`, and opt-in `gateway`), `read-only`/`agent`/`agent-full-access` modes, app-server `session/delete` through thread archive, additional workspace directories, upstream prompt content shapes, HTTP MCP `http_headers`, per-turn model/mode/reasoning/fast-mode application, `/status`, richer terminal/MCP metadata, usage updates, guardian review, image view, and fuzzy file search events.
 - **Claude ACP upstream sync** — Synced `ExMCP.ACP.Adapters.ClaudeSDK` with compatible `agentclientprotocol/claude-agent-acp` v0.55.0 behavior, including Claude Agent SDK 0.3.198 launch metadata, initialize-aware terminal/gateway auth method advertisement, `auth.logout` capability, upstream `mode` config option id, fast-mode and agent config controls when advertised by the SDK, MCP slash-command prompt rewriting, resource-link plus embedded-context prompt shapes, HTTP image prompt support, tool-call-before-permission ordering, Bash terminal metadata, result usage updates, and richer model/agent config option metadata.
 - **Pi ACP upstream sync** — Synced `ExMCP.ACP.Adapters.Pi` with compatible `svkozak/pi-acp` v0.0.31 behavior, including upstream-compatible Pi RPC spawn arguments, per-session `model` and `thought_level` config options, config-option sync updates after model/thinking changes, and Pi session listing that prefers latest message activity over later metadata-only timestamps.
+- **MCP conformance tooling** — Updated the draft conformance runner pin to the latest published alpha while keeping stable conformance runs on the published `latest` runner.
+
+### Fixed
+- **Claude final-result fallback** — `ExMCP.ACP.Adapters.ClaudeSDK` now emits an `agent_message_chunk` from Claude SDK `session_result` text when the SDK completes without streaming message chunks, so ACP clients that accumulate streamed text do not receive an empty answer.
 
 ### Breaking Changes
 - **Codex ACP mode IDs** — `ExMCP.ACP.Adapters.Codex` now only accepts upstream codex-acp-compatible mode IDs: `read-only`, `agent`, and `agent-full-access`. The older `auto` and `full-access` ids are no longer accepted, along with the prior `suggest`, `auto-edit`, and `full-auto` aliases.
