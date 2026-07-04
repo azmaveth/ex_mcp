@@ -516,6 +516,46 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert response["result"]["stopReason"] == "max_tokens"
       assert response["result"]["usage"]["inputTokens"] == 1
       assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "text"]) == "hello world"
+
+      refute Enum.any?(
+               messages,
+               &(get_in(&1, ["params", "update", "sessionUpdate"]) == "agent_message_chunk")
+             )
+
+      assert state.pending_prompt_id == nil
+    end
+
+    test "final result emits fallback message chunk when Claude does not stream text", %{
+      state: state
+    } do
+      state = %{state | pending_prompt_id: 123, session_id: "s1", text_acc: []}
+
+      event = %{
+        "type" => "result",
+        "subtype" => "success",
+        "session_id" => "s1",
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 2},
+        "result" => "final only answer"
+      }
+
+      assert {:messages, messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(event), state)
+
+      chunk =
+        Enum.find(
+          messages,
+          &(get_in(&1, ["params", "update", "sessionUpdate"]) == "agent_message_chunk")
+        )
+
+      response = Enum.find(messages, &(&1["id"] == 123))
+
+      assert get_in(chunk, ["params", "sessionId"]) == "s1"
+      assert get_in(chunk, ["params", "update", "content", "text"]) == "final only answer"
+      assert response["result"]["stopReason"] == "end_turn"
+
+      assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "text"]) ==
+               "final only answer"
+
       assert state.pending_prompt_id == nil
     end
 

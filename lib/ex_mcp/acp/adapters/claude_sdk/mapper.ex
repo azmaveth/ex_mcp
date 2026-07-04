@@ -553,7 +553,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         config_option_update(state),
         AdapterEvents.session_info_update(session_id, %{
           "_meta" => %{"ex_mcp.claude_sdk" => %{"status" => "completed"}}
-        })
+        }),
+        result_text_chunk(session_id, text, state)
       ]
       |> Enum.reject(&is_nil/1)
 
@@ -579,6 +580,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     {Enum.reverse(messages), writes, state}
   end
+
+  defp result_text_chunk(session_id, text, %{pending_prompt_id: pending_prompt_id, text_acc: []})
+       when not is_nil(pending_prompt_id) and is_binary(text) and text != "" do
+    AdapterEvents.agent_message_chunk(session_id, text)
+  end
+
+  defp result_text_chunk(_session_id, _text, _state), do: nil
 
   defp handle_system(%{"subtype" => "init"} = event, state) do
     state =
