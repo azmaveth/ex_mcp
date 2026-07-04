@@ -18,6 +18,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   @thinking_levels ~w(off minimal low medium high xhigh)
   @auth_method_id "pi_terminal_login"
+  @model_config_id "model"
+  @thought_level_config_id "thought_level"
   @default_thinking_level "medium"
 
   defstruct [
@@ -76,13 +78,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     args =
       ["--mode", "rpc", "--no-themes"]
-      |> append_opt(opts, :model, "--model")
-      |> append_opt(opts, :cwd, "--cwd")
-      |> append_opt(opts, :system_prompt, "--system-prompt")
       |> append_opt(opts, :session_path, "--session")
-      |> append_opt(opts, :session_dir, "--session-dir")
 
-    args = if Keyword.get(opts, :no_session, false), do: args ++ ["--no-session"], else: args
     {cli_path, args}
   end
 
@@ -154,6 +151,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   @impl true
   def config_options do
+    session_config_options(nil, thinking_state(%{}))
+  end
+
+  defp runtime_config_options do
     [
       %{
         "id" => "auto_compaction",
@@ -374,12 +375,16 @@ defmodule ExMCP.ACP.Adapters.Pi do
     mode = params["modeId"]
 
     if mode in @thinking_levels do
-      update = AdapterEvents.current_mode_update(params["sessionId"] || state.session_id, mode)
-
       state = %{state | thinking_level: mode}
+      session_id = params["sessionId"] || state.session_id
+
+      messages = [
+        AdapterEvents.current_mode_update(session_id, mode),
+        config_options_update(session_id, state)
+      ]
 
       deliver_messages_and_ack(
-        [update],
+        messages,
         encode_rpc(%{"type" => "set_thinking_level", "level" => mode}),
         state
       )
@@ -392,7 +397,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
     case resolve_model(params["modelId"], state.available_models) do
       {:ok, provider, model_id, current_model_id} ->
         rpc_msg = %{"type" => "set_model", "provider" => provider, "modelId" => model_id}
-        deliver_ack(encode_rpc(rpc_msg), %{state | current_model_id: current_model_id})
+        state = %{state | current_model_id: current_model_id}
+        session_id = params["sessionId"] || state.session_id
+
+        deliver_messages_and_config_result(
+          [config_options_update(session_id, state)],
+          encode_rpc(rpc_msg),
+          state
+        )
 
       {:error, reason} ->
         {:error, reason, state}
@@ -563,6 +575,20 @@ defmodule ExMCP.ACP.Adapters.Pi do
     case write_managed(data, state) do
       :ok -> {:messages_and_reply, messages, %{}, state}
       {:error, reason} -> {:error, inspect(reason), state}
+    end
+  end
+
+  defp deliver_messages_and_config_result(messages, data, %{managed?: false} = state),
+    do: {:messages_and_write, messages, data, state}
+
+  defp deliver_messages_and_config_result(messages, data, state) do
+    case write_managed(data, state) do
+      :ok ->
+        {:messages_and_reply, messages, %{"configOptions" => config_options_for_state(state)},
+         state}
+
+      {:error, reason} ->
+        {:error, inspect(reason), state}
     end
   end
 
@@ -1289,6 +1315,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
           "sessionId" => session_id,
           "models" => models,
           "modes" => modes,
+          "configOptions" => session_config_options(models, modes),
           "_meta" => %{"ex_mcp" => %{"pi" => compact(%{"sessionFile" => session_file})}}
         })
 
@@ -1377,6 +1404,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
         "sessionId" => session_id,
         "models" => models,
         "modes" => modes,
+        "configOptions" => session_config_options(models, modes),
         "_meta" => %{"ex_mcp" => %{"pi" => compact(%{"sessionFile" => session_file})}}
       })
 
@@ -1828,9 +1856,94 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp thinking_state(state_data) do
-    current = state_data["thinkingLevel"] || @default_thinking_level
-    current = if current in @thinking_levels, do: current, else: @default_thinking_level
+    current = normalize_thinking_level(state_data["thinkingLevel"])
     %{"availableModes" => modes(), "currentModeId" => current}
+  end
+
+  defp normalize_thinking_level(level) when level in @thinking_levels, do: level
+  defp normalize_thinking_level(_level), do: @default_thinking_level
+
+  defp session_config_options(models, modes) do
+    model_options =
+      case model_config_option(models) do
+        nil -> []
+        option -> [option]
+      end
+
+    model_options ++ [thinking_config_option(modes)] ++ runtime_config_options()
+  end
+
+  defp config_options_for_state(state) do
+    models =
+      case state.available_models do
+        [] ->
+          nil
+
+        available when is_list(available) ->
+          %{
+            "availableModels" => available,
+            "currentModelId" =>
+              state.current_model_id || get_in(available, [Access.at(0), "modelId"]) ||
+                "default"
+          }
+      end
+
+    modes = %{
+      "availableModes" => modes(),
+      "currentModeId" => normalize_thinking_level(state.thinking_level)
+    }
+
+    session_config_options(models, modes)
+  end
+
+  defp config_options_update(session_id, state) do
+    AdapterEvents.config_option_update(session_id, config_options_for_state(state))
+  end
+
+  defp model_config_option(%{"availableModels" => models} = state) when is_list(models) do
+    if models == [] do
+      nil
+    else
+      %{
+        "id" => @model_config_id,
+        "name" => "Model",
+        "category" => "model",
+        "description" => "Select the model for this session",
+        "type" => "select",
+        "currentValue" => state["currentModelId"],
+        "options" =>
+          Enum.map(models, fn model ->
+            %{
+              "value" => model["modelId"],
+              "name" => model["name"],
+              "description" => model["description"]
+            }
+          end)
+      }
+    end
+  end
+
+  defp model_config_option(_models), do: nil
+
+  defp thinking_config_option(modes) do
+    available = modes["availableModes"] || modes()
+
+    %{
+      "id" => @thought_level_config_id,
+      "name" => "Thinking",
+      "category" => "thought_level",
+      "description" => "Set the reasoning effort for this session",
+      "type" => "select",
+      "currentValue" => normalize_thinking_level(modes["currentModeId"]),
+      "options" =>
+        Enum.map(available, fn mode ->
+          %{
+            "value" => mode["id"],
+            "name" => mode["name"],
+            "description" => mode["description"]
+          }
+        end)
+    }
   end
 
   defp command_state(data, file_commands, settings) do
@@ -2084,6 +2197,44 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp translate_config_option("auto_retry", value, state) when value in ["true", "false"],
     do: translate_config_option("auto_retry", value == "true", state)
+
+  defp translate_config_option(@model_config_id, value, state) do
+    case resolve_model(value, state.available_models) do
+      {:ok, provider, model_id, current_model_id} ->
+        rpc_msg = %{"type" => "set_model", "provider" => provider, "modelId" => model_id}
+        state = %{state | current_model_id: current_model_id}
+        session_id = state.session_id
+
+        deliver_messages_and_config_result(
+          [config_options_update(session_id, state)],
+          encode_rpc(rpc_msg),
+          state
+        )
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  defp translate_config_option(@thought_level_config_id, value, state)
+       when value in @thinking_levels do
+    state = %{state | thinking_level: value}
+    session_id = state.session_id
+
+    messages = [
+      AdapterEvents.current_mode_update(session_id, value),
+      config_options_update(session_id, state)
+    ]
+
+    deliver_messages_and_config_result(
+      messages,
+      encode_rpc(%{"type" => "set_thinking_level", "level" => value}),
+      state
+    )
+  end
+
+  defp translate_config_option(@thought_level_config_id, value, state),
+    do: {:error, "Unknown thinking level: #{value}", state}
 
   defp translate_config_option("steering_mode", value, state)
        when value in ["all", "one-at-a-time"] do

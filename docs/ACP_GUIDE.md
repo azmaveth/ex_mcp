@@ -130,11 +130,13 @@ session setup, model/mode config, and richer status updates.
   command: ["pi"],
   adapter: ExMCP.ACP.Adapters.Pi,
   adapter_opts: [
-    model: "anthropic/claude-sonnet-4",
-    thinking_level: "medium",
     session_path: "/path/to/session.jsonl"  # optional: resume session
   ]
 )
+
+{:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/my/project")
+{:ok, _} = ExMCP.ACP.Client.set_config_option(client, sid, "model", "anthropic/claude-sonnet-4")
+{:ok, _} = ExMCP.ACP.Client.set_config_option(client, sid, "thought_level", "medium")
 ```
 
 ## Client Options
@@ -490,6 +492,7 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 - Terminal authentication method advertisement through `authMethods`
 - Pi session discovery from JSONL files plus a local ExMCP session map at `~/.ex_mcp/pi/session-map.json`, with cursor pagination and last-cwd default filtering
 - Prompt queuing while another Pi turn is active
+- Per-session `model` and `thought_level` config options, with ACP config-option sync updates after model/thinking changes
 - Global/project Pi settings merge for skill command filtering and quiet startup
 - Startup info for Pi version, context, prompts, skills, extensions, and captured CLI prelude; registry update notices are opt-in
 - Markdown slash commands loaded from `~/.pi/agent/prompts` and `<cwd>/.pi/prompts`
@@ -501,9 +504,9 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 
 **Modes:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh` map to Pi thinking levels through ACP `session/set_mode`.
 
-**Config options:** `auto_compaction`, `auto_retry`, `steering_mode`, `follow_up_mode`. Model changes use `ExMCP.ACP.Client.set_model/3` rather than a config option.
+**Config options:** Session responses include upstream-compatible `model` and `thought_level` selectors, plus ExMCP's existing `auto_compaction`, `auto_retry`, `steering_mode`, and `follow_up_mode` controls. Model changes can use either `ExMCP.ACP.Client.set_model/3` or `set_config_option/4` with config id `model`.
 
-**Startup options:** `cli_path`/`pi_command`, `session_dir`, `session_map_path`, `delete_session_files`, and `update_notice`. `session/delete` removes ExMCP session-map state by default; backing Pi JSONL files are deleted only when `delete_session_files: true` is set and the file is under the configured Pi session directory. Registry update checks are disabled unless `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true` is set.
+**Startup options:** `cli_path`/`pi_command`, `session_path`, `session_dir`, `session_map_path`, `delete_session_files`, and `update_notice`. The live Pi subprocess is started like upstream `pi-acp`, with `--mode rpc --no-themes` and optional `--session <path>`; cwd is applied as the child process working directory. `session/delete` removes ExMCP session-map state by default; backing Pi JSONL files are deleted only when `delete_session_files: true` is set and the file is under the configured Pi session directory. Registry update checks are disabled unless `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true` is set.
 
 **Breaking change:** Pi-specific `_ex_mcp.pi/*` and legacy `pi/*` extension methods are no longer implemented. Use the ACP session methods above or slash commands in prompts.
 

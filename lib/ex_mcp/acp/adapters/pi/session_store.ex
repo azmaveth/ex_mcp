@@ -162,10 +162,16 @@ defmodule ExMCP.ACP.Adapters.Pi.SessionStore do
   end
 
   defp updated_at_from_lines(lines) do
+    updated_at_from_lines(lines, :message) || updated_at_from_lines(lines, :any)
+  end
+
+  defp updated_at_from_lines(lines, mode) do
     lines
     |> Enum.reverse()
     |> Enum.find_value(fn line ->
-      with {:ok, %{"timestamp" => timestamp}} when is_binary(timestamp) <- Jason.decode(line),
+      with {:ok, entry} when is_map(entry) <- Jason.decode(line),
+           true <- mode == :any or entry["type"] == "message",
+           timestamp when is_binary(timestamp) <- entry["timestamp"],
            {:ok, dt, _offset} <- DateTime.from_iso8601(timestamp) do
         DateTime.to_iso8601(dt)
       else

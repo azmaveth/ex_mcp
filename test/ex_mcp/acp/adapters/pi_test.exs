@@ -42,27 +42,37 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert "--no-themes" in args
     end
 
-    test "includes model flag" do
-      {_cmd, args} = Pi.cli_command(model: "anthropic/claude-sonnet-4")
-      assert "--model" in args
-      assert "anthropic/claude-sonnet-4" in args
-    end
-
     test "includes session path" do
       {_cmd, args} = Pi.cli_command(session_path: "/tmp/session.jsonl")
       assert "--session" in args
       assert "/tmp/session.jsonl" in args
     end
 
+    test "does not pass unsupported runtime settings through process argv" do
+      {_cmd, args} =
+        Pi.cli_command(
+          model: "anthropic/claude-sonnet-4",
+          cwd: "/tmp/project",
+          session_dir: "/tmp/pi-sessions",
+          system_prompt: "custom prompt",
+          no_session: true
+        )
+
+      refute "--model" in args
+      refute "anthropic/claude-sonnet-4" in args
+      refute "--cwd" in args
+      refute "/tmp/project" in args
+      refute "--session-dir" in args
+      refute "/tmp/pi-sessions" in args
+      refute "--system-prompt" in args
+      refute "custom prompt" in args
+      refute "--no-session" in args
+    end
+
     test "does not pass api key through process argv" do
       {_cmd, args} = Pi.cli_command(api_key: "secret")
       refute "--api-key" in args
       refute "secret" in args
-    end
-
-    test "includes no-session flag" do
-      {_cmd, args} = Pi.cli_command(no_session: true)
-      assert "--no-session" in args
     end
   end
 
@@ -103,15 +113,15 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   end
 
   describe "config_options/0" do
-    test "returns Pi runtime config options but not model or thinking selectors" do
+    test "returns Pi static runtime config options and the thinking selector" do
       ids = Pi.config_options() |> Enum.map(& &1["id"])
 
+      assert "thought_level" in ids
       assert "auto_compaction" in ids
       assert "auto_retry" in ids
       assert "steering_mode" in ids
       assert "follow_up_mode" in ids
       refute "model" in ids
-      refute "thinking_level" in ids
     end
   end
 
@@ -158,6 +168,19 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:ok, %{"sessions" => [%{"sessionId" => "s1"}]}, _state} =
                Pi.list_sessions(%{}, state)
+    end
+
+    test "uses latest message timestamp instead of later metadata timestamp", %{
+      state: state,
+      session_dir: session_dir,
+      tmp_dir: tmp_dir
+    } do
+      write_session(session_dir, "s1", tmp_dir, "First prompt", "Renamed session")
+
+      assert {:ok, %{"sessions" => [%{"sessionId" => "s1"} = session]}, _state} =
+               Pi.list_sessions(%{"cwd" => tmp_dir}, state)
+
+      assert session["updatedAt"] == "2026-01-01T00:00:01Z"
     end
   end
 
@@ -213,6 +236,24 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert response["result"]["sessionId"] == "pi-session"
       assert response["result"]["modes"]["currentModeId"] == "high"
       assert response["result"]["models"]["currentModelId"] == "anthropic/claude-sonnet-4"
+
+      assert Enum.map(response["result"]["configOptions"], & &1["id"]) == [
+               "model",
+               "thought_level",
+               "auto_compaction",
+               "auto_retry",
+               "steering_mode",
+               "follow_up_mode"
+             ]
+
+      assert Enum.find(response["result"]["configOptions"], &(&1["id"] == "model"))[
+               "currentValue"
+             ] == "anthropic/claude-sonnet-4"
+
+      assert Enum.find(response["result"]["configOptions"], &(&1["id"] == "thought_level"))[
+               "currentValue"
+             ] == "high"
+
       assert commands_update["params"]["update"]["sessionUpdate"] == "available_commands_update"
       assert state.session_id == "pi-session"
 
@@ -431,19 +472,20 @@ defmodule ExMCP.ACP.Adapters.PiTest do
         "params" => %{"modelId" => "anthropic/claude-sonnet-4"}
       }
 
-      assert {:ok, data, new_state} = Pi.translate_outbound(msg, state)
+      assert {:messages_and_write, [update], data, new_state} = Pi.translate_outbound(msg, state)
       decoded = decode_one(data)
       assert decoded["type"] == "set_model"
       assert decoded["provider"] == "anthropic"
       assert decoded["modelId"] == "claude-sonnet-4"
       assert new_state.current_model_id == "anthropic/claude-sonnet-4"
+      assert update["params"]["update"]["sessionUpdate"] == "config_option_update"
     end
 
     test "session/set_model resolves bare model IDs from available models", %{state: state} do
       state = %{state | available_models: [%{"modelId" => "openai/gpt-5.1"}]}
       msg = %{"method" => "session/set_model", "params" => %{"modelId" => "gpt-5.1"}}
 
-      assert {:ok, data, new_state} = Pi.translate_outbound(msg, state)
+      assert {:messages_and_write, [_update], data, new_state} = Pi.translate_outbound(msg, state)
       decoded = decode_one(data)
       assert decoded["provider"] == "openai"
       assert decoded["modelId"] == "gpt-5.1"
@@ -463,8 +505,11 @@ defmodule ExMCP.ACP.Adapters.PiTest do
         "params" => %{"sessionId" => "s1", "modeId" => "high"}
       }
 
-      assert {:messages_and_write, [update], data, new_state} = Pi.translate_outbound(msg, state)
-      assert update["params"]["update"]["currentModeId"] == "high"
+      assert {:messages_and_write, [mode_update, config_update], data, new_state} =
+               Pi.translate_outbound(msg, state)
+
+      assert mode_update["params"]["update"]["currentModeId"] == "high"
+      assert config_update["params"]["update"]["sessionUpdate"] == "config_option_update"
       assert decode_one(data)["type"] == "set_thinking_level"
       assert new_state.thinking_level == "high"
     end
@@ -482,6 +527,66 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
       assert decode_one(data) == %{"type" => "set_auto_compaction", "enabled" => false}
+    end
+
+    test "model config option routes to set_model and emits config option update", %{
+      state: state
+    } do
+      state = %{
+        state
+        | session_id: "s1",
+          available_models: [
+            %{"modelId" => "test/alpha", "name" => "test/Alpha", "description" => nil},
+            %{"modelId" => "test/beta", "name" => "test/Beta", "description" => nil}
+          ],
+          current_model_id: "test/alpha"
+      }
+
+      msg = %{
+        "method" => "session/set_config_option",
+        "params" => %{"configId" => "model", "value" => "test/beta"}
+      }
+
+      assert {:messages_and_write, [update], data, new_state} =
+               Pi.translate_outbound(msg, state)
+
+      assert decode_one(data) == %{
+               "type" => "set_model",
+               "provider" => "test",
+               "modelId" => "beta"
+             }
+
+      assert new_state.current_model_id == "test/beta"
+
+      option =
+        update["params"]["update"]["configOptions"]
+        |> Enum.find(&(&1["id"] == "model"))
+
+      assert option["currentValue"] == "test/beta"
+    end
+
+    test "thought_level config option routes to set_thinking_level and emits sync updates", %{
+      state: state
+    } do
+      state = %{state | session_id: "s1", thinking_level: "medium"}
+
+      msg = %{
+        "method" => "session/set_config_option",
+        "params" => %{"configId" => "thought_level", "value" => "xhigh"}
+      }
+
+      assert {:messages_and_write, [mode_update, config_update], data, new_state} =
+               Pi.translate_outbound(msg, state)
+
+      assert decode_one(data) == %{"type" => "set_thinking_level", "level" => "xhigh"}
+      assert new_state.thinking_level == "xhigh"
+      assert mode_update["params"]["update"]["currentModeId"] == "xhigh"
+
+      option =
+        config_update["params"]["update"]["configOptions"]
+        |> Enum.find(&(&1["id"] == "thought_level"))
+
+      assert option["currentValue"] == "xhigh"
     end
 
     test "unknown config option returns an error", %{state: state} do

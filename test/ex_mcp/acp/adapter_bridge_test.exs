@@ -1005,6 +1005,29 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
         {:reply, %{"deleted" => true}, state}
       end
 
+      def translate_outbound(
+            %{"method" => "session/set_config_option", "params" => %{"configId" => "mode"}},
+            state
+          ) do
+        options = [%{"id" => "mode"}]
+
+        messages = [
+          %{
+            "jsonrpc" => "2.0",
+            "method" => "session/update",
+            "params" => %{
+              "sessionId" => "adapter-session",
+              "update" => %{
+                "sessionUpdate" => "config_option_update",
+                "configOptions" => options
+              }
+            }
+          }
+        ]
+
+        {:messages_and_reply, messages, %{"configOptions" => options}, state}
+      end
+
       def translate_outbound(%{"method" => "session/set_config_option"}, state) do
         data = Jason.encode!(%{"type" => "config_echo", "ok" => true}) <> "\n"
         {:reply_and_write, %{"configOptions" => [%{"id" => "model"}]}, data, state}
@@ -1073,6 +1096,35 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
       assert msg["id"] == 91
       assert msg["result"] == %{"deleted" => true}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "messages_and_reply emits config update and responds to config option requests" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: DirectReplyAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      config_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/set_config_option",
+        "params" => %{
+          "sessionId" => "adapter-session",
+          "configId" => "mode",
+          "value" => "agent"
+        },
+        "id" => 93
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(config_msg))
+      assert {:ok, raw_update} = AdapterBridge.receive_message(bridge, 5_000)
+      update = Jason.decode!(raw_update)
+      assert update["method"] == "session/update"
+      assert update["params"]["update"]["configOptions"] == [%{"id" => "mode"}]
+
+      assert {:ok, raw_response} = AdapterBridge.receive_message(bridge, 5_000)
+      response = Jason.decode!(raw_response)
+      assert response["id"] == 93
+      assert response["result"]["configOptions"] == [%{"id" => "mode"}]
 
       AdapterBridge.close(bridge)
     end

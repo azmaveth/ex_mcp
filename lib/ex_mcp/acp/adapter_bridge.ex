@@ -650,10 +650,23 @@ defmodule ExMCP.ACP.AdapterBridge do
         state = synthesize_result(state, id, result || config_options_result(state))
         {:reply, :ok, state}
 
+      {:messages_and_reply, messages, result, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        state = synthesize_result(state, id, result || config_options_result(state))
+        {:reply, :ok, state}
+
       {:reply_and_write, result, data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
         _ = write_to_port(state, data)
         state = synthesize_result(state, id, result || config_options_result(state))
+        {:reply, :ok, state}
+
+      {:messages_and_write, messages, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        state = synthesize_result(state, id, config_options_result(state))
         {:reply, :ok, state}
 
       {:error, reason, new_adapter_state} ->
