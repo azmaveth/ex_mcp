@@ -3,13 +3,31 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
   Pure config and mode helpers for the Codex ACP adapter.
   """
 
-  @default_mode "auto"
+  @default_mode "agent"
   @default_reasoning_effort "medium"
 
   @mode_profiles %{
-    "read-only" => %{permissions: ":read-only", approval: "on-request"},
-    "auto" => %{permissions: ":workspace", approval: "on-request"},
-    "full-access" => %{permissions: ":danger-no-sandbox", approval: "never"}
+    "read-only" => %{
+      approval: "on-request",
+      sandbox: "read-only",
+      sandbox_policy: %{"type" => "readOnly", "networkAccess" => false}
+    },
+    "agent" => %{
+      approval: "on-request",
+      sandbox: "workspace-write",
+      sandbox_policy: %{
+        "type" => "workspaceWrite",
+        "writableRoots" => [],
+        "networkAccess" => false,
+        "excludeTmpdirEnvVar" => false,
+        "excludeSlashTmp" => false
+      }
+    },
+    "agent-full-access" => %{
+      approval: "never",
+      sandbox: "danger-full-access",
+      sandbox_policy: %{"type" => "dangerFullAccess"}
+    }
   }
 
   @reasoning_efforts [
@@ -33,18 +51,19 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
     [
       %{
         "id" => "read-only",
-        "name" => "Read Only",
-        "description" => "Inspect files and propose changes without writing to the workspace"
+        "name" => "Read-only",
+        "description" => "Requires approval to edit files and run commands."
       },
       %{
-        "id" => "auto",
-        "name" => "Auto",
-        "description" => "Edit within the workspace and request approval for sensitive actions"
+        "id" => "agent",
+        "name" => "Agent",
+        "description" => "Read and edit files, and run commands."
       },
       %{
-        "id" => "full-access",
-        "name" => "Full Access",
-        "description" => "Run without sandbox restrictions"
+        "id" => "agent-full-access",
+        "name" => "Agent (full access)",
+        "description" =>
+          "Codex can edit files outside this workspace and run commands with network access. Exercise caution when using."
       }
     ]
   end
@@ -67,20 +86,41 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
     to_string(mode_id)
   end
 
-  @spec merge_mode_wire_params(map(), String.t() | nil) :: map()
-  def merge_mode_wire_params(map, nil), do: map
+  @spec merge_thread_mode_wire_params(map(), String.t() | nil) :: map()
+  def merge_thread_mode_wire_params(map, nil), do: map
 
-  def merge_mode_wire_params(map, mode_id) do
+  def merge_thread_mode_wire_params(map, mode_id) do
     case Map.get(@mode_profiles, mode_id) do
       nil ->
         map
 
-      %{permissions: permissions, approval: approval} ->
+      %{sandbox: sandbox, approval: approval} ->
         map
-        |> Map.put("permissions", permissions)
+        |> Map.put("sandbox", sandbox)
         |> Map.put("approvalPolicy", approval)
     end
   end
+
+  @spec merge_turn_mode_wire_params(map(), String.t() | nil, [String.t()]) :: map()
+  def merge_turn_mode_wire_params(map, mode_id, additional_directories \\ [])
+
+  def merge_turn_mode_wire_params(map, nil, _additional_directories), do: map
+
+  def merge_turn_mode_wire_params(map, mode_id, additional_directories) do
+    case Map.get(@mode_profiles, mode_id) do
+      nil ->
+        map
+
+      %{sandbox_policy: sandbox_policy, approval: approval} ->
+        map
+        |> Map.put("sandboxPolicy", add_writable_roots(sandbox_policy, additional_directories))
+        |> Map.put("approvalPolicy", approval)
+    end
+  end
+
+  @doc false
+  @spec merge_mode_wire_params(map(), String.t() | nil) :: map()
+  def merge_mode_wire_params(map, mode_id), do: merge_thread_mode_wire_params(map, mode_id)
 
   @spec mode_id_from_result(map()) :: String.t() | nil
   def mode_id_from_result(result) do
@@ -90,9 +130,34 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
 
     case active_profile do
       ":read-only" -> "read-only"
-      ":workspace" -> "auto"
-      ":danger-no-sandbox" -> "full-access"
-      _ -> nil
+      ":workspace" -> "agent"
+      ":danger-no-sandbox" -> "agent-full-access"
+      _ -> mode_id_from_settings(result["threadSettings"] || result["settings"] || result)
     end
   end
+
+  defp mode_id_from_settings(%{"sandboxPolicy" => %{"type" => "readOnly"}}), do: "read-only"
+  defp mode_id_from_settings(%{"sandboxPolicy" => %{"type" => "workspaceWrite"}}), do: "agent"
+
+  defp mode_id_from_settings(%{"sandboxPolicy" => %{"type" => "dangerFullAccess"}}),
+    do: "agent-full-access"
+
+  defp mode_id_from_settings(%{"sandbox" => "read-only"}), do: "read-only"
+  defp mode_id_from_settings(%{"sandbox" => "workspace-write"}), do: "agent"
+  defp mode_id_from_settings(%{"sandbox" => "danger-full-access"}), do: "agent-full-access"
+  defp mode_id_from_settings(_settings), do: nil
+
+  defp add_writable_roots(%{"type" => "workspaceWrite"} = sandbox_policy, additional_directories) do
+    roots =
+      sandbox_policy
+      |> Map.get("writableRoots", [])
+      |> List.wrap()
+      |> Enum.concat(additional_directories)
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+
+    Map.put(sandbox_policy, "writableRoots", roots)
+  end
+
+  defp add_writable_roots(sandbox_policy, _additional_directories), do: sandbox_policy
 end

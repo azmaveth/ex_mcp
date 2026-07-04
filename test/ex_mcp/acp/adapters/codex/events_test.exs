@@ -31,7 +31,7 @@ defmodule ExMCP.ACP.Adapters.Codex.EventsTest do
   test "maps common titles and ids" do
     assert Events.command_title("") == "Run Command"
     assert Events.command_title("mix test") == "mix test"
-    assert Events.mcp_tool_title(%{"server" => "repo", "tool" => "search"}) == "repo:search"
+    assert Events.mcp_tool_title(%{"server" => "repo", "tool" => "search"}) == "mcp.repo.search"
     assert Events.dynamic_tool_title(%{"namespace" => "fs", "tool" => "read"}) == "fs:read"
 
     assert Events.item_id(%{"itemId" => "item-1"}, %{"id" => "item-2"}) == "item-1"

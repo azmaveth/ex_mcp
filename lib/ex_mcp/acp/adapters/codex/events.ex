@@ -10,10 +10,13 @@ defmodule ExMCP.ACP.Adapters.Codex.Events do
     "queued" => "pending",
     "running" => "in_progress",
     "in_progress" => "in_progress",
+    "inProgress" => "in_progress",
+    "incomplete" => "in_progress",
     "completed" => "completed",
     "success" => "completed",
     "succeeded" => "completed",
     "failed" => "failed",
+    "declined" => "failed",
     "errored" => "failed",
     "cancelled" => "cancelled",
     "canceled" => "cancelled"
@@ -49,7 +52,7 @@ defmodule ExMCP.ACP.Adapters.Codex.Events do
   @spec mcp_tool_title(map()) :: String.t()
   def mcp_tool_title(%{"server" => server, "tool" => tool})
       when is_binary(server) and is_binary(tool),
-      do: "#{server}:#{tool}"
+      do: "mcp.#{server}.#{tool}"
 
   def mcp_tool_title(%{"tool" => tool}) when is_binary(tool), do: tool
   def mcp_tool_title(_item), do: "MCP Tool"
@@ -117,6 +120,73 @@ defmodule ExMCP.ACP.Adapters.Codex.Events do
   @spec command_title(any()) :: String.t()
   def command_title(command) when is_binary(command) and command != "", do: command
   def command_title(_command), do: "Run Command"
+
+  @spec terminal_info(String.t(), String.t() | nil) :: map()
+  def terminal_info(terminal_id, cwd) do
+    %{"terminal_info" => %{"terminal_id" => terminal_id, "cwd" => cwd}}
+  end
+
+  @spec terminal_output_delta(String.t(), String.t()) :: map()
+  def terminal_output_delta(terminal_id, data) do
+    %{"terminal_output_delta" => %{"terminal_id" => terminal_id, "data" => data}}
+  end
+
+  @spec terminal_exit(String.t(), any()) :: map()
+  def terminal_exit(terminal_id, exit_code) do
+    %{
+      "terminal_exit" => %{
+        "terminal_id" => terminal_id,
+        "exit_code" => exit_code,
+        "signal" => nil
+      }
+    }
+  end
+
+  @spec mcp_raw_input(map()) :: map()
+  def mcp_raw_input(item) do
+    %{
+      "server" => item["server"],
+      "tool" => item["tool"],
+      "arguments" => item["arguments"]
+    }
+  end
+
+  @spec mcp_raw_output(map()) :: map() | nil
+  def mcp_raw_output(%{"result" => nil, "error" => nil}), do: nil
+
+  def mcp_raw_output(item) do
+    %{"result" => item["result"], "error" => item["error"]}
+  end
+
+  @spec web_search_title(map()) :: String.t()
+  def web_search_title(%{"action" => %{"type" => "search"} = action} = item) do
+    query =
+      action["query"] ||
+        (action["queries"] || [])
+        |> List.wrap()
+        |> Enum.filter(&(is_binary(&1) and &1 != ""))
+        |> Enum.join(", ")
+        |> case do
+          "" -> item["query"]
+          value -> value
+        end
+
+    if query, do: "Web search: #{query}", else: "Web search"
+  end
+
+  def web_search_title(%{"action" => %{"type" => "openPage", "url" => url}}) when is_binary(url),
+    do: "Open page: #{url}"
+
+  def web_search_title(%{"action" => %{"type" => "findInPage"} = action}) do
+    pattern = if action["pattern"], do: " for '#{action["pattern"]}'", else: ""
+    url = if action["url"], do: " in #{action["url"]}", else: ""
+    String.trim("Find in page#{pattern}#{url}")
+  end
+
+  def web_search_title(%{"query" => query}) when is_binary(query) and query != "",
+    do: "Web search: #{query}"
+
+  def web_search_title(_item), do: "Web search"
 
   @spec tool_kind(any()) :: String.t()
   def tool_kind(name) when is_binary(name) do

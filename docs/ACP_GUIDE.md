@@ -461,18 +461,18 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 - Initialize handshake with `post_connect/1`
 - Model catalog loading from Codex `model/list`, ACP `session/set_model`, and per-session `models` state
 - Tool call lifecycle: creation, completion, output, patch events, and current camelCase app-server item variants
-- Command execution streaming (started/outputDelta/completed)
-- Web search, MCP tool, dynamic tool, file change, image generation, plan, status, goal, and compaction events
-- Session list/load/resume/close through Codex app-server thread APIs
+- Command execution streaming with ACP terminal metadata
+- Web search, MCP tool, dynamic tool, file change, image view, image generation, guardian review, fuzzy file search, plan, status, goal, usage, and compaction events
+- Session list/load/resume/close/delete through Codex app-server thread APIs
 - Load-history replay from returned Codex turns when available, including tool history
-- Image content, resource links, and embedded text resources in prompts
-- Codex slash commands in prompts: `/compact`, `/init`, `/review`, `/review-branch`, `/review-commit`, and `/logout`
+- Image content, resource links, embedded text/binary resources, and additional workspace directories in prompts/session setup
+- Codex slash commands in prompts: `/compact`, `/init`, `/review`, `/review-branch`, `/review-commit`, `/status`, and `/logout`
 - ACP HTTP and stdio MCP server descriptors forwarded into Codex session config
-- Codex auth methods for ChatGPT login and explicit `CODEX_API_KEY`/`OPENAI_API_KEY` adapter env
+- Codex auth methods for `chat-gpt`, `api-key`, and opt-in custom `gateway` auth
 - Approval and MCP elicitation requests bridged through ACP `session/request_permission`
 
-**Modes:** read-only, auto, full-access. Legacy `suggest`, `auto-edit`, and `full-auto` aliases are no longer accepted.
-**Config options:** `mode`, `model`, and `reasoning_effort` are returned with Codex session responses and updated with `thread/settings/update`.
+**Modes:** `read-only`, `agent`, `agent-full-access`. Legacy `suggest`, `auto-edit`, `auto`, `full-auto`, and `full-access` aliases are no longer accepted.
+**Config options:** `mode`, `model`, `reasoning_effort`, and `fast-mode` (when supported by the selected model) are returned with Codex session responses. Runtime changes are kept in adapter session state and applied to subsequent `turn/start` requests.
 
 **Unsupported Codex app-server requests:** Dynamic tool calls, request-user-input prompts, ChatGPT token refresh, and attestation generation are rejected explicitly because ACP does not provide compatible structured responses for those app-server request schemas.
 

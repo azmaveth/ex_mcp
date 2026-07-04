@@ -25,6 +25,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     pending_requests: %{},
     pending_client_requests: %{},
     sessions: %{},
+    gateway_config: nil,
     opts: []
   ]
 
@@ -40,14 +41,18 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   @impl true
-  def command(_opts), do: {"codex", ["app-server"]}
+  def command(opts) do
+    {Keyword.get(opts, :codex_path) || System.get_env("CODEX_PATH") || "codex", ["app-server"]}
+  end
 
   @impl true
   def capabilities do
     %{
       "promptCapabilities" => %{"image" => true, "embeddedContext" => true},
       "mcpCapabilities" => %{
+        "acp" => false,
         "http" => true,
+        "sse" => false,
         "_meta" => %{"ex_mcp.codex" => %{"stdioMcpServers" => true}}
       },
       "loadSession" => true,
@@ -56,6 +61,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
         "list" => %{},
         "resume" => %{},
         "close" => %{},
+        "delete" => %{},
+        "additionalDirectories" => %{},
         "setModel" => %{}
       }
     }
@@ -63,23 +70,67 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   @impl true
   def auth_methods(opts) do
-    env_methods = [
-      env_auth_method("codex-api-key", "Use CODEX_API_KEY", "CODEX_API_KEY"),
-      env_auth_method("openai-api-key", "Use OPENAI_API_KEY", "OPENAI_API_KEY")
+    methods = [
+      %{
+        "id" => "api-key",
+        "name" => "API Key",
+        "description" => "Use an API key to authenticate",
+        "_meta" => %{"api-key" => %{"provider" => "openai"}}
+      }
     ]
 
-    if Keyword.get(opts, :no_browser, false) || System.get_env("NO_BROWSER") do
-      env_methods
+    methods =
+      if Keyword.get(opts, :no_browser, false) || System.get_env("NO_BROWSER") do
+        methods
+      else
+        methods ++
+          [
+            %{
+              "id" => "chat-gpt",
+              "name" => "ChatGPT",
+              "description" => "Use ChatGPT to authenticate"
+            }
+          ]
+      end
+
+    methods =
+      if Keyword.get(opts, :gateway_auth, false) do
+        methods ++
+          [
+            %{
+              "id" => "gateway",
+              "name" => "Custom model gateway",
+              "description" => "Use a custom gateway to authenticate and access models",
+              "_meta" => %{
+                "gateway" => %{"protocol" => "openai", "restartRequired" => "false"}
+              }
+            }
+          ]
+      else
+        methods
+      end
+
+    with_legacy_auth_methods(methods)
+  end
+
+  defp legacy_auth_methods do
+    [
+      env_auth_method("codex-api-key", "Use CODEX_API_KEY", "CODEX_API_KEY"),
+      env_auth_method("openai-api-key", "Use OPENAI_API_KEY", "OPENAI_API_KEY"),
+      %{
+        "id" => "chatgpt",
+        "name" => "Login with ChatGPT",
+        "description" =>
+          "Use your ChatGPT login with Codex CLI (requires a paid ChatGPT subscription)"
+      }
+    ]
+  end
+
+  defp with_legacy_auth_methods(methods) do
+    if Application.get_env(:ex_mcp, :codex_legacy_auth_methods, false) do
+      methods ++ legacy_auth_methods()
     else
-      [
-        %{
-          "id" => "chatgpt",
-          "name" => "Login with ChatGPT",
-          "description" =>
-            "Use your ChatGPT login with Codex CLI (requires a paid ChatGPT subscription)"
-        }
-        | env_methods
-      ]
+      methods
     end
   end
 
@@ -118,7 +169,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
   def translate_outbound(%{"method" => "authenticate", "id" => acp_id, "params" => params}, state) do
     method_id = params["methodId"] || params["provider"] || params["id"]
 
-    case auth_request_params(method_id, state) do
+    case auth_request_params(method_id, params, state) do
+      {:ok, {:gateway, gateway_config}} ->
+        {:reply, %{}, %{state | gateway_config: gateway_config}}
+
       {:ok, codex_params} ->
         {id, state} = next_request_id(state)
         request = encode_request(id, "account/login/start", codex_params)
@@ -144,20 +198,32 @@ defmodule ExMCP.ACP.Adapters.Codex do
     mode_id =
       Config.normalize_mode_id(params["modeId"] || params["approvalPolicy"] || state.mode_id)
 
-    mcp_config = mcp_config(params["mcpServers"], params["cwd"] || Keyword.get(state.opts, :cwd))
+    cwd = params["cwd"] || Keyword.get(state.opts, :cwd)
 
-    wire_params =
-      %{}
-      |> maybe_put("model", params["model"] || state.model)
-      |> maybe_put("cwd", params["cwd"] || Keyword.get(state.opts, :cwd))
-      |> maybe_put("sandbox", params["sandbox"])
-      |> maybe_put("config", mcp_config)
-      |> Config.merge_mode_wire_params(mode_id)
+    case session_config(params, cwd, state) do
+      {:ok, config, additional_directories} ->
+        wire_params =
+          %{}
+          |> maybe_put("model", params["model"] || state.model)
+          |> maybe_put("modelProvider", model_provider(state))
+          |> maybe_put("cwd", cwd)
+          |> maybe_put("config", config)
+          |> Config.merge_thread_mode_wire_params(mode_id)
 
-    {id, state} = next_request_id(state)
-    request = encode_request(id, "thread/start", wire_params)
-    state = track_request(state, id, :thread_start, acp_id, %{mode_id: mode_id})
-    {:ok, request, state}
+        {id, state} = next_request_id(state)
+        request = encode_request(id, "thread/start", wire_params)
+
+        state =
+          track_request(state, id, :thread_start, acp_id, %{
+            mode_id: mode_id,
+            additional_directories: additional_directories
+          })
+
+        {:ok, request, state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
   end
 
   def translate_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state) do
@@ -166,23 +232,35 @@ defmodule ExMCP.ACP.Adapters.Codex do
         mode_id =
           Config.normalize_mode_id(params["modeId"] || params["approvalPolicy"] || state.mode_id)
 
-        mcp_config =
-          mcp_config(params["mcpServers"], params["cwd"] || Keyword.get(state.opts, :cwd))
+        cwd = params["cwd"] || Keyword.get(state.opts, :cwd)
 
-        wire_params =
-          %{
-            "threadId" => session_id,
-            "initialTurnsPage" => %{"limit" => 100, "itemsView" => "full"}
-          }
-          |> maybe_put("model", params["model"] || state.model)
-          |> maybe_put("cwd", params["cwd"] || Keyword.get(state.opts, :cwd))
-          |> maybe_put("config", mcp_config)
-          |> Config.merge_mode_wire_params(mode_id)
+        case session_config(params, cwd, state) do
+          {:ok, config, additional_directories} ->
+            wire_params =
+              %{
+                "threadId" => session_id,
+                "initialTurnsPage" => %{"limit" => 100, "itemsView" => "full"}
+              }
+              |> maybe_put("model", params["model"] || state.model)
+              |> maybe_put("modelProvider", resume_model_provider(state))
+              |> maybe_put("cwd", cwd)
+              |> maybe_put("config", config)
+              |> Config.merge_thread_mode_wire_params(mode_id)
 
-        {id, state} = next_request_id(state)
-        request = encode_request(id, "thread/resume", wire_params)
-        state = track_request(state, id, :thread_resume, acp_id, %{mode_id: mode_id})
-        {:ok, request, state}
+            {id, state} = next_request_id(state)
+            request = encode_request(id, "thread/resume", wire_params)
+
+            state =
+              track_request(state, id, :thread_resume, acp_id, %{
+                mode_id: mode_id,
+                additional_directories: additional_directories
+              })
+
+            {:ok, request, state}
+
+          {:error, reason} ->
+            {:error, reason, state}
+        end
 
       {:error, reason} ->
         {:error, reason, state}
@@ -195,16 +273,35 @@ defmodule ExMCP.ACP.Adapters.Codex do
       ) do
     case Sessions.fetch_id(params) do
       {:ok, session_id} ->
-        wire_params =
-          %{"threadId" => session_id, "excludeTurns" => true}
-          |> maybe_put("model", params["model"] || state.model)
-          |> maybe_put("cwd", params["cwd"] || Keyword.get(state.opts, :cwd))
-          |> maybe_put("config", mcp_config(params["mcpServers"], params["cwd"]))
+        mode_id =
+          Config.normalize_mode_id(params["modeId"] || params["approvalPolicy"] || state.mode_id)
 
-        {id, state} = next_request_id(state)
-        request = encode_request(id, "thread/resume", wire_params)
-        state = track_request(state, id, :thread_resume, acp_id, %{})
-        {:ok, request, state}
+        cwd = params["cwd"] || Keyword.get(state.opts, :cwd)
+
+        case session_config(params, cwd, state) do
+          {:ok, config, additional_directories} ->
+            wire_params =
+              %{"threadId" => session_id, "excludeTurns" => true}
+              |> maybe_put("model", params["model"] || state.model)
+              |> maybe_put("modelProvider", resume_model_provider(state))
+              |> maybe_put("cwd", cwd)
+              |> maybe_put("config", config)
+              |> Config.merge_thread_mode_wire_params(mode_id)
+
+            {id, state} = next_request_id(state)
+            request = encode_request(id, "thread/resume", wire_params)
+
+            state =
+              track_request(state, id, :thread_resume, acp_id, %{
+                mode_id: mode_id,
+                additional_directories: additional_directories
+              })
+
+            {:ok, request, state}
+
+          {:error, reason} ->
+            {:error, reason, state}
+        end
 
       {:error, reason} ->
         {:error, reason, state}
@@ -220,8 +317,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
       |> maybe_put("cursor", params["cursor"])
       |> maybe_put("limit", params["limit"])
       |> maybe_put("archived", false)
-      |> maybe_put("sortKey", "updatedAt")
-      |> maybe_put("sortDirection", "desc")
 
     request = encode_request(id, "thread/list", wire_params)
     state = track_request(state, id, :session_list, acp_id)
@@ -258,6 +353,63 @@ defmodule ExMCP.ACP.Adapters.Codex do
       {:reply_and_write, %{}, data, state}
     else
       {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  def translate_outbound(%{"method" => "session/delete", "params" => params}, state) do
+    case Sessions.fetch_id(params) do
+      {:ok, session_id} ->
+        session = Map.get(state.sessions, session_id)
+
+        {requests, state} =
+          if session && session[:turn_id] do
+            {interrupt_id, state} = next_request_id(state)
+
+            interrupt_request =
+              encode_request(interrupt_id, "turn/interrupt", %{
+                "threadId" => session_id,
+                "turnId" => session[:turn_id]
+              })
+
+            state =
+              track_request(state, interrupt_id, :turn_interrupt, nil, %{session_id: session_id})
+
+            {[interrupt_request], state}
+          else
+            {[], state}
+          end
+
+        {requests, state} =
+          if session do
+            {unsubscribe_id, state} = next_request_id(state)
+
+            unsubscribe_request =
+              encode_request(unsubscribe_id, "thread/unsubscribe", %{"threadId" => session_id})
+
+            state =
+              track_request(state, unsubscribe_id, :thread_unsubscribe, nil, %{
+                session_id: session_id
+              })
+
+            {requests ++ [unsubscribe_request], state}
+          else
+            {requests, state}
+          end
+
+        {archive_id, state} = next_request_id(state)
+
+        archive_request =
+          encode_request(archive_id, "thread/archive", %{"threadId" => session_id})
+
+        state =
+          state
+          |> Map.update!(:sessions, &Map.delete(&1, session_id))
+          |> track_request(archive_id, :thread_archive, nil, %{session_id: session_id})
+
+        {:reply_and_write, %{}, requests ++ [archive_request], state}
+
+      {:error, reason} ->
+        {:error, reason, state}
     end
   end
 
@@ -304,26 +456,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id),
          {:ok, mode_id} <- Config.normalize_requested_mode(params["modeId"]) do
-      {id, state} = next_request_id(state)
-
-      request =
-        encode_request(
-          id,
-          "thread/settings/update",
-          %{"threadId" => session_id} |> Config.merge_mode_wire_params(mode_id)
-        )
-
       session = Map.put(session, :mode_id, mode_id)
-
       messages = [AdapterEvents.current_mode_update(session_id, mode_id)]
 
       state =
         state
         |> Sessions.put(session_id, session)
         |> Map.put(:mode_id, mode_id)
-        |> track_request(id, :settings_update, nil, %{session_id: session_id})
 
-      {:messages_and_write, messages, request, state}
+      {:messages_and_reply, messages, %{}, state}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -333,17 +474,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id),
          {:ok, selection} <- model_selection(params["modelId"], session, state) do
-      {id, state} = next_request_id(state)
-
-      request =
-        encode_request(
-          id,
-          "thread/settings/update",
-          %{"threadId" => session_id}
-          |> Map.put("model", selection.model)
-          |> maybe_put("effort", selection.effort)
-        )
-
       session = Map.merge(session, selection.session)
       result = session_config_result(session, state)
 
@@ -352,9 +482,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
         |> Sessions.put(session_id, session)
         |> Map.put(:model, selection.model)
         |> Map.put(:reasoning_effort, selection.effort || state.reasoning_effort)
-        |> track_request(id, :settings_update, nil, %{session_id: session_id})
 
-      {:reply_and_write, result, request, state}
+      {:reply, result, state}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -364,15 +493,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id),
          {:ok, update} <- config_update(params, session, state) do
-      {id, state} = next_request_id(state)
-
-      request =
-        encode_request(
-          id,
-          "thread/settings/update",
-          Map.merge(%{"threadId" => session_id}, update.wire)
-        )
-
       session = Map.merge(session, update.session)
       result = session_config_result(session, state)
 
@@ -380,9 +500,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
         state
         |> Sessions.put(session_id, session)
         |> Map.merge(update.state)
-        |> track_request(id, :settings_update, nil, %{session_id: session_id})
 
-      {:reply_and_write, result, request, state}
+      {:reply, result, state}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -403,14 +522,22 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp translate_user_prompt(input_items, acp_id, session_id, session, params, state) do
     {id, state} = next_request_id(state)
+    additional_directories = session[:additional_directories] || []
 
     wire_params =
       %{
         "threadId" => session_id,
-        "input" => input_items
+        "input" => input_items,
+        "summary" => params["summary"] || "auto"
       }
       |> maybe_put("model", params["model"] || session[:model] || state.model)
+      |> maybe_put("effort", session[:reasoning_effort] || state.reasoning_effort)
+      |> maybe_put("serviceTier", service_tier_for_session(session, state))
       |> maybe_put("cwd", params["cwd"] || session[:cwd] || Keyword.get(state.opts, :cwd))
+      |> Config.merge_turn_mode_wire_params(
+        session[:mode_id] || state.mode_id || Config.default_mode(),
+        additional_directories
+      )
 
     request = encode_request(id, "turn/start", wire_params)
 
@@ -519,6 +646,46 @@ defmodule ExMCP.ACP.Adapters.Codex do
     }
 
     {:reply_and_write, result, request, state}
+  end
+
+  defp translate_slash_command({:status, _rest}, _acp_id, session_id, session, _params, state) do
+    message =
+      AdapterEvents.agent_message_chunk(session_id, status_message(session_id, session, state))
+
+    result =
+      %{
+        "stopReason" => "end_turn",
+        "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "command" => "status"}}
+      }
+      |> maybe_put("usage", session[:accumulated_usage])
+
+    {:messages_and_reply, [message], result, state}
+  end
+
+  defp translate_slash_command(
+         {:unknown, name, _rest},
+         _acp_id,
+         session_id,
+         _session,
+         _params,
+         state
+       ) do
+    commands =
+      ["compact", "init", "review", "review-branch", "review-commit", "status", "logout"]
+      |> Enum.map_join("\n", &"- /#{&1}")
+
+    message =
+      AdapterEvents.agent_message_chunk(
+        session_id,
+        "Unknown command \"/#{name}\".\nAvailable commands:\n#{commands}"
+      )
+
+    result = %{
+      "stopReason" => "end_turn",
+      "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "command" => "unknown"}}
+    }
+
+    {:messages_and_reply, [message], result, state}
   end
 
   defp review_command(acp_id, session_id, session, state, target) do
@@ -635,6 +802,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     session =
       session_from_result(session_id, result, state)
       |> Map.put(:mode_id, mode_id)
+      |> Map.put(:additional_directories, meta[:additional_directories] || [])
 
     state = Sessions.put(state, session_id, session)
 
@@ -695,6 +863,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_typed_response(:turn_interrupt, _entry, _reply, state), do: {:skip, state}
   defp handle_typed_response(:settings_update, _entry, _reply, state), do: {:skip, state}
   defp handle_typed_response(:thread_unsubscribe, _entry, _reply, state), do: {:skip, state}
+  defp handle_typed_response(:thread_archive, _entry, _reply, state), do: {:skip, state}
   defp handle_typed_response(_type, _entry, _reply, state), do: {:skip, state}
 
   # Notifications
@@ -818,11 +987,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_notification("item/commandExecution/outputDelta", params, state) do
     session_id = Sessions.id_from_params(params, state)
     delta = params["delta"] || ""
+    tool_call_id = params["callId"] || params["itemId"] || params["item_id"]
 
     notification =
       AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => params["callId"] || params["itemId"] || params["item_id"],
-        "content" => [Events.tool_text_content(delta)]
+        "toolCallId" => tool_call_id,
+        "_meta" => Events.terminal_output_delta(tool_call_id, delta)
       })
 
     {:messages, [notification], state}
@@ -830,12 +1000,17 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_notification("item/commandExecution/terminalInteraction", params, state) do
     session_id = Sessions.id_from_params(params, state)
-    text = params["text"] || params["input"] || params["delta"] || Events.format_raw(params)
+
+    text =
+      params["stdin"] || params["text"] || params["input"] || params["delta"] ||
+        Events.format_raw(params)
+
+    tool_call_id = params["callId"] || params["itemId"] || params["item_id"]
 
     notification =
       AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => params["callId"] || params["itemId"] || params["item_id"],
-        "content" => [Events.tool_text_content(text)],
+        "toolCallId" => tool_call_id,
+        "_meta" => Events.terminal_output_delta(tool_call_id, "\n#{text}\n"),
         "rawOutput" => params
       })
 
@@ -850,10 +1025,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
         "status" => "completed",
         "toolCallId" => params["callId"] || params["itemId"],
         "rawOutput" => %{
-          "exitCode" => params["exitCode"],
-          "output" => params["output"]
+          "exit_code" => params["exitCode"],
+          "formatted_output" => params["output"] || ""
         },
-        "content" => [Events.tool_text_content(params["output"] || "")]
+        "_meta" => Events.terminal_exit(params["callId"] || params["itemId"], params["exitCode"])
       })
 
     {:messages, [notification], state}
@@ -901,8 +1076,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
       AdapterEvents.tool_call_update(session_id, %{
         "toolCallId" => params["callId"] || params["itemId"],
         "status" => "in_progress",
-        "content" => [Events.tool_text_content(text)],
-        "rawOutput" => params
+        "_meta" => %{"mcp_output_delta" => %{"data" => String.trim(text)}}
       })
 
     {:messages, [notification], state}
@@ -991,20 +1165,31 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_notification("thread/tokenUsage/updated", params, state) do
     session_id = Sessions.id_from_params(params, state)
     token_usage = params["tokenUsage"] || %{}
+    last = token_usage["last"] || %{}
     total = token_usage["total"] || %{}
 
-    usage_data = %{
-      "inputTokens" => total["inputTokens"] || 0,
-      "outputTokens" => total["outputTokens"] || 0,
-      "cachedInputTokens" => total["cachedInputTokens"] || 0
-    }
+    usage_data = usage_data(total)
+    used = token_total(last)
+    size = token_usage["modelContextWindow"]
 
     state =
       Sessions.update(state, session_id, fn session ->
-        Map.put(session, :accumulated_usage, usage_data)
+        session
+        |> Map.put(:accumulated_usage, usage_data)
+        |> Map.put(:model_context_window, size)
       end)
 
-    {:skip, state}
+    if is_integer(used) and is_integer(size) and size > 0 do
+      {:messages,
+       [
+         AdapterEvents.session_update_type(session_id, "usage_update", %{
+           "used" => used,
+           "size" => size
+         })
+       ], state}
+    else
+      {:skip, state}
+    end
   end
 
   defp handle_notification("error", params, state) do
@@ -1107,13 +1292,40 @@ defmodule ExMCP.ACP.Adapters.Codex do
      ], state}
   end
 
+  defp handle_notification("thread/name/updated", params, state) do
+    session_id = Sessions.id_from_params(params, state)
+
+    {:messages,
+     [AdapterEvents.session_info_update(session_id, %{"title" => params["threadName"] || nil})],
+     state}
+  end
+
+  defp handle_notification(method, params, state)
+       when method in ["thread/archived", "thread/unarchived", "thread/closed"] do
+    session_id = Sessions.id_from_params(params, state)
+
+    metadata =
+      case method do
+        "thread/archived" -> %{"archived" => true}
+        "thread/unarchived" -> %{"archived" => false}
+        "thread/closed" -> %{"closed" => true}
+      end
+
+    {:messages,
+     [
+       AdapterEvents.session_info_update(session_id, %{
+         "_meta" => %{"codex" => metadata}
+       })
+     ], state}
+  end
+
   defp handle_notification("thread/goal/updated", params, state) do
     session_id = Sessions.id_from_params(params, state)
 
     {:messages,
      [
        AdapterEvents.session_info_update(session_id, %{
-         "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "goal" => params["goal"] || params}}
+         "_meta" => %{"codex" => %{"goal" => normalize_goal(params["goal"] || params)}}
        })
      ], state}
   end
@@ -1124,13 +1336,28 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages,
      [
        AdapterEvents.session_info_update(session_id, %{
-         "_meta" => %{"ex_mcp" => %{"adapter" => "codex", "goalCleared" => true}}
+         "_meta" => %{"codex" => %{"goal" => nil}}
        })
      ], state}
   end
 
+  defp handle_notification("model/rerouted", params, state) do
+    session_id = Sessions.id_from_params(params, state)
+    from_model = params["fromModel"] || params["from"]
+    to_model = params["toModel"] || params["to"]
+    reason = params["reason"] || "unknown"
+
+    {:messages,
+     [
+       AdapterEvents.agent_thought_chunk(
+         session_id,
+         "Model rerouted from #{from_model} to #{to_model} (#{reason}).\n\n"
+       )
+     ], state}
+  end
+
   defp handle_notification(method, params, state)
-       when method in ["model/rerouted", "model/verification", "turn/moderationMetadata"] do
+       when method in ["model/verification", "turn/moderationMetadata"] do
     session_id = Sessions.id_from_params(params, state)
 
     {:messages,
@@ -1147,6 +1374,17 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     {:messages, [AdapterEvents.available_commands_update(session_id, commands)], state}
   end
+
+  defp handle_notification(method, _params, state)
+       when method in [
+              "remoteControl/status/changed",
+              "mcpServer/startupStatus/updated",
+              "account/updated",
+              "account/login/completed",
+              "skills/changed",
+              "deprecationNotice"
+            ],
+       do: {:skip, state}
 
   defp handle_notification(method, _params, state) do
     Logger.debug("[Codex Adapter] Unhandled notification: #{method}")
@@ -1222,13 +1460,17 @@ defmodule ExMCP.ACP.Adapters.Codex do
         {:messages, [Events.tool_call_started(session_id, item)], state}
 
       "commandExecution" ->
+        tool_call_id = Events.item_id(params, item)
+
         notification =
           AdapterEvents.tool_call(session_id, %{
-            "toolCallId" => Events.item_id(params, item),
+            "toolCallId" => tool_call_id,
             "title" => Events.command_title(item["command"]),
             "kind" => "execute",
             "status" => Events.normalize_tool_status(item["status"], "in_progress"),
-            "rawInput" => %{"command" => item["command"], "cwd" => item["cwd"]}
+            "rawInput" => %{"command" => item["command"], "cwd" => item["cwd"]},
+            "content" => [%{"type" => "terminal", "terminalId" => tool_call_id}],
+            "_meta" => Events.terminal_info(tool_call_id, item["cwd"])
           })
 
         {:messages, [notification], state}
@@ -1250,9 +1492,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
           AdapterEvents.tool_call(session_id, %{
             "toolCallId" => Events.item_id(params, item),
             "title" => Events.mcp_tool_title(item),
-            "kind" => "other",
+            "kind" => "execute",
             "status" => Events.normalize_tool_status(item["status"], "in_progress"),
-            "rawInput" => item["arguments"]
+            "rawInput" => Events.mcp_raw_input(item),
+            "_meta" => %{"is_mcp_tool_call" => true}
           })
 
         {:messages, [notification], state}
@@ -1273,10 +1516,31 @@ defmodule ExMCP.ACP.Adapters.Codex do
         notification =
           AdapterEvents.tool_call(session_id, %{
             "toolCallId" => Events.item_id(params, item),
-            "title" => "Web Search",
-            "kind" => "fetch",
+            "title" => Events.web_search_title(item),
+            "kind" => "search",
             "status" => "in_progress",
-            "rawInput" => %{"query" => item["query"], "action" => item["action"]}
+            "rawInput" => item
+          })
+
+        {:messages, [notification], state}
+
+      "imageView" ->
+        path = item["path"] || ""
+
+        notification =
+          AdapterEvents.tool_call(session_id, %{
+            "toolCallId" => Events.item_id(params, item),
+            "title" => "View Image #{path}",
+            "kind" => "read",
+            "status" => "completed",
+            "content" => [
+              %{
+                "type" => "content",
+                "content" => %{"type" => "resource_link", "name" => path, "uri" => path}
+              }
+            ],
+            "locations" => [%{"path" => path}],
+            "rawInput" => %{"path" => path}
           })
 
         {:messages, [notification], state}
@@ -1285,7 +1549,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         notification =
           AdapterEvents.tool_call(session_id, %{
             "toolCallId" => Events.item_id(params, item),
-            "title" => "Generate Image",
+            "title" => "Image generation",
             "kind" => "other",
             "status" => Events.normalize_tool_status(item["status"], "in_progress"),
             "rawInput" => %{"revisedPrompt" => item["revisedPrompt"]}
@@ -1352,16 +1616,17 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp handle_item_completed(session_id, %{"type" => "commandExecution"} = item, state) do
+    tool_call_id = item["id"]
+
     notification =
       AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["id"],
+        "toolCallId" => tool_call_id,
         "status" => Events.normalize_tool_status(item["status"], "completed"),
         "rawOutput" => %{
-          "exitCode" => item["exitCode"],
-          "output" => item["aggregatedOutput"],
-          "durationMs" => item["durationMs"]
+          "exit_code" => item["exitCode"],
+          "formatted_output" => item["aggregatedOutput"] || ""
         },
-        "content" => [Events.tool_text_content(item["aggregatedOutput"] || "")]
+        "_meta" => Events.terminal_exit(tool_call_id, item["exitCode"])
       })
 
     {:messages, [notification], state}
@@ -1405,8 +1670,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
             item["status"],
             if(item["error"], do: "failed", else: "completed")
           ),
-        "content" => [Events.tool_text_content(Events.format_raw(output))],
-        "rawOutput" => output
+        "rawInput" => Events.mcp_raw_input(item),
+        "rawOutput" => Events.mcp_raw_output(item) || output
       })
 
     {:messages, [notification], state}
@@ -1434,24 +1699,29 @@ defmodule ExMCP.ACP.Adapters.Codex do
     notification =
       AdapterEvents.tool_call_update(session_id, %{
         "toolCallId" => item["id"],
+        "title" => Events.web_search_title(item),
         "status" => "completed",
-        "rawOutput" => item,
-        "content" => [
-          Events.tool_text_content(item["query"] || Events.format_raw(item["action"] || item))
-        ]
+        "rawInput" => item
       })
 
     {:messages, [notification], state}
   end
 
+  defp handle_item_completed(session_id, %{"type" => "imageView"} = item, state) do
+    handle_item_started(session_id, item, %{}, state)
+  end
+
   defp handle_item_completed(session_id, %{"type" => "imageGeneration"} = item, state) do
-    text = item["savedPath"] || item["result"] || item["revisedPrompt"] || ""
+    content =
+      []
+      |> maybe_add_image_revised_prompt(item["revisedPrompt"])
+      |> maybe_add_generated_image(item)
 
     notification =
       AdapterEvents.tool_call_update(session_id, %{
         "toolCallId" => item["id"],
         "status" => Events.normalize_tool_status(item["status"], "completed"),
-        "content" => [Events.tool_text_content(text)],
+        "content" => content,
         "rawOutput" => item
       })
 
@@ -1463,6 +1733,23 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp handle_item_completed(_session_id, _item, state), do: {:skip, state}
+
+  defp maybe_add_image_revised_prompt(content, prompt) when is_binary(prompt) and prompt != "" do
+    content ++ [Events.tool_text_content("Revised prompt: #{prompt}")]
+  end
+
+  defp maybe_add_image_revised_prompt(content, _prompt), do: content
+
+  defp maybe_add_generated_image(content, %{"result" => result} = item)
+       when is_binary(result) and result != "" do
+    image =
+      %{"type" => "image", "data" => result, "mimeType" => "image/png"}
+      |> maybe_put("uri", item["savedPath"])
+
+    content ++ [%{"type" => "content", "content" => image}]
+  end
+
+  defp maybe_add_generated_image(content, _item), do: content
 
   defp replay_thread_history(session_id, result) do
     turns =
@@ -1536,6 +1823,73 @@ defmodule ExMCP.ACP.Adapters.Codex do
     }
   end
 
+  defp status_message(session_id, session, state) do
+    mode_id = session[:mode_id] || state.mode_id || Config.default_mode()
+    profile = status_mode_profile(mode_id)
+    model = model_id_for_session(session, state) || session[:model] || state.model || "default"
+    cwd = session[:cwd] || Keyword.get(state.opts, :cwd) || ""
+    usage = format_usage(session[:accumulated_usage])
+
+    [
+      "**Model:** #{model}",
+      "**Directory:** #{cwd}",
+      "**Approval:** #{profile.approval}",
+      "**Sandbox:** #{profile.sandbox}",
+      "**Session:** `#{session_id}`",
+      "",
+      "**Token usage:** #{usage}"
+    ]
+    |> Enum.join("  \n")
+  end
+
+  defp status_mode_profile("read-only"), do: %{approval: "on-request", sandbox: "read-only"}
+
+  defp status_mode_profile("agent-full-access"),
+    do: %{approval: "never", sandbox: "danger-full-access"}
+
+  defp status_mode_profile(_mode_id), do: %{approval: "on-request", sandbox: "workspace-write"}
+
+  defp format_usage(nil), do: "data not available yet"
+
+  defp format_usage(%{"inputTokens" => input, "outputTokens" => output} = usage) do
+    cached = usage["cachedInputTokens"] || 0
+    total = input + output
+    "#{total} total (#{input} input + #{cached} cached input, #{output} output)"
+  end
+
+  defp format_usage(_usage), do: "data not available yet"
+
+  defp usage_data(token_counts) when is_map(token_counts) do
+    %{
+      "inputTokens" => token_counts["inputTokens"] || 0,
+      "outputTokens" => token_counts["outputTokens"] || 0,
+      "cachedInputTokens" => token_counts["cachedInputTokens"] || 0
+    }
+  end
+
+  defp usage_data(_token_counts), do: usage_data(%{})
+
+  defp token_total(%{"totalTokens" => total}) when is_integer(total), do: total
+
+  defp token_total(token_counts) when is_map(token_counts) do
+    input = token_counts["inputTokens"] || 0
+    output = token_counts["outputTokens"] || 0
+
+    if is_integer(input) and is_integer(output), do: input + output
+  end
+
+  defp token_total(_token_counts), do: nil
+
+  defp normalize_goal(%{"objective" => objective} = goal) when is_binary(objective) do
+    %{
+      "objective" => String.trim(objective),
+      "status" => goal["status"],
+      "tokenBudget" => goal["tokenBudget"]
+    }
+  end
+
+  defp normalize_goal(goal), do: goal
+
   defp auth_response_result(%{"authUrl" => _} = result) do
     %{"_meta" => %{"ex_mcp" => %{"codex" => %{"auth" => result}}}}
   end
@@ -1583,6 +1937,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     |> Kernel.++([mode_option(session[:mode_id] || state.mode_id || Config.default_mode())])
     |> maybe_add_model_option(model, state)
     |> maybe_add_reasoning_effort_option(effort, session, state)
+    |> maybe_add_fast_mode_option(session, state)
   end
 
   defp mode_option(current) do
@@ -1664,13 +2019,38 @@ defmodule ExMCP.ACP.Adapters.Codex do
     }
   end
 
+  defp maybe_add_fast_mode_option(options, session, state) do
+    if model_supports_fast?(current_model(session, state)) do
+      options ++
+        [
+          %{
+            "id" => "fast-mode",
+            "name" => "Fast mode",
+            "description" => "1.5x speed, increased usage",
+            "type" => "select",
+            "category" => "model_config",
+            "currentValue" => if(session[:fast_mode_enabled], do: "on", else: "off"),
+            "options" => [
+              %{
+                "value" => "off",
+                "name" => "Off",
+                "description" => "Default speed, normal usage"
+              },
+              %{"value" => "on", "name" => "On", "description" => "1.5x speed, increased usage"}
+            ]
+          }
+        ]
+    else
+      options
+    end
+  end
+
   defp config_update(%{"configId" => "mode", "value" => value}, _session, _state)
        when is_binary(value) do
     case Config.normalize_requested_mode(value) do
       {:ok, mode_id} ->
         {:ok,
          %{
-           wire: Config.merge_mode_wire_params(%{}, mode_id),
            session: %{mode_id: mode_id},
            state: %{mode_id: mode_id}
          }}
@@ -1686,7 +2066,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
       {:ok, selection} ->
         {:ok,
          %{
-           wire: %{"model" => selection.model} |> maybe_put("effort", selection.effort),
            session: selection.session,
            state: %{
              model: selection.model,
@@ -1704,7 +2083,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
     if reasoning_effort_supported?(value, session, state) do
       {:ok,
        %{
-         wire: %{"effort" => value},
          session: %{
            reasoning_effort: value,
            model_id: model_id_for_session(%{session | reasoning_effort: value}, state)
@@ -1713,6 +2091,16 @@ defmodule ExMCP.ACP.Adapters.Codex do
        }}
     else
       {:error, "Unsupported reasoning_effort: #{value}"}
+    end
+  end
+
+  defp config_update(%{"configId" => "fast-mode", "value" => value}, _session, _state) do
+    case normalize_fast_mode_value(value) do
+      {:ok, enabled} ->
+        {:ok, %{session: %{fast_mode_enabled: enabled}, state: %{}}}
+
+      :error ->
+        {:error, "Unsupported fast-mode value: #{inspect(value)}"}
     end
   end
 
@@ -1740,6 +2128,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "hidden" => model["hidden"] || false,
       "defaultReasoningEffort" =>
         model["defaultReasoningEffort"] || model["default_reasoning_effort"],
+      "additionalSpeedTiers" => model["additionalSpeedTiers"] || [],
+      "inputModalities" => model["inputModalities"] || ["text", "image"],
       "supportedReasoningEfforts" =>
         model
         |> Map.get("supportedReasoningEfforts", model["supported_reasoning_efforts"] || [])
@@ -2002,6 +2392,28 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
+  defp normalize_fast_mode_value(value) when value in [true, "on"], do: {:ok, true}
+  defp normalize_fast_mode_value(value) when value in [false, "off"], do: {:ok, false}
+  defp normalize_fast_mode_value(_value), do: :error
+
+  defp service_tier_for_session(session, state) do
+    if session[:fast_mode_enabled] && model_supports_fast?(current_model(session, state)) do
+      "fast"
+    end
+  end
+
+  defp model_supports_fast?(%{"additionalSpeedTiers" => tiers}) when is_list(tiers),
+    do: "fast" in tiers
+
+  defp model_supports_fast?(_model), do: false
+
+  defp model_provider(%{gateway_config: %{model_provider: provider}}), do: provider
+
+  defp model_provider(state),
+    do: Keyword.get(state.opts, :model_provider) || System.get_env("MODEL_PROVIDER")
+
+  defp resume_model_provider(state), do: model_provider(state) || "openai"
+
   # Auth helpers
 
   defp env_auth_method(id, name, var) do
@@ -2014,30 +2426,80 @@ defmodule ExMCP.ACP.Adapters.Codex do
     }
   end
 
-  defp auth_request_params("chatgpt", _state), do: {:ok, %{"type" => "chatgpt"}}
+  defp auth_request_params("chat-gpt", _params, _state), do: {:ok, %{"type" => "chatgpt"}}
+  defp auth_request_params("chatgpt", _params, _state), do: {:ok, %{"type" => "chatgpt"}}
 
-  defp auth_request_params("codex-api-key", state) do
-    explicit_api_key(state, "CODEX_API_KEY")
-  end
-
-  defp auth_request_params("openai-api-key", state) do
-    explicit_api_key(state, "OPENAI_API_KEY")
-  end
-
-  defp auth_request_params(nil, _state), do: {:error, "authenticate requires methodId"}
-
-  defp auth_request_params(method_id, _state),
-    do: {:error, "Unsupported Codex auth method: #{method_id}"}
-
-  defp explicit_api_key(state, name) do
-    case explicit_env_value(state.opts, name) do
+  defp auth_request_params("api-key", params, state) do
+    case explicit_api_key_from_request(params) do
       nil ->
-        {:error, "#{name} must be supplied explicitly in adapter_opts[:env] before authenticate"}
+        explicit_api_key(state, ["CODEX_API_KEY", "OPENAI_API_KEY"])
 
       value ->
         {:ok, %{"type" => "apiKey", "apiKey" => value}}
     end
   end
+
+  defp auth_request_params("gateway", params, _state) do
+    meta = get_in(params, ["_meta", "gateway"])
+
+    if is_map(meta) do
+      gateway_auth_params(meta)
+    else
+      {:error, "gateway auth requires adapter_opts[:gateway]"}
+    end
+  end
+
+  defp auth_request_params("codex-api-key", _params, state) do
+    explicit_api_key(state, ["CODEX_API_KEY"])
+  end
+
+  defp auth_request_params("openai-api-key", _params, state) do
+    explicit_api_key(state, ["OPENAI_API_KEY"])
+  end
+
+  defp auth_request_params(nil, _params, _state), do: {:error, "authenticate requires methodId"}
+
+  defp auth_request_params(method_id, _params, _state),
+    do: {:error, "Unsupported Codex auth method: #{method_id}"}
+
+  defp explicit_api_key(state, names) do
+    case Enum.find_value(names, &explicit_env_value(state.opts, &1)) do
+      nil ->
+        {:error,
+         "#{Enum.join(names, " or ")} must be supplied explicitly in adapter_opts[:env] before authenticate"}
+
+      value ->
+        {:ok, %{"type" => "apiKey", "apiKey" => value}}
+    end
+  end
+
+  defp explicit_api_key_from_request(params) do
+    get_in(params, ["_meta", "api-key", "apiKey"])
+  end
+
+  defp gateway_auth_params(%{"baseUrl" => base_url} = meta) when is_binary(base_url) do
+    provider_name =
+      case meta["providerName"] do
+        name when is_binary(name) and name != "" -> name
+        _ -> "User-provided gateway"
+      end
+
+    headers = Map.merge(%{"X-Client-Feature-ID" => "codex"}, meta["headers"] || %{})
+
+    {:ok,
+     {:gateway,
+      %{
+        model_provider: "custom-gateway",
+        provider_config: %{
+          "name" => provider_name,
+          "base_url" => base_url,
+          "http_headers" => headers,
+          "wire_api" => "responses"
+        }
+      }}}
+  end
+
+  defp gateway_auth_params(_meta), do: {:error, "gateway auth requires baseUrl"}
 
   defp explicit_env_value(opts, name) do
     opts
@@ -2046,49 +2508,203 @@ defmodule ExMCP.ACP.Adapters.Codex do
     |> Map.get(name)
   end
 
-  # MCP mapping
+  # Session config / MCP mapping
 
-  defp mcp_config(nil, _cwd), do: nil
-  defp mcp_config([], _cwd), do: nil
+  defp session_config(params, cwd, state) do
+    with {:ok, additional_directories} <- additional_directories(params, cwd),
+         {:ok, mcp_config} <- mcp_config(params["mcpServers"], cwd) do
+      config =
+        state.opts
+        |> codex_config()
+        |> merge_gateway_config(state.gateway_config)
+        |> merge_trusted_projects(cwd, additional_directories)
+        |> merge_sandbox_workspace_roots(additional_directories)
+        |> merge_config(mcp_config)
 
-  defp mcp_config(servers, cwd) when is_list(servers) do
-    servers
-    |> Enum.reduce(%{}, fn server, acc ->
-      case mcp_server_config(server, cwd) do
-        nil -> acc
-        {name, config} -> Map.put(acc, name, config)
-      end
-    end)
-    |> case do
-      config when map_size(config) == 0 -> nil
-      config -> %{"mcp_servers" => config}
+      {:ok, empty_to_nil(config), additional_directories}
     end
   end
 
-  defp mcp_config(_servers, _cwd), do: nil
+  defp codex_config(opts) do
+    case Keyword.get(opts, :codex_config) || System.get_env("CODEX_CONFIG") do
+      config when is_map(config) ->
+        config
+
+      config when is_binary(config) and config != "" ->
+        case Jason.decode(config) do
+          {:ok, decoded} when is_map(decoded) -> decoded
+          _ -> %{}
+        end
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp merge_gateway_config(config, nil), do: config
+
+  defp merge_gateway_config(config, %{
+         model_provider: model_provider,
+         provider_config: provider_config
+       }) do
+    providers =
+      config
+      |> Map.get("model_providers", %{})
+      |> case do
+        providers when is_map(providers) -> providers
+        _ -> %{}
+      end
+      |> Map.put(model_provider, provider_config)
+
+    Map.put(config, "model_providers", providers)
+  end
+
+  defp merge_trusted_projects(config, cwd, additional_directories) do
+    roots =
+      [cwd | additional_directories]
+      |> Enum.filter(&(is_binary(&1) and &1 != ""))
+      |> Enum.uniq()
+
+    if roots == [] do
+      config
+    else
+      projects =
+        config
+        |> Map.get("projects", %{})
+        |> case do
+          projects when is_map(projects) -> projects
+          _ -> %{}
+        end
+        |> Map.merge(Map.new(roots, &{&1, %{"trust_level" => "trusted"}}))
+
+      Map.put(config, "projects", projects)
+    end
+  end
+
+  defp merge_sandbox_workspace_roots(config, []), do: config
+
+  defp merge_sandbox_workspace_roots(config, additional_directories) do
+    sandbox =
+      config
+      |> Map.get("sandbox_workspace_write", %{})
+      |> case do
+        sandbox when is_map(sandbox) -> sandbox
+        _ -> %{}
+      end
+
+    roots =
+      sandbox
+      |> Map.get("writable_roots", [])
+      |> List.wrap()
+      |> Enum.filter(&is_binary/1)
+      |> Enum.concat(additional_directories)
+      |> Enum.uniq()
+
+    Map.put(config, "sandbox_workspace_write", Map.put(sandbox, "writable_roots", roots))
+  end
+
+  defp merge_config(config, nil), do: config
+  defp merge_config(config, mcp_config), do: Map.merge(config, mcp_config)
+
+  defp empty_to_nil(config) when map_size(config) == 0, do: nil
+  defp empty_to_nil(config), do: config
+
+  defp additional_directories(params, cwd) do
+    raw = params["additionalDirectories"] || get_in(params, ["_meta", "additionalRoots"])
+
+    cond do
+      is_nil(raw) ->
+        {:ok, []}
+
+      not is_list(raw) ->
+        {:error, "additionalDirectories must be a list of absolute paths"}
+
+      true ->
+        raw
+        |> Enum.reduce_while({:ok, [], MapSet.new([cwd])}, fn
+          directory, {:ok, acc, seen} when is_binary(directory) ->
+            directory = String.trim(directory)
+
+            cond do
+              directory == "" ->
+                {:halt, {:error, "additionalDirectories entries must not be empty"}}
+
+              Path.type(directory) != :absolute ->
+                {:halt, {:error, "additionalDirectories entries must be absolute paths"}}
+
+              MapSet.member?(seen, directory) ->
+                {:cont, {:ok, acc, seen}}
+
+              true ->
+                {:cont, {:ok, acc ++ [directory], MapSet.put(seen, directory)}}
+            end
+
+          _directory, _acc ->
+            {:halt, {:error, "additionalDirectories entries must be strings"}}
+        end)
+        |> case do
+          {:ok, dirs, _seen} -> {:ok, dirs}
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp mcp_config(nil, _cwd), do: {:ok, nil}
+  defp mcp_config([], _cwd), do: {:ok, nil}
+
+  defp mcp_config(servers, cwd) when is_list(servers) do
+    Enum.reduce_while(servers, {:ok, %{}}, fn server, {:ok, acc} ->
+      case mcp_server_config(server, cwd) do
+        {:ok, nil} -> {:cont, {:ok, acc}}
+        {:ok, {name, config}} -> {:cont, {:ok, Map.put(acc, name, config)}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, config} when map_size(config) == 0 -> {:ok, nil}
+      {:ok, config} -> {:ok, %{"mcp_servers" => config}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp mcp_config(_servers, _cwd), do: {:ok, nil}
 
   defp mcp_server_config(%{"type" => "http"} = server, _cwd) do
     name = sanitize_mcp_server_name(server["name"])
 
-    {name,
-     %{}
-     |> Map.put("url", server["url"])
-     |> maybe_put("headers", headers_to_map(server["headers"]))}
+    {:ok,
+     {name,
+      %{}
+      |> Map.put("url", server["url"])
+      |> maybe_put("http_headers", headers_to_map(server["headers"]))}}
   end
 
-  defp mcp_server_config(%{"type" => "stdio"} = server, cwd) do
+  defp mcp_server_config(%{"type" => "stdio"} = server, _cwd) do
     name = sanitize_mcp_server_name(server["name"])
 
-    {name,
-     %{}
-     |> Map.put("command", server["command"])
-     |> maybe_put("args", server["args"] || [])
-     |> maybe_put("env", env_to_map(server["env"]))
-     |> maybe_put("cwd", cwd)}
+    {:ok,
+     {name,
+      %{}
+      |> Map.put("command", server["command"])
+      |> maybe_put("args", server["args"] || [])
+      |> maybe_put("env", env_to_map(server["env"]))}}
   end
 
-  defp mcp_server_config(%{"type" => "sse"}, _cwd), do: nil
-  defp mcp_server_config(_server, _cwd), do: nil
+  defp mcp_server_config(%{"type" => "sse"}, _cwd),
+    do: {:error, "Codex doesn't support MCP SSE transport protocol"}
+
+  defp mcp_server_config(%{"type" => "acp"}, _cwd),
+    do: {:error, "Codex doesn't support MCP ACP transport protocol"}
+
+  defp mcp_server_config(server, _cwd) when is_map(server) do
+    if Map.has_key?(server, "command") do
+      mcp_server_config(Map.put(server, "type", "stdio"), nil)
+    else
+      {:ok, nil}
+    end
+  end
+
+  defp mcp_server_config(_server, _cwd), do: {:ok, nil}
 
   defp sanitize_mcp_server_name(nil), do: "mcp_server"
 
@@ -2297,43 +2913,77 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp extract_input_items(nil), do: [%{"type" => "text", "text" => ""}]
 
   defp extract_input_items(prompt) when is_binary(prompt),
-    do: [%{"type" => "text", "text" => prompt}]
+    do: [text_input(prompt)]
 
   defp extract_input_items(blocks) when is_list(blocks) do
     items =
       Enum.flat_map(blocks, fn
         %{"type" => "text", "text" => text} ->
-          [%{"type" => "text", "text" => text}]
+          [text_input(text)]
 
-        %{"type" => "image", "data" => data} = img ->
-          [
-            %{
-              "type" => "image",
-              "data" => data,
-              "mimeType" => img["mimeType"] || "image/png"
-            }
-          ]
+        %{"type" => "image"} = img ->
+          [image_input(img)]
 
         %{"type" => "resource_link"} = resource ->
-          [%{"type" => "text", "text" => format_uri_as_link(resource["name"], resource["uri"])}]
+          [text_input(format_uri_as_link(resource["name"], resource["uri"]))]
 
         %{"type" => "resource", "resource" => %{"text" => text, "uri" => uri}} ->
           [
-            %{
-              "type" => "text",
-              "text" =>
-                "#{format_uri_as_link(nil, uri)}\n<context ref=\"#{uri}\">\n#{text}\n</context>"
-            }
+            text_input(
+              "#{format_uri_as_link(nil, uri)}\n<context ref=\"#{uri}\">\n#{text}\n</context>"
+            )
           ]
+
+        %{
+          "type" => "resource",
+          "resource" => %{"blob" => blob, "mimeType" => mime_type, "uri" => uri}
+        } ->
+          if image_mime_type?(mime_type) do
+            [%{"type" => "image", "url" => "data:#{mime_type};base64,#{blob}"}]
+          else
+            mime_type = mime_type || "application/octet-stream"
+
+            context =
+              [
+                format_uri_as_link(nil, uri),
+                ~s(<context ref="#{uri}" mimeType="#{mime_type}" encoding="base64">),
+                blob,
+                "</context>"
+              ]
+              |> Enum.join("\n")
+
+            [
+              text_input(context)
+            ]
+          end
 
         _ ->
           []
       end)
 
-    if items == [], do: [%{"type" => "text", "text" => ""}], else: items
+    if items == [], do: [text_input("")], else: items
   end
 
-  defp extract_input_items(_), do: [%{"type" => "text", "text" => ""}]
+  defp extract_input_items(_), do: [text_input("")]
+
+  defp text_input(text),
+    do: %{"type" => "text", "text" => to_string(text || ""), "text_elements" => []}
+
+  defp image_input(%{"uri" => uri}) when is_binary(uri) and uri != "" do
+    %{"type" => "image", "url" => uri}
+  end
+
+  defp image_input(%{"data" => data} = img) do
+    mime_type = img["mimeType"] || "image/png"
+    %{"type" => "image", "url" => "data:#{mime_type};base64,#{data}"}
+  end
+
+  defp image_input(_img), do: %{"type" => "image", "url" => ""}
+
+  defp image_mime_type?(mime_type) when is_binary(mime_type),
+    do: String.starts_with?(mime_type, "image/")
+
+  defp image_mime_type?(_mime_type), do: false
 
   defp format_uri_as_link(name, uri) when is_binary(name) and name != "", do: "[@#{name}](#{uri})"
 

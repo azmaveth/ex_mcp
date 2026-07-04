@@ -570,7 +570,10 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
       {:ok, turn_msg} = Jason.decode(turn_json)
       assert turn_msg["method"] == "turn/start"
       assert turn_msg["params"]["threadId"] == "thread-42"
-      assert turn_msg["params"]["input"] == [%{"type" => "text", "text" => "Fix the tests"}]
+
+      assert turn_msg["params"]["input"] == [
+               %{"type" => "text", "text" => "Fix the tests", "text_elements" => []}
+             ]
 
       # Simulate turn/start response
       turn_response =

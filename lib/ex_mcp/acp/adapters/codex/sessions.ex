@@ -24,6 +24,11 @@ defmodule ExMCP.ACP.Adapters.Codex.Sessions do
       model_id: nil,
       mode_id: state.mode_id || Config.default_mode(),
       reasoning_effort: state.reasoning_effort || Config.default_reasoning_effort(),
+      service_tier: nil,
+      fast_mode_enabled: false,
+      additional_directories: [],
+      rate_limits: %{},
+      model_context_window: nil,
       accumulated_text: [],
       accumulated_thinking: [],
       accumulated_usage: nil
@@ -41,6 +46,9 @@ defmodule ExMCP.ACP.Adapters.Codex.Sessions do
         thread: thread,
         cwd: result["cwd"] || thread["cwd"],
         model: result["model"] || state.model,
+        service_tier: result["serviceTier"],
+        fast_mode_enabled: result["serviceTier"] == "fast",
+        additional_directories: result["additionalDirectories"] || [],
         reasoning_effort:
           result["reasoningEffort"] || state.reasoning_effort || Config.default_reasoning_effort()
       })

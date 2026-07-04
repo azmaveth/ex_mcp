@@ -26,20 +26,18 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert caps["auth"]["logout"] == %{}
     end
 
-    test "matches Zed Codex mode ids" do
+    test "matches upstream Codex ACP mode ids" do
       ids = Codex.modes() |> Enum.map(& &1["id"])
-      assert ids == ["read-only", "auto", "full-access"]
+      assert ids == ["read-only", "agent", "agent-full-access"]
     end
 
     test "advertises Codex auth methods" do
       ids = Codex.auth_methods([]) |> Enum.map(& &1["id"])
-      assert "chatgpt" in ids
-      assert "codex-api-key" in ids
-      assert "openai-api-key" in ids
+      assert "chat-gpt" in ids
+      assert "api-key" in ids
 
-      env_method = Enum.find(Codex.auth_methods([]), &(&1["id"] == "codex-api-key"))
-      assert env_method["type"] == "env_var"
-      assert [%{"name" => "CODEX_API_KEY"} = _] = env_method["vars"]
+      api_key = Enum.find(Codex.auth_methods([]), &(&1["id"] == "api-key"))
+      assert api_key["_meta"]["api-key"]["provider"] == "openai"
     end
   end
 
@@ -88,20 +86,25 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert codex_msg["method"] == "thread/start"
       assert codex_msg["params"]["model"] == "gpt-5"
       assert codex_msg["params"]["cwd"] == "/tmp/project"
-      assert codex_msg["params"]["permissions"] == ":workspace"
+      assert codex_msg["params"]["sandbox"] == "workspace-write"
       assert codex_msg["params"]["approvalPolicy"] == "on-request"
 
       assert get_in(codex_msg, ["params", "config", "mcp_servers", "remote_tools", "url"]) ==
                "http://localhost:4000/mcp"
 
-      assert get_in(codex_msg, ["params", "config", "mcp_servers", "remote_tools", "headers"]) ==
+      assert get_in(codex_msg, [
+               "params",
+               "config",
+               "mcp_servers",
+               "remote_tools",
+               "http_headers"
+             ]) ==
                %{"Authorization" => "Bearer token"}
 
       assert get_in(codex_msg, ["params", "config", "mcp_servers", "local_tools", "command"]) ==
                "tools"
 
-      assert get_in(codex_msg, ["params", "config", "mcp_servers", "local_tools", "cwd"]) ==
-               "/tmp/project"
+      refute get_in(codex_msg, ["params", "config", "mcp_servers", "local_tools", "cwd"])
 
       assert new_state.pending_requests[new_state.next_id - 1].type == :thread_start
       assert new_state.pending_requests[new_state.next_id - 1].acp_id == 2
@@ -199,7 +202,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert Enum.at(codex_msg["params"]["input"], 2)["text"] =~
                ~s(<context ref="file:///tmp/context.md">)
 
-      assert Enum.at(codex_msg["params"]["input"], 3)["mimeType"] == "image/png"
+      assert Enum.at(codex_msg["params"]["input"], 3)["url"] == "data:image/png;base64,abc"
 
       session = new_state.sessions["thread-1"]
       assert session.active_prompt_acp_id == 7
@@ -261,7 +264,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert codex_msg["params"] == %{"threadId" => "thread-1", "turnId" => "turn-1"}
     end
 
-    test "session/set_mode updates current session through thread/settings/update", %{
+    test "session/set_mode updates current session state", %{
       state: state
     } do
       state = put_test_session(state, "thread-1")
@@ -269,21 +272,15 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       msg = %{
         "method" => "session/set_mode",
         "id" => 8,
-        "params" => %{"sessionId" => "thread-1", "modeId" => "full-access"}
+        "params" => %{"sessionId" => "thread-1", "modeId" => "agent-full-access"}
       }
 
-      assert {:messages_and_write, [update], data, new_state} =
+      assert {:messages_and_reply, [update], %{}, new_state} =
                Codex.translate_outbound(msg, state)
 
-      codex_msg = decode(data)
-
-      assert codex_msg["method"] == "thread/settings/update"
-      assert codex_msg["params"]["threadId"] == "thread-1"
-      assert codex_msg["params"]["permissions"] == ":danger-no-sandbox"
-      assert codex_msg["params"]["approvalPolicy"] == "never"
       assert update["params"]["update"]["sessionUpdate"] == "current_mode_update"
-      assert update["params"]["update"]["currentModeId"] == "full-access"
-      assert new_state.sessions["thread-1"].mode_id == "full-access"
+      assert update["params"]["update"]["currentModeId"] == "agent-full-access"
+      assert new_state.sessions["thread-1"].mode_id == "agent-full-access"
     end
 
     test "session/set_model updates model and reasoning effort from catalog", %{state: state} do
@@ -298,12 +295,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         "params" => %{"sessionId" => "thread-1", "modelId" => "codex-mini/high"}
       }
 
-      assert {:reply_and_write, result, data, new_state} = Codex.translate_outbound(msg, state)
-      codex_msg = decode(data)
-
-      assert codex_msg["method"] == "thread/settings/update"
-      assert codex_msg["params"]["model"] == "gpt-5-codex"
-      assert codex_msg["params"]["effort"] == "high"
+      assert {:reply, result, new_state} = Codex.translate_outbound(msg, state)
       assert result["models"]["currentModelId"] == "codex-mini/high"
       assert Enum.any?(result["models"]["availableModels"], &(&1["modelId"] == "codex-mini/high"))
       assert new_state.sessions["thread-1"].model == "gpt-5-codex"
@@ -319,11 +311,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         "params" => %{"sessionId" => "thread-1", "configId" => "model", "value" => "gpt-5"}
       }
 
-      assert {:reply_and_write, result, data, new_state} = Codex.translate_outbound(msg, state)
-      codex_msg = decode(data)
-
-      assert codex_msg["method"] == "thread/settings/update"
-      assert codex_msg["params"]["model"] == "gpt-5"
+      assert {:reply, result, new_state} = Codex.translate_outbound(msg, state)
       assert new_state.sessions["thread-1"].model == "gpt-5"
 
       assert Enum.any?(
@@ -335,7 +323,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
   describe "auth outbound mapping" do
     test "chatgpt authenticate starts app-server login", %{state: state} do
-      msg = %{"method" => "authenticate", "id" => 10, "params" => %{"methodId" => "chatgpt"}}
+      msg = %{"method" => "authenticate", "id" => 10, "params" => %{"methodId" => "chat-gpt"}}
 
       assert {:ok, data, new_state} = Codex.translate_outbound(msg, state)
       codex_msg = decode(data)
@@ -351,7 +339,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       msg = %{
         "method" => "authenticate",
         "id" => 11,
-        "params" => %{"methodId" => "codex-api-key"}
+        "params" => %{"methodId" => "api-key"}
       }
 
       assert {:ok, data, _state} = Codex.translate_outbound(msg, state)
@@ -365,11 +353,11 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       msg = %{
         "method" => "authenticate",
         "id" => 12,
-        "params" => %{"methodId" => "codex-api-key"}
+        "params" => %{"methodId" => "api-key"}
       }
 
       assert {:error, message, ^state} = Codex.translate_outbound(msg, state)
-      assert message =~ "CODEX_API_KEY must be supplied explicitly"
+      assert message =~ "CODEX_API_KEY or OPENAI_API_KEY must be supplied explicitly"
     end
   end
 
@@ -428,7 +416,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
     test "thread/start response produces ACP session result and stores session", %{state: state} do
       state = %{
         state
-        | pending_requests: %{1 => %{type: :thread_start, acp_id: 20, meta: %{mode_id: "auto"}}}
+        | pending_requests: %{1 => %{type: :thread_start, acp_id: 20, meta: %{mode_id: "agent"}}}
       }
 
       line =
@@ -450,7 +438,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert msg["result"]["sessionId"] == "thread-abc"
       refute Map.has_key?(msg["result"], "metadata")
       assert get_in(msg, ["result", "_meta", "ex_mcp", "codex", "thread", "id"]) == "thread-abc"
-      assert msg["result"]["modes"]["currentModeId"] == "auto"
+      assert msg["result"]["modes"]["currentModeId"] == "agent"
       assert msg["result"]["models"]["currentModelId"] == "gpt-5"
       assert Enum.any?(msg["result"]["configOptions"], &(&1["id"] == "model"))
       assert new_state.sessions["thread-abc"].model == "gpt-5"
@@ -459,7 +447,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
     test "thread/resume response replays embedded turns before load response", %{state: state} do
       state = %{
         state
-        | pending_requests: %{1 => %{type: :thread_resume, acp_id: 21, meta: %{mode_id: "auto"}}}
+        | pending_requests: %{1 => %{type: :thread_resume, acp_id: 21, meta: %{mode_id: "agent"}}}
       }
 
       line =
@@ -616,7 +604,11 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       assert {:messages, [done_msg], _state} = Codex.translate_inbound(completed, state)
       assert done_msg["params"]["update"]["sessionUpdate"] == "tool_call_update"
-      assert done_msg["params"]["update"]["rawOutput"] == %{"exitCode" => 0, "output" => "ok"}
+
+      assert done_msg["params"]["update"]["rawOutput"] == %{
+               "exit_code" => 0,
+               "formatted_output" => "ok"
+             }
     end
 
     test "current Codex item events map commandExecution and fileChange variants", %{state: state} do
@@ -660,7 +652,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert diff["type"] == "diff"
     end
 
-    test "token usage is accumulated for the prompt response instead of emitted as non-spec update",
+    test "token usage is accumulated for the prompt response and emitted as usage_update",
          %{
            state: state
          } do
@@ -670,12 +662,18 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
           "params" => %{
             "threadId" => "thread-1",
             "tokenUsage" => %{
+              "last" => %{"inputTokens" => 4, "outputTokens" => 1},
+              "modelContextWindow" => 100,
               "total" => %{"inputTokens" => 10, "outputTokens" => 5, "cachedInputTokens" => 2}
             }
           }
         })
 
-      assert {:skip, new_state} = Codex.translate_inbound(line, state)
+      assert {:messages, [usage_update], new_state} = Codex.translate_inbound(line, state)
+
+      assert usage_update["params"]["update"]["sessionUpdate"] == "usage_update"
+      assert usage_update["params"]["update"]["used"] == 5
+      assert usage_update["params"]["update"]["size"] == 100
 
       assert new_state.sessions["thread-1"].accumulated_usage == %{
                "inputTokens" => 10,
@@ -732,7 +730,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
         cwd: "/tmp/project",
         model: nil,
         model_id: nil,
-        mode_id: "auto",
+        mode_id: "agent",
         reasoning_effort: "medium",
         accumulated_text: [],
         accumulated_thinking: [],

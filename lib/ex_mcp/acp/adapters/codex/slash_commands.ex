@@ -9,6 +9,7 @@ defmodule ExMCP.ACP.Adapters.Codex.SlashCommands do
     "review" => :review,
     "review-branch" => :"review-branch",
     "review-commit" => :"review-commit",
+    "status" => :status,
     "logout" => :logout
   }
 
@@ -71,7 +72,7 @@ defmodule ExMCP.ACP.Adapters.Codex.SlashCommands do
   defp command_result(name, rest) do
     case Map.fetch(@commands, name) do
       {:ok, command} -> {:ok, {command, rest}}
-      :error -> :error
+      :error -> {:ok, {:unknown, name, rest}}
     end
   end
 end

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Codex ACP upstream sync** — Synced `ExMCP.ACP.Adapters.Codex` with `agentclientprotocol/codex-acp` v1.1.0 behavior, including upstream auth ids (`api-key`, `chat-gpt`, and opt-in `gateway`), `read-only`/`agent`/`agent-full-access` modes, app-server `session/delete` through thread archive, additional workspace directories, upstream prompt content shapes, HTTP MCP `http_headers`, per-turn model/mode/reasoning/fast-mode application, `/status`, richer terminal/MCP metadata, usage updates, guardian review, image view, and fuzzy file search events.
+
+### Breaking Changes
+- **Codex ACP mode IDs** — `ExMCP.ACP.Adapters.Codex` now only accepts upstream codex-acp-compatible mode IDs: `read-only`, `agent`, and `agent-full-access`. The older `auto` and `full-access` ids are no longer accepted, along with the prior `suggest`, `auto-edit`, and `full-auto` aliases.
+
 ## [1.0.0-rc.1] - 2026-06-15
 
 ### Changed
@@ -56,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Transport aliases removed** — Removed public `transport: :sse` and `transport: :native`. Use `transport: :http, use_sse: true` for HTTP SSE streaming and `transport: :beam` for BEAM-local MCP transport. BEAM transport now carries MCP-shaped maps/lists as Elixir terms without JSON serialization.
 - **ACP BEAM MCP metadata renamed** — ExMCP ACP metadata now advertises BEAM-local MCP support only as `_meta.ex_mcp.mcpCapabilities.beam`; the previous `native` metadata flag and `:native_mcp` builder option were removed.
 - **ACP adapter session listing callback** — Custom ACP adapters should implement `list_sessions(params, state)` instead of `list_sessions(state)`. The bridge now forwards decoded `session/list` params directly to adapters and no longer carries the legacy arity.
-- **Codex ACP mode IDs** — `ExMCP.ACP.Adapters.Codex` now only accepts Zed-compatible mode IDs: `read-only`, `auto`, and `full-access`. The old `suggest`, `auto-edit`, and `full-auto` aliases were removed.
+- **Codex ACP mode IDs** — `ExMCP.ACP.Adapters.Codex` now only accepts upstream codex-acp-compatible mode IDs: `read-only`, `agent`, and `agent-full-access`. The old `suggest`, `auto-edit`, `auto`, `full-auto`, and `full-access` aliases were removed.
 - **Adapter authenticate behavior** — `AdapterBridge` no longer returns `{}` for `authenticate` when an adapter skips the request. Unimplemented auth now returns method-not-found or invalid-params, while adapters that write to their subprocess can produce the eventual auth response themselves.
 - **Pi extension methods removed** — `ExMCP.ACP.Adapters.Pi` no longer implements `_ex_mcp.pi/*` or legacy `pi/*` control methods. Use `session/set_model`, `session/set_mode`, `session/load`, `session/list`, or prompt slash commands such as `/compact`, `/export`, `/session`, `/name`, `/steering`, and `/follow-up`.
 

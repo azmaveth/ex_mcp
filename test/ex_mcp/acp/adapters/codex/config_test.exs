@@ -4,14 +4,14 @@ defmodule ExMCP.ACP.Adapters.Codex.ConfigTest do
   alias ExMCP.ACP.Adapters.Codex.Config
 
   test "normalizes current mode ids" do
-    assert Config.normalize_mode_id(nil) == "auto"
+    assert Config.normalize_mode_id(nil) == "agent"
     assert Config.normalize_mode_id("read-only") == "read-only"
-    assert Config.normalize_mode_id("auto") == "auto"
-    assert Config.normalize_mode_id("full-access") == "full-access"
+    assert Config.normalize_mode_id("agent") == "agent"
+    assert Config.normalize_mode_id("agent-full-access") == "agent-full-access"
   end
 
   test "validates requested modes" do
-    assert Config.normalize_requested_mode("full-access") == {:ok, "full-access"}
+    assert Config.normalize_requested_mode("agent-full-access") == {:ok, "agent-full-access"}
     assert {:error, reason} = Config.normalize_requested_mode("unknown")
     assert reason =~ "Unsupported Codex mode"
     assert {:error, legacy_reason} = Config.normalize_requested_mode("full-auto")
@@ -21,7 +21,7 @@ defmodule ExMCP.ACP.Adapters.Codex.ConfigTest do
   test "merges mode wire params" do
     assert Config.merge_mode_wire_params(%{"model" => "gpt-5"}, "read-only") == %{
              "model" => "gpt-5",
-             "permissions" => ":read-only",
+             "sandbox" => "read-only",
              "approvalPolicy" => "on-request"
            }
 
@@ -30,11 +30,11 @@ defmodule ExMCP.ACP.Adapters.Codex.ConfigTest do
 
   test "maps active permission profiles back to ACP mode ids" do
     assert Config.mode_id_from_result(%{"activePermissionProfile" => %{"id" => ":workspace"}}) ==
-             "auto"
+             "agent"
 
     assert Config.mode_id_from_result(%{
              "settings" => %{"activePermissionProfile" => %{"id" => ":danger-no-sandbox"}}
-           }) == "full-access"
+           }) == "agent-full-access"
 
     assert Config.mode_id_from_result(%{}) == nil
   end
