@@ -34,6 +34,16 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
         paginated_result("tools", tools, next_cursor)
         |> put_success_result(conn, id)
 
+      {:ok, result, _state} when is_map(result) ->
+        result
+        |> deep_stringify_keys()
+        |> put_success_result(conn, id)
+
+      {:ok, result} when is_map(result) ->
+        result
+        |> deep_stringify_keys()
+        |> put_success_result(conn, id)
+
       {:error, reason} ->
         put_error(conn, "Tools list failed", reason, id)
     end
@@ -55,7 +65,13 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       {:ok, result} ->
         put_success(conn, wrap_tool_result(result), id)
 
+      {:ok, result, _state} ->
+        put_success(conn, wrap_tool_result(result), id)
+
       {:error, reason} ->
+        put_success(conn, tool_error_result(reason), id)
+
+      {:error, reason, _state} ->
         put_success(conn, tool_error_result(reason), id)
     end
   rescue
@@ -68,6 +84,16 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     case GenServer.call(server_pid, {:list_resources, cursor}, 5000) do
       {:ok, resources, next_cursor, _state} ->
         paginated_result("resources", resources, next_cursor)
+        |> put_success_result(conn, id)
+
+      {:ok, result, _state} when is_map(result) ->
+        result
+        |> deep_stringify_keys()
+        |> put_success_result(conn, id)
+
+      {:ok, result} when is_map(result) ->
+        result
+        |> deep_stringify_keys()
         |> put_success_result(conn, id)
 
       {:error, reason} ->
@@ -130,6 +156,16 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     case GenServer.call(server_pid, {:list_prompts, cursor}, 5000) do
       {:ok, prompts, next_cursor, _state} ->
         paginated_result("prompts", prompts, next_cursor)
+        |> put_success_result(conn, id)
+
+      {:ok, result, _state} when is_map(result) ->
+        result
+        |> deep_stringify_keys()
+        |> put_success_result(conn, id)
+
+      {:ok, result} when is_map(result) ->
+        result
+        |> deep_stringify_keys()
         |> put_success_result(conn, id)
 
       {:error, reason} ->

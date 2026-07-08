@@ -85,8 +85,14 @@ defmodule ExMCP.Integration.AgentSimulationTest do
 
   defp execute_mcp_action(client, :tool, name, args) do
     case Client.call_tool(client, name, args) do
-      {:ok, result} -> %{role: "tool", tool: name, content: extract_tool_text(result)}
-      {:error, error} -> %{role: "error", tool: name, content: extract_error_message(error)}
+      {:ok, %ExMCP.Response{is_error: true} = result} ->
+        %{role: "error", tool: name, content: extract_tool_text(result)}
+
+      {:ok, result} ->
+        %{role: "tool", tool: name, content: extract_tool_text(result)}
+
+      {:error, error} ->
+        %{role: "error", tool: name, content: extract_error_message(error)}
     end
   end
 
@@ -479,16 +485,15 @@ defmodule ExMCP.Integration.AgentSimulationTest do
     end
 
     test "calculate tool handles division by zero", %{client: client} do
-      {:error, error} =
+      {:ok, result} =
         Client.call_tool(client, "calculate", %{
           "operation" => "divide",
           "a" => 10,
           "b" => 0
         })
 
-      # Error may be wrapped in a generic message or contain the specific reason
-      error_text = inspect(error)
-      assert error_text =~ "Division by zero" or error.message =~ "error"
+      assert result.is_error
+      assert Enum.at(result.content, 0).text == "Division by zero"
     end
 
     test "search_docs returns results", %{client: client} do
@@ -520,9 +525,10 @@ defmodule ExMCP.Integration.AgentSimulationTest do
     end
 
     test "unknown tool returns error", %{client: client} do
-      {:error, error} = Client.call_tool(client, "nonexistent", %{})
-      # The server returns an error - it may be wrapped with a generic message
-      assert is_struct(error) or is_map(error)
+      {:ok, result} = Client.call_tool(client, "nonexistent", %{})
+
+      assert result.is_error
+      assert Enum.at(result.content, 0).text == "Unknown tool: nonexistent"
     end
   end
 

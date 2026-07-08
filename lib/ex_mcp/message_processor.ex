@@ -269,7 +269,7 @@ defmodule ExMCP.MessageProcessor do
 
   defp handle_initialize_dispatch(conn, handler, params, id) do
     # server_info comes from the conn's assigns (set during process routing)
-    server_info = Map.get(conn.assigns || %{}, :server_info, %{})
+    server_info = Map.get(conn.assigns, :server_info, %{})
     MethodHandlers.handle_initialize(conn, handler, params, id, server_info)
   end
 
