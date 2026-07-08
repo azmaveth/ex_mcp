@@ -7,7 +7,7 @@ This guide covers the supported configuration surfaces for ExMCP 1.0.
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.1"}
+    {:ex_mcp, "~> 1.0.0-rc.4"}
   ]
 end
 ```
@@ -152,6 +152,20 @@ forward "/mcp", ExMCP.HttpPlug,
   server_info: %{name: "my-app", version: "1.0.0"},
   sse_enabled: true,
   cors_enabled: true
+```
+
+Pass request-local context into a handler with `:handler_opts`. The option can
+be a static term, a one-arity function called with the `Plug.Conn`, a two-arity
+function called with the `Plug.Conn` and decoded JSON-RPC request, or an MFA
+tuple called as `apply(module, function, [conn, request | extra_args])`.
+
+```elixir
+forward "/mcp", ExMCP.HttpPlug,
+  handler: MyApp.MCPServer,
+  handler_opts: fn conn ->
+    [current_user: conn.assigns[:current_user]]
+  end,
+  server_info: %{name: "my-app", version: "1.0.0"}
 ```
 
 ## Resilience

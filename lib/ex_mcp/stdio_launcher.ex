@@ -22,7 +22,7 @@ defmodule ExMCP.StdioLauncher do
       #!/usr/bin/env elixir
 
       ExMCP.StdioLauncher.start(MyServer, [
-        {:ex_mcp, "~> 0.1"},
+        {:ex_mcp, "~> 1.0.0-rc.4"},
         {:jason, "~> 1.4"}
       ])
 

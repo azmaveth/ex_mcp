@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.4] - 2026-07-08
+
+### Added
+- **HTTP handler initialization context** — `ExMCP.HttpPlug` now accepts `:handler_opts` as a static term, `Plug.Conn` function, `Plug.Conn` plus decoded request function, or MFA tuple, and passes the resolved value into temporary handler GenServers. This lets Phoenix/Plug pipelines pass verified request context such as authenticated users, tenants, or signed request data into handler `init/1`.
+
+### Fixed
+- **MessageProcessor handler startup** — `ExMCP.MessageProcessor` now starts temporary handler GenServers with the configured handler options and consistently assigns `server_info` before dispatching initialize requests.
+- **Release docs** — Updated active installation snippets and Phoenix request-context examples for the rc.4 release line.
+
 ## [1.0.0-rc.3] - 2026-07-03
 
 ### Fixed

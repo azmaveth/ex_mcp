@@ -10,7 +10,7 @@ ExMCP provides seamless integration with Phoenix applications through the `ExMCP
 # In mix.exs
 defp deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.1"},
+    {:ex_mcp, "~> 1.0.0-rc.4"},
     # ... your other dependencies
   ]
 end
@@ -290,6 +290,9 @@ scope "/api" do
   
   forward "/mcp", ExMCP.HttpPlug,
     handler: MyApp.AuthenticatedMCPHandler,
+    handler_opts: fn conn ->
+      [current_user: conn.assigns[:current_user]]
+    end,
     server_info: %{name: "secure-app", version: "1.0.0"}
 end
 ```
@@ -301,11 +304,15 @@ Access the current user and other Phoenix context in your MCP handler:
 ```elixir
 defmodule MyApp.AuthenticatedMCPHandler do
   use ExMCP.Server.Handler
+
+  @impl true
+  def init(opts) do
+    {:ok, %{current_user: Keyword.fetch!(opts, :current_user)}}
+  end
   
   @impl true
   def handle_call_tool("get_my_posts", _args, state) do
-    # Access current user from the request context
-    user = get_current_user(state)
+    user = state.current_user
     
     posts = MyApp.Blog.list_user_posts(user.id)
     
@@ -314,13 +321,6 @@ defmodule MyApp.AuthenticatedMCPHandler do
     end)
     
     {:ok, results, state}
-  end
-  
-  # Helper to extract user from state (you'll need to modify the HttpPlug to pass this)
-  defp get_current_user(state) do
-    # This would require modifying ExMCP.HttpPlug to pass request context
-    # For now, you can access it via Process.get/1 if set by a plug
-    Process.get(:current_user)
   end
 end
 ```
