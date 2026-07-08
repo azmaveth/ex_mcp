@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **MessageProcessor handler startup** — `ExMCP.MessageProcessor` now starts temporary handler GenServers with the configured handler options and consistently assigns `server_info` before dispatching initialize requests.
+- **MessageProcessor handler reply normalization** — `ExMCP.MessageProcessor.MethodHandlers` now accepts map-shaped list results and GenServer-style three-tuple replies from handler processes, preserving compatibility with existing handlers while returning MCP tool errors as successful `isError` tool results.
 - **Release docs** — Updated active installation snippets and Phoenix request-context examples for the rc.4 release line.
 
 ## [1.0.0-rc.3] - 2026-07-03
