@@ -139,6 +139,7 @@ defmodule ExMCP.MessageProcessor do
 
   defp process_validated_request(%Conn{} = conn, opts) do
     handler = Map.get(opts, :handler)
+    handler_opts = Map.get(opts, :handler_opts, [])
     server = Map.get(opts, :server)
     server_info = Map.get(opts, :server_info, %{})
 
@@ -151,7 +152,7 @@ defmodule ExMCP.MessageProcessor do
       handler != nil ->
         case handler do
           handler_module when is_atom(handler_module) ->
-            process_with_handler_genserver(conn, handler_module, server_info)
+            process_with_handler_genserver(conn, handler_module, server_info, handler_opts)
 
           _ ->
             error_response =
@@ -178,9 +179,9 @@ defmodule ExMCP.MessageProcessor do
   end
 
   # Process request using Handler Server with GenServer
-  defp process_with_handler_genserver(conn, handler_module, server_info) do
+  defp process_with_handler_genserver(conn, handler_module, server_info, handler_opts) do
     # Start the handler as a GenServer
-    case GenServer.start_link(handler_module, []) do
+    case GenServer.start_link(handler_module, handler_opts) do
       {:ok, server_pid} ->
         try do
           # Process the request using the handler's GenServer interface
@@ -206,7 +207,8 @@ defmodule ExMCP.MessageProcessor do
   end
 
   # Process handler request through GenServer calls
-  defp process_handler_request(conn, server_pid, _server_info) do
+  defp process_handler_request(conn, server_pid, server_info) do
+    conn = assign(conn, :server_info, server_info)
     dispatch_to_method_handlers(conn, server_pid)
   end
 

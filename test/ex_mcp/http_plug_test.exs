@@ -24,6 +24,23 @@ defmodule ExMCP.HttpPlugTest do
     end
   end
 
+  defmodule RequestAwareServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(opts), do: {:ok, Map.new(opts)}
+
+    @impl true
+    def handle_initialize(_params, state) do
+      {:ok,
+       %{
+         name: Map.fetch!(state, :request_path),
+         version: Map.fetch!(state, :request_method),
+         capabilities: %{}
+       }, state}
+    end
+  end
+
   defmodule TrackingSessionManager do
     @table :http_plug_test_session_manager
 
@@ -82,6 +99,7 @@ defmodule ExMCP.HttpPlugTest do
       assert config.validate_origin == true
       assert config.allowed_origins == []
       assert config.body_limit == 1_000_000
+      assert config.handler_opts == []
     end
   end
 
@@ -239,6 +257,46 @@ defmodule ExMCP.HttpPlugTest do
       assert response["jsonrpc"] == "2.0"
       assert response["id"] == 3
       assert Map.has_key?(response["result"], "content")
+    end
+
+    test "resolves handler_opts from the Plug connection and JSON-RPC request" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2025-06-18",
+          "capabilities" => %{},
+          "clientInfo" => %{name: "test-client", version: "1.0.0"}
+        },
+        "id" => 30
+      }
+
+      handler_opts = fn conn, request ->
+        [
+          request_path: conn.request_path,
+          request_method: request["method"]
+        ]
+      end
+
+      conn =
+        conn(:post, "/mcp", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: RequestAwareServer,
+            handler_opts: handler_opts,
+            sse_enabled: false
+          )
+        )
+
+      assert conn.status == 200
+
+      {:ok, response} = Jason.decode(conn.resp_body)
+
+      assert response["result"]["serverInfo"] == %{
+               "name" => "/mcp",
+               "version" => "initialize"
+             }
     end
 
     test "handles invalid JSON" do

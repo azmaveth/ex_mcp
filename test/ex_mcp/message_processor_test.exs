@@ -60,6 +60,23 @@ defmodule ExMCP.MessageProcessorTest do
     end
   end
 
+  defmodule InitOptsHandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(opts), do: {:ok, Map.new(opts)}
+
+    @impl true
+    def handle_initialize(_params, state) do
+      {:ok,
+       %{
+         name: Map.fetch!(state, :name),
+         version: Map.fetch!(state, :version),
+         capabilities: %{}
+       }, state}
+    end
+  end
+
   describe "new/2" do
     test "creates a new connection with request" do
       request = %{"method" => "test", "params" => %{}}
@@ -173,6 +190,32 @@ defmodule ExMCP.MessageProcessorTest do
         request |> MessageProcessor.new() |> MessageProcessor.process(%{handler: HandlerServer})
 
       assert conn.response["result"]["completion"]["values"] == ["prompt:par"]
+    end
+
+    test "passes handler_opts to temporary handler GenServers" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2025-11-25",
+          "capabilities" => %{},
+          "clientInfo" => %{"name" => "test", "version" => "1.0.0"}
+        },
+        "id" => 3
+      }
+
+      conn =
+        request
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{
+          handler: InitOptsHandlerServer,
+          handler_opts: [name: "configured-handler", version: "2.0.0"]
+        })
+
+      assert conn.response["result"]["serverInfo"] == %{
+               "name" => "configured-handler",
+               "version" => "2.0.0"
+             }
     end
   end
 end

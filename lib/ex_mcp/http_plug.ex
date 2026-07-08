@@ -8,6 +8,14 @@ defmodule ExMCP.HttpPlug do
   requests for RPC calls and Server-Sent Events (SSE) for real-time
   communication.
 
+  ## Handler options
+
+  `:handler_opts` configures the argument passed to a handler module's
+  `init/1`. It may be a static term, a one-arity function called with the
+  `Plug.Conn`, a two-arity function called with the `Plug.Conn` and decoded
+  JSON-RPC request, or an `{module, function, extra_args}` tuple. MFA handlers
+  are called as `apply(module, function, [conn, request | extra_args])`.
+
   ## Usage
 
       # With Cowboy
@@ -68,6 +76,7 @@ defmodule ExMCP.HttpPlug do
   def init(opts) do
     %{
       handler: Keyword.get(opts, :handler),
+      handler_opts: Keyword.get(opts, :handler_opts, []),
       server_info: Keyword.get(opts, :server_info, %{name: "ex_mcp_server", version: "1.0.0"}),
       session_manager: Keyword.get(opts, :session_manager, ExMCP.SessionManager),
       sse_enabled: Keyword.get(opts, :sse_enabled, true),
@@ -239,6 +248,7 @@ defmodule ExMCP.HttpPlug do
          {:ok, body, conn} <- read_or_cached_body(conn, opts),
          {:ok, request} <- parse_json(body),
          {:ok, _token_info} <- authorize_request(conn, request, opts),
+         {:ok, opts} <- resolve_handler_opts(conn, request, opts),
          result <- process_mcp_request(request, opts) do
       Logger.debug("MCP request processed, result: #{inspect(result)}")
 
@@ -425,6 +435,29 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  defp resolve_handler_opts(conn, request, %{handler_opts: handler_opts} = opts) do
+    resolved =
+      case handler_opts do
+        fun when is_function(fun, 2) ->
+          fun.(conn, request)
+
+        fun when is_function(fun, 1) ->
+          fun.(conn)
+
+        {module, function, args} when is_atom(module) and is_atom(function) and is_list(args) ->
+          apply(module, function, [conn, request | args])
+
+        other ->
+          other
+      end
+
+    {:ok, %{opts | handler_opts: resolved}}
+  rescue
+    exception ->
+      Logger.error("Failed to resolve MCP handler_opts: #{Exception.message(exception)}")
+      {:error, :handler_opts_failed}
+  end
+
   # Handle session termination via DELETE request
   defp handle_session_delete(conn, session_id, opts) do
     with {:ok, conn} <- validate_request_origin(conn, opts),
@@ -594,6 +627,7 @@ defmodule ExMCP.HttpPlug do
   # Process MCP request using the configured handler
   defp process_mcp_request(request, opts) do
     handler = opts.handler
+    handler_opts = Map.get(opts, :handler_opts, [])
     server_info = opts.server_info
 
     case handler do
@@ -608,6 +642,7 @@ defmodule ExMCP.HttpPlug do
         processed_conn =
           ExMCP.MessageProcessor.process(conn, %{
             handler: handler_module,
+            handler_opts: handler_opts,
             server_info: server_info
           })
 
