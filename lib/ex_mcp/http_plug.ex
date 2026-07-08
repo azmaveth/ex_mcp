@@ -435,7 +435,9 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  defp resolve_handler_opts(conn, request, %{handler_opts: handler_opts} = opts) do
+  defp resolve_handler_opts(conn, request, opts) do
+    handler_opts = Map.get(opts, :handler_opts, [])
+
     resolved =
       case handler_opts do
         fun when is_function(fun, 2) ->
@@ -451,7 +453,7 @@ defmodule ExMCP.HttpPlug do
           other
       end
 
-    {:ok, %{opts | handler_opts: resolved}}
+    {:ok, Map.put(opts, :handler_opts, resolved)}
   rescue
     exception ->
       Logger.error("Failed to resolve MCP handler_opts: #{Exception.message(exception)}")

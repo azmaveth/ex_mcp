@@ -299,6 +299,38 @@ defmodule ExMCP.HttpPlugTest do
              }
     end
 
+    test "defaults missing handler_opts to empty options" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "tools/call",
+        "params" => %{
+          "name" => "test_tool",
+          "arguments" => %{"message" => "hello"}
+        },
+        "id" => 31
+      }
+
+      opts = %{
+        handler: TestServer,
+        server_info: %{name: "test", version: "1.0.0"},
+        sse_enabled: false,
+        cors_enabled: false,
+        oauth_enabled: false,
+        auth_config: %{}
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(opts)
+
+      assert conn.status == 200
+
+      {:ok, response} = Jason.decode(conn.resp_body)
+      assert response["id"] == 31
+      assert response["result"]["content"] == [%{"type" => "text", "text" => "Echo: hello"}]
+    end
+
     test "handles invalid JSON" do
       conn =
         conn(:post, "/", "invalid json")
