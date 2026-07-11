@@ -2,19 +2,25 @@ defmodule ExMCP.Types do
   @moduledoc """
   Type definitions for the Model Context Protocol.
 
-  This module defines the core types used throughout ExMCP,
-  matching the MCP specification version 2025-06-18.
+  The latest negotiated protocol version is **2025-11-25**. This module holds
+  the shared / current type surface used across ExMCP. Version-specific
+  modules document differences for older protocol revisions.
 
-  ## MCP Specification Types
-  All core types are from the official MCP specification 2025-06-18.
+  ## Version-specific modules
 
-  ## Version-Specific Types
-  Types that vary between protocol versions are defined in separate modules:
-  - ExMCP.Types.V20241105 - Initial stable version
-  - ExMCP.Types.V20250326 - Added subscription support
-  - ExMCP.Types.V20250618 - Current version (removed batching, added structured output)
+  - `ExMCP.Types.V20241105` — initial stable version
+  - `ExMCP.Types.V20250326` — subscriptions / batch era
+  - `ExMCP.Types.V20250618` — structured tool output; batching removed
+  - `ExMCP.Types.V20251125` — tasks, icons, URL elicitation, sampling tool calls
 
-  For version-specific features, use the appropriate version module.
+  Prefer `ExMCP.Types.latest_protocol_version/0` and
+  `ExMCP.Internal.VersionRegistry` for negotiation rather than hard-coding
+  version strings in application code.
+
+  > #### Forward looking {: .info}
+  >
+  > Upstream is drafting **MCP 2026-07-28** (breaking). ExMCP does not
+  > implement that draft yet; track it for a post-1.0 release.
   """
 
   # Protocol version constants

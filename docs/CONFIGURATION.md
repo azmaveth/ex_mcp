@@ -19,7 +19,10 @@ ExMCP supports:
 - `2024-11-05`
 - `2025-03-26`
 - `2025-06-18`
-- `2025-11-25`
+- `2025-11-25` (latest stable; default)
+
+> **Note:** Upstream is drafting MCP **2026-07-28** (breaking). That version is not
+> negotiated by ExMCP until a future release after the final specification ships.
 
 The latest supported version is returned by `ExMCP.protocol_version/0`.
 

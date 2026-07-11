@@ -151,7 +151,7 @@ session setup, model/mode config, and richer status updates.
 | `:event_listener` | `nil` | PID to receive `{:acp_session_update, sid, update}` messages |
 | `:client_info` | `%{"name" => "ex_mcp", ...}` | Client identification |
 | `:capabilities` | `%{}` | Client capabilities map |
-| `:protocol_version` | `1` | ACP protocol version (integer) |
+| `:protocol_version` | `1` | ACP major protocol version (integer). Matches upstream [v1](https://agentclientprotocol.com/protocol/v1/overview); non-breaking features use capability negotiation. |
 | `:name` | `nil` | GenServer name registration |
 
 ## Session Lifecycle

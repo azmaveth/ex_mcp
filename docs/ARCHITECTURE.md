@@ -148,7 +148,21 @@ transport behavior. `ExMCP.Transport.Test` and `transport: :beam` keep local
 server/client tests fast without starting subprocesses or network listeners.
 
 External conformance scripts live in `scripts/` and should be run for each
-supported MCP spec version before release.
+supported MCP spec version before release:
+
+```bash
+./scripts/conformance.sh              # latest stable suite
+./scripts/conformance.sh all-versions # all negotiated MCP versions
+mix mcp.sync_spec --version 2025-11-25 --force  # refresh local docs/mcp-specs
+```
+
+### Protocol version alignment
+
+| Protocol | Upstream (current stable) | ExMCP |
+|----------|---------------------------|--------|
+| MCP | `2025-11-25` | Default + negotiated; also 2025-06-18, 2025-03-26, 2024-11-05 |
+| MCP draft | `2026-07-28` RC (breaking) | **Not implemented** — post-1.0 |
+| ACP | major `1` | `protocolVersion: 1` |
 
 ## Design Rules
 

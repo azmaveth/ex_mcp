@@ -233,8 +233,17 @@ If you encounter issues during migration:
 
 ## Version Support
 
-- **v0.12.x**: Current stable version with MCP 2025-11-25 support and stable ACP v1 alignment
-- **v0.11.x**: Previous stable version
-- **v0.10.x and earlier**: Legacy versions, upgrade recommended
+- **1.0.x (RC / upcoming stable)**: MCP **2025-11-25** (latest) plus older negotiated versions; ACP major **v1**
+- **v0.12.x**: Prior line with MCP 2025-11-25 support and ACP v1 alignment
+- **v0.11.x and earlier**: Upgrade recommended
+
+### Forward-looking protocol notes
+
+- **MCP 2026-07-28** is a breaking draft/RC relative to 2025-11-25. ExMCP does not
+  implement it yet; plan a post-1.0 release after the final ships.
+- **ACP** adds non-breaking capabilities under major `1` (session list/close/resume,
+  logout, config options, etc.). Adapter packages (Claude / Codex / Pi) should be
+  re-synced periodically with upstream agent releases.
+- Refresh local MCP reference docs with `mix mcp.sync_spec --version 2025-11-25`.
 
 Keep your ExMCP version up to date to benefit from the latest MCP protocol features and security improvements.
