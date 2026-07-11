@@ -532,17 +532,45 @@ defmodule ConformanceRouter do
   # ── SSE Tool Handlers ────────────────────────────────────────
 
   defp handle_sse_tool(conn, name, id, req) do
-    sid = session_id(conn)
+    # Prefer client-supplied session id so POST tools/call matches GET SSE.
+    # If the header is missing, wait for the sole live SSE stream (POST-before-GET race).
+    case resolve_sse_session_id(conn) do
+      {:ok, sid} ->
+        conn =
+          conn
+          |> put_resp_header("content-type", "text/event-stream")
+          |> put_resp_header("cache-control", "no-cache")
+          |> put_resp_header("connection", "keep-alive")
+          |> put_resp_header("mcp-session-id", sid)
+          |> send_chunked(200)
 
-    conn =
-      conn
-      |> put_resp_header("content-type", "text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> put_resp_header("connection", "keep-alive")
-      |> put_resp_header("mcp-session-id", sid)
-      |> send_chunked(200)
+        do_sse_tool(conn, name, id, req, sid)
 
-    do_sse_tool(conn, name, id, req, sid)
+      {:error, reason} ->
+        Logger.warning(
+          "SSE stream not ready for tool=#{name} reason=#{inspect(reason)}; " <>
+            "bidirectional request would fail"
+        )
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          200,
+          Jason.encode!(%{
+            jsonrpc: "2.0",
+            id: id,
+            result: %{
+              content: [
+                %{
+                  type: "text",
+                  text: "Error: no SSE stream (#{inspect(reason)}) for tool #{name}"
+                }
+              ],
+              isError: true
+            }
+          })
+        )
+    end
   end
 
   defp do_sse_tool(conn, "test_tool_with_logging", id, _req, _sid) do
@@ -787,10 +815,30 @@ defmodule ConformanceRouter do
   defp sse_event(conn, data),
     do: Plug.Conn.chunk(conn, "event: message\ndata: #{Jason.encode!(data)}\n\n")
 
-  defp session_id(conn),
-    do:
-      get_req_header(conn, "mcp-session-id") |> List.first() ||
-        "session-#{System.unique_integer([:positive])}"
+  # Session id for ordinary requests: honor header or mint a stable-looking id.
+  defp session_id(conn) do
+    case get_req_header(conn, "mcp-session-id") do
+      [sid | _] when is_binary(sid) and sid != "" -> sid
+      _ -> "session-#{System.unique_integer([:positive])}"
+    end
+  end
+
+  # Bidirectional tools MUST share the GET SSE session id.
+  defp resolve_sse_session_id(conn) do
+    case get_req_header(conn, "mcp-session-id") do
+      [sid | _] when is_binary(sid) and sid != "" ->
+        case SSESession.await_sse_stream(sid, 3_000) do
+          :ok -> {:ok, sid}
+          {:error, :timeout} -> {:error, {:no_sse_stream, sid}}
+        end
+
+      _ ->
+        case SSESession.await_sole_live_session_id(3_000) do
+          {:ok, sid} -> {:ok, sid}
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
 end
 
 # ── Start Server ─────────────────────────────────────────────────
