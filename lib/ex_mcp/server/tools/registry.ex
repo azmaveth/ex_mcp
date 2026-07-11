@@ -2,6 +2,12 @@ defmodule ExMCP.Server.Tools.Registry do
   @moduledoc """
   Runtime tool registry that manages tool definitions and handlers.
 
+  > #### Deprecated {: .warning}
+  >
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Prefer declarative tools via `ExMCP.Server.DSL`, or implement dynamic
+  > lists with `ExMCP.Server.Handler` callbacks.
+
   This module provides a simpler alternative to compile-time metaprogramming
   by using runtime registration of tools.
   """

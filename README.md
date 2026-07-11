@@ -26,7 +26,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **100% MCP conformance** -- 226/226 client checks, 39/39 server checks (official test suite)
 - **Multiple transports** -- HTTP/SSE, stdio, and BEAM-local MCP (~15μs local calls)
 - **Phoenix Plug** -- native Phoenix integration with `ExMCP.HttpPlug`
-- **DSL and Handler APIs** -- declarative tool/resource/prompt definitions or callback-based handlers
+- **DSL and Handler APIs** -- declarative tool/resource/prompt definitions via `ExMCP.Server.DSL`, or raw callback-based handlers (`ExMCP.Server.Tools` is deprecated; removed in 1.1)
 - **OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD, JWT client auth (`private_key_jwt`), enterprise SSO (ID-JAG), token revocation (RFC 7009), pluggable auth providers
 - **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, 88 telemetry events
 - **Agent Client Protocol (ACP)** -- control coding agents and build native Elixir ACP agents
@@ -43,6 +43,16 @@ def deps do
   ]
 end
 ```
+
+### API stability (1.0)
+
+| Stable | Experimental / limited | Deprecated (gone in 1.1) |
+|--------|------------------------|---------------------------|
+| `ExMCP.Client`, `Server.Handler`, `Server.DSL` | Content transform/sanitize stubs | `ExMCP.Server.Tools` (+ helpers) |
+| Transports (`:stdio`, `:http`, `:beam`, `:test`) | Some draft MCP handler features | — |
+| `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | — |
+
+Runnable examples live in the GitHub repo under [`examples/`](https://github.com/azmaveth/ex_mcp/tree/master/examples) (not shipped in the Hex package).
 
 ## Quick Start
 

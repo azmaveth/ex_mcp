@@ -2,50 +2,38 @@ defmodule ExMCP.Server.Tools do
   @moduledoc """
   DSL for defining MCP tools in server handlers.
 
+  > #### Deprecated {: .warning}
+  >
+  > `ExMCP.Server.Tools` is **deprecated** and will be **removed in 1.1.0**.
+  > Use `ExMCP.Server.Handler` with `ExMCP.Server.DSL` instead (tools, resources,
+  > and prompts in one API). See the project DSL guide for migration examples.
+  >
+  > `use ExMCP.Server.Tools` emits a compile-time warning.
+
   This module provides a declarative way to define tools with automatic
-  schema generation and validation. It supports both simple and advanced APIs.
+  schema generation and validation. Prefer `ExMCP.Server.DSL` for new code.
 
-  ## Simple API
+  ## Migration
 
-  For common cases, use the simple API with automatic schema generation:
+      # Deprecated
+      use ExMCP.Server.Handler
+      use ExMCP.Server.Tools
 
-      defmodule MyServer do
-        use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
-
-        tool "echo", "Echo back the input" do
-          param :message, :string, required: true
-
-          handle fn %{message: message}, _state ->
-            {:ok, text: message}
-          end
+      tool "echo", "Echo back the input" do
+        param :message, :string, required: true
+        handle fn %{message: message}, _state ->
+          {:ok, text: message}
         end
       end
 
-  ## Advanced API
+      # Preferred
+      use ExMCP.Server.Handler
+      use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
 
-  For full control over schemas and metadata:
-
-      tool "calculate" do
-        description "Perform mathematical calculations"
-
-        input_schema %{
-          type: "object",
-          properties: %{
-            expression: %{type: "string", pattern: "^[0-9+\\-*/().\\s]+$"}
-          }
-        }
-
-        annotations %{
-          readOnlyHint: true
-        }
-
-        handle fn %{expression: expr}, state ->
-          result = evaluate_expression(expr)
-          {:ok, %{
-            content: [{type: "text", text: "Result: #\{result}"}],
-            structuredContent: %{result: result, expression: expr}
-          }, state}
+      tool "echo", "Echo back the input" do
+        param :message, :string, required: true
+        run fn %{message: message}, state ->
+          {:ok, message, state}
         end
       end
   """
@@ -53,6 +41,13 @@ defmodule ExMCP.Server.Tools do
   alias ExMCP.Server.Tools.ResponseNormalizer
 
   defmacro __using__(_opts) do
+    IO.warn(
+      "ExMCP.Server.Tools is deprecated and will be removed in 1.1.0. " <>
+        "Use ExMCP.Server.Handler with ExMCP.Server.DSL instead " <>
+        "(see ExMCP.Server.DSL and the DSL guide).",
+      Macro.Env.stacktrace(__CALLER__)
+    )
+
     quote do
       import ExMCP.Server.Tools
       Module.register_attribute(__MODULE__, :tools, accumulate: true)

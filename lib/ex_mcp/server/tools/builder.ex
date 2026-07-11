@@ -2,6 +2,11 @@ defmodule ExMCP.Server.Tools.Builder do
   @moduledoc """
   Simplified tool builder that reduces metaprogramming complexity.
 
+  > #### Deprecated {: .warning}
+  >
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Use `ExMCP.Server.DSL` instead.
+
   Instead of heavy AST manipulation, this module uses a cleaner builder pattern
   with explicit data structures and runtime registration.
   """

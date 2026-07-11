@@ -108,72 +108,46 @@ The library follows a layered architecture:
 ## Common Tasks
 
 When implementing new features:
-1. Check TASKS.md for current development status
-2. Follow existing patterns in similar modules
-3. Add comprehensive tests before implementation
-4. Run `mix format` and `mix credo` before committing
-5. Update type specs in `lib/ex_mcp/types.ex` if adding new message types
+1. Follow existing patterns in similar modules
+2. Add comprehensive tests before implementation
+3. Run `mix format` and `mix credo` before committing
+4. Update type specs in `lib/ex_mcp/types.ex` if adding new message types
+5. Prefer `ExMCP.Server.DSL` over the deprecated `ExMCP.Server.Tools` API
 
-## State Machine Implementation
+## Client implementation
 
-The library now includes a refactored client implementation using GenStateMachine for better state management and observability.
+The public MCP client API is **`ExMCP.Client`** (GenServer). There is no
+`client_adapter` / `LegacyAdapter` / `StateMachineAdapter` switch anymore —
+those modules were removed before 1.0.
 
-### Client Implementation Configuration
+Internal connection lifecycle helpers live under `ExMCP.Client.*` (for example
+`ExMCP.Client.StateMachine`, transitions, request handler). Prefer `ExMCP.Client`
+and the top-level `ExMCP.start_client/1` helpers in application code.
 
-Set the default client adapter:
+### Telemetry (client)
 
-```elixir
-# config/config.exs
-config :ex_mcp, :client_adapter, ExMCP.Client.StateMachineAdapter
-```
-
-Available adapters:
-- `ExMCP.Client.LegacyAdapter` (default) - Original GenServer implementation
-- `ExMCP.Client.StateMachineAdapter` - New state machine implementation
-
-### Per-Client Configuration
+The client stack emits telemetry such as:
 
 ```elixir
-# Use specific adapter for a client
-{:ok, client} = ExMCP.Client.start_link(
-  transport: :stdio,
-  command: "mcp-server", 
-  adapter: ExMCP.Client.StateMachineAdapter
-)
-```
-
-### State Machine Benefits
-
-- Formal state transitions with guards
-- State-specific data structures (reduced from 21 to 5-9 fields per state)
-- Comprehensive telemetry events for observability
-- Enhanced reconnection logic with exponential backoff
-- Integration with ExMCP.ProgressTracker
-
-### Telemetry Events
-
-The state machine emits telemetry for monitoring:
-
-```elixir
-# State transitions
+# State transitions (where applicable)
 [:ex_mcp, :client, :state_transition]
 
-# Request lifecycle  
+# Request lifecycle
 [:ex_mcp, :client, :request, :start]
 [:ex_mcp, :client, :request, :success]
 [:ex_mcp, :client, :request, :error]
 
-# Connection events
+# Connection / transport
 [:ex_mcp, :client, :connection, :success]
 [:ex_mcp, :client, :transport, :error]
 [:ex_mcp, :client, :transport, :closed]
 
-# Handshake events
+# Handshake
 [:ex_mcp, :client, :handshake, :start]
 [:ex_mcp, :client, :handshake, :success]
 [:ex_mcp, :client, :handshake, :error]
 
-# Reconnection events
+# Reconnection
 [:ex_mcp, :client, :reconnect, :attempt]
 [:ex_mcp, :client, :reconnect, :success]
 [:ex_mcp, :client, :reconnect, :error]
@@ -185,13 +159,19 @@ The state machine emits telemetry for monitoring:
 [:ex_mcp, :client, :progress, :rate_limited]
 ```
 
-See `ExMCP.Client.Configuration` for complete configuration documentation.
+### Server DSL
 
-## Development Workflow
+- Prefer `ExMCP.Server.Handler` + `ExMCP.Server.DSL` for tools/resources/prompts.
+- `ExMCP.Server.Tools` is **deprecated** and will be removed in **1.1.0**.
 
-- Whenever you need to write or edit code, prefer to use aider.
+## Deprecated / planned removals
 
-## Code Review
+| API | Status |
+|-----|--------|
+| `ExMCP.Server.Tools` (+ `Simplified`, helpers) | Deprecated → **removed in 1.1.0** |
+| Client adapter layer (`LegacyAdapter`, etc.) | Already removed; use `ExMCP.Client` |
 
-- After new code is written, use zen to review the code.
-- Before writing or editing code, use zen to analyze it, get consensus on it, and plan it.
+## Development notes
+
+- Primary public APIs: `ExMCP`, `ExMCP.Client`, `ExMCP.Server` / `Handler` / `DSL`, transports, `ExMCP.HttpPlug`, `ExMCP.ACP.*`, `ExMCP.Authorization`, `ExMCP.Content`, `ExMCP.Types`.
+- Other modules under `ExMCP.*` are internal unless documented otherwise.

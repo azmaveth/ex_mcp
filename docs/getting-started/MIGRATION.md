@@ -4,9 +4,52 @@ This guide helps you upgrade your ExMCP applications between versions. Each sect
 
 ## Table of Contents
 
+- [Deprecations toward 1.1.0](#deprecations-toward-110)
 - [Upgrading to v0.6.0 from v0.5.x](#upgrading-to-v060-from-v05x)
 - [Upgrading to v0.5.0 from v0.4.x](#upgrading-to-v050-from-v04x)
 - [General Migration Tips](#general-migration-tips)
+
+## Deprecations toward 1.1.0
+
+### `ExMCP.Server.Tools` → `ExMCP.Server.DSL`
+
+`ExMCP.Server.Tools`, `ExMCP.Server.Tools.Simplified`, and related helpers
+(`Builder`, `Helpers`, `Registry`, `ResponseNormalizer`, `ASTValidator`) are
+**deprecated** and will be **removed in 1.1.0**.
+
+```elixir
+# Before (deprecated — compile warning)
+defmodule MyServer do
+  use ExMCP.Server.Handler
+  use ExMCP.Server.Tools
+
+  tool "echo", "Echo" do
+    param :message, :string, required: true
+    handle fn %{message: message}, state ->
+      {:ok, text: message}
+    end
+  end
+end
+
+# After (supported)
+defmodule MyServer do
+  use ExMCP.Server.Handler
+  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+
+  tool "echo", "Echo" do
+    param :message, :string, required: true
+    run fn %{message: message}, state ->
+      {:ok, message, state}
+    end
+  end
+end
+```
+
+Notes:
+
+- Prefer `run` over `handle` for tool bodies.
+- DSL modules get `start_link/1` and can declare resources and prompts too.
+- See [DSL_GUIDE.md](../DSL_GUIDE.md) for param types, results, and compile-time checks.
 
 ## Upgrading to v0.6.0 from v0.5.x
 

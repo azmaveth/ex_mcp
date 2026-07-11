@@ -799,27 +799,55 @@ defmodule ExMCP.Client.StateMachine do
 
   # Server notification handlers
 
-  defp handle_server_notification(data, "notifications/resources/changed", _params) do
+  defp handle_server_notification(data, "notifications/resources/changed", params) do
     Logger.info("Resources changed notification received")
-    # TODO: Notify subscribers
+
+    :telemetry.execute(
+      [:ex_mcp, :client, :notification, :resources_changed],
+      %{count: 1},
+      %{params: params}
+    )
+
     data
   end
 
-  defp handle_server_notification(data, "notifications/tools/changed", _params) do
+  defp handle_server_notification(data, "notifications/tools/changed", params) do
     Logger.info("Tools changed notification received")
-    # TODO: Notify subscribers
+
+    :telemetry.execute(
+      [:ex_mcp, :client, :notification, :tools_changed],
+      %{count: 1},
+      %{params: params}
+    )
+
     data
   end
 
-  defp handle_server_notification(data, "notifications/prompts/changed", _params) do
+  defp handle_server_notification(data, "notifications/prompts/changed", params) do
     Logger.info("Prompts changed notification received")
-    # TODO: Notify subscribers
+
+    :telemetry.execute(
+      [:ex_mcp, :client, :notification, :prompts_changed],
+      %{count: 1},
+      %{params: params}
+    )
+
     data
   end
 
-  defp handle_server_notification(data, "notifications/resource/updated", %{"uri" => uri}) do
+  defp handle_server_notification(
+         data,
+         "notifications/resource/updated",
+         %{"uri" => uri} = params
+       ) do
     Logger.info("Resource updated: #{uri}")
-    # TODO: Notify subscribers
+
+    :telemetry.execute(
+      [:ex_mcp, :client, :notification, :resource_updated],
+      %{count: 1},
+      %{uri: uri, params: params}
+    )
+
     data
   end
 

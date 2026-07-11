@@ -2,6 +2,11 @@ defmodule ExMCP.Server.Tools.ResponseNormalizer do
   @moduledoc """
   Normalizes tool responses to comply with MCP specification.
 
+  > #### Deprecated {: .warning}
+  >
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Prefer `ExMCP.Server.DSL.Result` normalization used by `ExMCP.Server.DSL`.
+
   This module extracts the response normalization logic from the original
   Server.Tools module into a focused, testable unit.
   """

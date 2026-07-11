@@ -2,9 +2,13 @@ defmodule ExMCP.Content.SchemaValidator do
   @moduledoc """
   Schema validation for MCP content.
 
-  This module handles all schema-based validation, including JSON Schema
-  validation and custom schema rules. Extracted from the original
-  Content.Validation module to follow Single Responsibility Principle.
+  > #### Experimental / limited {: .warning}
+  >
+  > Not part of the core stable 1.0 surface. Field/size/MIME helpers are
+  > implemented. Full JSON Schema validation via `validate_schema/2` is **not**
+  > implemented and returns an error (it does not silently succeed).
+
+  Extracted from the original Content.Validation module.
   """
 
   alias ExMCP.Content.Protocol
@@ -22,27 +26,22 @@ defmodule ExMCP.Content.SchemaValidator do
   @doc """
   Validates content against a JSON Schema.
 
-  ## Examples
-
-      schema = %{
-        type: "object",
-        properties: %{
-          name: %{type: "string"},
-          age: %{type: "integer", minimum: 0}
-        },
-        required: ["name"]
-      }
-      
-      case SchemaValidator.validate_schema(content, schema) do
-        :ok -> :valid
-        {:error, errors} -> handle_errors(errors)
-      end
+  **Not implemented.** Always returns `{:error, [...]}` so callers do not
+  assume success. Use tool `output_schema` / `ExJsonSchema` at the DSL layer
+  for schema validation of structured tool results.
   """
   @spec validate_schema(Protocol.content(), map()) :: validation_result()
   def validate_schema(_content, schema) when is_map(schema) do
-    # TODO: Implement JSON Schema validation
-    # This would use ExJsonSchema or similar library
-    :ok
+    {:error,
+     [
+       %{
+         rule: :json_schema,
+         message: "JSON Schema validation is not implemented in ExMCP.Content.SchemaValidator",
+         field: nil,
+         value: nil,
+         severity: :error
+       }
+     ]}
   end
 
   @doc """

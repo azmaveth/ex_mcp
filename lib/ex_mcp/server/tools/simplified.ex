@@ -2,53 +2,25 @@ defmodule ExMCP.Server.Tools.Simplified do
   @moduledoc """
   Simplified tool definition DSL that reduces metaprogramming complexity.
 
-  This module provides a cleaner API that avoids heavy AST manipulation
-  while maintaining a similar developer experience to the original DSL.
+  > #### Deprecated {: .warning}
+  >
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Use `ExMCP.Server.Handler` with `ExMCP.Server.DSL` instead.
+  > `use ExMCP.Server.Tools.Simplified` emits a compile-time warning.
 
-  ## Example Usage
-
-      defmodule MyServer do
-        use ExMCP.Server.Handler
-        use ExMCP.Server.Tools.Simplified
-        
-        deftool "echo", "Echo back the input" do
-          param :message, :string, required: true
-          param :uppercase, :boolean, default: false
-          
-          run fn %{message: msg, uppercase: up}, state ->
-            result = if up, do: String.upcase(msg), else: msg
-            {:ok, %{text: result}, state}
-          end
-        end
-        
-        deftool "calculator" do
-          description "Perform basic calculations"
-          
-          input_schema %{
-            type: "object",
-            properties: %{
-              operation: %{type: "string", enum: ["add", "subtract", "multiply", "divide"]},
-              a: %{type: "number"},
-              b: %{type: "number"}
-            },
-            required: ["operation", "a", "b"]
-          }
-          
-          output_schema %{
-            type: "object",
-            properties: %{
-              result: %{type: "number"}
-            }
-          }
-          
-          run &Calculator.execute/2
-        end
-      end
+  This module provided a cleaner API that avoided heavy AST manipulation.
+  Prefer `ExMCP.Server.DSL` for new servers.
   """
 
   alias ExMCP.Server.Tools.{Builder, Registry, ResponseNormalizer}
 
   defmacro __using__(_opts) do
+    IO.warn(
+      "ExMCP.Server.Tools.Simplified is deprecated and will be removed in 1.1.0. " <>
+        "Use ExMCP.Server.Handler with ExMCP.Server.DSL instead.",
+      Macro.Env.stacktrace(__CALLER__)
+    )
+
     quote do
       import ExMCP.Server.Tools.Simplified
 

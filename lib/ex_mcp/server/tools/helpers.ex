@@ -2,6 +2,12 @@ defmodule ExMCP.Server.Tools.Helpers do
   @moduledoc """
   Helper functions for building tool responses and working with schemas.
 
+  > #### Deprecated {: .warning}
+  >
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Prefer `ExMCP.Server.DSL.Result` (`ToolResult` inside DSL modules) or raw
+  > MCP content maps from handler callbacks.
+
   This module provides utilities to simplify common patterns when implementing
   MCP tools, including response builders, schema validators, and type converters.
   """

@@ -167,23 +167,29 @@ defmodule ExMCP.MixProject do
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
-        "MCP Specification": [
-          ExMCP.Types,
+        "MCP Core": [
+          ExMCP,
+          ExMCP.Client,
           ExMCP.Server,
           ExMCP.Server.Handler,
-          ExMCP.Protocol.ErrorCodes,
-          ExMCP.Protocol.RequestProcessor,
-          ExMCP.Protocol.RequestTracker,
-          ExMCP.Protocol.ResponseBuilder,
-          ExMCP.Protocol.VersionNegotiator
+          ExMCP.Server.DSL,
+          ExMCP.Server.DSL.Result,
+          ExMCP.HttpPlug,
+          ExMCP.Types,
+          ExMCP.Content,
+          ExMCP.Error,
+          ExMCP.Response
         ],
         "MCP Transports": [
           ExMCP.Transport,
           ExMCP.Transport.Stdio,
           ExMCP.Transport.HTTP,
-          ExMCP.Transport.SSEClient
+          ExMCP.Transport.SSEClient,
+          ExMCP.Transport.Local
         ],
-        "MCP + Extensions": [ExMCP.Client],
+        Authorization: [
+          ExMCP.Authorization
+        ],
         "Agent Client Protocol (ACP)": [
           ExMCP.ACP,
           ExMCP.ACP.Agent,
@@ -202,8 +208,23 @@ defmodule ExMCP.MixProject do
           ExMCP.ACP.Adapters.Codex,
           ExMCP.ACP.Adapters.Pi
         ],
-        Internal: [ExMCP.Transport, ExMCP.Application]
+        "Deprecated (remove in 1.1)": [
+          ExMCP.Server.Tools,
+          ExMCP.Server.Tools.Simplified,
+          ExMCP.Server.Tools.Builder,
+          ExMCP.Server.Tools.Helpers,
+          ExMCP.Server.Tools.Registry,
+          ExMCP.Server.Tools.ResponseNormalizer,
+          ExMCP.Server.Tools.ASTValidator
+        ]
       ],
+      filter_modules: fn mod, _ ->
+        # Hide pure internals from the sidebar. Deprecated Tools stay visible.
+        name = inspect(mod)
+
+        not String.starts_with?(name, "ExMCP.Internal.") and
+          not String.contains?(name, ".Test.")
+      end,
       before_closing_body_tag: fn
         :html ->
           """

@@ -2,9 +2,24 @@ defmodule ExMCP.Content.Sanitizer do
   @moduledoc """
   Content sanitization utilities for MCP content.
 
-  This module handles all sanitization operations including HTML escaping,
-  script removal, and security-related content cleaning. Extracted from 
-  the original Content.Validation module.
+  > #### Experimental / limited {: .warning}
+  >
+  > Not part of the core stable 1.0 surface. HTML escape, script stripping, and
+  > path sanitization are implemented. Unicode NFC and EXIF/metadata removal are
+  > **stubs** (currently pass-through). Do not treat this as a full security
+  > sandbox.
+
+  ### Implemented
+
+  - `:html_escape` / `html_escape/1`
+  - `:strip_scripts` / `strip_scripts/1`
+  - `:limit_size` (where used by `sanitize/2`)
+  - `sanitize_path/1`, `strip_sql_injection/1`
+
+  ### Stubs / incomplete
+
+  - `:normalize_unicode` — no real NFC/homograph normalization yet
+  - `:remove_metadata` / media EXIF stripping — pass-through
   """
 
   alias ExMCP.Content.Protocol
@@ -77,17 +92,18 @@ defmodule ExMCP.Content.Sanitizer do
   """
   @spec normalize_unicode(String.t()) :: String.t()
   def normalize_unicode(text) when is_binary(text) do
-    # TODO: Implement proper Unicode normalization
-    # This would use :unicode.characters_to_nfc_binary/1 or similar
+    # Stub: full NFC/homograph normalization not implemented yet.
+    # :unicode.characters_to_nfc_binary/1 is a candidate when this is completed.
     text
   end
 
   @doc """
   Removes potentially dangerous metadata from content.
+
+  Currently a pass-through for image content (EXIF stripping not implemented).
   """
   @spec remove_metadata(Protocol.content()) :: Protocol.content()
   def remove_metadata(%{type: :image} = content) do
-    # TODO: Implement EXIF and other metadata removal
     content
   end
 

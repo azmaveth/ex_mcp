@@ -23,13 +23,27 @@ defmodule ExMCP do
   - `ExMCP.ACP` - Agent Client Protocol client and native agent helpers
 
   ### Supporting Modules
-  - `ExMCP.Content` - Content type helpers
+  - `ExMCP.Content` - Content type helpers (builders; advanced transform/sanitize is experimental)
   - `ExMCP.Types` - Type definitions (stable across versions)
+  - `ExMCP.HttpPlug` - Phoenix/Plug MCP endpoint
+  - `ExMCP.Error` / `ExMCP.Response` - Error and response helpers
+
+  ### Deprecated (removed in 1.1.0)
+  - `ExMCP.Server.Tools` and related modules — use `ExMCP.Server.DSL`
 
   > #### Internal Modules {: .warning}
   >
   > All other modules under the `ExMCP` namespace are internal implementation details
   > and may change without notice. Do not depend on them directly in your applications.
+
+  > #### Stability {: .info}
+  >
+  > **Stable for 1.0:** Client, Server Handler/DSL, documented transports, HttpPlug,
+  > Types, Content builders, Authorization entry points, ACP client/agent/adapters.
+  >
+  > **May change in minors:** draft MCP features, experimental content transformers,
+  > and anything marked deprecated. Default negotiated protocol version is the latest
+  > registered in the version registry (currently 2025-11-25).
 
   ## Quick Start
 

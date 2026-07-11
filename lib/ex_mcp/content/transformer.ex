@@ -2,9 +2,27 @@ defmodule ExMCP.Content.Transformer do
   @moduledoc """
   Content transformation utilities for MCP content.
 
-  This module handles all content transformation operations including
-  format conversion, normalization, and media processing. Extracted from
-  the original Content.Validation module.
+  > #### Experimental / limited {: .warning}
+  >
+  > Not part of the core stable 1.0 surface. Several media/encoding operations
+  > are **stubs** that either leave content unchanged or return
+  > `{:error, "… not implemented"}`. Prefer `ExMCP.Content` builders for
+  > constructing MCP content.
+
+  ### Implemented
+
+  - `:normalize_whitespace` / `normalize_whitespace/1`
+  - `extract_text/1` (plain, simple HTML tag strip)
+  - `{:custom, fun/1}`
+  - limited text format conversion in `convert_format/2`
+
+  ### Not implemented (stubs)
+
+  - `:convert_encoding` / `convert_encoding/2`
+  - `:compress_images` / `compress_image/3`
+  - `:resize_images` / `resize_image/3`
+  - `:generate_thumbnails` / `generate_thumbnail/3`
+  - markdown→HTML conversion
   """
 
   alias ExMCP.Content.Protocol
@@ -23,13 +41,13 @@ defmodule ExMCP.Content.Transformer do
   @doc """
   Transforms content by applying a list of transformation operations.
 
+  Unimplemented image/encoding ops are currently **no-ops** (content returned
+  unchanged) so pipelines do not crash. Prefer the explicit functions
+  (`compress_image/3`, etc.) when you need a hard error.
+
   ## Examples
 
-      {:ok, transformed} = Transformer.transform(content, [
-        :normalize_whitespace,
-        {:resize_images, max_width: 800},
-        :compress_images
-      ])
+      {:ok, transformed} = Transformer.transform(content, [:normalize_whitespace])
   """
   @spec transform(Protocol.content(), [transformation_op()]) ::
           {:ok, Protocol.content()} | {:error, String.t()}
@@ -162,20 +180,10 @@ defmodule ExMCP.Content.Transformer do
     %{content | text: normalize_whitespace(text)}
   end
 
-  defp apply_transformation({:convert_encoding, _from}, %{type: :text} = content) do
-    # Encoding conversion not implemented - return content unchanged
-    content
-  end
-
-  defp apply_transformation(:compress_images, %{type: :image} = content) do
-    # Image compression not implemented - return content unchanged
-    content
-  end
-
-  defp apply_transformation({:resize_images, _opts}, %{type: :image} = content) do
-    # Image resizing not implemented - return content unchanged
-    content
-  end
+  # Stubs: leave content unchanged (see moduledoc). Explicit * functions return errors.
+  defp apply_transformation({:convert_encoding, _from}, %{type: :text} = content), do: content
+  defp apply_transformation(:compress_images, %{type: :image} = content), do: content
+  defp apply_transformation({:resize_images, _opts}, %{type: :image} = content), do: content
 
   defp apply_transformation({:custom, fun}, content) when is_function(fun, 1) do
     fun.(content)

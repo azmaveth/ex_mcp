@@ -222,6 +222,21 @@ For a hand-written handler without the DSL:
 
 **Fast verification tip:** After `mix compile`, `mix examples.getting_started` runs a quick in-process demo of the DSL + client patterns shown throughout this guide (and in QUICKSTART.md).
 
+## Deprecated: `ExMCP.Server.Tools`
+
+`ExMCP.Server.Tools` and `ExMCP.Server.Tools.Simplified` are **deprecated** and
+will be **removed in 1.1.0**. They only covered tools (not resources/prompts)
+and overlapped with this DSL.
+
+| Old (`Server.Tools`) | New (`Server.DSL`) |
+|----------------------|--------------------|
+| `use ExMCP.Server.Tools` | `use ExMCP.Server.DSL, name: "...", version: "..."` |
+| `tool "name" do ... handle fn ... end end` | `tool "name" do ... run fn ... end end` |
+| `handle fn args, state -> ... end` | `run fn args, state -> ... end` |
+| (tools only) | also `resource`, `resource_template`, `prompt` |
+
+Using the old modules prints a compile-time deprecation warning.
+
 ## Migration From The Removed Legacy DSL
 
 The former `use ExMCP.Server` macro and `deftool`, `defresource`, and

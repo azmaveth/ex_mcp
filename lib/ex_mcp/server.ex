@@ -20,6 +20,11 @@ defmodule ExMCP.Server do
 
   Use `ExMCP.Server.HandlerServer.start_link/1` when you need a transport-aware
   process for a handler module.
+
+  > #### Deprecated API {: .warning}
+  >
+  > `ExMCP.Server.Tools` (and `Tools.Simplified`) are deprecated and will be
+  > removed in **1.1.0**. Prefer `ExMCP.Server.DSL` for new code.
   """
 
   @doc """

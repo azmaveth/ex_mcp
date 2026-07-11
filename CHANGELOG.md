@@ -7,13 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+- **`ExMCP.Server.Tools` API** — `ExMCP.Server.Tools`, `ExMCP.Server.Tools.Simplified`, and companion modules (`Builder`, `Helpers`, `Registry`, `ResponseNormalizer`, `ASTValidator`) are deprecated and will be **removed in 1.1.0**. `use ExMCP.Server.Tools` and `use ExMCP.Server.Tools.Simplified` emit compile-time warnings. Migrate to `ExMCP.Server.Handler` + `ExMCP.Server.DSL` (see the DSL guide and migration guide).
+
 ### Improved
 - **DSL compile errors** — `ExMCP.Server.DSL` now raises `CompileError`s with file/line and actionable messages for missing handlers, duplicate tool/resource/prompt ids, wrong instructions per declaration kind, unknown instructions (with suggestions such as `inputSchema` → `input_schema`), non-literal values, and invalid param types.
 - **DSL docs and examples** — Documented param types, compile-time checks, and `ToolResult` scoping in the DSL guide and quick start; examples note the `ToolResult` alias.
+- **1.0 cleanup** — Documented API stability (README / `ExMCP` moduledoc); fixed stale agent docs (`CLAUDE.md`) that still referenced removed client adapters; HexDocs module groups now feature core APIs and group deprecated Tools modules; content transform/sanitize/schema modules document experimental stubs; client list-changed notifications emit telemetry instead of bare TODOs; removed empty `lib` directories and finished docs audit plan file; pruned dead `.dialyzer_ignore.exs` entries.
 
 ### Fixed
 - **Bare `:array` param types** — `param :name, :array` no longer silently maps to a string schema. Use `{:array, :string}` (or another item type). Examples (`advanced_dsl_server`, `weather_service`) were updated accordingly.
 - **Empty-list param defaults** — `default: []` is preserved in generated JSON Schema properties.
+- **`ExMCP.Content.SchemaValidator.validate_schema/2`** — No longer silently returns `:ok`; returns a clear not-implemented error so callers cannot assume validation ran.
 
 ## [1.0.0-rc.4] - 2026-07-08
 
