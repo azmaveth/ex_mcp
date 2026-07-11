@@ -46,6 +46,13 @@ defmodule ExMCP.SpecSync.FileMapper do
     map_doc_path(parts)
   end
 
+  # Non-versioned tutorial docs (moved out of specification/YYYY-MM-DD/basic/)
+  def github_to_local("docs/docs/tutorials/security/security_best_practices.mdx"),
+    do: "Tutorials/SecurityBestPractices.md"
+
+  def github_to_local("docs/docs/tutorials/security/authorization.mdx"),
+    do: "Tutorials/Authorization.md"
+
   def github_to_local(path), do: path
 
   @doc """
@@ -79,7 +86,7 @@ defmodule ExMCP.SpecSync.FileMapper do
       "#{base}/basic/lifecycle.mdx",
       "#{base}/basic/transports.mdx",
       "#{base}/basic/authorization.mdx",
-      "#{base}/basic/security_best_practices.mdx",
+      # Note: security_best_practices left the versioned tree; see shared_doc_files/0
       # Base protocol utilities
       "#{base}/basic/utilities/cancellation.mdx",
       "#{base}/basic/utilities/ping.mdx",
@@ -98,6 +105,23 @@ defmodule ExMCP.SpecSync.FileMapper do
       "#{base}/client/elicitation.mdx",
       "#{base}/client/roots.mdx",
       "#{base}/client/sampling.mdx"
+    ]
+  end
+
+  @doc """
+  Non-versioned tutorial / guide docs that apply across protocol revisions.
+
+  Upstream moved Security Best Practices out of
+  `specification/YYYY-MM-DD/basic/` into the global tutorials tree:
+
+  * Site: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
+  * Repo: `docs/docs/tutorials/security/security_best_practices.mdx`
+  """
+  @spec shared_doc_files() :: [String.t()]
+  def shared_doc_files do
+    [
+      "docs/docs/tutorials/security/security_best_practices.mdx",
+      "docs/docs/tutorials/security/authorization.mdx"
     ]
   end
 

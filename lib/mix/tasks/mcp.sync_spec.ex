@@ -85,6 +85,7 @@ defmodule Mix.Tasks.Mcp.SyncSpec do
 
         metadata = Metadata.load(@base_dir)
         metadata = sync_versions(versions, metadata, opts)
+        metadata = sync_shared_docs(metadata, opts)
 
         unless opts[:dry_run] do
           case Metadata.save(@base_dir, metadata) do
@@ -170,6 +171,29 @@ defmodule Mix.Tasks.Mcp.SyncSpec do
         else: FileMapper.doc_files_for_version(version)
 
     schema_files ++ doc_files
+  end
+
+  # Tutorial docs that live outside specification/VERSION/ (e.g. Security Best Practices).
+  defp sync_shared_docs(metadata, opts) do
+    if opts[:schema_only] do
+      metadata
+    else
+      info("--- Shared tutorials ---")
+      files = FileMapper.shared_doc_files()
+      verbose(opts, "  Files to check: #{length(files)}")
+
+      {metadata, stats} =
+        Enum.reduce(
+          files,
+          {metadata, %{new: 0, updated: 0, unchanged: 0, errors: 0, skipped: 0}},
+          fn github_path, {meta, stats} ->
+            sync_file(github_path, "shared", meta, stats, opts)
+          end
+        )
+
+      print_stats(stats)
+      metadata
+    end
   end
 
   defp sync_file(github_path, _version, metadata, stats, opts) do
