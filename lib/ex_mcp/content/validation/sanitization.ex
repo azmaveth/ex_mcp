@@ -59,14 +59,24 @@ defmodule ExMCP.Content.Validation.Sanitization do
 
   defp strip_scripts(content), do: content
 
-  defp normalize_unicode(%{type: :text} = content) do
-    normalized_text = :unicode.characters_to_binary(content.text, :utf8, :utf8)
-    %{content | text: normalized_text}
+  defp normalize_unicode(%{type: :text, text: text} = content) when is_binary(text) do
+    normalized =
+      case :unicode.characters_to_nfc_binary(text) do
+        result when is_binary(result) -> result
+        _ -> text
+      end
+
+    %{content | text: normalized}
   end
 
   defp normalize_unicode(content), do: content
 
   defp limit_content_size(content, _max_size), do: content
-  defp remove_metadata(content), do: %{content | metadata: %{}}
+
+  # Deprecated path: EXIF stripping was never implemented; clear map metadata only.
+  defp remove_metadata(%{metadata: _} = content), do: %{content | metadata: %{}}
+  defp remove_metadata(content), do: content
+
+  # Deprecated no-op: media compression is not an MCP requirement.
   defp compress_media(content), do: content
 end

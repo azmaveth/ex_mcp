@@ -23,11 +23,14 @@ defmodule ExMCP.Content.Validation.Analysis do
     end
   end
 
-  defp detect_faces(%{type: :image}), do: {:ok, %{count: 0, faces: []}}
+  # Face/color "analysis" is not part of MCP/ACP — historical stubs returning empty data.
+  defp detect_faces(%{type: :image}),
+    do: {:error, "Face detection is not implemented and is not an MCP/ACP feature"}
+
   defp detect_faces(_), do: {:error, "Face detection only available for images"}
 
   defp extract_colors(%{type: :image}),
-    do: {:ok, %{dominant_colors: ["#FFFFFF", "#000000"], palette: []}}
+    do: {:error, "Color extraction is not implemented and is not an MCP/ACP feature"}
 
   defp extract_colors(_), do: {:error, "Color extraction only available for images"}
 

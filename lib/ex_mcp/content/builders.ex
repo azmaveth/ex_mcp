@@ -429,26 +429,25 @@ defmodule ExMCP.Content.Builders do
   # Utility Functions
 
   @doc """
-  Resizes image content data (requires image processing library).
-  Note: This is a placeholder - actual implementation would require ImageMagick or similar.
+  Resizes image content data.
 
-  ## Examples
-
-      resized = resize(image_content, 800, 600)
+  Deprecated stub — not an MCP requirement. MCP image content is base64 + MIME only.
   """
+  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0."
   @spec resize(Protocol.image(), pos_integer(), pos_integer()) ::
           Protocol.image() | {:error, String.t()}
   def resize(%{type: :image} = _content, _width, _height) do
-    # Placeholder implementation - would need actual image processing
     {:error, "Image resizing not implemented - requires image processing library"}
   end
 
   @doc """
-  Compresses image content (placeholder).
+  Compresses image content.
+
+  Deprecated stub — not an MCP requirement.
   """
+  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0."
   @spec compress(Protocol.image(), keyword()) :: Protocol.image() | {:error, String.t()}
   def compress(%{type: :image} = _content, _opts \\ []) do
-    # Placeholder implementation
     {:error, "Image compression not implemented - requires image processing library"}
   end
 

@@ -50,9 +50,34 @@ defmodule ExMCP.ContentValidationRefactorTest do
       assert result.text == ""
     end
 
+    test "normalizes Unicode to NFC" do
+      # é as e + combining accent (NFD) should become precomposed é (NFC)
+      nfd = "e" <> <<0xCC, 0x81>>
+      nfc = Sanitizer.normalize_unicode(nfd)
+      assert String.valid?(nfc)
+      assert nfc == :unicode.characters_to_nfc_binary(nfd)
+    end
+
     test "sanitizes file paths" do
       assert "home/user/file.txt" = Sanitizer.sanitize_path("../../../home/user/file.txt")
       assert "etc/passwd" = Sanitizer.sanitize_path("/etc/passwd")
+    end
+  end
+
+  describe "SchemaValidator.validate_schema/2" do
+    test "accepts content matching the schema" do
+      content = %{type: :text, text: "hello"}
+      schema = %{"type" => "object", "required" => ["text"]}
+
+      assert :ok = SchemaValidator.validate_schema(content, schema)
+    end
+
+    test "rejects content that fails the schema" do
+      content = %{type: :text, text: "hello"}
+      schema = %{"type" => "object", "required" => ["missing_field"]}
+
+      assert {:error, [%{rule: :json_schema} | _]} =
+               SchemaValidator.validate_schema(content, schema)
     end
   end
 

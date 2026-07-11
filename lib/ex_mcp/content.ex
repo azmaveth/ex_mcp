@@ -2,8 +2,18 @@ defmodule ExMCP.Content do
   @moduledoc """
   Content handling utilities for MCP messages.
 
-  This module provides functions for creating and validating different
-  content types including text, image, audio, and embedded resources.
+  Builds and validates **protocol content blocks** used in tool results, prompts,
+  sampling, and resources:
+
+  - **text** — plain text
+  - **image** — base64 payload + MIME type (MCP content type, not image processing)
+  - **audio** — base64 payload + MIME type
+  - **resource** — embedded resource reference
+  - **tool_use** / **tool_result** — sampling content (2025-11-25)
+
+  MCP and ACP specify how to *carry* images (and icons with URLs). They do **not**
+  require compress/resize/thumbnail APIs. Those stubs live under experimental
+  modules (`ExMCP.Content.Transformer`, `Builders`) and are deprecated for 1.1.0.
   """
 
   alias ExMCP.Types

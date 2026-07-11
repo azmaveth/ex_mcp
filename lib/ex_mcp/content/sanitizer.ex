@@ -2,24 +2,24 @@ defmodule ExMCP.Content.Sanitizer do
   @moduledoc """
   Content sanitization utilities for MCP content.
 
-  > #### Experimental / limited {: .warning}
+  > #### Experimental {: .warning}
   >
-  > Not part of the core stable 1.0 surface. HTML escape, script stripping, and
-  > path sanitization are implemented. Unicode NFC and EXIF/metadata removal are
-  > **stubs** (currently pass-through). Do not treat this as a full security
-  > sandbox.
+  > Not part of the core stable Handler/DSL surface. Best-effort text sanitization
+  > only — not a full security sandbox.
 
   ### Implemented
 
   - `:html_escape` / `html_escape/1`
   - `:strip_scripts` / `strip_scripts/1`
-  - `:limit_size` (where used by `sanitize/2`)
+  - `:normalize_unicode` / `normalize_unicode/1` (Unicode NFC)
+  - `:limit_size` (text truncation; binary content marked on overflow)
   - `sanitize_path/1`, `strip_sql_injection/1`
 
-  ### Stubs / incomplete
+  ### Deprecated (not MCP/ACP requirements)
 
-  - `:normalize_unicode` — no real NFC/homograph normalization yet
-  - `:remove_metadata` / media EXIF stripping — pass-through
+  - `:remove_metadata` / `remove_metadata/1` — EXIF stripping was never implemented;
+    not required by MCP. Prefer app-level media pipelines if needed.
+  - `:compress_media` — no-op stub; will be removed in 1.1.0
   """
 
   alias ExMCP.Content.Protocol
@@ -88,25 +88,30 @@ defmodule ExMCP.Content.Sanitizer do
   end
 
   @doc """
-  Normalizes Unicode characters to prevent homograph attacks.
+  Normalizes Unicode text to NFC form.
+
+  Uses `:unicode.characters_to_nfc_binary/1`. This reduces some homograph
+  confusion but is not a complete security control by itself.
   """
   @spec normalize_unicode(String.t()) :: String.t()
   def normalize_unicode(text) when is_binary(text) do
-    # Stub: full NFC/homograph normalization not implemented yet.
-    # :unicode.characters_to_nfc_binary/1 is a candidate when this is completed.
-    text
+    case :unicode.characters_to_nfc_binary(text) do
+      result when is_binary(result) -> result
+      _ -> text
+    end
   end
 
   @doc """
   Removes potentially dangerous metadata from content.
 
-  Currently a pass-through for image content (EXIF stripping not implemented).
+  > #### Deprecated {: .warning}
+  > Never implemented for real EXIF stripping. Not required by MCP/ACP.
+  > Returns content unchanged (or clears a `:metadata` key when present).
+  > Removed in 1.1.0.
   """
+  @deprecated "Not implemented for EXIF; not an MCP requirement. Removed in 1.1.0."
   @spec remove_metadata(Protocol.content()) :: Protocol.content()
-  def remove_metadata(%{type: :image} = content) do
-    content
-  end
-
+  def remove_metadata(%{metadata: _} = content), do: Map.put(content, :metadata, %{})
   def remove_metadata(content), do: content
 
   @doc """

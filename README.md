@@ -48,9 +48,10 @@ end
 
 | Stable | Experimental / limited | Deprecated (gone in 1.1) |
 |--------|------------------------|---------------------------|
-| `ExMCP.Client`, `Server.Handler`, `Server.DSL` | Content transform/sanitize stubs | `ExMCP.Server.Tools` (+ helpers) |
-| Transports (`:stdio`, `:http`, `:beam`, `:test`) | Some draft MCP handler features | — |
-| `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | — |
+| `ExMCP.Client`, `Server.Handler`, `Server.DSL` | Content sanitize/transform helpers | `ExMCP.Server.Tools` (+ helpers) |
+| Transports (`:stdio`, `:http`, `:beam`, `:test`) | Some draft MCP handler features | Image compress/resize/thumbnail stubs |
+| `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | (MCP only needs `Content.image/2` blocks) |
+| `ExMCP.Content` builders (`text`/`image`/`audio`) | — | — |
 
 Runnable examples live in the GitHub repo under [`examples/`](https://github.com/azmaveth/ex_mcp/tree/master/examples) (not shipped in the Hex package).
 

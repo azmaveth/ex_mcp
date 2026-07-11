@@ -337,24 +337,25 @@ defmodule ExMCP.Content.ValidationTest do
   end
 
   describe "transform/2" do
-    test "transforms content successfully" do
+    test "deprecated image resize is a no-op (no pixel processing)" do
       assert {:ok, result} =
                Validation.transform(@valid_image_content, [{:resize, width: 100, height: 100}])
 
-      assert result.width == 100
-      assert result.height == 100
+      # Does not mutate dimensions; MCP only carries image bytes + MIME
+      assert result.width == @valid_image_content.width
+      assert result.height == @valid_image_content.height
     end
 
-    test "handles compression transformation" do
+    test "deprecated compression transformation is a no-op" do
       assert {:ok, result} =
                Validation.transform(@valid_image_content, [{:compress, quality: 0.8}])
 
-      assert is_map(result)
+      assert result == @valid_image_content
     end
 
-    test "generates thumbnails" do
+    test "deprecated generate_thumbnail is a no-op" do
       assert {:ok, result} = Validation.transform(@valid_image_content, [:generate_thumbnail])
-      assert is_map(result)
+      assert result == @valid_image_content
     end
 
     test "extracts text content" do
@@ -362,20 +363,19 @@ defmodule ExMCP.Content.ValidationTest do
       assert {:ok, "Hello, world!"} = result
     end
 
-    test "normalizes encoding" do
+    test "normalizes encoding with Unicode NFC" do
       assert {:ok, result} = Validation.transform(@valid_text_content, [:normalize_encoding])
       assert result.text == @valid_text_content.text
     end
 
-    test "handles multiple transformations" do
+    test "deprecated multi-step image transforms remain no-ops" do
       assert {:ok, result} =
                Validation.transform(@valid_image_content, [
                  {:resize, width: 200, height: 150},
                  {:compress, quality: 0.9}
                ])
 
-      assert result.width == 200
-      assert result.height == 150
+      assert result == @valid_image_content
     end
 
     test "handles transformation errors" do
@@ -417,13 +417,12 @@ defmodule ExMCP.Content.ValidationTest do
   end
 
   describe "analyze/2" do
-    test "analyzes image content" do
+    test "skips unimplemented image analysis (not MCP features)" do
       analysis = Validation.analyze(@valid_image_content, [:detect_faces, :extract_colors])
 
-      assert Map.has_key?(analysis, :detect_faces)
-      assert Map.has_key?(analysis, :extract_colors)
-      assert analysis.detect_faces.count == 0
-      assert length(analysis.extract_colors.dominant_colors) > 0
+      # Face/color analysis was never real processing and is not part of MCP/ACP
+      refute Map.has_key?(analysis, :detect_faces)
+      refute Map.has_key?(analysis, :extract_colors)
     end
 
     test "analyzes text content" do
@@ -484,40 +483,31 @@ defmodule ExMCP.Content.ValidationTest do
   end
 
   describe "validate_schema/2" do
-    test "validates content against JSON schema" do
+    test "validates content against JSON schema via ExJsonSchema" do
       schema = %{
         "type" => "object",
         "properties" => %{
           "text" => %{"type" => "string"},
           "format" => %{"type" => "string"}
-        }
+        },
+        "required" => ["text"]
       }
 
-      # This is a basic test - real JSON schema validation would require ExJsonSchema
       assert Validation.validate_schema(@valid_text_content, schema) == :ok
     end
 
-    test "handles schema validation errors" do
-      # Test with content that can't be JSON encoded
-      # Create a malformed content with invalid data
-      malformed_content =
-        Map.merge(@valid_text_content, %{
-          # Invalid UTF-8
-          text: <<0xFF, 0xFE>>
-        })
+    test "returns errors when content does not match schema" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "text" => %{"type" => "integer"}
+        },
+        "required" => ["text"]
+      }
 
-      schema = %{"type" => "object"}
-
-      # Should handle serialization/validation errors gracefully
-      # The function should either succeed or return an error tuple
-      result =
-        try do
-          Validation.validate_schema(malformed_content, schema)
-        rescue
-          _ -> {:error, ["Serialization failed"]}
-        end
-
-      assert result == :ok || match?({:error, _}, result)
+      assert {:error, errors} = Validation.validate_schema(@valid_text_content, schema)
+      assert is_list(errors)
+      assert errors != []
     end
   end
 

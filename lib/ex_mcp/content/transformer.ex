@@ -2,12 +2,11 @@ defmodule ExMCP.Content.Transformer do
   @moduledoc """
   Content transformation utilities for MCP content.
 
-  > #### Experimental / limited {: .warning}
+  > #### Experimental {: .warning}
   >
-  > Not part of the core stable 1.0 surface. Several media/encoding operations
-  > are **stubs** that either leave content unchanged or return
-  > `{:error, "… not implemented"}`. Prefer `ExMCP.Content` builders for
-  > constructing MCP content.
+  > Prefer `ExMCP.Content` for constructing MCP content blocks (`text`, `image`,
+  > `audio`, resources). MCP/ACP only require **carrying** image bytes + MIME
+  > type — not compressing, resizing, or generating thumbnails.
 
   ### Implemented
 
@@ -16,13 +15,14 @@ defmodule ExMCP.Content.Transformer do
   - `{:custom, fun/1}`
   - limited text format conversion in `convert_format/2`
 
-  ### Not implemented (stubs)
+  ### Deprecated stubs (removed in 1.1.0)
 
-  - `:convert_encoding` / `convert_encoding/2`
-  - `:compress_images` / `compress_image/3`
-  - `:resize_images` / `resize_image/3`
-  - `:generate_thumbnails` / `generate_thumbnail/3`
-  - markdown→HTML conversion
+  Image processing was never part of MCP/ACP and was never implemented:
+
+  - `compress_image/3`, `:compress_images`
+  - `resize_image/3`, `:resize_images`
+  - `generate_thumbnail/3`, `:generate_thumbnails`
+  - `convert_encoding/2` (needs external encoding libs)
   """
 
   alias ExMCP.Content.Protocol
@@ -41,9 +41,7 @@ defmodule ExMCP.Content.Transformer do
   @doc """
   Transforms content by applying a list of transformation operations.
 
-  Unimplemented image/encoding ops are currently **no-ops** (content returned
-  unchanged) so pipelines do not crash. Prefer the explicit functions
-  (`compress_image/3`, etc.) when you need a hard error.
+  Deprecated image ops are **no-ops** in the pipeline for backward compatibility.
 
   ## Examples
 
@@ -91,10 +89,12 @@ defmodule ExMCP.Content.Transformer do
 
   @doc """
   Converts text encoding to UTF-8.
+
+  Deprecated stub — not an MCP requirement.
   """
+  @deprecated "Not implemented; not required by MCP/ACP. Removed in 1.1.0."
   @spec convert_encoding(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def convert_encoding(text, _from_encoding \\ "auto") when is_binary(text) do
-    # TODO: Implement actual encoding conversion using :iconv or similar library
     {:error, "Encoding conversion not implemented - requires external encoding library"}
   end
 
@@ -127,31 +127,37 @@ defmodule ExMCP.Content.Transformer do
 
   @doc """
   Compresses image data.
+
+  Deprecated stub — MCP only transports image content blocks; processing is app-level.
   """
+  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0. Use app-level image tools."
   @spec compress_image(binary(), String.t(), keyword()) ::
           {:ok, binary()} | {:error, String.t()}
   def compress_image(_image_data, _mime_type, _opts \\ []) do
-    # TODO: Implement actual image compression using ImageMagick, Mogrify, or similar
     {:error, "Image compression not implemented - requires external image processing library"}
   end
 
   @doc """
   Resizes image to fit within specified dimensions.
+
+  Deprecated stub — not required by MCP/ACP.
   """
+  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0. Use app-level image tools."
   @spec resize_image(binary(), String.t(), keyword()) ::
           {:ok, binary()} | {:error, String.t()}
   def resize_image(_image_data, _mime_type, _opts) do
-    # TODO: Implement actual image resizing using ImageMagick, Mogrify, or similar
     {:error, "Image resizing not implemented - requires external image processing library"}
   end
 
   @doc """
   Generates a thumbnail from image content.
+
+  Deprecated stub — not required by MCP/ACP.
   """
+  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0. Use app-level image tools."
   @spec generate_thumbnail(binary(), String.t(), keyword()) ::
           {:ok, binary()} | {:error, String.t()}
   def generate_thumbnail(_image_data, _mime_type, _opts \\ []) do
-    # TODO: Implement actual thumbnail generation using ImageMagick, Mogrify, or similar
     {:error, "Thumbnail generation not implemented - requires external image processing library"}
   end
 

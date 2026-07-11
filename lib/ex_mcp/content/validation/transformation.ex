@@ -34,17 +34,10 @@ defmodule ExMCP.Content.Validation.Transformation do
     end
   end
 
-  defp resize_content(%{type: :image} = content, opts) do
-    width = Keyword.get(opts, :width)
-    height = Keyword.get(opts, :height)
-    if width && height, do: %{content | width: width, height: height}, else: content
-  end
-
+  # Image resize/compress/thumbnail are not MCP features and never processed
+  # pixel data — keep no-ops for API compatibility until 1.1.0 removal.
   defp resize_content(content, _opts), do: content
-
   defp compress_content(content, _opts), do: content
-
-  defp generate_thumbnail(%{type: :image} = content), do: content
   defp generate_thumbnail(content), do: content
 
   defp extract_text_content(content) do
@@ -57,8 +50,13 @@ defmodule ExMCP.Content.Validation.Transformation do
     end
   end
 
-  defp normalize_content_encoding(%{type: :text} = content) do
-    normalized = :unicode.characters_to_binary(content.text, :utf8, :utf8)
+  defp normalize_content_encoding(%{type: :text, text: text} = content) when is_binary(text) do
+    normalized =
+      case :unicode.characters_to_nfc_binary(text) do
+        result when is_binary(result) -> result
+        _ -> text
+      end
+
     %{content | text: normalized}
   end
 

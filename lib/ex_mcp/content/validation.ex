@@ -2,37 +2,32 @@ defmodule ExMCP.Content.Validation do
   @moduledoc """
   Content validation and transformation utilities for ExMCP.
 
-  Provides comprehensive validation, sanitization, and transformation
-  capabilities for MCP content, ensuring data integrity and security.
+  > #### Experimental {: .warning}
+  >
+  > Outside the core Handler/DSL path. Useful helpers for apps that process
+  > untrusted content; not required to speak MCP/ACP.
 
   ## Features
 
-  - **Schema Validation**: JSON Schema and custom validation rules
-  - **Content Sanitization**: HTML, SQL injection, and XSS protection
-  - **Size Limits**: File size and content length validation
-  - **MIME Type Validation**: Strict MIME type checking and detection
-  - **Content Transformation**: Format conversion and normalization
-  - **Security Scanning**: Malware detection and content analysis
-  - **Custom Validators**: Extensible validation framework
+  - **Schema Validation**: JSON Schema via `ExJsonSchema` (`validate_schema/2`)
+  - **Content Sanitization**: HTML escape, script stripping, Unicode NFC
+  - **Size / MIME checks**: structural validation helpers
+  - **Security scanning**: best-effort pattern checks
+
+  Image **processing** (compress/resize/thumbnail/face detection) is **not** part
+  of MCP/ACP and is deprecated for removal in 1.1.0. Use `ExMCP.Content.image/2`
+  to build protocol image blocks only.
 
   ## Usage
 
       alias ExMCP.Content.Validation
 
-      # Basic validation
       case Validation.validate(content, rules) do
         :ok -> process_content(content)
         {:error, reasons} -> handle_validation_errors(reasons)
       end
 
-      # Sanitization
-      safe_content = Validation.sanitize(content, [:html_escape, :strip_scripts])
-
-      # Security scanning
-      case Validation.scan_security(content, [:xss, :sql_injection]) do
-        :safe -> process_content(content)
-        {:threat, threats} -> reject_content(content)
-      end
+      safe_content = Validation.sanitize(content, [:html_escape, :strip_scripts, :normalize_unicode])
   """
 
   alias ExMCP.Content.Protocol
@@ -232,15 +227,24 @@ defmodule ExMCP.Content.Validation do
   # --- Schema Validation ---
 
   @doc """
-  Validates content against a JSON schema.
+  Validates content against a JSON schema using ExJsonSchema.
+
+  Content is converted to a JSON-compatible map before validation.
   """
   @spec validate_schema(Protocol.content(), map()) :: :ok | {:error, [String.t()]}
   def validate_schema(content, schema) when is_map(schema) do
-    serialized = Protocol.serialize(content)
+    alias ExMCP.Content.SchemaValidator
 
-    case Jason.encode(serialized) do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, ["JSON encoding failed: #{inspect(reason)}"]}
+    case SchemaValidator.validate_schema(content, schema) do
+      :ok ->
+        :ok
+
+      {:error, errors} ->
+        {:error,
+         Enum.map(errors, fn
+           %{message: message} -> message
+           other -> inspect(other)
+         end)}
     end
   end
 

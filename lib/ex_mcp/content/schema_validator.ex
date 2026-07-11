@@ -2,13 +2,13 @@ defmodule ExMCP.Content.SchemaValidator do
   @moduledoc """
   Schema validation for MCP content.
 
-  > #### Experimental / limited {: .warning}
+  > #### Experimental {: .warning}
   >
-  > Not part of the core stable 1.0 surface. Field/size/MIME helpers are
-  > implemented. Full JSON Schema validation via `validate_schema/2` is **not**
-  > implemented and returns an error (it does not silently succeed).
+  > Helper utilities outside the core Handler/DSL path. Prefer tool
+  > `output_schema` on `ExMCP.Server.DSL` for structured tool results.
 
-  Extracted from the original Content.Validation module.
+  Field/size/MIME helpers are implemented. `validate_schema/2` uses
+  `ExJsonSchema` when available.
   """
 
   alias ExMCP.Content.Protocol
@@ -24,25 +24,93 @@ defmodule ExMCP.Content.SchemaValidator do
   @type validation_result :: :ok | {:error, [validation_error()]}
 
   @doc """
-  Validates content against a JSON Schema.
+  Validates content against a JSON Schema using ExJsonSchema.
 
-  **Not implemented.** Always returns `{:error, [...]}` so callers do not
-  assume success. Use tool `output_schema` / `ExJsonSchema` at the DSL layer
-  for schema validation of structured tool results.
+  Content maps are converted to JSON-compatible string-keyed maps (atoms
+  become strings) before validation.
   """
-  @spec validate_schema(Protocol.content(), map()) :: validation_result()
-  def validate_schema(_content, schema) when is_map(schema) do
-    {:error,
-     [
-       %{
-         rule: :json_schema,
-         message: "JSON Schema validation is not implemented in ExMCP.Content.SchemaValidator",
-         field: nil,
-         value: nil,
-         severity: :error
-       }
-     ]}
+  @spec validate_schema(Protocol.content() | map(), map()) :: validation_result()
+  def validate_schema(content, schema) when is_map(content) and is_map(schema) do
+    if Code.ensure_loaded?(ExJsonSchema) do
+      data = json_compatible(content)
+
+      try do
+        resolved =
+          schema
+          |> json_compatible()
+          |> ExJsonSchema.Schema.resolve()
+
+        case ExJsonSchema.Validator.validate(resolved, data) do
+          :ok ->
+            :ok
+
+          {:error, errors} ->
+            {:error, Enum.map(List.wrap(errors), &schema_error/1)}
+        end
+      rescue
+        e ->
+          {:error,
+           [
+             %{
+               rule: :json_schema,
+               message: "Schema validation failed: #{Exception.message(e)}",
+               field: nil,
+               value: nil,
+               severity: :error
+             }
+           ]}
+      end
+    else
+      {:error,
+       [
+         %{
+           rule: :json_schema,
+           message: "ExJsonSchema is not available",
+           field: nil,
+           value: nil,
+           severity: :error
+         }
+       ]}
+    end
   end
+
+  defp schema_error({path, message}) when is_binary(message) do
+    %{
+      rule: :json_schema,
+      message: message,
+      field: path_to_field(path),
+      value: nil,
+      severity: :error
+    }
+  end
+
+  defp schema_error(other) do
+    %{
+      rule: :json_schema,
+      message: inspect(other),
+      field: nil,
+      value: nil,
+      severity: :error
+    }
+  end
+
+  defp path_to_field(path) when is_list(path), do: Enum.map_join(path, ".", &to_string/1)
+  defp path_to_field(path) when is_binary(path), do: path
+  defp path_to_field(_), do: nil
+
+  defp json_compatible(map) when is_map(map) do
+    Map.new(map, fn {key, value} ->
+      {json_key(key), json_compatible(value)}
+    end)
+  end
+
+  defp json_compatible(list) when is_list(list), do: Enum.map(list, &json_compatible/1)
+  defp json_compatible(value) when is_atom(value), do: Atom.to_string(value)
+  defp json_compatible(value), do: value
+
+  defp json_key(key) when is_atom(key), do: Atom.to_string(key)
+  defp json_key(key) when is_binary(key), do: key
+  defp json_key(key), do: to_string(key)
 
   @doc """
   Validates that required fields are present and non-empty.
