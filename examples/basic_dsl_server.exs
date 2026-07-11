@@ -14,6 +14,7 @@ defmodule BasicServer do
     title "Greet"
     param :name, :string, required: true, description: "Name of the person to greet"
 
+    # Plain strings are normalized to text tool results
     run fn %{name: name}, state ->
       {:ok, "Hello, #{name}. Welcome to ExMCP.", state}
     end

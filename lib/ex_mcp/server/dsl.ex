@@ -6,16 +6,27 @@ defmodule ExMCP.Server.DSL do
 
       defmodule MyServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.DSL
+        use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
 
         tool "echo", "Echo back the input" do
           param :message, :string, required: true
+          param :tags, {:array, :string}, default: []
 
-          run fn %{message: message}, _state ->
-            {:ok, %{text: message}}
+          run fn %{message: message}, state ->
+            {:ok, message, state}
           end
         end
       end
+
+  Param types include `:string`, `:integer`, `:number`, `:boolean`,
+  `:object`/`:map`, and `{:array, item_type}`. Bare `:array` is rejected at
+  compile time.
+
+  Invalid declarations fail at compile time with file/line and fix hints
+  (missing handlers, duplicate names, wrong instructions per kind, etc.).
+
+  Inside DSL modules, `ToolResult` is an alias for `ExMCP.Server.DSL.Result`.
+  See the project DSL guide for full details.
   """
 
   alias ExMCP.Server.DSL.Builder
@@ -59,6 +70,11 @@ defmodule ExMCP.Server.DSL do
       |> Enum.reverse()
 
     prompts = env.module |> Module.get_attribute(:ex_mcp_dsl_prompts, []) |> Enum.reverse()
+
+    assert_unique_ids!(env, tools, :tool, & &1.name)
+    assert_unique_ids!(env, resources, :resource, & &1.uri)
+    assert_unique_ids!(env, resource_templates, :resource_template, & &1.uriTemplate)
+    assert_unique_ids!(env, prompts, :prompt, & &1.name)
 
     quote do
       unquote(
@@ -161,14 +177,34 @@ defmodule ExMCP.Server.DSL do
     end
   end
 
+  @handler_keys [:run, :handle, :read, :render]
+
+  @tool_only [:run, :handle, :input_schema, :output_schema, :execution]
+  @resource_only [:read, :mime_type, :size]
+  @prompt_only [:render, :arg]
+  @param_allowed_kinds [:tool, :resource_template]
+
+  @instruction_suggestions %{
+    inputSchema: :input_schema,
+    outputSchema: :output_schema,
+    mimeType: :mime_type,
+    handler: :run,
+    params: :param,
+    arguments: :arg,
+    argument: :arg
+  }
+
   defp build_entry(env, kind, id_ast, description_ast, block) do
-    id = eval_ast!(id_ast, env)
-    description = eval_ast!(description_ast, env)
-    instructions = parse_instructions(block, env)
+    id = eval_ast!(id_ast, env, "declaration name/URI")
+    description = eval_ast!(description_ast, env, "description")
+    assert_non_empty_id!(env, kind, id)
+
+    instructions = parse_instructions(block, env, kind)
+    label = declaration_label(kind, id)
 
     case kind do
       :tool ->
-        handler = required_handler!(instructions, [:run, :handle], "tool")
+        handler = required_handler!(env, instructions, [:run, :handle], label)
         params = Map.get(instructions, :params, [])
 
         definition =
@@ -186,7 +222,7 @@ defmodule ExMCP.Server.DSL do
         {definition, handler, params}
 
       :resource ->
-        handler = required_handler!(instructions, [:read], "resource")
+        handler = required_handler!(env, instructions, [:read], label)
 
         definition =
           Builder.resource(id, Map.get(instructions, :description, description),
@@ -202,7 +238,7 @@ defmodule ExMCP.Server.DSL do
         {definition, handler, []}
 
       :resource_template ->
-        handler = required_handler!(instructions, [:read], "resource template")
+        handler = required_handler!(env, instructions, [:read], label)
         params = Map.get(instructions, :params, [])
 
         definition =
@@ -218,7 +254,7 @@ defmodule ExMCP.Server.DSL do
         {definition, handler, params}
 
       :prompt ->
-        handler = required_handler!(instructions, [:render], "prompt")
+        handler = required_handler!(env, instructions, [:render], label)
         args = Map.get(instructions, :args, [])
 
         definition =
@@ -233,10 +269,10 @@ defmodule ExMCP.Server.DSL do
     end
   end
 
-  defp parse_instructions(block, env) do
+  defp parse_instructions(block, env, kind) do
     block
     |> block_statements()
-    |> Enum.reduce(%{params: [], args: []}, &parse_instruction(&1, &2, env))
+    |> Enum.reduce(%{params: [], args: []}, &parse_instruction(&1, &2, env, kind))
     |> Map.update!(:params, &Enum.reverse/1)
     |> Map.update!(:args, &Enum.reverse/1)
   end
@@ -244,85 +280,240 @@ defmodule ExMCP.Server.DSL do
   defp block_statements({:__block__, _meta, statements}), do: statements
   defp block_statements(statement), do: [statement]
 
-  defp parse_instruction({:param, _meta, args}, acc, env) do
-    param = parse_param(args, env)
+  defp parse_instruction({:param, meta, args}, acc, env, kind) do
+    assert_instruction_allowed!(env, meta, kind, :param)
+    param = parse_param(args, env, meta)
     Map.update!(acc, :params, &[param | &1])
   end
 
-  defp parse_instruction({:arg, _meta, args}, acc, env) do
-    arg = parse_prompt_arg(args, env)
+  defp parse_instruction({:arg, meta, args}, acc, env, kind) do
+    assert_instruction_allowed!(env, meta, kind, :arg)
+    arg = parse_prompt_arg(args, env, meta)
     Map.update!(acc, :args, &[arg | &1])
   end
 
-  defp parse_instruction({kind, _meta, [handler]}, acc, _env)
-       when kind in [:run, :handle, :read, :render] do
-    Map.put(acc, kind, handler)
+  defp parse_instruction({handler_kind, meta, [handler]}, acc, env, kind)
+       when handler_kind in @handler_keys do
+    assert_instruction_allowed!(env, meta, kind, handler_kind)
+
+    if Map.has_key?(acc, handler_kind) or has_other_handler?(acc, handler_kind) do
+      compile_error!(
+        env,
+        meta,
+        "#{kind_name(kind)} already defines a handler; only one of run/handle/read/render is allowed"
+      )
+    end
+
+    Map.put(acc, handler_kind, handler)
   end
 
-  defp parse_instruction({:title, _meta, [title]}, acc, env),
-    do: Map.put(acc, :title, eval_ast!(title, env))
-
-  defp parse_instruction({:name, _meta, [name]}, acc, env),
-    do: Map.put(acc, :name, eval_ast!(name, env))
-
-  defp parse_instruction({:description, _meta, [description]}, acc, env),
-    do: Map.put(acc, :description, eval_ast!(description, env))
-
-  defp parse_instruction({:annotations, _meta, [annotations]}, acc, env),
-    do: Map.put(acc, :annotations, eval_ast!(annotations, env))
-
-  defp parse_instruction({:icons, _meta, [icons]}, acc, env),
-    do: Map.put(acc, :icons, eval_ast!(icons, env))
-
-  defp parse_instruction({:meta, _meta, [meta]}, acc, env),
-    do: Map.put(acc, :meta, eval_ast!(meta, env))
-
-  defp parse_instruction({:execution, _meta, [execution]}, acc, env),
-    do: Map.put(acc, :execution, eval_ast!(execution, env))
-
-  defp parse_instruction({:input_schema, _meta, [schema]}, acc, env),
-    do: Map.put(acc, :input_schema, eval_ast!(schema, env))
-
-  defp parse_instruction({:output_schema, _meta, [schema]}, acc, env),
-    do: Map.put(acc, :output_schema, eval_ast!(schema, env))
-
-  defp parse_instruction({:mime_type, _meta, [mime_type]}, acc, env),
-    do: Map.put(acc, :mime_type, eval_ast!(mime_type, env))
-
-  defp parse_instruction({:size, _meta, [size]}, acc, env),
-    do: Map.put(acc, :size, eval_ast!(size, env))
-
-  defp parse_instruction({unknown, _meta, _args}, _acc, _env) when is_atom(unknown) do
-    raise CompileError, description: "Unknown ExMCP.Server.DSL instruction: #{unknown}"
+  defp parse_instruction({instr, meta, [value]}, acc, env, kind)
+       when instr in [
+              :title,
+              :name,
+              :description,
+              :annotations,
+              :icons,
+              :meta,
+              :execution,
+              :input_schema,
+              :output_schema,
+              :mime_type,
+              :size
+            ] do
+    assert_instruction_allowed!(env, meta, kind, instr)
+    Map.put(acc, instr, eval_ast!(value, env, Atom.to_string(instr), meta))
   end
 
-  defp parse_param([name, type], env), do: parse_param([name, type, []], env)
+  defp parse_instruction({unknown, meta, _args}, _acc, env, _kind) when is_atom(unknown) do
+    suggestion =
+      case Map.get(@instruction_suggestions, unknown) do
+        nil ->
+          ""
 
-  defp parse_param([name, type, opts], env) do
-    Builder.param(
-      eval_name!(name, env),
-      eval_ast!(type, env),
-      eval_ast!(opts, env)
+        known ->
+          " Did you mean `#{known}`?"
+      end
+
+    compile_error!(
+      env,
+      meta,
+      "Unknown ExMCP.Server.DSL instruction: #{unknown}.#{suggestion}"
     )
   end
 
-  defp parse_prompt_arg([name], env), do: parse_prompt_arg([name, []], env)
+  defp parse_param([name, type], env, meta), do: parse_param([name, type, []], env, meta)
 
-  defp parse_prompt_arg([name, opts], env) do
+  defp parse_param([name, type, opts], env, meta) do
+    param_name = eval_name!(name, env, meta)
+    param_type = eval_ast!(type, env, "param type", meta)
+    param_opts = eval_ast!(opts, env, "param options", meta)
+    assert_param_type!(env, meta, param_name, param_type)
+    Builder.param(param_name, param_type, param_opts)
+  end
+
+  defp parse_prompt_arg([name], env, meta), do: parse_prompt_arg([name, []], env, meta)
+
+  defp parse_prompt_arg([name, opts], env, meta) do
     Builder.param(
-      eval_name!(name, env),
+      eval_name!(name, env, meta),
       :string,
-      eval_ast!(opts, env)
+      eval_ast!(opts, env, "arg options", meta)
     )
   end
 
-  defp required_handler!(instructions, keys, label) do
-    Enum.find_value(keys, &Map.get(instructions, &1)) ||
-      raise CompileError, description: "#{label} must define #{Enum.join(keys, " or ")}/1"
+  defp assert_param_type!(env, meta, name, type) do
+    cond do
+      type == :array ->
+        compile_error!(
+          env,
+          meta,
+          "Invalid param type :array for #{inspect(name)}. " <>
+            "Use {:array, item_type}, e.g. {:array, :string} or {:array, :number}. " <>
+            "Allowed types: #{Builder.allowed_param_types_hint()}"
+        )
+
+      Builder.allowed_param_type?(type) ->
+        :ok
+
+      true ->
+        compile_error!(
+          env,
+          meta,
+          "Invalid param type #{inspect(type)} for #{inspect(name)}. " <>
+            "Allowed types: #{Builder.allowed_param_types_hint()}"
+        )
+    end
   end
 
-  defp eval_name!(ast, env) do
-    case eval_ast!(ast, env) do
+  defp assert_instruction_allowed!(env, meta, kind, instruction) do
+    allowed? =
+      cond do
+        instruction in [:title, :name, :description, :annotations, :icons, :meta] ->
+          true
+
+        instruction == :param ->
+          kind in @param_allowed_kinds
+
+        instruction in @tool_only ->
+          kind == :tool
+
+        instruction in @resource_only ->
+          kind in [:resource, :resource_template]
+
+        instruction in @prompt_only ->
+          kind == :prompt
+
+        true ->
+          false
+      end
+
+    unless allowed? do
+      compile_error!(
+        env,
+        meta,
+        "`#{instruction}` is not valid inside #{kind_name(kind)}. " <>
+          instruction_context_hint(instruction)
+      )
+    end
+  end
+
+  defp instruction_context_hint(:param),
+    do: "Use `param` in tool or resource_template declarations."
+
+  defp instruction_context_hint(:arg), do: "Use `arg` in prompt declarations."
+
+  defp instruction_context_hint(instr) when instr in [:run, :handle],
+    do: "Use `run` in tool declarations."
+
+  defp instruction_context_hint(:read),
+    do: "Use `read` in resource or resource_template declarations."
+
+  defp instruction_context_hint(:render), do: "Use `render` in prompt declarations."
+
+  defp instruction_context_hint(instr) when instr in [:input_schema, :output_schema, :execution],
+    do: "Use `#{instr}` in tool declarations."
+
+  defp instruction_context_hint(instr) when instr in [:mime_type, :size],
+    do: "Use `#{instr}` in resource or resource_template declarations."
+
+  defp instruction_context_hint(_), do: ""
+
+  defp has_other_handler?(acc, handler_kind) do
+    @handler_keys
+    |> Enum.reject(&(&1 == handler_kind))
+    |> Enum.any?(&Map.has_key?(acc, &1))
+  end
+
+  defp required_handler!(env, instructions, keys, label) do
+    Enum.find_value(keys, &Map.get(instructions, &1)) ||
+      compile_error!(
+        env,
+        nil,
+        "#{label} must define #{handler_names(keys)}, e.g. #{example_handler(keys)}"
+      )
+  end
+
+  defp handler_names([key]), do: "`#{key}`"
+  defp handler_names(keys), do: Enum.map_join(keys, " or ", &"`#{&1}`")
+
+  defp example_handler(keys) do
+    cond do
+      :run in keys or :handle in keys ->
+        "run fn args, state -> {:ok, result, state} end"
+
+      :read in keys ->
+        "read fn params, state -> {:ok, result, state} end"
+
+      :render in keys ->
+        "render fn args, state -> {:ok, result, state} end"
+
+      true ->
+        "..."
+    end
+  end
+
+  defp assert_non_empty_id!(env, kind, id) when is_binary(id) do
+    if String.trim(id) == "" do
+      compile_error!(env, nil, "#{kind_name(kind)} name/URI must be a non-empty string")
+    end
+  end
+
+  defp assert_non_empty_id!(env, kind, id) do
+    compile_error!(
+      env,
+      nil,
+      "#{kind_name(kind)} name/URI must be a string, got: #{inspect(id)}"
+    )
+  end
+
+  defp assert_unique_ids!(env, entries, kind, id_fun) do
+    entries
+    |> Enum.map(fn {definition, _handler, _params} -> id_fun.(definition) end)
+    |> Enum.frequencies()
+    |> Enum.each(fn {id, count} ->
+      if count > 1 do
+        compile_error!(
+          env,
+          nil,
+          "Duplicate #{kind_name(kind)} #{inspect(id)} declared #{count} times"
+        )
+      end
+    end)
+  end
+
+  defp declaration_label(:tool, id), do: "tool #{inspect(id)}"
+  defp declaration_label(:resource, id), do: "resource #{inspect(id)}"
+  defp declaration_label(:resource_template, id), do: "resource_template #{inspect(id)}"
+  defp declaration_label(:prompt, id), do: "prompt #{inspect(id)}"
+
+  defp kind_name(:tool), do: "tool"
+  defp kind_name(:resource), do: "resource"
+  defp kind_name(:resource_template), do: "resource_template"
+  defp kind_name(:prompt), do: "prompt"
+
+  defp eval_name!(ast, env, meta) do
+    case eval_ast!(ast, env, "name", meta) do
       name when is_atom(name) ->
         name
 
@@ -330,36 +521,57 @@ defmodule ExMCP.Server.DSL do
         String.to_atom(name)
 
       other ->
-        raise CompileError, description: "Expected atom or string name, got: #{inspect(other)}"
+        compile_error!(env, meta, "Expected atom or string name, got: #{inspect(other)}")
     end
   end
 
-  defp eval_ast!(ast, env) do
+  defp eval_ast!(ast, env, context), do: eval_ast!(ast, env, context, nil)
+
+  defp eval_ast!(ast, env, context, meta) do
     ast
     |> Macro.expand(env)
-    |> literal_value!()
+    |> literal_value!(env, context, meta)
   end
 
-  defp literal_value!({:%{}, _meta, pairs}) do
-    Map.new(pairs, fn {key, value} -> {literal_value!(key), literal_value!(value)} end)
+  defp literal_value!({:%{}, _meta, pairs}, env, context, meta) do
+    Map.new(pairs, fn {key, value} ->
+      {literal_value!(key, env, context, meta), literal_value!(value, env, context, meta)}
+    end)
   end
 
-  defp literal_value!({:{}, _meta, values}),
-    do: List.to_tuple(Enum.map(values, &literal_value!/1))
+  defp literal_value!({:{}, _meta, values}, env, context, meta),
+    do: List.to_tuple(Enum.map(values, &literal_value!(&1, env, context, meta)))
 
-  defp literal_value!(tuple) when is_tuple(tuple),
-    do: tuple |> Tuple.to_list() |> Enum.map(&literal_value!/1) |> List.to_tuple()
+  # 2-tuples only (keyword pairs and {:array, :string}); never treat AST 3-tuples as data
+  defp literal_value!({left, right}, env, context, meta),
+    do: {literal_value!(left, env, context, meta), literal_value!(right, env, context, meta)}
 
-  defp literal_value!(list) when is_list(list), do: Enum.map(list, &literal_value!/1)
-  defp literal_value!(value) when is_binary(value), do: value
-  defp literal_value!(value) when is_atom(value), do: value
-  defp literal_value!(value) when is_integer(value), do: value
-  defp literal_value!(value) when is_float(value), do: value
+  defp literal_value!(list, env, context, meta) when is_list(list),
+    do: Enum.map(list, &literal_value!(&1, env, context, meta))
 
-  defp literal_value!(other) do
+  defp literal_value!(value, _env, _context, _meta) when is_binary(value), do: value
+  defp literal_value!(value, _env, _context, _meta) when is_atom(value), do: value
+  defp literal_value!(value, _env, _context, _meta) when is_integer(value), do: value
+  defp literal_value!(value, _env, _context, _meta) when is_float(value), do: value
+
+  defp literal_value!(other, env, context, meta) do
+    compile_error!(
+      env,
+      meta,
+      "Expected a compile-time literal for #{context}, got: #{Macro.to_string(other)}. " <>
+        "Use literals such as :string, :integer, {:array, :string}, or a map/list of literals."
+    )
+  end
+
+  defp compile_error!(env, meta, message) do
     raise CompileError,
-      description: "Expected a literal value in ExMCP.Server.DSL, got: #{Macro.to_string(other)}"
+      file: env.file,
+      line: line_from(meta) || env.line,
+      description: message
   end
+
+  defp line_from(meta) when is_list(meta), do: Keyword.get(meta, :line)
+  defp line_from(_), do: nil
 
   defp generate_tool_handlers(tools) do
     tools

@@ -157,6 +157,22 @@ defmodule ExMCP.Server.DSL.Builder do
   defp param_schema(%{schema: schema}) when is_map(schema), do: schema
   defp param_schema(%{type: type}), do: type_to_schema(type)
 
+  @allowed_scalar_types [:string, :integer, :number, :boolean, :object, :map]
+
+  @doc false
+  def allowed_param_type?(type) when type in @allowed_scalar_types, do: true
+
+  def allowed_param_type?({:array, item_type}) do
+    allowed_param_type?(item_type)
+  end
+
+  def allowed_param_type?(_), do: false
+
+  @doc false
+  def allowed_param_types_hint do
+    ":string, :integer, :number, :boolean, :object, :map, or {:array, type}"
+  end
+
   defp type_to_schema(:string), do: %{type: "string"}
   defp type_to_schema(:integer), do: %{type: "integer"}
   defp type_to_schema(:number), do: %{type: "number"}
@@ -168,8 +184,9 @@ defmodule ExMCP.Server.DSL.Builder do
     %{type: "array", items: type_to_schema(item_type)}
   end
 
-  defp type_to_schema(_type), do: %{type: "string"}
-
+  # `default: []` is a valid JSON Schema default; only omit nil defaults.
+  defp put_optional(map, :default, nil), do: map
+  defp put_optional(map, :default, value), do: Map.put(map, :default, value)
   defp put_optional(map, _key, nil), do: map
   defp put_optional(map, _key, []), do: map
   defp put_optional(map, _key, %{} = value) when map_size(value) == 0, do: map

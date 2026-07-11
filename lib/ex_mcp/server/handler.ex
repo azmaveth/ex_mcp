@@ -115,7 +115,7 @@ defmodule ExMCP.Server.Handler do
                 ExMCP.Server.notify_progress(self(), progress_token, 100, 100)
               end
 
-              {:ok, [%{type: "text", text: "Result: \#{result}"}], state}
+              {:ok, %{content: [%{type: "text", text: "Result: \#{result}"}]}, state}
 
             {:error, reason} ->
               # Return tool execution error with isError flag

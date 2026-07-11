@@ -48,13 +48,82 @@ tool "add", "Adds two numbers" do
 end
 ```
 
-`ToolResult` is an alias for `ExMCP.Server.DSL.Result` that is automatically
-imported when you `use ExMCP.Server.DSL`. It provides `text/1`, `error/1`,
-and `structured/2` helpers. You can also return a plain string, `%{text: "..."}`,
-a full `%{content: [...], structuredContent: ...}` map, or `{:error, reason}` from
-your `run` (or `read` / `render`) functions. The DSL normalizes the result for you.
+### Param types
+
+| DSL type | JSON Schema |
+|----------|-------------|
+| `:string` | `{"type": "string"}` |
+| `:integer` | `{"type": "integer"}` |
+| `:number` | `{"type": "number"}` |
+| `:boolean` | `{"type": "boolean"}` |
+| `:object` / `:map` | `{"type": "object"}` |
+| `{:array, item_type}` | `{"type": "array", "items": ...}` |
+
+```elixir
+param :tags, {:array, :string}, default: []
+param :scores, {:array, :number}, required: true
+```
+
+Bare `:array` is **not** valid — the item type is required so the generated
+`inputSchema` is correct.
+
+You can also pass a full JSON Schema with `input_schema` (DSL instruction,
+snake_case). That becomes the MCP `inputSchema` field on the wire.
 
 Declared params are normalized so handlers can use atom keys and defaults.
+
+### Response helpers and normalization
+
+`ToolResult` is an **alias** for `ExMCP.Server.DSL.Result`, injected only inside
+modules that `use ExMCP.Server.DSL`. Outside those modules, use the fully
+qualified module:
+
+```elixir
+ExMCP.Server.DSL.Result.structured("done", %{count: 1})
+```
+
+`ToolResult` provides `text/1`, `error/1`, and `structured/2`. The DSL also
+normalizes several plain return shapes from `run` / `read` / `render`:
+
+| Return from handler | Normalized result |
+|---------------------|-------------------|
+| `"hello"` | text content |
+| `%{text: "hello"}` | text content |
+| `%{content: [...]}` | used as-is (plus structured key cleanup) |
+| `ToolResult.structured(text, map)` | text + `structuredContent` |
+| `{:error, reason}` | tool/resource/prompt error shape |
+| `{:ok, result}` or `{:ok, result, state}` | both accepted |
+
+## Compile-time checks
+
+Invalid DSL declarations fail at **compile time** with file/line and a fix hint:
+
+```elixir
+# Missing handler
+tool "echo" do
+  param :message, :string
+end
+# => tool "echo" must define `run` or `handle`, e.g. run fn args, state -> ...
+
+# Bare :array
+param :data, :array
+# => Invalid param type :array ... Use {:array, item_type}, e.g. {:array, :string}
+
+# Wrong instruction for the declaration kind
+tool "echo" do
+  arg :message   # arg is only valid on prompts
+  run fn _, s -> {:ok, "ok", s} end
+end
+
+# Duplicates
+tool "echo" do ... end
+tool "echo" do ... end
+# => Duplicate tool "echo" declared 2 times
+```
+
+Other checks include unknown instructions (with suggestions for common
+mistakes like `inputSchema` → `input_schema`), non-literal types, empty
+names/URIs, and using `run`/`read`/`render`/`mime_type` in the wrong block.
 
 ## Resources
 

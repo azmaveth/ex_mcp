@@ -39,6 +39,8 @@ use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
 - `weather_service.exs` - practical simulated weather tools and resources
 - `file_manager.exs` - sandboxed file operations and file resources
 
+Param types, compile-time checks, and `ToolResult` helpers are documented in [docs/DSL_GUIDE.md](../docs/DSL_GUIDE.md).
+
 Run a server directly (see note above about first-run time):
 
 ```bash

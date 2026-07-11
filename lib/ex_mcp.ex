@@ -147,7 +147,7 @@ defmodule ExMCP do
 
         @impl true
         def handle_call_tool("echo", params, state) do
-          {:ok, [%{type: "text", text: params["message"]}], state}
+          {:ok, %{content: [%{type: "text", text: params["message"]}]}, state}
         end
       end
 

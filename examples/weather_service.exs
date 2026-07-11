@@ -33,6 +33,7 @@ defmodule WeatherService do
           "#{location}: #{weather.temperature} #{weather.unit}, #{weather.condition}"
         end
 
+      # ToolResult is aliased by `use ExMCP.Server.DSL`
       {:ok, ToolResult.structured(text, weather), new_state}
     end
   end
@@ -55,7 +56,7 @@ defmodule WeatherService do
 
   tool "compare_weather", "Compares current weather across locations" do
     title "Compare Weather"
-    param :locations, :array, required: true
+    param :locations, {:array, :string}, required: true
 
     run fn %{locations: locations}, state ->
       comparisons =

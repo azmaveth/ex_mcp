@@ -29,6 +29,7 @@ defmodule FileManager do
     run fn %{path: path, recursive: recursive}, state ->
       with {:ok, full_path} <- safe_path(state.root_dir, path),
            {:ok, files} <- list_files(full_path, state.root_dir, recursive) do
+        # ToolResult is aliased by `use ExMCP.Server.DSL`
         {:ok,
          ToolResult.structured("Found #{length(files)} entries.", %{
            root: state.root_dir,

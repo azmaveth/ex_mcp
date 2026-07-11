@@ -1,6 +1,23 @@
 defmodule ExMCP.Server.DSL.Result do
   @moduledoc """
   Response helpers for the modern server DSL.
+
+  When a module uses `ExMCP.Server.DSL`, this module is aliased as `ToolResult`.
+  Outside DSL modules, call the functions via `ExMCP.Server.DSL.Result`.
+
+  ## Building results
+
+      ToolResult.text("hello")
+      ToolResult.error("something went wrong")
+      ToolResult.structured("done", %{count: 1})
+
+  ## Normalization
+
+  Handlers may also return plain values; the DSL normalizes them:
+
+  * binaries and `%{text: ...}` → text content
+  * `%{content: ...}` maps → used as tool results
+  * `{:ok, result}` / `{:ok, result, state}` / `{:error, reason}` tuples
   """
 
   @doc """

@@ -23,7 +23,7 @@ defmodule AdvancedServer do
 
   tool "analyze_data", "Analyzes a list of numbers" do
     title "Analyze Data"
-    param :data, :array, required: true, description: "Numbers to analyze"
+    param :data, {:array, :number}, required: true, description: "Numbers to analyze"
     param :method, :string, default: "all", description: "mean, median, or all"
     param :precision, :integer, default: 2
 
@@ -36,6 +36,7 @@ defmodule AdvancedServer do
       required: ["count", "result"]
     }
 
+    # ToolResult is aliased by `use ExMCP.Server.DSL`
     run fn %{data: data, method: method, precision: precision}, state ->
       result =
         data
@@ -53,7 +54,7 @@ defmodule AdvancedServer do
   tool "transform_text", "Transforms text through a list of operations" do
     title "Transform Text"
     param :text, :string, required: true
-    param :operations, :array, default: ["uppercase"]
+    param :operations, {:array, :string}, default: ["uppercase"]
 
     run fn %{text: text, operations: operations}, state ->
       transformed =

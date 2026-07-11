@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved
+- **DSL compile errors** — `ExMCP.Server.DSL` now raises `CompileError`s with file/line and actionable messages for missing handlers, duplicate tool/resource/prompt ids, wrong instructions per declaration kind, unknown instructions (with suggestions such as `inputSchema` → `input_schema`), non-literal values, and invalid param types.
+- **DSL docs and examples** — Documented param types, compile-time checks, and `ToolResult` scoping in the DSL guide and quick start; examples note the `ToolResult` alias.
+
+### Fixed
+- **Bare `:array` param types** — `param :name, :array` no longer silently maps to a string schema. Use `{:array, :string}` (or another item type). Examples (`advanced_dsl_server`, `weather_service`) were updated accordingly.
+- **Empty-list param defaults** — `default: []` is preserved in generated JSON Schema properties.
+
 ## [1.0.0-rc.4] - 2026-07-08
 
 ### Added

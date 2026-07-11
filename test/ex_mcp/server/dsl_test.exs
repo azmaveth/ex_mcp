@@ -8,6 +8,7 @@ defmodule ExMCP.Server.DSLTest do
     tool "echo", "Echo back the input" do
       title("Echo Tool")
       param(:message, :string, required: true, description: "Message to echo")
+      param(:tags, {:array, :string}, default: [])
       annotations(readOnlyHint: true)
 
       output_schema(%{
@@ -79,7 +80,10 @@ defmodule ExMCP.Server.DSLTest do
 
     assert echo.inputSchema == %{
              type: "object",
-             properties: %{message: %{type: "string", description: "Message to echo"}},
+             properties: %{
+               message: %{type: "string", description: "Message to echo"},
+               tags: %{type: "array", items: %{type: "string"}, default: []}
+             },
              required: ["message"]
            }
 

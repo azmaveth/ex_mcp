@@ -30,6 +30,7 @@ defmodule MyMCPServer do
   tool "echo", "Echoes back the input message" do
     param :message, :string, required: true
 
+    # Plain strings and maps are normalized; ToolResult is aliased by the DSL
     run fn %{message: message}, state ->
       {:ok, %{content: [%{type: "text", text: "Echo: #{message}"}]}, state}
     end
@@ -48,7 +49,7 @@ end
 {:ok, server} = MyMCPServer.start_link(transport: :stdio)
 ```
 
-The DSL generates the MCP list/read/call callbacks and initialization response from your declarations.
+The DSL generates the MCP list/read/call callbacks and initialization response from your declarations. See the [DSL Guide](../DSL_GUIDE.md) for param types (including `{:array, :string}`), compile-time checks, and `ToolResult` helpers.
 
 ## Client Connections
 
