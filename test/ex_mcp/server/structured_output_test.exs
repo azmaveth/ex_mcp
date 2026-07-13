@@ -8,7 +8,7 @@ defmodule ExMCP.Server.StructuredOutputTest do
 
   defmodule TestServer do
     use ExMCP.Server.Handler
-    use ExMCP.Server.Tools
+    use ExMCP.Server.Tools, warn: false
 
     tool "calculate" do
       description("Perform mathematical calculations with structured output")

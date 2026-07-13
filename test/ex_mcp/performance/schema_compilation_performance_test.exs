@@ -123,7 +123,7 @@ defmodule ExMCP.Performance.SchemaCompilationPerformanceTest do
   describe "integration with tools DSL" do
     defmodule TestPerformanceServer do
       use ExMCP.Server.Handler
-      use ExMCP.Server.Tools
+      use ExMCP.Server.Tools, warn: false
 
       tool "perf_test" do
         description("Performance test tool")

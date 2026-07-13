@@ -10,7 +10,6 @@ defmodule ExMCP.StructuredOutputTest do
   defmodule TestHandler do
     @behaviour ExMCP.Server.Handler
 
-    @impl true
     def init(_args), do: {:ok, %{}}
 
     @impl true

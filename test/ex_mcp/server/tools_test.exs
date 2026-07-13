@@ -5,7 +5,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "defines simple tool with automatic schema generation" do
       defmodule SimpleToolServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "echo", "Echo back the input" do
           param(:message, :string, required: true)
@@ -47,7 +47,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "defines tool with multiple parameters and types" do
       defmodule MultiParamServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "user_info", "Get user information" do
           param(:name, :string, required: true)
@@ -81,7 +81,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "defines advanced tool with full control" do
       defmodule AdvancedToolServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "calculate" do
           description("Perform mathematical calculations")
@@ -146,7 +146,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "supports all annotation types" do
       defmodule AnnotatedToolServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "delete_file" do
           description("Delete a file from the system")
@@ -178,7 +178,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "handles tool execution errors gracefully" do
       defmodule ErrorToolServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "failing_tool", "A tool that fails" do
           param(:trigger_error, :boolean, default: false)
@@ -218,7 +218,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "allows mixing DSL tools with traditional handler methods" do
       defmodule MixedServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         # DSL tool
         tool "simple", "Simple tool" do
@@ -259,7 +259,7 @@ defmodule ExMCP.Server.ToolsTest do
       # This should compile successfully
       defmodule ValidToolServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "valid", "Valid tool" do
           param(:string_param, :string)
@@ -279,7 +279,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "generates correct schema for nested types" do
       defmodule NestedTypeServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "nested", "Tool with nested types" do
           param(:users, {:array, :object},
@@ -322,7 +322,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "supports custom validation in handle function" do
       defmodule ValidationServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "divide", "Divide two numbers" do
           param(:dividend, :number, required: true)
@@ -364,7 +364,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "handles missing required parameters" do
       defmodule RequiredParamServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "greet", "Greet a user" do
           param(:name, :string, required: true)
@@ -416,7 +416,7 @@ defmodule ExMCP.Server.ToolsTest do
     test "supports tool composition" do
       defmodule CompositeServer do
         use ExMCP.Server.Handler
-        use ExMCP.Server.Tools
+        use ExMCP.Server.Tools, warn: false
 
         tool "fetch_data", "Fetch data from source" do
           param(:source, :string)

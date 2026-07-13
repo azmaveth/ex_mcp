@@ -17,7 +17,6 @@ defmodule ExMCP.CancellationComprehensiveTest do
   defmodule SlowHandler do
     @behaviour Handler
 
-    @impl true
     def init(_args) do
       # Create ETS table for cancellation tracking if it doesn't exist
       case :ets.info(:cancellation_tracker) do
@@ -206,7 +205,6 @@ defmodule ExMCP.CancellationComprehensiveTest do
     # Note: handle_cancelled is not part of the Handler behaviour
     # Cancellation is handled by the server infrastructure
 
-    @impl true
     def terminate(_reason, _state) do
       :ok
     end
