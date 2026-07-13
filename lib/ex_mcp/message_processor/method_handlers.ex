@@ -130,8 +130,8 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     uri = Map.get(params, "uri")
 
     case GenServer.call(server_pid, {:subscribe_resource, uri}, 5000) do
-      :ok -> put_success(conn, %{}, id)
-      {:ok, _state} -> put_success(conn, %{}, id)
+      :ok -> register_subscription(conn, uri, id)
+      {:ok, _state} -> register_subscription(conn, uri, id)
       {:error, reason} -> put_error(conn, "Subscribe failed", reason, id)
     end
   rescue
@@ -142,13 +142,33 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     uri = Map.get(params, "uri")
 
     case GenServer.call(server_pid, {:unsubscribe_resource, uri}, 5000) do
-      :ok -> put_success(conn, %{}, id)
-      {:ok, _state} -> put_success(conn, %{}, id)
+      :ok -> unregister_subscription(conn, uri, id)
+      {:ok, _state} -> unregister_subscription(conn, uri, id)
       {:error, reason} -> put_error(conn, "Unsubscribe failed", reason, id)
     end
   rescue
     error -> put_error(conn, "Unsubscribe failed", error, id)
   end
+
+  defp register_subscription(%{session_id: session_id} = conn, uri, id)
+       when is_binary(session_id) do
+    case ExMCP.SubscriptionRegistry.subscribe(session_id, uri) do
+      :ok -> put_success(conn, %{}, id)
+      {:error, reason} -> put_error(conn, "Subscribe failed", reason, id)
+    end
+  end
+
+  defp register_subscription(conn, _uri, id), do: put_success(conn, %{}, id)
+
+  defp unregister_subscription(%{session_id: session_id} = conn, uri, id)
+       when is_binary(session_id) do
+    case ExMCP.SubscriptionRegistry.unsubscribe(session_id, uri) do
+      :ok -> put_success(conn, %{}, id)
+      {:error, reason} -> put_error(conn, "Unsubscribe failed", reason, id)
+    end
+  end
+
+  defp unregister_subscription(conn, _uri, id), do: put_success(conn, %{}, id)
 
   def handle_prompts_list(conn, server_pid, params, id) do
     cursor = Map.get(params, "cursor")

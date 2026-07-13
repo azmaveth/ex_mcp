@@ -123,6 +123,18 @@ defmodule ExMCP.SessionManager do
   end
 
   @doc """
+  Ensures a transport-issued session ID exists and remains active.
+
+  Streamable HTTP creates the ID on the first POST, before the SSE connection
+  is opened. Registering that exact ID keeps subscriptions and event delivery
+  attached to one client identity across both channels.
+  """
+  @spec ensure_session(session_id(), map()) :: :ok
+  def ensure_session(session_id, metadata \\ %{}) when is_binary(session_id) do
+    GenServer.call(__MODULE__, {:ensure_session, session_id, metadata})
+  end
+
+  @doc """
   Stores an event for the given session.
 
   Events are stored with their ID, type, data, and timestamp for potential
@@ -273,6 +285,33 @@ defmodule ExMCP.SessionManager do
 
     Logger.debug("Created session #{session_id} with transport #{session_data.transport}")
     {:reply, session_id, state}
+  end
+
+  def handle_call({:ensure_session, session_id, metadata}, _from, state) do
+    now = System.system_time(:microsecond)
+
+    session_data =
+      case :ets.lookup(state.sessions_table, session_id) do
+        [{^session_id, session}] ->
+          session
+          |> Map.merge(metadata)
+          |> Map.put(:status, :active)
+          |> Map.put(:last_activity, now)
+
+        [] ->
+          %{
+            id: session_id,
+            transport: Map.get(metadata, :transport, :http),
+            client_info: Map.get(metadata, :client_info, %{}),
+            created_at: now,
+            last_activity: now,
+            event_count: 0,
+            status: :active
+          }
+      end
+
+    :ets.insert(state.sessions_table, {session_id, session_data})
+    {:reply, :ok, state}
   end
 
   @impl true
