@@ -58,6 +58,10 @@ defmodule ExMCP.HttpPlugTest do
 
     def create_session(_attrs), do: "tracked_session"
 
+    def ensure_session(session_id, metadata) do
+      notify({:session_ensured, session_id, metadata})
+    end
+
     def update_session(session_id, attrs) do
       notify({:session_updated, session_id, attrs})
     end
@@ -140,6 +144,8 @@ defmodule ExMCP.HttpPlugTest do
     end
 
     test "rejects browser origins unless explicitly allowed or same-origin" do
+      {:ok, _} = TrackingSessionManager.start_link(self())
+
       request = %{
         "jsonrpc" => "2.0",
         "method" => "initialize",
@@ -150,10 +156,17 @@ defmodule ExMCP.HttpPlugTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_req_header("origin", "https://evil.example")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            sse_enabled: false,
+            session_manager: TrackingSessionManager
+          )
+        )
 
       assert conn.status == 403
       assert conn.resp_body == "Origin not allowed"
+      refute_received {:session_ensured, _, _}
     end
 
     test "allows explicitly configured browser origins" do

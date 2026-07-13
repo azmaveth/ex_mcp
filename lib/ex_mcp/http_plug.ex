@@ -243,13 +243,19 @@ defmodule ExMCP.HttpPlug do
     # The server provides session IDs to clients via response headers.
     session_id = get_or_create_session_id(conn)
 
+    session_manager =
+      opts
+      |> Map.get(:session_manager, ExMCP.SessionManager)
+      |> ensure_session_manager()
+
     with {:ok, conn} <- validate_request_origin(conn, opts),
          {:ok, conn} <- validate_protocol_version(conn),
          {:ok, body, conn} <- read_or_cached_body(conn, opts),
          {:ok, request} <- parse_json(body),
          {:ok, _token_info} <- authorize_request(conn, request, opts),
          {:ok, opts} <- resolve_handler_opts(conn, request, opts),
-         result <- process_mcp_request(request, opts) do
+         :ok <- maybe_ensure_session(session_manager, session_id, %{transport: :http}),
+         result <- process_mcp_request(request, Map.put(opts, :session_id, session_id)) do
       Logger.debug("MCP request processed, result: #{inspect(result)}")
 
       case result do
@@ -468,6 +474,7 @@ defmodule ExMCP.HttpPlug do
 
       # Terminate the session
       :ok = session_manager.terminate_session(session_id)
+      :ok = remove_session_subscriptions(session_id)
 
       # Try to stop the SSE handler if it exists
       case lookup_sse_handler(session_id) do
@@ -588,6 +595,7 @@ defmodule ExMCP.HttpPlug do
           {:DOWN, ^ref, :process, ^handler, reason} ->
             # Clean up the session registry when handler exits
             cleanup_sse_handler(final_session_id)
+            remove_session_subscriptions(final_session_id)
 
             # Terminate session in SessionManager if it was a clean shutdown
             if reason == :normal do
@@ -626,6 +634,21 @@ defmodule ExMCP.HttpPlug do
 
   defp ensure_session_manager(session_manager), do: session_manager
 
+  defp maybe_ensure_session(session_manager, session_id, metadata) do
+    if function_exported?(session_manager, :ensure_session, 2) do
+      session_manager.ensure_session(session_id, metadata)
+    else
+      :ok
+    end
+  end
+
+  defp remove_session_subscriptions(session_id) do
+    case Process.whereis(ExMCP.SubscriptionRegistry) do
+      nil -> :ok
+      _pid -> ExMCP.SubscriptionRegistry.remove_session(session_id)
+    end
+  end
+
   # Process MCP request using the configured handler
   defp process_mcp_request(request, opts) do
     handler = opts.handler
@@ -638,7 +661,11 @@ defmodule ExMCP.HttpPlug do
 
       handler_module when is_atom(handler_module) ->
         # Use ExMCP.MessageProcessor to process the request
-        conn = ExMCP.MessageProcessor.new(request, transport: :http)
+        conn =
+          ExMCP.MessageProcessor.new(request,
+            transport: :http,
+            session_id: Map.get(opts, :session_id)
+          )
 
         # Create a simple processor that delegates to the handler
         processed_conn =
@@ -783,6 +810,42 @@ defmodule ExMCP.HttpPlug do
     end
   rescue
     ArgumentError -> {:error, :table_not_found}
+  end
+
+  @doc """
+  Broadcasts a resource-updated notification to every live SSE client that
+  subscribed to `uri`. Slow clients receive independent backpressure and do
+  not block delivery to other sessions.
+  """
+  def broadcast_resource_update(uri) when is_binary(uri) do
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "notifications/resources/updated",
+      "params" => %{"uri" => uri}
+    }
+
+    results =
+      uri
+      |> ExMCP.SubscriptionRegistry.sessions()
+      |> Task.async_stream(
+        fn session_id ->
+          with {:ok, handler} <- lookup_sse_handler(session_id),
+               true <- Process.alive?(handler),
+               :ok <- SSEHandler.request_send(handler) do
+            SSEHandler.send_event(handler, "message", notification)
+            {:ok, session_id}
+          else
+            _ -> {:stale, session_id}
+          end
+        end,
+        ordered: false,
+        timeout: 5_000,
+        on_timeout: :kill_task
+      )
+      |> Enum.to_list()
+
+    delivered = Enum.count(results, &match?({:ok, {:ok, _}}, &1))
+    %{subscribers: length(results), delivered: delivered}
   end
 
   # Clean up SSE handler registration

@@ -12,19 +12,20 @@ defmodule ExMCP.Application do
       configure_stdio_logging()
     end
 
-    children =
-      [
-        # Dynamic supervisor for runtime components
-        {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
-        # Start the Consent Cache for security features
-        ExMCP.Internal.ConsentCache,
-        # Start the Session Manager for streamable HTTP sessions
-        ExMCP.SessionManager,
-        # Start the Progress Tracker for 2025-06-18 progress notifications
-        ExMCP.ProgressTracker,
-        # Start the Reliability Supervisor for circuit breakers and health checks
-        {ExMCP.Reliability.Supervisor, name: ExMCP.Reliability.Supervisor}
-      ]
+    children = [
+      # Dynamic supervisor for runtime components
+      {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
+      # Start the Consent Cache for security features
+      ExMCP.Internal.ConsentCache,
+      # Start the Session Manager for streamable HTTP sessions
+      ExMCP.SessionManager,
+      # Track resource subscriptions independently for every client session
+      ExMCP.SubscriptionRegistry,
+      # Start the Progress Tracker for 2025-06-18 progress notifications
+      ExMCP.ProgressTracker,
+      # Start the Reliability Supervisor for circuit breakers and health checks
+      {ExMCP.Reliability.Supervisor, name: ExMCP.Reliability.Supervisor}
+    ]
 
     opts = [strategy: :one_for_one, name: ExMCP.Supervisor]
     Supervisor.start_link(children, opts)

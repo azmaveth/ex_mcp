@@ -180,15 +180,14 @@ defmodule ExMCP.MessageProcessor do
 
   # Process request using Handler Server with GenServer
   defp process_with_handler_genserver(conn, handler_module, server_info, handler_opts) do
-    # Start the handler as a GenServer
-    case GenServer.start_link(handler_module, handler_opts) do
-      {:ok, server_pid} ->
+    case start_handler_server(handler_module, handler_opts) do
+      {:ok, server_pid, owned?} ->
         try do
           # Process the request using the handler's GenServer interface
           process_handler_request(conn, server_pid, server_info)
         after
           # Clean up the temporary server
-          if Process.alive?(server_pid) do
+          if owned? and Process.alive?(server_pid) do
             GenServer.stop(server_pid, :normal, 1000)
           end
         end
@@ -203,6 +202,20 @@ defmodule ExMCP.MessageProcessor do
           )
 
         put_response(conn, error_response)
+    end
+  end
+
+  defp start_handler_server(handler_module, handler_opts) do
+    case Process.whereis(handler_module) do
+      pid when is_pid(pid) ->
+        {:ok, pid, false}
+
+      nil ->
+        case GenServer.start_link(handler_module, handler_opts) do
+          {:ok, pid} -> {:ok, pid, true}
+          {:error, {:already_started, pid}} -> {:ok, pid, false}
+          other -> other
+        end
     end
   end
 
