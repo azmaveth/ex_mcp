@@ -32,7 +32,12 @@ defmodule ExMCP.MessageProcessorValidationTest do
     @impl true
     def handle_list_tools(_cursor, state) do
       tools = [
-        %{name: "test_tool", description: "A test tool", inputSchema: %{}}
+        %{
+          name: "test_tool",
+          description: "A test tool",
+          input_schema: %{},
+          output_schema: %{type: "object"}
+        }
       ]
 
       {:ok, tools, nil, state}
@@ -117,6 +122,10 @@ defmodule ExMCP.MessageProcessorValidationTest do
       # Check the actual structure returned
       tool = hd(tools)
       assert tool["name"] == "test_tool"
+      assert tool["inputSchema"] == %{}
+      assert tool["outputSchema"] == %{"type" => "object"}
+      refute Map.has_key?(tool, "input_schema")
+      refute Map.has_key?(tool, "output_schema")
 
       # Cleanup
       GenServer.stop(server)

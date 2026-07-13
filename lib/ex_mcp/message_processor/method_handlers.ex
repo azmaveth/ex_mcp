@@ -281,10 +281,17 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   defp deep_stringify_keys(map) when is_map(map) and not is_struct(map) do
     Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), deep_stringify_keys(value)}
+      {key, value} when is_atom(key) -> {protocol_key(key), deep_stringify_keys(value)}
       {key, value} -> {key, deep_stringify_keys(value)}
     end)
   end
 
   defp deep_stringify_keys(value), do: value
+
+  defp protocol_key(:input_schema), do: "inputSchema"
+  defp protocol_key(:output_schema), do: "outputSchema"
+  defp protocol_key(:mime_type), do: "mimeType"
+  defp protocol_key(:uri_template), do: "uriTemplate"
+  defp protocol_key(:list_pattern), do: "listPattern"
+  defp protocol_key(key), do: Atom.to_string(key)
 end
