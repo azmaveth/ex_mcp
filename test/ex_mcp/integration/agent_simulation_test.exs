@@ -77,9 +77,6 @@ defmodule ExMCP.Integration.AgentSimulationTest do
 
       {:text_response, text} ->
         {:ok, conversation ++ [%{role: "assistant", content: text}]}
-
-      {:error, reason} ->
-        {:error, reason, conversation}
     end
   end
 

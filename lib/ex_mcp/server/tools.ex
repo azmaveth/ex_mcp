@@ -40,13 +40,15 @@ defmodule ExMCP.Server.Tools do
 
   alias ExMCP.Server.Tools.ResponseNormalizer
 
-  defmacro __using__(_opts) do
-    IO.warn(
-      "ExMCP.Server.Tools is deprecated and will be removed in 1.1.0. " <>
-        "Use ExMCP.Server.Handler with ExMCP.Server.DSL instead " <>
-        "(see ExMCP.Server.DSL and the DSL guide).",
-      Macro.Env.stacktrace(__CALLER__)
-    )
+  defmacro __using__(opts) do
+    if Keyword.get(opts, :warn, true) do
+      IO.warn(
+        "ExMCP.Server.Tools is deprecated and will be removed in 1.1.0. " <>
+          "Use ExMCP.Server.Handler with ExMCP.Server.DSL instead " <>
+          "(see ExMCP.Server.DSL and the DSL guide).",
+        Macro.Env.stacktrace(__CALLER__)
+      )
+    end
 
     quote do
       import ExMCP.Server.Tools

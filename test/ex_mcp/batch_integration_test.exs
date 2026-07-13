@@ -9,7 +9,6 @@ defmodule ExMCP.BatchIntegrationTest do
   defmodule TestHandler do
     @behaviour ExMCP.Server.Handler
 
-    @impl true
     def init(_args) do
       {:ok, %{}}
     end
@@ -79,7 +78,6 @@ defmodule ExMCP.BatchIntegrationTest do
       {:ok, %{}, state}
     end
 
-    @impl true
     def terminate(_reason, _state) do
       :ok
     end

@@ -259,9 +259,9 @@ defmodule ExMCP.Integration.FullWorkflowTest do
           })
 
         # Verify all operations succeeded
-        assert fetch_result != nil
-        assert process_result != nil
-        assert final_result != nil
+        assert fetch_result["tool"] == "data_fetcher"
+        assert process_result["tool"] == "data_processor"
+        assert final_result["tool"] == "result_formatter"
       end)
     end
 
@@ -289,8 +289,8 @@ defmodule ExMCP.Integration.FullWorkflowTest do
             "config" => "simulated_config_from_resource"
           })
 
-        assert config_result != nil
-        assert tool_result != nil
+        assert config_result["uri"] == "file://config.json"
+        assert tool_result["tool"] == "configured_processor"
       end)
     end
 
@@ -318,8 +318,8 @@ defmodule ExMCP.Integration.FullWorkflowTest do
             "prompt" => "simulated_generated_prompt"
           })
 
-        assert prompt_result != nil
-        assert execution_result != nil
+        assert prompt_result["prompt"] == "dynamic_analysis"
+        assert execution_result["tool"] == "executor"
       end)
     end
   end

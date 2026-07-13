@@ -70,7 +70,6 @@ defmodule ExMCP.Compliance.ElicitationComplianceTest do
   defmodule TestServerHandler do
     @behaviour ExMCP.Server.Handler
 
-    @impl true
     def init(args), do: {:ok, args}
 
     @impl true

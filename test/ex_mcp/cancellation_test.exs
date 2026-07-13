@@ -13,7 +13,6 @@ defmodule ExMCP.CancellationTest do
   defmodule TestHandler do
     @behaviour Handler
 
-    @impl true
     def init(_args) do
       {:ok, %{}}
     end
@@ -48,7 +47,6 @@ defmodule ExMCP.CancellationTest do
       {:ok, [%{type: "text", text: "Slow operation completed"}], state}
     end
 
-    @impl true
     def terminate(_reason, _state) do
       :ok
     end

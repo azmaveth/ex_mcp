@@ -16,7 +16,7 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
 
   defmodule TestServer do
     use ExMCP.Server.Handler
-    use ExMCP.Server.Tools
+    use ExMCP.Server.Tools, warn: false
 
     tool "weather_tool" do
       title("Weather Information Tool")
