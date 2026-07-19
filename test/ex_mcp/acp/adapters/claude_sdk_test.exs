@@ -420,6 +420,96 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
   end
 
   describe "SDK event mapping" do
+    test "does not emit completed assistant text after the same partial text deltas", %{
+      state: state
+    } do
+      first_delta = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{
+          "type" => "content_block_delta",
+          "delta" => %{"type" => "text_delta", "text" => "ECH"}
+        }
+      }
+
+      second_delta = put_in(first_delta, ["event", "delta", "text"], "O")
+
+      assistant = %{
+        "type" => "assistant",
+        "session_id" => "s1",
+        "message" => %{
+          "content" => [%{"type" => "text", "text" => "ECHO"}]
+        }
+      }
+
+      assert {:messages, [_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(first_delta), state)
+
+      assert {:messages, [_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(second_delta), state)
+
+      assert {:skip, state} = ClaudeSDK.translate_inbound(Jason.encode!(assistant), state)
+      assert IO.iodata_to_binary(Enum.reverse(state.text_acc)) == "ECHO"
+    end
+
+    test "deduplicates each streamed assistant message across a tool loop", %{state: state} do
+      message_start = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{"type" => "message_start", "message" => %{}}
+      }
+
+      delta = fn text ->
+        %{
+          "type" => "stream_event",
+          "session_id" => "s1",
+          "event" => %{
+            "type" => "content_block_delta",
+            "delta" => %{"type" => "text_delta", "text" => text}
+          }
+        }
+      end
+
+      assistant = fn text ->
+        %{
+          "type" => "assistant",
+          "session_id" => "s1",
+          "message" => %{"content" => [%{"type" => "text", "text" => text}]}
+        }
+      end
+
+      assert {:skip, state} = ClaudeSDK.translate_inbound(Jason.encode!(message_start), state)
+
+      assert {:messages, [_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(delta.("A")), state)
+
+      assert {:skip, state} = ClaudeSDK.translate_inbound(Jason.encode!(assistant.("A")), state)
+
+      assert {:skip, state} = ClaudeSDK.translate_inbound(Jason.encode!(message_start), state)
+
+      assert {:messages, [_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(delta.("B")), state)
+
+      assert {:skip, state} = ClaudeSDK.translate_inbound(Jason.encode!(assistant.("B")), state)
+      assert IO.iodata_to_binary(Enum.reverse(state.text_acc)) == "AB"
+    end
+
+    test "does not suppress distinct identical assistant messages without partial deltas", %{
+      state: state
+    } do
+      assistant = %{
+        "type" => "assistant",
+        "session_id" => "s1",
+        "message" => %{"content" => [%{"type" => "text", "text" => "SAME"}]}
+      }
+
+      assert {:messages, [_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(assistant), state)
+
+      assert {:messages, [_chunk], _state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(assistant), state)
+    end
+
     test "emits pending tool_call from partial tool start", %{state: state} do
       event = %{
         "type" => "stream_event",

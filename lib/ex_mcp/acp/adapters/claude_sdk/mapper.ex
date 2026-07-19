@@ -409,10 +409,18 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     end
   end
 
+  defp handle_stream_event(%{"type" => "message_start"}, state) do
+    {[], [], %{state | streamed_text_acc: []}}
+  end
+
   defp handle_stream_event(%{"type" => "content_block_delta", "delta" => delta}, state) do
     case delta do
       %{"type" => "text_delta", "text" => text} ->
-        state = %{state | text_acc: [text | state.text_acc]}
+        state = %{
+          state
+          | text_acc: [text | state.text_acc],
+            streamed_text_acc: [text | state.streamed_text_acc]
+        }
 
         {[AdapterEvents.agent_message_chunk(session_id(state), text)], [], state}
 
@@ -445,15 +453,24 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       |> maybe_set(:model, message["model"])
       |> maybe_set(:session_id, message["session_id"])
 
-    Enum.reduce(content, {[], [], state}, fn block, {messages, writes, acc} ->
-      {new_messages, new_writes, acc} = handle_assistant_block(block, acc)
-      {messages ++ new_messages, writes ++ new_writes, acc}
-    end)
+    text_already_streamed? = assistant_text_already_streamed?(content, state)
+
+    {messages, writes, state} =
+      Enum.reduce(content, {[], [], state}, fn block, {messages, writes, acc} ->
+        {new_messages, new_writes, acc} =
+          handle_assistant_block(block, acc, text_already_streamed?)
+
+        {messages ++ new_messages, writes ++ new_writes, acc}
+      end)
+
+    {messages, writes, %{state | streamed_text_acc: []}}
   end
 
   defp handle_assistant(_message, state), do: {[], [], state}
 
-  defp handle_assistant_block(%{"type" => "text", "text" => text}, state) do
+  defp handle_assistant_block(%{"type" => "text"}, state, true), do: {[], [], state}
+
+  defp handle_assistant_block(%{"type" => "text", "text" => text}, state, false) do
     state =
       if state.text_acc == [] do
         %{state | text_acc: [text]}
@@ -464,7 +481,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     {[AdapterEvents.agent_message_chunk(session_id(state), text)], [], state}
   end
 
-  defp handle_assistant_block(%{"type" => "thinking", "thinking" => thinking}, state) do
+  defp handle_assistant_block(
+         %{"type" => "thinking", "thinking" => thinking},
+         state,
+         _text_already_streamed?
+       ) do
     state = %{
       state
       | thinking_blocks: [%{text: thinking, signature: nil} | state.thinking_blocks]
@@ -473,7 +494,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     {[], [], state}
   end
 
-  defp handle_assistant_block(%{"type" => "tool_use"} = block, state) do
+  defp handle_assistant_block(%{"type" => "tool_use"} = block, state, _text_already_streamed?) do
     {pending_messages, state} = emit_tool_pending(block, state)
     {update_messages, state} = emit_tool_update(block, state)
 
@@ -491,7 +512,24 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     {pending_messages ++ update_messages ++ plan_messages, [], state}
   end
 
-  defp handle_assistant_block(_block, state), do: {[], [], state}
+  defp handle_assistant_block(_block, state, _text_already_streamed?), do: {[], [], state}
+
+  defp assistant_text_already_streamed?(content, %{
+         streamed_text_acc: [_ | _] = streamed_text_acc
+       }) do
+    assistant_text =
+      content
+      |> Enum.flat_map(fn
+        %{"type" => "text", "text" => text} when is_binary(text) -> [text]
+        _block -> []
+      end)
+      |> IO.iodata_to_binary()
+
+    assistant_text != "" and
+      assistant_text == IO.iodata_to_binary(Enum.reverse(streamed_text_acc))
+  end
+
+  defp assistant_text_already_streamed?(_content, _state), do: false
 
   defp handle_user(%{"content" => content}, state) when is_list(content) do
     {messages, state} =
@@ -570,6 +608,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       | pending_prompt_id: nil,
         active_prompt_session_id: nil,
         text_acc: [],
+        streamed_text_acc: [],
         thinking_acc: [],
         thinking_blocks: [],
         current_block_type: nil,
@@ -1238,6 +1277,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
               session_id: queued.session_id || state.session_id,
               prompt_queue: rest,
               text_acc: [],
+              streamed_text_acc: [],
               thinking_acc: [],
               thinking_blocks: [],
               current_block_type: nil,
