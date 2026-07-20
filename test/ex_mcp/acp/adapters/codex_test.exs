@@ -721,6 +721,143 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert codex_response == %{"id" => 99, "result" => %{"decision" => "accept"}}
       assert new_state.pending_client_requests == %{}
     end
+
+    test "structured available decisions round-trip through string ACP option ids", %{
+      state: state
+    } do
+      state = put_test_session(state, "thread-1")
+
+      structured_decision = %{
+        "acceptWithExecpolicyAmendment" => %{
+          "execpolicy_amendment" => ["touch", "/tmp/contract.hwp"]
+        }
+      }
+
+      line =
+        Jason.encode!(%{
+          "id" => 100,
+          "method" => "item/commandExecution/requestApproval",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turnId" => "turn-1",
+            "itemId" => "item-1",
+            "command" => "python3 fill_contract.py",
+            "startedAtMs" => 1,
+            "availableDecisions" => ["accept", structured_decision, "decline"]
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+
+      assert [accept, structured, decline] = request["params"]["options"]
+      assert accept == %{"optionId" => "accept", "name" => "Accept", "kind" => "allow_once"}
+      assert decline == %{"optionId" => "decline", "name" => "Decline", "kind" => "reject_once"}
+      assert is_binary(structured["optionId"])
+      assert structured["name"] == "Accept With Execpolicy Amendment"
+      assert structured["kind"] == "allow_always"
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "outcome" => %{"outcome" => "selected", "optionId" => structured["optionId"]}
+        }
+      }
+
+      assert {:ok, data, new_state} = Codex.translate_outbound(response, state)
+
+      assert decode(data) == %{"id" => 100, "result" => %{"decision" => structured_decision}}
+      assert new_state.pending_client_requests == %{}
+    end
+
+    test "fabricated structured option ids are declined instead of forwarded", %{state: state} do
+      state = put_test_session(state, "thread-1")
+
+      available_decision = %{
+        "acceptWithExecpolicyAmendment" => %{
+          "execpolicy_amendment" => ["touch", "/tmp/contract.hwp"]
+        }
+      }
+
+      line =
+        Jason.encode!(%{
+          "id" => 102,
+          "method" => "item/commandExecution/requestApproval",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turnId" => "turn-1",
+            "itemId" => "item-1",
+            "command" => "python3 fill_contract.py",
+            "startedAtMs" => 1,
+            "availableDecisions" => [available_decision]
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+
+      fabricated_decision = %{
+        "acceptWithExecpolicyAmendment" => %{
+          "execpolicy_amendment" => ["rm", "-rf", "/tmp/contract.hwp"]
+        }
+      }
+
+      fabricated_option_id = "codex:decision:" <> Jason.encode!(fabricated_decision)
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "outcome" => %{"outcome" => "selected", "optionId" => fabricated_option_id}
+        }
+      }
+
+      assert {:ok, data, new_state} = Codex.translate_outbound(response, state)
+
+      assert decode(data) == %{"id" => 102, "result" => %{"decision" => "decline"}}
+      assert new_state.pending_client_requests == %{}
+    end
+
+    test "deny network policy amendments round-trip as reject-always ACP options", %{
+      state: state
+    } do
+      state = put_test_session(state, "thread-1")
+
+      structured_decision = %{
+        "applyNetworkPolicyAmendment" => %{
+          "network_policy_amendment" => %{"action" => "deny", "host" => "example.test"}
+        }
+      }
+
+      line =
+        Jason.encode!(%{
+          "id" => 101,
+          "method" => "item/commandExecution/requestApproval",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turnId" => "turn-1",
+            "itemId" => "item-1",
+            "command" => "curl https://example.test",
+            "startedAtMs" => 1,
+            "availableDecisions" => [structured_decision]
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+      assert [structured] = request["params"]["options"]
+      assert is_binary(structured["optionId"])
+      assert structured["name"] == "Apply Network Policy Amendment"
+      assert structured["kind"] == "reject_always"
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "outcome" => %{"outcome" => "selected", "optionId" => structured["optionId"]}
+        }
+      }
+
+      assert {:ok, data, new_state} = Codex.translate_outbound(response, state)
+
+      assert decode(data) == %{"id" => 101, "result" => %{"decision" => structured_decision}}
+      assert new_state.pending_client_requests == %{}
+    end
   end
 
   defp put_test_session(state, session_id, attrs \\ %{}) do
