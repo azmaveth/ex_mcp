@@ -2918,8 +2918,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
-  defp decode_structured_decision(_option_id), do: :error
-
   defp structured_decision_name(decision) do
     case Map.keys(decision) do
       [name] when is_binary(name) -> name |> Macro.underscore() |> humanize_option()
