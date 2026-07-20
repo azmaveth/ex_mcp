@@ -15,6 +15,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
   alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests}
   alias ExMCP.Internal.{Maps, NameValue}
 
+  @structured_decision_prefix "codex:decision:"
+
   defstruct [
     :model,
     :mode_id,
@@ -2798,6 +2800,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
     %{"optionId" => id, "name" => name, "kind" => option_kind(id)}
   end
 
+  defp decision_to_option(decision) when is_map(decision) do
+    %{
+      "optionId" => @structured_decision_prefix <> Jason.encode!(decision),
+      "name" => structured_decision_name(decision),
+      "kind" => structured_decision_kind(decision)
+    }
+  end
+
   defp decision_to_option(decision) when is_binary(decision) do
     %{
       "optionId" => decision,
@@ -2812,6 +2822,16 @@ defmodule ExMCP.ACP.Adapters.Codex do
          "result" => %{"outcome" => %{"outcome" => "cancelled"}}
        }) do
     codex_cancel_response(method)
+  end
+
+  defp permission_response(
+         %{
+           method: "item/commandExecution/requestApproval",
+           params: %{"availableDecisions" => available_decisions}
+         },
+         %{"result" => %{"outcome" => %{"optionId" => option_id}}}
+       ) do
+    %{"decision" => command_approval_decision(option_id, available_decisions)}
   end
 
   defp permission_response(%{method: method}, %{
@@ -2860,6 +2880,20 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp codex_cancel_response(_method), do: %{"decision" => "cancel"}
 
+  defp command_approval_decision(option_id, available_decisions) do
+    if structured_decision_option_id?(option_id) do
+      with true <- is_list(available_decisions),
+           {:ok, decision} <- decode_structured_decision(option_id),
+           true <- Enum.member?(available_decisions, decision) do
+        decision
+      else
+        _ -> "decline"
+      end
+    else
+      app_server_decision(option_id)
+    end
+  end
+
   defp app_server_decision(option_id) do
     cond do
       always_option?(option_id) -> "acceptForSession"
@@ -2868,6 +2902,43 @@ defmodule ExMCP.ACP.Adapters.Codex do
       true -> "decline"
     end
   end
+
+  defp structured_decision_option_id?(option_id) when is_binary(option_id),
+    do: String.starts_with?(option_id, @structured_decision_prefix)
+
+  defp structured_decision_option_id?(_option_id), do: false
+
+  defp decode_structured_decision(option_id) when is_binary(option_id) do
+    with true <- String.starts_with?(option_id, @structured_decision_prefix),
+         encoded <- String.replace_prefix(option_id, @structured_decision_prefix, ""),
+         {:ok, decision} when is_map(decision) <- Jason.decode(encoded) do
+      {:ok, decision}
+    else
+      _ -> :error
+    end
+  end
+
+  defp structured_decision_name(decision) do
+    case Map.keys(decision) do
+      [name] when is_binary(name) -> name |> Macro.underscore() |> humanize_option()
+      _ -> "Codex Decision"
+    end
+  end
+
+  defp structured_decision_kind(%{"acceptWithExecpolicyAmendment" => _amendment}),
+    do: "allow_always"
+
+  defp structured_decision_kind(%{
+         "applyNetworkPolicyAmendment" => %{
+           "network_policy_amendment" => %{"action" => "deny"}
+         }
+       }),
+       do: "reject_always"
+
+  defp structured_decision_kind(%{"applyNetworkPolicyAmendment" => _amendment}),
+    do: "allow_always"
+
+  defp structured_decision_kind(_decision), do: "reject_once"
 
   defp legacy_review_decision(option_id) do
     cond do
