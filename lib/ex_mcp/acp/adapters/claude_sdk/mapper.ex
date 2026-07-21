@@ -412,7 +412,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp handle_stream_event(%{"type" => "content_block_delta", "delta" => delta}, state) do
     case delta do
       %{"type" => "text_delta", "text" => text} ->
-        state = %{state | text_acc: [text | state.text_acc]}
+        state = %{
+          state
+          | text_acc: [text | state.text_acc],
+            current_assistant_text_streamed?: true
+        }
 
         {[AdapterEvents.agent_message_chunk(session_id(state), text)], [], state}
 
@@ -445,21 +449,27 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       |> maybe_set(:model, message["model"])
       |> maybe_set(:session_id, message["session_id"])
 
-    Enum.reduce(content, {[], [], state}, fn block, {messages, writes, acc} ->
-      {new_messages, new_writes, acc} = handle_assistant_block(block, acc)
-      {messages ++ new_messages, writes ++ new_writes, acc}
-    end)
+    {messages, writes, state} =
+      Enum.reduce(content, {[], [], state}, fn block, {messages, writes, acc} ->
+        {new_messages, new_writes, acc} = handle_assistant_block(block, acc)
+        {messages ++ new_messages, writes ++ new_writes, acc}
+      end)
+
+    {messages, writes, %{state | current_assistant_text_streamed?: false}}
   end
 
-  defp handle_assistant(_message, state), do: {[], [], state}
+  defp handle_assistant(_message, state),
+    do: {[], [], %{state | current_assistant_text_streamed?: false}}
+
+  defp handle_assistant_block(
+         %{"type" => "text"},
+         %{current_assistant_text_streamed?: true} = state
+       ) do
+    {[], [], state}
+  end
 
   defp handle_assistant_block(%{"type" => "text", "text" => text}, state) do
-    state =
-      if state.text_acc == [] do
-        %{state | text_acc: [text]}
-      else
-        state
-      end
+    state = %{state | text_acc: [text | state.text_acc]}
 
     {[AdapterEvents.agent_message_chunk(session_id(state), text)], [], state}
   end
@@ -573,6 +583,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         thinking_acc: [],
         thinking_blocks: [],
         current_block_type: nil,
+        current_assistant_text_streamed?: false,
         session_id: session_id
     }
 
@@ -1241,6 +1252,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
               thinking_acc: [],
               thinking_blocks: [],
               current_block_type: nil,
+              current_assistant_text_streamed?: false,
               tool_calls: %{}
           }
 
