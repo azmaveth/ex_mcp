@@ -1050,22 +1050,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_notification("item/fileChange/patchUpdated", params, state) do
     session_id = Sessions.id_from_params(params, state)
-    patch = params["patch"] || params
 
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => params["callId"] || params["itemId"] || patch["id"],
-        "kind" => "edit",
-        "content" => [
-          Events.tool_diff_content(
-            patch["path"] || params["path"],
-            patch["diff"] || patch["text"] || params["delta"] || ""
-          )
-        ],
-        "rawOutput" => params
-      })
-
-    {:messages, [notification], state}
+    {:messages, [FileChanges.patch_updated(session_id, params)], state}
   end
 
   defp handle_notification("item/mcpToolCall/progress", params, state) do
