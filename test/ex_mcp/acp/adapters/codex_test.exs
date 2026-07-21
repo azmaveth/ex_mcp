@@ -544,6 +544,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert msg["params"]["sessionId"] == "thread-1"
       assert msg["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
       assert new_state.sessions["thread-1"].accumulated_text == ["Hello "]
+      assert new_state.sessions["thread-1"].prompt_activity
     end
 
     test "turn/completed responds to the active prompt for that session", %{state: state} do
@@ -578,6 +579,95 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert response["result"]["_meta"]["ex_mcp"]["text"] == "Hello world"
       assert new_state.sessions["thread-1"].active_prompt_acp_id == nil
       assert new_state.sessions["thread-2"].active_prompt_acp_id == 31
+    end
+
+    test "warning notifications remain metadata and cannot become an agent response", %{
+      state: state
+    } do
+      line =
+        Jason.encode!(%{
+          "method" => "warning",
+          "params" => %{
+            "threadId" => "thread-1",
+            "message" => "Skill descriptions were shortened"
+          }
+        })
+
+      assert {:messages, [msg], new_state} = Codex.translate_inbound(line, state)
+      update = msg["params"]["update"]
+
+      assert update["sessionUpdate"] == "session_info_update"
+
+      assert update["_meta"]["ex_mcp"]["warning"]["message"] ==
+               "Skill descriptions were shortened"
+
+      assert new_state.sessions["thread-1"].accumulated_text == []
+    end
+
+    test "an exhausted rate limit with no model activity fails the active prompt", %{state: state} do
+      rate_limits = %{
+        "limitId" => "codex_spark",
+        "primary" => %{"usedPercent" => 100, "resetsAt" => 1_800_000_000},
+        "credits" => %{"hasCredits" => false, "unlimited" => false}
+      }
+
+      update =
+        Jason.encode!(%{
+          "method" => "account/rateLimits/updated",
+          "params" => %{"rateLimits" => rate_limits}
+        })
+
+      assert {:messages, [info], state} = Codex.translate_inbound(update, state)
+      assert info["params"]["update"]["sessionUpdate"] == "session_info_update"
+      assert state.sessions["thread-1"].rate_limits == rate_limits
+
+      completed =
+        Jason.encode!(%{
+          "method" => "turn/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turn" => %{"id" => "turn-1", "status" => "completed"}
+          }
+        })
+
+      assert {:messages, messages, new_state} = Codex.translate_inbound(completed, state)
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+
+      assert response["id"] == 30
+      assert response["error"]["code"] == -32_029
+      assert response["error"]["data"]["kind"] == "rate_limit_exhausted"
+      assert new_state.sessions["thread-1"].active_prompt_acp_id == nil
+    end
+
+    test "rate-limit metadata does not replace a response that made model progress", %{
+      state: state
+    } do
+      state =
+        put_test_session(state, "thread-1", %{
+          turn_id: "turn-1",
+          active_prompt_acp_id: 30,
+          accumulated_text: ["done"],
+          prompt_activity: true,
+          rate_limits: %{
+            "primary" => %{"usedPercent" => 100},
+            "credits" => %{"hasCredits" => false, "unlimited" => false}
+          }
+        })
+
+      completed =
+        Jason.encode!(%{
+          "method" => "turn/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turn" => %{"id" => "turn-1", "status" => "completed"}
+          }
+        })
+
+      assert {:messages, messages, _state} = Codex.translate_inbound(completed, state)
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+
+      assert response["result"]["stopReason"] == "end_turn"
+      refute Map.has_key?(response, "error")
     end
 
     test "tool and error notifications keep stable ACP update shapes", %{state: state} do

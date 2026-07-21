@@ -714,6 +714,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
     |> Map.put(:accumulated_text, [])
     |> Map.put(:accumulated_thinking, [])
     |> Map.put(:accumulated_usage, nil)
+    |> Map.put(:rate_limits, %{})
+    |> Map.put(:prompt_activity, false)
   end
 
   # Inbound: Codex app-server -> ACP
@@ -919,7 +921,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     state =
       Sessions.update(state, session_id, fn session ->
-        Map.update(session, :accumulated_text, [delta], &[delta | &1])
+        session
+        |> Map.update(:accumulated_text, [delta], &[delta | &1])
+        |> Map.put(:prompt_activity, true)
       end)
 
     {:messages, [AdapterEvents.agent_message_chunk(session_id, delta)], state}
@@ -934,7 +938,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     state =
       Sessions.update(state, session_id, fn session ->
-        Map.update(session, :accumulated_thinking, [delta], &[delta | &1])
+        session
+        |> Map.update(:accumulated_thinking, [delta], &[delta | &1])
+        |> Map.put(:prompt_activity, true)
       end)
 
     {:messages, [AdapterEvents.agent_thought_chunk(session_id, delta)], state}
@@ -950,7 +956,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_notification("item/started", %{"item" => item} = params, state) do
     session_id = Sessions.id_from_params(params, state)
-    handle_item_started(session_id, item, params, state)
+    handle_item_started(session_id, item, params, mark_prompt_activity(state, session_id))
   end
 
   defp handle_notification(
@@ -959,6 +965,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
          state
        ) do
     session_id = Sessions.id_from_params(params, state)
+    state = mark_prompt_activity(state, session_id)
     {:messages, [Events.tool_call_started(session_id, item)], state}
   end
 
@@ -966,6 +973,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_notification("item/completed", params, state) do
     session_id = Sessions.id_from_params(params, state)
+    state = mark_prompt_activity(state, session_id)
     handle_item_completed(session_id, params["item"] || %{}, state)
   end
 
@@ -1131,20 +1139,29 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     messages =
       if session[:active_prompt_acp_id] do
-        result =
-          %{
-            "stopReason" => normalize_stop_reason(turn["status"] || params["status"]),
-            "_meta" => %{
-              "ex_mcp" => %{
-                "text" => text,
-                "sessionId" => session_id,
-                "turnId" => session[:turn_id]
-              }
-            }
-          }
-          |> maybe_put("usage", session[:accumulated_usage])
+        response =
+          case capacity_failure(session, text) do
+            {:error, error} ->
+              Envelope.error(session[:active_prompt_acp_id], error)
 
-        [Envelope.response(session[:active_prompt_acp_id], result) | messages]
+            :ok ->
+              result =
+                %{
+                  "stopReason" => normalize_stop_reason(turn["status"] || params["status"]),
+                  "_meta" => %{
+                    "ex_mcp" => %{
+                      "text" => text,
+                      "sessionId" => session_id,
+                      "turnId" => session[:turn_id]
+                    }
+                  }
+                }
+                |> maybe_put("usage", session[:accumulated_usage])
+
+              Envelope.response(session[:active_prompt_acp_id], result)
+          end
+
+        [response | messages]
       else
         messages
       end
@@ -1177,6 +1194,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         session
         |> Map.put(:accumulated_usage, usage_data)
         |> Map.put(:model_context_window, size)
+        |> Map.put(:prompt_activity, session[:prompt_activity] == true or positive_usage?(last))
       end)
 
     if is_integer(used) and is_integer(size) and size > 0 do
@@ -1216,11 +1234,51 @@ defmodule ExMCP.ACP.Adapters.Codex do
     session_id = Sessions.id_from_params(params, state)
     text = params["message"] || params["warning"] || Events.format_raw(params)
 
-    {:messages, [AdapterEvents.agent_message_chunk(session_id, text)], state}
+    if session_id do
+      notification =
+        AdapterEvents.session_info_update(session_id, %{
+          "_meta" => %{
+            "ex_mcp" => %{
+              "adapter" => "codex",
+              "warning" => %{"message" => text}
+            }
+          }
+        })
+
+      {:messages, [notification], state}
+    else
+      {:skip, state}
+    end
   end
 
   defp handle_notification("guardianWarning", params, state),
     do: handle_notification("warning", params, state)
+
+  defp handle_notification("account/rateLimits/updated", params, state) do
+    session_id = Sessions.current_id(state)
+    rate_limits = params["rateLimits"] || %{}
+
+    state =
+      Sessions.update(state, session_id, fn session ->
+        Map.put(session, :rate_limits, rate_limits)
+      end)
+
+    if session_id do
+      notification =
+        AdapterEvents.session_info_update(session_id, %{
+          "_meta" => %{
+            "ex_mcp" => %{
+              "adapter" => "codex",
+              "rateLimits" => rate_limits
+            }
+          }
+        })
+
+      {:messages, [notification], state}
+    else
+      {:skip, state}
+    end
+  end
 
   defp handle_notification("item/webSearch/started", params, state) do
     session_id = Sessions.id_from_params(params, state)
@@ -1858,6 +1916,63 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp format_usage(_usage), do: "data not available yet"
+
+  defp mark_prompt_activity(state, session_id) do
+    Sessions.update(state, session_id, &Map.put(&1, :prompt_activity, true))
+  end
+
+  defp capacity_failure(session, text) do
+    if text == "" and session[:prompt_activity] != true and
+         not positive_usage?(session[:accumulated_usage]) and
+         rate_limit_exhausted?(session[:rate_limits]) do
+      {:error,
+       %{
+         "code" => -32_029,
+         "message" => "Codex rate limit exhausted before the model produced a response",
+         "data" => %{
+           "kind" => "rate_limit_exhausted",
+           "provider" => "codex",
+           "rateLimits" => session[:rate_limits]
+         }
+       }}
+    else
+      :ok
+    end
+  end
+
+  defp rate_limit_exhausted?(rate_limits) when is_map(rate_limits) do
+    reached_type =
+      rate_limits["rateLimitReachedType"] || rate_limits["rate_limit_reached_type"]
+
+    reached_type not in [nil, ""] or
+      (Enum.any?([rate_limits["primary"], rate_limits["secondary"]], &window_exhausted?/1) and
+         not credits_available?(rate_limits["credits"]))
+  end
+
+  defp rate_limit_exhausted?(_rate_limits), do: false
+
+  defp window_exhausted?(window) when is_map(window) do
+    used_percent = window["usedPercent"] || window["used_percent"]
+    is_number(used_percent) and used_percent >= 100
+  end
+
+  defp window_exhausted?(_window), do: false
+
+  defp credits_available?(credits) when is_map(credits) do
+    credits["unlimited"] == true or credits["hasCredits"] == true or
+      credits["has_credits"] == true
+  end
+
+  defp credits_available?(_credits), do: false
+
+  defp positive_usage?(usage) when is_map(usage) do
+    case token_total(usage) do
+      total when is_integer(total) -> total > 0
+      _other -> false
+    end
+  end
+
+  defp positive_usage?(_usage), do: false
 
   defp usage_data(token_counts) when is_map(token_counts) do
     %{

@@ -31,7 +31,8 @@ defmodule ExMCP.ACP.Adapters.Codex.Sessions do
       model_context_window: nil,
       accumulated_text: [],
       accumulated_thinking: [],
-      accumulated_usage: nil
+      accumulated_usage: nil,
+      prompt_activity: false
     }
   end
 
