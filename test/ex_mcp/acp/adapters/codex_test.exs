@@ -652,6 +652,30 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert diff["type"] == "diff"
     end
 
+    test "current fileChange patchUpdated reaches the snapshot mapper", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "method" => "item/fileChange/patchUpdated",
+          "params" => %{
+            "threadId" => "thread-1",
+            "itemId" => "edit-1",
+            "changes" => [
+              %{"path" => "lib/a.ex", "newText" => "first"},
+              %{"path" => "lib/b.ex", "diff" => "second"}
+            ]
+          }
+        })
+
+      assert {:messages, [message], ^state} = Codex.translate_inbound(line, state)
+
+      update = get_in(message, ["params", "update"])
+      assert update["sessionUpdate"] == "tool_call_update"
+      assert update["toolCallId"] == "edit-1"
+
+      assert Enum.map(update["content"], &{&1["path"], &1["newText"]}) ==
+               [{"lib/a.ex", "first"}, {"lib/b.ex", "second"}]
+    end
+
     test "token usage is accumulated for the prompt response and emitted as usage_update",
          %{
            state: state

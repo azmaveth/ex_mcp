@@ -11,7 +11,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   require Logger
 
-  alias ExMCP.ACP.Adapters.Codex.{Config, Events, Sessions, SlashCommands}
+  alias ExMCP.ACP.Adapters.Codex.{Config, Events, FileChanges, Sessions, SlashCommands}
   alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests}
   alias ExMCP.Internal.{Maps, NameValue}
 
@@ -1050,22 +1050,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_notification("item/fileChange/patchUpdated", params, state) do
     session_id = Sessions.id_from_params(params, state)
-    patch = params["patch"] || params
 
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => params["callId"] || params["itemId"] || patch["id"],
-        "kind" => "edit",
-        "content" => [
-          Events.tool_diff_content(
-            patch["path"] || params["path"],
-            patch["diff"] || patch["text"] || params["delta"] || ""
-          )
-        ],
-        "rawOutput" => params
-      })
-
-    {:messages, [notification], state}
+    {:messages, [FileChanges.patch_updated(session_id, params)], state}
   end
 
   defp handle_notification("item/mcpToolCall/progress", params, state) do
@@ -1476,16 +1462,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         {:messages, [notification], state}
 
       "fileChange" ->
-        notification =
-          AdapterEvents.tool_call(session_id, %{
-            "toolCallId" => Events.item_id(params, item),
-            "title" => "Edit File",
-            "kind" => "edit",
-            "status" => Events.normalize_tool_status(item["status"], "in_progress"),
-            "rawInput" => %{"changes" => item["changes"]}
-          })
-
-        {:messages, [notification], state}
+        {:messages, [FileChanges.started(session_id, params, item)], state}
 
       "mcpToolCall" ->
         notification =
@@ -1645,18 +1622,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp handle_item_completed(session_id, %{"type" => "fileChange"} = item, state) do
-    changes = item["changes"] || []
-
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["id"],
-        "kind" => "edit",
-        "status" => Events.normalize_tool_status(item["status"], "completed"),
-        "content" => Enum.map(changes, &Events.file_change_content/1),
-        "rawOutput" => %{"changes" => changes, "status" => item["status"]}
-      })
-
-    {:messages, [notification], state}
+    {:messages, [FileChanges.completed(session_id, item)], state}
   end
 
   defp handle_item_completed(session_id, %{"type" => "mcpToolCall"} = item, state) do
