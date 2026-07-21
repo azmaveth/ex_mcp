@@ -12,7 +12,8 @@ defmodule ExMCP.Transport.Stdio do
 
   - `:command` - Command and arguments to spawn (required)
   - `:cd` - Working directory for the process
-  - `:env` - Environment variables as a list of {"KEY", "VALUE"} tuples
+  - `:env` - Environment variables as a list of `{"KEY", "VALUE"}` tuples;
+    use `{"KEY", false}` to remove an inherited variable from the child
 
   ## Example
 
@@ -451,8 +452,12 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   defp format_env(env) do
-    Enum.map(env, fn {key, value} ->
-      {to_charlist(key), to_charlist(value)}
+    Enum.map(env, fn
+      {key, false} ->
+        {to_charlist(key), false}
+
+      {key, value} ->
+        {to_charlist(key), to_charlist(value)}
     end)
   end
 end

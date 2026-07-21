@@ -2,6 +2,7 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.ACP.AdapterBridge
+  alias ExMCP.ACP.AdapterBridge.PortRunner
 
   # MockAdapter: uses a simple cat-like echo process for testing
   defmodule MockAdapter do
@@ -130,6 +131,17 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
     @impl true
     def translate_inbound(_line, state), do: {:skip, state}
+  end
+
+  test "adapter subprocess environment clears inherited Mix selectors" do
+    env =
+      [env: [{"MIX_ENV", "test"}, {"CUSTOM_UNSET", false}]]
+      |> PortRunner.safe_env(MockAdapter)
+      |> Map.new(fn {name, value} -> {to_string(name), value} end)
+
+    assert env["MIX_ENV"] == ~c"test"
+    assert env["MIX_TARGET"] == false
+    assert env["CUSTOM_UNSET"] == false
   end
 
   defmodule ManagedMockAdapter do

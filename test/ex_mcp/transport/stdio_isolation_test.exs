@@ -16,6 +16,24 @@ defmodule ExMCP.Transport.StdioIsolationTest do
     :ok
   end
 
+  test "stdio environment can remove an inherited variable" do
+    key = "EX_MCP_STDIO_INHERITED_ENV_TEST"
+    previous = System.get_env(key)
+    System.put_env(key, "must-not-reach-child")
+
+    on_exit(fn ->
+      if is_binary(previous), do: System.put_env(key, previous), else: System.delete_env(key)
+    end)
+
+    shell = System.find_executable("sh") || flunk("sh executable is required for stdio test")
+    probe = ~s(test -z "${#{key}+x}")
+
+    assert {:ok, %Stdio{port: port}} =
+             Stdio.connect(command: [shell, "-c", probe], env: [{key, false}])
+
+    assert_receive {^port, {:exit_status, 0}}, 1_000
+  end
+
   describe "Stdio Transport Isolation" do
     test "validates external resource access through security guard" do
       # Test message requesting an external resource
