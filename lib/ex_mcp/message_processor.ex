@@ -10,9 +10,15 @@ defmodule ExMCP.MessageProcessor do
   alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Protocol.ResponseBuilder
 
+  require Logger
+
   # Protocol version constants used by MethodHandlers
   # @supported_protocol_versions ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
   # @default_protocol_version "2025-11-25"
+
+  # How long to wait for a graceful stop of a per-request handler process
+  # before killing it.
+  @handler_stop_timeout 1_000
 
   @type t :: module()
   @type opts :: term()
@@ -143,6 +149,8 @@ defmodule ExMCP.MessageProcessor do
     server = Map.get(opts, :server)
     server_info = Map.get(opts, :server_info, %{})
 
+    conn = put_handler_call_timeout(conn, opts)
+
     cond do
       # If we have a server PID, use it directly
       is_pid(server) ->
@@ -178,31 +186,83 @@ defmodule ExMCP.MessageProcessor do
     end
   end
 
-  # Process request using Handler Server with GenServer
+  # Process request using a temporary per-request handler GenServer.
+  #
+  # The handler is started *unlinked* (`GenServer.start/2`) so a crash inside
+  # the handler cannot take down the request process; MethodHandlers converts
+  # handler crashes, call timeouts and error returns into JSON-RPC error
+  # responses instead.
   defp process_with_handler_genserver(conn, handler_module, server_info, handler_opts) do
-    # Start the handler as a GenServer
-    case GenServer.start_link(handler_module, handler_opts) do
+    case GenServer.start(handler_module, handler_opts) do
       {:ok, server_pid} ->
+        start_handler_watchdog(server_pid)
+
         try do
           # Process the request using the handler's GenServer interface
           process_handler_request(conn, server_pid, server_info)
         after
-          # Clean up the temporary server
-          if Process.alive?(server_pid) do
-            GenServer.stop(server_pid, :normal, 1000)
-          end
+          # Clean up the temporary server on every exit path
+          stop_handler(server_pid)
         end
 
       {:error, reason} ->
+        # Log the detail; never embed it in the JSON-RPC response (audit M12).
+        Logger.error("Failed to start handler #{inspect(handler_module)}: #{inspect(reason)}")
+
         error_response =
           JSONRPC.error(
             get_request_id(conn.request),
             ErrorCodes.internal_error(),
-            "Failed to start handler server",
-            %{"reason" => inspect(reason)}
+            "Internal server error",
+            %{"type" => "handler_start_failed"}
           )
 
         put_response(conn, error_response)
+    end
+  end
+
+  # Stops the per-request handler process. `GenServer.stop/3` exits the caller
+  # when the handler is already dead or does not stop within the timeout, so
+  # catch those exits and fall back to a brutal kill to guarantee the handler
+  # cannot outlive the request (no process leak).
+  defp stop_handler(server_pid) do
+    GenServer.stop(server_pid, :normal, @handler_stop_timeout)
+    :ok
+  catch
+    :exit, _reason ->
+      Process.exit(server_pid, :kill)
+      :ok
+  end
+
+  # Since the handler is not linked to the request process, an exit signal
+  # that kills the request process mid-call (e.g. client disconnect) would
+  # skip the `after` cleanup and leak the handler. This watchdog kills the
+  # handler if the request process dies first, and exits on its own once the
+  # handler is down.
+  defp start_handler_watchdog(server_pid) do
+    request_pid = self()
+
+    spawn(fn ->
+      request_ref = Process.monitor(request_pid)
+      server_ref = Process.monitor(server_pid)
+
+      receive do
+        {:DOWN, ^server_ref, :process, _pid, _reason} ->
+          :ok
+
+        {:DOWN, ^request_ref, :process, _pid, _reason} ->
+          Process.exit(server_pid, :kill)
+      end
+    end)
+  end
+
+  # Plumb the `:handler_call_timeout` option (default 10_000, applied in
+  # MethodHandlers) through the conn so all GenServer calls to the handler
+  # use it.
+  defp put_handler_call_timeout(%Conn{} = conn, opts) do
+    case Map.get(opts, :handler_call_timeout) do
+      nil -> conn
+      timeout -> assign(conn, :handler_call_timeout, timeout)
     end
   end
 

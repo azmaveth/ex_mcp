@@ -77,6 +77,71 @@ defmodule ExMCP.MessageProcessorTest do
     end
   end
 
+  defmodule TrackedHandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(opts) do
+      state = Map.new(opts)
+      send(state.test_pid, {:handler_started, self()})
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+  end
+
+  defmodule RaisingHandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(opts) do
+      state = Map.new(opts)
+      send(state.test_pid, {:handler_started, self()})
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_list_tools(_cursor, _state) do
+      raise "handler blew up: s3cr3t-detail"
+    end
+  end
+
+  defmodule BlockingHandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(opts) do
+      state = Map.new(opts)
+      send(state.test_pid, {:handler_started, self()})
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_list_tools(_cursor, state) do
+      # Blocks until told otherwise; the caller's timeout fires first.
+      receive do
+        :unblock -> {:ok, [], nil, state}
+      end
+    end
+  end
+
+  defmodule ErrorReturningHandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def handle_list_tools(_cursor, state) do
+      {:error, %{secret: "s3cr3t-detail"}, state}
+    end
+  end
+
+  defmodule FailingInitHandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(_opts), do: {:stop, {:boom, "s3cr3t-detail"}}
+  end
+
   describe "new/2" do
     test "creates a new connection with request" do
       request = %{"method" => "test", "params" => %{}}
@@ -217,5 +282,108 @@ defmodule ExMCP.MessageProcessorTest do
                "version" => "2.0.0"
              }
     end
+  end
+
+  describe "process/2 handler fault tolerance" do
+    @describetag capture_log: true
+
+    test "handler crash returns -32603 and does not kill the request process" do
+      Process.flag(:trap_exit, true)
+
+      conn =
+        10
+        |> tools_list_request()
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{
+          handler: RaisingHandlerServer,
+          handler_opts: [test_pid: self()]
+        })
+
+      assert %{"error" => error} = conn.response
+      assert error["code"] == -32603
+      assert error["message"] == "Tools list failed"
+      assert error["data"] == %{"type" => "handler_crash"}
+      refute inspect(conn.response) =~ "s3cr3t-detail"
+
+      # The handler must not be linked to the request process, so no exit
+      # signal is delivered even while trapping exits.
+      refute_received {:EXIT, _pid, _reason}
+
+      assert_receive {:handler_started, handler_pid}
+      assert_handler_down(handler_pid)
+    end
+
+    test "handler blocking past :handler_call_timeout returns -32603 timeout error" do
+      conn =
+        11
+        |> tools_list_request()
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{
+          handler: BlockingHandlerServer,
+          handler_opts: [test_pid: self()],
+          handler_call_timeout: 100
+        })
+
+      assert %{"error" => error} = conn.response
+      assert error["code"] == -32603
+      assert error["data"] == %{"type" => "handler_timeout"}
+
+      # The stuck handler must be reaped after the request, not leaked.
+      assert_receive {:handler_started, handler_pid}
+      assert_handler_down(handler_pid)
+    end
+
+    test "handler is stopped after a successful request (no process leak)" do
+      conn =
+        12
+        |> tools_list_request()
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{
+          handler: TrackedHandlerServer,
+          handler_opts: [test_pid: self()]
+        })
+
+      assert conn.response["result"] == %{"tools" => []}
+
+      assert_receive {:handler_started, handler_pid}
+      assert_handler_down(handler_pid)
+    end
+
+    test "handler error returns do not leak error details in the response" do
+      conn =
+        13
+        |> tools_list_request()
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: ErrorReturningHandlerServer})
+
+      assert %{"error" => error} = conn.response
+      assert error["code"] == -32603
+      assert error["message"] == "Tools list failed"
+      assert error["data"] == %{"type" => "handler_error"}
+      refute inspect(conn.response) =~ "s3cr3t-detail"
+    end
+
+    test "handler start failure returns a generic -32603 error" do
+      conn =
+        14
+        |> tools_list_request()
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: FailingInitHandlerServer})
+
+      assert %{"error" => error} = conn.response
+      assert error["code"] == -32603
+      assert error["message"] == "Internal server error"
+      assert error["data"] == %{"type" => "handler_start_failed"}
+      refute inspect(conn.response) =~ "s3cr3t-detail"
+    end
+  end
+
+  defp tools_list_request(id) do
+    %{"jsonrpc" => "2.0", "method" => "tools/list", "params" => %{}, "id" => id}
+  end
+
+  defp assert_handler_down(handler_pid) do
+    ref = Process.monitor(handler_pid)
+    assert_receive {:DOWN, ^ref, :process, ^handler_pid, _reason}, 2_000
   end
 end

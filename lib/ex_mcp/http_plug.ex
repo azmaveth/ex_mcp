@@ -506,11 +506,14 @@ defmodule ExMCP.HttpPlug do
   defp handle_session_delete(conn, session_id, opts) do
     with :ok <- validate_session_id_value(session_id),
          {:ok, conn} <- validate_request_origin(conn, opts),
-         {:ok, _token_info} <- authorize_request(conn, %{"method" => "session/delete"}, opts) do
-      session_manager = ensure_session_manager(opts.session_manager)
-
-      # Terminate the session
-      :ok = session_manager.terminate_session(session_id)
+         {:ok, _token_info} <- authorize_request(conn, %{"method" => "session/delete"}, opts),
+         {:ok, session_manager} <- ensure_session_manager(opts.session_manager) do
+      # Terminate the session. Deletion is idempotent, so log (rather than
+      # crash on) failures and still acknowledge the request.
+      case session_manager.terminate_session(session_id) do
+        :ok -> :ok
+        error -> Logger.error("Failed to terminate MCP session: #{inspect(error)}")
+      end
 
       # Try to stop the SSE handler if it exists
       case lookup_sse_handler(session_id) do
@@ -532,6 +535,9 @@ defmodule ExMCP.HttpPlug do
     else
       {:error, :invalid_session_id} ->
         reject_invalid_session_id(conn, opts)
+
+      {:error, :session_manager_unavailable} ->
+        session_manager_unavailable_response(conn, opts)
 
       {:error, {:auth_error, {status, www_auth_header, body}}} ->
         conn
@@ -556,9 +562,8 @@ defmodule ExMCP.HttpPlug do
   defp handle_sse_connection(conn, opts) do
     with :ok <- validate_session_id_headers(conn),
          {:ok, conn} <- validate_request_origin(conn, opts),
-         {:ok, _token_info} <- authorize_request(conn, %{}, opts) do
-      session_manager = ensure_session_manager(opts.session_manager)
-
+         {:ok, _token_info} <- authorize_request(conn, %{}, opts),
+         {:ok, session_manager} <- ensure_session_manager(opts.session_manager) do
       conn =
         conn
         |> maybe_add_cors_headers(opts)
@@ -653,6 +658,9 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_header("www-authenticate", www_auth_header)
         |> send_resp(status, body)
 
+      {:error, :session_manager_unavailable} ->
+        session_manager_unavailable_response(conn, opts)
+
       {:error, :origin_not_allowed} ->
         conn
         |> maybe_add_cors_headers(opts)
@@ -660,20 +668,36 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  # The default session manager is supervised by the :ex_mcp application
+  # (see ExMCP.Application). If it is not running, fail fast instead of
+  # lazily starting an unsupervised copy linked to the HTTP request process.
   defp ensure_session_manager(ExMCP.SessionManager) do
-    case Process.whereis(ExMCP.SessionManager) do
-      nil ->
-        case ExMCP.SessionManager.start_link([]) do
-          {:ok, _pid} -> ExMCP.SessionManager
-          {:error, {:already_started, _pid}} -> ExMCP.SessionManager
-        end
+    if Process.whereis(ExMCP.SessionManager) do
+      {:ok, ExMCP.SessionManager}
+    else
+      Logger.error(
+        "ExMCP.SessionManager is not running. Start the :ex_mcp application " <>
+          "(or add ExMCP.SessionManager to your supervision tree) before " <>
+          "serving MCP session requests."
+      )
 
-      _pid ->
-        ExMCP.SessionManager
+      {:error, :session_manager_unavailable}
     end
   end
 
-  defp ensure_session_manager(session_manager), do: session_manager
+  defp ensure_session_manager(session_manager), do: {:ok, session_manager}
+
+  defp session_manager_unavailable_response(conn, opts) do
+    error_response =
+      JSONRPC.error(nil, ErrorCodes.internal_error(), "Service unavailable", %{
+        "type" => "session_manager_unavailable"
+      })
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_content_type("application/json")
+    |> send_resp(503, Jason.encode!(error_response))
+  end
 
   # Process MCP request using the configured handler
   defp process_mcp_request(request, opts) do

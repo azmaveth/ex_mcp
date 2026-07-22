@@ -3,33 +3,27 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   alias ExMCP.Internal.JSONRPC
 
+  require Logger
+
   @default_protocol_version "2025-11-25"
 
+  # Default timeout for GenServer calls into handler processes. Override per
+  # request via the `:handler_call_timeout` option of
+  # `ExMCP.MessageProcessor.process/2`.
+  @default_handler_call_timeout 10_000
+
   def handle_initialize(conn, server_pid, params, id, _server_info) do
-    case GenServer.call(server_pid, {:initialize, params}, 5000) do
-      {:ok, result} ->
-        result
-        |> normalize_initialize_result()
-        |> deep_stringify_keys()
-        |> then(&put_success(conn, &1, id))
-
-      {:ok, result, _state} ->
-        result
-        |> normalize_initialize_result()
-        |> deep_stringify_keys()
-        |> then(&put_success(conn, &1, id))
-
-      {:error, reason} ->
-        put_error(conn, "Initialize failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Initialize failed", error, id)
+    safe_call(conn, server_pid, {:initialize, params}, id, "Initialize failed", fn
+      {:ok, result} -> put_initialize_result(conn, result, id)
+      {:ok, result, _state} -> put_initialize_result(conn, result, id)
+      {:error, reason} -> put_error(conn, "Initialize failed", reason, id)
+    end)
   end
 
   def handle_tools_list(conn, server_pid, params, id) do
     cursor = Map.get(params, "cursor")
 
-    case GenServer.call(server_pid, {:list_tools, cursor}, 5000) do
+    safe_call(conn, server_pid, {:list_tools, cursor}, id, "Tools list failed", fn
       {:ok, tools, next_cursor, _state} ->
         paginated_result("tools", tools, next_cursor)
         |> put_success_result(conn, id)
@@ -46,9 +40,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
       {:error, reason} ->
         put_error(conn, "Tools list failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Tools list failed", error, id)
+    end)
   end
 
   def handle_tools_call(conn, server_pid, params, id) do
@@ -61,27 +53,18 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       %{tool_name: tool_name, mode: :handler}
     )
 
-    case GenServer.call(server_pid, {:call_tool, tool_name, arguments}, 10_000) do
-      {:ok, result} ->
-        put_success(conn, wrap_tool_result(result), id)
-
-      {:ok, result, _state} ->
-        put_success(conn, wrap_tool_result(result), id)
-
-      {:error, reason} ->
-        put_success(conn, tool_error_result(reason), id)
-
-      {:error, reason, _state} ->
-        put_success(conn, tool_error_result(reason), id)
-    end
-  rescue
-    error -> put_error(conn, "Tool call failed", error, id)
+    safe_call(conn, server_pid, {:call_tool, tool_name, arguments}, id, "Tool call failed", fn
+      {:ok, result} -> put_success(conn, wrap_tool_result(result), id)
+      {:ok, result, _state} -> put_success(conn, wrap_tool_result(result), id)
+      {:error, reason} -> put_success(conn, tool_error_result(reason), id)
+      {:error, reason, _state} -> put_success(conn, tool_error_result(reason), id)
+    end)
   end
 
   def handle_resources_list(conn, server_pid, params, id) do
     cursor = Map.get(params, "cursor")
 
-    case GenServer.call(server_pid, {:list_resources, cursor}, 5000) do
+    safe_call(conn, server_pid, {:list_resources, cursor}, id, "Resources list failed", fn
       {:ok, resources, next_cursor, _state} ->
         paginated_result("resources", resources, next_cursor)
         |> put_success_result(conn, id)
@@ -98,9 +81,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
       {:error, reason} ->
         put_error(conn, "Resources list failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Resources list failed", error, id)
+    end)
   end
 
   def handle_resources_read(conn, server_pid, params, id) do
@@ -112,7 +93,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       %{uri: uri, mode: :handler}
     )
 
-    case GenServer.call(server_pid, {:read_resource, uri}, 5000) do
+    safe_call(conn, server_pid, {:read_resource, uri}, id, "Resource read failed", fn
       {:ok, contents, _state} ->
         put_success(conn, %{"contents" => deep_stringify_keys(List.wrap(contents))}, id)
 
@@ -121,39 +102,33 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
       {:error, reason} ->
         put_error(conn, "Resource read failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Resource read failed", error, id)
+    end)
   end
 
   def handle_resources_subscribe(conn, server_pid, params, id) do
     uri = Map.get(params, "uri")
 
-    case GenServer.call(server_pid, {:subscribe_resource, uri}, 5000) do
+    safe_call(conn, server_pid, {:subscribe_resource, uri}, id, "Subscribe failed", fn
       :ok -> put_success(conn, %{}, id)
       {:ok, _state} -> put_success(conn, %{}, id)
       {:error, reason} -> put_error(conn, "Subscribe failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Subscribe failed", error, id)
+    end)
   end
 
   def handle_resources_unsubscribe(conn, server_pid, params, id) do
     uri = Map.get(params, "uri")
 
-    case GenServer.call(server_pid, {:unsubscribe_resource, uri}, 5000) do
+    safe_call(conn, server_pid, {:unsubscribe_resource, uri}, id, "Unsubscribe failed", fn
       :ok -> put_success(conn, %{}, id)
       {:ok, _state} -> put_success(conn, %{}, id)
       {:error, reason} -> put_error(conn, "Unsubscribe failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Unsubscribe failed", error, id)
+    end)
   end
 
   def handle_prompts_list(conn, server_pid, params, id) do
     cursor = Map.get(params, "cursor")
 
-    case GenServer.call(server_pid, {:list_prompts, cursor}, 5000) do
+    safe_call(conn, server_pid, {:list_prompts, cursor}, id, "Prompts list failed", fn
       {:ok, prompts, next_cursor, _state} ->
         paginated_result("prompts", prompts, next_cursor)
         |> put_success_result(conn, id)
@@ -170,9 +145,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
       {:error, reason} ->
         put_error(conn, "Prompts list failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Prompts list failed", error, id)
+    end)
   end
 
   def handle_prompts_get(conn, server_pid, params, id) do
@@ -185,34 +158,72 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       %{name: name, mode: :handler}
     )
 
-    case GenServer.call(server_pid, {:get_prompt, name, arguments}, 5000) do
+    safe_call(conn, server_pid, {:get_prompt, name, arguments}, id, "Prompt get failed", fn
       {:ok, result, _state} -> put_success(conn, deep_stringify_keys(result), id)
       {:ok, result} -> put_success(conn, deep_stringify_keys(result), id)
       {:error, reason} -> put_error(conn, "Prompt get failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Prompt get failed", error, id)
+    end)
   end
 
   def handle_completion_complete(conn, server_pid, params, id) do
-    case GenServer.call(server_pid, {:complete, params["ref"], params["argument"]}, 5000) do
-      {:ok, result} -> put_success(conn, deep_stringify_keys(result), id)
-      {:ok, result, _state} -> put_success(conn, deep_stringify_keys(result), id)
-      {:error, reason} -> put_error(conn, "Completion failed", reason, id)
-    end
-  rescue
-    error -> put_error(conn, "Completion failed", error, id)
+    safe_call(
+      conn,
+      server_pid,
+      {:complete, params["ref"], params["argument"]},
+      id,
+      "Completion failed",
+      fn
+        {:ok, result} -> put_success(conn, deep_stringify_keys(result), id)
+        {:ok, result, _state} -> put_success(conn, deep_stringify_keys(result), id)
+        {:error, reason} -> put_error(conn, "Completion failed", reason, id)
+      end
+    )
   end
 
   def handle_custom_method(conn, server_pid, method, params, id) do
-    case GenServer.call(server_pid, {:request, method, params}, 5000) do
+    case GenServer.call(server_pid, {:request, method, params}, call_timeout(conn)) do
       {:ok, result, _state} -> put_success(conn, deep_stringify_keys(result), id)
       {:ok, result} -> put_success(conn, deep_stringify_keys(result), id)
       {:error, _reason} -> put_method_not_found(conn, id)
       _ -> put_method_not_found(conn, id)
     end
   catch
-    :exit, _ -> put_method_not_found(conn, id)
+    :exit, {:timeout, _} = reason ->
+      Logger.error("Custom method call timed out: #{inspect(reason)}")
+      put_failure(conn, "Custom method failed", "handler_timeout", id)
+
+    :exit, _reason ->
+      put_method_not_found(conn, id)
+  end
+
+  # Calls the handler process, converting raised exceptions *and* exits
+  # (handler crash, :noproc, call timeout) into JSON-RPC internal errors so
+  # that a misbehaving handler can never crash the request process.
+  defp safe_call(conn, server_pid, request, id, label, on_reply) do
+    reply = GenServer.call(server_pid, request, call_timeout(conn))
+    on_reply.(reply)
+  rescue
+    error ->
+      Logger.error("#{label}: #{Exception.format(:error, error, __STACKTRACE__)}")
+      put_failure(conn, label, "handler_crash", id)
+  catch
+    :exit, reason ->
+      Logger.error("#{label}: handler exited: #{inspect(reason)}")
+      put_failure(conn, label, exit_failure_type(reason), id)
+  end
+
+  defp call_timeout(conn) do
+    Map.get(conn.assigns, :handler_call_timeout, @default_handler_call_timeout)
+  end
+
+  defp exit_failure_type({:timeout, _}), do: "handler_timeout"
+  defp exit_failure_type(_reason), do: "handler_crash"
+
+  defp put_initialize_result(conn, result, id) do
+    result
+    |> normalize_initialize_result()
+    |> deep_stringify_keys()
+    |> then(&put_success(conn, &1, id))
   end
 
   defp normalize_initialize_result(result) do
@@ -246,8 +257,16 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   defp put_success_result(result, conn, id), do: put_success(conn, result, id)
   defp put_success(conn, result, id), do: %{conn | response: JSONRPC.response(id, result)}
 
+  # Error details are logged, never embedded in the JSON-RPC response: the
+  # `data.type` field carries a stable, machine-readable classification
+  # instead of `inspect(reason)` output (audit M12).
   defp put_error(conn, message, reason, id) do
-    %{conn | response: JSONRPC.error(id, -32603, message, %{"reason" => inspect(reason)})}
+    Logger.error("#{message}: #{inspect(reason)}")
+    put_failure(conn, message, "handler_error", id)
+  end
+
+  defp put_failure(conn, message, type, id) do
+    %{conn | response: JSONRPC.error(id, -32603, message, %{"type" => type})}
   end
 
   defp put_method_not_found(conn, id) do
