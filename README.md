@@ -5,7 +5,7 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/ex_mcp.svg)](https://hex.pm/packages/ex_mcp)
 [![Documentation](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/ex_mcp)
 [![CI](https://github.com/azmaveth/ex_mcp/workflows/CI/badge.svg)](https://github.com/azmaveth/ex_mcp/actions)
-[![Coverage](https://img.shields.io/codecov/c/github/azmaveth/ex_mcp.svg)](https://codecov.io/gh/azmaveth/ex_mcp)
+[![Coverage](https://coveralls.io/repos/github/azmaveth/ex_mcp/badge.svg?branch=master)](https://coveralls.io/github/azmaveth/ex_mcp?branch=master)
 [![License](https://img.shields.io/hexpm/l/ex_mcp.svg)](https://github.com/azmaveth/ex_mcp/blob/master/LICENSE)
 
 **A complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP)**

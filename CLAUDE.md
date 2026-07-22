@@ -70,7 +70,7 @@ The library follows a layered architecture:
    - Implementations: stdio, SSE, BEAM (Erlang processes)
    - Each transport handles message framing and delivery
 
-2. **Protocol Layer** (`lib/ex_mcp/protocol.ex`)
+2. **Protocol Layer** (`lib/ex_mcp/internal/protocol.ex`)
    - JSON-RPC 2.0 message encoding/decoding
    - Request/response correlation
    - Error handling
@@ -100,7 +100,7 @@ The library follows a layered architecture:
 
 ## Testing Approach
 
-- Unit tests with Mox for transport mocking
+- Unit tests use lightweight in-process test transports (no mocking library)
 - Property-based testing for protocol encoding/decoding
 - Integration tests for client-server communication
 - Test files mirror source structure in `test/`

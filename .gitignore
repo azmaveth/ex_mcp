@@ -31,8 +31,7 @@ ex_mcp-*.tar
 # Dialyzer PLT files
 /priv/plts/
 
-# Coverage reports
-/cover/
+# Coverage reports (see also /cover/ above)
 /excoveralls.html
 
 # OS files
@@ -57,4 +56,3 @@ test_output.log
 # Node.js dependencies for interop tests
 test/interop/node_modules/
 test/interop/package-lock.json
-tmp/

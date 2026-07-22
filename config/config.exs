@@ -21,43 +21,43 @@ config :ex_mcp,
 
 # OAuth 2.1 Server (Resource Server) Configuration
 # This configuration is used when the server needs to validate OAuth 2.1 tokens.
-# It is required when `oauth2_enabled` is set to `true`.
-config :ex_mcp, :oauth2_server_config,
-  # (Required) URL of the token introspection endpoint (RFC 7662).
-  introspection_endpoint: "https://auth.example.com/introspect",
-  # (Optional) Base URL of the authorization server for metadata discovery.
-  authorization_server: "https://auth.example.com",
-  # (Optional) Default scopes required to access protected resources.
-  required_scopes: ["mcp:read"],
-  # (Optional) Cache TTL for token validation results.
-  token_cache_ttl: :timer.minutes(5),
-  # (Optional) OAuth realm name for WWW-Authenticate headers.
-  realm: "mcp-service"
+# It is required when `oauth2_enabled` is set to `true`. There is intentionally
+# no default: configure it in YOUR application's config with your real
+# authorization server, e.g.:
+#
+#     config :ex_mcp, :oauth2_server_config,
+#       # (Required) URL of the token introspection endpoint (RFC 7662).
+#       introspection_endpoint: "https://auth.example.com/introspect",
+#       # (Optional) Base URL of the authorization server for metadata discovery.
+#       authorization_server: "https://auth.example.com",
+#       # (Optional) Default scopes required to access protected resources.
+#       required_scopes: ["mcp:read"],
+#       # (Optional) Cache TTL for token validation results.
+#       token_cache_ttl: :timer.minutes(5),
+#       # (Optional) OAuth realm name for WWW-Authenticate headers.
+#       realm: "mcp-service"
 
 # OAuth 2.1 Authorization Server Metadata (RFC 8414)
-# This configuration defines the authorization server metadata returned by
-# the /.well-known/oauth-authorization-server endpoint.
-config :ex_mcp, :oauth2_authorization_server_metadata,
-  # (Required) The authorization server issuer identifier.
-  issuer: "https://auth.example.com",
-  # (Required) URL of the authorization server's authorization endpoint.
-  authorization_endpoint: "https://auth.example.com/authorize",
-  # (Required) URL of the authorization server's token endpoint.
-  token_endpoint: "https://auth.example.com/token",
-  # (Optional) URL of the authorization server's JWK Set document.
-  jwks_uri: "https://auth.example.com/.well-known/jwks.json",
-  # (Optional) JSON array containing a list of the OAuth 2.0 scope values.
-  scopes_supported: ["mcp:read", "mcp:write", "mcp:admin", "offline_access"],
-  # (Optional) JSON array containing a list of the OAuth 2.0 response_type values.
-  response_types_supported: ["code"],
-  # (Optional) JSON array containing a list of the OAuth 2.0 grant type values.
-  grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
-  # (Optional) JSON array containing a list of PKCE code challenge methods.
-  code_challenge_methods_supported: ["S256"],
-  # (Optional) URL of the authorization server's token introspection endpoint.
-  introspection_endpoint: "https://auth.example.com/introspect",
-  # (Optional) URL of the authorization server's token revocation endpoint.
-  revocation_endpoint: "https://auth.example.com/revoke"
+# Defines the metadata returned by /.well-known/oauth-authorization-server.
+# Also intentionally left unset; example:
+#
+#     config :ex_mcp, :oauth2_authorization_server_metadata,
+#       # (Required) The authorization server issuer identifier.
+#       issuer: "https://auth.example.com",
+#       # (Required) URL of the authorization endpoint.
+#       authorization_endpoint: "https://auth.example.com/authorize",
+#       # (Required) URL of the token endpoint.
+#       token_endpoint: "https://auth.example.com/token",
+#       # (Optional) URL of the JWK Set document.
+#       jwks_uri: "https://auth.example.com/.well-known/jwks.json",
+#       # (Optional) Supported scopes / response types / grant types / PKCE methods.
+#       scopes_supported: ["mcp:read", "mcp:write"],
+#       response_types_supported: ["code"],
+#       grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
+#       code_challenge_methods_supported: ["S256"],
+#       # (Optional) Introspection / revocation endpoints.
+#       introspection_endpoint: "https://auth.example.com/introspect",
+#       revocation_endpoint: "https://auth.example.com/revoke"
 
 # Security Configuration
 config :ex_mcp, :security,
