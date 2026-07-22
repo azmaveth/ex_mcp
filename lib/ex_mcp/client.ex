@@ -39,7 +39,7 @@ defmodule ExMCP.Client do
 
   alias ExMCP.Client.{ConnectionManager, RequestHandler}
   alias ExMCP.Client.Operations.{Prompts, Resources, Tools}
-  alias ExMCP.Internal.{Protocol, RequestParams}
+  alias ExMCP.Internal.{Protocol, RequestParams, VersionInfo}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
 
@@ -77,7 +77,15 @@ defmodule ExMCP.Client do
     :default_timeout,
     # Monitor refs of in-flight async POST tasks (HTTP/SSE transport),
     # mapped to the request id each task serves.
-    async_post_tasks: %{}
+    async_post_tasks: %{},
+    # Memoized client handler: nil (not yet initialized), :none (no handler
+    # configured) or {module, handler_state}. Initialized once; callback
+    # returns update handler_state, so stateful client handlers work.
+    client_handler: nil,
+    # In-flight server-request handler tasks (sampling/elicitation/custom):
+    # task pid => {monitor_ref, request_id, kind}. Handlers run off the
+    # client loop so a slow sampling callback cannot block responses.
+    server_request_tasks: %{}
   ]
 
   @type t :: GenServer.server()
@@ -93,6 +101,9 @@ defmodule ExMCP.Client do
   - `:transport` - Transport type (:stdio, :http, :beam, etc.)
   - `:transports` - List of transports for fallback
   - `:name` - Optional GenServer name
+  - `:handshake_timeout` - Maximum time in milliseconds to wait for the
+    server's `initialize` response during connection (default: 10_000).
+    On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
   - `:health_check_interval` - Interval for health checks (default: 30_000)
   - `:reliability` - Reliability features configuration (optional)
   - `:retry_policy` - Default retry policy for all client operations (optional)
@@ -235,11 +246,17 @@ defmodule ExMCP.Client do
         "http://localhost:8080/mcp",
         "stdio://mcp-server"
       ])
+
+  Returns `{:error, {:invalid_transport_config, reason}}` when the connection
+  spec cannot be normalized into a valid transport configuration.
   """
   @spec connect(connection_spec(), keyword()) :: {:ok, t()} | {:error, any()}
   def connect(connection_spec, opts \\ []) do
     transport_opts = do_parse_connection_spec(connection_spec)
     start_link(Keyword.merge(transport_opts, opts))
+  catch
+    :throw, {:transport_config_error, reason} ->
+      {:error, {:invalid_transport_config, reason}}
   end
 
   @doc """
@@ -248,7 +265,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
   """
   @spec list_tools(t(), keyword() | timeout()) ::
           {:ok, %{String.t() => [map()]}} | {:error, any()}
@@ -275,7 +292,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 30000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
   """
   @spec call_tool(t(), String.t(), map(), keyword() | timeout()) ::
           {:ok, any()} | {:error, any()}
@@ -436,7 +453,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
 
   ## Returns
 
@@ -466,7 +483,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
 
   ## Returns
 
@@ -767,6 +784,8 @@ defmodule ExMCP.Client do
   end
 
   # Normalize various error formats to consistent structure
+  defp normalize_connection_error(:handshake_timeout), do: :handshake_timeout
+
   defp normalize_connection_error(:invalid_request) do
     {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
   end
@@ -805,6 +824,7 @@ defmodule ExMCP.Client do
 
   @impl GenServer
   def handle_call({:request, method, params}, from, state) do
+    # Legacy request shape: the caller enforces its own GenServer.call timeout.
     :telemetry.execute(
       [:ex_mcp, :client, :request, :sent],
       %{},
@@ -812,6 +832,19 @@ defmodule ExMCP.Client do
     )
 
     RequestHandler.handle_request(method, params, from, state)
+  end
+
+  def handle_call({:request, method, params, meta}, from, state) when is_map(meta) do
+    # Request shape used by make_request/5. Default timeout and retry policy
+    # are resolved from this process's own state (single GenServer.call per
+    # request); explicit per-call options win and are enforced caller-side.
+    :telemetry.execute(
+      [:ex_mcp, :client, :request, :sent],
+      %{},
+      %{method: method}
+    )
+
+    RequestHandler.handle_request(method, params, from, state, meta)
   end
 
   def handle_call(:get_default_retry_policy, _from, state) do
@@ -865,7 +898,9 @@ defmodule ExMCP.Client do
 
       {_batch_id, {from, :batch, ordered_ids, received_responses}}
       when is_map(received_responses) ->
-        # For batch requests, we need to handle them specially
+        # For batch requests, we need to handle them specially. The reply is
+        # wrapped in {:ok, responses} to match the batch_request/3 contract;
+        # each element is an individual {:ok, _} | {:error, _} result.
         missing_responses =
           ordered_ids
           |> Enum.reject(&Map.has_key?(received_responses, &1))
@@ -874,7 +909,7 @@ defmodule ExMCP.Client do
 
         all_responses = Map.merge(received_responses, missing_responses)
         ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
-        GenServer.reply(from, ordered_responses)
+        GenServer.reply(from, {:ok, ordered_responses})
 
       {_id, batch_id} when is_binary(batch_id) ->
         # This is a request that's part of a batch
@@ -1006,6 +1041,21 @@ defmodule ExMCP.Client do
     end
   end
 
+  # A server-request handler task (sampling/elicitation/custom) finished.
+  def handle_info({:server_request_result, task_pid, outcome}, state)
+      when is_pid(task_pid) do
+    RequestHandler.handle_server_request_completion(task_pid, outcome, state)
+  end
+
+  # A server-request handler task died before delivering a result.
+  def handle_info(
+        {:DOWN, _ref, :process, pid, reason},
+        %{server_request_tasks: tasks} = state
+      )
+      when is_map(tasks) and is_map_key(tasks, pid) do
+    RequestHandler.handle_server_request_down(pid, reason, state)
+  end
+
   # Push model: transport sends pre-parsed messages directly
   def handle_info({:transport_event, message}, state) do
     RequestHandler.parse_transport_message(message, state)
@@ -1030,6 +1080,20 @@ defmodule ExMCP.Client do
     # Schedule next health check
     health_check_ref = schedule_health_check(state.health_check_interval)
     {:noreply, %{state | health_check_ref: health_check_ref}}
+  end
+
+  # Default-timeout enforcement for requests made without an explicit
+  # :timeout option (scheduled by RequestHandler). Stale timers for requests
+  # that already completed find no pending entry and are ignored.
+  def handle_info({:request_timeout, request_id}, state) do
+    case Map.get(state.pending_requests, request_id) do
+      {from, :single} ->
+        GenServer.reply(from, {:error, :timeout})
+        {:noreply, %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+
+      _ ->
+        {:noreply, state}
+    end
   end
 
   def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
@@ -1174,7 +1238,9 @@ defmodule ExMCP.Client do
 
       {_batch_id, {from, :batch, ordered_ids, received_responses}}
       when is_map(received_responses) ->
-        # For batch requests, we need to handle them specially
+        # For batch requests, we need to handle them specially. The reply is
+        # wrapped in {:ok, responses} to match the batch_request/3 contract;
+        # each element is an individual {:ok, _} | {:error, _} result.
         missing_responses =
           ordered_ids
           |> Enum.reject(&Map.has_key?(received_responses, &1))
@@ -1183,7 +1249,7 @@ defmodule ExMCP.Client do
 
         all_responses = Map.merge(received_responses, missing_responses)
         ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
-        GenServer.reply(from, ordered_responses)
+        GenServer.reply(from, {:ok, ordered_responses})
 
       {_id, batch_id} when is_binary(batch_id) ->
         # This is a request that's part of a batch
@@ -1321,7 +1387,12 @@ defmodule ExMCP.Client do
   # Private functions (some exposed for testing)
 
   @doc false
-  def parse_connection_spec(spec), do: do_parse_connection_spec(spec)
+  def parse_connection_spec(spec) do
+    do_parse_connection_spec(spec)
+  catch
+    :throw, {:transport_config_error, reason} ->
+      {:error, {:invalid_transport_config, reason}}
+  end
 
   @doc false
   def prepare_transport_config(opts), do: ConnectionManager.prepare_transport_config(opts)
@@ -1366,10 +1437,7 @@ defmodule ExMCP.Client do
   end
 
   defp build_client_info do
-    %{
-      "name" => "ExMCP",
-      "version" => "0.8.0"
-    }
+    VersionInfo.client_info()
   end
 
   defp schedule_health_check(interval) do
@@ -1388,69 +1456,99 @@ defmodule ExMCP.Client do
     {:ok, structured_response}
   end
 
+  # Issues a single GenServer.call per request in the common path. Default
+  # timeout and retry policy are resolved by the client process from its own
+  # state instead of dedicated pre-flight calls:
+  #
+  # - Explicit :timeout opts are enforced caller-side via the GenServer.call
+  #   timeout (explicit opts win).
+  # - Without an explicit timeout, the client process schedules its own
+  #   default-timeout timer for the request and replies {:error, :timeout};
+  #   the call itself waits without a caller-side deadline (the call monitor
+  #   still detects a dead client).
+  # - The default retry policy is only fetched (one extra call) after a
+  #   failed first attempt, so successful requests never pay for it.
   @doc false
   @spec make_request(t(), String.t(), map(), keyword(), pos_integer()) ::
           {:ok, any()} | {:error, any()}
-  def make_request(client, method, params, opts, default_timeout) do
-    # Get the client's default timeout if no timeout is specified
-    timeout =
-      case Keyword.fetch(opts, :timeout) do
-        {:ok, t} ->
-          t
-
-        :error ->
-          # Try to get client's default timeout
-          try do
-            case GenServer.call(client, :get_default_timeout, 5_000) do
-              {:ok, client_timeout} -> client_timeout
-              _ -> default_timeout
-            end
-          catch
-            :exit, {:timeout, _} -> default_timeout
-            :exit, _ -> default_timeout
-          end
-      end
-
-    retry_policy = Keyword.get(opts, :retry_policy, :use_default)
-
-    effective_retry_policy = get_effective_retry_policy(client, retry_policy, timeout)
+  def make_request(client, method, params, opts, _default_timeout) do
+    explicit_timeout = Keyword.get(opts, :timeout)
+    call_timeout = explicit_timeout || :infinity
 
     operation = fn ->
       try do
-        GenServer.call(client, {:request, method, params}, timeout)
+        GenServer.call(
+          client,
+          {:request, method, params, %{timeout: explicit_timeout}},
+          call_timeout
+        )
       catch
         :exit, {:timeout, _} -> {:error, :timeout}
       end
     end
 
-    result = execute_with_retry(operation, effective_retry_policy)
+    retry_policy = Keyword.get(opts, :retry_policy, :use_default)
+
+    result = execute_with_retry_policy(operation, client, retry_policy)
     handle_request_result(result, opts)
   end
 
-  defp get_effective_retry_policy(client, :use_default, timeout) do
-    GenServer.call(client, :get_default_retry_policy, timeout)
-    |> case do
-      {:ok, policy} -> policy
+  defp execute_with_retry_policy(operation, client, retry_policy) do
+    case retry_policy do
+      :use_default ->
+        execute_with_lazy_default_retry(operation, client)
+
+      false ->
+        operation.()
+
+      [] ->
+        operation.()
+
+      policy when is_list(policy) ->
+        Retry.with_retry(operation, Retry.mcp_defaults(policy))
+    end
+  end
+
+  # First attempt runs without any pre-flight calls; the client's default
+  # retry policy is only fetched when that attempt fails.
+  defp execute_with_lazy_default_retry(operation, client) do
+    case operation.() do
+      {:error, reason} = error ->
+        retry_remaining_attempts(operation, client, reason, error)
+
+      result ->
+        result
+    end
+  end
+
+  defp retry_remaining_attempts(operation, client, reason, original_error) do
+    case fetch_default_retry_policy(client) do
+      [] ->
+        original_error
+
+      policy ->
+        retry_opts = Retry.mcp_defaults(policy)
+        should_retry? = Keyword.fetch!(retry_opts, :should_retry?)
+        max_attempts = Keyword.get(retry_opts, :max_attempts, 0)
+
+        if max_attempts > 1 and should_retry?.(reason) do
+          # The first attempt already ran; honor its backoff delay, then run
+          # the remaining attempts through the shared retry infrastructure.
+          Process.sleep(Retry.calculate_delay(1, retry_opts))
+          Retry.with_retry(operation, Keyword.put(retry_opts, :max_attempts, max_attempts - 1))
+        else
+          original_error
+        end
+    end
+  end
+
+  defp fetch_default_retry_policy(client) do
+    case GenServer.call(client, :get_default_retry_policy, 5_000) do
+      {:ok, policy} when is_list(policy) -> policy
       _ -> []
     end
   catch
-    :exit, {:timeout, _} -> []
     :exit, _ -> []
-  end
-
-  defp get_effective_retry_policy(_client, false, _timeout), do: []
-  defp get_effective_retry_policy(_client, [], _timeout), do: []
-  defp get_effective_retry_policy(_client, policy, _timeout) when is_list(policy), do: policy
-
-  defp execute_with_retry(operation, []) do
-    # No retry policy - execute directly for backward compatibility
-    operation.()
-  end
-
-  defp execute_with_retry(operation, retry_policy) do
-    # Apply retry policy using the existing retry infrastructure
-    retry_opts = Retry.mcp_defaults(retry_policy)
-    Retry.with_retry(operation, retry_opts)
   end
 
   defp handle_request_result({:ok, response}, opts) do
@@ -1543,7 +1641,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
 
   ## Returns
 

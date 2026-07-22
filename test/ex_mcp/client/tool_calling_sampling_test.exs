@@ -138,10 +138,21 @@ defmodule ExMCP.Client.ToolCallingSamplingTest do
       transport_mod: MockTransport,
       transport_state: transport_state,
       transport_opts: [],
-      pending_requests: %{}
+      pending_requests: %{},
+      client_handler: nil,
+      server_request_tasks: %{}
     }
 
     {:ok, base_state: base_state}
+  end
+
+  # Slow handler callbacks (sampling/elicitation/custom) now run in a
+  # monitored task; the client process receives {:server_request_result, ...}
+  # and completes the request. These tests call the RequestHandler directly,
+  # so the test process plays the client loop's role here.
+  defp complete_async(state) do
+    assert_receive {:server_request_result, task_pid, outcome}, 1_000
+    RequestHandler.handle_server_request_completion(task_pid, outcome, state)
   end
 
   describe "sampling/createMessage dispatch in request handler" do
@@ -171,8 +182,10 @@ defmodule ExMCP.Client.ToolCallingSamplingTest do
 
       request_id = 42
 
-      {:noreply, _new_state} =
+      {:noreply, new_state} =
         RequestHandler.handle_server_request("sampling/createMessage", params, request_id, state)
+
+      {:noreply, _final_state} = complete_async(new_state)
 
       # Verify the response was sent via transport
       assert_receive {:sent_message, encoded_response}
@@ -202,8 +215,10 @@ defmodule ExMCP.Client.ToolCallingSamplingTest do
 
       request_id = 43
 
-      {:noreply, _new_state} =
+      {:noreply, new_state} =
         RequestHandler.handle_server_request("sampling/createMessage", params, request_id, state)
+
+      {:noreply, _final_state} = complete_async(new_state)
 
       assert_receive {:sent_message, encoded_response}
       {:ok, response} = Jason.decode(encoded_response)
@@ -226,8 +241,10 @@ defmodule ExMCP.Client.ToolCallingSamplingTest do
 
       request_id = 44
 
-      {:noreply, _new_state} =
+      {:noreply, new_state} =
         RequestHandler.handle_server_request("sampling/createMessage", params, request_id, state)
+
+      {:noreply, _final_state} = complete_async(new_state)
 
       assert_receive {:sent_message, encoded_response}
       {:ok, response} = Jason.decode(encoded_response)
@@ -277,8 +294,10 @@ defmodule ExMCP.Client.ToolCallingSamplingTest do
 
       request_id = 50
 
-      {:noreply, _new_state} =
+      {:noreply, new_state} =
         RequestHandler.handle_server_request("elicitation/create", params, request_id, state)
+
+      {:noreply, _final_state} = complete_async(new_state)
 
       assert_receive {:sent_message, encoded_response}
       {:ok, response} = Jason.decode(encoded_response)
@@ -338,7 +357,8 @@ defmodule ExMCP.Client.ToolCallingSamplingTest do
           "id" => 99
         })
 
-      {:noreply, _new_state} = RequestHandler.parse_transport_message(message, state)
+      {:noreply, new_state} = RequestHandler.parse_transport_message(message, state)
+      {:noreply, _final_state} = complete_async(new_state)
 
       assert_receive {:sent_message, encoded_response}
       {:ok, response} = Jason.decode(encoded_response)

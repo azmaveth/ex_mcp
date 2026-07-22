@@ -16,7 +16,7 @@ defmodule ExMCP.Client.Operations.Prompts do
 
   - `:cursor` - Pagination cursor for retrieving additional results
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Response format (default: :map)
+  - `:format` - Response format (default: :struct)
 
   ## Examples
 
@@ -47,7 +47,7 @@ defmodule ExMCP.Client.Operations.Prompts do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Response format (default: :map)
+  - `:format` - Response format (default: :struct)
 
   ## Examples
 

@@ -319,13 +319,14 @@ defmodule ExMCP.Reliability.SupervisorTest do
           base_delay: 1
         )
 
-      assert result == {:error, {:retry_exhausted, :always_fails}}
+      # The last underlying error is returned unchanged
+      assert result == {:error, :always_fails}
       assert Agent.get(agent, & &1) == 3
 
       Agent.stop(agent)
     end
 
-    test "handles exceptions during retry" do
+    test "handles transport exceptions during retry" do
       counter = Agent.start_link(fn -> 0 end)
       {:ok, agent} = counter
 
@@ -333,7 +334,12 @@ defmodule ExMCP.Reliability.SupervisorTest do
         Reliability.with_retry(
           fn ->
             current = Agent.get_and_update(agent, fn count -> {count + 1, count + 1} end)
-            if current < 2, do: raise("test error"), else: {:ok, "recovered"}
+
+            if current < 2 do
+              raise ExMCP.Error.TransportError, transport: :test, reason: :closed
+            else
+              {:ok, "recovered"}
+            end
           end,
           max_attempts: 3,
           base_delay: 1
@@ -342,6 +348,12 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert result == {:ok, "recovered"}
 
       Agent.stop(agent)
+    end
+
+    test "re-raises non-transport exceptions" do
+      assert_raise RuntimeError, "test error", fn ->
+        Reliability.with_retry(fn -> raise "test error" end, max_attempts: 3, base_delay: 1)
+      end
     end
   end
 
@@ -650,17 +662,18 @@ defmodule ExMCP.Reliability.SupervisorTest do
       assert {:error, %RuntimeError{}} = result
     end
 
-    test "with_retry handles various error formats" do
-      # Test with different error return formats
-      assert {:error, {:retry_exhausted, :simple}} =
+    test "with_retry preserves error shapes" do
+      # The last underlying error is returned unchanged
+      assert {:error, :simple} =
                Reliability.with_retry(fn -> {:error, :simple} end, max_attempts: 1)
 
-      assert {:error, {:retry_exhausted, "string"}} =
+      assert {:error, "string"} =
                Reliability.with_retry(fn -> {:error, "string"} end, max_attempts: 1)
 
-      # Test with exceptions - retry wraps them differently
-      result = Reliability.with_retry(fn -> raise "test" end, max_attempts: 1)
-      assert {:error, {:retry_exhausted, %RuntimeError{message: "test"}}} = result
+      # Non-transport exceptions are re-raised, not converted to errors
+      assert_raise RuntimeError, "test", fn ->
+        Reliability.with_retry(fn -> raise "test" end, max_attempts: 1)
+      end
     end
   end
 end

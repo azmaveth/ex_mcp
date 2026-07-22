@@ -73,7 +73,17 @@ defmodule ExMCP.Reliability.Retry do
   ## Returns
 
   - `{:ok, result}` if operation succeeds
-  - `{:error, reason}` if all retries are exhausted
+  - `{:error, reason}` if all retries are exhausted, where `reason` is the
+    last underlying error unchanged — callers see the same error shape with
+    or without a retry policy
+
+  ## Exceptions
+
+  Only transport-level exceptions (`ExMCP.Error.TransportError`) are treated
+  as retryable errors. All other exceptions are re-raised so bugs are not
+  silently converted into retry loops. Exits (e.g. from `GenServer.call/3`)
+  and throws are caught and treated as `{:error, {:exit, reason}}` /
+  `{:error, {:throw, value}}`.
   """
   @spec with_retry(function(), retry_opts()) :: {:ok, any()} | {:error, any()}
   def with_retry(fun, opts \\ []) when is_function(fun, 0) do
@@ -186,7 +196,9 @@ defmodule ExMCP.Reliability.Retry do
   defp execute_with_retry(fun, attempt, last_error, config) do
     if attempt > config.max_attempts do
       Logger.warning("Retry exhausted after #{config.max_attempts} attempts")
-      {:error, {:retry_exhausted, last_error}}
+      # Return the last underlying error unchanged so callers see the same
+      # error shape with or without a retry policy.
+      {:error, last_error}
     else
       case execute_function(fun) do
         {:ok, _result} = success ->
@@ -208,11 +220,11 @@ defmodule ExMCP.Reliability.Retry do
           else
             if attempt >= config.max_attempts do
               Logger.warning("Retry exhausted after #{attempt} attempts: #{inspect(reason)}")
-              {:error, {:retry_exhausted, reason}}
             else
               Logger.debug("Error not retryable: #{inspect(reason)}")
-              error
             end
+
+            error
           end
 
         other ->
@@ -223,10 +235,14 @@ defmodule ExMCP.Reliability.Retry do
     end
   end
 
+  # Only exceptions that signal a (potentially transient) transport problem
+  # are converted into retryable errors; everything else is a bug and is
+  # re-raised. Exits (dead/unresponsive processes) and throws are still
+  # captured as error tuples.
   defp execute_function(fun) do
     fun.()
   rescue
-    e ->
+    e in [ExMCP.Error.TransportError] ->
       {:error, e}
   catch
     :exit, reason -> {:error, {:exit, reason}}
@@ -238,8 +254,9 @@ defmodule ExMCP.Reliability.Retry do
   defp default_on_retry(_attempt, _error), do: :ok
 
   defp add_jitter(delay) do
-    # Add ±25% jitter
-    jitter_range = div(delay, 4)
+    # Add ±25% jitter. Guard the range so :rand.uniform/1 is never called
+    # with 0 (it raises) when delay < 4ms.
+    jitter_range = max(div(delay, 4), 1)
     delay + :rand.uniform(jitter_range * 2) - jitter_range
   end
 

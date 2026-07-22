@@ -440,6 +440,7 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
 
   use GenServer
 
+  alias ExMCP.Reliability.CircuitBreaker
   alias ExMCP.Reliability.Retry
 
   def start_link(opts) do
@@ -452,7 +453,9 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
       client: Keyword.fetch!(opts, :client),
       circuit_breaker: Keyword.get(opts, :circuit_breaker),
       retry_opts: Keyword.get(opts, :retry_opts, []),
-      health_check: Keyword.get(opts, :health_check)
+      health_check: Keyword.get(opts, :health_check),
+      # in-flight request tasks: monitor ref => caller
+      pending: %{}
     }
 
     # Monitor the underlying client
@@ -525,15 +528,44 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
     {:stop, {:client_died, reason}, state}
   end
 
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.pending, ref) do
+      {nil, _pending} ->
+        {:noreply, state}
+
+      {from, pending} ->
+        # The request task died before replying; make sure the caller is not
+        # left hanging until its call timeout.
+        if reason != :normal do
+          GenServer.reply(from, {:error, {:request_task_exit, reason}})
+        end
+
+        {:noreply, %{state | pending: pending}}
+    end
+  end
+
+  # Runs the request in an unlinked, monitored process, applying retry and —
+  # when configured — the circuit breaker, so the wrapper survives request
+  # crashes and callers always get a reply.
   defp execute_with_reliability(fun, from, state) do
-    Task.start(fn ->
-      # Execute with retry logic
-      result = Retry.with_retry(fun, Retry.mcp_defaults(state.retry_opts))
+    breaker = state.circuit_breaker
+    retry_opts = Retry.mcp_defaults(state.retry_opts)
 
-      GenServer.reply(from, result)
-    end)
+    {_pid, ref} =
+      spawn_monitor(fn ->
+        wrapped = fn -> Retry.with_retry(fun, retry_opts) end
 
-    {:noreply, state}
+        result =
+          if breaker do
+            CircuitBreaker.call(breaker, wrapped, :infinity)
+          else
+            wrapped.()
+          end
+
+        GenServer.reply(from, result)
+      end)
+
+    {:noreply, %{state | pending: Map.put(state.pending, ref, from)}}
   end
 end
 

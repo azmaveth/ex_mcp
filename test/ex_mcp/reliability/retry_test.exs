@@ -39,7 +39,7 @@ defmodule ExMCP.Reliability.RetryTest do
       assert get_counter(counter) == 3
     end
 
-    test "returns error after max attempts" do
+    test "returns the last underlying error unchanged after max attempts" do
       counter = start_counter()
 
       result =
@@ -52,7 +52,8 @@ defmodule ExMCP.Reliability.RetryTest do
           initial_delay: 10
         )
 
-      assert {:error, {:retry_exhausted, :permanent_failure}} = result
+      # Same error shape with or without a retry policy
+      assert {:error, :permanent_failure} = result
       assert get_counter(counter) == 3
     end
   end
@@ -98,6 +99,15 @@ defmodule ExMCP.Reliability.RetryTest do
       assert Enum.all?(delays, &(&1 >= 300 and &1 <= 500))
       # But not all the same
       assert length(Enum.uniq(delays)) > 1
+    end
+
+    test "jitter does not crash for sub-4ms delays" do
+      # A 1ms delay previously produced :rand.uniform(0), which raises
+      for _ <- 1..10 do
+        delay = Retry.calculate_delay(1, initial_delay: 1, backoff_factor: 2, jitter: true)
+        assert is_integer(delay)
+        assert delay >= 0
+      end
     end
   end
 
@@ -264,17 +274,35 @@ defmodule ExMCP.Reliability.RetryTest do
   end
 
   describe "exception handling" do
-    test "handles exceptions as errors" do
+    test "re-raises non-transport exceptions instead of retrying them" do
+      counter = start_counter()
+
+      assert_raise RuntimeError, "Test exception", fn ->
+        Retry.with_retry(
+          fn ->
+            increment_counter(counter)
+            raise "Test exception"
+          end,
+          max_attempts: 3,
+          initial_delay: 10
+        )
+      end
+
+      # The exception escapes on the first attempt — no retries happen
+      assert get_counter(counter) == 1
+    end
+
+    test "treats transport exceptions as retryable errors" do
       result =
         Retry.with_retry(
           fn ->
-            raise "Test exception"
+            raise ExMCP.Error.TransportError, transport: :http, reason: :closed
           end,
           max_attempts: 2,
           initial_delay: 10
         )
 
-      assert {:error, {:retry_exhausted, %RuntimeError{message: "Test exception"}}} = result
+      assert {:error, %ExMCP.Error.TransportError{transport: :http, reason: :closed}} = result
     end
 
     test "handles exits" do
@@ -287,7 +315,7 @@ defmodule ExMCP.Reliability.RetryTest do
           initial_delay: 10
         )
 
-      assert {:error, {:retry_exhausted, {:exit, :test_exit}}} = result
+      assert {:error, {:exit, :test_exit}} = result
     end
 
     test "handles throws" do
@@ -300,7 +328,7 @@ defmodule ExMCP.Reliability.RetryTest do
           initial_delay: 10
         )
 
-      assert {:error, {:retry_exhausted, {:throw, :test_throw}}} = result
+      assert {:error, {:throw, :test_throw}} = result
     end
   end
 

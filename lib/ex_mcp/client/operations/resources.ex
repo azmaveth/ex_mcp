@@ -15,7 +15,7 @@ defmodule ExMCP.Client.Operations.Resources do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Response format (default: :map)
+  - `:format` - Response format (default: :struct)
 
   ## Examples
 
@@ -43,7 +43,7 @@ defmodule ExMCP.Client.Operations.Resources do
   ## Options
 
   - `:timeout` - Request timeout (default: 10000)
-  - `:format` - Response format (default: :map)
+  - `:format` - Response format (default: :struct)
 
   ## Examples
 
@@ -67,7 +67,7 @@ defmodule ExMCP.Client.Operations.Resources do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Response format (default: :map)
+  - `:format` - Response format (default: :struct)
 
   ## Examples
 
@@ -90,7 +90,7 @@ defmodule ExMCP.Client.Operations.Resources do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Response format (default: :map)
+  - `:format` - Response format (default: :struct)
 
   ## Examples
 

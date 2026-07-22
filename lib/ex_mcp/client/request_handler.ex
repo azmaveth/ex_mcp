@@ -14,8 +14,18 @@ defmodule ExMCP.Client.RequestHandler do
   Handles individual MCP requests.
 
   Processes a single MCP request and returns the appropriate GenServer response.
+
+  The optional `meta` map controls request timeout enforcement:
+
+  - `%{timeout: nil}` - the caller did not specify a timeout, so the client
+    process enforces its own `default_timeout` by scheduling a
+    `{:request_timeout, id}` message for pending requests
+  - `%{timeout: integer}` - the caller enforces the timeout on its side
+    (via the `GenServer.call/3` timeout), so no timer is scheduled
+  - `%{timeout: :caller_enforced}` - legacy `{:request, method, params}`
+    calls; no timer is scheduled
   """
-  def handle_request(method, params, from, state) do
+  def handle_request(method, params, from, state, meta \\ %{timeout: :caller_enforced}) do
     id = Protocol.generate_id()
     request = build_request(method, params, id)
 
@@ -47,6 +57,7 @@ defmodule ExMCP.Client.RequestHandler do
 
       {:ok, updated_state} ->
         # SSE and streaming transports - track pending request
+        maybe_schedule_request_timeout(id, meta, updated_state)
         pending_requests = Map.put(updated_state.pending_requests, id, {from, :single})
         new_state = %{updated_state | pending_requests: pending_requests}
         {:noreply, new_state}
@@ -62,6 +73,18 @@ defmodule ExMCP.Client.RequestHandler do
         {:reply, response, state}
     end
   end
+
+  # When the caller did not provide an explicit timeout, the client process
+  # enforces its configured default (resolved from its own state — no extra
+  # GenServer round-trips). Stale timers for completed requests are ignored
+  # by the {:request_timeout, id} handler.
+  defp maybe_schedule_request_timeout(id, %{timeout: nil}, state) do
+    timeout = state.default_timeout || 5_000
+    Process.send_after(self(), {:request_timeout, id}, timeout)
+    :ok
+  end
+
+  defp maybe_schedule_request_timeout(_id, _meta, _state), do: :ok
 
   @doc """
   Handles batch MCP requests.
@@ -377,23 +400,17 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handle_ping_request(_params, request_id, state) do
-    {client_handler, handler_state_opts} = extract_handler_info(state)
+    {handler, handler_state, state} = ensure_client_handler(state)
 
-    if client_handler && function_exported?(client_handler, :handle_ping, 1) do
-      handler_state =
-        case client_handler.init(handler_state_opts) do
-          {:ok, initial_state} -> initial_state
-          _ -> %{}
-        end
+    if handler != :none && function_exported?(handler, :handle_ping, 1) do
+      case handler.handle_ping(handler_state) do
+        {:ok, result, new_handler_state} ->
+          state = update_handler_state(state, new_handler_state)
+          send_response(build_success_response(result, request_id), state)
 
-      case client_handler.handle_ping(handler_state) do
-        {:ok, result, _new_handler_state} ->
-          response = build_success_response(result, request_id)
-          send_response(response, state)
-
-        {:error, error, _new_handler_state} ->
-          error_response = build_error_response(-32603, error, request_id)
-          send_response(error_response, state)
+        {:error, error, new_handler_state} ->
+          state = update_handler_state(state, new_handler_state)
+          send_response(handler_error_response(error, request_id), state)
       end
     else
       # Ping is a protocol-level operation - always respond with success
@@ -404,25 +421,17 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handle_roots_list_request(_params, request_id, state) do
-    {client_handler, handler_state_opts} = extract_handler_info(state)
+    {handler, handler_state, state} = ensure_client_handler(state)
 
-    if client_handler && function_exported?(client_handler, :handle_list_roots, 1) do
-      # Initialize handler if needed
-      handler_state =
-        case client_handler.init(handler_state_opts) do
-          {:ok, initial_state} -> initial_state
-          _ -> %{}
-        end
+    if handler != :none && function_exported?(handler, :handle_list_roots, 1) do
+      case handler.handle_list_roots(handler_state) do
+        {:ok, roots, new_handler_state} ->
+          state = update_handler_state(state, new_handler_state)
+          send_response(build_success_response(%{"roots" => roots}, request_id), state)
 
-      case client_handler.handle_list_roots(handler_state) do
-        {:ok, roots, _new_handler_state} ->
-          result = %{"roots" => roots}
-          response = build_success_response(result, request_id)
-          send_response(response, state)
-
-        {:error, error, _new_handler_state} ->
-          error_response = build_error_response(-32603, error, request_id)
-          send_response(error_response, state)
+        {:error, error, new_handler_state} ->
+          state = update_handler_state(state, new_handler_state)
+          send_response(handler_error_response(error, request_id), state)
       end
     else
       # Handler doesn't implement handle_list_roots or no handler configured
@@ -432,32 +441,15 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handle_create_message_request(params, request_id, state) do
-    {client_handler, handler_state_opts} = extract_handler_info(state)
+    {handler, handler_state, state} = ensure_client_handler(state)
 
-    if client_handler && function_exported?(client_handler, :handle_create_message, 2) do
-      handler_state =
-        case client_handler.init(handler_state_opts) do
-          {:ok, initial_state} -> initial_state
-          _ -> %{}
-        end
-
-      case client_handler.handle_create_message(params, handler_state) do
-        {:ok, result, _new_handler_state} ->
-          response = build_success_response(result, request_id)
-          send_response(response, state)
-
-        {:error, error, _new_handler_state} ->
-          # Extract code and message from error map or use defaults
-          {code, message} =
-            case error do
-              %{"code" => c, "message" => m} -> {c, m}
-              msg when is_binary(msg) -> {-32603, msg}
-              _ -> {-32603, inspect(error)}
-            end
-
-          error_response = build_error_response(code, message, request_id)
-          send_response(error_response, state)
-      end
+    if handler != :none && function_exported?(handler, :handle_create_message, 2) do
+      run_handler_async(
+        :create_message,
+        fn -> handler.handle_create_message(params, handler_state) end,
+        request_id,
+        state
+      )
     else
       error_response = build_error_response(-32601, "Method not found", request_id)
       send_response(error_response, state)
@@ -465,27 +457,18 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handle_elicitation_create_request(params, request_id, state) do
-    {client_handler, handler_state_opts} = extract_handler_info(state)
+    {handler, handler_state, state} = ensure_client_handler(state)
 
-    if client_handler && function_exported?(client_handler, :handle_elicitation_create, 3) do
-      handler_state =
-        case client_handler.init(handler_state_opts) do
-          {:ok, initial_state} -> initial_state
-          _ -> %{}
-        end
-
+    if handler != :none && function_exported?(handler, :handle_elicitation_create, 3) do
       message = Map.get(params, "message", "")
       requested_schema = Map.get(params, "requestedSchema", %{})
 
-      case client_handler.handle_elicitation_create(message, requested_schema, handler_state) do
-        {:ok, result, _new_handler_state} ->
-          response = build_success_response(result, request_id)
-          send_response(response, state)
-
-        {:error, error, _new_handler_state} ->
-          error_response = build_error_response(-32603, error, request_id)
-          send_response(error_response, state)
-      end
+      run_handler_async(
+        :elicitation,
+        fn -> handler.handle_elicitation_create(message, requested_schema, handler_state) end,
+        request_id,
+        state
+      )
     else
       # No custom handler — check if client declared elicitation capability
       capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
@@ -568,35 +551,194 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handle_generic_server_request(method, params, request_id, state) do
-    {client_handler, handler_state_opts} = extract_handler_info(state)
+    {handler, handler_state, state} = ensure_client_handler(state)
 
-    if client_handler &&
-         function_exported?(client_handler, :handle_server_request, 3) do
-      handler_state =
-        case client_handler.init(handler_state_opts) do
-          {:ok, initial_state} -> initial_state
-          _ -> %{}
-        end
-
-      case client_handler.handle_server_request(method, params, handler_state) do
-        {:ok, result, _new_handler_state} ->
-          response = build_success_response(result, request_id)
-          send_response(response, state)
-
-        {:error, error, _new_handler_state} ->
-          error_response = build_error_response(-32603, error, request_id)
-          send_response(error_response, state)
-      end
+    if handler != :none &&
+         function_exported?(handler, :handle_server_request, 3) do
+      run_handler_async(
+        :generic,
+        fn -> handler.handle_server_request(method, params, handler_state) end,
+        request_id,
+        state
+      )
     else
       error_response = build_error_response(-32601, "Method not found", request_id)
       send_response(error_response, state)
     end
   end
 
+  # -- Client handler lifecycle -------------------------------------------
+
+  # Initializes the configured client handler once and memoizes it in the
+  # client state; subsequent callbacks reuse (and update) the same handler
+  # state, so stateful client handlers work.
+  defp ensure_client_handler(%{client_handler: {module, handler_state}} = state) do
+    {module, handler_state, state}
+  end
+
+  defp ensure_client_handler(%{client_handler: :none} = state) do
+    {:none, %{}, state}
+  end
+
+  defp ensure_client_handler(state) do
+    case extract_handler_info(state) do
+      {nil, _opts} ->
+        {:none, %{}, %{state | client_handler: :none}}
+
+      {module, opts} ->
+        handler_state =
+          case module.init(opts) do
+            {:ok, initial_state} -> initial_state
+            _ -> %{}
+          end
+
+        {module, handler_state, %{state | client_handler: {module, handler_state}}}
+    end
+  end
+
+  defp update_handler_state(%{client_handler: {module, _old}} = state, new_handler_state) do
+    %{state | client_handler: {module, new_handler_state}}
+  end
+
+  defp update_handler_state(state, _new_handler_state), do: state
+
+  # Runs a potentially slow client handler callback (LLM sampling, user
+  # elicitation, custom methods) in an unlinked monitored process so it
+  # cannot head-of-line-block the client loop. The result is delivered via
+  # `handle_server_request_completion/3`; crashes via
+  # `handle_server_request_down/3`.
+  defp run_handler_async(kind, fun, request_id, state) do
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        outcome =
+          try do
+            {:ok, fun.()}
+          rescue
+            error -> {:handler_raised, error, __STACKTRACE__}
+          catch
+            thrown_kind, value -> {:handler_caught, {thrown_kind, value}}
+          end
+
+        send(parent, {:server_request_result, self(), outcome})
+      end)
+
+    tasks = Map.put(state.server_request_tasks || %{}, pid, {ref, request_id, kind})
+    {:noreply, %{state | server_request_tasks: tasks}}
+  end
+
+  @doc false
+  # Completion of an async server-request handler task.
+  def handle_server_request_completion(task_pid, outcome, state) do
+    case Map.pop(state.server_request_tasks || %{}, task_pid) do
+      {nil, _tasks} ->
+        {:noreply, state}
+
+      {{ref, request_id, kind}, tasks} ->
+        Process.demonitor(ref, [:flush])
+        state = %{state | server_request_tasks: tasks}
+
+        case outcome do
+          {:ok, callback_return} ->
+            {response, state} = map_callback_return(kind, callback_return, request_id, state)
+            send_response(response, state)
+
+          {:handler_raised, error, stacktrace} ->
+            Logger.error(
+              "Client handler for #{kind} raised: " <>
+                Exception.format(:error, error, stacktrace)
+            )
+
+            send_response(internal_handler_error(request_id), state)
+
+          {:handler_caught, detail} ->
+            Logger.error("Client handler for #{kind} exited: #{inspect(detail)}")
+            send_response(internal_handler_error(request_id), state)
+        end
+    end
+  end
+
+  @doc false
+  # An async handler task died without delivering a result.
+  def handle_server_request_down(task_pid, reason, state) do
+    case Map.pop(state.server_request_tasks || %{}, task_pid) do
+      {nil, _tasks} ->
+        {:noreply, state}
+
+      {{_ref, request_id, kind}, tasks} ->
+        state = %{state | server_request_tasks: tasks}
+        Logger.error("Client handler task for #{kind} exited: #{inspect(reason)}")
+        send_response(internal_handler_error(request_id), state)
+    end
+  end
+
+  defp map_callback_return(kind, callback_return, request_id, state) do
+    case callback_return do
+      {:ok, result, new_handler_state} ->
+        state = update_handler_state(state, new_handler_state)
+        {build_success_response(wrap_result(kind, result), request_id), state}
+
+      {:error, error, new_handler_state} ->
+        state = update_handler_state(state, new_handler_state)
+        {kind_error_response(kind, error, request_id), state}
+
+      other ->
+        Logger.error("Client handler for #{kind} returned unexpected value: #{inspect(other)}")
+        {internal_handler_error(request_id), state}
+    end
+  end
+
+  defp wrap_result(:roots, roots), do: %{"roots" => roots}
+  defp wrap_result(_kind, result), do: result
+
+  defp kind_error_response(:create_message, error, request_id) do
+    # Sampling errors may carry an explicit JSON-RPC code/message.
+    case error do
+      %{"code" => code, "message" => message} when is_integer(code) and is_binary(message) ->
+        build_error_response(code, message, request_id)
+
+      _ ->
+        handler_error_response(error, request_id)
+    end
+  end
+
+  defp kind_error_response(_kind, error, request_id) do
+    handler_error_response(error, request_id)
+  end
+
+  # Builds a -32603 response from a handler-provided error without leaking
+  # arbitrary internal terms to the server: binaries pass through, anything
+  # else is logged and replaced with a generic message.
+  defp handler_error_response(error, request_id) when is_binary(error) do
+    build_error_response(-32603, error, request_id)
+  end
+
+  defp handler_error_response(error, request_id) do
+    Logger.error("Client handler error: #{inspect(error)}")
+    internal_handler_error(request_id)
+  end
+
+  defp internal_handler_error(request_id) do
+    build_error_response(-32603, "Internal error in client handler", request_id)
+  end
+
   defp send_response(response, state) do
     case send_message(response, state) do
       {:ok, updated_state} ->
         {:noreply, updated_state}
+
+      {:ok, updated_state, response_data} ->
+        # Synchronous transports (non-SSE HTTP) may return a body inline even
+        # for replies to server-initiated requests. Any payload is delivered
+        # through the normal parse path instead of crashing on the 3-tuple.
+        case response_data do
+          data when data in [nil, ""] ->
+            {:noreply, updated_state}
+
+          data ->
+            parse_transport_message(data, updated_state)
+        end
 
       {:error, reason} ->
         Logger.error("Failed to send response to server: #{inspect(reason)}")
