@@ -41,6 +41,39 @@ defmodule ExMCP.HttpPlug do
           introspection_endpoint: "https://auth.example.com/introspect",
           realm: "my-mcp-server" # Optional, defaults to server_info.name
         }
+
+  ## Security
+
+  ### Origin validation (`:validate_origin`, `:allowed_origins`)
+
+  With `validate_origin: true` (the default), any request carrying an
+  `Origin` header is rejected with `403` unless the origin is listed in
+  `:allowed_origins` (or `:allowed_origins` is `:any`). There is no
+  "same origin as the Host header" fallback: in a DNS rebinding attack the
+  Host header is attacker-controlled, so such a comparison would always pass.
+
+  Requests **without** an `Origin` header are allowed. Non-browser clients
+  (CLIs, SDKs, server-to-server callers) do not send the header; use
+  `:allowed_hosts` to protect them against DNS rebinding.
+
+  ### Host validation (`:allowed_hosts`)
+
+  `:allowed_hosts` is either `:any` (default, no restriction) or a list of
+  hostnames. When a list is given, requests whose `Host` header does not
+  match an entry are rejected with `421` before any processing. Ports are
+  ignored and IPv6 hosts match with or without brackets, so
+  `allowed_hosts: ["localhost", "127.0.0.1", "[::1]", "::1"]` accepts
+  `localhost:4000` and `[::1]:8080`. Servers started via
+  `ExMCP.Server.Transport` with a localhost bind get this allow-list by
+  default.
+
+  ### Session ids
+
+  Client-supplied `mcp-session-id` (and legacy `x-session-id`) header values
+  are validated before use: at most 128 bytes from the character set
+  `A-Z a-z 0-9 . _ ~ + / = -` (covering UUIDs and base64/base64url tokens).
+  Invalid values are rejected with a `400` JSON-RPC error and are never
+  echoed back.
   """
 
   @behaviour Plug
@@ -53,20 +86,20 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.Authorization.ServerGuard
   alias ExMCP.FeatureFlags
   alias ExMCP.HttpPlug.Core
+  alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEHandler
   alias ExMCP.Internal.{JSONRPC, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
 
-  # Simple session registry using ETS
-  @ets_table :http_plug_sessions
+  @session_id_max_bytes 128
 
-  def start_link(_opts \\ []) do
-    # Create ETS table for session storage if it doesn't exist
-    :ets.new(@ets_table, [:named_table, :public, :set])
-    {:ok, self()}
-  rescue
-    # Table already exists
-    ArgumentError -> {:ok, self()}
+  @deprecated "The session table is owned by ExMCP.HttpPlug.SessionRegistry, started with the :ex_mcp application"
+  def start_link(opts \\ []) do
+    case SessionRegistry.start_link(opts) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      other -> other
+    end
   end
 
   @doc """
@@ -82,6 +115,7 @@ defmodule ExMCP.HttpPlug do
       sse_enabled: Keyword.get(opts, :sse_enabled, true),
       cors_enabled: Keyword.get(opts, :cors_enabled, false),
       allowed_origins: Keyword.get(opts, :allowed_origins, []),
+      allowed_hosts: Keyword.get(opts, :allowed_hosts, :any),
       validate_origin: Keyword.get(opts, :validate_origin, true),
       body_limit: Keyword.get(opts, :body_limit, 1_000_000),
       oauth_enabled: Keyword.get(opts, :oauth_enabled, false),
@@ -91,9 +125,24 @@ defmodule ExMCP.HttpPlug do
 
   @doc """
   Processes HTTP connections for MCP protocol.
+
+  Host validation (`:allowed_hosts`) runs before any routing so that DNS
+  rebinding attempts are rejected before request processing.
   """
   @impl Plug
-  def call(%Plug.Conn{method: "OPTIONS"} = conn, opts) do
+  def call(conn, opts) do
+    if request_host_allowed?(conn, opts) do
+      dispatch(conn, opts)
+    else
+      reject_disallowed_host(conn, opts)
+    end
+  end
+
+  defp dispatch(conn, opts) do
+    do_dispatch(conn.method, conn.path_info, conn, opts)
+  end
+
+  defp do_dispatch("OPTIONS", _path, conn, opts) do
     Logger.debug("HttpPlug: OPTIONS request")
 
     if opts.cors_enabled do
@@ -103,10 +152,7 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  def call(
-        %Plug.Conn{method: "GET", path_info: [".well-known", "oauth-protected-resource"]} = conn,
-        opts
-      ) do
+  defp do_dispatch("GET", [".well-known", "oauth-protected-resource"], conn, opts) do
     if opts.oauth_enabled do
       handle_well_known_resource(conn, opts)
     else
@@ -114,11 +160,7 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  def call(
-        %Plug.Conn{method: "GET", path_info: [".well-known", "oauth-authorization-server"]} =
-          conn,
-        opts
-      ) do
+  defp do_dispatch("GET", [".well-known", "oauth-authorization-server"], conn, opts) do
     if opts.oauth_enabled do
       handle_authorization_server_metadata(conn, opts)
     else
@@ -126,7 +168,7 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  def call(%Plug.Conn{method: "GET", path_info: ["sse"]} = conn, opts) do
+  defp do_dispatch("GET", ["sse"], conn, opts) do
     if opts.sse_enabled do
       handle_sse_connection(conn, opts)
     else
@@ -134,7 +176,7 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  def call(%Plug.Conn{method: "GET", path_info: ["mcp", "v1", "sse"]} = conn, opts) do
+  defp do_dispatch("GET", ["mcp", "v1", "sse"], conn, opts) do
     if opts.sse_enabled do
       handle_sse_connection(conn, opts)
     else
@@ -143,26 +185,19 @@ defmodule ExMCP.HttpPlug do
   end
 
   # Handle POST to OAuth endpoints - these should return 404
-  def call(
-        %Plug.Conn{method: "POST", path_info: [".well-known", "oauth-authorization-server"]} =
-          conn,
-        _opts
-      ) do
+  defp do_dispatch("POST", [".well-known", "oauth-authorization-server"], conn, _opts) do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(404, Jason.encode!(%{error: "Not found"}))
   end
 
-  def call(
-        %Plug.Conn{method: "POST", path_info: [".well-known", "oauth-protected-resource"]} = conn,
-        _opts
-      ) do
+  defp do_dispatch("POST", [".well-known", "oauth-protected-resource"], conn, _opts) do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(404, Jason.encode!(%{error: "Not found"}))
   end
 
-  def call(%Plug.Conn{method: "POST"} = conn, opts) do
+  defp do_dispatch("POST", _path, conn, opts) do
     Logger.debug("HttpPlug: POST request to #{conn.request_path}")
 
     :telemetry.execute(
@@ -174,16 +209,16 @@ defmodule ExMCP.HttpPlug do
     handle_mcp_request(conn, opts)
   end
 
-  def call(%Plug.Conn{method: "DELETE", path_info: ["sse", session_id]} = conn, opts) do
+  defp do_dispatch("DELETE", ["sse", session_id], conn, opts) do
     handle_session_delete(conn, session_id, opts)
   end
 
-  def call(%Plug.Conn{method: "DELETE", path_info: ["mcp", "v1", "sse", session_id]} = conn, opts) do
+  defp do_dispatch("DELETE", ["mcp", "v1", "sse", session_id], conn, opts) do
     handle_session_delete(conn, session_id, opts)
   end
 
   # Per MCP spec, DELETE to the MCP endpoint with Mcp-Session-Id header terminates the session.
-  def call(%Plug.Conn{method: "DELETE"} = conn, opts) do
+  defp do_dispatch("DELETE", _path, conn, opts) do
     case get_req_header(conn, "mcp-session-id") do
       [session_id | _] ->
         handle_session_delete(conn, session_id, opts)
@@ -197,7 +232,7 @@ defmodule ExMCP.HttpPlug do
 
   # Per MCP spec, SSE GET uses the same endpoint as POST.
   # Handle GET requests with Accept: text/event-stream on any path.
-  def call(%Plug.Conn{method: "GET"} = conn, opts) do
+  defp do_dispatch("GET", _path, conn, opts) do
     accepts_sse =
       conn
       |> get_req_header("accept")
@@ -212,7 +247,7 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  def call(conn, _opts) do
+  defp do_dispatch(_method, _path, conn, _opts) do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(404, Jason.encode!(%{error: "Not found"}))
@@ -241,8 +276,15 @@ defmodule ExMCP.HttpPlug do
 
     # Per MCP spec, get or generate session ID for this request.
     # The server provides session IDs to clients via response headers.
-    session_id = get_or_create_session_id(conn)
+    # Client-supplied ids are validated first; malformed values are rejected
+    # with 400 and never echoed back.
+    case get_or_create_session_id(conn) do
+      {:ok, session_id} -> do_handle_mcp_request(conn, opts, session_id)
+      {:error, :invalid_session_id} -> reject_invalid_session_id(conn, opts)
+    end
+  end
 
+  defp do_handle_mcp_request(conn, opts, session_id) do
     with {:ok, conn} <- validate_request_origin(conn, opts),
          {:ok, conn} <- validate_protocol_version(conn),
          {:ok, body, conn} <- read_or_cached_body(conn, opts),
@@ -462,7 +504,8 @@ defmodule ExMCP.HttpPlug do
 
   # Handle session termination via DELETE request
   defp handle_session_delete(conn, session_id, opts) do
-    with {:ok, conn} <- validate_request_origin(conn, opts),
+    with :ok <- validate_session_id_value(session_id),
+         {:ok, conn} <- validate_request_origin(conn, opts),
          {:ok, _token_info} <- authorize_request(conn, %{"method" => "session/delete"}, opts) do
       session_manager = ensure_session_manager(opts.session_manager)
 
@@ -487,6 +530,9 @@ defmodule ExMCP.HttpPlug do
       |> maybe_add_cors_headers(opts)
       |> send_resp(204, "")
     else
+      {:error, :invalid_session_id} ->
+        reject_invalid_session_id(conn, opts)
+
       {:error, {:auth_error, {status, www_auth_header, body}}} ->
         conn
         |> maybe_add_cors_headers(opts)
@@ -508,9 +554,9 @@ defmodule ExMCP.HttpPlug do
 
   # Handle Server-Sent Events connections
   defp handle_sse_connection(conn, opts) do
-    with {:ok, conn} <- validate_request_origin(conn, opts),
+    with :ok <- validate_session_id_headers(conn),
+         {:ok, conn} <- validate_request_origin(conn, opts),
          {:ok, _token_info} <- authorize_request(conn, %{}, opts) do
-      _original_session_id = get_session_id(conn)
       session_manager = ensure_session_manager(opts.session_manager)
 
       conn =
@@ -598,6 +644,9 @@ defmodule ExMCP.HttpPlug do
         end
       end
     else
+      {:error, :invalid_session_id} ->
+        reject_invalid_session_id(conn, opts)
+
       {:error, {:auth_error, {status, www_auth_header, body}}} ->
         conn
         |> maybe_add_cors_headers(opts)
@@ -701,6 +750,31 @@ defmodule ExMCP.HttpPlug do
     if origin_allowed?(conn, opts), do: {:ok, conn}, else: {:error, :origin_not_allowed}
   end
 
+  # Host-header allow-list (DNS rebinding protection). Prefers the raw Host
+  # header — the literal value the client sent — and falls back to the
+  # adapter-parsed conn.host when the header is absent (e.g. HTTP/2
+  # :authority).
+  defp request_host_allowed?(conn, opts) do
+    Core.host_allowed?(request_host(conn), Map.get(opts, :allowed_hosts, :any))
+  end
+
+  defp request_host(conn) do
+    case get_req_header(conn, "host") do
+      [host | _] -> host
+      [] -> conn.host
+    end
+  end
+
+  # 421 Misdirected Request: the Host header does not match this server.
+  defp reject_disallowed_host(conn, opts) do
+    error_response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Host header not allowed")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_content_type("application/json")
+    |> send_resp(421, Jason.encode!(error_response))
+  end
+
   defp origin_allowed?(conn, opts) do
     conn
     |> origin_context()
@@ -733,64 +807,106 @@ defmodule ExMCP.HttpPlug do
   # Extract session ID from request or generate a new one.
   # Per MCP spec, the server provides the session ID — the client's first
   # request should not include one, and the server generates it.
+  # Both supported session headers are validated even though only
+  # mcp-session-id is used on this path.
   defp get_or_create_session_id(conn) do
-    case get_req_header(conn, "mcp-session-id") do
-      [session_id] -> session_id
-      [] -> generate_session_id()
+    with {:ok, session_id} <- fetch_session_id_header(conn, "mcp-session-id"),
+         {:ok, _legacy} <- fetch_session_id_header(conn, "x-session-id") do
+      {:ok, session_id || generate_session_id()}
     end
   end
 
-  # Extract or generate session ID (legacy, also checks x-session-id)
-  defp get_session_id(conn) do
-    # Try multiple possible session header names for compatibility
-    case get_req_header(conn, "mcp-session-id") do
-      [session_id] ->
-        session_id
-
-      [] ->
-        case get_req_header(conn, "x-session-id") do
-          [session_id] -> session_id
-          [] -> generate_session_id()
-        end
+  # Validates both supported session id headers (mcp-session-id plus the
+  # legacy x-session-id) without selecting either.
+  defp validate_session_id_headers(conn) do
+    with {:ok, _} <- fetch_session_id_header(conn, "mcp-session-id"),
+         {:ok, _} <- fetch_session_id_header(conn, "x-session-id") do
+      :ok
     end
+  end
+
+  defp fetch_session_id_header(conn, header) do
+    case get_req_header(conn, header) do
+      [] ->
+        {:ok, nil}
+
+      [value] ->
+        if valid_session_id?(value) do
+          {:ok, value}
+        else
+          {:error, :invalid_session_id}
+        end
+
+      _multiple ->
+        {:error, :invalid_session_id}
+    end
+  end
+
+  defp validate_session_id_value(session_id) do
+    if valid_session_id?(session_id) do
+      :ok
+    else
+      {:error, :invalid_session_id}
+    end
+  end
+
+  # Client-supplied session ids are echoed back in response headers and used
+  # as registry keys, so they are strictly validated: bounded length and the
+  # printable token charset [A-Za-z0-9._~+/=-], covering UUID, hex, and
+  # base64/base64url shapes.
+  defp valid_session_id?(session_id) when is_binary(session_id) do
+    byte_size(session_id) in 1..@session_id_max_bytes and
+      valid_session_id_chars?(session_id)
+  end
+
+  defp valid_session_id_chars?(<<>>), do: true
+
+  defp valid_session_id_chars?(<<c, rest::binary>>)
+       when c in ?A..?Z or c in ?a..?z or c in ?0..?9 or c in [?., ?_, ?~, ?+, ?/, ?=, ?-] do
+    valid_session_id_chars?(rest)
+  end
+
+  defp valid_session_id_chars?(_other), do: false
+
+  # 400 response for malformed session ids. Deliberately does not echo the
+  # offending value or set a session header.
+  defp reject_invalid_session_id(conn, opts) do
+    error_response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid session ID")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(error_response))
   end
 
   # Register SSE handler for a session
   defp register_sse_handler(session_id, handler_pid, session_manager) do
-    :ets.insert(@ets_table, {session_id, handler_pid})
+    case SessionRegistry.register(session_id, handler_pid) do
+      :ok ->
+        :ok
+
+      {:error, :registry_not_started} ->
+        Logger.error(
+          "ExMCP.HttpPlug.SessionRegistry is not running; SSE handler for session " <>
+            "#{session_id} cannot be registered. Ensure the :ex_mcp application is started."
+        )
+    end
 
     # Also register with the configured session manager if available
     if function_exported?(session_manager, :update_session, 2) do
       session_manager.update_session(session_id, %{handler_pid: handler_pid})
     end
-  rescue
-    ArgumentError ->
-      # Table doesn't exist, create it
-      :ets.new(@ets_table, [:named_table, :public, :set])
-      :ets.insert(@ets_table, {session_id, handler_pid})
-
-      # Also register with the configured session manager if available
-      if function_exported?(session_manager, :update_session, 2) do
-        session_manager.update_session(session_id, %{handler_pid: handler_pid})
-      end
   end
 
   # Look up SSE handler for a session
   defp lookup_sse_handler(session_id) do
-    case :ets.lookup(@ets_table, session_id) do
-      [{^session_id, handler_pid}] -> {:ok, handler_pid}
-      [] -> {:error, :not_found}
-    end
-  rescue
-    ArgumentError -> {:error, :table_not_found}
+    SessionRegistry.lookup(session_id)
   end
 
   # Clean up SSE handler registration
   defp cleanup_sse_handler(session_id) do
-    :ets.delete(@ets_table, session_id)
-  rescue
-    # Table doesn't exist, nothing to clean up
-    ArgumentError -> :ok
+    SessionRegistry.unregister(session_id)
   end
 
   # Generate a simple session ID

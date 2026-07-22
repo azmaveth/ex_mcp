@@ -2,6 +2,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
   use ExUnit.Case, async: true
   import Mox
 
+  alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEHandler
 
   setup :verify_on_exit!
@@ -203,6 +204,87 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
       assert buffer_size >= 5
 
       SSEHandler.close(handler)
+    end
+  end
+
+  describe "session registry cleanup" do
+    setup do
+      # The registry is normally started by the :ex_mcp application; start it
+      # here only when running without the application (e.g. --no-start).
+      if Process.whereis(SessionRegistry) == nil do
+        start_supervised!(SessionRegistry)
+      end
+
+      :ok
+    end
+
+    test "conn owner exit stops the handler and removes the ETS entry" do
+      session_id = "owner-exit-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      owner =
+        spawn(fn ->
+          conn = MockConn.new()
+          {:ok, handler} = SSEHandler.start_link(conn, session_id, %{})
+          :ok = SessionRegistry.register(session_id, handler)
+          send(test_pid, {:handler, handler})
+
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      assert_receive {:handler, handler}
+      assert {:ok, ^handler} = SessionRegistry.lookup(session_id)
+
+      ref = Process.monitor(handler)
+      Process.exit(owner, :kill)
+
+      # The handler traps the owner's exit, cleans up in terminate/2, and
+      # stops; the DOWN message is delivered only after terminate/2 ran.
+      assert_receive {:DOWN, ^ref, :process, ^handler, _reason}, 1000
+      assert :ets.lookup(SessionRegistry.table(), session_id) == []
+    end
+
+    test "graceful close removes the ETS entry" do
+      session_id = "close-#{System.unique_integer([:positive])}"
+      conn = MockConn.new()
+      {:ok, handler} = SSEHandler.start_link(conn, session_id, %{})
+      :ok = SessionRegistry.register(session_id, handler)
+
+      ref = Process.monitor(handler)
+      SSEHandler.close(handler)
+
+      assert_receive {:DOWN, ^ref, :process, ^handler, :normal}, 1000
+      assert :ets.lookup(SessionRegistry.table(), session_id) == []
+    end
+
+    test "terminate does not clobber a newer registration for the same session" do
+      session_id = "reregister-#{System.unique_integer([:positive])}"
+      conn = MockConn.new()
+
+      {:ok, old_handler} = SSEHandler.start_link(conn, session_id, %{})
+      :ok = SessionRegistry.register(session_id, old_handler)
+
+      # A reconnect registers a newer handler pid under the same session id.
+      new_handler =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      :ok = SessionRegistry.register(session_id, new_handler)
+
+      ref = Process.monitor(old_handler)
+      SSEHandler.close(old_handler)
+      assert_receive {:DOWN, ^ref, :process, ^old_handler, :normal}, 1000
+
+      # The newer registration must survive the old handler's cleanup.
+      assert {:ok, ^new_handler} = SessionRegistry.lookup(session_id)
+
+      SessionRegistry.unregister(session_id)
+      Process.exit(new_handler, :kill)
     end
   end
 end

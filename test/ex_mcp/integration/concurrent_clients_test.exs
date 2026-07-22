@@ -252,13 +252,16 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
     unique_id = System.unique_integer([:positive])
     ranch_ref = :"concurrent_test_listener_#{unique_id}"
 
-    # Start HTTP server with our plug
+    # Start HTTP server with our plug. ExMCP.Client sends an Origin header
+    # derived from the server URL, and HttpPlug no longer has a same-origin
+    # fallback, so the local origin must be allow-listed explicitly.
     {:ok, _} =
       Plug.Cowboy.http(
         HttpPlug,
         [
           handler: TestConcurrentHandler,
-          server_info: %{name: "test-server", version: "1.0.0"}
+          server_info: %{name: "test-server", version: "1.0.0"},
+          allowed_origins: ["http://localhost:#{port}", "http://127.0.0.1:#{port}"]
         ],
         port: port,
         ref: ranch_ref
@@ -476,13 +479,15 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
       unique_id = System.unique_integer([:positive])
       ranch_ref = :"rate_limit_test_listener_#{unique_id}"
 
-      # Start a rate-limited server
+      # Start a rate-limited server. The client's Origin (derived from the
+      # server URL) must be allow-listed now that same-origin fallback is gone.
       {:ok, _} =
         Plug.Cowboy.http(
           HttpPlug,
           [
             handler: TestConcurrentHandler,
-            server_info: %{name: "rate-limited-server", version: "1.0.0"}
+            server_info: %{name: "rate-limited-server", version: "1.0.0"},
+            allowed_origins: ["http://localhost:#{port}", "http://127.0.0.1:#{port}"]
             # Rate limiting could be configured here
           ],
           port: port,
@@ -557,7 +562,11 @@ defmodule ExMCP.Integration.ConcurrentClientsTest do
           HttpPlug,
           [
             handler: ErrorProneHandler,
-            server_info: %{name: "error-test", version: "1.0.0"}
+            server_info: %{name: "error-test", version: "1.0.0"},
+            allowed_origins: [
+              "http://localhost:#{error_port}",
+              "http://127.0.0.1:#{error_port}"
+            ]
           ],
           port: error_port,
           ref: error_ranch_ref

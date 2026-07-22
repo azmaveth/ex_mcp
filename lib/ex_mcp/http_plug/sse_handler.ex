@@ -25,12 +25,15 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   use GenServer
   require Logger
 
+  alias ExMCP.HttpPlug.SessionRegistry
+
   @max_mailbox_size 10
   @heartbeat_interval 30_000
   @event_id_buffer_size 1000
 
   defstruct [
     :conn,
+    :conn_owner,
     :session_id,
     :opts,
     :event_counter,
@@ -43,6 +46,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   @type t :: %__MODULE__{
           conn: Plug.Conn.t(),
+          conn_owner: pid() | nil,
           session_id: String.t(),
           opts: map(),
           event_counter: non_neg_integer(),
@@ -55,10 +59,14 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   @doc """
   Starts an SSE handler for the given connection.
+
+  The calling process is treated as the connection owner: when it exits
+  (client disconnect, timeout, crash), the handler shuts down and cleans up
+  its session registration.
   """
   @spec start_link(Plug.Conn.t(), String.t(), map()) :: {:ok, pid()} | {:error, any()}
   def start_link(conn, session_id, opts) do
-    GenServer.start_link(__MODULE__, {conn, session_id, opts})
+    GenServer.start_link(__MODULE__, {conn, session_id, opts, self()})
   end
 
   @doc """
@@ -103,6 +111,10 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   @impl true
   def init({conn, session_id, opts}) do
+    init({conn, session_id, opts, nil})
+  end
+
+  def init({conn, session_id, opts, conn_owner}) do
     Process.flag(:trap_exit, true)
 
     # Extract Last-Event-ID if provided
@@ -119,6 +131,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
         # Initialize state
         state = %__MODULE__{
           conn: conn,
+          conn_owner: conn_owner,
           session_id: session_id,
           opts: opts,
           event_counter: 1,
@@ -231,8 +244,17 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   end
 
   @impl true
+  def handle_info({:EXIT, pid, _reason}, %__MODULE__{conn_owner: pid} = state) do
+    # The request process that owns the SSE socket exited (client disconnect,
+    # timeout, crash). The connection is unusable, so stop and let terminate/2
+    # clean up the session registration. conn is cleared to avoid writing a
+    # close event to a dead socket.
+    {:stop, :normal, %{state | conn: nil}}
+  end
+
+  @impl true
   def handle_info({:EXIT, _pid, _reason}, state) do
-    # Handle linked process exits
+    # Ignore exits from other linked processes
     {:noreply, state}
   end
 
@@ -263,6 +285,13 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     Enum.each(state.producers, fn pid ->
       GenServer.reply(pid, {:error, :connection_closed})
     end)
+
+    # Deregister on every exit path so client-first disconnects cannot leak
+    # ETS entries. Scoped to this pid so a newer handler that re-registered
+    # the same session id is left untouched.
+    if state.session_id do
+      SessionRegistry.unregister(state.session_id, self())
+    end
 
     :ok
   end

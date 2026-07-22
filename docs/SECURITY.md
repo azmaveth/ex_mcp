@@ -13,7 +13,7 @@ authorization.
 | OAuth 2.1 flows | Yes | No | No |
 | TLS | Yes | No | Only through distributed Erlang if you add it |
 | Origin/CORS checks | Yes | No | Not applicable |
-| DNS rebinding protection | Plug/client security config | No | Not applicable |
+| DNS rebinding protection | Origin + Host allow-lists (`:allowed_origins`, `:allowed_hosts`, `ExMCP.Plugs.DnsRebinding`) | Not applicable | Not applicable |
 | Process isolation | Server process | Subprocess | Local BEAM process |
 
 ## HTTP Client Security
@@ -60,6 +60,31 @@ end
 Keep request authentication and authorization at the HTTP edge. Keep
 tool/resource authorization in handler code when it depends on the specific
 tool, resource URI, user, tenant, or project.
+
+### DNS rebinding protection
+
+`ExMCP.HttpPlug` provides three complementary protections:
+
+- **Origin allow-list** (`:validate_origin`, default `true`, plus
+  `:allowed_origins`): requests that carry an `Origin` header are rejected
+  with `403` unless the origin is listed (or `:allowed_origins` is `:any`).
+  Requests *without* an `Origin` header are allowed, because non-browser
+  clients do not send one. There is no "same origin as the Host header"
+  fallback — under DNS rebinding the Host header is attacker-controlled, so
+  such a comparison would always pass.
+- **Host allow-list** (`:allowed_hosts`, default `:any`): when set to a list,
+  requests whose `Host` header is not listed are rejected with `421` before
+  any processing. Ports are ignored and IPv6 hosts match with or without
+  brackets (`[::1]:8080` matches `"[::1]"` and `"::1"`). Servers started via
+  `ExMCP.Server.Transport` with a localhost bind default to
+  `["localhost", "127.0.0.1", "[::1]", "::1"]`.
+- **`ExMCP.Plugs.DnsRebinding`**: a standalone plug for Phoenix/Plug
+  pipelines that enforces a Host allow-list (default: localhost names only)
+  in front of any downstream plugs.
+
+Session ids supplied via `mcp-session-id` / legacy `x-session-id` headers are
+validated (max 128 bytes, `A-Za-z0-9._~+/=-`) and malformed values are
+rejected with `400` without being echoed back.
 
 ## stdio Security
 
