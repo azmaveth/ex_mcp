@@ -315,12 +315,31 @@ defmodule ExMCP.Transport.Stdio do
   def close(%__MODULE__{port: port, reader_pid: reader_pid}) do
     :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{transport: :stdio})
 
+    # Close the port before killing the reader: port_close exits the port
+    # with reason :normal, which linked processes ignore, whereas killing
+    # the port's owner (the reader, in push mode) first would cascade a
+    # :killed exit through the port to its other linked processes.
+    close_port(port)
+
     if is_pid(reader_pid) and Process.alive?(reader_pid) do
-      Process.exit(reader_pid, :normal)
+      # The reader is a plain spawn_link receive loop that does not trap
+      # exits, so an exit signal with reason :normal would be silently
+      # ignored and leak the process. Unlink first so the kill cannot
+      # cascade to the caller, then terminate it unconditionally.
+      Process.unlink(reader_pid)
+      Process.exit(reader_pid, :kill)
     end
 
+    :ok
+  end
+
+  # Tolerate a port that is nil or already closed (e.g. the spawned process
+  # exited on its own before close/1 was called).
+  defp close_port(port) do
     Port.close(port)
     :ok
+  catch
+    :error, :badarg -> :ok
   end
 
   @impl true
@@ -336,13 +355,27 @@ defmodule ExMCP.Transport.Stdio do
   """
   @impl true
   def subscribe(pid, %__MODULE__{port: port} = state) when is_pid(pid) do
+    # Spawn the reader first, then transfer port ownership from the caller
+    # (the current port owner). Transferring from the caller instead of from
+    # inside the reader avoids a race where the port dies before the reader
+    # is scheduled, which would crash the subscriber through the link.
     reader =
       spawn_link(fn ->
-        Port.connect(port, self())
-        stdio_reader_loop(port, "", pid)
+        receive do
+          :port_transferred -> stdio_reader_loop(port, "", pid)
+        end
       end)
 
-    {:ok, %{state | subscriber: pid, reader_pid: reader}}
+    try do
+      Port.connect(port, reader)
+      send(reader, :port_transferred)
+      {:ok, %{state | subscriber: pid, reader_pid: reader}}
+    rescue
+      ArgumentError ->
+        Process.unlink(reader)
+        Process.exit(reader, :kill)
+        {:error, :port_closed}
+    end
   end
 
   @impl true

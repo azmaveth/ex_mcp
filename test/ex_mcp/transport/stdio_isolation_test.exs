@@ -950,4 +950,34 @@ defmodule ExMCP.Transport.StdioIsolationTest do
       end
     end
   end
+
+  describe "Stdio Transport close/1 cleanup" do
+    test "close terminates the push-mode reader process" do
+      cat = System.find_executable("cat") || flunk("cat executable is required for stdio test")
+
+      assert {:ok, state} = Stdio.connect(command: [cat])
+      assert {:ok, %Stdio{reader_pid: reader_pid} = subscribed} = Stdio.subscribe(self(), state)
+      assert is_pid(reader_pid)
+      assert Process.alive?(reader_pid)
+
+      ref = Process.monitor(reader_pid)
+
+      assert :ok = Stdio.close(subscribed)
+
+      # The reader is a plain receive loop that does not trap exits, so close
+      # must kill it outright; a :normal exit signal would leak the process.
+      assert_receive {:DOWN, ^ref, :process, ^reader_pid, :killed}, 1_000
+      refute Process.alive?(reader_pid)
+    end
+
+    test "close without a reader closes the port" do
+      cat = System.find_executable("cat") || flunk("cat executable is required for stdio test")
+
+      assert {:ok, %Stdio{port: port} = state} = Stdio.connect(command: [cat])
+      assert Port.info(port) != nil
+
+      assert :ok = Stdio.close(state)
+      assert Port.info(port) == nil
+    end
+  end
 end

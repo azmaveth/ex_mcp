@@ -74,7 +74,10 @@ defmodule ExMCP.Client do
     :initialized,
     :default_retry_policy,
     :protocol_version,
-    :default_timeout
+    :default_timeout,
+    # Monitor refs of in-flight async POST tasks (HTTP/SSE transport),
+    # mapped to the request id each task serves.
+    async_post_tasks: %{}
   ]
 
   @type t :: GenServer.server()
@@ -721,7 +724,8 @@ defmodule ExMCP.Client do
       server_capabilities: %{},
       initialized: false,
       default_retry_policy: Keyword.get(opts, :retry_policy, []),
-      default_timeout: Keyword.get(opts, :timeout, 5_000)
+      default_timeout: Keyword.get(opts, :timeout, 5_000),
+      async_post_tasks: %{}
     }
   end
 
@@ -898,7 +902,8 @@ defmodule ExMCP.Client do
         receiver_task: nil,
         health_check_ref: nil,
         reconnect_timer: nil,
-        manual_disconnect: true
+        manual_disconnect: true,
+        async_post_tasks: %{}
     }
 
     {:reply, :ok, new_state}
@@ -963,21 +968,42 @@ defmodule ExMCP.Client do
     RequestHandler.parse_transport_message(message, state)
   end
 
-  # Async POST result — the HTTP transport spawns a Task for POST requests
-  # in SSE mode to avoid blocking the GenServer during bidirectional flows.
-  def handle_info({:async_post_result, {:ok, _new_ts, response_data}}, state) do
-    # POST response contains data — parse it as a transport message
-    RequestHandler.parse_transport_message(response_data, state)
+  # Async POST result — the HTTP transport spawns a monitored task for POST
+  # requests in SSE mode to avoid blocking the GenServer during bidirectional
+  # flows. `meta` carries the request id the task served plus the durable
+  # transport-state fields the POST changed (session rotation, OAuth token
+  # refresh), which are merged back into our copy of the transport state.
+  def handle_info({:async_post_result, result, meta}, state) when is_map(meta) do
+    state = merge_async_transport_state(state, meta)
+    handle_async_post_result(result, Map.get(meta, :request_id), state)
   end
 
-  def handle_info({:async_post_result, {:ok, _new_ts}}, state) do
-    # POST returned but no inline data — result will come via SSE stream
-    {:noreply, state}
+  # Legacy 2-tuple shape (no metadata) kept for compatibility.
+  def handle_info({:async_post_result, result}, state) do
+    handle_async_post_result(result, nil, state)
   end
 
-  def handle_info({:async_post_result, {:error, reason}}, state) do
-    Logger.error("Async POST failed: #{inspect(reason)}")
-    {:noreply, state}
+  # Async POST task registration: maps the task's monitor ref to the request
+  # id it serves so a crashed task can fail that request.
+  def handle_info({:async_post_task, ref, request_id}, state) when is_reference(ref) do
+    tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
+    {:noreply, %{state | async_post_tasks: tasks}}
+  end
+
+  # Async POST task exited. A :normal exit just clears the bookkeeping (its
+  # result was delivered separately); an abnormal exit fails the pending
+  # request the task was serving instead of leaving it to hang until timeout.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{async_post_tasks: tasks} = state)
+      when is_map(tasks) and is_map_key(tasks, ref) do
+    {request_id, remaining} = Map.pop(tasks, ref)
+    state = %{state | async_post_tasks: remaining}
+
+    if reason == :normal do
+      {:noreply, state}
+    else
+      Logger.error("Async POST task exited: #{inspect(reason)}")
+      {:noreply, fail_async_post_request(state, request_id, reason)}
+    end
   end
 
   # Push model: transport sends pre-parsed messages directly
@@ -1037,6 +1063,62 @@ defmodule ExMCP.Client do
     {:noreply, state}
   end
 
+  # Async POST support (HTTP/SSE transport)
+
+  defp handle_async_post_result({:ok, _new_ts, response_data}, _request_id, state) do
+    # POST response contains data — parse it as a transport message
+    RequestHandler.parse_transport_message(response_data, state)
+  end
+
+  defp handle_async_post_result({:ok, _new_ts}, _request_id, state) do
+    # POST returned but no inline data — result will come via SSE stream
+    {:noreply, state}
+  end
+
+  defp handle_async_post_result({:error, reason}, request_id, state) do
+    Logger.error("Async POST failed: #{inspect(reason)}")
+    {:noreply, fail_async_post_request(state, request_id, reason)}
+  end
+
+  # Merge the durable transport-state changes computed by an async POST task
+  # (session id rotation, OAuth token/auth state, SSE retry metadata) into the
+  # client's current transport state. Only the fields the task actually
+  # changed are merged — see ExMCP.Transport.HTTP.async_state_changes/2 — so
+  # concurrent updates to unrelated fields are preserved. The merge is skipped
+  # when the task is no longer tracked (the transport was torn down or
+  # reconnected after the task started), which keeps stale results from an old
+  # connection out of the new connection's state.
+  defp merge_async_transport_state(state, meta) do
+    changes = Map.get(meta, :state_changes) || %{}
+
+    if map_size(changes) > 0 and is_map(state.transport_state) and
+         known_async_post_request?(state, Map.get(meta, :request_id)) do
+      %{state | transport_state: Map.merge(state.transport_state, changes)}
+    else
+      state
+    end
+  end
+
+  defp known_async_post_request?(%{async_post_tasks: tasks}, request_id) when is_map(tasks) do
+    Enum.any?(tasks, fn {_ref, id} -> id == request_id end)
+  end
+
+  defp known_async_post_request?(_state, _request_id), do: false
+
+  # Fail the pending request an async POST task was serving. Batch members,
+  # notifications (nil id), and already-completed requests are left to the
+  # normal timeout/cleanup path.
+  defp fail_async_post_request(state, request_id, reason) do
+    case request_id && Map.get(state.pending_requests, request_id) do
+      {from, :single} ->
+        GenServer.reply(from, {:error, {:transport_error, reason}})
+        %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+
+      _ ->
+        state
+    end
+  end
+
   # Transport teardown and reconnection
 
   # Already reconnecting with an attempt scheduled — nothing left to tear down.
@@ -1067,7 +1149,8 @@ defmodule ExMCP.Client do
         receiver_task: nil,
         pending_requests: %{},
         pending_batches: %{},
-        cancelled_requests: MapSet.new()
+        cancelled_requests: MapSet.new(),
+        async_post_tasks: %{}
     }
 
     if reconnect_allowed?(cleared_state, previous_status) do

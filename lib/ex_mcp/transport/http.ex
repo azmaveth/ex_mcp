@@ -313,26 +313,40 @@ defmodule ExMCP.Transport.HTTP do
       when is_pid(sse_pid) do
     # SSE mode with active connection — use async POST so the GenServer
     # can process SSE events (elicitation, sampling) while waiting for
-    # the POST response. The response will arrive as {:async_post_result, ...}.
+    # the POST response. The response arrives as {:async_post_result, result, meta}.
     parent = self()
+    request_id = extract_request_id(message)
 
-    Task.start(fn ->
-      # Use a bounded pool of predeclared httpc profiles for async POST
-      # requests. Creating fresh atoms per request would exhaust the VM atom
-      # table under repeated connections.
-      profile = async_post_profile()
-      ensure_httpc_profile!(profile)
-      Process.put(:httpc_profile, profile)
+    # spawn_monitor rather than Task.start: the parent (the ExMCP.Client
+    # GenServer) owns the monitor, so a crashed POST task produces a
+    # {:DOWN, ref, ...} the client maps back to the pending request instead
+    # of leaving it hanging until timeout. No link is created, so the
+    # exit-trapping client's {:EXIT, ...} transport handling is untouched.
+    {_task_pid, task_ref} =
+      spawn_monitor(fn ->
+        # Use a bounded pool of predeclared httpc profiles for async POST
+        # requests. Creating fresh atoms per request would exhaust the VM atom
+        # table under repeated connections.
+        profile = async_post_profile()
+        ensure_httpc_profile!(profile)
+        Process.put(:httpc_profile, profile)
 
-      result =
-        case perform_and_maybe_auth(message, state) do
-          {:ok, response} -> handle_http_response(response, state)
-          {:ok, response, new_state} -> handle_http_response(response, new_state)
-          {:error, reason} -> {:error, reason}
-        end
+        result =
+          case perform_and_maybe_auth(message, state) do
+            {:ok, response} -> handle_http_response(response, state)
+            {:ok, response, new_state} -> handle_http_response(response, new_state)
+            {:error, reason} -> {:error, reason}
+          end
 
-      send(parent, {:async_post_result, result})
-    end)
+        # Report the durable transport-state fields this POST changed
+        # (session rotation, OAuth token refresh) so the client can merge
+        # them into its copy of the transport state instead of discarding.
+        meta = %{request_id: request_id, state_changes: result_state_changes(state, result)}
+        send(parent, {:async_post_result, result, meta})
+      end)
+
+    # Let the client associate the monitored task with the request it serves.
+    send(parent, {:async_post_task, task_ref, request_id})
 
     # Return without response data — it will arrive via :async_post_result
     # or via the GET SSE stream (for SSE-formatted POST responses)
@@ -678,9 +692,11 @@ defmodule ExMCP.Transport.HTTP do
     # Add request timeout to HTTP options
     base_http_opts = [{:timeout, state.timeouts.request}]
 
+    # build_ssl_options_from_state/1 returns a flat ssl option list, which
+    # :httpc expects wrapped as a single {:ssl, opts} http_option.
     http_opts =
       case URI.parse(url).scheme do
-        "https" -> build_ssl_options_from_state(state) ++ base_http_opts
+        "https" -> [{:ssl, build_ssl_options_from_state(state)} | base_http_opts]
         _ -> base_http_opts
       end
 
@@ -701,6 +717,69 @@ defmodule ExMCP.Transport.HTTP do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
+  end
+
+  # Extracts the JSON-RPC id from an outbound client *request* for async POST
+  # correlation. Notifications (no id), batches, and responses to
+  # server-initiated requests (no "method" key) yield nil — a crash of those
+  # POSTs has no pending client request to fail.
+  defp extract_request_id(message) when is_binary(message) do
+    case Jason.decode(message) do
+      {:ok, %{"method" => _, "id" => id}} when not is_nil(id) -> id
+      _ -> nil
+    end
+  end
+
+  defp extract_request_id(_message), do: nil
+
+  # Transport-state fields an async POST may durably change. Everything else
+  # is either transient (:last_response) or owned by the connection lifecycle
+  # (:sse_pid, :sse_deferred_attempted) and must never be reported back.
+  @async_merge_fields [
+    :session_id,
+    :access_token,
+    :auth_completed,
+    :auth_provider_state,
+    :headers,
+    :retry_delay,
+    :last_event_id
+  ]
+
+  defp result_state_changes(snapshot, {:ok, new_state}) do
+    async_state_changes(snapshot, new_state)
+  end
+
+  defp result_state_changes(snapshot, {:ok, new_state, _response_data}) do
+    async_state_changes(snapshot, new_state)
+  end
+
+  defp result_state_changes(_snapshot, _error), do: %{}
+
+  @doc false
+  # Computes the durable transport-state fields an async POST changed relative
+  # to the snapshot the task was spawned with:
+  #
+  #   * :session_id — server-driven session rotation (Mcp-Session-Id header)
+  #   * :access_token / :auth_completed / :headers — OAuth 401/403 retry
+  #     (maybe_oauth_retry / run_full_oauth_flow / apply_token_to_state)
+  #   * :auth_provider_state — auth provider token refresh
+  #   * :retry_delay / :last_event_id — SSE-formatted POST response metadata
+  #
+  # The task runs on a snapshot, so its computed state cannot replace the
+  # client's copy wholesale — concurrent updates to unrelated fields would be
+  # clobbered. Only actual changes are reported; ExMCP.Client merges them into
+  # its current transport state. With several POSTs in flight the merges are
+  # serialized through the client process and the last delivered change wins.
+  def async_state_changes(%__MODULE__{} = snapshot, %__MODULE__{} = new_state) do
+    Enum.reduce(@async_merge_fields, %{}, fn field, acc ->
+      new_value = Map.fetch!(new_state, field)
+
+      if new_value == Map.fetch!(snapshot, field) do
+        acc
+      else
+        Map.put(acc, field, new_value)
+      end
+    end)
   end
 
   defp extract_user_id(state) do
@@ -967,12 +1046,21 @@ defmodule ExMCP.Transport.HTTP do
     # Best-effort session termination before closing
     terminate_session(state)
 
-    # Stop SSE connection if active
+    # Stop SSE connection if active. SSEClient is a GenServer that does not
+    # trap exits, so Process.exit(pid, :normal) would be silently ignored and
+    # leak the process. GenServer.stop runs its terminate/2 (cancelling the
+    # httpc request); tolerate an already-dead or slow-to-stop client.
     if is_pid(state.sse_pid) do
-      Process.exit(state.sse_pid, :normal)
+      stop_sse_client(state.sse_pid)
     end
 
     :ok
+  end
+
+  defp stop_sse_client(pid) do
+    GenServer.stop(pid, :normal, 1_000)
+  catch
+    :exit, _ -> :ok
   end
 
   # NOTE: HTTP transport does NOT implement subscribe/2 (push model) because
@@ -1205,6 +1293,16 @@ defmodule ExMCP.Transport.HTTP do
   @doc """
   Builds SSL options from TLS configuration.
 
+  Always returns a *flat* `:ssl` option list. Callers passing the result to
+  `:httpc` must wrap it themselves, e.g. `[{:ssl, ssl_opts} | http_opts]` —
+  passing the flat list unwrapped makes `:httpc` silently ignore every
+  TLS option.
+
+  The defaults enable peer verification, the OS trust store, TLS 1.2/1.3,
+  and HTTPS hostname matching with wildcard support
+  (`:customize_hostname_check`). Each default can be overridden through the
+  TLS configuration map.
+
   ## Examples
 
       tls_config = %{
@@ -1215,12 +1313,15 @@ defmodule ExMCP.Transport.HTTP do
       }
 
       ssl_opts = ExMCP.Transport.HTTP.build_ssl_options(tls_config)
+      # => [verify: :verify_peer, cacerts: [...], versions: [...], ...]
   """
   def build_ssl_options(tls_config) when is_map(tls_config) do
     base_ssl_opts = [
       verify: Map.get(tls_config, :verify, :verify_peer),
       cacerts: Map.get(tls_config, :cacerts, :public_key.cacerts_get()),
-      versions: Map.get(tls_config, :versions, [:"tlsv1.2", :"tlsv1.3"])
+      versions: Map.get(tls_config, :versions, [:"tlsv1.2", :"tlsv1.3"]),
+      customize_hostname_check:
+        Map.get(tls_config, :customize_hostname_check, default_hostname_check())
     ]
 
     # Add client certificate if provided
@@ -1245,24 +1346,21 @@ defmodule ExMCP.Transport.HTTP do
       end
 
     # Add verify function if provided
-    ssl_opts =
-      case Map.get(tls_config, :verify_fun) do
-        nil -> ssl_opts
-        verify_fun -> Keyword.put(ssl_opts, :verify_fun, verify_fun)
-      end
-
-    [ssl: ssl_opts]
+    case Map.get(tls_config, :verify_fun) do
+      nil -> ssl_opts
+      verify_fun -> Keyword.put(ssl_opts, :verify_fun, verify_fun)
+    end
   end
 
   def build_ssl_options(_) do
     # Default secure SSL options
-    [
-      ssl: [
-        verify: :verify_peer,
-        cacerts: :public_key.cacerts_get(),
-        versions: [:"tlsv1.2", :"tlsv1.3"]
-      ]
-    ]
+    build_ssl_options(%{})
+  end
+
+  # Enables wildcard certificate matching for HTTPS per RFC 6125. Without
+  # this, :ssl rejects certificates such as `*.example.com`.
+  defp default_hostname_check do
+    [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
   end
 
   defp build_ssl_options_from_state(%{security: %{tls: tls_config}}) when is_map(tls_config) do
