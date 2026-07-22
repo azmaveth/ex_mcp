@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Client auto-reconnection** — `ExMCP.Client` now automatically reconnects when the transport closes unexpectedly, as the documentation always promised. Pending requests still fail with a connection error, then the client re-establishes the transport and MCP handshake with exponential backoff and jitter (defaults: initial 1s, multiplier 2, cap 60s, up to 10 attempts). New `start_link/1` options: `:reconnect` (default `true`), `:max_reconnect_attempts`, and `:reconnect_backoff` (`:initial`/`:max`/`:multiplier`). Emits `[:ex_mcp, :client, :reconnect, :attempt | :success | :error | :timeout]` telemetry. Explicit `disconnect/1`/`stop/2` never triggers reconnection; requests made while reconnecting return `{:error, :not_connected}`.
+
+### Removed
+- **Dead client state machine modules** — Removed `ExMCP.Client.StateMachine`, `ExMCP.Client.Transitions`, and `ExMCP.Client.States` (unreferenced since the client adapter layer was removed before 1.0; their reconnect/backoff behavior now lives in `ExMCP.Client`), along with their tests, the state-machine-only test transport helper, and the now-unused `gen_state_machine` dependency.
+
 ### Deprecated
 - **`ExMCP.Server.Tools` API** — `ExMCP.Server.Tools`, `ExMCP.Server.Tools.Simplified`, and companion modules (`Builder`, `Helpers`, `Registry`, `ResponseNormalizer`, `ASTValidator`) are deprecated and will be **removed in 1.1.0**. `use ExMCP.Server.Tools` and `use ExMCP.Server.Tools.Simplified` emit compile-time warnings. Migrate to `ExMCP.Server.Handler` + `ExMCP.Server.DSL` (see the DSL guide and migration guide).
 - **Image processing stubs** — Compress/resize/thumbnail/encoding conversion helpers under `ExMCP.Content.Transformer`, `ExMCP.Content.Builders`, and related Validation pipelines are deprecated for **removal in 1.1.0**. They were never required by MCP/ACP (which only define **image content blocks**: base64 + MIME). Use `ExMCP.Content.image/2` for protocol content; do image processing in the application if needed.

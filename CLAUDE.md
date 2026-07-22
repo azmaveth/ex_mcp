@@ -121,42 +121,41 @@ The public MCP client API is **`ExMCP.Client`** (GenServer). There is no
 those modules were removed before 1.0.
 
 Internal connection lifecycle helpers live under `ExMCP.Client.*` (for example
-`ExMCP.Client.StateMachine`, transitions, request handler). Prefer `ExMCP.Client`
-and the top-level `ExMCP.start_client/1` helpers in application code.
+`ExMCP.Client.ConnectionManager` and `ExMCP.Client.RequestHandler`). Prefer
+`ExMCP.Client` and the top-level `ExMCP.start_client/1` helpers in application
+code.
+
+### Auto-reconnection (client)
+
+When the transport closes unexpectedly, `ExMCP.Client` fails pending requests
+and reconnects with exponential backoff and jitter (defaults: initial 1s,
+multiplier 2, cap 60s, up to 10 attempts). Configure via the `:reconnect`,
+`:max_reconnect_attempts`, and `:reconnect_backoff` options on
+`ExMCP.Client.start_link/1`. Explicit `disconnect/1`/`stop/2` never triggers
+reconnection.
 
 ### Telemetry (client)
 
 The client stack emits telemetry such as:
 
 ```elixir
-# State transitions (where applicable)
-[:ex_mcp, :client, :state_transition]
-
 # Request lifecycle
-[:ex_mcp, :client, :request, :start]
-[:ex_mcp, :client, :request, :success]
-[:ex_mcp, :client, :request, :error]
+[:ex_mcp, :client, :request, :sent]
+[:ex_mcp, :client, :request, :completed]
 
-# Connection / transport
-[:ex_mcp, :client, :connection, :success]
-[:ex_mcp, :client, :transport, :error]
-[:ex_mcp, :client, :transport, :closed]
+# Connection lifecycle
+[:ex_mcp, :client, :connected]
+[:ex_mcp, :client, :disconnected]
 
-# Handshake
-[:ex_mcp, :client, :handshake, :start]
-[:ex_mcp, :client, :handshake, :success]
-[:ex_mcp, :client, :handshake, :error]
+# Receiver (transport message loop)
+[:ex_mcp, :client, :receiver, :started]
+[:ex_mcp, :client, :receiver, :message]
 
 # Reconnection
 [:ex_mcp, :client, :reconnect, :attempt]
 [:ex_mcp, :client, :reconnect, :success]
 [:ex_mcp, :client, :reconnect, :error]
 [:ex_mcp, :client, :reconnect, :timeout]
-
-# Progress tracking
-[:ex_mcp, :client, :progress, :update]
-[:ex_mcp, :client, :progress, :unknown_token]
-[:ex_mcp, :client, :progress, :rate_limited]
 ```
 
 ### Server DSL

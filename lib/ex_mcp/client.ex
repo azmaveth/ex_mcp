@@ -9,6 +9,8 @@ defmodule ExMCP.Client do
 
   - Simple connection with URL strings or transport specs
   - Automatic transport fallback via TransportManager
+  - Automatic reconnection with exponential backoff after unexpected
+    transport closure (see `start_link/1`)
   - Consistent return values with optional normalization
   - Convenience methods for common operations
   - Clean separation of concerns
@@ -41,6 +43,12 @@ defmodule ExMCP.Client do
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
 
+  # Reconnection defaults ported from the former state machine implementation:
+  # exponential backoff starting at 1s, doubling per attempt, capped at 60s,
+  # with up to 10 attempts before giving up.
+  @default_max_reconnect_attempts 10
+  @default_reconnect_backoff [initial: 1_000, max: 60_000, multiplier: 2]
+
   # Client state
   defstruct [
     :transport_mod,
@@ -56,6 +64,11 @@ defmodule ExMCP.Client do
     :connection_status,
     :last_activity,
     :reconnect_attempts,
+    :reconnect_enabled,
+    :max_reconnect_attempts,
+    :reconnect_backoff,
+    :reconnect_timer,
+    :manual_disconnect,
     :client_info,
     :server_capabilities,
     :initialized,
@@ -80,6 +93,35 @@ defmodule ExMCP.Client do
   - `:health_check_interval` - Interval for health checks (default: 30_000)
   - `:reliability` - Reliability features configuration (optional)
   - `:retry_policy` - Default retry policy for all client operations (optional)
+  - `:reconnect` - Automatically reconnect when the transport closes
+    unexpectedly (default: `true`)
+  - `:max_reconnect_attempts` - Consecutive failed reconnection attempts
+    before giving up (default: 10)
+  - `:reconnect_backoff` - Reconnection backoff policy (keyword list):
+    - `:initial` - Delay before the first attempt in ms (default: 1000)
+    - `:max` - Maximum delay between attempts in ms (default: 60_000)
+    - `:multiplier` - Exponential backoff multiplier (default: 2)
+
+  ## Automatic Reconnection
+
+  When the transport closes unexpectedly while the client is connected, all
+  pending requests fail with a connection error and the client transitions to
+  `:reconnecting`. It then re-establishes the connection (including the MCP
+  handshake) with exponential backoff and jitter. After
+  `:max_reconnect_attempts` consecutive failures the client gives up and
+  settles in `:disconnected`. Requests made while reconnecting return
+  `{:error, :not_connected}`.
+
+  Explicit `disconnect/1` or `stop/2` calls never trigger reconnection.
+  Passing `reconnect: false` disables the behavior entirely.
+
+  The reconnection lifecycle emits telemetry:
+
+  - `[:ex_mcp, :client, :reconnect, :attempt]` - measurements
+    `%{attempt: n, delay_ms: ms}`, emitted when an attempt is scheduled
+  - `[:ex_mcp, :client, :reconnect, :success]` - reconnected and re-initialized
+  - `[:ex_mcp, :client, :reconnect, :error]` - a single attempt failed
+  - `[:ex_mcp, :client, :reconnect, :timeout]` - gave up after the final attempt
 
   ## Reliability Options
 
@@ -669,11 +711,27 @@ defmodule ExMCP.Client do
       connection_status: :connecting,
       last_activity: System.system_time(:second),
       reconnect_attempts: 0,
+      reconnect_enabled: Keyword.get(opts, :reconnect, true),
+      max_reconnect_attempts:
+        Keyword.get(opts, :max_reconnect_attempts, @default_max_reconnect_attempts),
+      reconnect_backoff: build_reconnect_backoff(opts),
+      reconnect_timer: nil,
+      manual_disconnect: false,
       client_info: build_client_info(),
       server_capabilities: %{},
       initialized: false,
       default_retry_policy: Keyword.get(opts, :retry_policy, []),
       default_timeout: Keyword.get(opts, :timeout, 5_000)
+    }
+  end
+
+  defp build_reconnect_backoff(opts) do
+    configured = Keyword.get(opts, :reconnect_backoff, [])
+
+    %{
+      initial: Keyword.get(configured, :initial, @default_reconnect_backoff[:initial]),
+      max: Keyword.get(configured, :max, @default_reconnect_backoff[:max]),
+      multiplier: Keyword.get(configured, :multiplier, @default_reconnect_backoff[:multiplier])
     }
   end
 
@@ -776,6 +834,11 @@ defmodule ExMCP.Client do
       Process.cancel_timer(state.health_check_ref)
     end
 
+    # Cancel any scheduled reconnection attempt
+    if state.reconnect_timer do
+      Process.cancel_timer(state.reconnect_timer)
+    end
+
     # Stop receiver task by killing the process directly
     if state.receiver_task && is_struct(state.receiver_task, Task) do
       if Process.alive?(state.receiver_task.pid) do
@@ -824,7 +887,8 @@ defmodule ExMCP.Client do
       end
     end
 
-    # Update state to disconnected
+    # Update state to disconnected. The manual_disconnect flag ensures a
+    # late {:transport_closed, _} message does not trigger auto-reconnection.
     new_state = %{
       state
       | connection_status: :disconnected,
@@ -832,7 +896,9 @@ defmodule ExMCP.Client do
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
         receiver_task: nil,
-        health_check_ref: nil
+        health_check_ref: nil,
+        reconnect_timer: nil,
+        manual_disconnect: true
     }
 
     {:reply, :ok, new_state}
@@ -943,53 +1009,85 @@ defmodule ExMCP.Client do
   def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
       when pid == task_pid do
     Logger.error("Receiver task died: #{inspect(reason)}")
-    {:noreply, %{state | connection_status: :disconnected}}
+    {:noreply, handle_transport_down({:receiver_task_died, reason}, state)}
   end
 
   # Push mode: forwarder process died
   def handle_info({:EXIT, _pid, reason}, %{receiver_task: :push} = state)
       when reason != :normal do
     Logger.error("Transport forwarder died: #{inspect(reason)}")
-    {:noreply, %{state | connection_status: :disconnected}}
+    {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
   end
 
   def handle_info({:transport_closed, reason}, state) do
     Logger.error("Transport closed: #{inspect(reason)}")
+    {:noreply, handle_transport_down(reason, state)}
+  end
 
-    # Reply to all pending requests with connection error or cancelled error
+  def handle_info(:attempt_reconnect, %{connection_status: :reconnecting} = state) do
+    {:noreply, attempt_reconnect(%{state | reconnect_timer: nil})}
+  end
+
+  def handle_info(:attempt_reconnect, state) do
+    # Stale timer (e.g. the user disconnected while a reconnect was scheduled)
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  # Transport teardown and reconnection
+
+  # Already reconnecting with an attempt scheduled — nothing left to tear down.
+  defp handle_transport_down(
+         _reason,
+         %{connection_status: :reconnecting, reconnect_timer: timer} = state
+       )
+       when timer != nil do
+    state
+  end
+
+  defp handle_transport_down(reason, state) do
+    reply_pending_with_close_error(reason, state)
+
+    # Stop any lingering receiver task for the old transport so it cannot
+    # deliver stale close events after a successful reconnection
+    if is_struct(state.receiver_task, Task) && Process.alive?(state.receiver_task.pid) do
+      Process.exit(state.receiver_task.pid, :shutdown)
+    end
+
+    previous_status = state.connection_status
+
+    cleared_state = %{
+      state
+      | connection_status: :disconnected,
+        transport_mod: nil,
+        transport_state: nil,
+        receiver_task: nil,
+        pending_requests: %{},
+        pending_batches: %{},
+        cancelled_requests: MapSet.new()
+    }
+
+    if reconnect_allowed?(cleared_state, previous_status) do
+      schedule_reconnect(cleared_state)
+    else
+      cleared_state
+    end
+  end
+
+  # Reply to all pending requests with connection error or cancelled error
+  defp reply_pending_with_close_error(reason, state) do
     connection_error = Error.connection_error("Transport closed: #{inspect(reason)}")
 
-    state.pending_requests
-    |> Enum.each(fn
+    Enum.each(state.pending_requests, fn
       {id, {from, :single}} ->
-        # Check if this request was cancelled
-        error =
-          if MapSet.member?(state.cancelled_requests, id) do
-            # Use proper error map for cancelled requests
-            %{
-              "code" => ErrorCodes.request_cancelled(),
-              "message" => "Request cancelled"
-            }
-          else
-            connection_error
-          end
-
-        GenServer.reply(from, {:error, error})
+        GenServer.reply(from, {:error, close_error_for(id, state, connection_error)})
 
       {id, {pid, ref}} when is_pid(pid) and is_reference(ref) ->
         # Handle simple {pid, ref} tuples from older test code
-        error =
-          if MapSet.member?(state.cancelled_requests, id) do
-            # Use proper error map for cancelled requests
-            %{
-              "code" => ErrorCodes.request_cancelled(),
-              "message" => "Request cancelled"
-            }
-          else
-            connection_error
-          end
-
-        GenServer.reply({pid, ref}, {:error, error})
+        GenServer.reply({pid, ref}, {:error, close_error_for(id, state, connection_error)})
 
       {_batch_id, {from, :batch, ordered_ids, received_responses}}
       when is_map(received_responses) ->
@@ -1008,23 +1106,133 @@ defmodule ExMCP.Client do
         # This is a request that's part of a batch
         :ok
     end)
-
-    # Clear transport references and update connection status
-    new_state = %{
-      state
-      | connection_status: :disconnected,
-        transport_mod: nil,
-        transport_state: nil,
-        pending_requests: %{},
-        pending_batches: %{},
-        cancelled_requests: MapSet.new()
-    }
-
-    {:noreply, new_state}
   end
 
-  def handle_info(_msg, state) do
-    {:noreply, state}
+  defp close_error_for(id, state, connection_error) do
+    if MapSet.member?(state.cancelled_requests, id) do
+      # Use proper error map for cancelled requests
+      %{
+        "code" => ErrorCodes.request_cancelled(),
+        "message" => "Request cancelled"
+      }
+    else
+      connection_error
+    end
+  end
+
+  defp reconnect_allowed?(state, previous_status) do
+    state.reconnect_enabled == true and
+      state.manual_disconnect != true and
+      previous_status == :ready and
+      state.reconnect_attempts < state.max_reconnect_attempts
+  end
+
+  defp schedule_reconnect(state) do
+    attempt = state.reconnect_attempts + 1
+    delay = reconnect_delay(state.reconnect_backoff, attempt)
+    timer = Process.send_after(self(), :attempt_reconnect, delay)
+
+    :telemetry.execute(
+      [:ex_mcp, :client, :reconnect, :attempt],
+      %{attempt: attempt, delay_ms: delay},
+      %{transport: configured_transport(state), pid: self()}
+    )
+
+    Logger.info("Scheduling MCP reconnection attempt #{attempt} in #{delay}ms")
+
+    %{
+      state
+      | connection_status: :reconnecting,
+        reconnect_attempts: attempt,
+        reconnect_timer: timer
+    }
+  end
+
+  defp attempt_reconnect(state) do
+    attempt = state.reconnect_attempts
+
+    case ConnectionManager.establish_connection(state, reconnect_opts(state)) do
+      {:ok, connected_state} ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :reconnect, :success],
+          %{attempt: attempt},
+          %{transport: connected_state.transport_mod, pid: self()}
+        )
+
+        :telemetry.execute(
+          [:ex_mcp, :client, :connected],
+          %{},
+          %{transport: connected_state.transport_mod}
+        )
+
+        %{
+          connected_state
+          | connection_status: :ready,
+            initialized: true,
+            reconnect_attempts: 0
+        }
+
+      {:error, reason} ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :reconnect, :error],
+          %{attempt: attempt},
+          %{reason: reason, transport: configured_transport(state), pid: self()}
+        )
+
+        handle_reconnect_failure(state, reason)
+    end
+  end
+
+  defp handle_reconnect_failure(state, reason) do
+    if state.reconnect_attempts < state.max_reconnect_attempts do
+      schedule_reconnect(state)
+    else
+      :telemetry.execute(
+        [:ex_mcp, :client, :reconnect, :timeout],
+        %{attempt: state.reconnect_attempts},
+        %{
+          max_attempts: state.max_reconnect_attempts,
+          reason: reason,
+          transport: configured_transport(state),
+          pid: self()
+        }
+      )
+
+      Logger.error(
+        "Giving up on reconnection after #{state.reconnect_attempts} attempts: " <>
+          inspect(reason)
+      )
+
+      %{state | connection_status: :disconnected}
+    end
+  end
+
+  # Each reconnection attempt is a single try; the reconnect scheduler owns
+  # retry/backoff, so disable the nested connection retry policy.
+  defp reconnect_opts(state) do
+    Keyword.put(state.transport_opts, :retry_policy, [])
+  end
+
+  defp reconnect_delay(%{initial: initial, max: max, multiplier: multiplier}, attempt) do
+    base = min(round(initial * :math.pow(multiplier, attempt - 1)), max)
+    add_reconnect_jitter(base)
+  end
+
+  # +/-25% jitter (same policy as ExMCP.Reliability.Retry) to avoid
+  # synchronized reconnection storms.
+  defp add_reconnect_jitter(delay) do
+    jitter_range = div(delay, 4)
+
+    if jitter_range > 0 do
+      delay + :rand.uniform(jitter_range * 2) - jitter_range
+    else
+      delay
+    end
+  end
+
+  defp configured_transport(state) do
+    Keyword.get(state.transport_opts, :transport) ||
+      Keyword.get(state.transport_opts, :transports)
   end
 
   # Private functions (some exposed for testing)
