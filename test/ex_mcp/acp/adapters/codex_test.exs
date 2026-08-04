@@ -859,6 +859,76 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert new_state.pending_client_requests == %{}
     end
 
+    test "structured file-change decisions are preserved", %{state: state} do
+      state = put_test_session(state, "thread-1")
+
+      structured_decision = %{
+        "acceptWithGrantRoot" => %{"grantRoot" => "/tmp/project"}
+      }
+
+      line =
+        Jason.encode!(%{
+          "id" => 103,
+          "method" => "item/fileChange/requestApproval",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turnId" => "turn-1",
+            "itemId" => "item-1",
+            "availableDecisions" => [structured_decision]
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+      assert [option] = request["params"]["options"]
+      assert option["kind"] == "allow_always"
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => option["optionId"]}}
+      }
+
+      assert {:ok, data, new_state} = Codex.translate_outbound(response, state)
+
+      assert decode(data) == %{"id" => 103, "result" => %{"decision" => structured_decision}}
+      assert new_state.pending_client_requests == %{}
+    end
+
+    test "structured permissions decisions preserve the complete response", %{state: state} do
+      state = put_test_session(state, "thread-1")
+
+      structured_decision = %{
+        "permissions" => %{"network" => %{"enabled" => true}},
+        "scope" => "session",
+        "strictAutoReview" => true
+      }
+
+      line =
+        Jason.encode!(%{
+          "id" => 104,
+          "method" => "item/permissions/requestApproval",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turnId" => "turn-1",
+            "itemId" => "item-1",
+            "availableDecisions" => [structured_decision]
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+      assert [option] = request["params"]["options"]
+      assert option["kind"] == "allow_always"
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => option["optionId"]}}
+      }
+
+      assert {:ok, data, new_state} = Codex.translate_outbound(response, state)
+
+      assert decode(data) == %{"id" => 104, "result" => structured_decision}
+      assert new_state.pending_client_requests == %{}
+    end
+
     test "fabricated structured option ids are declined instead of forwarded", %{state: state} do
       state = put_test_session(state, "thread-1")
 

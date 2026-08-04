@@ -2941,12 +2941,16 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp permission_response(
          %{
-           method: "item/commandExecution/requestApproval",
+           method: method,
            params: %{"availableDecisions" => available_decisions}
          },
          %{"result" => %{"outcome" => %{"optionId" => option_id}}}
        ) do
-    %{"decision" => command_approval_decision(option_id, available_decisions)}
+    case selected_structured_decision(option_id, available_decisions) do
+      {:ok, decision} -> structured_permission_response(method, decision)
+      :plain -> codex_decision_response(method, option_id)
+      :error -> invalid_structured_permission_response(method)
+    end
   end
 
   defp permission_response(%{method: method}, %{
@@ -2995,19 +2999,29 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp codex_cancel_response(_method), do: %{"decision" => "cancel"}
 
-  defp command_approval_decision(option_id, available_decisions) do
+  defp selected_structured_decision(option_id, available_decisions) do
     if structured_decision_option_id?(option_id) do
       with true <- is_list(available_decisions),
            {:ok, decision} <- decode_structured_decision(option_id),
            true <- Enum.member?(available_decisions, decision) do
-        decision
+        {:ok, decision}
       else
-        _ -> "decline"
+        _ -> :error
       end
     else
-      app_server_decision(option_id)
+      :plain
     end
   end
+
+  defp structured_permission_response("item/permissions/requestApproval", decision),
+    do: decision
+
+  defp structured_permission_response(_method, decision), do: %{"decision" => decision}
+
+  defp invalid_structured_permission_response("item/permissions/requestApproval"),
+    do: codex_cancel_response("item/permissions/requestApproval")
+
+  defp invalid_structured_permission_response(_method), do: %{"decision" => "decline"}
 
   defp app_server_decision(option_id) do
     cond do
@@ -3043,17 +3057,44 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp structured_decision_kind(%{"acceptWithExecpolicyAmendment" => _amendment}),
     do: "allow_always"
 
-  defp structured_decision_kind(%{
-         "applyNetworkPolicyAmendment" => %{
-           "network_policy_amendment" => %{"action" => "deny"}
-         }
-       }),
-       do: "reject_always"
+  defp structured_decision_kind(%{"applyNetworkPolicyAmendment" => amendment}) do
+    policy = amendment["network_policy_amendment"] || amendment["networkPolicyAmendment"] || %{}
 
-  defp structured_decision_kind(%{"applyNetworkPolicyAmendment" => _amendment}),
-    do: "allow_always"
+    case policy["action"] do
+      "allow" -> "allow_always"
+      "deny" -> "reject_always"
+      _ -> "reject_once"
+    end
+  end
 
-  defp structured_decision_kind(_decision), do: "reject_once"
+  defp structured_decision_kind(%{"permissions" => permissions, "scope" => scope})
+       when is_map(permissions) do
+    if scope == "session", do: "allow_always", else: "allow_once"
+  end
+
+  defp structured_decision_kind(decision) when is_map(decision) do
+    case Map.keys(decision) do
+      [name] when is_binary(name) -> structured_option_kind(name)
+      _ -> "reject_once"
+    end
+  end
+
+  defp structured_option_kind(name) do
+    normalized = String.downcase(name)
+
+    cond do
+      String.contains?(normalized, ["deny", "decline", "reject", "cancel"]) ->
+        "reject_once"
+
+      String.contains?(normalized, ["accept", "allow", "approve"]) ->
+        if String.contains?(normalized, ["session", "amendment", "grant"]),
+          do: "allow_always",
+          else: "allow_once"
+
+      true ->
+        "reject_once"
+    end
+  end
 
   defp legacy_review_decision(option_id) do
     cond do
