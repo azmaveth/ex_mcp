@@ -25,6 +25,10 @@ try {
   const transport = new StdioClientTransport({
     command: serverCommand,
     args: serverArgs,
+    // The SDK intentionally inherits only a small allow-list of environment
+    // variables. Pass MIX_ENV explicitly so a clean CI runner reuses the
+    // already-compiled test build instead of compiling a dev build on stdout.
+    env: { MIX_ENV: process.env.MIX_ENV ?? "test" },
   });
 
   const client = new Client({
