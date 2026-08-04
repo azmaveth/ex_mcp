@@ -19,10 +19,11 @@ defmodule ExMCP.ACP.Adapters.Codex.FileChanges do
 
   @spec patch_updated(String.t(), map()) :: map()
   def patch_updated(session_id, params) do
-    changes = normalize_changes(params["changes"])
+    patch = params["patch"] || params
+    changes = patch_changes(params, patch)
 
     AdapterEvents.tool_call_update(session_id, %{
-      "toolCallId" => Events.item_id(params, %{}),
+      "toolCallId" => Events.item_id(params, patch),
       "kind" => "edit",
       "content" => Enum.map(changes, &Events.file_change_content/1),
       "rawOutput" => params
@@ -44,4 +45,17 @@ defmodule ExMCP.ACP.Adapters.Codex.FileChanges do
 
   defp normalize_changes(changes) when is_list(changes), do: changes
   defp normalize_changes(_changes), do: []
+
+  defp patch_changes(params, patch) do
+    if Map.has_key?(params, "changes") do
+      normalize_changes(params["changes"])
+    else
+      [
+        %{
+          "path" => patch["path"] || params["path"],
+          "diff" => patch["diff"] || patch["text"] || params["delta"] || ""
+        }
+      ]
+    end
+  end
 end

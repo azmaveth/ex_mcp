@@ -141,6 +141,46 @@ defmodule ExMCP.ACP.Adapters.Codex.FileChangesTest do
     assert update["content"] == []
   end
 
+  test "patch updated preserves the legacy nested patch payload" do
+    params = %{
+      "patch" => %{"id" => "legacy-edit", "path" => "lib/legacy.ex", "text" => "legacy text"}
+    }
+
+    update =
+      "thread-1"
+      |> FileChanges.patch_updated(params)
+      |> get_in(["params", "update"])
+
+    assert update["toolCallId"] == "legacy-edit"
+
+    assert update["content"] == [
+             %{
+               "type" => "diff",
+               "path" => "lib/legacy.ex",
+               "oldText" => nil,
+               "newText" => "legacy text"
+             }
+           ]
+  end
+
+  test "patch updated preserves the legacy flat delta payload" do
+    params = %{"itemId" => "legacy-edit", "path" => "lib/legacy.ex", "delta" => "delta"}
+
+    update =
+      "thread-1"
+      |> FileChanges.patch_updated(params)
+      |> get_in(["params", "update"])
+
+    assert update["content"] == [
+             %{
+               "type" => "diff",
+               "path" => "lib/legacy.ex",
+               "oldText" => nil,
+               "newText" => "delta"
+             }
+           ]
+  end
+
   test "malformed individual changes use the existing Events fallback" do
     update =
       "thread-1"
