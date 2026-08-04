@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unicode NFC** — `Sanitizer.normalize_unicode/1` and related Validation sanitization use `:unicode.characters_to_nfc_binary/1`.
 
 ### Fixed
+- **ACP initialize lifecycle** — `ExMCP.ACP.Client` accepts a bounded
+  `:initialize_timeout`, applies it to the full initialize handshake, and closes
+  the receiver and transport when initialization fails so spawned stdio agents
+  do not outlive a failed client start.
 - **Bare `:array` param types** — `param :name, :array` no longer silently maps to a string schema. Use `{:array, :string}` (or another item type). Examples (`advanced_dsl_server`, `weather_service`) were updated accordingly.
 - **Empty-list param defaults** — `default: []` is preserved in generated JSON Schema properties.
 - **Honest image transform behaviour** — Deprecated resize no longer pretends to change width/height without processing pixels.

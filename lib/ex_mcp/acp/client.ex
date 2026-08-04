@@ -25,6 +25,8 @@ defmodule ExMCP.ACP.Client do
   - `:client_info` — `%{"name" => ..., "version" => ...}` (default: `%{"name" => "ex_mcp", "version" => "0.1.0"}`)
   - `:capabilities` — client capabilities map
   - `:protocol_version` — integer (default: 1)
+  - `:initialize_timeout` — total initialize-handshake timeout in milliseconds
+    (default: 30_000)
   - `:name` — GenServer name registration
   """
 
@@ -38,6 +40,8 @@ defmodule ExMCP.ACP.Client do
   alias ExMCP.ACP.Protocol
   alias ExMCP.Transport.Stdio
 
+  @default_initialize_timeout 30_000
+  @maximum_initialize_timeout 4_294_967_295
   @supported_protocol_versions [1]
 
   defstruct [
@@ -577,48 +581,79 @@ defmodule ExMCP.ACP.Client do
   defp connect_and_initialize(opts, state) do
     transport_opts = build_transport_opts(opts)
 
-    with {:ok, transport_state} <- state.transport_mod.connect(transport_opts) do
-      state = %{state | transport_state: transport_state}
+    with {:ok, initialize_timeout} <- initialize_timeout(opts),
+         {:ok, transport_state} <- state.transport_mod.connect(transport_opts) do
+      state = start_initialization_receiver(state, transport_state)
 
-      # Start receiver loop
-      receiver_pid = start_receiver(self(), state.transport_mod, transport_state)
-      state = %{state | receiver_pid: receiver_pid}
+      case initialize_connection(opts, state, initialize_timeout) do
+        {:ok, initialized_state} ->
+          {:ok, initialized_state}
 
-      # Send initialize
-      client_info =
-        Keyword.get(opts, :client_info, %{"name" => "ex_mcp", "version" => "0.1.0"})
-
-      # Per ACP spec: "capabilities omitted in initialize MUST be treated
-      # as UNSUPPORTED." Auto-advertise fs/terminal capabilities based on
-      # whether the handler module exports the corresponding callbacks —
-      # otherwise the agent will never call them even if the handler can
-      # answer. Explicit :capabilities opt takes precedence.
-      auto_capabilities = auto_advertise_capabilities(state.handler_mod)
-      explicit_capabilities = Keyword.get(opts, :capabilities)
-      capabilities = Capabilities.merge(auto_capabilities, explicit_capabilities)
-
-      init_msg = Protocol.encode_initialize(client_info, capabilities, state.protocol_version)
-
-      with {:ok, _} <- do_send(init_msg, state),
-           {:ok, result} <- receive_init_response(init_msg["id"]) do
-        protocol_version = result["protocolVersion"] || state.protocol_version
-
-        if protocol_version in @supported_protocol_versions do
-          {:ok,
-           %{
-             state
-             | agent_info: result["agentInfo"],
-               agent_capabilities: result["agentCapabilities"],
-               auth_methods: result["authMethods"] || [],
-               protocol_version: protocol_version,
-               status: :ready
-           }}
-        else
-          do_disconnect(state)
-          {:error, {:unsupported_protocol_version, protocol_version}}
-        end
+        {:error, _reason} = error ->
+          cleanup_failed_initialization(state)
+          error
       end
     end
+  end
+
+  defp start_initialization_receiver(state, transport_state) do
+    receiver_pid = start_receiver(self(), state.transport_mod, transport_state)
+    %{state | transport_state: transport_state, receiver_pid: receiver_pid}
+  end
+
+  defp initialize_connection(opts, state, initialize_timeout) do
+    client_info =
+      Keyword.get(opts, :client_info, %{"name" => "ex_mcp", "version" => "0.1.0"})
+
+    # Per ACP spec: "capabilities omitted in initialize MUST be treated
+    # as UNSUPPORTED." Auto-advertise fs/terminal capabilities based on
+    # whether the handler module exports the corresponding callbacks —
+    # otherwise the agent will never call them even if the handler can
+    # answer. Explicit :capabilities opt takes precedence.
+    auto_capabilities = auto_advertise_capabilities(state.handler_mod)
+    explicit_capabilities = Keyword.get(opts, :capabilities)
+    capabilities = Capabilities.merge(auto_capabilities, explicit_capabilities)
+
+    init_msg = Protocol.encode_initialize(client_info, capabilities, state.protocol_version)
+
+    with {:ok, _} <- do_send(init_msg, state),
+         {:ok, result} <- receive_init_response(init_msg["id"], initialize_timeout) do
+      protocol_version = result["protocolVersion"] || state.protocol_version
+
+      if protocol_version in @supported_protocol_versions do
+        {:ok,
+         %{
+           state
+           | agent_info: result["agentInfo"],
+             agent_capabilities: result["agentCapabilities"],
+             auth_methods: result["authMethods"] || [],
+             protocol_version: protocol_version,
+             status: :ready
+         }}
+      else
+        {:error, {:unsupported_protocol_version, protocol_version}}
+      end
+    end
+  end
+
+  defp initialize_timeout(opts) do
+    case Keyword.get(opts, :initialize_timeout, @default_initialize_timeout) do
+      timeout
+      when is_integer(timeout) and timeout > 0 and timeout <= @maximum_initialize_timeout ->
+        {:ok, timeout}
+
+      _invalid ->
+        {:error, :invalid_initialize_timeout}
+    end
+  end
+
+  defp cleanup_failed_initialization(state) do
+    do_disconnect(state)
+    :ok
+  rescue
+    _exception -> :ok
+  catch
+    _kind, _reason -> :ok
   end
 
   @client_keys [
@@ -629,6 +664,7 @@ defmodule ExMCP.ACP.Client do
     :client_info,
     :capabilities,
     :protocol_version,
+    :initialize_timeout,
     :transport_mod,
     :_skip_connect
   ]
@@ -656,23 +692,34 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
-  defp receive_init_response(request_id) do
-    receive do
-      {:transport_message, raw} ->
-        case Protocol.parse_message(raw) do
-          {:result, result, ^request_id} ->
-            {:ok, result}
+  defp receive_init_response(request_id, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_receive_init_response(request_id, deadline)
+  end
 
-          {:error, error, ^request_id} ->
-            {:error, {:agent_error, error}}
+  defp do_receive_init_response(request_id, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
 
-          _other ->
-            # Skip non-matching messages during init
-            receive_init_response(request_id)
-        end
-    after
-      30_000 ->
-        {:error, :init_timeout}
+    if remaining == 0 do
+      {:error, :init_timeout}
+    else
+      receive do
+        {:transport_message, raw} ->
+          case Protocol.parse_message(raw) do
+            {:result, result, ^request_id} ->
+              {:ok, result}
+
+            {:error, error, ^request_id} ->
+              {:error, {:agent_error, error}}
+
+            _other ->
+              # Skip non-matching messages during init without resetting the deadline.
+              do_receive_init_response(request_id, deadline)
+          end
+      after
+        remaining ->
+          {:error, :init_timeout}
+      end
     end
   end
 
