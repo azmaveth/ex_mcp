@@ -40,7 +40,7 @@ Add `ex_mcp` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.4"}
+    {:ex_mcp, "~> 1.0.0-rc.5"}
   ]
 end
 ```

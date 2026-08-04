@@ -131,6 +131,78 @@ defmodule ExMCP.Client.ToolCallingSamplingTest do
     end
   end
 
+  defmodule BothElicitationHandler do
+    @behaviour ExMCP.Client.Handler
+
+    @impl true
+    def init(opts), do: {:ok, Map.new(opts)}
+
+    @impl true
+    def handle_ping(state), do: {:ok, %{}, state}
+
+    @impl true
+    def handle_list_roots(state), do: {:ok, [], state}
+
+    @impl true
+    def handle_create_message(_params, state), do: {:error, "Not implemented", state}
+
+    @impl true
+    def handle_elicitation_create(message, schema, state) do
+      send(state.test_pid, {:form_elicitation, message, schema})
+      {:ok, %{"action" => "accept"}, state}
+    end
+
+    @impl true
+    def handle_url_elicitation(message, url, state) do
+      send(state.test_pid, {:url_elicitation, message, url})
+      {:ok, %{"action" => "accept"}, state}
+    end
+  end
+
+  defmodule UrlOnlyElicitationHandler do
+    @behaviour ExMCP.Client.Handler
+
+    @impl true
+    def init(opts), do: {:ok, Map.new(opts)}
+
+    @impl true
+    def handle_ping(state), do: {:ok, %{}, state}
+
+    @impl true
+    def handle_list_roots(state), do: {:ok, [], state}
+
+    @impl true
+    def handle_create_message(_params, state), do: {:error, "Not implemented", state}
+
+    @impl true
+    def handle_url_elicitation(message, url, state) do
+      send(state.test_pid, {:url_only_elicitation, message, url})
+      {:ok, %{"action" => "accept"}, state}
+    end
+  end
+
+  defmodule FormOnlyFallbackHandler do
+    @behaviour ExMCP.Client.Handler
+
+    @impl true
+    def init(opts), do: {:ok, Map.new(opts)}
+
+    @impl true
+    def handle_ping(state), do: {:ok, %{}, state}
+
+    @impl true
+    def handle_list_roots(state), do: {:ok, [], state}
+
+    @impl true
+    def handle_create_message(_params, state), do: {:error, "Not implemented", state}
+
+    @impl true
+    def handle_elicitation_create(message, payload, state) do
+      send(state.test_pid, {:fallback_elicitation, message, payload})
+      {:ok, %{"action" => "accept"}, state}
+    end
+  end
+
   setup do
     transport_state = %MockTransport{test_pid: self()}
 
@@ -331,6 +403,114 @@ defmodule ExMCP.Client.ToolCallingSamplingTest do
 
       assert response["id"] == 51
       assert response["error"]["code"] == -32601
+    end
+
+    test "form mode still dispatches to the form callback when both callbacks exist", %{
+      base_state: base_state
+    } do
+      state = %{
+        base_state
+        | transport_opts: [handler: BothElicitationHandler, handler_state: [test_pid: self()]]
+      }
+
+      params = %{
+        "message" => "Choose a project",
+        "requestedSchema" => %{"type" => "object"}
+      }
+
+      {:noreply, state} =
+        RequestHandler.handle_server_request("elicitation/create", params, 52, state)
+
+      {:noreply, _state} = complete_async(state)
+
+      assert_receive {:form_elicitation, "Choose a project", %{"type" => "object"}}
+      refute_receive {:url_elicitation, _, _}
+    end
+
+    test "URL mode prefers handle_url_elicitation when both callbacks exist", %{
+      base_state: base_state
+    } do
+      state = %{
+        base_state
+        | transport_opts: [handler: BothElicitationHandler, handler_state: [test_pid: self()]]
+      }
+
+      params = %{
+        "mode" => "url",
+        "message" => "Authorize access",
+        "url" => "https://example.com/authorize",
+        "elicitationId" => "elicit-1"
+      }
+
+      {:noreply, state} =
+        RequestHandler.handle_server_request("elicitation/create", params, 53, state)
+
+      {:noreply, _state} = complete_async(state)
+
+      assert_receive {:url_elicitation, "Authorize access", "https://example.com/authorize"}
+      refute_receive {:form_elicitation, _, _}
+    end
+
+    test "URL-only handlers receive URL-mode requests", %{base_state: base_state} do
+      state = %{
+        base_state
+        | transport_opts: [handler: UrlOnlyElicitationHandler, handler_state: [test_pid: self()]]
+      }
+
+      params = %{
+        "mode" => "url",
+        "message" => "Authorize access",
+        "url" => "https://example.com/authorize",
+        "elicitationId" => "elicit-2"
+      }
+
+      {:noreply, state} =
+        RequestHandler.handle_server_request("elicitation/create", params, 54, state)
+
+      {:noreply, _state} = complete_async(state)
+
+      assert_receive {:url_only_elicitation, "Authorize access", "https://example.com/authorize"}
+    end
+
+    test "form-only handlers retain URL fallback with the complete URL payload and one warning",
+         %{
+           base_state: base_state
+         } do
+      state = %{
+        base_state
+        | transport_opts: [handler: FormOnlyFallbackHandler, handler_state: [test_pid: self()]]
+      }
+
+      params = %{
+        "mode" => "url",
+        "message" => "Authorize access",
+        "url" => "https://example.com/authorize",
+        "elicitationId" => "elicit-3"
+      }
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          {:noreply, state} =
+            RequestHandler.handle_server_request("elicitation/create", params, 55, state)
+
+          {:noreply, state} = complete_async(state)
+
+          {:noreply, state} =
+            RequestHandler.handle_server_request("elicitation/create", params, 56, state)
+
+          {:noreply, _state} = complete_async(state)
+        end)
+
+      expected_payload = %{
+        "mode" => "url",
+        "url" => "https://example.com/authorize",
+        "elicitationId" => "elicit-3"
+      }
+
+      assert_receive {:fallback_elicitation, "Authorize access", ^expected_payload}
+      assert_receive {:fallback_elicitation, "Authorize access", ^expected_payload}
+
+      assert length(Regex.scan(~r/does not implement handle_url_elicitation\/3/, log)) == 1
     end
   end
 

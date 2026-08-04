@@ -30,13 +30,13 @@ defmodule ExMCP.Compliance.Features.Transport do
       end
 
       # Streamable HTTP and progress notifications (2025-03-26+)
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "Streamable HTTP transport works" do
           ExMCP.Compliance.Features.Transport.test_streamable_http(@version)
         end
       end
 
-      if @version == "2025-06-18" do
+      if @version in ["2025-06-18", "2025-11-25"] do
         test "MCP-Protocol-Version header is required for HTTP" do
           ExMCP.Compliance.Features.Transport.test_protocol_version_header(@version)
         end
@@ -51,7 +51,7 @@ defmodule ExMCP.Compliance.Features.Transport do
   def test_jsonrpc_format(version) do
     # Test that JSON-RPC message format is valid for all versions
     assert is_binary(version)
-    assert version in ["2024-11-05", "2025-03-26", "2025-06-18"]
+    assert version in ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test basic JSON-RPC 2.0 message structure
     request = %{
@@ -133,9 +133,9 @@ defmodule ExMCP.Compliance.Features.Transport do
     validate_batch_response(batch_response)
   end
 
-  def test_streamable_http(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_streamable_http(version) when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test Streamable HTTP transport for versions that support it
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test that Streamable HTTP transport can be configured
     # TODO: Add actual transport testing
@@ -228,9 +228,9 @@ defmodule ExMCP.Compliance.Features.Transport do
     end
   end
 
-  def test_protocol_version_header(version) when version == "2025-06-18" do
+  def test_protocol_version_header(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test MCP-Protocol-Version header requirement for HTTP transport
-    assert version == "2025-06-18"
+    assert version in ["2025-06-18", "2025-11-25"]
 
     # In HTTP transport, subsequent requests must include MCP-Protocol-Version header
     # This is handled by the HTTP transport implementation

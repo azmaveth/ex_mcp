@@ -12,7 +12,7 @@ defmodule ExMCP.Compliance.Features.Authorization do
       @version unquote(version)
 
       # Authorization features only in 2025-03-26+
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "OAuth 2.1 authorization framework works" do
           ExMCP.Compliance.Features.Authorization.test_oauth_authorization(@version)
         end
@@ -60,9 +60,10 @@ defmodule ExMCP.Compliance.Features.Authorization do
   @introspection_endpoint "https://auth.example.com/introspect"
 
   # Actual test implementations
-  def test_oauth_authorization(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_oauth_authorization(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test OAuth 2.1 authorization framework
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test basic OAuth 2.1 compliance with mock server
     mock_server_config = %{
@@ -90,9 +91,10 @@ defmodule ExMCP.Compliance.Features.Authorization do
     validate_oauth_config(config)
   end
 
-  def test_authorization_metadata(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_authorization_metadata(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test authorization server metadata (RFC8414)
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test metadata structure
     metadata = %{
@@ -109,9 +111,10 @@ defmodule ExMCP.Compliance.Features.Authorization do
     validate_authorization_metadata(metadata)
   end
 
-  def test_token_introspection(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_token_introspection(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test token introspection functionality
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test introspection response structure
     introspection_response = %{
@@ -124,9 +127,10 @@ defmodule ExMCP.Compliance.Features.Authorization do
     validate_introspection_response(introspection_response)
   end
 
-  def test_client_credentials(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_client_credentials(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test client credentials flow
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test client credentials token response
     token_response = %{
@@ -139,9 +143,10 @@ defmodule ExMCP.Compliance.Features.Authorization do
     validate_token_response(token_response)
   end
 
-  def test_authorization_code_flow(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_authorization_code_flow(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test authorization code flow
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test authorization code response
     auth_response = %{
@@ -156,9 +161,9 @@ defmodule ExMCP.Compliance.Features.Authorization do
     assert Map.has_key?(auth_response, "refresh_token")
   end
 
-  def test_token_refresh(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_token_refresh(version) when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test token refresh functionality
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test refresh token response
     refresh_response = %{
@@ -171,9 +176,9 @@ defmodule ExMCP.Compliance.Features.Authorization do
     validate_token_response(refresh_response)
   end
 
-  def test_pkce_challenge(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_pkce_challenge(version) when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test PKCE challenge generation
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test PKCE verifier and challenge generation
     {:ok, verifier, challenge} = PKCE.generate_challenge()
@@ -189,9 +194,10 @@ defmodule ExMCP.Compliance.Features.Authorization do
     assert String.match?(challenge, ~r/^[A-Za-z0-9_-]+$/)
   end
 
-  def test_streamable_http_auth(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_streamable_http_auth(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test streamable HTTP transport authorization
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test session ID generation for HTTP transport
     session_id = Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)

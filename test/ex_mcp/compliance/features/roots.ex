@@ -25,7 +25,7 @@ defmodule ExMCP.Compliance.Features.Roots do
       end
 
       # Roots change notifications (2025-03-26+)
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "roots change notifications work" do
           ExMCP.Compliance.Features.Roots.test_roots_change_notifications(@version)
         end
@@ -137,7 +137,8 @@ defmodule ExMCP.Compliance.Features.Roots do
     end
   end
 
-  def test_roots_change_notifications(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_roots_change_notifications(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do

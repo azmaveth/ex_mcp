@@ -1,0 +1,47 @@
+{
+  "2024-11-05": {
+    "experimental": {},
+    "logging": {},
+    "prompts": {"listChanged": true},
+    "resources": {"listChanged": true, "subscribe": true},
+    "tools": {"listChanged": true}
+  },
+  "2025-03-26": {
+    "completions": {},
+    "experimental": {"batchProcessing": true},
+    "logging": {},
+    "prompts": {"listChanged": true},
+    "resources": {"listChanged": true, "subscribe": true},
+    "tools": {}
+  },
+  "2025-06-18": {
+    "completions": {},
+    "experimental": {
+      "batchProcessing": false,
+      "elicitation": true,
+      "structuredContent": true,
+      "toolOutputSchema": true
+    },
+    "logging": {},
+    "prompts": {"listChanged": true},
+    "resources": {"listChanged": true, "subscribe": true},
+    "tools": {"listChanged": true}
+  },
+  "2025-11-25": {
+    "completions": {},
+    "experimental": {
+      "batchProcessing": false,
+      "elicitation": true,
+      "icons": true,
+      "structuredContent": true,
+      "toolCallingInSampling": true,
+      "toolOutputSchema": true,
+      "urlElicitation": true
+    },
+    "logging": {},
+    "prompts": {"listChanged": true},
+    "resources": {"listChanged": true, "subscribe": true},
+    "tasks": {},
+    "tools": {"listChanged": true}
+  }
+}

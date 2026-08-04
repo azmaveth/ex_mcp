@@ -21,7 +21,7 @@ defmodule ExMCP.Compliance.Features.Resources do
       end
 
       # Version-specific features
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "resource subscriptions work correctly" do
           ExMCP.Compliance.Features.Resources.test_resource_subscriptions(@version)
         end
@@ -31,7 +31,7 @@ defmodule ExMCP.Compliance.Features.Resources do
         end
       end
 
-      if @version == "2025-06-18" do
+      if @version in ["2025-06-18", "2025-11-25"] do
         test "resources have title fields" do
           ExMCP.Compliance.Features.Resources.test_resource_titles(@version)
         end
@@ -105,7 +105,8 @@ defmodule ExMCP.Compliance.Features.Resources do
     end
   end
 
-  def test_resource_subscriptions(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_resource_subscriptions(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test resource subscriptions for versions that support them
     {:ok, test_context} = setup_test_client(version)
 
@@ -134,7 +135,8 @@ defmodule ExMCP.Compliance.Features.Resources do
     end
   end
 
-  def test_list_change_notifications(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_list_change_notifications(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test resource list change notifications
     {:ok, test_context} = setup_test_client(version)
 
@@ -180,7 +182,7 @@ defmodule ExMCP.Compliance.Features.Resources do
 
     # Version-specific validations
     case version do
-      v when v in ["2025-03-26", "2025-06-18"] ->
+      v when v in ["2025-03-26", "2025-06-18", "2025-11-25"] ->
         # These versions support additional resource features
         # Resources can be subscribed to in these versions
         :ok
@@ -191,7 +193,7 @@ defmodule ExMCP.Compliance.Features.Resources do
     end
   end
 
-  def test_resource_titles(version) when version == "2025-06-18" do
+  def test_resource_titles(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test that resources have title fields in 2025-06-18
     {:ok, test_context} = setup_test_client(version)
 

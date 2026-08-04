@@ -1,6 +1,8 @@
 defmodule ExMCP.VersionRegistryTest do
   use ExUnit.Case
 
+  import ExUnit.CaptureLog
+
   alias ExMCP.Internal.Protocol
   alias ExMCP.Internal.VersionRegistry
 
@@ -34,6 +36,31 @@ defmodule ExMCP.VersionRegistryTest do
       assert VersionRegistry.supported?("2025-03-26")
       refute VersionRegistry.supported?("1.0.0")
       refute VersionRegistry.supported?("unknown")
+    end
+
+    test "classifies every current version as legacy" do
+      for version <- VersionRegistry.supported_versions() do
+        assert VersionRegistry.era_for(version) == :legacy
+        refute VersionRegistry.modern?(version)
+      end
+
+      assert VersionRegistry.era_for("unknown") == :unknown
+      refute VersionRegistry.modern?("unknown")
+    end
+
+    test "warns while preserving the latest-version fallback for unknown versions" do
+      log =
+        capture_log(fn ->
+          assert VersionRegistry.capabilities_for_version("typo") ==
+                   VersionRegistry.capabilities_for_version(VersionRegistry.latest_version())
+
+          assert VersionRegistry.message_format("typo") ==
+                   VersionRegistry.message_format(VersionRegistry.latest_version())
+        end)
+
+      assert log =~ "Unknown MCP protocol version \"typo\""
+      assert log =~ "using 2025-11-25 capabilities"
+      assert log =~ "using 2025-11-25 message format"
     end
 
     test "returns version-specific capabilities" do

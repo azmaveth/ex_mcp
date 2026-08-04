@@ -12,6 +12,12 @@ if Code.ensure_loaded?(Plug) do
       - HTTPS enforcement
       - Request validation
 
+      > #### Simplified example transport {: .warning}
+      >
+      > This Plug is retained as a simplified example and includes a canned
+      > `initialize` response. It is not the production HTTP server path. Use
+      > `ExMCP.HttpPlug` for protocol-complete HTTP deployments.
+
       ## Usage with Phoenix
 
           # In your router
@@ -286,8 +292,7 @@ if Code.ensure_loaded?(Plug) do
     end
 
     defp call_server_method(server_pid, method, _params) do
-      # This is a simplified mapping - in a real implementation,
-      # you'd want more comprehensive method handling
+      # Simplified example mapping; production servers use ExMCP.HttpPlug.
       case method do
         "initialize" ->
           {:ok,

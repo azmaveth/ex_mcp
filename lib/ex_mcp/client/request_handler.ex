@@ -7,6 +7,7 @@ defmodule ExMCP.Client.RequestHandler do
   """
 
   require Logger
+  alias ExMCP.Client.ElicitationHandler
   alias ExMCP.Internal.{JSONRPC, Maps, Protocol}
   alias ExMCP.Protocol.ResponseBuilder
 
@@ -438,7 +439,11 @@ defmodule ExMCP.Client.RequestHandler do
         handle_create_message_request(params, request_id, state)
 
       "elicitation/create" ->
-        handle_elicitation_create_request(params, request_id, state)
+        if Map.get(params, "mode") == "url" do
+          handle_url_elicitation_request(params, request_id, state)
+        else
+          handle_elicitation_create_request(params, request_id, state)
+        end
 
       _ ->
         # Try generic handler, then fall back to method not found
@@ -508,7 +513,7 @@ defmodule ExMCP.Client.RequestHandler do
 
     if handler != :none && function_exported?(handler, :handle_elicitation_create, 3) do
       message = Map.get(params, "message", "")
-      requested_schema = Map.get(params, "requestedSchema", %{})
+      requested_schema = elicitation_payload(params)
 
       run_handler_async(
         :elicitation,
@@ -524,9 +529,9 @@ defmodule ExMCP.Client.RequestHandler do
       if elicitation_cap do
         # Client declared elicitation support — use default handler (decline or auto-accept)
         message = Map.get(params, "message", "")
-        requested_schema = Map.get(params, "requestedSchema", %{})
+        requested_schema = elicitation_payload(params)
 
-        result = ExMCP.Client.ElicitationHandler.handle(message, requested_schema)
+        result = ElicitationHandler.handle(message, requested_schema)
         response = build_success_response(result, request_id)
         send_response(response, state)
       else
@@ -534,6 +539,73 @@ defmodule ExMCP.Client.RequestHandler do
         error_response = build_error_response(-32601, "Method not found", request_id)
         send_response(error_response, state)
       end
+    end
+  end
+
+  defp handle_url_elicitation_request(params, request_id, state) do
+    {handler, handler_state, state} = ensure_client_handler(state)
+    message = Map.get(params, "message", "")
+    url = Map.get(params, "url", "")
+
+    cond do
+      handler != :none && function_exported?(handler, :handle_url_elicitation, 3) ->
+        run_handler_async(
+          :url_elicitation,
+          fn -> handler.handle_url_elicitation(message, url, handler_state) end,
+          request_id,
+          state
+        )
+
+      handler != :none && function_exported?(handler, :handle_elicitation_create, 3) ->
+        warn_url_elicitation_fallback(handler)
+
+        run_handler_async(
+          :elicitation,
+          fn ->
+            handler.handle_elicitation_create(message, elicitation_payload(params), handler_state)
+          end,
+          request_id,
+          state
+        )
+
+      true ->
+        handle_default_elicitation(params, request_id, state)
+    end
+  end
+
+  defp handle_default_elicitation(params, request_id, state) do
+    capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
+    elicitation_cap = capabilities["elicitation"] || capabilities[:elicitation]
+
+    if elicitation_cap do
+      result =
+        ElicitationHandler.handle(
+          Map.get(params, "message", ""),
+          elicitation_payload(params)
+        )
+
+      send_response(build_success_response(result, request_id), state)
+    else
+      send_response(build_error_response(-32601, "Method not found", request_id), state)
+    end
+  end
+
+  defp elicitation_payload(%{"mode" => "url"} = params) do
+    Map.take(params, ["mode", "url", "elicitationId"])
+  end
+
+  defp elicitation_payload(params), do: Map.get(params, "requestedSchema", %{})
+
+  defp warn_url_elicitation_fallback(handler) do
+    warning_key = {__MODULE__, :url_elicitation_fallback, handler}
+
+    unless :persistent_term.get(warning_key, false) do
+      :persistent_term.put(warning_key, true)
+
+      Logger.warning(
+        "#{inspect(handler)} does not implement handle_url_elicitation/3; " <>
+          "routing URL-mode elicitation to handle_elicitation_create/3 with the URL payload"
+      )
     end
   end
 

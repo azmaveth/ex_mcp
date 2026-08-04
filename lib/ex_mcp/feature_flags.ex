@@ -14,6 +14,7 @@ defmodule ExMCP.FeatureFlags do
   * `:protocol_version_header` - Enforce MCP-Protocol-Version header validation
   * `:structured_output` - Enable structured tool output with schema validation
   * `:oauth2_auth` - Enable OAuth 2.1 authorization
+  * `:tasks` - Advertise tasks from the legacy capability negotiator
 
   ## Examples
 
@@ -52,7 +53,8 @@ defmodule ExMCP.FeatureFlags do
       %{
         protocol_version_header: false,
         structured_output: false,
-        oauth2_auth: false
+        oauth2_auth: false,
+        tasks: false
       }
   """
   @spec all() :: map()

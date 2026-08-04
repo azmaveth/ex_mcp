@@ -7,7 +7,7 @@ This guide covers the supported configuration surfaces for ExMCP 1.0.
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.4"}
+    {:ex_mcp, "~> 1.0.0-rc.5"}
   ]
 end
 ```
@@ -34,7 +34,7 @@ config :ex_mcp,
 Validate versions with the public negotiator:
 
 ```elixir
-ExMCP.Protocol.VersionNegotiator.valid_version?("2025-11-25")
+ExMCP.Protocol.VersionNegotiator.supported?("2025-11-25")
 ```
 
 ## Client Configuration

@@ -22,7 +22,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
   alias ExMCP.Error
   alias ExMCP.Internal.VersionRegistry
-  alias ExMCP.Protocol.ResponseBuilder
+  alias ExMCP.Protocol.{Methods, ResponseBuilder}
   alias ExMCP.Server.ResultNormalizer
 
   @type request :: map()
@@ -69,27 +69,14 @@ defmodule ExMCP.Protocol.RequestProcessor do
     {:response, error_response, state}
   end
 
-  defp dispatch_method("initialize", req, state), do: process_initialize(req, state)
-  defp dispatch_method("tools/list", req, state), do: process_tools_list(req, state)
-  defp dispatch_method("tools/call", req, state), do: process_tools_call(req, state)
-  defp dispatch_method("resources/list", req, state), do: process_resources_list(req, state)
-  defp dispatch_method("resources/read", req, state), do: process_resources_read(req, state)
-  defp dispatch_method("prompts/list", req, state), do: process_prompts_list(req, state)
-  defp dispatch_method("prompts/get", req, state), do: process_prompts_get(req, state)
+  @doc false
+  @spec dispatched_methods() :: [String.t()]
+  def dispatched_methods, do: Map.keys(Methods.handler_map(:request_processor))
 
-  defp dispatch_method("notifications/initialized", req, state),
-    do: process_initialized_notification(req, state)
+  for {method, handler} <- Methods.handler_map(:request_processor) do
+    defp dispatch_method(unquote(method), req, state), do: unquote(handler)(req, state)
+  end
 
-  defp dispatch_method("notifications/elicitation/complete", req, state),
-    do: process_elicitation_complete(req, state)
-
-  defp dispatch_method("notifications/tasks/status", req, state),
-    do: process_task_status_notification(req, state)
-
-  defp dispatch_method("tasks/get", req, state), do: process_task_get(req, state)
-  defp dispatch_method("tasks/list", req, state), do: process_task_list(req, state)
-  defp dispatch_method("tasks/result", req, state), do: process_task_result(req, state)
-  defp dispatch_method("tasks/cancel", req, state), do: process_task_cancel(req, state)
   defp dispatch_method(_, req, state), do: process_unknown_method(req, state)
 
   # Initialize request processing

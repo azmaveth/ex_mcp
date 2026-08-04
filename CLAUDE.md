@@ -224,4 +224,5 @@ The client stack emits telemetry such as:
 ## Development notes
 
 - Primary public APIs: `ExMCP`, `ExMCP.Client`, `ExMCP.Server` / `Handler` / `DSL`, transports, `ExMCP.HttpPlug`, `ExMCP.ACP.*`, `ExMCP.Authorization`, `ExMCP.Content`, `ExMCP.Types`.
+- `ExMCP.Internal.VersionRegistry` is the canonical protocol-version registry. `ExMCP.Protocol.VersionNegotiator` is a compatibility shim for public negotiation helpers and retains a separate, non-wire capability vocabulary.
 - Other modules under `ExMCP.*` are internal unless documented otherwise.

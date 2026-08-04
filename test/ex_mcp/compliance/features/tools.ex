@@ -22,7 +22,7 @@ defmodule ExMCP.Compliance.Features.Tools do
       end
 
       # Version-specific features
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "tool annotations are properly supported" do
           ExMCP.Compliance.Features.Tools.test_tool_annotations(@version)
         end
@@ -32,7 +32,7 @@ defmodule ExMCP.Compliance.Features.Tools do
         end
       end
 
-      if @version == "2025-06-18" do
+      if @version in ["2025-06-18", "2025-11-25"] do
         test "structured output schemas work correctly" do
           ExMCP.Compliance.Features.Tools.test_structured_output(@version)
         end
@@ -107,7 +107,7 @@ defmodule ExMCP.Compliance.Features.Tools do
     end
   end
 
-  def test_tool_annotations(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_tool_annotations(version) when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test tool annotations for versions that support them
     {:ok, test_context} = setup_test_client(version)
 
@@ -133,7 +133,8 @@ defmodule ExMCP.Compliance.Features.Tools do
     end
   end
 
-  def test_list_change_notifications(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_list_change_notifications(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test tool list change notifications
     {:ok, test_context} = setup_test_client(version)
 
@@ -141,7 +142,7 @@ defmodule ExMCP.Compliance.Features.Tools do
       # Test that server capabilities include list change support
       # This would be tested through server capabilities in a real implementation
       # For now, validate that the version supports this feature
-      assert version in ["2025-03-26", "2025-06-18"]
+      assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
       # In a real implementation, this would test:
       # 1. Server sends notifications/tools/list_changed
@@ -152,7 +153,7 @@ defmodule ExMCP.Compliance.Features.Tools do
     end
   end
 
-  def test_structured_output(version) when version == "2025-06-18" do
+  def test_structured_output(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test structured output schemas for 2025-06-18
     {:ok, test_context} = setup_test_client(version)
 
@@ -196,14 +197,14 @@ defmodule ExMCP.Compliance.Features.Tools do
 
     # Version-specific validations
     case version do
-      v when v in ["2025-03-26", "2025-06-18"] ->
+      v when v in ["2025-03-26", "2025-06-18", "2025-11-25"] ->
         # These versions may have annotations
         if Map.has_key?(tool, :annotations) do
           validate_tool_annotations(tool.annotations)
         end
 
         # 2025-06-18 specific features
-        if v == "2025-06-18" do
+        if v in ["2025-06-18", "2025-11-25"] do
           # This version may have structured output
           if Map.has_key?(tool, :outputSchema) do
             assert is_map(tool.outputSchema)
@@ -271,7 +272,7 @@ defmodule ExMCP.Compliance.Features.Tools do
     end
   end
 
-  def test_tool_titles(version) when version == "2025-06-18" do
+  def test_tool_titles(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test that tools have title fields in 2025-06-18
     {:ok, test_context} = setup_test_client(version)
 
@@ -292,7 +293,7 @@ defmodule ExMCP.Compliance.Features.Tools do
     end
   end
 
-  def test_structured_content_and_links(version) when version == "2025-06-18" do
+  def test_structured_content_and_links(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test structured content and resource links in tool results
     {:ok, test_context} = setup_test_client(version)
 

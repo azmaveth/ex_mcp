@@ -401,9 +401,9 @@ defmodule ExMCP.Compliance.Version20250618Test do
       refute "notifications/elicitation/complete" in format.notification_methods
     end
 
-    test "does NOT have request_methods key (no tasks)" do
+    test "has an empty request_methods list (no tasks)" do
       format = VersionRegistry.message_format("2025-06-18")
-      refute Map.has_key?(format, :request_methods)
+      assert format.request_methods == []
     end
   end
 

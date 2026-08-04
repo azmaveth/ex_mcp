@@ -132,6 +132,24 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       assert new_state.protocol_version == "2025-06-18"
     end
 
+    test "omitted protocolVersion retains the 2025-06-18 default", %{minimal_state: state} do
+      request = %{"method" => "initialize", "id" => 124, "params" => %{}}
+
+      {:response, response, new_state} = RequestProcessor.process(request, state)
+
+      assert response == %{
+               "jsonrpc" => "2.0",
+               "id" => 124,
+               "result" => %{
+                 "protocolVersion" => "2025-06-18",
+                 "serverInfo" => %{"name" => "ExMCP Server", "version" => "0.1.0"},
+                 "capabilities" => %{}
+               }
+             }
+
+      assert new_state.protocol_version == "2025-06-18"
+    end
+
     test "rejects unsupported protocol version", %{minimal_state: state} do
       request = %{
         "method" => "initialize",

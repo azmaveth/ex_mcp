@@ -16,6 +16,7 @@ defmodule ExMCP.Internal.Protocol do
   # All methods in this module are part of the official MCP specification.
 
   alias ExMCP.Internal.{JSONRPC, MapBuilder, MessageValidator, RequestParams, VersionRegistry}
+  alias ExMCP.Protocol.ErrorCodes
 
   @type json_rpc_id :: String.t() | integer()
   @type method :: String.t()
@@ -548,46 +549,8 @@ defmodule ExMCP.Internal.Protocol do
   @doc """
   Checks if a method is available in the given protocol version.
   """
-  # Methods gated by minimum version for availability checks
-  # Note: resources/subscribe, resources/unsubscribe, logging/setLevel,
-  # and notifications/resources/updated are all defined in the 2024-11-05
-  # schema and are NOT gated to later versions.
-  @methods_v20250326_plus MapSet.new([])
-  @methods_v20250618_plus MapSet.new(["elicitation/create"])
-  @methods_v20251125_only MapSet.new([
-                            "tasks/get",
-                            "tasks/list",
-                            "tasks/result",
-                            "tasks/cancel",
-                            "notifications/tasks/status",
-                            "notifications/elicitation/complete"
-                          ])
-  @methods_draft_only MapSet.new([
-                        "server/discover",
-                        "subscriptions/listen"
-                      ])
-  @versions_v20250326_plus MapSet.new(["2025-03-26", "2025-06-18", "2025-11-25"])
-  @versions_v20250618_plus MapSet.new(["2025-06-18", "2025-11-25"])
-
   @spec method_available?(String.t(), String.t()) :: boolean()
-  def method_available?(method, version) do
-    cond do
-      MapSet.member?(@methods_draft_only, method) ->
-        version == "draft"
-
-      MapSet.member?(@methods_v20251125_only, method) ->
-        version == "2025-11-25"
-
-      MapSet.member?(@methods_v20250618_plus, method) ->
-        MapSet.member?(@versions_v20250618_plus, version)
-
-      MapSet.member?(@methods_v20250326_plus, method) ->
-        MapSet.member?(@versions_v20250326_plus, version)
-
-      true ->
-        true
-    end
-  end
+  def method_available?(method, version), do: ExMCP.Protocol.Methods.available?(method, version)
 
   @doc """
   Validates that a message is compatible with the given protocol version.
@@ -648,19 +611,12 @@ defmodule ExMCP.Internal.Protocol do
     JSONRPC.request(method, params, generate_id())
   end
 
-  # Error Codes (from JSON-RPC spec)
-  @parse_error -32700
-  @invalid_request -32600
-  @method_not_found -32601
-  @invalid_params -32602
-  @internal_error -32603
-
   @doc """
   Standard JSON-RPC error codes.
   """
-  def parse_error, do: @parse_error
-  def invalid_request, do: @invalid_request
-  def method_not_found, do: @method_not_found
-  def invalid_params, do: @invalid_params
-  def internal_error, do: @internal_error
+  def parse_error, do: ErrorCodes.parse_error()
+  def invalid_request, do: ErrorCodes.invalid_request()
+  def method_not_found, do: ErrorCodes.method_not_found()
+  def invalid_params, do: ErrorCodes.invalid_params()
+  def internal_error, do: ErrorCodes.internal_error()
 end

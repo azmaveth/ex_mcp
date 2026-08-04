@@ -11,8 +11,8 @@ defmodule ExMCP.Compliance.DemoNewStructureTest do
     assert true
 
     # Test that our modules can be referenced
-    versions = ["2024-11-05", "2025-03-26", "2025-06-18"]
-    assert length(versions) == 3
+    versions = ExMCP.Internal.VersionRegistry.supported_versions()
+    assert length(versions) == 4
 
     # Test basic module existence
     assert Code.ensure_loaded?(ExMCP.Compliance.VersionGenerator)

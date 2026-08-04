@@ -12,7 +12,7 @@ defmodule ExMCP.Compliance.Features.ResourceTemplates do
       @version unquote(version)
 
       # Resource templates (2024-11-05+)
-      if @version in ["2024-11-05", "2025-03-26", "2025-06-18"] do
+      if @version in ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"] do
         test "resources/templates/list returns valid templates" do
           ExMCP.Compliance.Features.ResourceTemplates.test_list_templates(@version)
         end
@@ -33,7 +33,8 @@ defmodule ExMCP.Compliance.Features.ResourceTemplates do
   import ExMCP.ComplianceTestHelpers
 
   # Actual test implementations
-  def test_list_templates(version) when version in ["2024-11-05", "2025-03-26", "2025-06-18"] do
+  def test_list_templates(version)
+      when version in ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -57,7 +58,7 @@ defmodule ExMCP.Compliance.Features.ResourceTemplates do
   end
 
   def test_uri_template_syntax(version)
-      when version in ["2024-11-05", "2025-03-26", "2025-06-18"] do
+      when version in ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -96,7 +97,7 @@ defmodule ExMCP.Compliance.Features.ResourceTemplates do
   end
 
   def test_template_metadata(version)
-      when version in ["2024-11-05", "2025-03-26", "2025-06-18"] do
+      when version in ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do

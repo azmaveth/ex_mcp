@@ -22,11 +22,11 @@ defmodule ExMCP.Internal.MessageValidator do
           protocol_version: String.t() | nil
         }
 
-  # JSON-RPC 2.0 error codes
-  @invalid_request -32600
-  @method_not_found -32601
-  @invalid_params -32602
-  @internal_error -32603
+  alias ExMCP.Protocol.ErrorCodes
+
+  @invalid_request ErrorCodes.invalid_request()
+  @invalid_params ErrorCodes.invalid_params()
+  @internal_error ErrorCodes.internal_error()
 
   @doc """
   Creates a new validation session state.
@@ -77,16 +77,6 @@ defmodule ExMCP.Internal.MessageValidator do
   """
   @spec validate_message(map() | list(), session_state()) ::
           {validation_result(), session_state()}
-  # Special case: Reject batch requests for protocol version 2025-06-18
-  def validate_message(messages, %{protocol_version: "2025-06-18"} = state)
-      when is_list(messages) do
-    {{:error,
-      create_error(
-        @invalid_request,
-        "Batch requests are not supported in protocol version 2025-06-18"
-      )}, state}
-  end
-
   def validate_message(messages, state) when is_list(messages) do
     # Handle batch requests
     if Enum.empty?(messages) do
@@ -342,22 +332,6 @@ defmodule ExMCP.Internal.MessageValidator do
   defp type_of(value) when is_map(value), do: "object"
   defp type_of(value) when is_atom(value), do: "atom"
   defp type_of(_), do: "unknown"
-
-  @doc """
-  Validates method availability for a given protocol version.
-  """
-  @spec validate_method_version(String.t(), String.t()) :: :ok | {:error, map()}
-  def validate_method_version(method, version) do
-    if ExMCP.Internal.Protocol.method_available?(method, version) do
-      :ok
-    else
-      {:error,
-       create_error(@method_not_found, "Method not available in protocol version", %{
-         method: method,
-         version: version
-       })}
-    end
-  end
 
   @doc """
   Validates that required parameters are present for specific methods.

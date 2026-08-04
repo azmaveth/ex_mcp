@@ -12,7 +12,11 @@ defmodule ExMCP.ComplianceTestHelpers do
   Sets up a test client for the specified MCP version.
   Returns {:ok, client} or {:error, reason}.
   """
-  def setup_test_client(version) when version in ["2024-11-05", "2025-03-26", "2025-06-18"] do
+  def setup_test_client(version) do
+    unless ExMCP.Internal.VersionRegistry.supported?(version) do
+      raise ArgumentError, "unsupported compliance-test version: #{inspect(version)}"
+    end
+
     # Create a test server handler for the specific version
     handler_module = get_handler_module(version)
 
@@ -94,7 +98,7 @@ defmodule ExMCP.ComplianceTestHelpers do
   Validates that a test result matches expected structure for the given version.
   """
   def validate_version_compatibility(result, version, feature) do
-    newer_versions = ["2025-03-26", "2025-06-18"]
+    newer_versions = ["2025-03-26", "2025-06-18", "2025-11-25"]
     is_newer_version = version in newer_versions
 
     case feature do
@@ -163,6 +167,7 @@ defmodule ExMCP.ComplianceTestHelpers do
       "2024-11-05" -> ExMCP.Compliance.Handlers.Handler20241105
       "2025-03-26" -> ExMCP.Compliance.Handlers.Handler20250326
       "2025-06-18" -> ExMCP.Compliance.Handlers.Handler20250618
+      "2025-11-25" -> ExMCP.Compliance.Handlers.Handler20251125
     end
   end
 end

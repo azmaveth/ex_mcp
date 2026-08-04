@@ -9,9 +9,7 @@ defmodule ExMCP.Protocol.VersionNegotiator do
 
   require Logger
   alias ExMCP.Authorization.ScopeValidator
-
-  @supported_versions ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
-  @latest_version "2025-11-25"
+  alias ExMCP.Internal.VersionRegistry
 
   @doc """
   Negotiate the protocol version based on client capabilities.
@@ -41,7 +39,7 @@ defmodule ExMCP.Protocol.VersionNegotiator do
     # Find the highest version that both client and server support
     compatible_versions =
       client_versions
-      |> Enum.filter(&(&1 in @supported_versions))
+      |> Enum.filter(&(&1 in VersionRegistry.supported_versions()))
       |> Enum.sort(&version_compare/2)
 
     case compatible_versions do
@@ -64,20 +62,20 @@ defmodule ExMCP.Protocol.VersionNegotiator do
   Get the list of supported protocol versions.
   """
   @spec supported_versions() :: [String.t()]
-  def supported_versions, do: @supported_versions
+  def supported_versions, do: VersionRegistry.supported_versions()
 
   @doc """
   Get the latest supported protocol version.
   """
   @spec latest_version() :: String.t()
-  def latest_version, do: @latest_version
+  def latest_version, do: VersionRegistry.latest_version()
 
   @doc """
   Check if a specific version is supported.
   """
   @spec supported?(String.t()) :: boolean()
   def supported?(version) when is_binary(version) do
-    version in @supported_versions
+    VersionRegistry.supported?(version)
   end
 
   def supported?(_), do: false
@@ -85,8 +83,9 @@ defmodule ExMCP.Protocol.VersionNegotiator do
   @doc """
   Build the server capabilities response including protocol version info.
 
-  This is used during the initialization response to inform the client
-  about server capabilities and the negotiated protocol version.
+  This legacy helper does not build the capability map used by server
+  initialization on the wire. For wire capabilities, use
+  `ExMCP.Server.Capabilities`, which delegates to `VersionRegistry`.
   """
   @spec build_capabilities(String.t()) :: map()
   def build_capabilities(negotiated_version) do

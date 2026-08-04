@@ -1,0 +1,71 @@
+request_processor = fn version ->
+  %{
+    "capabilities" => %{"source" => "request-processor"},
+    "protocolVersion" => version,
+    "serverInfo" => %{"name" => "request-processor", "version" => "1.0.0"}
+  }
+end
+
+message_processor = %{
+  "capabilities" => %{"source" => "message-processor"},
+  "protocolVersion" => "2025-11-25",
+  "serverInfo" => %{"name" => "message-processor", "version" => "1.0.0"}
+}
+
+server_handler = %{
+  protocolVersion: "2025-11-25",
+  serverInfo: %{name: "ex_mcp", version: "0.1.0"},
+  capabilities: %{}
+}
+
+server_dsl = fn version ->
+  %{
+    "capabilities" => %{},
+    "protocolVersion" => version,
+    "serverInfo" => %{"name" => "dsl-server", "version" => "1.0.0"}
+  }
+end
+
+http_server = %{
+  "capabilities" => %{},
+  "protocolVersion" => "2025-03-26",
+  "serverInfo" => %{"name" => "http-server", "version" => "1.0.0"}
+}
+
+%{
+  "2025-11-25" => %{
+    request_processor: request_processor.("2025-11-25"),
+    message_processor: message_processor,
+    server_handler: server_handler,
+    server_dsl: server_dsl.("2025-11-25"),
+    http_server: http_server
+  },
+  "2025-06-18" => %{
+    request_processor: request_processor.("2025-06-18"),
+    message_processor: message_processor,
+    server_handler: server_handler,
+    server_dsl: server_dsl.("2025-06-18"),
+    http_server: http_server
+  },
+  "2025-03-26" => %{
+    request_processor: request_processor.("2025-03-26"),
+    message_processor: message_processor,
+    server_handler: server_handler,
+    server_dsl: server_dsl.("2025-03-26"),
+    http_server: http_server
+  },
+  "2024-11-05" => %{
+    request_processor: request_processor.("2024-11-05"),
+    message_processor: message_processor,
+    server_handler: server_handler,
+    server_dsl: server_dsl.("2024-11-05"),
+    http_server: http_server
+  },
+  "omitted" => %{
+    request_processor: request_processor.("2025-06-18"),
+    message_processor: message_processor,
+    server_handler: server_handler,
+    server_dsl: server_dsl.("2025-11-25"),
+    http_server: http_server
+  }
+}

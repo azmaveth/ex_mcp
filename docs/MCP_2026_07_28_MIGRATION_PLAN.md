@@ -3,7 +3,7 @@
 **Status:** Draft / not yet started
 **Target release:** ExMCP `2.0.0`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28) ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current ExMCP:** `1.0.0-rc.4`, implements MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
+**Current ExMCP:** `1.0.0-rc.5`, implements MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup shipping as `1.0.0-rc.5`
 **Author:** planning document — no code changes implied by this file
 **Last updated:** 2026-08-02

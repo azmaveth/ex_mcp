@@ -5,6 +5,7 @@ defmodule ExMCP.Compliance.StructureValidationTest do
     Spec20241105,
     Spec20250326,
     Spec20250618,
+    Spec20251125,
     VersionGenerator
   }
 
@@ -21,10 +22,11 @@ defmodule ExMCP.Compliance.StructureValidationTest do
 
   test "version generator creates all expected modules" do
     versions = VersionGenerator.supported_versions()
-    assert length(versions) == 3
+    assert versions == ExMCP.Internal.VersionRegistry.supported_versions()
     assert "2024-11-05" in versions
     assert "2025-03-26" in versions
     assert "2025-06-18" in versions
+    assert "2025-11-25" in versions
   end
 
   test "generated modules exist and are accessible" do
@@ -43,6 +45,7 @@ defmodule ExMCP.Compliance.StructureValidationTest do
     assert Spec20241105.version() == "2024-11-05"
     assert Spec20250326.version() == "2025-03-26"
     assert Spec20250618.version() == "2025-06-18"
+    assert Spec20251125.version() == "2025-11-25"
   end
 
   test "feature modules are properly imported" do

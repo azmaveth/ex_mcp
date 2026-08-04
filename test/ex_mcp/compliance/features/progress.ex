@@ -29,7 +29,7 @@ defmodule ExMCP.Compliance.Features.Progress do
       end
 
       # Progress message field (2025-03-26+)
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "progress notifications include message field" do
           ExMCP.Compliance.Features.Progress.test_progress_message(@version)
         end
@@ -227,7 +227,7 @@ defmodule ExMCP.Compliance.Features.Progress do
     end
   end
 
-  def test_progress_message(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_progress_message(version) when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -321,7 +321,7 @@ defmodule ExMCP.Compliance.Features.Progress do
 
     # Message field only in 2025-03-26+
     if Map.has_key?(params, "message") do
-      if version in ["2025-03-26", "2025-06-18"] do
+      if version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         assert is_binary(params["message"])
       else
         # Earlier versions shouldn't have message field

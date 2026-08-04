@@ -29,7 +29,7 @@ defmodule ExMCP.Compliance.Features.Logging do
       end
 
       # Set log level (2025-03-26+)
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "logging/setLevel works correctly" do
           ExMCP.Compliance.Features.Logging.test_set_log_level(@version)
         end
@@ -204,7 +204,7 @@ defmodule ExMCP.Compliance.Features.Logging do
     end
   end
 
-  def test_set_log_level(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_set_log_level(version) when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -225,7 +225,8 @@ defmodule ExMCP.Compliance.Features.Logging do
     end
   end
 
-  def test_log_level_persistence(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_log_level_persistence(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do

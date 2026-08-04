@@ -5,6 +5,7 @@ defmodule ExMCP.Compliance.NewStructureTest do
     Spec20241105,
     Spec20250326,
     Spec20250618,
+    Spec20251125,
     VersionGenerator
   }
 
@@ -21,7 +22,7 @@ defmodule ExMCP.Compliance.NewStructureTest do
       # Test that it has the expected functions
       versions = VersionGenerator.supported_versions()
       assert is_list(versions)
-      assert length(versions) == 3
+      assert versions == ExMCP.Internal.VersionRegistry.supported_versions()
     end
 
     test "feature modules load correctly" do
@@ -44,7 +45,8 @@ defmodule ExMCP.Compliance.NewStructureTest do
       version_modules = [
         ExMCP.Compliance.Spec20241105,
         ExMCP.Compliance.Spec20250326,
-        ExMCP.Compliance.Spec20250618
+        ExMCP.Compliance.Spec20250618,
+        ExMCP.Compliance.Spec20251125
       ]
 
       for module <- version_modules do
@@ -57,6 +59,7 @@ defmodule ExMCP.Compliance.NewStructureTest do
       assert Spec20241105.version() == "2024-11-05"
       assert Spec20250326.version() == "2025-03-26"
       assert Spec20250618.version() == "2025-06-18"
+      assert Spec20251125.version() == "2025-11-25"
     end
   end
 end

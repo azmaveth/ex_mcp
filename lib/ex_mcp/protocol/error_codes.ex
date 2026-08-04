@@ -19,7 +19,17 @@ defmodule ExMCP.Protocol.ErrorCodes do
   - `-32001` - Request cancelled: The request was cancelled by the client
   - `-32002` - Consent required: User consent is required for the operation
   - `-32003` - Consent denied: User denied consent for the operation
+  - `-32020` - Header mismatch
+  - `-32021` - Missing required client capability
+  - `-32022` - Unsupported protocol version
   - `-32000` - Generic server error: Catch-all for server-side errors
+
+  > #### Compatibility note {: .warning}
+  >
+  > The existing 1.x API assigns `-32002` to consent-required,
+  > resource-not-found, and prompt errors. Consequently,
+  > `error_message(:resource_not_found)` returns `"Consent required"`. The
+  > collision is retained through 1.x to avoid changing public and wire values.
 
   ## Usage
 
@@ -47,6 +57,9 @@ defmodule ExMCP.Protocol.ErrorCodes do
   @server_error -32000
   @resource_not_found -32002
   @url_elicitation_required -32042
+  @header_mismatch -32020
+  @missing_required_client_capability -32021
+  @unsupported_protocol_version -32022
 
   # Server-defined error codes range
   @server_error_start -32099
@@ -70,7 +83,13 @@ defmodule ExMCP.Protocol.ErrorCodes do
   @doc "Request cancelled: The request was cancelled by the client"
   def request_cancelled, do: @request_cancelled
 
-  @doc "Consent required: User consent is required for the operation"
+  @doc """
+  Consent required: User consent is required for the operation.
+
+  This legacy constructor shares `-32002` with resource-not-found and prompt
+  errors. It is retained for compatibility.
+  """
+  @deprecated "The -32002 consent/resource/prompt collision is retained only for 1.x compatibility"
   def consent_required, do: @consent_required
 
   @doc "Consent denied: User denied consent for the operation"
@@ -79,11 +98,26 @@ defmodule ExMCP.Protocol.ErrorCodes do
   @doc "Generic server error: Catch-all for server-side errors"
   def server_error, do: @server_error
 
-  @doc "Resource not found: The requested resource does not exist"
+  @doc """
+  Resource not found: The requested resource does not exist.
+
+  This legacy constructor returns `-32002`, which also means consent-required
+  and prompt error in 1.x. It is retained for compatibility.
+  """
+  @deprecated "The -32002 consent/resource/prompt collision is retained only for 1.x compatibility"
   def resource_not_found, do: @resource_not_found
 
   @doc "URL elicitation required: The server requires URL-mode elicitation"
   def url_elicitation_required, do: @url_elicitation_required
+
+  @doc "Header mismatch between negotiated protocol state and the request"
+  def header_mismatch, do: @header_mismatch
+
+  @doc "A required client capability was not declared"
+  def missing_required_client_capability, do: @missing_required_client_capability
+
+  @doc "The requested protocol version is not supported"
+  def unsupported_protocol_version, do: @unsupported_protocol_version
 
   @doc """
   Returns a human-readable error message for the given error code or atom.
@@ -107,6 +141,9 @@ defmodule ExMCP.Protocol.ErrorCodes do
     @consent_required => "Consent required",
     @consent_denied => "Consent denied",
     @server_error => "Server error",
+    @header_mismatch => "Header mismatch",
+    @missing_required_client_capability => "Missing required client capability",
+    @unsupported_protocol_version => "Unsupported protocol version",
     @url_elicitation_required => "URL elicitation required"
   }
 
@@ -122,6 +159,9 @@ defmodule ExMCP.Protocol.ErrorCodes do
     :consent_denied => @consent_denied,
     :server_error => @server_error,
     :resource_not_found => @resource_not_found,
+    :header_mismatch => @header_mismatch,
+    :missing_required_client_capability => @missing_required_client_capability,
+    :unsupported_protocol_version => @unsupported_protocol_version,
     :url_elicitation_required => @url_elicitation_required
   }
 
@@ -170,7 +210,15 @@ defmodule ExMCP.Protocol.ErrorCodes do
   """
   @spec is_mcp_error?(integer()) :: boolean()
   def is_mcp_error?(code) when is_integer(code) do
-    code in [@request_cancelled, @consent_required, @consent_denied, @url_elicitation_required] or
+    code in [
+      @request_cancelled,
+      @consent_required,
+      @consent_denied,
+      @header_mismatch,
+      @missing_required_client_capability,
+      @unsupported_protocol_version,
+      @url_elicitation_required
+    ] or
       (code >= @server_error_start and code <= @server_error_end)
   end
 
@@ -212,21 +260,6 @@ defmodule ExMCP.Protocol.ErrorCodes do
     %{code: code, message: message}
   end
 
-  # Map from atom to error code for quick lookup
-  @atom_to_code_map %{
-    parse_error: @parse_error,
-    invalid_request: @invalid_request,
-    method_not_found: @method_not_found,
-    invalid_params: @invalid_params,
-    internal_error: @internal_error,
-    request_cancelled: @request_cancelled,
-    consent_required: @consent_required,
-    consent_denied: @consent_denied,
-    server_error: @server_error,
-    resource_not_found: @resource_not_found,
-    url_elicitation_required: @url_elicitation_required
-  }
-
   # Private helper to convert atom to error code
-  defp atom_to_code(atom), do: Map.get(@atom_to_code_map, atom, @server_error)
+  defp atom_to_code(atom), do: Map.get(@atom_to_code, atom, @server_error)
 end

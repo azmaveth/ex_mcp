@@ -201,6 +201,12 @@ defmodule ExMCP.Client.Handler do
   Instead of a form schema, the server sends a URL for the client to navigate to.
   Available in protocol version 2025-11-25.
 
+  URL-mode requests are routed here whenever this callback is implemented. For
+  compatibility, handlers that only implement `handle_elicitation_create/3`
+  continue to receive URL-mode requests through that callback; its second
+  argument is then a map containing `"mode"`, `"url"`, and
+  `"elicitationId"`, and ExMCP logs a once-per-handler warning.
+
   ## Parameters
 
   - `message` - Human-readable message explaining what information is needed

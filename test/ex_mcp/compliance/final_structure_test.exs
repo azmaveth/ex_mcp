@@ -1,10 +1,13 @@
 defmodule ExMCP.Compliance.FinalStructureTest do
   use ExUnit.Case, async: false
 
+  alias ExMCP.Internal.VersionRegistry
+
   alias ExMCP.Compliance.{
     Spec20241105,
     Spec20250326,
     Spec20250618,
+    Spec20251125,
     VersionGenerator
   }
 
@@ -25,11 +28,13 @@ defmodule ExMCP.Compliance.FinalStructureTest do
       assert Code.ensure_loaded?(ExMCP.Compliance.Spec20241105)
       assert Code.ensure_loaded?(ExMCP.Compliance.Spec20250326)
       assert Code.ensure_loaded?(ExMCP.Compliance.Spec20250618)
+      assert Code.ensure_loaded?(ExMCP.Compliance.Spec20251125)
 
       # Test that they return correct versions
       assert Spec20241105.version() == "2024-11-05"
       assert Spec20250326.version() == "2025-03-26"
       assert Spec20250618.version() == "2025-06-18"
+      assert Spec20251125.version() == "2025-11-25"
     end
 
     test "all feature modules are loaded and functional" do
@@ -49,10 +54,11 @@ defmodule ExMCP.Compliance.FinalStructureTest do
 
     test "version generator provides correct information" do
       versions = VersionGenerator.supported_versions()
-      assert length(versions) == 3
+      assert versions == VersionRegistry.supported_versions()
       assert "2024-11-05" in versions
       assert "2025-03-26" in versions
       assert "2025-06-18" in versions
+      assert "2025-11-25" in versions
 
       # Test module mapping
       assert VersionGenerator.module_for_version("2024-11-05") ==
@@ -63,6 +69,9 @@ defmodule ExMCP.Compliance.FinalStructureTest do
 
       assert VersionGenerator.module_for_version("2025-06-18") ==
                Spec20250618
+
+      assert VersionGenerator.module_for_version("2025-11-25") ==
+               Spec20251125
     end
 
     test "feature test functions are accessible" do
@@ -96,6 +105,7 @@ defmodule ExMCP.Compliance.FinalStructureTest do
       # But should work for 2025-03-26+
       Authorization.test_oauth_authorization("2025-03-26")
       Authorization.test_oauth_authorization("2025-06-18")
+      Authorization.test_oauth_authorization("2025-11-25")
 
       # Batch processing should only work for 2025-03-26 (removed in 2025-06-18)
       assert_raise FunctionClauseError, fn ->
@@ -112,7 +122,7 @@ defmodule ExMCP.Compliance.FinalStructureTest do
     end
 
     test "basic feature tests work for all versions" do
-      versions = ["2024-11-05", "2025-03-26", "2025-06-18"]
+      versions = VersionRegistry.supported_versions()
 
       for version <- versions do
         # These should work for all versions

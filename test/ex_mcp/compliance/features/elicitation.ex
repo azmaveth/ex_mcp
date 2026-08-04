@@ -12,7 +12,7 @@ defmodule ExMCP.Compliance.Features.Elicitation do
       @version unquote(version)
 
       # Elicitation capability (2025-06-18+)
-      if @version == "2025-06-18" do
+      if @version in ["2025-06-18", "2025-11-25"] do
         test "elicitation support is stable" do
           ExMCP.Compliance.Features.Elicitation.test_elicitation_stable(@version)
         end
@@ -38,7 +38,7 @@ defmodule ExMCP.Compliance.Features.Elicitation do
   alias ExMCP.Client
 
   # Actual test implementations
-  def test_elicitation_stable(version) when version == "2025-06-18" do
+  def test_elicitation_stable(version) when version in ["2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -53,7 +53,7 @@ defmodule ExMCP.Compliance.Features.Elicitation do
     end
   end
 
-  def test_elicitation_structure(version) when version == "2025-06-18" do
+  def test_elicitation_structure(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test elicitation request structure
     elicit_request = %{
       "message" => "Please provide your API key",
@@ -79,7 +79,7 @@ defmodule ExMCP.Compliance.Features.Elicitation do
     validate_json_schema(elicit_request["requestedSchema"])
   end
 
-  def test_elicitation_schema(version) when version == "2025-06-18" do
+  def test_elicitation_schema(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test various elicitation schemas
     schemas = [
       # Simple string input
@@ -121,7 +121,7 @@ defmodule ExMCP.Compliance.Features.Elicitation do
     end
   end
 
-  def test_complex_elicitation(version) when version == "2025-06-18" do
+  def test_complex_elicitation(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test complex elicitation scenarios
     complex_schema = %{
       "type" => "object",

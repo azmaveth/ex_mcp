@@ -29,48 +29,24 @@ defmodule ExMCP.Server.Dispatch do
   """
 
   alias ExMCP.Internal.JSONRPC
-  alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Protocol.{ErrorCodes, Methods}
   alias ExMCP.Server.ResultNormalizer
 
   @type handler_state :: term()
   @type result ::
           {:response, map(), handler_state()} | {:notification, handler_state()}
 
-  # Methods this dispatcher answers. Transports use `known_method?/1` to decide
-  # whether to fall back to their own custom-method escape hatch.
-  @methods [
-    "initialize",
-    "ping",
-    "tools/list",
-    "tools/call",
-    "resources/list",
-    "resources/templates/list",
-    "resources/read",
-    "resources/subscribe",
-    "resources/unsubscribe",
-    "prompts/list",
-    "prompts/get",
-    "completion/complete",
-    "logging/setLevel",
-    "roots/list",
-    "tasks/get",
-    "tasks/list",
-    "tasks/result",
-    "tasks/cancel",
-    "notifications/elicitation/complete"
-  ]
-
   @doc """
   Returns the list of MCP methods handled by this dispatcher.
   """
   @spec methods() :: [String.t()]
-  def methods, do: @methods
+  def methods, do: Methods.methods_for(:server_dispatch)
 
   @doc """
   Whether `method` is part of the shared MCP method table.
   """
   @spec known_method?(String.t()) :: boolean()
-  def known_method?(method), do: method in @methods
+  def known_method?(method), do: method in Methods.methods_for(:server_dispatch)
 
   @doc """
   Dispatches a decoded JSON-RPC request or notification to `handler_module`.

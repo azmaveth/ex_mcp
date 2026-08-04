@@ -23,16 +23,10 @@ defmodule ExMCP.Types do
   > implement that draft yet; track it for a post-1.0 release.
   """
 
-  # Protocol version constants
-  @latest_protocol_version "2025-11-25"
-  @jsonrpc_version "2.0"
+  alias ExMCP.Protocol.ErrorCodes
 
-  # Error code constants
-  @parse_error -32700
-  @invalid_request -32600
-  @method_not_found -32601
-  @invalid_params -32602
-  @internal_error -32603
+  # Protocol constants
+  @jsonrpc_version "2.0"
 
   # Common protocol atoms are now safely created in Client.atomize_keys/1
 
@@ -587,14 +581,16 @@ defmodule ExMCP.Types do
           | jsonrpc_error_response()
 
   # Accessor functions for constants
-  def latest_protocol_version, do: @latest_protocol_version
+  @doc "Returns the latest protocol version from the canonical version registry."
+  @spec latest_protocol_version() :: String.t()
+  def latest_protocol_version, do: ExMCP.Internal.VersionRegistry.latest_version()
   def jsonrpc_version, do: @jsonrpc_version
 
-  def parse_error, do: @parse_error
-  def invalid_request, do: @invalid_request
-  def method_not_found, do: @method_not_found
-  def invalid_params, do: @invalid_params
-  def internal_error, do: @internal_error
+  def parse_error, do: ErrorCodes.parse_error()
+  def invalid_request, do: ErrorCodes.invalid_request()
+  def method_not_found, do: ErrorCodes.method_not_found()
+  def invalid_params, do: ErrorCodes.invalid_params()
+  def internal_error, do: ErrorCodes.internal_error()
 
   # Union types for results
   @type client_result ::

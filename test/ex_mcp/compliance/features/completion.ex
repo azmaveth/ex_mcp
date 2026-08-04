@@ -12,7 +12,7 @@ defmodule ExMCP.Compliance.Features.Completion do
       @version unquote(version)
 
       # Completion capability (2025-03-26+)
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "completion/complete for arguments works" do
           ExMCP.Compliance.Features.Completion.test_argument_completion(@version)
         end
@@ -31,7 +31,7 @@ defmodule ExMCP.Compliance.Features.Completion do
       end
 
       # Enhanced completion in 2025-06-18
-      if @version == "2025-06-18" do
+      if @version in ["2025-06-18", "2025-11-25"] do
         test "completion supports multiple reference types" do
           ExMCP.Compliance.Features.Completion.test_multiple_reference_types(@version)
         end
@@ -49,7 +49,8 @@ defmodule ExMCP.Compliance.Features.Completion do
   alias ExMCP.Client
 
   # Actual test implementations
-  def test_argument_completion(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_argument_completion(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -77,7 +78,8 @@ defmodule ExMCP.Compliance.Features.Completion do
     end
   end
 
-  def test_completion_suggestions(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_completion_suggestions(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -109,7 +111,8 @@ defmodule ExMCP.Compliance.Features.Completion do
     end
   end
 
-  def test_empty_prefix_completion(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_empty_prefix_completion(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -139,7 +142,8 @@ defmodule ExMCP.Compliance.Features.Completion do
     end
   end
 
-  def test_completion_filtering(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_completion_filtering(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -177,7 +181,7 @@ defmodule ExMCP.Compliance.Features.Completion do
     end
   end
 
-  def test_multiple_reference_types(version) when version == "2025-06-18" do
+  def test_multiple_reference_types(version) when version in ["2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do
@@ -207,7 +211,7 @@ defmodule ExMCP.Compliance.Features.Completion do
     end
   end
 
-  def test_completion_values(version) when version == "2025-06-18" do
+  def test_completion_values(version) when version in ["2025-06-18", "2025-11-25"] do
     {:ok, test_context} = setup_test_client(version)
 
     try do

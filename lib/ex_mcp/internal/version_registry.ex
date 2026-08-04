@@ -10,6 +10,9 @@ defmodule ExMCP.Internal.VersionRegistry do
   @type capability_key :: atom()
   @type feature :: atom()
 
+  require Logger
+  alias ExMCP.Protocol.Methods
+
   # Protocol versions in order of preference (newest first)
   @versions [
     {"2025-11-25", "Latest spec with tasks, icons, and URL elicitation"},
@@ -30,7 +33,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   Get the latest stable protocol version.
   """
   @spec latest_version() :: version()
-  def latest_version, do: "2025-11-25"
+  def latest_version, do: @versions |> hd() |> elem(0)
 
   @doc """
   Get the preferred protocol version from configuration or default.
@@ -128,7 +131,23 @@ defmodule ExMCP.Internal.VersionRegistry do
     }
   end
 
-  def capabilities_for_version(_unknown), do: capabilities_for_version(latest_version())
+  def capabilities_for_version(unknown) do
+    Logger.warning(
+      "Unknown MCP protocol version #{inspect(unknown)}; using #{latest_version()} capabilities"
+    )
+
+    capabilities_for_version(latest_version())
+  end
+
+  @doc "Returns the protocol era for a supported version."
+  @spec era_for(version()) :: :legacy | :modern | :unknown
+  def era_for(version) do
+    if supported?(version), do: :legacy, else: :unknown
+  end
+
+  @doc "Returns whether a version uses the post-2025-11-25 protocol era."
+  @spec modern?(version()) :: boolean()
+  def modern?(_version), do: false
 
   @doc """
   Check if a feature is available in a specific version.
@@ -184,17 +203,8 @@ defmodule ExMCP.Internal.VersionRegistry do
       supports_batch: false,
       supports_progress: true,
       supports_cancellation: true,
-      notification_methods: [
-        "notifications/initialized",
-        "notifications/tools/list_changed",
-        "notifications/resources/list_changed",
-        "notifications/prompts/list_changed",
-        "notifications/progress",
-        "notifications/message",
-        "notifications/cancelled",
-        "notifications/resources/updated",
-        "notifications/roots/list_changed"
-      ]
+      notification_methods: Methods.notification_methods("2024-11-05"),
+      request_methods: []
     }
   end
 
@@ -204,17 +214,8 @@ defmodule ExMCP.Internal.VersionRegistry do
       supports_batch: true,
       supports_progress: true,
       supports_cancellation: true,
-      notification_methods: [
-        "notifications/initialized",
-        "notifications/tools/list_changed",
-        "notifications/resources/list_changed",
-        "notifications/prompts/list_changed",
-        "notifications/progress",
-        "notifications/message",
-        "notifications/cancelled",
-        "notifications/resources/updated",
-        "notifications/roots/list_changed"
-      ]
+      notification_methods: Methods.notification_methods("2025-03-26"),
+      request_methods: []
     }
   end
 
@@ -224,17 +225,8 @@ defmodule ExMCP.Internal.VersionRegistry do
       supports_batch: false,
       supports_progress: true,
       supports_cancellation: true,
-      notification_methods: [
-        "notifications/initialized",
-        "notifications/tools/list_changed",
-        "notifications/resources/list_changed",
-        "notifications/prompts/list_changed",
-        "notifications/progress",
-        "notifications/message",
-        "notifications/cancelled",
-        "notifications/resources/updated",
-        "notifications/roots/list_changed"
-      ]
+      notification_methods: Methods.notification_methods("2025-06-18"),
+      request_methods: []
     }
   end
 
@@ -244,29 +236,18 @@ defmodule ExMCP.Internal.VersionRegistry do
       supports_batch: false,
       supports_progress: true,
       supports_cancellation: true,
-      notification_methods: [
-        "notifications/initialized",
-        "notifications/tools/list_changed",
-        "notifications/resources/list_changed",
-        "notifications/prompts/list_changed",
-        "notifications/progress",
-        "notifications/message",
-        "notifications/cancelled",
-        "notifications/resources/updated",
-        "notifications/roots/list_changed",
-        "notifications/tasks/status",
-        "notifications/elicitation/complete"
-      ],
-      request_methods: [
-        "tasks/get",
-        "tasks/list",
-        "tasks/result",
-        "tasks/cancel"
-      ]
+      notification_methods: Methods.notification_methods("2025-11-25"),
+      request_methods: Methods.introduced_request_methods("2025-11-25")
     }
   end
 
-  def message_format(_unknown), do: message_format(latest_version())
+  def message_format(unknown) do
+    Logger.warning(
+      "Unknown MCP protocol version #{inspect(unknown)}; using #{latest_version()} message format"
+    )
+
+    message_format(latest_version())
+  end
 
   @doc """
   Negotiate protocol version between client and server.

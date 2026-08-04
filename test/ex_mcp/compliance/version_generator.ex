@@ -5,13 +5,30 @@ defmodule ExMCP.Compliance.VersionGenerator do
   This module creates individual test modules for each MCP specification version,
   each using the appropriate feature modules based on version compatibility.
 
-  Adding a new version is as simple as adding it to @versions list.
+  Supported versions come from `ExMCP.Internal.VersionRegistry`. Adding a new
+  version requires an explicit handler entry below; missing entries fail at
+  compile time instead of silently falling back to a generic handler.
   """
 
-  @versions ["2024-11-05", "2025-03-26", "2025-06-18"]
+  alias ExMCP.Internal.VersionRegistry
+
+  @versions VersionRegistry.supported_versions()
+  @handlers %{
+    "2024-11-05" => ExMCP.Compliance.Handlers.Handler20241105,
+    "2025-03-26" => ExMCP.Compliance.Handlers.Handler20250326,
+    "2025-06-18" => ExMCP.Compliance.Handlers.Handler20250618,
+    "2025-11-25" => ExMCP.Compliance.Handlers.Handler20251125
+  }
+
+  @missing_handlers @versions -- Map.keys(@handlers)
+
+  if @missing_handlers != [] do
+    raise "missing compliance handlers for: #{Enum.join(@missing_handlers, ", ")}"
+  end
 
   # Generate a test module for each version
   for version <- @versions do
+    handler = Map.fetch!(@handlers, version)
     # Create module name like ExMCP.Compliance.Spec20241105
     module_name_suffix = String.replace(version, "-", "")
     module_name = :"Elixir.ExMCP.Compliance.Spec#{module_name_suffix}"
@@ -19,7 +36,10 @@ defmodule ExMCP.Compliance.VersionGenerator do
     defmodule module_name do
       use ExUnit.Case, async: true
 
+      alias ExMCP.Internal.VersionRegistry
+
       @version version
+      @handler handler
 
       # Import feature modules
       use ExMCP.Compliance.Features.Tools, version
@@ -48,23 +68,14 @@ defmodule ExMCP.Compliance.VersionGenerator do
 
       # Version-specific setup
       setup do
-        # Get the appropriate handler for this version
-        handler =
-          case @version do
-            "2024-11-05" -> ExMCP.Compliance.Handlers.Handler20241105
-            "2025-03-26" -> ExMCP.Compliance.Handlers.Handler20250326
-            "2025-06-18" -> ExMCP.Compliance.Handlers.Handler20250618
-            _ -> ExMCP.Server.Handler
-          end
-
-        {:ok, version: @version, spec_version: @version, handler: handler}
+        {:ok, version: @version, spec_version: @version, handler: @handler}
       end
 
       # Version-specific tests that don't fit into feature categories
       test "protocol version negotiation works for #{@version}" do
         # Test that this specific version can be negotiated
         assert is_binary(@version)
-        assert @version in ["2024-11-05", "2025-03-26", "2025-06-18"]
+        assert @version in VersionRegistry.supported_versions()
         # Add actual negotiation test logic here
       end
 

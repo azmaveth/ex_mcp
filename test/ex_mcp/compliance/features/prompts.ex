@@ -20,13 +20,13 @@ defmodule ExMCP.Compliance.Features.Prompts do
       end
 
       # Version-specific features
-      if @version in ["2025-03-26", "2025-06-18"] do
+      if @version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
         test "prompt list change notifications work" do
           ExMCP.Compliance.Features.Prompts.test_list_change_notifications(@version)
         end
       end
 
-      if @version == "2025-06-18" do
+      if @version in ["2025-06-18", "2025-11-25"] do
         test "prompts have title fields" do
           ExMCP.Compliance.Features.Prompts.test_prompt_titles(@version)
         end
@@ -94,9 +94,10 @@ defmodule ExMCP.Compliance.Features.Prompts do
     end
   end
 
-  def test_list_change_notifications(version) when version in ["2025-03-26", "2025-06-18"] do
+  def test_list_change_notifications(version)
+      when version in ["2025-03-26", "2025-06-18", "2025-11-25"] do
     # Test prompt list change notifications
-    assert version in ["2025-03-26", "2025-06-18"]
+    assert version in ["2025-03-26", "2025-06-18", "2025-11-25"]
 
     # Test notification structure
     notification = %{
@@ -127,13 +128,13 @@ defmodule ExMCP.Compliance.Features.Prompts do
 
     # Version-specific validations
     case version do
-      "2025-06-18" ->
+      v when v in ["2025-06-18", "2025-11-25"] ->
         # 2025-06-18 may have title field
         if Map.has_key?(prompt, :title) do
           assert is_binary(prompt.title)
         end
 
-      v when v in ["2025-03-26", "2025-06-18"] ->
+      v when v in ["2025-03-26", "2025-06-18", "2025-11-25"] ->
         # These versions may have additional prompt features
         :ok
 
@@ -233,7 +234,7 @@ defmodule ExMCP.Compliance.Features.Prompts do
     refute Map.has_key?(notification, "id")
   end
 
-  def test_prompt_titles(version) when version == "2025-06-18" do
+  def test_prompt_titles(version) when version in ["2025-06-18", "2025-11-25"] do
     # Test that prompts have title fields in 2025-06-18
     {:ok, test_context} = setup_test_client(version)
 

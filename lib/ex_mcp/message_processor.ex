@@ -8,6 +8,7 @@ defmodule ExMCP.MessageProcessor do
 
   alias ExMCP.Internal.{JSONRPC, MessageValidator}
   alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Protocol.Methods
   alias ExMCP.Protocol.ResponseBuilder
 
   require Logger
@@ -285,35 +286,12 @@ defmodule ExMCP.MessageProcessor do
     end
   end
 
-  # Method table mirrors ExMCP.Server.Dispatch so the HTTP transport answers
-  # the same set of methods as the process-based transports (audit M9/M15).
-  # `logging/setLevel` is routed through the handler rather than answered with
-  # a canned success (audit M10).
-  @method_handlers %{
-    "tools/list" => :handle_tools_list,
-    "tools/call" => :handle_tools_call,
-    "resources/list" => :handle_resources_list,
-    "resources/templates/list" => :handle_resource_templates_list,
-    "resources/read" => :handle_resources_read,
-    "resources/subscribe" => :handle_resources_subscribe,
-    "resources/unsubscribe" => :handle_resources_unsubscribe,
-    "prompts/list" => :handle_prompts_list,
-    "prompts/get" => :handle_prompts_get,
-    "completion/complete" => :handle_completion_complete,
-    "logging/setLevel" => :handle_set_log_level,
-    "roots/list" => :handle_roots_list,
-    "tasks/get" => :handle_task_get,
-    "tasks/list" => :handle_task_list,
-    "tasks/result" => :handle_task_result,
-    "tasks/cancel" => :handle_task_cancel
-  }
-
   @doc false
   @spec dispatched_methods() :: [String.t()]
-  def dispatched_methods, do: Map.keys(@method_handlers)
+  def dispatched_methods, do: Map.keys(Methods.handler_map(:message_processor))
 
   defp dispatch_method(method, conn, handler, params, id) do
-    case Map.fetch(@method_handlers, method) do
+    case Map.fetch(Methods.handler_map(:message_processor), method) do
       {:ok, handler_fun} ->
         apply(MethodHandlers, handler_fun, [conn, handler, params, id])
 

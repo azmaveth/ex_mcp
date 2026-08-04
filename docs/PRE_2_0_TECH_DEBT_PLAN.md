@@ -1,10 +1,10 @@
 # Pre-2.0 Technical Debt Plan — target `1.0.0-rc.5`
 
-**Status:** Draft / not yet started
+**Status:** Implemented; release gates passed
 **Target release:** ExMCP `1.0.0-rc.5` (then `1.0.0` stable)
 **Protocol:** unchanged — MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Companion doc:** [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md) — the 2.0 protocol work this unblocks
-**Last updated:** 2026-08-02
+**Last updated:** 2026-08-04
 
 ---
 
@@ -57,22 +57,22 @@ This is the part that makes the plan credible. **Track 0 lands before any other 
 Write tests that pin *current* behavior, before touching the code they describe. They must
 pass unchanged at the end of every subsequent track.
 
-- [ ] **Capability snapshot test.** For each of the four supported versions, snapshot the exact
+- [x] **Capability snapshot test.** For each of the four supported versions, snapshot the exact
       map returned by `ExMCP.Server.Capabilities.build_capabilities/2` — this is the one that
       actually reaches the wire, via `server/handler.ex:300`. Assert deep equality against a
       committed fixture.
-- [ ] **Initialize-result golden test.** For each version, snapshot the full `initialize`
+- [x] **Initialize-result golden test.** For each version, snapshot the full `initialize`
       result from all five implementations that produce one (see §4.6): `RequestProcessor`,
       `MessageProcessor`, `Server.Handler`, `Server.DSL`, `Transport.HTTPServer`. Include the
       **omitted-`protocolVersion`** case, which is currently untested and is exactly where a
       refactor would silently drift (`request_processor.ex:119` defaults to `"2025-06-18"`).
-- [ ] **Method-table equality test.** Assert that the five parallel method tables (§4.2) agree
+- [x] **Method-table equality test.** Assert that the five parallel method tables (§4.2) agree
       with each other today, method-for-method. This test is what lets Track B swap in a single
       table safely — it must pass both before and after.
-- [ ] **Error-code snapshot.** Assert the numeric code returned by every public error
+- [x] **Error-code snapshot.** Assert the numeric code returned by every public error
       constructor across `ErrorCodes`, `Error`, `SecurityError`, and `ACP.Types`, including the
       three distinct meanings currently attached to `-32002` (§5.2).
-- [ ] **Elicitation routing test.** Pin which client callback fires for form-mode and URL-mode
+- [x] **Elicitation routing test.** Pin which client callback fires for form-mode and URL-mode
       elicitations, **through the real client** rather than by invoking the callback directly.
       Track G changes this deliberately — the test is what makes the change visible in review
       instead of silent. It is the one Track 0 test expected to be updated, and its diff should
@@ -116,19 +116,19 @@ reconciliation.
 | `lib/ex_mcp/types.ex` L27 | `@latest_protocol_version` scalar, exposed as `ExMCP.Types.latest_protocol_version/0`, **zero callers** in `lib/` or `test/` | **Delegate to VersionRegistry** |
 | `config/config.exs` L8 | `protocol_version: "2025-11-25"`, read by `VersionRegistry.preferred_version/0` and `transport/http.ex:169` | **Leave the value alone**; document only |
 
-- [ ] `VersionNegotiator.@supported_versions` / `@latest_version` → delegate to
+- [x] `VersionNegotiator.@supported_versions` / `@latest_version` → delegate to
       `VersionRegistry`. The only lib call site is `transport/http.ex:170`
       (`VersionNegotiator.latest_version/0` as the third fallback for the
       `MCP-Protocol-Version` header) and it returns the same string either way.
-- [ ] `ExMCP.Types.latest_protocol_version/0` → delegate to `VersionRegistry.latest_version/0`.
+- [x] `ExMCP.Types.latest_protocol_version/0` → delegate to `VersionRegistry.latest_version/0`.
       Same value; zero callers. Add the missing `@doc`.
-- [ ] Add `era_for/1` and `modern?/1` helpers to `VersionRegistry`, returning `:legacy` for all
+- [x] Add `era_for/1` and `modern?/1` helpers to `VersionRegistry`, returning `:legacy` for all
       four current versions. **Purely additive**, unused in rc.5, consumed heavily by 2.0.
-- [ ] Add `request_methods: []` to the three `message_format/1` clauses that omit it
+- [x] Add `request_methods: []` to the three `message_format/1` clauses that omit it
       (`version_registry.ex` L187-240) — only the `"2025-11-25"` clause (L241-267) has the key
       today, so any consumer doing `Map.get(format, :request_methods)` gets `nil` for older
       versions. Internal shape fix, no wire effect.
-- [ ] Log a warning (do **not** change the return) when `capabilities_for_version/1`
+- [x] Log a warning (do **not** change the return) when `capabilities_for_version/1`
       (L131) or `message_format/1` (L269) falls through to the latest-version default for an
       unrecognised version string. A typo'd version currently gets full 2025-11-25 capabilities
       silently.
@@ -155,16 +155,16 @@ means five coordinated edits.
 | 4 | `lib/ex_mcp/internal/protocol.ex` L555-568 | version-gating MapSets |
 | 5 | `lib/ex_mcp/internal/version_registry.ex` L187-265 | `message_format/1` `notification_methods` / `request_methods` |
 
-- [ ] Introduce `ExMCP.Protocol.Methods` — a single table of
+- [x] Introduce `ExMCP.Protocol.Methods` — a single table of
       `{method, min_version, max_version, kind, handler}` rows.
-- [ ] **Prove equality before switching.** The Track 0 method-table test asserts the five
+- [x] **Prove equality before switching.** The Track 0 method-table test asserts the five
       current tables agree; extend it to assert the new table reproduces each of the five
       exactly. Only then rewire consumers.
-- [ ] Rewire all five consumers to derive from `Methods`. Delete the local tables.
-- [ ] Delete the dead `@methods_v20250326_plus` branch — the MapSet is empty
+- [x] Rewire all five consumers to derive from `Methods`. Delete the local tables.
+- [x] Delete the dead `@methods_v20250326_plus` branch — the MapSet is empty
       (`internal/protocol.ex` L555), making the `cond` branch at L584-585 and
       `@versions_v20250326_plus` (L569) unreachable.
-- [ ] Decide on the phantom `"draft"` version (`internal/protocol.ex` L565-568, gating
+- [x] Decide on the phantom `"draft"` version (`internal/protocol.ex` L565-568, gating
       `"server/discover"` and `"subscriptions/listen"`). No `lib/` caller ever passes `"draft"`,
       but `test/ex_mcp/version_registry_test.exs` L161-162 asserts it. Either keep it as the
       2026-07-28 staging ground (recommended — it is already the right shape) or delete it and
@@ -180,14 +180,14 @@ means five coordinated edits.
 The `-32002` collision is a genuine bug but resolving it is wire-visible, so it is deferred
 (§5.2).
 
-- [ ] Collapse the three duplicate JSON-RPC code blocks into `ExMCP.Protocol.ErrorCodes`:
+- [x] Collapse the three duplicate JSON-RPC code blocks into `ExMCP.Protocol.ErrorCodes`:
       `internal/protocol.ex` L652-656 (5 codes), `types.ex` L31-35 (same 5),
       `internal/message_validator.ex` L26-29 (4 of them). All identical — pure dedup.
-- [ ] Collapse `ErrorCodes`' own two identical atom→code maps: `@atom_to_code` (L114-126) and
+- [x] Collapse `ErrorCodes`' own two identical atom→code maps: `@atom_to_code` (L114-126) and
       `@atom_to_code_map` (L216-228), same module, identical contents.
-- [ ] **Additively** define `-32020` `HeaderMismatch`, `-32021` `MissingRequiredClientCapability`,
+- [x] **Additively** define `-32020` `HeaderMismatch`, `-32021` `MissingRequiredClientCapability`,
       `-32022` `UnsupportedProtocolVersion`. Unused in rc.5; consumed by 2.0.
-- [ ] Add a `@doc` warning documenting that `-32002` currently carries **three** meanings —
+- [x] Add a `@doc` warning documenting that `-32002` currently carries **three** meanings —
       `consent_required` (`ErrorCodes` L45, emitted by `transport/security_error.ex:138`),
       `resource_not_found` (`ErrorCodes` L48, emitted by `acp/types.ex:139,148`), and
       `prompt_error` (`error.ex:384`, categorised `"Prompt Error"` at L461) — and that
@@ -202,15 +202,15 @@ The `-32002` collision is a genuine bug but resolving it is wire-visible, so it 
 
 All items verified to have **zero callers** in `lib/` and `test/`.
 
-- [ ] `MessageValidator.validate_method_version/2` (L349-360) — zero callers anywhere. Delete.
+- [x] `MessageValidator.validate_method_version/2` (L349-360) — zero callers anywhere. Delete.
       (Wiring it in would be a behavior change — see §5.4.)
-- [ ] `MessageValidator` L80-88 batch-rejection clause — provably unreachable:
+- [x] `MessageValidator` L80-88 batch-rejection clause — provably unreachable:
       `new_session/1` (L34) defaults `protocol_version` to `nil`, the sole lib call site
       `internal/protocol.ex:521` never passes a version, and no test sets it. Delete the clause
       **or** leave it and note the dead-code status; do **not** "fix" it to use version ordering,
       since wiring session versions through is the actual behavior change.
-- [ ] `@methods_v20250326_plus` / `@versions_v20250326_plus` — folded into Track B.
-- [ ] Audit `ErrorCodes.consent_required/0` and `ErrorCodes.resource_not_found/0` — zero
+- [x] `@methods_v20250326_plus` / `@versions_v20250326_plus` — folded into Track B.
+- [x] Audit `ErrorCodes.consent_required/0` and `ErrorCodes.resource_not_found/0` — zero
       callers; the real emitters bypass `ErrorCodes` entirely. Mark deprecated rather than
       removing (they are in a moduledoc'd module).
 
@@ -231,14 +231,14 @@ Adding a version currently requires **four** coordinated edits:
 | L52-58 | version→handler `case`, falling through to `ExMCP.Server.Handler` for anything new |
 | — | a new `Handlers.HandlerYYYYMMDD` module |
 
-- [ ] Derive `@versions` from `VersionRegistry.supported_versions()`.
-- [ ] Remove the duplicated inline list at L64-69.
-- [ ] Replace the version→handler `case` (L52-58) with a map, and make an unmapped version a
+- [x] Derive `@versions` from `VersionRegistry.supported_versions()`.
+- [x] Remove the duplicated inline list at L64-69.
+- [x] Replace the version→handler `case` (L52-58) with a map, and make an unmapped version a
       **loud failure** rather than a silent fallback to `ExMCP.Server.Handler`.
-- [ ] Add `Handlers.Handler20251125` and fold the standalone
+- [x] Add `Handlers.Handler20251125` and fold the standalone
       `compliance/version_2025_11_25_test.exs` into the generated path where it duplicates
       generated coverage — keeping genuinely 2025-11-25-specific assertions standalone.
-- [ ] Audit the 14 `Features.*` modules for version-conditional gaps now that a fourth version
+- [x] Audit the 14 `Features.*` modules for version-conditional gaps now that a fourth version
       flows through the generator.
 
 **Exit:** adding a version is one row in a map plus one handler module. All four supported
@@ -248,18 +248,18 @@ versions flow through the generator.
 
 ### Track F — Docs and config accuracy
 
-- [ ] `docs/CONFIGURATION.md` L37 documents `VersionNegotiator.valid_version?/1` — **this
+- [x] `docs/CONFIGURATION.md` L37 documents `VersionNegotiator.valid_version?/1` — **this
       function has never existed**. The real name is `supported?/1`. Fix before anyone writes
       code against it.
-- [ ] `config/config.exs` L14-20 declares three of the four feature flags —
+- [x] `config/config.exs` L14-20 declares three of the four feature flags —
       `tasks_enabled` is missing while `FeatureFlags.enabled?(:tasks)` reads it (L40-42). Add
       it with its current effective default (`false`).
-- [ ] `ExMCP.FeatureFlags` `@doc` (L14-16) and the `all/0` doctest (L52-56) both omit `:tasks`,
+- [x] `ExMCP.FeatureFlags` `@doc` (L14-16) and the `all/0` doctest (L52-56) both omit `:tasks`,
       though `all/0`'s body includes it (L64). Fix the docs to match the code.
-- [ ] Document `ExMCP.Transport.HTTPServer.call_server_method/3` as a **simplified example**,
+- [x] Document `ExMCP.Transport.HTTPServer.call_server_method/3` as a **simplified example**,
       not a production path — it is a public-by-documentation Plug with a canned `initialize`
       response, zero repo callers and zero tests (§5.3).
-- [ ] `CLAUDE.md`: note that `ExMCP.Protocol.VersionNegotiator` is a thin shim over
+- [x] `CLAUDE.md`: note that `ExMCP.Protocol.VersionNegotiator` is a thin shim over
       `VersionRegistry` and that `VersionRegistry` is the module to reach for.
 
 ---
@@ -295,31 +295,31 @@ L511), and **the `url` — the entire point of the request — is silently disca
 
 #### Work
 
-- [ ] **Characterization test first** (part of Track 0): pin the *current* routing for both
+- [x] **Characterization test first** (part of Track 0): pin the *current* routing for both
       form-mode and URL-mode, through the real client rather than by calling the callback
       directly. Existing coverage does not do this —
       `compliance/url_elicitation_test.exs` L253-264 invokes
       `TestClientHandler.handle_url_elicitation/3` **directly**, bypassing the client entirely,
       and L266-269 only asserts the callback appears in `behaviour_info(:optional_callbacks)`.
       This is why the bug survived.
-- [ ] Route on `params["mode"] == "url"` in `request_handler.ex` L429-447 → dispatch to
+- [x] Route on `params["mode"] == "url"` in `request_handler.ex` L429-447 → dispatch to
       `handle_url_elicitation/3` when the handler exports it.
-- [ ] **Fallback, so nothing regresses:** if the handler does *not* export
+- [x] **Fallback, so nothing regresses:** if the handler does *not* export
       `handle_url_elicitation/3`, keep routing to `handle_elicitation_create/3` as today. This
       keeps single-callback handlers working. Log a warning once per handler module noting the
       `url` is being dropped and pointing at the callback to implement.
-- [ ] Stop discarding the payload on the legacy path: pass `url` and `elicitationId` through
+- [x] Stop discarding the payload on the legacy path: pass `url` and `elicitationId` through
       rather than defaulting `requested_schema` to `%{}` and dropping the rest.
-- [ ] Add real routing tests for both modes, both handler shapes, and the fallback path.
-- [ ] Update `ExMCP.Client.Handler` `@doc` — the current docs give no indication that
+- [x] Add real routing tests for both modes, both handler shapes, and the fallback path.
+- [x] Update `ExMCP.Client.Handler` `@doc` — the current docs give no indication that
       `handle_url_elicitation/3` is inert.
 
 #### Release notes
 
-- [ ] CHANGELOG under **Fixed**, worded so users with both callbacks understand the dispatch
+- [x] CHANGELOG under **Fixed**, worded so users with both callbacks understand the dispatch
       moved. Do **not** use a `BREAKING:` prefix — it is a fix — but do call it out as the one
       behavior change in the release.
-- [ ] Note it in the rc.5 release announcement alongside the "no wire change" claim, so the
+- [x] Note it in the rc.5 release announcement alongside the "no wire change" claim, so the
       claim reads as accurate rather than overstated.
 
 #### Why it belongs here rather than in 2.0
@@ -429,24 +429,24 @@ large, and it interacts directly with §5.3 and §5.4.
 
 ## 7. Release checklist for `1.0.0-rc.5`
 
-- [ ] Track 0 characterization tests pass **unchanged** from the first commit to the last —
+- [x] Track 0 characterization tests pass **unchanged** from the first commit to the last —
       with the single expected exception of the elicitation routing test, updated by Track G.
       Any *other* Track 0 diff means something escaped the gate.
-- [ ] `mix test.suite ci` green.
-- [ ] `mix format`, `mix credo`, `mix dialyzer`, `mix sobelow --skip` clean.
-- [ ] `scripts/conformance.sh` — 39/39 server, 226/226 client, `expected-failures.yml` still
+- [x] `mix test.suite ci` green.
+- [x] `mix format`, `mix credo`, `mix dialyzer`, `mix sobelow --skip` clean.
+- [x] `scripts/conformance.sh` — 39/39 server, 226/226 client, `expected-failures.yml` still
       empty. The `draft-alpha` mode (`@modelcontextprotocol/conformance@0.2.0-alpha.9`) may
       still fail; it is non-gating.
-- [ ] **Wire-diff check:** capture `initialize` + `tools/list` + `tools/call` traffic for all
+- [x] **Wire-diff check:** capture `initialize` + `tools/list` + `tools/call` traffic for all
       four versions before and after the branch; assert byte-identical. Server→client
       `elicitation/create` traffic is unchanged by Track G — the fix is entirely client-side
       dispatch — so this check should be clean even with G landed.
-- [ ] **Track G callout:** confirm the CHANGELOG names the elicitation routing change
+- [x] **Track G callout:** confirm the CHANGELOG names the elicitation routing change
       explicitly, and that the release notes do not claim "no behavior changes" without
       qualifying it.
-- [ ] `mix.exs` → `1.0.0-rc.5`; `CHANGELOG.md` entry under **Changed** / **Fixed** /
+- [x] `mix.exs` → `1.0.0-rc.5`; `CHANGELOG.md` entry under **Changed** / **Fixed** /
       **Removed** — with **no** `BREAKING:` prefixes. If any appear, an item escaped the gate.
       Track G belongs under **Fixed**.
-- [ ] Commit: `chore: bump version to 1.0.0-rc.5`.
+- [x] Commit: `chore: bump version to 1.0.0-rc.5`.
 
 Then: `1.0.0` stable, and branch 2.0 from it.
