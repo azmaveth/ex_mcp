@@ -210,10 +210,12 @@ defmodule ExMCP.MessageProcessorValidationTest do
       # Start handler as a GenServer
       {:ok, pid} = GenServer.start_link(MinimalHandler, [])
 
-      # This is how the message processor SHOULD call handlers
+      # This is how the message processor SHOULD call handlers. The bridge
+      # replies with the canonical shape and no longer leaks handler state
+      # into the reply (audit M13).
       result = GenServer.call(pid, {:list_tools, nil})
 
-      assert {:ok, tools, _cursor, _state} = result
+      assert {:ok, tools, _cursor} = result
       assert length(tools) == 1
       assert hd(tools).name == "test_tool"
 

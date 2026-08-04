@@ -21,52 +21,77 @@ config :ex_mcp,
 
 # OAuth 2.1 Server (Resource Server) Configuration
 # This configuration is used when the server needs to validate OAuth 2.1 tokens.
-# It is required when `oauth2_enabled` is set to `true`.
-config :ex_mcp, :oauth2_server_config,
-  # (Required) URL of the token introspection endpoint (RFC 7662).
-  introspection_endpoint: "https://auth.example.com/introspect",
-  # (Optional) Base URL of the authorization server for metadata discovery.
-  authorization_server: "https://auth.example.com",
-  # (Optional) Default scopes required to access protected resources.
-  required_scopes: ["mcp:read"],
-  # (Optional) Cache TTL for token validation results.
-  token_cache_ttl: :timer.minutes(5),
-  # (Optional) OAuth realm name for WWW-Authenticate headers.
-  realm: "mcp-service"
+# There is intentionally no default: the values below are illustrative
+# placeholders, not endpoints anyone should point at. Configure the real
+# authorization server in YOUR application's config. The key actually read at
+# runtime is `ExMCP.Authorization.ServerConfig`:
+#
+#     config :ex_mcp, ExMCP.Authorization.ServerConfig,
+#       default_server: :auth_server,
+#       servers: %{
+#         auth_server: %{
+#           # (Required) URL of the token introspection endpoint (RFC 7662).
+#           # Must be HTTPS unless it is localhost.
+#           introspection_endpoint: "https://auth.example.com/introspect",
+#           # (Optional) OAuth realm name for WWW-Authenticate headers.
+#           realm: "mcp-service",
+#           client_id: "mcp-server-id",
+#           # Load secrets from the environment in config/runtime.exs, never
+#           # from a checked-in config file.
+#           client_secret: "server-secret"
+#         }
+#       }
 
 # OAuth 2.1 Authorization Server Metadata (RFC 8414)
-# This configuration defines the authorization server metadata returned by
-# the /.well-known/oauth-authorization-server endpoint.
-config :ex_mcp, :oauth2_authorization_server_metadata,
-  # (Required) The authorization server issuer identifier.
-  issuer: "https://auth.example.com",
-  # (Required) URL of the authorization server's authorization endpoint.
-  authorization_endpoint: "https://auth.example.com/authorize",
-  # (Required) URL of the authorization server's token endpoint.
-  token_endpoint: "https://auth.example.com/token",
-  # (Optional) URL of the authorization server's JWK Set document.
-  jwks_uri: "https://auth.example.com/.well-known/jwks.json",
-  # (Optional) JSON array containing a list of the OAuth 2.0 scope values.
-  scopes_supported: ["mcp:read", "mcp:write", "mcp:admin", "offline_access"],
-  # (Optional) JSON array containing a list of the OAuth 2.0 response_type values.
-  response_types_supported: ["code"],
-  # (Optional) JSON array containing a list of the OAuth 2.0 grant type values.
-  grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
-  # (Optional) JSON array containing a list of PKCE code challenge methods.
-  code_challenge_methods_supported: ["S256"],
-  # (Optional) URL of the authorization server's token introspection endpoint.
-  introspection_endpoint: "https://auth.example.com/introspect",
-  # (Optional) URL of the authorization server's token revocation endpoint.
-  revocation_endpoint: "https://auth.example.com/revoke"
+# Defines the metadata returned by /.well-known/oauth-authorization-server.
+# Also intentionally left unset; example:
+#
+#     config :ex_mcp, :oauth2_authorization_server_metadata,
+#       # (Required) The authorization server issuer identifier.
+#       issuer: "https://auth.example.com",
+#       # (Required) URL of the authorization endpoint.
+#       authorization_endpoint: "https://auth.example.com/authorize",
+#       # (Required) URL of the token endpoint.
+#       token_endpoint: "https://auth.example.com/token",
+#       # (Optional) URL of the JWK Set document.
+#       jwks_uri: "https://auth.example.com/.well-known/jwks.json",
+#       # (Optional) Supported scopes / response types / grant types / PKCE methods.
+#       scopes_supported: ["mcp:read", "mcp:write"],
+#       response_types_supported: ["code"],
+#       grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
+#       code_challenge_methods_supported: ["S256"],
+#       # (Optional) Introspection / revocation endpoints.
+#       introspection_endpoint: "https://auth.example.com/introspect",
+#       revocation_endpoint: "https://auth.example.com/revoke"
 
 # Security Configuration
+#
+# These are ExMCP's own defaults, restated here for visibility. A library's
+# config is not loaded by dependent applications: to change any of this, copy
+# the setting into YOUR application's config.
+#
+# The defaults are fail-closed. `ExMCP.Transport.SecurityGuard` classifies
+# every outbound URL against :trusted_origins; anything else has its
+# credential headers stripped and must be approved by :consent_handler, which
+# denies by default. A client pointed at a non-localhost MCP server therefore
+# needs that server's origin declared:
+#
+#     config :ex_mcp, :security,
+#       trusted_origins: ["https://mcp.example.com"]
+#
+# A trusted origin is exempt from both stripping and consent. See
+# docs/SECURITY.md.
 config :ex_mcp, :security,
-  # Token passthrough prevention
+  # Origins treated as the same security domain. "*.example.com" matches
+  # subdomains. Add the MCP servers this application connects to.
   trusted_origins: ["localhost", "127.0.0.1", "::1"],
   additional_sensitive_headers: [],
 
-  # Consent management
+  # Consent management. Asked to approve access to origins that are NOT
+  # trusted. ExMCP.ConsentHandler.CLI prompts interactively;
+  # ExMCP.ConsentHandler.Web defers to an out-of-band web flow.
   consent_handler: ExMCP.ConsentHandler.Deny,
+  # Milliseconds. Handlers receive this as :consent_ttl in seconds.
   consent_ttl: :timer.hours(24),
   consent_cache_cleanup_interval: :timer.minutes(5),
 
@@ -74,7 +99,9 @@ config :ex_mcp, :security,
   log_security_actions: true,
   audit_log_level: :info,
 
-  # Feature flags
+  # Enforcement switches, read by ExMCP.Transport.SecurityGuard. Setting either
+  # to false disables that control for every transport; prefer declaring
+  # :trusted_origins instead.
   enable_token_passthrough_prevention: true,
   enable_user_consent_validation: true
 

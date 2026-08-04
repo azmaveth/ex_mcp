@@ -728,7 +728,7 @@ defmodule ExMCP.ClientTest do
       {:ok, status} = Client.get_status(client)
 
       # Status should show either disconnected or attempting reconnection
-      assert status.connection_status in [:disconnected, :connecting, :error]
+      assert status.connection_status in [:disconnected, :connecting, :reconnecting, :error]
 
       if Process.alive?(client), do: GenServer.stop(client)
     end

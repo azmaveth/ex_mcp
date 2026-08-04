@@ -104,8 +104,17 @@ defmodule ExMCP.Transport do
   The message will be a JSON-encoded string for wire transports, or an
   MCP-shaped map/list for local BEAM transports. Should return
   `{:ok, new_state}` on success.
+
+  Synchronous request/response transports (e.g. HTTP POST without SSE
+  streaming) may instead return `{:ok, new_state, response}` where
+  `response` is the response body delivered inline — either a raw JSON
+  string or an already-decoded map. Callers must be prepared to handle
+  both the 2-tuple and 3-tuple success shapes; transports that deliver
+  responses asynchronously (via `receive_message/1` or `subscribe/2`)
+  should return the 2-tuple.
   """
-  @callback send_message(message(), state()) :: {:ok, state()} | {:error, any()}
+  @callback send_message(message(), state()) ::
+              {:ok, state()} | {:ok, state(), response :: binary() | map()} | {:error, any()}
 
   @doc """
   Receives a message from the transport.

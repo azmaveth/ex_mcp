@@ -10,7 +10,6 @@ defmodule ExMCP.BidirectionalTest do
   defmodule TestClientHandler do
     @behaviour ExMCP.Client.Handler
 
-    @impl true
     def init(args) do
       {:ok, args}
     end
@@ -51,7 +50,6 @@ defmodule ExMCP.BidirectionalTest do
   defmodule TestServerHandler do
     @behaviour ExMCP.Server.Handler
 
-    @impl true
     def init(_args) do
       {:ok, %{}}
     end
@@ -121,7 +119,6 @@ defmodule ExMCP.BidirectionalTest do
       {:ok, %{}, state}
     end
 
-    @impl true
     def terminate(_reason, _state) do
       :ok
     end

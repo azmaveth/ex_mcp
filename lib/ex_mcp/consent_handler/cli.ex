@@ -16,8 +16,9 @@ defmodule ExMCP.ConsentHandler.CLI do
 
     case IO.gets("Allow access? (y/n) ") do
       "y\n" ->
-        expires_at = System.monotonic_time(:second) + ttl
-        {:ok, expires_at}
+        # Relative TTL: unambiguous, unlike a bare integer (see
+        # `t:ExMCP.ConsentHandler.expiry/0`).
+        {:ok, {:ttl, ttl}}
 
       _ ->
         {:error, :denied}

@@ -367,22 +367,11 @@ defmodule ExMCP.Internal.Security do
     end
   end
 
-  @doc """
-  Validates hostname verification function.
-  """
-  def verify_hostname(_cert, :valid_peer, _hostname) do
-    # This would implement proper hostname verification
-    # For now, just return valid
-    :valid_peer
-  end
-
-  def verify_hostname(_cert, {:bad_cert, reason}, _hostname) do
-    {:fail, reason}
-  end
-
-  def verify_hostname(_cert, {:extension, _ext}, _hostname) do
-    :unknown
-  end
+  # `verify_hostname/3` was removed: it unconditionally returned `:valid_peer`,
+  # so wiring it in as an `:ssl` `verify_fun` silently disabled hostname
+  # verification. Hostname checking is handled by `:ssl` itself through the
+  # `:customize_hostname_check` option set in
+  # `ExMCP.Transport.HTTP.build_ssl_options/1`.
 
   @doc """
   Validates transport security configuration.
@@ -400,6 +389,10 @@ defmodule ExMCP.Internal.Security do
   Applies security configuration to transport options.
 
   This function merges security-specific options into transport configuration.
+  TLS options are built by the canonical builder,
+  `ExMCP.Transport.HTTP.build_ssl_options/1`, so that every caller gets the
+  same defaults (peer verification, OS trust store, TLS 1.2/1.3 and HTTPS
+  hostname matching).
   """
   @spec apply_security(keyword(), security_config()) :: keyword()
   def apply_security(transport_opts, security_config) do
@@ -413,18 +406,7 @@ defmodule ExMCP.Internal.Security do
   defp maybe_add_tls_options(opts, nil), do: opts
 
   defp maybe_add_tls_options(opts, tls_config) do
-    ssl_opts =
-      [
-        verify: Map.get(tls_config, :verify, :verify_peer),
-        cacerts: Map.get(tls_config, :cacerts),
-        cert: Map.get(tls_config, :cert),
-        key: Map.get(tls_config, :key),
-        versions: Map.get(tls_config, :versions),
-        ciphers: Map.get(tls_config, :ciphers)
-      ]
-      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-
-    Keyword.put(opts, :ssl_options, ssl_opts)
+    Keyword.put(opts, :ssl_options, ExMCP.Transport.HTTP.build_ssl_options(tls_config))
   end
 
   # MCP Specification Security Requirements

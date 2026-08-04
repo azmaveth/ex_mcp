@@ -421,11 +421,15 @@ defmodule ConformanceRouter do
 
   @sse_tools ~w(test_tool_with_logging test_tool_with_progress test_sampling test_elicitation test_elicitation_sep1034_defaults test_elicitation_sep1330_enums)
 
+  # allowed_origins :any — this is a localhost-only conformance fixture; the
+  # DnsRebinding plug above already pins the Host header to localhost names,
+  # and HttpPlug no longer has a same-origin Origin fallback.
   @mcp_opts ExMCP.HttpPlug.init(
               handler: ConformanceHandler,
               server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
               sse_enabled: true,
-              cors_enabled: true
+              cors_enabled: true,
+              allowed_origins: :any
             )
 
   @impl true

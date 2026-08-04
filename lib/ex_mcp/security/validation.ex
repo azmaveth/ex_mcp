@@ -8,6 +8,11 @@ defmodule ExMCP.Security.Validation do
 
   alias ExMCP.Internal.Headers
 
+  require Logger
+
+  # Binding values that keep a listener on the loopback interface.
+  @localhost_bindings ["127.0.0.1", "localhost", "::1", "[::1]", "0:0:0:0:0:0:0:1"]
+
   @typedoc """
   Security configuration map for transport-level security.
 
@@ -33,6 +38,14 @@ defmodule ExMCP.Security.Validation do
   @doc """
   Validates that a server binding is localhost-only for security.
 
+  Accepts the shapes `:gen_tcp`/`:inet` understand: binaries (`"127.0.0.1"`),
+  charlists (`~c"127.0.0.1"`), address tuples (`{127, 0, 0, 1}`,
+  `{0, 0, 0, 0, 0, 0, 0, 1}`) and the `:loopback` atom. A configured binding
+  of any other shape is rejected rather than silently accepted — a
+  `{0, 0, 0, 0}` tuple binds every interface just as `"0.0.0.0"` does.
+
+  A config with no `:binding` key at all is not a binding decision and passes.
+
   ## Examples
 
       iex> ExMCP.Security.Validation.validate_localhost_binding(%{binding: "127.0.0.1"})
@@ -41,20 +54,54 @@ defmodule ExMCP.Security.Validation do
       iex> ExMCP.Security.Validation.validate_localhost_binding(%{binding: "localhost"})
       :ok
 
+      iex> ExMCP.Security.Validation.validate_localhost_binding(%{binding: {127, 0, 0, 1}})
+      :ok
+
       iex> ExMCP.Security.Validation.validate_localhost_binding(%{binding: "0.0.0.0"})
+      {:error, :public_binding_requires_security}
+
+      iex> ExMCP.Security.Validation.validate_localhost_binding(%{binding: {0, 0, 0, 0}})
       {:error, :public_binding_requires_security}
   """
   @spec validate_localhost_binding(map()) :: :ok | {:error, :public_binding_requires_security}
   def validate_localhost_binding(%{binding: binding}) when is_binary(binding) do
-    case binding do
-      "127.0.0.1" -> :ok
-      "localhost" -> :ok
-      "::1" -> :ok
-      _ -> {:error, :public_binding_requires_security}
+    if binding in @localhost_bindings do
+      :ok
+    else
+      {:error, :public_binding_requires_security}
     end
   end
 
-  def validate_localhost_binding(_), do: :ok
+  def validate_localhost_binding(%{binding: :loopback}), do: :ok
+
+  def validate_localhost_binding(%{binding: binding}) when is_tuple(binding) do
+    if loopback_address?(binding) do
+      :ok
+    else
+      {:error, :public_binding_requires_security}
+    end
+  end
+
+  def validate_localhost_binding(%{binding: binding}) when is_list(binding) do
+    if List.ascii_printable?(binding) do
+      validate_localhost_binding(%{binding: List.to_string(binding)})
+    else
+      {:error, :public_binding_requires_security}
+    end
+  end
+
+  # A binding was configured but is not a shape we can recognise as loopback
+  # (`:any`, `nil`, a port number, ...). Fail closed.
+  def validate_localhost_binding(%{binding: _unrecognized}) do
+    {:error, :public_binding_requires_security}
+  end
+
+  def validate_localhost_binding(_config), do: :ok
+
+  # IPv4 loopback is the whole 127.0.0.0/8 block; IPv6 loopback is ::1.
+  defp loopback_address?({127, _b, _c, _d}), do: true
+  defp loopback_address?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+  defp loopback_address?(_other), do: false
 
   @doc """
   Validates origin header against allowed origins.
@@ -190,7 +237,21 @@ defmodule ExMCP.Security.Validation do
 
   defp validate_verify_mode(nil), do: :ok
   defp validate_verify_mode(:verify_peer), do: :ok
-  defp validate_verify_mode(:verify_none), do: :ok
+
+  defp validate_verify_mode(:verify_none) do
+    # Accepted (it is occasionally needed against a dev server with a
+    # self-signed certificate) but never silently: with verify_none the
+    # connection is encrypted yet unauthenticated, so an active
+    # man-in-the-middle is undetectable.
+    Logger.warning(
+      "TLS configuration sets verify: :verify_none. Server certificates will not " <>
+        "be validated and the connection is not protected against " <>
+        "man-in-the-middle attacks. Use verify: :verify_peer outside local development."
+    )
+
+    :ok
+  end
+
   defp validate_verify_mode(_), do: {:error, :invalid_verify_mode}
 
   defp validate_tls_versions(nil), do: :ok

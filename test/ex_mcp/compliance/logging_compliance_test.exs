@@ -307,8 +307,9 @@ defmodule ExMCP.LoggingComplianceTest do
         handler_state: [log_collector: log_collector]
       )
 
-    # Wait for initialization
-    Process.sleep(100)
+    # Client.start_link/1 performs the full handshake inside init/1, so the
+    # client is already connected here. Assert it instead of sleeping.
+    assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
     %{server: server, client: client, log_collector: log_collector}
   end
@@ -332,8 +333,9 @@ defmodule ExMCP.LoggingComplianceTest do
         Client.log_message(client, level, "Test message at #{level} level", %{test: true})
       end
 
-      # Give time for messages to be processed
-      Process.sleep(100)
+      # Ordered after the notifications above: once the ping round-trip
+      # completes, they have all been sent and processed.
+      assert {:ok, _} = Client.ping(client)
 
       # All should complete without errors
       :ok
@@ -347,7 +349,9 @@ defmodule ExMCP.LoggingComplianceTest do
         user_action: "button_click"
       })
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
 
       # Message should be processed successfully
       :ok
@@ -366,7 +370,9 @@ defmodule ExMCP.LoggingComplianceTest do
     test "info level for general information", %{client: client} do
       Client.log_message(client, "info", "General information message")
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
 
@@ -402,7 +408,9 @@ defmodule ExMCP.LoggingComplianceTest do
       Client.log_message(client, "alert", "Action must be taken immediately")
       Client.log_message(client, "emergency", "System is unusable")
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
   end
@@ -411,7 +419,9 @@ defmodule ExMCP.LoggingComplianceTest do
     test "required level field", %{client: client} do
       Client.log_message(client, "error", "Required level field test")
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
 
@@ -419,7 +429,9 @@ defmodule ExMCP.LoggingComplianceTest do
       # Our implementation includes logger name in the server logic
       Client.log_message(client, "info", "Logger field test", %{source: "test_component"})
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
 
@@ -437,14 +449,18 @@ defmodule ExMCP.LoggingComplianceTest do
 
       Client.log_message(client, "info", "Complex data structure test", data)
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
 
     test "handles nil data gracefully", %{client: client} do
       Client.log_message(client, "info", "Message without data")
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
   end
@@ -463,7 +479,9 @@ defmodule ExMCP.LoggingComplianceTest do
 
       Client.log_message(client, "info", "Login attempt with password=secret123", sensitive_data)
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       # Implementation should sanitize this data
       assert true
     end
@@ -478,7 +496,9 @@ defmodule ExMCP.LoggingComplianceTest do
 
       Client.log_message(client, "debug", "Operation completed", safe_data)
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
 
@@ -493,7 +513,9 @@ defmodule ExMCP.LoggingComplianceTest do
 
       Client.log_message(client, "warning", malicious_message, malicious_data)
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       # Should not cause any issues
       assert true
     end
@@ -541,7 +563,9 @@ defmodule ExMCP.LoggingComplianceTest do
         Client.log_message(client, "debug", "Rapid message #{i}", %{sequence: i})
       end
 
-      Process.sleep(100)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       # Should handle all without issues
       assert true
     end
@@ -565,7 +589,9 @@ defmodule ExMCP.LoggingComplianceTest do
 
       Client.log_message(client, "info", "Client integration test")
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
 
       # Client should have processed the log message
       # (Implementation detail: our test client captures logs)
@@ -580,7 +606,9 @@ defmodule ExMCP.LoggingComplianceTest do
         Client.log_message(client, level, "Message at #{level} level")
       end
 
-      Process.sleep(100)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
 
       # Clients could filter these by level in their implementation
       assert true
@@ -591,7 +619,9 @@ defmodule ExMCP.LoggingComplianceTest do
 
       Client.log_message(client, "info", "Timestamp test")
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
 
       after_time = DateTime.utc_now()
 
@@ -607,7 +637,9 @@ defmodule ExMCP.LoggingComplianceTest do
       # Note: The client should validate, but let's see how it handles it
       try do
         Client.log_message(client, "invalid_level", "Test message")
-        Process.sleep(50)
+        # Ordered after the notification above: once the ping round-trip
+        # completes, the notification has been sent and processed.
+        assert {:ok, _} = Client.ping(client)
         # Should not crash
         assert true
       rescue
@@ -621,7 +653,9 @@ defmodule ExMCP.LoggingComplianceTest do
 
       Client.log_message(client, "info", long_message)
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       # Should handle without issues
       assert true
     end
@@ -637,7 +671,9 @@ defmodule ExMCP.LoggingComplianceTest do
 
       Client.log_message(client, "info", unicode_message, unicode_data)
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
 
@@ -647,7 +683,9 @@ defmodule ExMCP.LoggingComplianceTest do
       # Empty data
       Client.log_message(client, "debug", "Normal message", %{})
 
-      Process.sleep(50)
+      # Ordered after the notification above: once the ping round-trip
+      # completes, the notification has been sent and processed.
+      assert {:ok, _} = Client.ping(client)
       assert true
     end
   end

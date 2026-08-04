@@ -25,12 +25,17 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   use GenServer
   require Logger
 
+  alias ExMCP.HttpPlug.SessionRegistry
+  alias ExMCP.HttpPlug.SSEConnection
+
   @max_mailbox_size 10
   @heartbeat_interval 30_000
   @event_id_buffer_size 1000
 
   defstruct [
     :conn,
+    :conn_module,
+    :conn_owner,
     :session_id,
     :opts,
     :event_counter,
@@ -42,7 +47,9 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   ]
 
   @type t :: %__MODULE__{
-          conn: Plug.Conn.t(),
+          conn: Plug.Conn.t() | term(),
+          conn_module: module(),
+          conn_owner: pid() | nil,
           session_id: String.t(),
           opts: map(),
           event_counter: non_neg_integer(),
@@ -55,10 +62,14 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   @doc """
   Starts an SSE handler for the given connection.
+
+  The calling process is treated as the connection owner: when it exits
+  (client disconnect, timeout, crash), the handler shuts down and cleans up
+  its session registration.
   """
   @spec start_link(Plug.Conn.t(), String.t(), map()) :: {:ok, pid()} | {:error, any()}
   def start_link(conn, session_id, opts) do
-    GenServer.start_link(__MODULE__, {conn, session_id, opts})
+    GenServer.start_link(__MODULE__, {conn, session_id, opts, self()})
   end
 
   @doc """
@@ -103,15 +114,23 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   @impl true
   def init({conn, session_id, opts}) do
+    init({conn, session_id, opts, nil})
+  end
+
+  def init({conn, session_id, opts, conn_owner}) do
     Process.flag(:trap_exit, true)
 
+    # The connection adapter is resolved once, here, so the write path has no
+    # runtime branching on the shape of `conn` (audit L6).
+    conn_module = SSEConnection.resolve(opts)
+
     # Extract Last-Event-ID if provided
-    last_event_id = extract_last_event_id(conn)
+    last_event_id = extract_last_event_id(conn_module, conn)
 
     # Send initial connection event
     event_id = generate_event_id(0)
 
-    case send_sse_event(conn, "connected", %{session_id: session_id}, event_id) do
+    case send_sse_event(conn_module, conn, "connected", %{session_id: session_id}, event_id) do
       {:ok, conn} ->
         # Start heartbeat timer
         heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
@@ -119,6 +138,8 @@ defmodule ExMCP.HttpPlug.SSEHandler do
         # Initialize state
         state = %__MODULE__{
           conn: conn,
+          conn_module: conn_module,
+          conn_owner: conn_owner,
           session_id: session_id,
           opts: opts,
           event_counter: 1,
@@ -167,7 +188,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   def handle_cast({:send_event, event_type, data, opts}, state) do
     event_id = Keyword.get(opts, :event_id, generate_event_id(state.event_counter))
 
-    case send_sse_event(state.conn, event_type, data, event_id) do
+    case send_sse_event(state, event_type, data, event_id) do
       {:ok, conn} ->
         # Update state
         state = %{state | conn: conn, event_counter: state.event_counter + 1}
@@ -191,11 +212,11 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     error_data = format_error(error)
 
     # Send error event
-    case send_sse_event(state.conn, "error", error_data, generate_event_id(state.event_counter)) do
+    case send_sse_event(state, "error", error_data, generate_event_id(state.event_counter)) do
       {:ok, conn} ->
         # Send close event
         send_sse_event(
-          conn,
+          %{state | conn: conn},
           "close",
           %{reason: "error"},
           generate_event_id(state.event_counter + 1)
@@ -211,7 +232,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   @impl true
   def handle_info(:heartbeat, state) do
     # Send heartbeat
-    case send_sse_event(state.conn, "heartbeat", %{timestamp: System.system_time(:second)}, nil) do
+    case send_sse_event(state, "heartbeat", %{timestamp: System.system_time(:second)}, nil) do
       {:ok, conn} ->
         # Schedule next heartbeat
         heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
@@ -231,8 +252,17 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   end
 
   @impl true
+  def handle_info({:EXIT, pid, _reason}, %__MODULE__{conn_owner: pid} = state) do
+    # The request process that owns the SSE socket exited (client disconnect,
+    # timeout, crash). The connection is unusable, so stop and let terminate/2
+    # clean up the session registration. conn is cleared to avoid writing a
+    # close event to a dead socket.
+    {:stop, :normal, %{state | conn: nil}}
+  end
+
+  @impl true
   def handle_info({:EXIT, _pid, _reason}, state) do
-    # Handle linked process exits
+    # Ignore exits from other linked processes
     {:noreply, state}
   end
 
@@ -252,7 +282,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     # Send close event if connection is still open
     if state.conn do
       send_sse_event(
-        state.conn,
+        state,
         "close",
         %{reason: "shutdown"},
         generate_event_id(state.event_counter)
@@ -264,31 +294,22 @@ defmodule ExMCP.HttpPlug.SSEHandler do
       GenServer.reply(pid, {:error, :connection_closed})
     end)
 
+    # Deregister on every exit path so client-first disconnects cannot leak
+    # ETS entries. Scoped to this pid so a newer handler that re-registered
+    # the same session id is left untouched.
+    if state.session_id do
+      SessionRegistry.unregister(state.session_id, self())
+    end
+
     :ok
   end
 
   # Private Functions
 
-  defp extract_last_event_id(%Plug.Conn{} = conn) do
-    case Plug.Conn.get_req_header(conn, "last-event-id") do
+  defp extract_last_event_id(conn_module, conn) do
+    case conn_module.get_req_header(conn, "last-event-id") do
       [id | _] -> id
-      [] -> nil
-    end
-  end
-
-  defp extract_last_event_id(conn) do
-    # For testing or other conn implementations
-    if is_struct(conn) and Map.has_key?(conn, :get_req_header) and
-         is_function(Map.get(conn, :get_req_header), 2) do
-      get_req_header = Map.get(conn, :get_req_header)
-
-      case get_req_header.(conn, "last-event-id") do
-        [id | _] -> id
-        [] -> nil
-        nil -> nil
-      end
-    else
-      nil
+      _none -> nil
     end
   end
 
@@ -296,21 +317,11 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     "#{System.system_time(:microsecond)}-#{counter}"
   end
 
-  defp do_chunk(%Plug.Conn{} = conn, message) do
-    Plug.Conn.chunk(conn, message)
+  defp send_sse_event(%__MODULE__{} = state, event_type, data, event_id) do
+    send_sse_event(state.conn_module, state.conn, event_type, data, event_id)
   end
 
-  defp do_chunk(conn, message) do
-    # For testing or other conn implementations
-    if is_struct(conn) and Map.has_key?(conn, :chunk) and is_function(Map.get(conn, :chunk), 2) do
-      chunk_fn = Map.get(conn, :chunk)
-      chunk_fn.(conn, message)
-    else
-      {:error, :not_supported}
-    end
-  end
-
-  defp send_sse_event(conn, event_type, data, event_id) do
+  defp send_sse_event(conn_module, conn, event_type, data, event_id) do
     formatted_data = Jason.encode!(data)
 
     message =
@@ -322,7 +333,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
           "id: #{id}\nevent: #{event_type}\ndata: #{formatted_data}\n\n"
       end
 
-    case do_chunk(conn, message) do
+    case conn_module.chunk(conn, message) do
       {:ok, conn} -> {:ok, conn}
       {:error, reason} -> {:error, reason}
     end

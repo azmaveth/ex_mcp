@@ -9,6 +9,8 @@ defmodule ExMCP.Client do
 
   - Simple connection with URL strings or transport specs
   - Automatic transport fallback via TransportManager
+  - Automatic reconnection with exponential backoff after unexpected
+    transport closure (see `start_link/1`)
   - Consistent return values with optional normalization
   - Convenience methods for common operations
   - Clean separation of concerns
@@ -37,9 +39,15 @@ defmodule ExMCP.Client do
 
   alias ExMCP.Client.{ConnectionManager, RequestHandler}
   alias ExMCP.Client.Operations.{Prompts, Resources, Tools}
-  alias ExMCP.Internal.{Protocol, RequestParams}
+  alias ExMCP.Internal.{Protocol, RequestParams, VersionInfo}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
+
+  # Reconnection defaults ported from the former state machine implementation:
+  # exponential backoff starting at 1s, doubling per attempt, capped at 60s,
+  # with up to 10 attempts before giving up.
+  @default_max_reconnect_attempts 10
+  @default_reconnect_backoff [initial: 1_000, max: 60_000, multiplier: 2]
 
   # Client state
   defstruct [
@@ -53,15 +61,35 @@ defmodule ExMCP.Client do
     :receiver_task,
     :health_check_ref,
     :health_check_interval,
+    # Request id of an in-flight health-check ping, or nil when none is
+    # outstanding. Deliberately not kept in pending_requests: it has no
+    # caller and must not surface via get_pending_requests/1.
+    :health_check_id,
     :connection_status,
     :last_activity,
     :reconnect_attempts,
+    :reconnect_enabled,
+    :max_reconnect_attempts,
+    :reconnect_backoff,
+    :reconnect_timer,
+    :manual_disconnect,
     :client_info,
     :server_capabilities,
     :initialized,
     :default_retry_policy,
     :protocol_version,
-    :default_timeout
+    :default_timeout,
+    # Monitor refs of in-flight async POST tasks (HTTP/SSE transport),
+    # mapped to the request id each task serves.
+    async_post_tasks: %{},
+    # Memoized client handler: nil (not yet initialized), :none (no handler
+    # configured) or {module, handler_state}. Initialized once; callback
+    # returns update handler_state, so stateful client handlers work.
+    client_handler: nil,
+    # In-flight server-request handler tasks (sampling/elicitation/custom):
+    # task pid => {monitor_ref, request_id, kind}. Handlers run off the
+    # client loop so a slow sampling callback cannot block responses.
+    server_request_tasks: %{}
   ]
 
   @type t :: GenServer.server()
@@ -77,9 +105,50 @@ defmodule ExMCP.Client do
   - `:transport` - Transport type (:stdio, :http, :beam, etc.)
   - `:transports` - List of transports for fallback
   - `:name` - Optional GenServer name
-  - `:health_check_interval` - Interval for health checks (default: 30_000)
+  - `:handshake_timeout` - Maximum time in milliseconds to wait for the
+    server's `initialize` response during connection (default: 10_000).
+    On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
+  - `:health_check_interval` - Interval in milliseconds between idle health
+    check pings (default: 30_000). Set to `nil` or `0` to disable.
   - `:reliability` - Reliability features configuration (optional)
   - `:retry_policy` - Default retry policy for all client operations (optional)
+  - `:reconnect` - Automatically reconnect when the transport closes
+    unexpectedly (default: `true`)
+  - `:max_reconnect_attempts` - Consecutive failed reconnection attempts
+    before giving up (default: 10)
+  - `:reconnect_backoff` - Reconnection backoff policy (keyword list):
+    - `:initial` - Delay before the first attempt in ms (default: 1000)
+    - `:max` - Maximum delay between attempts in ms (default: 60_000)
+    - `:multiplier` - Exponential backoff multiplier (default: 2)
+
+  ## Automatic Reconnection
+
+  When the transport closes unexpectedly while the client is connected, all
+  pending requests fail with a connection error and the client transitions to
+  `:reconnecting`. It then re-establishes the connection (including the MCP
+  handshake) with exponential backoff and jitter. After
+  `:max_reconnect_attempts` consecutive failures the client gives up and
+  settles in `:disconnected`. Requests made while reconnecting return
+  `{:error, :not_connected}`.
+
+  Explicit `disconnect/1` or `stop/2` calls never trigger reconnection.
+  Passing `reconnect: false` disables the behavior entirely.
+
+  ## Health Checks
+
+  While connected and idle, the client sends a protocol `ping` every
+  `:health_check_interval` milliseconds. If a ping is still unanswered one
+  full interval later, the transport is treated as closed: pending requests
+  fail and the reconnection path takes over. Health checks are skipped while
+  requests are in flight, since those already prove the connection is alive.
+
+  The reconnection lifecycle emits telemetry:
+
+  - `[:ex_mcp, :client, :reconnect, :attempt]` - measurements
+    `%{attempt: n, delay_ms: ms}`, emitted when an attempt is scheduled
+  - `[:ex_mcp, :client, :reconnect, :success]` - reconnected and re-initialized
+  - `[:ex_mcp, :client, :reconnect, :error]` - a single attempt failed
+  - `[:ex_mcp, :client, :reconnect, :timeout]` - gave up after the final attempt
 
   ## Reliability Options
 
@@ -190,11 +259,17 @@ defmodule ExMCP.Client do
         "http://localhost:8080/mcp",
         "stdio://mcp-server"
       ])
+
+  Returns `{:error, {:invalid_transport_config, reason}}` when the connection
+  spec cannot be normalized into a valid transport configuration.
   """
   @spec connect(connection_spec(), keyword()) :: {:ok, t()} | {:error, any()}
   def connect(connection_spec, opts \\ []) do
     transport_opts = do_parse_connection_spec(connection_spec)
     start_link(Keyword.merge(transport_opts, opts))
+  catch
+    :throw, {:transport_config_error, reason} ->
+      {:error, {:invalid_transport_config, reason}}
   end
 
   @doc """
@@ -203,7 +278,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
   """
   @spec list_tools(t(), keyword() | timeout()) ::
           {:ok, %{String.t() => [map()]}} | {:error, any()}
@@ -230,7 +305,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 30000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
   """
   @spec call_tool(t(), String.t(), map(), keyword() | timeout()) ::
           {:ok, any()} | {:error, any()}
@@ -391,7 +466,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
 
   ## Returns
 
@@ -421,7 +496,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
 
   ## Returns
 
@@ -666,14 +741,32 @@ defmodule ExMCP.Client do
       pending_batches: %{},
       cancelled_requests: MapSet.new(),
       health_check_interval: Keyword.get(opts, :health_check_interval, 30_000),
+      health_check_id: nil,
       connection_status: :connecting,
       last_activity: System.system_time(:second),
       reconnect_attempts: 0,
+      reconnect_enabled: Keyword.get(opts, :reconnect, true),
+      max_reconnect_attempts:
+        Keyword.get(opts, :max_reconnect_attempts, @default_max_reconnect_attempts),
+      reconnect_backoff: build_reconnect_backoff(opts),
+      reconnect_timer: nil,
+      manual_disconnect: false,
       client_info: build_client_info(),
       server_capabilities: %{},
       initialized: false,
       default_retry_policy: Keyword.get(opts, :retry_policy, []),
-      default_timeout: Keyword.get(opts, :timeout, 5_000)
+      default_timeout: Keyword.get(opts, :timeout, 5_000),
+      async_post_tasks: %{}
+    }
+  end
+
+  defp build_reconnect_backoff(opts) do
+    configured = Keyword.get(opts, :reconnect_backoff, [])
+
+    %{
+      initial: Keyword.get(configured, :initial, @default_reconnect_backoff[:initial]),
+      max: Keyword.get(configured, :max, @default_reconnect_backoff[:max]),
+      multiplier: Keyword.get(configured, :multiplier, @default_reconnect_backoff[:multiplier])
     }
   end
 
@@ -691,7 +784,7 @@ defmodule ExMCP.Client do
         )
 
         final_state = %{updated_state | connection_status: :ready, initialized: true}
-        {:ok, final_state}
+        {:ok, schedule_next_health_check(final_state)}
 
       {:error, reason} ->
         handle_connection_error(reason)
@@ -705,6 +798,8 @@ defmodule ExMCP.Client do
   end
 
   # Normalize various error formats to consistent structure
+  defp normalize_connection_error(:handshake_timeout), do: :handshake_timeout
+
   defp normalize_connection_error(:invalid_request) do
     {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
   end
@@ -743,6 +838,7 @@ defmodule ExMCP.Client do
 
   @impl GenServer
   def handle_call({:request, method, params}, from, state) do
+    # Legacy request shape: the caller enforces its own GenServer.call timeout.
     :telemetry.execute(
       [:ex_mcp, :client, :request, :sent],
       %{},
@@ -750,6 +846,19 @@ defmodule ExMCP.Client do
     )
 
     RequestHandler.handle_request(method, params, from, state)
+  end
+
+  def handle_call({:request, method, params, meta}, from, state) when is_map(meta) do
+    # Request shape used by make_request/5. Default timeout and retry policy
+    # are resolved from this process's own state (single GenServer.call per
+    # request); explicit per-call options win and are enforced caller-side.
+    :telemetry.execute(
+      [:ex_mcp, :client, :request, :sent],
+      %{},
+      %{method: method}
+    )
+
+    RequestHandler.handle_request(method, params, from, state, meta)
   end
 
   def handle_call(:get_default_retry_policy, _from, state) do
@@ -772,8 +881,11 @@ defmodule ExMCP.Client do
     )
 
     # Cancel health check timer
-    if state.health_check_ref do
-      Process.cancel_timer(state.health_check_ref)
+    cancel_health_check_timer(state)
+
+    # Cancel any scheduled reconnection attempt
+    if state.reconnect_timer do
+      Process.cancel_timer(state.reconnect_timer)
     end
 
     # Stop receiver task by killing the process directly
@@ -798,7 +910,9 @@ defmodule ExMCP.Client do
 
       {_batch_id, {from, :batch, ordered_ids, received_responses}}
       when is_map(received_responses) ->
-        # For batch requests, we need to handle them specially
+        # For batch requests, we need to handle them specially. The reply is
+        # wrapped in {:ok, responses} to match the batch_request/3 contract;
+        # each element is an individual {:ok, _} | {:error, _} result.
         missing_responses =
           ordered_ids
           |> Enum.reject(&Map.has_key?(received_responses, &1))
@@ -807,7 +921,7 @@ defmodule ExMCP.Client do
 
         all_responses = Map.merge(received_responses, missing_responses)
         ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
-        GenServer.reply(from, ordered_responses)
+        GenServer.reply(from, {:ok, ordered_responses})
 
       {_id, batch_id} when is_binary(batch_id) ->
         # This is a request that's part of a batch
@@ -824,7 +938,8 @@ defmodule ExMCP.Client do
       end
     end
 
-    # Update state to disconnected
+    # Update state to disconnected. The manual_disconnect flag ensures a
+    # late {:transport_closed, _} message does not trigger auto-reconnection.
     new_state = %{
       state
       | connection_status: :disconnected,
@@ -832,7 +947,11 @@ defmodule ExMCP.Client do
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
         receiver_task: nil,
-        health_check_ref: nil
+        health_check_ref: nil,
+        health_check_id: nil,
+        reconnect_timer: nil,
+        manual_disconnect: true,
+        async_post_tasks: %{}
     }
 
     {:reply, :ok, new_state}
@@ -897,21 +1016,57 @@ defmodule ExMCP.Client do
     RequestHandler.parse_transport_message(message, state)
   end
 
-  # Async POST result — the HTTP transport spawns a Task for POST requests
-  # in SSE mode to avoid blocking the GenServer during bidirectional flows.
-  def handle_info({:async_post_result, {:ok, _new_ts, response_data}}, state) do
-    # POST response contains data — parse it as a transport message
-    RequestHandler.parse_transport_message(response_data, state)
+  # Async POST result — the HTTP transport spawns a monitored task for POST
+  # requests in SSE mode to avoid blocking the GenServer during bidirectional
+  # flows. `meta` carries the request id the task served plus the durable
+  # transport-state fields the POST changed (session rotation, OAuth token
+  # refresh), which are merged back into our copy of the transport state.
+  def handle_info({:async_post_result, result, meta}, state) when is_map(meta) do
+    state = merge_async_transport_state(state, meta)
+    handle_async_post_result(result, Map.get(meta, :request_id), state)
   end
 
-  def handle_info({:async_post_result, {:ok, _new_ts}}, state) do
-    # POST returned but no inline data — result will come via SSE stream
-    {:noreply, state}
+  # Legacy 2-tuple shape (no metadata) kept for compatibility.
+  def handle_info({:async_post_result, result}, state) do
+    handle_async_post_result(result, nil, state)
   end
 
-  def handle_info({:async_post_result, {:error, reason}}, state) do
-    Logger.error("Async POST failed: #{inspect(reason)}")
-    {:noreply, state}
+  # Async POST task registration: maps the task's monitor ref to the request
+  # id it serves so a crashed task can fail that request.
+  def handle_info({:async_post_task, ref, request_id}, state) when is_reference(ref) do
+    tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
+    {:noreply, %{state | async_post_tasks: tasks}}
+  end
+
+  # Async POST task exited. A :normal exit just clears the bookkeeping (its
+  # result was delivered separately); an abnormal exit fails the pending
+  # request the task was serving instead of leaving it to hang until timeout.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{async_post_tasks: tasks} = state)
+      when is_map(tasks) and is_map_key(tasks, ref) do
+    {request_id, remaining} = Map.pop(tasks, ref)
+    state = %{state | async_post_tasks: remaining}
+
+    if reason == :normal do
+      {:noreply, state}
+    else
+      Logger.error("Async POST task exited: #{inspect(reason)}")
+      {:noreply, fail_async_post_request(state, request_id, reason)}
+    end
+  end
+
+  # A server-request handler task (sampling/elicitation/custom) finished.
+  def handle_info({:server_request_result, task_pid, outcome}, state)
+      when is_pid(task_pid) do
+    RequestHandler.handle_server_request_completion(task_pid, outcome, state)
+  end
+
+  # A server-request handler task died before delivering a result.
+  def handle_info(
+        {:DOWN, _ref, :process, pid, reason},
+        %{server_request_tasks: tasks} = state
+      )
+      when is_map(tasks) and is_map_key(tasks, pid) do
+    RequestHandler.handle_server_request_down(pid, reason, state)
   end
 
   # Push model: transport sends pre-parsed messages directly
@@ -932,68 +1087,180 @@ defmodule ExMCP.Client do
   end
 
   def handle_info(:health_check, state) do
-    # Perform health check
-    # Note: Health check logic could ping server or check connection status
+    {:noreply, perform_health_check(state)}
+  end
 
-    # Schedule next health check
-    health_check_ref = schedule_health_check(state.health_check_interval)
-    {:noreply, %{state | health_check_ref: health_check_ref}}
+  # Default-timeout enforcement for requests made without an explicit
+  # :timeout option (scheduled by RequestHandler). Stale timers for requests
+  # that already completed find no pending entry and are ignored.
+  def handle_info({:request_timeout, request_id}, state) do
+    case Map.get(state.pending_requests, request_id) do
+      {from, :single} ->
+        GenServer.reply(from, {:error, :timeout})
+        {:noreply, %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+
+      _ ->
+        {:noreply, state}
+    end
   end
 
   def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
       when pid == task_pid do
     Logger.error("Receiver task died: #{inspect(reason)}")
-    {:noreply, %{state | connection_status: :disconnected}}
+    {:noreply, handle_transport_down({:receiver_task_died, reason}, state)}
   end
 
   # Push mode: forwarder process died
   def handle_info({:EXIT, _pid, reason}, %{receiver_task: :push} = state)
       when reason != :normal do
     Logger.error("Transport forwarder died: #{inspect(reason)}")
-    {:noreply, %{state | connection_status: :disconnected}}
+    {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
   end
 
   def handle_info({:transport_closed, reason}, state) do
     Logger.error("Transport closed: #{inspect(reason)}")
+    {:noreply, handle_transport_down(reason, state)}
+  end
 
-    # Reply to all pending requests with connection error or cancelled error
+  def handle_info(:attempt_reconnect, %{connection_status: :reconnecting} = state) do
+    {:noreply, attempt_reconnect(%{state | reconnect_timer: nil})}
+  end
+
+  def handle_info(:attempt_reconnect, state) do
+    # Stale timer (e.g. the user disconnected while a reconnect was scheduled)
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  # Async POST support (HTTP/SSE transport)
+
+  defp handle_async_post_result({:ok, _new_ts, response_data}, _request_id, state) do
+    # POST response contains data — parse it as a transport message
+    RequestHandler.parse_transport_message(response_data, state)
+  end
+
+  defp handle_async_post_result({:ok, _new_ts}, _request_id, state) do
+    # POST returned but no inline data — result will come via SSE stream
+    {:noreply, state}
+  end
+
+  defp handle_async_post_result({:error, reason}, request_id, state) do
+    Logger.error("Async POST failed: #{inspect(reason)}")
+    {:noreply, fail_async_post_request(state, request_id, reason)}
+  end
+
+  # Merge the durable transport-state changes computed by an async POST task
+  # (session id rotation, OAuth token/auth state, SSE retry metadata) into the
+  # client's current transport state. Only the fields the task actually
+  # changed are merged — see ExMCP.Transport.HTTP.async_state_changes/2 — so
+  # concurrent updates to unrelated fields are preserved. The merge is skipped
+  # when the task is no longer tracked (the transport was torn down or
+  # reconnected after the task started), which keeps stale results from an old
+  # connection out of the new connection's state.
+  defp merge_async_transport_state(state, meta) do
+    changes = Map.get(meta, :state_changes) || %{}
+
+    if map_size(changes) > 0 and is_map(state.transport_state) and
+         known_async_post_request?(state, Map.get(meta, :request_id)) do
+      %{state | transport_state: Map.merge(state.transport_state, changes)}
+    else
+      state
+    end
+  end
+
+  defp known_async_post_request?(%{async_post_tasks: tasks}, request_id) when is_map(tasks) do
+    Enum.any?(tasks, fn {_ref, id} -> id == request_id end)
+  end
+
+  defp known_async_post_request?(_state, _request_id), do: false
+
+  # Fail the pending request an async POST task was serving. Batch members,
+  # notifications (nil id), and already-completed requests are left to the
+  # normal timeout/cleanup path.
+  defp fail_async_post_request(state, request_id, reason) do
+    case request_id && Map.get(state.pending_requests, request_id) do
+      {from, :single} ->
+        GenServer.reply(from, {:error, {:transport_error, reason}})
+        %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+
+      _ ->
+        state
+    end
+  end
+
+  # Transport teardown and reconnection
+
+  # Already reconnecting with an attempt scheduled — nothing left to tear down.
+  defp handle_transport_down(
+         _reason,
+         %{connection_status: :reconnecting, reconnect_timer: timer} = state
+       )
+       when timer != nil do
+    state
+  end
+
+  defp handle_transport_down(reason, state) do
+    reply_pending_with_close_error(reason, state)
+
+    :telemetry.execute(
+      [:ex_mcp, :client, :disconnected],
+      %{},
+      %{reason: reason, transport: state.transport_mod, pid: self()}
+    )
+
+    # Stop any lingering receiver task for the old transport so it cannot
+    # deliver stale close events after a successful reconnection
+    if is_struct(state.receiver_task, Task) && Process.alive?(state.receiver_task.pid) do
+      Process.exit(state.receiver_task.pid, :shutdown)
+    end
+
+    previous_status = state.connection_status
+
+    # The health check is re-armed by the reconnect success path; leaving the
+    # old timer running would double up once the client is ready again.
+    cancel_health_check_timer(state)
+
+    cleared_state = %{
+      state
+      | connection_status: :disconnected,
+        transport_mod: nil,
+        transport_state: nil,
+        receiver_task: nil,
+        pending_requests: %{},
+        pending_batches: %{},
+        cancelled_requests: MapSet.new(),
+        health_check_ref: nil,
+        health_check_id: nil,
+        async_post_tasks: %{}
+    }
+
+    if reconnect_allowed?(cleared_state, previous_status) do
+      schedule_reconnect(cleared_state)
+    else
+      cleared_state
+    end
+  end
+
+  # Reply to all pending requests with connection error or cancelled error
+  defp reply_pending_with_close_error(reason, state) do
     connection_error = Error.connection_error("Transport closed: #{inspect(reason)}")
 
-    state.pending_requests
-    |> Enum.each(fn
+    Enum.each(state.pending_requests, fn
       {id, {from, :single}} ->
-        # Check if this request was cancelled
-        error =
-          if MapSet.member?(state.cancelled_requests, id) do
-            # Use proper error map for cancelled requests
-            %{
-              "code" => ErrorCodes.request_cancelled(),
-              "message" => "Request cancelled"
-            }
-          else
-            connection_error
-          end
-
-        GenServer.reply(from, {:error, error})
+        GenServer.reply(from, {:error, close_error_for(id, state, connection_error)})
 
       {id, {pid, ref}} when is_pid(pid) and is_reference(ref) ->
         # Handle simple {pid, ref} tuples from older test code
-        error =
-          if MapSet.member?(state.cancelled_requests, id) do
-            # Use proper error map for cancelled requests
-            %{
-              "code" => ErrorCodes.request_cancelled(),
-              "message" => "Request cancelled"
-            }
-          else
-            connection_error
-          end
-
-        GenServer.reply({pid, ref}, {:error, error})
+        GenServer.reply({pid, ref}, {:error, close_error_for(id, state, connection_error)})
 
       {_batch_id, {from, :batch, ordered_ids, received_responses}}
       when is_map(received_responses) ->
-        # For batch requests, we need to handle them specially
+        # For batch requests, we need to handle them specially. The reply is
+        # wrapped in {:ok, responses} to match the batch_request/3 contract;
+        # each element is an individual {:ok, _} | {:error, _} result.
         missing_responses =
           ordered_ids
           |> Enum.reject(&Map.has_key?(received_responses, &1))
@@ -1002,35 +1269,217 @@ defmodule ExMCP.Client do
 
         all_responses = Map.merge(received_responses, missing_responses)
         ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
-        GenServer.reply(from, ordered_responses)
+        GenServer.reply(from, {:ok, ordered_responses})
 
       {_id, batch_id} when is_binary(batch_id) ->
         # This is a request that's part of a batch
         :ok
     end)
+  end
 
-    # Clear transport references and update connection status
-    new_state = %{
+  defp close_error_for(id, state, connection_error) do
+    if MapSet.member?(state.cancelled_requests, id) do
+      # Use proper error map for cancelled requests
+      %{
+        "code" => ErrorCodes.request_cancelled(),
+        "message" => "Request cancelled"
+      }
+    else
+      connection_error
+    end
+  end
+
+  defp reconnect_allowed?(state, previous_status) do
+    state.reconnect_enabled == true and
+      state.manual_disconnect != true and
+      previous_status == :ready and
+      state.reconnect_attempts < state.max_reconnect_attempts
+  end
+
+  defp schedule_reconnect(state) do
+    attempt = state.reconnect_attempts + 1
+    delay = reconnect_delay(state.reconnect_backoff, attempt)
+    timer = Process.send_after(self(), :attempt_reconnect, delay)
+
+    :telemetry.execute(
+      [:ex_mcp, :client, :reconnect, :attempt],
+      %{attempt: attempt, delay_ms: delay},
+      %{transport: configured_transport(state), pid: self()}
+    )
+
+    Logger.info("Scheduling MCP reconnection attempt #{attempt} in #{delay}ms")
+
+    %{
       state
-      | connection_status: :disconnected,
-        transport_mod: nil,
-        transport_state: nil,
-        pending_requests: %{},
-        pending_batches: %{},
-        cancelled_requests: MapSet.new()
+      | connection_status: :reconnecting,
+        reconnect_attempts: attempt,
+        reconnect_timer: timer
     }
-
-    {:noreply, new_state}
   end
 
-  def handle_info(_msg, state) do
-    {:noreply, state}
+  defp attempt_reconnect(state) do
+    attempt = state.reconnect_attempts
+
+    case ConnectionManager.establish_connection(state, reconnect_opts(state)) do
+      {:ok, connected_state} ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :reconnect, :success],
+          %{attempt: attempt},
+          %{transport: connected_state.transport_mod, pid: self()}
+        )
+
+        :telemetry.execute(
+          [:ex_mcp, :client, :connected],
+          %{},
+          %{transport: connected_state.transport_mod}
+        )
+
+        schedule_next_health_check(%{
+          connected_state
+          | connection_status: :ready,
+            initialized: true,
+            reconnect_attempts: 0,
+            health_check_id: nil
+        })
+
+      {:error, reason} ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :reconnect, :error],
+          %{attempt: attempt},
+          %{reason: reason, transport: configured_transport(state), pid: self()}
+        )
+
+        handle_reconnect_failure(state, reason)
+    end
   end
+
+  defp handle_reconnect_failure(state, reason) do
+    if state.reconnect_attempts < state.max_reconnect_attempts do
+      schedule_reconnect(state)
+    else
+      :telemetry.execute(
+        [:ex_mcp, :client, :reconnect, :timeout],
+        %{attempt: state.reconnect_attempts},
+        %{
+          max_attempts: state.max_reconnect_attempts,
+          reason: reason,
+          transport: configured_transport(state),
+          pid: self()
+        }
+      )
+
+      Logger.error(
+        "Giving up on reconnection after #{state.reconnect_attempts} attempts: " <>
+          inspect(reason)
+      )
+
+      %{state | connection_status: :disconnected}
+    end
+  end
+
+  # Each reconnection attempt is a single try; the reconnect scheduler owns
+  # retry/backoff, so disable the nested connection retry policy.
+  defp reconnect_opts(state) do
+    Keyword.put(state.transport_opts, :retry_policy, [])
+  end
+
+  defp reconnect_delay(%{initial: initial, max: max, multiplier: multiplier}, attempt) do
+    base = min(round(initial * :math.pow(multiplier, attempt - 1)), max)
+    add_reconnect_jitter(base)
+  end
+
+  # +/-25% jitter (same policy as ExMCP.Reliability.Retry) to avoid
+  # synchronized reconnection storms.
+  defp add_reconnect_jitter(delay) do
+    jitter_range = div(delay, 4)
+
+    if jitter_range > 0 do
+      delay + :rand.uniform(jitter_range * 2) - jitter_range
+    else
+      delay
+    end
+  end
+
+  defp configured_transport(state) do
+    Keyword.get(state.transport_opts, :transport) ||
+      Keyword.get(state.transport_opts, :transports)
+  end
+
+  # Idle health check
+  #
+  # Every `:health_check_interval` a connected and *idle* client sends a
+  # protocol `ping`. If the previous ping is still unanswered a full interval
+  # later, the connection is treated as closed, which fails pending requests
+  # and hands over to the reconnection path.
+  #
+  # The check is skipped while requests are in flight: those are themselves
+  # proof of liveness, and a ping queued behind a long-running tool call on a
+  # single-threaded server would otherwise look like a dead connection.
+  defp perform_health_check(%{connection_status: :ready} = state) do
+    cond do
+      map_size(state.pending_requests) > 0 ->
+        schedule_next_health_check(%{state | health_check_id: nil})
+
+      state.health_check_id != nil ->
+        Logger.warning("MCP health check ping unanswered; treating transport as closed")
+        state = %{state | health_check_id: nil, health_check_ref: nil}
+        handle_transport_down(:health_check_timeout, state)
+
+      true ->
+        state
+        |> send_health_ping()
+        |> schedule_next_health_check()
+    end
+  end
+
+  # Not connected: drop the timer. It is re-armed once the client is ready
+  # again (initial connection or successful reconnection).
+  defp perform_health_check(state) do
+    %{state | health_check_id: nil, health_check_ref: nil}
+  end
+
+  defp send_health_ping(state) do
+    case RequestHandler.send_ping(state) do
+      {:ok, request_id, new_state} ->
+        %{new_state | health_check_id: request_id}
+
+      {:error, reason} ->
+        Logger.debug("MCP health check ping could not be sent: #{inspect(reason)}")
+        %{state | health_check_id: nil}
+    end
+  end
+
+  # Stateless request/response transports (non-SSE HTTP) have no receiver and
+  # no persistent connection to monitor — every request opens its own — so a
+  # periodic ping would only add a blocking POST to the client loop.
+  defp schedule_next_health_check(%{receiver_task: nil} = state) do
+    %{state | health_check_ref: nil}
+  end
+
+  defp schedule_next_health_check(%{health_check_interval: interval} = state)
+       when is_integer(interval) and interval > 0 do
+    cancel_health_check_timer(state)
+    %{state | health_check_ref: Process.send_after(self(), :health_check, interval)}
+  end
+
+  defp schedule_next_health_check(state), do: %{state | health_check_ref: nil}
+
+  defp cancel_health_check_timer(%{health_check_ref: ref}) when is_reference(ref) do
+    Process.cancel_timer(ref)
+    :ok
+  end
+
+  defp cancel_health_check_timer(_state), do: :ok
 
   # Private functions (some exposed for testing)
 
   @doc false
-  def parse_connection_spec(spec), do: do_parse_connection_spec(spec)
+  def parse_connection_spec(spec) do
+    do_parse_connection_spec(spec)
+  catch
+    :throw, {:transport_config_error, reason} ->
+      {:error, {:invalid_transport_config, reason}}
+  end
 
   @doc false
   def prepare_transport_config(opts), do: ConnectionManager.prepare_transport_config(opts)
@@ -1075,14 +1524,7 @@ defmodule ExMCP.Client do
   end
 
   defp build_client_info do
-    %{
-      "name" => "ExMCP",
-      "version" => "0.8.0"
-    }
-  end
-
-  defp schedule_health_check(interval) do
-    Process.send_after(self(), :health_check, interval)
+    VersionInfo.client_info()
   end
 
   defp format_response(response, :struct, opts) do
@@ -1097,69 +1539,99 @@ defmodule ExMCP.Client do
     {:ok, structured_response}
   end
 
+  # Issues a single GenServer.call per request in the common path. Default
+  # timeout and retry policy are resolved by the client process from its own
+  # state instead of dedicated pre-flight calls:
+  #
+  # - Explicit :timeout opts are enforced caller-side via the GenServer.call
+  #   timeout (explicit opts win).
+  # - Without an explicit timeout, the client process schedules its own
+  #   default-timeout timer for the request and replies {:error, :timeout};
+  #   the call itself waits without a caller-side deadline (the call monitor
+  #   still detects a dead client).
+  # - The default retry policy is only fetched (one extra call) after a
+  #   failed first attempt, so successful requests never pay for it.
   @doc false
   @spec make_request(t(), String.t(), map(), keyword(), pos_integer()) ::
           {:ok, any()} | {:error, any()}
-  def make_request(client, method, params, opts, default_timeout) do
-    # Get the client's default timeout if no timeout is specified
-    timeout =
-      case Keyword.fetch(opts, :timeout) do
-        {:ok, t} ->
-          t
-
-        :error ->
-          # Try to get client's default timeout
-          try do
-            case GenServer.call(client, :get_default_timeout, 5_000) do
-              {:ok, client_timeout} -> client_timeout
-              _ -> default_timeout
-            end
-          catch
-            :exit, {:timeout, _} -> default_timeout
-            :exit, _ -> default_timeout
-          end
-      end
-
-    retry_policy = Keyword.get(opts, :retry_policy, :use_default)
-
-    effective_retry_policy = get_effective_retry_policy(client, retry_policy, timeout)
+  def make_request(client, method, params, opts, _default_timeout) do
+    explicit_timeout = Keyword.get(opts, :timeout)
+    call_timeout = explicit_timeout || :infinity
 
     operation = fn ->
       try do
-        GenServer.call(client, {:request, method, params}, timeout)
+        GenServer.call(
+          client,
+          {:request, method, params, %{timeout: explicit_timeout}},
+          call_timeout
+        )
       catch
         :exit, {:timeout, _} -> {:error, :timeout}
       end
     end
 
-    result = execute_with_retry(operation, effective_retry_policy)
+    retry_policy = Keyword.get(opts, :retry_policy, :use_default)
+
+    result = execute_with_retry_policy(operation, client, retry_policy)
     handle_request_result(result, opts)
   end
 
-  defp get_effective_retry_policy(client, :use_default, timeout) do
-    GenServer.call(client, :get_default_retry_policy, timeout)
-    |> case do
-      {:ok, policy} -> policy
+  defp execute_with_retry_policy(operation, client, retry_policy) do
+    case retry_policy do
+      :use_default ->
+        execute_with_lazy_default_retry(operation, client)
+
+      false ->
+        operation.()
+
+      [] ->
+        operation.()
+
+      policy when is_list(policy) ->
+        Retry.with_retry(operation, Retry.mcp_defaults(policy))
+    end
+  end
+
+  # First attempt runs without any pre-flight calls; the client's default
+  # retry policy is only fetched when that attempt fails.
+  defp execute_with_lazy_default_retry(operation, client) do
+    case operation.() do
+      {:error, reason} = error ->
+        retry_remaining_attempts(operation, client, reason, error)
+
+      result ->
+        result
+    end
+  end
+
+  defp retry_remaining_attempts(operation, client, reason, original_error) do
+    case fetch_default_retry_policy(client) do
+      [] ->
+        original_error
+
+      policy ->
+        retry_opts = Retry.mcp_defaults(policy)
+        should_retry? = Keyword.fetch!(retry_opts, :should_retry?)
+        max_attempts = Keyword.get(retry_opts, :max_attempts, 0)
+
+        if max_attempts > 1 and should_retry?.(reason) do
+          # The first attempt already ran; honor its backoff delay, then run
+          # the remaining attempts through the shared retry infrastructure.
+          Process.sleep(Retry.calculate_delay(1, retry_opts))
+          Retry.with_retry(operation, Keyword.put(retry_opts, :max_attempts, max_attempts - 1))
+        else
+          original_error
+        end
+    end
+  end
+
+  defp fetch_default_retry_policy(client) do
+    case GenServer.call(client, :get_default_retry_policy, 5_000) do
+      {:ok, policy} when is_list(policy) -> policy
       _ -> []
     end
   catch
-    :exit, {:timeout, _} -> []
     :exit, _ -> []
-  end
-
-  defp get_effective_retry_policy(_client, false, _timeout), do: []
-  defp get_effective_retry_policy(_client, [], _timeout), do: []
-  defp get_effective_retry_policy(_client, policy, _timeout) when is_list(policy), do: policy
-
-  defp execute_with_retry(operation, []) do
-    # No retry policy - execute directly for backward compatibility
-    operation.()
-  end
-
-  defp execute_with_retry(operation, retry_policy) do
-    # Apply retry policy using the existing retry infrastructure
-    retry_opts = Retry.mcp_defaults(retry_policy)
-    Retry.with_retry(operation, retry_opts)
   end
 
   defp handle_request_result({:ok, response}, opts) do
@@ -1252,7 +1724,7 @@ defmodule ExMCP.Client do
   ## Options
 
   - `:timeout` - Request timeout (default: 5000)
-  - `:format` - Return format (:map or :struct, default: :map)
+  - `:format` - Return format (:map or :struct, default: :struct)
 
   ## Returns
 

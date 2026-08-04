@@ -23,7 +23,7 @@ defmodule ExMCP.ClientSubscriptionTest do
             GenServer.reply(from, response)
             loop.(loop)
 
-          {:"$gen_call", from, {:request, _method, _params}} ->
+          {:"$gen_call", from, {:request, _method, _params, _opts}} ->
             # Default handler for requests
             GenServer.reply(from, {:ok, %{}})
             loop.(loop)
@@ -43,7 +43,7 @@ defmodule ExMCP.ClientSubscriptionTest do
         spawn(fn ->
           loop = fn loop ->
             receive do
-              {:"$gen_call", from, {:request, method, params}} ->
+              {:"$gen_call", from, {:request, method, params, _opts}} ->
                 send(test_pid, {:captured_request, method, params})
                 GenServer.reply(from, {:ok, %{}})
                 loop.(loop)
@@ -73,7 +73,7 @@ defmodule ExMCP.ClientSubscriptionTest do
         spawn(fn ->
           loop = fn loop ->
             receive do
-              {:"$gen_call", from, {:request, "resources/subscribe", _params}} ->
+              {:"$gen_call", from, {:request, "resources/subscribe", _params, _opts}} ->
                 GenServer.reply(from, {:ok, %{}})
                 loop.(loop)
 
@@ -98,7 +98,7 @@ defmodule ExMCP.ClientSubscriptionTest do
         spawn(fn ->
           loop = fn loop ->
             receive do
-              {:"$gen_call", from, {:request, "resources/subscribe", _params}} ->
+              {:"$gen_call", from, {:request, "resources/subscribe", _params, _opts}} ->
                 GenServer.reply(from, {:error, "Resource not found"})
                 loop.(loop)
 
@@ -122,7 +122,7 @@ defmodule ExMCP.ClientSubscriptionTest do
     test "supports timeout option" do
       client =
         create_mock_client(fn
-          {:request, "resources/subscribe", _params} ->
+          {:request, "resources/subscribe", _params, _opts} ->
             :timer.sleep(100)
             {:ok, %{}}
         end)
@@ -134,7 +134,7 @@ defmodule ExMCP.ClientSubscriptionTest do
       client =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:request, "resources/subscribe", _params}} ->
+            {:"$gen_call", from, {:request, "resources/subscribe", _params, _opts}} ->
               GenServer.reply(from, {:ok, %{"status" => "subscribed"}})
           end
         end)
@@ -155,7 +155,7 @@ defmodule ExMCP.ClientSubscriptionTest do
       client =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:request, method, params}} ->
+            {:"$gen_call", from, {:request, method, params, _opts}} ->
               send(test_pid, {:captured_request, method, params})
               GenServer.reply(from, {:ok, %{}})
           end
@@ -171,7 +171,7 @@ defmodule ExMCP.ClientSubscriptionTest do
       client =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:request, "resources/unsubscribe", _params}} ->
+            {:"$gen_call", from, {:request, "resources/unsubscribe", _params, _opts}} ->
               GenServer.reply(from, {:ok, %{}})
           end
         end)
@@ -183,7 +183,7 @@ defmodule ExMCP.ClientSubscriptionTest do
       client =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:request, "resources/unsubscribe", _params}} ->
+            {:"$gen_call", from, {:request, "resources/unsubscribe", _params, _opts}} ->
               GenServer.reply(from, {:error, "Not subscribed"})
           end
         end)

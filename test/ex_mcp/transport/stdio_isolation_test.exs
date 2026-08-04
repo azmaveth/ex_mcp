@@ -6,12 +6,11 @@ defmodule ExMCP.Transport.StdioIsolationTest do
   @moduletag :stdio
 
   setup_all do
-    # Start the application to ensure ConsentCache and other services are available
+    # Start the application to ensure ConsentCache and other services are
+    # available. It is deliberately left running afterwards: test_helper.exs
+    # starts :ex_mcp for the whole run, and stopping it here took down
+    # supervised singletons for every test that ran after this file.
     {:ok, _} = Application.ensure_all_started(:ex_mcp)
-
-    on_exit(fn ->
-      Application.stop(:ex_mcp)
-    end)
 
     :ok
   end
@@ -49,7 +48,6 @@ defmodule ExMCP.Transport.StdioIsolationTest do
       # Create a mock stdio transport state
       state = %Stdio{
         port: nil,
-        buffer: "",
         line_buffer: ""
       }
 
@@ -89,7 +87,6 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
       state = %Stdio{
         port: nil,
-        buffer: "",
         line_buffer: ""
       }
 
@@ -126,7 +123,6 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
       state = %Stdio{
         port: nil,
-        buffer: "",
         line_buffer: ""
       }
 
@@ -166,7 +162,6 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
       state = %Stdio{
         port: nil,
-        buffer: "",
         line_buffer: ""
       }
 
@@ -201,7 +196,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
       try do
         System.put_env("USER", "test_user")
 
-        state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+        state = %Stdio{port: nil, line_buffer: ""}
 
         # This is testing the private function through the validation pathway
         # We can't directly call the private function, but we can verify the behavior
@@ -266,7 +261,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
     test "buffers incomplete JSON lines until complete" do
       # Test the buffering logic conceptually without calling process_data
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       partial_json = ~s({"jsonrpc":"2.0","method":"tools/list")
 
@@ -364,7 +359,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
     test "preserves buffer state across message processing" do
       # Test buffer state preservation conceptually
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Simulate receiving data in chunks
       partial = ~s({"jsonrpc":"2.0","method")
@@ -394,7 +389,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
   describe "Stdio Transport Newline Constraints" do
     test "rejects JSON messages with embedded newlines" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Create a JSON message that contains an embedded newline in a string value
       # This violates the MCP stdio transport requirement that messages MUST NOT contain embedded newlines
@@ -446,7 +441,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
     end
 
     test "rejects JSON-RPC batch messages with embedded newlines" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Create a batch message with embedded newlines
       _batch_with_newlines = [
@@ -498,7 +493,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
     end
 
     test "accepts messages without embedded newlines" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Create a valid message without embedded newlines
       valid_message = %{
@@ -547,7 +542,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
     end
 
     test "handles escaped newlines correctly" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # JSON can contain escaped newlines (\\n) which are fine
       message_with_escaped_newlines = %{
@@ -593,7 +588,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
   describe "Stdio Transport Security Integration" do
     test "integrates security validation with newline message processing" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Test that security validation works with properly formatted newline-delimited messages
       external_message = %{
@@ -630,8 +625,8 @@ defmodule ExMCP.Transport.StdioIsolationTest do
       # This test verifies that security policies are applied per-process
       # rather than globally across all stdio transports
 
-      state1 = %Stdio{port: :mock_port_1, buffer: "", line_buffer: ""}
-      state2 = %Stdio{port: :mock_port_2, buffer: "", line_buffer: ""}
+      state1 = %Stdio{port: :mock_port_1, line_buffer: ""}
+      state2 = %Stdio{port: :mock_port_2, line_buffer: ""}
 
       message =
         Jason.encode!(%{
@@ -667,7 +662,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
   describe "Stdio Transport Isolation and Format Validation" do
     test "validates that only valid MCP messages are sent to stdin" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Test non-JSON content that should be rejected
       invalid_inputs = [
@@ -728,7 +723,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
     end
 
     test "validates JSON-RPC 2.0 message structure for stdio" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Test JSON that's valid but not valid JSON-RPC 2.0
       invalid_jsonrpc_messages = [
@@ -775,7 +770,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
     end
 
     test "accepts valid JSON-RPC 2.0 messages" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Test valid JSON-RPC messages that should be accepted
       valid_jsonrpc_messages = [
@@ -821,7 +816,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
     end
 
     test "enforces line-delimited format for message output" do
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       # Test that send_message adds proper newline delimiter
       valid_message = %{
@@ -868,7 +863,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
       # Test that we don't accidentally write to stderr or other streams
       # This is more of a conceptual test since we can't easily test actual stream separation
-      state = %Stdio{port: nil, buffer: "", line_buffer: ""}
+      state = %Stdio{port: nil, line_buffer: ""}
 
       valid_message =
         Jason.encode!(%{
@@ -896,7 +891,7 @@ defmodule ExMCP.Transport.StdioIsolationTest do
       end
 
       # Test that receive_message only processes data from the designated port
-      receive_state = %Stdio{port: :mock_receive_port, buffer: "", line_buffer: "sample data"}
+      receive_state = %Stdio{port: :mock_receive_port, line_buffer: "sample data"}
 
       # We can't easily test the actual receive loop without complex mocking,
       # but we can verify that the state management is port-specific
@@ -948,6 +943,36 @@ defmodule ExMCP.Transport.StdioIsolationTest do
         assert {:ok, decoded} = Jason.decode(json_line)
         assert Map.has_key?(decoded, "jsonrpc"), "Should contain jsonrpc field"
       end
+    end
+  end
+
+  describe "Stdio Transport close/1 cleanup" do
+    test "close terminates the push-mode reader process" do
+      cat = System.find_executable("cat") || flunk("cat executable is required for stdio test")
+
+      assert {:ok, state} = Stdio.connect(command: [cat])
+      assert {:ok, %Stdio{reader_pid: reader_pid} = subscribed} = Stdio.subscribe(self(), state)
+      assert is_pid(reader_pid)
+      assert Process.alive?(reader_pid)
+
+      ref = Process.monitor(reader_pid)
+
+      assert :ok = Stdio.close(subscribed)
+
+      # The reader is a plain receive loop that does not trap exits, so close
+      # must kill it outright; a :normal exit signal would leak the process.
+      assert_receive {:DOWN, ^ref, :process, ^reader_pid, :killed}, 1_000
+      refute Process.alive?(reader_pid)
+    end
+
+    test "close without a reader closes the port" do
+      cat = System.find_executable("cat") || flunk("cat executable is required for stdio test")
+
+      assert {:ok, %Stdio{port: port} = state} = Stdio.connect(command: [cat])
+      assert Port.info(port) != nil
+
+      assert :ok = Stdio.close(state)
+      assert Port.info(port) == nil
     end
   end
 end

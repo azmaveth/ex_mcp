@@ -55,7 +55,7 @@ defmodule ExMCPTest do
     test "tools/2 returns actual tool list", %{http_url: http_url} do
       {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
-      tools = ExMCP.tools(client)
+      assert {:ok, tools} = ExMCP.tools(client)
       assert is_list(tools)
 
       # Check for our test tools
@@ -70,7 +70,7 @@ defmodule ExMCPTest do
     test "call/4 executes tool and normalizes response", %{http_url: http_url} do
       {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
-      result = ExMCP.call(client, "echo", %{"message" => "Hello World"})
+      assert {:ok, result} = ExMCP.call(client, "echo", %{"message" => "Hello World"})
       assert result == "Echo: Hello World"
 
       ExMCP.disconnect(client)
@@ -79,7 +79,7 @@ defmodule ExMCPTest do
     test "call/4 with add tool", %{http_url: http_url} do
       {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
-      result = ExMCP.call(client, "add", %{"a" => 5, "b" => 3})
+      assert {:ok, result} = ExMCP.call(client, "add", %{"a" => 5, "b" => 3})
       assert result == "5 + 3 = 8"
 
       ExMCP.disconnect(client)
@@ -88,7 +88,7 @@ defmodule ExMCPTest do
     test "call/4 with normalize: false returns raw response", %{http_url: http_url} do
       {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
-      result = ExMCP.call(client, "echo", %{"message" => "test"}, normalize: false)
+      assert {:ok, result} = ExMCP.call(client, "echo", %{"message" => "test"}, normalize: false)
       assert %Response{} = result
       assert Response.text_content(result) == "Echo: test"
 
@@ -186,8 +186,8 @@ defmodule ExMCPTest do
         {:error, _error} -> :ok
         {:ok, %{"isError" => true}} -> :ok
         {:ok, %{isError: true}} -> :ok
-        # Some server paths return raw error strings
-        msg when is_binary(msg) -> :ok
+        # Some server paths return raw error strings (normalized content)
+        {:ok, msg} when is_binary(msg) -> :ok
         other -> flunk("Expected error response, got: #{inspect(other)}")
       end
 

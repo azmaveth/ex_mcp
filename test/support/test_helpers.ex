@@ -41,8 +41,7 @@ defmodule ExMCP.TestHelpers do
 
     case ExMCP.TestServer.start_link(server_opts) do
       {:ok, pid} ->
-        # Give the server a moment to fully start
-        Process.sleep(200)
+        # No sleep: wait_for_server_ready/1 polls the listener until it accepts.
         :ok = wait_for_server_ready(port)
         {:ok, pid, port}
 
@@ -56,7 +55,6 @@ defmodule ExMCP.TestHelpers do
 
         case ExMCP.TestServer.start_link(server_opts) do
           {:ok, pid} ->
-            Process.sleep(200)
             :ok = wait_for_server_ready(retry_port)
             {:ok, pid, retry_port}
 
@@ -262,7 +260,7 @@ defmodule ExMCP.TestHelpers do
 
   # Handle successful server start
   defp handle_successful_start(server_name, ranch_ref, port) do
-    Process.sleep(300)
+    # ensure_server_ready/1 polls the listening socket; no fixed sleep needed.
     ensure_server_ready(port)
     register_cleanup(server_name, ranch_ref)
     %{http_url: "http://localhost:#{port}"}
@@ -277,7 +275,6 @@ defmodule ExMCP.TestHelpers do
 
     case ApiTestServer.start_link(retry_opts) do
       {:ok, _pid} ->
-        Process.sleep(300)
         ensure_server_ready(port)
         register_cleanup(server_name, retry_ranch_ref)
         %{http_url: "http://localhost:#{port}"}
@@ -294,7 +291,6 @@ defmodule ExMCP.TestHelpers do
 
     case ApiTestServer.start_link(server_opts) do
       {:ok, pid} ->
-        Process.sleep(300)
         ensure_server_ready(retry_port)
         register_simple_cleanup(pid)
         %{http_url: "http://localhost:#{retry_port}"}
@@ -312,21 +308,27 @@ defmodule ExMCP.TestHelpers do
     end
   end
 
-  # Register cleanup for server and ranch listener
+  # Register cleanup for server and ranch listener.
+  # `:ranch.stop_listener/1` and `GenServer.stop/3` are both synchronous, so
+  # once they return the port is released — no settling sleep required.
   defp register_cleanup(server_name, ranch_ref) do
     on_exit(fn ->
       cleanup_ranch_listener(ranch_ref)
       safe_stop_process(server_name)
-      Process.sleep(100)
     end)
   end
 
   # Register simple cleanup for just the process
   defp register_simple_cleanup(pid) do
     on_exit(fn ->
-      if Process.alive?(pid) do
-        GenServer.stop(pid, :shutdown, 500)
-        Process.sleep(100)
+      ref = Process.monitor(pid)
+      safe_stop_process(pid, :shutdown, 500)
+
+      # Guarantees the process is gone before the next test binds the port.
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+      after
+        1_000 -> Process.demonitor(ref, [:flush])
       end
     end)
   end
@@ -389,6 +391,8 @@ defmodule ExMCP.TestHelpers do
         :ok
 
       {:error, :econnrefused} when attempts > 0 ->
+        # Intentional bounded poll: there is no event to subscribe to for
+        # "the OS accepted a bind", so we retry the connect until it succeeds.
         Process.sleep(50)
         wait_for_server_ready(port, attempts - 1)
 
@@ -478,6 +482,8 @@ defmodule ExMCP.TestHelpers do
           message: "wait_until timed out after condition was not met"
       end
 
+      # Intentional: this IS the polling primitive. Prefer assert_receive or
+      # assert_event/2 when the code under test emits a message or telemetry.
       Process.sleep(interval)
       do_wait_until(condition, interval, deadline)
     end

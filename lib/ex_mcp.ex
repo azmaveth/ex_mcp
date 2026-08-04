@@ -351,27 +351,33 @@ defmodule ExMCP do
   @doc """
   Lists available tools from the connected server.
 
-  Returns a list of tool definitions with their schemas and descriptions.
+  Returns `{:ok, tools}` where `tools` is a list of tool definitions with
+  their schemas and descriptions, or `{:error, reason}` if the request fails
+  or the client is dead/unresponsive.
   """
-  @spec tools(client(), keyword()) :: [map()] | {:error, any()}
+  @spec tools(client(), keyword()) :: {:ok, [map()]} | {:error, any()}
   def tools(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    case Client.list_tools(client, timeout) do
+    case Client.list_tools(client, timeout: timeout, format: :map) do
       {:ok, result} when is_map(result) ->
-        # Extract tools list from the result map
-        # Try both string and atom keys
-        Map.get(result, "tools") || Map.get(result, :tools, [])
+        # Extract tools list from the result map (string or atom keys)
+        {:ok, Map.get(result, "tools") || Map.get(result, :tools) || []}
 
-      error ->
-        error
+      {:error, reason} ->
+        {:error, reason}
     end
-  rescue
-    _ -> {:error, Error.connection_error("Client not responding")}
+  catch
+    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
   end
 
   @doc """
   Calls a tool on the connected server.
+
+  Returns `{:ok, result}` on success or `{:error, reason}` if the request
+  fails or the client is dead/unresponsive. With `normalize: true` (the
+  default) `result` is the extracted text content; with `normalize: false`
+  it is the raw response.
 
   ## Options
 
@@ -381,12 +387,12 @@ defmodule ExMCP do
   ## Examples
 
       # Simple call
-      result = ExMCP.call(client, "calculator", %{op: "add", a: 1, b: 2})
+      {:ok, result} = ExMCP.call(client, "calculator", %{op: "add", a: 1, b: 2})
 
       # With options
-      result = ExMCP.call(client, "slow_tool", %{data: "..."}, timeout: 60_000)
+      {:ok, result} = ExMCP.call(client, "slow_tool", %{data: "..."}, timeout: 60_000)
   """
-  @spec call(client(), String.t(), map(), keyword()) :: any() | {:error, any()}
+  @spec call(client(), String.t(), map(), keyword()) :: {:ok, any()} | {:error, any()}
   def call(client, tool_name, args \\ %{}, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     normalize = Keyword.get(opts, :normalize, true)
@@ -394,39 +400,45 @@ defmodule ExMCP do
     case Client.call_tool(client, tool_name, args, timeout) do
       {:ok, result} ->
         if normalize do
-          extract_tool_result_content(result)
+          {:ok, extract_tool_result_content(result)}
         else
-          result
+          {:ok, result}
         end
 
-      error ->
-        error
+      {:error, reason} ->
+        {:error, reason}
     end
-  rescue
-    _ -> {:error, Error.connection_error("Client not responding")}
+  catch
+    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
   end
 
   @doc """
   Lists available resources from the connected server.
+
+  Returns `{:ok, resources}` on success, or `{:error, reason}` if the
+  request fails or the client is dead/unresponsive.
   """
-  @spec resources(client(), keyword()) :: [map()] | {:error, any()}
+  @spec resources(client(), keyword()) :: {:ok, [map()]} | {:error, any()}
   def resources(client, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    case Client.list_resources(client, timeout) do
+    case Client.list_resources(client, timeout: timeout, format: :map) do
       {:ok, result} when is_map(result) ->
-        # Extract resources list from the result map
-        Map.get(result, "resources", [])
+        # Extract resources list from the result map (string or atom keys)
+        {:ok, Map.get(result, "resources") || Map.get(result, :resources) || []}
 
-      error ->
-        error
+      {:error, reason} ->
+        {:error, reason}
     end
-  rescue
-    _ -> {:error, Error.connection_error("Client not responding")}
+  catch
+    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
   end
 
   @doc """
   Reads a resource from the connected server.
+
+  Returns `{:ok, content}` on success, or `{:error, reason}` if the request
+  fails or the client is dead/unresponsive.
 
   ## Options
 
@@ -436,22 +448,22 @@ defmodule ExMCP do
   ## Examples
 
       # Read text content
-      content = ExMCP.read(client, "file://data.txt")
+      {:ok, content} = ExMCP.read(client, "file://data.txt")
 
       # Read and parse JSON
-      data = ExMCP.read(client, "file://config.json", parse_json: true)
+      {:ok, data} = ExMCP.read(client, "file://config.json", parse_json: true)
   """
-  @spec read(client(), String.t(), keyword()) :: any() | {:error, any()}
+  @spec read(client(), String.t(), keyword()) :: {:ok, any()} | {:error, any()}
   def read(client, uri, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 10_000)
     parse_json = Keyword.get(opts, :parse_json, false)
 
-    case Client.read_resource(client, uri, timeout) do
-      {:ok, response} -> process_read_response(response, parse_json)
-      error -> error
+    case Client.read_resource(client, uri, timeout: timeout, format: :map) do
+      {:ok, response} -> {:ok, process_read_response(response, parse_json)}
+      {:error, reason} -> {:error, reason}
     end
-  rescue
-    _ -> {:error, Error.connection_error("Client not responding")}
+  catch
+    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
   end
 
   defp process_read_response(response, parse_json) when is_map(response) do
@@ -522,12 +534,15 @@ defmodule ExMCP do
 
   @doc """
   Gets connection status and server information.
+
+  Returns `{:ok, status}` on success, or `{:error, reason}` if the client
+  is dead/unresponsive.
   """
   @spec status(client()) :: {:ok, map()} | {:error, any()}
   def status(client) do
     Client.get_status(client)
-  rescue
-    _ -> {:error, Error.connection_error("Client not responding")}
+  catch
+    :exit, _reason -> {:error, Error.connection_error("Client not responding")}
   end
 
   @doc """

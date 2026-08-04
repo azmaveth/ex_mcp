@@ -50,6 +50,19 @@ defmodule ExMCP.ClientUnifiedAPITest do
       assert mod2 == ExMCP.Transport.Stdio
       assert opts2[:command] == "fallback-server"
     end
+
+    test "returns an error tuple for an unusable transport spec" do
+      # Normalization failures must surface as {:error, _} rather than
+      # escaping as an uncaught throw.
+      assert {:error, {:invalid_transport_config, reason}} =
+               Client.parse_connection_spec([{:native, []}, "http://fallback.example/mcp"])
+
+      assert reason =~ "native"
+    end
+
+    test "connect/2 reports an unusable transport spec as an error" do
+      assert {:error, {:invalid_transport_config, _reason}} = Client.connect([{:native, []}])
+    end
   end
 
   describe "API compatibility" do

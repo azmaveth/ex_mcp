@@ -37,11 +37,77 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   @doc """
   Executes a function through the circuit breaker with timeout.
+
+  The function runs in a process spawned by the *caller*, never inside the
+  circuit breaker itself: a raising/exiting function can neither crash the
+  breaker nor block other callers. The breaker only admits the call and
+  records its outcome. The effective execution timeout is the breaker's
+  configured `:timeout` bounded by `timeout` (this argument).
   """
   @spec call(GenServer.server(), (-> any()), timeout()) :: any()
   def call(server, fun, timeout) do
-    GenServer.call(server, {:execute, fun}, timeout)
+    case GenServer.call(server, :acquire, 5000) do
+      {:error, :circuit_open} = error ->
+        error
+
+      {:ok, config_timeout} ->
+        outcome = run_protected(fun, effective_timeout(config_timeout, timeout))
+        GenServer.cast(server, {:report, outcome})
+        outcome_to_result(outcome)
+    end
   end
+
+  defp effective_timeout(:infinity, timeout), do: timeout
+  defp effective_timeout(config_timeout, :infinity), do: config_timeout
+  defp effective_timeout(config_timeout, timeout), do: min(config_timeout, timeout)
+
+  # Runs `fun` in an unlinked, monitored process so that raises, throws and
+  # exits are contained and a timeout can be enforced without trapping.
+  defp run_protected(fun, timeout) do
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        outcome =
+          try do
+            {:ok, fun.()}
+          rescue
+            error -> {:raised, error}
+          catch
+            :throw, value -> {:threw, value}
+            :exit, reason -> {:exited, reason}
+          end
+
+        send(parent, {:circuit_breaker_result, self(), outcome})
+      end)
+
+    receive do
+      {:circuit_breaker_result, ^pid, outcome} ->
+        Process.demonitor(ref, [:flush])
+        outcome
+
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        {:exited, reason}
+    after
+      timeout ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:circuit_breaker_result, ^pid, outcome} ->
+            Process.demonitor(ref, [:flush])
+            outcome
+
+          {:DOWN, ^ref, :process, ^pid, _reason} ->
+            :timeout
+        end
+    end
+  end
+
+  defp outcome_to_result({:ok, value}), do: value
+  defp outcome_to_result({:raised, error}), do: {:error, error}
+  defp outcome_to_result({:threw, value}), do: {:error, {:throw, value}}
+  defp outcome_to_result({:exited, reason}), do: {:error, {:exit, reason}}
+  defp outcome_to_result(:timeout), do: {:error, :timeout}
 
   @doc """
   Gets the current state of the circuit breaker.
@@ -108,12 +174,13 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   end
 
   @impl GenServer
-  def handle_call({:execute, fun}, _from, state) do
+  def handle_call(:acquire, _from, state) do
     {allowed, updated_cb} = Core.allow_request_with_state?(state.circuit_breaker)
     updated_state = %{state | circuit_breaker: updated_cb}
 
     if allowed do
-      execute_with_circuit_breaker(fun, updated_state)
+      timeout = Map.get(updated_cb.config, :timeout, :infinity)
+      {:reply, {:ok, timeout}, updated_state}
     else
       {:reply, {:error, :circuit_open}, updated_state}
     end
@@ -149,77 +216,12 @@ defmodule ExMCP.Reliability.CircuitBreaker do
     {:reply, :ok, %{state | circuit_breaker: updated_cb}}
   end
 
-  defp execute_with_circuit_breaker(fun, state) do
-    # credo:disable-for-next-line Credo.Check.Readability.PreferImplicitTry
-    try do
-      result = execute_with_timeout(fun, state.circuit_breaker.config)
-      handle_execution_result(result, state)
-    rescue
-      error ->
-        handle_execution_error(error, state)
-    catch
-      :throw, value ->
-        updated_cb = Core.record_failure(state.circuit_breaker)
-        {:reply, {:error, {:throw, value}}, %{state | circuit_breaker: updated_cb}}
-
-      :exit, reason ->
-        updated_cb = Core.record_failure(state.circuit_breaker)
-        {:reply, {:error, {:exit, reason}}, %{state | circuit_breaker: updated_cb}}
-    end
-  end
-
-  defp execute_with_timeout(fun, config) do
-    timeout = Map.get(config, :timeout, :infinity)
-
-    if timeout != :infinity do
-      task = Task.async(fun)
-
-      case Task.yield(task, timeout) || Task.shutdown(task) do
-        {:ok, task_result} -> task_result
-        nil -> {:error, :timeout}
-      end
-    else
-      fun.()
-    end
-  end
-
-  defp handle_execution_result({:error, :timeout}, state) do
-    updated_cb = Core.record_failure(state.circuit_breaker)
-    {:reply, {:error, :timeout}, %{state | circuit_breaker: updated_cb}}
-  end
-
-  defp handle_execution_result({:error, error_reason}, state) do
-    should_count_error = state.error_filter.(error_reason)
-
-    updated_cb =
-      if should_count_error do
-        Core.record_failure(state.circuit_breaker)
-      else
-        state.circuit_breaker
-      end
-
-    {:reply, {:error, error_reason}, %{state | circuit_breaker: updated_cb}}
-  end
-
-  defp handle_execution_result(success_result, state) do
-    updated_cb = Core.record_success(state.circuit_breaker)
-    {:reply, success_result, %{state | circuit_breaker: updated_cb}}
-  end
-
-  defp handle_execution_error(error, state) do
-    should_count_error = state.error_filter.(error)
-
-    updated_cb =
-      if should_count_error do
-        Core.record_failure(state.circuit_breaker)
-      else
-        state.circuit_breaker
-      end
-
-    {:reply, {:error, error}, %{state | circuit_breaker: updated_cb}}
-  end
-
   @impl GenServer
+  def handle_cast({:report, outcome}, state) do
+    updated_cb = record_outcome(outcome, state)
+    {:noreply, %{state | circuit_breaker: updated_cb}}
+  end
+
   def handle_cast(:open, state) do
     updated_cb = Core.force_state(state.circuit_breaker, :open)
     {:noreply, %{state | circuit_breaker: updated_cb}}
@@ -236,6 +238,22 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   end
 
   # Private helpers
+
+  # Success/failure accounting, preserving the pre-existing semantics:
+  # ok results record success; {:error, _} returns and raised exceptions go
+  # through the error filter; throws, exits and timeouts always count.
+  defp record_outcome({:ok, {:error, reason}}, state), do: record_filtered(reason, state)
+  defp record_outcome({:ok, _value}, state), do: Core.record_success(state.circuit_breaker)
+  defp record_outcome({:raised, error}, state), do: record_filtered(error, state)
+  defp record_outcome(_failure, state), do: Core.record_failure(state.circuit_breaker)
+
+  defp record_filtered(reason, state) do
+    if state.error_filter.(reason) do
+      Core.record_failure(state.circuit_breaker)
+    else
+      state.circuit_breaker
+    end
+  end
 
   defp split_options(opts) do
     {gen_opts, cb_opts} = Keyword.split(opts, [:name])

@@ -2,10 +2,20 @@ defmodule ExMCP.ApplicationTest do
   use ExUnit.Case, async: false
 
   setup do
-    # Stop the application if it's already running
+    # These tests own the application lifecycle, so they stop it first and take
+    # over supervision themselves.
     Application.stop(:ex_mcp)
     # Give time for cleanup
     Process.sleep(10)
+
+    # Restore it afterwards: later tests (and any supervised singleton such as
+    # ExMCP.SessionManager) rely on the application being up, and HttpPlug now
+    # fails fast rather than lazily starting a request-linked SessionManager
+    # (audit M14).
+    on_exit(fn ->
+      {:ok, _} = Application.ensure_all_started(:ex_mcp)
+    end)
+
     :ok
   end
 

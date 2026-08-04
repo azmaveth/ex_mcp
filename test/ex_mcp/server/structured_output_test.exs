@@ -1,18 +1,22 @@
 defmodule ExMCP.Server.StructuredOutputTest do
   @moduledoc """
-  Tests for MCP 2025-06-18 structured tool output feature.
+  Tests for MCP 2025-06-18 structured tool output.
+
+  Ported off the deprecated `ExMCP.Server.Tools` DSL onto
+  `ExMCP.Server.Handler` + `ExMCP.Server.DSL` (audit L11) so that nothing here
+  blocks the 1.1.0 removal of `ExMCP.Server.Tools`. The deprecated DSL keeps its
+  own dedicated coverage in `test/ex_mcp/server/tools_test.exs`.
+
+  Note the field name: the spec field is `structuredContent`. `structuredOutput`
+  is accepted as a legacy alias and normalized to `structuredContent`.
   """
   use ExUnit.Case, async: true
 
-  alias ExMCP.Server.Tools
-
   defmodule TestServer do
     use ExMCP.Server.Handler
-    use ExMCP.Server.Tools
+    use ExMCP.Server.DSL
 
-    tool "calculate" do
-      description("Perform mathematical calculations with structured output")
-
+    tool "calculate", "Perform mathematical calculations with structured output" do
       input_schema(%{
         type: "object",
         properties: %{
@@ -30,24 +34,22 @@ defmodule ExMCP.Server.StructuredOutputTest do
         required: ["result"]
       })
 
-      handle(fn %{expression: expr}, state ->
+      run(fn %{expression: expr}, state ->
         case eval_expression(expr) do
           {:ok, result} ->
             {:ok,
              %{
                content: [%{type: "text", text: "Result: #{result}"}],
-               structuredOutput: %{result: result, expression: expr}
+               structuredContent: %{result: result, expression: expr}
              }, state}
 
           {:error, reason} ->
-            {:error, "Calculation failed: #{reason}"}
+            {:error, "Calculation failed: #{reason}", state}
         end
       end)
     end
 
-    tool "echo" do
-      description("Echo input without output schema")
-
+    tool "echo", "Echo input without output schema" do
       input_schema(%{
         type: "object",
         properties: %{
@@ -56,14 +58,12 @@ defmodule ExMCP.Server.StructuredOutputTest do
         required: ["message"]
       })
 
-      handle(fn %{message: msg}, state ->
+      run(fn %{message: msg}, state ->
         {:ok, %{content: [%{type: "text", text: msg}]}, state}
       end)
     end
 
-    tool "structured_only" do
-      description("Returns only structured output")
-
+    tool "structured_only", "Returns only structured content" do
       input_schema(%{
         type: "object",
         properties: %{
@@ -80,10 +80,10 @@ defmodule ExMCP.Server.StructuredOutputTest do
         required: ["processed"]
       })
 
-      handle(fn %{data: data}, state ->
+      run(fn %{data: data}, state ->
         {:ok,
          %{
-           structuredOutput: %{
+           structuredContent: %{
              processed: String.upcase(data),
              timestamp: System.system_time(:second)
            }
@@ -91,9 +91,7 @@ defmodule ExMCP.Server.StructuredOutputTest do
       end)
     end
 
-    tool "invalid_output" do
-      description("Tool that returns invalid structured output")
-
+    tool "invalid_output", "Tool that returns invalid structured content" do
       input_schema(%{
         type: "object",
         properties: %{
@@ -109,19 +107,17 @@ defmodule ExMCP.Server.StructuredOutputTest do
         required: ["result"]
       })
 
-      handle(fn _args, state ->
+      run(fn _args, state ->
         {:ok,
          %{
            content: [%{type: "text", text: "Invalid output"}],
            # Invalid per schema
-           structuredOutput: %{result: "not a number"}
+           structuredContent: %{result: "not a number"}
          }, state}
       end)
     end
 
-    tool "legacy_structured_content" do
-      description("Tool using legacy structuredContent field")
-
+    tool "legacy_structured_output", "Tool using the legacy structuredOutput field" do
       input_schema(%{
         type: "object",
         properties: %{
@@ -129,12 +125,12 @@ defmodule ExMCP.Server.StructuredOutputTest do
         }
       })
 
-      handle(fn %{input: input}, state ->
+      run(fn %{input: input}, state ->
         {:ok,
          %{
            content: [%{type: "text", text: "Processing..."}],
-           # Legacy field
-           structuredContent: %{output: input}
+           # Legacy field, normalized to structuredContent
+           structuredOutput: %{output: input}
          }, state}
       end)
     end
@@ -156,29 +152,26 @@ defmodule ExMCP.Server.StructuredOutputTest do
   end
 
   describe "structured output with validation" do
-    test "validates structured output against schema successfully" do
+    test "validates structured content against schema successfully" do
       state = %{}
-      params = %{name: "calculate", arguments: %{expression: "2+2"}}
 
       assert {:ok, response, ^state} =
-               TestServer.handle_call_tool(params.name, params.arguments, state)
+               TestServer.handle_call_tool("calculate", %{expression: "2+2"}, state)
 
       assert %{
                content: [%{type: "text", text: "Result: 4"}],
-               structuredOutput: %{result: 4, expression: "2+2"}
+               structuredContent: %{result: 4, expression: "2+2"}
              } = response
 
       refute Map.has_key?(response, :isError)
     end
 
-    test "returns validation error for invalid structured output" do
+    test "returns validation error for invalid structured content" do
       state = %{}
-      params = %{name: "invalid_output", arguments: %{value: "test"}}
 
       assert {:ok, response, ^state} =
-               TestServer.handle_call_tool(params.name, params.arguments, state)
+               TestServer.handle_call_tool("invalid_output", %{value: "test"}, state)
 
-      # Should get validation error now that schema conversion is fixed
       assert %{
                content: [%{type: "text", text: text}],
                isError: true
@@ -189,77 +182,64 @@ defmodule ExMCP.Server.StructuredOutputTest do
 
     test "handles tool without output schema normally" do
       state = %{}
-      params = %{name: "echo", arguments: %{message: "hello"}}
 
       assert {:ok, response, ^state} =
-               TestServer.handle_call_tool(params.name, params.arguments, state)
+               TestServer.handle_call_tool("echo", %{message: "hello"}, state)
 
-      assert %{
-               content: [%{type: "text", text: "hello"}]
-             } = response
+      assert %{content: [%{type: "text", text: "hello"}]} = response
 
-      refute Map.has_key?(response, :structuredOutput)
+      refute Map.has_key?(response, :structuredContent)
       refute Map.has_key?(response, :isError)
     end
 
-    test "adds empty content array when only structured output provided" do
+    test "adds empty content array when only structured content provided" do
       state = %{}
-      params = %{name: "structured_only", arguments: %{data: "test"}}
 
       assert {:ok, response, ^state} =
-               TestServer.handle_call_tool(params.name, params.arguments, state)
+               TestServer.handle_call_tool("structured_only", %{data: "test"}, state)
 
       assert %{
                content: [],
-               structuredOutput: %{processed: "TEST", timestamp: _}
+               structuredContent: %{processed: "TEST", timestamp: _}
              } = response
     end
 
-    test "maps legacy structuredContent to structuredOutput" do
+    test "maps legacy structuredOutput to structuredContent" do
       state = %{}
-      params = %{name: "legacy_structured_content", arguments: %{input: "test"}}
 
       assert {:ok, response, ^state} =
-               TestServer.handle_call_tool(params.name, params.arguments, state)
+               TestServer.handle_call_tool("legacy_structured_output", %{input: "test"}, state)
 
       assert %{
                content: [%{type: "text", text: "Processing..."}],
-               structuredOutput: %{output: "test"}
+               structuredContent: %{output: "test"}
              } = response
 
-      refute Map.has_key?(response, :structuredContent)
+      refute Map.has_key?(response, :structuredOutput)
     end
   end
 
   describe "response normalization integration" do
-    test "structured output response includes both content and structuredOutput" do
+    test "structured response includes both content and structuredContent" do
       state = %{}
 
-      # Test through the actual tool call to verify normalization
-      params = %{name: "calculate", arguments: %{expression: "10*5"}}
-
       assert {:ok, response, ^state} =
-               TestServer.handle_call_tool(params.name, params.arguments, state)
+               TestServer.handle_call_tool("calculate", %{expression: "10*5"}, state)
 
-      # Should have both content and structuredOutput
       assert Map.has_key?(response, :content)
-      assert Map.has_key?(response, :structuredOutput)
+      assert Map.has_key?(response, :structuredContent)
       assert response.content == [%{type: "text", text: "Result: 50"}]
-      assert response.structuredOutput == %{result: 50, expression: "10*5"}
+      assert response.structuredContent == %{result: 50, expression: "10*5"}
     end
 
-    test "legacy structuredContent is mapped correctly" do
+    test "handler errors are normalized into an error tool result" do
       state = %{}
 
-      params = %{name: "legacy_structured_content", arguments: %{input: "test"}}
-
       assert {:ok, response, ^state} =
-               TestServer.handle_call_tool(params.name, params.arguments, state)
+               TestServer.handle_call_tool("calculate", %{expression: "invalid"}, state)
 
-      # Should have structuredOutput, not structuredContent
-      assert Map.has_key?(response, :structuredOutput)
-      refute Map.has_key?(response, :structuredContent)
-      assert response.structuredOutput == %{output: "test"}
+      assert %{content: [%{type: "text", text: text}], isError: true} = response
+      assert String.contains?(text, "Calculation failed")
     end
   end
 
@@ -267,7 +247,7 @@ defmodule ExMCP.Server.StructuredOutputTest do
     test "output schema is included in tool definitions" do
       state = %{}
 
-      assert {:ok, tools, ^state} = TestServer.handle_list_tools(%{}, state)
+      assert {:ok, tools, nil, ^state} = TestServer.handle_list_tools(nil, state)
 
       calculate_tool = Enum.find(tools, &(&1.name == "calculate"))
 

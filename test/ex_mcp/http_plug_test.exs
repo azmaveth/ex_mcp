@@ -4,6 +4,7 @@ defmodule ExMCP.HttpPlugTest do
   import Plug.Conn
 
   alias ExMCP.HttpPlug
+  alias ExMCP.HttpPlug.Core
 
   defmodule TestServer do
     use ExMCP.Server.Handler
@@ -98,8 +99,15 @@ defmodule ExMCP.HttpPlugTest do
       assert config.cors_enabled == false
       assert config.validate_origin == true
       assert config.allowed_origins == []
+      assert config.allowed_hosts == :any
       assert config.body_limit == 1_000_000
       assert config.handler_opts == []
+    end
+
+    test "init/1 resolves the SSE mode instead of branching at request time" do
+      assert HttpPlug.init(sse_mode: :stream).sse_mode == :stream
+      assert HttpPlug.init(sse_mode: :oneshot).sse_mode == :oneshot
+      assert HttpPlug.init([]).sse_mode in [:stream, :oneshot]
     end
   end
 
@@ -139,7 +147,7 @@ defmodule ExMCP.HttpPlugTest do
       assert conn.status == 405
     end
 
-    test "rejects browser origins unless explicitly allowed or same-origin" do
+    test "rejects browser origins unless explicitly allowed" do
       request = %{
         "jsonrpc" => "2.0",
         "method" => "initialize",
@@ -154,6 +162,48 @@ defmodule ExMCP.HttpPlugTest do
 
       assert conn.status == 403
       assert conn.resp_body == "Origin not allowed"
+    end
+
+    test "rejects an Origin equal to the request Host when not allow-listed" do
+      # DNS rebinding: the Host header is attacker-controlled, so an Origin
+      # matching scheme://host:port must not be implicitly trusted.
+      # Plug.Test conns use host www.example.com on port 80.
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "id" => 1
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("origin", "http://www.example.com")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 403
+      assert conn.resp_body == "Origin not allowed"
+    end
+
+    test "allows requests without an Origin header when validate_origin is enabled" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2025-06-18",
+          "capabilities" => %{},
+          "clientInfo" => %{name: "test-client", version: "1.0.0"}
+        },
+        "id" => 1
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(
+          HttpPlug.init(handler: TestServer, sse_enabled: false, validate_origin: true)
+        )
+
+      assert conn.status == 200
     end
 
     test "allows explicitly configured browser origins" do
@@ -183,6 +233,191 @@ defmodule ExMCP.HttpPlugTest do
 
       assert conn.status == 200
       assert get_resp_header(conn, "access-control-allow-origin") == ["https://client.example"]
+    end
+  end
+
+  # Helpers shared by the host validation and session ID validation tests.
+  # (Function definitions are not allowed inside describe blocks.)
+  defp initialize_conn do
+    request = %{
+      "jsonrpc" => "2.0",
+      "method" => "initialize",
+      "params" => %{
+        "protocolVersion" => "2025-06-18",
+        "capabilities" => %{},
+        "clientInfo" => %{name: "test-client", version: "1.0.0"}
+      },
+      "id" => 1
+    }
+
+    conn(:post, "/", Jason.encode!(request))
+    |> put_req_header("content-type", "application/json")
+  end
+
+  # Plug.Test forbids put_req_header("host", _); the Host is modelled by
+  # conn.host, which is what HttpPlug falls back to when no header is present.
+  defp with_host(conn, host), do: %{conn | host: host}
+
+  defp session_request_conn do
+    request = %{
+      "jsonrpc" => "2.0",
+      "method" => "tools/list",
+      "id" => 10
+    }
+
+    conn(:post, "/", Jason.encode!(request))
+    |> put_req_header("content-type", "application/json")
+  end
+
+  describe "host validation" do
+    test "default allowed_hosts :any accepts any Host" do
+      conn =
+        initialize_conn()
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 200
+    end
+
+    test "rejects a Host that is not allow-listed with 421" do
+      conn =
+        initialize_conn()
+        |> with_host("evil.example")
+        |> HttpPlug.call(
+          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
+        )
+
+      assert conn.status == 421
+
+      {:ok, response} = Jason.decode(conn.resp_body)
+      assert response["error"]["code"] == -32600
+      assert response["error"]["message"] =~ "Host"
+    end
+
+    test "rejects the Plug.Test default host when only localhost is allowed" do
+      # No explicit Host header: falls back to conn.host (www.example.com).
+      conn =
+        initialize_conn()
+        |> HttpPlug.call(
+          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
+        )
+
+      assert conn.status == 421
+    end
+
+    test "accepts an allow-listed Host" do
+      conn =
+        initialize_conn()
+        |> with_host("localhost")
+        |> HttpPlug.call(
+          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
+        )
+
+      assert conn.status == 200
+    end
+
+    test "accepts an allow-listed IPv6 Host" do
+      conn =
+        initialize_conn()
+        |> with_host("::1")
+        |> HttpPlug.call(
+          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["::1"])
+        )
+
+      assert conn.status == 200
+    end
+
+    # Plug forbids setting the "host" request header directly (it is derived
+    # from conn.host), so port and IPv6-bracket normalization is asserted
+    # against the function that implements it.
+    test "host matching ignores ports and IPv6 brackets" do
+      assert Core.host_allowed?("localhost:4000", ["localhost"])
+      assert Core.host_allowed?("LOCALHOST:4000", ["localhost"])
+      assert Core.host_allowed?("[::1]:8080", ["::1"])
+      assert Core.host_allowed?("[::1]:8080", ["[::1]"])
+      assert Core.host_allowed?("::1", ["::1"])
+      refute Core.host_allowed?("evil.example:8080", ["localhost"])
+      refute Core.host_allowed?("evil.example", ["localhost"])
+      refute Core.host_allowed?(nil, ["localhost"])
+      assert Core.host_allowed?("anything.example", :any)
+    end
+  end
+
+  describe "session ID validation" do
+    test "accepts and echoes a UUID session id" do
+      uuid = "123e4567-e89b-12d3-a456-426614174000"
+
+      conn =
+        session_request_conn()
+        |> put_req_header("mcp-session-id", uuid)
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "mcp-session-id") == [uuid]
+    end
+
+    test "rejects session ids longer than 128 bytes without echoing them" do
+      long_id = String.duplicate("a", 129)
+
+      conn =
+        session_request_conn()
+        |> put_req_header("mcp-session-id", long_id)
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 400
+      assert get_resp_header(conn, "mcp-session-id") == []
+      refute conn.resp_body =~ long_id
+
+      {:ok, response} = Jason.decode(conn.resp_body)
+      assert response["error"]["code"] == -32600
+    end
+
+    test "rejects session ids with control characters" do
+      # Injected directly to bypass any header-value validation in Plug.Test.
+      base = session_request_conn()
+      conn = %{base | req_headers: [{"mcp-session-id", "bad\nid"} | base.req_headers]}
+
+      conn = HttpPlug.call(conn, HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 400
+      assert get_resp_header(conn, "mcp-session-id") == []
+      refute conn.resp_body =~ "bad\nid"
+    end
+
+    test "rejects session ids with characters outside the token charset" do
+      conn =
+        session_request_conn()
+        |> put_req_header("mcp-session-id", "not a valid id!")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 400
+      refute conn.resp_body =~ "not a valid id!"
+    end
+
+    test "validates the legacy x-session-id header on POST" do
+      conn =
+        session_request_conn()
+        |> put_req_header("x-session-id", "bad session id")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 400
+    end
+
+    test "rejects invalid session ids on SSE connections" do
+      conn =
+        conn(:get, "/sse")
+        |> put_req_header("mcp-session-id", "bad session id")
+        |> HttpPlug.call(HttpPlug.init(sse_enabled: true))
+
+      assert conn.status == 400
+    end
+
+    test "rejects invalid session ids on DELETE" do
+      conn =
+        conn(:delete, "/mcp")
+        |> put_req_header("mcp-session-id", "bad session id")
+        |> HttpPlug.call(HttpPlug.init([]))
+
+      assert conn.status == 400
     end
   end
 

@@ -367,7 +367,10 @@ defmodule ExMCP.ClientMainTest do
                Client.list_tools(client, timeout: 10)
     end
 
-    test "handles transport errors", %{client: client} do
+    test "handles transport errors" do
+      # Use a client with auto-reconnection disabled so the closure is permanent
+      {:ok, client} = Client.start_link(transport: MockTransport, reconnect: false)
+
       # Simulate disconnection
       send(client, {:transport_closed, :connection_lost})
 
@@ -636,7 +639,9 @@ defmodule ExMCP.ClientMainTest do
       {:ok, client: client}
     end
 
-    test "handles transport closure and reconnection", %{client: client} do
+    test "stays disconnected after transport closure when reconnect is disabled" do
+      {:ok, client} = Client.start_link(transport: MockTransport, reconnect: false)
+
       # Simulate transport closure
       send(client, {:transport_closed, :connection_lost})
 
@@ -648,12 +653,26 @@ defmodule ExMCP.ClientMainTest do
       assert {:error, :not_connected} = Client.list_tools(client)
     end
 
+    test "enters reconnecting state after transport closure by default", %{client: client} do
+      # Simulate transport closure
+      send(client, {:transport_closed, :connection_lost})
+
+      # Status should show the client waiting to reconnect
+      assert {:ok, status} = Client.get_status(client)
+      assert status.connection_status == :reconnecting
+      assert status.reconnect_attempts == 1
+
+      # Requests should fail immediately while reconnecting
+      assert {:error, :not_connected} = Client.list_tools(client)
+    end
+
     test "cancels pending requests on disconnection" do
       # Start client with a transport that won't respond to tools/call
       {:ok, client} =
         Client.start_link(
           transport: MockTransport,
-          no_response_methods: ["tools/call"]
+          no_response_methods: ["tools/call"],
+          reconnect: false
         )
 
       # Start a request that won't get a response

@@ -76,6 +76,8 @@ defmodule ExMCP.Reliability.Supervisor do
   - `:circuit_breaker` - Circuit breaker options (optional)
   - `:retry` - Retry configuration (optional)
   - `:health_check` - Health check configuration (optional)
+  - `:max_concurrency` - Maximum concurrently executing requests through the
+    wrapper (optional, default: 100)
   """
   @spec create_reliable_client(Supervisor.supervisor(), keyword()) ::
           {:ok, pid()} | {:error, term()}
@@ -169,18 +171,18 @@ defmodule ExMCP.Reliability.Supervisor do
          health_pid,
          opts
        ) do
+    base_wrapper_opts = [
+      client: client_pid,
+      circuit_breaker: breaker_pid,
+      retry_opts: Keyword.get(opts, :retry, []),
+      health_check: health_pid
+    ]
+
+    wrapper_opts = base_wrapper_opts ++ Keyword.take(opts, [:max_concurrency])
+
     wrapper_spec = %{
       id: {:reliable_client_wrapper, client_id},
-      start:
-        {__MODULE__.ClientWrapper, :start_link,
-         [
-           [
-             client: client_pid,
-             circuit_breaker: breaker_pid,
-             retry_opts: Keyword.get(opts, :retry, []),
-             health_check: health_pid
-           ]
-         ]},
+      start: {__MODULE__.ClientWrapper, :start_link, [wrapper_opts]},
       restart: :temporary
     }
 
@@ -436,11 +438,24 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
   - Circuit breaker protection
   - Retry logic with exponential backoff
   - Health monitoring integration
+  - A bound on concurrently in-flight requests
+
+  ## Options
+
+  - `:client` - the wrapped `ExMCP.Client` pid (required)
+  - `:circuit_breaker` - circuit breaker pid, or `nil` to disable
+  - `:retry_opts` - retry policy passed to `ExMCP.Reliability.Retry`
+  - `:max_concurrency` - maximum requests executing at once (default: 100).
+    Calls beyond the limit are rejected with `{:error, :too_many_requests}`
+    instead of spawning unbounded work against a struggling server.
   """
 
   use GenServer
 
+  alias ExMCP.Reliability.CircuitBreaker
   alias ExMCP.Reliability.Retry
+
+  @default_max_concurrency 100
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
@@ -452,7 +467,10 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
       client: Keyword.fetch!(opts, :client),
       circuit_breaker: Keyword.get(opts, :circuit_breaker),
       retry_opts: Keyword.get(opts, :retry_opts, []),
-      health_check: Keyword.get(opts, :health_check)
+      health_check: Keyword.get(opts, :health_check),
+      max_concurrency: Keyword.get(opts, :max_concurrency, @default_max_concurrency),
+      # in-flight request tasks: monitor ref => caller
+      pending: %{}
     }
 
     # Monitor the underlying client
@@ -525,15 +543,54 @@ defmodule ExMCP.Reliability.Supervisor.ClientWrapper do
     {:stop, {:client_died, reason}, state}
   end
 
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.pending, ref) do
+      {nil, _pending} ->
+        {:noreply, state}
+
+      {from, pending} ->
+        # The request task died before replying; make sure the caller is not
+        # left hanging until its call timeout.
+        if reason != :normal do
+          GenServer.reply(from, {:error, {:request_task_exit, reason}})
+        end
+
+        {:noreply, %{state | pending: pending}}
+    end
+  end
+
+  # Runs the request in an unlinked, monitored process, applying retry and —
+  # when configured — the circuit breaker, so the wrapper survives request
+  # crashes and callers always get a reply. Concurrency is capped so a
+  # struggling server cannot be met with an unbounded fan-out of retrying
+  # processes.
   defp execute_with_reliability(fun, from, state) do
-    Task.start(fn ->
-      # Execute with retry logic
-      result = Retry.with_retry(fun, Retry.mcp_defaults(state.retry_opts))
+    if map_size(state.pending) >= state.max_concurrency do
+      {:reply, {:error, :too_many_requests}, state}
+    else
+      spawn_request(fun, from, state)
+    end
+  end
 
-      GenServer.reply(from, result)
-    end)
+  defp spawn_request(fun, from, state) do
+    breaker = state.circuit_breaker
+    retry_opts = Retry.mcp_defaults(state.retry_opts)
 
-    {:noreply, state}
+    {_pid, ref} =
+      spawn_monitor(fn ->
+        wrapped = fn -> Retry.with_retry(fun, retry_opts) end
+
+        result =
+          if breaker do
+            CircuitBreaker.call(breaker, wrapped, :infinity)
+          else
+            wrapped.()
+          end
+
+        GenServer.reply(from, result)
+      end)
+
+    {:noreply, %{state | pending: Map.put(state.pending, ref, from)}}
   end
 end
 

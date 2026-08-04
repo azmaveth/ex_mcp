@@ -8,9 +8,11 @@ defmodule ExMCP.Client.ConnectionManager do
 
   require Logger
   # alias ExMCP.TransportManager  # Not using full manager for now
-  alias ExMCP.Internal.Protocol
+  alias ExMCP.Internal.{Protocol, VersionInfo}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Transport.{HTTP, Local, ReliabilityWrapper, Stdio, Test}
+
+  @default_handshake_timeout 10_000
 
   @doc """
   Establishes connection using the provided options and updates client state.
@@ -129,15 +131,8 @@ defmodule ExMCP.Client.ConnectionManager do
       [] ->
         {:error, "No transports configured"}
 
-      nil ->
-        # Single transport specified
-        case Keyword.get(transport_manager_opts, :transports) do
-          [{transport_mod, transport_opts}] ->
-            connect_with_reliability(transport_mod, transport_opts, reliability_opts)
-
-          _ ->
-            {:error, "No transport specified"}
-        end
+      _missing ->
+        {:error, "No transport specified"}
     end
   end
 
@@ -291,6 +286,7 @@ defmodule ExMCP.Client.ConnectionManager do
 
   defp do_handshake(transport_mod, transport_state, opts) do
     protocol_version = Keyword.get(opts, :protocol_version)
+    handshake_timeout = Keyword.get(opts, :handshake_timeout, @default_handshake_timeout)
 
     case send_initialize_request(
            transport_mod,
@@ -304,7 +300,7 @@ defmodule ExMCP.Client.ConnectionManager do
       {:ok, state_after_send} ->
         # SSE mode or other transports - need to receive separately
         with {:ok, response_data, state_after_receive} <-
-               receive_handshake_message(transport_mod, state_after_send) do
+               receive_handshake_message(transport_mod, state_after_send, handshake_timeout) do
           parse_handshake_response(response_data, state_after_receive)
         end
 
@@ -318,10 +314,7 @@ defmodule ExMCP.Client.ConnectionManager do
          transport_state,
          protocol_version
        ) do
-    client_info = %{
-      "name" => "ExMCP",
-      "version" => "0.8.0"
-    }
+    client_info = VersionInfo.client_info()
 
     request = Protocol.encode_initialize(client_info, %{}, protocol_version)
 
@@ -344,14 +337,42 @@ defmodule ExMCP.Client.ConnectionManager do
   defp encode_for_transport(Local, message), do: {:ok, message}
   defp encode_for_transport(_transport_mod, message), do: Protocol.encode_to_string(message)
 
-  defp receive_handshake_message(transport_mod, transport_state) do
-    # Note: Transport behaviour doesn't support timeout parameter
-    case transport_mod.receive_message(transport_state) do
+  # Receives the initialize response with a bounded wait so a silent server
+  # cannot hang client start_link forever. Transports that export
+  # receive_message/2 (e.g. the Test transport, which reads the caller's
+  # mailbox) are called in-process with the timeout; transports with only the
+  # blocking receive_message/1 are wrapped in a task that is shut down on
+  # expiry. On timeout the connection attempt fails with :handshake_timeout.
+  defp receive_handshake_message(transport_mod, transport_state, timeout) do
+    result =
+      if function_exported?(transport_mod, :receive_message, 2) do
+        transport_mod.receive_message(transport_state, timeout)
+      else
+        receive_handshake_via_task(transport_mod, transport_state, timeout)
+      end
+
+    case result do
       {:ok, message, new_state} ->
         {:ok, message, new_state}
 
+      {:error, :handshake_timeout} ->
+        {:error, :handshake_timeout}
+
+      {:error, {:timeout_error, _reason}} ->
+        {:error, :handshake_timeout}
+
       {:error, reason} ->
         {:error, "Failed to receive handshake response: #{inspect(reason)}"}
+    end
+  end
+
+  defp receive_handshake_via_task(transport_mod, transport_state, timeout) do
+    task = Task.async(fn -> transport_mod.receive_message(transport_state) end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      {:exit, reason} -> {:error, {:handshake_receive_failed, reason}}
+      nil -> {:error, :handshake_timeout}
     end
   end
 

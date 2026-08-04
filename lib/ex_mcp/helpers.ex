@@ -81,7 +81,7 @@ defmodule ExMCP.Helpers do
   defmacro list_tools!(opts \\ []) do
     quote do
       case ExMCP.tools(var!(client), unquote(opts)) do
-        tools when is_list(tools) -> tools
+        {:ok, tools} -> tools
         {:error, error} -> raise ExMCP.ToolError, format_error_message(error)
       end
     end
@@ -105,8 +105,8 @@ defmodule ExMCP.Helpers do
              unquote(args),
              unquote(opts)
            ) do
+        {:ok, result} -> result
         {:error, error} -> raise ExMCP.ToolError, format_error_message(error)
-        result -> result
       end
     end
   end
@@ -117,7 +117,7 @@ defmodule ExMCP.Helpers do
   defmacro list_resources!(opts \\ []) do
     quote do
       case ExMCP.resources(var!(client), unquote(opts)) do
-        resources when is_list(resources) -> resources
+        {:ok, resources} -> resources
         {:error, error} -> raise ExMCP.ResourceError, format_error_message(error)
       end
     end
@@ -136,8 +136,8 @@ defmodule ExMCP.Helpers do
   defmacro read_resource!(uri, opts \\ []) do
     quote do
       case ExMCP.read(var!(client), unquote(uri), unquote(opts)) do
+        {:ok, content} -> content
         {:error, error} -> raise ExMCP.ResourceError, format_error_message(error)
-        content -> content
       end
     end
   end

@@ -5,6 +5,24 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
+
+# Tag coverage map (see test/test_helper.exs for the default exclusions and
+# test/TAGGING_STRATEGY.md for the meaning of each tag):
+#
+#   compliance ............ `compliance` job (all protocol versions, one run)
+#   integration ........... `test` job  -> mix test.suite integration
+#   requires_http ......... `test` job  -> mix test.suite integration
+#   requires_stdio ........ `test` job  -> mix test.suite integration
+#   requires_beam ......... `test` job  -> mix test.suite integration
+#   requires_bypass ....... `test` job  -> --include requires_bypass
+#   slow .................. `test` job  -> --include slow, plus `coverage`
+#   performance / stress .. `extended` job -> mix test.suite performance
+#   interop ............... `interop` job (Node.js + npm)
+#   external / live_server  no tests currently carry these tags; they stay in
+#                           the default exclusion list for future use only.
+#   wip / skip ............ intentionally never run; `scripts/check_skip_tags.sh`
+#                           fails the build if a test is left tagged :skip.
 
 env:
   MIX_ENV: test
@@ -31,207 +49,248 @@ jobs:
           - otp: '29.0'
             elixir: '1.20.0'
             quality: false
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Elixir
       uses: erlef/setup-beam@v1
       with:
         otp-version: ${{matrix.otp}}
         elixir-version: ${{matrix.elixir}}
-    
-    - name: Restore dependencies cache
+
+    - name: Restore deps/_build cache
       uses: actions/cache@v4
       with:
-        path: deps
+        path: |
+          deps
+          _build
         key: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
           ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-
-    
+
     - name: Install dependencies
       run: mix deps.get
 
     - name: Compile dependencies
       run: mix deps.compile
-    
+
     - name: Check formatting
       if: matrix.quality
       run: mix format --check-formatted
-    
+
     - name: Run credo
       if: matrix.quality
       run: mix credo --strict
-    
+
     - name: Check for skipped tests
       if: matrix.quality
       run: ./scripts/check_skip_tags.sh all
-    
+
     - name: Check for unused dependencies
       if: matrix.quality
       run: mix deps.unlock --check-unused
-    
+
     - name: Compile without warnings
       run: mix compile --warnings-as-errors
-    
-    - name: Run unit and integration tests
+
+    - name: Run unit tests
       run: mix test --exclude compliance
-    
+
+    - name: Run integration-tagged tests
+      run: mix test.suite integration --include requires_bypass --include slow
+
     - name: Run security check
       if: matrix.quality
       run: mix sobelow --skip
 
-  # New compliance test jobs for each MCP version
-  compliance-2024-11-05:
-    name: MCP 2024-11-05 Compliance
+  compliance:
+    name: MCP Compliance Suite
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Elixir
       uses: erlef/setup-beam@v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
-    
-    - name: Restore dependencies cache
+
+    - name: Restore deps/_build cache
       uses: actions/cache@v4
       with:
-        path: deps
+        path: |
+          deps
+          _build
         key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
           ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
-    
+
     - name: Install dependencies
       run: mix deps.get
-    
+
     - name: Compile
       run: mix compile
-    
-    - name: Run MCP 2024-11-05 compliance tests
+
+    # One job, not a per-version matrix: the compliance suite is generated
+    # across every supported protocol version in a single run
+    # (test/ex_mcp/compliance/version_generator.ex plus the version-specific
+    # handlers in test/ex_mcp/compliance/handlers/), and 2025-11-25 behaviour is
+    # covered by the dedicated files (icons_test.exs, version_*_test.exs).
+    # Running the same suite three times under different job names only
+    # duplicated work.
+    - name: Run MCP compliance tests
       run: mix test.suite compliance
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  compliance-2025-03-26:
-    name: MCP 2025-03-26 Compliance
+  extended:
+    name: Performance & stress suite
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Elixir
       uses: erlef/setup-beam@v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
-    
-    - name: Restore dependencies cache
+
+    - name: Restore deps/_build cache
       uses: actions/cache@v4
       with:
-        path: deps
+        path: |
+          deps
+          _build
         key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
           ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
-    
+
     - name: Install dependencies
       run: mix deps.get
-    
+
     - name: Compile
       run: mix compile
-    
-    - name: Run MCP 2025-03-26 compliance tests
-      run: mix test.suite compliance
+
+    # Covers the :performance, :stress and :slow tags, which are excluded by
+    # default in test/test_helper.exs and are otherwise never exercised.
+    - name: Run performance and stress tests
+      run: mix test.suite performance
+
+  interop:
+    name: Cross-language interop (Node.js)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: ${{ env.CI_OTP_VERSION }}
+        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Restore deps/_build cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
+
+    - name: Cache interop node_modules
+      uses: actions/cache@v4
+      with:
+        path: test/interop/node_modules
+        key: ${{ runner.os }}-interop-node-${{ hashFiles('test/interop/package.json') }}
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Compile
+      run: mix compile
+
+    # The interop tests install their own npm deps on first run and skip
+    # themselves if `node` is unavailable.
+    - name: Run interop tests
+      run: mix test --only interop
+
+  coverage:
+    name: Coverage (full suite)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: ${{ env.CI_OTP_VERSION }}
+        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+
+    - name: Restore deps/_build cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Compile
+      run: mix compile
+
+    # Everything except the tags that need external services or Node.js
+    # (those run in the `extended` / `interop` jobs).
+    - name: Run tests with coverage
+      run: >
+        mix coveralls.github
+        --include compliance
+        --include integration
+        --include slow
+        --include requires_http
+        --include requires_stdio
+        --include requires_beam
+        --include requires_bypass
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  compliance-2025-06-18:
-    name: MCP 2025-06-18 Compliance
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Elixir
-      uses: erlef/setup-beam@v1
-      with:
-        otp-version: ${{ env.CI_OTP_VERSION }}
-        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
-    
-    - name: Restore dependencies cache
-      uses: actions/cache@v4
-      with:
-        path: deps
-        key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
-    
-    - name: Install dependencies
-      run: mix deps.get
-    
-    - name: Compile
-      run: mix compile
-    
-    - name: Run MCP 2025-06-18 compliance tests
-      run: mix test.suite compliance
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Combined compliance test job for coverage
-  compliance-coverage:
-    name: Compliance Test Coverage
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Elixir
-      uses: erlef/setup-beam@v1
-      with:
-        otp-version: ${{ env.CI_OTP_VERSION }}
-        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
-    
-    - name: Restore dependencies cache
-      uses: actions/cache@v4
-      with:
-        path: deps
-        key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
-    
-    - name: Install dependencies
-      run: mix deps.get
-    
-    - name: Compile
-      run: mix compile
-    
-    - name: Run all compliance tests with coverage
-      run: mix coveralls.github --only compliance
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  
   dialyzer:
     name: Dialyzer
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Elixir
       uses: erlef/setup-beam@v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
-    
-    - name: Restore dependencies cache
+
+    - name: Restore deps/_build cache
       uses: actions/cache@v4
       with:
-        path: deps
+        path: |
+          deps
+          _build
         key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
           ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
-    
+
     - name: Restore PLT cache
       uses: actions/cache@v4
       id: plt_cache
@@ -240,13 +299,13 @@ jobs:
         key: ${{ runner.os }}-plt-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
           ${{ runner.os }}-plt-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
-    
+
     - name: Install dependencies
       run: mix deps.get
-    
+
     - name: Create PLTs
       if: steps.plt_cache.outputs.cache-hit != 'true'
       run: mix dialyzer --plt
-    
+
     - name: Run dialyzer
       run: mix dialyzer --format github

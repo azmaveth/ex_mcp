@@ -4,13 +4,11 @@ defmodule ExMCP.ProgressTrackerMinimalTest do
   alias ExMCP.ProgressTracker
 
   setup do
-    # Start the application to ensure ProgressTracker is available
+    # Start the application to ensure ProgressTracker is available.
+    # It is deliberately left running: test_helper.exs starts :ex_mcp for the
+    # whole run, and stopping it here took down supervised singletons (such as
+    # ExMCP.SessionManager) for every test that ran afterwards.
     {:ok, _} = Application.ensure_all_started(:ex_mcp)
-
-    on_exit(fn ->
-      # Stop the application after test
-      Application.stop(:ex_mcp)
-    end)
 
     :ok
   end

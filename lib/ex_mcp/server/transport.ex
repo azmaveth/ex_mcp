@@ -34,8 +34,15 @@ defmodule ExMCP.Server.Transport do
   * `:transport` - The transport type (`:stdio`, `:http`, `:beam`, `:test`)
   * `:port` - Port number for HTTP transports (default: 4000)
   * `:host` - Host for HTTP transports (default: "localhost")
-  * `:cors_enabled` - Enable CORS for HTTP transports (default: true)
+  * `:cors_enabled` - Enable CORS for HTTP transports (default: `false`, the
+    same default `ExMCP.HttpPlug` uses)
   * `:sse_enabled` - Enable SSE for HTTP transports (default: false)
+  * `:allowed_hosts` - Host-header allow-list passed to `ExMCP.HttpPlug`.
+    Defaults to the localhost names when binding to a localhost address
+    (DNS rebinding protection), otherwise `:any`
+  * `:allowed_origins` - Origin allow-list passed to `ExMCP.HttpPlug`.
+    Defaults to localhost origins for the bound port when binding to a
+    localhost address, otherwise `[]` (reject all cross-origin browsers)
 
   ## Examples
 
@@ -103,21 +110,30 @@ defmodule ExMCP.Server.Transport do
   """
   @spec start_http_server(module(), map(), list(), keyword()) ::
           {:ok, pid()} | {:error, term()}
-  def start_http_server(module, server_info, tools, opts) do
+  def start_http_server(module, server_info, _tools, opts) do
     port = Keyword.get(opts, :port, 4000)
     host = Keyword.get(opts, :host, "localhost")
     # Check both :sse_enabled and :use_sse for compatibility
     sse_enabled = Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
-    cors_enabled = Keyword.get(opts, :cors_enabled, true)
+    # Matches ExMCP.HttpPlug's own default; CORS must be opted into (audit L10).
+    cors_enabled = Keyword.get(opts, :cors_enabled, false)
     ranch_ref = Keyword.get(opts, :ranch_ref)
 
-    # Configure the HTTP Plug
+    # Localhost-bound servers are the prime target for DNS rebinding, so
+    # they get a Host allow-list (and matching localhost Origin allow-list)
+    # by default. Explicit :allowed_hosts / :allowed_origins always win.
+    allowed_hosts = Keyword.get(opts, :allowed_hosts, default_allowed_hosts(host))
+    allowed_origins = Keyword.get(opts, :allowed_origins, default_allowed_origins(host, port))
+
+    # Configure the HTTP Plug. Tools are read from the handler module, so the
+    # `tools` argument is not forwarded (ExMCP.HttpPlug.init/1 ignores it).
     plug_opts = [
       handler: module,
       server_info: server_info,
-      tools: tools,
       sse_enabled: sse_enabled,
-      cors_enabled: cors_enabled
+      cors_enabled: cors_enabled,
+      allowed_hosts: allowed_hosts,
+      allowed_origins: allowed_origins
     ]
 
     Logger.info("Starting MCP HTTP server on #{host}:#{port} (SSE: #{sse_enabled})")
@@ -279,6 +295,39 @@ defmodule ExMCP.Server.Transport do
   # Configure logging for STDIO transport to prevent stdout contamination
   defp configure_stdio_logging do
     StdioLoggerConfig.configure()
+  end
+
+  @localhost_hosts ["localhost", "127.0.0.1", "::1", "[::1]"]
+
+  defp localhost_bind?(host) do
+    host in @localhost_hosts or host == {127, 0, 0, 1} or host == {0, 0, 0, 0, 0, 0, 0, 1}
+  end
+
+  # Host allow-list for ExMCP.HttpPlug: localhost binds get DNS rebinding
+  # protection by default; other binds keep :any for backwards compatibility.
+  defp default_allowed_hosts(host) do
+    if localhost_bind?(host) do
+      ["localhost", "127.0.0.1", "[::1]", "::1"]
+    else
+      :any
+    end
+  end
+
+  # Origin allow-list for ExMCP.HttpPlug. HttpPlug no longer has a
+  # same-origin fallback (Host is attacker-controlled under DNS rebinding),
+  # and ExMCP's own HTTP client sends an Origin derived from the server URL,
+  # so localhost binds explicitly allow localhost origins for the bound port.
+  # This is rebinding-safe: a rebinding attack presents the attacker page's
+  # real (non-localhost) origin.
+  defp default_allowed_origins(host, port) do
+    if localhost_bind?(host) do
+      for h <- ["localhost", "127.0.0.1", "[::1]"],
+          origin <- ["http://#{h}", "http://#{h}:#{port}"] do
+        origin
+      end
+    else
+      []
+    end
   end
 
   # Parse host string to IP tuple

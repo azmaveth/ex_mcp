@@ -106,9 +106,6 @@ defmodule ExMCP.PingTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
-
       # Client pings server
       assert {:ok, %{}} = Client.ping(client)
 
@@ -134,9 +131,6 @@ defmodule ExMCP.PingTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
-
       # Short timeout should still work for ping
       assert {:ok, %{}} = Client.ping(client, 100)
 
@@ -161,9 +155,6 @@ defmodule ExMCP.PingTest do
           handler: TestClientHandler,
           handler_state: %{ping_count: 0}
         )
-
-      # Wait for initialization
-      Process.sleep(100)
 
       # Server pings client
       assert {:ok, %{}} = ExMCP.Server.ping(server)
@@ -191,9 +182,6 @@ defmodule ExMCP.PingTest do
           # No handler specified - uses DefaultHandler which now supports basic server requests like ping
         )
 
-      # Wait for initialization
-      Process.sleep(100)
-
       # Server ping should succeed with default handler
       assert {:ok, _} = ExMCP.Server.ping(server)
 
@@ -218,9 +206,6 @@ defmodule ExMCP.PingTest do
           handler: TestClientHandler,
           handler_state: %{}
         )
-
-      # Wait for initialization
-      Process.sleep(100)
 
       # Client pings server
       assert {:ok, %{}} = Client.ping(client)
@@ -300,9 +285,6 @@ defmodule ExMCP.PingTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
-
       # Normal ping should work
       assert {:ok, %{}} = Client.ping(client, 1000)
 
@@ -326,13 +308,10 @@ defmodule ExMCP.PingTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
-
       # Simulate periodic health checks
+      # Each ping is a synchronous round-trip, so the loop needs no pacing.
       results =
         for _i <- 1..5 do
-          Process.sleep(50)
           Client.ping(client)
         end
 
@@ -341,12 +320,15 @@ defmodule ExMCP.PingTest do
                match?({:ok, %{}}, result)
              end)
 
-      # Stop server to simulate connection loss
+      # Stop server to simulate connection loss and wait for it to actually die.
+      ref = Process.monitor(server)
       GenServer.stop(server)
-      Process.sleep(100)
+      assert_receive {:DOWN, ^ref, :process, ^server, _reason}, 1_000
 
-      # Ping should now fail
-      assert {:error, _} = Client.ping(client)
+      # The server is definitively gone, so the ping cannot succeed: either the
+      # client already saw the transport close (`:not_connected` while it
+      # reconnects with backoff) or the request times out.
+      assert {:error, _} = Client.ping(client, 1_000)
 
       # Cleanup
       GenServer.stop(client)

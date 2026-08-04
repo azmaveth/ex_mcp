@@ -11,6 +11,7 @@
       files: %{
         included: [
           "lib/",
+          "dev/",
           "test/",
           "priv/",
           "mix.exs"
