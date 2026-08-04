@@ -32,7 +32,10 @@ defmodule ExMCP.Transport.Stdio do
   alias ExMCP.Internal.{LineBuffer, SecurityConfig}
   alias ExMCP.Transport.{Error, SecurityGuard}
 
-  defstruct [:port, :line_buffer, :subscriber, :reader_pid]
+  @termination_poll_ms 10
+  @termination_grace_attempts 10
+
+  defstruct [:port, :os_pid, :line_buffer, :subscriber, :reader_pid]
 
   @impl true
   def connect(opts) do
@@ -89,6 +92,7 @@ defmodule ExMCP.Transport.Stdio do
 
       state = %__MODULE__{
         port: port,
+        os_pid: port_os_pid(port),
         line_buffer: ""
       }
 
@@ -327,7 +331,7 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   @impl true
-  def close(%__MODULE__{port: port, reader_pid: reader_pid}) do
+  def close(%__MODULE__{port: port, os_pid: os_pid, reader_pid: reader_pid}) do
     :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{transport: :stdio})
 
     # Close the port before killing the reader: port_close exits the port
@@ -345,6 +349,12 @@ defmodule ExMCP.Transport.Stdio do
       Process.exit(reader_pid, :kill)
     end
 
+    # Port.close/1 tears down the Erlang port, but on Unix it does not
+    # guarantee that the spawned OS process exits. Explicitly terminate the
+    # child after detaching the reader so repeated stdio connections cannot
+    # leak servers and exhaust the runner's process/thread budget.
+    terminate_os_process(os_pid)
+
     :ok
   end
 
@@ -355,6 +365,63 @@ defmodule ExMCP.Transport.Stdio do
     :ok
   catch
     :error, :badarg -> :ok
+  end
+
+  defp port_os_pid(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, os_pid} -> os_pid
+      _other -> nil
+    end
+  end
+
+  defp terminate_os_process(nil), do: :ok
+
+  defp terminate_os_process(os_pid) when is_integer(os_pid) do
+    case :os.type() do
+      {:win32, _name} ->
+        run_command("taskkill", ["/PID", Integer.to_string(os_pid), "/T", "/F"])
+
+      {:unix, _name} ->
+        signal_process(os_pid, "TERM")
+
+        unless wait_for_process_exit(os_pid, @termination_grace_attempts) do
+          signal_process(os_pid, "KILL")
+        end
+    end
+
+    :ok
+  end
+
+  defp wait_for_process_exit(_os_pid, 0), do: false
+
+  defp wait_for_process_exit(os_pid, attempts_left) do
+    if os_process_alive?(os_pid) do
+      Process.sleep(@termination_poll_ms)
+      wait_for_process_exit(os_pid, attempts_left - 1)
+    else
+      true
+    end
+  end
+
+  defp os_process_alive?(os_pid) do
+    case run_command("kill", ["-0", Integer.to_string(os_pid)]) do
+      {_output, 0} -> true
+      _other -> false
+    end
+  end
+
+  defp signal_process(os_pid, signal) do
+    run_command("kill", ["-#{signal}", Integer.to_string(os_pid)])
+    :ok
+  end
+
+  defp run_command(command, args) do
+    case System.find_executable(command) do
+      nil -> {"", 127}
+      executable -> System.cmd(executable, args, stderr_to_stdout: true)
+    end
+  rescue
+    _error -> {"", 1}
   end
 
   @impl true

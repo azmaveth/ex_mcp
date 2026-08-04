@@ -974,5 +974,27 @@ defmodule ExMCP.Transport.StdioIsolationTest do
       assert :ok = Stdio.close(state)
       assert Port.info(port) == nil
     end
+
+    test "close terminates the spawned OS process" do
+      sleep = System.find_executable("sleep") || flunk("sleep executable is required")
+      kill = System.find_executable("kill") || flunk("kill executable is required")
+
+      assert {:ok, %Stdio{os_pid: os_pid} = state} =
+               Stdio.connect(command: [sleep, "30"])
+
+      on_exit(fn ->
+        if os_process_alive?(kill, os_pid) do
+          System.cmd(kill, ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
+        end
+      end)
+
+      assert os_process_alive?(kill, os_pid)
+      assert :ok = Stdio.close(state)
+      refute os_process_alive?(kill, os_pid)
+    end
+  end
+
+  defp os_process_alive?(kill, os_pid) do
+    match?({_, 0}, System.cmd(kill, ["-0", Integer.to_string(os_pid)], stderr_to_stdout: true))
   end
 end

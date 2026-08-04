@@ -16,8 +16,8 @@ on:
 #   requires_stdio ........ `test` job  -> mix test.suite integration
 #   requires_beam ......... `test` job  -> mix test.suite integration
 #   requires_bypass ....... `test` job  -> --include requires_bypass
-#   slow .................. `test` job  -> --include slow, plus `coverage`
-#   performance / stress .. `extended` job -> mix test.suite performance
+#   slow / performance / stress
+#                         `extended` job -> mix test.suite performance
 #   interop ............... `interop` job (Node.js + npm)
 #   external / live_server  no tests currently carry these tags; they stay in
 #                           the default exclusion list for future use only.
@@ -101,7 +101,7 @@ jobs:
       run: mix test --exclude compliance
 
     - name: Run integration-tagged tests
-      run: mix test.suite integration --include requires_bypass --include slow
+      run: mix test.suite integration --include requires_bypass
 
     - name: Run security check
       if: matrix.quality
@@ -263,7 +263,6 @@ jobs:
         mix coveralls.github
         --include compliance
         --include integration
-        --include slow
         --include requires_http
         --include requires_stdio
         --include requires_beam
