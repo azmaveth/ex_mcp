@@ -537,6 +537,22 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert IO.iodata_to_binary(Enum.reverse(state.text_acc)) == "streamed once"
     end
 
+    test "does not suppress distinct identical assistant messages without partial deltas", %{
+      state: state
+    } do
+      assistant = %{
+        "type" => "assistant",
+        "session_id" => "s1",
+        "message" => %{"content" => [%{"type" => "text", "text" => "SAME"}]}
+      }
+
+      assert {:messages, [_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(assistant), state)
+
+      assert {:messages, [_chunk], _state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(assistant), state)
+    end
+
     test "does not re-emit streamed text when the terminal assistant also contains a tool", %{
       state: state
     } do
