@@ -71,6 +71,7 @@ defmodule MyAppWeb.Router do
     forward "/", ExMCP.HttpPlug,
       handler: MyApp.MCPHandler,
       server_info: %{name: "my-phoenix-app", version: "1.0.0"},
+      handler_call_timeout: 10_000,
       sse_enabled: true,
       cors_enabled: true
   end
@@ -111,6 +112,9 @@ defmodule MyApp.MCPHandler do
   end
 end
 ```
+
+`handler_call_timeout` is the server-side Handler deadline in milliseconds;
+client request and SSE timeouts are configured separately on `ExMCP.Client`.
 
 > **Note:** The example above uses raw `ExMCP.Server.Handler` callbacks (useful for dynamic capabilities). Most Phoenix apps will be simpler with the DSL — see the "DSL Server" section below and the [Phoenix Guide](docs/guides/PHOENIX_GUIDE.md).
 

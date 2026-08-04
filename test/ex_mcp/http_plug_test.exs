@@ -42,6 +42,24 @@ defmodule ExMCP.HttpPlugTest do
     end
   end
 
+  defmodule BlockingRequestServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(opts) do
+      state = Map.new(opts)
+      send(state.test_pid, {:blocking_handler_started, self()})
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_list_tools(_cursor, state) do
+      receive do
+        :unblock -> {:ok, [], nil, state}
+      end
+    end
+  end
+
   defmodule TrackingSessionManager do
     @table :http_plug_test_session_manager
 
@@ -102,6 +120,11 @@ defmodule ExMCP.HttpPlugTest do
       assert config.allowed_hosts == :any
       assert config.body_limit == 1_000_000
       assert config.handler_opts == []
+      assert config.handler_call_timeout == 10_000
+    end
+
+    test "init/1 accepts a server-side handler call deadline" do
+      assert HttpPlug.init(handler_call_timeout: 250).handler_call_timeout == 250
     end
 
     test "init/1 resolves the SSE mode instead of branching at request time" do
@@ -122,6 +145,37 @@ defmodule ExMCP.HttpPlugTest do
 
       assert conn.status == 204
       assert_received {:session_terminated, "custom-session"}
+    end
+  end
+
+  describe "handler call timeout" do
+    @describetag capture_log: true
+
+    test "threads the plug deadline into MessageProcessor" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "tools/list",
+        "params" => %{},
+        "id" => 41
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: BlockingRequestServer,
+            handler_opts: [test_pid: self()],
+            handler_call_timeout: 25,
+            sse_enabled: false
+          )
+        )
+
+      assert conn.status == 200
+      assert_received {:blocking_handler_started, _handler_pid}
+
+      assert %{"error" => %{"code" => -32603, "data" => %{"type" => "handler_timeout"}}} =
+               Jason.decode!(conn.resp_body)
     end
   end
 

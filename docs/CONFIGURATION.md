@@ -153,9 +153,15 @@ Phoenix/Plug applications usually mount `ExMCP.HttpPlug`:
 forward "/mcp", ExMCP.HttpPlug,
   handler: MyApp.MCPServer,
   server_info: %{name: "my-app", version: "1.0.0"},
+  handler_call_timeout: 10_000,
   sse_enabled: true,
   cors_enabled: true
 ```
+
+`:handler_call_timeout` is the server-side deadline for each call from
+`ExMCP.HttpPlug` into the Handler process (default `10_000` milliseconds).
+It is separate from client-side `:timeout`, `:request_timeout`,
+`:stream_handshake_timeout`, and `:stream_idle_timeout` settings.
 
 Pass request-local context into a handler with `:handler_opts`. The option can
 be a static term, a one-arity function called with the `Plug.Conn`, a two-arity

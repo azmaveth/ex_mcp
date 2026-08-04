@@ -28,6 +28,10 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
 - **Shared server dispatch** — New `ExMCP.Server.Dispatch`, `ExMCP.Server.ResultNormalizer`, and `ExMCP.Server.HandlerBridge` give the HandlerServer, stdio, HTTP, and request-processor paths one method table and one result/error shape. stdio gained `completion/complete`, `resources/subscribe`, `resources/unsubscribe`, `roots/list`, `logging/setLevel`, resource templates, and the `tasks/*` methods it was missing.
 
 ### Fixed
+- **HTTP Handler timeout is configurable** — `ExMCP.HttpPlug` now exposes
+  `:handler_call_timeout` (default 10 seconds) and threads it into the existing
+  MessageProcessor deadline. This server-side deadline is independent of
+  client request and SSE timeouts.
 - **URL-mode elicitation reaches the URL callback** — `elicitation/create` requests with `mode: "url"` now dispatch to `handle_url_elicitation/3` when implemented. This is the release's one intentional behavior change: handlers implementing both elicitation callbacks will now receive URL-mode requests in the URL callback. Form-only handlers retain a compatibility fallback, receive the URL payload instead of an empty schema, and get a once-per-handler warning.
 - **Compliance coverage includes 2025-11-25** — the generated compliance matrix now derives versions from the canonical registry, requires an explicit handler for every version, and carries inherited feature coverage through the latest supported revision.
 - **Transport `close/1` no longer leaks processes** — HTTP and stdio called `Process.exit(pid, :normal)` on processes that do not trap exits (a no-op), leaving the SSE client GenServer and the stdio reader running after close.

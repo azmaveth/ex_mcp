@@ -16,6 +16,10 @@ defmodule ExMCP.HttpPlug do
   JSON-RPC request, or an `{module, function, extra_args}` tuple. MFA handlers
   are called as `apply(module, function, [conn, request | extra_args])`.
 
+  `:handler_call_timeout` is the server-side deadline, in milliseconds, for
+  each call from the plug into a Handler process (default: `10_000`). It is
+  independent of client request and stream timeouts.
+
   ## Usage
 
       # With Cowboy
@@ -117,6 +121,7 @@ defmodule ExMCP.HttpPlug do
     %{
       handler: Keyword.get(opts, :handler),
       handler_opts: Keyword.get(opts, :handler_opts, []),
+      handler_call_timeout: Keyword.get(opts, :handler_call_timeout, 10_000),
       server_info: Keyword.get(opts, :server_info, %{name: "ex_mcp_server", version: "1.0.0"}),
       session_manager: Keyword.get(opts, :session_manager, ExMCP.SessionManager),
       sse_enabled: Keyword.get(opts, :sse_enabled, true),
@@ -776,6 +781,7 @@ defmodule ExMCP.HttpPlug do
           ExMCP.MessageProcessor.process(conn, %{
             handler: handler_module,
             handler_opts: handler_opts,
+            handler_call_timeout: Map.get(opts, :handler_call_timeout, 10_000),
             server_info: server_info
           })
 
