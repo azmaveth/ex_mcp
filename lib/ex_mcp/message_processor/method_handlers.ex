@@ -90,7 +90,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     uri = Map.get(params, "uri")
 
     safe_call(conn, server_pid, {:subscribe_resource, uri}, id, "Subscribe failed", fn
-      {:ok, _result} -> put_success(conn, %{}, id)
+      {:ok, _result} -> register_subscription(conn, uri, id)
       {:error, reason} -> put_error(conn, "Subscribe failed", reason, id)
     end)
   end
@@ -99,10 +99,28 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     uri = Map.get(params, "uri")
 
     safe_call(conn, server_pid, {:unsubscribe_resource, uri}, id, "Unsubscribe failed", fn
-      {:ok, _result} -> put_success(conn, %{}, id)
+      {:ok, _result} -> unregister_subscription(conn, uri, id)
       {:error, reason} -> put_error(conn, "Unsubscribe failed", reason, id)
     end)
   end
+
+  defp register_subscription(%{session_id: session_id} = conn, uri, id)
+       when is_binary(session_id) do
+    case ExMCP.SubscriptionRegistry.subscribe(session_id, uri) do
+      :ok -> put_success(conn, %{}, id)
+      {:error, reason} -> put_error(conn, "Subscribe failed", reason, id)
+    end
+  end
+
+  defp register_subscription(conn, _uri, id), do: put_success(conn, %{}, id)
+
+  defp unregister_subscription(%{session_id: session_id} = conn, uri, id)
+       when is_binary(session_id) do
+    :ok = ExMCP.SubscriptionRegistry.unsubscribe(session_id, uri)
+    put_success(conn, %{}, id)
+  end
+
+  defp unregister_subscription(conn, _uri, id), do: put_success(conn, %{}, id)
 
   def handle_prompts_list(conn, server_pid, params, id) do
     list_call(

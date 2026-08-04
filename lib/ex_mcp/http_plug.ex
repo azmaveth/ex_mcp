@@ -299,7 +299,13 @@ defmodule ExMCP.HttpPlug do
          {:ok, request} <- parse_json(body),
          {:ok, _token_info} <- authorize_request(conn, request, opts),
          {:ok, opts} <- resolve_handler_opts(conn, request, opts),
-         result <- process_mcp_request(request, opts) do
+         :ok <-
+           maybe_ensure_session(
+             Map.get(opts, :session_manager, ExMCP.SessionManager),
+             session_id,
+             %{transport: :http}
+           ),
+         result <- process_mcp_request(request, Map.put(opts, :session_id, session_id)) do
       Logger.debug("MCP request processed, result: #{inspect(result)}")
 
       case result do
@@ -523,6 +529,8 @@ defmodule ExMCP.HttpPlug do
         error -> Logger.error("Failed to terminate MCP session: #{inspect(error)}")
       end
 
+      ExMCP.SubscriptionRegistry.remove_session(session_id)
+
       # Try to stop the SSE handler if it exists
       case lookup_sse_handler(session_id) do
         {:ok, handler_pid} ->
@@ -725,6 +733,14 @@ defmodule ExMCP.HttpPlug do
 
   defp ensure_session_manager(session_manager), do: {:ok, session_manager}
 
+  defp maybe_ensure_session(session_manager, session_id, metadata) do
+    if function_exported?(session_manager, :ensure_session, 2) do
+      session_manager.ensure_session(session_id, metadata)
+    else
+      :ok
+    end
+  end
+
   defp session_manager_unavailable_response(conn, opts) do
     error_response =
       JSONRPC.error(nil, ErrorCodes.internal_error(), "Service unavailable", %{
@@ -749,7 +765,11 @@ defmodule ExMCP.HttpPlug do
 
       handler_module when is_atom(handler_module) ->
         # Use ExMCP.MessageProcessor to process the request
-        conn = ExMCP.MessageProcessor.new(request, transport: :http)
+        conn =
+          ExMCP.MessageProcessor.new(request,
+            transport: :http,
+            session_id: Map.get(opts, :session_id)
+          )
 
         # Create a simple processor that delegates to the handler
         processed_conn =
@@ -964,6 +984,49 @@ defmodule ExMCP.HttpPlug do
   # Look up SSE handler for a session
   defp lookup_sse_handler(session_id) do
     SessionRegistry.lookup(session_id)
+  end
+
+  @doc """
+  Broadcasts a resource update to each live SSE client subscribed to `uri`.
+
+  Subscription lookup is performed directly against ETS, and delivery uses
+  independent tasks so backpressure from one client does not block the rest.
+  Sessions without a live SSE connection remain subscribed for reconnection
+  and are removed by `ExMCP.SessionManager` when they expire.
+  """
+  @spec broadcast_resource_update(String.t()) :: %{
+          subscribers: non_neg_integer(),
+          delivered: non_neg_integer()
+        }
+  def broadcast_resource_update(uri) when is_binary(uri) do
+    session_ids = ExMCP.SubscriptionRegistry.sessions(uri)
+
+    delivered =
+      session_ids
+      |> Task.async_stream(&deliver_resource_update(&1, uri),
+        ordered: false,
+        timeout: 5_000,
+        on_timeout: :kill_task
+      )
+      |> Enum.count(&match?({:ok, :ok}, &1))
+
+    %{subscribers: length(session_ids), delivered: delivered}
+  end
+
+  defp deliver_resource_update(session_id, uri) do
+    notification = %{
+      "jsonrpc" => "2.0",
+      "method" => "notifications/resources/updated",
+      "params" => %{"uri" => uri}
+    }
+
+    with {:ok, handler} <- lookup_sse_handler(session_id),
+         true <- Process.alive?(handler),
+         :ok <- SSEHandler.request_send(handler) do
+      SSEHandler.send_event(handler, "message", notification)
+    else
+      _not_connected -> :not_delivered
+    end
   end
 
   # Clean up SSE handler registration

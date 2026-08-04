@@ -84,6 +84,17 @@ defmodule ExMCP.Server do
   end
 
   @doc """
+  Sends a resource update to streamable-HTTP clients subscribed to `uri`.
+  """
+  @spec notify_resource_update(String.t()) :: %{
+          subscribers: non_neg_integer(),
+          delivered: non_neg_integer()
+        }
+  def notify_resource_update(uri) when is_binary(uri) do
+    ExMCP.HttpPlug.broadcast_resource_update(uri)
+  end
+
+  @doc """
   Notifies subscribed clients that the resource list has changed.
   """
   @spec notify_resources_changed(GenServer.server()) :: :ok

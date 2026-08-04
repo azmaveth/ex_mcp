@@ -123,6 +123,18 @@ defmodule ExMCP.SessionManager do
   end
 
   @doc """
+  Ensures a transport-issued session ID exists and refreshes its activity.
+
+  Streamable HTTP issues the ID on POST before the client opens its SSE
+  channel. Retaining that exact ID associates later subscriptions and
+  notifications with one client across both channels.
+  """
+  @spec ensure_session(session_id(), map()) :: :ok
+  def ensure_session(session_id, metadata \\ %{}) when is_binary(session_id) do
+    GenServer.call(__MODULE__, {:ensure_session, session_id, metadata})
+  end
+
+  @doc """
   Stores an event for the given session.
 
   Events are stored with their ID, type, data, and timestamp for potential
@@ -276,6 +288,34 @@ defmodule ExMCP.SessionManager do
   end
 
   @impl true
+  def handle_call({:ensure_session, session_id, metadata}, _from, state) do
+    now = System.system_time(:microsecond)
+
+    session_data =
+      case :ets.lookup(state.sessions_table, session_id) do
+        [{^session_id, session}] ->
+          session
+          |> Map.merge(Map.take(metadata, [:transport, :client_info]))
+          |> Map.put(:status, :active)
+          |> Map.put(:last_activity, now)
+
+        [] ->
+          %{
+            id: session_id,
+            transport: Map.get(metadata, :transport, :http),
+            client_info: Map.get(metadata, :client_info, %{}),
+            created_at: now,
+            last_activity: now,
+            event_count: 0,
+            status: :active
+          }
+      end
+
+    :ets.insert(state.sessions_table, {session_id, session_data})
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_call({:store_event, session_id, event_data}, _from, state) do
     case :ets.lookup(state.sessions_table, session_id) do
       [{^session_id, session}] when session.status == :active ->
@@ -342,6 +382,7 @@ defmodule ExMCP.SessionManager do
 
         # Clean up events for this session
         cleanup_session_events(state, session_id)
+        ExMCP.SubscriptionRegistry.remove_session(session_id)
 
         Logger.debug("Terminated session #{session_id}")
 
@@ -539,6 +580,7 @@ defmodule ExMCP.SessionManager do
 
       :ets.insert(state.sessions_table, {session_id, terminated_session})
       cleanup_session_events(state, session_id)
+      ExMCP.SubscriptionRegistry.remove_session(session_id)
     end)
 
     if length(expired_sessions) > 0 do

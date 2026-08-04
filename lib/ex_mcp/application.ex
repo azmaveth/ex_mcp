@@ -21,6 +21,8 @@ defmodule ExMCP.Application do
         # Owns the ETS table mapping SSE session ids to handler pids for
         # ExMCP.HttpPlug (must outlive individual HTTP request processes)
         ExMCP.HttpPlug.SessionRegistry,
+        # Owns the ETS indexes for streamable-HTTP resource subscriptions
+        ExMCP.SubscriptionRegistry,
         # Start the Session Manager for streamable HTTP sessions
         ExMCP.SessionManager,
         # Start the Progress Tracker for 2025-06-18 progress notifications
