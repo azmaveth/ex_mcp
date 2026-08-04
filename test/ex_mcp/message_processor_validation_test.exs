@@ -10,7 +10,7 @@ defmodule ExMCP.MessageProcessorValidationTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.MessageProcessor
-  alias ExMCP.Server.HandlerServer
+  alias ExMCP.Server.{HandlerServer, ResultNormalizer}
 
   # Minimal handler-based server
   defmodule MinimalHandler do
@@ -32,7 +32,12 @@ defmodule ExMCP.MessageProcessorValidationTest do
     @impl true
     def handle_list_tools(_cursor, state) do
       tools = [
-        %{name: "test_tool", description: "A test tool", inputSchema: %{}}
+        %{
+          name: "test_tool",
+          description: "A test tool",
+          input_schema: %{},
+          output_schema: %{type: "object"}
+        }
       ]
 
       {:ok, tools, nil, state}
@@ -80,6 +85,18 @@ defmodule ExMCP.MessageProcessorValidationTest do
   end
 
   describe "message processor routing validation" do
+    test "raw Handler protocol fields use their MCP wire names" do
+      assert ResultNormalizer.stringify_keys(%{
+               mime_type: "text/plain",
+               uri_template: "file:///{path}",
+               list_pattern: "*.txt"
+             }) == %{
+               "mimeType" => "text/plain",
+               "uriTemplate" => "file:///{path}",
+               "listPattern" => "*.txt"
+             }
+    end
+
     test "handler server works correctly with new routing" do
       # Start the handler server first
       {:ok, server} =
@@ -117,6 +134,10 @@ defmodule ExMCP.MessageProcessorValidationTest do
       # Check the actual structure returned
       tool = hd(tools)
       assert tool["name"] == "test_tool"
+      assert tool["inputSchema"] == %{}
+      assert tool["outputSchema"] == %{"type" => "object"}
+      refute Map.has_key?(tool, "input_schema")
+      refute Map.has_key?(tool, "output_schema")
 
       # Cleanup
       GenServer.stop(server)

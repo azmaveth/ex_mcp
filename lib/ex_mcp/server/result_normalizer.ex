@@ -23,8 +23,9 @@ defmodule ExMCP.Server.ResultNormalizer do
   @doc """
   Recursively converts atom keys to strings.
 
-  `:is_error` is mapped to `"isError"` so handlers may use idiomatic Elixir
-  keys for the MCP tool-result flag.
+  Known MCP protocol fields such as `:input_schema`, `:mime_type` and
+  `:is_error` are mapped to their lower-camel-case wire names so raw Handler
+  implementations may use idiomatic Elixir keys.
   """
   @spec stringify_keys(term()) :: term()
   def stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
@@ -38,6 +39,11 @@ defmodule ExMCP.Server.ResultNormalizer do
 
   def stringify_keys(value), do: value
 
+  defp stringify_key(:input_schema), do: "inputSchema"
+  defp stringify_key(:output_schema), do: "outputSchema"
+  defp stringify_key(:mime_type), do: "mimeType"
+  defp stringify_key(:uri_template), do: "uriTemplate"
+  defp stringify_key(:list_pattern), do: "listPattern"
   defp stringify_key(:is_error), do: "isError"
   defp stringify_key(:is_error?), do: "isError"
   defp stringify_key(key), do: Atom.to_string(key)
