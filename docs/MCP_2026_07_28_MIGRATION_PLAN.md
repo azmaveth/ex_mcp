@@ -215,7 +215,7 @@ on each request and passed to handlers. In the legacy era it is synthesised from
 session so that handler code is era-agnostic.
 
 `ExMCP.Server.ResultNormalizer` is already the single shared result shaper across all four
-dispatch paths (this consolidation landed in `[Unreleased]`). That makes stamping
+dispatch paths (this consolidation landed in `1.0.0-rc.5`). That makes stamping
 `resultType`/`_meta.serverInfo`/`ttlMs`/`cacheScope` a **one-file change** rather than four.
 Preserve that property.
 

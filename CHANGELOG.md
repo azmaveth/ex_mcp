@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.5] - 2026-08-04
+
 This release closes the findings of a full-codebase audit (architecture, security,
 tests, tooling). Behavior changes are listed under **Breaking Changes** below.
 
@@ -20,6 +22,11 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
 - **Removed a hostname-verification stub** — `ExMCP.Internal.Security.verify_hostname/3` always returned `:valid_peer`; wiring it as a `verify_fun` would have silently disabled hostname checking. Removed, and the module's divergent second TLS-options builder now delegates to the canonical one. `verify: :verify_none` now logs a warning.
 
 ### Added
+- **Session-scoped HTTP resource subscriptions** — Streamable-HTTP subscriptions
+  are retained across POST and SSE requests, tracked independently per client
+  session in supervised ETS indexes, and removed on explicit termination or
+  TTL expiry. `ExMCP.Server.notify_resource_update/1` broadcasts updates to
+  every connected subscriber without routing through a singleton mailbox.
 - **Canonical protocol method registry** — `ExMCP.Protocol.Methods` now owns method names, version bounds, message kinds, and dispatcher handlers. Server dispatch, HTTP message processing, request processing, version gating, and message-format metadata all derive from it.
 - **Pre-2.0 compatibility guardrails** — committed wire-capability fixtures and characterization tests pin protocol method tables, public error codes, the omitted-version initialize default, and elicitation callback routing across all four supported protocol revisions.
 - **Client auto-reconnection** — `ExMCP.Client` now automatically reconnects when the transport closes unexpectedly, as the documentation always promised. Pending requests still fail with a connection error, then the client re-establishes the transport and MCP handshake with exponential backoff and jitter (defaults: initial 1s, multiplier 2, cap 60s, up to 10 attempts). New `start_link/1` options: `:reconnect` (default `true`), `:max_reconnect_attempts`, and `:reconnect_backoff` (`:initial`/`:max`/`:multiplier`). Emits `[:ex_mcp, :client, :reconnect, :attempt | :success | :error | :timeout]` telemetry. Explicit `disconnect/1`/`stop/2` never triggers reconnection; requests made while reconnecting return `{:error, :not_connected}`.
@@ -28,6 +35,21 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
 - **Shared server dispatch** — New `ExMCP.Server.Dispatch`, `ExMCP.Server.ResultNormalizer`, and `ExMCP.Server.HandlerBridge` give the HandlerServer, stdio, HTTP, and request-processor paths one method table and one result/error shape. stdio gained `completion/complete`, `resources/subscribe`, `resources/unsubscribe`, `roots/list`, `logging/setLevel`, resource templates, and the `tasks/*` methods it was missing.
 
 ### Fixed
+- **Claude streamed text is emitted once** — Claude SDK terminal assistant text
+  no longer repeats content already emitted through text deltas. Multiple
+  non-streamed text blocks and distinct identical assistant messages remain
+  intact.
+- **Codex structured approvals are preserved** — Structured command-execution,
+  file-change, and permission responses no longer crash string conversion or
+  lose provider fields. Decisions are validated against the advertised
+  `availableDecisions` before they are returned.
+- **Codex file-change snapshots and legacy patches agree** — Current ordered
+  `changes` snapshots are mapped in full, while legacy nested `patch` and flat
+  `diff` / `text` / `delta` payloads retain their previous behavior.
+- **Raw Handler field names use MCP wire casing** — Shared result normalization
+  maps idiomatic fields including `:input_schema`, `:output_schema`,
+  `:mime_type`, and `:uri_template` to their protocol names on every server
+  dispatch path.
 - **HTTP Handler timeout is configurable** — `ExMCP.HttpPlug` now exposes
   `:handler_call_timeout` (default 10 seconds) and threads it into the existing
   MessageProcessor deadline. This server-side deadline is independent of
