@@ -496,6 +496,181 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert state.session_id == "s1"
     end
 
+    test "does not re-emit terminal assistant text after partial text chunks", %{state: state} do
+      start_event = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{
+          "type" => "content_block_start",
+          "content_block" => %{"type" => "text", "text" => ""}
+        }
+      }
+
+      delta_event = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{
+          "type" => "content_block_delta",
+          "delta" => %{"type" => "text_delta", "text" => "streamed once"}
+        }
+      }
+
+      assistant_event = %{
+        "type" => "assistant",
+        "session_id" => "s1",
+        "message" => %{
+          "content" => [%{"type" => "text", "text" => "streamed once"}]
+        }
+      }
+
+      assert {:skip, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(start_event), state)
+
+      assert {:messages, [chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(delta_event), state)
+
+      assert get_in(chunk, ["params", "update", "content", "text"]) == "streamed once"
+
+      assert {:skip, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(assistant_event), state)
+
+      assert IO.iodata_to_binary(Enum.reverse(state.text_acc)) == "streamed once"
+    end
+
+    test "does not re-emit streamed text when the terminal assistant also contains a tool", %{
+      state: state
+    } do
+      text_start = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{
+          "type" => "content_block_start",
+          "content_block" => %{"type" => "text", "text" => ""}
+        }
+      }
+
+      text_delta = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{
+          "type" => "content_block_delta",
+          "delta" => %{"type" => "text_delta", "text" => "before tool"}
+        }
+      }
+
+      tool = %{
+        "type" => "tool_use",
+        "id" => "toolu_read",
+        "name" => "Read",
+        "input" => %{"file_path" => "/tmp/project/lib/a.ex"}
+      }
+
+      tool_start = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{"type" => "content_block_start", "content_block" => tool}
+      }
+
+      assistant = %{
+        "type" => "assistant",
+        "session_id" => "s1",
+        "message" => %{
+          "content" => [%{"type" => "text", "text" => "before tool"}, tool]
+        }
+      }
+
+      assert {:skip, state} = ClaudeSDK.translate_inbound(Jason.encode!(text_start), state)
+
+      assert {:messages, [_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(text_delta), state)
+
+      assert {:messages, [_pending], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(tool_start), state)
+
+      assert {:messages, messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(assistant), state)
+
+      refute Enum.any?(
+               messages,
+               &(get_in(&1, ["params", "update", "sessionUpdate"]) ==
+                   "agent_message_chunk")
+             )
+
+      assert IO.iodata_to_binary(Enum.reverse(state.text_acc)) == "before tool"
+    end
+
+    test "allows assistant-only text after a streamed assistant", %{state: state} do
+      text_start = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{
+          "type" => "content_block_start",
+          "content_block" => %{"type" => "text", "text" => ""}
+        }
+      }
+
+      text_delta = %{
+        "type" => "stream_event",
+        "session_id" => "s1",
+        "event" => %{
+          "type" => "content_block_delta",
+          "delta" => %{"type" => "text_delta", "text" => "first"}
+        }
+      }
+
+      streamed_assistant = %{
+        "type" => "assistant",
+        "session_id" => "s1",
+        "message" => %{"content" => [%{"type" => "text", "text" => "first"}]}
+      }
+
+      fallback_assistant = %{
+        "type" => "assistant",
+        "session_id" => "s1",
+        "message" => %{"content" => [%{"type" => "text", "text" => " fallback"}]}
+      }
+
+      assert {:skip, state} = ClaudeSDK.translate_inbound(Jason.encode!(text_start), state)
+
+      assert {:messages, [_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(text_delta), state)
+
+      assert {:skip, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(streamed_assistant), state)
+
+      assert {:messages, [fallback_chunk], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(fallback_assistant), state)
+
+      assert get_in(fallback_chunk, ["params", "update", "content", "text"]) == " fallback"
+      assert IO.iodata_to_binary(Enum.reverse(state.text_acc)) == "first fallback"
+    end
+
+    test "accumulates every assistant text block when no partials were streamed", %{
+      state: state
+    } do
+      assistant = %{
+        "type" => "assistant",
+        "session_id" => "s1",
+        "message" => %{
+          "content" => [
+            %{"type" => "text", "text" => "first"},
+            %{"type" => "text", "text" => " second"}
+          ]
+        }
+      }
+
+      assert {:messages, messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(assistant), state)
+
+      chunks =
+        for %{"params" => %{"update" => %{"sessionUpdate" => "agent_message_chunk"} = update}} <-
+              messages,
+            do: get_in(update, ["content", "text"])
+
+      assert chunks == ["first", " second"]
+      assert IO.iodata_to_binary(Enum.reverse(state.text_acc)) == "first second"
+    end
+
     test "final result produces ACP prompt response with stop reason and usage", %{state: state} do
       state = %{state | pending_prompt_id: 123, session_id: "s1", text_acc: ["world", "hello "]}
 

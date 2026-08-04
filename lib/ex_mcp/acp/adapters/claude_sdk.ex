@@ -41,6 +41,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     thinking_acc: [],
     thinking_blocks: [],
     current_block_type: nil,
+    current_assistant_text_streamed?: false,
     tool_calls: %{},
     message_ids: %{}
   ]
@@ -535,6 +536,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         thinking_acc: [],
         thinking_blocks: [],
         current_block_type: nil,
+        current_assistant_text_streamed?: false,
         tool_calls: %{}
     }
   end
@@ -554,6 +556,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
               thinking_acc: [],
               thinking_blocks: [],
               current_block_type: nil,
+              current_assistant_text_streamed?: false,
               tool_calls: %{}
           }
 
@@ -596,6 +599,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
             thinking_acc: [],
             thinking_blocks: [],
             current_block_type: nil,
+            current_assistant_text_streamed?: false,
             tool_calls: %{}
         }
       else
@@ -619,6 +623,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
           thinking_acc: [],
           thinking_blocks: [],
           current_block_type: nil,
+          current_assistant_text_streamed?: false,
           tool_calls: %{}
       }
 
