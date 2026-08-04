@@ -92,7 +92,10 @@ jobs:
       run: mix deps.unlock --check-unused
 
     - name: Compile without warnings
-      run: mix compile --warnings-as-errors
+      # Dependencies are compiled in the preceding step. Avoid re-checking them
+      # under warnings-as-errors: OTP 29 reports deprecations in third-party
+      # Erlang sources (notably jose) that ExMCP cannot fix locally.
+      run: mix compile --warnings-as-errors --no-deps-check
 
     - name: Run unit tests
       run: mix test --exclude compliance
