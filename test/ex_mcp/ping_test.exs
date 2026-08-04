@@ -10,7 +10,6 @@ defmodule ExMCP.PingTest do
   defmodule TestServerHandler do
     @behaviour Handler
 
-    @impl true
     def init(_args) do
       {:ok, %{ping_count: 0}}
     end
@@ -35,7 +34,6 @@ defmodule ExMCP.PingTest do
       {:ok, [%{type: "text", text: "Not implemented"}], state}
     end
 
-    @impl true
     def terminate(_reason, _state) do
       :ok
     end

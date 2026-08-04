@@ -10,6 +10,7 @@ defmodule ExMCP.BidirectionalTest do
   defmodule TestClientHandler do
     @behaviour ExMCP.Client.Handler
 
+    @impl true
     def init(args) do
       {:ok, args}
     end

@@ -795,9 +795,9 @@ defmodule ExMCP.Client.ResponseTest do
       # We can't easily test this directly, but we can test edge cases
 
       # The public API should handle edge cases gracefully
-      assert Response.normalize_tool(%{}) != nil
-      assert Response.normalize_resource(%{}) != nil
-      assert Response.normalize_prompt(%{}) != nil
+      assert %{metadata: %{}} = Response.normalize_tool(%{})
+      assert %{metadata: %{}} = Response.normalize_resource(%{})
+      assert %{metadata: %{}} = Response.normalize_prompt(%{})
     end
   end
 

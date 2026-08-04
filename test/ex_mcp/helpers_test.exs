@@ -106,7 +106,9 @@ defmodule ExMCP.HelpersTest do
     test "preserves return value on exception" do
       assert_raise RuntimeError, "test error", fn ->
         measure do
-          raise "test error"
+          # Keep the call dynamic so the compiler can verify the macro's exception path.
+          # credo:disable-for-next-line Credo.Check.Refactor.Apply
+          apply(:erlang, :error, [RuntimeError.exception("test error")])
         end
       end
     end

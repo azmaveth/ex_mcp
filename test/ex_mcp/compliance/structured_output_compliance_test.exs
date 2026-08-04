@@ -4,10 +4,10 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
 
   Tests the following features:
   - Output schema validation with ExJsonSchema
-  - structuredOutput field support
+  - structuredContent field support
   - Resource links in tool results
   - Title fields for tools
-  - Legacy structuredContent mapping
+  - Legacy structuredOutput mapping
   - Error handling for invalid output
   """
   use ExUnit.Case, async: true
@@ -16,7 +16,7 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
 
   defmodule TestServer do
     use ExMCP.Server.Handler
-    use ExMCP.Server.Tools
+    use ExMCP.Server.DSL
 
     tool "weather_tool" do
       title("Weather Information Tool")
@@ -40,11 +40,11 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
         required: ["temperature", "conditions"]
       })
 
-      handle(fn %{location: location}, state ->
+      run(fn %{location: location}, state ->
         {:ok,
          %{
            content: [%{type: "text", text: "Weather in #{location}: 22°C, Sunny"}],
-           structuredOutput: %{
+           structuredContent: %{
              temperature: 22.5,
              conditions: "Sunny",
              humidity: 65
@@ -82,13 +82,13 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
         required: ["result", "expression"]
       })
 
-      handle(fn %{expression: expr}, state ->
+      run(fn %{expression: expr}, state ->
         case evaluate_expression(expr) do
           {:ok, result} ->
             {:ok,
              %{
                content: [%{type: "text", text: "Result: #{result}"}],
-               structuredOutput: %{
+               structuredContent: %{
                  result: result,
                  expression: expr,
                  explanation: "Evaluated mathematical expression"
@@ -123,12 +123,12 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
         required: ["number_result"]
       })
 
-      handle(fn _args, state ->
+      run(fn _args, state ->
         {:ok,
          %{
            content: [%{type: "text", text: "Invalid output test"}],
            # This should fail validation - string instead of number
-           structuredOutput: %{number_result: "not a number"}
+           structuredContent: %{number_result: "not a number"}
          }, state}
       end)
     end
@@ -143,12 +143,12 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
         }
       })
 
-      handle(fn %{input: input}, state ->
+      run(fn %{input: input}, state ->
         {:ok,
          %{
            content: [%{type: "text", text: "Processed: #{input}"}],
-           # Legacy field that should be mapped to structuredOutput
-           structuredContent: %{processed: String.upcase(input)}
+           # Legacy field that should be mapped to structuredContent
+           structuredOutput: %{processed: String.upcase(input)}
          }, state}
       end)
     end
@@ -172,10 +172,10 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
         required: ["processed"]
       })
 
-      handle(fn %{data: data}, state ->
+      run(fn %{data: data}, state ->
         {:ok,
          %{
-           structuredOutput: %{
+           structuredContent: %{
              processed: String.upcase(data),
              timestamp: System.system_time(:second)
            }
@@ -202,7 +202,7 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
   describe "tool definition compliance" do
     test "tools include title field in 2025-06-18 format" do
       state = %{}
-      assert {:ok, tools, ^state} = TestServer.handle_list_tools(%{}, state)
+      assert {:ok, tools, nil, ^state} = TestServer.handle_list_tools(nil, state)
 
       weather_tool = Enum.find(tools, &(&1.name == "weather_tool"))
       assert weather_tool.title == "Weather Information Tool"
@@ -214,7 +214,7 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
 
     test "tools include outputSchema field" do
       state = %{}
-      assert {:ok, tools, ^state} = TestServer.handle_list_tools(%{}, state)
+      assert {:ok, tools, nil, ^state} = TestServer.handle_list_tools(nil, state)
 
       weather_tool = Enum.find(tools, &(&1.name == "weather_tool"))
       assert weather_tool.outputSchema != nil
@@ -233,7 +233,7 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
   end
 
   describe "structured output response format" do
-    test "tool results include structuredOutput field" do
+    test "tool results include structuredContent field" do
       state = %{}
       params = %{name: "weather_tool", arguments: %{location: "London"}}
 
@@ -242,7 +242,7 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
 
       # Verify response structure for 2025-06-18 compliance
       assert Map.has_key?(response, :content)
-      assert Map.has_key?(response, :structuredOutput)
+      assert Map.has_key?(response, :structuredContent)
       assert Map.has_key?(response, :resourceLinks)
 
       # Verify content
@@ -250,9 +250,9 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       assert hd(response.content).type == "text"
 
       # Verify structured output
-      assert response.structuredOutput.temperature == 22.5
-      assert response.structuredOutput.conditions == "Sunny"
-      assert response.structuredOutput.humidity == 65
+      assert response.structuredContent.temperature == 22.5
+      assert response.structuredContent.conditions == "Sunny"
+      assert response.structuredContent.humidity == 65
 
       # Verify resource links
       assert length(response.resourceLinks) == 1
@@ -270,9 +270,9 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
                TestServer.handle_call_tool(params.name, params.arguments, state)
 
       # Valid output should pass validation
-      assert response.structuredOutput.result == 4
-      assert response.structuredOutput.expression == "2+2"
-      assert response.structuredOutput.explanation == "Evaluated mathematical expression"
+      assert response.structuredContent.result == 4
+      assert response.structuredContent.expression == "2+2"
+      assert response.structuredContent.explanation == "Evaluated mathematical expression"
       refute Map.has_key?(response, :isError)
     end
 
@@ -292,17 +292,16 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
       assert String.contains?(error_text, "Output validation failed")
     end
 
-    test "legacy structuredContent is mapped to structuredOutput" do
+    test "legacy structuredOutput is mapped to structuredContent" do
       state = %{}
       params = %{name: "legacy_tool", arguments: %{input: "test"}}
 
       assert {:ok, response, ^state} =
                TestServer.handle_call_tool(params.name, params.arguments, state)
 
-      # Should have structuredOutput, not structuredContent
-      assert Map.has_key?(response, :structuredOutput)
-      refute Map.has_key?(response, :structuredContent)
-      assert response.structuredOutput.processed == "TEST"
+      assert Map.has_key?(response, :structuredContent)
+      refute Map.has_key?(response, :structuredOutput)
+      assert response.structuredContent.processed == "TEST"
     end
 
     test "empty content array added when only structured output provided" do
@@ -314,9 +313,9 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
 
       # Should have empty content array and structured output
       assert response.content == []
-      assert Map.has_key?(response, :structuredOutput)
-      assert response.structuredOutput.processed == "TEST"
-      assert is_integer(response.structuredOutput.timestamp)
+      assert Map.has_key?(response, :structuredContent)
+      assert response.structuredContent.processed == "TEST"
+      assert is_integer(response.structuredContent.timestamp)
     end
   end
 
@@ -330,7 +329,7 @@ defmodule ExMCP.Compliance.StructuredOutputComplianceTest do
 
       # Should work without validation
       assert length(response.content) == 1
-      assert response.structuredOutput.processed == "HELLO"
+      assert response.structuredContent.processed == "HELLO"
       refute Map.has_key?(response, :isError)
     end
 

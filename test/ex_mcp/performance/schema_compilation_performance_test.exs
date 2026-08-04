@@ -123,7 +123,7 @@ defmodule ExMCP.Performance.SchemaCompilationPerformanceTest do
   describe "integration with tools DSL" do
     defmodule TestPerformanceServer do
       use ExMCP.Server.Handler
-      use ExMCP.Server.Tools
+      use ExMCP.Server.DSL
 
       tool "perf_test" do
         description("Performance test tool")
@@ -137,11 +137,11 @@ defmodule ExMCP.Performance.SchemaCompilationPerformanceTest do
           required: ["result"]
         })
 
-        handle(fn _args, state ->
+        run(fn _args, state ->
           {:ok,
            %{
              content: [%{type: "text", text: "Performance test"}],
-             structuredOutput: %{
+             structuredContent: %{
                result: 42,
                timestamp: System.system_time(:second)
              }
@@ -182,7 +182,7 @@ defmodule ExMCP.Performance.SchemaCompilationPerformanceTest do
 
       assert Enum.all?(results, fn
                {:ok, response, ^state} ->
-                 Map.has_key?(response, :structuredOutput) and
+                 Map.has_key?(response, :structuredContent) and
                    not Map.has_key?(response, :isError)
 
                _ ->

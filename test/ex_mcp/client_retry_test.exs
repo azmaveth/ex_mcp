@@ -130,30 +130,20 @@ defmodule ExMCP.ClientRetryTest do
       retry_policy = [max_attempts: 3]
 
       # The :use_default symbol should be handled
-      effective_policy =
-        if retry_policy == :use_default do
-          []
-        else
-          case retry_policy do
-            false -> []
-            [] -> []
-            policy when is_list(policy) -> policy
-          end
-        end
+      effective_policy = normalize_retry_policy(retry_policy)
 
       assert effective_policy == [max_attempts: 3]
+      assert normalize_retry_policy(:use_default) == []
 
       # Test disabled retry
       disabled_policy = false
-
-      effective_disabled =
-        case disabled_policy do
-          false -> []
-          [] -> []
-          policy when is_list(policy) -> policy
-        end
+      effective_disabled = normalize_retry_policy(disabled_policy)
 
       assert effective_disabled == []
     end
   end
+
+  defp normalize_retry_policy(:use_default), do: []
+  defp normalize_retry_policy(false), do: []
+  defp normalize_retry_policy(policy) when is_list(policy), do: policy
 end

@@ -17,20 +17,13 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.TestConcurrentHandler do
 
   @impl GenServer
   def handle_call({:initialize, params}, _from, state) do
-    case handle_initialize(params, state) do
-      {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
-      {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
-    end
+    {:ok, result, new_state} = handle_initialize(params, state)
+    {:reply, {:ok, result, new_state}, new_state}
   end
 
   def handle_call({:list_tools, cursor}, _from, state) do
-    case handle_list_tools(cursor, state) do
-      {:ok, tools, next_cursor, new_state} ->
-        {:reply, {:ok, %{"tools" => tools, "nextCursor" => next_cursor}, new_state}, new_state}
-
-      {:error, reason, new_state} ->
-        {:reply, {:error, reason, new_state}, new_state}
-    end
+    {:ok, tools, next_cursor, new_state} = handle_list_tools(cursor, state)
+    {:reply, {:ok, %{"tools" => tools, "nextCursor" => next_cursor}, new_state}, new_state}
   end
 
   def handle_call({:call_tool, name, args}, _from, state) do
@@ -140,20 +133,13 @@ defmodule ExMCP.Integration.ConcurrentClientsTest.ErrorProneHandler do
 
   @impl GenServer
   def handle_call({:initialize, params}, _from, state) do
-    case handle_initialize(params, state) do
-      {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
-      {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
-    end
+    {:ok, result, new_state} = handle_initialize(params, state)
+    {:reply, {:ok, result, new_state}, new_state}
   end
 
   def handle_call({:list_tools, cursor}, _from, state) do
-    case handle_list_tools(cursor, state) do
-      {:ok, tools, next_cursor, new_state} ->
-        {:reply, {:ok, %{"tools" => tools, "nextCursor" => next_cursor}, new_state}, new_state}
-
-      {:error, reason, new_state} ->
-        {:reply, {:error, reason, new_state}, new_state}
-    end
+    {:ok, tools, next_cursor, new_state} = handle_list_tools(cursor, state)
+    {:reply, {:ok, %{"tools" => tools, "nextCursor" => next_cursor}, new_state}, new_state}
   end
 
   def handle_call({:call_tool, name, args}, _from, state) do

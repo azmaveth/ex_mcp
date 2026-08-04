@@ -427,14 +427,18 @@ defmodule ExMCP.Content.BuildersTest do
 
     test "resize returns error placeholder" do
       image_content = Builders.image("data", "image/png")
-      result = Builders.resize(image_content, 100, 100)
+      # Invoke dynamically so this compatibility test does not emit a deprecation warning.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(Builders, :resize, [image_content, 100, 100])
 
       assert {:error, _} = result
     end
 
     test "compress returns error placeholder" do
       image_content = Builders.image("data", "image/png")
-      result = Builders.compress(image_content)
+      # Invoke dynamically so this compatibility test does not emit a deprecation warning.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(Builders, :compress, [image_content])
 
       assert {:error, _} = result
     end
