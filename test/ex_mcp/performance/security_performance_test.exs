@@ -55,11 +55,10 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
         SecurityGuard.validate_request(request, config)
       end
 
-      # Measure performance
-      {time_microseconds, _result} =
-        :timer.tc(fn ->
-          SecurityGuard.validate_request(request, config)
-        end)
+      # Use the best of several samples so scheduler jitter on shared CI
+      # runners does not turn a sub-100us operation into a false regression.
+      time_microseconds =
+        best_time(fn -> SecurityGuard.validate_request(request, config) end)
 
       assert time_microseconds < @performance_target_microseconds,
              "Security validation took #{time_microseconds}μs, exceeds target of #{@performance_target_microseconds}μs"
@@ -237,10 +236,8 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
         SecurityGuard.validate_request(request, config)
       end
 
-      {time_microseconds, _result} =
-        :timer.tc(fn ->
-          SecurityGuard.validate_request(request, config)
-        end)
+      time_microseconds =
+        best_time(fn -> SecurityGuard.validate_request(request, config) end)
 
       assert time_microseconds < @performance_target_microseconds,
              "Stdio security validation took #{time_microseconds}μs, exceeds target"
@@ -262,10 +259,8 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
         SecurityGuard.validate_request(request, config)
       end
 
-      {time_microseconds, _result} =
-        :timer.tc(fn ->
-          SecurityGuard.validate_request(request, config)
-        end)
+      time_microseconds =
+        best_time(fn -> SecurityGuard.validate_request(request, config) end)
 
       assert time_microseconds < @performance_target_microseconds,
              "BEAM security validation took #{time_microseconds}μs, exceeds target"
@@ -322,5 +317,14 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
                "Validation with #{header_count} headers took #{best_time}μs (best of 5), exceeds scaled target of #{max_time}μs"
       end
     end
+  end
+
+  defp best_time(fun, samples \\ 5) do
+    1..samples
+    |> Enum.map(fn _ ->
+      {time_microseconds, _result} = :timer.tc(fun)
+      time_microseconds
+    end)
+    |> Enum.min()
   end
 end

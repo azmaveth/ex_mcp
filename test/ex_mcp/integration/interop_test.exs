@@ -14,7 +14,6 @@ defmodule ExMCP.Integration.InteropTest do
   use ExUnit.Case, async: false
 
   @moduletag :interop
-  @moduletag :integration
   @moduletag timeout: 60_000
 
   @interop_dir Path.expand("../../interop", __DIR__)

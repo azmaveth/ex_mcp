@@ -15,6 +15,7 @@ if (!serverCommand) {
 }
 
 const results = {};
+const requestOptions = { timeout: 5_000 };
 
 try {
   const transport = new StdioClientTransport({
@@ -27,12 +28,12 @@ try {
     version: "1.0.0",
   });
 
-  await client.connect(transport);
+  await client.connect(transport, { timeout: 10_000 });
   results.connected = true;
 
   // List and call tools
   try {
-    const toolsResult = await client.listTools();
+    const toolsResult = await client.listTools(undefined, requestOptions);
     results.tools = toolsResult.tools.map((t) => t.name);
   } catch (e) {
     results.tools_error = e.message;
@@ -40,10 +41,14 @@ try {
 
   // Call echo tool
   try {
-    const echoResult = await client.callTool({
-      name: "echo",
-      arguments: { message: "hello from TS" },
-    });
+    const echoResult = await client.callTool(
+      {
+        name: "echo",
+        arguments: { message: "hello from TS" },
+      },
+      undefined,
+      requestOptions
+    );
     results.echo = echoResult;
   } catch (e) {
     results.echo_error = e.message;
@@ -51,10 +56,14 @@ try {
 
   // Call add tool (if available)
   try {
-    const addResult = await client.callTool({
-      name: "add",
-      arguments: { a: 10, b: 20 },
-    });
+    const addResult = await client.callTool(
+      {
+        name: "add",
+        arguments: { a: 10, b: 20 },
+      },
+      undefined,
+      requestOptions
+    );
     results.add = addResult;
   } catch (e) {
     results.add_error = e.message;
@@ -62,7 +71,7 @@ try {
 
   // List resources
   try {
-    const resourcesResult = await client.listResources();
+    const resourcesResult = await client.listResources(undefined, requestOptions);
     results.resources = resourcesResult.resources.map((r) => r.uri);
   } catch (e) {
     results.resources_error = e.message;
@@ -70,7 +79,7 @@ try {
 
   // List prompts
   try {
-    const promptsResult = await client.listPrompts();
+    const promptsResult = await client.listPrompts(undefined, requestOptions);
     results.prompts = promptsResult.prompts.map((p) => p.name);
   } catch (e) {
     results.prompts_error = e.message;
@@ -78,14 +87,14 @@ try {
 
   // Ping
   try {
-    await client.ping();
+    await client.ping(requestOptions);
     results.ping = true;
   } catch (e) {
     results.ping_error = e.message;
   }
 
   await client.close();
-  results.success = true;
+  results.success = !Object.keys(results).some((key) => key.endsWith("_error"));
 } catch (e) {
   results.error = e.message;
   results.success = false;

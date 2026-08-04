@@ -42,3 +42,23 @@ server.prompt("simple_prompt", async () => ({
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// The SDK transport does not install an EOF handler. Explicitly exit when the
+// Elixir client closes its end of the pipe so repeated interop tests do not
+// leave Node processes behind on Linux CI runners.
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  try {
+    await server.close();
+  } finally {
+    process.exit(0);
+  }
+};
+
+process.stdin.once("end", shutdown);
+process.stdin.once("close", shutdown);
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);

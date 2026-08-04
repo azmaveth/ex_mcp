@@ -43,8 +43,6 @@ defmodule ExMCP.Server.CancellationTracker do
 
     @behaviour ExMCP.Server.CancellationTracker
 
-    require Logger
-
     @impl true
     def mark_cancelled(request_id, handler_state) when is_map(handler_state) do
       handler_state
