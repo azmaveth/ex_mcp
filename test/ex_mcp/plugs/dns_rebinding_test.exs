@@ -2,14 +2,13 @@ defmodule ExMCP.Plugs.DnsRebindingTest do
   use ExUnit.Case, async: true
 
   import Plug.Test
-  import Plug.Conn
 
   alias ExMCP.Plugs.DnsRebinding
 
   defp call(host_header, opts \\ []) do
     # Plug forbids put_req_header/3 for "host"; inject it directly.
-    base = conn(:get, "/")
-    conn = %Plug.Conn{base | req_headers: [{"host", host_header} | base.req_headers]}
+    %Plug.Conn{} = base = conn(:get, "/")
+    conn = %{base | req_headers: [{"host", host_header} | base.req_headers]}
     DnsRebinding.call(conn, DnsRebinding.init(opts))
   end
 
