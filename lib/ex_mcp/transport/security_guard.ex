@@ -5,6 +5,29 @@ defmodule ExMCP.Transport.SecurityGuard do
   This module provides consistent security enforcement across all transports
   by intercepting outbound requests and applying token passthrough prevention
   and user consent validation.
+
+  ## The trust boundary
+
+  Every outbound URL is classified as `:internal` or `:external` by comparing
+  its host against `:trusted_origins`. External requests
+
+    1. have their credential headers removed (token passthrough prevention), and
+    2. must be approved by the configured `:consent_handler`.
+
+  `:trusted_origins` defaults to loopback only and `:consent_handler` defaults
+  to `ExMCP.ConsentHandler.Deny`, so **an MCP server that is not on localhost is
+  blocked until its origin is added to `:trusted_origins`**:
+
+      config :ex_mcp, :security,
+        trusted_origins: ["https://mcp.example.com"]
+
+  That single setting covers both checks — a trusted origin is never stripped
+  and never prompts for consent. Consent then applies only to origins the
+  application did not declare. See `docs/SECURITY.md`.
+
+  Both checks can be switched off individually with
+  `:enable_token_passthrough_prevention` and `:enable_user_consent_validation`;
+  prefer declaring `:trusted_origins` over disabling a control.
   """
 
   alias ExMCP.Internal.Security
@@ -82,7 +105,7 @@ defmodule ExMCP.Transport.SecurityGuard do
             %{url: request.url, user_id: request.user_id, transport: request.transport}
           )
 
-        Logger.info("SecurityGuard: Consent required",
+        Logger.info("SecurityGuard: Consent required. " <> remediation_hint(request),
           url: request.url,
           user_id: request.user_id
         )
@@ -97,7 +120,7 @@ defmodule ExMCP.Transport.SecurityGuard do
             %{url: request.url, user_id: request.user_id, transport: request.transport}
           )
 
-        Logger.warning("SecurityGuard: Consent denied",
+        Logger.warning("SecurityGuard: Consent denied. " <> remediation_hint(request),
           url: request.url,
           user_id: request.user_id
         )
@@ -129,7 +152,9 @@ defmodule ExMCP.Transport.SecurityGuard do
     default_config = %{
       trusted_origins: ["localhost", "127.0.0.1", "::1"],
       consent_handler: ExMCP.ConsentHandler.Deny,
-      log_security_actions: true
+      log_security_actions: true,
+      enable_token_passthrough_prevention: true,
+      enable_user_consent_validation: true
     }
 
     Map.merge(default_config, config)
@@ -139,11 +164,29 @@ defmodule ExMCP.Transport.SecurityGuard do
 
   defp check_token_passthrough(request, config) do
     security_config = get_security_config(config)
-    Security.check_token_passthrough(request.url, request.headers, security_config)
+
+    if Map.get(security_config, :enable_token_passthrough_prevention, true) do
+      {:ok, headers} =
+        Security.check_token_passthrough(request.url, request.headers, security_config)
+
+      warn_if_credentials_stripped(request, headers)
+      {:ok, headers}
+    else
+      {:ok, request.headers}
+    end
   end
 
   defp check_user_consent(request, config) do
     security_config = get_security_config(config)
+
+    if Map.get(security_config, :enable_user_consent_validation, true) do
+      do_check_user_consent(request, security_config)
+    else
+      {:ok, :consent_granted}
+    end
+  end
+
+  defp do_check_user_consent(request, security_config) do
     consent_handler = Map.get(security_config, :consent_handler, ExMCP.ConsentHandler.Deny)
 
     result =
@@ -179,6 +222,36 @@ defmodule ExMCP.Transport.SecurityGuard do
         )
 
         {:error, :consent_error}
+    end
+  end
+
+  # Credential headers are only removed for origins that are not trusted. When
+  # that origin is in fact the MCP server the client was pointed at, the
+  # request silently loses its Authorization header and comes back 401, so say
+  # so rather than letting it look like a server-side auth bug.
+  defp warn_if_credentials_stripped(request, sanitized_headers) do
+    if sanitized_headers != request.headers do
+      Logger.warning(
+        "SecurityGuard: removed credential headers from a request to an untrusted origin. " <>
+          remediation_hint(request),
+        transport: request.transport,
+        user_id: request.user_id
+      )
+    end
+
+    :ok
+  end
+
+  defp remediation_hint(request) do
+    case Security.extract_origin(request.url) do
+      {:ok, origin} ->
+        "If #{origin} is a server this application is meant to talk to, declare it as " <>
+          "trusted (this exempts it from both header stripping and consent): " <>
+          ~s|config :ex_mcp, :security, trusted_origins: ["#{origin}"]|
+
+      {:error, _reason} ->
+        "Declare the origins this application is meant to talk to in " <>
+          "config :ex_mcp, :security, trusted_origins: [...]"
     end
   end
 end

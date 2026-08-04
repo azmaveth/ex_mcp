@@ -689,21 +689,30 @@ defmodule ExMCP.Transport.HTTP do
       body
     }
 
-    # Add request timeout to HTTP options
-    base_http_opts = [{:timeout, state.timeouts.request}]
-
-    # build_ssl_options_from_state/1 returns a flat ssl option list, which
-    # :httpc expects wrapped as a single {:ssl, opts} http_option.
-    http_opts =
-      case URI.parse(url).scheme do
-        "https" -> [{:ssl, build_ssl_options_from_state(state)} | base_http_opts]
-        _ -> base_http_opts
-      end
+    http_opts = httpc_http_options(url, state)
 
     # Use process dictionary profile if set (for async POST isolation)
     case Process.get(:httpc_profile) do
       nil -> :httpc.request(:post, request, http_opts, [])
       profile -> :httpc.request(:post, request, http_opts, [], profile)
+    end
+  end
+
+  @doc false
+  # Builds the `http_options` list handed to `:httpc.request/4,5`.
+  #
+  # TLS settings must be passed as a single `{:ssl, opts}` entry:
+  # `build_ssl_options/1` returns a *flat* ssl option list, and splicing that
+  # straight into `http_options` makes httpc reject each entry ("Invalid
+  # option {verify,verify_peer} ignored"), silently dropping every configured
+  # TLS setting.
+  @spec httpc_http_options(String.t(), t()) :: keyword()
+  def httpc_http_options(url, state) do
+    base_http_opts = [{:timeout, state.timeouts.request}]
+
+    case URI.parse(url).scheme do
+      "https" -> [{:ssl, build_ssl_options_from_state(state)} | base_http_opts]
+      _other -> base_http_opts
     end
   end
 

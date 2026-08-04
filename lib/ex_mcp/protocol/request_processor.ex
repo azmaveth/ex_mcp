@@ -23,6 +23,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
   alias ExMCP.Error
   alias ExMCP.Internal.VersionRegistry
   alias ExMCP.Protocol.ResponseBuilder
+  alias ExMCP.Server.ResultNormalizer
 
   @type request :: map()
   @type state :: map()
@@ -149,7 +150,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
     if function_exported?(module, :handle_list_tools, 2) do
       case module.handle_list_tools(nil, state) do
         {:ok, tools, next_cursor, new_state} ->
-          result = %{"tools" => deep_stringify_keys(tools)}
+          result = %{"tools" => ResultNormalizer.stringify_keys(tools)}
           result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
@@ -204,7 +205,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
   # Handle tool execution result
   defp handle_tool_result({:ok, result, new_state}, _tool_name, id) do
-    tool_result = normalize_tool_result(result)
+    tool_result = ResultNormalizer.tool_result(result)
     response = ResponseBuilder.build_success_response(tool_result, id)
     {:response, response, new_state}
   end
@@ -214,28 +215,6 @@ defmodule ExMCP.Protocol.RequestProcessor do
     error_response = ResponseBuilder.build_error_response(error, id)
     {:response, error_response, new_state}
   end
-
-  defp normalize_tool_result(result) when is_list(result) do
-    %{"content" => deep_stringify_keys(result)}
-  end
-
-  defp normalize_tool_result(%{content: content} = result) do
-    result
-    |> Map.delete(:content)
-    |> Map.put("content", deep_stringify_keys(List.wrap(content)))
-    |> maybe_put_is_error()
-    |> deep_stringify_keys()
-  end
-
-  defp normalize_tool_result(%{"content" => _content} = result), do: deep_stringify_keys(result)
-
-  defp normalize_tool_result(result) when is_binary(result),
-    do: %{"content" => [%{"type" => "text", "text" => result}]}
-
-  defp normalize_tool_result(result) when is_map(result), do: deep_stringify_keys(result)
-
-  defp maybe_put_is_error(%{is_error?: true} = result), do: Map.put(result, "isError", true)
-  defp maybe_put_is_error(result), do: result
 
   # Normalize various error formats to Error structs
   defp normalize_error(%Error.ProtocolError{} = err, _tool_name), do: err
@@ -260,7 +239,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
     if function_exported?(module, :handle_list_resources, 2) do
       case module.handle_list_resources(nil, state) do
         {:ok, resources, next_cursor, new_state} ->
-          result = %{"resources" => deep_stringify_keys(resources)}
+          result = %{"resources" => ResultNormalizer.stringify_keys(resources)}
           result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
@@ -310,7 +289,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
             )
           end
 
-          result = %{"contents" => deep_stringify_keys(List.wrap(content))}
+          result = %{"contents" => ResultNormalizer.stringify_keys(List.wrap(content))}
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
 
@@ -334,7 +313,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
     if function_exported?(module, :handle_list_prompts, 2) do
       case module.handle_list_prompts(nil, state) do
         {:ok, prompts, next_cursor, new_state} ->
-          result = %{"prompts" => deep_stringify_keys(prompts)}
+          result = %{"prompts" => ResultNormalizer.stringify_keys(prompts)}
           result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
@@ -361,11 +340,14 @@ defmodule ExMCP.Protocol.RequestProcessor do
     if function_exported?(module, :handle_get_prompt, 3) do
       case module.handle_get_prompt(prompt_name, arguments, state) do
         {:ok, result, new_state} ->
-          response = ResponseBuilder.build_success_response(deep_stringify_keys(result), id)
+          result = ResultNormalizer.stringify_keys(result)
+          response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
 
         {:error, reason, new_state} ->
-          error = Error.protocol_error(-32000, inspect(reason))
+          # Handler-authored detail only; other terms are logged (audit M12).
+          message = ResultNormalizer.error_message("Prompt error", reason)
+          error = Error.protocol_error(-32000, message)
           error_response = ResponseBuilder.build_error_response(error, id)
           {:response, error_response, new_state}
       end
@@ -523,17 +505,4 @@ defmodule ExMCP.Protocol.RequestProcessor do
       %{}
     end
   end
-
-  defp deep_stringify_keys(list) when is_list(list) do
-    Enum.map(list, &deep_stringify_keys/1)
-  end
-
-  defp deep_stringify_keys(map) when is_map(map) and not is_struct(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), deep_stringify_keys(value)}
-      {key, value} -> {key, deep_stringify_keys(value)}
-    end)
-  end
-
-  defp deep_stringify_keys(value), do: value
 end

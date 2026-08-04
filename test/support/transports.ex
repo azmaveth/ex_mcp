@@ -1,4 +1,4 @@
-defmodule ExMcp.Test.Support.Transports do
+defmodule ExMCP.Test.Support.Transports do
   @moduledoc """
   Test support module for transport-related testing utilities.
 
@@ -213,7 +213,7 @@ defmodule ExMcp.Test.Support.Transports do
   end
 end
 
-defmodule ExMcp.Test.Support.Transports.MockTransport do
+defmodule ExMCP.Test.Support.Transports.MockTransport do
   @moduledoc false
   # Mock transport GenServer for testing
 
@@ -295,7 +295,7 @@ defmodule ExMcp.Test.Support.Transports.MockTransport do
   end
 end
 
-defmodule ExMcp.Test.Support.Transports.Http do
+defmodule ExMCP.Test.Support.Transports.Http do
   @moduledoc """
   HTTP transport test helper with SecurityGuard integration.
 
@@ -494,7 +494,7 @@ defmodule ExMcp.Test.Support.Transports.Http do
   end
 end
 
-defmodule ExMcp.Test.Support.Transports.Stdio do
+defmodule ExMCP.Test.Support.Transports.Stdio do
   @moduledoc """
   Stdio transport test helper with SecurityGuard integration.
 
@@ -643,7 +643,7 @@ defmodule ExMcp.Test.Support.Transports.Stdio do
   end
 end
 
-defmodule ExMcp.Test.Support.Transports.Beam do
+defmodule ExMCP.Test.Support.Transports.Beam do
   @moduledoc """
   BEAM transport test helper with SecurityGuard integration.
 

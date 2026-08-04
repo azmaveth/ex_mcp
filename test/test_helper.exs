@@ -90,5 +90,6 @@ ExUnit.configure(exclude: default_exclusions)
 
 ExUnit.start(capture_log: true)
 
-# Define mocks
-# Note: Transport mocks removed since v1 Transport module was deleted
+# No mocking library is used. Tests rely on lightweight in-process test
+# transports (`transport: :test`), hand-written stub modules injected via
+# options, and the helpers in `test/support/` plus `ExMCP.Testing.*`.

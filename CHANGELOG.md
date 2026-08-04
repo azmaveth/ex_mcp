@@ -7,11 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This release closes the findings of a full-codebase audit (architecture, security,
+tests, tooling). Behavior changes are listed under **Breaking Changes** below.
+
+### Security
+- **Real DNS-rebinding protection in `ExMCP.HttpPlug`** — Origin validation previously allowed a missing or empty `Origin`, and its same-origin fallback compared `Origin` against the attacker-controlled `Host` header, so the check passed in exactly the scenario it was meant to stop. Host is now validated against an allow-list (`:allowed_hosts`) before routing, mismatches get `421 Misdirected Request`, and the same-origin fallback is gone. `ExMCP.Plugs.DnsRebinding` no longer default-allows `0.0.0.0` and now parses bracketed IPv6 hosts correctly (`[::1]:8080`).
+- **Configured TLS options are actually applied to HTTPS POSTs** — `ExMCP.Transport.HTTP.build_ssl_options/1` returned two different shapes; on the POST path the result was spliced into `:httpc` http_options as a flat list, which `:httpc` rejects and ignores (`Invalid option {verify,verify_peer} ignored`). Every configured TLS setting — client certificates for mTLS, private `cacerts`, `versions` — was silently dropped on each request. The builder now returns one shape, wrapped as `{:ssl, opts}` at each call site, and default client TLS adds `customize_hostname_check` so wildcard certificates verify correctly.
+- **JWT expiry is now enforced** — `ExMCP.Authorization.JWT` accepted tokens with no `exp` claim, or with a non-numeric `exp`. `exp` is now required and must be numeric (opt out with `require_exp: false`), `nbf`/`iat` types are validated when present, and a `:leeway` option (default 30s) covers clock skew. The asymmetric-only algorithm allow-list is unchanged.
+- **Client-supplied session IDs are validated** — `mcp-session-id` (and legacy `x-session-id`) values are checked for format and length instead of being accepted and echoed back unbounded.
+- **Consent expiry contract is explicit** — `ExMCP.Security.Consent` accepted a bare integer expiry as a monotonic value, so a handler returning unix seconds granted near-permanent consent. Handlers now return `DateTime`, `{:ttl, _}`, `{:unix, _}`, or `{:monotonic, _}`; implausible values fail closed. Fixes a related unit bug where `:consent_ttl` (milliseconds in config) was passed to handlers as seconds.
+- **Security enforcement flags are honored** — `enable_token_passthrough_prevention` and `enable_user_consent_validation` were read nowhere; they now gate their checks in `ExMCP.Transport.SecurityGuard` and are type-validated.
+- **Removed a hostname-verification stub** — `ExMCP.Internal.Security.verify_hostname/3` always returned `:valid_peer`; wiring it as a `verify_fun` would have silently disabled hostname checking. Removed, and the module's divergent second TLS-options builder now delegates to the canonical one. `verify: :verify_none` now logs a warning.
+
 ### Added
 - **Client auto-reconnection** — `ExMCP.Client` now automatically reconnects when the transport closes unexpectedly, as the documentation always promised. Pending requests still fail with a connection error, then the client re-establishes the transport and MCP handshake with exponential backoff and jitter (defaults: initial 1s, multiplier 2, cap 60s, up to 10 attempts). New `start_link/1` options: `:reconnect` (default `true`), `:max_reconnect_attempts`, and `:reconnect_backoff` (`:initial`/`:max`/`:multiplier`). Emits `[:ex_mcp, :client, :reconnect, :attempt | :success | :error | :timeout]` telemetry. Explicit `disconnect/1`/`stop/2` never triggers reconnection; requests made while reconnecting return `{:error, :not_connected}`.
+- **Client health checks** — On persistent transports the client sends a protocol `ping` on an interval and treats an unanswered ping as transport loss, handing off to the reconnect path. (The previous health-check timer fired but performed no check.)
+- **Working progress tokens** — `call_tool/4` now accepts `:progress_token`, which was previously ignored; it is sent as `_meta.progressToken`, and request-level `_meta` is merged into the arguments map handed to `handle_call_tool/3`, as `ExMCP.Server.Handler` has always documented. Long-running tools can now actually report progress.
+- **Shared server dispatch** — New `ExMCP.Server.Dispatch`, `ExMCP.Server.ResultNormalizer`, and `ExMCP.Server.HandlerBridge` give the HandlerServer, stdio, HTTP, and request-processor paths one method table and one result/error shape. stdio gained `completion/complete`, `resources/subscribe`, `resources/unsubscribe`, `roots/list`, `logging/setLevel`, resource templates, and the `tasks/*` methods it was missing.
+
+### Fixed
+- **Transport `close/1` no longer leaks processes** — HTTP and stdio called `Process.exit(pid, :normal)` on processes that do not trap exits (a no-op), leaving the SSE client GenServer and the stdio reader running after close.
+- **Async POST state and crashes** — The async POST task's updated transport state (session-ID rotation, refreshed OAuth token) was discarded by the client, so session and auth updates were lost between requests; the task was also unmonitored, so a crash hung the pending request until timeout.
+- **SSE handler and session-registry lifetime** — The SSE session table was created lazily inside a Cowboy request process, so every registration vanished when that request ended; it is now owned by a supervised `ExMCP.HttpPlug.SessionRegistry`. SSE handlers stop on conn-owner `:EXIT` and clean up in `terminate/2` instead of leaking with heartbeats still firing.
+- **Handler crashes and timeouts return JSON-RPC errors** — `ExMCP.MessageProcessor` ran a per-request handler GenServer whose exits were not caught, so a crash or a call timeout killed the request process and the client got no response at all. Exits are caught and mapped to `-32603`.
+- **Handler errors are no longer reported as "Method not found"** — Any `{:error, _}` or exit from a custom method previously became `-32601`; only genuinely unknown methods do now.
+- **Batch rejection follows the spec across versions** — Batch support was gated on the exact string `"2025-06-18"`, so 2025-11-25 sessions still accepted JSON-RPC batches. Gating now uses version ordering.
+- **Protocol-version defaults unified** — `ExMCP.Plugs.ProtocolVersion`, `MessageProcessor`, `MethodHandlers`, and the default `handle_initialize` disagreed on the default and supported-version list; all now read `ExMCP.Internal.VersionRegistry`.
+- **`logging/setLevel` reaches the handler** on the HTTP path instead of being answered with a canned success.
+- **Internal detail no longer leaks in error responses** — `inspect(reason)` was embedded in JSON-RPC error data and messages; detail is logged, clients get generic messages.
+- **Circuit breaker and reliability wrapper** — A raising function killed the `CircuitBreaker` GenServer through its task link, and `ClientWrapper.execute_with_reliability` spawned unbounded unsupervised tasks while never applying the configured breaker. Both fixed; the wrapper takes `:max_concurrency` (default 100).
+- **Retry policy** — `add_jitter/1` raised via `:rand.uniform(0)` for sub-4ms delays, and every exception was treated as retryable.
+- **Handshake timeouts** — Client connect and stdio receive had no timeout, so `start_link/1` could hang forever in `init/1` against an unresponsive server; they now return `{:error, :handshake_timeout}`.
+- **Request bookkeeping** — Requests with a caller-supplied `:timeout` leaked their pending-request entry forever.
+- **`ExMCP.SessionManager` is no longer lazily started** linked to an HTTP request process (it is supervised by the application); `HttpPlug` fails fast with a clear message instead.
+- **`clientInfo` version** — The MCP handshake advertised a hardcoded `"0.8.0"`; it is now derived from the application version.
+- **Dead code removed** — `HandlerServer`'s unreachable `:start_message_loop` (which evaluated `self()` inside `spawn_link` and would have messaged itself), the unused stdio `:buffer` field, and an unreachable branch in the client's connect path.
+- **Test isolation** — `ExMCP.ApplicationTest`, `ProgressTrackerMinimalTest`, and the stdio isolation test stopped the `:ex_mcp` application without restarting it, taking supervised singletons down for every test that ran afterwards.
+- **stdio handshake no longer kills the spawned server** — The bounded handshake wait ran the transport's blocking `receive_message/1` inside a temporary task, which took ownership of the port; when that task exited, OTP closed the port and terminated the spawned program, so the very next send failed with `{:send_failed, :badarg}`. `ExMCP.Transport.Stdio` now exposes a timeout-aware `receive_message/2` that runs in the owning process.
+
+### Changed
+- **Test scaffolding out of production code** — `HttpPlug`'s `:test_mode` branch is replaced by `:sse_mode` (`:stream` | `:oneshot`) resolved in `init/1`, SSE conn duck-typing by a `:conn_module` injection point, and `HandlerServer`'s cancellation-state poking by a `:cancellation_tracker` behaviour.
+- **Dev tooling out of the published package** — Mix tasks (`test.suite`, `test.tags`, `test.cleanup`, `check_skip_tags`, `mcp.sync_spec`) and `ExMCP.SpecSync` moved to `dev/`, so they no longer ship on Hex or appear in dependents' `mix help`. `ExMCP.Testing.*` remains a supported public test kit.
+- **CI** — Integration, performance/stress/slow, and Node interop suites now actually run (they were excluded by default and included by no job); the three identical per-version compliance jobs are collapsed; coverage is broadened; `_build` is cached.
+- **Tests** — `Process.sleep`-based synchronization reduced from 296 to 142 occurrences, with the remainder documented where the delay is the thing under test.
 
 ### Removed
 - **Dead client state machine modules** — Removed `ExMCP.Client.StateMachine`, `ExMCP.Client.Transitions`, and `ExMCP.Client.States` (unreferenced since the client adapter layer was removed before 1.0; their reconnect/backoff behavior now lives in `ExMCP.Client`), along with their tests, the state-machine-only test transport helper, and the now-unused `gen_state_machine` dependency.
+- **`mox`** — Removed from dependencies; it was imported by a single test that used no mock.
+
+### Breaking Changes
+- **Batch replies are consistently tagged** — `ExMCP.Client.batch_request/3` replied `{:ok, results}` on success but a bare list on disconnect. It now always returns `{:ok, results} | {:error, reason}`.
+- **`ExMCP` facade returns tagged tuples** — The convenience functions in `ExMCP` returned bare values on success and rescued every exception into "Client not responding". They now follow the `{:ok, _} | {:error, _}` convention used everywhere else and rescue narrowly.
+- **`ExMCP.Client.connect/2` returns errors instead of throwing** — Invalid transport configuration now yields `{:error, {:invalid_transport_config, reason}}`.
+- **JWT validation requires `exp`** — Tokens without a numeric `exp` are rejected unless `require_exp: false` is passed.
+- **Consent handler expiry values** — Bare integers are still read as monotonic for compatibility, but implausible values (in the past, or more than 365 days out) now fail closed; prefer the explicit `{:ttl, _}` / `{:unix, _}` / `DateTime` forms. Handlers now receive `:consent_ttl` in seconds (it was mistakenly passed as milliseconds).
+- **`ExMCP.Internal.Security.verify_hostname/3` removed**, and `apply_security/2` now includes `cacerts` and `customize_hostname_check` in its TLS options.
+- **`ExMCP.Security.Validation.validate_localhost_binding/1`** rejects unrecognised binding shapes instead of passing them through (`{0,0,0,0}` no longer validates as localhost).
+- **`ExMCP.Server.Transport`** no longer passes the ignored `tools:` key and defaults `cors_enabled` to `false`, matching `HttpPlug`.
+- **Server transports may return `{:ok, state, response}`** — The `ExMCP.Transport` behaviour's `send_message/2` type was widened to admit the 3-tuple the HTTP transport already returned (a widening; existing implementations still conform).
 
 ### Deprecated
 - **`ExMCP.Server.Tools` API** — `ExMCP.Server.Tools`, `ExMCP.Server.Tools.Simplified`, and companion modules (`Builder`, `Helpers`, `Registry`, `ResponseNormalizer`, `ASTValidator`) are deprecated and will be **removed in 1.1.0**. `use ExMCP.Server.Tools` and `use ExMCP.Server.Tools.Simplified` emit compile-time warnings. Migrate to `ExMCP.Server.Handler` + `ExMCP.Server.DSL` (see the DSL guide and migration guide).

@@ -51,6 +51,7 @@ defmodule ExMCP.Server.StdioServer do
   require Logger
 
   alias ExMCP.Internal.{JSONRPC, StdioLoggerConfig, VersionRegistry}
+  alias ExMCP.Server.{Dispatch, ResultNormalizer}
 
   @doc """
   Starts the STDIO server.
@@ -162,187 +163,93 @@ defmodule ExMCP.Server.StdioServer do
     end
   end
 
-  # Handle incoming MCP requests
+  # Handle incoming MCP requests.
+  #
+  # Method coverage and result shaping come from ExMCP.Server.Dispatch, the
+  # same table the process-based transports use (audit M9), so stdio no longer
+  # silently lacks completion/complete, resources/subscribe, roots/list,
+  # logging/setLevel or the task methods. Only stdio-specific concerns —
+  # protocol version negotiation and the custom `handle_request/3` escape
+  # hatch — live here.
   defp handle_request(%{"method" => "initialize"} = request, state) do
-    id = Map.get(request, "id")
     params = Map.get(request, "params", %{})
+    negotiated_version = negotiate_version(params)
 
-    # Get client's requested protocol version
-    client_version = Map.get(params, "protocolVersion", "2025-06-18")
+    request =
+      Map.put(request, "params", Map.put(params, "protocolVersion", negotiated_version))
 
-    # Negotiate protocol version
-    server_versions = VersionRegistry.supported_versions()
-
-    negotiated_version =
-      case VersionRegistry.negotiate_version(client_version, server_versions) do
-        {:ok, version} ->
-          version
-
-        {:error, :version_mismatch} ->
-          # Fall back to latest if negotiation fails
-          VersionRegistry.latest_version()
-      end
-
-    params = Map.put(params, "protocolVersion", negotiated_version)
-
-    case state.handler_module.handle_initialize(params, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = JSONRPC.response(id, result)
-        send_response(response, state)
-
-        new_state =
-          state
-          |> Map.put(:protocol_version, negotiated_version)
-          |> Map.put(:handler_state, new_handler_state)
-
-        {:noreply, new_state}
-
-      {:error, reason, new_handler_state} ->
-        send_error_response(-32000, "Initialize error: #{inspect(reason)}", id, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-    end
-  end
-
-  defp handle_request(%{"method" => "tools/list"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    cursor = Map.get(params, "cursor")
-
-    case state.handler_module.handle_list_tools(cursor, state.handler_state) do
-      {:ok, tools, next_cursor, new_handler_state} ->
-        result = %{"tools" => tools}
-        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
-        response = JSONRPC.response(id, result)
-
-        send_response(response, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-
-      {:error, reason, new_handler_state} ->
-        send_error_response(-32000, "List tools error: #{inspect(reason)}", id, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-    end
-  end
-
-  defp handle_request(%{"method" => "tools/call", "params" => params} = request, state) do
-    id = Map.get(request, "id")
-    tool_name = Map.get(params, "name")
-    arguments = Map.get(params, "arguments", %{})
-
-    case state.handler_module.handle_call_tool(tool_name, arguments, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = JSONRPC.response(id, result)
-        send_response(response, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-
-      {:error, error, new_handler_state} ->
-        send_error_response(-32000, "Tool error: #{inspect(error)}", id, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-    end
-  end
-
-  defp handle_request(%{"method" => "resources/list"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    cursor = Map.get(params, "cursor")
-
-    case state.handler_module.handle_list_resources(cursor, state.handler_state) do
-      {:ok, resources, next_cursor, new_handler_state} ->
-        result = %{"resources" => resources}
-        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
-        response = JSONRPC.response(id, result)
-
-        send_response(response, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-
-      {:error, reason, new_handler_state} ->
-        send_error_response(-32000, "List resources error: #{inspect(reason)}", id, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-    end
-  end
-
-  defp handle_request(%{"method" => "resources/read", "params" => params} = request, state) do
-    id = Map.get(request, "id")
-    uri = Map.get(params, "uri")
-
-    case state.handler_module.handle_read_resource(uri, state.handler_state) do
-      {:ok, content, new_handler_state} ->
-        response = JSONRPC.response(id, %{"contents" => List.wrap(content)})
-        send_response(response, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-
-      {:error, reason, new_handler_state} ->
-        send_error_response(-32000, "Read resource error: #{inspect(reason)}", id, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-    end
-  end
-
-  defp handle_request(%{"method" => "prompts/list"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    cursor = Map.get(params, "cursor")
-
-    case state.handler_module.handle_list_prompts(cursor, state.handler_state) do
-      {:ok, prompts, next_cursor, new_handler_state} ->
-        result = %{"prompts" => prompts}
-        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
-        response = JSONRPC.response(id, result)
-
-        send_response(response, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-
-      {:error, reason, new_handler_state} ->
-        send_error_response(-32000, "List prompts error: #{inspect(reason)}", id, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-    end
-  end
-
-  defp handle_request(%{"method" => "prompts/get", "params" => params} = request, state) do
-    id = Map.get(request, "id")
-    name = Map.get(params, "name")
-    arguments = Map.get(params, "arguments", %{})
-
-    case state.handler_module.handle_get_prompt(name, arguments, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = JSONRPC.response(id, result)
-        send_response(response, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-
-      {:error, reason, new_handler_state} ->
-        send_error_response(-32000, "Get prompt error: #{inspect(reason)}", id, state)
-        {:noreply, %{state | handler_state: new_handler_state}}
-    end
+    state
+    |> dispatch(request)
+    |> put_protocol_version(negotiated_version)
   end
 
   defp handle_request(%{"method" => method} = request, state) do
-    id = Map.get(request, "id")
+    cond do
+      Dispatch.known_method?(method) ->
+        dispatch(state, request)
 
-    # Try to handle unknown methods with the handler module
-    case function_exported?(state.handler_module, :handle_request, 3) do
+      function_exported?(state.handler_module, :handle_request, 3) ->
+        handle_custom_request(request, state)
+
       true ->
-        params = Map.get(request, "params", %{})
-
-        case state.handler_module.handle_request(method, params, state.handler_state) do
-          {:reply, result, new_handler_state} ->
-            response = JSONRPC.response(id, result)
-
-            send_response(response, state)
-            new_state = %{state | handler_state: new_handler_state}
-            {:noreply, new_state}
-
-          {:error, error, new_handler_state} ->
-            send_error_response(-32000, "Request error: #{inspect(error)}", id, state)
-            new_state = %{state | handler_state: new_handler_state}
-            {:noreply, new_state}
-
-          {:noreply, new_handler_state} ->
-            new_state = %{state | handler_state: new_handler_state}
-            {:noreply, new_state}
-        end
-
-      false ->
-        send_error_response(-32601, "Method not found: #{method}", id, state)
-        {:noreply, state}
+        # Unknown method (or notification): let the shared table answer.
+        dispatch(state, request)
     end
+  end
+
+  defp handle_request(request, state) do
+    dispatch(state, request)
+  end
+
+  defp dispatch(state, request) do
+    case Dispatch.dispatch(request, state.handler_module, state.handler_state) do
+      {:response, response, handler_state} ->
+        send_response(response, state)
+        {:noreply, %{state | handler_state: handler_state}}
+
+      {:notification, handler_state} ->
+        {:noreply, %{state | handler_state: handler_state}}
+    end
+  end
+
+  # Servers may implement handle_request/3 to answer methods outside the MCP
+  # method table (ExMCP extension).
+  defp handle_custom_request(%{"method" => method} = request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params", %{})
+
+    case state.handler_module.handle_request(method, params, state.handler_state) do
+      {:reply, result, new_handler_state} ->
+        send_response(JSONRPC.response(id, result), state)
+        {:noreply, %{state | handler_state: new_handler_state}}
+
+      {:error, error, new_handler_state} ->
+        send_error_response(
+          -32000,
+          ResultNormalizer.error_message("Request error", error),
+          id,
+          state
+        )
+
+        {:noreply, %{state | handler_state: new_handler_state}}
+
+      {:noreply, new_handler_state} ->
+        {:noreply, %{state | handler_state: new_handler_state}}
+    end
+  end
+
+  defp negotiate_version(params) do
+    client_version = Map.get(params, "protocolVersion", VersionRegistry.latest_version())
+    server_versions = VersionRegistry.supported_versions()
+
+    case VersionRegistry.negotiate_version(client_version, server_versions) do
+      {:ok, version} -> version
+      {:error, :version_mismatch} -> VersionRegistry.latest_version()
+    end
+  end
+
+  defp put_protocol_version({:noreply, state}, version) do
+    {:noreply, Map.put(state, :protocol_version, version)}
   end
 
   # Send a successful response

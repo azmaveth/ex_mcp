@@ -124,67 +124,108 @@ defmodule ExMCP.Authorization.JWTTest do
   end
 
   describe "validate_claims/2" do
-    test "validates exp - valid token" do
+    setup do
       now = System.system_time(:second)
+      %{now: now, valid_exp: %{"exp" => now + 300}}
+    end
+
+    test "validates exp - valid token", %{now: now} do
       claims = %{"exp" => now + 300}
       assert {:ok, _} = JWT.validate_claims(claims)
     end
 
-    test "validates exp - expired token" do
-      now = System.system_time(:second)
+    test "validates exp - expired token", %{now: now} do
       claims = %{"exp" => now - 60}
       assert {:error, :token_expired} = JWT.validate_claims(claims)
     end
 
-    test "validates iss" do
-      claims = %{"iss" => "correct-issuer"}
+    test "rejects a token with no exp claim" do
+      assert {:error, :missing_exp} = JWT.validate_claims(%{"sub" => "user123"})
+    end
+
+    test "accepts a token with no exp claim when require_exp: false" do
+      assert {:ok, _} = JWT.validate_claims(%{"sub" => "user123"}, require_exp: false)
+    end
+
+    test "rejects a non-numeric exp claim" do
+      assert {:error, {:invalid_claim_type, "exp"}} = JWT.validate_claims(%{"exp" => "whenever"})
+      assert {:error, {:invalid_claim_type, "exp"}} = JWT.validate_claims(%{"exp" => nil})
+
+      # A string exp must not slip past even with the opt-out.
+      assert {:error, {:invalid_claim_type, "exp"}} =
+               JWT.validate_claims(%{"exp" => "whenever"}, require_exp: false)
+    end
+
+    test "rejects a non-numeric nbf claim", %{valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "nbf", "soon")
+      assert {:error, {:invalid_claim_type, "nbf"}} = JWT.validate_claims(claims)
+    end
+
+    test "rejects a non-numeric iat claim", %{valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "iat", "yesterday")
+      assert {:error, {:invalid_claim_type, "iat"}} = JWT.validate_claims(claims)
+    end
+
+    test "honors the leeway option for expired tokens", %{now: now} do
+      # 45s past expiry: outside the 30s default leeway, inside a 120s leeway.
+      claims = %{"exp" => now - 45}
+      assert {:error, :token_expired} = JWT.validate_claims(claims)
+      assert {:ok, _} = JWT.validate_claims(claims, leeway: 120)
+      assert {:error, :token_expired} = JWT.validate_claims(claims, leeway: 0)
+    end
+
+    test "honors the leeway option for nbf", %{now: now} do
+      claims = %{"exp" => now + 300, "nbf" => now + 45}
+      assert {:error, :token_not_yet_valid} = JWT.validate_claims(claims)
+      assert {:ok, _} = JWT.validate_claims(claims, leeway: 120)
+    end
+
+    test "validates iss", %{valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "iss", "correct-issuer")
       assert {:ok, _} = JWT.validate_claims(claims, iss: "correct-issuer")
       assert {:error, {:invalid_issuer, _}} = JWT.validate_claims(claims, iss: "wrong-issuer")
     end
 
-    test "validates aud - string" do
-      claims = %{"aud" => "my-audience"}
+    test "validates aud - string", %{valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "aud", "my-audience")
       assert {:ok, _} = JWT.validate_claims(claims, aud: "my-audience")
       assert {:error, {:invalid_audience, _}} = JWT.validate_claims(claims, aud: "wrong")
     end
 
-    test "validates aud - list in claims" do
-      claims = %{"aud" => ["aud1", "aud2"]}
+    test "validates aud - list in claims", %{valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "aud", ["aud1", "aud2"])
       assert {:ok, _} = JWT.validate_claims(claims, aud: "aud1")
       assert {:ok, _} = JWT.validate_claims(claims, aud: "aud2")
       assert {:error, {:invalid_audience, _}} = JWT.validate_claims(claims, aud: "aud3")
     end
 
-    test "validates sub" do
-      claims = %{"sub" => "user123"}
+    test "validates sub", %{valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "sub", "user123")
       assert {:ok, _} = JWT.validate_claims(claims, sub: "user123")
       assert {:error, {:invalid_subject, _}} = JWT.validate_claims(claims, sub: "other")
     end
 
-    test "validates max_age" do
-      now = System.system_time(:second)
-      claims = %{"iat" => now - 10}
+    test "validates max_age", %{now: now, valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "iat", now - 10)
       assert {:ok, _} = JWT.validate_claims(claims, max_age: 60)
       assert {:error, :token_too_old} = JWT.validate_claims(claims, max_age: 5)
     end
 
-    test "validates required claims" do
-      claims = %{"iss" => "test", "sub" => "user"}
+    test "validates required claims", %{valid_exp: valid_exp} do
+      claims = Map.merge(valid_exp, %{"iss" => "test", "sub" => "user"})
       assert {:ok, _} = JWT.validate_claims(claims, required: ["iss", "sub"])
 
       assert {:error, {:missing_required_claims, ["aud"]}} =
                JWT.validate_claims(claims, required: ["iss", "aud"])
     end
 
-    test "validates nbf - not yet valid" do
-      now = System.system_time(:second)
-      claims = %{"nbf" => now + 300}
+    test "validates nbf - not yet valid", %{now: now, valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "nbf", now + 300)
       assert {:error, :token_not_yet_valid} = JWT.validate_claims(claims)
     end
 
-    test "validates iat - future iat rejected" do
-      now = System.system_time(:second)
-      claims = %{"iat" => now + 300}
+    test "validates iat - future iat rejected", %{now: now, valid_exp: valid_exp} do
+      claims = Map.put(valid_exp, "iat", now + 300)
       assert {:error, :invalid_iat} = JWT.validate_claims(claims)
     end
   end
@@ -214,11 +255,36 @@ defmodule ExMCP.Authorization.JWTTest do
     end
 
     test "rejects token with wrong issuer", %{rsa_key: rsa_key} do
-      claims = %{"iss" => "wrong"}
+      claims = %{"iss" => "wrong", "exp" => System.system_time(:second) + 300}
       assert {:ok, token} = JWT.sign(claims, rsa_key)
 
       assert {:error, {:invalid_issuer, "wrong"}} =
                JWT.verify_and_validate(token, rsa_key, iss: "expected")
+    end
+
+    test "rejects a correctly signed token that has no exp", %{rsa_key: rsa_key} do
+      assert {:ok, token} = JWT.sign(%{"sub" => "user123"}, rsa_key)
+
+      # The signature is good, so verify/2 succeeds ...
+      assert {:ok, _} = JWT.verify(token, rsa_key)
+      # ... but verify_and_validate/3 requires an expiry.
+      assert {:error, :missing_exp} = JWT.verify_and_validate(token, rsa_key)
+    end
+
+    test "rejects a correctly signed token that has expired", %{rsa_key: rsa_key} do
+      now = System.system_time(:second)
+      assert {:ok, token} = JWT.sign(%{"sub" => "user123", "exp" => now - 600}, rsa_key)
+
+      assert {:ok, _} = JWT.verify(token, rsa_key)
+      assert {:error, :token_expired} = JWT.verify_and_validate(token, rsa_key)
+    end
+
+    test "rejects a correctly signed token that is not yet valid", %{rsa_key: rsa_key} do
+      now = System.system_time(:second)
+      claims = %{"sub" => "user123", "exp" => now + 900, "nbf" => now + 600}
+      assert {:ok, token} = JWT.sign(claims, rsa_key)
+
+      assert {:error, :token_not_yet_valid} = JWT.verify_and_validate(token, rsa_key)
     end
   end
 

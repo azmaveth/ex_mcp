@@ -49,11 +49,19 @@ defmodule ExMCP.Client.Operations.Tools do
 
   - `:timeout` - Request timeout (default: 30000)
   - `:format` - Response format (default: :struct)
+  - `:progress_token` - Token sent as `_meta.progressToken`, which the server
+    handler receives in its arguments map and can use to emit
+    `notifications/progress` for long-running work
+  - `:meta` - Additional `_meta` entries; merged with `:progress_token`
 
   ## Examples
 
       ExMCP.Client.Operations.Tools.call_tool(client, "my_tool", %{arg1: "value"})
       ExMCP.Client.Operations.Tools.call_tool(client, "my_tool", %{arg1: "value"}, timeout: 60_000)
+
+      ExMCP.Client.Operations.Tools.call_tool(client, "slow_tool", %{},
+        progress_token: "job-42"
+      )
   """
   @spec call_tool(
           Types.client(),

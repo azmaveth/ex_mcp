@@ -40,8 +40,14 @@ defmodule ExMCP.Server.HandlerServer do
   use GenServer
   require Logger
 
+  alias ExMCP.Internal.{JSONRPC, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Server.{CancellationTracker, Dispatch}
   alias ExMCP.Transport.{Local, Test}
+
+  # JSON-RPC batches were removed from the spec in 2025-06-18 and have not
+  # come back since, so every version from 2025-06-18 onwards rejects them.
+  @batch_removed_in "2025-06-18"
 
   @type handler_module :: module()
   @type state :: %{
@@ -49,7 +55,10 @@ defmodule ExMCP.Server.HandlerServer do
           handler_state: any(),
           transport: any(),
           transport_state: any(),
-          protocol_version: String.t() | nil
+          protocol_version: String.t() | nil,
+          pending_requests: map(),
+          cancelled_requests: MapSet.t(),
+          cancellation_tracker: module()
         }
 
   @doc """
@@ -60,6 +69,10 @@ defmodule ExMCP.Server.HandlerServer do
   * `:handler` - Module implementing `ExMCP.Server.Handler` behaviour (required)
   * `:transport` - Transport type (`:test`, `:stdio`, `:http`, etc.)
   * `:handler_args` - Optional term passed to `handler.init/1` (default: `[]`)
+  * `:cancellation_tracker` - Module implementing
+    `ExMCP.Server.CancellationTracker` used to propagate
+    `notifications/cancelled` into handler state
+    (default: `ExMCP.Server.CancellationTracker.Default`)
   * Other options are passed to the transport
   """
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -79,6 +92,7 @@ defmodule ExMCP.Server.HandlerServer do
     transport_type = Keyword.get(opts, :transport, :test)
 
     handler_args = Keyword.get(opts, :handler_args, [])
+    cancellation_tracker = Keyword.get(opts, :cancellation_tracker, CancellationTracker.Default)
 
     case handler_module.init(handler_args) do
       {:ok, handler_state} ->
@@ -92,7 +106,8 @@ defmodule ExMCP.Server.HandlerServer do
               transport_state: transport_state,
               protocol_version: nil,
               pending_requests: %{},
-              cancelled_requests: MapSet.new()
+              cancelled_requests: MapSet.new(),
+              cancellation_tracker: cancellation_tracker
             }
 
             {:ok, state}
@@ -107,12 +122,6 @@ defmodule ExMCP.Server.HandlerServer do
   end
 
   @impl GenServer
-  def handle_info(:start_message_loop, state) do
-    # Start receiving messages from transport
-    spawn_link(fn -> message_loop(self(), state.transport, state.transport_state) end)
-    {:noreply, state}
-  end
-
   def handle_info({:transport_message, message}, state) do
     case decode_transport_message(message) do
       {:ok, requests} when is_list(requests) ->
@@ -235,18 +244,38 @@ defmodule ExMCP.Server.HandlerServer do
     send_error_response(-32600, "Invalid Request", nil, state)
   end
 
-  defp handle_batch_request(requests, %{protocol_version: "2025-06-18"} = state)
-       when is_list(requests) do
-    # Batch requests not supported in this version
-    send_error_response(
-      -32600,
-      "Batch requests are not supported in protocol version 2025-06-18",
-      nil,
-      state
-    )
+  defp handle_batch_request(requests, state) when is_list(requests) do
+    if batch_supported?(state.protocol_version) do
+      process_batch(requests, state)
+    else
+      send_error_response(
+        -32600,
+        "Batch requests are not supported in protocol version #{state.protocol_version}",
+        nil,
+        state
+      )
+    end
   end
 
-  defp handle_batch_request(requests, state) when is_list(requests) do
+  # Batches are allowed up to (but not including) the version that removed
+  # them. Ordering comes from VersionRegistry (newest first) instead of a
+  # string equality check, so newer versions such as 2025-11-25 also reject
+  # batches (audit M7).
+  defp batch_supported?(nil), do: true
+
+  defp batch_supported?(version) do
+    versions = VersionRegistry.supported_versions()
+    removed_index = Enum.find_index(versions, &(&1 == @batch_removed_in))
+    version_index = Enum.find_index(versions, &(&1 == version))
+
+    cond do
+      is_nil(removed_index) -> true
+      is_nil(version_index) -> false
+      true -> version_index > removed_index
+    end
+  end
+
+  defp process_batch(requests, state) when is_list(requests) do
     # Process each request in the batch
     {responses, final_state} = process_batch_requests(requests, state)
 
@@ -531,99 +560,40 @@ defmodule ExMCP.Server.HandlerServer do
 
   # Handle cancellation notifications from clients
   defp handle_cancellation_notification(%{"requestId" => request_id} = params, state) do
-    require Logger
     reason = Map.get(params, "reason", "Request cancelled by client")
-
     Logger.debug("Received cancellation for request #{request_id}: #{reason}")
 
-    # Mark the request as cancelled
-    new_cancelled_requests = MapSet.put(state.cancelled_requests, request_id)
-    new_state = %{state | cancelled_requests: new_cancelled_requests}
+    # Mark the request as cancelled and let the configured tracker propagate
+    # it into the handler's own state.
+    new_state = %{
+      state
+      | cancelled_requests: MapSet.put(state.cancelled_requests, request_id),
+        handler_state: state.cancellation_tracker.mark_cancelled(request_id, state.handler_state)
+    }
 
-    # If the request is still pending, remove it and reply with cancellation error
+    # If the request is still pending, remove it and reply with a cancellation
+    # error so the caller does not wait for a reply that will never come.
     case Map.get(state.pending_requests, request_id) do
       nil ->
-        # Request not found or already completed
-        Logger.debug("Request #{request_id} not found in pending requests")
-        # Still update handler state to inform it about cancellation
-        new_handler_state =
-          update_handler_cancelled_requests(state.handler_module, state.handler_state, request_id)
+        {:noreply, new_state}
 
-        final_state = %{new_state | handler_state: new_handler_state}
-        {:noreply, final_state}
+      :sync_call ->
+        # Synchronous tool calls have no GenServer.from to reply to.
+        {:noreply, drop_pending(new_state, request_id)}
 
       from ->
-        # Request is still pending, reply with cancellation error
         GenServer.reply(from, {:error, :cancelled})
-        new_pending_requests = Map.delete(state.pending_requests, request_id)
-        # Also notify handler about cancellation
-        new_handler_state =
-          update_handler_cancelled_requests(state.handler_module, state.handler_state, request_id)
-
-        final_state = %{
-          new_state
-          | pending_requests: new_pending_requests,
-            handler_state: new_handler_state
-        }
-
-        {:noreply, final_state}
+        {:noreply, drop_pending(new_state, request_id)}
     end
   end
 
   defp handle_cancellation_notification(params, state) do
-    require Logger
     Logger.warning("Invalid cancellation notification: #{inspect(params)}")
     {:noreply, state}
   end
 
-  # Update handler state with cancelled request information
-  defp update_handler_cancelled_requests(_handler_module, handler_state, request_id) do
-    require Logger
-
-    # For the SlowHandler pattern, update the cancelled_requests field
-    updated_state =
-      if Map.has_key?(handler_state, :cancelled_requests) do
-        new_cancelled = MapSet.put(handler_state.cancelled_requests, request_id)
-        Logger.debug("Updated cancelled_requests in handler state: #{inspect(new_cancelled)}")
-
-        # Also update ETS table if it exists (for test handlers)
-        if :ets.whereis(:cancellation_tracker) != :undefined do
-          :ets.insert(:cancellation_tracker, {request_id, :cancelled})
-          Logger.debug("Updated ETS cancellation tracker for request #{request_id}")
-        end
-
-        %{handler_state | cancelled_requests: new_cancelled}
-      else
-        handler_state
-      end
-
-    # Also send cancellation message to active request processes
-    if Map.has_key?(handler_state, :active_requests) do
-      case Map.get(handler_state.active_requests, request_id) do
-        nil ->
-          Logger.debug("No active process found for request #{request_id}")
-
-        pid when is_pid(pid) ->
-          Logger.debug(
-            "Sending cancellation message to worker process #{inspect(pid)} for request #{request_id}"
-          )
-
-          # Send cancellation message to the worker process
-          send(pid, {:cancelled, request_id})
-
-        other ->
-          Logger.debug("Unexpected active_requests entry for #{request_id}: #{inspect(other)}")
-      end
-    else
-      Logger.debug("Handler state has no active_requests field")
-    end
-
-    # IMPORTANT: Also send cancellation to the handler process itself
-    # The handler might be waiting for this message in a receive block
-    send(self(), {:cancelled, request_id})
-    Logger.debug("Sent cancellation message to handler process for request #{request_id}")
-
-    updated_state
+  defp drop_pending(state, request_id) do
+    %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
   end
 
   # Check if a request has been cancelled
@@ -661,490 +631,55 @@ defmodule ExMCP.Server.HandlerServer do
     {:error, {:unsupported_transport, transport_type}}
   end
 
-  defp message_loop(server_pid, transport_mod, transport_state) do
-    case transport_mod.receive_message(transport_state) do
-      {:ok, message, new_transport_state} ->
-        send(server_pid, {:transport_message, message})
-        message_loop(server_pid, transport_mod, new_transport_state)
-
-      {:error, reason} ->
-        send(server_pid, {:transport_error, reason})
-    end
-  end
-
-  # Process a single MCP request or notification
+  # Process a single MCP request or notification.
+  #
+  # Method coverage and result/error shaping live in ExMCP.Server.Dispatch so
+  # that every transport answers the same set of methods identically (audit
+  # M9). Only the pieces that are specific to this process — protocol version
+  # capture, telemetry, and cancellation bookkeeping — stay here.
   defp process_mcp_request(%{"method" => "initialize"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
+    case dispatch(request, state) do
+      {:response, %{"result" => result} = response, new_state} ->
+        emit_initialize_telemetry(result)
 
-    case state.handler_module.handle_initialize(params, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
+        {:response, response,
+         %{new_state | protocol_version: protocol_version_from_result(result)}}
 
-        server_name =
-          case result do
-            %{"serverInfo" => %{"name" => name}} -> name
-            %{serverInfo: %{name: name}} -> name
-            _ -> "unknown"
-          end
-
-        :telemetry.execute(
-          [:ex_mcp, :server, :initialize, :completed],
-          %{},
-          %{server_name: server_name}
-        )
-
-        new_state = %{
-          state
-          | handler_state: new_handler_state,
-            protocol_version: Map.get(result, "protocolVersion")
-        }
-
-        {:response, response, new_state}
-
-      {:error, error, new_handler_state} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{"code" => -32000, "message" => "Initialize error: #{inspect(error)}"}
-        }
-
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "tools/list"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    cursor = Map.get(params, "cursor")
-
-    case state.handler_module.handle_list_tools(cursor, state.handler_state) do
-      {:ok, tools, next_cursor, new_handler_state} ->
-        result = %{"tools" => tools}
-        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-
-      {:error, error, new_handler_state} ->
-        # Use appropriate error code based on error type
-        error_code =
-          case error do
-            # Invalid params
-            "Invalid cursor" <> _ -> -32602
-            # Invalid params
-            "Invalid cursor parameter" -> -32602
-            # Generic server error
-            _ -> -32000
-          end
-
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{"code" => error_code, "message" => "List tools error: #{inspect(error)}"}
-        }
-
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
+      other ->
+        other
     end
   end
 
   defp process_mcp_request(%{"method" => "tools/call"} = request, state) do
     id = Map.get(request, "id")
     params = Map.get(request, "params", %{})
-    name = Map.get(params, "name")
-    arguments = Map.get(params, "arguments", %{})
 
-    require Logger
-
-    # Check if request was already cancelled before processing
     if request_cancelled?(id, state) do
-      response = %{
-        "jsonrpc" => "2.0",
-        "id" => id,
-        "error" => %{"code" => -32001, "message" => "Request was cancelled"}
-      }
+      response =
+        JSONRPC.error(id, ErrorCodes.request_cancelled(), "Request was cancelled")
 
       {:response, response, state}
     else
-      # Track this as a pending request for cancellation support
-      new_state = track_pending_request(id, :sync_call, state)
-      Logger.debug("Tracking pending request #{id} for tools/call")
+      # Track the request so a notifications/cancelled can find it, and expose
+      # the request id (plus any _meta) to cancellation-aware handlers.
+      tracked_state = track_pending_request(id, :sync_call, state)
 
-      # Add the request_id to arguments for handlers that support cancellation
-      enhanced_arguments = Map.put(arguments, "_request_id", id)
-
-      # Pass _meta from params to arguments so handlers can access it
       enhanced_arguments =
-        case Map.get(params, "_meta") do
-          nil -> enhanced_arguments
-          meta -> Map.put(enhanced_arguments, "_meta", meta)
-        end
+        params
+        |> Map.get("arguments", %{})
+        |> Map.put("_request_id", id)
+        |> put_meta(Map.get(params, "_meta"))
 
-      case new_state.handler_module.handle_call_tool(
-             name,
-             enhanced_arguments,
-             new_state.handler_state
-           ) do
-        {:ok, result, new_handler_state} ->
-          response_result = normalize_tool_result(result)
-          response = %{"jsonrpc" => "2.0", "id" => id, "result" => response_result}
-          final_state = %{new_state | handler_state: new_handler_state}
-          # Remove from pending requests when complete
-          completed_state = complete_pending_request(id, final_state)
-          {:response, response, completed_state}
+      enhanced_params = Map.put(params, "arguments", enhanced_arguments)
+      enhanced_request = Map.put(request, "params", enhanced_params)
 
-        {:error, error, new_handler_state} ->
-          response = %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "error" => %{"code" => -32000, "message" => "Tool call error: #{inspect(error)}"}
-          }
+      case dispatch(enhanced_request, tracked_state) do
+        {:response, response, new_state} ->
+          {:response, response, complete_pending_request(id, new_state)}
 
-          final_state = %{new_state | handler_state: new_handler_state}
-          # Remove from pending requests when complete
-          completed_state = complete_pending_request(id, final_state)
-          {:response, response, completed_state}
+        other ->
+          other
       end
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "resources/list"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    cursor = Map.get(params, "cursor")
-
-    case state.handler_module.handle_list_resources(cursor, state.handler_state) do
-      {:ok, resources, next_cursor, new_handler_state} ->
-        result = %{"resources" => resources}
-        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-
-      {:error, error, new_handler_state} ->
-        # Use appropriate error code based on error type
-        error_code =
-          case error do
-            # Invalid params
-            "Invalid cursor" <> _ -> -32602
-            # Invalid params
-            "Invalid cursor parameter" -> -32602
-            # Generic server error
-            _ -> -32000
-          end
-
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{
-            "code" => error_code,
-            "message" => "List resources error: #{inspect(error)}"
-          }
-        }
-
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "resources/templates/list"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    cursor = Map.get(params, "cursor")
-
-    if function_exported?(state.handler_module, :handle_list_resource_templates, 2) do
-      case state.handler_module.handle_list_resource_templates(cursor, state.handler_state) do
-        {:ok, templates, next_cursor, new_handler_state} ->
-          result = %{"resourceTemplates" => templates}
-          result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
-          response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-          new_state = %{state | handler_state: new_handler_state}
-          {:response, response, new_state}
-
-        {:error, error, new_handler_state} ->
-          # Use appropriate error code based on error type
-          error_code =
-            case error do
-              # Invalid params
-              "Invalid cursor" <> _ -> -32602
-              # Generic server error
-              _ -> -32000
-            end
-
-          response = %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "error" => %{
-              "code" => error_code,
-              "message" => "List resource templates error: #{inspect(error)}"
-            }
-          }
-
-          new_state = %{state | handler_state: new_handler_state}
-          {:response, response, new_state}
-      end
-    else
-      response = %{
-        "jsonrpc" => "2.0",
-        "id" => id,
-        "error" =>
-          ErrorCodes.error_response(
-            :method_not_found,
-            "Method not found: resources/templates/list"
-          )
-      }
-
-      {:response, response, state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "resources/read"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    uri = Map.get(params, "uri")
-
-    case state.handler_module.handle_read_resource(uri, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{"contents" => [result]}}
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-
-      {:error, error, new_handler_state} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{"code" => -32000, "message" => "Read resource error: #{inspect(error)}"}
-        }
-
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "ping"} = request, state) do
-    id = Map.get(request, "id")
-    response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{}}
-    {:response, response, state}
-  end
-
-  defp process_mcp_request(%{"method" => "logging/setLevel"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    level = Map.get(params, "level")
-
-    if function_exported?(state.handler_module, :handle_set_log_level, 2) do
-      case state.handler_module.handle_set_log_level(level, state.handler_state) do
-        {:ok, new_handler_state} ->
-          response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{}}
-          new_state = %{state | handler_state: new_handler_state}
-          {:response, response, new_state}
-
-        {:error, error, new_handler_state} ->
-          response = %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "error" => %{"code" => -32000, "message" => "Set log level error: #{inspect(error)}"}
-          }
-
-          new_state = %{state | handler_state: new_handler_state}
-          {:response, response, new_state}
-      end
-    else
-      # Default implementation - just return success
-      response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{}}
-      {:response, response, state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "prompts/list"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    cursor = Map.get(params, "cursor")
-
-    case state.handler_module.handle_list_prompts(cursor, state.handler_state) do
-      {:ok, prompts, next_cursor, new_handler_state} ->
-        result = %{"prompts" => prompts}
-        result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-
-      {:error, error, new_handler_state} ->
-        # Use appropriate error code based on error type
-        error_code =
-          case error do
-            # Invalid params
-            "Invalid cursor" <> _ -> -32602
-            # Invalid params
-            "Invalid cursor parameter" -> -32602
-            # Generic server error
-            _ -> -32000
-          end
-
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{"code" => error_code, "message" => "List prompts error: #{inspect(error)}"}
-        }
-
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "prompts/get"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    name = Map.get(params, "name")
-    arguments = Map.get(params, "arguments", %{})
-
-    case state.handler_module.handle_get_prompt(name, arguments, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-
-      {:error, error, new_handler_state} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{"code" => -32000, "message" => "Get prompt error: #{inspect(error)}"}
-        }
-
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "roots/list"} = request, state) do
-    id = Map.get(request, "id")
-
-    if function_exported?(state.handler_module, :handle_list_roots, 1) do
-      case state.handler_module.handle_list_roots(state.handler_state) do
-        {:ok, roots, new_handler_state} ->
-          result = %{"roots" => roots}
-          response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-          new_state = %{state | handler_state: new_handler_state}
-          {:response, response, new_state}
-
-        {:error, error, new_handler_state} ->
-          # Use appropriate error code based on error type
-          error_code =
-            case error do
-              # Invalid params
-              "Invalid cursor" <> _ -> -32602
-              # Generic server error
-              _ -> -32000
-            end
-
-          response = %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "error" => %{"code" => error_code, "message" => "List roots error: #{inspect(error)}"}
-          }
-
-          new_state = %{state | handler_state: new_handler_state}
-          {:response, response, new_state}
-      end
-    else
-      # Handler doesn't implement roots listing
-      response = %{
-        "jsonrpc" => "2.0",
-        "id" => id,
-        "error" => ErrorCodes.error_response(:method_not_found, "Method not found: roots/list")
-      }
-
-      {:response, response, state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "resources/subscribe"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    uri = Map.get(params, "uri")
-
-    case state.handler_module.handle_subscribe_resource(uri, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-
-      {:error, error, new_handler_state} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{
-            "code" => -32000,
-            "message" => "Subscribe resource error: #{inspect(error)}"
-          }
-        }
-
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "resources/unsubscribe"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    uri = Map.get(params, "uri")
-
-    case state.handler_module.handle_unsubscribe_resource(uri, state.handler_state) do
-      {:ok, result, new_handler_state} ->
-        response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-
-      {:error, error, new_handler_state} ->
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{
-            "code" => -32000,
-            "message" => "Unsubscribe resource error: #{inspect(error)}"
-          }
-        }
-
-        new_state = %{state | handler_state: new_handler_state}
-        {:response, response, new_state}
-    end
-  end
-
-  defp process_mcp_request(%{"method" => "completion/complete"} = request, state) do
-    id = Map.get(request, "id")
-    params = Map.get(request, "params", %{})
-    ref = Map.get(params, "ref")
-    argument = Map.get(params, "argument")
-
-    if function_exported?(state.handler_module, :handle_complete, 3) do
-      case state.handler_module.handle_complete(ref, argument, state.handler_state) do
-        {:ok, result, new_handler_state} ->
-          response = %{"jsonrpc" => "2.0", "id" => id, "result" => result}
-          new_state = %{state | handler_state: new_handler_state}
-          {:response, response, new_state}
-
-        {:error, error, new_handler_state} ->
-          response = %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "error" => %{"code" => -32000, "message" => "Completion error: #{inspect(error)}"}
-          }
-
-          new_state = %{state | handler_state: new_handler_state}
-          {:response, response, new_state}
-      end
-    else
-      # Handler doesn't support completion
-      response = %{
-        "jsonrpc" => "2.0",
-        "id" => id,
-        "error" =>
-          ErrorCodes.error_response(:method_not_found, "Method not found: completion/complete")
-      }
-
-      {:response, response, state}
     end
   end
 
@@ -1155,52 +690,49 @@ defmodule ExMCP.Server.HandlerServer do
     {:notification, new_state}
   end
 
-  defp process_mcp_request(%{"method" => method} = request, state) do
-    if Map.has_key?(request, "id") do
-      # It's a request with an unknown method
-      id = Map.get(request, "id")
-
-      response = %{
-        "jsonrpc" => "2.0",
-        "id" => id,
-        "error" => ErrorCodes.error_response(:method_not_found, "Method not found: #{method}")
-      }
-
-      {:response, response, state}
-    else
-      # It's a notification with an unknown method, ignore it.
-      {:notification, state}
-    end
+  defp process_mcp_request(%{"method" => _method} = request, state) do
+    dispatch(request, state)
   end
 
   defp process_mcp_request(_invalid_request, state) do
     # Invalid request format (e.g. not a map)
-    response = %{
-      "jsonrpc" => "2.0",
-      "id" => nil,
-      "error" => %{"code" => -32600, "message" => "Invalid Request"}
-    }
-
+    response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid Request")
     {:response, response, state}
   end
 
-  defp normalize_tool_result(%{"content" => _} = result), do: deep_stringify_keys(result)
-  defp normalize_tool_result(%{content: _} = result), do: deep_stringify_keys(result)
-  defp normalize_tool_result(result), do: %{"content" => deep_stringify_keys(result)}
+  # Runs the shared dispatcher against the handler module and folds the new
+  # handler state back into the server state.
+  defp dispatch(request, state) do
+    case Dispatch.dispatch(request, state.handler_module, state.handler_state) do
+      {:response, response, handler_state} ->
+        {:response, response, %{state | handler_state: handler_state}}
 
-  defp deep_stringify_keys(list) when is_list(list), do: Enum.map(list, &deep_stringify_keys/1)
-
-  defp deep_stringify_keys(map) when is_map(map) and not is_struct(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {stringify_key(key), deep_stringify_keys(value)}
-      {key, value} -> {key, deep_stringify_keys(value)}
-    end)
+      {:notification, handler_state} ->
+        {:notification, %{state | handler_state: handler_state}}
+    end
   end
 
-  defp deep_stringify_keys(value), do: value
+  defp put_meta(arguments, nil), do: arguments
+  defp put_meta(arguments, meta), do: Map.put(arguments, "_meta", meta)
 
-  defp stringify_key(:is_error), do: "isError"
-  defp stringify_key(key), do: Atom.to_string(key)
+  defp emit_initialize_telemetry(result) do
+    server_name =
+      case result do
+        %{"serverInfo" => %{"name" => name}} -> name
+        %{serverInfo: %{name: name}} -> name
+        _ -> "unknown"
+      end
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :initialize, :completed],
+      %{},
+      %{server_name: server_name}
+    )
+  end
+
+  defp protocol_version_from_result(%{"protocolVersion" => version}), do: version
+  defp protocol_version_from_result(%{protocolVersion: version}), do: version
+  defp protocol_version_from_result(_result), do: nil
 
   defp send_message(message, state) do
     outbound_message =
@@ -1212,6 +744,10 @@ defmodule ExMCP.Server.HandlerServer do
 
     case state.transport.send_message(outbound_message, state.transport_state) do
       {:ok, new_transport_state} ->
+        {:ok, %{state | transport_state: new_transport_state}}
+
+      # Transports may also answer with an immediate response payload.
+      {:ok, new_transport_state, _response} ->
         {:ok, %{state | transport_state: new_transport_state}}
 
       error ->

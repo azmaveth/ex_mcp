@@ -67,6 +67,13 @@ defmodule ExMCP.HttpPlug do
   `ExMCP.Server.Transport` with a localhost bind get this allow-list by
   default.
 
+  ### Server-Sent Events (`:sse_mode`)
+
+  `:sse_mode` is `:stream` (default) or `:oneshot`. `:stream` starts an
+  `ExMCP.HttpPlug.SSEHandler` and holds the request open for the lifetime of
+  the stream; `:oneshot` writes a single `connected` event and returns, which
+  suits test harnesses and health checks.
+
   ### Session ids
 
   Client-supplied `mcp-session-id` (and legacy `x-session-id`) header values
@@ -113,6 +120,7 @@ defmodule ExMCP.HttpPlug do
       server_info: Keyword.get(opts, :server_info, %{name: "ex_mcp_server", version: "1.0.0"}),
       session_manager: Keyword.get(opts, :session_manager, ExMCP.SessionManager),
       sse_enabled: Keyword.get(opts, :sse_enabled, true),
+      sse_mode: Keyword.get(opts, :sse_mode, default_sse_mode()),
       cors_enabled: Keyword.get(opts, :cors_enabled, false),
       allowed_origins: Keyword.get(opts, :allowed_origins, []),
       allowed_hosts: Keyword.get(opts, :allowed_hosts, :any),
@@ -615,39 +623,7 @@ defmodule ExMCP.HttpPlug do
           })
         end
 
-      # Check if we're in test mode via application environment
-      if Application.get_env(:ex_mcp, :test_mode, false) do
-        # Send a simple connection message and return for testing
-        {:ok, conn} =
-          chunk(conn, "event: connected\ndata: {\"session_id\": \"#{final_session_id}\"}\n\n")
-
-        conn
-      else
-        # Use the new SSE handler with backpressure control
-        {:ok, handler} = SSEHandler.start_link(conn, final_session_id, opts)
-
-        # Register with session manager
-        session_manager.update_session(final_session_id, %{handler_pid: handler})
-
-        # Also register in our simple ETS registry
-        register_sse_handler(final_session_id, handler, session_manager)
-
-        # Block until handler exits
-        ref = Process.monitor(handler)
-
-        receive do
-          {:DOWN, ^ref, :process, ^handler, reason} ->
-            # Clean up the session registry when handler exits
-            cleanup_sse_handler(final_session_id)
-
-            # Terminate session in SessionManager if it was a clean shutdown
-            if reason == :normal do
-              session_manager.terminate_session(final_session_id)
-            end
-
-            conn
-        end
-      end
+      serve_sse(conn, final_session_id, session_manager, opts)
     else
       {:error, :invalid_session_id} ->
         reject_invalid_session_id(conn, opts)
@@ -665,6 +641,68 @@ defmodule ExMCP.HttpPlug do
         conn
         |> maybe_add_cors_headers(opts)
         |> send_resp(403, "Origin not allowed")
+    end
+  end
+
+  # `:sse_mode` decides how a GET SSE request is served:
+  #
+  #   * `:stream` (default) - start an `ExMCP.HttpPlug.SSEHandler` and keep the
+  #     request process alive for the lifetime of the stream
+  #   * `:oneshot` - write a single `connected` event and return, for callers
+  #     (harnesses, health checks) that only need the handshake
+  #
+  # The mode is resolved in `init/1`, so the request path below has no
+  # environment lookups or test-only branches (audit L6). Opts maps that were
+  # hand-built rather than produced by `init/1` have no `:sse_mode` key, so the
+  # default is resolved once here for them.
+  defp serve_sse(conn, session_id, session_manager, opts)
+       when not is_map_key(opts, :sse_mode) do
+    serve_sse(conn, session_id, session_manager, Map.put(opts, :sse_mode, default_sse_mode()))
+  end
+
+  defp serve_sse(conn, session_id, _session_manager, %{sse_mode: :oneshot}) do
+    {:ok, conn} = chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
+
+    conn
+  end
+
+  defp serve_sse(conn, session_id, session_manager, opts) do
+    # Use the SSE handler with backpressure control
+    {:ok, handler} = SSEHandler.start_link(conn, session_id, opts)
+
+    # Register with session manager
+    session_manager.update_session(session_id, %{handler_pid: handler})
+
+    # Also register in our simple ETS registry
+    register_sse_handler(session_id, handler, session_manager)
+
+    # Block until handler exits
+    ref = Process.monitor(handler)
+
+    receive do
+      {:DOWN, ^ref, :process, ^handler, reason} ->
+        # Clean up the session registry when handler exits
+        cleanup_sse_handler(session_id)
+
+        # Terminate session in SessionManager if it was a clean shutdown
+        if reason == :normal do
+          session_manager.terminate_session(session_id)
+        end
+
+        conn
+    end
+  end
+
+  # Default SSE mode. `:ex_mcp, :sse_mode` selects it explicitly; the legacy
+  # `:ex_mcp, :test_mode` flag is still honoured here (and only here) so
+  # existing harnesses keep working.
+  defp default_sse_mode do
+    case Application.get_env(:ex_mcp, :sse_mode) do
+      mode when mode in [:stream, :oneshot] ->
+        mode
+
+      _unset ->
+        if Application.get_env(:ex_mcp, :test_mode, false), do: :oneshot, else: :stream
     end
   end
 

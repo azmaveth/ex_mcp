@@ -66,9 +66,6 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           handler: VersionTestHandler
         )
 
-      # Allow server to start its message loop
-      Process.sleep(10)
-
       # Client initialization happens automatically during start_link
       {:ok, client} =
         Client.start_link(
@@ -77,8 +74,6 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           client_info: %{name: "test-client", version: "1.0.0"},
           protocol_version: "2025-03-26"
         )
-
-      Process.sleep(50)
 
       # Verify client is initialized with server
       state = :sys.get_state(client)
@@ -97,9 +92,6 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           handler: VersionTestHandler
         )
 
-      # Allow server to start its message loop
-      Process.sleep(10)
-
       # Client with custom info
       {:ok, client} =
         Client.start_link(
@@ -108,8 +100,6 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           client_info: %{name: "custom-client", version: "2.0.0"},
           protocol_version: "2025-03-26"
         )
-
-      Process.sleep(50)
 
       # Client should be successfully initialized
       assert :sys.get_state(client).initialized == true
@@ -125,17 +115,12 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           expected_version: "2025-03-26"
         )
 
-      # Allow server to start its message loop
-      Process.sleep(10)
-
       {:ok, client} =
         Client.start_link(
           transport: :test,
           server: server,
           protocol_version: "2025-03-26"
         )
-
-      Process.sleep(50)
 
       # Should successfully negotiate
       state = :sys.get_state(client)
@@ -153,17 +138,12 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           handler: VersionTestHandler
         )
 
-      # Allow server to start its message loop
-      Process.sleep(10)
-
       {:ok, client} =
         Client.start_link(
           transport: :test,
           server: server,
           protocol_version: "2025-03-26"
         )
-
-      Process.sleep(50)
 
       # Check that client is initialized
       state = :sys.get_state(client)
@@ -186,17 +166,12 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
           handler: VersionTestHandler
         )
 
-      # Allow server to start its message loop
-      Process.sleep(10)
-
       {:ok, client} =
         Client.start_link(
           transport: :test,
           server: server,
           protocol_version: "2025-03-26"
         )
-
-      Process.sleep(50)
 
       # The fact that the client is initialized means the notification was sent
       assert :sys.get_state(client).initialized == true

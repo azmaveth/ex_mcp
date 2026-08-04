@@ -63,6 +63,47 @@ defmodule ExMCP.Transport.HTTPSslOptionsTest do
     end
   end
 
+  describe "httpc_http_options/2" do
+    test "wraps TLS settings as a single {:ssl, opts} option on the POST path" do
+      state = %HTTP{timeouts: %{request: 30_000}}
+
+      http_opts = HTTP.httpc_http_options("https://example.com/mcp", state)
+
+      # httpc only accepts TLS settings nested under :ssl; a flat list would
+      # be rejected option-by-option and every TLS setting silently dropped.
+      assert {:ssl, ssl_opts} = List.keyfind(http_opts, :ssl, 0)
+      assert Keyword.get(ssl_opts, :verify) == :verify_peer
+      assert Keyword.has_key?(ssl_opts, :customize_hostname_check)
+
+      # The flat ssl options must not leak into http_options themselves
+      refute Keyword.has_key?(http_opts, :verify)
+      refute Keyword.has_key?(http_opts, :versions)
+      assert Keyword.get(http_opts, :timeout) == 30_000
+    end
+
+    test "honors configured TLS settings on the POST path" do
+      state = %HTTP{
+        timeouts: %{request: 5_000},
+        security: %{tls: %{verify: :verify_none, versions: [:"tlsv1.3"]}}
+      }
+
+      http_opts = HTTP.httpc_http_options("https://example.com/mcp", state)
+
+      assert {:ssl, ssl_opts} = List.keyfind(http_opts, :ssl, 0)
+      assert Keyword.get(ssl_opts, :verify) == :verify_none
+      assert Keyword.get(ssl_opts, :versions) == [:"tlsv1.3"]
+    end
+
+    test "omits TLS options for plain http" do
+      state = %HTTP{timeouts: %{request: 1_000}}
+
+      http_opts = HTTP.httpc_http_options("http://example.com/mcp", state)
+
+      refute List.keyfind(http_opts, :ssl, 0)
+      assert Keyword.get(http_opts, :timeout) == 1_000
+    end
+  end
+
   describe "async_state_changes/2" do
     test "reports only durable fields that differ from the snapshot" do
       snapshot = %HTTP{session_id: "old", access_token: nil, headers: []}

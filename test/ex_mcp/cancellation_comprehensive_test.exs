@@ -9,6 +9,8 @@ defmodule ExMCP.CancellationComprehensiveTest do
 
   use ExUnit.Case, async: false
 
+  import ExMCP.TestHelpers, only: [wait_until: 2]
+
   alias ExMCP.Client
   alias ExMCP.Internal.Protocol
   alias ExMCP.Server.Handler
@@ -85,12 +87,15 @@ defmodule ExMCP.CancellationComprehensiveTest do
                     Logger.debug("SlowHandler checking ETS for #{request_id}, iteration #{i}")
                   end
 
+                  # Intentional: this handler *is* the slow operation the
+                  # cancellation tests race against.
                   Process.sleep(100)
                   {:cont, :ok}
               end
 
             # No cancellation tracking available
             true ->
+              # Intentional: simulated slow work (see above).
               Process.sleep(100)
               {:cont, :ok}
           end
@@ -223,7 +228,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
             {:halt, :cancelled}
         after
           0 ->
-            # Do some work
+            # Do some work (intentional: simulates a cancellable long task)
             Process.sleep(50)
             Logger.debug("Worker iteration #{i} complete for request #{request_id}")
             {:cont, acc <> "Iteration #{i} complete. "}
@@ -285,8 +290,8 @@ defmodule ExMCP.CancellationComprehensiveTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Client.start_link/1 completes the handshake in init/1.
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         # More robust cleanup with try/catch
@@ -313,10 +318,9 @@ defmodule ExMCP.CancellationComprehensiveTest do
           Client.call_tool(client, "cancellable_tool", %{"iterations" => 30})
         end)
 
-      # Wait for request to be sent and start processing
-      Process.sleep(150)
-
-      # Get pending requests
+      # Deterministic: block until the client has actually registered the
+      # in-flight request instead of guessing how long that takes.
+      wait_until(fn -> length(Client.get_pending_requests(client)) == 1 end, timeout: 5_000)
       [request_id] = Client.get_pending_requests(client)
 
       # Cancel the request
@@ -342,7 +346,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
           end)
         end
 
-      Process.sleep(150)
+      wait_until(fn -> length(Client.get_pending_requests(client)) == 3 end, timeout: 5_000)
       pending = Client.get_pending_requests(client)
       assert length(pending) == 3
 
@@ -396,7 +400,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
           server: server
         )
 
-      Process.sleep(100)
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         # More robust cleanup with try/catch
@@ -425,9 +429,9 @@ defmodule ExMCP.CancellationComprehensiveTest do
           Client.call_tool(client, "cancellable_tool", %{"iterations" => 30})
         end)
 
-      # Let it start processing - wait for a few iterations but not too long
-      Process.sleep(150)
-
+      # Deterministic: block until the client has actually registered the
+      # in-flight request instead of guessing how long that takes.
+      wait_until(fn -> length(Client.get_pending_requests(client)) == 1 end, timeout: 5_000)
       [request_id] = Client.get_pending_requests(client)
       :ok = Client.send_cancelled(client, request_id, "Stop processing")
 
@@ -444,10 +448,9 @@ defmodule ExMCP.CancellationComprehensiveTest do
           end)
         end
 
-      # Give tasks time to start but cancel quickly to test cancellation
-      Process.sleep(100)
+      # Wait until every request is registered, then cancel them all.
+      wait_until(fn -> length(Client.get_pending_requests(client)) == 5 end, timeout: 5_000)
 
-      # Get pending requests and cancel them as quickly as possible
       pending = Client.get_pending_requests(client)
 
       # Cancel all pending requests immediately
@@ -491,7 +494,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
           server: server
         )
 
-      Process.sleep(100)
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         # More robust cleanup with try/catch
@@ -515,18 +518,11 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # Per spec: "Due to network latency, cancellation notifications may
       # arrive after request processing has completed"
 
-      # Make a request that completes quickly
-      result_task =
-        Task.async(fn ->
-          Client.call_tool(client, "instant_tool", %{})
-        end)
+      # Deterministically exercise "cancellation arrives after completion":
+      # let the request finish first, then send the notification.
+      assert {:ok, _} = Client.call_tool(client, "instant_tool", %{})
 
-      # Try to cancel it (might arrive after completion)
-      Process.sleep(10)
       Client.send_cancelled(client, "possibly_completed", "Maybe too late")
-
-      # Should get the result regardless
-      assert {:ok, _} = Task.await(result_task)
 
       # System should remain stable
       assert {:ok, _} = Client.list_tools(client)
@@ -539,7 +535,9 @@ defmodule ExMCP.CancellationComprehensiveTest do
           Client.call_tool(client, "cancellable_tool", %{"iterations" => 30})
         end)
 
-      Process.sleep(150)
+      # Deterministic: block until the client has actually registered the
+      # in-flight request instead of guessing how long that takes.
+      wait_until(fn -> length(Client.get_pending_requests(client)) == 1 end, timeout: 5_000)
       [request_id] = Client.get_pending_requests(client)
 
       # Cancel it
@@ -564,7 +562,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
           server: server
         )
 
-      Process.sleep(100)
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         # More robust cleanup with try/catch
@@ -612,7 +610,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
           server: server
         )
 
-      Process.sleep(100)
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         # More robust cleanup with try/catch
@@ -687,7 +685,7 @@ defmodule ExMCP.CancellationComprehensiveTest do
           server: server
         )
 
-      Process.sleep(100)
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       # No pending requests initially
       assert [] = Client.get_pending_requests(client)
@@ -698,7 +696,9 @@ defmodule ExMCP.CancellationComprehensiveTest do
           Client.call_tool(client, "cancellable_tool", %{"iterations" => 30})
         end)
 
-      Process.sleep(150)
+      # Deterministic: block until the client has actually registered the
+      # in-flight request instead of guessing how long that takes.
+      wait_until(fn -> length(Client.get_pending_requests(client)) == 1 end, timeout: 5_000)
 
       # Now there's a pending request
       assert [request_id] = Client.get_pending_requests(client)

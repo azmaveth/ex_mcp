@@ -47,7 +47,7 @@ defmodule ExMCP.Plugs.DnsRebinding do
     host =
       conn
       |> get_req_header("host")
-      |> List.first(conn.host || "")
+      |> List.first(conn.host)
 
     if Core.host_allowed?(host, opts.allowed_hosts) do
       conn

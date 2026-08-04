@@ -4,6 +4,39 @@ defmodule ExMCP.Internal.SecurityConfig do
 
   This module provides secure defaults and configuration validation
   for the ExMCP security system.
+
+  ## Defaults are fail-closed
+
+  `:trusted_origins` defaults to loopback only and `:consent_handler` defaults
+  to `ExMCP.ConsentHandler.Deny`. `ExMCP.Transport.SecurityGuard` runs on every
+  outbound request, so a client pointed at a server that is **not** on
+  localhost has its credential headers stripped and is then denied, until the
+  application declares that origin:
+
+      config :ex_mcp, :security,
+        trusted_origins: ["https://mcp.example.com"]
+
+  A trusted origin is exempt from both header stripping and consent prompts;
+  consent then only gates origins the application never declared. The
+  SecurityGuard logs this remediation whenever it strips or blocks, so the
+  failure is not silent.
+
+  ## Settings
+
+    * `:trusted_origins` - hosts or origins treated as the same security
+      domain. `"*.example.com"` matches subdomains.
+    * `:consent_handler` - module implementing `ExMCP.ConsentHandler`, asked to
+      approve access to origins that are *not* trusted.
+    * `:consent_ttl` - lifetime of a cached consent decision, **in
+      milliseconds** (handlers receive it in seconds as `:consent_ttl` in the
+      request context).
+    * `:enable_token_passthrough_prevention` - when `false`, credential headers
+      are forwarded to untrusted origins. Off by default only in the sense that
+      the protection is on; disabling it removes confused-deputy protection.
+    * `:enable_user_consent_validation` - when `false`, the consent handler is
+      never consulted and every origin is allowed.
+
+  Prefer declaring `:trusted_origins` over disabling either control.
   """
 
   require Logger
@@ -29,7 +62,8 @@ defmodule ExMCP.Internal.SecurityConfig do
     log_security_actions: true,
     audit_log_level: :info,
 
-    # Feature flags
+    # Enforcement switches. Both are read by ExMCP.Transport.SecurityGuard;
+    # setting either to false disables that control for every transport.
     enable_token_passthrough_prevention: true,
     enable_user_consent_validation: true
   }
@@ -67,6 +101,7 @@ defmodule ExMCP.Internal.SecurityConfig do
     with :ok <- validate_trusted_origins(config.trusted_origins),
          :ok <- validate_consent_handler(config.consent_handler),
          :ok <- validate_ttl_values(config),
+         :ok <- validate_enforcement_switches(config),
          :ok <- validate_user_resolvers(config.user_id_resolvers) do
       {:ok, config}
     else
@@ -78,6 +113,12 @@ defmodule ExMCP.Internal.SecurityConfig do
   Gets security configuration for a specific transport.
 
   Includes transport-specific settings and user ID resolution.
+
+  `base_config` is merged over the application configuration. A transport that
+  knows the origin it was explicitly configured to talk to can declare it here,
+  which exempts that origin from header stripping and consent:
+
+      SecurityConfig.get_transport_config(:http, %{trusted_origins: [origin | configured]})
   """
   @spec get_transport_config(atom(), map()) :: map()
   def get_transport_config(transport, base_config \\ %{}) do
@@ -145,6 +186,18 @@ defmodule ExMCP.Internal.SecurityConfig do
       :ok
     else
       {:error, "consent_ttl must be a positive integer (milliseconds)"}
+    end
+  end
+
+  defp validate_enforcement_switches(config) do
+    switches = [:enable_token_passthrough_prevention, :enable_user_consent_validation]
+
+    invalid = Enum.reject(switches, fn key -> is_boolean(Map.get(config, key, true)) end)
+
+    if invalid == [] do
+      :ok
+    else
+      {:error, "#{Enum.join(invalid, ", ")} must be true or false"}
     end
   end
 

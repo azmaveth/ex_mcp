@@ -4,6 +4,7 @@ defmodule ExMCP.HttpPlugTest do
   import Plug.Conn
 
   alias ExMCP.HttpPlug
+  alias ExMCP.HttpPlug.Core
 
   defmodule TestServer do
     use ExMCP.Server.Handler
@@ -101,6 +102,12 @@ defmodule ExMCP.HttpPlugTest do
       assert config.allowed_hosts == :any
       assert config.body_limit == 1_000_000
       assert config.handler_opts == []
+    end
+
+    test "init/1 resolves the SSE mode instead of branching at request time" do
+      assert HttpPlug.init(sse_mode: :stream).sse_mode == :stream
+      assert HttpPlug.init(sse_mode: :oneshot).sse_mode == :oneshot
+      assert HttpPlug.init([]).sse_mode in [:stream, :oneshot]
     end
   end
 
@@ -247,6 +254,10 @@ defmodule ExMCP.HttpPlugTest do
     |> put_req_header("content-type", "application/json")
   end
 
+  # Plug.Test forbids put_req_header("host", _); the Host is modelled by
+  # conn.host, which is what HttpPlug falls back to when no header is present.
+  defp with_host(conn, host), do: %{conn | host: host}
+
   defp session_request_conn do
     request = %{
       "jsonrpc" => "2.0",
@@ -270,7 +281,7 @@ defmodule ExMCP.HttpPlugTest do
     test "rejects a Host that is not allow-listed with 421" do
       conn =
         initialize_conn()
-        |> put_req_header("host", "evil.example:8080")
+        |> with_host("evil.example")
         |> HttpPlug.call(
           HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
         )
@@ -293,10 +304,10 @@ defmodule ExMCP.HttpPlugTest do
       assert conn.status == 421
     end
 
-    test "accepts an allow-listed Host ignoring the port" do
+    test "accepts an allow-listed Host" do
       conn =
         initialize_conn()
-        |> put_req_header("host", "localhost:4000")
+        |> with_host("localhost")
         |> HttpPlug.call(
           HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["localhost"])
         )
@@ -304,10 +315,10 @@ defmodule ExMCP.HttpPlugTest do
       assert conn.status == 200
     end
 
-    test "accepts bracketed IPv6 Hosts against unbracketed allow-list entries" do
+    test "accepts an allow-listed IPv6 Host" do
       conn =
         initialize_conn()
-        |> put_req_header("host", "[::1]:8080")
+        |> with_host("::1")
         |> HttpPlug.call(
           HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["::1"])
         )
@@ -315,15 +326,19 @@ defmodule ExMCP.HttpPlugTest do
       assert conn.status == 200
     end
 
-    test "accepts bracketed IPv6 Hosts against bracketed allow-list entries" do
-      conn =
-        initialize_conn()
-        |> put_req_header("host", "[::1]:8080")
-        |> HttpPlug.call(
-          HttpPlug.init(handler: TestServer, sse_enabled: false, allowed_hosts: ["[::1]"])
-        )
-
-      assert conn.status == 200
+    # Plug forbids setting the "host" request header directly (it is derived
+    # from conn.host), so port and IPv6-bracket normalization is asserted
+    # against the function that implements it.
+    test "host matching ignores ports and IPv6 brackets" do
+      assert Core.host_allowed?("localhost:4000", ["localhost"])
+      assert Core.host_allowed?("LOCALHOST:4000", ["localhost"])
+      assert Core.host_allowed?("[::1]:8080", ["::1"])
+      assert Core.host_allowed?("[::1]:8080", ["[::1]"])
+      assert Core.host_allowed?("::1", ["::1"])
+      refute Core.host_allowed?("evil.example:8080", ["localhost"])
+      refute Core.host_allowed?("evil.example", ["localhost"])
+      refute Core.host_allowed?(nil, ["localhost"])
+      assert Core.host_allowed?("anything.example", :any)
     end
   end
 

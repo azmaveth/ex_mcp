@@ -46,7 +46,7 @@ ExMCP is an Elixir implementation of the Model Context Protocol (MCP), enabling 
 # Essential commands
 mix deps.get          # Install dependencies
 mix test              # Run all tests
-mix test test/ex_mcp/protocol_test.exs  # Run specific test file
+mix test test/ex_mcp/internal/protocol_compliance_test.exs  # Run specific test file
 mix format            # Format code (required before committing)
 mix credo             # Static code analysis
 mix dialyzer          # Type checking (run after significant changes)
@@ -59,6 +59,11 @@ MIX_ENV=test mix compile         # Compile for test environment
 mix sobelow --skip               # Security analysis
 mix coveralls.html               # Generate coverage report
 
+# Repo-only tooling (lives in dev/, never published to Hex)
+mix test.suite <unit|compliance|integration|performance|all|ci>
+mix test.tags         # List the test tags and what they mean
+mix test.cleanup      # Kill stray processes/ports left by crashed tests
+mix mcp.sync_spec     # Sync upstream MCP spec docs into docs/mcp-specs/
 ```
 
 ## Architecture
@@ -90,6 +95,13 @@ The library follows a layered architecture:
    - OTP application supervision tree
    - Server discovery and management
 
+Everything under `lib/` ships to Hex. Repo-only tooling lives in `dev/`
+(`dev/mix/tasks/` and `dev/ex_mcp/spec_sync/`), which is compiled in `:dev` and
+`:test` via `elixirc_paths/1` but is deliberately excluded from
+`package.files`, so those mix tasks never show up in a consumer's `mix help`.
+`ExMCP.Testing.*` is the opposite case: it stays in `lib/` as a published,
+documented test kit.
+
 ## Key Patterns
 
 - All public APIs use `{:ok, result}` or `{:error, reason}` tuples
@@ -100,10 +112,31 @@ The library follows a layered architecture:
 
 ## Testing Approach
 
-- Unit tests use lightweight in-process test transports (no mocking library)
+- Unit tests use lightweight in-process test transports (`transport: :test`) and
+  hand-written stub modules injected via options. **There is no mocking library**
+  — Mox was removed once the last vestigial usage disappeared. Do not reintroduce
+  one without a strong reason.
 - Property-based testing for protocol encoding/decoding
 - Integration tests for client-server communication
 - Test files mirror source structure in `test/`
+
+### No `Process.sleep` for synchronization
+
+`Process.sleep/1` is only acceptable when the test is *genuinely about timing*
+(e.g. asserting a timeout fires). For everything else use a real
+synchronization point — in rough order of preference:
+
+1. `assert_receive` / `refute_receive` on a message the code under test sends
+2. `Process.monitor/1` + `assert_receive {:DOWN, ref, :process, pid, reason}`
+3. A synchronous round-trip that flushes the pipeline (e.g. `ExMCP.Client.ping/1`
+   after firing a notification — the notification is ordered before the ping)
+4. Telemetry: `ExMCP.TestHelpers.assert_event/2`, `wait_for_event/2`,
+   `refute_event/2`
+5. `ExMCP.TestHelpers.wait_until(fun, timeout: ms)` as a deadline-bounded poll
+
+Note that `ExMCP.Client.start_link/1` performs the full MCP handshake inside
+`init/1`, so once it returns `{:ok, pid}` the client is already `:ready`. Never
+sleep "to let the client initialize".
 
 ## Common Tasks
 
@@ -117,8 +150,15 @@ When implementing new features:
 ## Client implementation
 
 The public MCP client API is **`ExMCP.Client`** (GenServer). There is no
-`client_adapter` / `LegacyAdapter` / `StateMachineAdapter` switch anymore —
-those modules were removed before 1.0.
+`client_adapter` / `LegacyAdapter` / `StateMachineAdapter` switch anymore, and
+`ExMCP.Client.StateMachine` was deleted when auto-reconnect landed — connection
+state is plain fields on the `ExMCP.Client` struct (`:connection_status` is one
+of `:connecting`, `:ready`, `:reconnecting`, `:disconnected`).
+
+`ExMCP.Client.start_link/1` connects **synchronously**: the transport
+connection, the `initialize` handshake and the `notifications/initialized`
+message all happen inside `init/1`, so a successful return means the client is
+already `:ready`.
 
 Internal connection lifecycle helpers live under `ExMCP.Client.*` (for example
 `ExMCP.Client.ConnectionManager` and `ExMCP.Client.RequestHandler`). Prefer
@@ -133,6 +173,17 @@ multiplier 2, cap 60s, up to 10 attempts). Configure via the `:reconnect`,
 `:max_reconnect_attempts`, and `:reconnect_backoff` options on
 `ExMCP.Client.start_link/1`. Explicit `disconnect/1`/`stop/2` never triggers
 reconnection.
+
+### Health checks (client)
+
+While connected and idle, the client sends a protocol `ping` every
+`:health_check_interval` ms (default 30_000; `nil`/`0` disables). If a ping is
+still unanswered a full interval later, the transport is treated as closed and
+the reconnection path takes over. Health checks are skipped while requests are
+in flight. Tests that assert an exact message sequence over more than 30s, or
+that a client stays disconnected after transport loss, must account for this —
+pass `health_check_interval: nil` and/or `reconnect: false` when the test is
+not about those behaviours.
 
 ### Telemetry (client)
 

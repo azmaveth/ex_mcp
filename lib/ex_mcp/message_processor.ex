@@ -12,9 +12,7 @@ defmodule ExMCP.MessageProcessor do
 
   require Logger
 
-  # Protocol version constants used by MethodHandlers
-  # @supported_protocol_versions ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
-  # @default_protocol_version "2025-11-25"
+  # Protocol versions come from ExMCP.Internal.VersionRegistry (audit M8).
 
   # How long to wait for a graceful stop of a per-request handler process
   # before killing it.
@@ -283,41 +281,43 @@ defmodule ExMCP.MessageProcessor do
     case method do
       "ping" -> handle_ping(conn, id)
       "initialize" -> handle_initialize_dispatch(conn, handler, params, id)
-      "logging/setLevel" -> put_response(conn, ResponseBuilder.build_success_response(%{}, id))
       _ -> dispatch_method(method, conn, handler, params, id)
     end
   end
 
+  # Method table mirrors ExMCP.Server.Dispatch so the HTTP transport answers
+  # the same set of methods as the process-based transports (audit M9/M15).
+  # `logging/setLevel` is routed through the handler rather than answered with
+  # a canned success (audit M10).
+  @method_handlers %{
+    "tools/list" => :handle_tools_list,
+    "tools/call" => :handle_tools_call,
+    "resources/list" => :handle_resources_list,
+    "resources/templates/list" => :handle_resource_templates_list,
+    "resources/read" => :handle_resources_read,
+    "resources/subscribe" => :handle_resources_subscribe,
+    "resources/unsubscribe" => :handle_resources_unsubscribe,
+    "prompts/list" => :handle_prompts_list,
+    "prompts/get" => :handle_prompts_get,
+    "completion/complete" => :handle_completion_complete,
+    "logging/setLevel" => :handle_set_log_level,
+    "roots/list" => :handle_roots_list,
+    "tasks/get" => :handle_task_get,
+    "tasks/list" => :handle_task_list,
+    "tasks/result" => :handle_task_result,
+    "tasks/cancel" => :handle_task_cancel
+  }
+
+  @doc false
+  @spec dispatched_methods() :: [String.t()]
+  def dispatched_methods, do: Map.keys(@method_handlers)
+
   defp dispatch_method(method, conn, handler, params, id) do
-    case method do
-      "tools/list" ->
-        MethodHandlers.handle_tools_list(conn, handler, params, id)
+    case Map.fetch(@method_handlers, method) do
+      {:ok, handler_fun} ->
+        apply(MethodHandlers, handler_fun, [conn, handler, params, id])
 
-      "tools/call" ->
-        MethodHandlers.handle_tools_call(conn, handler, params, id)
-
-      "resources/list" ->
-        MethodHandlers.handle_resources_list(conn, handler, params, id)
-
-      "resources/read" ->
-        MethodHandlers.handle_resources_read(conn, handler, params, id)
-
-      "resources/subscribe" ->
-        MethodHandlers.handle_resources_subscribe(conn, handler, params, id)
-
-      "resources/unsubscribe" ->
-        MethodHandlers.handle_resources_unsubscribe(conn, handler, params, id)
-
-      "prompts/list" ->
-        MethodHandlers.handle_prompts_list(conn, handler, params, id)
-
-      "prompts/get" ->
-        MethodHandlers.handle_prompts_get(conn, handler, params, id)
-
-      "completion/complete" ->
-        MethodHandlers.handle_completion_complete(conn, handler, params, id)
-
-      _ ->
+      :error ->
         MethodHandlers.handle_custom_method(conn, handler, method, params, id)
     end
   end

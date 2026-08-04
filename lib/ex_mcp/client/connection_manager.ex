@@ -131,15 +131,8 @@ defmodule ExMCP.Client.ConnectionManager do
       [] ->
         {:error, "No transports configured"}
 
-      nil ->
-        # Single transport specified
-        case Keyword.get(transport_manager_opts, :transports) do
-          [{transport_mod, transport_opts}] ->
-            connect_with_reliability(transport_mod, transport_opts, reliability_opts)
-
-          _ ->
-            {:error, "No transport specified"}
-        end
+      _missing ->
+        {:error, "No transport specified"}
     end
   end
 

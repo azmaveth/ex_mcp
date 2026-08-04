@@ -10,6 +10,10 @@ defmodule ExMCP.Client.RequestHandler do
   alias ExMCP.Internal.{JSONRPC, Maps, Protocol}
   alias ExMCP.Protocol.ResponseBuilder
 
+  # Extra time allowed past a caller-enforced timeout before the client
+  # cleans up its own pending-request bookkeeping.
+  @caller_timeout_grace 1_000
+
   @doc """
   Handles individual MCP requests.
 
@@ -84,6 +88,17 @@ defmodule ExMCP.Client.RequestHandler do
     :ok
   end
 
+  # An explicit timeout is enforced by the caller's own `GenServer.call/3`,
+  # but the client still has to drop its bookkeeping for a request the caller
+  # abandoned: a leaked pending entry keeps the client looking permanently
+  # busy and suppresses idle health checks. The grace period keeps the
+  # caller-side timeout authoritative.
+  defp maybe_schedule_request_timeout(id, %{timeout: caller_timeout}, _state)
+       when is_integer(caller_timeout) do
+    Process.send_after(self(), {:request_timeout, id}, caller_timeout + @caller_timeout_grace)
+    :ok
+  end
+
   defp maybe_schedule_request_timeout(_id, _meta, _state), do: :ok
 
   @doc """
@@ -149,6 +164,30 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   @doc """
+  Sends a protocol-level `ping` on behalf of the client's idle health check.
+
+  The ping is deliberately kept out of `pending_requests`: it has no caller to
+  reply to and must not show up in `ExMCP.Client.get_pending_requests/1`.
+
+  Returns:
+
+  - `{:ok, request_id, state}` - ping sent, the pong will arrive asynchronously
+  - `{:ok, nil, state}` - a synchronous transport answered inline, so the
+    connection is already proven alive
+  - `{:error, reason}` - the ping could not be sent
+  """
+  @spec send_ping(map()) :: {:ok, term() | nil, map()} | {:error, any()}
+  def send_ping(state) do
+    id = Protocol.generate_id()
+
+    case send_message(build_request("ping", %{}, id), state) do
+      {:ok, updated_state, _response_data} -> {:ok, nil, updated_state}
+      {:ok, updated_state} -> {:ok, id, updated_state}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
   Parses a message from the transport.
 
   This function is intended to be called from the client's `handle_info/2` callback.
@@ -209,6 +248,14 @@ defmodule ExMCP.Client.RequestHandler do
   def handle_single_response(other, state) do
     Logger.warning("Received unexpected response format: #{inspect(other)}")
     {:noreply, state}
+  end
+
+  # Reply to the client's own health-check ping. Any answer — result or
+  # error — proves the connection is alive, so the outstanding ping is simply
+  # cleared. These ids are never in pending_requests.
+  defp handle_response_by_id(response_id, _response_data, %{health_check_id: ping_id} = state)
+       when not is_nil(ping_id) and response_id == ping_id do
+    {:noreply, %{state | health_check_id: nil, last_activity: System.system_time(:second)}}
   end
 
   defp handle_response_by_id(response_id, response_data, state) do

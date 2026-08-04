@@ -61,6 +61,10 @@ defmodule ExMCP.Client do
     :receiver_task,
     :health_check_ref,
     :health_check_interval,
+    # Request id of an in-flight health-check ping, or nil when none is
+    # outstanding. Deliberately not kept in pending_requests: it has no
+    # caller and must not surface via get_pending_requests/1.
+    :health_check_id,
     :connection_status,
     :last_activity,
     :reconnect_attempts,
@@ -104,7 +108,8 @@ defmodule ExMCP.Client do
   - `:handshake_timeout` - Maximum time in milliseconds to wait for the
     server's `initialize` response during connection (default: 10_000).
     On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
-  - `:health_check_interval` - Interval for health checks (default: 30_000)
+  - `:health_check_interval` - Interval in milliseconds between idle health
+    check pings (default: 30_000). Set to `nil` or `0` to disable.
   - `:reliability` - Reliability features configuration (optional)
   - `:retry_policy` - Default retry policy for all client operations (optional)
   - `:reconnect` - Automatically reconnect when the transport closes
@@ -128,6 +133,14 @@ defmodule ExMCP.Client do
 
   Explicit `disconnect/1` or `stop/2` calls never trigger reconnection.
   Passing `reconnect: false` disables the behavior entirely.
+
+  ## Health Checks
+
+  While connected and idle, the client sends a protocol `ping` every
+  `:health_check_interval` milliseconds. If a ping is still unanswered one
+  full interval later, the transport is treated as closed: pending requests
+  fail and the reconnection path takes over. Health checks are skipped while
+  requests are in flight, since those already prove the connection is alive.
 
   The reconnection lifecycle emits telemetry:
 
@@ -728,6 +741,7 @@ defmodule ExMCP.Client do
       pending_batches: %{},
       cancelled_requests: MapSet.new(),
       health_check_interval: Keyword.get(opts, :health_check_interval, 30_000),
+      health_check_id: nil,
       connection_status: :connecting,
       last_activity: System.system_time(:second),
       reconnect_attempts: 0,
@@ -770,7 +784,7 @@ defmodule ExMCP.Client do
         )
 
         final_state = %{updated_state | connection_status: :ready, initialized: true}
-        {:ok, final_state}
+        {:ok, schedule_next_health_check(final_state)}
 
       {:error, reason} ->
         handle_connection_error(reason)
@@ -867,9 +881,7 @@ defmodule ExMCP.Client do
     )
 
     # Cancel health check timer
-    if state.health_check_ref do
-      Process.cancel_timer(state.health_check_ref)
-    end
+    cancel_health_check_timer(state)
 
     # Cancel any scheduled reconnection attempt
     if state.reconnect_timer do
@@ -936,6 +948,7 @@ defmodule ExMCP.Client do
         cancelled_requests: MapSet.new(),
         receiver_task: nil,
         health_check_ref: nil,
+        health_check_id: nil,
         reconnect_timer: nil,
         manual_disconnect: true,
         async_post_tasks: %{}
@@ -1074,12 +1087,7 @@ defmodule ExMCP.Client do
   end
 
   def handle_info(:health_check, state) do
-    # Perform health check
-    # Note: Health check logic could ping server or check connection status
-
-    # Schedule next health check
-    health_check_ref = schedule_health_check(state.health_check_interval)
-    {:noreply, %{state | health_check_ref: health_check_ref}}
+    {:noreply, perform_health_check(state)}
   end
 
   # Default-timeout enforcement for requests made without an explicit
@@ -1197,6 +1205,12 @@ defmodule ExMCP.Client do
   defp handle_transport_down(reason, state) do
     reply_pending_with_close_error(reason, state)
 
+    :telemetry.execute(
+      [:ex_mcp, :client, :disconnected],
+      %{},
+      %{reason: reason, transport: state.transport_mod, pid: self()}
+    )
+
     # Stop any lingering receiver task for the old transport so it cannot
     # deliver stale close events after a successful reconnection
     if is_struct(state.receiver_task, Task) && Process.alive?(state.receiver_task.pid) do
@@ -1204,6 +1218,10 @@ defmodule ExMCP.Client do
     end
 
     previous_status = state.connection_status
+
+    # The health check is re-armed by the reconnect success path; leaving the
+    # old timer running would double up once the client is ready again.
+    cancel_health_check_timer(state)
 
     cleared_state = %{
       state
@@ -1214,6 +1232,8 @@ defmodule ExMCP.Client do
         pending_requests: %{},
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
+        health_check_ref: nil,
+        health_check_id: nil,
         async_post_tasks: %{}
     }
 
@@ -1314,12 +1334,13 @@ defmodule ExMCP.Client do
           %{transport: connected_state.transport_mod}
         )
 
-        %{
+        schedule_next_health_check(%{
           connected_state
           | connection_status: :ready,
             initialized: true,
-            reconnect_attempts: 0
-        }
+            reconnect_attempts: 0,
+            health_check_id: nil
+        })
 
       {:error, reason} ->
         :telemetry.execute(
@@ -1384,6 +1405,72 @@ defmodule ExMCP.Client do
       Keyword.get(state.transport_opts, :transports)
   end
 
+  # Idle health check
+  #
+  # Every `:health_check_interval` a connected and *idle* client sends a
+  # protocol `ping`. If the previous ping is still unanswered a full interval
+  # later, the connection is treated as closed, which fails pending requests
+  # and hands over to the reconnection path.
+  #
+  # The check is skipped while requests are in flight: those are themselves
+  # proof of liveness, and a ping queued behind a long-running tool call on a
+  # single-threaded server would otherwise look like a dead connection.
+  defp perform_health_check(%{connection_status: :ready} = state) do
+    cond do
+      map_size(state.pending_requests) > 0 ->
+        schedule_next_health_check(%{state | health_check_id: nil})
+
+      state.health_check_id != nil ->
+        Logger.warning("MCP health check ping unanswered; treating transport as closed")
+        state = %{state | health_check_id: nil, health_check_ref: nil}
+        handle_transport_down(:health_check_timeout, state)
+
+      true ->
+        state
+        |> send_health_ping()
+        |> schedule_next_health_check()
+    end
+  end
+
+  # Not connected: drop the timer. It is re-armed once the client is ready
+  # again (initial connection or successful reconnection).
+  defp perform_health_check(state) do
+    %{state | health_check_id: nil, health_check_ref: nil}
+  end
+
+  defp send_health_ping(state) do
+    case RequestHandler.send_ping(state) do
+      {:ok, request_id, new_state} ->
+        %{new_state | health_check_id: request_id}
+
+      {:error, reason} ->
+        Logger.debug("MCP health check ping could not be sent: #{inspect(reason)}")
+        %{state | health_check_id: nil}
+    end
+  end
+
+  # Stateless request/response transports (non-SSE HTTP) have no receiver and
+  # no persistent connection to monitor — every request opens its own — so a
+  # periodic ping would only add a blocking POST to the client loop.
+  defp schedule_next_health_check(%{receiver_task: nil} = state) do
+    %{state | health_check_ref: nil}
+  end
+
+  defp schedule_next_health_check(%{health_check_interval: interval} = state)
+       when is_integer(interval) and interval > 0 do
+    cancel_health_check_timer(state)
+    %{state | health_check_ref: Process.send_after(self(), :health_check, interval)}
+  end
+
+  defp schedule_next_health_check(state), do: %{state | health_check_ref: nil}
+
+  defp cancel_health_check_timer(%{health_check_ref: ref}) when is_reference(ref) do
+    Process.cancel_timer(ref)
+    :ok
+  end
+
+  defp cancel_health_check_timer(_state), do: :ok
+
   # Private functions (some exposed for testing)
 
   @doc false
@@ -1438,10 +1525,6 @@ defmodule ExMCP.Client do
 
   defp build_client_info do
     VersionInfo.client_info()
-  end
-
-  defp schedule_health_check(interval) do
-    Process.send_after(self(), :health_check, interval)
   end
 
   defp format_response(response, :struct, opts) do

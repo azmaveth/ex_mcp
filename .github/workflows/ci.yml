@@ -5,6 +5,24 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
+
+# Tag coverage map (see test/test_helper.exs for the default exclusions and
+# test/TAGGING_STRATEGY.md for the meaning of each tag):
+#
+#   compliance ............ `compliance` job (all protocol versions, one run)
+#   integration ........... `test` job  -> mix test.suite integration
+#   requires_http ......... `test` job  -> mix test.suite integration
+#   requires_stdio ........ `test` job  -> mix test.suite integration
+#   requires_beam ......... `test` job  -> mix test.suite integration
+#   requires_bypass ....... `test` job  -> --include requires_bypass
+#   slow .................. `test` job  -> --include slow, plus `coverage`
+#   performance / stress .. `extended` job -> mix test.suite performance
+#   interop ............... `interop` job (Node.js + npm)
+#   external / live_server  no tests currently carry these tags; they stay in
+#                           the default exclusion list for future use only.
+#   wip / skip ............ intentionally never run; `scripts/check_skip_tags.sh`
+#                           fails the build if a test is left tagged :skip.
 
 env:
   MIX_ENV: test
@@ -115,13 +133,96 @@ jobs:
     - name: Compile
       run: mix compile
 
-    # The compliance suite covers all supported protocol versions
-    # (2024-11-05 through 2025-11-25) in a single run; version-specific
-    # handlers live under test/ex_mcp/compliance/handlers/.
+    # One job, not a per-version matrix: the compliance suite is generated
+    # across every supported protocol version in a single run
+    # (test/ex_mcp/compliance/version_generator.ex plus the version-specific
+    # handlers in test/ex_mcp/compliance/handlers/), and 2025-11-25 behaviour is
+    # covered by the dedicated files (icons_test.exs, version_*_test.exs).
+    # Running the same suite three times under different job names only
+    # duplicated work.
     - name: Run MCP compliance tests
       run: mix test.suite compliance
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  extended:
+    name: Performance & stress suite
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: ${{ env.CI_OTP_VERSION }}
+        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+
+    - name: Restore deps/_build cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Compile
+      run: mix compile
+
+    # Covers the :performance, :stress and :slow tags, which are excluded by
+    # default in test/test_helper.exs and are otherwise never exercised.
+    - name: Run performance and stress tests
+      run: mix test.suite performance
+
+  interop:
+    name: Cross-language interop (Node.js)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: ${{ env.CI_OTP_VERSION }}
+        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Restore deps/_build cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
+
+    - name: Cache interop node_modules
+      uses: actions/cache@v4
+      with:
+        path: test/interop/node_modules
+        key: ${{ runner.os }}-interop-node-${{ hashFiles('test/interop/package.json') }}
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Compile
+      run: mix compile
+
+    # The interop tests install their own npm deps on first run and skip
+    # themselves if `node` is unavailable.
+    - name: Run interop tests
+      run: mix test --only interop
 
   coverage:
     name: Coverage (full suite)
@@ -152,11 +253,14 @@ jobs:
     - name: Compile
       run: mix compile
 
+    # Everything except the tags that need external services or Node.js
+    # (those run in the `extended` / `interop` jobs).
     - name: Run tests with coverage
       run: >
         mix coveralls.github
         --include compliance
         --include integration
+        --include slow
         --include requires_http
         --include requires_stdio
         --include requires_beam

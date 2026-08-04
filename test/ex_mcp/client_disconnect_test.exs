@@ -204,5 +204,54 @@ defmodule ExMCP.ClientDisconnectTest do
       # Stop the client
       GenServer.stop(client)
     end
+
+    test "pending batches are replied with the {:ok, results} batch contract" do
+      {:ok, client} =
+        GenServer.start_link(Client,
+          transport: :test,
+          _skip_connect: true
+        )
+
+      # A batch whose first member already answered and whose second member is
+      # still outstanding when the client disconnects.
+      ref = make_ref()
+      from = {self(), ref}
+      batch_id = "batch-1"
+      ordered_ids = [1, 2]
+      received = %{1 => {:ok, %{"value" => 1}}}
+
+      pending_requests = %{
+        batch_id => {from, :batch, ordered_ids, received},
+        1 => batch_id,
+        2 => batch_id
+      }
+
+      state = %Client{
+        transport_mod: nil,
+        transport_state: nil,
+        transport_opts: [],
+        connection_status: :connected,
+        pending_requests: pending_requests,
+        pending_batches: %{},
+        cancelled_requests: MapSet.new(),
+        receiver_task: nil,
+        health_check_ref: nil,
+        health_check_interval: 30_000,
+        last_activity: System.system_time(:second),
+        reconnect_attempts: 0
+      }
+
+      :sys.replace_state(client, fn _ -> state end)
+
+      assert :ok = Client.disconnect(client)
+
+      # batch_request/3 promises {:ok, results} | {:error, reason} — never a
+      # bare list — with one {:ok, _} | {:error, _} entry per request, in order.
+      assert_receive {^ref, {:ok, [first, second]}}, 1_000
+      assert first == {:ok, %{"value" => 1}}
+      assert {:error, %ExMCP.Error{code: :connection_error}} = second
+
+      GenServer.stop(client)
+    end
   end
 end

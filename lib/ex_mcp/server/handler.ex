@@ -515,11 +515,14 @@ defmodule ExMCP.Server.Handler do
   @callback handle_elicitation_complete(elicitation_id :: String.t(), state()) ::
               {:ok, state()} | {:error, any(), state()}
 
-  # Optional callbacks with defaults provided in __using__
-  # Note: init/1 and terminate/2 are inherited from GenServer (via `use GenServer`
-  # in __using__). They are NOT declared as Handler callbacks to avoid conflicting
-  # behaviour warnings. Use `@impl true` or `@impl GenServer` in handlers.
+  # `init/1` and `terminate/2` are intentionally NOT declared as callbacks here.
+  # Handlers run inside a GenServer, so those names belong to `GenServer`;
+  # declaring them on this behaviour too makes every module that implements both
+  # behaviours emit a "conflicting behaviours" warning. Modules that declare only
+  # `@behaviour ExMCP.Server.Handler` should annotate their GenServer callbacks
+  # with `@impl GenServer` (or omit `@impl`), not `@impl true`.
 
+  # Optional callbacks with defaults provided in __using__.
   @optional_callbacks [
     handle_list_resources: 2,
     handle_read_resource: 2,
@@ -544,6 +547,7 @@ defmodule ExMCP.Server.Handler do
       @behaviour ExMCP.Server.Handler
       use GenServer
       alias ExMCP.Internal.Logging
+      alias ExMCP.Server.HandlerBridge
 
       # Required callback defaults live in @before_compile with
       # defoverridable so the Tool DSL's @before_compile can override them.
@@ -659,121 +663,70 @@ defmodule ExMCP.Server.Handler do
                      handle_elicitation_complete: 2,
                      terminate: 2
 
-      # GenServer bridge (inline — must beat GenServer's @before_compile catch-all).
-      # __widen_type__/1 prevents Elixir 1.19 type narrowing on callback returns.
-      # @dialyzer {:no_match, ...} suppresses pattern_match warnings because the
-      # bridge handles all return variants but specific handlers only use a subset.
-
-      defp __widen_type__(result), do: result
-
-      @dialyzer {:no_match, handle_call: 3}
+      # GenServer bridge (inline — must beat GenServer's @before_compile
+      # catch-all). Each clause delegates to ExMCP.Server.HandlerBridge, which
+      # normalizes the handler's return value into a single reply shape.
 
       @impl GenServer
-      def handle_call({:initialize, params}, _from, state) do
-        case __widen_type__(handle_initialize(params, state)) do
-          {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
-          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
-          {:error, reason} -> {:reply, {:error, reason}, state}
-        end
-      end
+      def handle_call({:initialize, params}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_initialize, [params], state)
 
-      def handle_call({:list_tools, cursor}, _from, state) do
-        case __widen_type__(handle_list_tools(cursor, state)) do
-          {:ok, tools, next_cursor, new_state} ->
-            {:reply, {:ok, tools, next_cursor, new_state}, new_state}
+      def handle_call({:list_tools, cursor}, _from, state),
+        do: HandlerBridge.list(__MODULE__, :handle_list_tools, [cursor], state)
 
-          {:ok, tools, new_state} ->
-            {:reply, {:ok, tools, nil, new_state}, new_state}
+      def handle_call({:call_tool, name, args}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_call_tool, [name, args], state)
 
-          {:error, reason, new_state} ->
-            {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:execute_tool, name, args}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_call_tool, [name, args], state)
 
-      def handle_call({:call_tool, name, args}, _from, state) do
-        case __widen_type__(handle_call_tool(name, args, state)) do
-          {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
-          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:list_resources, cursor}, _from, state),
+        do: HandlerBridge.list(__MODULE__, :handle_list_resources, [cursor], state)
 
-      def handle_call({:execute_tool, name, args}, _from, state) do
-        case __widen_type__(handle_call_tool(name, args, state)) do
-          {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
-          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:list_resource_templates, cursor}, _from, state),
+        do: HandlerBridge.list(__MODULE__, :handle_list_resource_templates, [cursor], state)
 
-      def handle_call({:list_resources, cursor}, _from, state) do
-        case __widen_type__(handle_list_resources(cursor, state)) do
-          {:ok, resources, next_cursor, new_state} ->
-            {:reply, {:ok, resources, next_cursor, new_state}, new_state}
+      def handle_call({:read_resource, uri}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_read_resource, [uri], state)
 
-          {:ok, resources, new_state} ->
-            {:reply, {:ok, resources, nil, new_state}, new_state}
+      def handle_call({:subscribe_resource, uri}, _from, state),
+        do: HandlerBridge.ack(__MODULE__, :handle_subscribe_resource, [uri], state)
 
-          {:error, reason, new_state} ->
-            {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:unsubscribe_resource, uri}, _from, state),
+        do: HandlerBridge.ack(__MODULE__, :handle_unsubscribe_resource, [uri], state)
 
-      def handle_call({:read_resource, uri}, _from, state) do
-        case __widen_type__(handle_read_resource(uri, state)) do
-          {:ok, content, new_state} -> {:reply, {:ok, content}, new_state}
-          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:list_prompts, cursor}, _from, state),
+        do: HandlerBridge.list(__MODULE__, :handle_list_prompts, [cursor], state)
 
-      def handle_call({:subscribe_resource, uri}, _from, state) do
-        case __widen_type__(handle_subscribe_resource(uri, state)) do
-          {:ok, _result, new_state} -> {:reply, :ok, new_state}
-          {:ok, new_state} -> {:reply, :ok, new_state}
-          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:get_prompt, name, args}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_get_prompt, [name, args], state)
 
-      def handle_call({:unsubscribe_resource, uri}, _from, state) do
-        case __widen_type__(handle_unsubscribe_resource(uri, state)) do
-          {:ok, _result, new_state} -> {:reply, :ok, new_state}
-          {:ok, new_state} -> {:reply, :ok, new_state}
-          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:complete, ref, argument}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_complete, [ref, argument], state)
 
-      def handle_call({:list_prompts, cursor}, _from, state) do
-        case __widen_type__(handle_list_prompts(cursor, state)) do
-          {:ok, prompts, next_cursor, new_state} ->
-            {:reply, {:ok, prompts, next_cursor, new_state}, new_state}
+      def handle_call({:set_log_level, level}, _from, state),
+        do: HandlerBridge.ack(__MODULE__, :handle_set_log_level, [level], state)
 
-          {:ok, prompts, new_state} ->
-            {:reply, {:ok, prompts, nil, new_state}, new_state}
+      def handle_call({:list_roots}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_list_roots, [], state)
 
-          {:error, reason, new_state} ->
-            {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:task_get, task_id}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_task_get, [task_id], state)
 
-      def handle_call({:get_prompt, name, args}, _from, state) do
-        case __widen_type__(handle_get_prompt(name, args, state)) do
-          {:ok, result, new_state} -> {:reply, {:ok, result}, new_state}
-          {:error, reason, new_state} -> {:reply, {:error, reason}, new_state}
-        end
-      end
+      def handle_call({:task_result, task_id}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_task_result, [task_id], state)
 
-      def handle_call({:complete, ref, argument}, _from, state) do
-        case __widen_type__(handle_complete(ref, argument, state)) do
-          {:ok, result, new_state} -> {:reply, {:ok, result, new_state}, new_state}
-          {:error, reason, new_state} -> {:reply, {:error, reason, new_state}, new_state}
-        end
-      end
+      def handle_call({:task_cancel, task_id}, _from, state),
+        do: HandlerBridge.call(__MODULE__, :handle_task_cancel, [task_id], state)
 
-      def handle_call({:request, method, _params}, _from, state) do
-        {:reply, {:error, "Unknown method: #{method}"}, state}
-      end
+      def handle_call({:task_list, cursor}, _from, state),
+        do: HandlerBridge.list(__MODULE__, :handle_task_list, [cursor], state)
 
-      def handle_call(_msg, _from, state) do
-        {:reply, {:error, "Unknown message"}, state}
-      end
+      def handle_call({:request, method, _params}, _from, state),
+        do: {:reply, {:error, "Unknown method: #{method}"}, state}
+
+      def handle_call(_msg, _from, state),
+        do: {:reply, {:error, "Unknown message"}, state}
     end
   end
 
@@ -785,9 +738,11 @@ defmodule ExMCP.Server.Handler do
           quote do
             @impl ExMCP.Server.Handler
             def handle_initialize(_params, state) do
+              # Default negotiated version comes from the single source of
+              # truth so every entry point agrees (audit M8).
               {:ok,
                %{
-                 protocolVersion: "2025-03-26",
+                 protocolVersion: ExMCP.Internal.VersionRegistry.preferred_version(),
                  serverInfo: %{name: "ex_mcp", version: "0.1.0"},
                  capabilities: %{}
                }, state}

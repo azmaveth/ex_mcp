@@ -34,7 +34,8 @@ defmodule ExMCP.Server.Transport do
   * `:transport` - The transport type (`:stdio`, `:http`, `:beam`, `:test`)
   * `:port` - Port number for HTTP transports (default: 4000)
   * `:host` - Host for HTTP transports (default: "localhost")
-  * `:cors_enabled` - Enable CORS for HTTP transports (default: true)
+  * `:cors_enabled` - Enable CORS for HTTP transports (default: `false`, the
+    same default `ExMCP.HttpPlug` uses)
   * `:sse_enabled` - Enable SSE for HTTP transports (default: false)
   * `:allowed_hosts` - Host-header allow-list passed to `ExMCP.HttpPlug`.
     Defaults to the localhost names when binding to a localhost address
@@ -109,12 +110,13 @@ defmodule ExMCP.Server.Transport do
   """
   @spec start_http_server(module(), map(), list(), keyword()) ::
           {:ok, pid()} | {:error, term()}
-  def start_http_server(module, server_info, tools, opts) do
+  def start_http_server(module, server_info, _tools, opts) do
     port = Keyword.get(opts, :port, 4000)
     host = Keyword.get(opts, :host, "localhost")
     # Check both :sse_enabled and :use_sse for compatibility
     sse_enabled = Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
-    cors_enabled = Keyword.get(opts, :cors_enabled, true)
+    # Matches ExMCP.HttpPlug's own default; CORS must be opted into (audit L10).
+    cors_enabled = Keyword.get(opts, :cors_enabled, false)
     ranch_ref = Keyword.get(opts, :ranch_ref)
 
     # Localhost-bound servers are the prime target for DNS rebinding, so
@@ -123,11 +125,11 @@ defmodule ExMCP.Server.Transport do
     allowed_hosts = Keyword.get(opts, :allowed_hosts, default_allowed_hosts(host))
     allowed_origins = Keyword.get(opts, :allowed_origins, default_allowed_origins(host, port))
 
-    # Configure the HTTP Plug
+    # Configure the HTTP Plug. Tools are read from the handler module, so the
+    # `tools` argument is not forwarded (ExMCP.HttpPlug.init/1 ignores it).
     plug_opts = [
       handler: module,
       server_info: server_info,
-      tools: tools,
       sse_enabled: sse_enabled,
       cors_enabled: cors_enabled,
       allowed_hosts: allowed_hosts,

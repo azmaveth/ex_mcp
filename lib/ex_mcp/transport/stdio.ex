@@ -32,7 +32,7 @@ defmodule ExMCP.Transport.Stdio do
   alias ExMCP.Internal.{LineBuffer, SecurityConfig}
   alias ExMCP.Transport.{Error, SecurityGuard}
 
-  defstruct [:port, :buffer, :line_buffer, :subscriber, :reader_pid]
+  defstruct [:port, :line_buffer, :subscriber, :reader_pid]
 
   @impl true
   def connect(opts) do
@@ -89,7 +89,6 @@ defmodule ExMCP.Transport.Stdio do
 
       state = %__MODULE__{
         port: port,
-        buffer: "",
         line_buffer: ""
       }
 
@@ -302,13 +301,29 @@ defmodule ExMCP.Transport.Stdio do
   end
 
   @impl true
-  def receive_message(%__MODULE__{port: port} = state) do
+  def receive_message(%__MODULE__{} = state) do
+    receive_message(state, :infinity)
+  end
+
+  @doc """
+  Receives a single message, waiting at most `timeout` milliseconds.
+
+  Callers must run this in the process that owns the port (or in one that may
+  take ownership): port ownership is transferred to the caller, and an OTP port
+  is closed when its owner exits. Running it in a short-lived helper process
+  would therefore kill the spawned program — which is why the handshake path
+  uses this timeout-aware clause in-process instead of wrapping
+  `receive_message/1` in a task.
+  """
+  @spec receive_message(%__MODULE__{}, timeout()) ::
+          {:ok, binary(), %__MODULE__{}} | {:error, any()}
+  def receive_message(%__MODULE__{port: port} = state, timeout) do
     # Transfer port ownership to this process if needed
     if Port.info(port, :connected) != {:connected, self()} do
       Port.connect(port, self())
     end
 
-    receive_loop(state)
+    receive_loop(state, timeout)
   end
 
   @impl true
@@ -387,20 +402,33 @@ defmodule ExMCP.Transport.Stdio do
 
   # Private functions
 
-  defp receive_loop(state) do
+  # `timeout` bounds the wait for a *complete* line: each partial chunk resets
+  # the remaining budget only by the time already spent, so a slow-drip server
+  # cannot extend the deadline indefinitely.
+  defp receive_loop(state, timeout) do
+    started = System.monotonic_time(:millisecond)
+
     receive do
       {port, {:data, data}} when port == state.port ->
-        do_process_data(data, state)
+        do_process_data(data, state, remaining(timeout, started))
 
       {port, {:exit_status, status}} when port == state.port ->
         Error.connection_error({:process_exited, status})
 
       {port, :eof} when port == state.port ->
         Error.connection_error(:eof)
+    after
+      timeout -> {:error, :handshake_timeout}
     end
   end
 
-  defp do_process_data(data, state) do
+  defp remaining(:infinity, _started), do: :infinity
+
+  defp remaining(timeout, started) do
+    max(timeout - (System.monotonic_time(:millisecond) - started), 0)
+  end
+
+  defp do_process_data(data, state, timeout \\ :infinity) do
     # Handle both binary and :eol tuple format from port
     binary_data =
       case data do
@@ -420,12 +448,12 @@ defmodule ExMCP.Transport.Stdio do
         cond do
           trimmed == "" ->
             # Empty line, continue
-            receive_loop(%{state | line_buffer: rest})
+            receive_loop(%{state | line_buffer: rest}, timeout)
 
           # Skip non-JSON output like "Secure MCP Filesystem Server..."
           not String.starts_with?(trimmed, "{") and not String.starts_with?(trimmed, "[") ->
             Logger.debug("Skipping non-JSON output: #{inspect(trimmed)}")
-            receive_loop(%{state | line_buffer: rest})
+            receive_loop(%{state | line_buffer: rest}, timeout)
 
           true ->
             # Return the JSON line and update state
@@ -440,7 +468,7 @@ defmodule ExMCP.Transport.Stdio do
 
       [partial] ->
         # No complete line yet, keep buffering
-        receive_loop(%{state | line_buffer: partial})
+        receive_loop(%{state | line_buffer: partial}, timeout)
     end
   end
 

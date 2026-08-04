@@ -48,8 +48,26 @@ defmodule ExMCP.Internal.RequestParams do
 
   @spec with_opts_meta(map(), keyword()) :: map()
   def with_opts_meta(params, opts) do
-    with_meta(params, Keyword.get(opts, :meta))
+    params
+    |> with_meta(Keyword.get(opts, :meta))
+    |> with_progress_token(Keyword.get(opts, :progress_token))
   end
+
+  # Merges `progressToken` into any `_meta` already built from `opts[:meta]`,
+  # so callers can pass both without one clobbering the other.
+  @spec with_progress_token(map(), ExMCP.Types.progress_token() | nil) :: map()
+  defp with_progress_token(params, nil), do: params
+
+  defp with_progress_token(params, token) when is_binary(token) or is_integer(token) do
+    meta =
+      params
+      |> Map.get("_meta", %{})
+      |> Map.put("progressToken", token)
+
+    Map.put(params, "_meta", meta)
+  end
+
+  defp with_progress_token(params, _), do: params
 
   @spec with_progress_or_meta(map(), ExMCP.Types.progress_token() | nil | map()) :: map()
   def with_progress_or_meta(params, nil), do: params

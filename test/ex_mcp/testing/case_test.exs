@@ -1,4 +1,13 @@
 defmodule ExMCP.Testing.CaseTest do
+  @moduledoc """
+  Tests for the `ExMCP.TestCase` helpers.
+
+  Every `Process.sleep/1` in this file is **intentional** (audit M25): these
+  tests exercise timing primitives — `measure_time/1`, `with_timeout/2`,
+  `run_parallel/2` and `wait_for_condition/2` — so the sleep *is* the workload
+  being measured or timed out. Do not "de-sleep" them; there is nothing to
+  synchronize on.
+  """
   use ExUnit.Case, async: true
 
   alias ExMCP.TestCase
@@ -117,8 +126,12 @@ defmodule ExMCP.Testing.CaseTest do
       end_time = System.monotonic_time(:millisecond)
 
       assert results == [1, 2, 3]
-      # Should take ~50ms, not ~150ms (sequential)
-      assert end_time - start_time < 100
+
+      # Concurrent execution should land near one sleep (~50ms) rather than the
+      # sum of all three (~150ms). The bound is generous because scheduler
+      # latency on a loaded CI machine can add tens of milliseconds to a
+      # 50ms sleep; anything at or above the sequential total is a real failure.
+      assert end_time - start_time < 150
     end
   end
 

@@ -1,22 +1,23 @@
-defmodule ExMcp.Transport.SecurityIntegrationTest do
+defmodule ExMCP.Transport.SecurityIntegrationTest do
   use ExUnit.Case, async: false
 
-  # These tests assume the existence of several helper modules:
+  # These tests rely on several helper modules:
   #
-  # - `ExMcp.Security.SecurityGuard`: The security middleware being tested.
+  # - `ExMCP.Transport.SecurityGuard`: The security middleware being tested.
   #
-  # - `ExMcp.Test.Support.Transports`: A helper module with functions to start
-  #   and interact with test versions of each transport (HTTP, Stdio, BEAM).
-  #   - Each transport helper is expected to return `{:ok, response, received_command}`
-  #     on success, where `received_command` is the command as seen by the
-  #     final handler (after middleware processing).
+  # - `ExMCP.Test.Support.Transports` (test/support/transports.ex): A helper
+  #   module with functions to start and interact with test versions of each
+  #   transport (HTTP, Stdio, BEAM).
+  #   - Each transport helper returns `{:ok, response, received_command}` on
+  #     success, where `received_command` is the command as seen by the final
+  #     handler (after middleware processing).
   #
-  # - `ExMcp.Test.ConsentHandler`: A mock consent handler that allows setting
+  # - `ExMCP.ConsentHandler.Test`: A test consent handler that allows setting
   #   consent status for specific tokens during tests.
 
   alias ExMCP.ConsentHandler.Test, as: ConsentHandler
   alias ExMCP.Internal.ConsentCache
-  alias ExMcp.Test.Support.Transports
+  alias ExMCP.Test.Support.Transports
   alias ExMCP.Transport.SecurityGuard
 
   @command %{

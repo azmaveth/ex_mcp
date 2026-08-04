@@ -26,6 +26,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   require Logger
 
   alias ExMCP.HttpPlug.SessionRegistry
+  alias ExMCP.HttpPlug.SSEConnection
 
   @max_mailbox_size 10
   @heartbeat_interval 30_000
@@ -33,6 +34,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   defstruct [
     :conn,
+    :conn_module,
     :conn_owner,
     :session_id,
     :opts,
@@ -45,7 +47,8 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   ]
 
   @type t :: %__MODULE__{
-          conn: Plug.Conn.t(),
+          conn: Plug.Conn.t() | term(),
+          conn_module: module(),
           conn_owner: pid() | nil,
           session_id: String.t(),
           opts: map(),
@@ -117,13 +120,17 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   def init({conn, session_id, opts, conn_owner}) do
     Process.flag(:trap_exit, true)
 
+    # The connection adapter is resolved once, here, so the write path has no
+    # runtime branching on the shape of `conn` (audit L6).
+    conn_module = SSEConnection.resolve(opts)
+
     # Extract Last-Event-ID if provided
-    last_event_id = extract_last_event_id(conn)
+    last_event_id = extract_last_event_id(conn_module, conn)
 
     # Send initial connection event
     event_id = generate_event_id(0)
 
-    case send_sse_event(conn, "connected", %{session_id: session_id}, event_id) do
+    case send_sse_event(conn_module, conn, "connected", %{session_id: session_id}, event_id) do
       {:ok, conn} ->
         # Start heartbeat timer
         heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
@@ -131,6 +138,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
         # Initialize state
         state = %__MODULE__{
           conn: conn,
+          conn_module: conn_module,
           conn_owner: conn_owner,
           session_id: session_id,
           opts: opts,
@@ -180,7 +188,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   def handle_cast({:send_event, event_type, data, opts}, state) do
     event_id = Keyword.get(opts, :event_id, generate_event_id(state.event_counter))
 
-    case send_sse_event(state.conn, event_type, data, event_id) do
+    case send_sse_event(state, event_type, data, event_id) do
       {:ok, conn} ->
         # Update state
         state = %{state | conn: conn, event_counter: state.event_counter + 1}
@@ -204,11 +212,11 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     error_data = format_error(error)
 
     # Send error event
-    case send_sse_event(state.conn, "error", error_data, generate_event_id(state.event_counter)) do
+    case send_sse_event(state, "error", error_data, generate_event_id(state.event_counter)) do
       {:ok, conn} ->
         # Send close event
         send_sse_event(
-          conn,
+          %{state | conn: conn},
           "close",
           %{reason: "error"},
           generate_event_id(state.event_counter + 1)
@@ -224,7 +232,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   @impl true
   def handle_info(:heartbeat, state) do
     # Send heartbeat
-    case send_sse_event(state.conn, "heartbeat", %{timestamp: System.system_time(:second)}, nil) do
+    case send_sse_event(state, "heartbeat", %{timestamp: System.system_time(:second)}, nil) do
       {:ok, conn} ->
         # Schedule next heartbeat
         heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
@@ -274,7 +282,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     # Send close event if connection is still open
     if state.conn do
       send_sse_event(
-        state.conn,
+        state,
         "close",
         %{reason: "shutdown"},
         generate_event_id(state.event_counter)
@@ -298,26 +306,10 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   # Private Functions
 
-  defp extract_last_event_id(%Plug.Conn{} = conn) do
-    case Plug.Conn.get_req_header(conn, "last-event-id") do
+  defp extract_last_event_id(conn_module, conn) do
+    case conn_module.get_req_header(conn, "last-event-id") do
       [id | _] -> id
-      [] -> nil
-    end
-  end
-
-  defp extract_last_event_id(conn) do
-    # For testing or other conn implementations
-    if is_struct(conn) and Map.has_key?(conn, :get_req_header) and
-         is_function(Map.get(conn, :get_req_header), 2) do
-      get_req_header = Map.get(conn, :get_req_header)
-
-      case get_req_header.(conn, "last-event-id") do
-        [id | _] -> id
-        [] -> nil
-        nil -> nil
-      end
-    else
-      nil
+      _none -> nil
     end
   end
 
@@ -325,21 +317,11 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     "#{System.system_time(:microsecond)}-#{counter}"
   end
 
-  defp do_chunk(%Plug.Conn{} = conn, message) do
-    Plug.Conn.chunk(conn, message)
+  defp send_sse_event(%__MODULE__{} = state, event_type, data, event_id) do
+    send_sse_event(state.conn_module, state.conn, event_type, data, event_id)
   end
 
-  defp do_chunk(conn, message) do
-    # For testing or other conn implementations
-    if is_struct(conn) and Map.has_key?(conn, :chunk) and is_function(Map.get(conn, :chunk), 2) do
-      chunk_fn = Map.get(conn, :chunk)
-      chunk_fn.(conn, message)
-    else
-      {:error, :not_supported}
-    end
-  end
-
-  defp send_sse_event(conn, event_type, data, event_id) do
+  defp send_sse_event(conn_module, conn, event_type, data, event_id) do
     formatted_data = Jason.encode!(data)
 
     message =
@@ -351,7 +333,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
           "id: #{id}\nevent: #{event_type}\ndata: #{formatted_data}\n\n"
       end
 
-    case do_chunk(conn, message) do
+    case conn_module.chunk(conn, message) do
       {:ok, conn} -> {:ok, conn}
       {:error, reason} -> {:error, reason}
     end

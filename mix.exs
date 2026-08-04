@@ -73,7 +73,6 @@ defmodule ExMCP.MixProject do
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:mox, "~> 1.2", only: :test},
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
       {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
@@ -105,6 +104,8 @@ defmodule ExMCP.MixProject do
         "MCP Spec" => "https://modelcontextprotocol.io",
         "ACP Spec" => "https://agentclientprotocol.com"
       },
+      # NOTE: `dev/` (repo-only mix tasks + ExMCP.SpecSync) is intentionally
+      # not listed, so it never ships to Hex.
       files: ~w(
           lib
           .formatter.exs
@@ -126,15 +127,24 @@ defmodule ExMCP.MixProject do
     ]
   end
 
-  # Specifies which paths to compile per environment
+  # Specifies which paths to compile per environment.
+  #
+  # `dev/` holds repo-only tooling (the `mix test.suite` / `mix mcp.sync_spec`
+  # family and `ExMCP.SpecSync.*`). It is compiled for local development and
+  # tests but is deliberately absent from `package.files`, so it never reaches
+  # consumers' `mix help` (audit L1). `ExMCP.Testing.*` stays under `lib/` as a
+  # documented, published test kit.
   defp elixirc_paths(:test),
     do: [
       "lib",
+      "dev",
       "test/support",
       "test/ex_mcp/compliance",
       "test/ex_mcp/compliance/features",
       "test/ex_mcp/compliance/handlers"
     ]
+
+  defp elixirc_paths(:dev), do: ["lib", "dev"]
 
   defp elixirc_paths(_), do: ["lib"]
 
@@ -218,10 +228,13 @@ defmodule ExMCP.MixProject do
         ]
       ],
       filter_modules: fn mod, _ ->
-        # Hide pure internals from the sidebar. Deprecated Tools stay visible.
+        # Hide pure internals and repo-only tooling from the sidebar.
+        # Deprecated Tools stay visible.
         name = inspect(mod)
 
         not String.starts_with?(name, "ExMCP.Internal.") and
+          not String.starts_with?(name, "ExMCP.SpecSync.") and
+          not String.starts_with?(name, "Mix.Tasks.") and
           not String.contains?(name, ".Test.")
       end,
       before_closing_body_tag: fn

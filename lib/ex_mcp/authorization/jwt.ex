@@ -6,6 +6,9 @@ defmodule ExMCP.Authorization.JWT do
   used by OAuth client assertions, ID-JAG tokens, and JWT bearer grants.
   """
 
+  # Clock skew allowance, in seconds, applied to exp/nbf/iat comparisons.
+  @default_leeway_seconds 30
+
   @doc """
   Loads a JWK from a PEM string, JWK map, or file path.
 
@@ -119,9 +122,17 @@ defmodule ExMCP.Authorization.JWT do
   end
 
   @doc """
-  Verifies a JWS string and returns decoded claims.
+  Verifies the *signature* of a JWS string and returns the decoded claims.
 
   Accepts a single JWK or a list of JWKs (JWKS).
+
+  > #### Signature verification only {: .warning}
+  >
+  > This function performs **no claims validation**: an expired token, a
+  > token that is not yet valid, or a token issued for another audience all
+  > verify successfully as long as the signature is good. Use
+  > `verify_and_validate/3` (or `validate_claims/2` on the result) for
+  > anything that makes an authorization decision.
   """
   @spec verify(String.t(), JOSE.JWK.t() | [JOSE.JWK.t()]) ::
           {:ok, map()} | {:error, term()}
@@ -150,12 +161,9 @@ defmodule ExMCP.Authorization.JWT do
   @doc """
   Verifies a JWS string and validates claims against expected values.
 
-  ## Expected Claims Options
-    - `:iss` - Expected issuer
-    - `:aud` - Expected audience (string or list)
-    - `:sub` - Expected subject
-    - `:max_age` - Maximum token age in seconds
-    - `:required` - List of required claim keys
+  Takes the same options as `validate_claims/2`. Note that `exp` is required
+  by default; pass `require_exp: false` for the rare token profile that
+  legitimately omits it.
   """
   @spec verify_and_validate(String.t(), JOSE.JWK.t() | [JOSE.JWK.t()], keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -168,21 +176,42 @@ defmodule ExMCP.Authorization.JWT do
   @doc """
   Validates standard JWT claims against expected values.
 
+  ## Time-based claims
+
+  `exp` is **required by default** and must be a number: a token without an
+  expiry, or with a non-numeric expiry, is rejected. `nbf` and `iat` are
+  optional, but when present they must be numeric — a non-numeric value is
+  rejected rather than ignored.
+
+  All time comparisons allow `:leeway` seconds of clock skew (default
+  `#{@default_leeway_seconds}`).
+
   ## Options
+    - `:leeway` - Clock skew allowance in seconds (default: `#{@default_leeway_seconds}`)
+    - `:require_exp` - Require an `exp` claim (default: `true`)
     - `:iss` - Expected issuer
     - `:aud` - Expected audience (string or list)
     - `:sub` - Expected subject
     - `:max_age` - Maximum token age in seconds
     - `:required` - List of required claim keys (as strings)
+
+  ## Errors
+
+    - `{:error, :missing_exp}` - no `exp` claim and `require_exp` is true
+    - `{:error, {:invalid_claim_type, "exp" | "nbf" | "iat"}}` - claim present but not a number
+    - `{:error, :token_expired}` / `{:error, :token_not_yet_valid}` / `{:error, :invalid_iat}`
   """
   @spec validate_claims(map(), keyword()) :: {:ok, map()} | {:error, term()}
   def validate_claims(claims, expected \\ []) do
     now = System.system_time(:second)
+    leeway = Keyword.get(expected, :leeway, @default_leeway_seconds)
+    # Anything other than an explicit `false` keeps exp required (fail closed).
+    require_exp = Keyword.get(expected, :require_exp, true) != false
 
     validations = [
-      fn -> validate_exp(claims, now) end,
-      fn -> validate_iat(claims, now) end,
-      fn -> validate_nbf(claims, now) end,
+      fn -> validate_exp(claims, now, leeway, require_exp) end,
+      fn -> validate_iat(claims, now, leeway) end,
+      fn -> validate_nbf(claims, now, leeway) end,
       fn -> validate_iss(claims, expected[:iss]) end,
       fn -> validate_aud(claims, expected[:aud]) end,
       fn -> validate_sub(claims, expected[:sub]) end,
@@ -268,26 +297,33 @@ defmodule ExMCP.Authorization.JWT do
   defp error_or_nil(:ok), do: nil
   defp error_or_nil({:error, _} = err), do: err
 
-  defp validate_exp(%{"exp" => exp}, now) when is_number(exp) do
-    # Allow 30 seconds of clock skew
-    if now <= exp + 30, do: :ok, else: {:error, :token_expired}
+  defp validate_exp(%{"exp" => exp}, now, leeway, _require_exp) when is_number(exp) do
+    if now <= exp + leeway, do: :ok, else: {:error, :token_expired}
   end
 
-  defp validate_exp(_, _), do: :ok
-
-  defp validate_iat(%{"iat" => iat}, now) when is_number(iat) do
-    # iat should not be in the future (with 30s skew)
-    if iat <= now + 30, do: :ok, else: {:error, :invalid_iat}
+  # An `exp` claim that is present but not a number is always a rejection:
+  # silently ignoring it would let `{"exp": "whenever"}` pass as unexpiring.
+  defp validate_exp(%{"exp" => _}, _now, _leeway, _require_exp) do
+    {:error, {:invalid_claim_type, "exp"}}
   end
 
-  defp validate_iat(_, _), do: :ok
+  defp validate_exp(_claims, _now, _leeway, true), do: {:error, :missing_exp}
+  defp validate_exp(_claims, _now, _leeway, false), do: :ok
 
-  defp validate_nbf(%{"nbf" => nbf}, now) when is_number(nbf) do
-    # Allow 30 seconds of clock skew
-    if now >= nbf - 30, do: :ok, else: {:error, :token_not_yet_valid}
+  defp validate_iat(%{"iat" => iat}, now, leeway) when is_number(iat) do
+    # iat must not be in the future (beyond the allowed clock skew)
+    if iat <= now + leeway, do: :ok, else: {:error, :invalid_iat}
   end
 
-  defp validate_nbf(_, _), do: :ok
+  defp validate_iat(%{"iat" => _}, _now, _leeway), do: {:error, {:invalid_claim_type, "iat"}}
+  defp validate_iat(_claims, _now, _leeway), do: :ok
+
+  defp validate_nbf(%{"nbf" => nbf}, now, leeway) when is_number(nbf) do
+    if now >= nbf - leeway, do: :ok, else: {:error, :token_not_yet_valid}
+  end
+
+  defp validate_nbf(%{"nbf" => _}, _now, _leeway), do: {:error, {:invalid_claim_type, "nbf"}}
+  defp validate_nbf(_claims, _now, _leeway), do: :ok
 
   defp validate_iss(_, nil), do: :ok
 

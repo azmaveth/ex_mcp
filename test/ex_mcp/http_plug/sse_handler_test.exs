@@ -1,34 +1,38 @@
 defmodule ExMCP.HttpPlug.SSEHandlerTest do
   use ExUnit.Case, async: true
-  import Mox
 
   alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEHandler
 
-  setup :verify_on_exit!
-
+  # Test double for the SSE socket. A hand-written in-process stub implementing
+  # the `ExMCP.HttpPlug.SSEConnection` behaviour — no mocking library needed.
+  # Injected through the handler's `:conn_module` option instead of being
+  # duck-typed at runtime (audit L6).
   defmodule MockConn do
-    defstruct chunks: [], headers: %{}, chunk: nil, get_req_header: nil
+    @behaviour ExMCP.HttpPlug.SSEConnection
 
-    def new(headers \\ %{}) do
-      conn = %__MODULE__{headers: headers}
+    defstruct chunks: [], headers: %{}
 
-      %{
-        conn
-        | chunk: fn conn, data ->
-            {:ok, %{conn | chunks: conn.chunks ++ [data]}}
-          end,
-          get_req_header: fn conn, header ->
-            Map.get(conn.headers, header, [])
-          end
-      }
+    def new(headers \\ %{}), do: %__MODULE__{headers: headers}
+
+    @impl true
+    def chunk(%__MODULE__{} = conn, data) do
+      {:ok, %{conn | chunks: conn.chunks ++ [data]}}
+    end
+
+    @impl true
+    def get_req_header(%__MODULE__{} = conn, header) do
+      Map.get(conn.headers, header, [])
     end
   end
+
+  # Options every handler in this module starts with.
+  defp opts, do: %{conn_module: MockConn}
 
   describe "backpressure control" do
     test "implements backpressure control mechanism" do
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
 
       # Verify that the handler module exports the backpressure functions
       assert function_exported?(SSEHandler, :request_send, 1)
@@ -38,10 +42,8 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
       assert :ok = SSEHandler.request_send(handler)
       SSEHandler.send_event(handler, "test", %{data: "hello"})
 
-      # Give time for event to process
-      Process.sleep(50)
-
-      # Verify event was sent
+      # send_event/4 is a cast from this process; :sys.get_state/1 is a call
+      # from the same process, so it is guaranteed to be handled after it.
       state = :sys.get_state(handler)
       # Connected event + our test event
       assert length(state.conn.chunks) >= 2
@@ -55,7 +57,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
 
     test "unblocks producers when mailbox drains" do
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
 
       # First request should succeed immediately
       assert :ok = SSEHandler.request_send(handler)
@@ -63,8 +65,8 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
       # Send an event
       SSEHandler.send_event(handler, "test", %{data: "test"})
 
-      # Wait for event to be processed
-      Process.sleep(50)
+      # Flush the cast: this call is ordered after it.
+      _ = :sys.get_state(handler)
 
       # Next request should also succeed
       assert :ok = SSEHandler.request_send(handler)
@@ -74,7 +76,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
 
     test "returns error when connection is closed" do
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
 
       # Monitor the handler process
       ref = Process.monitor(handler)
@@ -93,19 +95,14 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
   describe "SSE event formatting" do
     test "sends events with proper SSE format" do
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
 
-      # Wait for initial connection event
-      Process.sleep(50)
-
-      # Request permission and send event
+      # The initial connection event is written in init/1, so it is already
+      # there once start_link/3 returns.
       assert :ok = SSEHandler.request_send(handler)
       SSEHandler.send_event(handler, "test_event", %{message: "hello"})
 
-      # Wait for processing
-      Process.sleep(50)
-
-      # Get the handler state to check chunks
+      # Get the handler state to check chunks (ordered after the cast above)
       state = :sys.get_state(handler)
       chunks = state.conn.chunks
 
@@ -123,15 +120,15 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
 
     test "sends error events and closes connection" do
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
+
+      ref = Process.monitor(handler)
 
       # Send error
       SSEHandler.send_error(handler, {:test_error, "Something went wrong"})
 
-      # Wait for processing
-      Process.sleep(100)
-
-      # Handler should have stopped
+      # The handler writes the error event and then stops itself.
+      assert_receive {:DOWN, ^ref, :process, ^handler, _reason}, 1000
       refute Process.alive?(handler)
     end
   end
@@ -139,7 +136,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
   describe "Last-Event-ID support" do
     test "extracts Last-Event-ID from headers" do
       conn = MockConn.new(%{"last-event-id" => ["event-123"]})
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
 
       # Get state to check if last_event_id was extracted
       state = :sys.get_state(handler)
@@ -150,7 +147,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
 
     test "handles missing Last-Event-ID header" do
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
 
       # Get state to check last_event_id is nil
       state = :sys.get_state(handler)
@@ -163,15 +160,13 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
   describe "heartbeat mechanism" do
     test "sends periodic heartbeats" do
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
 
-      # Wait for initial event
-      Process.sleep(50)
       initial_chunks = length(:sys.get_state(handler).conn.chunks)
 
-      # Trigger heartbeat manually
+      # Trigger heartbeat manually; the following :sys.get_state/1 call is
+      # ordered behind the :heartbeat message we just sent.
       send(handler, :heartbeat)
-      Process.sleep(50)
 
       # Should have one more chunk
       final_chunks = length(:sys.get_state(handler).conn.chunks)
@@ -189,16 +184,15 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
   describe "event buffering" do
     test "buffers events for potential replay" do
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, "test_session", %{})
+      {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())
 
       # Send multiple events
       for i <- 1..5 do
         assert :ok = SSEHandler.request_send(handler)
         SSEHandler.send_event(handler, "event_#{i}", %{index: i})
-        Process.sleep(10)
       end
 
-      # Check buffer contains events
+      # Check buffer contains events (this call drains the casts above)
       state = :sys.get_state(handler)
       buffer_size = :queue.len(state.event_buffer)
       assert buffer_size >= 5
@@ -225,7 +219,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
       owner =
         spawn(fn ->
           conn = MockConn.new()
-          {:ok, handler} = SSEHandler.start_link(conn, session_id, %{})
+          {:ok, handler} = SSEHandler.start_link(conn, session_id, opts())
           :ok = SessionRegistry.register(session_id, handler)
           send(test_pid, {:handler, handler})
 
@@ -249,7 +243,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
     test "graceful close removes the ETS entry" do
       session_id = "close-#{System.unique_integer([:positive])}"
       conn = MockConn.new()
-      {:ok, handler} = SSEHandler.start_link(conn, session_id, %{})
+      {:ok, handler} = SSEHandler.start_link(conn, session_id, opts())
       :ok = SessionRegistry.register(session_id, handler)
 
       ref = Process.monitor(handler)
@@ -263,7 +257,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
       session_id = "reregister-#{System.unique_integer([:positive])}"
       conn = MockConn.new()
 
-      {:ok, old_handler} = SSEHandler.start_link(conn, session_id, %{})
+      {:ok, old_handler} = SSEHandler.start_link(conn, session_id, opts())
       :ok = SessionRegistry.register(session_id, old_handler)
 
       # A reconnect registers a newer handler pid under the same session id.

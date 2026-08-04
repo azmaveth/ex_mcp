@@ -4,10 +4,32 @@ defmodule ExMCP.Security.Consent do
 
   This module is responsible for ensuring that user consent has been
   obtained before proceeding with sensitive actions.
+
+  ## Expiry handling
+
+  Consent handlers may express a grant's lifetime in any of the forms listed in
+  `t:ExMCP.ConsentHandler.expiry/0`. All of them are normalized here into the
+  monotonic seconds value `ExMCP.Internal.ConsentCache` stores.
+
+  Every decision path fails closed: an expiry that cannot be interpreted, is
+  already in the past, or is implausibly far in the future (the classic
+  "handler returned Unix epoch seconds where a monotonic value was expected"
+  bug, which would otherwise grant consent for decades) is logged and the
+  request is rejected with `{:error, :consent_error}` rather than cached.
   """
 
   alias ExMCP.Internal.ConsentCache
   alias ExMCP.Security.TokenHandler
+
+  require Logger
+
+  # Longest consent lifetime we are willing to store. Anything beyond this is
+  # treated as a handler bug (typically Unix epoch seconds returned where a
+  # monotonic value was expected) rather than an intentional grant.
+  @max_consent_seconds 365 * 24 * 3600
+
+  # Used when the security config carries no (valid) :consent_ttl.
+  @default_consent_ttl_seconds 3600
 
   @doc """
   Ensures user consent is obtained before accessing an external resource.
@@ -53,8 +75,17 @@ defmodule ExMCP.Security.Consent do
   end
 
   defp compute_expires_at(context) do
-    ttl = Map.get(context, :consent_ttl, 3600)
-    DateTime.add(DateTime.utc_now(), ttl, :second)
+    {:ttl, Map.get(context, :consent_ttl, @default_consent_ttl_seconds)}
+  end
+
+  # The `:consent_ttl` security setting is milliseconds (see
+  # `ExMCP.Internal.SecurityConfig`), but consent handlers receive — and
+  # `t:ExMCP.ConsentHandler.expiry/0` speaks — seconds.
+  defp consent_ttl_seconds(config) do
+    case Map.get(config, :consent_ttl) do
+      ms when is_integer(ms) and ms > 0 -> max(div(ms, 1000), 1)
+      _ -> @default_consent_ttl_seconds
+    end
   end
 
   defp handle_consent_request(user_id, origin, transport, handler, config) do
@@ -64,23 +95,17 @@ defmodule ExMCP.Security.Consent do
     context =
       %{
         transport: transport,
-        consent_ttl: Map.get(config, :consent_ttl, 3600)
+        consent_ttl: consent_ttl_seconds(config)
       }
       |> Map.merge(Enum.into(handler_opts, %{}))
 
     case handler.request_consent(user_id, origin, context) do
       {:ok, expires_at} ->
-        # Convert DateTime or integer to monotonic time
-        monotonic_expires = convert_to_monotonic_time(expires_at)
-        ConsentCache.store_consent(user_id, origin, monotonic_expires)
-        :ok
+        store_consent(user_id, origin, expires_at, handler)
 
       {:approved, opts} ->
         expires_at = Keyword.get(opts, :expires_at, compute_expires_at(context))
-        # Convert DateTime to monotonic time
-        monotonic_expires = convert_to_monotonic_time(expires_at)
-        ConsentCache.store_consent(user_id, origin, monotonic_expires)
-        :ok
+        store_consent(user_id, origin, expires_at, handler)
 
       {:denied, _opts} ->
         # Don't cache denials - let the handler be called each time
@@ -103,8 +128,6 @@ defmodule ExMCP.Security.Consent do
 
       other ->
         # Handle unexpected consent handler responses
-        require Logger
-
         Logger.warning(
           "Unexpected consent handler response: #{inspect(other)} from #{inspect(handler)} for user #{user_id} at #{origin}"
         )
@@ -113,16 +136,80 @@ defmodule ExMCP.Security.Consent do
     end
   end
 
-  defp convert_to_monotonic_time(%DateTime{} = datetime) do
-    # Convert DateTime to monotonic time
-    unix_seconds = DateTime.to_unix(datetime)
-    now_unix = DateTime.to_unix(DateTime.utc_now())
-    diff_seconds = unix_seconds - now_unix
-    System.monotonic_time(:second) + diff_seconds
+  defp store_consent(user_id, origin, expiry, handler) do
+    case normalize_expiry(expiry) do
+      {:ok, monotonic_expires} ->
+        ConsentCache.store_consent(user_id, origin, monotonic_expires)
+        :ok
+
+      {:error, reason} ->
+        # Fail closed: an expiry we cannot interpret is never treated as a grant.
+        Logger.warning(
+          "Rejecting consent grant from #{inspect(handler)} for #{user_id} at #{origin}: " <>
+            describe_expiry_error(reason, expiry)
+        )
+
+        {:error, :consent_error}
+    end
   end
 
-  defp convert_to_monotonic_time(seconds) when is_integer(seconds) do
-    # Already in monotonic time format
-    seconds
+  # Normalizes every supported `t:ExMCP.ConsentHandler.expiry/0` form into the
+  # monotonic seconds value the ConsentCache stores.
+  defp normalize_expiry(%DateTime{} = datetime) do
+    from_unix(DateTime.to_unix(datetime))
+  end
+
+  defp normalize_expiry({:unix, seconds}) when is_integer(seconds) do
+    from_unix(seconds)
+  end
+
+  defp normalize_expiry({:ttl, seconds}) when is_integer(seconds) do
+    from_now(seconds)
+  end
+
+  defp normalize_expiry({:monotonic, seconds}) when is_integer(seconds) do
+    from_monotonic(seconds)
+  end
+
+  # Legacy bare integer: documented as a monotonic value, but frequently a Unix
+  # timestamp by mistake, so the plausibility check below is what catches it.
+  defp normalize_expiry(seconds) when is_integer(seconds) do
+    from_monotonic(seconds)
+  end
+
+  defp normalize_expiry(_other), do: {:error, :invalid_expiry}
+
+  defp from_unix(unix_seconds) do
+    from_now(unix_seconds - System.os_time(:second))
+  end
+
+  defp from_now(ttl_seconds) do
+    cond do
+      ttl_seconds <= 0 -> {:error, :expiry_in_past}
+      ttl_seconds > @max_consent_seconds -> {:error, :expiry_too_far_in_future}
+      true -> {:ok, System.monotonic_time(:second) + ttl_seconds}
+    end
+  end
+
+  defp from_monotonic(monotonic_seconds) do
+    case from_now(monotonic_seconds - System.monotonic_time(:second)) do
+      {:ok, _absolute} -> {:ok, monotonic_seconds}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp describe_expiry_error(:invalid_expiry, expiry) do
+    "unsupported expiry #{inspect(expiry)}. Return a DateTime, {:ttl, seconds}, " <>
+      "{:unix, seconds}, or {:monotonic, seconds}."
+  end
+
+  defp describe_expiry_error(:expiry_in_past, expiry) do
+    "expiry #{inspect(expiry)} is already in the past."
+  end
+
+  defp describe_expiry_error(:expiry_too_far_in_future, expiry) do
+    "expiry #{inspect(expiry)} is more than #{div(@max_consent_seconds, 86_400)} days away. " <>
+      "A bare integer is read as System.monotonic_time(:second); if this is a Unix " <>
+      "timestamp, return {:unix, seconds} (or a DateTime) instead."
   end
 end

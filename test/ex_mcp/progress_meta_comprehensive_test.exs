@@ -11,6 +11,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
 
   use ExUnit.Case, async: true
 
+  import ExMCP.TestHelpers, only: [wait_until: 2]
+
   @moduletag :progress
   @moduletag :slow
 
@@ -202,6 +204,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
           token = meta["progressToken"]
 
           for i <- 1..5 do
+            # Intentional: simulates a slow streaming operation.
             Process.sleep(100)
             ExMCP.Server.notify_progress(self(), token, i, 5)
           end
@@ -265,13 +268,14 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
           step_duration = div(duration, steps)
 
           for i <- 1..steps do
+            # Intentional: the tool's advertised "duration" is simulated work.
             Process.sleep(step_duration)
             ExMCP.Server.notify_progress(self(), token, i, steps)
           end
         end)
       end
 
-      # Simulate work
+      # Intentional: the tool is documented to take "duration" ms.
       Process.sleep(duration)
 
       result = %{
@@ -303,6 +307,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     defp send_progress_updates(token, count) do
       Task.start(fn ->
         for i <- 1..count do
+          # Intentional: paces simulated progress updates.
           Process.sleep(50)
           ExMCP.Server.notify_progress(self(), token, i, count)
         end
@@ -324,8 +329,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
           server: server
         )
 
-      # Wait for initialization
-      Process.sleep(100)
+      # Client.start_link/1 handshakes inside init/1.
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         try do
@@ -468,7 +473,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
           server: server
         )
 
-      Process.sleep(100)
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         try do
@@ -569,7 +574,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
           server: server
         )
 
-      Process.sleep(100)
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         try do
@@ -663,7 +668,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
           server: server
         )
 
-      Process.sleep(100)
+      assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
 
       on_exit(fn ->
         try do
@@ -701,8 +706,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
           )
         end)
 
-      # Give some time for operation to start
-      Process.sleep(200)
+      # Block until the request is registered rather than guessing.
+      wait_until(fn -> Client.get_pending_requests(client) != [] end, timeout: 5_000)
 
       # Cancel the operation
       [request_id | _] = Client.get_pending_requests(client)
