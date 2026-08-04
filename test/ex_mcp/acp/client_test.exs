@@ -73,19 +73,30 @@ defmodule ExMCP.ACP.ClientTest do
   defmodule MockACPTransport do
     @behaviour ExMCP.Transport
 
-    defstruct [:agent_pid, :to_client_relay, :to_agent_relay]
+    @initialize_noise ~s({"jsonrpc":"2.0","method":"session/update","params":{}})
+
+    defstruct [
+      :agent_pid,
+      :to_client_relay,
+      :to_agent_relay,
+      :close_listener,
+      initialize_noise: false
+    ]
 
     @impl true
     def connect(opts) do
       agent_pid = Keyword.fetch!(opts, :agent_pid)
       to_client_relay = Keyword.fetch!(opts, :to_client_relay)
       to_agent_relay = Keyword.fetch!(opts, :to_agent_relay)
+      close_listener = Keyword.get(opts, :close_listener)
 
       {:ok,
        %__MODULE__{
          agent_pid: agent_pid,
          to_client_relay: to_client_relay,
-         to_agent_relay: to_agent_relay
+         to_agent_relay: to_agent_relay,
+         close_listener: close_listener,
+         initialize_noise: Keyword.get(opts, :initialize_noise, false)
        }}
     end
 
@@ -96,6 +107,9 @@ defmodule ExMCP.ACP.ClientTest do
     end
 
     @impl true
+    def receive_message(%__MODULE__{initialize_noise: true} = state),
+      do: {:ok, @initialize_noise, state}
+
     def receive_message(%__MODULE__{to_client_relay: relay} = state) do
       case MessageRelay.pop(relay) do
         {:ok, message} -> {:ok, message, state}
@@ -104,7 +118,8 @@ defmodule ExMCP.ACP.ClientTest do
     end
 
     @impl true
-    def close(%__MODULE__{}) do
+    def close(%__MODULE__{close_listener: listener}) do
+      if is_pid(listener), do: send(listener, :mock_acp_transport_closed)
       :ok
     end
 
@@ -122,6 +137,7 @@ defmodule ExMCP.ACP.ClientTest do
       load_updates = Keyword.get(opts, :load_updates, [])
       permission_request = Keyword.get(opts, :permission_request)
       cancel_permission_request = Keyword.get(opts, :cancel_permission_request, false)
+      initialize_delay_ms = Keyword.get(opts, :initialize_delay_ms, 0)
 
       capabilities =
         Keyword.get(opts, :capabilities, %{
@@ -151,6 +167,7 @@ defmodule ExMCP.ACP.ClientTest do
           load_updates: load_updates,
           permission_request: permission_request,
           cancel_permission_request: cancel_permission_request,
+          initialize_delay_ms: initialize_delay_ms,
           capabilities: capabilities,
           auth_methods: auth_methods,
           test_pid: test_pid
@@ -172,6 +189,7 @@ defmodule ExMCP.ACP.ClientTest do
 
     defp handle_message(%{"method" => "initialize", "id" => id} = msg, state) do
       send(state.test_pid, {:initialize_request, msg["params"] || %{}})
+      Process.sleep(state.initialize_delay_ms)
 
       response =
         Jason.encode!(%{
@@ -514,6 +532,87 @@ defmodule ExMCP.ACP.ClientTest do
       assert [%{"id" => "api-key"}] = auth_methods
 
       assert Client.status(client) == :ready
+    end
+
+    test "honors a configurable total initialize timeout and closes the transport" do
+      {:ok, to_client_relay} = MessageRelay.start_link()
+      {:ok, to_agent_relay} = MessageRelay.start_link()
+      silent_agent = spawn_link(fn -> Process.sleep(:infinity) end)
+      test_pid = self()
+
+      assert {:error, :init_timeout} =
+               Task.async(fn ->
+                 Process.flag(:trap_exit, true)
+
+                 Client.start_link(
+                   transport_mod: MockACPTransport,
+                   command: ["mock"],
+                   agent_pid: silent_agent,
+                   to_client_relay: to_client_relay,
+                   to_agent_relay: to_agent_relay,
+                   close_listener: test_pid,
+                   initialize_timeout: 20
+                 )
+               end)
+               |> Task.await()
+
+      assert_receive :mock_acp_transport_closed, 200
+    end
+
+    test "unrelated initialize traffic cannot extend the total timeout" do
+      {:ok, to_client_relay} = MessageRelay.start_link()
+      {:ok, to_agent_relay} = MessageRelay.start_link()
+      test_pid = self()
+
+      assert {:error, :init_timeout} =
+               Task.async(fn ->
+                 Process.flag(:trap_exit, true)
+
+                 Client.start_link(
+                   transport_mod: MockACPTransport,
+                   command: ["mock"],
+                   agent_pid: self(),
+                   to_client_relay: to_client_relay,
+                   to_agent_relay: to_agent_relay,
+                   close_listener: test_pid,
+                   initialize_noise: true,
+                   initialize_timeout: 20
+                 )
+               end)
+               |> Task.await(1_000)
+
+      assert_receive :mock_acp_transport_closed, 200
+    end
+
+    test "accepts a delayed initialize response within the configured budget" do
+      {client, _agent} =
+        start_client([initialize_delay_ms: 40], initialize_timeout: 200)
+
+      assert Client.status(client) == :ready
+    end
+
+    test "rejects invalid initialize timeout values before opening the transport" do
+      {:ok, to_client_relay} = MessageRelay.start_link()
+      {:ok, to_agent_relay} = MessageRelay.start_link()
+
+      for timeout <- [0, 4_294_967_296] do
+        assert {:error, :invalid_initialize_timeout} =
+                 Task.async(fn ->
+                   Process.flag(:trap_exit, true)
+
+                   Client.start_link(
+                     transport_mod: MockACPTransport,
+                     command: ["mock"],
+                     agent_pid: self(),
+                     to_client_relay: to_client_relay,
+                     to_agent_relay: to_agent_relay,
+                     initialize_timeout: timeout
+                   )
+                 end)
+                 |> Task.await()
+      end
+
+      refute_receive :mock_acp_transport_closed, 50
     end
   end
 
