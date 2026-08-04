@@ -1,6 +1,7 @@
 defmodule ExMCP.Protocol.VersionNegotiatorTest do
   use ExUnit.Case, async: true
 
+  alias ExMCP.Internal.VersionRegistry
   alias ExMCP.Protocol.VersionNegotiator
 
   describe "negotiate/1" do
@@ -48,8 +49,12 @@ defmodule ExMCP.Protocol.VersionNegotiatorTest do
     end
 
     test "filters out unsupported versions" do
-      client_versions = ["2025-11-25", "2024-12-31", "2025-06-18", "2023-01-01"]
+      client_versions = ["2026-07-28", "2025-11-25", "2024-12-31", "2025-06-18"]
       assert {:ok, "2025-11-25"} = VersionNegotiator.negotiate(client_versions)
+    end
+
+    test "does not negotiate the staged modern version" do
+      assert {:error, :no_compatible_version} = VersionNegotiator.negotiate(["2026-07-28"])
     end
 
     test "handles duplicate versions in client list" do
@@ -99,54 +104,27 @@ defmodule ExMCP.Protocol.VersionNegotiatorTest do
   end
 
   describe "build_capabilities/1" do
-    test "builds capabilities for 2025-11-25" do
-      capabilities = VersionNegotiator.build_capabilities("2025-11-25")
+    test "is a compatibility shim over the canonical registry" do
+      # Invoke dynamically because this deliberately covers a deprecated API.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(VersionNegotiator, :build_capabilities, ["2025-11-25"])
 
-      assert capabilities.protocolVersion == "2025-11-25"
-      assert capabilities.serverInfo.name == "ExMCP"
-      assert is_binary(capabilities.serverInfo.version)
-      assert capabilities.capabilities.experimental.protocolVersionHeader == true
-      # These depend on feature flags
-      assert is_boolean(capabilities.capabilities.experimental.structuredOutput)
-      assert is_boolean(capabilities.capabilities.experimental.oauth2)
+      assert result.protocolVersion == "2025-11-25"
+      assert result.serverInfo.name == "ExMCP"
+      assert is_binary(result.serverInfo.version)
+
+      assert result.capabilities == VersionRegistry.capabilities_for_version("2025-11-25")
+
+      assert result.capabilities.tasks == %{}
     end
 
-    test "builds capabilities for 2025-06-18" do
-      capabilities = VersionNegotiator.build_capabilities("2025-06-18")
+    test "does not advertise a staged version" do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(VersionNegotiator, :build_capabilities, ["2026-07-28"])
 
-      assert capabilities.protocolVersion == "2025-06-18"
-      assert capabilities.serverInfo.name == "ExMCP"
-      assert is_binary(capabilities.serverInfo.version)
-      assert capabilities.capabilities.experimental.protocolVersionHeader == true
-      # These depend on feature flags
-      assert is_boolean(capabilities.capabilities.experimental.structuredOutput)
-      assert is_boolean(capabilities.capabilities.experimental.oauth2)
-    end
+      assert result.protocolVersion == "2025-11-25"
 
-    test "builds capabilities for 2025-03-26" do
-      capabilities = VersionNegotiator.build_capabilities("2025-03-26")
-
-      assert capabilities.protocolVersion == "2025-03-26"
-      assert capabilities.serverInfo.name == "ExMCP"
-      assert capabilities.capabilities.experimental.batchRequests == true
-    end
-
-    test "builds capabilities for 2024-11-05" do
-      capabilities = VersionNegotiator.build_capabilities("2024-11-05")
-
-      assert capabilities.protocolVersion == "2024-11-05"
-      assert capabilities.serverInfo.name == "ExMCP"
-      assert capabilities.capabilities.experimental.batchRequests == true
-    end
-
-    test "includes application version" do
-      capabilities = VersionNegotiator.build_capabilities("2025-06-18")
-
-      # The version should be a string (from mix.exs)
-      assert is_binary(capabilities.serverInfo.version)
-      # Should not be nil or empty
-      assert capabilities.serverInfo.version != ""
-      assert capabilities.serverInfo.version != nil
+      assert result.capabilities == VersionRegistry.capabilities_for_version("2025-11-25")
     end
   end
 end

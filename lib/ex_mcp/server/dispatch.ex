@@ -28,9 +28,10 @@ defmodule ExMCP.Server.Dispatch do
   `-32601 Method not found`.
   """
 
+  alias ExMCP.Error
   alias ExMCP.Internal.JSONRPC
-  alias ExMCP.Protocol.{ErrorCodes, Methods}
-  alias ExMCP.Server.ResultNormalizer
+  alias ExMCP.Protocol.{ErrorCodes, Initialize, Methods}
+  alias ExMCP.Server.{Context, Discover, MRTR, RequestContext, ResultNormalizer}
 
   @type handler_state :: term()
   @type result ::
@@ -52,22 +53,74 @@ defmodule ExMCP.Server.Dispatch do
   Dispatches a decoded JSON-RPC request or notification to `handler_module`.
   """
   @spec dispatch(map(), module(), handler_state()) :: result()
-  def dispatch(request, handler_module, handler_state)
-
-  def dispatch(%{"method" => method} = request, handler_module, state) do
-    ctx = %{
-      method: method,
-      id: Map.get(request, "id"),
-      params: Map.get(request, "params") || %{},
-      request?: Map.has_key?(request, "id"),
-      module: handler_module
-    }
-
-    do_dispatch(method, ctx, state)
+  def dispatch(request, handler_module, handler_state) do
+    dispatch(request, handler_module, handler_state, [])
   end
 
-  def dispatch(_invalid_request, _handler_module, state) do
+  @doc false
+  @spec dispatch(map(), module(), handler_state(), keyword()) :: result()
+  def dispatch(request, handler_module, handler_state, opts)
+
+  def dispatch(%{"method" => method} = request, handler_module, state, opts) do
+    params = Map.get(request, "params") || %{}
+
+    case RequestContext.from_message(request) do
+      {:ok, request_context} ->
+        with :ok <-
+               RequestContext.validate_protocol_mode(
+                 request_context,
+                 Keyword.get(opts, :protocol_mode)
+               ),
+             :ok <- RequestContext.validate_method(request_context),
+             {:ok, request_context} <- MRTR.prepare_context(request_context, params, opts) do
+          ctx = %{
+            method: method,
+            id: Map.get(request, "id"),
+            params: params,
+            request?: Map.has_key?(request, "id"),
+            request_context: request_context,
+            module: handler_module,
+            dispatch_opts: opts
+          }
+
+          method
+          |> do_dispatch(ctx, state)
+          |> normalize_protocol_result(request_context, handler_module)
+        else
+          {:error, reason} ->
+            context_error_result(request, reason, state, opts)
+        end
+
+      {:error, reason} ->
+        context_error_result(request, reason, state, opts)
+    end
+  end
+
+  def dispatch(_invalid_request, _handler_module, state, _opts) do
     {:response, JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid Request"), state}
+  end
+
+  defp context_error_result(request, %Error.ProtocolError{} = error, state, _opts) do
+    if Map.has_key?(request, "id") do
+      {:response, JSONRPC.error(Map.get(request, "id"), Error.to_json_rpc(error)), state}
+    else
+      {:notification, state}
+    end
+  end
+
+  defp context_error_result(request, reason, state, opts) do
+    if Map.has_key?(request, "id") do
+      response =
+        RequestContext.error_response(
+          reason,
+          Map.get(request, "id"),
+          Keyword.get(opts, :protocol_mode)
+        )
+
+      {:response, response, state}
+    else
+      {:notification, state}
+    end
   end
 
   @doc """
@@ -89,11 +142,24 @@ defmodule ExMCP.Server.Dispatch do
   end
 
   defp do_dispatch("initialize", ctx, state) do
-    call(ctx, :handle_initialize, [ctx.params, state], "Initialize error", state)
+    call(ctx, :handle_initialize, [ctx.params, state], "Initialize error", state,
+      on_ok: &Initialize.build_initialize_result(ctx.params, &1)
+    )
   end
 
   defp do_dispatch("ping", ctx, state) do
     {:response, JSONRPC.response(ctx.id, %{}), state}
+  end
+
+  defp do_dispatch("server/discover", ctx, state) do
+    result =
+      Discover.build(handler_server_info(ctx.module) || %{}, handler_capabilities(ctx.module),
+        protocol_mode: Keyword.get(ctx.dispatch_opts, :protocol_mode) || protocol_mode(state),
+        instructions:
+          Keyword.get(ctx.dispatch_opts, :instructions) || state_value(state, :instructions)
+      )
+
+    {:response, JSONRPC.response(ctx.id, result), state}
   end
 
   defp do_dispatch("tools/list", ctx, state) do
@@ -244,7 +310,24 @@ defmodule ExMCP.Server.Dispatch do
     if exported?(ctx.module, fun, length(args)) do
       on_ok = Keyword.get(opts, :on_ok, & &1)
 
-      case apply(ctx.module, fun, args) do
+      case Context.with_context(ctx.request_context, fn -> apply(ctx.module, fun, args) end) do
+        {:input_required, input_requests, new_state} ->
+          input_required_response(ctx, input_requests, nil, new_state)
+
+        {:input_required, input_requests, application_state, new_state} ->
+          input_required_response(ctx, input_requests, application_state, new_state)
+
+        {:ok, %MRTR.InputRequired{} = required, new_state} ->
+          input_required_response(
+            ctx,
+            required.input_requests,
+            required.request_state,
+            new_state
+          )
+
+        {:ok, %MRTR.InputRequired{} = required} ->
+          input_required_response(ctx, required.input_requests, required.request_state, state)
+
         {:ok, result, new_state} ->
           {:response, JSONRPC.response(ctx.id, on_ok.(result)), new_state}
 
@@ -265,7 +348,7 @@ defmodule ExMCP.Server.Dispatch do
   # Invokes a paginated list callback returning {:ok, entries, cursor, state}.
   defp paginated(ctx, fun, args, key, label, state) do
     if exported?(ctx.module, fun, length(args)) do
-      case apply(ctx.module, fun, args) do
+      case Context.with_context(ctx.request_context, fn -> apply(ctx.module, fun, args) end) do
         {:ok, entries, next_cursor, new_state} ->
           result = ResultNormalizer.paginated(key, entries, next_cursor)
           {:response, JSONRPC.response(ctx.id, result), new_state}
@@ -287,12 +370,29 @@ defmodule ExMCP.Server.Dispatch do
 
   defp cursor(ctx), do: Map.get(ctx.params, "cursor")
 
+  defp input_required_response(ctx, input_requests, application_state, state) do
+    case MRTR.build_result(
+           ctx.request_context,
+           ctx.params,
+           input_requests,
+           application_state,
+           ctx.dispatch_opts
+         ) do
+      {:ok, result} -> {:response, JSONRPC.response(ctx.id, result), state}
+      {:error, reason} -> {:response, error_response(ctx.id, "MRTR error", reason), state}
+    end
+  end
+
   defp method_not_found(id, method) do
     JSONRPC.error(id, ErrorCodes.method_not_found(), "Method not found: #{method}")
   end
 
   # Error details are logged by ResultNormalizer; only handler-authored text
   # reaches the client (audit M12).
+  defp error_response(id, _label, %Error.ProtocolError{} = error) do
+    JSONRPC.error(id, Error.to_json_rpc(error))
+  end
+
   defp error_response(id, label, reason) do
     JSONRPC.error(
       id,
@@ -305,4 +405,38 @@ defmodule ExMCP.Server.Dispatch do
     function_exported?(module, fun, arity) or
       (Code.ensure_loaded?(module) and function_exported?(module, fun, arity))
   end
+
+  defp normalize_protocol_result(
+         {:response, %{"result" => result} = response, state},
+         request_context,
+         handler_module
+       ) do
+    result =
+      ResultNormalizer.protocol_result(result, request_context,
+        server_info: handler_server_info(handler_module)
+      )
+
+    {:response, Map.put(response, "result", result), state}
+  end
+
+  defp normalize_protocol_result(other, _request_context, _handler_module), do: other
+
+  defp handler_server_info(handler_module) do
+    if exported?(handler_module, :__server_info__, 0),
+      do: handler_module.__server_info__(),
+      else: nil
+  end
+
+  defp handler_capabilities(handler_module) do
+    if exported?(handler_module, :__server_capabilities__, 0),
+      do: handler_module.__server_capabilities__(),
+      else: %{}
+  end
+
+  defp protocol_mode(state) do
+    state_value(state, :protocol_mode) || ExMCP.Internal.VersionRegistry.protocol_mode()
+  end
+
+  defp state_value(state, key) when is_map(state), do: Map.get(state, key)
+  defp state_value(_state, _key), do: nil
 end

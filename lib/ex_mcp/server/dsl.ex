@@ -595,6 +595,12 @@ defmodule ExMCP.Server.DSL do
     quote do
       unquote(start_link_callback)
       unquote(initialize_callback)
+
+      @doc false
+      def __server_info__, do: unquote(Macro.escape(server_info))
+
+      @doc false
+      def __server_capabilities__, do: unquote(Macro.escape(capabilities))
     end
   end
 
@@ -635,6 +641,7 @@ defmodule ExMCP.Server.DSL do
   defp generate_initialize_callback(server_info, capabilities) do
     quote do
       alias ExMCP.Internal.VersionRegistry
+      alias ExMCP.Protocol.Initialize
 
       @impl ExMCP.Server.Handler
       def handle_initialize(params, state) do
@@ -652,11 +659,12 @@ defmodule ExMCP.Server.DSL do
             {:error, _reason} -> VersionRegistry.latest_version()
           end
 
-        result = %{
-          "protocolVersion" => protocol_version,
-          "serverInfo" => unquote(Macro.escape(server_info)),
-          "capabilities" => unquote(Macro.escape(capabilities))
-        }
+        result =
+          Initialize.build_initialize_result(params, %{
+            "protocolVersion" => protocol_version,
+            "serverInfo" => unquote(Macro.escape(server_info)),
+            "capabilities" => unquote(Macro.escape(capabilities))
+          })
 
         {:ok, result, Map.put(state, :protocol_version, protocol_version)}
       end

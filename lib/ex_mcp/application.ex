@@ -18,6 +18,10 @@ defmodule ExMCP.Application do
         {DynamicSupervisor, strategy: :one_for_one, name: ExMCP.DynamicSupervisor},
         # Start the Consent Cache for security features
         ExMCP.Internal.ConsentCache,
+        # Remembers protocol-era observations across individual client processes
+        ExMCP.Client.EraCache,
+        # Optional node-local single-use enforcement for resumed MRTR requests
+        ExMCP.Server.ReplayCache.ETS,
         # Owns the ETS table mapping SSE session ids to handler pids for
         # ExMCP.HttpPlug (must outlive individual HTTP request processes)
         ExMCP.HttpPlug.SessionRegistry,

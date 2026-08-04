@@ -7,6 +7,8 @@ defmodule ExMCP.Internal.VersionRegistry do
   # version-specific behavior for the MCP implementation.
 
   @type version :: String.t()
+  @type version_status :: :supported | :supported_opt_in | :unknown
+  @type protocol_mode :: :legacy_only | :modern_only | :prefer_legacy | :prefer_modern
   @type capability_key :: atom()
   @type feature :: atom()
 
@@ -21,12 +23,82 @@ defmodule ExMCP.Internal.VersionRegistry do
     {"2024-11-05", "Initial stable specification"}
   ]
 
+  # Modern revisions are implemented but participate only when an explicit
+  # dual-era mode enables them. The zero-arity legacy APIs intentionally keep
+  # their pre-1.0 behavior until the final RC changes the application default.
+  @modern_revisions [
+    {"2026-07-28", "Stateless protocol revision available by explicit opt-in"}
+  ]
+
+  @modern_versions Enum.map(@modern_revisions, &elem(&1, 0))
+
   @doc """
   Get all supported protocol versions.
   """
   @spec supported_versions() :: [version()]
   def supported_versions do
     Enum.map(@versions, fn {version, _desc} -> version end)
+  end
+
+  @doc """
+  Get every protocol version implemented by ExMCP, including opt-in modern revisions.
+
+  Callers performing negotiation or advertising support must use
+  `supported_versions/0` instead.
+  """
+  @spec known_versions() :: [version()]
+  def known_versions do
+    Enum.map(@modern_revisions ++ @versions, fn {version, _desc} -> version end)
+  end
+
+  @doc "Returns whether ExMCP recognizes a version, regardless of enablement status."
+  @spec known?(version()) :: boolean()
+  def known?(version), do: version in known_versions()
+
+  @doc "Returns the configured dual-era protocol mode."
+  @spec protocol_mode() :: protocol_mode()
+  def protocol_mode do
+    case Application.get_env(:ex_mcp, :protocol_mode, :legacy_only) do
+      mode when mode in [:legacy_only, :modern_only, :prefer_legacy, :prefer_modern] -> mode
+      _invalid -> :legacy_only
+    end
+  end
+
+  @doc "Returns versions enabled by an explicit protocol mode."
+  @spec enabled_versions(protocol_mode()) :: [version()]
+  def enabled_versions(mode), do: supported_versions(mode)
+
+  @doc "Returns supported versions in the preference order for a protocol mode."
+  @spec supported_versions(protocol_mode()) :: [version()]
+  def supported_versions(:legacy_only), do: supported_versions()
+  def supported_versions(:modern_only), do: @modern_versions
+  def supported_versions(:prefer_legacy), do: supported_versions() ++ @modern_versions
+  def supported_versions(:prefer_modern), do: @modern_versions ++ supported_versions()
+
+  @doc "Returns whether a version is enabled in an explicit protocol mode."
+  @spec enabled?(version(), protocol_mode()) :: boolean()
+  def enabled?(version, mode), do: version in enabled_versions(mode)
+
+  @doc "Returns whether a version is supported under an explicit protocol mode."
+  @spec supported?(version(), protocol_mode()) :: boolean()
+  def supported?(version, mode), do: version in supported_versions(mode)
+
+  @doc "Returns the preferred version for an explicit protocol mode."
+  @spec preferred_version(protocol_mode()) :: version()
+  def preferred_version(mode) do
+    mode
+    |> enabled_versions()
+    |> List.first()
+  end
+
+  @doc "Returns the implementation status for a protocol version."
+  @spec version_status(version()) :: version_status()
+  def version_status(version) do
+    cond do
+      supported?(version) -> :supported
+      version in @modern_versions -> :supported_opt_in
+      true -> :unknown
+    end
   end
 
   @doc """
@@ -40,7 +112,18 @@ defmodule ExMCP.Internal.VersionRegistry do
   """
   @spec preferred_version() :: version()
   def preferred_version do
-    Application.get_env(:ex_mcp, :protocol_version, latest_version())
+    configured_version = Application.get_env(:ex_mcp, :protocol_version, latest_version())
+
+    if supported?(configured_version) do
+      configured_version
+    else
+      Logger.warning(
+        "Configured MCP protocol version #{inspect(configured_version)} is not enabled; " <>
+          "using #{latest_version()}"
+      )
+
+      latest_version()
+    end
   end
 
   @doc """
@@ -131,6 +214,16 @@ defmodule ExMCP.Internal.VersionRegistry do
     }
   end
 
+  def capabilities_for_version("2026-07-28") do
+    %{
+      prompts: %{listChanged: true},
+      resources: %{listChanged: true},
+      tools: %{listChanged: true},
+      completions: %{},
+      extensions: %{}
+    }
+  end
+
   def capabilities_for_version(unknown) do
     Logger.warning(
       "Unknown MCP protocol version #{inspect(unknown)}; using #{latest_version()} capabilities"
@@ -139,15 +232,19 @@ defmodule ExMCP.Internal.VersionRegistry do
     capabilities_for_version(latest_version())
   end
 
-  @doc "Returns the protocol era for a supported version."
+  @doc "Returns the protocol era for a known version."
   @spec era_for(version()) :: :legacy | :modern | :unknown
   def era_for(version) do
-    if supported?(version), do: :legacy, else: :unknown
+    cond do
+      version in @modern_versions -> :modern
+      supported?(version) -> :legacy
+      true -> :unknown
+    end
   end
 
   @doc "Returns whether a version uses the post-2025-11-25 protocol era."
   @spec modern?(version()) :: boolean()
-  def modern?(_version), do: false
+  def modern?(version), do: era_for(version) == :modern
 
   @doc """
   Check if a feature is available in a specific version.
@@ -155,6 +252,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   @spec feature_available?(version(), feature()) :: boolean()
   def feature_available?(version, feature) do
     cond do
+      not supported?(version) -> false
       feature in base_features() -> true
       feature in v2025_features() -> version in ["2025-03-26", "2025-06-18", "2025-11-25"]
       feature in batch_features() -> version == "2025-03-26"
@@ -259,7 +357,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   def negotiate_version(client_version, server_versions) do
     cond do
       # Exact match
-      client_version in server_versions ->
+      supported?(client_version) and client_version in server_versions ->
         {:ok, client_version}
 
       # Client version is supported by us
@@ -296,5 +394,6 @@ defmodule ExMCP.Internal.VersionRegistry do
   def types_module("2025-03-26"), do: ExMCP.Types.V20250326
   def types_module("2025-06-18"), do: ExMCP.Types.V20250618
   def types_module("2025-11-25"), do: ExMCP.Types.V20251125
+  def types_module("2026-07-28"), do: ExMCP.Types.V20260728
   def types_module(_), do: ExMCP.Types
 end

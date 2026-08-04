@@ -16,20 +16,22 @@ end
 
 ExMCP supports:
 
+- `2026-07-28` (modern stateless protocol; opt-in during the RC soak)
 - `2024-11-05`
 - `2025-03-26`
 - `2025-06-18`
-- `2025-11-25` (latest stable; default)
-
-> **Note:** Upstream is drafting MCP **2026-07-28** (breaking). That version is not
-> negotiated by ExMCP until a future release after the final specification ships.
+- `2025-11-25` (legacy default during the RC soak)
 
 The latest supported version is returned by `ExMCP.protocol_version/0`.
 
 ```elixir
 config :ex_mcp,
-  protocol_version: "2025-11-25"
+  protocol_mode: :prefer_modern
 ```
+
+Modes are `:modern_only`, `:legacy_only`, `:prefer_modern`, and
+`:prefer_legacy`. The current RC defaults to `:legacy_only`; a later RC will
+soak `:prefer_modern` before 1.0.
 
 Validate versions with the public negotiator:
 
@@ -162,6 +164,78 @@ forward "/mcp", ExMCP.HttpPlug,
 `ExMCP.HttpPlug` into the Handler process (default `10_000` milliseconds).
 It is separate from client-side `:timeout`, `:request_timeout`,
 `:stream_handshake_timeout`, and `:stream_idle_timeout` settings.
+
+## Multi Round-Trip Requests (MCP 2026-07-28)
+
+MRTR lets `tools/call`, `resources/read`, and `prompts/get` pause for client
+elicitation, sampling, or roots input. Configure a runtime AES-256 key ring and
+declare `mrtr: true` so server startup validates it:
+
+```elixir
+# runtime.exs — load the secret from your runtime secret manager/environment.
+key = System.fetch_env!("MCP_REQUEST_STATE_KEY") |> Base.decode64!()
+
+config :ex_mcp, :request_state,
+  active_key_id: "2026-08",
+  keys: %{"2026-08" => key},
+  ttl_seconds: 300,
+  max_ttl_seconds: 900,
+  clock_skew_seconds: 30
+```
+
+```elixir
+MyServer.start_link(
+  transport: :stdio,
+  protocol_mode: :modern_only,
+  mrtr: true
+)
+```
+
+Handlers can return either MRTR tuple, or use the DSL builder:
+
+```elixir
+{:input_required, input_requests, state}
+{:input_required, input_requests, application_request_state, state}
+
+ToolResult.input_required(input_requests, %{"workflowStep" => 1})
+```
+
+On the retry, unchanged callback arities read verified data from
+`ExMCP.Server.Context.input_responses/0` and
+`ExMCP.Server.Context.request_state/0`. Application request state must be JSON
+encodable and is size-bounded before encryption.
+
+Client operation options default to 8 rounds, 16 input requests per round, and
+1 MiB of serialized MRTR input/output. Override them with
+`:max_mrtr_rounds`, `:max_input_requests`, and `:max_mrtr_bytes`. One overall
+`:timeout` covers all rounds.
+
+Input callbacks run sequentially in deterministic request-ID order by default.
+A stateless client handler can explicitly opt into bounded parallel dispatch by
+implementing `mrtr_input_concurrency/0` and returning an integer from 2 through
+16. Every parallel callback receives the same handler state and must return it
+unchanged; ExMCP rejects a parallel callback that attempts to update the state.
+
+For resumptions that may cause side effects, enable atomic single-use
+enforcement:
+
+```elixir
+MyServer.start_link(
+  mrtr: true,
+  replay_cache: ExMCP.Server.ReplayCache.ETS,
+  require_replay_protection: true
+)
+```
+
+The bundled cache is node-local. Clustered deployments must implement
+`ExMCP.Server.ReplayCache` over a shared, strongly consistent store. Without a
+replay cache, verified retry context explicitly reports
+`delivery_semantics: :at_least_once`.
+
+HTTP deployments may provide `:principal_id` and `:tenant_id` as strings or
+resolver functions. OAuth token `sub` and `tenant_id` claims are used by
+default when available; these identities are authenticated into the sealed
+state without embedding bearer tokens.
 
 Pass request-local context into a handler with `:handler_opts`. The option can
 be a static term, a one-arity function called with the `Plug.Conn`, a two-arity

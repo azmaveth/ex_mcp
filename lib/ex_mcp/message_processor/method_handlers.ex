@@ -8,8 +8,10 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # mirrors ExMCP.Server.Dispatch and all result/error shaping is delegated to
   # ExMCP.Server.ResultNormalizer, so both paths answer identically (audit M9).
 
-  alias ExMCP.Internal.{JSONRPC, VersionRegistry}
-  alias ExMCP.Server.{Dispatch, ResultNormalizer}
+  alias ExMCP.Error
+  alias ExMCP.Internal.JSONRPC
+  alias ExMCP.Protocol.Initialize
+  alias ExMCP.Server.{Discover, Dispatch, MRTR, ResultNormalizer}
 
   require Logger
 
@@ -18,11 +20,23 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # `ExMCP.MessageProcessor.process/2`.
   @default_handler_call_timeout 10_000
 
-  def handle_initialize(conn, server_pid, params, id, _server_info) do
+  def handle_initialize(conn, server_pid, params, id, server_info) do
     safe_call(conn, server_pid, {:initialize, params}, id, "Initialize failed", fn
-      {:ok, result} -> put_initialize_result(conn, result, id)
+      {:ok, result} -> put_initialize_result(conn, params, result, server_info, id)
       {:error, reason} -> put_error(conn, "Initialize failed", reason, id)
     end)
+  end
+
+  def handle_server_discover(conn, _server_pid, _params, id) do
+    result =
+      Discover.build(
+        Map.get(conn.assigns, :server_info, %{}),
+        Map.get(conn.assigns, :server_capabilities, %{}),
+        protocol_mode: Map.get(conn.assigns, :protocol_mode),
+        instructions: Map.get(conn.assigns, :instructions)
+      )
+
+    put_success(conn, result, id)
   end
 
   def handle_tools_list(conn, server_pid, params, id) do
@@ -39,10 +53,19 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       %{tool_name: tool_name, mode: :handler}
     )
 
-    safe_call(conn, server_pid, {:call_tool, tool_name, arguments}, id, "Tool call failed", fn
-      {:ok, result} -> put_success(conn, ResultNormalizer.tool_result(result), id)
-      {:error, reason} -> put_success(conn, ResultNormalizer.tool_error_result(reason), id)
-    end)
+    safe_call(
+      conn,
+      server_pid,
+      contextual_request(conn, {:call_tool, tool_name, arguments}),
+      id,
+      "Tool call failed",
+      fn reply ->
+        case put_mrtr_result(conn, params, reply, id) do
+          {:handled, conn} -> conn
+          :not_mrtr -> handle_tool_reply(conn, reply, id)
+        end
+      end
+    )
   end
 
   def handle_resources_list(conn, server_pid, params, id) do
@@ -76,14 +99,19 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       %{uri: uri, mode: :handler}
     )
 
-    safe_call(conn, server_pid, {:read_resource, uri}, id, "Resource read failed", fn
-      {:ok, contents} ->
-        contents = ResultNormalizer.stringify_keys(List.wrap(contents))
-        put_success(conn, %{"contents" => contents}, id)
-
-      {:error, reason} ->
-        put_error(conn, "Resource read failed", reason, id)
-    end)
+    safe_call(
+      conn,
+      server_pid,
+      contextual_request(conn, {:read_resource, uri}),
+      id,
+      "Resource read failed",
+      fn reply ->
+        case put_mrtr_result(conn, params, reply, id) do
+          {:handled, conn} -> conn
+          :not_mrtr -> handle_resource_reply(conn, reply, id)
+        end
+      end
+    )
   end
 
   def handle_resources_subscribe(conn, server_pid, params, id) do
@@ -143,10 +171,19 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       %{name: name, mode: :handler}
     )
 
-    safe_call(conn, server_pid, {:get_prompt, name, arguments}, id, "Prompt get failed", fn
-      {:ok, result} -> put_success(conn, ResultNormalizer.stringify_keys(result), id)
-      {:error, reason} -> put_error(conn, "Prompt get failed", reason, id)
-    end)
+    safe_call(
+      conn,
+      server_pid,
+      contextual_request(conn, {:get_prompt, name, arguments}),
+      id,
+      "Prompt get failed",
+      fn reply ->
+        case put_mrtr_result(conn, params, reply, id) do
+          {:handled, conn} -> conn
+          :not_mrtr -> handle_prompt_reply(conn, reply, id)
+        end
+      end
+    )
   end
 
   def handle_completion_complete(conn, server_pid, params, id) do
@@ -305,6 +342,10 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # GenServer bridge now emits the canonical shapes; the legacy variants stay
   # accepted here for hand-written handlers.
   defp normalize_reply(:ok), do: {:ok, %{}}
+
+  defp normalize_reply({:input_required, requests, application_state}),
+    do: {:input_required, requests, application_state}
+
   defp normalize_reply({:ok, result}), do: {:ok, result}
   defp normalize_reply({:ok, result, _state}), do: {:ok, result}
   defp normalize_reply({:error, reason}), do: {:error, reason}
@@ -325,6 +366,60 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   defp cursor(params), do: Map.get(params, "cursor")
 
+  defp contextual_request(conn, request) do
+    case Map.get(conn.assigns, :request_context) do
+      nil -> request
+      context -> {:mcp_context, context, request}
+    end
+  end
+
+  defp put_mrtr_result(conn, params, reply, id) do
+    case mrtr_reply(reply) do
+      {:ok, input_requests, application_state} ->
+        context = Map.fetch!(conn.assigns, :request_context)
+        opts = Map.get(conn.assigns, :mrtr_opts, [])
+
+        case MRTR.build_result(context, params, input_requests, application_state, opts) do
+          {:ok, result} -> {:handled, put_success(conn, result, id)}
+          {:error, reason} -> {:handled, put_error(conn, "MRTR failed", reason, id)}
+        end
+
+      :not_mrtr ->
+        :not_mrtr
+    end
+  end
+
+  defp mrtr_reply({:input_required, requests, application_state}),
+    do: {:ok, requests, application_state}
+
+  defp mrtr_reply({:ok, %MRTR.InputRequired{} = required}),
+    do: {:ok, required.input_requests, required.request_state}
+
+  defp mrtr_reply(_reply), do: :not_mrtr
+
+  defp handle_tool_reply(conn, {:ok, result}, id),
+    do: put_success(conn, ResultNormalizer.tool_result(result), id)
+
+  defp handle_tool_reply(conn, {:error, %Error.ProtocolError{} = error}, id),
+    do: put_error(conn, "Tool call failed", error, id)
+
+  defp handle_tool_reply(conn, {:error, reason}, id),
+    do: put_success(conn, ResultNormalizer.tool_error_result(reason), id)
+
+  defp handle_resource_reply(conn, {:ok, contents}, id) do
+    contents = ResultNormalizer.stringify_keys(List.wrap(contents))
+    put_success(conn, %{"contents" => contents}, id)
+  end
+
+  defp handle_resource_reply(conn, {:error, reason}, id),
+    do: put_error(conn, "Resource read failed", reason, id)
+
+  defp handle_prompt_reply(conn, {:ok, result}, id),
+    do: put_success(conn, ResultNormalizer.stringify_keys(result), id)
+
+  defp handle_prompt_reply(conn, {:error, reason}, id),
+    do: put_error(conn, "Prompt get failed", reason, id)
+
   defp call_timeout(conn) do
     Map.get(conn.assigns, :handler_call_timeout, @default_handler_call_timeout)
   end
@@ -332,32 +427,19 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   defp exit_failure_type({:timeout, _}), do: "handler_timeout"
   defp exit_failure_type(_reason), do: "handler_crash"
 
-  defp put_initialize_result(conn, result, id) do
+  defp put_initialize_result(conn, params, result, server_info, id) do
     result
-    |> normalize_initialize_result()
-    |> ResultNormalizer.stringify_keys()
+    |> put_default_server_info(server_info)
+    |> then(&Initialize.build_initialize_result(params, &1))
     |> then(&put_success(conn, &1, id))
   end
 
-  defp normalize_initialize_result(result) do
-    default_version = VersionRegistry.latest_version()
-
-    result =
-      result
-      |> Map.put_new("protocolVersion", default_version)
-      |> Map.put_new(:protocolVersion, default_version)
-
-    if Map.has_key?(result, "serverInfo") or Map.has_key?(result, :serverInfo) do
+  defp put_default_server_info(result, server_info) do
+    if Map.has_key?(result, "serverInfo") or Map.has_key?(result, :serverInfo) or
+         Map.has_key?(result, "name") or Map.has_key?(result, :name) do
       result
     else
-      name = Map.get(result, "name") || Map.get(result, :name)
-      version = Map.get(result, "version") || Map.get(result, :version)
-
-      if name && version do
-        Map.put(result, "serverInfo", %{"name" => name, "version" => version})
-      else
-        result
-      end
+      Map.put(result, "serverInfo", server_info)
     end
   end
 
@@ -367,6 +449,10 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # Error details are logged, never embedded in the JSON-RPC response: the
   # `data.type` field carries a stable, machine-readable classification
   # instead of `inspect(reason)` output (audit M12).
+  defp put_error(conn, _message, %Error.ProtocolError{} = error, id) do
+    %{conn | response: JSONRPC.error(id, Error.to_json_rpc(error))}
+  end
+
   defp put_error(conn, message, reason, id) do
     Logger.error("#{message}: #{inspect(reason)}")
     put_failure(conn, message, "handler_error", id)

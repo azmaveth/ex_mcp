@@ -42,7 +42,7 @@ defmodule ExMCP.Server.HandlerServer do
 
   alias ExMCP.Internal.{JSONRPC, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
-  alias ExMCP.Server.{CancellationTracker, Dispatch}
+  alias ExMCP.Server.{CancellationTracker, Dispatch, RequestContext, RequestState}
   alias ExMCP.Transport.{Local, Test}
 
   # JSON-RPC batches were removed from the spec in 2025-06-18 and have not
@@ -56,6 +56,15 @@ defmodule ExMCP.Server.HandlerServer do
           transport: any(),
           transport_state: any(),
           protocol_version: String.t() | nil,
+          protocol_mode: ExMCP.Internal.VersionRegistry.protocol_mode() | nil,
+          connection_era: :legacy | :modern | nil,
+          instructions: String.t() | nil,
+          request_state: keyword() | nil,
+          endpoint: String.t() | nil,
+          principal_id: String.t() | nil,
+          tenant_id: String.t() | nil,
+          replay_cache: module() | {module(), keyword()} | nil,
+          require_replay_protection: boolean(),
           pending_requests: map(),
           cancelled_requests: MapSet.t(),
           cancellation_tracker: module()
@@ -88,6 +97,13 @@ defmodule ExMCP.Server.HandlerServer do
 
   @impl GenServer
   def init(opts) do
+    case validate_mrtr_configuration(opts) do
+      :ok -> do_init(opts)
+      {:error, reason} -> {:stop, {:mrtr_configuration_error, reason}}
+    end
+  end
+
+  defp do_init(opts) do
     handler_module = Keyword.fetch!(opts, :handler)
     transport_type = Keyword.get(opts, :transport, :test)
 
@@ -105,6 +121,15 @@ defmodule ExMCP.Server.HandlerServer do
               transport: transport_mod,
               transport_state: transport_state,
               protocol_version: nil,
+              protocol_mode: Keyword.get(opts, :protocol_mode),
+              connection_era: nil,
+              instructions: Keyword.get(opts, :instructions),
+              request_state: Keyword.get(opts, :request_state),
+              endpoint: Keyword.get(opts, :endpoint),
+              principal_id: Keyword.get(opts, :principal_id),
+              tenant_id: Keyword.get(opts, :tenant_id),
+              replay_cache: Keyword.get(opts, :replay_cache),
+              require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
               pending_requests: %{},
               cancelled_requests: MapSet.new(),
               cancellation_tracker: cancellation_tracker
@@ -118,6 +143,14 @@ defmodule ExMCP.Server.HandlerServer do
 
       {:error, reason} ->
         {:stop, {:handler_init_error, reason}}
+    end
+  end
+
+  defp validate_mrtr_configuration(opts) do
+    if Keyword.get(opts, :mrtr, false) do
+      RequestState.validate_configuration(request_state: Keyword.get(opts, :request_state))
+    else
+      :ok
     end
   end
 
@@ -703,7 +736,20 @@ defmodule ExMCP.Server.HandlerServer do
   # Runs the shared dispatcher against the handler module and folds the new
   # handler state back into the server state.
   defp dispatch(request, state) do
-    case Dispatch.dispatch(request, state.handler_module, state.handler_state) do
+    state = maybe_pin_connection_era(request, state)
+
+    dispatch_opts = [
+      protocol_mode: effective_protocol_mode(state),
+      instructions: state.instructions,
+      request_state: state.request_state,
+      endpoint: state.endpoint,
+      principal_id: state.principal_id,
+      tenant_id: state.tenant_id,
+      replay_cache: state.replay_cache,
+      require_replay_protection: state.require_replay_protection
+    ]
+
+    case Dispatch.dispatch(request, state.handler_module, state.handler_state, dispatch_opts) do
       {:response, response, handler_state} ->
         {:response, response, %{state | handler_state: handler_state}}
 
@@ -711,6 +757,34 @@ defmodule ExMCP.Server.HandlerServer do
         {:notification, %{state | handler_state: handler_state}}
     end
   end
+
+  defp maybe_pin_connection_era(request, %{connection_era: nil} = state) do
+    with {:ok, context} <- RequestContext.from_message(request),
+         era when era in [:legacy, :modern] <- pin_candidate(context),
+         true <- mode_allows_era?(state.protocol_mode, era) do
+      %{state | connection_era: era}
+    else
+      _other -> state
+    end
+  end
+
+  defp maybe_pin_connection_era(_request, state), do: state
+
+  defp pin_candidate(%RequestContext{era: :modern}), do: :modern
+  defp pin_candidate(%RequestContext{era: :legacy, method: "initialize"}), do: :legacy
+  defp pin_candidate(_context), do: nil
+
+  defp mode_allows_era?(:modern_only, :legacy), do: false
+  defp mode_allows_era?(:legacy_only, :modern), do: false
+  defp mode_allows_era?(_mode, _era), do: true
+
+  defp effective_protocol_mode(%{protocol_mode: mode})
+       when mode in [:legacy_only, :modern_only],
+       do: mode
+
+  defp effective_protocol_mode(%{connection_era: :legacy}), do: :legacy_only
+  defp effective_protocol_mode(%{connection_era: :modern}), do: :modern_only
+  defp effective_protocol_mode(state), do: state.protocol_mode
 
   defp put_meta(arguments, nil), do: arguments
   defp put_meta(arguments, meta), do: Map.put(arguments, "_meta", meta)

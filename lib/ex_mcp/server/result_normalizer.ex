@@ -20,6 +20,10 @@ defmodule ExMCP.Server.ResultNormalizer do
 
   require Logger
 
+  alias ExMCP.Internal.VersionInfo
+
+  @server_info_key "io.modelcontextprotocol/serverInfo"
+
   @doc """
   Recursively converts atom keys to strings.
 
@@ -38,6 +42,45 @@ defmodule ExMCP.Server.ResultNormalizer do
   end
 
   def stringify_keys(value), do: value
+
+  @doc """
+  Applies the result envelope required by the request's protocol era.
+
+  Legacy results are returned unchanged. Modern results receive a
+  `resultType` discriminator and result metadata identifying the server.
+  Handler-supplied `input_required` (or extension) result types are preserved.
+  """
+  @spec protocol_result(map(), map(), keyword()) :: map()
+  def protocol_result(result, request_context, opts \\ []) when is_map(result) do
+    if Map.get(request_context, :era) == :modern do
+      result = stringify_keys(result)
+      server_info = Keyword.get(opts, :server_info) || default_server_info()
+      result_type = normalize_result_type(Map.get(result, "resultType"))
+
+      meta =
+        case Map.get(result, "_meta") do
+          existing when is_map(existing) -> existing
+          _other -> %{}
+        end
+
+      result
+      |> Map.put("resultType", result_type)
+      |> Map.put("_meta", Map.put(meta, @server_info_key, stringify_keys(server_info)))
+    else
+      result
+    end
+  end
+
+  defp normalize_result_type(type) when is_binary(type) and type != "", do: type
+
+  defp normalize_result_type(type) when is_atom(type) and not is_nil(type),
+    do: Atom.to_string(type)
+
+  defp normalize_result_type(_type), do: "complete"
+
+  defp default_server_info do
+    %{"name" => "ExMCP", "version" => VersionInfo.version()}
+  end
 
   defp stringify_key(:input_schema), do: "inputSchema"
   defp stringify_key(:output_schema), do: "outputSchema"

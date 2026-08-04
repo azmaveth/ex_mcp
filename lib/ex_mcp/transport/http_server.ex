@@ -65,8 +65,9 @@ if Code.ensure_loaded?(Plug) do
     import Plug.Conn
     require Logger
 
-    alias ExMCP.Server.HandlerServer, as: Server
     alias ExMCP.Internal.{Protocol, Security}
+    alias ExMCP.Protocol.Initialize
+    alias ExMCP.Server.HandlerServer, as: Server
 
     @behaviour Plug
 
@@ -291,16 +292,15 @@ if Code.ensure_loaded?(Plug) do
       send_json_response(conn, 200, responses)
     end
 
-    defp call_server_method(server_pid, method, _params) do
+    defp call_server_method(server_pid, method, params) do
       # Simplified example mapping; production servers use ExMCP.HttpPlug.
       case method do
         "initialize" ->
           {:ok,
-           %{
-             protocolVersion: "2025-03-26",
+           Initialize.build_initialize_result(params, %{
              serverInfo: %{name: "http-server", version: "1.0.0"},
              capabilities: %{}
-           }}
+           })}
 
         "tools/list" ->
           # Call the actual server

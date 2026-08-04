@@ -22,8 +22,8 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
   alias ExMCP.Error
   alias ExMCP.Internal.VersionRegistry
-  alias ExMCP.Protocol.{Methods, ResponseBuilder}
-  alias ExMCP.Server.ResultNormalizer
+  alias ExMCP.Protocol.{Initialize, Methods, ResponseBuilder}
+  alias ExMCP.Server.{Context, Discover, MRTR, RequestContext, ResultNormalizer}
 
   @type request :: map()
   @type state :: map()
@@ -48,18 +48,55 @@ defmodule ExMCP.Protocol.RequestProcessor do
   """
   @spec process(request(), state()) :: process_result()
   def process(%{"method" => method} = request, state) do
-    request_id = Map.get(request, "id", "notification_#{System.unique_integer([:positive])}")
-    server = Map.get(state, :__module__, :unknown)
+    params = Map.get(request, "params") || %{}
+    mrtr_opts = state_mrtr_opts(state)
 
-    metadata = %{
-      request_id: to_string(request_id),
-      method: method,
-      server: server
-    }
+    with {:ok, request_context} <- RequestContext.from_message(request),
+         :ok <-
+           RequestContext.validate_protocol_mode(request_context, Map.get(state, :protocol_mode)),
+         :ok <- RequestContext.validate_method(request_context),
+         {:ok, request_context} <- MRTR.prepare_context(request_context, params, mrtr_opts) do
+      request_id = Map.get(request, "id", "notification_#{System.unique_integer([:positive])}")
+      server = Map.get(state, :__module__, :unknown)
 
-    ExMCP.Telemetry.span([:ex_mcp, :request], metadata, fn ->
-      dispatch_method(method, request, state)
-    end)
+      metadata = %{
+        request_id: to_string(request_id),
+        method: method,
+        server: server
+      }
+
+      request =
+        request
+        |> Map.put(:__request_context__, request_context)
+        |> Map.put(:__mrtr_opts__, mrtr_opts)
+
+      ExMCP.Telemetry.span([:ex_mcp, :request], metadata, fn ->
+        method
+        |> dispatch_method(request, state)
+        |> normalize_protocol_result(request_context, state)
+      end)
+    else
+      {:error, %Error.ProtocolError{} = error} ->
+        if Map.has_key?(request, "id") do
+          {:response, ResponseBuilder.build_error_response(error, Map.get(request, "id")), state}
+        else
+          {:notification, state}
+        end
+
+      {:error, reason} ->
+        if Map.has_key?(request, "id") do
+          response =
+            RequestContext.error_response(
+              reason,
+              Map.get(request, "id"),
+              Map.get(state, :protocol_mode)
+            )
+
+          {:response, response, state}
+        else
+          {:notification, state}
+        end
+    end
   end
 
   def process(_request, state) do
@@ -88,6 +125,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
     if function_exported?(module, :handle_initialize, 2) do
       case module.handle_initialize(params, state) do
         {:ok, result, new_state} ->
+          result = Initialize.build_initialize_result(params, result)
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
 
@@ -103,15 +141,16 @@ defmodule ExMCP.Protocol.RequestProcessor do
   end
 
   defp process_default_initialize(id, params, state) do
-    client_version = Map.get(params, "protocolVersion", "2025-06-18")
+    client_version = Map.get(params, "protocolVersion", VersionRegistry.preferred_version())
     supported_versions = VersionRegistry.supported_versions()
 
     if client_version in supported_versions do
-      result = %{
-        "protocolVersion" => client_version,
-        "serverInfo" => get_server_info(state),
-        "capabilities" => get_capabilities(state)
-      }
+      result =
+        Initialize.build_initialize_result(params, %{
+          "protocolVersion" => client_version,
+          "serverInfo" => get_server_info(state),
+          "capabilities" => get_capabilities(state)
+        })
 
       response = ResponseBuilder.build_success_response(result, id)
       new_state = Map.put(state, :protocol_version, client_version)
@@ -128,6 +167,17 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
       {:response, error_response, state}
     end
+  end
+
+  defp process_server_discover(%{"id" => id}, state) do
+    result =
+      Discover.build(get_server_info(state), get_capabilities(state),
+        protocol_mode: Map.get(state, :protocol_mode, VersionRegistry.protocol_mode()),
+        instructions: Map.get(state, :instructions)
+      )
+
+    response = ResponseBuilder.build_success_response(result, id)
+    {:response, response, state}
   end
 
   # Tools list request
@@ -161,7 +211,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
     module = state.__module__
 
     if function_exported?(module, :handle_call_tool, 3) do
-      execute_tool_call(module, tool_name, arguments, id, state)
+      execute_tool_call(module, tool_name, arguments, id, request, state)
     else
       # No custom implementation, return default error
       error = %Error.ToolError{
@@ -176,7 +226,7 @@ defmodule ExMCP.Protocol.RequestProcessor do
   end
 
   # Execute tool call with telemetry
-  defp execute_tool_call(module, tool_name, arguments, id, state) do
+  defp execute_tool_call(module, tool_name, arguments, id, request, state) do
     metadata = %{
       tool_name: tool_name || "unknown",
       request_id: to_string(id)
@@ -184,20 +234,44 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
     result =
       ExMCP.Telemetry.span([:ex_mcp, :tool], metadata, fn ->
-        module.handle_call_tool(tool_name, arguments, state)
+        Context.with_context(request.__request_context__, fn ->
+          module.handle_call_tool(tool_name, arguments, state)
+        end)
       end)
 
-    handle_tool_result(result, tool_name, id)
+    handle_tool_result(result, tool_name, id, request)
   end
 
   # Handle tool execution result
-  defp handle_tool_result({:ok, result, new_state}, _tool_name, id) do
+  defp handle_tool_result(
+         {:ok, %MRTR.InputRequired{} = required, new_state},
+         _tool_name,
+         id,
+         request
+       ) do
+    build_mrtr_response(required.input_requests, required.request_state, id, request, new_state)
+  end
+
+  defp handle_tool_result({:input_required, requests, new_state}, _tool_name, id, request) do
+    build_mrtr_response(requests, nil, id, request, new_state)
+  end
+
+  defp handle_tool_result(
+         {:input_required, requests, application_state, new_state},
+         _tool_name,
+         id,
+         request
+       ) do
+    build_mrtr_response(requests, application_state, id, request, new_state)
+  end
+
+  defp handle_tool_result({:ok, result, new_state}, _tool_name, id, _request) do
     tool_result = ResultNormalizer.tool_result(result)
     response = ResponseBuilder.build_success_response(tool_result, id)
     {:response, response, new_state}
   end
 
-  defp handle_tool_result({:error, reason, new_state}, tool_name, id) do
+  defp handle_tool_result({:error, reason, new_state}, tool_name, id, _request) do
     error = normalize_error(reason, tool_name)
     error_response = ResponseBuilder.build_error_response(error, id)
     {:response, error_response, new_state}
@@ -256,41 +330,84 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
       result =
         ExMCP.Telemetry.span([:ex_mcp, :resource, :read], metadata, fn ->
-          module.handle_read_resource(uri, state)
+          Context.with_context(request.__request_context__, fn ->
+            module.handle_read_resource(uri, state)
+          end)
         end)
 
-      case result do
-        {:ok, content, new_state} ->
-          # Calculate content size if possible
-          bytes =
-            case content do
-              %{"text" => text} when is_binary(text) -> byte_size(text)
-              _ -> nil
-            end
-
-          if bytes do
-            :telemetry.execute(
-              [:ex_mcp, :resource, :read, :bytes],
-              %{bytes: bytes},
-              metadata
-            )
-          end
-
-          result = %{"contents" => ResultNormalizer.stringify_keys(List.wrap(content))}
-          response = ResponseBuilder.build_success_response(result, id)
-          {:response, response, new_state}
-
-        {:error, reason, new_state} ->
-          error = Error.resource_error(uri || "unknown", :read, reason)
-          error_response = ResponseBuilder.build_error_response(error, id)
-          {:response, error_response, new_state}
-      end
+      handle_resource_read_result(result, uri, id, request, metadata)
     else
       # No custom implementation, return default error
       error = Error.resource_error(uri || "unknown", :read, "Resource reading not implemented")
       error_response = ResponseBuilder.build_error_response(error, id)
       {:response, error_response, state}
     end
+  end
+
+  defp handle_resource_read_result(
+         {:ok, %MRTR.InputRequired{} = required, new_state},
+         _uri,
+         id,
+         request,
+         _metadata
+       ) do
+    build_mrtr_response(
+      required.input_requests,
+      required.request_state,
+      id,
+      request,
+      new_state
+    )
+  end
+
+  defp handle_resource_read_result(
+         {:input_required, requests, new_state},
+         _uri,
+         id,
+         request,
+         _metadata
+       ) do
+    build_mrtr_response(requests, nil, id, request, new_state)
+  end
+
+  defp handle_resource_read_result(
+         {:input_required, requests, application_state, new_state},
+         _uri,
+         id,
+         request,
+         _metadata
+       ) do
+    build_mrtr_response(requests, application_state, id, request, new_state)
+  end
+
+  defp handle_resource_read_result({:ok, content, new_state}, _uri, id, _request, metadata) do
+    case content do
+      %{"text" => text} when is_binary(text) ->
+        :telemetry.execute(
+          [:ex_mcp, :resource, :read, :bytes],
+          %{bytes: byte_size(text)},
+          metadata
+        )
+
+      _other ->
+        :ok
+    end
+
+    result = %{"contents" => ResultNormalizer.stringify_keys(List.wrap(content))}
+    response = ResponseBuilder.build_success_response(result, id)
+    {:response, response, new_state}
+  end
+
+  defp handle_resource_read_result(
+         {:error, reason, new_state},
+         uri,
+         id,
+         _request,
+         _metadata
+       ) do
+    error = Error.resource_error(uri || "unknown", :read, reason)
+    error_response = ResponseBuilder.build_error_response(error, id)
+    {:response, error_response, new_state}
   end
 
   # Prompts list request
@@ -325,7 +442,27 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
     # Check if custom implementation exists
     if function_exported?(module, :handle_get_prompt, 3) do
-      case module.handle_get_prompt(prompt_name, arguments, state) do
+      result =
+        Context.with_context(request.__request_context__, fn ->
+          module.handle_get_prompt(prompt_name, arguments, state)
+        end)
+
+      case result do
+        {:ok, %MRTR.InputRequired{} = required, new_state} ->
+          build_mrtr_response(
+            required.input_requests,
+            required.request_state,
+            id,
+            request,
+            new_state
+          )
+
+        {:input_required, requests, new_state} ->
+          build_mrtr_response(requests, nil, id, request, new_state)
+
+        {:input_required, requests, application_state, new_state} ->
+          build_mrtr_response(requests, application_state, id, request, new_state)
+
         {:ok, result, new_state} ->
           result = ResultNormalizer.stringify_keys(result)
           response = ResponseBuilder.build_success_response(result, id)
@@ -371,6 +508,36 @@ defmodule ExMCP.Protocol.RequestProcessor do
 
   # Task status notification (2025-11-25)
   defp process_task_status_notification(_request, state), do: {:notification, state}
+
+  defp build_mrtr_response(input_requests, application_state, id, request, state) do
+    case MRTR.build_result(
+           request.__request_context__,
+           Map.get(request, "params") || %{},
+           input_requests,
+           application_state,
+           request.__mrtr_opts__
+         ) do
+      {:ok, result} ->
+        {:response, ResponseBuilder.build_success_response(result, id), state}
+
+      {:error, error} ->
+        {:response, ResponseBuilder.build_error_response(error, id), state}
+    end
+  end
+
+  defp state_mrtr_opts(state) do
+    [
+      request_state: Map.get(state, :request_state),
+      endpoint: Map.get(state, :endpoint),
+      principal_id: Map.get(state, :principal_id),
+      tenant_id: Map.get(state, :tenant_id),
+      max_input_requests: Map.get(state, :max_input_requests, 16),
+      max_mrtr_bytes: Map.get(state, :max_mrtr_bytes, 1_048_576),
+      replay_cache: Map.get(state, :replay_cache),
+      require_replay_protection: Map.get(state, :require_replay_protection, false)
+    ]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
 
   # Tasks/get (2025-11-25)
   defp process_task_get(%{"id" => id} = request, state) do
@@ -492,4 +659,19 @@ defmodule ExMCP.Protocol.RequestProcessor do
       %{}
     end
   end
+
+  defp normalize_protocol_result(
+         {:response, %{"result" => result} = response, new_state},
+         request_context,
+         state
+       ) do
+    result =
+      ResultNormalizer.protocol_result(result, request_context,
+        server_info: get_server_info(state)
+      )
+
+    {:response, Map.put(response, "result", result), new_state}
+  end
+
+  defp normalize_protocol_result(other, _request_context, _state), do: other
 end

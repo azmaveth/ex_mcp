@@ -7,9 +7,10 @@ defmodule ExMCP.Client.RequestHandler do
   """
 
   require Logger
-  alias ExMCP.Client.ElicitationHandler
-  alias ExMCP.Internal.{JSONRPC, Maps, Protocol}
-  alias ExMCP.Protocol.ResponseBuilder
+  alias ExMCP.Client.{InputDispatcher, MRTR}
+  alias ExMCP.Error
+  alias ExMCP.Internal.{JSONRPC, Maps, Protocol, RequestParams, VersionRegistry}
+  alias ExMCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
 
   # Extra time allowed past a caller-enforced timeout before the client
   # cleans up its own pending-request bookkeeping.
@@ -32,8 +33,25 @@ defmodule ExMCP.Client.RequestHandler do
   """
   def handle_request(method, params, from, state, meta \\ %{timeout: :caller_enforced}) do
     id = Protocol.generate_id()
-    request = build_request(method, params, id)
+    send_built_request(method, params, id, from, state, meta)
+  end
 
+  defp send_built_request(method, params, id, from, state, timeout_meta) do
+    case build_request(method, params, id, state) do
+      {:ok, request} ->
+        send_request(request, method, id, from, state, timeout_meta)
+
+      {:error, reason} ->
+        {:reply,
+         {:error,
+          %{
+            type: :invalid_request_meta,
+            message: "Invalid MCP request metadata: #{format_meta_error(reason)}"
+          }}, state}
+    end
+  end
+
+  defp send_request(request, method, id, from, state, meta) do
     case send_message(request, state) do
       {:ok, updated_state, response_data} ->
         # Non-SSE HTTP returns response immediately
@@ -45,7 +63,7 @@ defmodule ExMCP.Client.RequestHandler do
               %{method: method, request_id: id}
             )
 
-            {:reply, {:ok, result}, updated_state}
+            {:reply, validate_result(result, updated_state), updated_state}
 
           {:error, error_data, _id} ->
             :telemetry.execute(
@@ -108,6 +126,19 @@ defmodule ExMCP.Client.RequestHandler do
   Processes multiple MCP requests in a single batch operation.
   """
   def handle_batch_request(requests, from, state) do
+    if VersionRegistry.modern?(state.protocol_version) do
+      {:reply,
+       {:error,
+        %{
+          type: :unsupported_operation,
+          message: "Batch requests are not available in MCP #{state.protocol_version}"
+        }}, state}
+    else
+      do_handle_batch_request(requests, from, state)
+    end
+  end
+
+  defp do_handle_batch_request(requests, from, state) do
     requests_with_ids =
       Enum.map(requests, fn request ->
         case request do
@@ -165,7 +196,8 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   @doc """
-  Sends a protocol-level `ping` on behalf of the client's idle health check.
+  Sends the era-appropriate liveness request for the client's idle health
+  check: legacy `ping`, or an uncached modern `server/discover`.
 
   The ping is deliberately kept out of `pending_requests`: it has no caller to
   reply to and must not show up in `ExMCP.Client.get_pending_requests/1`.
@@ -181,10 +213,15 @@ defmodule ExMCP.Client.RequestHandler do
   def send_ping(state) do
     id = Protocol.generate_id()
 
-    case send_message(build_request("ping", %{}, id), state) do
-      {:ok, updated_state, _response_data} -> {:ok, nil, updated_state}
-      {:ok, updated_state} -> {:ok, id, updated_state}
-      {:error, reason} -> {:error, reason}
+    method =
+      if VersionRegistry.modern?(state.protocol_version), do: "server/discover", else: "ping"
+
+    with {:ok, request} <- build_request(method, %{}, id, state) do
+      case send_message(request, state) do
+        {:ok, updated_state, _response_data} -> {:ok, nil, updated_state}
+        {:ok, updated_state} -> {:ok, id, updated_state}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -238,7 +275,7 @@ defmodule ExMCP.Client.RequestHandler do
   Handles a single response from the transport.
   """
   def handle_single_response({:result, result, response_id}, state) do
-    handle_response_by_id(response_id, {:ok, result}, state)
+    handle_response_by_id(response_id, validate_result(result, state), state)
   end
 
   def handle_single_response({:error, error, response_id}, state) do
@@ -424,6 +461,54 @@ defmodule ExMCP.Client.RequestHandler do
     |> Maps.put_present("id", id)
   end
 
+  defp build_request(method, params, id, state) do
+    with {:ok, params} <- RequestParams.for_request(params || %{}, state) do
+      {:ok, build_request(method, params, id)}
+    end
+  end
+
+  defp format_meta_error({:invalid_meta_key, key}),
+    do: "metadata key #{inspect(key)} does not follow the MCP key grammar"
+
+  defp format_meta_error({:missing_meta_field, key}), do: "required field #{key} is missing"
+  defp format_meta_error({:invalid_meta_field, key}), do: "field #{key} has an invalid value"
+  defp format_meta_error({:invalid_meta, :not_an_object}), do: "_meta must be an object"
+
+  defp validate_result(result, state) do
+    transport_opts = Map.get(state, :transport_opts) || []
+
+    allowed_result_types =
+      transport_opts
+      |> Keyword.get(:allowed_result_types, [])
+      |> List.wrap()
+
+    case ResultEnvelope.validate(result, Map.get(state, :protocol_version),
+           allowed_result_types: allowed_result_types
+         ) do
+      {:ok, _kind, validated_result} ->
+        {:ok, validated_result}
+
+      {:error, reason} ->
+        {:error,
+         %{
+           type: :protocol_error,
+           reason: reason,
+           message: result_error_message(reason)
+         }}
+    end
+  end
+
+  defp result_error_message(:result_must_be_object), do: "MCP result must be an object"
+
+  defp result_error_message(:missing_result_type),
+    do: "MCP result is missing required resultType"
+
+  defp result_error_message({:invalid_result_type, _value}),
+    do: "MCP resultType must be a string"
+
+  defp result_error_message({:unknown_result_type, type}),
+    do: "MCP resultType #{inspect(type)} was not negotiated"
+
   @doc """
   Handles server-to-client requests by routing them to the appropriate handler callback.
   """
@@ -474,140 +559,146 @@ defmodule ExMCP.Client.RequestHandler do
 
   defp handle_roots_list_request(_params, request_id, state) do
     {handler, handler_state, state} = ensure_client_handler(state)
+    capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
 
-    if handler != :none && function_exported?(handler, :handle_list_roots, 1) do
-      case handler.handle_list_roots(handler_state) do
-        {:ok, roots, new_handler_state} ->
-          state = update_handler_state(state, new_handler_state)
-          send_response(build_success_response(%{"roots" => roots}, request_id), state)
-
-        {:error, error, new_handler_state} ->
-          state = update_handler_state(state, new_handler_state)
-          send_response(handler_error_response(error, request_id), state)
-      end
-    else
-      # Handler doesn't implement handle_list_roots or no handler configured
-      error_response = build_error_response(-32601, "Method not found", request_id)
-      send_response(error_response, state)
-    end
+    dispatch_input_sync(
+      "roots/list",
+      %{},
+      handler,
+      handler_state,
+      capabilities,
+      request_id,
+      state
+    )
   end
 
   defp handle_create_message_request(params, request_id, state) do
     {handler, handler_state, state} = ensure_client_handler(state)
+    capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
 
-    if handler != :none && function_exported?(handler, :handle_create_message, 2) do
+    if client_callback?(handler, :handle_create_message, 2) do
       run_handler_async(
-        :create_message,
-        fn -> handler.handle_create_message(params, handler_state) end,
+        :input_request,
+        fn ->
+          InputDispatcher.dispatch(
+            "sampling/createMessage",
+            params,
+            handler,
+            handler_state,
+            capabilities
+          )
+        end,
         request_id,
         state
       )
     else
-      error_response = build_error_response(-32601, "Method not found", request_id)
-      send_response(error_response, state)
+      dispatch_input_sync(
+        "sampling/createMessage",
+        params,
+        handler,
+        handler_state,
+        capabilities,
+        request_id,
+        state
+      )
     end
   end
 
   defp handle_elicitation_create_request(params, request_id, state) do
     {handler, handler_state, state} = ensure_client_handler(state)
+    capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
 
-    if handler != :none && function_exported?(handler, :handle_elicitation_create, 3) do
-      message = Map.get(params, "message", "")
-      requested_schema = elicitation_payload(params)
-
+    if client_callback?(handler, :handle_elicitation_create, 3) or
+         elicitation_capability?(capabilities) do
       run_handler_async(
-        :elicitation,
-        fn -> handler.handle_elicitation_create(message, requested_schema, handler_state) end,
+        :input_request,
+        fn ->
+          InputDispatcher.dispatch(
+            "elicitation/create",
+            params,
+            handler,
+            handler_state,
+            capabilities
+          )
+        end,
         request_id,
         state
       )
     else
-      # No custom handler — check if client declared elicitation capability
-      capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
-      elicitation_cap = capabilities["elicitation"] || capabilities[:elicitation]
-
-      if elicitation_cap do
-        # Client declared elicitation support — use default handler (decline or auto-accept)
-        message = Map.get(params, "message", "")
-        requested_schema = elicitation_payload(params)
-
-        result = ElicitationHandler.handle(message, requested_schema)
-        response = build_success_response(result, request_id)
-        send_response(response, state)
-      else
-        # Client did not declare elicitation capability — method not found
-        error_response = build_error_response(-32601, "Method not found", request_id)
-        send_response(error_response, state)
-      end
+      dispatch_input_sync(
+        "elicitation/create",
+        params,
+        handler,
+        handler_state,
+        capabilities,
+        request_id,
+        state
+      )
     end
   end
 
   defp handle_url_elicitation_request(params, request_id, state) do
     {handler, handler_state, state} = ensure_client_handler(state)
-    message = Map.get(params, "message", "")
-    url = Map.get(params, "url", "")
-
-    cond do
-      handler != :none && function_exported?(handler, :handle_url_elicitation, 3) ->
-        run_handler_async(
-          :url_elicitation,
-          fn -> handler.handle_url_elicitation(message, url, handler_state) end,
-          request_id,
-          state
-        )
-
-      handler != :none && function_exported?(handler, :handle_elicitation_create, 3) ->
-        warn_url_elicitation_fallback(handler)
-
-        run_handler_async(
-          :elicitation,
-          fn ->
-            handler.handle_elicitation_create(message, elicitation_payload(params), handler_state)
-          end,
-          request_id,
-          state
-        )
-
-      true ->
-        handle_default_elicitation(params, request_id, state)
-    end
-  end
-
-  defp handle_default_elicitation(params, request_id, state) do
     capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
-    elicitation_cap = capabilities["elicitation"] || capabilities[:elicitation]
 
-    if elicitation_cap do
-      result =
-        ElicitationHandler.handle(
-          Map.get(params, "message", ""),
-          elicitation_payload(params)
-        )
-
-      send_response(build_success_response(result, request_id), state)
+    if client_callback?(handler, :handle_url_elicitation, 3) or
+         client_callback?(handler, :handle_elicitation_create, 3) or
+         elicitation_capability?(capabilities) do
+      run_handler_async(
+        :input_request,
+        fn ->
+          InputDispatcher.dispatch(
+            "elicitation/create",
+            params,
+            handler,
+            handler_state,
+            capabilities
+          )
+        end,
+        request_id,
+        state
+      )
     else
-      send_response(build_error_response(-32601, "Method not found", request_id), state)
-    end
-  end
-
-  defp elicitation_payload(%{"mode" => "url"} = params) do
-    Map.take(params, ["mode", "url", "elicitationId"])
-  end
-
-  defp elicitation_payload(params), do: Map.get(params, "requestedSchema", %{})
-
-  defp warn_url_elicitation_fallback(handler) do
-    warning_key = {__MODULE__, :url_elicitation_fallback, handler}
-
-    unless :persistent_term.get(warning_key, false) do
-      :persistent_term.put(warning_key, true)
-
-      Logger.warning(
-        "#{inspect(handler)} does not implement handle_url_elicitation/3; " <>
-          "routing URL-mode elicitation to handle_elicitation_create/3 with the URL payload"
+      dispatch_input_sync(
+        "elicitation/create",
+        params,
+        handler,
+        handler_state,
+        capabilities,
+        request_id,
+        state
       )
     end
   end
+
+  defp dispatch_input_sync(
+         method,
+         params,
+         handler,
+         handler_state,
+         capabilities,
+         request_id,
+         state
+       ) do
+    callback_return =
+      InputDispatcher.dispatch(method, params, handler, handler_state, capabilities)
+
+    {response, state} = map_callback_return(:input_request, callback_return, request_id, state)
+    send_response(response, state)
+  end
+
+  defp client_callback?(:none, _fun, _arity), do: false
+
+  defp client_callback?(handler, fun, arity) do
+    function_exported?(handler, fun, arity) or
+      (Code.ensure_loaded?(handler) and function_exported?(handler, fun, arity))
+  end
+
+  defp elicitation_capability?(capabilities) when is_map(capabilities) do
+    Map.has_key?(capabilities, "elicitation") or Map.has_key?(capabilities, :elicitation)
+  end
+
+  defp elicitation_capability?(_capabilities), do: false
 
   # Extract module and handler args from the handler option.
   # The handler can be specified as just a module or as {module, args}.
@@ -721,6 +812,109 @@ defmodule ExMCP.Client.RequestHandler do
 
   defp update_handler_state(state, _new_handler_state), do: state
 
+  @doc false
+  def handle_mrtr_fulfillment(input_requests, opts, scope_ref, from, state) do
+    if VersionRegistry.modern?(state.protocol_version) do
+      {handler, handler_state, state} = ensure_client_handler(state)
+      capabilities = Keyword.get(state.transport_opts, :capabilities, %{})
+      parent = self()
+
+      {pid, ref} =
+        spawn_monitor(fn ->
+          outcome =
+            try do
+              MRTR.fulfill(input_requests, handler, handler_state, capabilities, opts)
+            rescue
+              error -> {:error, {:client_handler_raised, error, __STACKTRACE__}, handler_state}
+            catch
+              kind, value -> {:error, {:client_handler_caught, {kind, value}}, handler_state}
+            end
+
+          send(parent, {:mrtr_fulfillment_result, self(), outcome})
+        end)
+
+      tasks = Map.put(state.mrtr_tasks || %{}, pid, {ref, from, scope_ref})
+      {:noreply, %{state | mrtr_tasks: tasks}}
+    else
+      {:reply,
+       {:error,
+        Error.protocol_error(
+          ErrorCodes.invalid_params(),
+          "MRTR requires MCP 2026-07-28"
+        )}, state}
+    end
+  end
+
+  @doc false
+  def handle_mrtr_fulfillment_completion(task_pid, outcome, state) do
+    case Map.pop(state.mrtr_tasks || %{}, task_pid) do
+      {nil, _tasks} ->
+        {:noreply, state}
+
+      {{ref, from, _scope_ref}, tasks} ->
+        Process.demonitor(ref, [:flush])
+        state = %{state | mrtr_tasks: tasks}
+
+        case outcome do
+          {:ok, responses, new_handler_state} ->
+            GenServer.reply(from, {:ok, responses})
+            {:noreply, update_handler_state(state, new_handler_state)}
+
+          {:error, reason, new_handler_state} ->
+            GenServer.reply(from, {:error, normalize_mrtr_error(reason)})
+            {:noreply, update_handler_state(state, new_handler_state)}
+        end
+    end
+  end
+
+  @doc false
+  def handle_mrtr_fulfillment_down(task_pid, reason, state) do
+    case Map.pop(state.mrtr_tasks || %{}, task_pid) do
+      {nil, _tasks} ->
+        {:noreply, state}
+
+      {{_ref, from, _scope_ref}, tasks} ->
+        Logger.error("MRTR input handler task exited: #{inspect(reason)}")
+
+        GenServer.reply(
+          from,
+          {:error,
+           Error.protocol_error(
+             ErrorCodes.internal_error(),
+             "MRTR input handler failed"
+           )}
+        )
+
+        {:noreply, %{state | mrtr_tasks: tasks}}
+    end
+  end
+
+  @doc false
+  def cancel_mrtr_scope(scope_ref, state) do
+    {cancelled, remaining} =
+      Enum.split_with(state.mrtr_tasks || %{}, fn {_pid, {_ref, _from, task_scope}} ->
+        task_scope == scope_ref
+      end)
+
+    Enum.each(cancelled, fn {pid, {ref, _from, _task_scope}} ->
+      Process.exit(pid, :kill)
+      Process.demonitor(ref, [:flush])
+    end)
+
+    {:noreply, %{state | mrtr_tasks: Map.new(remaining)}}
+  end
+
+  defp normalize_mrtr_error(%Error.ProtocolError{} = error), do: error
+
+  defp normalize_mrtr_error(reason) do
+    Logger.error("MRTR input handler failed: #{inspect(reason)}")
+
+    Error.protocol_error(
+      ErrorCodes.internal_error(),
+      "MRTR input handler failed"
+    )
+  end
+
   # Runs a potentially slow client handler callback (LLM sampling, user
   # elicitation, custom methods) in an unlinked monitored process so it
   # cannot head-of-line-block the client loop. The result is delivered via
@@ -820,6 +1014,15 @@ defmodule ExMCP.Client.RequestHandler do
       _ ->
         handler_error_response(error, request_id)
     end
+  end
+
+  defp kind_error_response(:input_request, %Error.ProtocolError{} = error, request_id) do
+    message =
+      if error.code == ErrorCodes.method_not_found(),
+        do: "Method not found",
+        else: error.message
+
+    build_error_response(error.code, message, request_id)
   end
 
   defp kind_error_response(_kind, error, request_id) do

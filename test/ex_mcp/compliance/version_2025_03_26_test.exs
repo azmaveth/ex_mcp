@@ -64,52 +64,15 @@ defmodule ExMCP.Compliance.Version20250326Test do
     end
   end
 
-  describe "build_capabilities for 2025-03-26" do
-    test "returns a map with protocolVersion set to 2025-03-26" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      assert caps.protocolVersion == "2025-03-26"
-    end
+  describe "canonical capabilities for 2025-03-26" do
+    test "the compatibility shim delegates to VersionRegistry" do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(VersionNegotiator, :build_capabilities, ["2025-03-26"])
 
-    test "returns serverInfo with name and version" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      assert is_map(caps.serverInfo)
-      assert caps.serverInfo.name == "ExMCP"
-      assert is_binary(caps.serverInfo.version)
-    end
-
-    test "capabilities include experimental.batchRequests as true" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      assert caps.capabilities.experimental.batchRequests == true
-    end
-
-    test "capabilities do NOT include protocolVersionHeader" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      refute Map.has_key?(caps.capabilities.experimental, :protocolVersionHeader)
-    end
-
-    test "capabilities do NOT include structuredOutput" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      refute Map.has_key?(caps.capabilities.experimental, :structuredOutput)
-    end
-
-    test "capabilities do NOT include oauth2" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      refute Map.has_key?(caps.capabilities.experimental, :oauth2)
-    end
-
-    test "capabilities do NOT include icons" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      refute Map.has_key?(caps.capabilities.experimental, :icons)
-    end
-
-    test "capabilities do NOT include urlElicitation" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      refute Map.has_key?(caps.capabilities.experimental, :urlElicitation)
-    end
-
-    test "capabilities do NOT include toolCallingInSampling" do
-      caps = VersionNegotiator.build_capabilities("2025-03-26")
-      refute Map.has_key?(caps.capabilities.experimental, :toolCallingInSampling)
+      assert result.protocolVersion == "2025-03-26"
+      assert result.serverInfo.name == "ExMCP"
+      assert result.capabilities == VersionRegistry.capabilities_for_version("2025-03-26")
+      assert result.capabilities.experimental.batchProcessing
     end
   end
 

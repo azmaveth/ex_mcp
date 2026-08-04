@@ -265,11 +265,11 @@ defmodule ExMCP.Transport.HTTP do
       {:ok, response} ->
         case handle_http_response(response, state) do
           {:ok, new_state, response_data} ->
-            new_state = maybe_start_deferred_sse(new_state)
+            new_state = maybe_start_deferred_sse(new_state, message)
             {:ok, new_state, response_data}
 
           {:ok, new_state} ->
-            new_state = maybe_start_deferred_sse(new_state)
+            new_state = maybe_start_deferred_sse(new_state, message)
             {:ok, new_state}
 
           error ->
@@ -279,11 +279,11 @@ defmodule ExMCP.Transport.HTTP do
       {:ok, response, new_state} ->
         case handle_http_response(response, new_state) do
           {:ok, new_state2, response_data} ->
-            new_state2 = maybe_start_deferred_sse(new_state2)
+            new_state2 = maybe_start_deferred_sse(new_state2, message)
             {:ok, new_state2, response_data}
 
           {:ok, new_state2} ->
-            new_state2 = maybe_start_deferred_sse(new_state2)
+            new_state2 = maybe_start_deferred_sse(new_state2, message)
             {:ok, new_state2}
 
           error ->
@@ -708,7 +708,7 @@ defmodule ExMCP.Transport.HTTP do
   # TLS setting.
   @spec httpc_http_options(String.t(), t()) :: keyword()
   def httpc_http_options(url, state) do
-    base_http_opts = [{:timeout, state.timeouts.request}]
+    base_http_opts = [{:timeout, state.timeouts.request}, {:autoredirect, false}]
 
     case URI.parse(url).scheme do
       "https" -> [{:ssl, build_ssl_options_from_state(state)} | base_http_opts]
@@ -1066,6 +1066,26 @@ defmodule ExMCP.Transport.HTTP do
     :ok
   end
 
+  @doc false
+  @spec settle_protocol_era(t(), :legacy | :modern | :unknown, String.t()) :: t()
+  def settle_protocol_era(%__MODULE__{} = state, :modern, version) do
+    if is_pid(state.sse_pid), do: stop_sse_client(state.sse_pid)
+
+    %{
+      state
+      | protocol_version: version,
+        use_sse: false,
+        sse_pid: nil,
+        session_id: nil,
+        last_event_id: nil,
+        sse_deferred_attempted: false
+    }
+  end
+
+  def settle_protocol_era(%__MODULE__{} = state, _era, version) do
+    %{state | protocol_version: version}
+  end
+
   defp stop_sse_client(pid) do
     GenServer.stop(pid, :normal, 1_000)
   catch
@@ -1088,6 +1108,10 @@ defmodule ExMCP.Transport.HTTP do
       nil -> state
       session_id -> %{state | session_id: session_id}
     end
+  end
+
+  defp maybe_start_deferred_sse(state, message) do
+    if modern_request?(message), do: state, else: maybe_start_deferred_sse(state)
   end
 
   defp maybe_start_deferred_sse(
@@ -1123,6 +1147,23 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp maybe_start_deferred_sse(state), do: state
+
+  defp modern_request?(message) when is_binary(message) do
+    case Jason.decode(message) do
+      {:ok,
+       %{
+         "params" => %{
+           "_meta" => %{"io.modelcontextprotocol/protocolVersion" => version}
+         }
+       }} ->
+        is_binary(version)
+
+      _other ->
+        false
+    end
+  end
+
+  defp modern_request?(_message), do: false
 
   # Trigger SSE reconnection when POST response closes without a result.
   # Sends a message to SSEClient to close current connection and reconnect

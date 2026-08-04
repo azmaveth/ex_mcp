@@ -135,6 +135,25 @@ Keep request authentication and authorization at the HTTP edge. Keep
 tool/resource authorization in handler code when it depends on the specific
 tool, resource URI, user, tenant, or project.
 
+### MRTR request state
+
+Modern multi-round requests use an ExMCP-owned, versioned AES-256-GCM envelope.
+The authenticated payload binds the immutable request digest, expected input
+IDs, round, protocol version, endpoint, capability fingerprint, principal, and
+tenant. It contains only bounded JSON application state—never bearer tokens or
+runtime secrets.
+
+Load the 32-byte key ring at runtime and retain decrypt-only old keys for at
+least the maximum token TTL plus clock skew. `active_key_id` selects the only
+encryption key; `revoked_key_ids` immediately prevents use of a compromised
+key. Every node that may resume a request needs the same ring.
+
+AEAD prevents tampering but not replay. Side-effecting resumptions should set
+`require_replay_protection: true` and configure a shared replay-cache adapter.
+`ExMCP.Server.ReplayCache.ETS` is atomic but node-local and is therefore only
+appropriate for single-node deployments. Without an adapter, handlers must
+treat `RequestContext.delivery_semantics == :at_least_once` accordingly.
+
 ### DNS rebinding protection
 
 Protection is Host-allow-list based and is **on by default for localhost

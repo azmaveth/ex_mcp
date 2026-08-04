@@ -65,6 +65,13 @@ defmodule ExMCP.Server.HandlerBridge do
 
   defp normalize({:ok, result, new_state}, _state), do: {:reply, {:ok, result}, new_state}
   defp normalize({:ok, result}, state), do: {:reply, {:ok, result}, state}
+
+  defp normalize({:input_required, input_requests, new_state}, _state),
+    do: {:reply, {:input_required, input_requests, nil}, new_state}
+
+  defp normalize({:input_required, input_requests, application_state, new_state}, _state),
+    do: {:reply, {:input_required, input_requests, application_state}, new_state}
+
   defp normalize({:error, reason, new_state}, _state), do: {:reply, {:error, reason}, new_state}
   defp normalize({:error, reason}, state), do: {:reply, {:error, reason}, state}
   defp normalize(:ok, state), do: {:reply, {:ok, %{}}, state}

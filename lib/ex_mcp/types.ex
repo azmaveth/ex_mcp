@@ -12,6 +12,7 @@ defmodule ExMCP.Types do
   - `ExMCP.Types.V20250326` — subscriptions / batch era
   - `ExMCP.Types.V20250618` — structured tool output; batching removed
   - `ExMCP.Types.V20251125` — tasks, icons, URL elicitation, sampling tool calls
+  - `ExMCP.Types.V20260728` — opt-in stateless era, MRTR, discovery, caching
 
   Prefer `ExMCP.Types.latest_protocol_version/0` and
   `ExMCP.Internal.VersionRegistry` for negotiation rather than hard-coding
@@ -19,8 +20,9 @@ defmodule ExMCP.Types do
 
   > #### Forward looking {: .info}
   >
-  > Upstream is drafting **MCP 2026-07-28** (breaking). ExMCP does not
-  > implement that draft yet; track it for a post-1.0 release.
+  > Upstream released **MCP 2026-07-28** with breaking changes. ExMCP knows
+  > about that revision. Runtime use remains behind explicit protocol modes
+  > until the final 1.0 release-candidate default is selected.
   """
 
   alias ExMCP.Protocol.ErrorCodes
@@ -72,7 +74,8 @@ defmodule ExMCP.Types do
           },
           optional(:sampling) => %{},
           # Elicitation capability (stable in 2025-06-18)
-          optional(:elicitation) => %{}
+          optional(:elicitation) => %{},
+          optional(:extensions) => %{String.t() => map()}
         }
 
   @type server_capabilities :: %{
@@ -88,7 +91,8 @@ defmodule ExMCP.Types do
           },
           optional(:tools) => %{
             optional(:listChanged) => boolean()
-          }
+          },
+          optional(:extensions) => %{String.t() => map()}
         }
 
   # Annotations
@@ -99,13 +103,7 @@ defmodule ExMCP.Types do
         }
 
   # JSON Schema type
-  @type json_schema :: %{
-          required(:type) => String.t(),
-          optional(:properties) => %{String.t() => map()},
-          optional(:required) => [String.t()],
-          optional(:additionalProperties) => boolean(),
-          optional(:description) => String.t()
-        }
+  @type json_schema :: map()
 
   # Tool types
   @type tool_annotations :: %{
@@ -167,7 +165,7 @@ defmodule ExMCP.Types do
           required(:content) => [content()],
           optional(:isError) => boolean(),
           # Structured content (stable in 2025-06-18)
-          optional(:structuredContent) => %{String.t() => any()}
+          optional(:structuredContent) => any()
         }
 
   # Resource types

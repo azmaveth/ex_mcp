@@ -24,6 +24,21 @@ defmodule ExMCP.Protocol.Methods do
   @v2024 Enum.at(@versions, 3)
   @v20250618 Enum.at(@versions, 1)
   @v20251125 Enum.at(@versions, 0)
+  @v20260728 VersionRegistry.known_versions() |> hd()
+
+  @modern_methods ~w(
+    server/discover
+    completion/complete
+    prompts/get
+    prompts/list
+    resources/list
+    resources/templates/list
+    resources/read
+    subscriptions/listen
+    tools/call
+    tools/list
+    notifications/cancelled
+  )
 
   @rows [
     {"initialize", @v2024, nil, :request,
@@ -124,8 +139,13 @@ defmodule ExMCP.Protocol.Methods do
        message_processor: :handle_task_cancel,
        request_processor: :process_task_cancel
      }},
-    {"server/discover", "draft", "draft", :request, %{}},
-    {"subscriptions/listen", "draft", "draft", :request, %{}},
+    {"server/discover", @v20260728, @v20260728, :request,
+     %{
+       server_dispatch: :server_discover,
+       message_processor: :handle_server_discover,
+       request_processor: :process_server_discover
+     }},
+    {"subscriptions/listen", @v20260728, @v20260728, :request, %{}},
     {"notifications/initialized", @v2024, nil, :notification,
      %{request_processor: :process_initialized_notification}},
     {"notifications/tools/list_changed", @v2024, nil, :notification, %{}},
@@ -189,9 +209,14 @@ defmodule ExMCP.Protocol.Methods do
   @spec available?(String.t(), version()) :: boolean()
   def available?(method, version) do
     case Enum.find(@rows, fn {known, _min, _max, _kind, _handlers} -> known == method end) do
-      nil -> true
-      {_method, "draft", "draft", _kind, _handlers} -> version == "draft"
-      {_method, min, max, _kind, _handlers} -> within_bounds?(version, min, max)
+      nil ->
+        true
+
+      {_method, _min, _max, _kind, _handlers} when version == @v20260728 ->
+        method in @modern_methods
+
+      {_method, min, max, _kind, _handlers} ->
+        within_bounds?(version, min, max)
     end
   end
 

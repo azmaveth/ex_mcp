@@ -18,7 +18,8 @@ defmodule ExMCP.Client.AsyncPostResultTest do
         pending_requests: %{},
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
-        async_post_tasks: %{}
+        async_post_tasks: %{},
+        protocol_version: "2025-11-25"
       },
       overrides
     )

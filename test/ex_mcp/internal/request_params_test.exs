@@ -119,4 +119,59 @@ defmodule ExMCP.Internal.RequestParamsTest do
              }
     end
   end
+
+  describe "for_request/2" do
+    test "leaves legacy request params unchanged" do
+      params = %{"name" => "weather", "_meta" => %{"progressToken" => 1}}
+
+      assert {:ok, ^params} =
+               RequestParams.for_request(params, %{
+                 protocol_version: "2025-11-25",
+                 client_info: %{"name" => "ExMCP", "version" => "1"}
+               })
+    end
+
+    test "injects the required metadata on every modern request" do
+      params = %{
+        "name" => "weather",
+        "_meta" => %{
+          "progressToken" => 1,
+          "io.modelcontextprotocol/protocolVersion" => "spoofed"
+        }
+      }
+
+      context = %{
+        protocol_version: "2026-07-28",
+        client_info: %{"name" => "ExMCP", "version" => "1.0"},
+        client_capabilities: %{elicitation: %{form: %{}}}
+      }
+
+      assert {:ok, modern_params} = RequestParams.for_request(params, context)
+      meta = modern_params["_meta"]
+
+      assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+
+      assert meta["io.modelcontextprotocol/clientCapabilities"] == %{
+               "elicitation" => %{"form" => %{}}
+             }
+
+      assert meta["io.modelcontextprotocol/clientInfo"] == %{
+               "name" => "ExMCP",
+               "version" => "1.0"
+             }
+
+      assert meta["progressToken"] == 1
+    end
+
+    test "reads capabilities from client transport options" do
+      context = %{
+        protocol_version: "2026-07-28",
+        client_info: %{"name" => "ExMCP", "version" => "1.0"},
+        transport_opts: [capabilities: %{roots: %{}}]
+      }
+
+      assert {:ok, %{"_meta" => meta}} = RequestParams.for_request(%{}, context)
+      assert meta["io.modelcontextprotocol/clientCapabilities"] == %{"roots" => %{}}
+    end
+  end
 end

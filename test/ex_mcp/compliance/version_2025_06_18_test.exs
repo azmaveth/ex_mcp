@@ -62,60 +62,16 @@ defmodule ExMCP.Compliance.Version20250618Test do
     end
   end
 
-  describe "build_capabilities for 2025-06-18" do
-    test "returns protocolVersion 2025-06-18" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      assert caps.protocolVersion == "2025-06-18"
-    end
+  describe "canonical capabilities for 2025-06-18" do
+    test "the compatibility shim delegates to VersionRegistry" do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(VersionNegotiator, :build_capabilities, ["2025-06-18"])
 
-    test "returns serverInfo with name and version" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      assert is_map(caps.serverInfo)
-      assert caps.serverInfo.name == "ExMCP"
-      assert is_binary(caps.serverInfo.version)
-    end
-
-    test "capabilities include experimental.protocolVersionHeader: true" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      assert caps.capabilities.experimental.protocolVersionHeader == true
-    end
-
-    test "capabilities include experimental.structuredOutput (feature flag dependent)" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      experimental = caps.capabilities.experimental
-      # structuredOutput is present and reflects the feature flag state
-      assert Map.has_key?(experimental, :structuredOutput)
-      assert is_boolean(experimental.structuredOutput) or experimental.structuredOutput == false
-    end
-
-    test "capabilities include experimental.oauth2 (feature flag dependent)" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      experimental = caps.capabilities.experimental
-      # oauth2 is present and reflects the feature flag state (map or false)
-      assert Map.has_key?(experimental, :oauth2)
-    end
-
-    test "NO icons in experimental capabilities" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      experimental = caps.capabilities.experimental
-      refute Map.has_key?(experimental, :icons)
-    end
-
-    test "NO urlElicitation in experimental capabilities" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      experimental = caps.capabilities.experimental
-      refute Map.has_key?(experimental, :urlElicitation)
-    end
-
-    test "NO toolCallingInSampling in experimental capabilities" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      experimental = caps.capabilities.experimental
-      refute Map.has_key?(experimental, :toolCallingInSampling)
-    end
-
-    test "NO tasks capability" do
-      caps = VersionNegotiator.build_capabilities("2025-06-18")
-      refute Map.has_key?(caps.capabilities, :tasks)
+      assert result.protocolVersion == "2025-06-18"
+      assert result.serverInfo.name == "ExMCP"
+      assert result.capabilities == VersionRegistry.capabilities_for_version("2025-06-18")
+      assert result.capabilities.experimental.structuredContent
+      refute Map.has_key?(result.capabilities, :tasks)
     end
   end
 

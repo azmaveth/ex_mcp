@@ -8,6 +8,10 @@ defmodule ExMCP.Error do
 
   defstruct [:code, :message, :data, :request_id, __exception__: true]
 
+  alias ExMCP.Protocol.ErrorCodes
+
+  @prompt_error_code ErrorCodes.prompt_error()
+
   @type t :: %__MODULE__{
           code: integer(),
           message: String.t(),
@@ -26,6 +30,12 @@ defmodule ExMCP.Error do
     Errors related to MCP protocol violations.
     """
     defexception [:code, :message, :data]
+
+    @type t :: %__MODULE__{
+            code: integer(),
+            message: String.t(),
+            data: any()
+          }
 
     @impl true
     def message(%{code: code, message: message}) do
@@ -93,12 +103,33 @@ defmodule ExMCP.Error do
   * `-32603` - Internal error
   * `-32000` to `-32099` - Server error
   """
-  def protocol_error(code, message, data \\ nil) do
+  def protocol_error(code, message, data \\ nil)
+
+  def protocol_error(_code, %ProtocolError{} = error, _data), do: error
+
+  def protocol_error(code, message, data) do
     %ProtocolError{
       code: code,
       message: message,
       data: data
     }
+  end
+
+  @doc """
+  Creates the MCP 2026-07-28 error returned when a server operation requires
+  client capabilities that were not declared on the request.
+
+  Handlers may return this value as their normal error reason; every ExMCP
+  server dispatcher preserves its code and `requiredCapabilities` data.
+  """
+  @spec missing_required_client_capability(map()) :: ProtocolError.t()
+  def missing_required_client_capability(required_capabilities)
+      when is_map(required_capabilities) do
+    protocol_error(
+      ErrorCodes.missing_required_client_capability(),
+      "Missing required client capability",
+      %{"requiredCapabilities" => required_capabilities}
+    )
   end
 
   @doc """
@@ -233,6 +264,8 @@ defmodule ExMCP.Error do
   def resource_error(details, uri) when is_binary(details) and is_binary(uri) do
     resource_error_struct(details, uri, [])
   end
+
+  def resource_error(_uri, _operation, %ProtocolError{} = error), do: error
 
   def resource_error(uri, operation, reason) when is_atom(operation) do
     %ResourceError{
@@ -381,7 +414,7 @@ defmodule ExMCP.Error do
       end
 
     %__MODULE__{
-      code: -32002,
+      code: @prompt_error_code,
       message: "Prompt error in '#{prompt_name}': #{details}",
       data: data,
       request_id: Keyword.get(opts, :request_id),
@@ -451,6 +484,9 @@ defmodule ExMCP.Error do
   def mcp_error?(%__MODULE__{code: code}) when code in [-32000, -32001, -32002], do: true
   def mcp_error?(_), do: false
 
+  def application_error?(%__MODULE__{code: code}), do: ErrorCodes.application_error?(code)
+  def application_error?(_), do: false
+
   def category(%__MODULE__{code: -32700}), do: "Parse Error"
   def category(%__MODULE__{code: -32600}), do: "Invalid Request"
   def category(%__MODULE__{code: -32601}), do: "Method Not Found"
@@ -458,7 +494,8 @@ defmodule ExMCP.Error do
   def category(%__MODULE__{code: -32603}), do: "Internal Error"
   def category(%__MODULE__{code: -32000}), do: "Tool Error"
   def category(%__MODULE__{code: -32001}), do: "Resource Error"
-  def category(%__MODULE__{code: -32002}), do: "Prompt Error"
+  def category(%__MODULE__{code: @prompt_error_code}), do: "Prompt Error"
+  def category(%__MODULE__{code: -32002}), do: "Legacy Resource Not Found"
   def category(%__MODULE__{code: -32003}), do: "Transport Error"
   def category(%__MODULE__{code: -32004}), do: "Authentication Error"
   def category(%__MODULE__{code: -32005}), do: "Authorization Error"

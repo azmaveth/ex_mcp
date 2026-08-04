@@ -8,7 +8,8 @@ defmodule ExMCP.Client.ConnectionManager do
 
   require Logger
   # alias ExMCP.TransportManager  # Not using full manager for now
-  alias ExMCP.Internal.{Protocol, VersionInfo}
+  alias ExMCP.Client.{EraCache, EraProbe}
+  alias ExMCP.Internal.{Protocol, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Transport.{HTTP, Local, ReliabilityWrapper, Stdio, Test}
 
@@ -47,17 +48,18 @@ defmodule ExMCP.Client.ConnectionManager do
   defp do_establish_connection(state, opts) do
     with {:ok, transport_manager_opts} <- prepare_transport_config(opts),
          {:ok, {transport_mod, transport_state}} <- connect_transport(transport_manager_opts),
-         {:ok, result, state_after_handshake} <-
-           do_handshake(transport_mod, transport_state, opts),
-         {:ok, state_after_initialized} <-
-           send_initialized(transport_mod, state_after_handshake, result),
+         era_identity = EraCache.identity(transport_mod, transport_state, opts),
+         :ok <- maybe_reset_era_cache(era_identity, opts),
+         {:ok, result, state_after_protocol} <-
+           establish_protocol(transport_mod, transport_state, opts, era_identity),
+         state_after_protocol = settle_transport_era(transport_mod, state_after_protocol, result),
          {:ok, receiver_result} <-
-           start_receiver_task(self(), transport_mod, state_after_initialized) do
+           start_receiver_task(self(), transport_mod, state_after_protocol) do
       # Push mode returns {:push, updated_transport_state} — extract it
       {receiver_task, final_transport_state} =
         case receiver_result do
           {:push, new_ts} -> {:push, new_ts}
-          task -> {task, state_after_initialized}
+          task -> {task, state_after_protocol}
         end
 
       new_state =
@@ -78,6 +80,233 @@ defmodule ExMCP.Client.ConnectionManager do
         {:error, "Unexpected error during connection: #{inspect(error)}"}
     end
   end
+
+  defp establish_protocol(transport_mod, transport_state, opts, era_identity) do
+    mode = Keyword.get(opts, :protocol_mode) || VersionRegistry.protocol_mode()
+
+    case mode do
+      :legacy_only ->
+        establish_legacy_protocol(transport_mod, transport_state, opts, era_identity)
+
+      :modern_only ->
+        establish_modern_protocol(transport_mod, transport_state, opts, era_identity, false)
+
+      :prefer_modern ->
+        establish_prefer_modern(transport_mod, transport_state, opts, era_identity)
+
+      :prefer_legacy ->
+        establish_prefer_legacy(transport_mod, transport_state, opts, era_identity)
+
+      invalid ->
+        {:error, {:invalid_protocol_mode, invalid}}
+    end
+  end
+
+  defp establish_legacy_protocol(transport_mod, transport_state, opts, era_identity) do
+    with {:ok, result, state_after_handshake} <-
+           do_handshake(transport_mod, transport_state, opts),
+         {:ok, state_after_initialized} <-
+           send_initialized(transport_mod, state_after_handshake, result) do
+      emit_settled_era(:legacy, result["protocolVersion"])
+      observe_era(era_identity, :legacy, result["protocolVersion"], opts)
+      {:ok, result, state_after_initialized}
+    end
+  end
+
+  defp establish_modern_protocol(transport_mod, transport_state, opts, era_identity, pinned?) do
+    case EraProbe.probe(transport_mod, transport_state, opts) do
+      {:ok, discovery, updated_state} ->
+        emit_settled_era(:modern, discovery.protocol_version)
+        observe_era(era_identity, :modern, discovery.protocol_version, opts)
+        {:ok, discovery_as_connection_result(discovery), updated_state}
+
+      {:error, reason, _updated_state} ->
+        if pinned? do
+          {:error,
+           {:pinned_modern_era_probe_failed,
+            %{probe: reason, action: :clear_era_observation_or_change_configuration}}}
+        else
+          {:error, {:era_probe_failed, reason}}
+        end
+    end
+  end
+
+  defp establish_prefer_modern(transport_mod, transport_state, opts, era_identity) do
+    case cached_era(era_identity) do
+      :modern ->
+        establish_modern_protocol(transport_mod, transport_state, opts, era_identity, true)
+
+      :legacy ->
+        establish_legacy_protocol(transport_mod, transport_state, opts, era_identity)
+
+      :miss ->
+        probe_then_maybe_legacy(transport_mod, transport_state, opts, era_identity)
+    end
+  end
+
+  defp probe_then_maybe_legacy(transport_mod, transport_state, opts, era_identity) do
+    case EraProbe.probe(transport_mod, transport_state, opts) do
+      {:ok, discovery, updated_state} ->
+        emit_settled_era(:modern, discovery.protocol_version)
+        observe_era(era_identity, :modern, discovery.protocol_version, opts)
+        {:ok, discovery_as_connection_result(discovery), updated_state}
+
+      {:error, probe_error, updated_state} ->
+        if legacy_fallback_evidence?(probe_error) and
+             transport_alive?(transport_mod, updated_state) do
+          case establish_legacy_protocol(
+                 transport_mod,
+                 updated_state,
+                 opts,
+                 era_identity
+               ) do
+            {:ok, _result, _state} = success ->
+              :telemetry.execute(
+                [:ex_mcp, :client, :era, :fallback],
+                %{},
+                %{from: :modern, to: :legacy, probe_error: probe_error}
+              )
+
+              success
+
+            {:error, initialize_error} ->
+              {:error,
+               {:era_probe_and_initialize_failed,
+                %{probe: probe_error, initialize: initialize_error}}}
+          end
+        else
+          {:error, {:era_probe_failed, probe_error}}
+        end
+    end
+  end
+
+  defp establish_prefer_legacy(transport_mod, transport_state, opts, era_identity) do
+    case cached_era(era_identity) do
+      :modern ->
+        establish_modern_protocol(transport_mod, transport_state, opts, era_identity, true)
+
+      :legacy ->
+        establish_legacy_protocol(transport_mod, transport_state, opts, era_identity)
+
+      :miss ->
+        initialize_then_maybe_modern(transport_mod, transport_state, opts, era_identity)
+    end
+  end
+
+  defp initialize_then_maybe_modern(transport_mod, transport_state, opts, era_identity) do
+    case establish_legacy_protocol(transport_mod, transport_state, opts, era_identity) do
+      {:ok, _result, _state} = success ->
+        success
+
+      {:error, initialize_error} ->
+        if legacy_protocol_failure?(initialize_error) and
+             transport_alive?(transport_mod, transport_state) do
+          case EraProbe.probe(transport_mod, transport_state, opts) do
+            {:ok, discovery, updated_state} ->
+              emit_settled_era(:modern, discovery.protocol_version)
+              observe_era(era_identity, :modern, discovery.protocol_version, opts)
+              {:ok, discovery_as_connection_result(discovery), updated_state}
+
+            {:error, probe_error, _updated_state} ->
+              {:error,
+               {:initialize_and_era_probe_failed,
+                %{initialize: initialize_error, probe: probe_error}}}
+          end
+        else
+          {:error, initialize_error}
+        end
+    end
+  end
+
+  defp discovery_as_connection_result(discovery) do
+    %{
+      "protocolVersion" => discovery.protocol_version,
+      "capabilities" => discovery.server_capabilities,
+      "serverInfo" => discovery.server_info
+    }
+  end
+
+  defp legacy_fallback_evidence?({:json_rpc_error, error}) do
+    not modern_specific_error?(error)
+  end
+
+  defp legacy_fallback_evidence?({:probe_timeout, _reason}), do: true
+  defp legacy_fallback_evidence?({:http_probe_rejected, _response}), do: true
+  defp legacy_fallback_evidence?(_reason), do: false
+
+  defp modern_specific_error?(%{"code" => -32022, "data" => data}) when is_map(data) do
+    is_list(data["supported"]) and is_binary(data["requested"])
+  end
+
+  defp modern_specific_error?(_error), do: false
+
+  defp legacy_protocol_failure?(:invalid_request), do: true
+  defp legacy_protocol_failure?({:method_not_found, _message}), do: true
+  defp legacy_protocol_failure?({:initialize_rejected, _error}), do: true
+  defp legacy_protocol_failure?(_reason), do: false
+
+  defp transport_alive?(transport_mod, transport_state) do
+    if function_exported?(transport_mod, :connected?, 1) do
+      transport_mod.connected?(transport_state)
+    else
+      true
+    end
+  rescue
+    _error -> false
+  end
+
+  defp emit_settled_era(era, version) do
+    :telemetry.execute(
+      [:ex_mcp, :client, :era, :settled],
+      %{},
+      %{era: era, protocol_version: version}
+    )
+  end
+
+  defp cached_era(identity) do
+    case EraCache.lookup(identity) do
+      {:ok, %{era: era, protocol_version: version}} ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :era, :cache_hit],
+          %{},
+          %{era: era, protocol_version: version}
+        )
+
+        era
+
+      :miss ->
+        :miss
+    end
+  end
+
+  defp maybe_reset_era_cache(identity, opts) do
+    if Keyword.get(opts, :reset_era_cache, false), do: EraCache.clear(identity), else: :ok
+  end
+
+  defp observe_era(identity, era, version, opts) when is_binary(version) do
+    EraCache.observe(identity, era, version, opts)
+  end
+
+  defp observe_era(_identity, _era, _version, _opts), do: :ok
+
+  defp settle_transport_era(HTTP, transport_state, result) do
+    version = result["protocolVersion"]
+    HTTP.settle_protocol_era(transport_state, VersionRegistry.era_for(version), version)
+  end
+
+  defp settle_transport_era(ReliabilityWrapper, transport_state, result) do
+    case ReliabilityWrapper.unwrap(transport_state) do
+      {HTTP, http_state} ->
+        version = result["protocolVersion"]
+        settled = HTTP.settle_protocol_era(http_state, VersionRegistry.era_for(version), version)
+        %{transport_state | wrapped_state: settled}
+
+      _other ->
+        transport_state
+    end
+  end
+
+  defp settle_transport_era(_transport_mod, transport_state, _result), do: transport_state
 
   @doc """
   The message receiving loop.
@@ -391,7 +620,7 @@ defmodule ExMCP.Client.ConnectionManager do
         case error_code do
           -32600 -> {:error, :invalid_request}
           -32601 -> {:error, {:method_not_found, error_message}}
-          _ -> {:error, "Handshake failed: #{error_message}"}
+          _ -> {:error, {:initialize_rejected, error_details}}
         end
 
       {:error, :invalid_message} ->

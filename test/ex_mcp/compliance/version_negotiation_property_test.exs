@@ -17,6 +17,7 @@ defmodule ExMCP.Compliance.VersionNegotiationPropertyTest do
   use ExUnit.Case, async: true
   use PropCheck
 
+  alias ExMCP.Internal.VersionRegistry
   alias ExMCP.Protocol.VersionNegotiator
 
   @supported_versions VersionNegotiator.supported_versions()
@@ -132,39 +133,14 @@ defmodule ExMCP.Compliance.VersionNegotiationPropertyTest do
     end
   end
 
-  property "build_capabilities returns a valid capabilities map for any supported version" do
+  property "the capability compatibility shim delegates for every supported version" do
     forall version <- supported_version_gen() do
-      capabilities = VersionNegotiator.build_capabilities(version)
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(VersionNegotiator, :build_capabilities, [version])
 
-      case capabilities do
-        %{
-          protocolVersion: ^version,
-          serverInfo: %{name: "ExMCP", version: _},
-          capabilities: %{experimental: experimental_caps}
-        } ->
-          # Verify that version-specific capabilities are present.
-          # The exact values may depend on feature flags, so we just check for keys.
-          case version do
-            "2025-11-25" ->
-              Map.has_key?(experimental_caps, :protocolVersionHeader) and
-                Map.has_key?(experimental_caps, :structuredOutput) and
-                Map.has_key?(experimental_caps, :oauth2)
-
-            "2025-06-18" ->
-              Map.has_key?(experimental_caps, :protocolVersionHeader) and
-                Map.has_key?(experimental_caps, :structuredOutput) and
-                Map.has_key?(experimental_caps, :oauth2)
-
-            "2025-03-26" ->
-              Map.has_key?(experimental_caps, :batchRequests)
-
-            "2024-11-05" ->
-              Map.has_key?(experimental_caps, :batchRequests)
-          end
-
-        _ ->
-          false
-      end
+      result.protocolVersion == version and
+        result.serverInfo.name == "ExMCP" and
+        result.capabilities == VersionRegistry.capabilities_for_version(version)
     end
   end
 end

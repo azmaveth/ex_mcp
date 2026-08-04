@@ -37,6 +37,11 @@ defmodule ExMCP.Server.DispatchTest do
       {:error, %{internal: :secret_detail}, state}
     end
 
+    def handle_call_tool("needs_sampling", _args, state) do
+      error = ExMCP.Error.missing_required_client_capability(%{"sampling" => %{}})
+      {:error, error, state}
+    end
+
     def handle_call_tool(name, _args, state) do
       {:error, "Unknown tool: #{name}", state}
     end
@@ -101,6 +106,84 @@ defmodule ExMCP.Server.DispatchTest do
 
     test "ping answers an empty result" do
       assert {:response, %{"result" => %{}}, _state} = dispatch("ping")
+    end
+
+    test "rejects incomplete modern request metadata before dispatch" do
+      params = %{
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => "2026-07-28"
+        }
+      }
+
+      assert {:response, %{"error" => error}, _state} = dispatch("tools/list", params)
+      assert error["code"] == -32602
+      assert error["data"]["field"] == "io.modelcontextprotocol/clientCapabilities"
+    end
+
+    test "advertises the configured modern versions for unsupported requests" do
+      params = %{
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => "2099-01-01",
+          "io.modelcontextprotocol/clientCapabilities" => %{}
+        }
+      }
+
+      assert {:response, %{"error" => error}, _state} =
+               Dispatch.dispatch(
+                 request("tools/list", params),
+                 FullHandler,
+                 %{level: nil},
+                 protocol_mode: :modern_only
+               )
+
+      assert error["code"] == -32022
+
+      assert error["data"] == %{
+               "requested" => "2099-01-01",
+               "supported" => ["2026-07-28"]
+             }
+    end
+
+    test "stamps successful modern results at the dispatch boundary" do
+      params = %{
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities" => %{}
+        }
+      }
+
+      assert {:response, %{"result" => result}, _state} = dispatch("tools/list", params)
+      assert result["resultType"] == "complete"
+      assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "ExMCP"
+    end
+
+    test "preserves missing client capability errors from handlers" do
+      params = %{
+        "name" => "needs_sampling",
+        "arguments" => %{},
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities" => %{}
+        }
+      }
+
+      assert {:response, %{"error" => error}, _state} = dispatch("tools/call", params)
+      assert error["code"] == -32021
+      assert error["data"]["requiredCapabilities"] == %{"sampling" => %{}}
+    end
+
+    test "rejects methods removed from the modern protocol" do
+      params = %{
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities" => %{}
+        }
+      }
+
+      assert {:response, %{"error" => error}, _state} = dispatch("ping", params)
+      assert error["code"] == -32601
+      assert error["data"]["method"] == "ping"
+      assert error["data"]["protocolVersion"] == "2026-07-28"
     end
   end
 

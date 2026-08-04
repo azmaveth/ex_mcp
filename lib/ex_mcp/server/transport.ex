@@ -127,14 +127,28 @@ defmodule ExMCP.Server.Transport do
 
     # Configure the HTTP Plug. Tools are read from the handler module, so the
     # `tools` argument is not forwarded (ExMCP.HttpPlug.init/1 ignores it).
-    plug_opts = [
-      handler: module,
-      server_info: server_info,
-      sse_enabled: sse_enabled,
-      cors_enabled: cors_enabled,
-      allowed_hosts: allowed_hosts,
-      allowed_origins: allowed_origins
-    ]
+    plug_opts =
+      [
+        handler: module,
+        server_info: server_info,
+        sse_enabled: sse_enabled,
+        cors_enabled: cors_enabled,
+        allowed_hosts: allowed_hosts,
+        allowed_origins: allowed_origins
+      ] ++
+        Keyword.take(opts, [
+          :request_state,
+          :mrtr,
+          :path,
+          :protocol_mode,
+          :instructions,
+          :server_capabilities,
+          :handler_call_timeout,
+          :max_input_requests,
+          :max_mrtr_bytes,
+          :replay_cache,
+          :require_replay_protection
+        ])
 
     Logger.info("Starting MCP HTTP server on #{host}:#{port} (SSE: #{sse_enabled})")
 

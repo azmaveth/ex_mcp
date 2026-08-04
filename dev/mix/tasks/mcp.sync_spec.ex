@@ -168,9 +168,26 @@ defmodule Mix.Tasks.Mcp.SyncSpec do
     doc_files =
       if opts[:schema_only],
         do: [],
-        else: FileMapper.doc_files_for_version(version)
+        else: discover_doc_files(version, opts)
 
     schema_files ++ doc_files
+  end
+
+  defp discover_doc_files(version, opts) do
+    directory = "docs/specification/#{version}"
+
+    case GitHubClient.list_directory(directory, client_opts(opts)) do
+      {:ok, paths} ->
+        Enum.filter(paths, &FileMapper.mdx_file?/1)
+
+      {:error, reason} ->
+        warn(
+          "Could not enumerate #{version} documentation (#{inspect(reason)}); " <>
+            "using the known-file fallback"
+        )
+
+        FileMapper.doc_files_for_version(version)
+    end
   end
 
   # Tutorial docs that live outside specification/VERSION/ (e.g. Security Best Practices).

@@ -79,62 +79,15 @@ defmodule ExMCP.Compliance.Version20251125Test do
     end
   end
 
-  describe "build_capabilities for 2025-11-25" do
-    test "returns a map with protocolVersion set to 2025-11-25" do
-      caps = VersionNegotiator.build_capabilities("2025-11-25")
-      assert caps.protocolVersion == "2025-11-25"
-    end
+  describe "canonical capabilities for 2025-11-25" do
+    test "the compatibility shim delegates to VersionRegistry" do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(VersionNegotiator, :build_capabilities, ["2025-11-25"])
 
-    test "returns serverInfo with name and version" do
-      caps = VersionNegotiator.build_capabilities("2025-11-25")
-      assert is_map(caps.serverInfo)
-      assert caps.serverInfo.name == "ExMCP"
-      assert is_binary(caps.serverInfo.version)
-    end
-
-    test "returns capabilities map" do
-      caps = VersionNegotiator.build_capabilities("2025-11-25")
-      assert is_map(caps.capabilities)
-    end
-
-    test "capabilities include experimental features" do
-      caps = VersionNegotiator.build_capabilities("2025-11-25")
-      experimental = caps.capabilities.experimental
-
-      assert experimental.protocolVersionHeader == true
-      assert experimental.icons == true
-      assert experimental.urlElicitation == true
-      assert experimental.toolCallingInSampling == true
-    end
-
-    test "capabilities include tasks capability" do
-      # Enable the tasks feature flag for this test
-      prev = Application.get_env(:ex_mcp, :tasks_enabled)
-      Application.put_env(:ex_mcp, :tasks_enabled, true)
-
-      caps = VersionNegotiator.build_capabilities("2025-11-25")
-      assert caps.capabilities.tasks == %{}
-
-      # Restore previous value
-      if prev do
-        Application.put_env(:ex_mcp, :tasks_enabled, prev)
-      else
-        Application.delete_env(:ex_mcp, :tasks_enabled)
-      end
-    end
-
-    test "tasks capability is false when feature flag is disabled" do
-      prev = Application.get_env(:ex_mcp, :tasks_enabled)
-      Application.put_env(:ex_mcp, :tasks_enabled, false)
-
-      caps = VersionNegotiator.build_capabilities("2025-11-25")
-      assert caps.capabilities.tasks == false
-
-      if prev do
-        Application.put_env(:ex_mcp, :tasks_enabled, prev)
-      else
-        Application.delete_env(:ex_mcp, :tasks_enabled)
-      end
+      assert result.protocolVersion == "2025-11-25"
+      assert result.serverInfo.name == "ExMCP"
+      assert result.capabilities == VersionRegistry.capabilities_for_version("2025-11-25")
+      assert result.capabilities.tasks == %{}
     end
   end
 

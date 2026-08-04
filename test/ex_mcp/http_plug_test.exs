@@ -60,6 +60,22 @@ defmodule ExMCP.HttpPlugTest do
     end
   end
 
+  defmodule CapabilityErrorServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def handle_initialize(_params, state), do: {:ok, %{}, state}
+
+    @impl true
+    def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+
+    @impl true
+    def handle_call_tool(_name, _arguments, state) do
+      error = ExMCP.Error.missing_required_client_capability(%{"sampling" => %{}})
+      {:error, error, state}
+    end
+  end
+
   defmodule TrackingSessionManager do
     @table :http_plug_test_session_manager
 
@@ -79,6 +95,10 @@ defmodule ExMCP.HttpPlugTest do
 
     def update_session(session_id, attrs) do
       notify({:session_updated, session_id, attrs})
+    end
+
+    def ensure_session(session_id, attrs) do
+      notify({:session_ensured, session_id, attrs})
     end
 
     def terminate_session(session_id) do
@@ -397,6 +417,60 @@ defmodule ExMCP.HttpPlugTest do
   end
 
   describe "session ID validation" do
+    test "modern requests are stateless and ignore legacy session headers" do
+      {:ok, _} = TrackingSessionManager.start_link(self())
+
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "tools/list",
+        "id" => 9,
+        "params" => %{
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities" => %{}
+          }
+        }
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", "ignored legacy session")
+        |> put_req_header("last-event-id", "ignored-event")
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            protocol_mode: :modern_only,
+            session_manager: TrackingSessionManager,
+            sse_enabled: false
+          )
+        )
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "mcp-session-id") == []
+      assert %{"result" => %{"resultType" => "complete"}} = Jason.decode!(conn.resp_body)
+      refute_received {:session_ensured, _session_id, _attrs}
+    end
+
+    test "legacy requests retain session-scoped behavior" do
+      {:ok, _} = TrackingSessionManager.start_link(self())
+
+      conn =
+        session_request_conn()
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            protocol_mode: :prefer_modern,
+            session_manager: TrackingSessionManager,
+            sse_enabled: false
+          )
+        )
+
+      assert conn.status == 200
+      assert [session_id] = get_resp_header(conn, "mcp-session-id")
+      assert_received {:session_ensured, ^session_id, %{transport: :http}}
+    end
+
     test "accepts and echoes a UUID session id" do
       uuid = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -476,6 +550,121 @@ defmodule ExMCP.HttpPlugTest do
   end
 
   describe "MCP POST requests" do
+    test "returns HTTP 400 for invalid modern request metadata" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "tools/list",
+        "params" => %{
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28"
+          }
+        },
+        "id" => 101
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 400
+      assert Jason.decode!(conn.resp_body)["error"]["code"] == -32602
+    end
+
+    test "stamps valid modern handler results" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "tools/list",
+        "params" => %{
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities" => %{}
+          }
+        },
+        "id" => 102
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            server_info: %{name: "configured-server", version: "1"},
+            sse_enabled: false
+          )
+        )
+
+      assert conn.status == 200
+      result = Jason.decode!(conn.resp_body)["result"]
+      assert result["resultType"] == "complete"
+
+      assert result["_meta"]["io.modelcontextprotocol/serverInfo"] == %{
+               "name" => "configured-server",
+               "version" => "1"
+             }
+    end
+
+    test "serves modern discovery without initialize" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "server/discover",
+        "params" => %{
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities" => %{}
+          }
+        },
+        "id" => 103
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            server_info: %{name: "discoverable", version: "1"},
+            protocol_mode: :modern_only,
+            sse_enabled: false
+          )
+        )
+
+      assert conn.status == 200
+      result = Jason.decode!(conn.resp_body)["result"]
+      assert result["resultType"] == "complete"
+      assert result["supportedVersions"] == ["2026-07-28"]
+      assert result["capabilities"]["tools"] == %{}
+      assert result["ttlMs"] >= 0
+      assert result["cacheScope"] in ["public", "private"]
+    end
+
+    test "preserves missing client capability errors from handlers" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "tools/call",
+        "params" => %{
+          "name" => "needs_sampling",
+          "arguments" => %{},
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities" => %{}
+          }
+        },
+        "id" => 104
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: CapabilityErrorServer, sse_enabled: false))
+
+      assert conn.status == 200
+      error = Jason.decode!(conn.resp_body)["error"]
+      assert error["code"] == -32021
+      assert error["data"]["requiredCapabilities"] == %{"sampling" => %{}}
+    end
+
     test "handles initialize request" do
       request = %{
         "jsonrpc" => "2.0",

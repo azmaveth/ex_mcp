@@ -37,17 +37,19 @@ defmodule ExMCP.Client do
   use GenServer
   require Logger
 
-  alias ExMCP.Client.{ConnectionManager, RequestHandler}
+  alias ExMCP.Client.{ConnectionManager, EraCache, MRTR, RequestHandler}
   alias ExMCP.Client.Operations.{Prompts, Resources, Tools}
-  alias ExMCP.Internal.{Protocol, RequestParams, VersionInfo}
+  alias ExMCP.Internal.{Protocol, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
+  alias ExMCP.Server.Discover
 
   # Reconnection defaults ported from the former state machine implementation:
   # exponential backoff starting at 1s, doubling per attempt, capped at 60s,
   # with up to 10 attempts before giving up.
   @default_max_reconnect_attempts 10
   @default_reconnect_backoff [initial: 1_000, max: 60_000, multiplier: 2]
+  @default_max_mrtr_rounds 8
 
   # Client state
   defstruct [
@@ -89,7 +91,10 @@ defmodule ExMCP.Client do
     # In-flight server-request handler tasks (sampling/elicitation/custom):
     # task pid => {monitor_ref, request_id, kind}. Handlers run off the
     # client loop so a slow sampling callback cannot block responses.
-    server_request_tasks: %{}
+    server_request_tasks: %{},
+    # In-flight MRTR input fulfillment tasks. Each task may perform several
+    # input callbacks sequentially while the client loop remains responsive.
+    mrtr_tasks: %{}
   ]
 
   @type t :: GenServer.server()
@@ -108,6 +113,14 @@ defmodule ExMCP.Client do
   - `:handshake_timeout` - Maximum time in milliseconds to wait for the
     server's `initialize` response during connection (default: 10_000).
     On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
+  - `:protocol_mode` - Era policy: `:modern_only`, `:legacy_only`,
+    `:prefer_modern`, or `:prefer_legacy`.
+  - `:era_probe_timeout` - Dedicated timeout for the side-effect-free modern
+    discovery probe (default: 2_000 milliseconds).
+  - `:era_cache_legacy_ttl` - How long a successful legacy observation is
+    reused before probing for an upgrade again (default: 300_000 milliseconds).
+  - `:reset_era_cache` - Clear the observation for this exact transport,
+    endpoint, and auth configuration before connecting (default: `false`).
   - `:health_check_interval` - Interval in milliseconds between idle health
     check pings (default: 30_000). Set to `nil` or `0` to disable.
   - `:reliability` - Reliability features configuration (optional)
@@ -602,13 +615,40 @@ defmodule ExMCP.Client do
   @doc """
   Gets the negotiated protocol version with the server.
   """
-  @spec negotiated_version(t()) :: {:ok, String.t()} | {:error, any()}
+  @spec negotiated_version(t()) :: {:ok, String.t() | nil} | {:error, any()}
   def negotiated_version(client) do
     case get_status(client) do
       {:ok, %{protocol_version: version}} -> {:ok, version}
       _ -> {:error, :not_connected}
     end
   end
+
+  @doc """
+  Discovers a modern MCP server's versions, capabilities, and identity.
+
+  A successful discovery also updates the client's protocol version,
+  `server_info`, and `server_capabilities` state. Automatic discovery during
+  connection establishment is handled separately by the era probe.
+  """
+  @spec discover(t(), keyword()) :: {:ok, map()} | {:error, any()}
+  def discover(client, opts \\ []) do
+    request_opts = Keyword.put(opts, :format, :map)
+
+    with {:ok, result} <- make_request(client, "server/discover", %{}, request_opts, 5_000),
+         :ok <- GenServer.call(client, {:apply_discover_result, result}) do
+      {:ok, result}
+    end
+  end
+
+  @doc """
+  Clears all remembered protocol-era observations.
+
+  This is an operator action intended for configuration changes or recovery
+  from a previously pinned modern endpoint. To clear only the identity used by
+  one new connection, pass `reset_era_cache: true` to `start_link/1`.
+  """
+  @spec clear_era_observations() :: :ok
+  def clear_era_observations, do: EraCache.clear()
 
   @doc """
   Pings the server.
@@ -623,7 +663,23 @@ defmodule ExMCP.Client do
       end
 
     opts = if is_list(opts_or_timeout), do: opts_or_timeout, else: []
-    make_request(client, "ping", %{}, opts, timeout)
+
+    case negotiated_version(client) do
+      {:ok, version} when is_binary(version) ->
+        if VersionRegistry.modern?(version) do
+          discover(client, Keyword.put(opts, :timeout, timeout))
+        else
+          make_request(client, "ping", %{}, opts, timeout)
+        end
+
+      {:ok, nil} ->
+        # Older custom initialize handlers may omit protocolVersion. Preserve
+        # the 1.x behavior by treating that connected shape as legacy.
+        make_request(client, "ping", %{}, opts, timeout)
+
+      _other ->
+        {:error, :not_connected}
+    end
   end
 
   @doc """
@@ -770,6 +826,28 @@ defmodule ExMCP.Client do
     }
   end
 
+  defp select_discovered_version(server_versions, state) do
+    mode = Keyword.get(state.transport_opts, :protocol_mode) || :prefer_modern
+    enabled_versions = VersionRegistry.enabled_versions(mode)
+
+    selected =
+      if state.protocol_version in server_versions and state.protocol_version in enabled_versions do
+        state.protocol_version
+      else
+        Enum.find(enabled_versions, &(&1 in server_versions))
+      end
+
+    case selected do
+      nil ->
+        {:error,
+         {:no_mutually_supported_protocol_version,
+          %{server: server_versions, client: enabled_versions}}}
+
+      version ->
+        {:ok, version}
+    end
+  end
+
   # Establish connection with the server
   defp establish_connection(state, opts) do
     connection_opts = Keyword.put(opts, :retry_policy, state.default_retry_policy)
@@ -816,6 +894,14 @@ defmodule ExMCP.Client do
     {:initialize_error, %{"code" => ErrorCodes.method_not_found(), "message" => message}}
   end
 
+  defp normalize_connection_error({:initialize_rejected, error}) when is_map(error) do
+    if error["code"] == ErrorCodes.unsupported_protocol_version() do
+      {:initialize_error, error}
+    else
+      {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
+    end
+  end
+
   defp normalize_connection_error(error) when is_binary(error) do
     if String.contains?(error, "Handshake failed") do
       {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
@@ -859,6 +945,11 @@ defmodule ExMCP.Client do
     )
 
     RequestHandler.handle_request(method, params, from, state, meta)
+  end
+
+  def handle_call({:fulfill_mrtr, input_requests, opts, scope_ref}, from, state)
+      when is_map(input_requests) and is_list(opts) do
+    RequestHandler.handle_mrtr_fulfillment(input_requests, opts, scope_ref, from, state)
   end
 
   def handle_call(:get_default_retry_policy, _from, state) do
@@ -972,6 +1063,22 @@ defmodule ExMCP.Client do
     {:reply, {:ok, status}, state}
   end
 
+  def handle_call({:apply_discover_result, result}, _from, state) do
+    with {:ok, discovery} <- Discover.parse_result(result),
+         {:ok, version} <- select_discovered_version(discovery.supported_versions, state) do
+      updated_state = %{
+        state
+        | protocol_version: version,
+          server_capabilities: discovery.capabilities,
+          server_info: discovery.server_info
+      }
+
+      {:reply, :ok, updated_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   def handle_call(:get_pending_requests, _from, state) do
     # Return list of pending request IDs from the state
     pending_ids = Map.keys(state.pending_requests)
@@ -1007,6 +1114,10 @@ defmodule ExMCP.Client do
   end
 
   @impl GenServer
+  def handle_cast({:cancel_mrtr_scope, scope_ref}, state) when is_reference(scope_ref) do
+    RequestHandler.cancel_mrtr_scope(scope_ref, state)
+  end
+
   def handle_cast({:notification, method, params}, state) do
     RequestHandler.handle_cast_notification(method, params, state)
   end
@@ -1058,6 +1169,19 @@ defmodule ExMCP.Client do
   def handle_info({:server_request_result, task_pid, outcome}, state)
       when is_pid(task_pid) do
     RequestHandler.handle_server_request_completion(task_pid, outcome, state)
+  end
+
+  def handle_info({:mrtr_fulfillment_result, task_pid, outcome}, state)
+      when is_pid(task_pid) do
+    RequestHandler.handle_mrtr_fulfillment_completion(task_pid, outcome, state)
+  end
+
+  def handle_info(
+        {:DOWN, _ref, :process, pid, reason},
+        %{mrtr_tasks: tasks} = state
+      )
+      when is_map(tasks) and is_map_key(tasks, pid) do
+    RequestHandler.handle_mrtr_fulfillment_down(pid, reason, state)
   end
 
   # A server-request handler task died before delivering a result.
@@ -1555,25 +1679,167 @@ defmodule ExMCP.Client do
   @spec make_request(t(), String.t(), map(), keyword(), pos_integer()) ::
           {:ok, any()} | {:error, any()}
   def make_request(client, method, params, opts, _default_timeout) do
+    started_at = System.monotonic_time(:millisecond)
     explicit_timeout = Keyword.get(opts, :timeout)
-    call_timeout = explicit_timeout || :infinity
+    retry_policy = Keyword.get(opts, :retry_policy, :use_default)
+    scope_ref = make_ref()
 
-    operation = fn ->
-      try do
-        GenServer.call(
+    result =
+      if explicit_timeout do
+        deadline = started_at + explicit_timeout
+        control = %{deadline: deadline, scope_ref: scope_ref}
+
+        do_mrtr_request(
           client,
-          {:request, method, params, %{timeout: explicit_timeout}},
-          call_timeout
+          method,
+          params,
+          params,
+          opts,
+          retry_policy,
+          0,
+          control
         )
-      catch
-        :exit, {:timeout, _} -> {:error, :timeout}
+      else
+        first_operation = fn -> request_once(client, method, params, nil) end
+
+        case execute_with_retry_policy(first_operation, client, retry_policy) do
+          {:ok, result} = complete_or_extension ->
+            if MRTR.input_required?(result) do
+              deadline = started_at + fetch_default_timeout(client)
+              control = %{deadline: deadline, scope_ref: scope_ref}
+
+              continue_mrtr(
+                client,
+                method,
+                params,
+                result,
+                opts,
+                retry_policy,
+                0,
+                control
+              )
+            else
+              complete_or_extension
+            end
+
+          other ->
+            other
+        end
+      end
+
+    if result == {:error, :timeout},
+      do: GenServer.cast(client, {:cancel_mrtr_scope, scope_ref})
+
+    handle_request_result(result, opts)
+  end
+
+  defp do_mrtr_request(
+         client,
+         method,
+         original_params,
+         round_params,
+         opts,
+         retry_policy,
+         round,
+         control
+       ) do
+    with {:ok, remaining} <- remaining_timeout(control.deadline) do
+      operation = fn -> request_once(client, method, round_params, remaining) end
+
+      case execute_with_retry_policy(operation, client, retry_policy) do
+        {:ok, result} = complete_or_extension ->
+          if MRTR.input_required?(result) do
+            continue_mrtr(
+              client,
+              method,
+              original_params,
+              result,
+              opts,
+              retry_policy,
+              round,
+              control
+            )
+          else
+            complete_or_extension
+          end
+
+        other ->
+          other
       end
     end
+  end
 
-    retry_policy = Keyword.get(opts, :retry_policy, :use_default)
+  defp continue_mrtr(
+         client,
+         method,
+         original_params,
+         result,
+         opts,
+         retry_policy,
+         round,
+         control
+       ) do
+    maximum = Keyword.get(opts, :max_mrtr_rounds, @default_max_mrtr_rounds)
 
-    result = execute_with_retry_policy(operation, client, retry_policy)
-    handle_request_result(result, opts)
+    if round >= maximum do
+      {:error,
+       Error.protocol_error(
+         ErrorCodes.invalid_params(),
+         "MRTR round limit exceeded",
+         %{"maximum" => maximum}
+       )}
+    else
+      with {:ok, input_requests, request_state} <- MRTR.validate_result(method, result, opts),
+           {:ok, remaining} <- remaining_timeout(control.deadline),
+           {:ok, input_responses} <-
+             fulfill_mrtr(client, input_requests, opts, remaining, control.scope_ref) do
+        next_round = round + 1
+
+        :telemetry.execute(
+          [:ex_mcp, :client, :mrtr, :round],
+          %{round: next_round, input_requests: map_size(input_requests)},
+          %{method: method}
+        )
+
+        retry_params = MRTR.retry_params(original_params, input_responses, request_state)
+
+        do_mrtr_request(
+          client,
+          method,
+          original_params,
+          retry_params,
+          opts,
+          retry_policy,
+          next_round,
+          control
+        )
+      end
+    end
+  end
+
+  defp request_once(client, method, params, timeout) when is_integer(timeout) do
+    GenServer.call(client, {:request, method, params, %{timeout: timeout}}, timeout)
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+  end
+
+  defp request_once(client, method, params, nil) do
+    GenServer.call(client, {:request, method, params, %{timeout: nil}}, :infinity)
+  end
+
+  defp fulfill_mrtr(client, input_requests, opts, timeout, scope_ref) do
+    GenServer.call(client, {:fulfill_mrtr, input_requests, opts, scope_ref}, timeout)
+  catch
+    :exit, {:timeout, _} ->
+      GenServer.cast(client, {:cancel_mrtr_scope, scope_ref})
+      {:error, :timeout}
+  end
+
+  defp remaining_timeout(deadline) do
+    case deadline - System.monotonic_time(:millisecond) do
+      remaining when remaining > 0 -> {:ok, remaining}
+      _expired -> {:error, :timeout}
+    end
   end
 
   defp execute_with_retry_policy(operation, client, retry_policy) do
@@ -1632,6 +1898,15 @@ defmodule ExMCP.Client do
     end
   catch
     :exit, _ -> []
+  end
+
+  defp fetch_default_timeout(client) do
+    case GenServer.call(client, :get_default_timeout, 5_000) do
+      {:ok, timeout} when is_integer(timeout) and timeout > 0 -> timeout
+      _other -> 5_000
+    end
+  catch
+    :exit, _reason -> 5_000
   end
 
   defp handle_request_result({:ok, response}, opts) do

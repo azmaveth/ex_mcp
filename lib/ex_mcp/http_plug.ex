@@ -118,11 +118,24 @@ defmodule ExMCP.HttpPlug do
   """
   @impl Plug
   def init(opts) do
+    validate_mrtr_configuration!(opts)
+
     %{
       handler: Keyword.get(opts, :handler),
       handler_opts: Keyword.get(opts, :handler_opts, []),
       handler_call_timeout: Keyword.get(opts, :handler_call_timeout, 10_000),
       server_info: Keyword.get(opts, :server_info, %{name: "ex_mcp_server", version: "1.0.0"}),
+      server_capabilities: Keyword.get(opts, :server_capabilities),
+      protocol_mode: Keyword.get(opts, :protocol_mode),
+      instructions: Keyword.get(opts, :instructions),
+      request_state: Keyword.get(opts, :request_state),
+      endpoint: Keyword.get(opts, :path, "/mcp"),
+      max_input_requests: Keyword.get(opts, :max_input_requests, 16),
+      max_mrtr_bytes: Keyword.get(opts, :max_mrtr_bytes, 1_048_576),
+      replay_cache: Keyword.get(opts, :replay_cache),
+      require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
+      principal_id: Keyword.get(opts, :principal_id),
+      tenant_id: Keyword.get(opts, :tenant_id),
       session_manager: Keyword.get(opts, :session_manager, ExMCP.SessionManager),
       sse_enabled: Keyword.get(opts, :sse_enabled, true),
       sse_mode: Keyword.get(opts, :sse_mode, default_sse_mode()),
@@ -134,6 +147,20 @@ defmodule ExMCP.HttpPlug do
       oauth_enabled: Keyword.get(opts, :oauth_enabled, false),
       auth_config: Keyword.get(opts, :auth_config, %{})
     }
+  end
+
+  defp validate_mrtr_configuration!(opts) do
+    if Keyword.get(opts, :mrtr, false) do
+      case ExMCP.Server.RequestState.validate_configuration(
+             request_state: Keyword.get(opts, :request_state)
+           ) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          raise ArgumentError, "invalid MRTR requestState configuration: #{reason}"
+      end
+    end
   end
 
   @doc """
@@ -285,12 +312,53 @@ defmodule ExMCP.HttpPlug do
 
   # Handle regular MCP JSON-RPC requests
   defp handle_mcp_request(conn, opts) do
+    case validate_request_origin(conn, opts) do
+      {:ok, conn} ->
+        select_mcp_era(conn, opts)
+
+      {:error, :origin_not_allowed} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(403, "Origin not allowed")
+    end
+  end
+
+  defp select_mcp_era(conn, opts) do
     Logger.debug("Handling MCP request, SSE enabled: #{opts.sse_enabled}")
 
-    # Per MCP spec, get or generate session ID for this request.
-    # The server provides session IDs to clients via response headers.
-    # Client-supplied ids are validated first; malformed values are rejected
-    # with 400 and never echoed back.
+    # Era selection happens before session allocation. Modern requests are
+    # stateless and ignore legacy session/resumption headers; legacy requests
+    # retain the existing session behavior.
+    case read_or_cached_body(conn, opts) do
+      {:ok, body, conn} ->
+        conn = assign(conn, :raw_body, body)
+
+        case parse_json(body) do
+          {:ok, request} ->
+            if modern_http_request?(conn, request) do
+              do_handle_mcp_request(conn, opts, nil)
+            else
+              handle_legacy_mcp_request(conn, opts)
+            end
+
+          {:error, _reason} ->
+            # Preserve the legacy error/session shape when no modern envelope
+            # can be identified from an invalid body.
+            handle_legacy_mcp_request(conn, opts)
+        end
+
+      {:error, :body_too_large} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(413, "Request body too large")
+
+      {:error, reason} ->
+        Logger.error("Failed to read MCP request body: #{inspect(reason)}")
+        send_resp(conn, 400, "Invalid request body")
+    end
+  end
+
+  defp handle_legacy_mcp_request(conn, opts) do
     case get_or_create_session_id(conn) do
       {:ok, session_id} -> do_handle_mcp_request(conn, opts, session_id)
       {:error, :invalid_session_id} -> reject_invalid_session_id(conn, opts)
@@ -302,8 +370,9 @@ defmodule ExMCP.HttpPlug do
          {:ok, conn} <- validate_protocol_version(conn),
          {:ok, body, conn} <- read_or_cached_body(conn, opts),
          {:ok, request} <- parse_json(body),
-         {:ok, _token_info} <- authorize_request(conn, request, opts),
+         {:ok, token_info} <- authorize_request(conn, request, opts),
          {:ok, opts} <- resolve_handler_opts(conn, request, opts),
+         {:ok, opts} <- resolve_mrtr_identity(conn, request, token_info, opts),
          :ok <-
            maybe_ensure_session(
              Map.get(opts, :session_manager, ExMCP.SessionManager),
@@ -327,7 +396,7 @@ defmodule ExMCP.HttpPlug do
           conn
           |> maybe_add_cors_headers(opts)
           |> add_protocol_version_header()
-          |> put_resp_header("mcp-session-id", session_id)
+          |> maybe_put_session_header(session_id)
           |> put_resp_content_type("application/json")
           |> send_resp(200, Jason.encode!(response))
 
@@ -342,8 +411,22 @@ defmodule ExMCP.HttpPlug do
           conn
           |> maybe_add_cors_headers(opts)
           |> add_protocol_version_header()
-          |> put_resp_header("mcp-session-id", session_id)
+          |> maybe_put_session_header(session_id)
           |> send_resp(202, "")
+
+        {:http_error, status, response} ->
+          :telemetry.execute(
+            [:ex_mcp, :server, :http, :response],
+            %{},
+            %{status: status}
+          )
+
+          conn
+          |> maybe_add_cors_headers(opts)
+          |> add_protocol_version_header()
+          |> maybe_put_session_header(session_id)
+          |> put_resp_content_type("application/json")
+          |> send_resp(status, Jason.encode!(response))
 
         {:error, :no_response} ->
           :telemetry.execute(
@@ -364,7 +447,7 @@ defmodule ExMCP.HttpPlug do
           conn
           |> maybe_add_cors_headers(opts)
           |> add_protocol_version_header()
-          |> put_resp_header("mcp-session-id", session_id)
+          |> maybe_put_session_header(session_id)
           |> put_resp_content_type("application/json")
           |> send_resp(500, Jason.encode!(error_response))
 
@@ -387,7 +470,7 @@ defmodule ExMCP.HttpPlug do
           conn
           |> maybe_add_cors_headers(opts)
           |> add_protocol_version_header()
-          |> put_resp_header("mcp-session-id", session_id)
+          |> maybe_put_session_header(session_id)
           |> put_resp_content_type("application/json")
           |> send_resp(500, Jason.encode!(error_response))
       end
@@ -404,7 +487,7 @@ defmodule ExMCP.HttpPlug do
         conn
         |> maybe_add_cors_headers(opts)
         |> add_protocol_version_header()
-        |> put_resp_header("mcp-session-id", session_id)
+        |> maybe_put_session_header(session_id)
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(error_response))
 
@@ -431,7 +514,7 @@ defmodule ExMCP.HttpPlug do
         conn
         |> maybe_add_cors_headers(opts)
         |> add_protocol_version_header()
-        |> put_resp_header("mcp-session-id", session_id)
+        |> maybe_put_session_header(session_id)
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(error_response))
 
@@ -441,7 +524,7 @@ defmodule ExMCP.HttpPlug do
         conn
         |> maybe_add_cors_headers(opts)
         |> add_protocol_version_header()
-        |> put_resp_header("mcp-session-id", session_id)
+        |> maybe_put_session_header(session_id)
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(error_response))
 
@@ -458,7 +541,7 @@ defmodule ExMCP.HttpPlug do
         conn
         |> maybe_add_cors_headers(opts)
         |> add_protocol_version_header()
-        |> put_resp_header("mcp-session-id", session_id)
+        |> maybe_put_session_header(session_id)
         |> put_resp_content_type("application/json")
         |> send_resp(500, Jason.encode!(error_response))
     end
@@ -468,6 +551,24 @@ defmodule ExMCP.HttpPlug do
   defp parse_json(body) do
     Core.parse_json(body)
   end
+
+  defp modern_http_request?(conn, request) do
+    modern_protocol_header?(conn) or modern_request_metadata?(request)
+  end
+
+  defp modern_protocol_header?(conn) do
+    case get_req_header(conn, "mcp-protocol-version") do
+      [version] -> VersionRegistry.modern?(version)
+      _other -> false
+    end
+  end
+
+  defp modern_request_metadata?(%{"params" => %{"_meta" => meta}}) when is_map(meta) do
+    Map.has_key?(meta, "io.modelcontextprotocol/protocolVersion") or
+      Map.has_key?(meta, "io.modelcontextprotocol/clientCapabilities")
+  end
+
+  defp modern_request_metadata?(_request), do: false
 
   # Allow upstream plugs (e.g., signature-verification auth pipelines) to
   # pre-read the request body and stash it in `conn.assigns[:raw_body]`.
@@ -520,6 +621,63 @@ defmodule ExMCP.HttpPlug do
       Logger.error("Failed to resolve MCP handler_opts: #{Exception.message(exception)}")
       {:error, :handler_opts_failed}
   end
+
+  defp resolve_mrtr_identity(conn, request, token_info, opts) do
+    principal =
+      resolve_identity_value(
+        Map.get(opts, :principal_id),
+        conn,
+        request,
+        token_info,
+        token_claim(token_info, ["sub", :sub, "principal_id", :principal_id])
+      )
+
+    tenant =
+      resolve_identity_value(
+        Map.get(opts, :tenant_id),
+        conn,
+        request,
+        token_info,
+        token_claim(token_info, ["tenant_id", :tenant_id, "tenant", :tenant])
+      )
+
+    with true <- is_nil(principal) or is_binary(principal),
+         true <- is_nil(tenant) or is_binary(tenant) do
+      {:ok, opts |> Map.put(:principal_id, principal) |> Map.put(:tenant_id, tenant)}
+    else
+      false -> {:error, :invalid_mrtr_identity}
+    end
+  rescue
+    exception ->
+      Logger.error("Failed to resolve MRTR identity: #{Exception.message(exception)}")
+      {:error, :invalid_mrtr_identity}
+  end
+
+  defp resolve_identity_value(nil, _conn, _request, _token_info, fallback), do: fallback
+
+  defp resolve_identity_value(fun, conn, request, token_info, _fallback)
+       when is_function(fun, 3),
+       do: fun.(conn, request, token_info)
+
+  defp resolve_identity_value(fun, conn, request, _token_info, _fallback)
+       when is_function(fun, 2),
+       do: fun.(conn, request)
+
+  defp resolve_identity_value(fun, conn, _request, _token_info, _fallback)
+       when is_function(fun, 1),
+       do: fun.(conn)
+
+  defp resolve_identity_value({module, function, args}, conn, request, token_info, _fallback)
+       when is_atom(module) and is_atom(function) and is_list(args),
+       do: apply(module, function, [conn, request, token_info | args])
+
+  defp resolve_identity_value(value, _conn, _request, _token_info, _fallback), do: value
+
+  defp token_claim(token_info, keys) when is_map(token_info) do
+    Enum.find_value(keys, &Map.get(token_info, &1))
+  end
+
+  defp token_claim(_token_info, _keys), do: nil
 
   # Handle session termination via DELETE request
   defp handle_session_delete(conn, session_id, opts) do
@@ -738,12 +896,20 @@ defmodule ExMCP.HttpPlug do
 
   defp ensure_session_manager(session_manager), do: {:ok, session_manager}
 
+  defp maybe_ensure_session(_session_manager, nil, _metadata), do: :ok
+
   defp maybe_ensure_session(session_manager, session_id, metadata) do
     if function_exported?(session_manager, :ensure_session, 2) do
       session_manager.ensure_session(session_id, metadata)
     else
       :ok
     end
+  end
+
+  defp maybe_put_session_header(conn, nil), do: conn
+
+  defp maybe_put_session_header(conn, session_id) do
+    put_resp_header(conn, "mcp-session-id", session_id)
   end
 
   defp session_manager_unavailable_response(conn, opts) do
@@ -782,7 +948,18 @@ defmodule ExMCP.HttpPlug do
             handler: handler_module,
             handler_opts: handler_opts,
             handler_call_timeout: Map.get(opts, :handler_call_timeout, 10_000),
-            server_info: server_info
+            server_info: server_info,
+            server_capabilities: Map.get(opts, :server_capabilities),
+            protocol_mode: Map.get(opts, :protocol_mode),
+            instructions: Map.get(opts, :instructions),
+            request_state: Map.get(opts, :request_state),
+            endpoint: Map.get(opts, :endpoint, "/mcp"),
+            max_input_requests: Map.get(opts, :max_input_requests, 16),
+            max_mrtr_bytes: Map.get(opts, :max_mrtr_bytes, 1_048_576),
+            replay_cache: Map.get(opts, :replay_cache),
+            require_replay_protection: Map.get(opts, :require_replay_protection, false),
+            principal_id: Map.get(opts, :principal_id),
+            tenant_id: Map.get(opts, :tenant_id)
           })
 
         case processed_conn.response do
@@ -795,12 +972,8 @@ defmodule ExMCP.HttpPlug do
               {:error, :no_response}
             end
 
-          %{"jsonrpc" => "2.0", "error" => _} = response ->
-            # JSON-RPC error responses are still valid HTTP responses
-            {:ok, response}
-
           response ->
-            {:ok, response}
+            processed_response(response, processed_conn.assigns)
         end
 
       handler_fun when is_function(handler_fun, 1) ->
@@ -812,6 +985,15 @@ defmodule ExMCP.HttpPlug do
         end
     end
   end
+
+  defp processed_response(
+         %{"jsonrpc" => "2.0", "error" => _} = response,
+         %{http_status: status}
+       ) do
+    {:http_error, status, response}
+  end
+
+  defp processed_response(response, _assigns), do: {:ok, response}
 
   # Add CORS headers if enabled
   defp maybe_add_cors_headers(conn, %{cors_enabled: true} = opts) do

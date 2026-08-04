@@ -1,9 +1,9 @@
-# Pre-2.0 Technical Debt Plan — target `1.0.0-rc.5`
+# Pre-modern-protocol Technical Debt Plan — target `1.0.0-rc.5`
 
 **Status:** Implemented; release gates passed
-**Target release:** ExMCP `1.0.0-rc.5` (then `1.0.0` stable)
+**Target release:** ExMCP `1.0.0-rc.5` (completed prerequisite for additional 1.0 RCs)
 **Protocol:** unchanged — MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
-**Companion doc:** [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md) — the 2.0 protocol work this unblocks
+**Companion doc:** [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md) — the 1.0 modern-protocol work this unblocks
 **Last updated:** 2026-08-04
 
 ---
@@ -12,7 +12,7 @@
 
 The 2026-07-28 migration plan opened with a "Phase 0 — Foundations" that turned out to be
 almost entirely **pre-existing debt**, unrelated to the new protocol revision. This document
-splits that work out so it can ship as a release candidate **before** 2.0 branches.
+splits that work out so it can ship as a release candidate **before** the modern migration.
 
 > **Acceptance gate for every item in this plan:**
 > **no observable change to the JSON-RPC wire, and no change to any documented public return
@@ -32,18 +32,17 @@ checklist so the exception stays visible rather than setting a precedent.
 1. **It is a prerequisite, not a nice-to-have.** Adding a fifth protocol version currently
    requires editing **five** parallel method tables and **four** places in the compliance test
    generator. Doing 2026-07-28 on top of that multiplies every change by five.
-2. **It de-risks the 2.0 diff.** Every line changed for cleanup reasons in the 2.0 branch is a
+2. **It de-risks the modern-protocol diff.** Every line changed for cleanup reasons is a
    line that obscures the protocol change during review.
 3. **It is independently valuable.** These are real bugs and real duplication that affect users
    on 1.x today.
-4. **It gives users a stable landing point** before a breaking major.
+4. **It gives the migration a tested baseline** before the modern wire paths are added.
 
 ### Non-goals
 
 - No protocol behavior changes.
-- No new protocol versions (2026-07-28 stays unregistered until 2.0).
-- No API removals — `ExMCP.Server.Tools` removal stays scheduled for 1.1.0 as already
-  documented in `CLAUDE.md` and `README.md`.
+- No new protocol versions (2026-07-28 stays unregistered until a follow-on RC).
+- No API removals — `ExMCP.Server.Tools` stays available throughout 1.x and is removed in 2.0.
 - No performance work.
 
 ---
@@ -84,14 +83,14 @@ pass unchanged at the end of every subsequent track.
 
 ## 3. Track summary
 
-| Track | Theme | Risk | Unblocks 2.0? |
+| Track | Theme | Risk | Unblocks modern support? |
 |---|---|---|---|
 | 0 | Characterization tests | none | — (safety net) |
 | A | One source of truth for versions | low | yes |
 | B | **One method table** (five → one) | low–medium | **yes, highest leverage** |
 | C | Error-code consolidation (numeric only, additive) | low | yes |
 | D | Dead-code removal | none | minor |
-| E | **Compliance test generator** | none (test-only) | **yes, blocks the 2.0 branch** |
+| E | **Compliance test generator** | none (test-only) | **yes, blocks modern support** |
 | F | Docs & config accuracy | none | minor |
 | G | **Fix URL-mode elicitation routing** | medium — the one intentional behavior change | yes (MRTR reuses this path) |
 
@@ -123,7 +122,7 @@ reconciliation.
 - [x] `ExMCP.Types.latest_protocol_version/0` → delegate to `VersionRegistry.latest_version/0`.
       Same value; zero callers. Add the missing `@doc`.
 - [x] Add `era_for/1` and `modern?/1` helpers to `VersionRegistry`, returning `:legacy` for all
-      four current versions. **Purely additive**, unused in rc.5, consumed heavily by 2.0.
+      four current versions. **Purely additive**, unused in rc.5, consumed heavily by the modern migration.
 - [x] Add `request_methods: []` to the three `message_format/1` clauses that omit it
       (`version_registry.ex` L187-240) — only the `"2025-11-25"` clause (L241-267) has the key
       today, so any consumer doing `Map.get(format, :request_methods)` gets `nil` for older
@@ -186,7 +185,7 @@ The `-32002` collision is a genuine bug but resolving it is wire-visible, so it 
 - [x] Collapse `ErrorCodes`' own two identical atom→code maps: `@atom_to_code` (L114-126) and
       `@atom_to_code_map` (L216-228), same module, identical contents.
 - [x] **Additively** define `-32020` `HeaderMismatch`, `-32021` `MissingRequiredClientCapability`,
-      `-32022` `UnsupportedProtocolVersion`. Unused in rc.5; consumed by 2.0.
+      `-32022` `UnsupportedProtocolVersion`. Unused in rc.5; consumed by the modern migration.
 - [x] Add a `@doc` warning documenting that `-32002` currently carries **three** meanings —
       `consent_required` (`ErrorCodes` L45, emitted by `transport/security_error.ex:138`),
       `resource_not_found` (`ErrorCodes` L48, emitted by `acp/types.ex:139,148`), and
@@ -216,7 +215,7 @@ All items verified to have **zero callers** in `lib/` and `test/`.
 
 ---
 
-### Track E — Compliance test generator (blocks the 2.0 branch)
+### Track E — Compliance test generator (blocks modern support)
 
 **Finding:** `test/ex_mcp/compliance/version_generator.ex` is already stale — it covers **three**
 of the four supported versions. `2025-11-25` was never added and lives as a hand-written
@@ -322,20 +321,20 @@ L511), and **the `url` — the entire point of the request — is silently disca
 - [x] Note it in the rc.5 release announcement alongside the "no wire change" claim, so the
       claim reads as accurate rather than overstated.
 
-#### Why it belongs here rather than in 2.0
+#### Why it belongs here rather than in the modern migration
 
-2.0's MRTR work (Phase 4) fulfils `inputRequests` through these *same* `ExMCP.Client.Handler`
+The MRTR work (Phase 4) fulfils `inputRequests` through these *same* `ExMCP.Client.Handler`
 callbacks. Landing the routing fix first means MRTR inherits a correct dispatcher instead of
-reproducing the bug in a second code path — and it means the 2.0 diff does not have to explain
+reproducing the bug in a second code path — and it means the modern-protocol diff does not have to explain
 a behavior change buried inside a protocol migration.
 
 ---
 
 ## 5. Deferred — failed the no-behavior-change gate
 
-Each of these was considered for rc.5 and rejected. They carry forward to the 2.0 plan.
+Each of these was considered for rc.5 and rejected. They carry forward to the modern plan.
 
-### 5.1 Merging the two capability vocabularies — **defer to 2.0**
+### 5.1 Merging the two capability vocabularies — **defer to the modern migration**
 
 `VersionNegotiator.build_capabilities/1` and `VersionRegistry.capabilities_for_version/1` are
 not duplicates; they are **different vocabularies**:
@@ -354,7 +353,13 @@ design decision about which vocabulary is correct, not a refactor.
 **rc.5-safe subset:** document the split; mark `VersionNegotiator.build_capabilities/1` as
 not-wire-reaching in its `@doc`.
 
-### 5.2 Resolving the `-32002` collision — **defer to 2.0**
+**Resolved in the 2026-07-28 migration Phase 0:** the helper is retained through 1.x as a
+deprecated shim over the canonical registry vocabulary.
+
+### 5.2 Resolving the `-32002` collision — **defer to the modern migration**
+
+**Resolved in the 2026-07-28 migration Phase 0:** emission is era-aware, legacy decoding is
+preserved, and ExMCP-local consent/prompt errors moved outside the JSON-RPC reserved range.
 
 Wire-visible three ways, and 386 numeric-code assertions across 77 test files sit downstream.
 2026-07-28 renumbers resource-not-found to `-32602` anyway, so the fix belongs with the version
@@ -367,16 +372,20 @@ references `ExMCP.Transport.HTTPServer`) — but that is precisely the risk. It 
 public-by-documentation Plug that users `forward` to, so the change is wire-visible for them
 (2025-03-26 → 2025-11-25) with zero test coverage to catch fallout. **Recommendation:** in rc.5,
 document it as an example (Track F) and point users at `ExMCP.HttpPlug`; change or delete the
-canned response in 2.0.
+canned response during the modern migration.
 
 ### 5.4 `request_processor.ex` L119 default `"2025-06-18"` — **defer / needs care**
 
 A client that omits `protocolVersion` today gets `"2025-06-18"` echoed back and its session
 gated to that version's method set. Changing the default to latest changes both. No test covers
 the omitted-field path. **Recommendation:** Track 0 adds the missing test pinning current
-behavior; the change itself ships in 2.0, where era detection replaces this code path entirely.
+behavior; the change itself ships with modern support, where era detection replaces this path.
 
-### 5.5 `FeatureFlags` ↔ `VersionRegistry` `tasks` reconciliation — **defer to 2.0**
+### 5.5 `FeatureFlags` ↔ `VersionRegistry` `tasks` reconciliation — **defer to the modern migration**
+
+**Resolved in the 2026-07-28 migration Phase 0:** 2025-11-25 continues to advertise `tasks`
+unconditionally, including through the canonical initialize builder. Modern task negotiation
+will move to `capabilities.extensions` in Phase 8.
 
 `VersionRegistry` L117 advertises `tasks: %{}` **unconditionally** for 2025-11-25 and never
 consults `FeatureFlags`. Making it honour `FeatureFlags.enabled?(:tasks)` would — because
@@ -385,20 +394,20 @@ initialize response**. That is a wire-visible regression for anyone relying on i
 `compliance/tasks_test.exs` L183-192 asserts the unconditional behavior today.
 
 2026-07-28 replaces the whole mechanism with extension negotiation
-(`capabilities.extensions["io.modelcontextprotocol/tasks"]`), so this resolves itself in 2.0.
+(`capabilities.extensions["io.modelcontextprotocol/tasks"]`), so this resolves in the modern path.
 **rc.5-safe subset:** the docs/config fixes in Track F only.
 
 ### 5.6 Routing `handle_url_elicitation/3` — **decided: fix in rc.5**
 
 Promoted out of Deferred. See **Track G** (§4.7).
 
-### 5.7 `ExMCP.Server.Tools` removal — **stays scheduled for 1.1.0**
+### 5.7 `ExMCP.Server.Tools` removal — **move the removal target to 2.0.0**
 
-Nothing in `lib/` uses it. Removal is by definition breaking, and `CLAUDE.md` L221 and
-`README.md` L30 both commit to 1.1.0. The 2.0 plan proposed pulling it forward; either is fine,
-but it does not belong in an rc.
+Nothing in `lib/` uses it, but removal is by definition breaking. The existing `CLAUDE.md` and
+`README.md` promise of removal in 1.1.0 would violate SemVer after stable 1.0. Keep it for all
+1.x releases, change the notices to 2.0.0 before 1.0 ships, and remove it only in ExMCP 2.0.
 
-### 5.8 Consolidating the five `initialize` implementations — **defer, sequence before 2.0**
+### 5.8 Consolidating the five `initialize` implementations — **defer, sequence before modern support**
 
 `request_processor.ex` L118-144, `message_processor.ex` L283, `server/handler.ex` L300-305 and
 L745, `server/dsl.ex` L661, `transport/http_server.ex` L292-298. They disagree on default
@@ -406,8 +415,8 @@ version, capability source (`Capabilities` vs `get_capabilities/0` vs `%{}`), an
 (string vs atom). Consolidating behind one `build_initialize_result/2` is purely internal but
 large, and it interacts directly with §5.3 and §5.4.
 
-**Recommendation:** this is the natural **first commit of the 2.0 branch**, not an rc.5 item —
-2.0 has to touch all five anyway to add the modern era.
+**Recommendation:** this is the natural **first commit after rc.5**, not an rc.5 item — the
+modern era has to touch all five anyway.
 
 ---
 
@@ -449,4 +458,5 @@ large, and it interacts directly with §5.3 and §5.4.
       Track G belongs under **Fixed**.
 - [x] Commit: `chore: bump version to 1.0.0-rc.5`.
 
-Then: `1.0.0` stable, and branch 2.0 from it.
+Then: add modern support through further release candidates and cut `1.0.0` only after the
+modern-preferred release gates pass.

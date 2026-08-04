@@ -23,6 +23,11 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       {:error, "Tool error", state}
     end
 
+    def handle_call_tool("needs_sampling", _args, state) do
+      error = ExMCP.Error.missing_required_client_capability(%{"sampling" => %{}})
+      {:error, error, state}
+    end
+
     def handle_call_tool(nil, _args, state) do
       {:error, "No tool name provided", state}
     end
@@ -73,6 +78,69 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       assert response["error"]["code"] == -32600
       assert response["error"]["message"] =~ "Invalid Request"
       assert response["id"] == nil
+    end
+
+    test "rejects incomplete modern request metadata before invoking a handler", %{state: state} do
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => 99,
+        "method" => "tools/list",
+        "params" => %{
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28"
+          }
+        }
+      }
+
+      assert {:response, response, ^state} = RequestProcessor.process(request, state)
+      assert response["error"]["code"] == -32602
+      assert response["error"]["message"] == "Invalid request metadata"
+    end
+
+    test "stamps successful modern results at the processor boundary", %{state: state} do
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => 100,
+        "method" => "tools/list",
+        "params" => %{
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities" => %{}
+          }
+        }
+      }
+
+      assert {:response, %{"result" => result}, _new_state} =
+               RequestProcessor.process(request, state)
+
+      assert result["resultType"] == "complete"
+
+      assert result["_meta"]["io.modelcontextprotocol/serverInfo"] == %{
+               "name" => "test-server",
+               "version" => "1.0"
+             }
+    end
+
+    test "preserves missing client capability errors from handlers", %{state: state} do
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => 101,
+        "method" => "tools/call",
+        "params" => %{
+          "name" => "needs_sampling",
+          "arguments" => %{},
+          "_meta" => %{
+            "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities" => %{}
+          }
+        }
+      }
+
+      assert {:response, %{"error" => error}, _new_state} =
+               RequestProcessor.process(request, state)
+
+      assert error["code"] == -32021
+      assert error["data"]["requiredCapabilities"] == %{"sampling" => %{}}
     end
 
     test "routes to correct method handlers", %{state: state} do
@@ -132,7 +200,7 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       assert new_state.protocol_version == "2025-06-18"
     end
 
-    test "omitted protocolVersion retains the 2025-06-18 default", %{minimal_state: state} do
+    test "omitted protocolVersion uses the registry preference", %{minimal_state: state} do
       request = %{"method" => "initialize", "id" => 124, "params" => %{}}
 
       {:response, response, new_state} = RequestProcessor.process(request, state)
@@ -141,13 +209,13 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
                "jsonrpc" => "2.0",
                "id" => 124,
                "result" => %{
-                 "protocolVersion" => "2025-06-18",
+                 "protocolVersion" => "2025-11-25",
                  "serverInfo" => %{"name" => "ExMCP Server", "version" => "0.1.0"},
                  "capabilities" => %{}
                }
              }
 
-      assert new_state.protocol_version == "2025-06-18"
+      assert new_state.protocol_version == "2025-11-25"
     end
 
     test "rejects unsupported protocol version", %{minimal_state: state} do

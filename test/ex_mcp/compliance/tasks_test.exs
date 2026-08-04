@@ -11,6 +11,7 @@ defmodule ExMCP.Compliance.TasksTest do
 
   alias ExMCP.Internal.Protocol
   alias ExMCP.Internal.VersionRegistry
+  alias ExMCP.Server.Capabilities
 
   describe "protocol encoders" do
     test "encode_task_get creates correct JSON-RPC message" do
@@ -184,6 +185,7 @@ defmodule ExMCP.Compliance.TasksTest do
     test "2025-11-25 capabilities include tasks key" do
       caps = VersionRegistry.capabilities_for_version("2025-11-25")
       assert Map.has_key?(caps, :tasks)
+      assert Capabilities.build_capabilities(nil, "2025-11-25")["tasks"] == %{}
     end
 
     test "2025-06-18 capabilities do NOT include tasks key" do

@@ -43,6 +43,21 @@ defmodule ExMCP.Server.DSL.Result do
     %{content: [%{type: "text", text: text}], structuredContent: data}
   end
 
+  @doc """
+  Suspends a modern tool, resource, or prompt result for MRTR input.
+
+  The optional application state must be JSON encodable. ExMCP seals it into
+  an opaque `requestState`; handlers can read it on the retry through
+  `ExMCP.Server.Context.request_state/0`.
+  """
+  @spec input_required(map(), term()) :: ExMCP.Server.MRTR.InputRequired.t()
+  def input_required(input_requests, request_state \\ nil) when is_map(input_requests) do
+    %ExMCP.Server.MRTR.InputRequired{
+      input_requests: input_requests,
+      request_state: request_state
+    }
+  end
+
   @doc false
   def normalize_tool({:ok, result}, state), do: {:ok, normalize_tool_result(result), state}
 
@@ -54,6 +69,7 @@ defmodule ExMCP.Server.DSL.Result do
 
   @doc false
   def normalize_tool_result(result) when is_binary(result), do: text(result)
+  def normalize_tool_result(%ExMCP.Server.MRTR.InputRequired{} = result), do: result
   def normalize_tool_result(text: value) when is_binary(value), do: text(value)
   def normalize_tool_result(%{text: value}) when is_binary(value), do: text(value)
   def normalize_tool_result(%{content: _} = result), do: normalize_structured_key(result)
@@ -101,6 +117,9 @@ defmodule ExMCP.Server.DSL.Result do
     |> put_optional(:mimeType, mime_type)
   end
 
+  defp normalize_resource_result(%ExMCP.Server.MRTR.InputRequired{} = result, _uri, _mime_type),
+    do: result
+
   defp normalize_resource_result(%{text: _} = result, uri, mime_type) do
     result
     |> Map.put_new(:uri, uri)
@@ -116,6 +135,7 @@ defmodule ExMCP.Server.DSL.Result do
   defp normalize_resource_result(result, _uri, _mime_type), do: result
 
   defp normalize_prompt_result(%{messages: _} = result), do: result
+  defp normalize_prompt_result(%ExMCP.Server.MRTR.InputRequired{} = result), do: result
   defp normalize_prompt_result(text: text) when is_binary(text), do: normalize_prompt_result(text)
   defp normalize_prompt_result(messages) when is_list(messages), do: %{messages: messages}
 

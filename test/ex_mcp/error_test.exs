@@ -91,12 +91,24 @@ defmodule ExMCP.ErrorTest do
       assert error.data == %{resource_uri: "file://config.json"}
     end
 
+    test "missing_required_client_capability/1" do
+      required = %{"sampling" => %{"tools" => %{}}}
+      error = Error.missing_required_client_capability(required)
+
+      assert error.code == -32021
+      assert error.message == "Missing required client capability"
+      assert error.data == %{"requiredCapabilities" => required}
+      assert Error.to_json_rpc(error)["data"] == %{"requiredCapabilities" => required}
+    end
+
     test "prompt_error/3" do
       error = Error.prompt_error("Invalid arguments", "code_review")
 
-      assert error.code == -32002
+      assert error.code == -31003
       assert error.message == "Prompt error in 'code_review': Invalid arguments"
       assert error.data == %{prompt_name: "code_review"}
+      assert Error.application_error?(error)
+      refute Error.mcp_error?(error)
     end
 
     test "transport_error/2" do

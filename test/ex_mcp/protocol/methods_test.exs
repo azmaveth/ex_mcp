@@ -47,13 +47,24 @@ defmodule ExMCP.Protocol.MethodsTest do
     end
   end
 
-  test "draft-only staging methods remain available only in draft" do
+  test "modern staging methods are bound to the known modern version" do
     for method <- ["server/discover", "subscriptions/listen"] do
-      assert Protocol.method_available?(method, "draft")
+      assert Protocol.method_available?(method, "2026-07-28")
+      refute Protocol.method_available?(method, "draft")
 
       for version <- @versions do
         refute Protocol.method_available?(method, version)
       end
+    end
+  end
+
+  test "the modern method surface includes core operations and excludes removed methods" do
+    for method <- ["tools/list", "tools/call", "resources/read", "prompts/get"] do
+      assert Protocol.method_available?(method, "2026-07-28")
+    end
+
+    for method <- ["initialize", "ping", "logging/setLevel", "resources/subscribe"] do
+      refute Protocol.method_available?(method, "2026-07-28")
     end
   end
 end

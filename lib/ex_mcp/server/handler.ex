@@ -31,6 +31,18 @@ defmodule ExMCP.Server.Handler do
         # Process args without _meta...
       end
 
+  ## Required client capabilities
+
+  A modern handler that cannot continue without a capability declared in the
+  request may return the standard `-32021` error reason:
+
+      {:error,
+       ExMCP.Error.missing_required_client_capability(%{"sampling" => %{}}),
+       state}
+
+  ExMCP preserves that protocol error, including its
+  `data.requiredCapabilities` field, across every server transport.
+
   ## Basic Example
 
   > #### Tip
@@ -268,6 +280,9 @@ defmodule ExMCP.Server.Handler do
   @type tool :: ExMCP.Types.tool()
   @type resource :: ExMCP.Types.resource()
   @type prompt :: ExMCP.Types.prompt()
+  @type input_required_return ::
+          {:input_required, %{String.t() => map()}, state()}
+          | {:input_required, %{String.t() => map()}, request_state :: term(), state()}
 
   @doc """
   Handles the initialize request from a client.
@@ -351,7 +366,10 @@ defmodule ExMCP.Server.Handler do
   declared outputSchema.
   """
   @callback handle_call_tool(name :: String.t(), arguments :: map(), state()) ::
-              {:ok, ExMCP.Types.tool_result() | list(map()), state()} | {:error, any(), state()}
+              {:ok, ExMCP.Types.tool_result() | list(map()) | ExMCP.Server.MRTR.InputRequired.t(),
+               state()}
+              | {:error, any(), state()}
+              | input_required_return()
 
   @doc """
   Handles listing available resources.
@@ -367,7 +385,10 @@ defmodule ExMCP.Server.Handler do
   Handles reading a resource.
   """
   @callback handle_read_resource(uri :: String.t(), state()) ::
-              {:ok, ExMCP.Types.resource_contents(), state()} | {:error, any(), state()}
+              {:ok, ExMCP.Types.resource_contents() | ExMCP.Server.MRTR.InputRequired.t(),
+               state()}
+              | {:error, any(), state()}
+              | input_required_return()
 
   @doc """
   Handles listing available prompts.
@@ -383,7 +404,9 @@ defmodule ExMCP.Server.Handler do
   Handles getting a prompt.
   """
   @callback handle_get_prompt(name :: String.t(), arguments :: map(), state()) ::
-              {:ok, ExMCP.Types.prompt_message(), state()} | {:error, any(), state()}
+              {:ok, ExMCP.Types.prompt_message() | ExMCP.Server.MRTR.InputRequired.t(), state()}
+              | {:error, any(), state()}
+              | input_required_return()
 
   @doc """
   Handles a completion request for argument autocompletion.
@@ -668,6 +691,10 @@ defmodule ExMCP.Server.Handler do
       # normalizes the handler's return value into a single reply shape.
 
       @impl GenServer
+      def handle_call({:mcp_context, context, request}, from, state) do
+        ExMCP.Server.Context.with_context(context, fn -> handle_call(request, from, state) end)
+      end
+
       def handle_call({:initialize, params}, _from, state),
         do: HandlerBridge.call(__MODULE__, :handle_initialize, [params], state)
 
@@ -737,15 +764,14 @@ defmodule ExMCP.Server.Handler do
         unless Module.defines?(env.module, {:handle_initialize, 2}, :def) do
           quote do
             @impl ExMCP.Server.Handler
-            def handle_initialize(_params, state) do
+            def handle_initialize(params, state) do
               # Default negotiated version comes from the single source of
               # truth so every entry point agrees (audit M8).
               {:ok,
-               %{
-                 protocolVersion: ExMCP.Internal.VersionRegistry.preferred_version(),
+               ExMCP.Protocol.Initialize.build_initialize_result(params, %{
                  serverInfo: %{name: "ex_mcp", version: "0.1.0"},
                  capabilities: %{}
-               }, state}
+               }), state}
             end
           end
         end,

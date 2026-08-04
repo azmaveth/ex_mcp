@@ -69,9 +69,47 @@ defmodule ExMCP.SpecSync.FileMapper do
   @doc """
   Returns the list of known doc file paths to fetch for a given version.
 
-  These are the standard documentation files present in most versions.
+  These are used as a fallback when the upstream tree cannot be enumerated.
   """
   @spec doc_files_for_version(String.t()) :: [String.t()]
+  def doc_files_for_version("2026-07-28" = version) do
+    base = "docs/specification/#{version}"
+
+    [
+      "#{base}/architecture/index.mdx",
+      "#{base}/basic/authorization/authorization-server-discovery.mdx",
+      "#{base}/basic/authorization/client-registration.mdx",
+      "#{base}/basic/authorization/index.mdx",
+      "#{base}/basic/authorization/security-considerations.mdx",
+      "#{base}/basic/index.mdx",
+      "#{base}/basic/patterns/cancellation.mdx",
+      "#{base}/basic/patterns/index.mdx",
+      "#{base}/basic/patterns/mrtr.mdx",
+      "#{base}/basic/patterns/progress.mdx",
+      "#{base}/basic/patterns/subscriptions.mdx",
+      "#{base}/basic/transports/index.mdx",
+      "#{base}/basic/transports/stdio.mdx",
+      "#{base}/basic/transports/streamable-http.mdx",
+      "#{base}/basic/versioning.mdx",
+      "#{base}/changelog.mdx",
+      "#{base}/client/elicitation.mdx",
+      "#{base}/client/roots.mdx",
+      "#{base}/client/sampling.mdx",
+      "#{base}/deprecated.mdx",
+      "#{base}/index.mdx",
+      "#{base}/schema.mdx",
+      "#{base}/server/discover.mdx",
+      "#{base}/server/index.mdx",
+      "#{base}/server/prompts.mdx",
+      "#{base}/server/resources.mdx",
+      "#{base}/server/tools.mdx",
+      "#{base}/server/utilities/caching.mdx",
+      "#{base}/server/utilities/completion.mdx",
+      "#{base}/server/utilities/logging.mdx",
+      "#{base}/server/utilities/pagination.mdx"
+    ]
+  end
+
   def doc_files_for_version(version) do
     base = "docs/specification/#{version}"
 
@@ -173,6 +211,12 @@ defmodule ExMCP.SpecSync.FileMapper do
     "#{version}/#{local_dir}/#{local_name}"
   end
 
+  defp map_doc_path([version, dir, subdir, "index.mdx"]) do
+    local_dir = Map.get(@dir_mappings, dir, capitalize_name(dir))
+    local_subdir = Map.get(@dir_mappings, subdir, capitalize_name(subdir))
+    "#{version}/#{local_dir}/#{local_subdir}/Overview.md"
+  end
+
   defp map_doc_path([version, dir, subdir, filename]) do
     local_dir = Map.get(@dir_mappings, dir, capitalize_name(dir))
     local_subdir = Map.get(@dir_mappings, subdir, capitalize_name(subdir))
@@ -180,10 +224,20 @@ defmodule ExMCP.SpecSync.FileMapper do
     "#{version}/#{local_dir}/#{local_subdir}/#{local_name}"
   end
 
-  defp map_doc_path(parts) do
-    # Fallback: join remaining parts
-    Enum.join(parts, "/")
+  defp map_doc_path([version | rest]) when rest != [] do
+    {dirs, [filename]} = Enum.split(rest, -1)
+
+    local_dirs =
+      Enum.map(dirs, fn dir ->
+        Map.get(@dir_mappings, dir, capitalize_name(dir))
+      end)
+
+    local_name = if filename == "index.mdx", do: "Overview.md", else: map_filename(filename)
+
+    Path.join([version | local_dirs] ++ [local_name])
   end
+
+  defp map_doc_path(parts), do: Enum.join(parts, "/")
 
   defp map_filename(filename) do
     case Map.get(@file_mappings, filename) do
@@ -209,7 +263,7 @@ defmodule ExMCP.SpecSync.FileMapper do
 
     camel =
       base
-      |> String.split("_")
+      |> String.split(~r/[-_]/, trim: true)
       |> Enum.map_join(&String.capitalize/1)
 
     camel <> ext

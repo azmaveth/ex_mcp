@@ -6,10 +6,10 @@ defmodule ExMCP.MessageProcessor do
   It follows the Plug specification pattern used throughout the Elixir ecosystem.
   """
 
+  alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, MessageValidator}
-  alias ExMCP.Protocol.ErrorCodes
-  alias ExMCP.Protocol.Methods
-  alias ExMCP.Protocol.ResponseBuilder
+  alias ExMCP.Protocol.{ErrorCodes, Methods, ResponseBuilder}
+  alias ExMCP.Server.{MRTR, RequestContext}
 
   require Logger
 
@@ -108,7 +108,7 @@ defmodule ExMCP.MessageProcessor do
         # For notifications, use the simpler validation that doesn't require "id"
         case validate_notification(conn.request) do
           {:ok, _validated_notification} ->
-            process_validated_notification(conn, opts)
+            process_notification_with_context(conn, opts)
 
           {:error, error_data} ->
             # Notifications that fail validation are just logged, no response
@@ -120,8 +120,7 @@ defmodule ExMCP.MessageProcessor do
         # For requests, use full request validation
         case MessageValidator.validate_request(conn.request) do
           {:ok, _validated_request} ->
-            # Request is valid, proceed with processing.
-            process_validated_request(conn, opts)
+            process_request_with_context(conn, opts)
 
           {:error, error_data} ->
             # Request is invalid, construct and return an error response.
@@ -133,6 +132,8 @@ defmodule ExMCP.MessageProcessor do
         end
       end
 
+    result = normalize_protocol_result(result)
+
     :telemetry.execute(
       [:ex_mcp, :server, :request, :processed],
       %{},
@@ -142,13 +143,99 @@ defmodule ExMCP.MessageProcessor do
     result
   end
 
+  defp normalize_protocol_result(
+         %Conn{
+           response: %{"result" => result} = response,
+           assigns: %{request_context: request_context} = assigns
+         } = conn
+       ) do
+    result =
+      ExMCP.Server.ResultNormalizer.protocol_result(result, request_context,
+        server_info: Map.get(assigns, :server_info)
+      )
+
+    %{conn | response: Map.put(response, "result", result)}
+  end
+
+  defp normalize_protocol_result(conn), do: conn
+
+  defp process_request_with_context(%Conn{} = conn, opts) do
+    params = Map.get(conn.request, "params") || %{}
+    mrtr_opts = mrtr_opts(conn, opts)
+
+    with {:ok, request_context} <- RequestContext.from_message(conn.request),
+         :ok <-
+           RequestContext.validate_protocol_mode(request_context, Map.get(opts, :protocol_mode)),
+         :ok <- RequestContext.validate_method(request_context),
+         {:ok, request_context} <- MRTR.prepare_context(request_context, params, mrtr_opts) do
+      conn
+      |> assign(:request_context, request_context)
+      |> assign(:mrtr_opts, mrtr_opts)
+      |> process_validated_request(opts)
+    else
+      {:error, %Error.ProtocolError{} = error} ->
+        conn
+        |> assign(:http_status, 400)
+        |> put_response(JSONRPC.error(get_request_id(conn.request), Error.to_json_rpc(error)))
+
+      {:error, reason} ->
+        conn
+        |> assign(:http_status, RequestContext.http_status(reason))
+        |> put_response(
+          RequestContext.error_response(
+            reason,
+            get_request_id(conn.request),
+            Map.get(opts, :protocol_mode)
+          )
+        )
+    end
+  end
+
+  defp mrtr_opts(conn, opts) do
+    [
+      request_state: Map.get(opts, :request_state),
+      endpoint: Map.get(opts, :endpoint) || transport_endpoint(conn),
+      principal_id: Map.get(opts, :principal_id),
+      tenant_id: Map.get(opts, :tenant_id),
+      max_input_requests: Map.get(opts, :max_input_requests, 16),
+      max_mrtr_bytes: Map.get(opts, :max_mrtr_bytes, 1_048_576),
+      replay_cache: Map.get(opts, :replay_cache),
+      require_replay_protection: Map.get(opts, :require_replay_protection, false)
+    ]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp transport_endpoint(%Conn{transport: :http}), do: "/mcp"
+  defp transport_endpoint(_conn), do: nil
+
+  defp process_notification_with_context(%Conn{} = conn, opts) do
+    with {:ok, request_context} <- RequestContext.from_message(conn.request),
+         :ok <-
+           RequestContext.validate_protocol_mode(request_context, Map.get(opts, :protocol_mode)),
+         :ok <- RequestContext.validate_method(request_context) do
+      conn
+      |> assign(:request_context, request_context)
+      |> process_validated_notification(opts)
+    else
+      {:error, reason} ->
+        Logger.warning("Invalid notification metadata: #{inspect(reason)}")
+        conn
+    end
+  end
+
   defp process_validated_request(%Conn{} = conn, opts) do
     handler = Map.get(opts, :handler)
     handler_opts = Map.get(opts, :handler_opts, [])
     server = Map.get(opts, :server)
     server_info = Map.get(opts, :server_info, %{})
 
-    conn = put_handler_call_timeout(conn, opts)
+    conn =
+      conn
+      |> put_handler_call_timeout(opts)
+      |> assign(:server_info, server_info)
+      |> assign(:server_capabilities, configured_server_capabilities(handler, opts))
+      |> assign(:protocol_mode, Map.get(opts, :protocol_mode))
+      |> assign(:instructions, Map.get(opts, :instructions))
 
     cond do
       # If we have a server PID, use it directly
@@ -262,6 +349,19 @@ defmodule ExMCP.MessageProcessor do
     case Map.get(opts, :handler_call_timeout) do
       nil -> conn
       timeout -> assign(conn, :handler_call_timeout, timeout)
+    end
+  end
+
+  defp configured_server_capabilities(handler, opts) do
+    cond do
+      is_map(Map.get(opts, :server_capabilities)) ->
+        Map.get(opts, :server_capabilities)
+
+      is_atom(handler) and function_exported?(handler, :__server_capabilities__, 0) ->
+        handler.__server_capabilities__()
+
+      true ->
+        %{}
     end
   end
 

@@ -1,12 +1,12 @@
 # ExMCP → MCP 2026-07-28 Migration Plan
 
-**Status:** Draft / not yet started
-**Target release:** ExMCP `2.0.0`
+**Status:** Implementation in progress — Phases 0–3 complete; Phase 4 core implemented
+**Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28) ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
 **Current ExMCP:** `1.0.0-rc.5`, implements MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
-**Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup shipping as `1.0.0-rc.5`
-**Author:** planning document — no code changes implied by this file
-**Last updated:** 2026-08-02
+**Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
+**Author:** living implementation plan
+**Last updated:** 2026-08-04
 
 ---
 
@@ -34,9 +34,73 @@ feature addition on top of `2025-11-25`; it is a re-founding of the protocol on 
 |---|---|---|
 | Compatibility | **Dual-era.** Keep `2024-11-05` … `2025-11-25` working; add `2026-07-28`. | ExMCP already supports every prior revision and users depend on it. The spec explicitly defines a dual-era model and a compatibility matrix. |
 | Default version | **Prefer `2026-07-28`, fall back by probe.** | There is no handshake to negotiate in. Clients probe with `server/discover`; servers branch on the shape of the first request. |
-| Scope | **Everything** — core, tasks extension, `x-mcp-header`, auth updates (RFC 9207 `iss`, CIMD, `application_type`, issuer-keyed credentials). | A 2.0 is the right place to absorb the whole delta at once. |
-| Release | **`2.0.0`** | Breaking. Also the window to drop `ExMCP.Server.Tools` and other deprecated surface. |
-| Deprecated-but-live features | **Keep** Roots / Sampling / Logging / HTTP+SSE. | The spec deprecates them with a ≥12-month window; MRTR still carries sampling/elicitation/roots payloads. |
+| Scope | **Required modern core and applicable authorization requirements.** Tasks extension and the optional client cache may follow in `1.1` if they threaten the stabilization window. | ExMCP can truthfully support the core `2026-07-28` protocol without advertising an unimplemented optional extension or implementing an optional cache. |
+| Release | **`1.0.0` after additional RCs.** Do not publish stable `1.0.0` on the legacy-only architecture. | ExMCP has not made a stable 1.x API promise yet. Shipping a legacy-only 1.0 would make the first stable release obsolete on arrival and create an immediate 2.0 migration cliff. |
+| Public API removals | **None in this migration.** Keep `ExMCP.Server.Tools` and other deprecated public surface throughout 1.x; remove it in 2.0. | The protocol revision does not require unrelated library API removals. The current “removed in 1.1” promise is incompatible with SemVer and must be corrected before 1.0. |
+| Deprecated-but-live features | **Keep legacy support** for Roots / Sampling / Logging / HTTP+SSE. | The spec deprecates them with a ≥12-month window. They remain available on applicable legacy paths; modern uses MRTR/per-request logging and does not restore removed methods. |
+
+### Why this belongs in 1.0 rather than 2.0
+
+MCP's protocol version and ExMCP's package version are different compatibility boundaries.
+Supporting a new, breaking MCP wire revision does **not** itself require an ExMCP major release
+when the library remains dual-era and preserves its public Elixir API. Conversely, removing a
+public ExMCP module would require a major release even if the MCP wire protocol did not change.
+
+Release candidates exist to find exactly this kind of pre-stable design change. `rc.5` is tagged,
+but no stable `1.0.0` contract exists yet. The least disruptive long-term sequence is therefore:
+
+1. Keep `rc.5` as the published legacy characterization baseline and test oracle (it remains a
+   prerelease, not a stable package release).
+2. Ship modern support through additional RCs. Enable the modern server path and an explicit
+   client opt-in first; then flip the client default to modern-preferred for at least one RC.
+3. Release `1.0.0` only after modern-preferred + automatic legacy fallback has soaked in an RC.
+4. Preserve all four legacy revisions and deprecated ExMCP public APIs for the entire 1.x line.
+5. Reserve ExMCP `2.0.0` for deliberate public-API removals and any eventual legacy-protocol
+   removal, with separate notice and migration guidance.
+
+Use an explicit mode instead of a boolean flag, with per-client/per-server options overriding
+the application default:
+
+```elixir
+config :ex_mcp, protocol_mode: :prefer_modern
+# :prefer_modern | :prefer_legacy | :modern_only | :legacy_only
+```
+
+The first migration RC may default to `:prefer_legacy` while modern is exercised. The last RC
+and stable `1.0.0` should default to `:prefer_modern`. Servers should be dual-era by default.
+
+An illustrative RC train (gates matter more than the exact RC number):
+
+| Candidate | Contents | Default / exit condition |
+|---|---|---|
+| `rc.6` | Phases 0–3; generated types; modern stdio `discover`/list/call; legacy characterization unchanged | Client `:prefer_legacy`, modern opt-in; seven-row stdio matrix green |
+| `rc.7` | MRTR, subscriptions, modern Streamable HTTP, required cache metadata, applicable auth changes | Dual-era server default; HTTP matrix, security and disconnect tests green |
+| `rc.8` (or later) | Conformance/official-SDK interop, performance/soak, docs and API audit | Client `:prefer_modern`; no new wire/API design changes during the soak |
+| `1.0.0` | Same behavior as the final RC, plus release metadata only | Every gate in Phase 10 passes |
+
+If a gate misses, add another RC; do not move unfinished core work into stable `1.0.0` merely
+to preserve the illustrative numbering.
+
+### Scope boundary for 1.0
+
+The 1.0 release gate includes the modern core wire model, dual-era negotiation, MRTR,
+subscriptions, Streamable HTTP changes, required result/cache fields, schema behavior, and the
+authorization requirements that apply to enabled auth flows. Two pieces need not block 1.0:
+
+- **Tasks extension:** it is optional and outside core. Keep the legacy `2025-11-25` task path;
+  do not advertise `io.modelcontextprotocol/tasks` on modern connections until Phase 8 is done.
+- **Client response cache:** emitting and parsing the required cache metadata is in scope, but
+  actually caching responses is an optimization. It may ship in 1.1 without a compatibility
+  break. No-cache is the safe fallback.
+
+Everything else in this document remains planned work; this boundary only defines what may be
+deferred without making the 1.0 core-support claim inaccurate.
+
+Within Phase 7, OTel propagation and actual response storage are optional. Required for 1.0 are
+the cache fields on the wire, per-request logging rules, deterministic tool ordering, and the
+new JSON Schema acceptance/resource-safety behavior. Within Phase 9, every normative item is a
+release gate when authorization support is enabled; deployments that disable authorization do
+not bypass the auth test matrix for the library itself.
 
 ### Effort shape
 
@@ -53,9 +117,9 @@ of which ~17.6k LOC is ACP and out of scope):
 | 5 | `subscriptions/listen` | L |
 | 6 | Streamable HTTP rework | XL |
 | 7 | Caching, logging, ordering, JSON Schema, `x-mcp-header` | M |
-| 8 | Tasks extension | L |
+| 8 | Tasks extension (optional for the 1.0 core gate) | L |
 | 9 | Authorization updates | M |
-| 10 | Deprecation removals, docs, conformance, release | M |
+| 10 | Compatibility audit, docs, conformance, release | M |
 
 ---
 
@@ -65,7 +129,7 @@ of which ~17.6k LOC is ACP and out of scope):
 
 The `ClientRequest` union in the 2026-07-28 `schema.ts` is now exactly:
 
-```
+```text
 server/discover · completion/complete · prompts/get · prompts/list
 resources/list · resources/templates/list · resources/read
 subscriptions/listen · tools/call · tools/list
@@ -122,11 +186,13 @@ Every result gains a required `resultType`:
 - `"input_required"` — MRTR interim result (`InputRequiredResult`).
 - `"task"` — tasks extension `CreateTaskResult`.
 - Extensions MAY add more; unrecognised values MUST be treated as invalid.
-- **Absent ⇒ treat as `"complete"`** (backward compat with legacy servers).
+- **Absent on a legacy connection ⇒ treat as `"complete"`** for backward compatibility.
+  Absent on a modern connection is an invalid response because `resultType` is required.
+  Extension-defined values are accepted only when the corresponding extension was negotiated.
 
 `CacheableResult` adds `ttlMs` (integer ms, ≥ 0) and `cacheScope` (`"public"` | `"private"`),
-**required** on `resultType: "complete"` results of `server/discover`, `tools/list`,
-`prompts/list`, `resources/list`, `resources/templates/list`, `resources/read`.
+**required** on `resultType: "complete"` results of `tools/list`, `prompts/list`,
+`resources/list`, `resources/templates/list`, and `resources/read`.
 
 ### 2.4 Error codes
 
@@ -178,7 +244,7 @@ Collapsing them is Phase 0 and everything else depends on it.
 
 ### 3.2 Client shape
 
-```
+```text
 ExMCP.Client (GenServer)
 ├── ExMCP.Client.EraProbe          NEW  — server/discover probe + fallback + cache
 ├── ExMCP.Client.ConnectionManager  MOD — branches: modern (no handshake) | legacy (initialize)
@@ -187,7 +253,7 @@ ExMCP.Client (GenServer)
 ├── ExMCP.Client.MRTR              NEW  — fulfils inputRequests via ExMCP.Client.Handler
 │                                          callbacks, then retries with a fresh id
 ├── ExMCP.Client.Subscription      NEW  — long-lived subscriptions/listen request
-├── ExMCP.Client.Cache             NEW  — ttlMs / cacheScope honouring, list_changed invalidation
+├── ExMCP.Client.Cache             NEW  — optional ttlMs/cacheScope cache, list_changed invalidation
 └── ExMCP.Client.Handler            —   behaviour UNCHANGED (big win, see §3.4)
 ```
 
@@ -199,11 +265,13 @@ unchanged** — this is the main source-compatibility lever for downstream users
 
 ### 3.3 Server shape
 
-```
+```text
 ExMCP.Server.Dispatch              MOD — era-aware method table; builds RequestContext
 ├── ExMCP.Server.RequestContext   NEW  — %{protocol_version, era, client_info,
 │                                          client_capabilities, log_level, extensions,
-│                                          progress_token, subscription_id}
+│                                          progress_token, subscription_id,
+│                                          principal_id, tenant_id, deadline,
+│                                          input_responses, request_state, replay_protection}
 ├── ExMCP.Server.Discover         NEW  — server/discover result assembly
 ├── ExMCP.Server.RequestState     NEW  — AEAD sign/verify of MRTR requestState
 ├── ExMCP.Server.Subscriptions    NEW  — per-listen-request filter registry + fan-out
@@ -211,8 +279,10 @@ ExMCP.Server.Dispatch              MOD — era-aware method table; builds Reques
 ```
 
 `RequestContext` is the direct replacement for connection state. It is derived from `_meta`
-on each request and passed to handlers. In the legacy era it is synthesised from the stored
-session so that handler code is era-agnostic.
+on each request. In the legacy era it is synthesised from the stored session so internal code
+is era-agnostic. Expose it to user code additively through context-aware callback variants or a
+scoped accessor; keep existing callback arities and the documented `_meta` argument merge for
+the entire 1.x line.
 
 `ExMCP.Server.ResultNormalizer` is already the single shared result shaper across all four
 dispatch paths (this consolidation landed in `1.0.0-rc.5`). That makes stamping
@@ -235,6 +305,7 @@ ExMCP already handles as server-initiated requests. So:
   `ElicitationHandler`) continue to work in both eras with no changes.
 
 Two guards are required:
+
 1. **Round-trip cap** (`max_input_rounds`, default e.g. 8) to bound the retry loop, since the
    spec explicitly permits servers to return `input_required` repeatedly.
 2. **Capability gate** — never dispatch an `inputRequest` type the client did not declare;
@@ -254,11 +325,27 @@ existing `{:ok, result, state}` / `{:error, reason, state}`:
 {:input_required, input_requests, request_state :: term(), state}
 ```
 
-with `request_state` being an arbitrary Elixir term that `ExMCP.Server.RequestState`
-serialises + AEAD-seals into the opaque wire string, and unseals + verifies on the retry
-(binding principal, TTL, and a digest of method + salient params, per the spec's replay
-guidance). Handlers receive the verified term back via `RequestContext`. Default key source:
-application config, with a clear error at boot if MRTR is used without a configured key.
+with `request_state` being a bounded, portable value that `ExMCP.Server.RequestState`
+serialises through a safe codec + AEAD-seals into the opaque wire string, and unseals + verifies on the retry
+(binding principal/tenant, TTL, expected input IDs/round, and a digest of the canonical immutable
+original request, per the spec's replay guidance). Handlers receive the verified value back via `RequestContext`. Default key source:
+runtime application config. Both return forms require a key ring: when the handler omits
+application `request_state`, ExMCP still emits a minimal sealed envelope containing the expected
+input IDs, round and request binding. Validate a configured ring at boot when MRTR is declared;
+otherwise fail the first `:input_required` return before emitting a response with an actionable
+configuration error.
+
+The default codec should accept JSON-compatible values only. If an Erlang external-term codec
+is offered, decoding must use safe mode plus an explicit type/size allowlist; never call an
+unrestricted `binary_to_term/1` on state derived from the wire. PIDs, ports, functions and
+node-local references are invalid because a retry may land on another node or application version.
+
+On a retry, dispatch must verify/decode `requestState`, validate `inputResponses` against the
+previously requested IDs, then place both values in `RequestContext` before invoking the same
+method again. Context-aware handlers read them from that context and either return the final
+ordinary result or another `{:input_required, ...}` tuple. Legacy callback arities continue
+through an adapter; the DSL exposes `input_responses(context)` and `request_state(context)` so
+resumption does not depend on raw `_meta` or process-local state.
 
 The DSL gets a matching affordance inside `run/1` / `handle/1` bodies, e.g. a
 `ExMCP.Server.DSL.Result.input_required/2` builder alongside `text/1`, `error/1`, `structured/2`.
@@ -267,12 +354,16 @@ The DSL gets a matching affordance inside `run/1` / `handle/1` bodies, e.g. a
 
 `subscriptions/listen` is a *request whose response is an open stream*. Model it as:
 
-- **Client**: `ExMCP.Client.Subscription` — a supervised process owning one long-lived
-  request id, delivering notifications to a subscriber pid. `ExMCP.Client.subscribe_resource/2`
-  and `unsubscribe_resource/2` are re-implemented as sugar that opens/updates a listen stream
-  in the modern era and falls back to `resources/subscribe` in the legacy era.
-- **Server**: `ExMCP.Server.Subscriptions` — ETS-backed registry of
-  `{subscription_id, transport_ref, filter}`. Replaces `ExMCP.Server.SSESession`'s
+- **Client**: `ExMCP.Client.Subscription` — a supervised process owning a long-lived request id,
+  delivering notifications to subscriber pids and maintaining a ref-counted desired filter.
+  Because a listen request is immutable, a filter change opens a replacement stream, waits for
+  its acknowledgment, then cancels the old stream. During overlap, correlate by subscription ID
+  and suppress duplicate/out-of-filter delivery. `subscribe_resource/2` and
+  `unsubscribe_resource/2` are sugar over this replacement flow in modern and fall back to
+  `resources/subscribe` / `unsubscribe` in legacy.
+- **Server**: `ExMCP.Server.Subscriptions` — adapter-backed registry of
+  `{subscription_id, transport_ref, honoured_filter, principal_id, tenant_id, expires_at}`
+  (ETS locally, PubSub fan-out in a cluster). Replaces `ExMCP.Server.SSESession`'s
   server→client request correlation (which MRTR makes unnecessary) with pure notification
   fan-out. Existing `Protocol.encode_tools_changed/0` et al. get a `subscriptionId` stamped in
   `_meta` on the way out.
@@ -299,23 +390,22 @@ These stay for the legacy path but must be **bypassed entirely** when `era == :m
 
 ## 4. Gap analysis by subsystem
 
-### 4.1 Version handling — **blocker for everything else**
+### 4.1 Version handling — **rc.5 foundations landed; modern status remains**
 
 | Location | Problem |
 |---|---|
-| `lib/ex_mcp/internal/version_registry.ex` L14-19 | Canonical `@versions`, but only one of two lists |
-| `lib/ex_mcp/protocol/version_negotiator.ex` L13-14 | Independent duplicate `@supported_versions` / `@latest_version`, plus its own `build_capabilities/1` |
-| `lib/ex_mcp/types.ex` L27 | Third copy (scalar): `@latest_protocol_version` |
-| `config/config.exs` L8 | Fourth (scalar): `protocol_version: "2025-11-25"` |
-| `lib/ex_mcp/internal/protocol.ex` L555-570 | Six method/version MapSets, incl. `@methods_draft_only` (L565-568) which already lists `"server/discover"` and `"subscriptions/listen"` gated to a phantom `"draft"` version. `method_available?/2` at L573-589 |
-| `lib/ex_mcp/internal/message_validator.ex` L81 | Batch rejection hard-matches the literal `"2025-06-18"` |
-| `lib/ex_mcp/transport/http_server.ex` L295 | Hardcoded `protocolVersion: "2025-03-26"` |
-| `lib/ex_mcp/protocol/request_processor.ex` L119 | Defaults missing version to `"2025-06-18"` |
+| `lib/ex_mcp/internal/version_registry.ex` | Canonical supported-version list and era helpers landed in rc.5; it still needs known/supported/preferred status for staged modern rollout |
+| `lib/ex_mcp/protocol/version_negotiator.ex` | Version lists delegate to the registry; legacy `build_capabilities/1` is now a deprecated compatibility shim over the same canonical capability vocabulary |
+| `lib/ex_mcp/types.ex` | `latest_protocol_version/0` now delegates; moduledoc still says modern is post-1.0 and must be updated |
+| `config/config.exs` L8 | Legacy preferred scalar remains `protocol_version: "2025-11-25"`; introduce `protocol_mode` without changing this default prematurely |
+| `lib/ex_mcp/protocol/methods.ex` | Single method table landed in rc.5; modern-only methods are now bounded to the staged `"2026-07-28"` version rather than a phantom `"draft"` |
+| `lib/ex_mcp/transport/http_server.ex` | Canned initialize now uses the shared version-aware result builder |
+| `lib/ex_mcp/protocol/request_processor.ex` | Missing versions now use the validated registry preference |
 | `lib/ex_mcp/plugs/protocol_version.ex` | Gated behind `FeatureFlags.enabled?(:protocol_version_header)`, **off by default** — must be always-on for modern |
 
-**Action:** collapse to `VersionRegistry` first. Delete `VersionNegotiator`'s duplicate list
-and route `build_capabilities/1` through `VersionRegistry.capabilities_for_version/1`. Replace
-version string comparisons with `VersionRegistry.era_for/1` / ordering helpers.
+**Action:** build on the rc.5 registry/method table rather than repeating that cleanup. Add
+staged version status and protocol-mode selection, decide whether to deprecate the unused legacy
+capability builder, and replace remaining literal defaults with era-aware policy.
 
 ### 4.2 Initialize handshake — four implementations
 
@@ -334,16 +424,13 @@ L363-366 and `MockServer` L448 only; `Dispatch` silently ignores it.
 that never sees `initialize`. `server/discover` should be implemented **once** in
 `ExMCP.Server.Discover` and wired into all four tables.
 
-### 4.3 Error codes — four definitions, one collision
+### 4.3 Error codes — canonical module landed; one collision remains
 
-`lib/ex_mcp/protocol/error_codes.ex` (canonical), `Internal.Protocol` L652-665,
-`Types` L31-35, `MessageValidator` L26-29. `-32002` is **double-assigned** to both
-`consent_required` and `resource_not_found`.
-
-**Action:** single module; add `-32020/-32021/-32022`; move resource-not-found to `-32602`
-for modern while still *accepting* `-32002` from legacy servers; move `consent_required` out
-of the reserved sub-range (it is an ExMCP-local concern, so per spec it belongs **outside**
-`-32768..-32000`); retire `-32042`.
+`lib/ex_mcp/protocol/error_codes.ex` now distinguishes emission from compatibility decoding.
+Resource-not-found emits `-32002` for legacy and `-32602` for modern, while unknown-era client
+classification accepts either. ExMCP-local consent and prompt errors use `-31002` and `-31003`,
+outside `-32768..-32000`. The historical `-32042` constructor is legacy-only and deprecated;
+selecting it for a modern version returns `{:error, :retired_error_code}`.
 
 ### 4.4 Client
 
@@ -351,26 +438,26 @@ of the reserved sub-range (it is an ExMCP-local concern, so per spec it belongs 
 |---|---|---|
 | Handshake | `ConnectionManager.do_handshake/3` → `send_initialize_request` → `send_initialized` | Era probe via `server/discover`; no handshake in modern |
 | Outbound `_meta` | `ExMCP.Internal.RequestParams` — `with_meta/2` L38, `with_non_empty_meta/2` L43, `with_opts_meta/2` L50, `with_progress_or_meta/2` L73-79. Only progress + user meta | Must inject protocolVersion + clientCapabilities on **every** request; add clientInfo, logLevel |
-| Result parsing | No `resultType` awareness | Discriminate `complete` / `input_required` / `task`; absent ⇒ complete |
+| Result parsing | No `resultType` awareness | Discriminate `complete` / `input_required` / negotiated extension values; absence means complete only on legacy |
 | Server→client requests | `RequestHandler` L431-441 dispatch table (`ping`, `roots/list`, `sampling/createMessage`, `elicitation/create`) | Keep for legacy; add MRTR path for modern |
-| Health check | idle `ping`; interval `health_check_interval: 30_000` default at `client.ex` L743, scheduled L1410/L1459, sent by `RequestHandler.send_ping/1` L180-187 | `ping` is gone — use cached `server/discover` in modern, or make health checks era-conditional |
+| Health check | idle `ping`; interval `health_check_interval: 30_000` default at `client.ex` L743, scheduled L1410/L1459, sent by `RequestHandler.send_ping/1` L180-187 | `ping` is gone — use an uncached `server/discover` liveness request in modern and keep `Client.ping/2` as a wrapper |
 | Subscriptions | `Client.subscribe_resource/2` → `Operations.Resources` L79 | Re-implement over `subscriptions/listen` |
-| Caching | none | `ttlMs`/`cacheScope` cache + `list_changed` invalidation |
+| Caching | none | Parse/validate `ttlMs`/`cacheScope`; optional cache + `list_changed` invalidation |
 | Auto-reconnect | exists, backoff + jitter | Must re-establish `subscriptions/listen` streams after reconnect (spec: server holds no state) |
-| `x-mcp-header` | none | MUST mirror annotated params into `Mcp-Param-*`; MUST exclude tools with invalid annotations from `tools/list` output |
+| `x-mcp-header` | none | Client mirrors valid listed annotations into `Mcp-Param-*`; server validates annotations and excludes invalid tools from `tools/list` |
 
 ### 4.5 Server
 
 | Concern | Current | Needed |
 |---|---|---|
-| Request context | Session-derived; `_meta` merged into tool args by `Dispatch.tool_arguments/1` L106-113 | Explicit `RequestContext` from `_meta`, passed to handlers |
-| `server/discover` | Absent (name appears only in a phantom `"draft"` gate) | MUST implement |
+| Request context | Session-derived; `_meta` merged into tool args by `Dispatch.tool_arguments/1` L106-113 | Explicit internal `RequestContext` from `_meta`; additive context-aware user API with old callback arities retained |
+| `server/discover` | Method name is staged at `"2026-07-28"`; no dispatcher or handler exists yet | MUST implement |
 | Result envelope | `ResultNormalizer` — no `resultType` | Stamp `resultType`, `_meta.serverInfo`, `ttlMs`, `cacheScope` |
 | MRTR | Server→client requests via `HandlerServer` (L358 roots, L384-395 sampling) and `SSESession.send_request/3` | New `{:input_required, …}` handler return + `RequestState` sealing |
 | Subscriptions | `Dispatch` L163-171 → `handle_subscribe_resource/2`; no subscriber registry (handler's job) | `subscriptions/listen` + `Subscriptions` registry + acknowledgment notification |
 | Logging | `logging/setLevel` via `Dispatch.set_log_level/2` L244-264 (succeeds even without the callback) | Per-request `logLevel`; MUST NOT emit `notifications/message` when absent |
 | Deterministic tool order | not guaranteed | SHOULD return `tools/list` in stable order |
-| Capabilities | `VersionRegistry.capabilities_for_version/1` **disagrees with** `FeatureFlags` on `tasks` | Reconcile; add `extensions` map to both client and server capabilities |
+| Capabilities | The legacy 2025-11-25 wire path advertises `tasks` unconditionally; the independent negotiator vocabulary is retired | Keep the legacy behavior; add an `extensions` map to both client and server modern capabilities |
 
 ### 4.6 Streamable HTTP
 
@@ -417,12 +504,13 @@ New extension shape:
 | — | `tasks/update` — client submits `inputResponses` for a task in `input_required` |
 | `notifications/tasks/status` | `notifications/tasks`, opted into via `subscriptions/listen` |
 | per-request opt-in (`taskSupport`, tool `execution`) | **removed** — server-directed; client opts in once via the extension capability |
-| `ttl` / `poll_interval` (struct, L37-38 & L49-50) emitted as `"ttl"` / `"pollInterval"` (wire, `to_map/1` L172-173) | `ttl_ms` / `poll_interval_ms` emitted as `"ttlMs"` / `"pollIntervalMs"` — two renames each |
+| `ttl` / `poll_interval` (struct, L37-38 & L49-50) emitted as `"ttl"` / `"pollInterval"` (wire, `to_map/1` L172-173) | Modern wire emits `"ttlMs"` / `"pollIntervalMs"`; retain the old public fields as 1.x aliases or use a separate extension struct |
 | — | `CreateTaskResult` with `resultType: "task"` |
 
 The existing `ExMCP.Tasks.Task` state machine (`working` / `input_required` / `completed` /
-`failed` / `cancelled`) matches the new spec exactly — keep it, rename the two TTL fields,
-add `inputRequests` and `error`, and delete the `to_map/1` keys that no longer exist.
+`failed` / `cancelled`) matches the new spec exactly. Reuse the state logic, add
+`inputRequests` and `error`, and make serialization era-specific. Do not rename/remove public
+rc.5 struct fields in place; retain aliases throughout 1.x or add a separate extension struct.
 
 **Action:** remove the DSL `execution` instruction and `taskSupport` from the modern path
 (keep for legacy `2025-11-25`), and finally implement the creation side.
@@ -466,25 +554,26 @@ reuse, but several of them (roots, sampling, elicitation, logging) describe *ser
 request* flows that no longer exist in modern — they need era-conditional variants.
 
 `test/conformance/server.exs` hardcodes `mcp-protocol-version: "2025-11-25"` at L522 and the
-external harness (`@modelcontextprotocol/conformance@0.1.16`) currently passes 39/39 server +
+repo-pinned stable harness (`@modelcontextprotocol/conformance@0.1.16`) passes 39/39 server +
 226/226 client. `scripts/conformance.sh` **already has a non-gating `draft-alpha` mode**
 (`run_draft_alpha/0` L212-224, pinned to `@modelcontextprotocol/conformance@0.2.0-alpha.9`
 via `CONFORMANCE_ALPHA_VERSION`, usage L252-268, documented at
 `test/ex_mcp/compliance/MCP_COVERAGE_MATRIX.md` L9/L11). That mode is the natural early
-signal; a stable harness release supporting 2026-07-28 is the acceptance gate.
+signal. Prefer a stable 2026-07-28-aware harness for acceptance; if one is still unavailable at
+release time, use the explicit official-SDK interop fallback in the Phase 10 gates.
 
 ---
 
 ## 5. Phased plan
 
-Dependencies are strict unless noted. Phases 7/8/9 can run in parallel with each other once
-6 lands.
+Dependencies are strict unless noted. Phases 7/8/9 can run in parallel once 6 lands. Phase 10
+is gated by the required parts of 7 and 9; Phase 8 gates release only if modern Tasks support is
+advertised.
 
-```
-0 ──> 1 ──> 2 ──> 3 ──> 4 ──> 6 ──> 10
-                   └──> 5 ──┘   ┌──> 7
-                                ├──> 8
-                                └──> 9
+```text
+0 ──> 1 ──> 2 ──> 3 ──> 4 ──> 6 ──> 7 ──> 10
+                   └──> 5 ──┘   ├──> 9 ─────┘
+                                └──> 8 (optional gate)
 ```
 
 ---
@@ -502,75 +591,87 @@ Dependencies are strict unless noted. Phases 7/8/9 can run in parallel with each
 additively, `era_for/1` / `modern?/1` helpers, a version-derived compliance test generator,
 and characterization tests pinning per-version wire output.
 
-**Remaining Phase 0 work — the parts that genuinely require the breaking release:**
+**Remaining Phase 0 work — the parts that genuinely require the protocol migration:**
 
-- [ ] `mix mcp.sync_spec --version 2026-07-28` → `docs/mcp-specs/2026-07-28/` (+ `schema.ts`, `schema.json`).
+- [x] `mix mcp.sync_spec --version 2026-07-28` → `docs/mcp-specs/2026-07-28/` (+ `schema.ts`, `schema.json`).
       Verify `dev/ex_mcp/spec_sync/file_mapper.ex` maps the new pages (`basic/patterns/*`,
       `basic/versioning`, `basic/transports/*`, `server/discover`, `server/utilities/caching`) —
       the 2026-07-28 doc tree was reorganised relative to 2025-11-25 and the mapper will need
       new entries.
-- [ ] **Consolidate the five `initialize` implementations** behind one
+- [x] **Consolidate the five `initialize` implementations** behind one
       `build_initialize_result/2` — `request_processor.ex` L118-144, `message_processor.ex` L283,
       `server/handler.ex` L300-305 and L745, `server/dsl.ex` L661,
       `transport/http_server.ex` L292-298. They disagree on default version, capability source
-      and key casing. **This is the natural first commit of the 2.0 branch** — all five have to
+      and key casing. **This is the natural first commit after rc.5** — all five have to
       be touched anyway to add the modern era. (Deferred from rc.5 as §5.8 there.)
-- [ ] Register `"2026-07-28"` in `VersionRegistry` and have `era_for/1` return `:modern` for it.
-- [ ] Fix `RequestProcessor` L119's `"2025-06-18"` default (wire-visible for clients that omit
-      `protocolVersion`; rc.5 §5.4 added the pinning test, 2.0 changes the behavior).
-- [ ] Fix or delete `Transport.HttpServer` L292-298's canned `initialize` response with its
-      hardcoded `"2025-03-26"` (rc.5 §5.3 documented it as an example; 2.0 changes it).
-- [ ] Resolve the `-32002` collision: move resource-not-found to `-32602` for modern while
+- [x] Register `"2026-07-28"` in `VersionRegistry` and have `era_for/1` return `:modern` for it,
+      but mark it disabled/experimental until the Phase 2 exit gate. Merely adding the newest
+      date must not make `latest_version/0`, `preferred_version/0`, default capabilities, or
+      `server/discover` advertise a half-implemented protocol. Promote support and preference in
+      separate, reviewable commits aligned with the RC train.
+- [x] Fix `RequestProcessor` L119's `"2025-06-18"` default (wire-visible for clients that omit
+      `protocolVersion`; rc.5 §5.4 added the pinning test, the modern migration changes the behavior).
+- [x] Fix or delete `Transport.HttpServer` L292-298's canned `initialize` response with its
+      hardcoded `"2025-03-26"` (rc.5 §5.3 documented it as an example; the migration changes it).
+- [x] Resolve the `-32002` collision: move resource-not-found to `-32602` for modern while
       still *accepting* `-32002` from legacy servers, and move `consent_required` out of the
-      reserved sub-range. Note `-32002` currently carries a **third** meaning in
-      `error.ex` L384/L461 (`prompt_error`). Retire `-32042`. (rc.5 §5.2.)
-- [ ] Reconcile `FeatureFlags` vs `VersionRegistry` on `tasks` — resolves itself via extension
+      reserved sub-range. `prompt_error` now uses a separate application code, and `-32042`
+      is rejected for modern emission while its legacy constructor remains decodable. (rc.5 §5.2.)
+- [x] Reconcile `FeatureFlags` vs `VersionRegistry` on `tasks` — resolves itself via extension
       negotiation in Phase 8, but the 2025-11-25 path must keep advertising `tasks`
       unconditionally or it is a regression for existing users. (rc.5 §5.5.)
-- [ ] Decide the fate of `VersionNegotiator.build_capabilities/1` — it and
-      `VersionRegistry.capabilities_for_version/1` are two different capability vocabularies
-      with zero overlapping experimental keys on 2025-06-18+. Only `VersionRegistry` reaches
-      the wire; `build_capabilities/1` has zero lib callers but ~45 test assertions. (rc.5 §5.1.)
+- [x] Decide the fate of `VersionNegotiator.build_capabilities/1` — retain it through 1.x as a
+      deprecated compatibility shim over `VersionRegistry.capabilities_for_version/1`. The
+      independent experimental vocabulary and its feature-flag-dependent tasks behavior are gone.
+      (rc.5 §5.1.)
 - [ ] ~~Route `Handler.handle_url_elicitation/3`~~ — **shipping in rc.5 as Track G.** Phase 4
       inherits a correct dispatcher; MRTR must reuse it rather than adding a second routing path.
 
-**Exit:** one `initialize` builder; `"2026-07-28"` registered as `:modern`; full suite green.
+**Exit:** one `initialize` builder; `"2026-07-28"` known as `:modern` but not yet preferred or
+advertised; full suite green, legacy versions remain wire-compatible, and intentional default
+changes are covered by tests.
 
 ---
 
 ### Phase 1 — Types
 
-- [ ] `lib/ex_mcp/types/v20260728.ex`: `RequestMetaObject`, `NotificationMetaObject`,
+- [x] `lib/ex_mcp/types/v20260728.ex`: `RequestMetaObject`, `NotificationMetaObject`,
       `ResultMetaObject`, `ResultType`, `CacheableResult`, `DiscoverResult`,
       `InputRequests` / `InputResponses` / `InputRequiredResult`, `SubscriptionFilter`,
       `SubscriptionsListenRequest`/`Result`, `HeaderMismatchError`,
       `UnsupportedProtocolVersionError`, `MissingRequiredClientCapabilityError`.
-- [ ] Add `extensions` to `client_capabilities` / `server_capabilities` in `ExMCP.Types`.
-- [ ] Loosen `inputSchema`/`outputSchema` types to any JSON Schema 2020-12, and
+- [x] Add `extensions` to `client_capabilities` / `server_capabilities` in `ExMCP.Types`.
+- [x] Loosen `inputSchema`/`outputSchema` types to any JSON Schema 2020-12, and
       `structuredContent` to any JSON value (currently narrower).
-- [ ] `min`/`max`/`default` are `number`, not `integer` (upstream generator fix).
+- [x] Numeric schema `minimum`/`maximum`/`default` fields use `number`, not `integer`
+      (upstream generator fix).
 
-**Exit:** compiles; `mix dialyzer` clean.
+**Exit:** compiles; `mix dialyzer` clean. Conformance is covered by type-metadata tests in
+`test/ex_mcp/types/v20260728_test.exs`; runtime promotion remains a separate Phase 2 gate.
 
 ---
 
 ### Phase 2 — Wire plumbing
 
-- [ ] `ExMCP.Protocol.Meta` (new): build/parse the `io.modelcontextprotocol/*` `_meta` block;
+- [x] `ExMCP.Protocol.Meta` (new): build/parse the `io.modelcontextprotocol/*` `_meta` block;
       enforce the `_meta` key-naming rules (reserved `*.modelcontextprotocol` / `*.mcp` second
       labels); OTel passthrough for `traceparent`/`tracestate`/`baggage`.
-- [ ] `ExMCP.Internal.RequestParams`: inject required `_meta` on every modern outbound request.
+- [x] `ExMCP.Internal.RequestParams`: inject required `_meta` on every modern outbound request.
       Single choke point — do **not** scatter this across the ~30 `encode_*` functions.
-- [ ] `ExMCP.Server.RequestContext` (new) + extraction in `Dispatch`, `RequestProcessor`,
+- [x] `ExMCP.Server.RequestContext` (new) + extraction in `Dispatch`, `RequestProcessor`,
       `MethodHandlers`. Validate required fields → `-32602` / HTTP `400`.
-- [ ] `ExMCP.Server.ResultNormalizer`: stamp `resultType: "complete"` and
+- [x] `ExMCP.Server.ResultNormalizer`: stamp `resultType: "complete"` and
       `_meta["io.modelcontextprotocol/serverInfo"]` on modern results.
-- [ ] Client: parse `resultType`; absent ⇒ `"complete"`; unknown ⇒ protocol error.
-- [ ] `ExMCP.Server.Discover` (new) + wire `server/discover` into all four method tables.
-- [ ] Client: `server/discover` request + `DiscoverResult` → populate `:server_info`,
+- [x] Client: parse `resultType`; absent ⇒ `"complete"` only for a known legacy connection;
+      missing on modern or unknown/unnegotiated values ⇒ protocol error.
+- [x] `ExMCP.Server.Discover` (new) + wire `server/discover` into all four method tables.
+- [x] Client: `server/discover` request + `DiscoverResult` → populate `:server_info`,
       `:server_capabilities`, `:protocol_version`.
-- [ ] `MissingRequiredClientCapabilityError` emission when a handler needs an undeclared
+- [x] `MissingRequiredClientCapabilityError` emission when a handler needs an undeclared
       capability.
+- [x] After the stdio exit tests pass, promote `2026-07-28` from known to supported behind
+      explicit `:modern_only` / `:prefer_modern` opt-in. Do not change the application default
+      until the final RC soak.
 
 **Exit:** a modern client can call `server/discover` + `tools/list` + `tools/call` against a
 modern ExMCP server over stdio, with no `initialize`.
@@ -579,27 +680,54 @@ modern ExMCP server over stdio, with no `initialize`.
 
 ### Phase 3 — Era detection & dual-era dispatch
 
-- [ ] `ExMCP.Client.EraProbe` (new):
+- [x] `ExMCP.Client.EraProbe` (new):
       - stdio/local/test: send `server/discover` with the preferred modern version.
         `DiscoverResult` ⇒ modern. Recognised modern JSON-RPC error (e.g. `-32022`) ⇒ modern,
-        retry with an advertised version. Any other error **or timeout** ⇒ legacy → `initialize`.
-        The fallback MUST NOT be keyed to a specific error code.
+        retry with an advertised version. A non-modern JSON-RPC error, or a timeout while the
+        child process remains alive, triggers a tentative legacy `initialize` per the spec.
+        Process exit/transport failure is a connection failure, not era evidence. Cache legacy
+        only after `initialize` succeeds; otherwise surface both probe and initialize diagnostics.
+        The fallback MUST NOT be keyed to a single legacy error code.
       - HTTP: attempt a modern request; on `400`, inspect the body — recognised modern error ⇒
-        modern; otherwise fall back to `initialize`, then optionally to HTTP+SSE.
-      - Cache the era per server process (stdio) / origin (HTTP); allow persistence across
-        restarts with re-probe on failure.
-- [ ] `ExMCP.Client.ConnectionManager`: branch on era. Modern path skips
+        modern; otherwise follow the transport compatibility algorithm and tentatively try
+        `initialize`, then optionally HTTP+SSE. Authentication/authorization failures, rate
+        limits, redirects and `5xx` responses are not downgrade evidence.
+      - Cache the era per stdio child-process identity and canonical full HTTP endpoint plus a
+        transport/auth-configuration fingerprint. Never let two paths on one origin share a pin.
+        A legacy observation may expire so upgrades are discovered. Persist a successful modern
+        observation and never auto-downgrade it; a failed re-probe is diagnostic until an operator
+        clears the pin or changes the endpoint/configuration identity.
+      - Bound probing with a dedicated short timeout. Era fallback happens only during the
+        initial, side-effect-free probe; never reinterpret a failed application request as an
+        era change.
+      - Settle the era before sending any application request. A client never changes era during
+        one connection/process after successful discovery or initialization, even though a
+        dual-era server can accept clients of both eras concurrently. Emit telemetry and require
+        explicit operator/config action for any previously-modern endpoint to use legacy.
+      - Define all modes: `:modern_only` sends modern with no fallback; `:legacy_only` initializes
+        directly; `:prefer_modern` probes then falls back as above; `:prefer_legacy` initializes
+        first and, on a live-transport protocol failure, runs the modern probe before failing.
+        A recognized modern error is a schema-valid modern-specific error/result, not merely any
+        `-32602`/`-32601` response.
+      - Do not automatically follow redirects for MCP POSTs. An explicit policy may allow a
+        bounded same-origin `307`/`308`; never replay bodies, cookies, authorization or
+        `Mcp-Param-*` across origin or scheme downgrade. Key pins/caches to the configured/final
+        endpoint identity.
+- [x] `ExMCP.Client.ConnectionManager`: branch on era. Modern path skips
       `send_initialize_request`/`send_initialized` entirely.
-- [ ] Server: dual-era selection — a request carrying modern `_meta` is served statelessly;
+- [x] Server: dual-era selection — a request carrying modern `_meta` is served statelessly;
       an `initialize` request selects legacy semantics scoped to the process (stdio) or session
       (HTTP). Both MAY be served concurrently on one endpoint.
-- [ ] Modern-only servers SHOULD name their supported versions in the error returned to a
+- [x] Modern-only servers SHOULD name their supported versions in the error returned to a
       legacy `initialize` (legacy clients have no fall-forward).
-- [ ] `UnsupportedProtocolVersionError` emission + client-side retry with a mutually supported
+- [x] `UnsupportedProtocolVersionError` emission + client-side retry with a mutually supported
       version.
-- [ ] Health checks: `ping` no longer exists in modern. Make `:health_check_interval`
-      era-aware — use a cached `server/discover`, or disable in modern and rely on transport
-      liveness. **Open question, see §8.**
+- [x] Health checks: `ping` no longer exists in modern. Make `:health_check_interval`
+      era-aware and use an uncached `server/discover` liveness request in modern. Do not let
+      the application response cache satisfy a health check.
+- [x] Cover all seven rows of the specification's client/server era compatibility matrix,
+      including deterministic modern-only failure against legacy and supported-version
+      diagnostics for legacy-only clients against modern servers.
 
 **Exit:** the full 7-row compatibility matrix from the spec is covered by tests.
 
@@ -607,35 +735,77 @@ modern ExMCP server over stdio, with no `initialize`.
 
 ### Phase 4 — MRTR
 
-- [ ] `ExMCP.Client.MRTR` (new): on `resultType: "input_required"`, fulfil each `inputRequests`
+- [x] `ExMCP.Client.MRTR` (new): on `resultType: "input_required"`, fulfil each `inputRequests`
       entry via the existing `ExMCP.Client.Handler` callbacks, then re-issue the original
       request with a **new id**, `inputResponses`, and the echoed-verbatim `requestState`.
       Never inspect `requestState`. Omit it entirely if the server didn't send one.
-- [ ] Round-trip cap + telemetry (`[:ex_mcp, :client, :mrtr, :round]`).
-- [ ] Capability gate: refuse to fulfil an `inputRequest` type not declared in this client's
+- [x] Round-trip cap + telemetry (`[:ex_mcp, :client, :mrtr, :round]`).
+- [x] Carry one overall deadline and cancellation scope across every round. Add limits for the
+      number of rounds, `inputRequests` per round, and serialized request/response bytes so a
+      peer cannot amplify work indefinitely. A timed-out MRTR scope cancels any in-flight input
+      callback task and removes it from client bookkeeping.
+- [x] Validate that `inputResponses` keys match requested IDs exactly. Dispatch interactive
+      inputs sequentially in deterministic key order by default; allow bounded concurrency only
+      when a handler explicitly opts in. Parallel callbacks are capped at 16, receive the same
+      handler state, and are rejected if they try to update it.
+- [x] Capability gate: refuse to fulfil an `inputRequest` type not declared in this client's
       capabilities; surface a protocol error.
-- [ ] Reuse the URL-mode elicitation dispatcher fixed in rc.5 Track G — do **not** add a second
+- [x] Reuse the URL-mode elicitation dispatcher fixed in rc.5 Track G — do **not** add a second
       routing path inside `MRTR`.
-- [ ] Server: `{:input_required, input_requests, state}` / `{:input_required, input_requests,
+- [x] Server: `{:input_required, input_requests, state}` / `{:input_required, input_requests,
       request_state, state}` handler returns, honoured on `tools/call`, `resources/read`,
       `prompts/get` **only** (spec forbids elsewhere).
-- [ ] `ExMCP.Server.RequestState` (new): AEAD seal/unseal with principal binding, TTL, and a
-      digest of method + salient params. Reject on verification failure. Document that
-      single-use requires server-side enforcement.
-- [ ] `ExMCP.Server.DSL.Result.input_required/2` builder.
-- [ ] Legacy path (server-initiated requests via `HandlerServer` / `SSESession`) stays intact
+- [x] Always generate a sealed library envelope, even when the handler supplies no application
+      state, so a fresh-ID/cross-node retry can validate expected input IDs and round. ExMCP does
+      not use the spec's optional no-`requestState` form for server-produced MRTR results.
+- [x] Retry dispatch: parse `inputResponses`, verify/decode `requestState`, validate response IDs,
+      and populate `RequestContext.input_responses` / `.request_state` before re-invoking the
+      original handler. Add context-aware callback/DSL access while adapting old arities.
+- [x] `ExMCP.Server.RequestState` (new): AEAD seal/unseal with a digest of the canonical immutable
+      original method/params (excluding retry fields), expected input IDs, round number, protocol
+      version, endpoint, capability fingerprint, and principal/tenant. Reject any mismatch.
+- [x] Define a versioned, algorithm-tagged sealed-state envelope with key ID, random nonce,
+      issued-at/expiry and JTI. Default to AES-256-GCM with a 96-bit random nonce and 128-bit tag;
+      set a short configurable maximum TTL and clock-skew allowance. Clustered deployments share
+      the runtime key ring; never put secrets or bearer tokens in payloads or config files.
+- [ ] Key rotation retains decrypt-only old keys for at least maximum token TTL + clock skew,
+      supports emergency key-ID revocation, and is atomic across the cluster. Gate release on a
+      rolling mixed-version/key rotation test; version the payload codec for rolling upgrades.
+      **Decrypt-only old keys, key-ID revocation, boot validation and the versioned JSON codec are
+      implemented; the clustered rolling-upgrade test remains open.**
+- [x] Default to a bounded JSON codec for handler state. Reject node-local values and unsafe
+      external terms; cap the sealed token size before allocating/decoding it.
+- [x] AEAD integrity does not make a token single-use. Provide a replay-cache adapter keyed by
+      JTI and expiring with the token; require it when a resumed handler may cause side effects.
+      Otherwise expose explicit at-least-once semantics in `RequestContext`. Atomically consume a
+      JTI before dispatch and test concurrent same-request replay separately from cross-request/
+      principal replay.
+- [x] `ExMCP.Server.DSL.Result.input_required/2` builder.
+- [x] Legacy path (server-initiated requests via `HandlerServer` / `SSESession`) stays intact
       and is used only when `era == :legacy`.
 
-**Exit:** an elicitation-driven tool call round-trips end-to-end on stdio and HTTP; tampered
-`requestState` is rejected.
+**Exit:** an elicitation-driven tool call round-trips end-to-end on stdio; tampered
+`requestState` is rejected. The same acceptance test over HTTP moves to Phase 6.
+
+Current acceptance coverage exercises the complete client ↔ server flow over both the in-memory
+transport and a literal subprocess stdio connection, plus every server dispatch boundary,
+including the HTTP handler-process bridge. Phase 4 remains open only for the explicitly noted
+clustered rolling-key work above.
 
 ---
 
 ### Phase 5 — Subscriptions
 
-- [ ] `ExMCP.Server.Subscriptions` (new): registry of `{subscription_id, filter, transport_ref}`.
+- [ ] `ExMCP.Server.Subscriptions` (new): registry of `{subscription_id, honoured_filter,
+      transport_ref, principal_id, tenant_id, expires_at}` with no raw credential material.
+- [ ] Put the registry behind an adapter. The default local adapter may use ETS, but clustered
+      HTTP deployments need PubSub-backed fan-out because the process producing a change may not
+      own the listen stream.
 - [ ] `subscriptions/listen` handler; emit `notifications/subscriptions/acknowledged` **first**,
       reflecting only the honoured subset of the filter.
+- [ ] Authorize every requested filter at acknowledgment time and every publication against the
+      stored principal/tenant so a fan-out bug cannot cross tenants. Apply per-principal,
+      per-tenant and global listener/queue limits in addition to the per-listener bound.
 - [ ] Stamp `_meta["io.modelcontextprotocol/subscriptionId"]` on every notification on the
       stream. Server MUST NOT send unrequested types.
 - [ ] Request-scoped notifications (`notifications/progress`, `notifications/message`) continue
@@ -645,12 +815,28 @@ modern ExMCP server over stdio, with no `initialize`.
       listen request id.
 - [ ] `ExMCP.Client.Subscription` (new) + re-implement `subscribe_resource/2` /
       `unsubscribe_resource/2` on top of it for modern; keep `resources/subscribe` for legacy.
+- [ ] Implement immutable-filter replacement: ref-count the desired resource set, open and
+      acknowledge a replacement listen request, then cancel the old one. Define overlap/gap and
+      duplicate-suppression behavior using subscription IDs.
 - [ ] Auto-reconnect must re-send `subscriptions/listen` — the server holds no state across
       reconnects.
+- [ ] Because events are not resumable, a reconnected client refetches affected list/resource
+      state before declaring the subscription current. Expose a resync-complete event so callers
+      do not mistake a newly acknowledged stream for a gap-free continuation.
 - [ ] SSE comment keep-alives (`:\r\n`) on long-lived listen streams; clients must ignore them.
+- [ ] Bound each listener queue and define slow-consumer behavior: coalesce list-changed events,
+      retain only the newest update per resource URI where safe, then close an irrecoverably slow
+      stream with telemetry instead of allowing unbounded memory growth.
+- [ ] Monitor transport owners and remove registrations on disconnect/cancellation. Generate
+      unguessable subscription IDs and re-check authorization when establishing a replacement
+      stream after reconnect.
+- [ ] Define long-lived authorization behavior: bind the listener to the authenticated principal,
+      close it on credential revocation/expiry when observable, and set a configurable maximum
+      stream lifetime so authorization is periodically re-evaluated.
 
-**Exit:** list-changed and resource-updated notifications delivered over both transports with
-correct subscription correlation; reconnect re-establishes streams.
+**Exit:** list-changed and resource-updated notifications are delivered over stdio with correct
+subscription correlation; reconnect and filter replacement re-establish streams. HTTP acceptance
+moves to Phase 6.
 
 ---
 
@@ -658,12 +844,16 @@ correct subscription correlation; reconnect re-establishes streams.
 
 - [ ] Client transport: remove session/resumability state for modern (see §4.6 for the exact
       line references). Keep the code path for legacy.
-- [ ] Client: emit `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` on every POST.
+- [ ] Client: emit `MCP-Protocol-Version` and `Mcp-Method` on every POST; emit `Mcp-Name` only
+      for `tools/call`, `resources/read`, and `prompts/get`.
       Base64 sentinel (`=?base64?…?=`) encoding when a value isn't header-safe, **including**
       plain-ASCII values that happen to match the sentinel pattern.
-- [ ] Client: `x-mcp-header` → `Mcp-Param-{Name}` mirroring; static-reachability validation;
-      **exclude** tools with invalid annotations from `tools/list` results and log a warning.
-      On `-32020` due to missing/mismatched `Mcp-Param-*`, re-fetch `tools/list` and retry once.
+- [ ] Client: mirror server-listed `x-mcp-header` params into `Mcp-Param-{Name}`.
+      On `-32020` due to missing/mismatched `Mcp-Param-*`, re-fetch `tools/list` and retry once
+      only because header mismatch is guaranteed to reject before method dispatch.
+- [ ] Server: statically validate `x-mcp-header` reachability/names while normalizing
+      `tools/list`; **exclude** tools with invalid annotations from the paginated result before
+      cursor/cache calculation and log a warning.
 - [ ] Server plug: validate header↔body agreement (numeric compare for integers, Base64 decode
       before compare) → `400` + `-32020`. Missing required header ⇒ same.
 - [ ] Server plug: `404` + `-32601` for unknown methods (distinguishes a modern server from a
@@ -673,20 +863,52 @@ correct subscription correlation; reconnect re-establishes streams.
 - [ ] `X-Accel-Buffering: no` on SSE responses.
 - [ ] Closing the SSE response stream = cancellation; server stops work and sends nothing more.
 - [ ] `ExMCP.Plugs.ProtocolVersion` unconditional for modern (drop the default-off flag).
+- [ ] Define ambiguous-delivery semantics before enabling automatic reconnect retries. The
+      spec-default policy follows the modern transport requirement and reissues a broken
+      in-flight request with a new JSON-RPC id, which is **at-least-once**, not exactly-once.
+      Offer a caller-selected `:safe_only` policy that retries discovery/list/read and read-only
+      tools but returns `:outcome_unknown` for side-effecting calls. Clearly label this override
+      as non-conforming client behavior and reject it in conformance mode. Document that JSON-RPC
+      ids do not provide deduplication and recommend application-level idempotency keys for tools.
+- [ ] Retry only the transport-defined broken in-flight stream condition, at most once by default,
+      inside the original overall deadline/cancellation scope and reconnect backoff. Do not retry
+      generic HTTP/JSON-RPC failures. A tool's `readOnlyHint` is not a security boundary; safe-only
+      retry requires explicit caller policy. Provide a stable application idempotency-key hook.
+- [ ] Reject duplicate required headers, CR/LF values, oversized names/values and conflicting
+      case variants before dispatch. Add reverse-proxy integration tests so header normalization
+      or buffering by common proxies cannot silently change protocol behavior.
+- [ ] Treat every `Mcp-Param-*` value as potentially sensitive. Redact it from Plug/client debug
+      logs, telemetry and proxy examples just like `Authorization`; document that operators must
+      configure upstream access-log redaction too.
 
-**Exit:** `test/conformance/server.exs` + `client.exs` pass against the 2026-07-28 harness.
+**Exit:** the modern Streamable HTTP transport subset passes locally and against every available
+2026-07-28 harness case for headers, status codes, SSE and cancellation; the Phase 4 MRTR and
+Phase 5 subscription acceptances also pass over HTTP. Full protocol
+conformance remains a Phase 10 gate after Phases 7 and 9.
 
 ---
 
 ### Phase 7 — Caching, logging, ordering, schemas
 
-- [ ] `ttlMs` + `cacheScope` on `server/discover`, `tools/list`, `prompts/list`,
+- [ ] `ttlMs` + `cacheScope` on `tools/list`, `prompts/list`,
       `resources/list`, `resources/templates/list`, `resources/read`. Never on
       `input_required` results.
-- [ ] `ExMCP.Client.Cache` (new): freshness = `now < t_received + ttlMs`; `ttlMs` absent or
-      negative ⇒ 0; no background polling; `list_changed` notification invalidates immediately;
+- [ ] Modern response validation rejects missing/negative `ttlMs` or missing/unknown
+      `cacheScope` on cacheable complete results. A valid `ttlMs: 0` means immediately stale.
+- [ ] `ExMCP.Client.Cache` (new): freshness = `now < t_received + ttlMs`; no background polling;
+      `list_changed` notification invalidates immediately;
       MRTR retries (carrying `inputResponses`/`requestState`) **MUST NOT** be cached; per-page
-      caching for paginated lists; `private` scope keyed by authorization context.
+      caching for paginated lists; `private` scope keyed by authorization context. Cache keys
+      include endpoint, selected protocol version, method, canonical params/cursor, server
+      identity and a non-secret authorization partition — never a raw token. **Optional for 1.0:**
+      parsing metadata is required, storing/reusing responses is not.
+- [ ] If storage ships, default authorized responses to a partition derived from issuer, subject
+      or client identity, resource/audience, client ID and granted scopes; share only when the
+      server explicitly returns `cacheScope: "public"`. Use monotonic overflow-checked expiry,
+      entry/total-byte limits and generation-based invalidation so an older in-flight response
+      cannot repopulate the cache after `list_changed`.
+- [ ] Derive the exact cacheable-result method set and required fields from the vendored
+      `2026-07-28` schema instead of maintaining another hand-written list.
 - [ ] Server: per-request `logLevel` from `_meta`; **MUST NOT** emit `notifications/message` for
       requests without it. Remove `logging/setLevel` from the modern method table.
 - [ ] Deterministic `tools/list` ordering.
@@ -694,7 +916,12 @@ correct subscription correlation; reconnect re-establishes streams.
       host allowlist, reject loopback/link-local/private, timeouts, size limits, logging);
       bound composition-keyword depth / subschema count / validation time. Touches
       `ExMCP.Content.SchemaValidator` and `ExMCP.Content.Validation`.
+- [ ] If network `$ref` is enabled, apply redirect and DNS/IP revalidation on every hop, IPv4/
+      IPv6 address-class checks, recursive-fetch/cycle and aggregate-byte/decompression limits,
+      and an explicit proxy policy. Cache fetched schemas only inside the same trust partition.
 - [ ] OTel `_meta` propagation conventions (`traceparent`, `tracestate`, `baggage`).
+      Bound/allowlist baggage keys and total bytes. **Optional for 1.0**; it must not delay the
+      modern core release gate.
 
 ---
 
@@ -707,8 +934,10 @@ correct subscription correlation; reconnect re-establishes streams.
 - [ ] `tasks/get` (poll), `tasks/update` (submit `inputResponses`), `tasks/cancel` (cooperative).
       Remove `tasks/list` and `tasks/result` from the modern table.
 - [ ] `notifications/tasks` carrying full task state, opted into via `subscriptions/listen`.
-- [ ] `ExMCP.Tasks.Task`: rename `ttl` → `ttlMs`, `pollInterval` → `pollIntervalMs`; add
-      `inputRequests`, `error`; update `to_map/1`.
+- [ ] `ExMCP.Tasks.Task`: emit modern wire keys `ttlMs` / `pollIntervalMs`; add
+      `inputRequests`, `error`. Keep existing public struct fields/accessors as deprecated aliases
+      throughout 1.x, or introduce a separate extension struct, so Phase 8 does not silently
+      break rc.5 callers.
 - [ ] Durable creation before responding; task IDs survive client restarts.
 - [ ] Remove DSL `execution` instruction and `taskSupport` from the modern path (keep for
       `2025-11-25`).
@@ -722,29 +951,95 @@ correct subscription correlation; reconnect re-establishes streams.
 - [ ] Client ID Metadata Documents: HTTPS `client_id` URL with a path component; document
       `client_id` MUST equal the URL; MUST include `client_id`, `client_name`, `redirect_uris`;
       detect `client_id_metadata_document_supported`; optional `private_key_jwt`.
-- [ ] Registration priority: pre-registered → CIMD → DCR → prompt.
-- [ ] `application_type` on DCR (`"native"` for desktop/CLI/localhost, `"web"` otherwise);
-      handle OIDC redirect-URI rejections with an actionable error and optional retry.
+- [ ] Add explicit client configuration: `{:pre_registered, client_id, secret_ref}`,
+      `{:cimd, https_url}`, or `:auto`, plus `application_type: :native | :web`. ExMCP may provide
+      a Plug/helper to serve a CIMD but must not imply that a CLI can magically host HTTPS.
+- [ ] Registration priority: pre-registered → configured CIMD → DCR → prompt/actionable error.
+      If the AS supports CIMD but no URL is configured, use DCR only when advertised/allowed;
+      never invent a metadata URL or silently weaken registration policy.
+- [ ] `application_type` on DCR (`"native"` for desktop/CLI/localhost, `"web"` otherwise) is
+      explicit configuration; an inference helper may validate an unambiguous redirect URI but
+      must not guess silently. Redirect-URI rejection returns an actionable error; any retry uses
+      an explicitly configured URI and never relaxes exact redirect validation.
 - [ ] Key persisted credentials by issuer; refuse cross-AS reuse; re-register on AS change;
       surface an error on mismatched pre-registered credentials.
+- [ ] Use standards-defined issuer comparison with no ad hoc trailing-slash/path normalization.
+      Partition registrations by issuer + client ID and tokens by issuer + client ID + resource/
+      audience + subject/client identity + granted scopes. Migrate old unkeyed entries explicitly;
+      never silently attach them to the currently discovered issuer.
+- [ ] Preserve OAuth transaction protections across both eras: random single-use `state`, PKCE,
+      exact redirect URI, one-time authorization-code redemption, issuer-bound callbacks, and no
+      cookies/tokens in logs. Test replay and concurrent callback attempts.
 - [ ] Mark DCR deprecated in docs and `@doc`.
+- [ ] Treat CIMD and authorization-server metadata fetching as SSRF-sensitive: HTTPS only,
+      bounded redirects that do not cross origin without policy, DNS/IP revalidation, private/
+      loopback/link-local blocking, response size/time limits, and no credential forwarding.
+- [ ] Run an auth matrix covering pre-registered/CIMD/DCR registration, native vs web
+      `application_type`, RFC 9207 `iss` present/absent/mismatch, issuer changes, redirect
+      rejection, credential partitioning, and every supported legacy/modern HTTP mode.
 
 ---
 
-### Phase 10 — Removals, docs, release
+### Phase 10 — Compatibility audit, docs, release
 
-- [ ] Remove `ExMCP.Server.Tools` + `Simplified`/`builder`/`helpers`/`registry`/
-      `response_normalizer`/`ast_validator` (~2138 LOC, scheduled for 1.1.0 — take it in 2.0.0).
-- [ ] Decide HTTP+SSE (2024-11-05) transport fate — spec reclassifies it Deprecated, not
-      Removed. Recommend: keep, mark clearly, exclude from new-server defaults.
+- [ ] **Do not remove public APIs in this migration.** Keep `ExMCP.Server.Tools` + related
+      modules throughout 1.x. Update the current “removed in 1.1.0” notices in `README.md`,
+      `CLAUDE.md`, `docs/DSL_GUIDE.md`, `docs/getting-started/MIGRATION.md`, and module docs to
+      “removed in 2.0.0”; removal in 1.1 would violate SemVer.
+- [ ] HTTP+SSE (2024-11-05) is **decided:** keep it available and clearly deprecated throughout
+      1.x, but exclude it from new-server defaults. “Dual-era server by default” means both
+      protocol eras on enabled modern transports; it does not auto-enable a deprecated transport.
 - [ ] Keep Roots/Sampling/Logging; add deprecation notes pointing at the suggested migrations
       (tool params / resource URIs for roots; direct LLM APIs for sampling; stderr or OTel for
       logging).
-- [ ] Docs: `docs/getting-started/MIGRATION.md` gets a 1.x → 2.0 section; `docs/ARCHITECTURE.md`
-      gets the era model; `docs/TRANSPORT_GUIDE.md` gets the new HTTP shape; `CLAUDE.md` updated.
-- [ ] `CHANGELOG.md` `[2.0.0]` with **BREAKING:** entries; `mix.exs` version bump.
+- [ ] Docs: `docs/getting-started/MIGRATION.md` gets an rc.5/legacy → 1.0 dual-era section;
+      `docs/ARCHITECTURE.md` gets the era model; `docs/TRANSPORT_GUIDE.md` gets the new HTTP
+      shape; `CLAUDE.md` and configuration docs cover all four protocol modes.
+- [ ] `CHANGELOG.md` `[1.0.0]` separates MCP wire changes from ExMCP public-API compatibility;
+      bump `mix.exs` only after the final RC soak and release gates pass.
 - [ ] Green: `mix test.suite ci`, `mix credo`, `mix dialyzer`, `mix sobelow --skip`,
       `scripts/conformance.sh` against a 2026-07-28-aware harness.
+- [ ] Produce an API-diff report against `v1.0.0-rc.5`. Restore every removed public function,
+      callback, struct field and return shape or delay stable 1.0; document additive APIs and
+      protocol-driven behavior changes, but do not use release notes to waive a public removal.
+- [ ] If Phase 8 is deferred, verify neither side advertises `io.modelcontextprotocol/tasks` in
+      modern capabilities. If the client cache is deferred, validate required wire metadata but
+      do not store/reuse responses; missing or invalid required fields remain protocol errors.
+- [ ] Add bounded-cardinality telemetry for selected era/version, probe fallback/downgrade,
+      unsupported-version retry, MRTR rounds/failures, subscription reconnect/queue pressure,
+      ambiguous reissue, and cache hit/miss (if enabled). Never attach tool arguments,
+      `_meta`, `inputResponses`, resource contents, `Mcp-Param-*`, `requestState`, authorization
+      data or raw subscription IDs to events/logs. Add operational alerts for downgrade attempts,
+      unknown/revoked MRTR key IDs, replay rejection, queue pressure and reconnect churn.
+
+**1.0 release gates:**
+
+1. Legacy characterization fixtures for all four existing revisions are byte-for-byte green.
+2. The seven-row era compatibility matrix passes on stdio and HTTP, including timeouts and
+   downgrade diagnostics.
+3. Modern client and server conformance have zero unexplained failures. A stable harness is
+   preferred; if unavailable, self-conformance plus bidirectional interop with an official SDK
+   implementing `2026-07-28` is required and the harness gap is disclosed in release notes.
+4. Disconnect/ambiguous-retry and MRTR tamper, concurrent replay, expiry, failover and rolling
+   key/codec-rotation tests pass.
+5. Slow-subscriber, cross-tenant isolation, live authorization revocation, reconnect resync and
+   clustered fan-out tests pass with per-principal/global bounds.
+6. The Phase 9 auth matrix, OAuth replay protections, MCP redirect-leakage tests, CIMD/schema
+   SSRF suites, and credential-store migration tests pass.
+7. Modern-preferred has been the default for at least one published RC with no release-blocking
+   compatibility regression. `:prefer_legacy` remains a documented rollback switch.
+8. No critical/high security findings, no unbounded process/mailbox growth in the subscription
+   soak test, and no unresolved public API removals relative to rc.5.
+9. A rollback drill succeeds from a mixed-version cluster with active subscriptions and in-flight
+   MRTR: operators can select `:legacy_only`, drain/restart safely, reconcile state, and explicitly
+   manage persisted modern pins. Rollback must not silently downgrade already-pinned clients.
+
+Before publishing `rc.6`, assign an owner and evidence link for every gate, define the load-test
+workload and regression budget against rc.5, and pin the qualifying conformance harness and
+official SDK by version/commit. The final modern-preferred RC soaks for at least seven calendar
+days; any wire-design or public-API change restarts that window. “Release-blocking regression”
+means a new unexplained conformance failure, legacy fixture diff, crash/data leak, unbounded
+resource growth, or critical/high security issue.
 
 ---
 
@@ -756,14 +1051,14 @@ Things downstream users will notice.
 |---|---|---|
 | `ExMCP.Client.server_info/1`, `server_capabilities/1`, `protocol_version/1` | none | Populated from `DiscoverResult` in modern; same shape |
 | `ExMCP.Client.Handler` behaviour | none | MRTR reuses the same callbacks |
-| `ExMCP.Client.ping/2` | **breaking in modern** | Raise/`{:error, :not_supported}` when era is modern; keep for legacy |
-| `ExMCP.Client.set_log_level/2` | **breaking in modern** | Becomes a per-request option; keep the function as a client-wide default that populates `_meta` |
+| `ExMCP.Client.ping/2` | source-compatible | Legacy sends `ping`; modern performs an uncached `server/discover` liveness request and preserves the public success/error shape |
+| `ExMCP.Client.set_log_level/2` | source-compatible | Keep it as a client-wide default that populates per-request `_meta`; add a per-request override |
 | `ExMCP.Client.subscribe_resource/2` | source-compatible | Re-implemented over `subscriptions/listen` |
 | Server handler return tuples | additive | New `{:input_required, …}` |
-| Server handlers receiving `_meta` in tool args | **changed** | `RequestContext` becomes the supported way; keep merging `_meta` into args for one release with a deprecation warning |
-| `ExMCP.Server.Tools` | **removed** | Migrate to `ExMCP.Server.DSL` (already the documented path) |
-| DSL `execution` instruction | **removed in modern** | Server-directed tasks — no per-tool declaration needed |
-| Tasks API (`tasks/list`, `tasks/result`) | **removed** | Poll `tasks/get` |
+| Server handlers receiving `_meta` in tool args | compatible transition | Introduce context-aware callback variants or an accessor additively; keep existing callback arities and `_meta` merging throughout 1.x |
+| `ExMCP.Server.Tools` | deprecated, still available | Correct removal target to ExMCP 2.0; migration to `ExMCP.Server.DSL` remains recommended |
+| DSL `execution` instruction | legacy-only in modern mode | Keep the public DSL instruction for 1.x; it affects only the `2025-11-25` wire path |
+| Tasks API (`tasks/list`, `tasks/result`) | legacy-only in modern mode | Keep public helpers for legacy; add `tasks/get`/`update`/`cancel` extension helpers without removing old functions in 1.x |
 | `ExMCP.SessionManager` | modern: unused | Still exported for legacy; document as legacy-only |
 
 ---
@@ -783,6 +1078,8 @@ Things downstream users will notice.
    `ttlMs` freshness arithmetic, MRTR round-trip convergence under a round cap.
 5. **Security tests** for `requestState`: tamper detection, wrong principal, expired TTL,
    cross-request replay.
+5b. **Fuzz and limit tests** for request `_meta`, sentinel headers, duplicate headers,
+   subscription filters, `requestState`, MRTR maps, SSE frames, and pathological JSON Schemas.
 6. **No `Process.sleep` for synchronization** — per `CLAUDE.md`, use `assert_receive`,
    monitors, a `ping`-equivalent flush (note: in modern the flush must be a real request such
    as `tools/list`, since `ping` is gone), telemetry assertions, or `wait_until/2`.
@@ -794,6 +1091,11 @@ Things downstream users will notice.
    results from "non-gating exploration" to gating by Phase 10.
 8. **Interop** — `test/interop/` vendors the TypeScript SDK; bump it once an SDK release
    implements 2026-07-28 and run cross-implementation tests both directions.
+9. **Public API compatibility** — compile and run representative rc.5 client/server modules,
+   including `ExMCP.Server.Tools`, old handler callback arities and legacy task helpers.
+10. **Chaos/load** — disconnect HTTP responses before/after dispatch, restart stdio servers,
+    reconnect subscriptions, exercise slow consumers, and publish changes from a different
+    cluster node. Assert bounded mailboxes, cleanup and explicit ambiguous outcomes.
 
 ---
 
@@ -801,18 +1103,21 @@ Things downstream users will notice.
 
 | # | Item | Notes |
 |---|---|---|
-| R1 | **Ecosystem timing.** Most servers and clients in the wild are legacy. | Dual-era is exactly the hedge. Ship modern behind a config flag first, flip the default when the SDKs land. |
-| R2 | **Health checks lose `ping`.** ExMCP's 30s idle ping is load-bearing for the auto-reconnect path. | Options: (a) `server/discover` as the probe — cacheable, cheap, always implemented; (b) disable health checks in modern and rely on transport liveness + `subscriptions/listen` keep-alives. **(a) is recommended**; needs a decision. |
-| R3 | **`requestState` key management.** MRTR security depends on an AEAD key the operator must configure. | Fail loudly at boot if a handler returns `{:input_required, _, request_state, _}` with no key configured. Document key rotation. |
+| R1 | **Ecosystem timing.** Most servers and clients in the wild are legacy. | Dual-era is the hedge. Ship modern behind the explicit protocol mode first; flip the default only after pinned official-SDK interop passes. |
+| R2 | **Health checks lose `ping`.** ExMCP's 30s idle ping is load-bearing for auto-reconnect. | Use an uncached `server/discover` as the modern liveness operation and preserve `Client.ping/2` as a compatibility wrapper. |
+| R3 | **`requestState` key management.** MRTR security depends on an AEAD key shared by every node that can resume a request. | Version the envelope, support key IDs/rotation, bind principal + request digest + expiry, and fail clearly when a configured MRTR flow cannot decrypt state. |
 | R4 | **HTTP plug complexity.** `do_dispatch/4` already has 14 clauses (L153-262); dual-era adds more. | Consider splitting modern vs legacy into separate plug modules behind a router rather than growing `do_dispatch/4`. |
 | R5 | **Stateless servers break existing user handlers** that relied on per-connection state. | The spec's answer is explicit server-minted handles as tool arguments (§"Stateful Tools"). Needs a documented migration recipe with an example. |
-| R6 | **Conformance harness availability.** No *stable* 2026-07-28 harness release is confirmed; `scripts/conformance.sh` already tracks `0.2.0-alpha.9` non-gating. | Promote the existing `draft-alpha` mode to gating once a stable release lands; until then self-conformance tests + TS SDK interop are the gate. |
+| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.9` for non-gating draft checks; registry availability may change. | Re-check and pin at implementation/release time. Prefer a stable modern harness; otherwise use self-conformance + pinned official-SDK interop and disclose the gap. |
 | R7 | **Spec churn.** `2026-07-28` is dated in the near past relative to this plan; errata are likely. | `mix mcp.sync_spec` has sha256/ETag change detection — run it in CI and alert on drift. |
 | R8 | **Scope.** ACP (17.6k LOC) is untouched but shares `_meta` helpers. | Verify no shared-helper regressions when `RequestParams` changes. |
-| Q1 | Should modern be opt-in (`config :ex_mcp, prefer_era: :legacy`) for the first 2.0 release? | Recommend: modern preferred by default with automatic fallback, since the fallback is well-specified. |
-| Q2 | Generate `types/v20260728.ex` from `schema.json`, or hand-write? | Hand-writing is consistent with the existing four modules; generating is more accurate. Lean generate, with the generator living in `dev/`. |
+| R9 | **Ambiguous HTTP delivery can duplicate side effects.** A broken response does not reveal whether `tools/call` ran. | The conforming default reissues and is at-least-once. Offer `:safe_only` for callers that prefer `:outcome_unknown`; document application idempotency keys. |
+| R10 | **A local ETS subscription registry is insufficient in a cluster.** Producers and stream owners may be on different nodes. | Adapter boundary, PubSub fan-out, owner monitoring, bounded queues and multi-node tests are release-gating for clustered HTTP support. |
+| R11 | **Perpetual-RC risk.** Adding the full optional extension/cache work could indefinitely delay 1.0. | Gate 1.0 on modern core and normative auth only; allow Tasks and the cache optimization to move to 1.1 without advertising unsupported capability. |
+| Q1 | When does modern become the default? | Modern is opt-in in the first migration RC, modern-preferred in the final RC and stable 1.0; automatic legacy fallback remains enabled. |
+| Q2 | Generate `types/v20260728.ex` from `schema.json`, or hand-write? | **Decided: generate** from the vendored schema, keep the generator in `dev/`, and review the generated diff plus small handwritten ergonomic aliases. |
 | Q3 | Keep `ExMCP.SessionManager`'s event buffering at all? | Only legacy uses it. Keep, mark legacy-only, and skip supervising it when configured modern-only. |
-| Q4 | Ship `1.0.0` stable on `2025-11-25` before starting 2.0? | **Decided: yes.** `1.0.0-rc.5` absorbs the pre-existing debt ([`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md)), then `1.0.0` stable, then branch 2.0. |
+| Q4 | Ship `1.0.0` stable on `2025-11-25` before modern support? | **Decided: no.** Keep rc.5 as the legacy baseline, add dual-era `2026-07-28` support in further RCs, then cut stable 1.0. |
 
 ---
 
@@ -820,7 +1125,7 @@ Things downstream users will notice.
 
 | Method | Direction | Cacheable | MRTR-capable |
 |---|---|---|---|
-| `server/discover` | C→S | yes | no |
+| `server/discover` | C→S | no | no |
 | `tools/list` | C→S | yes | no |
 | `tools/call` | C→S | no | **yes** |
 | `prompts/list` | C→S | yes | no |

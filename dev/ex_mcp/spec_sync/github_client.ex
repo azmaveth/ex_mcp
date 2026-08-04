@@ -56,24 +56,24 @@ defmodule ExMCP.SpecSync.GitHubClient do
   end
 
   @doc """
-  Lists files in a GitHub directory recursively using the Contents API.
+  Lists files in a GitHub directory recursively using the Git Trees API.
 
   Returns `{:ok, paths}` with a list of file paths relative to the repo root.
   """
   @spec list_directory(String.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def list_directory(dir_path, opts \\ []) do
-    url = "#{@api_base}/repos/#{@repo}/contents/#{dir_path}"
+    branch = Keyword.get(opts, :branch, "main")
+    encoded_branch = URI.encode(branch, &URI.char_unreserved?/1)
+    url = "#{@api_base}/repos/#{@repo}/git/trees/#{encoded_branch}?recursive=1"
 
     case api_request(:get, url, opts) do
       {:ok, {200, _headers, body}} ->
         case Jason.decode(body) do
-          {:ok, entries} when is_list(entries) ->
-            paths =
-              entries
-              |> Enum.filter(fn entry -> entry["type"] == "file" end)
-              |> Enum.map(& &1["path"])
+          {:ok, %{"tree" => entries, "truncated" => false}} when is_list(entries) ->
+            {:ok, files_under_directory(entries, dir_path)}
 
-            {:ok, paths}
+          {:ok, %{"tree" => _entries, "truncated" => true}} ->
+            {:error, :truncated_tree}
 
           {:ok, _} ->
             {:error, :unexpected_response}
@@ -231,5 +231,16 @@ defmodule ExMCP.SpecSync.GitHubClient do
       val = if is_list(v), do: List.to_string(v), else: to_string(v)
       {String.downcase(key), val}
     end)
+  end
+
+  defp files_under_directory(entries, dir_path) do
+    prefix = String.trim_trailing(dir_path, "/") <> "/"
+
+    entries
+    |> Enum.filter(fn entry ->
+      entry["type"] == "blob" and String.starts_with?(entry["path"] || "", prefix)
+    end)
+    |> Enum.map(& &1["path"])
+    |> Enum.sort()
   end
 end

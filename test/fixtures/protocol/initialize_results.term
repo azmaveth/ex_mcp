@@ -6,17 +6,21 @@ request_processor = fn version ->
   }
 end
 
-message_processor = %{
-  "capabilities" => %{"source" => "message-processor"},
-  "protocolVersion" => "2025-11-25",
-  "serverInfo" => %{"name" => "message-processor", "version" => "1.0.0"}
-}
+message_processor = fn version ->
+  %{
+    "capabilities" => %{"source" => "message-processor"},
+    "protocolVersion" => version,
+    "serverInfo" => %{"name" => "message-processor", "version" => "1.0.0"}
+  }
+end
 
-server_handler = %{
-  protocolVersion: "2025-11-25",
-  serverInfo: %{name: "ex_mcp", version: "0.1.0"},
-  capabilities: %{}
-}
+server_handler = fn version ->
+  %{
+    "capabilities" => %{},
+    "protocolVersion" => version,
+    "serverInfo" => %{"name" => "ex_mcp", "version" => "0.1.0"}
+  }
+end
 
 server_dsl = fn version ->
   %{
@@ -26,46 +30,48 @@ server_dsl = fn version ->
   }
 end
 
-http_server = %{
-  "capabilities" => %{},
-  "protocolVersion" => "2025-03-26",
-  "serverInfo" => %{"name" => "http-server", "version" => "1.0.0"}
-}
+http_server = fn version ->
+  %{
+    "capabilities" => %{},
+    "protocolVersion" => version,
+    "serverInfo" => %{"name" => "http-server", "version" => "1.0.0"}
+  }
+end
 
 %{
   "2025-11-25" => %{
     request_processor: request_processor.("2025-11-25"),
-    message_processor: message_processor,
-    server_handler: server_handler,
+    message_processor: message_processor.("2025-11-25"),
+    server_handler: server_handler.("2025-11-25"),
     server_dsl: server_dsl.("2025-11-25"),
-    http_server: http_server
+    http_server: http_server.("2025-11-25")
   },
   "2025-06-18" => %{
     request_processor: request_processor.("2025-06-18"),
-    message_processor: message_processor,
-    server_handler: server_handler,
+    message_processor: message_processor.("2025-06-18"),
+    server_handler: server_handler.("2025-06-18"),
     server_dsl: server_dsl.("2025-06-18"),
-    http_server: http_server
+    http_server: http_server.("2025-06-18")
   },
   "2025-03-26" => %{
     request_processor: request_processor.("2025-03-26"),
-    message_processor: message_processor,
-    server_handler: server_handler,
+    message_processor: message_processor.("2025-03-26"),
+    server_handler: server_handler.("2025-03-26"),
     server_dsl: server_dsl.("2025-03-26"),
-    http_server: http_server
+    http_server: http_server.("2025-03-26")
   },
   "2024-11-05" => %{
     request_processor: request_processor.("2024-11-05"),
-    message_processor: message_processor,
-    server_handler: server_handler,
+    message_processor: message_processor.("2024-11-05"),
+    server_handler: server_handler.("2024-11-05"),
     server_dsl: server_dsl.("2024-11-05"),
-    http_server: http_server
+    http_server: http_server.("2024-11-05")
   },
   "omitted" => %{
-    request_processor: request_processor.("2025-06-18"),
-    message_processor: message_processor,
-    server_handler: server_handler,
+    request_processor: request_processor.("2025-11-25"),
+    message_processor: message_processor.("2025-11-25"),
+    server_handler: server_handler.("2025-11-25"),
     server_dsl: server_dsl.("2025-11-25"),
-    http_server: http_server
+    http_server: http_server.("2025-11-25")
   }
 }

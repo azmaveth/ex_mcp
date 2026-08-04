@@ -51,7 +51,7 @@ defmodule ExMCP.Server.StdioServer do
   require Logger
 
   alias ExMCP.Internal.{JSONRPC, StdioLoggerConfig, VersionRegistry}
-  alias ExMCP.Server.{Dispatch, ResultNormalizer}
+  alias ExMCP.Server.{Dispatch, RequestContext, RequestState, ResultNormalizer}
 
   @doc """
   Starts the STDIO server.
@@ -67,6 +67,13 @@ defmodule ExMCP.Server.StdioServer do
 
   @impl GenServer
   def init(opts) do
+    case validate_mrtr_configuration(opts) do
+      :ok -> do_init(opts)
+      {:error, reason} -> {:stop, {:mrtr_configuration_error, reason}}
+    end
+  end
+
+  defp do_init(opts) do
     # CRITICAL: For STDIO transport, suppress ALL logging to avoid contaminating JSON stream
     # MCP STDIO protocol requires ONLY JSON-RPC messages on stdout
     configure_stdio_logging()
@@ -89,7 +96,16 @@ defmodule ExMCP.Server.StdioServer do
     state = %{
       handler_module: module,
       handler_state: initial_state,
-      request_id: 0
+      request_id: 0,
+      protocol_mode: Keyword.get(opts, :protocol_mode),
+      connection_era: nil,
+      instructions: Keyword.get(opts, :instructions),
+      request_state: Keyword.get(opts, :request_state),
+      endpoint: Keyword.get(opts, :endpoint, "stdio"),
+      principal_id: Keyword.get(opts, :principal_id),
+      tenant_id: Keyword.get(opts, :tenant_id),
+      replay_cache: Keyword.get(opts, :replay_cache),
+      require_replay_protection: Keyword.get(opts, :require_replay_protection, false)
     }
 
     Logger.info("STDIO MCP server started with handler: #{module}")
@@ -108,6 +124,14 @@ defmodule ExMCP.Server.StdioServer do
     end)
 
     {:ok, state}
+  end
+
+  defp validate_mrtr_configuration(opts) do
+    if Keyword.get(opts, :mrtr, false) do
+      RequestState.validate_configuration(request_state: Keyword.get(opts, :request_state))
+    else
+      :ok
+    end
   end
 
   @impl GenServer
@@ -202,7 +226,20 @@ defmodule ExMCP.Server.StdioServer do
   end
 
   defp dispatch(state, request) do
-    case Dispatch.dispatch(request, state.handler_module, state.handler_state) do
+    state = maybe_pin_connection_era(request, state)
+
+    dispatch_opts = [
+      protocol_mode: effective_protocol_mode(state),
+      instructions: state.instructions,
+      request_state: state.request_state,
+      endpoint: state.endpoint,
+      principal_id: state.principal_id,
+      tenant_id: state.tenant_id,
+      replay_cache: state.replay_cache,
+      require_replay_protection: state.require_replay_protection
+    ]
+
+    case Dispatch.dispatch(request, state.handler_module, state.handler_state, dispatch_opts) do
       {:response, response, handler_state} ->
         send_response(response, state)
         {:noreply, %{state | handler_state: handler_state}}
@@ -211,6 +248,34 @@ defmodule ExMCP.Server.StdioServer do
         {:noreply, %{state | handler_state: handler_state}}
     end
   end
+
+  defp maybe_pin_connection_era(request, %{connection_era: nil} = state) do
+    with {:ok, context} <- RequestContext.from_message(request),
+         era when era in [:legacy, :modern] <- pin_candidate(context),
+         true <- mode_allows_era?(state.protocol_mode, era) do
+      %{state | connection_era: era}
+    else
+      _other -> state
+    end
+  end
+
+  defp maybe_pin_connection_era(_request, state), do: state
+
+  defp pin_candidate(%RequestContext{era: :modern}), do: :modern
+  defp pin_candidate(%RequestContext{era: :legacy, method: "initialize"}), do: :legacy
+  defp pin_candidate(_context), do: nil
+
+  defp mode_allows_era?(:modern_only, :legacy), do: false
+  defp mode_allows_era?(:legacy_only, :modern), do: false
+  defp mode_allows_era?(_mode, _era), do: true
+
+  defp effective_protocol_mode(%{protocol_mode: mode})
+       when mode in [:legacy_only, :modern_only],
+       do: mode
+
+  defp effective_protocol_mode(%{connection_era: :legacy}), do: :legacy_only
+  defp effective_protocol_mode(%{connection_era: :modern}), do: :modern_only
+  defp effective_protocol_mode(state), do: state.protocol_mode
 
   # Servers may implement handle_request/3 to answer methods outside the MCP
   # method table (ExMCP extension).

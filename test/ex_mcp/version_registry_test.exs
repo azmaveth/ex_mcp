@@ -20,6 +20,37 @@ defmodule ExMCP.VersionRegistryTest do
       refute VersionRegistry.supported?("draft")
     end
 
+    test "supports 2026-07-28 only through explicit protocol modes" do
+      assert VersionRegistry.known?("2026-07-28")
+      assert VersionRegistry.version_status("2026-07-28") == :supported_opt_in
+      assert VersionRegistry.era_for("2026-07-28") == :modern
+      assert VersionRegistry.modern?("2026-07-28")
+      assert VersionRegistry.supported?("2026-07-28", :modern_only)
+      assert "2026-07-28" in VersionRegistry.supported_versions(:prefer_modern)
+
+      # Zero-arity APIs retain the legacy default during the RC opt-in stage.
+      refute VersionRegistry.supported?("2026-07-28")
+      refute "2026-07-28" in VersionRegistry.supported_versions()
+      assert VersionRegistry.latest_version() == "2025-11-25"
+
+      assert {:error, :version_mismatch} =
+               VersionRegistry.negotiate_version("2026-07-28", ["2026-07-28"])
+    end
+
+    test "protocol modes enable modern support only when explicitly requested" do
+      legacy = VersionRegistry.supported_versions()
+
+      assert VersionRegistry.enabled_versions(:legacy_only) == legacy
+      assert VersionRegistry.enabled_versions(:modern_only) == ["2026-07-28"]
+      assert VersionRegistry.enabled_versions(:prefer_legacy) == legacy ++ ["2026-07-28"]
+      assert VersionRegistry.enabled_versions(:prefer_modern) == ["2026-07-28" | legacy]
+
+      refute VersionRegistry.enabled?("2026-07-28", :legacy_only)
+      assert VersionRegistry.enabled?("2026-07-28", :modern_only)
+      assert VersionRegistry.preferred_version(:prefer_modern) == "2026-07-28"
+      assert VersionRegistry.preferred_version(:prefer_legacy) == "2025-11-25"
+    end
+
     test "gets preferred version from config" do
       # Default should be latest
       assert VersionRegistry.preferred_version() == "2025-11-25"
@@ -30,12 +61,22 @@ defmodule ExMCP.VersionRegistryTest do
       Application.delete_env(:ex_mcp, :protocol_version)
     end
 
+    test "does not allow a staged version to become preferred through configuration" do
+      Application.put_env(:ex_mcp, :protocol_version, "2026-07-28")
+      on_exit(fn -> Application.delete_env(:ex_mcp, :protocol_version) end)
+
+      log = capture_log(fn -> assert VersionRegistry.preferred_version() == "2025-11-25" end)
+
+      assert log =~ "Configured MCP protocol version \"2026-07-28\" is not enabled"
+    end
+
     test "checks if versions are supported" do
       assert VersionRegistry.supported?("2025-11-25")
       assert VersionRegistry.supported?("2025-06-18")
       assert VersionRegistry.supported?("2025-03-26")
       refute VersionRegistry.supported?("1.0.0")
       refute VersionRegistry.supported?("unknown")
+      assert VersionRegistry.version_status("unknown") == :unknown
     end
 
     test "classifies every current version as legacy" do
@@ -121,6 +162,8 @@ defmodule ExMCP.VersionRegistryTest do
       assert VersionRegistry.feature_available?("2025-11-25", :structured_content)
       assert VersionRegistry.feature_available?("2025-11-25", :resource_subscription)
       refute VersionRegistry.feature_available?("2025-06-18", :tasks)
+      refute VersionRegistry.feature_available?("2026-07-28", :tools)
+      refute VersionRegistry.feature_available?("unknown", :tools)
     end
 
     test "negotiates protocol versions" do
@@ -146,6 +189,7 @@ defmodule ExMCP.VersionRegistryTest do
       assert VersionRegistry.types_module("2025-03-26") == ExMCP.Types.V20250326
       assert VersionRegistry.types_module("2025-06-18") == ExMCP.Types.V20250618
       assert VersionRegistry.types_module("2025-11-25") == ExMCP.Types.V20251125
+      assert VersionRegistry.types_module("2026-07-28") == ExMCP.Types.V20260728
       assert VersionRegistry.types_module("unknown") == ExMCP.Types
     end
   end
@@ -182,11 +226,13 @@ defmodule ExMCP.VersionRegistryTest do
       assert Protocol.method_available?("resources/list", "2024-11-05")
       assert Protocol.method_available?("prompts/list", "2024-11-05")
 
-      # Draft MCP methods are tracked but not advertised as stable.
+      # Modern-only MCP methods are unavailable to legacy revisions.
       refute Protocol.method_available?("server/discover", "2025-11-25")
       refute Protocol.method_available?("subscriptions/listen", "2025-11-25")
-      assert Protocol.method_available?("server/discover", "draft")
-      assert Protocol.method_available?("subscriptions/listen", "draft")
+      assert Protocol.method_available?("server/discover", "2026-07-28")
+      assert Protocol.method_available?("subscriptions/listen", "2026-07-28")
+      refute Protocol.method_available?("server/discover", "draft")
+      refute Protocol.method_available?("subscriptions/listen", "draft")
     end
 
     test "validates message version compatibility" do

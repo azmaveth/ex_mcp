@@ -257,9 +257,21 @@ defmodule ExMCP.Client.Handler do
               {:ok, result :: map(), state}
               | {:error, error_info, state}
 
+  @doc """
+  Opts this handler into bounded parallel dispatch of MRTR input requests.
+
+  The default is sequential dispatch in deterministic input-request ID order. A
+  handler may return an integer from 2 through 16 to allow that many callbacks
+  to run concurrently. Parallel callbacks all receive the same handler state
+  and must return it unchanged; use sequential dispatch when callbacks need to
+  update handler state.
+  """
+  @callback mrtr_input_concurrency() :: 2..16
+
   @optional_callbacks terminate: 2,
                       handle_elicitation_create: 3,
                       handle_url_elicitation: 3,
                       handle_task_status: 2,
-                      handle_server_request: 3
+                      handle_server_request: 3,
+                      mrtr_input_concurrency: 0
 end

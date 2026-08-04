@@ -8,7 +8,6 @@ defmodule ExMCP.Protocol.VersionNegotiator do
   """
 
   require Logger
-  alias ExMCP.Authorization.ScopeValidator
   alias ExMCP.Internal.VersionRegistry
 
   @doc """
@@ -81,99 +80,28 @@ defmodule ExMCP.Protocol.VersionNegotiator do
   def supported?(_), do: false
 
   @doc """
-  Build the server capabilities response including protocol version info.
+  Build a legacy initialize-result wrapper using the canonical capability registry.
 
-  This legacy helper does not build the capability map used by server
-  initialization on the wire. For wire capabilities, use
-  `ExMCP.Server.Capabilities`, which delegates to `VersionRegistry`.
+  This function is retained as a 1.x compatibility shim. New code should use
+  `ExMCP.Protocol.Initialize.build_initialize_result/2`; code that only needs
+  the capability map should use `ExMCP.Server.Capabilities.build_capabilities/2`.
   """
+  @deprecated "Use ExMCP.Protocol.Initialize or ExMCP.Server.Capabilities"
   @spec build_capabilities(String.t()) :: map()
   def build_capabilities(negotiated_version) do
-    base_capabilities = %{
-      protocolVersion: negotiated_version,
+    protocol_version =
+      if VersionRegistry.supported?(negotiated_version),
+        do: negotiated_version,
+        else: VersionRegistry.preferred_version()
+
+    %{
+      protocolVersion: protocol_version,
       serverInfo: %{
         name: "ExMCP",
         version: Application.spec(:ex_mcp, :vsn) |> to_string()
-      }
+      },
+      capabilities: VersionRegistry.capabilities_for_version(protocol_version)
     }
-
-    # Add version-specific capabilities
-    capabilities =
-      case negotiated_version do
-        "2025-11-25" ->
-          oauth2_capability =
-            if ExMCP.FeatureFlags.enabled?(:oauth2_auth) do
-              %{
-                scopes_supported: ScopeValidator.get_all_static_scopes(),
-                bearer_token_types_supported: ["bearer"],
-                resource_server: "ExMCP"
-              }
-            else
-              false
-            end
-
-          tasks_capability =
-            if ExMCP.FeatureFlags.enabled?(:tasks) do
-              %{}
-            else
-              false
-            end
-
-          %{
-            experimental: %{
-              protocolVersionHeader: true,
-              structuredOutput: ExMCP.FeatureFlags.enabled?(:structured_output),
-              oauth2: oauth2_capability,
-              icons: true,
-              urlElicitation: true,
-              toolCallingInSampling: true
-            },
-            tasks: tasks_capability
-          }
-
-        "2025-06-18" ->
-          oauth2_capability =
-            if ExMCP.FeatureFlags.enabled?(:oauth2_auth) do
-              %{
-                scopes_supported: ScopeValidator.get_all_static_scopes(),
-                bearer_token_types_supported: ["bearer"],
-                resource_server: "ExMCP"
-              }
-            else
-              false
-            end
-
-          %{
-            # Features added in 2025-06-18
-            experimental: %{
-              protocolVersionHeader: true,
-              structuredOutput: ExMCP.FeatureFlags.enabled?(:structured_output),
-              oauth2: oauth2_capability
-            }
-          }
-
-        "2025-03-26" ->
-          %{
-            # Features available in 2025-03-26
-            experimental: %{
-              # Batch support was removed in 2025-06-18
-              batchRequests: true
-            }
-          }
-
-        "2024-11-05" ->
-          %{
-            # Basic features for 2024-11-05
-            experimental: %{
-              batchRequests: true
-            }
-          }
-
-        _ ->
-          %{}
-      end
-
-    Map.put(base_capabilities, :capabilities, capabilities)
   end
 
   # Private function to compare version strings

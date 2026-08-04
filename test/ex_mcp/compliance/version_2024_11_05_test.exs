@@ -66,34 +66,16 @@ defmodule ExMCP.Compliance.Version20241105Test do
     end
   end
 
-  describe "build_capabilities for 2024-11-05" do
-    test "returns protocolVersion set to 2024-11-05" do
-      caps = VersionNegotiator.build_capabilities("2024-11-05")
-      assert caps.protocolVersion == "2024-11-05"
-    end
+  describe "canonical capabilities for 2024-11-05" do
+    test "the compatibility shim delegates to VersionRegistry" do
+      # Invoke dynamically because this deliberately covers a deprecated API.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      result = apply(VersionNegotiator, :build_capabilities, ["2024-11-05"])
 
-    test "returns serverInfo with name and version" do
-      caps = VersionNegotiator.build_capabilities("2024-11-05")
-      assert is_map(caps.serverInfo)
-      assert caps.serverInfo.name == "ExMCP"
-      assert is_binary(caps.serverInfo.version)
-    end
-
-    test "capabilities include experimental.batchRequests true" do
-      caps = VersionNegotiator.build_capabilities("2024-11-05")
-      assert caps.capabilities.experimental.batchRequests == true
-    end
-
-    test "no advanced experimental features like protocolVersionHeader" do
-      caps = VersionNegotiator.build_capabilities("2024-11-05")
-      experimental = caps.capabilities.experimental
-
-      refute Map.has_key?(experimental, :protocolVersionHeader)
-      refute Map.has_key?(experimental, :structuredOutput)
-      refute Map.has_key?(experimental, :oauth2)
-      refute Map.has_key?(experimental, :icons)
-      refute Map.has_key?(experimental, :urlElicitation)
-      refute Map.has_key?(experimental, :toolCallingInSampling)
+      assert result.protocolVersion == "2024-11-05"
+      assert result.serverInfo.name == "ExMCP"
+      assert result.capabilities == VersionRegistry.capabilities_for_version("2024-11-05")
+      assert result.capabilities.experimental == %{}
     end
   end
 

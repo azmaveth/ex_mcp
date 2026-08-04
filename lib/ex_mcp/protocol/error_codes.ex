@@ -17,19 +17,25 @@ defmodule ExMCP.Protocol.ErrorCodes do
   ## MCP-Specific Error Codes
 
   - `-32001` - Request cancelled: The request was cancelled by the client
-  - `-32002` - Consent required: User consent is required for the operation
+  - `-32002` - Resource not found on legacy MCP versions
   - `-32003` - Consent denied: User denied consent for the operation
   - `-32020` - Header mismatch
   - `-32021` - Missing required client capability
   - `-32022` - Unsupported protocol version
   - `-32000` - Generic server error: Catch-all for server-side errors
 
+  ## ExMCP-local Error Codes
+
+  - `-31002` - Consent required
+  - `-31003` - Prompt processing error
+
   > #### Compatibility note {: .warning}
   >
-  > The existing 1.x API assigns `-32002` to consent-required,
-  > resource-not-found, and prompt errors. Consequently,
-  > `error_message(:resource_not_found)` returns `"Consent required"`. The
-  > collision is retained through 1.x to avoid changing public and wire values.
+  > `-32002` and `-32042` are historical MCP codes. Legacy peers remain
+  > decodable, but modern emitters use `-32602` for a missing resource and must
+  > not emit `-32042`. ExMCP-local consent and prompt errors live outside the
+  > JSON-RPC reserved range so they cannot be confused with peer protocol
+  > errors.
 
   ## Usage
 
@@ -43,6 +49,8 @@ defmodule ExMCP.Protocol.ErrorCodes do
       true
   """
 
+  alias ExMCP.Internal.VersionRegistry
+
   # Standard JSON-RPC 2.0 error codes
   @parse_error -32700
   @invalid_request -32600
@@ -52,14 +60,18 @@ defmodule ExMCP.Protocol.ErrorCodes do
 
   # MCP-specific error codes
   @request_cancelled -32001
-  @consent_required -32002
+  @legacy_resource_not_found -32002
   @consent_denied -32003
   @server_error -32000
-  @resource_not_found -32002
-  @url_elicitation_required -32042
+  @legacy_url_elicitation_required -32042
   @header_mismatch -32020
   @missing_required_client_capability -32021
   @unsupported_protocol_version -32022
+
+  # ExMCP-local application errors. Keep these outside JSON-RPC's reserved
+  # -32768..-32000 range so they cannot be mistaken for peer protocol errors.
+  @consent_required -31002
+  @prompt_error -31003
 
   # Server-defined error codes range
   @server_error_start -32099
@@ -86,11 +98,13 @@ defmodule ExMCP.Protocol.ErrorCodes do
   @doc """
   Consent required: User consent is required for the operation.
 
-  This legacy constructor shares `-32002` with resource-not-found and prompt
-  errors. It is retained for compatibility.
+  This is an ExMCP-local application error, not an MCP protocol error.
   """
-  @deprecated "The -32002 consent/resource/prompt collision is retained only for 1.x compatibility"
   def consent_required, do: @consent_required
+
+  @doc "Legacy ExMCP consent-required code retained only for decoding old local errors."
+  @deprecated "Use consent_required/0; -32002 is reserved as a historical MCP code"
+  def legacy_consent_required, do: @legacy_resource_not_found
 
   @doc "Consent denied: User denied consent for the operation"
   def consent_denied, do: @consent_denied
@@ -99,16 +113,65 @@ defmodule ExMCP.Protocol.ErrorCodes do
   def server_error, do: @server_error
 
   @doc """
-  Resource not found: The requested resource does not exist.
+  Legacy resource-not-found code used by MCP 2025-11-25 and earlier.
 
-  This legacy constructor returns `-32002`, which also means consent-required
-  and prompt error in 1.x. It is retained for compatibility.
+  New code should call `resource_not_found/1` with the negotiated version or
+  protocol era.
   """
-  @deprecated "The -32002 consent/resource/prompt collision is retained only for 1.x compatibility"
-  def resource_not_found, do: @resource_not_found
+  @deprecated "Use resource_not_found/1 so modern peers receive -32602"
+  def resource_not_found, do: @legacy_resource_not_found
 
-  @doc "URL elicitation required: The server requires URL-mode elicitation"
-  def url_elicitation_required, do: @url_elicitation_required
+  @doc "Returns the resource-not-found code appropriate for a protocol era or version."
+  @spec resource_not_found(:legacy | :modern | String.t()) :: integer()
+  def resource_not_found(:legacy), do: @legacy_resource_not_found
+  def resource_not_found(:modern), do: @invalid_params
+
+  def resource_not_found(version) when is_binary(version) do
+    case VersionRegistry.era_for(version) do
+      :legacy -> @legacy_resource_not_found
+      :modern -> @invalid_params
+      :unknown -> raise ArgumentError, "unknown MCP protocol version: #{inspect(version)}"
+    end
+  end
+
+  @doc """
+  Returns whether a code represents resource-not-found for the given era.
+
+  `:unknown` accepts both encodings for clients that have not established the
+  peer's protocol era yet.
+  """
+  @spec resource_not_found_code?(integer(), :legacy | :modern | :unknown | String.t()) ::
+          boolean()
+  def resource_not_found_code?(code, :legacy), do: code == @legacy_resource_not_found
+  def resource_not_found_code?(code, :modern), do: code == @invalid_params
+
+  def resource_not_found_code?(code, :unknown),
+    do: code in [@legacy_resource_not_found, @invalid_params]
+
+  def resource_not_found_code?(code, version) when is_binary(version) do
+    resource_not_found_code?(code, VersionRegistry.era_for(version))
+  end
+
+  @doc "Legacy URL-elicitation-required code from MCP 2025-11-25."
+  @deprecated "MCP 2026-07-28 retired -32042; use MRTR for modern peers"
+  def url_elicitation_required, do: @legacy_url_elicitation_required
+
+  @doc "Returns the URL-elicitation code for legacy peers and rejects modern emission."
+  @spec url_elicitation_required(:legacy | :modern | String.t()) ::
+          integer() | {:error, :retired_error_code}
+  def url_elicitation_required(:legacy), do: @legacy_url_elicitation_required
+  def url_elicitation_required(:modern), do: {:error, :retired_error_code}
+
+  def url_elicitation_required(version) when is_binary(version) do
+    case VersionRegistry.era_for(version) do
+      :legacy -> @legacy_url_elicitation_required
+      :modern -> {:error, :retired_error_code}
+      :unknown -> raise ArgumentError, "unknown MCP protocol version: #{inspect(version)}"
+    end
+  end
+
+  @doc "ExMCP-local prompt processing error"
+  def prompt_error, do: @prompt_error
 
   @doc "Header mismatch between negotiated protocol state and the request"
   def header_mismatch, do: @header_mismatch
@@ -138,13 +201,22 @@ defmodule ExMCP.Protocol.ErrorCodes do
     @invalid_params => "Invalid params",
     @internal_error => "Internal error",
     @request_cancelled => "Request cancelled",
-    @consent_required => "Consent required",
+    @legacy_resource_not_found => "Resource not found",
     @consent_denied => "Consent denied",
     @server_error => "Server error",
     @header_mismatch => "Header mismatch",
     @missing_required_client_capability => "Missing required client capability",
     @unsupported_protocol_version => "Unsupported protocol version",
-    @url_elicitation_required => "URL elicitation required"
+    @legacy_url_elicitation_required => "URL elicitation required",
+    @consent_required => "Consent required",
+    @prompt_error => "Prompt error"
+  }
+
+  @atom_messages %{
+    resource_not_found: "Resource not found",
+    consent_required: "Consent required",
+    prompt_error: "Prompt error",
+    url_elicitation_required: "URL elicitation required"
   }
 
   # Map of atom names to error codes
@@ -158,11 +230,12 @@ defmodule ExMCP.Protocol.ErrorCodes do
     :consent_required => @consent_required,
     :consent_denied => @consent_denied,
     :server_error => @server_error,
-    :resource_not_found => @resource_not_found,
+    :resource_not_found => @legacy_resource_not_found,
+    :prompt_error => @prompt_error,
     :header_mismatch => @header_mismatch,
     :missing_required_client_capability => @missing_required_client_capability,
     :unsupported_protocol_version => @unsupported_protocol_version,
-    :url_elicitation_required => @url_elicitation_required
+    :url_elicitation_required => @legacy_url_elicitation_required
   }
 
   @spec error_message(integer() | atom()) :: String.t()
@@ -175,11 +248,14 @@ defmodule ExMCP.Protocol.ErrorCodes do
   end
 
   def error_message(atom) when is_atom(atom) do
-    case Map.get(@atom_to_code, atom) do
-      nil -> "Unknown error"
-      code -> error_message(code)
+    case Map.fetch(@atom_messages, atom) do
+      {:ok, message} -> message
+      :error -> @atom_to_code |> Map.get(atom) |> error_message_for_atom()
     end
   end
+
+  defp error_message_for_atom(nil), do: "Unknown error"
+  defp error_message_for_atom(code), do: error_message(code)
 
   @doc """
   Checks if the given error code is a standard JSON-RPC protocol error.
@@ -212,15 +288,19 @@ defmodule ExMCP.Protocol.ErrorCodes do
   def is_mcp_error?(code) when is_integer(code) do
     code in [
       @request_cancelled,
-      @consent_required,
+      @legacy_resource_not_found,
       @consent_denied,
       @header_mismatch,
       @missing_required_client_capability,
       @unsupported_protocol_version,
-      @url_elicitation_required
+      @legacy_url_elicitation_required
     ] or
       (code >= @server_error_start and code <= @server_error_end)
   end
+
+  @doc "Checks if the code is an ExMCP-local application error."
+  @spec application_error?(integer()) :: boolean()
+  def application_error?(code), do: code in [@consent_required, @prompt_error]
 
   @doc """
   Creates an error response map with the given code and message.
@@ -235,7 +315,7 @@ defmodule ExMCP.Protocol.ErrorCodes do
 
   def error_response(atom, custom_message) when is_atom(atom) do
     code = atom_to_code(atom)
-    base_message = error_message(code)
+    base_message = error_message(atom)
 
     message =
       if custom_message do
@@ -257,6 +337,31 @@ defmodule ExMCP.Protocol.ErrorCodes do
         base_message
       end
 
+    %{code: code, message: message}
+  end
+
+  @doc "Builds a version-aware error response for era-sensitive MCP errors."
+  @spec error_response_for_version(atom(), :legacy | :modern | String.t(), String.t() | nil) ::
+          map() | {:error, :retired_error_code}
+  def error_response_for_version(atom, version_or_era, custom_message \\ nil) do
+    case code_for(atom, version_or_era) do
+      {:error, _reason} = error -> error
+      code -> error_response_with_base(code, error_message(atom), custom_message)
+    end
+  end
+
+  @doc "Returns an error code using the negotiated version for era-sensitive errors."
+  @spec code_for(atom(), :legacy | :modern | String.t()) ::
+          integer() | {:error, :retired_error_code}
+  def code_for(:resource_not_found, version_or_era), do: resource_not_found(version_or_era)
+
+  def code_for(:url_elicitation_required, version_or_era),
+    do: url_elicitation_required(version_or_era)
+
+  def code_for(atom, _version_or_era), do: atom_to_code(atom)
+
+  defp error_response_with_base(code, base_message, custom_message) do
+    message = if custom_message, do: "#{base_message}: #{custom_message}", else: base_message
     %{code: code, message: message}
   end
 

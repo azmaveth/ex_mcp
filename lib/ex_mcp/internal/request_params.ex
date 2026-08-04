@@ -1,6 +1,9 @@
 defmodule ExMCP.Internal.RequestParams do
   @moduledoc false
 
+  alias ExMCP.Internal.VersionRegistry
+  alias ExMCP.Protocol.Meta
+
   @spec empty() :: map()
   def empty, do: %{}
 
@@ -78,5 +81,41 @@ defmodule ExMCP.Internal.RequestParams do
 
   def with_progress_or_meta(params, meta) when is_map(meta) do
     with_non_empty_meta(params, meta)
+  end
+
+  @doc false
+  @spec for_request(map(), map()) :: {:ok, map()} | {:error, Meta.validation_error()}
+  def for_request(params, context) when is_map(params) and is_map(context) do
+    protocol_version = context_value(context, :protocol_version)
+
+    if VersionRegistry.modern?(protocol_version) do
+      meta = Map.get(params, "_meta", %{})
+      capabilities = client_capabilities(context)
+
+      case Meta.build_request_meta(meta, protocol_version, capabilities,
+             client_info: context_value(context, :client_info),
+             log_level: context_value(context, :log_level),
+             trace_context: context_value(context, :trace_context) || %{}
+           ) do
+        {:ok, modern_meta} -> {:ok, Map.put(params, "_meta", modern_meta)}
+        {:error, _reason} = error -> error
+      end
+    else
+      {:ok, params}
+    end
+  end
+
+  defp client_capabilities(context) do
+    context_value(context, :client_capabilities) ||
+      context_value(context, :capabilities) ||
+      %{}
+  end
+
+  defp context_value(context, key) do
+    Map.get(context, key) ||
+      case Map.get(context, :transport_opts) do
+        opts when is_list(opts) -> Keyword.get(opts, key)
+        _other -> nil
+      end
   end
 end
