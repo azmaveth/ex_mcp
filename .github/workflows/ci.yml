@@ -224,8 +224,14 @@ jobs:
 
     # The interop tests install their own npm deps on first run and skip
     # themselves if `node` is unavailable.
-    - name: Run interop tests
-      run: mix test --only interop
+    # Run the nested-BEAM direction first in its own VM. Keeping the two
+    # directions isolated prevents stdio subprocess state from one SDK from
+    # affecting startup of the other.
+    - name: Run TypeScript client to ExMCP server tests
+      run: mix test --only interop_ts_client
+
+    - name: Run ExMCP client to TypeScript server tests
+      run: mix test --only interop_ex_mcp_client
 
   coverage:
     name: Coverage (full suite)

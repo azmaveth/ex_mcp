@@ -55,6 +55,8 @@ defmodule ExMCP.Integration.InteropTest do
   end
 
   describe "ExMCP Client → TypeScript Server" do
+    @describetag :interop_ex_mcp_client
+
     test "connects and lists tools", context do
       skip_without_node(context)
 
@@ -186,6 +188,8 @@ defmodule ExMCP.Integration.InteropTest do
   end
 
   describe "TypeScript Client → ExMCP Server" do
+    @describetag :interop_ts_client
+
     test "TS client connects and runs operations against ExMCP server", context do
       skip_without_node(context)
 
