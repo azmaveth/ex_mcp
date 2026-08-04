@@ -15,7 +15,11 @@ if (!serverCommand) {
 }
 
 const results = {};
-const requestOptions = { timeout: 5_000 };
+const requestOptions = { timeout: 10_000 };
+// Starting a nested Mix VM can take longer on a cold, shared CI runner even
+// when the project is already compiled. Keep the protocol timeout bounded,
+// but allow enough time for the child BEAM to boot before initialization.
+const connectOptions = { timeout: 30_000 };
 
 try {
   const transport = new StdioClientTransport({
@@ -28,7 +32,7 @@ try {
     version: "1.0.0",
   });
 
-  await client.connect(transport, { timeout: 10_000 });
+  await client.connect(transport, connectOptions);
   results.connected = true;
 
   // List and call tools

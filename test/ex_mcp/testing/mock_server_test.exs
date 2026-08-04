@@ -261,17 +261,14 @@ defmodule ExMCP.Testing.MockServerTest do
       GenServer.stop(server_pid)
     end
 
-    test "no latency when not configured" do
+    test "defaults to zero latency and handles requests" do
       {:ok, server_pid} = MockServer.start_link([])
 
-      start_time = System.monotonic_time(:millisecond)
       request = Builders.request("tools/list", id: 1)
-      GenServer.call(server_pid, {:mcp_request, request})
-      end_time = System.monotonic_time(:millisecond)
+      {:ok, response} = GenServer.call(server_pid, {:mcp_request, request})
 
-      elapsed = end_time - start_time
-      # Should be very fast
-      assert elapsed < 50
+      assert MockServer.get_server_state(server_pid).latency == 0
+      assert response["id"] == 1
 
       GenServer.stop(server_pid)
     end
