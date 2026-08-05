@@ -28,6 +28,18 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       {:error, error, state}
     end
 
+    def handle_call_tool("background", _args, state) do
+      {:ok,
+       %{
+         resultType: :task,
+         taskId: "task-1",
+         status: "working",
+         createdAt: "2026-08-04T00:00:00Z",
+         lastUpdatedAt: "2026-08-04T00:00:00Z",
+         ttlMs: 60_000
+       }, state}
+    end
+
     def handle_call_tool(nil, _args, state) do
       {:error, "No tool name provided", state}
     end
@@ -59,6 +71,19 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
     def handle_get_prompt(_name, _args, state) do
       {:error, "Unknown prompt", state}
     end
+
+    def handle_task_get(task_id, state) do
+      {:ok,
+       %{
+         "taskId" => task_id,
+         "status" => "working",
+         "createdAt" => "2026-08-04T00:00:00Z",
+         "lastUpdatedAt" => "2026-08-04T00:00:00Z",
+         "ttlMs" => 60_000
+       }, state}
+    end
+
+    def handle_task_update(_task_id, _responses, state), do: {:ok, %{}, state}
   end
 
   defmodule MinimalHandler do
@@ -143,6 +168,45 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       assert error["data"]["requiredCapabilities"] == %{"sampling" => %{}}
     end
 
+    test "routes the modern task lifecycle and enforces declaration", %{state: state} do
+      undeclared = modern_request(102, "tasks/get", %{"taskId" => "task-1"}, %{})
+
+      assert {:response, %{"error" => error}, _state} =
+               RequestProcessor.process(undeclared, state)
+
+      assert error["code"] == -32021
+
+      capabilities = %{
+        "extensions" => %{"io.modelcontextprotocol/tasks" => %{}}
+      }
+
+      get = modern_request(103, "tasks/get", %{"taskId" => "task-1"}, capabilities)
+      assert {:response, %{"result" => task}, _state} = RequestProcessor.process(get, state)
+      assert task["resultType"] == "task"
+
+      update =
+        modern_request(
+          104,
+          "tasks/update",
+          %{"taskId" => "task-1", "inputResponses" => %{"approval" => %{}}},
+          capabilities
+        )
+
+      assert {:response, %{"result" => ack}, _state} = RequestProcessor.process(update, state)
+      assert ack["resultType"] == "complete"
+
+      call =
+        modern_request(
+          105,
+          "tools/call",
+          %{"name" => "background", "arguments" => %{}},
+          capabilities
+        )
+
+      assert {:response, %{"result" => task}, _state} = RequestProcessor.process(call, state)
+      assert task["resultType"] == "task"
+    end
+
     test "routes to correct method handlers", %{state: state} do
       methods = [
         "initialize",
@@ -174,6 +238,20 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
       assert response["error"]["code"] == -32601
       assert response["error"]["message"] =~ "Method not found: unknown/method"
     end
+  end
+
+  defp modern_request(id, method, params, capabilities) do
+    meta = %{
+      "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities" => capabilities
+    }
+
+    %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "method" => method,
+      "params" => Map.put(params, "_meta", meta)
+    }
   end
 
   describe "initialize" do

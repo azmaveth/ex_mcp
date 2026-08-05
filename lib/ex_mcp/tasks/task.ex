@@ -1,6 +1,6 @@
 defmodule ExMCP.Tasks.Task do
   @moduledoc """
-  Task struct and state machine validation for MCP Tasks (2025-11-25).
+  Task struct and state machine validation for MCP Tasks.
 
   Tasks represent async operations initiated by tool calls. This module
   provides a pure data structure and state transition validation functions.
@@ -37,6 +37,8 @@ defmodule ExMCP.Tasks.Task do
           ttl: integer() | nil,
           poll_interval: integer() | nil,
           result: map() | nil,
+          input_requests: map() | nil,
+          error: map() | nil,
           metadata: map()
         }
 
@@ -49,6 +51,8 @@ defmodule ExMCP.Tasks.Task do
     :ttl,
     :poll_interval,
     :result,
+    :input_requests,
+    :error,
     :status_message,
     :last_updated_at,
     state: :working,
@@ -86,6 +90,8 @@ defmodule ExMCP.Tasks.Task do
       ttl: Keyword.get(opts, :ttl),
       poll_interval: Keyword.get(opts, :poll_interval),
       status_message: Keyword.get(opts, :status_message),
+      input_requests: Keyword.get(opts, :input_requests),
+      error: Keyword.get(opts, :error),
       metadata: Keyword.get(opts, :metadata, %{})
     }
   end
@@ -100,7 +106,17 @@ defmodule ExMCP.Tasks.Task do
   def transition(%__MODULE__{state: current} = task, new_state) do
     if valid_transition?(current, new_state) do
       now = DateTime.utc_now() |> DateTime.to_iso8601()
-      {:ok, %{task | state: new_state, last_updated_at: now}}
+
+      input_requests =
+        if new_state == :input_required, do: task.input_requests, else: nil
+
+      {:ok,
+       %{
+         task
+         | state: new_state,
+           last_updated_at: now,
+           input_requests: input_requests
+       }}
     else
       {:error, "Invalid transition from #{current} to #{new_state}"}
     end
@@ -123,7 +139,18 @@ defmodule ExMCP.Tasks.Task do
   @spec fail(t(), map()) :: {:ok, t()} | {:error, String.t()}
   def fail(%__MODULE__{} = task, error_result) do
     case transition(task, :failed) do
-      {:ok, task} -> {:ok, %{task | result: error_result}}
+      # Keep `result` populated for callers using the experimental 2025-11-25
+      # representation while exposing the dedicated modern `error` field.
+      {:ok, task} -> {:ok, %{task | error: error_result, result: error_result}}
+      error -> error
+    end
+  end
+
+  @doc "Transitions a task to `input_required` with outstanding input requests."
+  @spec require_input(t(), map()) :: {:ok, t()} | {:error, String.t()}
+  def require_input(%__MODULE__{} = task, input_requests) when is_map(input_requests) do
+    case transition(task, :input_required) do
+      {:ok, task} -> {:ok, %{task | input_requests: input_requests}}
       error -> error
     end
   end
@@ -179,6 +206,26 @@ defmodule ExMCP.Tasks.Task do
     |> MapBuilder.put_unless("metadata", task.metadata, %{})
   end
 
+  @doc "Converts a task to the wire representation for a protocol era or version."
+  @spec to_map(t(), :legacy | :modern | String.t()) :: map()
+  def to_map(%__MODULE__{} = task, era_or_version)
+      when era_or_version in [:modern, "2026-07-28"] do
+    %{
+      "taskId" => task.id,
+      "status" => Atom.to_string(task.state)
+    }
+    |> MapBuilder.put_if_present("createdAt", task.created_at)
+    |> MapBuilder.put_if_present("lastUpdatedAt", task.last_updated_at)
+    |> MapBuilder.put_if_present("ttlMs", task.ttl)
+    |> MapBuilder.put_if_present("pollIntervalMs", task.poll_interval)
+    |> MapBuilder.put_if_present("statusMessage", task.status_message)
+    |> MapBuilder.put_if_present("inputRequests", modern_input_requests(task))
+    |> MapBuilder.put_if_present("result", modern_result(task))
+    |> MapBuilder.put_if_present("error", task.error)
+  end
+
+  def to_map(%__MODULE__{} = task, _legacy_or_version), do: to_map(task)
+
   @doc """
   Parses a state string to a state atom.
   """
@@ -193,6 +240,14 @@ defmodule ExMCP.Tasks.Task do
   # Private helpers
 
   defp generate_id do
-    "task_#{:erlang.unique_integer([:positive, :monotonic])}_#{:rand.uniform(999_999)}"
+    "task_" <> Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
   end
+
+  defp modern_result(%__MODULE__{state: :completed, result: result}), do: result
+  defp modern_result(%__MODULE__{}), do: nil
+
+  defp modern_input_requests(%__MODULE__{state: :input_required, input_requests: requests}),
+    do: requests
+
+  defp modern_input_requests(%__MODULE__{}), do: nil
 end

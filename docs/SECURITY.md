@@ -254,6 +254,36 @@ integration. See the
 [configuration guide](CONFIGURATION.md#opentelemetry-metadata-policy) for the
 defaults and client example.
 
+## Durable Tasks
+
+Modern task IDs may act as bearer handles to stored execution state. Generate
+them with cryptographic entropy; `ExMCP.Tasks.Task.new/3` does this by default,
+but an application that supplies `:id` assumes that responsibility. Bind every
+stored task to the authenticated principal, tenant, resource/audience, and
+other authorization context needed by the deployment, and repeat that check on
+every `tasks/get`, `tasks/update`, and `tasks/cancel` request. Possession of a
+valid-looking task ID is not authorization.
+
+Persist the task and its authorization binding before returning a
+`resultType: "task"` handle. A successful creation response promises that an
+immediate `tasks/get` can find the task, including after a worker, connection,
+or client restart. Enforce TTL cleanup without reassigning identifiers, and use
+atomic or concurrency-controlled transitions so late updates cannot overwrite
+a terminal state.
+
+Treat task `inputRequests` with the same consent and trust policy as the
+corresponding elicitation, sampling, or roots request. Validate each
+`inputResponses` key against the currently outstanding request set, make
+retries idempotent, and never accept a response for a different task. Task
+notifications carry full state and may contain result or error data; publish
+them only through an authorized `subscriptions/listen` stream.
+
+The modern protocol intentionally has no `tasks/list`, avoiding cross-caller
+enumeration. Avoid recreating a list endpoint unless the application has a
+well-defined authorization scope. See the
+[configuration guide](CONFIGURATION.md#tasks-extension) for the explicit
+capability opt-in and callback boundary.
+
 ## stdio Security
 
 stdio is appropriate when the MCP server process is trusted by the application

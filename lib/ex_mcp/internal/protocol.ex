@@ -466,6 +466,13 @@ defmodule ExMCP.Internal.Protocol do
     |> jsonrpc_request("tasks/cancel")
   end
 
+  @doc "Encodes a modern tasks/update request with input responses."
+  @spec encode_task_update(String.t(), map()) :: map()
+  def encode_task_update(task_id, input_responses) do
+    %{"taskId" => task_id, "inputResponses" => input_responses}
+    |> jsonrpc_request("tasks/update")
+  end
+
   @doc """
   Encodes a task status notification.
   """
@@ -478,6 +485,16 @@ defmodule ExMCP.Internal.Protocol do
 
     params = if metadata, do: Map.put(params, "metadata", metadata), else: params
     encode_notification("notifications/tasks/status", params)
+  end
+
+  @doc "Encodes a modern full-state task notification."
+  @spec encode_task_notification(map() | ExMCP.Tasks.Task.t()) :: map()
+  def encode_task_notification(%ExMCP.Tasks.Task{} = task) do
+    encode_notification("notifications/tasks", ExMCP.Tasks.Task.to_map(task, :modern))
+  end
+
+  def encode_task_notification(task) when is_map(task) do
+    encode_notification("notifications/tasks", task)
   end
 
   # Message Parsing

@@ -149,6 +149,66 @@ defmodule ExMCP.Types.V20260728 do
   @typedoc "Server-assigned input IDs mapped to client results."
   @type input_responses :: %{optional(String.t()) => input_response()}
 
+  @typedoc "Lifecycle state of a task in the official Tasks extension."
+  @type task_status :: :working | :input_required | :completed | :failed | :cancelled
+
+  @typedoc "Fields common to task handles and detailed task state."
+  @type task :: %{
+          required(:taskId) => String.t(),
+          required(:status) => task_status(),
+          required(:createdAt) => String.t(),
+          required(:lastUpdatedAt) => String.t(),
+          required(:ttlMs) => non_neg_integer(),
+          optional(:pollIntervalMs) => non_neg_integer(),
+          optional(:statusMessage) => String.t()
+        }
+
+  @typedoc "A server-directed task handle returned instead of an immediate result."
+  @type create_task_result :: %{
+          required(:resultType) => :task,
+          required(:taskId) => String.t(),
+          required(:status) => task_status(),
+          required(:createdAt) => String.t(),
+          required(:lastUpdatedAt) => String.t(),
+          required(:ttlMs) => non_neg_integer(),
+          optional(:pollIntervalMs) => non_neg_integer(),
+          optional(:statusMessage) => String.t(),
+          optional(:_meta) => result_meta_object()
+        }
+
+  @typedoc "Full task state returned by `tasks/get` or `notifications/tasks`."
+  @type detailed_task :: %{
+          required(:taskId) => String.t(),
+          required(:status) => task_status(),
+          required(:createdAt) => String.t(),
+          required(:lastUpdatedAt) => String.t(),
+          required(:ttlMs) => non_neg_integer(),
+          optional(:pollIntervalMs) => non_neg_integer(),
+          optional(:statusMessage) => String.t(),
+          optional(:inputRequests) => input_requests(),
+          optional(:result) => json_object(),
+          optional(:error) => json_object()
+        }
+
+  @typedoc "Parameters for idempotently reading one task."
+  @type get_task_request_params :: %{
+          required(:_meta) => request_meta_object(),
+          required(:taskId) => String.t()
+        }
+
+  @typedoc "Parameters for submitting responses to outstanding task inputs."
+  @type update_task_request_params :: %{
+          required(:_meta) => request_meta_object(),
+          required(:taskId) => String.t(),
+          required(:inputResponses) => input_responses()
+        }
+
+  @typedoc "Parameters for cooperatively cancelling one task."
+  @type cancel_task_request_params :: %{
+          required(:_meta) => request_meta_object(),
+          required(:taskId) => String.t()
+        }
+
   @typedoc "An interim result requesting additional client input."
   @type input_required_result :: %{
           required(:resultType) => result_type(),

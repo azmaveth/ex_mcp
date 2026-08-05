@@ -9,7 +9,7 @@ defmodule ExMCP.MessageProcessor do
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, MessageValidator}
   alias ExMCP.Protocol.{ErrorCodes, Methods, ResponseBuilder}
-  alias ExMCP.Server.{MRTR, RequestContext}
+  alias ExMCP.Server.{MRTR, RequestContext, ResultNormalizer}
 
   require Logger
 
@@ -149,12 +149,18 @@ defmodule ExMCP.MessageProcessor do
            assigns: %{request_context: request_context} = assigns
          } = conn
        ) do
-    result =
-      ExMCP.Server.ResultNormalizer.protocol_result(result, request_context,
-        server_info: Map.get(assigns, :server_info)
-      )
+    case ResultNormalizer.validate_result_capabilities(result, request_context) do
+      :ok ->
+        result =
+          ResultNormalizer.protocol_result(result, request_context,
+            server_info: Map.get(assigns, :server_info)
+          )
 
-    %{conn | response: Map.put(response, "result", result)}
+        %{conn | response: Map.put(response, "result", result)}
+
+      {:error, error} ->
+        %{conn | response: JSONRPC.error(response["id"], Error.to_json_rpc(error))}
+    end
   end
 
   defp normalize_protocol_result(conn), do: conn

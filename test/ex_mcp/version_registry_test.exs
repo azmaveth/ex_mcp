@@ -231,6 +231,11 @@ defmodule ExMCP.VersionRegistryTest do
       refute Protocol.method_available?("subscriptions/listen", "2025-11-25")
       assert Protocol.method_available?("server/discover", "2026-07-28")
       assert Protocol.method_available?("subscriptions/listen", "2026-07-28")
+      assert Protocol.method_available?("tasks/get", "2026-07-28")
+      assert Protocol.method_available?("tasks/update", "2026-07-28")
+      assert Protocol.method_available?("tasks/cancel", "2026-07-28")
+      refute Protocol.method_available?("tasks/list", "2026-07-28")
+      refute Protocol.method_available?("tasks/result", "2026-07-28")
       refute Protocol.method_available?("server/discover", "draft")
       refute Protocol.method_available?("subscriptions/listen", "draft")
     end

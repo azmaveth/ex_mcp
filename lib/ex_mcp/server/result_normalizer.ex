@@ -22,6 +22,7 @@ defmodule ExMCP.Server.ResultNormalizer do
 
   alias ExMCP.Internal.VersionInfo
   alias ExMCP.Protocol.CacheableResult
+  alias ExMCP.Tasks.Extension, as: TasksExtension
   alias ExMCP.Transport.HTTP.ToolHeaders
 
   @server_info_key "io.modelcontextprotocol/serverInfo"
@@ -57,7 +58,12 @@ defmodule ExMCP.Server.ResultNormalizer do
     if Map.get(request_context, :era) == :modern do
       result = result |> stringify_keys() |> normalize_tools_list(request_context)
       server_info = Keyword.get(opts, :server_info) || default_server_info()
-      result_type = normalize_result_type(Map.get(result, "resultType"))
+
+      result_type =
+        result
+        |> Map.get("resultType")
+        |> normalize_result_type()
+        |> normalize_method_result_type(request_context)
 
       result =
         result
@@ -148,6 +154,47 @@ defmodule ExMCP.Server.ResultNormalizer do
 
   defp normalize_result_type(_type), do: "complete"
 
+  defp normalize_method_result_type(_result_type, %{method: "tasks/get"}), do: "task"
+  defp normalize_method_result_type(result_type, _request_context), do: result_type
+
+  @doc "Validates that an extension result was enabled by per-request capabilities."
+  @spec validate_result_capabilities(map(), map()) ::
+          :ok | {:error, ExMCP.Error.ProtocolError.t()}
+  def validate_result_capabilities(result, %{era: :modern} = request_context)
+      when is_map(result) do
+    task_result? =
+      normalize_result_type(field(result, "resultType")) == TasksExtension.result_type() or
+        Map.get(request_context, :method) == "tasks/get"
+
+    if task_result? do
+      if TasksExtension.declared?(Map.get(request_context, :client_capabilities)) do
+        validate_task_result(result, request_context)
+      else
+        {:error,
+         ExMCP.Error.missing_required_client_capability(TasksExtension.required_capabilities())}
+      end
+    else
+      :ok
+    end
+  end
+
+  def validate_result_capabilities(_result, _request_context), do: :ok
+
+  defp field(map, "resultType"), do: Map.get(map, "resultType") || Map.get(map, :resultType)
+
+  defp validate_task_result(result, request_context) do
+    mode = if Map.get(request_context, :method) == "tasks/get", do: :detailed, else: :create
+
+    case TasksExtension.validate_task_result(result, mode) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Handler returned an invalid Tasks extension result: #{inspect(reason)}")
+        {:error, ExMCP.Error.protocol_error(-32603, "Invalid task result")}
+    end
+  end
+
   defp default_server_info do
     %{"name" => "ExMCP", "version" => VersionInfo.version()}
   end
@@ -199,6 +246,12 @@ defmodule ExMCP.Server.ResultNormalizer do
     result
     |> Map.put("content", stringify_keys(List.wrap(content)))
     |> stringify_keys()
+  end
+
+  def tool_result(result, _opts)
+      when is_map(result) and
+             (is_map_key(result, "resultType") or is_map_key(result, :resultType)) do
+    stringify_keys(result)
   end
 
   def tool_result(result, opts) when is_map(result) do

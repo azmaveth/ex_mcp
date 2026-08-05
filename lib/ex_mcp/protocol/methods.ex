@@ -35,9 +35,13 @@ defmodule ExMCP.Protocol.Methods do
     resources/templates/list
     resources/read
     subscriptions/listen
+    tasks/cancel
+    tasks/get
+    tasks/update
     tools/call
     tools/list
     notifications/cancelled
+    notifications/tasks
   )
 
   @rows [
@@ -139,6 +143,12 @@ defmodule ExMCP.Protocol.Methods do
        message_processor: :handle_task_cancel,
        request_processor: :process_task_cancel
      }},
+    {"tasks/update", @v20260728, @v20260728, :request,
+     %{
+       server_dispatch: :task_update,
+       message_processor: :handle_task_update,
+       request_processor: :process_task_update
+     }},
     {"server/discover", @v20260728, @v20260728, :request,
      %{
        server_dispatch: :server_discover,
@@ -158,6 +168,7 @@ defmodule ExMCP.Protocol.Methods do
     {"notifications/roots/list_changed", @v2024, nil, :notification, %{}},
     {"notifications/tasks/status", @v20251125, nil, :notification,
      %{request_processor: :process_task_status_notification}},
+    {"notifications/tasks", @v20260728, @v20260728, :notification, %{}},
     {"notifications/elicitation/complete", @v20251125, nil, :notification,
      %{
        server_dispatch: :elicitation_complete,

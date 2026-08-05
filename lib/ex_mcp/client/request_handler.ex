@@ -11,6 +11,7 @@ defmodule ExMCP.Client.RequestHandler do
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, Maps, Protocol, RequestParams, VersionRegistry}
   alias ExMCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
+  alias ExMCP.Tasks.Extension, as: TasksExtension
   alias ExMCP.Transport.HTTP
 
   # Extra time allowed past a caller-enforced timeout before the client
@@ -847,16 +848,36 @@ defmodule ExMCP.Client.RequestHandler do
 
   defp validate_result(result, state, method) do
     transport_opts = Map.get(state, :transport_opts) || []
+    client_capabilities = Keyword.get(transport_opts, :capabilities, %{})
 
     allowed_result_types =
       transport_opts
       |> Keyword.get(:allowed_result_types, [])
       |> List.wrap()
+      |> Enum.reject(&(&1 == TasksExtension.result_type()))
+      |> Kernel.++(TasksExtension.allowed_result_types(client_capabilities))
+      |> Enum.uniq()
 
     case ResultEnvelope.validate(result, Map.get(state, :protocol_version),
            allowed_result_types: allowed_result_types,
            method: method
          ) do
+      {:ok, {:extension, "task"}, validated_result} ->
+        mode = if method == "tasks/get", do: :detailed, else: :create
+
+        case TasksExtension.validate_task_result(validated_result, mode) do
+          :ok ->
+            {:ok, validated_result}
+
+          {:error, reason} ->
+            {:error,
+             %{
+               type: :protocol_error,
+               reason: reason,
+               message: "MCP task result has an invalid wire shape"
+             }}
+        end
+
       {:ok, _kind, validated_result} ->
         {:ok, validated_result}
 

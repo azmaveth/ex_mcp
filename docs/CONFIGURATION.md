@@ -168,6 +168,60 @@ go through the same policy.
 Allowlist only low-cardinality routing or correlation fields. Do not propagate
 credentials, authorization tokens, personal data, or other secrets as baggage.
 
+## Tasks Extension
+
+Modern Tasks is an explicit extension, not the experimental `tasks` capability
+from MCP 2025-11-25. A modern client opts in on every request by adding
+`io.modelcontextprotocol/tasks` to its configured capabilities:
+
+```elixir
+task_capabilities =
+  ExMCP.Tasks.Extension.put_capability(%{
+    "elicitation" => %{"form" => %{}}
+  })
+
+ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://api.example.com/mcp",
+  capabilities: task_capabilities
+)
+```
+
+After a `tools/call` returns `resultType: "task"`, use
+`ExMCP.Client.get_task/3`, `update_task/4`, and `cancel_task/3`. The client
+rejects task results unless the extension was configured, and validates the
+task handle before returning it to application code.
+
+A server must advertise the same extension from `server/discover` only when it
+has implemented a durable task store and the modern task callbacks:
+
+```elixir
+def __server_capabilities__ do
+  ExMCP.Tasks.Extension.put_capability(%{"tools" => %{}})
+end
+
+@impl ExMCP.Server.Handler
+def handle_task_get(task_id, state), do: MyTasks.get(task_id, state)
+
+@impl ExMCP.Server.Handler
+def handle_task_update(task_id, input_responses, state),
+  do: MyTasks.update(task_id, input_responses, state)
+
+@impl ExMCP.Server.Handler
+def handle_task_cancel(task_id, state), do: MyTasks.cancel(task_id, state)
+```
+
+ExMCP provides the capability contract, dual-era routing, task state struct,
+wire validation, and client operations. The host application owns persistence,
+worker execution, authorization binding, expiry, and recovery. Do not return a
+task handle until the task is durably readable through `tasks/get`.
+
+`ExMCP.Tasks.Task.to_map/1` retains the legacy 2025-11-25 keys.
+`to_map/2` with `:modern` or `"2026-07-28"` emits `ttlMs`,
+`pollIntervalMs`, `inputRequests`, and `error` without removing the public 1.x
+struct aliases. `tasks/list`, `tasks/result`, and
+`notifications/tasks/status` remain legacy-only.
+
 ## Client Configuration
 
 You can pass options directly to `ExMCP.Client.start_link/1`:

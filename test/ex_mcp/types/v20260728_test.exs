@@ -14,6 +14,13 @@ defmodule ExMCP.Types.V20260728Test do
     :input_response,
     :input_requests,
     :input_responses,
+    :task_status,
+    :task,
+    :create_task_result,
+    :detailed_task,
+    :get_task_request_params,
+    :update_task_request_params,
+    :cancel_task_request_params,
     :input_required_result,
     :input_response_request_params,
     :subscription_filter,
@@ -79,6 +86,26 @@ defmodule ExMCP.Types.V20260728Test do
     assert fields.requestState == :optional
     assert Map.has_key?(types, :input_requests)
     assert Map.has_key?(types, :input_responses)
+  end
+
+  test "task extension types use the redesigned modern fields" do
+    types = type_map(V20260728)
+    task_fields = root_fields(types.task)
+    create_fields = root_fields(types.create_task_result)
+    detailed_fields = root_fields(types.detailed_task)
+    update_fields = root_fields(types.update_task_request_params)
+
+    for field <- [:taskId, :status, :createdAt, :lastUpdatedAt, :ttlMs] do
+      assert task_fields[field] == :required
+      assert create_fields[field] == :required
+    end
+
+    assert task_fields.pollIntervalMs == :optional
+    assert create_fields.resultType == :required
+    assert detailed_fields.inputRequests == :optional
+    assert detailed_fields.result == :optional
+    assert detailed_fields.error == :optional
+    assert update_fields.inputResponses == :required
   end
 
   test "subscription types include every standard filter and stream correlation metadata" do

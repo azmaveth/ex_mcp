@@ -637,6 +637,31 @@ defmodule ExMCP.Protocol.RequestProcessor do
     end
   end
 
+  # Tasks/update (io.modelcontextprotocol/tasks extension)
+  defp process_task_update(%{"id" => id} = request, state) do
+    params = Map.get(request, "params", %{})
+    task_id = Map.get(params, "taskId")
+    input_responses = Map.get(params, "inputResponses")
+    module = state.__module__
+
+    if function_exported?(module, :handle_task_update, 3) do
+      case module.handle_task_update(task_id, input_responses, state) do
+        {:ok, _result, new_state} ->
+          response = ResponseBuilder.build_success_response(%{}, id)
+          {:response, response, new_state}
+
+        {:error, reason, new_state} ->
+          error = Error.protocol_error(-32000, to_string(reason))
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
+      end
+    else
+      error = Error.protocol_error(-32601, "Method not found: tasks/update")
+      error_response = ResponseBuilder.build_error_response(error, id)
+      {:response, error_response, state}
+    end
+  end
+
   # Unknown method
   defp process_unknown_method(%{"method" => method, "id" => id}, state) do
     error = Error.protocol_error(-32601, "Method not found: #{method}")
@@ -665,12 +690,19 @@ defmodule ExMCP.Protocol.RequestProcessor do
          request_context,
          state
        ) do
-    result =
-      ResultNormalizer.protocol_result(result, request_context,
-        server_info: get_server_info(state)
-      )
+    case ResultNormalizer.validate_result_capabilities(result, request_context) do
+      :ok ->
+        result =
+          ResultNormalizer.protocol_result(result, request_context,
+            server_info: get_server_info(state)
+          )
 
-    {:response, Map.put(response, "result", result), new_state}
+        {:response, Map.put(response, "result", result), new_state}
+
+      {:error, error} ->
+        error_response = ResponseBuilder.build_error_response(error, response["id"])
+        {:response, error_response, new_state}
+    end
   end
 
   defp normalize_protocol_result(other, _request_context, _state), do: other

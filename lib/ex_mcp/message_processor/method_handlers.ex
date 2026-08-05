@@ -257,6 +257,16 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     end)
   end
 
+  def handle_task_update(conn, server_pid, params, id) do
+    request =
+      {:task_update, Map.get(params, "taskId"), Map.get(params, "inputResponses")}
+
+    safe_call(conn, server_pid, request, id, "Task update failed", fn
+      {:ok, _result} -> put_success(conn, %{}, id)
+      {:error, reason} -> put_error(conn, "Task update failed", reason, id)
+    end)
+  end
+
   def handle_task_list(conn, server_pid, params, id) do
     list_call(conn, server_pid, {:task_list, cursor(params)}, id, "Task list failed", "tasks")
   end

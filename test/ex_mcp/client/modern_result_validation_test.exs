@@ -125,17 +125,78 @@ defmodule ExMCP.Client.ModernResultValidationTest do
     assert_receive {:outbound_request, %{"method" => "server/discover"}}
   end
 
-  defp modern_state(result) do
+  test "accepts task results only when the modern extension was declared" do
+    result = task_result()
+
+    declared =
+      modern_state(result,
+        capabilities: %{
+          extensions: %{"io.modelcontextprotocol/tasks" => %{}}
+        }
+      )
+
+    assert {:reply, {:ok, %{"resultType" => "task", "taskId" => "task-1"}}, _state} =
+             RequestHandler.handle_request(
+               "tools/call",
+               %{"name" => "background", "arguments" => %{}},
+               {self(), make_ref()},
+               declared
+             )
+
+    undeclared = modern_state(result, allowed_result_types: ["task"])
+
+    assert {:reply, {:error, error}, _state} =
+             RequestHandler.handle_request(
+               "tools/call",
+               %{"name" => "background", "arguments" => %{}},
+               {self(), make_ref()},
+               undeclared
+             )
+
+    assert error.reason == {:unknown_result_type, "task"}
+  end
+
+  test "rejects malformed task results after extension negotiation" do
+    state =
+      modern_state(%{"resultType" => "task", "taskId" => "task-1"},
+        capabilities: %{
+          extensions: %{"io.modelcontextprotocol/tasks" => %{}}
+        }
+      )
+
+    assert {:reply, {:error, error}, _state} =
+             RequestHandler.handle_request(
+               "tools/call",
+               %{"name" => "background", "arguments" => %{}},
+               {self(), make_ref()},
+               state
+             )
+
+    assert error.reason == {:invalid_task_field, "status"}
+  end
+
+  defp modern_state(result, opts \\ []) do
     %ExMCP.Client{
       transport_mod: SyncTransport,
       transport_state: %{owner: self(), result: result},
-      transport_opts: [capabilities: %{roots: %{}}],
+      transport_opts: Keyword.merge([capabilities: %{roots: %{}}], opts),
       protocol_version: "2026-07-28",
       client_info: %{"name" => "test-client", "version" => "1"},
       pending_requests: %{},
       pending_batches: %{},
       cancelled_requests: MapSet.new(),
       default_timeout: 1_000
+    }
+  end
+
+  defp task_result do
+    %{
+      "resultType" => "task",
+      "taskId" => "task-1",
+      "status" => "working",
+      "createdAt" => "2026-08-04T00:00:00Z",
+      "lastUpdatedAt" => "2026-08-04T00:00:00Z",
+      "ttlMs" => 60_000
     }
   end
 end

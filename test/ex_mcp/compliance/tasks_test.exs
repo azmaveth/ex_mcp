@@ -120,6 +120,16 @@ defmodule ExMCP.Compliance.TasksTest do
       assert Protocol.method_available?("notifications/tasks/status", "2025-11-25")
     end
 
+    test "modern extension exposes only the redesigned method surface" do
+      for method <- ["tasks/get", "tasks/update", "tasks/cancel", "notifications/tasks"] do
+        assert Protocol.method_available?(method, "2026-07-28")
+      end
+
+      for method <- ["tasks/list", "tasks/result", "notifications/tasks/status"] do
+        refute Protocol.method_available?(method, "2026-07-28")
+      end
+    end
+
     test "tasks/get is NOT available in 2025-06-18" do
       refute Protocol.method_available?("tasks/get", "2025-06-18")
     end

@@ -27,6 +27,15 @@ defmodule ExMCP.Server.MRTR do
     sealed_state = context.sealed_request_state
 
     cond do
+      context.method == "tasks/update" and is_nil(sealed_state) ->
+        # Tasks extension inputResponses belong to the durable task state
+        # machine, not to an MRTR retry of the original request.
+        {:ok,
+         %{context | input_responses: nil, mrtr_round: 0, delivery_semantics: :at_least_once}}
+
+      context.method == "tasks/update" ->
+        {:error, invalid("requestState is not valid for tasks/update")}
+
       is_nil(input_responses) and is_nil(sealed_state) ->
         {:ok, %{context | mrtr_round: 0, delivery_semantics: :at_least_once}}
 

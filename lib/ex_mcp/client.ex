@@ -38,7 +38,7 @@ defmodule ExMCP.Client do
   require Logger
 
   alias ExMCP.Client.{ConnectionManager, EraCache, MRTR, RequestHandler, Subscription}
-  alias ExMCP.Client.Operations.{Prompts, Resources, Tools}
+  alias ExMCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
   alias ExMCP.Internal.{Protocol, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
@@ -536,6 +536,20 @@ defmodule ExMCP.Client do
   def listen(client, notification_filter, opts \\ []) do
     Subscription.open(client, notification_filter, opts)
   end
+
+  @doc "Reads the current full state of a task."
+  @spec get_task(t(), String.t(), keyword()) :: {:ok, map()} | {:error, any()}
+  def get_task(client, task_id, opts \\ []), do: Tasks.get(client, task_id, opts)
+
+  @doc "Submits responses to a modern task's outstanding input requests."
+  @spec update_task(t(), String.t(), map(), keyword()) :: {:ok, map()} | {:error, any()}
+  def update_task(client, task_id, input_responses, opts \\ []) do
+    Tasks.update(client, task_id, input_responses, opts)
+  end
+
+  @doc "Requests cooperative cancellation of a task."
+  @spec cancel_task(t(), String.t(), keyword()) :: {:ok, map()} | {:error, any()}
+  def cancel_task(client, task_id, opts \\ []), do: Tasks.cancel(client, task_id, opts)
 
   @doc """
   Unsubscribes from notifications for a resource.

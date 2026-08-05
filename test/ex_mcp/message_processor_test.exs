@@ -162,6 +162,11 @@ defmodule ExMCP.MessageProcessorTest do
       {:reply, {:ok, %{"taskId" => task_id, "status" => "completed"}}, state}
     end
 
+    def handle_call({:task_update, task_id, responses}, _from, state) do
+      send(state.test_pid, {:task_updated, task_id, responses})
+      {:reply, {:ok, %{}}, state}
+    end
+
     def handle_call({:list_roots}, _from, state) do
       {:reply, {:ok, [%{"uri" => "file:///"}]}, state}
     end
@@ -458,6 +463,32 @@ defmodule ExMCP.MessageProcessorTest do
         })
 
       assert conn.response["result"] == %{"taskId" => "t-1", "status" => "completed"}
+    end
+
+    test "modern tasks/update reaches the handler as an ack-only write" do
+      params = %{
+        "taskId" => "t-1",
+        "inputResponses" => %{"approval" => %{"action" => "accept"}},
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities" => %{
+            "extensions" => %{"io.modelcontextprotocol/tasks" => %{}}
+          }
+        }
+      }
+
+      conn =
+        26
+        |> protocol_request("tasks/update", params)
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{
+          handler: ProtocolHandlerServer,
+          handler_opts: [test_pid: self()],
+          protocol_mode: :modern_only
+        })
+
+      assert conn.response["result"]["resultType"] == "complete"
+      assert_receive {:task_updated, "t-1", %{"approval" => %{"action" => "accept"}}}
     end
 
     test "roots/list reaches the handler" do

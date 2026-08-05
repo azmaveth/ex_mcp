@@ -1,6 +1,8 @@
 defmodule ExMCP.Server.ResultNormalizerProtocolTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias ExMCP.Server.ResultNormalizer
 
   test "leaves legacy results unchanged" do
@@ -113,6 +115,53 @@ defmodule ExMCP.Server.ResultNormalizerProtocolTest do
 
       assert result["resultType"] == result_type
     end
+  end
+
+  test "marks modern tasks/get state and enforces task-result negotiation" do
+    context = %{
+      era: :modern,
+      method: "tasks/get",
+      client_capabilities: %{
+        "extensions" => %{"io.modelcontextprotocol/tasks" => %{}}
+      }
+    }
+
+    result = ResultNormalizer.protocol_result(%{"taskId" => "task-1"}, context)
+    assert result["resultType"] == "task"
+
+    task_result = %{
+      "resultType" => "task",
+      "taskId" => "task-1",
+      "status" => "working",
+      "createdAt" => "2026-08-04T00:00:00Z",
+      "lastUpdatedAt" => "2026-08-04T00:00:00Z",
+      "ttlMs" => 60_000
+    }
+
+    assert :ok = ResultNormalizer.validate_result_capabilities(task_result, context)
+
+    assert {:error, error} =
+             ResultNormalizer.validate_result_capabilities(task_result, %{
+               era: :modern,
+               method: "tools/call",
+               client_capabilities: %{}
+             })
+
+    assert error.code == -32021
+
+    log =
+      capture_log(fn ->
+        assert {:error, error} =
+                 ResultNormalizer.validate_result_capabilities(
+                   %{"taskId" => "task-1"},
+                   context
+                 )
+
+        assert error.code == -32603
+        assert error.message == "Invalid task result"
+      end)
+
+    assert log =~ "invalid Tasks extension result"
   end
 
   test "connection-owned server identity replaces handler-supplied identity" do

@@ -529,6 +529,15 @@ defmodule ExMCP.Server.Handler do
               {:ok, map(), state()} | {:error, any(), state()}
 
   @doc """
+  Handles a modern tasks/update request.
+
+  Accepts client responses to the task's currently outstanding input requests.
+  A successful update is acknowledged with an empty modern result.
+  """
+  @callback handle_task_update(task_id :: String.t(), input_responses :: map(), state()) ::
+              {:ok, map(), state()} | {:error, any(), state()}
+
+  @doc """
   Handles a notifications/elicitation/complete notification.
 
   Called when the client notifies that a URL-mode elicitation has completed.
@@ -560,6 +569,7 @@ defmodule ExMCP.Server.Handler do
     handle_task_result: 2,
     handle_task_list: 2,
     handle_task_cancel: 2,
+    handle_task_update: 3,
     handle_elicitation_complete: 2
   ]
 
@@ -658,6 +668,11 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl ExMCP.Server.Handler
+      def handle_task_update(_task_id, _input_responses, state) do
+        {:error, "Tasks not implemented", state}
+      end
+
+      @impl ExMCP.Server.Handler
       def handle_elicitation_complete(_elicitation_id, state) do
         {:ok, state}
       end
@@ -681,6 +696,7 @@ defmodule ExMCP.Server.Handler do
                      handle_task_result: 2,
                      handle_task_list: 2,
                      handle_task_cancel: 2,
+                     handle_task_update: 3,
                      handle_elicitation_complete: 2,
                      terminate: 2
 
@@ -743,6 +759,15 @@ defmodule ExMCP.Server.Handler do
 
       def handle_call({:task_cancel, task_id}, _from, state),
         do: HandlerBridge.call(__MODULE__, :handle_task_cancel, [task_id], state)
+
+      def handle_call({:task_update, task_id, input_responses}, _from, state),
+        do:
+          HandlerBridge.call(
+            __MODULE__,
+            :handle_task_update,
+            [task_id, input_responses],
+            state
+          )
 
       def handle_call({:task_list, cursor}, _from, state),
         do: HandlerBridge.list(__MODULE__, :handle_task_list, [cursor], state)

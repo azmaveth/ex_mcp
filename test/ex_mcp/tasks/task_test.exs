@@ -16,6 +16,8 @@ defmodule ExMCP.Tasks.TaskTest do
       assert task.ttl == nil
       assert task.metadata == %{}
       assert task.result == nil
+      assert task.input_requests == nil
+      assert task.error == nil
     end
 
     test "creates a task with default empty arguments" do
@@ -175,6 +177,42 @@ defmodule ExMCP.Tasks.TaskTest do
       assert updated.arguments == %{"key" => "val"}
       assert updated.ttl == 5000
       assert updated.created_at == task.created_at
+    end
+  end
+
+  describe "modern task state" do
+    test "retains legacy fields while emitting the 2026-07-28 wire keys" do
+      task = Task.new("deploy", %{"environment" => "production"}, ttl: 60_000)
+
+      legacy = Task.to_map(task)
+      modern = Task.to_map(task, "2026-07-28")
+
+      assert legacy["ttl"] == 60_000
+      assert legacy["toolName"] == "deploy"
+      refute Map.has_key?(legacy, "ttlMs")
+
+      assert modern["ttlMs"] == 60_000
+      assert modern["taskId"] == task.id
+      refute Map.has_key?(modern, "ttl")
+      refute Map.has_key?(modern, "toolName")
+      refute Map.has_key?(modern, "arguments")
+    end
+
+    test "carries outstanding inputs and uses error instead of result for failures" do
+      task = Task.new("deploy", %{}, ttl: 60_000)
+      assert {:ok, waiting} = Task.require_input(task, %{"approval" => %{"method" => "x"}})
+
+      assert Task.to_map(waiting, :modern)["inputRequests"] == %{
+               "approval" => %{"method" => "x"}
+             }
+
+      assert {:ok, working} = Task.transition(waiting, :working)
+      assert {:ok, failed} = Task.fail(working, %{"code" => -32603, "message" => "failed"})
+
+      modern = Task.to_map(failed, :modern)
+      assert modern["error"]["code"] == -32603
+      refute Map.has_key?(modern, "result")
+      assert failed.result == failed.error
     end
   end
 

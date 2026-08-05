@@ -125,6 +125,28 @@ defmodule ExMCP.Server.RequestContextTest do
              RequestContext.validate_method(removed)
   end
 
+  test "requires the official extension on every modern task request" do
+    assert {:ok, context} = RequestContext.from_message(modern_request())
+
+    for method <- ["tasks/get", "tasks/update", "tasks/cancel"] do
+      assert {:error, error} = RequestContext.validate_method(%{context | method: method})
+      assert error.code == -32021
+    end
+
+    capabilities = %{
+      "extensions" => %{"io.modelcontextprotocol/tasks" => %{}}
+    }
+
+    context = %{context | method: "tasks/get", client_capabilities: capabilities}
+    assert :ok = RequestContext.validate_method(context)
+
+    assert {:error, {:method_not_available, "tasks/list", "2026-07-28"}} =
+             RequestContext.validate_method(%{context | method: "tasks/list"})
+
+    assert {:error, {:method_not_available, "tasks/result", "2026-07-28"}} =
+             RequestContext.validate_method(%{context | method: "tasks/result"})
+  end
+
   defp modern_request do
     %{
       "jsonrpc" => "2.0",

@@ -252,6 +252,11 @@ defmodule ExMCP.Server.Dispatch do
     call(ctx, :handle_task_cancel, args, "Task cancel error", state)
   end
 
+  defp do_dispatch("tasks/update", ctx, state) do
+    args = [Map.get(ctx.params, "taskId"), Map.get(ctx.params, "inputResponses"), state]
+    call(ctx, :handle_task_update, args, "Task update error", state, on_ok: fn _ -> %{} end)
+  end
+
   defp do_dispatch("tasks/list", ctx, state) do
     args = [cursor(ctx), state]
     paginated(ctx, :handle_task_list, args, "tasks", "Task list error", state)
@@ -411,12 +416,18 @@ defmodule ExMCP.Server.Dispatch do
          request_context,
          handler_module
        ) do
-    result =
-      ResultNormalizer.protocol_result(result, request_context,
-        server_info: handler_server_info(handler_module)
-      )
+    case ResultNormalizer.validate_result_capabilities(result, request_context) do
+      :ok ->
+        result =
+          ResultNormalizer.protocol_result(result, request_context,
+            server_info: handler_server_info(handler_module)
+          )
 
-    {:response, Map.put(response, "result", result), state}
+        {:response, Map.put(response, "result", result), state}
+
+      {:error, error} ->
+        {:response, JSONRPC.error(response["id"], Error.to_json_rpc(error)), state}
+    end
   end
 
   defp normalize_protocol_result(other, _request_context, _handler_module), do: other

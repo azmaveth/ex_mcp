@@ -42,6 +42,19 @@ defmodule ExMCP.Server.DispatchTest do
       {:error, error, state}
     end
 
+    def handle_call_tool("background", _args, state) do
+      {:ok,
+       %{
+         resultType: :task,
+         taskId: "task-1",
+         status: "working",
+         createdAt: "2026-08-04T00:00:00Z",
+         lastUpdatedAt: "2026-08-04T00:00:00Z",
+         ttlMs: 60_000,
+         pollIntervalMs: 1_000
+       }, state}
+    end
+
     def handle_call_tool(name, _args, state) do
       {:error, "Unknown tool: #{name}", state}
     end
@@ -61,10 +74,22 @@ defmodule ExMCP.Server.DispatchTest do
     def handle_set_log_level(level, state), do: {:ok, %{state | level: level}}
 
     @impl true
-    def handle_task_get(task_id, state), do: {:ok, %{"taskId" => task_id}, state}
+    def handle_task_get(task_id, state) do
+      {:ok,
+       %{
+         "taskId" => task_id,
+         "status" => "working",
+         "createdAt" => "2026-08-04T00:00:00Z",
+         "lastUpdatedAt" => "2026-08-04T00:00:00Z",
+         "ttlMs" => 60_000
+       }, state}
+    end
 
     @impl true
     def handle_task_list(_cursor, state), do: {:ok, [%{"taskId" => "t1"}], nil, state}
+
+    @impl true
+    def handle_task_update(_task_id, _input_responses, state), do: {:ok, %{}, state}
   end
 
   defmodule BareHandler do
@@ -101,6 +126,7 @@ defmodule ExMCP.Server.DispatchTest do
       assert Dispatch.known_method?("completion/complete")
       assert Dispatch.known_method?("logging/setLevel")
       assert Dispatch.known_method?("tasks/get")
+      assert Dispatch.known_method?("tasks/update")
       refute Dispatch.known_method?("custom/thing")
     end
 
@@ -184,6 +210,53 @@ defmodule ExMCP.Server.DispatchTest do
       assert error["code"] == -32601
       assert error["data"]["method"] == "ping"
       assert error["data"]["protocolVersion"] == "2026-07-28"
+    end
+
+    test "gates modern task methods on the per-request extension capability" do
+      params = modern_params(%{"taskId" => "task-1"})
+
+      assert {:response, %{"error" => error}, _state} = dispatch("tasks/get", params)
+      assert error["code"] == -32021
+
+      assert error["data"]["requiredCapabilities"] == %{
+               "extensions" => %{"io.modelcontextprotocol/tasks" => %{}}
+             }
+
+      params = modern_task_params(%{"taskId" => "task-1"})
+      assert {:response, %{"result" => result}, _state} = dispatch("tasks/get", params)
+      assert result["resultType"] == "task"
+      assert result["taskId"] == "task-1"
+
+      update =
+        modern_task_params(%{
+          "taskId" => "task-1",
+          "inputResponses" => %{"approval" => %{"action" => "accept"}}
+        })
+
+      assert {:response, %{"result" => %{"resultType" => "complete"}}, _state} =
+               dispatch("tasks/update", update)
+    end
+
+    test "never returns an unsolicited task handle to a non-declaring client" do
+      params = modern_params(%{"name" => "background", "arguments" => %{}})
+
+      assert {:response, %{"error" => error}, _state} = dispatch("tools/call", params)
+      assert error["code"] == -32021
+
+      params = modern_task_params(%{"name" => "background", "arguments" => %{}})
+      assert {:response, %{"result" => result}, _state} = dispatch("tools/call", params)
+      assert result["resultType"] == "task"
+      assert result["taskId"] == "task-1"
+      refute Map.has_key?(result, "content")
+    end
+
+    test "keeps legacy-only task list and result methods out of the modern table" do
+      params = modern_task_params(%{"taskId" => "task-1"})
+
+      for method <- ["tasks/list", "tasks/result"] do
+        assert {:response, %{"error" => error}, _state} = dispatch(method, params)
+        assert error["code"] == -32601
+      end
     end
   end
 
@@ -274,5 +347,21 @@ defmodule ExMCP.Server.DispatchTest do
 
       assert error["code"] == -32600
     end
+  end
+
+  defp modern_params(params) do
+    Map.put(params, "_meta", %{
+      "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities" => %{}
+    })
+  end
+
+  defp modern_task_params(params) do
+    Map.put(params, "_meta", %{
+      "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities" => %{
+        "extensions" => %{"io.modelcontextprotocol/tasks" => %{}}
+      }
+    })
   end
 end

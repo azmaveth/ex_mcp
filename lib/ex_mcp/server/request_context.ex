@@ -11,6 +11,7 @@ defmodule ExMCP.Server.RequestContext do
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, VersionRegistry}
   alias ExMCP.Protocol.{ErrorCodes, Meta, Methods}
+  alias ExMCP.Tasks.Extension, as: TasksExtension
 
   @enforce_keys [:method, :request_id, :request?, :era]
   defstruct [
@@ -179,9 +180,11 @@ defmodule ExMCP.Server.RequestContext do
         do: context.protocol_version,
         else: VersionRegistry.latest_version()
 
-    if Methods.available?(context.method, version),
-      do: :ok,
-      else: {:error, {:method_not_available, context.method, version}}
+    if Methods.available?(context.method, version) do
+      validate_method_capabilities(context)
+    else
+      {:error, {:method_not_available, context.method, version}}
+    end
   end
 
   @doc """
@@ -203,6 +206,14 @@ defmodule ExMCP.Server.RequestContext do
       {:error, Error.missing_required_client_capability(required)}
     end
   end
+
+  defp validate_method_capabilities(%__MODULE__{era: :modern, request?: true} = context) do
+    if context.method in TasksExtension.request_methods(),
+      do: require_client_capabilities(context, TasksExtension.required_capabilities()),
+      else: :ok
+  end
+
+  defp validate_method_capabilities(_context), do: :ok
 
   defp from_request(message, params) do
     meta = Map.get(params, "_meta")
