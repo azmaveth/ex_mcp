@@ -342,6 +342,12 @@ tool dispatch. Custom raw `Mcp-Method`, `Mcp-Name`, `Mcp-Session-Id`,
 `:headers` option are removed and replaced by protocol-derived values on
 modern requests.
 
+Treat all `Mcp-Param-*` values as sensitive routing data. ExMCP does not attach
+raw request headers to its Plug/client debug logs or telemetry. Configure
+reverse proxies, load balancers, APM agents, and access-log middleware to
+redact `Mcp-Param-*` just as they redact `Authorization` and cookies; those
+systems observe headers before ExMCP can sanitize their logs.
+
 Pass request-local context into a handler with `:handler_opts`. The option can
 be a static term, a one-arity function called with the `Plug.Conn`, a two-arity
 function called with the `Plug.Conn` and decoded JSON-RPC request, or an MFA

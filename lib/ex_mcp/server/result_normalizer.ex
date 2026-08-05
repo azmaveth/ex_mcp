@@ -74,10 +74,21 @@ defmodule ExMCP.Server.ResultNormalizer do
 
   defp normalize_tools_list(%{"tools" => tools} = result, %{method: "tools/list"})
        when is_list(tools) do
-    Map.put(result, "tools", ToolHeaders.filter_valid_tools(tools))
+    tools =
+      tools
+      |> ToolHeaders.filter_valid_tools()
+      |> Enum.sort_by(&tool_sort_key/1)
+
+    Map.put(result, "tools", tools)
   end
 
   defp normalize_tools_list(result, _request_context), do: result
+
+  # Tool names are required and unique on the wire. The full tool term is a
+  # defensive tie-breaker for malformed/duplicate definitions so even those
+  # inputs cannot reintroduce handler iteration order into a modern response.
+  defp tool_sort_key(%{"name" => name} = tool) when is_binary(name), do: {0, name, tool}
+  defp tool_sort_key(tool), do: {1, "", tool}
 
   defp normalize_result_type(type) when is_binary(type) and type != "", do: type
 

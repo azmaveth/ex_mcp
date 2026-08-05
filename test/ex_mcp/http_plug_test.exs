@@ -2,6 +2,7 @@ defmodule ExMCP.HttpPlugTest do
   use ExUnit.Case, async: false
   import Plug.Test
   import Plug.Conn
+  import ExUnit.CaptureLog
 
   alias ExMCP.HttpPlug
   alias ExMCP.HttpPlug.Core
@@ -932,6 +933,46 @@ defmodule ExMCP.HttpPlugTest do
 
       assert mismatched.status == 400
       assert Jason.decode!(mismatched.resp_body)["error"]["code"] == -32020
+    end
+
+    test "does not expose Mcp-Param values through server logs or telemetry" do
+      secret = "header-only-routing-secret"
+      handler_id = "mcp-param-confidentiality-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:ex_mcp, :server, :http, :request],
+          fn event, measurements, metadata, owner ->
+            send(owner, {:http_telemetry, event, measurements, metadata})
+          end,
+          test_pid
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      request =
+        modern_request(
+          "tools/call",
+          %{"name" => "routed_tool", "arguments" => %{"region" => "body-region", "limit" => 42}},
+          109
+        )
+
+      log =
+        capture_log([level: :debug], fn ->
+          conn(:post, "/", Jason.encode!(request))
+          |> put_req_header("content-type", "application/json")
+          |> put_modern_headers(request)
+          |> put_req_header("mcp-param-region", secret)
+          |> put_req_header("mcp-param-limit", "42")
+          |> HttpPlug.call(HttpPlug.init(handler: HeaderToolServer, sse_enabled: false))
+        end)
+
+      refute log =~ secret
+
+      assert_receive {:http_telemetry, _event, measurements, metadata}
+      refute inspect({measurements, metadata}) =~ secret
     end
 
     test "handles initialize request" do

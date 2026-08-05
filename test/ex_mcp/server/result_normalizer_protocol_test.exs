@@ -11,6 +11,38 @@ defmodule ExMCP.Server.ResultNormalizerProtocolTest do
            ) == result
   end
 
+  test "preserves handler ordering for legacy tool lists" do
+    result = %{"tools" => [%{"name" => "zebra"}, %{"name" => "alpha"}]}
+
+    assert ResultNormalizer.protocol_result(result, %{era: :legacy, method: "tools/list"}) ==
+             result
+  end
+
+  test "sorts modern tool lists deterministically by name" do
+    tools = [
+      %{name: "zebra", description: "last"},
+      %{name: "alpha", description: "first"},
+      %{name: "middle", description: "second"}
+    ]
+
+    expected_names = ["alpha", "middle", "zebra"]
+
+    for permutation <- [
+          tools,
+          Enum.reverse(tools),
+          [Enum.at(tools, 1), hd(tools), List.last(tools)]
+        ] do
+      result =
+        ResultNormalizer.protocol_result(
+          %{tools: permutation},
+          %{era: :modern, method: "tools/list"},
+          server_info: %{name: "example", version: "1"}
+        )
+
+      assert Enum.map(result["tools"], & &1["name"]) == expected_names
+    end
+  end
+
   test "stamps complete modern results with canonical server metadata" do
     result =
       ResultNormalizer.protocol_result(

@@ -907,9 +907,11 @@ remaining unchecked Phase 5 work is clustered PubSub fan-out.
       or buffering by common proxies cannot silently change protocol behavior. **Direct Plug
       validation covers duplicate, malformed, unsafe and oversized standard/custom headers; the
       reverse-proxy matrix remains open.**
-- [ ] Treat every `Mcp-Param-*` value as potentially sensitive. Redact it from Plug/client debug
+- [x] Treat every `Mcp-Param-*` value as potentially sensitive. Redact it from Plug/client debug
       logs, telemetry and proxy examples just like `Authorization`; document that operators must
-      configure upstream access-log redaction too.
+      configure upstream access-log redaction too. **ExMCP does not attach raw request headers to
+      its HTTP logs or telemetry; server regression coverage pins that invariant, and the security
+      and configuration guides call out proxy/load-balancer/APM redaction explicitly.**
 
 Current Phase 6 coverage includes pure header encoding/validation, Base64 sentinel edge cases,
 `x-mcp-header` reachability/type/name checks, client schema refresh plus exactly-one retry on
@@ -954,7 +956,9 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] Server: per-request `logLevel` from `_meta`; **MUST NOT** emit `notifications/message` for
       requests without it. `ExMCP.Server.Context.send_log_message/3` filters below-threshold
       events and uses only the owning request stream. `logging/setLevel` remains legacy-only.
-- [ ] Deterministic `tools/list` ordering.
+- [x] Deterministic `tools/list` ordering. **Modern results are sorted lexicographically by tool
+      name after invalid `x-mcp-header` definitions are removed; legacy handler ordering is
+      preserved.**
 - [ ] JSON Schema: `$ref` MUST NOT auto-dereference network URIs (opt-in only, off by default,
       host allowlist, reject loopback/link-local/private, timeouts, size limits, logging);
       bound composition-keyword depth / subschema count / validation time. Touches
