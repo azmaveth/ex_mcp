@@ -176,7 +176,7 @@ defmodule ExMCP.Types.V20260728 do
           optional(:_meta) => result_meta_object()
         }
 
-  @typedoc "Full task state returned by `tasks/get` or `notifications/tasks`."
+  @typedoc "Full task state embedded in `tasks/get` and `notifications/tasks`."
   @type detailed_task :: %{
           required(:taskId) => String.t(),
           required(:status) => task_status(),
@@ -188,6 +188,22 @@ defmodule ExMCP.Types.V20260728 do
           optional(:inputRequests) => input_requests(),
           optional(:result) => json_object(),
           optional(:error) => json_object()
+        }
+
+  @typedoc "A complete result returned by `tasks/get`."
+  @type get_task_result :: %{
+          required(:resultType) => :complete,
+          required(:taskId) => String.t(),
+          required(:status) => task_status(),
+          required(:createdAt) => String.t(),
+          required(:lastUpdatedAt) => String.t(),
+          required(:ttlMs) => non_neg_integer(),
+          optional(:pollIntervalMs) => non_neg_integer(),
+          optional(:statusMessage) => String.t(),
+          optional(:inputRequests) => input_requests(),
+          optional(:result) => json_object(),
+          optional(:error) => json_object(),
+          optional(:_meta) => result_meta_object()
         }
 
   @typedoc "Parameters for idempotently reading one task."
@@ -230,7 +246,8 @@ defmodule ExMCP.Types.V20260728 do
           optional(:toolsListChanged) => boolean(),
           optional(:promptsListChanged) => boolean(),
           optional(:resourcesListChanged) => boolean(),
-          optional(:resourceSubscriptions) => [String.t()]
+          optional(:resourceSubscriptions) => [String.t()],
+          optional(:taskIds) => [String.t()]
         }
 
   @typedoc "Parameters for `subscriptions/listen`."

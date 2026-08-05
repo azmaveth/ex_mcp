@@ -18,6 +18,7 @@ defmodule ExMCP.Types.V20260728Test do
     :task,
     :create_task_result,
     :detailed_task,
+    :get_task_result,
     :get_task_request_params,
     :update_task_request_params,
     :cancel_task_request_params,
@@ -93,6 +94,7 @@ defmodule ExMCP.Types.V20260728Test do
     task_fields = root_fields(types.task)
     create_fields = root_fields(types.create_task_result)
     detailed_fields = root_fields(types.detailed_task)
+    get_fields = root_fields(types.get_task_result)
     update_fields = root_fields(types.update_task_request_params)
 
     for field <- [:taskId, :status, :createdAt, :lastUpdatedAt, :ttlMs] do
@@ -102,6 +104,8 @@ defmodule ExMCP.Types.V20260728Test do
 
     assert task_fields.pollIntervalMs == :optional
     assert create_fields.resultType == :required
+    assert get_fields.resultType == :required
+    assert get_fields.taskId == :required
     assert detailed_fields.inputRequests == :optional
     assert detailed_fields.result == :optional
     assert detailed_fields.error == :optional
@@ -118,7 +122,8 @@ defmodule ExMCP.Types.V20260728Test do
           :toolsListChanged,
           :promptsListChanged,
           :resourcesListChanged,
-          :resourceSubscriptions
+          :resourceSubscriptions,
+          :taskIds
         ] do
       assert filter_fields[field] == :optional
     end

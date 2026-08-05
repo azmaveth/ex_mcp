@@ -181,13 +181,22 @@ defmodule ExMCP.Client.Subscription do
 
   def handle_info({:client_subscription_event, request_id, method, params}, state)
       when request_id == state.request_id and state.status == :active do
-    send(state.owner, {:ex_mcp_subscription, reference(state), method, params})
+    if event_allowed?(method, params, state.acknowledged_filter) do
+      send(state.owner, {:ex_mcp_subscription, reference(state), method, params})
+    end
+
     {:noreply, state}
   end
 
   def handle_info({:client_subscription_event, request_id, method, params}, state)
       when request_id == state.request_id and state.status == :resyncing do
-    events = [{method, params} | state.pending_events] |> Enum.take(100)
+    events =
+      if event_allowed?(method, params, state.acknowledged_filter) do
+        [{method, params} | state.pending_events] |> Enum.take(100)
+      else
+        state.pending_events
+      end
+
     {:noreply, %{state | pending_events: events}}
   end
 
@@ -338,6 +347,7 @@ defmodule ExMCP.Client.Subscription do
       fn -> ExMCP.Client.list_resources(client, format: :map, timeout: timeout) end
     )
     |> resync_resources(client, Map.get(filter, "resourceSubscriptions", []), timeout)
+    |> resync_tasks(client, Map.get(filter, "taskIds", []), timeout)
   end
 
   defp maybe_resync(snapshot, false, _key, _operation), do: snapshot
@@ -359,6 +369,27 @@ defmodule ExMCP.Client.Subscription do
 
     Map.put(snapshot, "resources", resources)
   end
+
+  defp resync_tasks(snapshot, _client, [], _timeout), do: snapshot
+
+  defp resync_tasks(snapshot, client, task_ids, timeout) do
+    tasks =
+      Map.new(task_ids, fn task_id ->
+        {task_id,
+         safe_resync(fn ->
+           ExMCP.Client.get_task(client, task_id, format: :map, timeout: timeout)
+         end)}
+      end)
+
+    Map.put(snapshot, "tasks", tasks)
+  end
+
+  defp event_allowed?("notifications/tasks", %{"taskId" => task_id}, filter) do
+    task_id in Map.get(filter || %{}, "taskIds", [])
+  end
+
+  defp event_allowed?("notifications/tasks", _params, _filter), do: false
+  defp event_allowed?(_method, _params, _filter), do: true
 
   defp safe_resync(operation) do
     case operation.() do

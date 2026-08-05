@@ -50,6 +50,7 @@ defmodule ExMCP.Server.StdioServer do
   use GenServer
   require Logger
 
+  alias ExMCP.Error.ProtocolError
   alias ExMCP.Internal.{JSONRPC, StdioLoggerConfig, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Server.{Dispatch, RequestContext, RequestState, ResultNormalizer, Subscriptions}
@@ -109,7 +110,10 @@ defmodule ExMCP.Server.StdioServer do
       replay_cache: Keyword.get(opts, :replay_cache),
       require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
       subscriptions: %{},
-      subscription_options: Subscriptions.runtime_options(subscription_opts),
+      subscription_options:
+        subscription_opts
+        |> Keyword.put_new(:endpoint, "stdio")
+        |> Subscriptions.runtime_options(module),
       owned_subscription_runtime: owned_subscription_runtime
     }
 
@@ -437,7 +441,11 @@ defmodule ExMCP.Server.StdioServer do
              id,
              Map.get(params, "notifications"),
              self(),
-             state.subscription_options
+             Keyword.put(
+               state.subscription_options,
+               :client_capabilities,
+               context.client_capabilities
+             )
            ) do
       subscriptions = Map.put(state.subscriptions, id, entry.listener_pid)
       {:noreply, %{state | subscriptions: subscriptions, connection_era: :modern}}
@@ -450,6 +458,10 @@ defmodule ExMCP.Server.StdioServer do
         send_response(subscription_error(id, :modern_protocol_required), state)
         {:noreply, state}
     end
+  end
+
+  defp subscription_error(id, %ProtocolError{} = error) do
+    JSONRPC.error(id, error.code, error.message, error.data)
   end
 
   defp subscription_error(id, reason) do

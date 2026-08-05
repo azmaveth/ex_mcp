@@ -2,8 +2,23 @@ Application.put_env(:ex_mcp, :stdio_mode, true)
 Application.put_env(:ex_mcp, :stdio_startup_delay, 0)
 Logger.configure(level: :emergency)
 
+{:ok, _supervisor} =
+  DynamicSupervisor.start_link(strategy: :one_for_one, name: ExMCP.DynamicSupervisor)
+
+{:ok, _task_store} = ExMCP.Tasks.Store.ETS.start_link()
+{:ok, _subscriptions} = ExMCP.Server.Subscriptions.start_link()
+
+{:ok, _task} =
+  ExMCP.Tasks.create(
+    "stdio_task",
+    %{},
+    id: "stdio-task",
+    owner: %{principal_id: nil, tenant_id: nil, audience: "stdio"},
+    notify: false
+  )
+
 defmodule ExMCP.Test.ModernStdioServer do
-  use ExMCP.Server.Handler
+  use ExMCP.Server.Handler, tasks: :store
   use ExMCP.Server.DSL, name: "modern-stdio-server", version: "1.0.0"
 
   alias ExMCP.Server.Context
@@ -52,6 +67,18 @@ defmodule ExMCP.Test.ModernStdioServer do
     run(fn _arguments, state ->
       ExMCP.Server.notify_tools_changed(self())
       {:ok, ToolResult.text("published"), state}
+    end)
+  end
+
+  tool "complete_task", "Complete the fixed stdio task" do
+    run(fn _arguments, state ->
+      {:ok, _task} =
+        ExMCP.Tasks.complete(
+          "stdio-task",
+          %{"content" => [%{"type" => "text", "text" => "stdio task complete"}]}
+        )
+
+      {:ok, ToolResult.text("completed"), state}
     end)
   end
 end

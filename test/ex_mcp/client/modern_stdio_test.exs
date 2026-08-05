@@ -3,6 +3,7 @@ defmodule ExMCP.Client.ModernStdioTest do
 
   alias ExMCP.Client
   alias ExMCP.Client.Subscription
+  alias ExMCP.Tasks.Extension
 
   @fixture Path.expand("../../../priv/test/modern_stdio_server.exs", __DIR__)
   @project_root Path.expand("../../..", __DIR__)
@@ -39,7 +40,7 @@ defmodule ExMCP.Client.ModernStdioTest do
         cd: @project_root,
         env: [{"MIX_ENV", "test"}],
         protocol_mode: :modern_only,
-        capabilities: %{"elicitation" => %{"form" => %{}}},
+        capabilities: Extension.put_capability(%{"elicitation" => %{"form" => %{}}}),
         handler: {Handler, [owner: self()]},
         era_probe_timeout: 10_000,
         health_check_interval: nil
@@ -118,6 +119,22 @@ defmodule ExMCP.Client.ModernStdioTest do
     assert tools_params["_meta"]["io.modelcontextprotocol/subscriptionId"] ==
              subscription.request_id
 
+    assert {:ok, task_subscription} =
+             Client.listen(client, %{"taskIds" => ["stdio-task"]}, timeout: 5_000)
+
+    assert {:ok, _complete_result} =
+             Client.call_tool(client, "complete_task", %{}, format: :map, timeout: 5_000)
+
+    assert_receive {:ex_mcp_subscription, ^task_subscription, "notifications/tasks", task_params}
+
+    assert task_params["taskId"] == "stdio-task"
+    assert task_params["status"] == "completed"
+
+    assert task_params["result"] == %{
+             "content" => [%{"type" => "text", "text" => "stdio task complete"}]
+           }
+
     assert :ok = Subscription.cancel(subscription)
+    assert :ok = Subscription.cancel(task_subscription)
   end
 end

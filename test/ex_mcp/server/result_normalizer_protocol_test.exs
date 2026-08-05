@@ -136,7 +136,7 @@ defmodule ExMCP.Server.ResultNormalizerProtocolTest do
     end
   end
 
-  test "marks modern tasks/get state and enforces task-result negotiation" do
+  test "marks modern tasks/get state complete and enforces task-result negotiation" do
     context = %{
       era: :modern,
       method: "tasks/get",
@@ -146,7 +146,7 @@ defmodule ExMCP.Server.ResultNormalizerProtocolTest do
     }
 
     result = ResultNormalizer.protocol_result(%{"taskId" => "task-1"}, context)
-    assert result["resultType"] == "task"
+    assert result["resultType"] == "complete"
 
     task_result = %{
       "resultType" => "task",

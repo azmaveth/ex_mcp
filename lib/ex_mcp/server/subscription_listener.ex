@@ -273,6 +273,9 @@ defmodule ExMCP.Server.SubscriptionListener do
   defp coalescing_key("notifications/resources/updated", %{"uri" => uri}),
     do: {:resource_updated, uri}
 
+  defp coalescing_key("notifications/tasks", %{"taskId" => task_id}),
+    do: {:task, task_id}
+
   defp coalescing_key(_method, _params), do: nil
 
   defp emit_closed(reason) do

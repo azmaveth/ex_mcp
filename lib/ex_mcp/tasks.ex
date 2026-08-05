@@ -10,9 +10,15 @@ defmodule ExMCP.Tasks do
   The current request principal, tenant, and endpoint are included in the
   store owner automatically. A worker outside a server callback should retain
   `owner/1` from the creating request and pass it back with `owner: owner`.
+
+  Successful creates and wire-visible transitions asynchronously publish the
+  full modern state to authorized `subscriptions/listen` task filters. Pass a
+  non-default registry as `subscription_registry: registry`; use
+  `notify: false` only when the host owns publication.
   """
 
   alias ExMCP.Server.Context
+  alias ExMCP.Server.Subscriptions
   alias ExMCP.Tasks.{Extension, Store, Task}
 
   @default_ttl_ms 3_600_000
@@ -38,6 +44,8 @@ defmodule ExMCP.Tasks do
     task = Task.new(tool_name, arguments, task_opts)
 
     with {:ok, stored} <- call_store(:create, [task, owner(opts)], opts) do
+      notify(stored, opts)
+
       result =
         stored
         |> Task.to_map(:modern)
@@ -67,7 +75,16 @@ defmodule ExMCP.Tasks do
 
   def update(task_id, input_responses, opts)
       when is_binary(task_id) and is_map(input_responses) and is_list(opts) do
-    call_store(:submit_input, [task_id, input_responses, owner(opts)], opts)
+    task_owner = owner(opts)
+
+    case call_store(:submit_input, [task_id, input_responses, task_owner], opts) do
+      :ok ->
+        notify_current(task_id, task_owner, opts)
+        :ok
+
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   def update(_task_id, _input_responses, _opts), do: {:error, :invalid_input_responses}
@@ -134,7 +151,14 @@ defmodule ExMCP.Tasks do
   end
 
   defp transition(task_id, operation, opts) when is_binary(task_id) and is_list(opts) do
-    call_store(:transition, [task_id, operation, owner(opts)], opts)
+    case call_store(:transition, [task_id, operation, owner(opts)], opts) do
+      {:ok, task} = ok ->
+        notify(task, opts)
+        ok
+
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   defp transition(_task_id, _operation, _opts), do: {:error, :invalid_transition}
@@ -173,9 +197,45 @@ defmodule ExMCP.Tasks do
     end
   end
 
+  defp notify_current(task_id, task_owner, opts) do
+    case call_store(:fetch, [task_id, task_owner], opts) do
+      {:ok, task} -> notify(task, opts)
+      {:error, _reason} -> :ok
+    end
+  end
+
+  defp notify(%Task{} = task, opts) do
+    if Keyword.get(opts, :notify, true) do
+      publish_opts =
+        case Keyword.fetch(opts, :subscription_registry) do
+          {:ok, registry} -> [registry: registry]
+          :error -> []
+        end
+
+      Subscriptions.publish_async(
+        Extension.notification_method(),
+        Task.to_map(task, :modern),
+        publish_opts
+      )
+    else
+      :ok
+    end
+  end
+
   defp call_store(function, args, opts) do
     store = Keyword.get(opts, :store, Application.get_env(:ex_mcp, :task_store, Store.ETS))
-    store_opts = Keyword.drop(opts, [:store, :owner, :principal_id, :tenant_id, :audience])
+
+    store_opts =
+      Keyword.drop(opts, [
+        :store,
+        :owner,
+        :principal_id,
+        :tenant_id,
+        :audience,
+        :subscription_registry,
+        :notify,
+        :transport_ref
+      ])
 
     apply(store, function, args ++ [store_opts])
   rescue

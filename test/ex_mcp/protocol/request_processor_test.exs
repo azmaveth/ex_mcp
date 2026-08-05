@@ -182,7 +182,7 @@ defmodule ExMCP.Protocol.RequestProcessorTest do
 
       get = modern_request(103, "tasks/get", %{"taskId" => "task-1"}, capabilities)
       assert {:response, %{"result" => task}, _state} = RequestProcessor.process(get, state)
-      assert task["resultType"] == "task"
+      assert task["resultType"] == "complete"
 
       update =
         modern_request(

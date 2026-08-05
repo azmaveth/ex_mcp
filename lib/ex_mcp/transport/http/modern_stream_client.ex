@@ -331,7 +331,8 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       "notifications/tools/list_changed",
       "notifications/prompts/list_changed",
       "notifications/resources/list_changed",
-      "notifications/resources/updated"
+      "notifications/resources/updated",
+      "notifications/tasks"
     ]
   end
 

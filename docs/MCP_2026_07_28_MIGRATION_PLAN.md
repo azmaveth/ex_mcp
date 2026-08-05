@@ -1005,9 +1005,20 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] `tasks/get` (poll), `tasks/update` (submit `inputResponses`), `tasks/cancel` (cooperative).
       Remove `tasks/list` and `tasks/result` from the modern table. **The shared method table,
       handler/GenServer bridges, HTTP message processor, DSL request processor, client operations,
-      and encoders implement the redesigned surface. `tasks/update.inputResponses` explicitly
-      bypasses MRTR retry handling. Legacy list/result routing remains version-isolated.**
-- [ ] `notifications/tasks` carrying full task state, opted into via `subscriptions/listen`.
+      and encoders implement the redesigned surface. `CreateTaskResult` alone uses the extension
+      discriminator `resultType: "task"`; `tasks/get`, `tasks/update`, and `tasks/cancel` return
+      `resultType: "complete"`, and the client validates the full `tasks/get` state independently
+      of that standard discriminator. `tasks/update.inputResponses` explicitly bypasses MRTR retry
+      handling. Legacy list/result routing remains version-isolated.**
+- [x] `notifications/tasks` carrying full task state, opted into via `subscriptions/listen`.
+      **The extension's `notifications.taskIds` filter is bounded, deduplicated, and included
+      only when the client declares `io.modelcontextprotocol/tasks`. Store-backed handlers
+      authorize each ID against the task's principal/tenant/audience binding before
+      acknowledgement; custom task backends must provide a filter authorizer. Durable creates
+      and wire-visible transitions publish the complete modern task, queued updates coalesce by
+      task ID, HTTP and stdio streams accept the extension notification, malformed client-side
+      events are dropped, and reconnect resynchronization polls every acknowledged task before
+      queued events are released.**
 - [x] `ExMCP.Tasks.Task`: emit modern wire keys `ttlMs` / `pollIntervalMs`; add
       `inputRequests`, `error`. Keep existing public struct fields/accessors as deprecated aliases
       throughout 1.x, or introduce a separate extension struct, so Phase 8 does not silently

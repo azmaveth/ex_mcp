@@ -2,6 +2,8 @@ defmodule ExMCP.Server.SubscriptionsTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Server.Subscriptions
+  alias ExMCP.Tasks
+  alias ExMCP.Tasks.{Extension, Store}
 
   defmodule RejectingAdapter do
     @behaviour ExMCP.Server.Subscriptions.Adapter
@@ -172,6 +174,86 @@ defmodule ExMCP.Server.SubscriptionsTest do
     assert_receive {:ex_mcp_subscription_message, ^listener, :complete, completed}
     assert completed["id"] == entry.subscription_id
     refute_receive {:ex_mcp_subscription_message, ^listener, :notification, _message}
+  end
+
+  test "authorizes task IDs against the task owner and coalesces full-state updates" do
+    task_store = start_supervised!({Store.ETS, name: nil}, id: make_ref())
+    registry = start_registry(max_queue: 1)
+
+    alice = %{principal_id: "alice", tenant_id: "acme", audience: "mcp://tasks"}
+    bob = %{principal_id: "bob", tenant_id: "acme", audience: "mcp://tasks"}
+
+    alice_opts = [store: Store.ETS, server: task_store, owner: alice, notify: false]
+    bob_opts = [store: Store.ETS, server: task_store, owner: bob, notify: false]
+
+    assert {:ok, alice_task} = Tasks.create("deploy", %{}, alice_opts)
+    assert {:ok, bob_task} = Tasks.create("deploy", %{}, bob_opts)
+
+    listen_opts = [
+      registry: registry,
+      principal_id: alice.principal_id,
+      tenant_id: alice.tenant_id,
+      audience: alice.audience,
+      client_capabilities: Extension.put_capability(%{}),
+      task_store_opts: [store: Store.ETS, server: task_store]
+    ]
+
+    assert {:ok, entry} =
+             Subscriptions.listen(
+               "tasks",
+               %{"taskIds" => [alice_task["taskId"], bob_task["taskId"], "missing"]},
+               self(),
+               listen_opts
+             )
+
+    assert entry.filter == %{"taskIds" => [alice_task["taskId"]]}
+
+    assert_receive {:ex_mcp_subscription_message, listener, :acknowledged, acknowledged}
+    assert acknowledged["params"]["notifications"] == entry.filter
+
+    assert {:ok, working} = Tasks.get(alice_task["taskId"], alice_opts)
+
+    completed =
+      working
+      |> Map.put("status", "completed")
+      |> Map.put("result", %{"content" => []})
+
+    assert %{enqueued: 1} = publish(registry, "notifications/tasks", working)
+    assert %{coalesced: 1} = publish(registry, "notifications/tasks", completed)
+    assert %{subscribers: 0} = publish(registry, "notifications/tasks", bob_task)
+
+    Subscriptions.delivered(listener)
+
+    assert_receive {:ex_mcp_subscription_message, ^listener, :notification, notification}
+    assert notification["method"] == "notifications/tasks"
+    assert notification["params"]["taskId"] == alice_task["taskId"]
+    assert notification["params"]["status"] == "completed"
+  end
+
+  test "task filters require the extension and an authorization source" do
+    registry = start_registry()
+
+    assert {:error, %ExMCP.Error.ProtocolError{} = error} =
+             Subscriptions.listen(
+               1,
+               %{"taskIds" => ["task-1"]},
+               self(),
+               registry: registry
+             )
+
+    assert error.code == ExMCP.Protocol.ErrorCodes.missing_required_client_capability()
+    assert error.data == %{"requiredCapabilities" => Extension.required_capabilities()}
+
+    assert {:error, :task_subscription_authorizer_required} =
+             Subscriptions.listen(
+               2,
+               %{"taskIds" => ["task-1"]},
+               self(),
+               registry: registry,
+               client_capabilities: Extension.put_capability(%{})
+             )
+
+    assert Subscriptions.entries(registry: registry) == []
   end
 
   test "owner termination removes registrations and internal tokens are distinct from wire ids" do

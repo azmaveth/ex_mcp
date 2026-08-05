@@ -895,6 +895,31 @@ defmodule ExMCP.HttpPlugTest do
       assert error["data"]["reason"] == "unknown_subscription_filter"
     end
 
+    test "preserves the missing-capability error for task subscriptions" do
+      request =
+        modern_request(
+          "subscriptions/listen",
+          %{"notifications" => %{"taskIds" => ["task-1"]}},
+          119
+        )
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, protocol_mode: :modern_only))
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
+
+      error = Jason.decode!(conn.resp_body)["error"]
+      assert error["code"] == ExMCP.Protocol.ErrorCodes.missing_required_client_capability()
+
+      assert error["data"] == %{
+               "requiredCapabilities" => ExMCP.Tasks.Extension.required_capabilities()
+             }
+    end
+
     test "validates x-mcp-header values against tool arguments before dispatch" do
       request =
         modern_request(

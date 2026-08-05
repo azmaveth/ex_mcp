@@ -73,6 +73,13 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClientTest do
                "params" => %{"uri" => "file:///one"}
              })
 
+    assert :ok =
+             validate(:subscription, %{
+               "jsonrpc" => "2.0",
+               "method" => "notifications/tasks",
+               "params" => %{"taskId" => "task-1"}
+             })
+
     assert {:error, :invalid_stream_message} =
              validate(:subscription, %{
                "jsonrpc" => "2.0",

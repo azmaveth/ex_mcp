@@ -224,7 +224,7 @@ defmodule ExMCP.Server.DispatchTest do
 
       params = modern_task_params(%{"taskId" => "task-1"})
       assert {:response, %{"result" => result}, _state} = dispatch("tasks/get", params)
-      assert result["resultType"] == "task"
+      assert result["resultType"] == "complete"
       assert result["taskId"] == "task-1"
 
       update =

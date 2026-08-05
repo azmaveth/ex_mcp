@@ -406,6 +406,9 @@ defmodule ExMCP.Client.RequestHandler do
            ] ->
         route_subscription_event(method, params, state)
 
+      {:notification, "notifications/tasks" = method, params} ->
+        route_task_subscription_event(method, params, state)
+
       {:notification, "notifications/cancelled", params} ->
         Logger.info("Received notification: notifications/cancelled")
         handle_cancellation_notification(params, state)
@@ -824,6 +827,22 @@ defmodule ExMCP.Client.RequestHandler do
     end
   end
 
+  defp route_task_subscription_event(method, params, state) do
+    client_capabilities =
+      state
+      |> Map.get(:transport_opts, [])
+      |> Keyword.get(:capabilities, %{})
+
+    with true <- TasksExtension.declared?(client_capabilities),
+         :ok <- TasksExtension.validate_task_result(params, :detailed) do
+      route_subscription_event(method, params, state)
+    else
+      _invalid ->
+        Logger.warning("Received an invalid or undeclared task subscription notification")
+        {:noreply, state}
+    end
+  end
+
   defp route_subscription_response(subscription_pid, request_id, {:ok, result}) do
     send(subscription_pid, {:client_subscription_complete, request_id, result})
   end
@@ -849,6 +868,8 @@ defmodule ExMCP.Client.RequestHandler do
   defp validate_result(result, state, method) do
     transport_opts = Map.get(state, :transport_opts) || []
     client_capabilities = Keyword.get(transport_opts, :capabilities, %{})
+    modern? = VersionRegistry.modern?(Map.get(state, :protocol_version))
+    tasks_declared? = TasksExtension.declared?(client_capabilities)
 
     allowed_result_types =
       transport_opts
@@ -862,21 +883,28 @@ defmodule ExMCP.Client.RequestHandler do
            allowed_result_types: allowed_result_types,
            method: method
          ) do
-      {:ok, {:extension, "task"}, validated_result} ->
-        mode = if method == "tasks/get", do: :detailed, else: :create
+      {:ok, :complete, validated_result}
+      when method == "tasks/get" and modern? and tasks_declared? ->
+        validate_task_result(validated_result, :detailed)
 
-        case TasksExtension.validate_task_result(validated_result, mode) do
-          :ok ->
-            {:ok, validated_result}
+      {:ok, :complete, _validated_result} when method == "tasks/get" and modern? ->
+        {:error,
+         %{
+           type: :protocol_error,
+           reason: :undeclared_tasks_extension,
+           message: "MCP tasks/get requires the configured Tasks extension"
+         }}
 
-          {:error, reason} ->
-            {:error,
-             %{
-               type: :protocol_error,
-               reason: reason,
-               message: "MCP task result has an invalid wire shape"
-             }}
-        end
+      {:ok, {:extension, "task"}, validated_result} when method != "tasks/get" ->
+        validate_task_result(validated_result, :create)
+
+      {:ok, {:extension, "task"}, _validated_result} ->
+        {:error,
+         %{
+           type: :protocol_error,
+           reason: {:invalid_result_type, "task"},
+           message: "MCP tasks/get resultType must be complete"
+         }}
 
       {:ok, _kind, validated_result} ->
         {:ok, validated_result}
@@ -887,6 +915,21 @@ defmodule ExMCP.Client.RequestHandler do
            type: :protocol_error,
            reason: reason,
            message: result_error_message(reason)
+         }}
+    end
+  end
+
+  defp validate_task_result(result, mode) do
+    case TasksExtension.validate_task_result(result, mode) do
+      :ok ->
+        {:ok, result}
+
+      {:error, reason} ->
+        {:error,
+         %{
+           type: :protocol_error,
+           reason: reason,
+           message: "MCP task result has an invalid wire shape"
          }}
     end
   end

@@ -108,6 +108,7 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.Authorization.AuthorizationServerMetadata
   alias ExMCP.Authorization.ScopeValidator
   alias ExMCP.Authorization.ServerGuard
+  alias ExMCP.Error.ProtocolError
   alias ExMCP.FeatureFlags
   alias ExMCP.HttpPlug.Core
   alias ExMCP.HttpPlug.ModernStream
@@ -1158,7 +1159,7 @@ defmodule ExMCP.HttpPlug do
          :ok <- RequestContext.validate_protocol_mode(context, Map.get(opts, :protocol_mode)),
          :ok <- RequestContext.validate_method(context),
          :modern <- context.era,
-         subscription_options = subscription_options(opts),
+         subscription_options = subscription_options(opts, context),
          {:ok, entry} <-
            Subscriptions.listen(
              id,
@@ -1173,11 +1174,23 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  defp subscription_options(opts, context) do
+    opts
+    |> Map.to_list()
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Keyword.put(:client_capabilities, context.client_capabilities)
+    |> Subscriptions.runtime_options(Map.get(opts, :handler))
+  end
+
   defp subscription_options(opts) do
     opts
     |> Map.to_list()
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-    |> Subscriptions.runtime_options()
+    |> Subscriptions.runtime_options(Map.get(opts, :handler))
+  end
+
+  defp subscription_error(id, %ProtocolError{} = error) do
+    JSONRPC.error(id, error.code, error.message, error.data)
   end
 
   defp subscription_error(id, reason) do

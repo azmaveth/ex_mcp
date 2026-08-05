@@ -155,7 +155,7 @@ defmodule ExMCP.Server.ResultNormalizer do
 
   defp normalize_result_type(_type), do: "complete"
 
-  defp normalize_method_result_type(_result_type, %{method: "tasks/get"}), do: "task"
+  defp normalize_method_result_type(_result_type, %{method: "tasks/get"}), do: "complete"
   defp normalize_method_result_type(result_type, _request_context), do: result_type
 
   @doc "Validates that an extension result was enabled by per-request capabilities."

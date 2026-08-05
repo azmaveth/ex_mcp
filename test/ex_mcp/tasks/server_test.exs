@@ -47,7 +47,7 @@ defmodule ExMCP.Tasks.ServerTest do
     assert {:response, %{"result" => current}, state} =
              Dispatch.dispatch(get, StoredHandler, state, @identity)
 
-    assert current["resultType"] == "task"
+    assert current["resultType"] == "complete"
     assert current["status"] == "working"
 
     assert {:ok, _waiting} =

@@ -11,12 +11,15 @@ defmodule ExMCP.Server.Subscriptions do
 
   alias ExMCP.Server.SubscriptionListener
   alias ExMCP.Server.Subscriptions.{Entry, ETS}
+  alias ExMCP.Tasks
+  alias ExMCP.Tasks.Extension, as: TasksExtension
 
   @filter_keys [
     "toolsListChanged",
     "promptsListChanged",
     "resourcesListChanged",
-    "resourceSubscriptions"
+    "resourceSubscriptions",
+    "taskIds"
   ]
   @default_supported Map.new(@filter_keys, &{&1, true})
 
@@ -32,6 +35,7 @@ defmodule ExMCP.Server.Subscriptions do
     :max_queue,
     :max_lifetime_ms,
     :max_filter_uris,
+    :max_filter_task_ids,
     :max_filter_bytes,
     :supported_notifications,
     monitors: %{}
@@ -86,6 +90,16 @@ defmodule ExMCP.Server.Subscriptions do
     GenServer.call(registry, {:publish, method, params, transport_ref})
   end
 
+  @doc false
+  @spec publish_async(String.t(), map(), keyword()) :: :ok
+  def publish_async(method, params \\ %{}, opts \\ []) do
+    registry = Keyword.get(opts, :registry, __MODULE__)
+    transport_ref = Keyword.get(opts, :transport_ref)
+    GenServer.cast(registry, {:publish, method, params, transport_ref})
+  catch
+    :exit, _reason -> :ok
+  end
+
   @spec entries(keyword()) :: [Entry.t()]
   def entries(opts \\ []) do
     registry = Keyword.get(opts, :registry, __MODULE__)
@@ -104,7 +118,9 @@ defmodule ExMCP.Server.Subscriptions do
       :authorize_subscription_filter,
       :authorize_subscription_publication,
       :subscription_max_queue,
-      :subscription_max_lifetime_ms
+      :subscription_max_lifetime_ms,
+      :task_store_opts,
+      :client_capabilities
     ])
     |> Enum.map(fn
       {:subscription_registry, value} -> {:registry, value}
@@ -112,10 +128,33 @@ defmodule ExMCP.Server.Subscriptions do
       {:authorize_subscription_publication, value} -> {:authorize_publication, value}
       {:subscription_max_queue, value} -> {:max_queue, value}
       {:subscription_max_lifetime_ms, value} -> {:max_lifetime_ms, value}
+      {:task_store_opts, value} -> {:task_store_opts, value}
+      {:client_capabilities, value} -> {:client_capabilities, value}
     end)
     |> Keyword.put(:principal_id, Keyword.get(opts, :principal_id))
     |> Keyword.put(:tenant_id, Keyword.get(opts, :tenant_id))
+    |> Keyword.put(:audience, Keyword.get(opts, :audience, Keyword.get(opts, :endpoint)))
   end
+
+  @doc false
+  @spec runtime_options(keyword(), module() | term()) :: keyword()
+  def runtime_options(opts, handler) when is_list(opts) do
+    opts
+    |> put_handler_task_store(handler)
+    |> runtime_options()
+  end
+
+  defp put_handler_task_store(opts, handler) when is_atom(handler) do
+    if Code.ensure_loaded?(handler) and
+         function_exported?(handler, :__task_store_enabled__, 0) and
+         handler.__task_store_enabled__() do
+      Keyword.put(opts, :task_store_opts, handler.__task_store_options__())
+    else
+      opts
+    end
+  end
+
+  defp put_handler_task_store(opts, _handler), do: opts
 
   @impl true
   def init(opts) do
@@ -139,6 +178,7 @@ defmodule ExMCP.Server.Subscriptions do
          max_queue: limits.max_queue,
          max_lifetime_ms: limits.max_lifetime_ms,
          max_filter_uris: limits.max_filter_uris,
+         max_filter_task_ids: limits.max_filter_task_ids,
          max_filter_bytes: limits.max_filter_bytes
        )}
     end
@@ -160,7 +200,10 @@ defmodule ExMCP.Server.Subscriptions do
              Keyword.get(opts, :authorize_publication, state.publication_authorizer)
            ),
          {:ok, requested} <- normalize_filter(requested, state),
-         {:ok, honoured} <- authorize_filter(requested, transport_ref, opts, state),
+         :ok <- validate_task_capability(requested, opts),
+         supported = honour_supported(requested, state.supported_notifications),
+         {:ok, task_authorized} <- authorize_task_filter(supported, transport_ref, opts, state),
+         {:ok, honoured} <- authorize_filter(task_authorized, transport_ref, opts, state),
          :ok <- ensure_not_registered(entries, transport_ref, subscription_id),
          :ok <- enforce_limits(entries, transport_ref, opts, state),
          {:ok, entry, state} <-
@@ -213,6 +256,22 @@ defmodule ExMCP.Server.Subscriptions do
   end
 
   def handle_call({:publish, method, params, transport_ref}, _from, state) do
+    {result, state} = publish_to_matching(method, params, transport_ref, state)
+    {:reply, result, state}
+  end
+
+  def handle_call(:entries, _from, state) do
+    {entries, state} = all_entries(state)
+    {:reply, entries, state}
+  end
+
+  @impl true
+  def handle_cast({:publish, method, params, transport_ref}, state) do
+    {_result, state} = publish_to_matching(method, params, transport_ref, state)
+    {:noreply, state}
+  end
+
+  defp publish_to_matching(method, params, transport_ref, state) do
     {entries, state} = all_entries(state)
 
     matching =
@@ -234,12 +293,7 @@ defmodule ExMCP.Server.Subscriptions do
         end
       )
 
-    {:reply, result, state}
-  end
-
-  def handle_call(:entries, _from, state) do
-    {entries, state} = all_entries(state)
-    {:reply, entries, state}
+    {result, state}
   end
 
   @impl true
@@ -345,6 +399,62 @@ defmodule ExMCP.Server.Subscriptions do
     _kind, _value -> {:error, :filter_authorization_failed}
   end
 
+  defp validate_task_capability(filter, opts) do
+    if Map.has_key?(filter, "taskIds") and
+         not TasksExtension.declared?(Keyword.get(opts, :client_capabilities, %{})) do
+      {:error,
+       ExMCP.Error.missing_required_client_capability(TasksExtension.required_capabilities())}
+    else
+      :ok
+    end
+  end
+
+  defp authorize_task_filter(filter, transport_ref, opts, state) do
+    case Map.fetch(filter, "taskIds") do
+      :error ->
+        {:ok, filter}
+
+      {:ok, task_ids} ->
+        authorize_task_ids(filter, task_ids, transport_ref, opts, state)
+    end
+  end
+
+  defp authorize_task_ids(filter, task_ids, transport_ref, opts, state) do
+    cond do
+      Keyword.has_key?(opts, :task_store_opts) ->
+        task_opts = task_authorization_options(transport_ref, opts)
+
+        authorized =
+          Enum.filter(task_ids, fn task_id ->
+            match?({:ok, _task}, Tasks.get(task_id, task_opts))
+          end)
+
+        {:ok, put_nonempty_ids(filter, "taskIds", authorized)}
+
+      not is_nil(Keyword.get(opts, :authorize_filter, state.filter_authorizer)) ->
+        {:ok, filter}
+
+      true ->
+        {:error, :task_subscription_authorizer_required}
+    end
+  end
+
+  defp task_authorization_options(transport_ref, opts) do
+    owner = %{
+      principal_id: Keyword.get(opts, :principal_id),
+      tenant_id: Keyword.get(opts, :tenant_id),
+      audience: Keyword.get(opts, :audience)
+    }
+
+    opts
+    |> Keyword.fetch!(:task_store_opts)
+    |> Keyword.put(:owner, owner)
+    |> Keyword.put(:transport_ref, transport_ref)
+  end
+
+  defp put_nonempty_ids(filter, key, []), do: Map.delete(filter, key)
+  defp put_nonempty_ids(filter, key, ids), do: Map.put(filter, key, ids)
+
   defp normalize_authorization_result({:ok, filter}) when is_map(filter), do: {:ok, filter}
   defp normalize_authorization_result(true), do: {:error, :filter_authorizer_must_return_filter}
   defp normalize_authorization_result(false), do: {:error, :subscription_not_authorized}
@@ -357,7 +467,7 @@ defmodule ExMCP.Server.Subscriptions do
     with true <- Enum.all?(Map.keys(string_filter), &(&1 in @filter_keys)),
          {:ok, normalized} <- normalize_filter_fields(string_filter),
          :ok <- validate_filter_size(normalized, state) do
-      {:ok, honour_supported(normalized, state.supported_notifications)}
+      {:ok, normalized}
     else
       false -> {:error, :unknown_subscription_filter}
       {:error, reason} -> {:error, reason}
@@ -368,10 +478,10 @@ defmodule ExMCP.Server.Subscriptions do
 
   defp normalize_filter_fields(filter) do
     Enum.reduce_while(filter, {:ok, %{}}, fn
-      {key, true}, {:ok, acc} when key != "resourceSubscriptions" ->
+      {key, true}, {:ok, acc} when key not in ["resourceSubscriptions", "taskIds"] ->
         {:cont, {:ok, Map.put(acc, key, true)}}
 
-      {key, false}, {:ok, acc} when key != "resourceSubscriptions" ->
+      {key, false}, {:ok, acc} when key not in ["resourceSubscriptions", "taskIds"] ->
         {:cont, {:ok, acc}}
 
       {"resourceSubscriptions", uris}, {:ok, acc} when is_list(uris) ->
@@ -381,6 +491,13 @@ defmodule ExMCP.Server.Subscriptions do
           {:halt, {:error, :invalid_resource_subscription}}
         end
 
+      {"taskIds", task_ids}, {:ok, acc} when is_list(task_ids) ->
+        if Enum.all?(task_ids, &(is_binary(&1) and byte_size(&1) > 0)) do
+          {:cont, {:ok, Map.put(acc, "taskIds", Enum.uniq(task_ids))}}
+        else
+          {:halt, {:error, :invalid_task_subscription}}
+        end
+
       {_key, _value}, _acc ->
         {:halt, {:error, :invalid_subscription_filter}}
     end)
@@ -388,10 +505,14 @@ defmodule ExMCP.Server.Subscriptions do
 
   defp validate_filter_size(filter, state) do
     uris = Map.get(filter, "resourceSubscriptions", [])
+    task_ids = Map.get(filter, "taskIds", [])
 
     cond do
       length(uris) > state.max_filter_uris ->
         {:error, :subscription_filter_uri_limit}
+
+      length(task_ids) > state.max_filter_task_ids ->
+        {:error, :subscription_filter_task_id_limit}
 
       byte_size(Jason.encode!(filter)) > state.max_filter_bytes ->
         {:error, :subscription_filter_too_large}
@@ -422,6 +543,10 @@ defmodule ExMCP.Server.Subscriptions do
         requested_uris = Map.get(requested, "resourceSubscriptions", [])
         Enum.all?(uris, &(&1 in requested_uris))
 
+      {"taskIds", task_ids} ->
+        requested_task_ids = Map.get(requested, "taskIds", [])
+        Enum.all?(task_ids, &(&1 in requested_task_ids))
+
       {key, true} ->
         Map.get(requested, key) == true
     end)
@@ -438,6 +563,10 @@ defmodule ExMCP.Server.Subscriptions do
 
   defp filter_matches?(filter, "notifications/resources/updated", %{"uri" => uri}) do
     uri in Map.get(filter, "resourceSubscriptions", [])
+  end
+
+  defp filter_matches?(filter, "notifications/tasks", %{"taskId" => task_id}) do
+    task_id in Map.get(filter, "taskIds", [])
   end
 
   defp filter_matches?(_filter, _method, _params), do: false
@@ -513,6 +642,7 @@ defmodule ExMCP.Server.Subscriptions do
     %{
       principal_id: Keyword.get(opts, :principal_id),
       tenant_id: Keyword.get(opts, :tenant_id),
+      audience: Keyword.get(opts, :audience),
       transport_ref: transport_ref
     }
   end
@@ -525,6 +655,7 @@ defmodule ExMCP.Server.Subscriptions do
       max_queue: Keyword.get(opts, :max_queue, 100),
       max_lifetime_ms: Keyword.get(opts, :max_lifetime_ms, 3_600_000),
       max_filter_uris: Keyword.get(opts, :max_filter_uris, 256),
+      max_filter_task_ids: Keyword.get(opts, :max_filter_task_ids, 256),
       max_filter_bytes: Keyword.get(opts, :max_filter_bytes, 65_536)
     }
 

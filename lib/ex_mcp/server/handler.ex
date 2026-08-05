@@ -693,6 +693,9 @@ defmodule ExMCP.Server.Handler do
       @doc false
       def __task_store_options__, do: @ex_mcp_task_store_opts || []
 
+      @doc false
+      def __task_store_enabled__, do: not is_nil(@ex_mcp_task_store_opts)
+
       @impl ExMCP.Server.Handler
       def handle_elicitation_complete(_elicitation_id, state) do
         {:ok, state}
@@ -719,6 +722,7 @@ defmodule ExMCP.Server.Handler do
                      handle_task_cancel: 2,
                      handle_task_update: 3,
                      __task_store_options__: 0,
+                     __task_store_enabled__: 0,
                      handle_elicitation_complete: 2,
                      terminate: 2
 

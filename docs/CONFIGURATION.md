@@ -253,6 +253,14 @@ owner = ExMCP.Tasks.owner()
 {:ok, task} = ExMCP.Tasks.complete(task_id, result, owner: owner)
 ```
 
+Successful creates and wire-visible transitions publish full
+`notifications/tasks` state to matching `subscriptions/listen` streams. A
+deployment using a non-default subscription registry should pass
+`subscription_registry: registry` when a worker calls `ExMCP.Tasks.complete/3`,
+`fail/3`, `require_input/3`, `mark_cancelled/2`, or `put_status_message/3`.
+Set `notify: false` only when the host application deliberately owns
+publication itself.
+
 The host application still owns worker execution and recovery. Store adapters
 own persistence, atomicity across serving nodes, authorization binding, and
 expiry. Do not advertise the extension when the configured store cannot meet
@@ -472,7 +480,8 @@ to the subscribing process with the acknowledged subscription reference:
 {:ok, subscription} =
   ExMCP.Client.listen(client, %{
     "toolsListChanged" => true,
-    "resourceSubscriptions" => ["file:///project/config.json"]
+    "resourceSubscriptions" => ["file:///project/config.json"],
+    "taskIds" => [task_id]
   })
 
 receive do
@@ -482,6 +491,15 @@ end
 
 :ok = ExMCP.Client.Subscription.cancel(subscription)
 ```
+
+`taskIds` is defined by the `io.modelcontextprotocol/tasks` extension. The
+client must declare that extension in its configured capabilities. Servers
+using `tasks: :store` automatically authorize every requested ID against the
+same principal, tenant, endpoint, and task store used by `tasks/get`; IDs that
+are missing or not authorized are omitted from the acknowledged filter. A
+server with a custom task backend must provide
+`:authorize_subscription_filter` and must not acknowledge an ID until it has
+performed the equivalent access check.
 
 `subscribe_resource/3` and `unsubscribe_resource/3` retain their legacy RPC
 behavior before 2026-07-28. On a modern connection they maintain one
@@ -498,14 +516,15 @@ end
 ```
 
 After reconnect, subscriptions are opened with fresh JSON-RPC IDs. ExMCP
-refetches each affected list/resource, then emits
+refetches each affected list, resource, and task, then emits
 `{:ex_mcp_subscription_resync, subscription, {:complete, snapshot}}` for a
 generic subscription or `{:ex_mcp_resource_resync, subscription, snapshot}`
 for the resource compatibility wrapper before releasing queued events.
 
 Server listener defaults are 1,000 global registrations, 100 per principal,
 500 per tenant, 100 queued events per listener, a one-hour maximum lifetime,
-256 resource URIs, and a 64 KiB filter. Configure the registry child or pass
+256 resource URIs, 256 task IDs, and a 64 KiB filter. Configure the registry
+child or pass
 the corresponding server options (`:subscription_max_queue`,
 `:subscription_max_lifetime_ms`, `:authorize_subscription_filter`, and
 `:authorize_subscription_publication`). Publication authorization is checked

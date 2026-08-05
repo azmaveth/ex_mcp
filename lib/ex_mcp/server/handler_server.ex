@@ -40,6 +40,7 @@ defmodule ExMCP.Server.HandlerServer do
   use GenServer
   require Logger
 
+  alias ExMCP.Error.ProtocolError
   alias ExMCP.Internal.{JSONRPC, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Server.{CancellationTracker, Dispatch, RequestContext, RequestState, Subscriptions}
@@ -136,7 +137,7 @@ defmodule ExMCP.Server.HandlerServer do
               cancelled_requests: MapSet.new(),
               cancellation_tracker: cancellation_tracker,
               subscriptions: %{},
-              subscription_options: Subscriptions.runtime_options(opts)
+              subscription_options: Subscriptions.runtime_options(opts, handler_module)
             }
 
             {:ok, state}
@@ -885,7 +886,11 @@ defmodule ExMCP.Server.HandlerServer do
              id,
              Map.get(params, "notifications"),
              self(),
-             state.subscription_options
+             Keyword.put(
+               state.subscription_options,
+               :client_capabilities,
+               context.client_capabilities
+             )
            ) do
       subscriptions = Map.put(state.subscriptions, id, entry.listener_pid)
       {:notification, %{state | subscriptions: subscriptions, connection_era: :modern}}
@@ -896,6 +901,10 @@ defmodule ExMCP.Server.HandlerServer do
       _other ->
         {:response, subscription_error(id, :modern_protocol_required), state}
     end
+  end
+
+  defp subscription_error(id, %ProtocolError{} = error) do
+    JSONRPC.error(id, error.code, error.message, error.data)
   end
 
   defp subscription_error(id, reason) do

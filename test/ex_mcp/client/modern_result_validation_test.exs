@@ -175,6 +175,57 @@ defmodule ExMCP.Client.ModernResultValidationTest do
     assert error.reason == {:invalid_task_field, "status"}
   end
 
+  test "accepts complete detailed tasks/get results and rejects the create discriminator" do
+    capabilities = %{
+      extensions: %{"io.modelcontextprotocol/tasks" => %{}}
+    }
+
+    detailed = %{task_result() | "resultType" => "complete"}
+
+    assert {:reply, {:ok, %{"resultType" => "complete", "taskId" => "task-1"}}, _state} =
+             RequestHandler.handle_request(
+               "tasks/get",
+               %{"taskId" => "task-1"},
+               {self(), make_ref()},
+               modern_state(detailed, capabilities: capabilities)
+             )
+
+    assert {:reply, {:error, error}, _state} =
+             RequestHandler.handle_request(
+               "tasks/get",
+               %{"taskId" => "task-1"},
+               {self(), make_ref()},
+               modern_state(task_result(), capabilities: capabilities)
+             )
+
+    assert error.reason == {:invalid_result_type, "task"}
+
+    assert {:reply, {:error, error}, _state} =
+             RequestHandler.handle_request(
+               "tasks/get",
+               %{"taskId" => "task-1"},
+               {self(), make_ref()},
+               modern_state(detailed)
+             )
+
+    assert error.reason == :undeclared_tasks_extension
+  end
+
+  test "preserves the legacy tasks/get result shape" do
+    state = %{
+      modern_state(%{"taskId" => "task-1", "status" => "working"})
+      | protocol_version: "2025-11-25"
+    }
+
+    assert {:reply, {:ok, %{"taskId" => "task-1", "status" => "working"}}, _state} =
+             RequestHandler.handle_request(
+               "tasks/get",
+               %{"taskId" => "task-1"},
+               {self(), make_ref()},
+               state
+             )
+  end
+
   defp modern_state(result, opts \\ []) do
     %ExMCP.Client{
       transport_mod: SyncTransport,

@@ -531,6 +531,10 @@ defmodule ExMCP.Client do
   @doc """
   Opens a modern immutable notification subscription and waits for the
   server's acknowledgment.
+
+  The Tasks extension adds a `"taskIds"` filter whose values receive full
+  `notifications/tasks` states. The client must declare
+  `io.modelcontextprotocol/tasks` in its configured capabilities.
   """
   @spec listen(t(), map(), keyword()) :: {:ok, Subscription.Ref.t()} | {:error, term()}
   def listen(client, notification_filter, opts \\ []) do

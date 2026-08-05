@@ -60,6 +60,30 @@ defmodule ExMCP.Client.ModernSubscriptionTest do
         }}, state}
     end
 
+    def handle_call({:request, "tasks/get", %{"taskId" => task_id}, _meta}, _from, state) do
+      task = %{
+        "resultType" => "complete",
+        "taskId" => task_id,
+        "status" => "working",
+        "createdAt" => "2026-08-05T00:00:00Z",
+        "lastUpdatedAt" => "2026-08-05T00:00:01Z",
+        "ttlMs" => 60_000,
+        "pollIntervalMs" => 1_000
+      }
+
+      send(
+        state.subscription,
+        {:client_subscription_event, state.request_id, "notifications/tasks",
+         Map.put(
+           task,
+           "_meta",
+           %{"io.modelcontextprotocol/subscriptionId" => state.request_id}
+         )}
+      )
+
+      {:reply, {:ok, task}, state}
+    end
+
     @impl true
     def handle_cast({:close_subscription, _subscription, request_id, _reason}, state) do
       send(state.owner, {:subscription_cancelled, request_id})
@@ -250,13 +274,29 @@ defmodule ExMCP.Client.ModernSubscriptionTest do
              Client.listen(client, %{"toolsListChanged" => true})
   end
 
+  test "surfaces the required-capability error for task subscriptions" do
+    {_registry, _server, client} = start_stack()
+
+    assert {:error, error} =
+             Client.listen(client, %{"taskIds" => ["task-1"]}, timeout: 1_000)
+
+    assert error["code"] == ExMCP.Protocol.ErrorCodes.missing_required_client_capability()
+
+    assert error["data"] == %{
+             "requiredCapabilities" => ExMCP.Tasks.Extension.required_capabilities()
+           }
+  end
+
   test "reconnect opens a fresh request, refetches affected state, then releases queued events" do
     {:ok, client} = ReconnectClient.start_link(self())
 
     assert {:ok, subscription} =
              Subscription.open(
                client,
-               %{"resourceSubscriptions" => ["test://resync"]},
+               %{
+                 "resourceSubscriptions" => ["test://resync"],
+                 "taskIds" => ["task-resync"]
+               },
                timeout: 1_000
              )
 
@@ -281,10 +321,25 @@ defmodule ExMCP.Client.ModernSubscriptionTest do
                 "contents" => [%{"uri" => "test://resync", "text" => "fresh"}]
               }}
 
+    assert snapshot["tasks"]["task-resync"] ==
+             {:ok,
+              %{
+                "resultType" => "complete",
+                "taskId" => "task-resync",
+                "status" => "working",
+                "createdAt" => "2026-08-05T00:00:00Z",
+                "lastUpdatedAt" => "2026-08-05T00:00:01Z",
+                "ttlMs" => 60_000,
+                "pollIntervalMs" => 1_000
+              }}
+
     assert_receive {:ex_mcp_subscription, ^reconnected, "notifications/resources/updated",
                     queued_event}
 
     assert queued_event["uri"] == "test://resync"
+
+    assert_receive {:ex_mcp_subscription, ^reconnected, "notifications/tasks", task_event}
+    assert task_event["taskId"] == "task-resync"
     assert :ok = Subscription.cancel(reconnected)
     assert_receive {:subscription_cancelled, ^second_id}
   end

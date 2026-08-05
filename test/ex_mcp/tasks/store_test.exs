@@ -1,7 +1,9 @@
 defmodule ExMCP.Tasks.StoreTest do
   use ExUnit.Case, async: true
 
+  alias ExMCP.Server.Subscriptions
   alias ExMCP.Tasks
+  alias ExMCP.Tasks.Extension
   alias ExMCP.Tasks.Store.ETS
 
   @alice %{principal_id: "alice", tenant_id: "acme", audience: "https://mcp.example"}
@@ -130,6 +132,54 @@ defmodule ExMCP.Tasks.StoreTest do
   test "maps unavailable custom stores to a stable error" do
     assert {:error, :task_store_unavailable} =
              Tasks.create("deploy", %{}, store: MissingTaskStore, owner: @alice)
+  end
+
+  test "publishes full task state after a durable transition", %{server: server} do
+    registry =
+      start_supervised!(
+        {Subscriptions, name: nil, max_lifetime_ms: 5_000},
+        id: make_ref()
+      )
+
+    opts = store_opts(server, @alice) ++ [subscription_registry: registry, notify: false]
+    assert {:ok, created} = Tasks.create("deploy", %{}, opts)
+
+    assert {:ok, _entry} =
+             Subscriptions.listen(
+               "task-events",
+               %{"taskIds" => [created["taskId"]]},
+               self(),
+               registry: registry,
+               principal_id: @alice.principal_id,
+               tenant_id: @alice.tenant_id,
+               audience: @alice.audience,
+               client_capabilities: Extension.put_capability(%{}),
+               task_store_opts: [store: ETS, server: server]
+             )
+
+    assert_receive {:ex_mcp_subscription_message, listener, :acknowledged, _ack}
+    Subscriptions.delivered(listener)
+
+    transition_opts = Keyword.put(opts, :notify, true)
+
+    assert {:ok, completed} =
+             Tasks.complete(created["taskId"], %{"deploymentId" => "dep-1"}, transition_opts)
+
+    assert completed.state == :completed
+
+    assert_receive {:ex_mcp_subscription_message, ^listener, :notification, notification}
+    assert notification["method"] == "notifications/tasks"
+
+    assert notification["params"] == %{
+             "_meta" => %{"io.modelcontextprotocol/subscriptionId" => "task-events"},
+             "taskId" => created["taskId"],
+             "status" => "completed",
+             "createdAt" => created["createdAt"],
+             "lastUpdatedAt" => completed.last_updated_at,
+             "ttlMs" => created["ttlMs"],
+             "pollIntervalMs" => created["pollIntervalMs"],
+             "result" => %{"deploymentId" => "dep-1"}
+           }
   end
 
   defp store_opts(server, owner), do: [store: ETS, server: server, owner: owner]
