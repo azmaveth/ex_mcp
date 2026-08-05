@@ -21,6 +21,14 @@ defmodule ExMCP.Authorization.OAuthFlow do
     response_type client_id redirect_uri scope state
     code_challenge code_challenge_method resource
   )
+  @field_atoms %{
+    "code" => :code,
+    "iss" => :iss,
+    "issuer" => :issuer,
+    "state" => :state,
+    "state_param" => :state_param,
+    "transaction_id" => :transaction_id
+  }
 
   @type auth_params :: %{
           optional(:issuer) => String.t(),
@@ -503,7 +511,10 @@ defmodule ExMCP.Authorization.OAuthFlow do
   defp secure_equal?(_left, _right), do: false
 
   defp field(map, key) do
-    Map.get(map, key) || Map.get(map, String.to_existing_atom(key))
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Map.fetch!(@field_atoms, key))
+    end
   end
 
   defp build_url(base_url, query_params) do
