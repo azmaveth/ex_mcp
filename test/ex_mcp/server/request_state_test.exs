@@ -71,6 +71,77 @@ defmodule ExMCP.Server.RequestStateTest do
              RequestState.unseal(token, context(), params(), %{}, expired)
   end
 
+  test "rolling two-node rotation keeps mixed key-ring snapshots interoperable" do
+    old_key = @key
+    new_key = :binary.copy(<<8>>, 32)
+    distributed_keys = %{"old" => old_key, "new" => new_key}
+
+    # Stage one is deployed to every serving node before the active key flips.
+    # Both nodes still encrypt with old, but can already decrypt new.
+    node_a_stage_one =
+      options(now: 1_000, active_key_id: "old", keys: distributed_keys, clock_skew_seconds: 5)
+
+    node_b_stage_one =
+      options(now: 1_011, active_key_id: "old", keys: distributed_keys, clock_skew_seconds: 5)
+
+    assert {:ok, binding} = RequestState.binding(context(), params(), [], 1, node_a_stage_one)
+
+    assert {:ok, old_token} =
+             RequestState.seal(%{"writer" => "node-a"}, binding, node_a_stage_one)
+
+    assert {:ok, %{"codec" => "json-v1", "v" => 1}} =
+             RequestState.unseal(old_token, context(), params(), %{}, node_b_stage_one)
+
+    # Stage two may roll node-by-node because stage one distributed the new
+    # decrypt key everywhere. Tokens minted on either snapshot remain valid.
+    node_a_stage_two =
+      options(now: 1_010, active_key_id: "new", keys: distributed_keys, clock_skew_seconds: 5)
+
+    node_b_stage_two =
+      options(now: 1_011, active_key_id: "new", keys: distributed_keys, clock_skew_seconds: 5)
+
+    assert {:ok, new_token} =
+             RequestState.seal(%{"writer" => "node-b"}, binding, node_b_stage_two)
+
+    for {token, reader} <- [
+          {old_token, node_a_stage_one},
+          {old_token, node_a_stage_two},
+          {new_token, node_b_stage_one},
+          {new_token, node_b_stage_two}
+        ] do
+      assert {:ok, _payload} = RequestState.unseal(token, context(), params(), %{}, reader)
+    end
+
+    # Emergency revocation is fail-closed even during the retention window.
+    revoked_old =
+      options(
+        now: 1_012,
+        active_key_id: "new",
+        keys: distributed_keys,
+        revoked_key_ids: ["old"],
+        clock_skew_seconds: 5
+      )
+
+    assert {:error, :request_state_key_revoked} =
+             RequestState.unseal(old_token, context(), params(), %{}, revoked_old)
+
+    # Normal retirement waits for TTL + skew. Once every old token is expired,
+    # nodes can atomically install a snapshot without the old decrypt key.
+    retired_old =
+      options(
+        now: 1_066,
+        active_key_id: "new",
+        keys: %{"new" => new_key},
+        clock_skew_seconds: 5
+      )
+
+    assert {:error, :invalid_request_state} =
+             RequestState.unseal(old_token, context(), params(), %{}, retired_old)
+
+    assert {:ok, _payload} =
+             RequestState.unseal(new_token, context(), params(), %{}, retired_old)
+  end
+
   test "rejects unsafe or node-local application state" do
     opts = options(now: 1_000)
     assert {:ok, binding} = RequestState.binding(context(), params(), [], 1, opts)
@@ -122,9 +193,10 @@ defmodule ExMCP.Server.RequestStateTest do
     request_state = [
       active_key_id: Keyword.get(overrides, :active_key_id, "current"),
       keys: Keyword.get(overrides, :keys, %{"current" => @key}),
-      ttl_seconds: 60,
-      max_ttl_seconds: 60,
-      clock_skew_seconds: 0
+      revoked_key_ids: Keyword.get(overrides, :revoked_key_ids, []),
+      ttl_seconds: Keyword.get(overrides, :ttl_seconds, 60),
+      max_ttl_seconds: Keyword.get(overrides, :max_ttl_seconds, 60),
+      clock_skew_seconds: Keyword.get(overrides, :clock_skew_seconds, 0)
     ]
 
     [

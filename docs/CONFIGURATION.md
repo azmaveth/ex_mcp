@@ -690,6 +690,13 @@ config :ex_mcp, :request_state,
   clock_skew_seconds: 30
 ```
 
+For a rolling rotation, first distribute `%{"old" => old_key, "new" =>
+new_key}` to every node with `active_key_id: "old"`; then roll only
+`active_key_id` to `"new"`; finally remove `"old"` after the maximum token TTL
+plus clock skew. Install each complete key-ring snapshot atomically. Use
+`revoked_key_ids: ["old"]` for emergency invalidation, accepting that any
+in-flight token sealed by that key must restart.
+
 ```elixir
 MyServer.start_link(
   transport: :stdio,

@@ -768,11 +768,13 @@ modern ExMCP server over stdio, with no `initialize`.
       issued-at/expiry and JTI. Default to AES-256-GCM with a 96-bit random nonce and 128-bit tag;
       set a short configurable maximum TTL and clock-skew allowance. Clustered deployments share
       the runtime key ring; never put secrets or bearer tokens in payloads or config files.
-- [ ] Key rotation retains decrypt-only old keys for at least maximum token TTL + clock skew,
+- [x] Key rotation retains decrypt-only old keys for at least maximum token TTL + clock skew,
       supports emergency key-ID revocation, and is atomic across the cluster. Gate release on a
       rolling mixed-version/key rotation test; version the payload codec for rolling upgrades.
-      **Decrypt-only old keys, key-ID revocation, boot validation and the versioned JSON codec are
-      implemented; the clustered rolling-upgrade test remains open.**
+      **Complete:** decrypt-only old keys, key-ID revocation, boot validation and the versioned
+      JSON codec are covered by a two-node mixed-snapshot rotation test. The documented rollout
+      distributes decrypt material cluster-wide before changing `active_key_id`, then waits TTL +
+      skew before removal; each node installs a complete snapshot atomically.
 - [x] Default to a bounded JSON codec for handler state. Reject node-local values and unsafe
       external terms; cap the sealed token size before allocating/decoding it.
 - [x] AEAD integrity does not make a token single-use. Provide a replay-cache adapter keyed by

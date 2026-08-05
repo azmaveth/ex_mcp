@@ -188,6 +188,21 @@ least the maximum token TTL plus clock skew. `active_key_id` selects the only
 encryption key; `revoked_key_ids` immediately prevents use of a compromised
 key. Every node that may resume a request needs the same ring.
 
+Rotate the ring in three separately observable deployments:
+
+1. Add the new key to every node while the old key remains `active_key_id`.
+2. After every serving node can decrypt both key IDs, roll `active_key_id` to
+   the new key. Mixed snapshots remain interoperable during this deployment.
+3. Remove the old decrypt-only key only after the greatest configured token
+   TTL plus clock skew has elapsed since the final node stopped encrypting
+   with it.
+
+Treat each key-ring snapshot as one atomic runtime configuration value; never
+roll an active key before its key material has reached every node. For an
+emergency compromise, add the old ID to `revoked_key_ids` everywhere instead
+of waiting for normal retirement. In-flight tokens using that ID then fail
+closed and callers must restart the operation.
+
 AEAD prevents tampering but not replay. Side-effecting resumptions should set
 `require_replay_protection: true` and configure a shared replay-cache adapter.
 `ExMCP.Server.ReplayCache.ETS` is atomic but node-local and is therefore only
