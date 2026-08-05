@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **OAuth transactions are atomic and single-use** — Library-started authorization-code flows
+  now generate their own 256-bit state, reject reserved parameter overrides, retain only state/code
+  digests in a bounded supervised transaction store, and bind callback issuer, PKCE, authorization
+  code, and exact redirect URI through one-time transitions shared by both MCP protocol eras.
+  Concurrent callback/redemption attempts have one winner; an ambiguous token request cannot
+  replay its code. OAuth failure logs and telemetry redact credential fields, cookies,
+  authorization values, and URL query/fragment data.
 - **OAuth credentials are authorization-server bound** — MCP 2026-07-28 pre-registered clients require an exact `credential_issuer`; discovered metadata, callbacks, and persisted registrations use one no-normalization issuer comparison. The new pluggable `ExMCP.Authorization.CredentialStore` partitions registrations by issuer + client ID and tokens by the complete authorization context, rejects unkeyed legacy records pending explicit migration, and redacts stored secrets from inspection. DCR credentials are reused only within the same issuer partition and a changed AS triggers registration in a new partition.
 
 ## [1.0.0-rc.5] - 2026-08-04

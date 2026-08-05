@@ -37,7 +37,7 @@ defmodule ExMCP.Authorization.Provider.OAuth do
 
   require Logger
 
-  alias ExMCP.Authorization.FullOAuthFlow
+  alias ExMCP.Authorization.{FullOAuthFlow, LogSanitizer}
 
   defstruct [
     :access_token,
@@ -124,7 +124,7 @@ defmodule ExMCP.Authorization.Provider.OAuth do
         {:ok, access_token, new_state}
 
       {:error, reason} ->
-        Logger.warning("OAuth flow failed: #{inspect(reason)}")
+        Logger.warning("OAuth flow failed: #{LogSanitizer.format(reason)}")
         {:error, {:oauth_failed, reason}, state}
     end
   end

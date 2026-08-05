@@ -477,7 +477,7 @@ defmodule ExMCP.Compliance.OAuth21ComplianceTest do
       # without a mechanism to mock HTTP requests.
       params = %{
         code: "auth_code",
-        code_verifier: "verifier",
+        code_verifier: String.duplicate("v", 43),
         client_id: "test-client",
         redirect_uri: "http://localhost/callback",
         token_endpoint: "http://localhost:65001/token",

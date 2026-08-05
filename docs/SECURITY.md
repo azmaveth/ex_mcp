@@ -374,17 +374,37 @@ supply them when validating tokens from an identity provider.
 
 ### Authorization callback issuer validation
 
-Record the authorization server issuer with each OAuth authorization-code
-transaction. `ExMCP.Authorization.validate_authorization_response/2` verifies
-the `state` value and, when the callback includes the RFC 9207 `iss`
-parameter, requires exact equality with that recorded issuer before returning
-the code for redemption. Issuer identifiers are not normalized: a trailing
-slash or path difference is a mismatch. A present `iss` is rejected when the
-transaction did not record an issuer.
+ExMCP registers every library-started authorization-code transaction before
+returning its authorization URL. It generates random 256-bit `state` and PKCE
+values, stores only SHA-256 digests of state and authorization codes, and
+atomically moves the transaction through pending, code-ready, and redeemed
+states. Exactly one concurrent callback and one code redemption can succeed.
+
+`ExMCP.Authorization.validate_authorization_response/2` verifies state and,
+when the callback includes the RFC 9207 `iss` parameter, requires exact
+equality with the issuer recorded when the flow started. Issuer identifiers are
+not normalized: a trailing slash or path difference is a mismatch. A present
+`iss` is rejected when the transaction did not record an issuer. Redemption is
+also bound to the exact redirect URI recorded at flow start.
 
 The built-in full OAuth flow performs this validation automatically. It also
 bounds callback request/query sizes, rejects duplicate callback parameters,
-and does not log the authorization URL, callback URL, code, or state value.
+and does not log the authorization URL, callback URL, code, state, PKCE
+verifier, cookies, client secrets, or tokens. OAuth error logging and telemetry
+redact credential-shaped fields, authorization header values, and URL queries
+and fragments.
+
+Transactions remain redeemed before the token request is sent. This fail-closed
+ordering prevents code replay: after a timeout or lost response, start a new
+authorization flow instead of retrying the same code. The default transaction
+store is bounded, expires records, and is node-local. Route a loopback callback
+to the originating node; distributed browser callbacks require a strongly
+consistent application-owned flow.
+
+Caller-constructed transaction maps without the opaque `transaction_id` retain
+their 1.x validation behavior for source compatibility, but do not gain atomic
+replay protection. Always carry the transaction returned by
+`start_authorization_flow/1` through callback validation and token exchange.
 
 ### MCP routing-header confidentiality
 

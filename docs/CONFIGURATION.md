@@ -134,6 +134,53 @@ the original authorization server out of band, migrate them explicitly with
 `CredentialStore.bind_legacy_token/2`; never use the currently discovered
 issuer as an implicit migration value.
 
+### OAuth transaction retention
+
+Every authorization-code flow started by ExMCP uses a random 256-bit `state`
+and PKCE verifier. The returned transaction is registered in a supervised,
+node-local single-use store before the authorization URL is returned. Callback
+validation consumes state atomically, and code exchange atomically binds the
+validated code to the exact redirect URI before making the token request. This
+path is shared by legacy and `2026-07-28` MCP sessions.
+
+The default store retains up to 10,000 transaction records for 10 minutes. Both
+limits can be adjusted:
+
+```elixir
+config :ex_mcp, ExMCP.Authorization.OAuthTransactionStore,
+  ttl_ms: 600_000,
+  max_entries: 10_000
+```
+
+Do not shorten the TTL below the time a user may reasonably spend in the
+browser. Capacity exhaustion fails new flows closed. The built-in loopback flow
+is intentionally node-local; a distributed web callback must route back to the
+originating node or implement its own strongly consistent end-to-end flow.
+
+For direct use of `ExMCP.Authorization`, preserve the returned transaction and
+pass it through validation and redemption:
+
+```elixir
+{:ok, authorization_url, transaction} =
+  ExMCP.Authorization.start_authorization_flow(config)
+
+{:ok, code} =
+  ExMCP.Authorization.validate_authorization_response(callback, transaction)
+
+ExMCP.Authorization.exchange_code_for_token(%{
+  code: code,
+  code_verifier: transaction.code_verifier,
+  client_id: config.client_id,
+  redirect_uri: transaction.redirect_uri,
+  token_endpoint: config.token_endpoint,
+  transaction: transaction
+})
+```
+
+ExMCP does not accept caller-supplied state or reserved OAuth fields in
+`additional_params`. If a token request has an ambiguous outcome, its code
+remains redeemed; restart authorization instead of retrying the code.
+
 ## JSON Schema Resource Policy
 
 Every JSON Schema compiled or validated by ExMCP passes through one bounded,

@@ -9,6 +9,7 @@ defmodule ExMCP.Authorization.ErrorHandler do
 
   require Logger
 
+  alias ExMCP.Authorization.LogSanitizer
   alias ExMCP.Internal.Headers
 
   @doc """
@@ -64,10 +65,12 @@ defmodule ExMCP.Authorization.ErrorHandler do
     description = Map.get(response, "error_description", "")
     uri = Map.get(response, "error_uri")
 
-    Logger.error("OAuth error: #{error} - #{description}")
+    Logger.error(
+      "OAuth error: #{LogSanitizer.format(%{error: error, error_description: description})}"
+    )
 
     if uri do
-      Logger.debug("Error details: #{uri}")
+      Logger.debug("OAuth error details: #{LogSanitizer.format(uri)}")
     end
 
     # Keep error as string to avoid atom exhaustion

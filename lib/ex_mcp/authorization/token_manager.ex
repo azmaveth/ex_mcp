@@ -17,6 +17,7 @@ defmodule ExMCP.Authorization.TokenManager do
   require Logger
 
   alias ExMCP.Authorization
+  alias ExMCP.Authorization.LogSanitizer
 
   # Refresh tokens 5 minutes before expiration by default
   @default_refresh_window 300
@@ -270,7 +271,7 @@ defmodule ExMCP.Authorization.TokenManager do
         {:noreply, new_state}
 
       {:error, reason} ->
-        Logger.error("Token refresh failed: #{inspect(reason)}")
+        Logger.error("Token refresh failed: #{LogSanitizer.format(reason)}")
         # Schedule retry in 30 seconds
         Process.send_after(self(), :refresh_token, 30_000)
         {:noreply, state}

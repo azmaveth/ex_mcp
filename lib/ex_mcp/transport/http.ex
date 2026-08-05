@@ -78,7 +78,7 @@ defmodule ExMCP.Transport.HTTP do
   @behaviour ExMCP.Transport
   require Logger
 
-  alias ExMCP.Authorization.FullOAuthFlow
+  alias ExMCP.Authorization.{FullOAuthFlow, LogSanitizer}
   alias ExMCP.Internal.{Headers, Security, SecurityConfig, SSE}
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
@@ -586,7 +586,7 @@ defmodule ExMCP.Transport.HTTP do
         end
 
       {:error, reason} ->
-        Logger.warning("OAuth discovery flow failed: #{inspect(reason)}")
+        Logger.warning("OAuth discovery flow failed: #{LogSanitizer.format(reason)}")
         {:error, {:oauth_failed, reason}}
     end
   end
@@ -623,7 +623,7 @@ defmodule ExMCP.Transport.HTTP do
         end
 
       {:error, reason} ->
-        Logger.warning("Full OAuth flow failed: #{inspect(reason)}")
+        Logger.warning("Full OAuth flow failed: #{LogSanitizer.format(reason)}")
         {:error, {:oauth_failed, reason}}
     end
   end

@@ -38,7 +38,9 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     CredentialStore,
     HTTPClient,
     Issuer,
+    LogSanitizer,
     OAuthFlow,
+    OAuthTransactionStore,
     OIDCDiscovery,
     RegistrationPolicy
   }
@@ -71,10 +73,12 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
+    telemetry_resource = LogSanitizer.sanitize(config[:resource_url])
+
     :telemetry.execute(
       [:ex_mcp, :auth, :flow, :started],
       %{system_time: System.system_time()},
-      %{resource_url: config[:resource_url]}
+      %{resource_url: telemetry_resource}
     )
 
     result =
@@ -100,7 +104,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         :telemetry.execute(
           [:ex_mcp, :auth, :flow, :completed],
           %{system_time: System.system_time()},
-          %{resource_url: config[:resource_url]}
+          %{resource_url: telemetry_resource}
         )
 
         ok
@@ -109,7 +113,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         :telemetry.execute(
           [:ex_mcp, :auth, :flow, :failed],
           %{system_time: System.system_time()},
-          %{resource_url: config[:resource_url], reason: reason}
+          %{resource_url: telemetry_resource, reason: LogSanitizer.sanitize(reason)}
         )
 
         err
@@ -692,19 +696,28 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     with :ok <- validate_endpoints(authorization_endpoint, token_endpoint),
          {:ok, token_auth_method} <-
            select_token_auth_method(supported_methods, client_info, config),
-         {:ok, server_pid, redirect_uri} <- setup_redirect_server(config),
-         {:ok, auth_url, state_data} <- start_flow(client_info, redirect_uri, as_metadata, config) do
+         {:ok, server_pid, redirect_uri} <- setup_redirect_server(config) do
       result =
-        authorize_and_exchange(
-          auth_url,
-          state_data,
-          server_pid,
-          client_info,
-          redirect_uri,
-          token_endpoint,
-          config,
-          token_auth_method
-        )
+        case start_flow(client_info, redirect_uri, as_metadata, config) do
+          {:ok, auth_url, state_data} ->
+            result =
+              authorize_and_exchange(
+                auth_url,
+                state_data,
+                server_pid,
+                client_info,
+                redirect_uri,
+                token_endpoint,
+                config,
+                token_auth_method
+              )
+
+            OAuthTransactionStore.abort(state_data.transaction_id)
+            result
+
+          {:error, _reason} = error ->
+            error
+        end
 
       stop_redirect_server(server_pid)
 
@@ -786,6 +799,12 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
              token_endpoint,
              config,
              token_auth_method
+           ),
+         :ok <-
+           OAuthTransactionStore.redeem_code(
+             state_data.transaction_id,
+             code,
+             redirect_uri
            ) do
       HTTPClient.make_token_request(
         token_endpoint,
@@ -1016,7 +1035,10 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   end
 
   defp stop_redirect_server(pid) do
-    if Process.alive?(pid), do: Process.exit(pid, :normal)
+    if Process.alive?(pid) do
+      Process.unlink(pid)
+      Process.exit(pid, :shutdown)
+    end
   end
 
   defp extract_request_path(data) do

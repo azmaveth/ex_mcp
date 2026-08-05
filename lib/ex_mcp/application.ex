@@ -20,6 +20,9 @@ defmodule ExMCP.Application do
         ExMCP.Internal.ConsentCache,
         # Remembers protocol-era observations across individual client processes
         ExMCP.Client.EraCache,
+        # Atomically consumes OAuth state and authorization codes
+        {ExMCP.Authorization.OAuthTransactionStore,
+         Application.get_env(:ex_mcp, ExMCP.Authorization.OAuthTransactionStore, [])},
         # Optional node-local single-use enforcement for resumed MRTR requests
         ExMCP.Server.ReplayCache.ETS,
         # Atomically retains modern task handles across client connections

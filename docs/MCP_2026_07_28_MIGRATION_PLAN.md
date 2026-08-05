@@ -1095,9 +1095,17 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       additionally contain resource, audience, subject/client identity and a sorted granted-scope
       set, never raw tokens. Stored values redact secrets from `Inspect`; unkeyed values return
       `credential_migration_required` and can be rebound only through explicit migration helpers.**
-- [ ] Preserve OAuth transaction protections across both eras: random single-use `state`, PKCE,
+- [x] Preserve OAuth transaction protections across both eras: random single-use `state`, PKCE,
       exact redirect URI, one-time authorization-code redemption, issuer-bound callbacks, and no
-      cookies/tokens in logs. Test replay and concurrent callback attempts.
+      cookies/tokens in logs. Test replay and concurrent callback attempts. **All library-started
+      authorization-code flows now register a generated 256-bit state and PKCE transaction in a
+      bounded supervised store shared by both protocol eras. State and code are retained only as
+      SHA-256 digests; callback validation and exact-redirect redemption use atomic transitions,
+      so concurrent attempts have exactly one winner and ambiguous token requests cannot retry a
+      redeemed code. Reserved parameter overrides are rejected, issuer comparison remains exact,
+      and OAuth log/telemetry boundaries redact tokens, cookies, codes, state, PKCE verifiers,
+      authorization values and URL queries/fragments. Replay, mismatch, public-flow concurrency,
+      one-time token-request, entropy and log-capture tests cover the boundary.**
 - [x] Mark DCR deprecated in docs and `@doc`. **The DCR module and registration entry point now
       identify the 2026-07-28 deprecation and direct new deployments to pre-registration or
       CIMD; configuration docs describe it only as an advertised compatibility fallback.**
