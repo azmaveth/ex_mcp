@@ -1174,9 +1174,20 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       designs. `DeprecationCompatibilityTest` locks the exports, callback surface, migration
       text and absence of premature removal metadata, while the focused Roots/Sampling/Logging
       compatibility suite remains green.**
-- [ ] Docs: `docs/getting-started/MIGRATION.md` gets an rc.5/legacy → 1.0 dual-era section;
+- [x] Docs: `docs/getting-started/MIGRATION.md` gets an rc.5/legacy → 1.0 dual-era section;
       `docs/ARCHITECTURE.md` gets the era model; `docs/TRANSPORT_GUIDE.md` gets the new HTTP
-      shape; `CLAUDE.md` and configuration docs cover all four protocol modes.
+      shape; `CLAUDE.md` and configuration docs cover all four protocol modes. **The migration
+      guide now records the decision to land the wire break before stable 1.0 while preserving
+      the public 1.x API, compares both eras, gives a reversible four-mode rollout, and separates
+      legacy Streamable HTTP from the deprecated two-endpoint HTTP+SSE transport. The architecture
+      guide defines connection pinning, probe/cache/request-context/result-envelope ownership and
+      fallback invariants. The transport guide documents stateless POSTs, body-derived routing
+      headers, POST-owned request/subscription SSE, MRTR continuation and modern GET/DELETE
+      behavior. Configuration and `CLAUDE.md` cover all four modes, defaults, overrides, cache
+      controls and contributor rules. The migration guide is now an ExDoc extra; documentation
+      regression tests lock the reader-critical claims. `mix docs`, the 5-test documentation
+      suite, and 107 focused era, request-context, HTTP Plug, request-stream, subscription and
+      header tests pass.**
 - [ ] `CHANGELOG.md` `[1.0.0]` separates MCP wire changes from ExMCP public-API compatibility;
       bump `mix.exs` only after the final RC soak and release gates pass.
 - [ ] Green: `mix test.suite ci`, `mix credo`, `mix dialyzer`, `mix sobelow --skip`,

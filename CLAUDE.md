@@ -72,7 +72,7 @@ The library follows a layered architecture:
 
 1. **Transport Layer** (`lib/ex_mcp/transport/`)
    - Defines behaviour for different communication protocols
-   - Implementations: stdio, SSE, BEAM (Erlang processes)
+   - Implementations: stdio, Streamable HTTP, BEAM (Erlang processes), test
    - Each transport handles message framing and delivery
 
 2. **Protocol Layer** (`lib/ex_mcp/internal/protocol.ex`)
@@ -101,6 +101,55 @@ Everything under `lib/` ships to Hex. Repo-only tooling lives in `dev/`
 `package.files`, so those mix tasks never show up in a consumer's `mix help`.
 `ExMCP.Testing.*` is the opposite case: it stays in `lib/` as a published,
 documented test kit.
+
+## MCP Protocol Eras
+
+ExMCP 1.0 supports the legacy MCP revisions (`2024-11-05` through
+`2025-11-25`) and the wire-incompatible modern revision (`2026-07-28`). Treat
+the era as a first-class connection property; do not scatter date comparisons
+or infer modern behavior from one method in feature code.
+
+| `protocol_mode` | Client opens with | Enabled eras | Fallback |
+|---|---|---|---|
+| `:legacy_only` | `initialize` | Legacy | Never |
+| `:prefer_legacy` | `initialize` | Both | Probe modern only after an eligible protocol failure on a live transport |
+| `:prefer_modern` | `server/discover` | Both | Initialize only with positive legacy evidence on a live transport |
+| `:modern_only` | `server/discover` | Modern | Never |
+
+The current RC application default is `:legacy_only`; the final pre-1.0 soak
+is intended to exercise `:prefer_modern`. Tests and deployments that require a
+specific wire shape must always pass a mode explicitly instead of relying on
+that changing default. Both preference modes accept both eras on a server;
+their preference controls advertised version order.
+
+Era responsibilities:
+
+- `ExMCP.Internal.VersionRegistry` owns the version lists, era classification,
+  enablement, and preference ordering.
+- `ExMCP.Client.ConnectionManager`, `EraProbe`, and `EraCache` own selection,
+  evidence-based fallback, and peer observations. Never retry an application
+  operation in another era.
+- A modern observation is pinned and cannot silently downgrade. Legacy cache
+  entries expire so upgraded peers can be discovered. A cached-modern probe
+  failure is an operator-visible error.
+- `ExMCP.Server.RequestContext` validates per-request modern metadata and mode
+  compatibility. HandlerServer/stdio connections pin on the first valid
+  modern request or legacy `initialize` and must reject later era mixing.
+- Modern success results require `resultType`. MRTR returns
+  `input_required`/`inputResponses` instead of emitting elicitation, Sampling,
+  or Roots as independent server-to-client requests.
+- Modern HTTP is stateless: every message is a POST, SSE belongs to the
+  originating request or `subscriptions/listen`, and no session ID,
+  `Last-Event-ID`, GET stream, or DELETE termination is used. Keep this
+  distinct from the deprecated 2024-11-05 two-endpoint HTTP+SSE transport,
+  which is available only with `legacy_http_sse: true` during 1.x.
+
+When changing protocol code, run focused tests for all four modes and both
+strict-era failure directions. A dual-era success test is insufficient: also
+assert that ambiguous probe failures do not downgrade, cached modern peers do
+not downgrade, and an incompatible request never reaches a Handler callback.
+See `docs/ARCHITECTURE.md`, `docs/TRANSPORT_GUIDE.md`, and
+`docs/getting-started/MIGRATION.md` for the complete model.
 
 ## Key Patterns
 
@@ -134,9 +183,11 @@ synchronization point — in rough order of preference:
    `refute_event/2`
 5. `ExMCP.TestHelpers.wait_until(fun, timeout: ms)` as a deadline-bounded poll
 
-Note that `ExMCP.Client.start_link/1` performs the full MCP handshake inside
-`init/1`, so once it returns `{:ok, pid}` the client is already `:ready`. Never
-sleep "to let the client initialize".
+Note that `ExMCP.Client.start_link/1` performs full protocol-era establishment
+inside `init/1`, so once it returns `{:ok, pid}` the client is already `:ready`.
+That means `initialize` + `notifications/initialized` in the legacy era or a
+successful `server/discover` probe in the modern era. Never sleep "to let the
+client initialize".
 
 ## Common Tasks
 
@@ -156,9 +207,10 @@ state is plain fields on the `ExMCP.Client` struct (`:connection_status` is one
 of `:connecting`, `:ready`, `:reconnecting`, `:disconnected`).
 
 `ExMCP.Client.start_link/1` connects **synchronously**: the transport
-connection, the `initialize` handshake and the `notifications/initialized`
-message all happen inside `init/1`, so a successful return means the client is
-already `:ready`.
+connection and selected-era establishment happen inside `init/1`, so a
+successful return means the client is already `:ready`. Legacy mode performs
+`initialize` and sends `notifications/initialized`; modern mode completes
+`server/discover` and sends no initialized notification.
 
 Internal connection lifecycle helpers live under `ExMCP.Client.*` (for example
 `ExMCP.Client.ConnectionManager` and `ExMCP.Client.RequestHandler`). Prefer
@@ -197,6 +249,9 @@ The client stack emits telemetry such as:
 # Connection lifecycle
 [:ex_mcp, :client, :connected]
 [:ex_mcp, :client, :disconnected]
+[:ex_mcp, :client, :era, :settled]
+[:ex_mcp, :client, :era, :fallback]
+[:ex_mcp, :client, :era, :observed]
 
 # Receiver (transport message loop)
 [:ex_mcp, :client, :receiver, :started]

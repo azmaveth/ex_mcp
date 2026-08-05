@@ -37,17 +37,31 @@ Supported options:
 
 ## Streamable HTTP
 
-The HTTP transport sends JSON-RPC over HTTP POST. Modern MCP request and
-subscription streams use SSE on the owning POST response automatically. The
-client's `use_sse` option controls the standalone GET stream retained for
-pre-2026 Streamable HTTP revisions; it is disabled after a modern connection
-settles.
+The HTTP transport supports two wire shapes on one MCP POST endpoint. A
+protocol mode determines how the client establishes the era; it is not a
+choice between separate `:http` transport modules.
+
+| Behavior | Legacy Streamable HTTP (2025-03-26–2025-11-25) | Modern Streamable HTTP (2026-07-28) |
+|---|---|---|
+| Establishment | `initialize`; server may mint `Mcp-Session-Id` | `server/discover`; no protocol session |
+| Client messages | POST; session header after initialization | A fresh stateless POST for every message |
+| Ordinary response | JSON or request-owned SSE | JSON or request-owned SSE |
+| Independent notifications | Optional standalone GET SSE stream | `subscriptions/listen` POST response stream |
+| Server needs client input | JSON-RPC request on an SSE stream | `input_required` result followed by a new client POST |
+| Resume/termination | `Last-Event-ID`; DELETE session | Not resumable; close the owning response stream |
+
+The client's `use_sse` option controls the standalone GET stream used by
+legacy Streamable HTTP. ExMCP disables it, clears any session ID, and stops
+sending `Last-Event-ID` after a connection settles modern. Modern request and
+subscription streams use SSE on the owning POST response automatically and do
+not require `use_sse: true`.
 
 ```elixir
 {:ok, client} =
   ExMCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
+    protocol_mode: :prefer_modern,
     use_sse: true,
     headers: [{"Authorization", "Bearer #{token}"}],
     request_timeout: 30_000,
@@ -61,9 +75,12 @@ Supported client options include:
 - `:url` - base URL or full MCP endpoint URL.
 - `:endpoint` - endpoint path when it is not included in `url`.
 - `:headers` - additional request headers.
+- `:protocol_mode` - `:legacy_only`, `:prefer_legacy`, `:prefer_modern`, or
+  `:modern_only`; see the [Configuration Guide](CONFIGURATION.md#protocol-eras-and-modes).
 - `:use_sse` - enable the legacy Streamable HTTP GET stream, defaults to `true`.
 - `:session_id` - resume an existing streamable HTTP session.
-- `:protocol_version` - requested MCP protocol version.
+- `:protocol_version` - requested legacy revision, or a modern probe revision
+  when the selected mode enables it.
 - `:timeout` - connect timeout.
 - `:request_timeout` - single request timeout.
 - `:stream_handshake_timeout` - wait for SSE stream startup.
@@ -103,6 +120,78 @@ tokens safely across flows, configure an adapter implementing
 bound and tokens use the complete authorization partition. See the
 [Configuration Guide](CONFIGURATION.md#issuer-bound-credential-persistence).
 
+### Modern POST shape
+
+Every modern request is a new POST whose body contains one JSON-RPC request.
+The client advertises both response types:
+
+```http
+POST /mcp HTTP/1.1
+Accept: application/json, text/event-stream
+Content-Type: application/json
+MCP-Protocol-Version: 2026-07-28
+Mcp-Method: tools/call
+Mcp-Name: weather
+
+{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{...}}
+```
+
+ExMCP derives the routing headers from the validated body. It strips custom
+values for reserved MCP headers before sending a modern request, so callers
+cannot create a header/body disagreement.
+
+| Header | When sent | Meaning |
+|---|---|---|
+| `MCP-Protocol-Version` | Every modern request | Mirrors modern `_meta.protocolVersion` |
+| `Mcp-Method` | Every modern request | Mirrors the JSON-RPC method |
+| `Mcp-Name` | `tools/call`, `resources/read`, and `prompts/get` | Mirrors the addressed tool, resource, or prompt |
+| `Mcp-Param-*` | Annotated `tools/call` inputs | Mirrors schema-selected routing parameters |
+
+Header names are case-insensitive on the wire. `Mcp-Param-*` values may
+contain sensitive routing data; redact them in reverse-proxy, load-balancer,
+and APM logs as well as application logs.
+
+The server returns one of these shapes:
+
+- `application/json` with the final JSON-RPC response;
+- `text/event-stream` with request-related notifications and then the final
+  response; or
+- `202 Accepted` with no body for an accepted notification POST.
+
+A modern result always has `resultType: "complete"` or
+`resultType: "input_required"`. For `input_required`, the client satisfies the
+embedded elicitation, sampling, or roots requests and sends the original
+operation again as a new POST with `inputResponses` and the opaque
+`requestState`. ExMCP never turns those inputs into independent server-to-client
+JSON-RPC requests on the HTTP stream.
+
+Long-lived notifications use a `subscriptions/listen` request. Its POST
+response stays open as SSE, begins with the subscription acknowledgement, and
+then carries only the notification categories selected by that request.
+Closing a modern request/subscription response stream is the cancellation
+signal; there is no session DELETE and no resumable `Last-Event-ID` cursor.
+
+A `:modern_only` HTTP mount returns `405 Method Not Allowed` for GET or DELETE
+on the MCP endpoint, ignores legacy session headers, and never exposes the
+deprecated HTTP+SSE endpoints. A dual-era mount must retain whatever legacy
+GET/DELETE behavior its enabled legacy clients need, so use request metadata
+and the settled client era—not the mere presence of HTTP—to reason about the
+wire shape.
+
+### Safe era fallback
+
+With `:prefer_modern`, ExMCP sends a bounded `server/discover` probe first. It
+falls back to `initialize` only when the response is recognized as evidence of
+a legacy peer and the transport is still usable. A recognized modern error,
+unsupported modern revision, timeout, authentication failure, or broken
+transport is surfaced instead of being silently downgraded. `:modern_only`
+never falls back.
+
+Successful modern observations are pinned by endpoint and relevant transport
+configuration. Legacy observations expire (five minutes by default) so an
+upgraded endpoint is eventually probed again. Pass `reset_era_cache: true` for
+an intentional re-probe after an operator-controlled deployment change.
+
 ### Phoenix/Plug Server
 
 ```elixir
@@ -112,6 +201,7 @@ scope "/mcp" do
   forward "/", ExMCP.HttpPlug,
     handler: MyApp.MCPServer,
     server_info: %{name: "my-app", version: "1.0.0"},
+    protocol_mode: :prefer_modern,
     cors_enabled: true
 end
 ```
@@ -134,7 +224,9 @@ The GET endpoint defaults to `/sse`; its first event is `endpoint`, containing
 the POST URI (default `/message`) and session ID. Configure those paths with
 `:legacy_http_sse_path` and `:legacy_http_sse_post_path`. The rc.5
 `:sse_enabled` option remains a deprecated alias until ExMCP 2.0. New servers
-should use Streamable HTTP and leave this option off.
+should use Streamable HTTP and leave this option off. Selecting
+`:prefer_legacy` or `:prefer_modern` does not enable this transport;
+`:modern_only` disables it even if the compatibility flag is present.
 
 ## BEAM-Local
 

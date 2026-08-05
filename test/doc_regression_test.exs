@@ -105,4 +105,62 @@ defmodule ExMCP.DocRegressionTest do
              "Found outdated 1-arity callback pattern in #{file} matching #{inspect(pattern)}"
     end
   end
+
+  test "1.0 migration documentation answers the dual-era rollout questions" do
+    migration = File.read!("docs/getting-started/MIGRATION.md")
+    mixfile = File.read!("mix.exs")
+
+    for term <- [
+          "rc.5 / legacy MCP",
+          "ExMCP 1.0 includes MCP 2026-07-28 support",
+          "Recommended rollout",
+          "Modern observations are pinned",
+          "legacy_http_sse: true"
+        ] do
+      assert migration =~ term, "migration guide is missing #{inspect(term)}"
+    end
+
+    refute migration =~ "ExMCP does not\n  implement it yet"
+    assert mixfile =~ ~s("docs/getting-started/MIGRATION.md")
+  end
+
+  test "operator and contributor guides document every protocol mode" do
+    for file <- ["docs/CONFIGURATION.md", "CLAUDE.md"] do
+      content = File.read!(file)
+
+      for mode <- ~w(legacy_only prefer_legacy prefer_modern modern_only) do
+        assert content =~ "`:#{mode}`", "#{file} does not explain :#{mode}"
+      end
+    end
+  end
+
+  test "architecture and transport guides preserve the modern wire invariants" do
+    architecture = File.read!("docs/ARCHITECTURE.md")
+    transport = File.read!("docs/TRANSPORT_GUIDE.md")
+
+    for term <- [
+          "Protocol Era Model",
+          "ExMCP.Client.EraProbe",
+          "ExMCP.Client.EraCache",
+          "ExMCP.Server.RequestContext",
+          "ExMCP.Protocol.ResultEnvelope"
+        ] do
+      assert architecture =~ term, "architecture guide is missing #{inspect(term)}"
+    end
+
+    refute architecture =~ "**Not implemented** — post-1.0"
+
+    for term <- [
+          "Modern POST shape",
+          "MCP-Protocol-Version",
+          "Mcp-Method",
+          "Mcp-Name",
+          "Mcp-Param-*",
+          "subscriptions/listen",
+          "resultType",
+          "405 Method Not Allowed"
+        ] do
+      assert transport =~ term, "transport guide is missing #{inspect(term)}"
+    end
+  end
 end

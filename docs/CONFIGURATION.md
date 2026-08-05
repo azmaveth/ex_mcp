@@ -12,32 +12,98 @@ def deps do
 end
 ```
 
-## Protocol Version
+## Protocol Eras and Modes
 
-ExMCP supports:
+ExMCP 1.0 implements two wire-incompatible MCP eras:
 
-- `2026-07-28` (modern stateless protocol; opt-in during the RC soak)
-- `2024-11-05`
-- `2025-03-26`
-- `2025-06-18`
-- `2025-11-25` (legacy default during the RC soak)
+- **Legacy:** `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`.
+- **Modern:** `2026-07-28`, with stateless discovery and per-request context.
 
-The latest supported version is returned by `ExMCP.protocol_version/0`.
+`protocol_mode` is the compatibility policy. Set it in application
+configuration for a deployment default:
 
 ```elixir
 config :ex_mcp,
-  protocol_mode: :prefer_modern
+  protocol_mode: :prefer_modern,
+  protocol_version: "2025-11-25"
 ```
 
-Modes are `:modern_only`, `:legacy_only`, `:prefer_modern`, and
-`:prefer_legacy`. The current RC defaults to `:legacy_only`; a later RC will
-soak `:prefer_modern` before 1.0.
+The current RC defaults to `:legacy_only`; a later RC will soak
+`:prefer_modern` before 1.0. Stable 1.0 will copy the final RC behavior without
+another default change. Production deployments should set the mode explicitly
+while the RC rollout is in progress.
 
-Validate versions with the public negotiator:
+| Mode | Enabled versions, in preference order | Client establishment | Server acceptance |
+|---|---|---|---|
+| `:legacy_only` | 2025-11-25 → older legacy | `initialize` only | Legacy only |
+| `:prefer_legacy` | Legacy revisions → 2026-07-28 | `initialize`, then a modern probe only after an eligible protocol failure on a live transport | Both eras |
+| `:prefer_modern` | 2026-07-28 → legacy revisions | `server/discover`, then legacy fallback only with positive compatibility evidence on a live transport | Both eras |
+| `:modern_only` | 2026-07-28 | `server/discover` only | Modern only |
+
+The two preference modes differ when used by a client. On a server both accept
+either era; their ordering controls the versions advertised by
+`server/discover`. A stdio or BEAM connection pins its first valid modern
+request or legacy `initialize` and rejects mixed-era traffic afterward.
+
+Configure one client or server independently when canarying:
+
+```elixir
+{:ok, client} =
+  ExMCP.Client.start_link(
+    transport: :http,
+    url: "https://mcp.example.com/mcp",
+    protocol_mode: :prefer_modern,
+    era_probe_timeout: 2_000,
+    era_cache_legacy_ttl: 300_000
+  )
+
+{:ok, server} =
+  MyServer.start_link(
+    transport: :stdio,
+    protocol_mode: :prefer_legacy
+  )
+
+# Phoenix/Plug servers accept the same option.
+forward "/mcp", ExMCP.HttpPlug,
+  handler: MyApp.MCPServer,
+  protocol_mode: :prefer_legacy
+```
+
+Client mode options:
+
+- `:era_probe_timeout` bounds the side-effect-free `server/discover` probe;
+  the default is `2_000` milliseconds.
+- `:era_cache_legacy_ttl` controls how long a legacy observation is reused;
+  the default is `300_000` milliseconds. Modern observations do not expire
+  and cannot be replaced by automatic fallback.
+- `:reset_era_cache` clears the observation for the exact transport identity
+  before connecting. Use it after an intentional endpoint upgrade, not as an
+  automatic retry strategy.
+- `:era_cache_key` supplies a stable identity for a custom transport that
+  cannot be identified from its connected state. Never include raw secrets;
+  ExMCP hashes the configured identity.
+
+Fallback is deliberately narrow. A modern timeout, transport failure,
+recognized modern error, authentication error, or cached-modern probe failure
+does not trigger `initialize`. Similarly, `:prefer_legacy` probes modern only
+after a protocol-level legacy failure while the transport remains usable.
+Strict modes never fall back.
+
+`protocol_version` is a revision preference, not an era switch. The
+application-level value and the compatibility helper
+`ExMCP.protocol_version/0` retain their rc.5 legacy semantics during the soak;
+use `protocol_mode` to enable modern negotiation. A per-client modern
+`protocol_version` is honored only when its mode enables the modern era.
+
+Use the public negotiator for legacy compatibility checks:
 
 ```elixir
 ExMCP.Protocol.VersionNegotiator.supported?("2025-11-25")
 ```
+
+See the [migration rollout](getting-started/MIGRATION.md#recommended-rollout)
+and the [architecture era model](ARCHITECTURE.md#protocol-era-model) before
+changing a production default.
 
 ## OAuth Client Registration
 
@@ -472,6 +538,7 @@ You can pass options directly to `ExMCP.Client.start_link/1`:
   ExMCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
+    protocol_mode: :prefer_modern,
     use_sse: true,
     request_timeout: 30_000
   )
@@ -496,6 +563,7 @@ config =
   ExMCP.Client.start_link(
     transport: :stdio,
     command: ["node", "server.js"],
+    protocol_mode: :prefer_modern,
     cd: "/path/to/project",
     env: [{"NODE_ENV", "production"}],
     timeout: 30_000
@@ -516,6 +584,7 @@ Supported options:
   ExMCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
+    protocol_mode: :prefer_modern,
     use_sse: true,
     headers: [{"Authorization", "Bearer #{token}"}],
     request_timeout: 30_000,
@@ -530,6 +599,7 @@ Supported options include:
 - `:url`
 - `:endpoint`
 - `:headers`
+- `:protocol_mode`
 - `:use_sse`
 - `:session_id`
 - `:protocol_version`
@@ -541,6 +611,11 @@ Supported options include:
 - `:security`
 - `:auth`
 - `:auth_provider`
+
+`use_sse` controls the legacy standalone GET stream. It may remain `true` on a
+dual-era client: once `server/discover` succeeds, ExMCP disables that stream,
+clears legacy session state, and uses JSON or POST-owned SSE for each modern
+request. `subscriptions/listen` opens its own POST response stream.
 
 ## BEAM-Local
 
@@ -563,9 +638,9 @@ pooling, service discovery, or process selection in your application layer.
 Servers (DSL or raw handlers) can be started with:
 
 ```elixir
-MyServer.start_link(transport: :beam)                    # DSL modules get this
-MyServer.start_link(transport: :stdio)
-MyServer.start_link(transport: :http, port: 4000)
+MyServer.start_link(transport: :beam, protocol_mode: :prefer_legacy)
+MyServer.start_link(transport: :stdio, protocol_mode: :prefer_legacy)
+MyServer.start_link(transport: :http, port: 4000, protocol_mode: :prefer_legacy)
 
 # For a raw handler module (no DSL):
 ExMCP.Server.HandlerServer.start_link(handler: MyHandler, transport: :beam)
@@ -579,6 +654,7 @@ Phoenix/Plug applications usually mount `ExMCP.HttpPlug`:
 forward "/mcp", ExMCP.HttpPlug,
   handler: MyApp.MCPServer,
   server_info: %{name: "my-app", version: "1.0.0"},
+  protocol_mode: :prefer_legacy,
   handler_call_timeout: 10_000,
   cors_enabled: true
 ```
@@ -593,6 +669,8 @@ Existing servers may retain it during ExMCP 1.x with
 `legacy_http_sse: true`. `sse_enabled: true` remains an rc.5-compatible alias
 until ExMCP 2.0. Optional `legacy_http_sse_path` and
 `legacy_http_sse_post_path` settings default to `/sse` and `/message`.
+Neither dual-era preference mode enables this transport. `:modern_only`
+disables it even when the compatibility option or its rc.5 alias is present.
 
 ## Multi Round-Trip Requests (MCP 2026-07-28)
 
