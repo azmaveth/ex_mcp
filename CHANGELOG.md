@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - Unreleased
+
+The package version remains `1.0.0-rc.5` until the final release gates and the
+modern-preferred RC soak complete. This section describes the intended stable
+1.0 boundary.
+
+### MCP wire protocol changes
+
+- **MCP 2026-07-28 lands before stable 1.0** — New connections prefer the modern
+  protocol era and fall back according to the configured protocol mode. The
+  `:prefer_legacy`, `:legacy_only`, and `:modern_only` modes provide explicit
+  rollout and rollback controls. A connection is pinned to one era after
+  negotiation; it never silently downgrades after application traffic starts.
+- **Modern initialization and discovery** — Modern sessions use the 2026-07-28
+  initialization shape and `server/discover`, including extension metadata.
+  Existing revisions remain supported throughout 1.x.
+- **Stateless Streamable HTTP routing** — Modern requests use body-derived
+  `Mcp-Method`, `Mcp-Params`, and `Mcp-Param-*` headers, per-request or
+  subscription POST-owned SSE streams, and modern GET/DELETE semantics. The
+  deprecated two-endpoint HTTP+SSE transport remains opt-in for legacy peers.
+- **Multi-round tool results** — Tools, prompts, and resource reads can return
+  input-required results with sealed `requestState`; clients dispatch input and
+  continue the operation under bounded round, expiry, replay, principal, and
+  key-rotation controls.
+- **Subscriptions and cache metadata** — `subscriptions/listen` replaces the
+  modern resource-only flow and supports bounded local storage plus optional
+  clustered PubSub fanout. Result envelopes validate `resultType`, `ttlMs`, and
+  `cacheScope`; 1.0 deliberately does not store or reuse cached responses.
+- **Tasks extension** — Store-backed handlers advertise and implement
+  `io.modelcontextprotocol/tasks`; clients advertise it only when explicitly
+  configured. Legacy task APIs remain available on legacy protocol revisions.
+- **Protocol deprecations are compatibility features in 1.x** — Roots,
+  sampling, logging, the old resource-subscription methods, and legacy
+  HTTP+SSE remain available where their negotiated revision supports them, with
+  documented migration paths.
+
+### ExMCP public API compatibility
+
+- **No rc.5 public surface was removed** — The compiled API comparison found no
+  removed module, exported function/arity, callback, named type, or struct
+  field. Existing handler callbacks are widened for MRTR and existing structs
+  only gain fields. See
+  [`docs/API_DIFF_RC5_TO_1_0.md`](docs/API_DIFF_RC5_TO_1_0.md).
+- **Modern APIs are additive** — Discovery, request context, MRTR,
+  subscriptions, Tasks-extension, era control, modern HTTP, and OAuth security
+  APIs are added alongside the rc.5 surface.
+- **Deprecated library APIs remain for all of 1.x** — `ExMCP.Server.Tools`,
+  `ExMCP.Server.Tools.Simplified`, companion modules, and deprecated content
+  transformation stubs target removal in 2.0.0, not a 1.x release.
+- **OAuth state ownership is intentionally hardened** —
+  `OAuthFlow.start_authorization_flow/1` rejects caller-supplied `:state`,
+  generates a single-use value, and returns it in the bound transaction. This
+  is the one public input-behavior change identified by the rc.5 API audit;
+  callers should retain the returned transaction instead of supplying state.
+
+### Operations and security
+
+- **Bounded modern state** — Era observations, MRTR continuations/replay data,
+  subscription queues, filters, lifetimes, and task records have explicit
+  bounds and cleanup behavior.
+- **Migration telemetry is privacy-safe** — Era selection/fallback/downgrade,
+  MRTR failures, ambiguous reissue, and subscription reconnect/pressure events
+  use bounded classifications and exclude headers, arguments, response
+  content, request state, credentials, and raw subscription identifiers.
+- **OAuth 2026 hardening** — Metadata fetching is address-pinned and
+  SSRF-resistant; transactions are atomic and single-use; credentials are
+  issuer- and authorization-context-bound; CIMD replaces DCR where available.
+  Modern POST-owned request streams now apply the configured provider token,
+  handle a bounded 401 refresh plus optional 403 scope step-up, and merge the
+  resulting token/provider state back only while that stream still owns the
+  request.
+
 ### Security
 
 - **OAuth metadata fetches are SSRF-hardened** — CIMD, Protected Resource Metadata,

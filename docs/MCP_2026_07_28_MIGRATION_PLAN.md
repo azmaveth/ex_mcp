@@ -624,7 +624,7 @@ and characterization tests pinning per-version wire output.
       deprecated compatibility shim over `VersionRegistry.capabilities_for_version/1`. The
       independent experimental vocabulary and its feature-flag-dependent tasks behavior are gone.
       (rc.5 §5.1.)
-- [ ] ~~Route `Handler.handle_url_elicitation/3`~~ — **shipping in rc.5 as Track G.** Phase 4
+- [x] ~~Route `Handler.handle_url_elicitation/3`~~ — **shipping in rc.5 as Track G.** Phase 4
       inherits a correct dispatcher; MRTR must reuse it rather than adding a second routing path.
 
 **Exit:** one `initialize` builder; `"2026-07-28"` known as `:modern` but not yet preferred or
@@ -930,8 +930,10 @@ compatibility suites, plus literal modern HTTP subscription streaming, cancellat
 abrupt-close reconnect and resynchronization. Literal ordinary-request coverage verifies ordered
 progress/log events, one final response, per-request log opt-in/thresholds, client-side
 correlation, and disconnect-driven handler cancellation. Clustered subscription fan-out and the
-reverse-proxy boundary matrix are complete; non-SSE POST recovery and OAuth-aware request-stream
-reauthentication remain final release-gate checks. The request-stream retry matrix covers
+reverse-proxy boundary matrix are complete. Non-SSE POST recovery and OAuth-aware request-stream
+reauthentication are also covered: a live HTTP test drives a POST-owned stream through a 401,
+provider refresh, persisted token/provider state and final SSE response, plus a bounded 403
+insufficient-scope step-up and stale-stream isolation. The request-stream retry matrix covers
 retry-once, safe-only `outcome_unknown`, a fresh
 JSON-RPC id, original-deadline enforcement, non-retryable failures and stable idempotency keys.
 
@@ -1203,13 +1205,19 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       regression tests lock the reader-critical claims. `mix docs`, the 5-test documentation
       suite, and 107 focused era, request-context, HTTP Plug, request-stream, subscription and
       header tests pass.**
-- [ ] `CHANGELOG.md` `[1.0.0]` separates MCP wire changes from ExMCP public-API compatibility;
-      bump `mix.exs` only after the final RC soak and release gates pass.
+- [x] `CHANGELOG.md` `[1.0.0]` separates MCP wire changes from ExMCP public-API compatibility.
+      The package intentionally remains `1.0.0-rc.5`; bump `mix.exs` only after the final RC
+      soak and release gates pass.
 - [ ] Green: `mix test.suite ci`, `mix credo`, `mix dialyzer`, `mix sobelow --skip`,
       `scripts/conformance.sh` against a 2026-07-28-aware harness.
-- [ ] Produce an API-diff report against `v1.0.0-rc.5`. Restore every removed public function,
+- [x] Produce an API-diff report against `v1.0.0-rc.5`. Restore every removed public function,
       callback, struct field and return shape or delay stable 1.0; document additive APIs and
       protocol-driven behavior changes, but do not use release notes to waive a public removal.
+      **`docs/API_DIFF_RC5_TO_1_0.md` compares independently compiled BEAM snapshots: 236 → 290
+      modules, 2,288 → 2,689 exports, 93 → 115 callbacks, 363 → 497 struct fields, with zero
+      removals in those categories. Every changed typespec was inspected; callback changes are
+      supersets, struct/type changes are additive or corrective, and the intentional OAuth
+      caller-supplied-state hardening is disclosed as an input-behavior change.**
 - [x] Phase 8 shipped rather than being deferred: store-backed handlers automatically advertise
       `io.modelcontextprotocol/tasks` through both handler and HTTP discovery paths, handlers
       without task support do not, and clients advertise it only when explicitly configured. The
