@@ -38,6 +38,22 @@ defmodule ExMCP.Test.ModernStdioServer do
       end
     end)
   end
+
+  tool "publish_resource_update", "Publish a resource subscription event" do
+    param(:uri, :string, required: true)
+
+    run(fn %{"uri" => uri}, state ->
+      ExMCP.Server.notify_resource_update(self(), uri)
+      {:ok, ToolResult.text("published"), state}
+    end)
+  end
+
+  tool "publish_tools_changed", "Publish a tools list-changed event" do
+    run(fn _arguments, state ->
+      ExMCP.Server.notify_tools_changed(self())
+      {:ok, ToolResult.text("published"), state}
+    end)
+  end
 end
 
 {:ok, _server} =

@@ -1,0 +1,254 @@
+defmodule ExMCP.Server.SubscriptionsTest do
+  use ExUnit.Case, async: true
+
+  alias ExMCP.Server.Subscriptions
+
+  defmodule RejectingAdapter do
+    @behaviour ExMCP.Server.Subscriptions.Adapter
+
+    @impl true
+    def init(test_pid: test_pid), do: {:ok, test_pid}
+
+    @impl true
+    def put(entry, test_pid) do
+      send(test_pid, {:listener_started, entry.listener_pid})
+      {:error, :storage_unavailable, test_pid}
+    end
+
+    @impl true
+    def delete(_token, test_pid), do: {:ok, test_pid}
+
+    @impl true
+    def all(test_pid), do: {[], test_pid}
+  end
+
+  @subscription_id_key "io.modelcontextprotocol/subscriptionId"
+
+  test "acknowledges first, stamps correlation metadata, and filters publications" do
+    registry = start_registry()
+
+    assert {:ok, entry} =
+             Subscriptions.listen(
+               41,
+               %{
+                 "toolsListChanged" => true,
+                 "resourceSubscriptions" => ["test://one"]
+               },
+               self(),
+               registry: registry
+             )
+
+    assert_receive {:ex_mcp_subscription_message, listener, :acknowledged, acknowledged}
+    assert listener == entry.listener_pid
+
+    assert acknowledged["method"] == "notifications/subscriptions/acknowledged"
+    assert acknowledged["params"]["_meta"][@subscription_id_key] == 41
+    assert acknowledged["params"]["notifications"] == entry.filter
+
+    assert %{subscribers: 1, enqueued: 1} =
+             publish(registry, "notifications/tools/list_changed")
+
+    assert %{subscribers: 1, enqueued: 1} =
+             publish(registry, "notifications/resources/updated", %{"uri" => "test://one"})
+
+    assert %{subscribers: 0} =
+             publish(registry, "notifications/resources/updated", %{"uri" => "test://other"})
+
+    assert %{subscribers: 0} =
+             publish(registry, "notifications/prompts/list_changed")
+
+    refute_receive {:ex_mcp_subscription_message, ^listener, :notification, _message}
+
+    Subscriptions.delivered(listener)
+
+    assert_receive {:ex_mcp_subscription_message, ^listener, :notification, tools_changed}
+    assert tools_changed["method"] == "notifications/tools/list_changed"
+    assert tools_changed["params"]["_meta"][@subscription_id_key] == 41
+
+    Subscriptions.delivered(listener)
+
+    assert_receive {:ex_mcp_subscription_message, ^listener, :notification, resource_updated}
+    assert resource_updated["params"]["uri"] == "test://one"
+    assert resource_updated["params"]["_meta"][@subscription_id_key] == 41
+  end
+
+  test "authorization narrows the acknowledged filter and is rechecked for every publication" do
+    gate = :atomics.new(1, signed: false)
+    :atomics.put(gate, 1, 1)
+
+    registry =
+      start_registry(
+        authorize_filter: fn requested, context ->
+          assert context.principal_id == "principal-1"
+          {:ok, Map.take(requested, ["resourceSubscriptions"])}
+        end,
+        authorize_publication: fn _method, _params, context ->
+          context.principal_id == "principal-1" and :atomics.get(gate, 1) == 1
+        end
+      )
+
+    assert {:ok, entry} =
+             Subscriptions.listen(
+               "subscription-a",
+               %{
+                 "toolsListChanged" => true,
+                 "resourceSubscriptions" => ["test://private"]
+               },
+               self(),
+               registry: registry,
+               principal_id: "principal-1",
+               tenant_id: "tenant-1"
+             )
+
+    assert entry.filter == %{"resourceSubscriptions" => ["test://private"]}
+    assert entry.principal_id == "principal-1"
+    assert entry.tenant_id == "tenant-1"
+
+    assert_receive {:ex_mcp_subscription_message, listener, :acknowledged, acknowledged}
+    assert acknowledged["params"]["notifications"] == entry.filter
+    Subscriptions.delivered(listener)
+
+    :atomics.put(gate, 1, 0)
+
+    assert %{subscribers: 1, closed: 1} =
+             publish(
+               registry,
+               "notifications/resources/updated",
+               %{"uri" => "test://private"}
+             )
+
+    assert_receive {:ex_mcp_subscription_message, ^listener, :complete, completed}
+    assert completed["id"] == "subscription-a"
+    assert completed["result"]["_meta"][@subscription_id_key] == "subscription-a"
+  end
+
+  test "enforces global, principal, and tenant listener limits atomically" do
+    registry = start_registry(max_global: 3, max_per_principal: 1, max_per_tenant: 2)
+
+    assert {:ok, _entry} =
+             listen(registry, 1, principal_id: "p1", tenant_id: "shared")
+
+    assert {:error, {:subscription_limit_exceeded, :principal}} =
+             listen(registry, 2, principal_id: "p1", tenant_id: "shared")
+
+    assert {:ok, _entry} =
+             listen(registry, 3, principal_id: "p2", tenant_id: "shared")
+
+    assert {:error, {:subscription_limit_exceeded, :tenant}} =
+             listen(registry, 4, principal_id: "p3", tenant_id: "shared")
+
+    assert {:ok, _entry} =
+             listen(registry, 5, principal_id: "p3", tenant_id: "other")
+
+    assert {:error, {:subscription_limit_exceeded, :global}} =
+             listen(registry, 6, principal_id: "p4", tenant_id: "other-2")
+  end
+
+  test "coalesces safe updates and closes a listener whose bounded queue overflows" do
+    registry = start_registry(max_queue: 1)
+
+    assert {:ok, entry} =
+             Subscriptions.listen(
+               9,
+               %{
+                 "toolsListChanged" => true,
+                 "resourceSubscriptions" => ["test://one"]
+               },
+               self(),
+               registry: registry
+             )
+
+    assert_receive {:ex_mcp_subscription_message, listener, :acknowledged, _ack}
+
+    assert %{enqueued: 1} =
+             publish(registry, "notifications/resources/updated", %{"uri" => "test://one"})
+
+    assert %{coalesced: 1} =
+             publish(registry, "notifications/resources/updated", %{"uri" => "test://one"})
+
+    assert %{closed: 1} = publish(registry, "notifications/tools/list_changed")
+
+    Subscriptions.delivered(listener)
+    assert_receive {:ex_mcp_subscription_message, ^listener, :complete, completed}
+    assert completed["id"] == entry.subscription_id
+    refute_receive {:ex_mcp_subscription_message, ^listener, :notification, _message}
+  end
+
+  test "owner termination removes registrations and internal tokens are distinct from wire ids" do
+    registry = start_registry()
+    owner = spawn(fn -> Process.sleep(:infinity) end)
+
+    assert {:ok, entry} =
+             Subscriptions.listen("client-visible", %{}, owner, registry: registry)
+
+    assert entry.token != "client-visible"
+    assert byte_size(entry.token) >= 20
+    assert length(Subscriptions.entries(registry: registry)) == 1
+
+    Process.exit(owner, :kill)
+    assert_eventually(fn -> Subscriptions.entries(registry: registry) == [] end)
+  end
+
+  test "rejects authorizers that broaden the requested filter" do
+    registry =
+      start_registry(
+        authorize_filter: fn _requested, _context ->
+          {:ok, %{"toolsListChanged" => true}}
+        end
+      )
+
+    assert {:error, :authorizer_broadened_filter} =
+             Subscriptions.listen(1, %{}, self(), registry: registry)
+  end
+
+  test "rejects invalid publication authorizers before starting a listener" do
+    registry = start_registry()
+
+    assert {:error, :invalid_publication_authorizer} =
+             Subscriptions.listen(1, %{}, self(),
+               registry: registry,
+               authorize_publication: :not_a_callback
+             )
+
+    assert Subscriptions.entries(registry: registry) == []
+  end
+
+  test "terminates a listener when adapter registration fails" do
+    registry = start_registry(adapter: {RejectingAdapter, test_pid: self()})
+
+    assert {:error, :storage_unavailable} =
+             Subscriptions.listen(1, %{}, self(), registry: registry)
+
+    assert_receive {:listener_started, listener}
+    refute Process.alive?(listener)
+    assert Subscriptions.entries(registry: registry) == []
+  end
+
+  defp start_registry(opts \\ []) do
+    child = Supervisor.child_spec({Subscriptions, Keyword.put(opts, :name, nil)}, id: make_ref())
+    start_supervised!(child)
+  end
+
+  defp listen(registry, id, opts) do
+    Subscriptions.listen(id, %{}, self(), Keyword.put(opts, :registry, registry))
+  end
+
+  defp publish(registry, method, params \\ %{}) do
+    Subscriptions.publish(method, params, registry: registry)
+  end
+
+  defp assert_eventually(fun, attempts \\ 50)
+
+  defp assert_eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      :ok
+    else
+      receive do
+      after
+        10 -> assert_eventually(fun, attempts - 1)
+      end
+    end
+  end
+
+  defp assert_eventually(fun, 0), do: assert(fun.())
+end

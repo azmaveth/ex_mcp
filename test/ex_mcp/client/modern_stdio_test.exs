@@ -2,6 +2,7 @@ defmodule ExMCP.Client.ModernStdioTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.Client
+  alias ExMCP.Client.Subscription
 
   @fixture Path.expand("../../../priv/test/modern_stdio_server.exs", __DIR__)
   @project_root Path.expand("../../..", __DIR__)
@@ -78,5 +79,45 @@ defmodule ExMCP.Client.ModernStdioTest do
     assert mrtr_result["resultType"] == "complete"
     assert mrtr_result["content"] == [%{"type" => "text", "text" => "Mina:stdio"}]
     assert_receive {:stdio_elicitation, "Choose a stdio display name"}
+
+    assert {:ok, subscription} =
+             Client.listen(
+               client,
+               %{
+                 "toolsListChanged" => true,
+                 "resourceSubscriptions" => ["test://stdio-resource"]
+               },
+               timeout: 5_000
+             )
+
+    assert {:ok, publish_result} =
+             Client.call_tool(
+               client,
+               "publish_resource_update",
+               %{"uri" => "test://stdio-resource"},
+               format: :map,
+               timeout: 5_000
+             )
+
+    assert publish_result["content"] == [%{"type" => "text", "text" => "published"}]
+
+    assert_receive {:ex_mcp_subscription, ^subscription, "notifications/resources/updated",
+                    subscription_params}
+
+    assert subscription_params["uri"] == "test://stdio-resource"
+
+    assert {:ok, _publish_result} =
+             Client.call_tool(client, "publish_tools_changed", %{},
+               format: :map,
+               timeout: 5_000
+             )
+
+    assert_receive {:ex_mcp_subscription, ^subscription, "notifications/tools/list_changed",
+                    tools_params}
+
+    assert tools_params["_meta"]["io.modelcontextprotocol/subscriptionId"] ==
+             subscription.request_id
+
+    assert :ok = Subscription.cancel(subscription)
   end
 end

@@ -32,14 +32,44 @@ defmodule ExMCP.Plugs.ProtocolVersion do
   def init(opts), do: opts
 
   @impl true
-  def call(conn, _opts) do
-    if ExMCP.FeatureFlags.enabled?(:protocol_version_header) do
-      validate_protocol_version(conn)
-    else
-      # When feature is disabled, just set default version
-      assign(conn, :mcp_version, default_version())
+  def call(conn, opts) do
+    values = get_req_header(conn, "mcp-protocol-version")
+
+    case {values, Keyword.get(opts, :protocol_mode)} do
+      {[version], _mode} when version == "2026-07-28" ->
+        validate_modern_protocol_version(conn, version)
+
+      {values, :modern_only} ->
+        validate_modern_only_header(conn, values)
+
+      {_legacy_or_missing, _mode} ->
+        if ExMCP.FeatureFlags.enabled?(:protocol_version_header) do
+          validate_protocol_version(conn)
+        else
+          # Legacy enforcement remains behind its compatibility flag. Modern
+          # headers are always validated by the clauses above.
+          assign(conn, :mcp_version, default_version())
+        end
     end
   end
+
+  defp validate_modern_protocol_version(conn, version) do
+    if VersionRegistry.modern?(version) and VersionRegistry.known?(version) do
+      assign(conn, :mcp_version, version)
+    else
+      reject_version(conn, version, VersionRegistry.known_versions())
+    end
+  end
+
+  defp validate_modern_only_header(conn, [version]) do
+    validate_modern_protocol_version(conn, version)
+  end
+
+  defp validate_modern_only_header(conn, []),
+    do: reject_version(conn, "missing", VersionRegistry.supported_versions(:modern_only))
+
+  defp validate_modern_only_header(conn, _duplicates),
+    do: reject_version(conn, "duplicate", VersionRegistry.supported_versions(:modern_only))
 
   defp validate_protocol_version(conn) do
     default = default_version()
@@ -59,8 +89,8 @@ defmodule ExMCP.Plugs.ProtocolVersion do
     end
   end
 
-  defp reject_version(conn, invalid_version) do
-    Logger.warning("Invalid MCP-Protocol-Version: #{invalid_version}")
+  defp reject_version(conn, _invalid_version, supported \\ supported_versions()) do
+    Logger.warning("Invalid MCP-Protocol-Version header")
 
     error_response = %{
       jsonrpc: "2.0",
@@ -68,8 +98,8 @@ defmodule ExMCP.Plugs.ProtocolVersion do
         code: -32600,
         message: "Invalid Request",
         data: %{
-          reason: "Unsupported protocol version: #{invalid_version}",
-          supported_versions: supported_versions()
+          reason: "Unsupported protocol version",
+          supported_versions: supported
         }
       }
     }

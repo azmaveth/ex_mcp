@@ -4,6 +4,12 @@ defmodule ExMCP.Internal.SSETest do
   alias ExMCP.Internal.SSE
 
   describe "parse_complete/1" do
+    test "parses CRLF-framed events and ignores comment keepalives" do
+      body = ":\r\n\r\ndata: {\"ok\":true}\r\n\r\n"
+
+      assert SSE.parse_complete(body) == [%{data: ~s({"ok":true})}]
+    end
+
     test "parses complete SSE response bodies into atom-keyed events" do
       body = """
       event: message
@@ -41,6 +47,12 @@ defmodule ExMCP.Internal.SSETest do
   end
 
   describe "parse_stream/1" do
+    test "parses CRLF chunks and discards comment keepalives" do
+      body = ":\r\n\r\ndata: {\"ok\":true}\r\n\r\n"
+
+      assert SSE.parse_stream(body) == {[%{"data" => ~s({"ok":true})}], ""}
+    end
+
     test "parses complete streaming events into string-keyed events" do
       body = "event: update\nid: 1\nretry: 5000\ndata: hello\n\n"
 

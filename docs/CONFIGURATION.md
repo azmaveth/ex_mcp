@@ -237,6 +237,111 @@ resolver functions. OAuth token `sub` and `tenant_id` claims are used by
 default when available; these identities are authenticated into the sealed
 state without embedding bearer tokens.
 
+## Modern subscriptions (MCP 2026-07-28)
+
+Open an immutable notification stream with `ExMCP.Client.listen/3`. The call
+returns only after `notifications/subscriptions/acknowledged`; events are sent
+to the subscribing process with the acknowledged subscription reference:
+
+```elixir
+{:ok, subscription} =
+  ExMCP.Client.listen(client, %{
+    "toolsListChanged" => true,
+    "resourceSubscriptions" => ["file:///project/config.json"]
+  })
+
+receive do
+  {:ex_mcp_subscription, ^subscription, method, params} ->
+    handle_notification(method, params)
+end
+
+:ok = ExMCP.Client.Subscription.cancel(subscription)
+```
+
+`subscribe_resource/3` and `unsubscribe_resource/3` retain their legacy RPC
+behavior before 2026-07-28. On a modern connection they maintain one
+ref-counted desired URI set. Changes open and acknowledge an immutable
+replacement stream before cancelling the old stream; only the committed
+subscription ID delivers compatibility events:
+
+```elixir
+{:ok, _subscription} = ExMCP.Client.subscribe_resource(client, uri)
+
+receive do
+  {:ex_mcp_resource_updated, ^uri, params} -> handle_update(params)
+end
+```
+
+After reconnect, subscriptions are opened with fresh JSON-RPC IDs. ExMCP
+refetches each affected list/resource, then emits
+`{:ex_mcp_subscription_resync, subscription, {:complete, snapshot}}` for a
+generic subscription or `{:ex_mcp_resource_resync, subscription, snapshot}`
+for the resource compatibility wrapper before releasing queued events.
+
+Server listener defaults are 1,000 global registrations, 100 per principal,
+500 per tenant, 100 queued events per listener, a one-hour maximum lifetime,
+256 resource URIs, and a 64 KiB filter. Configure the registry child or pass
+the corresponding server options (`:subscription_max_queue`,
+`:subscription_max_lifetime_ms`, `:authorize_subscription_filter`, and
+`:authorize_subscription_publication`). Publication authorization is checked
+again for every event; denial gracefully closes the stream.
+
+Over modern Streamable HTTP, each `subscriptions/listen` call is a dedicated
+POST response stream. Cancelling `ExMCP.Client.Subscription` closes that HTTP
+response; it does not POST `notifications/cancelled`. An unexpected response
+close opens a new listen request with a fresh JSON-RPC ID and runs the resync
+flow described above. The server sends an SSE comment keepalive every 15
+seconds by default so quiet disconnects are detected and intermediaries do not
+expire an otherwise healthy stream:
+
+```elixir
+forward "/mcp", ExMCP.HttpPlug,
+  handler: MyApp.MCPServer,
+  protocol_mode: :modern_only,
+  subscription_keepalive_interval_ms: 15_000,
+  subscription_max_lifetime_ms: :timer.hours(1)
+```
+
+Set `:subscription_keepalive_interval_ms` to a positive integer or
+`:infinity`. Disabling keepalives delays detection of a quiet peer disconnect
+until the next notification or server-initiated closure.
+
+## Modern Streamable HTTP headers (MCP 2026-07-28)
+
+After a connection settles on MCP 2026-07-28, the HTTP client is stateless:
+it neither sends nor retains `Mcp-Session-Id` or `Last-Event-ID`. Every POST
+mirrors the body protocol version and method into `MCP-Protocol-Version` and
+`Mcp-Method`; `tools/call`, `resources/read`, and `prompts/get` also send
+`Mcp-Name`. Unsafe UTF-8, leading/trailing whitespace, control characters,
+and values shaped like the Base64 sentinel are encoded automatically.
+
+Tool input properties may opt into routing headers:
+
+```elixir
+%{
+  "type" => "object",
+  "properties" => %{
+    "region" => %{
+      "type" => "string",
+      "x-mcp-header" => "Region"
+    }
+  }
+}
+```
+
+After `tools/list`, a modern HTTP `tools/call` mirrors a present non-null
+argument as `Mcp-Param-Region`. String, integer, and boolean properties are
+supported, including nested property paths. Invalid, duplicate, unreachable,
+or unsupported annotations cause the server to omit that tool from a modern
+list response. On a `-32020` header mismatch the client refreshes `tools/list`
+and retries the tool call exactly once inside the original timeout.
+
+The server validates standard and annotated headers against the body before
+tool dispatch. Custom raw `Mcp-Method`, `Mcp-Name`, `Mcp-Session-Id`,
+`Last-Event-ID`, and `Mcp-Param-*` values supplied through the client's
+`:headers` option are removed and replaced by protocol-derived values on
+modern requests.
+
 Pass request-local context into a handler with `:handler_opts`. The option can
 be a static term, a one-arity function called with the `Plug.Conn`, a two-arity
 function called with the `Plug.Conn` and decoded JSON-RPC request, or an MFA

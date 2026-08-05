@@ -236,6 +236,7 @@ defmodule ExMCP.MessageProcessor do
       |> assign(:server_capabilities, configured_server_capabilities(handler, opts))
       |> assign(:protocol_mode, Map.get(opts, :protocol_mode))
       |> assign(:instructions, Map.get(opts, :instructions))
+      |> assign(:request_headers, Map.get(opts, :request_headers, []))
 
     cond do
       # If we have a server PID, use it directly

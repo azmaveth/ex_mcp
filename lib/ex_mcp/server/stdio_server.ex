@@ -51,7 +51,8 @@ defmodule ExMCP.Server.StdioServer do
   require Logger
 
   alias ExMCP.Internal.{JSONRPC, StdioLoggerConfig, VersionRegistry}
-  alias ExMCP.Server.{Dispatch, RequestContext, RequestState, ResultNormalizer}
+  alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Server.{Dispatch, RequestContext, RequestState, ResultNormalizer, Subscriptions}
 
   @doc """
   Starts the STDIO server.
@@ -79,6 +80,7 @@ defmodule ExMCP.Server.StdioServer do
     configure_stdio_logging()
 
     module = Keyword.fetch!(opts, :module)
+    {subscription_opts, owned_subscription_runtime} = ensure_subscription_runtime(opts)
 
     # Initialize the handler module state
     initial_state =
@@ -105,7 +107,10 @@ defmodule ExMCP.Server.StdioServer do
       principal_id: Keyword.get(opts, :principal_id),
       tenant_id: Keyword.get(opts, :tenant_id),
       replay_cache: Keyword.get(opts, :replay_cache),
-      require_replay_protection: Keyword.get(opts, :require_replay_protection, false)
+      require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
+      subscriptions: %{},
+      subscription_options: Subscriptions.runtime_options(subscription_opts),
+      owned_subscription_runtime: owned_subscription_runtime
     }
 
     Logger.info("STDIO MCP server started with handler: #{module}")
@@ -154,6 +159,21 @@ defmodule ExMCP.Server.StdioServer do
     {:stop, :normal, state}
   end
 
+  def handle_info(
+        {:ex_mcp_subscription_message, listener, kind, message},
+        state
+      ) do
+    send_response(message, state)
+    Subscriptions.delivered(listener)
+
+    state =
+      if kind == :complete,
+        do: remove_subscription_by_listener(state, listener),
+        else: state
+
+    {:noreply, state}
+  end
+
   @impl GenServer
   def handle_call(:get_server_info, _from, state) do
     module = state.handler_module
@@ -187,6 +207,25 @@ defmodule ExMCP.Server.StdioServer do
     end
   end
 
+  @impl GenServer
+  def handle_cast({:notify_resource_update, uri}, state) do
+    publish_or_send("notifications/resources/updated", %{"uri" => uri}, state)
+  end
+
+  def handle_cast({:notify_resources_changed}, state) do
+    publish_or_send("notifications/resources/list_changed", %{}, state)
+  end
+
+  def handle_cast({:notify_tools_changed}, state) do
+    publish_or_send("notifications/tools/list_changed", %{}, state)
+  end
+
+  def handle_cast({:notify_prompts_changed}, state) do
+    publish_or_send("notifications/prompts/list_changed", %{}, state)
+  end
+
+  def handle_cast(_request, state), do: {:noreply, state}
+
   # Handle incoming MCP requests.
   #
   # Method coverage and result shaping come from ExMCP.Server.Dispatch, the
@@ -205,6 +244,23 @@ defmodule ExMCP.Server.StdioServer do
     state
     |> dispatch(request)
     |> put_protocol_version(negotiated_version)
+  end
+
+  defp handle_request(%{"method" => "subscriptions/listen"} = request, state) do
+    open_subscription(request, state)
+  end
+
+  defp handle_request(%{"method" => "notifications/cancelled"} = request, state) do
+    request_id = get_in(request, ["params", "requestId"])
+
+    case Map.pop(state.subscriptions, request_id) do
+      {nil, _subscriptions} ->
+        dispatch(state, request)
+
+      {_listener, subscriptions} ->
+        :ok = Subscriptions.cancel(self(), request_id, state.subscription_options)
+        {:noreply, %{state | subscriptions: subscriptions}}
+    end
   end
 
   defp handle_request(%{"method" => method} = request, state) do
@@ -355,5 +411,108 @@ defmodule ExMCP.Server.StdioServer do
 
         read_stdin_loop(server_pid)
     end
+  end
+
+  @impl GenServer
+  def terminate(reason, state) do
+    Subscriptions.remove_transport(self(), state.subscription_options)
+
+    if function_exported?(state.handler_module, :terminate, 2) do
+      state.handler_module.terminate(reason, state.handler_state)
+    end
+
+    stop_owned_subscription_runtime(state.owned_subscription_runtime)
+  end
+
+  defp open_subscription(request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params") || %{}
+
+    with {:ok, context} <- RequestContext.from_message(request),
+         :ok <- RequestContext.validate_protocol_mode(context, effective_protocol_mode(state)),
+         :ok <- RequestContext.validate_method(context),
+         :modern <- context.era,
+         {:ok, entry} <-
+           Subscriptions.listen(
+             id,
+             Map.get(params, "notifications"),
+             self(),
+             state.subscription_options
+           ) do
+      subscriptions = Map.put(state.subscriptions, id, entry.listener_pid)
+      {:noreply, %{state | subscriptions: subscriptions, connection_era: :modern}}
+    else
+      {:error, reason} ->
+        send_response(subscription_error(id, reason), state)
+        {:noreply, state}
+
+      _other ->
+        send_response(subscription_error(id, :modern_protocol_required), state)
+        {:noreply, state}
+    end
+  end
+
+  defp subscription_error(id, reason) do
+    JSONRPC.error(id, ErrorCodes.invalid_params(), "Subscription request rejected", %{
+      "reason" => to_string_reason(reason)
+    })
+  end
+
+  defp to_string_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp to_string_reason(reason), do: inspect(reason)
+
+  defp publish_or_send(method, params, state) do
+    if modern_connection?(state) do
+      _counts =
+        Subscriptions.publish(
+          method,
+          params,
+          Keyword.put(state.subscription_options, :transport_ref, self())
+        )
+
+      {:noreply, state}
+    else
+      send_response(%{"jsonrpc" => "2.0", "method" => method, "params" => params}, state)
+      {:noreply, state}
+    end
+  end
+
+  defp modern_connection?(%{connection_era: :modern}), do: true
+  defp modern_connection?(%{protocol_version: version}), do: VersionRegistry.modern?(version)
+
+  defp remove_subscription_by_listener(state, listener) do
+    subscriptions =
+      Map.reject(state.subscriptions, fn {_id, listener_pid} -> listener_pid == listener end)
+
+    %{state | subscriptions: subscriptions}
+  end
+
+  defp ensure_subscription_runtime(opts) do
+    cond do
+      Keyword.has_key?(opts, :subscription_registry) ->
+        {opts, nil}
+
+      Process.whereis(Subscriptions) ->
+        {opts, nil}
+
+      true ->
+        {:ok, supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
+
+        {:ok, registry} =
+          Subscriptions.start_link(
+            name: nil,
+            listener_supervisor: supervisor
+          )
+
+        {Keyword.put(opts, :subscription_registry, registry), {registry, supervisor}}
+    end
+  end
+
+  defp stop_owned_subscription_runtime(nil), do: :ok
+
+  defp stop_owned_subscription_runtime({registry, supervisor}) do
+    if Process.alive?(registry), do: GenServer.stop(registry, :normal)
+    if Process.alive?(supervisor), do: Supervisor.stop(supervisor, :normal)
+    :ok
   end
 end

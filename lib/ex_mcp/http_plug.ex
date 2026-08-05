@@ -78,6 +78,12 @@ defmodule ExMCP.HttpPlug do
   the stream; `:oneshot` writes a single `connected` event and returns, which
   suits test harnesses and health checks.
 
+  MCP 2026-07-28 does not use that GET stream. A modern
+  `subscriptions/listen` POST owns its SSE response directly. The response
+  process closes its registry entry when the client disconnects and emits SSE
+  comment keepalives every `:subscription_keepalive_interval_ms` milliseconds
+  (default: `15_000`; set `:infinity` to disable).
+
   ### Session ids
 
   Client-supplied `mcp-session-id` (and legacy `x-session-id`) header values
@@ -97,10 +103,13 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.Authorization.ServerGuard
   alias ExMCP.FeatureFlags
   alias ExMCP.HttpPlug.Core
+  alias ExMCP.HttpPlug.ModernStream
   alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEHandler
   alias ExMCP.Internal.{JSONRPC, VersionRegistry}
-  alias ExMCP.Protocol.ErrorCodes
+  alias ExMCP.Protocol.{ErrorCodes, Methods}
+  alias ExMCP.Server.{RequestContext, Subscriptions}
+  alias ExMCP.Transport.HTTP.RequestHeaders
 
   @session_id_max_bytes 128
 
@@ -136,6 +145,15 @@ defmodule ExMCP.HttpPlug do
       require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
       principal_id: Keyword.get(opts, :principal_id),
       tenant_id: Keyword.get(opts, :tenant_id),
+      subscription_registry: Keyword.get(opts, :subscription_registry),
+      authorize_subscription_filter: Keyword.get(opts, :authorize_subscription_filter),
+      authorize_subscription_publication: Keyword.get(opts, :authorize_subscription_publication),
+      subscription_max_queue: Keyword.get(opts, :subscription_max_queue),
+      subscription_max_lifetime_ms: Keyword.get(opts, :subscription_max_lifetime_ms),
+      subscription_keepalive_interval_ms:
+        subscription_keepalive_interval!(
+          Keyword.get(opts, :subscription_keepalive_interval_ms, 15_000)
+        ),
       session_manager: Keyword.get(opts, :session_manager, ExMCP.SessionManager),
       sse_enabled: Keyword.get(opts, :sse_enabled, true),
       sse_mode: Keyword.get(opts, :sse_mode, default_sse_mode()),
@@ -179,8 +197,21 @@ defmodule ExMCP.HttpPlug do
   end
 
   defp dispatch(conn, opts) do
-    do_dispatch(conn.method, conn.path_info, conn, opts)
+    if modern_only_disallowed_method?(conn, opts) do
+      conn
+      |> put_resp_header("allow", "POST")
+      |> put_resp_content_type("application/json")
+      |> send_resp(405, Jason.encode!(%{"error" => "Method not allowed"}))
+    else
+      do_dispatch(conn.method, conn.path_info, conn, opts)
+    end
   end
+
+  defp modern_only_disallowed_method?(conn, %{protocol_mode: :modern_only} = opts) do
+    conn.method in ["GET", "DELETE"] and conn.request_path == opts.endpoint
+  end
+
+  defp modern_only_disallowed_method?(_conn, _opts), do: false
 
   defp do_dispatch("OPTIONS", _path, conn, opts) do
     Logger.debug("HttpPlug: OPTIONS request")
@@ -367,9 +398,11 @@ defmodule ExMCP.HttpPlug do
 
   defp do_handle_mcp_request(conn, opts, session_id) do
     with {:ok, conn} <- validate_request_origin(conn, opts),
-         {:ok, conn} <- validate_protocol_version(conn),
          {:ok, body, conn} <- read_or_cached_body(conn, opts),
          {:ok, request} <- parse_json(body),
+         conn = assign_request_protocol_version(conn, request),
+         {:ok, conn} <- validate_protocol_version(conn, request),
+         :ok <- validate_modern_method(request),
          {:ok, token_info} <- authorize_request(conn, request, opts),
          {:ok, opts} <- resolve_handler_opts(conn, request, opts),
          {:ok, opts} <- resolve_mrtr_identity(conn, request, token_info, opts),
@@ -379,10 +412,34 @@ defmodule ExMCP.HttpPlug do
              session_id,
              %{transport: :http}
            ),
-         result <- process_mcp_request(request, Map.put(opts, :session_id, session_id)) do
+         result <-
+           process_mcp_request(
+             request,
+             opts
+             |> Map.put(:session_id, session_id)
+             |> Map.put(:request_headers, conn.req_headers)
+           ) do
       Logger.debug("MCP request processed, result: #{inspect(result)}")
 
       case result do
+        {:subscription, entry} ->
+          :telemetry.execute(
+            [:ex_mcp, :server, :http, :response],
+            %{},
+            %{status: 200, streaming: true}
+          )
+
+          subscription_options = subscription_options(opts)
+
+          conn
+          |> maybe_add_cors_headers(opts)
+          |> add_protocol_version_header()
+          |> put_resp_header("content-type", "text/event-stream")
+          |> put_resp_header("x-accel-buffering", "no")
+          |> put_resp_header("cache-control", "no-cache")
+          |> send_chunked(200)
+          |> ModernStream.serve(entry, opts, subscription_options)
+
         {:ok, response} ->
           # Per MCP spec, POST responses MUST contain the result in the body,
           # even when SSE is enabled. The SSE stream is for server-initiated
@@ -475,6 +532,43 @@ defmodule ExMCP.HttpPlug do
           |> send_resp(500, Jason.encode!(error_response))
       end
     else
+      {:error, {:header_mismatch, request_id, message}} ->
+        error_response =
+          JSONRPC.error(request_id, ErrorCodes.header_mismatch(), message)
+
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(error_response))
+
+      {:error, {:unsupported_protocol_version, request_id, version}} ->
+        supported = VersionRegistry.known_versions()
+
+        error_response =
+          JSONRPC.error(
+            request_id,
+            ErrorCodes.unsupported_protocol_version(),
+            "Unsupported MCP protocol version",
+            %{"requested" => version, "supported" => supported}
+          )
+
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(error_response))
+
+      {:error, {:modern_method_not_found, request_id}} ->
+        error_response =
+          JSONRPC.error(request_id, ErrorCodes.method_not_found(), "Method not found")
+
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_content_type("application/json")
+        |> send_resp(404, Jason.encode!(error_response))
+
       {:error, {:protocol_version_mismatch, message}} ->
         error_response =
           JSONRPC.error(
@@ -747,6 +841,7 @@ defmodule ExMCP.HttpPlug do
         conn
         |> maybe_add_cors_headers(opts)
         |> put_resp_header("content-type", "text/event-stream")
+        |> put_resp_header("x-accel-buffering", "no")
         |> put_resp_header("cache-control", "no-cache")
         |> put_resp_header("connection", "keep-alive")
         |> send_chunked(200)
@@ -925,6 +1020,10 @@ defmodule ExMCP.HttpPlug do
   end
 
   # Process MCP request using the configured handler
+  defp process_mcp_request(%{"method" => "subscriptions/listen"} = request, opts) do
+    open_http_subscription(request, opts)
+  end
+
   defp process_mcp_request(request, opts) do
     handler = opts.handler
     handler_opts = Map.get(opts, :handler_opts, [])
@@ -959,7 +1058,8 @@ defmodule ExMCP.HttpPlug do
             replay_cache: Map.get(opts, :replay_cache),
             require_replay_protection: Map.get(opts, :require_replay_protection, false),
             principal_id: Map.get(opts, :principal_id),
-            tenant_id: Map.get(opts, :tenant_id)
+            tenant_id: Map.get(opts, :tenant_id),
+            request_headers: Map.get(opts, :request_headers, [])
           })
 
         case processed_conn.response do
@@ -994,6 +1094,57 @@ defmodule ExMCP.HttpPlug do
   end
 
   defp processed_response(response, _assigns), do: {:ok, response}
+
+  defp open_http_subscription(request, opts) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params") || %{}
+
+    with {:ok, context} <- RequestContext.from_message(request),
+         :ok <- RequestContext.validate_protocol_mode(context, Map.get(opts, :protocol_mode)),
+         :ok <- RequestContext.validate_method(context),
+         :modern <- context.era,
+         subscription_options = subscription_options(opts),
+         {:ok, entry} <-
+           Subscriptions.listen(
+             id,
+             Map.get(params, "notifications"),
+             self(),
+             subscription_options
+           ) do
+      {:subscription, entry}
+    else
+      {:error, reason} -> {:ok, subscription_error(id, reason)}
+      _other -> {:ok, subscription_error(id, :modern_protocol_required)}
+    end
+  end
+
+  defp subscription_options(opts) do
+    opts
+    |> Map.to_list()
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Subscriptions.runtime_options()
+  end
+
+  defp subscription_error(id, reason) do
+    JSONRPC.error(id, ErrorCodes.invalid_params(), "Subscription request rejected", %{
+      "reason" => subscription_reason(reason)
+    })
+  end
+
+  defp subscription_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp subscription_reason(reason), do: inspect(reason)
+
+  defp subscription_keepalive_interval!(:infinity), do: :infinity
+
+  defp subscription_keepalive_interval!(interval)
+       when is_integer(interval) and interval > 0,
+       do: interval
+
+  defp subscription_keepalive_interval!(interval) do
+    raise ArgumentError,
+          ":subscription_keepalive_interval_ms must be a positive integer or :infinity, " <>
+            "got: #{inspect(interval)}"
+  end
 
   # Add CORS headers if enabled
   defp maybe_add_cors_headers(conn, %{cors_enabled: true} = opts) do
@@ -1231,7 +1382,29 @@ defmodule ExMCP.HttpPlug do
 
   # --- New Helper Functions ---
 
-  defp validate_protocol_version(conn) do
+  defp validate_protocol_version(conn, request) do
+    if modern_http_request?(conn, request) do
+      request_id = Map.get(request, "id")
+
+      case RequestHeaders.protocol_version(request) do
+        version when is_binary(version) ->
+          with :ok <- RequestHeaders.validate(conn.req_headers, request),
+               true <- VersionRegistry.known?(version) do
+            {:ok, conn}
+          else
+            {:error, message} -> {:error, {:header_mismatch, request_id, message}}
+            false -> {:error, {:unsupported_protocol_version, request_id, version}}
+          end
+
+        _missing_version ->
+          {:error, {:header_mismatch, request_id, "Protocol version metadata is missing"}}
+      end
+    else
+      validate_legacy_protocol_version(conn)
+    end
+  end
+
+  defp validate_legacy_protocol_version(conn) do
     if FeatureFlags.enabled?(:protocol_version_header) do
       supported = VersionRegistry.supported_versions()
       latest = VersionRegistry.latest_version()
@@ -1251,6 +1424,29 @@ defmodule ExMCP.HttpPlug do
       end
     else
       {:ok, conn}
+    end
+  end
+
+  defp validate_modern_method(request) do
+    version = RequestHeaders.protocol_version(request)
+    method = Map.get(request, "method")
+
+    if VersionRegistry.modern?(version) do
+      known? =
+        Enum.any?(Methods.rows(), fn {known, _min, _max, _kind, _handlers} -> known == method end)
+
+      if known? and Methods.available?(method, version),
+        do: :ok,
+        else: {:error, {:modern_method_not_found, Map.get(request, "id")}}
+    else
+      :ok
+    end
+  end
+
+  defp assign_request_protocol_version(conn, request) do
+    case RequestHeaders.protocol_version(request) do
+      version when is_binary(version) -> assign(conn, :request_protocol_version, version)
+      _missing -> conn
     end
   end
 
@@ -1327,6 +1523,7 @@ defmodule ExMCP.HttpPlug do
 
   # Per MCP spec, all responses MUST include the mcp-protocol-version header.
   defp add_protocol_version_header(conn) do
-    put_resp_header(conn, "mcp-protocol-version", VersionRegistry.latest_version())
+    version = conn.assigns[:request_protocol_version] || VersionRegistry.latest_version()
+    put_resp_header(conn, "mcp-protocol-version", version)
   end
 end

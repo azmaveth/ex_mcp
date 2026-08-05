@@ -11,6 +11,7 @@ defmodule ExMCP.Client.RequestHandler do
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, Maps, Protocol, RequestParams, VersionRegistry}
   alias ExMCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
+  alias ExMCP.Transport.HTTP
 
   # Extra time allowed past a caller-enforced timeout before the client
   # cleans up its own pending-request bookkeeping.
@@ -36,6 +37,93 @@ defmodule ExMCP.Client.RequestHandler do
     send_built_request(method, params, id, from, state, meta)
   end
 
+  @doc false
+  def open_subscription(subscription_pid, filter, state)
+      when is_pid(subscription_pid) and is_map(filter) do
+    if VersionRegistry.modern?(state.protocol_version) do
+      id = Protocol.generate_id()
+
+      case build_request("subscriptions/listen", %{"notifications" => filter}, id, state) do
+        {:ok, request} ->
+          case send_subscription_request(request, state) do
+            {:ok, updated_state} ->
+              subscriptions = Map.put(updated_state.subscriptions || %{}, id, subscription_pid)
+              monitors = ensure_subscription_monitor(subscription_pid, updated_state)
+
+              {:reply, {:ok, id},
+               %{updated_state | subscriptions: subscriptions, subscription_monitors: monitors}}
+
+            {:ok, updated_state, _response_data} ->
+              {:reply, {:error, :subscription_requires_streaming_transport}, updated_state}
+
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
+    else
+      {:reply, {:error, :subscriptions_require_mcp_2026_07_28}, state}
+    end
+  end
+
+  @doc false
+  def close_subscription(subscription_pid, request_id, reason, state) do
+    case Map.get(state.subscriptions || %{}, request_id) do
+      ^subscription_pid ->
+        state = close_subscription_transport(request_id, reason, state)
+        {:noreply, %{state | subscriptions: Map.delete(state.subscriptions, request_id)}}
+
+      _other ->
+        {:noreply, state}
+    end
+  end
+
+  @doc false
+  def close_subscriptions_for_pid(subscription_pid, state) do
+    request_ids =
+      for {request_id, ^subscription_pid} <- state.subscriptions || %{}, do: request_id
+
+    Enum.reduce(request_ids, state, fn request_id, acc ->
+      {:noreply, updated} =
+        close_subscription(
+          subscription_pid,
+          request_id,
+          "subscription process exited",
+          acc
+        )
+
+      updated
+    end)
+  end
+
+  @doc false
+  def handle_subscription_stream_closed(request_id, reason, state) do
+    case Map.pop(state.subscriptions || %{}, request_id) do
+      {subscription_pid, subscriptions} when is_pid(subscription_pid) ->
+        if retryable_subscription_stream_close?(reason) do
+          send(subscription_pid, {:client_subscription_disconnected, reason})
+        else
+          send(
+            subscription_pid,
+            {:client_subscription_error, request_id, {:stream_error, reason}}
+          )
+        end
+
+        {:noreply, %{state | subscriptions: subscriptions}}
+
+      {nil, _subscriptions} ->
+        {:noreply, state}
+    end
+  end
+
+  defp retryable_subscription_stream_close?({:http_error, status}) when status >= 400,
+    do: false
+
+  defp retryable_subscription_stream_close?(:invalid_sse_json), do: false
+  defp retryable_subscription_stream_close?(_reason), do: true
+
   defp send_built_request(method, params, id, from, state, timeout_meta) do
     case build_request(method, params, id, state) do
       {:ok, request} ->
@@ -49,6 +137,39 @@ defmodule ExMCP.Client.RequestHandler do
             message: "Invalid MCP request metadata: #{format_meta_error(reason)}"
           }}, state}
     end
+  end
+
+  defp send_subscription_request(
+         request,
+         %{
+           transport_mod: HTTP,
+           transport_state: %HTTP{protocol_era: :modern} = transport_state
+         } = state
+       ) do
+    with {:ok, encoded} <- encode_for_transport(HTTP, request),
+         {:ok, transport_state} <- HTTP.open_stream(encoded, transport_state, self()) do
+      {:ok, %{state | transport_state: transport_state}}
+    end
+  end
+
+  defp send_subscription_request(request, state), do: send_message(request, state)
+
+  defp close_subscription_transport(
+         request_id,
+         _reason,
+         %{
+           transport_mod: HTTP,
+           transport_state: %HTTP{protocol_era: :modern} = transport_state
+         } = state
+       ) do
+    %{state | transport_state: HTTP.close_stream(transport_state, request_id)}
+  end
+
+  defp close_subscription_transport(request_id, reason, state) do
+    params = %{"requestId" => request_id}
+    params = if is_binary(reason), do: Map.put(params, "reason", reason), else: params
+    {:noreply, state} = handle_cast_notification("notifications/cancelled", params, state)
+    state
   end
 
   defp send_request(request, method, id, from, state, meta) do
@@ -239,6 +360,18 @@ defmodule ExMCP.Client.RequestHandler do
       {:error, error, id} ->
         handle_single_response({:error, error, id}, state)
 
+      {:notification, "notifications/subscriptions/acknowledged", params} ->
+        route_subscription_acknowledgment(params, state)
+
+      {:notification, method, params}
+      when method in [
+             "notifications/tools/list_changed",
+             "notifications/prompts/list_changed",
+             "notifications/resources/list_changed",
+             "notifications/resources/updated"
+           ] ->
+        route_subscription_event(method, params, state)
+
       {:notification, "notifications/cancelled", params} ->
         Logger.info("Received notification: notifications/cancelled")
         handle_cancellation_notification(params, state)
@@ -316,31 +449,42 @@ defmodule ExMCP.Client.RequestHandler do
           {:noreply, state}
       end
     else
-      pending_requests = state.pending_requests
+      case Map.pop(state.subscriptions || %{}, response_id) do
+        {subscription_pid, subscriptions} when is_pid(subscription_pid) ->
+          route_subscription_response(subscription_pid, response_id, response_data)
+          {:noreply, %{state | subscriptions: subscriptions}}
 
-      new_state =
-        case get_request_info(pending_requests, response_id) do
-          {:ok, {from, :single}} ->
-            :telemetry.execute(
-              [:ex_mcp, :client, :request, :completed],
-              %{},
-              %{method: nil, request_id: response_id}
-            )
-
-            GenServer.reply(from, response_data)
-            new_pending_requests = Map.delete(pending_requests, response_id)
-            %{state | pending_requests: new_pending_requests}
-
-          {:ok, {:batch, batch_id}} ->
-            handle_batch_response_item(response_data, response_id, batch_id, state)
-
-          :error ->
-            Logger.warning("Received response for unknown request ID: #{response_id}")
-            state
-        end
-
-      {:noreply, new_state}
+        {nil, _subscriptions} ->
+          handle_pending_response(response_id, response_data, state)
+      end
     end
+  end
+
+  defp handle_pending_response(response_id, response_data, state) do
+    pending_requests = state.pending_requests
+
+    new_state =
+      case get_request_info(pending_requests, response_id) do
+        {:ok, {from, :single}} ->
+          :telemetry.execute(
+            [:ex_mcp, :client, :request, :completed],
+            %{},
+            %{method: nil, request_id: response_id}
+          )
+
+          GenServer.reply(from, response_data)
+          new_pending_requests = Map.delete(pending_requests, response_id)
+          %{state | pending_requests: new_pending_requests}
+
+        {:ok, {:batch, batch_id}} ->
+          handle_batch_response_item(response_data, response_id, batch_id, state)
+
+        :error ->
+          Logger.warning("Received response for unknown request ID: #{response_id}")
+          state
+      end
+
+    {:noreply, new_state}
   end
 
   defp get_request_info(pending_requests, response_id) do
@@ -465,6 +609,52 @@ defmodule ExMCP.Client.RequestHandler do
     with {:ok, params} <- RequestParams.for_request(params || %{}, state) do
       {:ok, build_request(method, params, id)}
     end
+  end
+
+  defp ensure_subscription_monitor(subscription_pid, state) do
+    monitors = state.subscription_monitors || %{}
+
+    if Enum.any?(monitors, fn {_ref, pid} -> pid == subscription_pid end) do
+      monitors
+    else
+      Map.put(monitors, Process.monitor(subscription_pid), subscription_pid)
+    end
+  end
+
+  defp route_subscription_acknowledgment(params, state) do
+    request_id = get_in(params, ["_meta", "io.modelcontextprotocol/subscriptionId"])
+
+    case Map.get(state.subscriptions || %{}, request_id) do
+      subscription_pid when is_pid(subscription_pid) ->
+        send(subscription_pid, {:client_subscription_acknowledged, request_id, params})
+        {:noreply, state}
+
+      _other ->
+        Logger.warning("Received acknowledgment for unknown subscription")
+        {:noreply, state}
+    end
+  end
+
+  defp route_subscription_event(method, params, state) do
+    request_id = get_in(params, ["_meta", "io.modelcontextprotocol/subscriptionId"])
+
+    case Map.get(state.subscriptions || %{}, request_id) do
+      subscription_pid when is_pid(subscription_pid) ->
+        send(subscription_pid, {:client_subscription_event, request_id, method, params})
+        {:noreply, state}
+
+      _other ->
+        Logger.warning("Received event for unknown subscription")
+        {:noreply, state}
+    end
+  end
+
+  defp route_subscription_response(subscription_pid, request_id, {:ok, result}) do
+    send(subscription_pid, {:client_subscription_complete, request_id, result})
+  end
+
+  defp route_subscription_response(subscription_pid, request_id, {:error, error}) do
+    send(subscription_pid, {:client_subscription_error, request_id, error})
   end
 
   defp format_meta_error({:invalid_meta_key, key}),

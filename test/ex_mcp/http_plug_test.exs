@@ -5,6 +5,7 @@ defmodule ExMCP.HttpPlugTest do
 
   alias ExMCP.HttpPlug
   alias ExMCP.HttpPlug.Core
+  alias ExMCP.Transport.HTTP.RequestHeaders
 
   defmodule TestServer do
     use ExMCP.Server.Handler
@@ -73,6 +74,30 @@ defmodule ExMCP.HttpPlugTest do
     def handle_call_tool(_name, _arguments, state) do
       error = ExMCP.Error.missing_required_client_capability(%{"sampling" => %{}})
       {:error, error, state}
+    end
+  end
+
+  defmodule HeaderToolServer do
+    use ExMCP.Server.Handler
+
+    @tool %{
+      "name" => "routed_tool",
+      "description" => "Exercises x-mcp-header validation",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "region" => %{"type" => "string", "x-mcp-header" => "Region"},
+          "limit" => %{"type" => "integer", "x-mcp-header" => "Limit"}
+        }
+      }
+    }
+
+    @impl true
+    def handle_list_tools(_cursor, state), do: {:ok, [@tool], nil, state}
+
+    @impl true
+    def handle_call_tool(_name, arguments, state) do
+      {:ok, %{"content" => [%{"type" => "text", "text" => inspect(arguments)}]}, state}
     end
   end
 
@@ -332,6 +357,42 @@ defmodule ExMCP.HttpPlugTest do
   # conn.host, which is what HttpPlug falls back to when no header is present.
   defp with_host(conn, host), do: %{conn | host: host}
 
+  defp put_modern_headers(conn, request) do
+    meta = get_in(request, ["params", "_meta"])
+    version = meta["io.modelcontextprotocol/protocolVersion"]
+    method = request["method"]
+
+    conn
+    |> put_req_header("mcp-protocol-version", version)
+    |> put_req_header("mcp-method", method)
+    |> maybe_put_modern_name(method, request["params"] || %{})
+  end
+
+  defp maybe_put_modern_name(conn, "tools/call", params),
+    do: put_req_header(conn, "mcp-name", RequestHeaders.encode_value(params["name"]))
+
+  defp maybe_put_modern_name(conn, "resources/read", params),
+    do: put_req_header(conn, "mcp-name", RequestHeaders.encode_value(params["uri"]))
+
+  defp maybe_put_modern_name(conn, "prompts/get", params),
+    do: put_req_header(conn, "mcp-name", RequestHeaders.encode_value(params["name"]))
+
+  defp maybe_put_modern_name(conn, _method, _params), do: conn
+
+  defp modern_request(method, params, id) do
+    meta = %{
+      "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities" => %{}
+    }
+
+    %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "method" => method,
+      "params" => Map.put(params, "_meta", meta)
+    }
+  end
+
   defp session_request_conn do
     request = %{
       "jsonrpc" => "2.0",
@@ -435,6 +496,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
         |> put_req_header("mcp-session-id", "ignored legacy session")
         |> put_req_header("last-event-id", "ignored-event")
         |> HttpPlug.call(
@@ -549,6 +611,32 @@ defmodule ExMCP.HttpPlugTest do
     end
   end
 
+  describe "modern-only HTTP methods" do
+    test "rejects GET and DELETE on the MCP endpoint with 405" do
+      opts =
+        HttpPlug.init(
+          handler: TestServer,
+          path: "/mcp",
+          protocol_mode: :modern_only,
+          sse_enabled: true
+        )
+
+      get_conn =
+        conn(:get, "/mcp")
+        |> put_req_header("accept", "text/event-stream")
+        |> HttpPlug.call(opts)
+
+      delete_conn =
+        conn(:delete, "/mcp")
+        |> put_req_header("mcp-session-id", "legacy-session")
+        |> HttpPlug.call(opts)
+
+      assert get_conn.status == 405
+      assert delete_conn.status == 405
+      assert get_resp_header(get_conn, "allow") == ["POST"]
+    end
+  end
+
   describe "MCP POST requests" do
     test "returns HTTP 400 for invalid modern request metadata" do
       request = %{
@@ -565,6 +653,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
         |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 400
@@ -587,6 +676,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
         |> HttpPlug.call(
           HttpPlug.init(
             handler: TestServer,
@@ -621,6 +711,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
         |> HttpPlug.call(
           HttpPlug.init(
             handler: TestServer,
@@ -657,12 +748,190 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
         |> HttpPlug.call(HttpPlug.init(handler: CapabilityErrorServer, sse_enabled: false))
 
       assert conn.status == 200
       error = Jason.decode!(conn.resp_body)["error"]
       assert error["code"] == -32021
       assert error["data"]["requiredCapabilities"] == %{"sampling" => %{}}
+    end
+
+    test "rejects missing or mismatched modern request headers before dispatch" do
+      request = modern_request("tools/list", %{}, 105)
+
+      missing =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert missing.status == 400
+      assert Jason.decode!(missing.resp_body)["error"]["code"] == -32020
+
+      mismatched =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> put_req_header("mcp-method", "resources/list")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert mismatched.status == 400
+      assert Jason.decode!(mismatched.resp_body)["error"]["code"] == -32020
+    end
+
+    test "accepts an encoded Mcp-Name and rejects a name/body mismatch" do
+      request =
+        modern_request(
+          "tools/call",
+          %{"name" => "test_tool", "arguments" => %{"message" => "hi"}},
+          106
+        )
+
+      accepted =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> put_req_header("mcp-name", RequestHeaders.encode_value("test_tool"))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert accepted.status == 200, accepted.resp_body
+      assert get_resp_header(accepted, "mcp-protocol-version") == ["2026-07-28"]
+
+      rejected =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> put_req_header("mcp-name", "another_tool")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert rejected.status == 400
+      assert Jason.decode!(rejected.resp_body)["error"]["code"] == -32020
+    end
+
+    test "returns HTTP 404 and JSON-RPC method-not-found for unknown modern methods" do
+      request = modern_request("unknown/modern", %{}, 107)
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 404
+      assert Jason.decode!(conn.resp_body)["error"]["code"] == -32601
+      assert get_resp_header(conn, "mcp-session-id") == []
+    end
+
+    test "streams modern subscriptions/listen over the POST response with keepalives" do
+      request =
+        modern_request(
+          "subscriptions/listen",
+          %{"notifications" => %{"toolsListChanged" => true}},
+          117
+        )
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            protocol_mode: :modern_only,
+            subscription_keepalive_interval_ms: 5,
+            subscription_max_lifetime_ms: 25
+          )
+        )
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "content-type") == ["text/event-stream"]
+      assert get_resp_header(conn, "x-accel-buffering") == ["no"]
+      assert get_resp_header(conn, "mcp-session-id") == []
+      assert conn.resp_body =~ ":\r\n"
+
+      messages =
+        conn.resp_body
+        |> String.split("\r\n\r\n", trim: true)
+        |> Enum.flat_map(fn
+          "data: " <> json -> [Jason.decode!(json)]
+          _comment -> []
+        end)
+
+      assert [acknowledgment, completion] = messages
+
+      assert acknowledgment["method"] == "notifications/subscriptions/acknowledged"
+      assert get_in(acknowledgment, ["params", "notifications"]) == %{"toolsListChanged" => true}
+
+      assert completion == %{
+               "jsonrpc" => "2.0",
+               "id" => 117,
+               "result" => %{
+                 "resultType" => "complete",
+                 "_meta" => %{"io.modelcontextprotocol/subscriptionId" => 117}
+               }
+             }
+    end
+
+    test "rejects an invalid modern subscription filter without opening an SSE stream" do
+      request =
+        modern_request(
+          "subscriptions/listen",
+          %{"notifications" => %{"unknownEvents" => true}},
+          118
+        )
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, protocol_mode: :modern_only))
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
+
+      error = Jason.decode!(conn.resp_body)["error"]
+      assert error["code"] == -32602
+      assert error["data"]["reason"] == "unknown_subscription_filter"
+    end
+
+    test "validates x-mcp-header values against tool arguments before dispatch" do
+      request =
+        modern_request(
+          "tools/call",
+          %{"name" => "routed_tool", "arguments" => %{"region" => "us-west1", "limit" => 42}},
+          108
+        )
+
+      accepted =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> put_req_header("mcp-param-region", "us-west1")
+        |> put_req_header("mcp-param-limit", "42.0")
+        |> HttpPlug.call(HttpPlug.init(handler: HeaderToolServer, sse_enabled: false))
+
+      assert accepted.status == 200, accepted.resp_body
+
+      missing =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> put_req_header("mcp-param-region", "us-west1")
+        |> HttpPlug.call(HttpPlug.init(handler: HeaderToolServer, sse_enabled: false))
+
+      assert missing.status == 400
+      assert Jason.decode!(missing.resp_body)["error"]["code"] == -32020
+
+      mismatched =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_modern_headers(request)
+        |> put_req_header("mcp-param-region", "eu-central1")
+        |> put_req_header("mcp-param-limit", "42")
+        |> HttpPlug.call(HttpPlug.init(handler: HeaderToolServer, sse_enabled: false))
+
+      assert mismatched.status == 400
+      assert Jason.decode!(mismatched.resp_body)["error"]["code"] == -32020
     end
 
     test "handles initialize request" do

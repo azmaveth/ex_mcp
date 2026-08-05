@@ -42,7 +42,7 @@ defmodule ExMCP.Server.HandlerServer do
 
   alias ExMCP.Internal.{JSONRPC, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
-  alias ExMCP.Server.{CancellationTracker, Dispatch, RequestContext, RequestState}
+  alias ExMCP.Server.{CancellationTracker, Dispatch, RequestContext, RequestState, Subscriptions}
   alias ExMCP.Transport.{Local, Test}
 
   # JSON-RPC batches were removed from the spec in 2025-06-18 and have not
@@ -67,7 +67,9 @@ defmodule ExMCP.Server.HandlerServer do
           require_replay_protection: boolean(),
           pending_requests: map(),
           cancelled_requests: MapSet.t(),
-          cancellation_tracker: module()
+          cancellation_tracker: module(),
+          subscriptions: map(),
+          subscription_options: keyword()
         }
 
   @doc """
@@ -132,7 +134,9 @@ defmodule ExMCP.Server.HandlerServer do
               require_replay_protection: Keyword.get(opts, :require_replay_protection, false),
               pending_requests: %{},
               cancelled_requests: MapSet.new(),
-              cancellation_tracker: cancellation_tracker
+              cancellation_tracker: cancellation_tracker,
+              subscriptions: %{},
+              subscription_options: Subscriptions.runtime_options(opts)
             }
 
             {:ok, state}
@@ -206,6 +210,31 @@ defmodule ExMCP.Server.HandlerServer do
   def handle_info({:transport_error, reason}, state) do
     Logger.error("Transport error: #{inspect(reason)}")
     {:noreply, state}
+  end
+
+  def handle_info(
+        {:ex_mcp_subscription_message, listener, kind, message},
+        state
+      ) do
+    case send_message(message, state) do
+      {:ok, new_state} ->
+        Subscriptions.delivered(listener)
+
+        new_state =
+          if kind == :complete,
+            do: remove_subscription_by_listener(new_state, listener),
+            else: new_state
+
+        {:noreply, new_state}
+
+      {:error, _reason} ->
+        ExMCP.Server.SubscriptionListener.cancel(listener)
+        {:noreply, remove_subscription_by_listener(state, listener)}
+    end
+  end
+
+  def handle_info({:subscription_listener_closed, listener, _token, _transport, _reason}, state) do
+    {:noreply, remove_subscription_by_listener(state, listener)}
   end
 
   def handle_info({:test_transport_connect, client_pid}, state) do
@@ -497,19 +526,19 @@ defmodule ExMCP.Server.HandlerServer do
   end
 
   def handle_cast({:notify_resource_update, uri}, state) do
-    # Send resource update notification to client
-    update_notification = %{
-      "jsonrpc" => "2.0",
-      "method" => "notifications/resources/updated",
-      "params" => %{
-        "uri" => uri
-      }
-    }
+    publish_or_send("notifications/resources/updated", %{"uri" => uri}, state)
+  end
 
-    case send_message(update_notification, state) do
-      {:ok, new_state} -> {:noreply, new_state}
-      {:error, _reason} -> {:noreply, state}
-    end
+  def handle_cast({:notify_resources_changed}, state) do
+    publish_or_send("notifications/resources/list_changed", %{}, state)
+  end
+
+  def handle_cast({:notify_tools_changed}, state) do
+    publish_or_send("notifications/tools/list_changed", %{}, state)
+  end
+
+  def handle_cast({:notify_prompts_changed}, state) do
+    publish_or_send("notifications/prompts/list_changed", %{}, state)
   end
 
   def handle_cast(:notify_roots_changed, state) do
@@ -549,6 +578,8 @@ defmodule ExMCP.Server.HandlerServer do
 
   @impl GenServer
   def terminate(reason, state) do
+    Subscriptions.remove_transport(self(), state.subscription_options)
+
     if function_exported?(state.handler_module, :terminate, 2) do
       state.handler_module.terminate(reason, state.handler_state)
     end
@@ -716,11 +747,23 @@ defmodule ExMCP.Server.HandlerServer do
     end
   end
 
+  defp process_mcp_request(%{"method" => "subscriptions/listen"} = request, state) do
+    open_subscription(request, state)
+  end
+
   defp process_mcp_request(%{"method" => "notifications/cancelled"} = request, state) do
-    # Handle cancellation notifications from clients
     params = Map.get(request, "params", %{})
-    {_, new_state} = handle_cancellation_notification(params, state)
-    {:notification, new_state}
+    request_id = Map.get(params, "requestId")
+
+    case Map.pop(state.subscriptions, request_id) do
+      {nil, _subscriptions} ->
+        {_, new_state} = handle_cancellation_notification(params, state)
+        {:notification, new_state}
+
+      {_listener, subscriptions} ->
+        :ok = Subscriptions.cancel(self(), request_id, state.subscription_options)
+        {:notification, %{state | subscriptions: subscriptions}}
+    end
   end
 
   defp process_mcp_request(%{"method" => _method} = request, state) do
@@ -827,5 +870,70 @@ defmodule ExMCP.Server.HandlerServer do
       error ->
         error
     end
+  end
+
+  defp open_subscription(request, state) do
+    id = Map.get(request, "id")
+    params = Map.get(request, "params") || %{}
+
+    with {:ok, context} <- RequestContext.from_message(request),
+         :ok <- RequestContext.validate_protocol_mode(context, effective_protocol_mode(state)),
+         :ok <- RequestContext.validate_method(context),
+         :modern <- context.era,
+         {:ok, entry} <-
+           Subscriptions.listen(
+             id,
+             Map.get(params, "notifications"),
+             self(),
+             state.subscription_options
+           ) do
+      subscriptions = Map.put(state.subscriptions, id, entry.listener_pid)
+      {:notification, %{state | subscriptions: subscriptions, connection_era: :modern}}
+    else
+      {:error, reason} ->
+        {:response, subscription_error(id, reason), state}
+
+      _other ->
+        {:response, subscription_error(id, :modern_protocol_required), state}
+    end
+  end
+
+  defp subscription_error(id, reason) do
+    JSONRPC.error(id, ErrorCodes.invalid_params(), "Subscription request rejected", %{
+      "reason" => to_string_reason(reason)
+    })
+  end
+
+  defp to_string_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp to_string_reason(reason), do: inspect(reason)
+
+  defp publish_or_send(method, params, state) do
+    if modern_connection?(state) do
+      _counts =
+        Subscriptions.publish(
+          method,
+          params,
+          Keyword.put(state.subscription_options, :transport_ref, self())
+        )
+
+      {:noreply, state}
+    else
+      notification = %{"jsonrpc" => "2.0", "method" => method, "params" => params}
+
+      case send_message(notification, state) do
+        {:ok, new_state} -> {:noreply, new_state}
+        {:error, _reason} -> {:noreply, state}
+      end
+    end
+  end
+
+  defp modern_connection?(%{connection_era: :modern}), do: true
+  defp modern_connection?(%{protocol_version: version}), do: VersionRegistry.modern?(version)
+
+  defp remove_subscription_by_listener(state, listener) do
+    subscriptions =
+      Map.reject(state.subscriptions, fn {_id, listener_pid} -> listener_pid == listener end)
+
+    %{state | subscriptions: subscriptions}
   end
 end

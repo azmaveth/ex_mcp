@@ -45,6 +45,32 @@ defmodule ExMCP.Plugs.ProtocolVersionTest do
       assert conn.assigns[:mcp_version] == "2025-11-25"
       refute conn.halted
     end
+
+    test "validates and accepts the modern version even when the legacy flag is disabled" do
+      conn =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2026-07-28")
+        |> ProtocolVersion.call([])
+
+      assert conn.assigns[:mcp_version] == "2026-07-28"
+      refute conn.halted
+    end
+  end
+
+  describe "modern-only mode" do
+    test "requires exactly one modern protocol header" do
+      missing = conn(:post, "/mcp") |> ProtocolVersion.call(protocol_mode: :modern_only)
+      assert missing.status == 400
+      assert missing.halted
+
+      accepted =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2026-07-28")
+        |> ProtocolVersion.call(protocol_mode: :modern_only)
+
+      assert accepted.assigns[:mcp_version] == "2026-07-28"
+      refute accepted.halted
+    end
   end
 
   describe "with feature flag enabled" do

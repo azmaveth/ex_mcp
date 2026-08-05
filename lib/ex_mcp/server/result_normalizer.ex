@@ -21,6 +21,7 @@ defmodule ExMCP.Server.ResultNormalizer do
   require Logger
 
   alias ExMCP.Internal.VersionInfo
+  alias ExMCP.Transport.HTTP.ToolHeaders
 
   @server_info_key "io.modelcontextprotocol/serverInfo"
 
@@ -53,7 +54,7 @@ defmodule ExMCP.Server.ResultNormalizer do
   @spec protocol_result(map(), map(), keyword()) :: map()
   def protocol_result(result, request_context, opts \\ []) when is_map(result) do
     if Map.get(request_context, :era) == :modern do
-      result = stringify_keys(result)
+      result = result |> stringify_keys() |> normalize_tools_list(request_context)
       server_info = Keyword.get(opts, :server_info) || default_server_info()
       result_type = normalize_result_type(Map.get(result, "resultType"))
 
@@ -70,6 +71,13 @@ defmodule ExMCP.Server.ResultNormalizer do
       result
     end
   end
+
+  defp normalize_tools_list(%{"tools" => tools} = result, %{method: "tools/list"})
+       when is_list(tools) do
+    Map.put(result, "tools", ToolHeaders.filter_valid_tools(tools))
+  end
+
+  defp normalize_tools_list(result, _request_context), do: result
 
   defp normalize_result_type(type) when is_binary(type) and type != "", do: type
 

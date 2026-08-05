@@ -7,6 +7,7 @@ defmodule ExMCP.Client.Operations.Tools do
   """
 
   alias ExMCP.Client.Types
+  alias ExMCP.Error
   alias ExMCP.Internal.RequestParams
   alias ExMCP.Response
 
@@ -76,6 +77,10 @@ defmodule ExMCP.Client.Operations.Tools do
   end
 
   def call_tool(client, tool_name, arguments, opts) when is_list(opts) do
+    started_at = System.monotonic_time(:millisecond)
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    deadline = started_at + timeout
+
     params =
       tool_name
       |> RequestParams.named(arguments)
@@ -83,7 +88,50 @@ defmodule ExMCP.Client.Operations.Tools do
 
     # Add tool_name to opts for proper Response struct construction
     enhanced_opts = Keyword.put(opts, :tool_name, tool_name)
-    ExMCP.Client.make_request(client, "tools/call", params, enhanced_opts, 30_000)
+    result = ExMCP.Client.make_request(client, "tools/call", params, enhanced_opts, 30_000)
+
+    maybe_retry_header_mismatch(
+      result,
+      client,
+      params,
+      enhanced_opts,
+      deadline
+    )
+  end
+
+  defp maybe_retry_header_mismatch(result, client, params, opts, deadline) do
+    if header_mismatch?(result) do
+      with {:ok, remaining} <- remaining_timeout(deadline),
+           {:ok, _tools} <-
+             list_tools(client,
+               timeout: remaining,
+               format: :map,
+               retry_policy: false
+             ),
+           {:ok, remaining} <- remaining_timeout(deadline) do
+        retry_opts =
+          opts
+          |> Keyword.put(:timeout, remaining)
+          |> Keyword.put(:retry_policy, false)
+
+        ExMCP.Client.make_request(client, "tools/call", params, retry_opts, 30_000)
+      else
+        _refresh_or_timeout_error -> result
+      end
+    else
+      result
+    end
+  end
+
+  defp header_mismatch?({:error, %Error.ProtocolError{code: -32_020}}), do: true
+  defp header_mismatch?({:error, %{"code" => -32_020}}), do: true
+  defp header_mismatch?(_result), do: false
+
+  defp remaining_timeout(deadline) do
+    case deadline - System.monotonic_time(:millisecond) do
+      remaining when remaining > 0 -> {:ok, remaining}
+      _expired -> {:error, :timeout}
+    end
   end
 
   @doc """

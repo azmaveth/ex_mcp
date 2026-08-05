@@ -154,6 +154,19 @@ AEAD prevents tampering but not replay. Side-effecting resumptions should set
 appropriate for single-node deployments. Without an adapter, handlers must
 treat `RequestContext.delivery_semantics == :at_least_once` accordingly.
 
+### Modern subscription streams
+
+Subscription registrations store stable principal and tenant identifiers,
+never bearer tokens. Filter authorization runs before acknowledgment and
+publication authorization runs again for every event. Configure a bounded
+maximum stream lifetime so credentials are periodically re-evaluated, and use
+a cluster-aware adapter with PubSub fan-out for multi-node HTTP deployments.
+The bundled ETS adapter and listener supervisor are node-local. Modern HTTP
+streams treat an unsuccessful response chunk as cancellation, immediately
+remove the listener registration, and send no further events. Periodic SSE
+comment keepalives make this cleanup happen even when no application events
+are available to expose a disconnected peer.
+
 ### DNS rebinding protection
 
 Protection is Host-allow-list based and is **on by default for localhost
@@ -248,6 +261,22 @@ the HMAC family are rejected, so an attacker cannot swap the header's `alg`.
 
 `iss` and `aud` are checked only when you supply the expected values; always
 supply them when validating tokens from an identity provider.
+
+### MCP routing-header confidentiality
+
+Treat every `Mcp-Param-*` value as sensitive. These values mirror selected
+tool arguments and may contain tenant, region, account, or routing data.
+ExMCP does not include them in its HTTP debug logs or telemetry, but reverse
+proxies, load balancers, APM agents, and access-log middleware may record
+request headers independently. Configure those systems to redact
+`Mcp-Param-*` with the same policy used for `Authorization` and cookies.
+
+Modern HTTP servers compare protocol, method, name, and annotated parameter
+headers with the JSON-RPC body before dispatch. Missing, duplicate, malformed,
+oversized, or mismatched recognized headers return HTTP 400 with JSON-RPC
+error `-32020`; the rejected header value is not copied into the response or
+logs. Unsupported protocol-version errors may identify the requested version,
+but `Mcp-Param-*` values are never echoed.
 
 ## Best Practices
 

@@ -82,6 +82,7 @@ defmodule ExMCP.Transport.HTTP do
   alias ExMCP.Internal.{Headers, Security, SecurityConfig, SSE}
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
+  alias ExMCP.Transport.HTTP.{ModernStreamClient, RequestHeaders, ToolHeaders}
 
   @async_post_profiles [
     :ex_mcp_async_post_0,
@@ -116,12 +117,15 @@ defmodule ExMCP.Transport.HTTP do
     :last_response,
     :timeouts,
     :protocol_version,
+    :protocol_era,
     :auth_config,
     :access_token,
     :retry_delay,
     :max_retry_delay,
     :auth_provider,
     :auth_provider_state,
+    tool_headers: %{},
+    modern_streams: %{},
     sse_deferred_attempted: false,
     auth_completed: false
   ]
@@ -140,6 +144,9 @@ defmodule ExMCP.Transport.HTTP do
           last_response: map() | nil,
           timeouts: map(),
           protocol_version: String.t(),
+          protocol_era: :legacy | :modern | :unknown,
+          tool_headers: %{optional(String.t()) => [ToolHeaders.annotation()]},
+          modern_streams: %{optional(ExMCP.Types.request_id()) => pid()},
           sse_deferred_attempted: boolean(),
           auth_provider: module() | nil,
           auth_provider_state: any()
@@ -231,6 +238,9 @@ defmodule ExMCP.Transport.HTTP do
       session_id: session_id,
       timeouts: timeouts,
       protocol_version: protocol_version,
+      protocol_era: :unknown,
+      tool_headers: %{},
+      modern_streams: %{},
       auth_config: auth_config,
       max_retry_delay: max_retry_delay,
       auth_provider: auth_provider,
@@ -263,7 +273,7 @@ defmodule ExMCP.Transport.HTTP do
     # Handle synchronously like non-SSE mode, then start SSE if we get a session ID.
     case perform_and_maybe_auth(message, state) do
       {:ok, response} ->
-        case handle_http_response(response, state) do
+        case handle_http_response(response, state, message) do
           {:ok, new_state, response_data} ->
             new_state = maybe_start_deferred_sse(new_state, message)
             {:ok, new_state, response_data}
@@ -277,7 +287,7 @@ defmodule ExMCP.Transport.HTTP do
         end
 
       {:ok, response, new_state} ->
-        case handle_http_response(response, new_state) do
+        case handle_http_response(response, new_state, message) do
           {:ok, new_state2, response_data} ->
             new_state2 = maybe_start_deferred_sse(new_state2, message)
             {:ok, new_state2, response_data}
@@ -299,10 +309,10 @@ defmodule ExMCP.Transport.HTTP do
     # For non-SSE mode, we handle the request-response synchronously
     case perform_and_maybe_auth(message, state) do
       {:ok, response} ->
-        handle_http_response(response, state)
+        handle_http_response(response, state, message)
 
       {:ok, response, new_state} ->
-        handle_http_response(response, new_state)
+        handle_http_response(response, new_state, message)
 
       {:error, reason} ->
         {:error, reason}
@@ -333,8 +343,8 @@ defmodule ExMCP.Transport.HTTP do
 
         result =
           case perform_and_maybe_auth(message, state) do
-            {:ok, response} -> handle_http_response(response, state)
-            {:ok, response, new_state} -> handle_http_response(response, new_state)
+            {:ok, response} -> handle_http_response(response, state, message)
+            {:ok, response, new_state} -> handle_http_response(response, new_state, message)
             {:error, reason} -> {:error, reason}
           end
 
@@ -356,8 +366,8 @@ defmodule ExMCP.Transport.HTTP do
   def send_message(message, %__MODULE__{} = state) do
     # SSE mode without active connection (pre-initialization) or fallback
     case perform_and_maybe_auth(message, state) do
-      {:ok, response} -> handle_http_response(response, state)
-      {:ok, response, new_state} -> handle_http_response(response, new_state)
+      {:ok, response} -> handle_http_response(response, state, message)
+      {:ok, response, new_state} -> handle_http_response(response, new_state, message)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -642,7 +652,7 @@ defmodule ExMCP.Transport.HTTP do
       endpoint: state.endpoint
     })
 
-    headers = build_request_headers(state)
+    headers = RequestHeaders.build(body, state)
 
     # Security validation before making external request
     case validate_http_request(url, headers, state) do
@@ -750,6 +760,7 @@ defmodule ExMCP.Transport.HTTP do
     :auth_completed,
     :auth_provider_state,
     :headers,
+    :tool_headers,
     :retry_delay,
     :last_event_id
   ]
@@ -822,7 +833,7 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp handle_http_response({status_line, headers, body}, state) do
+  defp handle_http_response({status_line, headers, body}, state, request_body) do
     # Convert charlist to binary if needed (httpc returns charlists by default)
     body_binary = if is_list(body), do: List.to_string(body), else: body
     {_, status_code, _} = status_line
@@ -841,7 +852,7 @@ defmodule ExMCP.Transport.HTTP do
         # Always parse the response body — per MCP spec, POST responses
         # contain the result even in SSE mode. The SSE stream is for
         # server-initiated messages (notifications, progress updates).
-        handle_non_sse_response(body_binary, headers, state)
+        handle_non_sse_response(body_binary, headers, state, request_body)
 
       {_, 202, _} ->
         # 202 Accepted - notification was accepted, no response body expected
@@ -857,18 +868,19 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp handle_http_response({:error, reason}, _state) do
+  defp handle_http_response({:error, reason}, _state, _request_body) do
     {:error, reason}
   end
 
-  defp handle_non_sse_response(body, headers, state) do
+  defp handle_non_sse_response(body, headers, state, request_body) do
     content_type = Headers.get(headers, "content-type") || ""
 
     if String.contains?(content_type, "text/event-stream") do
-      handle_sse_post_response(body, state)
+      handle_sse_post_response(body, state, request_body)
     else
       case Jason.decode(body) do
         {:ok, response} ->
+          state = cache_tool_headers(state, request_body, response)
           {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
         {:error, reason} ->
@@ -877,11 +889,31 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
+  defp cache_tool_headers(state, request_body, %{"result" => %{"tools" => tools}})
+       when is_list(tools) do
+    case Jason.decode(request_body) do
+      {:ok, %{"method" => "tools/list"} = request} ->
+        page = ToolHeaders.cache(tools)
+
+        tool_headers =
+          if get_in(request, ["params", "cursor"]),
+            do: Map.merge(state.tool_headers || %{}, page),
+            else: page
+
+        %{state | tool_headers: tool_headers}
+
+      _other ->
+        state
+    end
+  end
+
+  defp cache_tool_headers(state, _request_body, _response), do: state
+
   # Process SSE-formatted POST response.
   # Extracts JSON data, retry fields, and event IDs.
   # If no JSON result is found (just priming events), the response
   # will come via GET SSE stream — start/ensure SSE is connected.
-  defp handle_sse_post_response(body, state) do
+  defp handle_sse_post_response(body, state, request_body) do
     events = SSE.parse_complete(body)
 
     # Extract retry field and last event ID from events
@@ -914,6 +946,7 @@ defmodule ExMCP.Transport.HTTP do
     if json_data != "" do
       case Jason.decode(json_data) do
         {:ok, response} ->
+          state = cache_tool_headers(state, request_body, response)
           {:ok, %{state | last_response: response}, Jason.encode!(response)}
 
         {:error, _} ->
@@ -1008,6 +1041,7 @@ defmodule ExMCP.Transport.HTTP do
   Returns `:ok` regardless of server response (fire-and-forget).
   """
   @spec terminate_session(t()) :: :ok
+  def terminate_session(%__MODULE__{protocol_era: :modern}), do: :ok
   def terminate_session(%__MODULE__{session_id: nil}), do: :ok
 
   def terminate_session(%__MODULE__{session_id: session_id} = state) when is_binary(session_id) do
@@ -1055,6 +1089,10 @@ defmodule ExMCP.Transport.HTTP do
     # Best-effort session termination before closing
     terminate_session(state)
 
+    Enum.each(state.modern_streams, fn {_request_id, pid} ->
+      ModernStreamClient.cancel(pid)
+    end)
+
     # Stop SSE connection if active. SSEClient is a GenServer that does not
     # trap exits, so Process.exit(pid, :normal) would be silently ignored and
     # leak the process. GenServer.stop runs its terminate/2 (cancelling the
@@ -1074,22 +1112,97 @@ defmodule ExMCP.Transport.HTTP do
     %{
       state
       | protocol_version: version,
+        protocol_era: :modern,
         use_sse: false,
         sse_pid: nil,
         session_id: nil,
         last_event_id: nil,
+        modern_streams: %{},
         sse_deferred_attempted: false
     }
   end
 
-  def settle_protocol_era(%__MODULE__{} = state, _era, version) do
-    %{state | protocol_version: version}
+  def settle_protocol_era(%__MODULE__{} = state, era, version) do
+    %{state | protocol_version: version, protocol_era: era}
   end
 
   defp stop_sse_client(pid) do
     GenServer.stop(pid, :normal, 1_000)
   catch
     :exit, _ -> :ok
+  end
+
+  @doc false
+  @spec open_stream(binary(), t(), pid()) :: {:ok, t()} | {:error, term()}
+  def open_stream(message, %__MODULE__{protocol_era: :modern} = state, parent)
+      when is_binary(message) and is_pid(parent) do
+    request_id = extract_request_id(message)
+    url = build_url(state, "")
+    headers = RequestHeaders.build(message, state)
+
+    with :ok <- validate_stream_request_id(request_id, state),
+         {:ok, headers} <- validate_http_request(url, headers, state),
+         {:ok, pid} <-
+           ModernStreamClient.start_link(
+             parent: parent,
+             request_id: request_id,
+             url: url,
+             headers: headers,
+             body: message,
+             http_options: modern_stream_http_options(url, state),
+             idle_timeout: state.timeouts.stream_idle
+           ) do
+      {:ok, %{state | modern_streams: Map.put(state.modern_streams, request_id, pid)}}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def open_stream(_message, _state, _parent), do: {:error, :modern_http_stream_required}
+
+  @doc false
+  @spec close_stream(t(), ExMCP.Types.request_id()) :: t()
+  def close_stream(%__MODULE__{} = state, request_id) do
+    case Map.pop(state.modern_streams, request_id) do
+      {nil, _streams} ->
+        state
+
+      {pid, streams} ->
+        ModernStreamClient.cancel(pid)
+        %{state | modern_streams: streams}
+    end
+  end
+
+  @doc false
+  @spec forget_stream(t(), ExMCP.Types.request_id(), pid()) :: t()
+  def forget_stream(%__MODULE__{} = state, request_id, pid) do
+    case Map.get(state.modern_streams, request_id) do
+      ^pid -> %{state | modern_streams: Map.delete(state.modern_streams, request_id)}
+      _other -> state
+    end
+  end
+
+  @doc false
+  @spec stream_owner?(t(), ExMCP.Types.request_id(), pid()) :: boolean()
+  def stream_owner?(%__MODULE__{} = state, request_id, pid) do
+    Map.get(state.modern_streams, request_id) == pid
+  end
+
+  defp validate_stream_request_id(nil, _state), do: {:error, :stream_request_id_required}
+
+  defp validate_stream_request_id(request_id, state) do
+    if Map.has_key?(state.modern_streams, request_id),
+      do: {:error, :duplicate_stream_request_id},
+      else: :ok
+  end
+
+  defp modern_stream_http_options(url, state) do
+    options = [timeout: :infinity, connect_timeout: state.timeouts.connect, autoredirect: false]
+
+    case URI.parse(url).scheme do
+      "https" -> [{:ssl, build_ssl_options_from_state(state)} | options]
+      _other -> options
+    end
   end
 
   # NOTE: HTTP transport does NOT implement subscribe/2 (push model) because
@@ -1102,6 +1215,8 @@ defmodule ExMCP.Transport.HTTP do
   # When :httpc is replaced with an async HTTP client, push mode can be enabled.
 
   # Private functions
+
+  defp maybe_update_session_id(_headers, %{protocol_era: :modern} = state), do: state
 
   defp maybe_update_session_id(headers, state) do
     case Headers.get(headers, @session_header) do
@@ -1162,8 +1277,6 @@ defmodule ExMCP.Transport.HTTP do
         false
     end
   end
-
-  defp modern_request?(_message), do: false
 
   # Trigger SSE reconnection when POST response closes without a result.
   # Sends a message to SSEClient to close current connection and reconnect
@@ -1291,54 +1404,6 @@ defmodule ExMCP.Transport.HTTP do
   defp default_port("http"), do: 80
   defp default_port("https"), do: 443
   defp default_port(_), do: nil
-
-  defp build_request_headers(%{
-         headers: headers,
-         security: security,
-         origin: origin,
-         session_id: session_id,
-         last_event_id: last_event_id,
-         protocol_version: protocol_version
-       }) do
-    base_headers = [
-      {"content-type", "application/json"},
-      {"accept", "application/json, text/event-stream"},
-      {@protocol_version_header, protocol_version}
-      | headers
-    ]
-
-    # Add session header only if we have a session ID (per MCP spec,
-    # the first request should not include a session ID — the server provides one)
-    headers_with_session =
-      if session_id do
-        [{@session_header, session_id} | base_headers]
-      else
-        base_headers
-      end
-
-    # Add Last-Event-ID for resumability if available
-    headers_with_event_id =
-      if last_event_id do
-        [{"Last-Event-ID", last_event_id} | headers_with_session]
-      else
-        headers_with_session
-      end
-
-    # Add Origin header if we have one
-    headers_with_origin =
-      if origin do
-        [{"Origin", origin} | headers_with_event_id]
-      else
-        headers_with_event_id
-      end
-
-    # Add security headers if configured
-    if security && Map.get(security, :include_security_headers, false) do
-      headers_with_origin ++ Security.build_standard_security_headers()
-    else
-      headers_with_origin
-    end
-  end
 
   @doc """
   Builds SSL options from TLS configuration.

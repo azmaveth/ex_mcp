@@ -10,8 +10,9 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   alias ExMCP.Error
   alias ExMCP.Internal.JSONRPC
-  alias ExMCP.Protocol.Initialize
+  alias ExMCP.Protocol.{ErrorCodes, Initialize}
   alias ExMCP.Server.{Discover, Dispatch, MRTR, ResultNormalizer}
+  alias ExMCP.Transport.HTTP.ToolHeaders
 
   require Logger
 
@@ -53,19 +54,30 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       %{tool_name: tool_name, mode: :handler}
     )
 
-    safe_call(
-      conn,
-      server_pid,
-      contextual_request(conn, {:call_tool, tool_name, arguments}),
-      id,
-      "Tool call failed",
-      fn reply ->
-        case put_mrtr_result(conn, params, reply, id) do
-          {:handled, conn} -> conn
-          :not_mrtr -> handle_tool_reply(conn, reply, id)
-        end
-      end
-    )
+    case validate_tool_request_headers(conn, server_pid, tool_name, params) do
+      :ok ->
+        safe_call(
+          conn,
+          server_pid,
+          contextual_request(conn, {:call_tool, tool_name, arguments}),
+          id,
+          "Tool call failed",
+          fn reply ->
+            case put_mrtr_result(conn, params, reply, id) do
+              {:handled, conn} -> conn
+              :not_mrtr -> handle_tool_reply(conn, reply, id)
+            end
+          end
+        )
+
+      {:error, :tool_schema_unavailable} ->
+        put_failure(conn, "Tool schema unavailable", "tool_schema_unavailable", id)
+
+      {:error, message} ->
+        conn
+        |> ExMCP.MessageProcessor.assign(:http_status, 400)
+        |> Map.put(:response, JSONRPC.error(id, ErrorCodes.header_mismatch(), message))
+    end
   end
 
   def handle_resources_list(conn, server_pid, params, id) do
@@ -363,6 +375,48 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   defp normalize_list_reply({:ok, result, _state}) when is_map(result), do: {:result, result}
   defp normalize_list_reply({:ok, result}) when is_map(result), do: {:result, result}
   defp normalize_list_reply(other), do: normalize_reply(other)
+
+  defp validate_tool_request_headers(
+         %{assigns: %{request_context: %{era: :modern}}} = conn,
+         server_pid,
+         tool_name,
+         params
+       ) do
+    with {:ok, tools} <- load_tools_for_header_validation(server_pid, conn),
+         tool when is_map(tool) <- find_tool(tools, tool_name),
+         {:ok, annotations} <- ToolHeaders.compile(tool) do
+      ToolHeaders.validate_request(
+        Map.get(conn.assigns, :request_headers, []),
+        annotations,
+        Map.get(params, "arguments", %{})
+      )
+    else
+      nil -> :ok
+      {:error, :tool_schema_unavailable} = error -> error
+      {:error, _invalid_annotation} -> {:error, "Tool x-mcp-header annotations are invalid"}
+    end
+  end
+
+  defp validate_tool_request_headers(_conn, _server_pid, _tool_name, _params), do: :ok
+
+  defp load_tools_for_header_validation(server_pid, conn) do
+    case GenServer.call(server_pid, {:list_tools, nil}, call_timeout(conn))
+         |> normalize_list_reply() do
+      {:list, tools, _cursor} -> {:ok, ResultNormalizer.stringify_keys(tools)}
+      {:result, result} -> {:ok, Map.get(ResultNormalizer.stringify_keys(result), "tools", [])}
+      {:error, _reason} -> {:error, :tool_schema_unavailable}
+    end
+  rescue
+    _error -> {:error, :tool_schema_unavailable}
+  catch
+    :exit, _reason -> {:error, :tool_schema_unavailable}
+  end
+
+  defp find_tool(tools, name) when is_list(tools) do
+    Enum.find(tools, &(Map.get(&1, "name") == name))
+  end
+
+  defp find_tool(_tools, _name), do: nil
 
   defp cursor(params), do: Map.get(params, "cursor")
 

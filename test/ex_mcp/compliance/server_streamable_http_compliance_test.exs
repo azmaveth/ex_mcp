@@ -168,6 +168,7 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
              "GET to the same endpoint as POST should start SSE, got status #{conn.status}"
 
       assert get_resp_header(conn, "content-type") == ["text/event-stream"]
+      assert get_resp_header(conn, "x-accel-buffering") == ["no"]
     end
 
     test "GET to /mcp endpoint starts SSE connection" do

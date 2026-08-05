@@ -796,41 +796,45 @@ clustered rolling-key work above.
 
 ### Phase 5 — Subscriptions
 
-- [ ] `ExMCP.Server.Subscriptions` (new): registry of `{subscription_id, honoured_filter,
+- [x] `ExMCP.Server.Subscriptions` (new): registry of `{subscription_id, honoured_filter,
       transport_ref, principal_id, tenant_id, expires_at}` with no raw credential material.
 - [ ] Put the registry behind an adapter. The default local adapter may use ETS, but clustered
       HTTP deployments need PubSub-backed fan-out because the process producing a change may not
-      own the listen stream.
-- [ ] `subscriptions/listen` handler; emit `notifications/subscriptions/acknowledged` **first**,
+      own the listen stream. **The adapter contract and node-local ETS implementation are complete;
+      the clustered PubSub adapter remains an HTTP deployment task.**
+- [x] `subscriptions/listen` handler; emit `notifications/subscriptions/acknowledged` **first**,
       reflecting only the honoured subset of the filter.
-- [ ] Authorize every requested filter at acknowledgment time and every publication against the
+- [x] Authorize every requested filter at acknowledgment time and every publication against the
       stored principal/tenant so a fan-out bug cannot cross tenants. Apply per-principal,
       per-tenant and global listener/queue limits in addition to the per-listener bound.
-- [ ] Stamp `_meta["io.modelcontextprotocol/subscriptionId"]` on every notification on the
+- [x] Stamp `_meta["io.modelcontextprotocol/subscriptionId"]` on every notification on the
       stream. Server MUST NOT send unrequested types.
-- [ ] Request-scoped notifications (`notifications/progress`, `notifications/message`) continue
+- [x] Request-scoped notifications (`notifications/progress`, `notifications/message`) continue
       to flow on the **originating request's** stream, never on the listen stream.
-- [ ] Graceful closure: empty `SubscriptionsListenResult` with `_meta.subscriptionId`.
-- [ ] Cancellation: HTTP ⇒ closing the SSE stream; stdio ⇒ `notifications/cancelled` on the
-      listen request id.
-- [ ] `ExMCP.Client.Subscription` (new) + re-implement `subscribe_resource/2` /
+- [x] Graceful closure: empty `SubscriptionsListenResult` with `_meta.subscriptionId`.
+- [x] Cancellation: HTTP ⇒ closing the SSE stream; stdio ⇒ `notifications/cancelled` on the
+      listen request id. Modern HTTP cancellation closes only the owning POST response process;
+      chunk failure or process exit removes the registry entry and stops delivery.
+- [x] `ExMCP.Client.Subscription` (new) + re-implement `subscribe_resource/2` /
       `unsubscribe_resource/2` on top of it for modern; keep `resources/subscribe` for legacy.
-- [ ] Implement immutable-filter replacement: ref-count the desired resource set, open and
+- [x] Implement immutable-filter replacement: ref-count the desired resource set, open and
       acknowledge a replacement listen request, then cancel the old one. Define overlap/gap and
       duplicate-suppression behavior using subscription IDs.
-- [ ] Auto-reconnect must re-send `subscriptions/listen` — the server holds no state across
+- [x] Auto-reconnect must re-send `subscriptions/listen` — the server holds no state across
       reconnects.
-- [ ] Because events are not resumable, a reconnected client refetches affected list/resource
+- [x] Because events are not resumable, a reconnected client refetches affected list/resource
       state before declaring the subscription current. Expose a resync-complete event so callers
       do not mistake a newly acknowledged stream for a gap-free continuation.
-- [ ] SSE comment keep-alives (`:\r\n`) on long-lived listen streams; clients must ignore them.
-- [ ] Bound each listener queue and define slow-consumer behavior: coalesce list-changed events,
+- [x] SSE comment keep-alives (`:\r\n`) on long-lived listen streams; clients ignore comment
+      frames and reset the stream idle timer on every received chunk.
+- [x] Bound each listener queue and define slow-consumer behavior: coalesce list-changed events,
       retain only the newest update per resource URI where safe, then close an irrecoverably slow
       stream with telemetry instead of allowing unbounded memory growth.
-- [ ] Monitor transport owners and remove registrations on disconnect/cancellation. Generate
+- [x] Monitor transport owners and remove registrations on disconnect/cancellation. Generate
       unguessable subscription IDs and re-check authorization when establishing a replacement
-      stream after reconnect.
-- [ ] Define long-lived authorization behavior: bind the listener to the authenticated principal,
+      stream after reconnect. **The wire ID remains the spec-required client request ID; ExMCP
+      separately generates an unguessable internal registry token.**
+- [x] Define long-lived authorization behavior: bind the listener to the authenticated principal,
       close it on credential revocation/expiry when observable, and set a configurable maximum
       stream lifetime so authorization is periodically re-evaluated.
 
@@ -838,31 +842,43 @@ clustered rolling-key work above.
 subscription correlation; reconnect and filter replacement re-establish streams. HTTP acceptance
 moves to Phase 6.
 
+Current coverage includes generic and resource-compatibility clients, acknowledgment-first
+replacement, correlation/authorization/limit checks, slow-consumer coalescing and closure,
+simulated reconnect resynchronization, in-memory transport integration, a literal subprocess
+stdio resource-update stream, and a literal Cowboy/httpc POST stream covering acknowledgment,
+publication, cancellation, quiet keepalives, abrupt-close reconnect, and resynchronization. The
+remaining unchecked Phase 5 work is clustered PubSub fan-out.
+
 ---
 
 ### Phase 6 — Streamable HTTP rework
 
-- [ ] Client transport: remove session/resumability state for modern (see §4.6 for the exact
+- [x] Client transport: remove session/resumability state for modern (see §4.6 for the exact
       line references). Keep the code path for legacy.
-- [ ] Client: emit `MCP-Protocol-Version` and `Mcp-Method` on every POST; emit `Mcp-Name` only
+- [x] Client: emit `MCP-Protocol-Version` and `Mcp-Method` on every POST; emit `Mcp-Name` only
       for `tools/call`, `resources/read`, and `prompts/get`.
       Base64 sentinel (`=?base64?…?=`) encoding when a value isn't header-safe, **including**
       plain-ASCII values that happen to match the sentinel pattern.
-- [ ] Client: mirror server-listed `x-mcp-header` params into `Mcp-Param-{Name}`.
+- [x] Client: mirror server-listed `x-mcp-header` params into `Mcp-Param-{Name}`.
       On `-32020` due to missing/mismatched `Mcp-Param-*`, re-fetch `tools/list` and retry once
       only because header mismatch is guaranteed to reject before method dispatch.
 - [ ] Server: statically validate `x-mcp-header` reachability/names while normalizing
       `tools/list`; **exclude** tools with invalid annotations from the paginated result before
-      cursor/cache calculation and log a warning.
-- [ ] Server plug: validate header↔body agreement (numeric compare for integers, Base64 decode
+      cursor/cache calculation and log a warning. **Validation, warning, and exclusion during
+      modern result normalization are complete. Moving exclusion ahead of handler-owned cursor
+      calculation remains open.**
+- [x] Server plug: validate header↔body agreement (numeric compare for integers, Base64 decode
       before compare) → `400` + `-32020`. Missing required header ⇒ same.
-- [ ] Server plug: `404` + `-32601` for unknown methods (distinguishes a modern server from a
+- [x] Server plug: `404` + `-32601` for unknown methods (distinguishes a modern server from a
       legacy HTTP+SSE `404`).
-- [ ] Server plug: modern requests never mint/echo `Mcp-Session-Id`; ignore `Last-Event-ID`.
+- [x] Server plug: modern requests never mint/echo `Mcp-Session-Id`; ignore `Last-Event-ID`.
       `GET`/`DELETE` on the MCP endpoint ⇒ `405` in a modern-only configuration.
-- [ ] `X-Accel-Buffering: no` on SSE responses.
+- [x] `X-Accel-Buffering: no` on SSE responses.
 - [ ] Closing the SSE response stream = cancellation; server stops work and sends nothing more.
-- [ ] `ExMCP.Plugs.ProtocolVersion` unconditional for modern (drop the default-off flag).
+      **Complete for `subscriptions/listen`, including client-side per-request close and server
+      owner cleanup. Request-scoped SSE for ordinary operations remains open.**
+- [x] `ExMCP.Plugs.ProtocolVersion` unconditional for modern (drop the default-off flag for the
+      modern era while retaining the legacy compatibility switch).
 - [ ] Define ambiguous-delivery semantics before enabling automatic reconnect retries. The
       spec-default policy follows the modern transport requirement and reissues a broken
       in-flight request with a new JSON-RPC id, which is **at-least-once**, not exactly-once.
@@ -876,10 +892,20 @@ moves to Phase 6.
       retry requires explicit caller policy. Provide a stable application idempotency-key hook.
 - [ ] Reject duplicate required headers, CR/LF values, oversized names/values and conflicting
       case variants before dispatch. Add reverse-proxy integration tests so header normalization
-      or buffering by common proxies cannot silently change protocol behavior.
+      or buffering by common proxies cannot silently change protocol behavior. **Direct Plug
+      validation covers duplicate, malformed, unsafe and oversized standard/custom headers; the
+      reverse-proxy matrix remains open.**
 - [ ] Treat every `Mcp-Param-*` value as potentially sensitive. Redact it from Plug/client debug
       logs, telemetry and proxy examples just like `Authorization`; document that operators must
       configure upstream access-log redaction too.
+
+Current Phase 6 coverage includes pure header encoding/validation, Base64 sentinel edge cases,
+`x-mcp-header` reachability/type/name checks, client schema refresh plus exactly-one retry on
+`-32020`, server-side custom-header validation before tool dispatch, stateless modern response
+behavior, unknown-method `404`, modern-only `GET`/`DELETE` `405`, and the existing legacy HTTP
+compatibility suites, plus literal modern HTTP subscription streaming, cancellation, keepalives,
+abrupt-close reconnect and resynchronization. Request-scoped modern SSE, clustered subscription
+fan-out, reverse-proxy tests, and ambiguous-delivery retry policy remain open.
 
 **Exit:** the modern Streamable HTTP transport subset passes locally and against every available
 2026-07-28 harness case for headers, status codes, SSE and cancellation; the Phase 4 MRTR and

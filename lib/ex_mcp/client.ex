@@ -37,12 +37,13 @@ defmodule ExMCP.Client do
   use GenServer
   require Logger
 
-  alias ExMCP.Client.{ConnectionManager, EraCache, MRTR, RequestHandler}
+  alias ExMCP.Client.{ConnectionManager, EraCache, MRTR, RequestHandler, Subscription}
   alias ExMCP.Client.Operations.{Prompts, Resources, Tools}
   alias ExMCP.Internal.{Protocol, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
   alias ExMCP.Server.Discover
+  alias ExMCP.Transport.HTTP
 
   # Reconnection defaults ported from the former state machine implementation:
   # exponential backoff starting at 1s, doubling per attempt, capped at 60s,
@@ -94,7 +95,18 @@ defmodule ExMCP.Client do
     server_request_tasks: %{},
     # In-flight MRTR input fulfillment tasks. Each task may perform several
     # input callbacks sequentially while the client loop remains responsive.
-    mrtr_tasks: %{}
+    mrtr_tasks: %{},
+    # Modern long-lived subscription request id => Subscription process.
+    subscriptions: %{},
+    # Monitor ref => Subscription process. Monitors survive reconnects while
+    # request ids are replaced.
+    subscription_monitors: %{},
+    # Ref-counted desired resource set and its currently committed immutable
+    # modern subscription stream.
+    resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
+    # Monitor ref => compatibility subscriber. Dead callers are removed from
+    # the desired resource set so their references cannot retain a stream.
+    resource_subscriber_monitors: %{}
   ]
 
   @type t :: GenServer.server()
@@ -490,9 +502,19 @@ defmodule ExMCP.Client do
 
       {:ok, _result} = ExMCP.Client.subscribe_resource(client, "file:///config.json")
   """
-  @spec subscribe_resource(t(), String.t(), keyword()) :: {:ok, map()} | {:error, any()}
+  @spec subscribe_resource(t(), String.t(), keyword()) ::
+          {:ok, map() | Subscription.Ref.t()} | {:error, any()}
   def subscribe_resource(client, uri, opts \\ []) do
     Resources.subscribe_resource(client, uri, opts)
+  end
+
+  @doc """
+  Opens a modern immutable notification subscription and waits for the
+  server's acknowledgment.
+  """
+  @spec listen(t(), map(), keyword()) :: {:ok, Subscription.Ref.t()} | {:error, term()}
+  def listen(client, notification_filter, opts \\ []) do
+    Subscription.open(client, notification_filter, opts)
   end
 
   @doc """
@@ -952,6 +974,66 @@ defmodule ExMCP.Client do
     RequestHandler.handle_mrtr_fulfillment(input_requests, opts, scope_ref, from, state)
   end
 
+  def handle_call({:open_subscription, subscription_pid, filter}, _from, state) do
+    RequestHandler.open_subscription(subscription_pid, filter, state)
+  end
+
+  def handle_call({:prepare_resource_subscribe, uri, subscriber}, _from, state) do
+    state = ensure_resource_subscriber_monitor(state, subscriber)
+    resources = resource_subscription_state(state)
+    subscribers = Map.get(resources.desired, uri, %{})
+    already_desired? = map_size(subscribers) > 0
+    subscribers = Map.update(subscribers, subscriber, 1, &(&1 + 1))
+    desired = Map.put(resources.desired, uri, subscribers)
+
+    if already_desired? and resources.active do
+      {:reply, {:retained, resources.active},
+       %{state | resource_subscriptions: %{resources | desired: desired}}}
+    else
+      resources = %{resources | desired: desired, generation: resources.generation + 1}
+      {:reply, replacement_plan(resources), %{state | resource_subscriptions: resources}}
+    end
+  end
+
+  def handle_call({:prepare_resource_unsubscribe, uri, subscriber}, _from, state) do
+    resources = resource_subscription_state(state)
+
+    case decrement_subscriber(resources.desired, uri, subscriber) do
+      :not_found ->
+        {:reply, {:error, :not_subscribed}, state}
+
+      {:retained, desired} ->
+        state = maybe_demonitor_resource_subscriber(state, subscriber, desired)
+
+        {:reply, {:retained, resources.active},
+         %{state | resource_subscriptions: %{resources | desired: desired}}}
+
+      {:removed, desired} ->
+        state = maybe_demonitor_resource_subscriber(state, subscriber, desired)
+        resources = %{resources | desired: desired, generation: resources.generation + 1}
+
+        if map_size(desired) == 0 do
+          old = resources.active
+          resources = %{resources | active: nil}
+          {:reply, {:cancel, old}, %{state | resource_subscriptions: resources}}
+        else
+          {:reply, replacement_plan(resources), %{state | resource_subscriptions: resources}}
+        end
+    end
+  end
+
+  def handle_call({:commit_resource_subscription, generation, subscription}, _from, state) do
+    resources = resource_subscription_state(state)
+
+    if generation == resources.generation do
+      old = resources.active
+      resources = %{resources | active: subscription}
+      {:reply, {:committed, old}, %{state | resource_subscriptions: resources}}
+    else
+      {:reply, {:stale, replacement_plan(resources)}, state}
+    end
+  end
+
   def handle_call(:get_default_retry_policy, _from, state) do
     {:reply, {:ok, state.default_retry_policy}, state}
   end
@@ -985,6 +1067,10 @@ defmodule ExMCP.Client do
         Process.exit(state.receiver_task.pid, :shutdown)
       end
     end
+
+    notify_subscription_processes(state, {:client_subscription_shutdown, :client_disconnected})
+    demonitor_subscriptions(state)
+    demonitor_resource_subscribers(state)
 
     # Reply to all pending requests with connection error
     connection_error = Error.connection_error("Client disconnected")
@@ -1042,7 +1128,11 @@ defmodule ExMCP.Client do
         health_check_id: nil,
         reconnect_timer: nil,
         manual_disconnect: true,
-        async_post_tasks: %{}
+        async_post_tasks: %{},
+        subscriptions: %{},
+        subscription_monitors: %{},
+        resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
+        resource_subscriber_monitors: %{}
     }
 
     {:reply, :ok, new_state}
@@ -1118,6 +1208,10 @@ defmodule ExMCP.Client do
     RequestHandler.cancel_mrtr_scope(scope_ref, state)
   end
 
+  def handle_cast({:close_subscription, subscription_pid, request_id, reason}, state) do
+    RequestHandler.close_subscription(subscription_pid, request_id, reason, state)
+  end
+
   def handle_cast({:notification, method, params}, state) do
     RequestHandler.handle_cast_notification(method, params, state)
   end
@@ -1126,6 +1220,95 @@ defmodule ExMCP.Client do
   def handle_info({:transport_message, message}, state) do
     RequestHandler.parse_transport_message(message, state)
   end
+
+  def handle_info(
+        {:modern_http_stream_message, stream_pid, request_id, message},
+        %{
+          transport_mod: HTTP,
+          transport_state: %HTTP{} = transport_state
+        } = state
+      ) do
+    if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
+      RequestHandler.parse_transport_message(message, state)
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(
+        {:modern_http_stream_finished, stream_pid, request_id},
+        %{
+          transport_mod: HTTP,
+          transport_state: %HTTP{} = transport_state
+        } = state
+      ) do
+    transport_state = HTTP.forget_stream(transport_state, request_id, stream_pid)
+
+    {:noreply, %{state | transport_state: transport_state}}
+  end
+
+  def handle_info(
+        {:modern_http_stream_closed, stream_pid, request_id, reason},
+        %{
+          transport_mod: HTTP,
+          transport_state: %HTTP{} = transport_state
+        } = state
+      ) do
+    if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
+      transport_state = HTTP.forget_stream(transport_state, request_id, stream_pid)
+
+      RequestHandler.handle_subscription_stream_closed(
+        request_id,
+        reason,
+        %{state | transport_state: transport_state}
+      )
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(
+        {:ex_mcp_subscription, %Subscription.Ref{} = subscription,
+         "notifications/resources/updated", %{"uri" => uri} = params},
+        state
+      ) do
+    resources = resource_subscription_state(state)
+
+    if active_subscription?(resources.active, subscription) do
+      resources.desired
+      |> Map.get(uri, %{})
+      |> Map.keys()
+      |> Enum.each(&send(&1, {:ex_mcp_resource_updated, uri, params}))
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:ex_mcp_subscription_resync, %Subscription.Ref{} = subscription, {:complete, snapshot}},
+        state
+      ) do
+    resources = resource_subscription_state(state)
+
+    if resources.active && resources.active.pid == subscription.pid do
+      subscribers =
+        resources.desired
+        |> Map.values()
+        |> Enum.flat_map(&Map.keys/1)
+        |> Enum.uniq()
+
+      Enum.each(subscribers, &send(&1, {:ex_mcp_resource_resync, subscription, snapshot}))
+      {:noreply, %{state | resource_subscriptions: %{resources | active: subscription}}}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:ex_mcp_subscription_resync, _subscription, _status}, state),
+    do: {:noreply, state}
+
+  def handle_info({:ex_mcp_subscription_closed, _subscription, _reason}, state),
+    do: {:noreply, state}
 
   # Async POST result — the HTTP transport spawns a monitored task for POST
   # requests in SSE mode to avoid blocking the GenServer during bidirectional
@@ -1147,6 +1330,48 @@ defmodule ExMCP.Client do
   def handle_info({:async_post_task, ref, request_id}, state) when is_reference(ref) do
     tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
     {:noreply, %{state | async_post_tasks: tasks}}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, subscriber, _reason},
+        %{resource_subscriber_monitors: monitors} = state
+      )
+      when is_map(monitors) and is_map_key(monitors, ref) do
+    resources = resource_subscription_state(state)
+    {resources, action} = drop_resource_subscriber(resources, subscriber)
+    client = self()
+
+    run_resource_subscription_action(client, action)
+
+    {:noreply,
+     %{
+       state
+       | resource_subscriber_monitors: Map.delete(monitors, ref),
+         resource_subscriptions: resources
+     }}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, subscription_pid, _reason},
+        %{subscription_monitors: monitors} = state
+      )
+      when is_map(monitors) and is_map_key(monitors, ref) do
+    state = RequestHandler.close_subscriptions_for_pid(subscription_pid, state)
+
+    resources = resource_subscription_state(state)
+
+    resources =
+      case resources.active do
+        %Subscription.Ref{pid: ^subscription_pid} -> %{resources | active: nil}
+        _other -> resources
+      end
+
+    {:noreply,
+     %{
+       state
+       | subscription_monitors: Map.delete(monitors, ref),
+         resource_subscriptions: resources
+     }}
   end
 
   # Async POST task exited. A :normal exit just clears the bookkeeping (its
@@ -1328,6 +1553,7 @@ defmodule ExMCP.Client do
 
   defp handle_transport_down(reason, state) do
     reply_pending_with_close_error(reason, state)
+    notify_subscription_processes(state, {:client_subscription_disconnected, reason})
 
     :telemetry.execute(
       [:ex_mcp, :client, :disconnected],
@@ -1358,7 +1584,8 @@ defmodule ExMCP.Client do
         cancelled_requests: MapSet.new(),
         health_check_ref: nil,
         health_check_id: nil,
-        async_post_tasks: %{}
+        async_post_tasks: %{},
+        subscriptions: %{}
     }
 
     if reconnect_allowed?(cleared_state, previous_status) do
@@ -1413,6 +1640,151 @@ defmodule ExMCP.Client do
     end
   end
 
+  defp notify_subscription_processes(state, message) do
+    state.subscription_monitors
+    |> Map.values()
+    |> Enum.uniq()
+    |> Enum.each(&send(&1, message))
+  end
+
+  defp demonitor_subscriptions(state) do
+    Enum.each(state.subscription_monitors, fn {ref, _pid} ->
+      Process.demonitor(ref, [:flush])
+    end)
+  end
+
+  defp demonitor_resource_subscribers(state) do
+    Enum.each(state.resource_subscriber_monitors, fn {ref, _pid} ->
+      Process.demonitor(ref, [:flush])
+    end)
+  end
+
+  defp resource_subscription_state(state) do
+    case state.resource_subscriptions do
+      %{desired: desired, active: active, generation: generation}
+      when is_map(desired) and is_integer(generation) ->
+        %{desired: desired, active: active, generation: generation}
+
+      _legacy_shape ->
+        %{desired: %{}, active: nil, generation: 0}
+    end
+  end
+
+  defp replacement_plan(resources) do
+    {:replace, resources.active, resources.desired |> Map.keys() |> Enum.sort(),
+     resources.generation}
+  end
+
+  defp decrement_subscriber(desired, uri, subscriber) do
+    with subscribers when is_map(subscribers) <- Map.get(desired, uri),
+         count when is_integer(count) <- Map.get(subscribers, subscriber) do
+      subscribers =
+        if count > 1,
+          do: Map.put(subscribers, subscriber, count - 1),
+          else: Map.delete(subscribers, subscriber)
+
+      if map_size(subscribers) == 0,
+        do: {:removed, Map.delete(desired, uri)},
+        else: {:retained, Map.put(desired, uri, subscribers)}
+    else
+      _other -> :not_found
+    end
+  end
+
+  defp ensure_resource_subscriber_monitor(state, subscriber) do
+    monitored? =
+      Enum.any?(state.resource_subscriber_monitors, fn {_ref, pid} -> pid == subscriber end)
+
+    if monitored? do
+      state
+    else
+      ref = Process.monitor(subscriber)
+
+      %{
+        state
+        | resource_subscriber_monitors:
+            Map.put(state.resource_subscriber_monitors, ref, subscriber)
+      }
+    end
+  end
+
+  defp maybe_demonitor_resource_subscriber(state, subscriber, desired) do
+    if resource_subscriber?(desired, subscriber) do
+      state
+    else
+      case Enum.find(state.resource_subscriber_monitors, fn {_ref, pid} -> pid == subscriber end) do
+        nil ->
+          state
+
+        {ref, _pid} ->
+          Process.demonitor(ref, [:flush])
+
+          %{
+            state
+            | resource_subscriber_monitors: Map.delete(state.resource_subscriber_monitors, ref)
+          }
+      end
+    end
+  end
+
+  defp resource_subscriber?(desired, subscriber) do
+    Enum.any?(desired, fn {_uri, subscribers} -> Map.has_key?(subscribers, subscriber) end)
+  end
+
+  defp drop_resource_subscriber(resources, subscriber) do
+    old_uris = resources.desired |> Map.keys() |> MapSet.new()
+
+    desired =
+      resources.desired
+      |> Enum.reduce(%{}, fn {uri, subscribers}, acc ->
+        case Map.delete(subscribers, subscriber) do
+          remaining when map_size(remaining) == 0 -> acc
+          remaining -> Map.put(acc, uri, remaining)
+        end
+      end)
+
+    new_uris = desired |> Map.keys() |> MapSet.new()
+    resources = %{resources | desired: desired}
+
+    cond do
+      MapSet.equal?(old_uris, new_uris) ->
+        {resources, :none}
+
+      map_size(desired) == 0 ->
+        old = resources.active
+        {%{resources | active: nil, generation: resources.generation + 1}, {:cancel, old}}
+
+      true ->
+        resources = %{resources | generation: resources.generation + 1}
+        {resources, replacement_plan(resources)}
+    end
+  end
+
+  defp run_resource_subscription_action(_client, :none), do: :ok
+  defp run_resource_subscription_action(_client, {:cancel, nil}), do: :ok
+
+  defp run_resource_subscription_action(_client, {:cancel, subscription}) do
+    Subscription.cancel(subscription, "resource subscriber exited")
+  end
+
+  defp run_resource_subscription_action(
+         client,
+         {:replace, old, uris, generation}
+       ) do
+    {:ok, _pid} =
+      Task.start(fn ->
+        Resources.replace_resource_subscription(client, old, uris, generation)
+      end)
+
+    :ok
+  end
+
+  defp active_subscription?(%Subscription.Ref{} = active, %Subscription.Ref{} = candidate) do
+    active.pid == candidate.pid and active.request_id == candidate.request_id
+  end
+
+  defp active_subscription?(_active, _candidate), do: false
+
   defp reconnect_allowed?(state, previous_status) do
     state.reconnect_enabled == true and
       state.manual_disconnect != true and
@@ -1458,13 +1830,17 @@ defmodule ExMCP.Client do
           %{transport: connected_state.transport_mod}
         )
 
-        schedule_next_health_check(%{
-          connected_state
-          | connection_status: :ready,
-            initialized: true,
-            reconnect_attempts: 0,
-            health_check_id: nil
-        })
+        reconnected_state =
+          schedule_next_health_check(%{
+            connected_state
+            | connection_status: :ready,
+              initialized: true,
+              reconnect_attempts: 0,
+              health_check_id: nil
+          })
+
+        notify_subscription_processes(reconnected_state, :client_subscription_reconnect)
+        reconnected_state
 
       {:error, reason} ->
         :telemetry.execute(

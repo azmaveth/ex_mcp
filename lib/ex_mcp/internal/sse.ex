@@ -13,6 +13,7 @@ defmodule ExMCP.Internal.SSE do
   @spec parse_complete(String.t()) :: [complete_event()]
   def parse_complete(body) when is_binary(body) do
     body
+    |> normalize_line_endings()
     |> String.split("\n\n")
     |> Enum.map(&parse_complete_block/1)
     |> Enum.reject(&(&1 == %{}))
@@ -23,6 +24,7 @@ defmodule ExMCP.Internal.SSE do
   @spec parse_stream(String.t()) :: {[stream_event()], String.t()}
   def parse_stream(buffer) when is_binary(buffer) do
     buffer
+    |> normalize_line_endings()
     |> String.split("\n")
     |> parse_stream_lines([], %{}, [])
   end
@@ -109,5 +111,11 @@ defmodule ExMCP.Internal.SSE do
       _ ->
         :incomplete
     end
+  end
+
+  defp normalize_line_endings(data) do
+    data
+    |> String.replace("\r\n", "\n")
+    |> String.replace("\r", "\n")
   end
 end
