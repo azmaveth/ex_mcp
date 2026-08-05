@@ -83,7 +83,7 @@ defmodule ExMCP.Test.ModernStdioServer do
   end
 end
 
-{:ok, _server} =
+{:ok, server} =
   ExMCP.Test.ModernStdioServer.start_link(
     transport: :stdio,
     protocol_mode: :modern_only,
@@ -94,4 +94,12 @@ end
     ]
   )
 
-Process.sleep(:infinity)
+# StdioServer stops normally when the parent closes stdin. A linked process does
+# not terminate on a normal exit, so sleeping forever here leaked one BEAM VM
+# per client/test run. Monitor the server explicitly and let the script finish
+# as soon as the transport closes.
+server_ref = Process.monitor(server)
+
+receive do
+  {:DOWN, ^server_ref, :process, ^server, _reason} -> :ok
+end
