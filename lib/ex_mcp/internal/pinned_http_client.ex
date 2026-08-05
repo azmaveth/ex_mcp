@@ -19,13 +19,12 @@ defmodule ExMCP.Internal.PinnedHTTPClient do
     connect_opts = [
       hostname: uri.host,
       mode: :passive,
-      protocols: [:http1],
       transport_opts: transport_opts(address, opts)
     ]
 
     pinned_address = address |> :inet.ntoa() |> to_string()
 
-    case Mint.HTTP.connect(scheme, pinned_address, port, connect_opts) do
+    case Mint.HTTP1.connect(scheme, pinned_address, port, connect_opts) do
       {:ok, conn} -> request_and_receive(conn, uri, opts[:request_headers], timeout, max_bytes)
       {:error, _reason} -> {:error, :fetch_failed}
     end
@@ -36,7 +35,7 @@ defmodule ExMCP.Internal.PinnedHTTPClient do
   end
 
   @spec request_and_receive(
-          Mint.HTTP.t(),
+          Mint.HTTP1.t(),
           URI.t(),
           Mint.Types.headers(),
           non_neg_integer(),
@@ -44,7 +43,7 @@ defmodule ExMCP.Internal.PinnedHTTPClient do
         ) :: request_result()
   defp request_and_receive(conn, uri, headers, timeout, max_bytes) do
     result =
-      case Mint.HTTP.request(conn, "GET", request_target(uri), headers, nil) do
+      case Mint.HTTP1.request(conn, "GET", request_target(uri), headers, nil) do
         {:ok, next_conn, request_ref} ->
           deadline = System.monotonic_time(:millisecond) + timeout
           receive_response(next_conn, request_ref, empty_response(), deadline, max_bytes)
@@ -53,14 +52,14 @@ defmodule ExMCP.Internal.PinnedHTTPClient do
           {:error, :fetch_failed}
       end
 
-    _ = Mint.HTTP.close(conn)
+    _ = Mint.HTTP1.close(conn)
     result
   end
 
   defp receive_response(conn, request_ref, response, deadline, max_bytes) do
     timeout = max(deadline - System.monotonic_time(:millisecond), 0)
 
-    case Mint.HTTP.recv(conn, 0, timeout) do
+    case Mint.HTTP1.recv(conn, 0, timeout) do
       {:ok, next_conn, events} ->
         case consume_events(events, request_ref, response, max_bytes) do
           {:done, completed} ->

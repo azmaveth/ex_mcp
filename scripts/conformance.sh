@@ -19,6 +19,7 @@
 #   CONFORMANCE_PORT          — Server port (default: 3099)
 #   CONFORMANCE_TIMEOUT       — Client timeout in ms (default: 120000)
 #   CONFORMANCE_START_TIMEOUT_SECONDS — Cold server startup timeout (default: 120)
+#   CONFORMANCE_MIX_ENV       — Mix environment for compiled clients (default: dev)
 #
 # Modern/draft alpha harnesses require Node.js 22 or newer (`fs.globSync`).
 #
@@ -157,28 +158,35 @@ run_client_tests() {
   echo "=== Client Conformance Tests${version:+ (spec $version)} ($target) ==="
   echo ""
 
-  # Compile once before the harness launches its scenarios in parallel. Using
-  # `mix run --no-compile` lets those processes share the completed build
-  # instead of racing dozens of concurrent Mix.install compilations.
-  mix compile --quiet
+  # Compile once before the harness launches its scenarios in parallel, then
+  # run the clients directly from the application code path. Entering Mix in
+  # every client would serialize them on the shared build lock and can make
+  # timing-sensitive mock authorization servers expire before discovery.
+  local conformance_mix_env="${CONFORMANCE_MIX_ENV:-dev}"
+  MIX_ENV="$conformance_mix_env" mix compile --quiet
 
-  local client_command="${CONFORMANCE_CLIENT_COMMAND:-mix run --no-compile --no-deps-check $CLIENT_SCRIPT}"
-  local args="client --command '$client_command' --timeout $TIMEOUT --verbose"
+  local default_client_command="ERL_LIBS='$PROJECT_DIR/_build/$conformance_mix_env/lib' elixir '$CLIENT_SCRIPT'"
+  local client_command="${CONFORMANCE_CLIENT_COMMAND:-$default_client_command}"
+  local args=(client --command "$client_command" --timeout "$TIMEOUT" --verbose)
   if [ -n "$scenario" ]; then
-    args="$args --scenario $scenario"
+    args+=(--scenario "$scenario")
   else
-    args="$args --suite $suite"
+    args+=(--suite "$suite")
   fi
   if [ -n "$version" ]; then
-    args="$args --spec-version $version"
+    args+=(--spec-version "$version")
   fi
   if [ -f "$BASELINE_FILE" ]; then
-    args="$args --expected-failures $BASELINE_FILE"
+    args+=(--expected-failures "$BASELINE_FILE")
   fi
 
-  echo "Running: $CONFORMANCE $args"
+  echo "Running: $CONFORMANCE ${args[*]}"
   echo ""
-  eval $CONFORMANCE $args 2>&1 | tee -a "$OUTPUT_FILE"
+  # CONFORMANCE intentionally contains the `npx` executable and its pinned
+  # package argument, so leave that prefix split while preserving every
+  # harness argument (especially the full client command) as one array item.
+  # shellcheck disable=SC2086
+  $CONFORMANCE "${args[@]}" 2>&1 | tee -a "$OUTPUT_FILE"
   return ${PIPESTATUS[0]}
 }
 
@@ -254,6 +262,11 @@ require_modern_node() {
 }
 
 run_modern() {
+  # The modern harness launches client scenarios in parallel. The test
+  # environment starts PropCheck in every VM, and those VMs would contend for
+  # its shared CounterStrike DETS file. Conformance exercises the packaged
+  # runtime, so exclude test-only dependencies unless explicitly overridden.
+  export MIX_ENV="${CONFORMANCE_MIX_ENV:-dev}"
   CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.10}"
   CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
   SPEC_VERSION="2026-07-28"
@@ -319,6 +332,7 @@ case "$MODE" in
     echo "  CONFORMANCE_PACKAGE_VERSION=0.1.16   Pin stable conformance package"
     echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.10 Override alpha package"
     echo "  CONFORMANCE_START_TIMEOUT_SECONDS=120 Override cold server startup timeout"
+    echo "  CONFORMANCE_MIX_ENV=dev               Override compiled-client Mix environment"
     exit 1
     ;;
 esac

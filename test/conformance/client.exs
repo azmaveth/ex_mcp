@@ -13,9 +13,11 @@
 # MCP_CONFORMANCE_SCENARIO env var indicates which scenario to run.
 # MCP_CONFORMANCE_CONTEXT env var has scenario-specific data (JSON).
 
-if is_nil(Mix.Project.get()) do
+unless Code.ensure_loaded?(ExMCP) do
   Mix.install([{:ex_mcp, path: "."}, {:jason, "~> 1.4"}])
 end
+
+{:ok, _started} = Application.ensure_all_started(:ex_mcp)
 
 defmodule ConformanceClient do
   require Logger

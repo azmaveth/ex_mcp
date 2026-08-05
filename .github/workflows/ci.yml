@@ -261,6 +261,11 @@ jobs:
   external-conformance:
     name: MCP 2026-07-28 external conformance
     runs-on: ubuntu-latest
+    # The harness launches client scenarios in parallel. Keep test-only
+    # dependencies (notably PropCheck's shared CounterStrike DETS file) out of
+    # those independent VMs so they cannot race over global test state.
+    env:
+      MIX_ENV: dev
 
     steps:
     - uses: actions/checkout@v7
