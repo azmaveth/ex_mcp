@@ -4,8 +4,16 @@ defmodule ExMCP.Server.Handler do
 
   Behaviour for implementing MCP server handlers.
 
-  This behaviour defines callbacks for handling all MCP protocol operations including
-  tools, resources, prompts, and the new sampling/LLM integration features.
+  This behaviour defines callbacks for handling MCP protocol operations,
+  including tools, resources, prompts, and retained compatibility features.
+
+  > #### Protocol-deprecated callbacks {: .warning}
+  >
+  > MCP 2026-07-28 deprecated Roots, Sampling, and protocol Logging. ExMCP
+  > retains `handle_list_roots/1`, `handle_create_message/2`, and
+  > `handle_set_log_level/2` throughout 1.x. For new implementations, pass
+  > directories explicitly, call LLM provider APIs directly, and use stderr or
+  > OpenTelemetry for logging.
 
   The handler behaviour pattern is an implementation detail but all callbacks
   correspond to official MCP protocol methods.
@@ -436,12 +444,19 @@ defmodule ExMCP.Server.Handler do
 
   @doc """
   Handles a sampling create message request.
+
+  MCP Sampling is deprecated as of 2026-07-28 and retained throughout ExMCP
+  1.x. New implementations should integrate directly with an LLM provider API.
   """
   @callback handle_create_message(params :: ExMCP.Types.create_message_params(), state()) ::
               {:ok, ExMCP.Types.create_message_result(), state()} | {:error, any(), state()}
 
   @doc """
   Handles listing available roots.
+
+  MCP Roots is deprecated as of 2026-07-28 and retained throughout ExMCP 1.x.
+  Prefer tool parameters, resource URIs, or server configuration for new
+  implementations.
   """
   @callback handle_list_roots(state()) ::
               {:ok, [ExMCP.Types.root()], state()} | {:error, any(), state()}
@@ -485,8 +500,12 @@ defmodule ExMCP.Server.Handler do
 
   The implementation should adjust the server's logging verbosity accordingly.
 
-  > #### Draft Feature {: .info}
-  > This implements the MCP specification feature (`logging/setLevel`) from version 2025-03-26.
+  > #### Protocol-deprecated feature {: .warning}
+  >
+  > MCP protocol Logging is deprecated as of 2026-07-28 and retained
+  > throughout ExMCP 1.x. `logging/setLevel` remains applicable to legacy
+  > connections. Prefer stderr for stdio or OpenTelemetry for new
+  > observability integrations.
 
   @doc api: :public
   """

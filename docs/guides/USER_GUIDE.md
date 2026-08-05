@@ -9,9 +9,10 @@ A practical guide to building MCP clients and servers with ExMCP.
 3. [Low-Level Handlers](#low-level-handlers)
 4. [BEAM-Local MCP](#beam-local-mcp)
 5. [Clients](#clients)
-6. [Transports](#transports)
-7. [Resilience And Pipelines](#resilience-and-pipelines)
-8. [Troubleshooting](#troubleshooting)
+6. [Protocol-Deprecated Features](#protocol-deprecated-features)
+7. [Transports](#transports)
+8. [Resilience And Pipelines](#resilience-and-pipelines)
+9. [Troubleshooting](#troubleshooting)
 
 ## Installation
 
@@ -195,6 +196,25 @@ Call server features:
 {:ok, content} = ExMCP.Client.read_resource(client, "file:///docs/readme.md")
 {:ok, prompts} = ExMCP.Client.list_prompts(client)
 ```
+
+## Protocol-Deprecated Features
+
+MCP 2026-07-28 deprecates Roots, Sampling, and protocol Logging, but keeps them
+in the specification for at least twelve months. ExMCP retains their callbacks,
+functions, capability declarations, legacy methods, and modern MRTR handling
+throughout the 1.x line. Existing integrations can continue to use them while
+migrating; new integrations should use these replacements:
+
+| Deprecated MCP feature | Recommended replacement |
+|------------------------|-------------------------|
+| Roots (`roots/list`, root callbacks and notifications) | Pass directories or files through tool parameters, resource URIs, or server configuration |
+| Sampling (`sampling/createMessage`) | Call the chosen LLM provider API directly from application code |
+| Logging (`logging/setLevel`, `notifications/message`, per-request log level) | Write stdio diagnostics to stderr and export structured observability through OpenTelemetry |
+
+Roots are informational hints, not an authorization boundary. Continue to
+enforce filesystem and resource permissions independently during migration.
+Sampling compatibility handlers must retain human approval for any legacy
+server-initiated model request.
 
 ## Transports
 

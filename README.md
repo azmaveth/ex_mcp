@@ -51,7 +51,7 @@ end
 |--------|------------------------|---------------------------|
 | `ExMCP.Client`, `Server.Handler`, `Server.DSL` | Content sanitize/transform helpers | `ExMCP.Server.Tools` (+ helpers) |
 | Transports (`:stdio`, `:http`, `:beam`, `:test`) | Some draft MCP handler features | Image compress/resize/thumbnail stubs |
-| `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | MCP 2024-11-05 HTTP+SSE transport |
+| `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | MCP HTTP+SSE, Roots, Sampling, and protocol Logging |
 | `ExMCP.Content` builders (`text`/`image`/`audio`) | — | — |
 
 Runnable examples live in the GitHub repo under [`examples/`](https://github.com/azmaveth/ex_mcp/tree/master/examples) (not shipped in the Hex package).

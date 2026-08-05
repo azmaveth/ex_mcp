@@ -8,6 +8,13 @@ defmodule ExMCP.Client.Handler do
   make requests to clients. This behaviour defines the callbacks that a
   client handler must implement to respond to these requests.
 
+  > #### Protocol-deprecated callbacks {: .warning}
+  >
+  > MCP 2026-07-28 deprecated Roots and Sampling. ExMCP retains
+  > `handle_list_roots/1` and `handle_create_message/2` throughout 1.x for
+  > compatibility. New clients should pass directories or files explicitly and
+  > integrate with LLM provider APIs directly.
+
   ## Example
 
       defmodule MyClientHandler do
@@ -72,6 +79,10 @@ defmodule ExMCP.Client.Handler do
   This is called when the server needs to understand what file system
   locations the client has access to.
 
+  MCP Roots is deprecated as of 2026-07-28 and retained throughout ExMCP 1.x.
+  Prefer passing directories or files via tool parameters, resource URIs, or
+  server configuration in new implementations.
+
   ## Response
 
   The roots should be a list of maps with:
@@ -97,6 +108,9 @@ defmodule ExMCP.Client.Handler do
 
   The client has full discretion over which model to select and should
   inform the user before beginning sampling (human in the loop).
+
+  MCP Sampling is deprecated as of 2026-07-28 and retained throughout ExMCP
+  1.x. New implementations should integrate directly with an LLM provider API.
 
   ## Parameters
 

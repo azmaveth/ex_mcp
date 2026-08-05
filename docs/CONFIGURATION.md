@@ -856,6 +856,12 @@ ExMCP.Client.start_link(
 
 ## Logging
 
+This section configures application/runtime logging. The MCP wire-level Logging
+feature (`logging/setLevel`, per-request log levels, and
+`notifications/message`) is deprecated as of MCP 2026-07-28 but remains
+available throughout ExMCP 1.x. New observability integrations should use
+stderr for stdio diagnostics or OpenTelemetry for structured telemetry.
+
 For stdio servers, stdout must contain only JSON-RPC messages. ExMCP configures
 stdio logging when stdio mode starts.
 Send ad hoc diagnostics to stderr:

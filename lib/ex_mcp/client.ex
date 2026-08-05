@@ -450,6 +450,10 @@ defmodule ExMCP.Client do
 
   Sends a `roots/list` request to the server to retrieve the list of
   available root URIs.
+
+  MCP Roots is deprecated as of 2026-07-28 and retained throughout ExMCP 1.x.
+  New implementations should pass directories or files via tool parameters,
+  resource URIs, or server configuration.
   """
   @spec list_roots(t(), keyword() | timeout()) ::
           {:ok, %{String.t() => [map()]}} | {:error, any()}
@@ -2698,6 +2702,10 @@ defmodule ExMCP.Client do
   Sends a `logging/setLevel` request to configure the server's log verbosity.
   This is part of the MCP specification for controlling server logging behavior.
 
+  MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
+  ExMCP 1.x. This legacy RPC remains available for compatible peers. Prefer
+  stderr for stdio or OpenTelemetry for new observability integrations.
+
   ## Parameters
 
   - `client` - Client process reference
@@ -2730,6 +2738,10 @@ defmodule ExMCP.Client do
   logging and monitoring. The message is sent as a notification (fire-and-forget)
   following the MCP specification.
 
+  MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
+  ExMCP 1.x. Prefer stderr for stdio or OpenTelemetry for new observability
+  integrations.
+
   ## Parameters
 
   - `client` - Client process reference
@@ -2757,6 +2769,10 @@ defmodule ExMCP.Client do
   This function sends detailed log messages from the client to the server for
   centralized logging and monitoring. The message is sent as a notification
   (fire-and-forget) following the MCP specification.
+
+  MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
+  ExMCP 1.x. Prefer stderr for stdio or OpenTelemetry for new observability
+  integrations.
 
   ## Parameters
 

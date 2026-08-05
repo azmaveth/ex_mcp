@@ -94,8 +94,10 @@ defmodule ExMCP do
   - **Tools** - Register and execute functions with parameters
   - **Resources** - List and read data from various sources
   - **Prompts** - Manage reusable prompt templates
-  - **Sampling** - Direct LLM integration for response generation
-  - **Roots** - URI-based resource boundaries
+  - **Sampling** - Protocol-deprecated in MCP 2026-07-28; retained throughout
+    ExMCP 1.x for compatibility. Prefer direct LLM provider APIs for new code
+  - **Roots** - Protocol-deprecated in MCP 2026-07-28; retained throughout
+    ExMCP 1.x. Prefer tool parameters, resource URIs, or server configuration
   - **Subscriptions** - Monitor resources for changes
   - **Progress** - Track long-running operations
   - **Notifications** - Real-time updates for changes

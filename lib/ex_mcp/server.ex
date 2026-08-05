@@ -26,10 +26,22 @@ defmodule ExMCP.Server do
   > `ExMCP.Server.Tools` (and `Tools.Simplified`) are deprecated, retained
   > throughout 1.x, and planned for removal in **2.0.0**. Prefer
   > `ExMCP.Server.DSL` for new code.
+
+  > #### Protocol-deprecated features {: .warning}
+  >
+  > MCP 2026-07-28 deprecated Roots, Sampling, and protocol Logging. ExMCP
+  > retains their public APIs throughout 1.x for legacy and 2026-07-28
+  > compatibility. New implementations should pass directories through tool
+  > parameters, resource URIs, or server configuration; call LLM provider APIs
+  > directly; and use stderr or OpenTelemetry for operational logs.
   """
 
   @doc """
   Sends a log message through the server.
+
+  MCP protocol Logging is deprecated as of 2026-07-28. This API remains
+  available throughout ExMCP 1.x for compatibility. Prefer stderr on stdio or
+  OpenTelemetry for new observability integrations.
   """
   @spec send_log_message(GenServer.server(), atom() | String.t(), String.t(), map()) :: :ok
   def send_log_message(server, level, message, data) do
@@ -46,6 +58,11 @@ defmodule ExMCP.Server do
 
   @doc """
   Lists roots available from the connected client.
+
+  MCP Roots is deprecated as of 2026-07-28. This API remains available
+  throughout ExMCP 1.x for compatibility. New implementations should pass
+  directories or files via tool parameters, resource URIs, or server
+  configuration.
   """
   @spec list_roots(GenServer.server(), timeout()) :: {:ok, %{roots: [map()]}} | {:error, any()}
   def list_roots(server, timeout \\ 5000) do
@@ -54,6 +71,10 @@ defmodule ExMCP.Server do
 
   @doc """
   Notifies the client that the server's roots have changed.
+
+  MCP Roots is deprecated as of 2026-07-28 and retained throughout ExMCP 1.x.
+  Prefer explicit tool parameters, resource URIs, or server configuration for
+  new implementations.
   """
   @spec notify_roots_changed(GenServer.server()) :: :ok
   def notify_roots_changed(server) do
@@ -139,6 +160,10 @@ defmodule ExMCP.Server do
 
   @doc """
   Sends a `sampling/createMessage` request to the connected client.
+
+  MCP Sampling is deprecated as of 2026-07-28. This API remains available
+  throughout ExMCP 1.x for compatibility. New implementations should integrate
+  directly with an LLM provider API.
   """
   @spec create_message(GenServer.server(), map()) :: {:ok, map()} | {:error, term()}
   def create_message(server, params) do

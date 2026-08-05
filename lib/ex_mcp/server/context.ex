@@ -79,6 +79,10 @@ defmodule ExMCP.Server.Context do
   Request-scoped log delivery is available only while that request owns an
   active SSE response. It never falls back to another request or subscription
   stream.
+
+  MCP protocol Logging is deprecated as of 2026-07-28 and retained throughout
+  ExMCP 1.x. Prefer stderr for stdio diagnostics or OpenTelemetry for new
+  structured-observability integrations.
   """
   @spec send_log_message(atom() | String.t(), String.t(), map()) ::
           :ok

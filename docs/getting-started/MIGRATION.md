@@ -187,9 +187,23 @@ Enhanced MCP logging protocol support:
 
 ```elixir
 # New in v0.5.0+
-ExMCP.Logging.set_level(:debug)
-ExMCP.Logging.send_message(:info, "Operation completed", %{result: "success"})
+{:ok, _} = ExMCP.Client.set_log_level(client, "debug")
+:ok = ExMCP.Server.send_log_message(server, "info", "Operation completed", %{result: "success"})
 ```
+
+MCP 2026-07-28 deprecates the protocol Logging feature. ExMCP retains the
+existing logging APIs and legacy methods throughout 1.x, but new integrations
+should write stdio diagnostics to stderr and use OpenTelemetry for structured
+observability.
+
+### MCP 2026-07-28 feature deprecations
+
+Roots and Sampling are also protocol-deprecated in MCP 2026-07-28. They remain
+available in ExMCP 1.x for peers that negotiate a revision containing them and
+for modern MRTR compatibility. Migrate Roots to explicit tool parameters,
+resource URIs, or server configuration. Migrate Sampling to direct LLM provider
+API calls. These notices do not remove or change the existing 1.x public
+functions and callbacks.
 
 ## General Migration Tips
 

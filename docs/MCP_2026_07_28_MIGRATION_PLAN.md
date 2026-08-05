@@ -1163,9 +1163,17 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       startup warns when the deprecated transport is enabled, and the main server/transport/
       configuration docs distinguish it from modern POST-owned SSE streams. Plug, handshake,
       routing, alias, default-selection and SSE formatting tests cover the compatibility path.**
-- [ ] Keep Roots/Sampling/Logging; add deprecation notes pointing at the suggested migrations
+- [x] Keep Roots/Sampling/Logging; add deprecation notes pointing at the suggested migrations
       (tool params / resource URIs for roots; direct LLM APIs for sampling; stderr or OTel for
-      logging).
+      logging). **All representative `ExMCP.Server`, `ExMCP.Client`, request-context and Handler
+      behaviour functions/callbacks remain exported throughout 1.x. Their compiled docs now
+      identify the MCP 2026-07-28 protocol deprecation and the feature-specific migration path;
+      they deliberately do not carry Elixir `@deprecated` metadata because ExMCP has not
+      scheduled these public APIs for removal during 1.x. The README, user guide, configuration
+      guide and migration guide distinguish retained wire compatibility from recommended new
+      designs. `DeprecationCompatibilityTest` locks the exports, callback surface, migration
+      text and absence of premature removal metadata, while the focused Roots/Sampling/Logging
+      compatibility suite remains green.**
 - [ ] Docs: `docs/getting-started/MIGRATION.md` gets an rc.5/legacy → 1.0 dual-era section;
       `docs/ARCHITECTURE.md` gets the era model; `docs/TRANSPORT_GUIDE.md` gets the new HTTP
       shape; `CLAUDE.md` and configuration docs cover all four protocol modes.
