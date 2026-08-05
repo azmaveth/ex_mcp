@@ -964,7 +964,12 @@ its own hints, and ExMCP removes cache hints from `input_required` results.
 Modern clients reject missing or invalid required hints. With the default
 `:struct` response format they are available as `response.ttlMs` and
 `response.cacheScope`; `format: :map` preserves the wire keys. ExMCP currently
-parses and validates these hints but does not store or reuse responses.
+parses and validates these hints but does not store or reuse responses. This
+is the deliberate 1.0 scope: a client cache would add authorization
+partitioning, invalidation races, memory bounds, and MRTR exclusion to the
+final release candidate. Repeated calls therefore still reach the transport,
+even for a positive public TTL, and a later operation never reuses an earlier
+`requestState`. Cache storage remains a post-1.0 additive feature.
 
 Pass request-local context into a handler with `:handler_opts`. The option can
 be a static term, a one-arity function called with the `Plug.Conn`, a two-arity

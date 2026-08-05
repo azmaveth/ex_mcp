@@ -60,6 +60,40 @@ defmodule ExMCP.Client.MRTRTest do
     end
   end
 
+  defmodule RepeatedMRTRTransport do
+    def send_message(encoded, state) do
+      request = Jason.decode!(encoded)
+      send(state.owner, {:repeated_mrtr_wire_request, state.round, request})
+
+      result =
+        if rem(state.round, 2) == 0 do
+          operation = div(state.round, 2) + 1
+
+          %{
+            "resultType" => "input_required",
+            "inputRequests" => %{
+              "confirm" => %{
+                "method" => "elicitation/create",
+                "params" => %{
+                  "message" => "Confirm operation #{operation}",
+                  "requestedSchema" => %{"type" => "object"}
+                }
+              }
+            },
+            "requestState" => "opaque.operation.#{operation}"
+          }
+        else
+          %{
+            "resultType" => "complete",
+            "content" => [%{"type" => "text", "text" => "done"}]
+          }
+        end
+
+      response = %{"jsonrpc" => "2.0", "id" => request["id"], "result" => result}
+      {:ok, %{state | round: state.round + 1}, Jason.encode!(response)}
+    end
+  end
+
   defmodule SlowHandler do
     @behaviour ExMCP.Client.Handler
 
@@ -182,6 +216,44 @@ defmodule ExMCP.Client.MRTRTest do
                "content" => %{"name" => "Grace"}
              }
            }
+  end
+
+  test "a later operation never reuses an earlier MRTR requestState" do
+    owner = self()
+
+    {:ok, client} =
+      start_supervised(
+        {Client,
+         _skip_connect: true,
+         handler: {Handler, [owner: self()]},
+         capabilities: %{"elicitation" => %{"form" => %{}}},
+         health_check_interval: nil}
+      )
+
+    :sys.replace_state(client, fn state ->
+      %{
+        state
+        | transport_mod: RepeatedMRTRTransport,
+          transport_state: %{owner: owner, round: 0},
+          protocol_version: "2026-07-28",
+          connection_status: :ready,
+          initialized: true
+      }
+    end)
+
+    assert {:ok, _first} = Client.call_tool(client, "collect", %{}, format: :map)
+    assert {:ok, _second} = Client.call_tool(client, "collect", %{}, format: :map)
+
+    assert_receive {:repeated_mrtr_wire_request, 0, first_initial}
+    assert_receive {:repeated_mrtr_wire_request, 1, first_retry}
+    assert_receive {:repeated_mrtr_wire_request, 2, second_initial}
+    assert_receive {:repeated_mrtr_wire_request, 3, second_retry}
+
+    refute Map.has_key?(first_initial["params"], "requestState")
+    assert first_retry["params"]["requestState"] == "opaque.operation.1"
+    refute Map.has_key?(second_initial["params"], "requestState")
+    refute Map.has_key?(second_initial["params"], "inputResponses")
+    assert second_retry["params"]["requestState"] == "opaque.operation.2"
   end
 
   test "rejects input methods the client did not declare" do

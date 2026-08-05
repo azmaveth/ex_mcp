@@ -952,18 +952,23 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       `cacheScope` on cacheable complete results. A valid `ttlMs: 0` means immediately stale.
       **The originating method is retained for asynchronous stdio/SSE responses, so validation
       is transport-independent; structured client responses expose both fields.**
-- [ ] `ExMCP.Client.Cache` (new): freshness = `now < t_received + ttlMs`; no background polling;
+- [x] **1.0 scope decision — client storage/reuse deferred.** A future `ExMCP.Client.Cache` must
+      define freshness as `now < t_received + ttlMs`; no background polling;
       `list_changed` notification invalidates immediately;
       MRTR retries (carrying `inputResponses`/`requestState`) **MUST NOT** be cached; per-page
       caching for paginated lists; `private` scope keyed by authorization context. Cache keys
       include endpoint, selected protocol version, method, canonical params/cursor, server
-      identity and a non-secret authorization partition — never a raw token. **Optional for 1.0:**
-      parsing metadata is required, storing/reusing responses is not.
-- [ ] If storage ships, default authorized responses to a partition derived from issuer, subject
+      identity and a non-secret authorization partition — never a raw token. **For 1.0, parsing
+      and validation ship but storage/reuse does not. Regression coverage proves a positive public
+      TTL still performs a second transport request and separate MRTR operations do not reuse
+      `requestState`.**
+- [x] **Not applicable to 1.0 because storage is deferred.** If storage ships later, default
+      authorized responses to a partition derived from issuer, subject
       or client identity, resource/audience, client ID and granted scopes; share only when the
       server explicitly returns `cacheScope: "public"`. Use monotonic overflow-checked expiry,
       entry/total-byte limits and generation-based invalidation so an older in-flight response
-      cannot repopulate the cache after `list_changed`.
+      cannot repopulate the cache after `list_changed`. These remain acceptance requirements for
+      the future additive cache feature, not waived requirements.
 - [x] Derive the exact cacheable-result method set and required fields from the vendored
       `2026-07-28` schema instead of maintaining another hand-written list. **A schema-sync test
       discovers every result definition requiring `ttlMs` + `cacheScope`, maps it to its request

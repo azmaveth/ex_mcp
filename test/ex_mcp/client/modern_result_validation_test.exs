@@ -45,6 +45,29 @@ defmodule ExMCP.Client.ModernResultValidationTest do
     assert meta["io.modelcontextprotocol/clientInfo"]["name"] == "test-client"
   end
 
+  test "valid cache hints are advisory and repeated requests still reach the transport" do
+    state =
+      modern_state(%{
+        "resultType" => "complete",
+        "tools" => [],
+        "ttlMs" => 60_000,
+        "cacheScope" => "public"
+      })
+
+    assert {:reply, {:ok, %{"ttlMs" => 60_000}}, state} =
+             RequestHandler.handle_request("tools/list", %{}, {self(), make_ref()}, state)
+
+    assert_receive {:outbound_request, first}
+
+    assert {:reply, {:ok, %{"ttlMs" => 60_000}}, _state} =
+             RequestHandler.handle_request("tools/list", %{}, {self(), make_ref()}, state)
+
+    assert_receive {:outbound_request, second}
+    assert first["id"] != second["id"]
+    assert first["method"] == second["method"]
+    assert first["params"] == second["params"]
+  end
+
   test "rejects a modern result without resultType" do
     state = modern_state(%{"tools" => []})
 
