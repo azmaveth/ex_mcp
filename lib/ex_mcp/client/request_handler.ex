@@ -460,10 +460,7 @@ defmodule ExMCP.Client.RequestHandler do
       _other ->
         case Map.get(state.pending_requests, request_id) do
           {from, :single} ->
-            error = %{
-              type: :transport_error,
-              message: "Request HTTP stream closed: #{inspect(reason)}"
-            }
+            error = request_stream_error(reason)
 
             GenServer.reply(from, {:error, error})
 
@@ -488,6 +485,35 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   def close_request_stream(_request_id, state), do: state
+
+  defp request_stream_error(reason) do
+    if ambiguous_stream_break?(reason) do
+      %Error.TransportError{
+        transport: :http,
+        reason: :response_stream_broken,
+        details: %{cause: reason, delivery: :ambiguous}
+      }
+    else
+      %Error.TransportError{
+        transport: :http,
+        reason: :response_stream_invalid,
+        details: %{cause: reason, delivery: :not_retryable}
+      }
+    end
+  end
+
+  defp ambiguous_stream_break?({:http_error, _status}), do: false
+
+  defp ambiguous_stream_break?(reason)
+       when reason in [
+              :invalid_sse_json,
+              :invalid_stream_message,
+              :response_id_mismatch,
+              :final_response_required
+            ],
+       do: false
+
+  defp ambiguous_stream_break?(_reason), do: true
 
   @doc """
   Handles a batch of responses from the transport.

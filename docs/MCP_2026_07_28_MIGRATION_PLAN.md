@@ -885,17 +885,23 @@ remaining unchecked Phase 5 work is clustered PubSub fan-out.
       watchdog terminates the temporary handler if the connection disappears.
 - [x] `ExMCP.Plugs.ProtocolVersion` unconditional for modern (drop the default-off flag for the
       modern era while retaining the legacy compatibility switch).
-- [ ] Define ambiguous-delivery semantics before enabling automatic reconnect retries. The
+- [x] Define ambiguous-delivery semantics before enabling automatic reconnect retries. The
       spec-default policy follows the modern transport requirement and reissues a broken
       in-flight request with a new JSON-RPC id, which is **at-least-once**, not exactly-once.
       Offer a caller-selected `:safe_only` policy that retries discovery/list/read and read-only
       tools but returns `:outcome_unknown` for side-effecting calls. Clearly label this override
       as non-conforming client behavior and reject it in conformance mode. Document that JSON-RPC
       ids do not provide deduplication and recommend application-level idempotency keys for tools.
-- [ ] Retry only the transport-defined broken in-flight stream condition, at most once by default,
+      **Implemented as `:http_stream_retry`; tools require the caller-owned `:retry_safe`
+      attestation because `readOnlyHint` is advisory.**
+- [x] Retry only the transport-defined broken in-flight stream condition, at most once by default,
       inside the original overall deadline/cancellation scope and reconnect backoff. Do not retry
       generic HTTP/JSON-RPC failures. A tool's `readOnlyHint` is not a security boundary; safe-only
       retry requires explicit caller policy. Provide a stable application idempotency-key hook.
+      **The retry delay is bounded by the original deadline, the second attempt always gets a new
+      JSON-RPC id, cancellation/protocol/HTTP errors are excluded, and `call_tool` can inject a
+      stable key at a caller-selected argument path before either attempt. The application tool
+      remains responsible for schema acceptance and server-side deduplication.**
 - [ ] Reject duplicate required headers, CR/LF values, oversized names/values and conflicting
       case variants before dispatch. Add reverse-proxy integration tests so header normalization
       or buffering by common proxies cannot silently change protocol behavior. **Direct Plug
@@ -913,7 +919,9 @@ compatibility suites, plus literal modern HTTP subscription streaming, cancellat
 abrupt-close reconnect and resynchronization. Literal ordinary-request coverage verifies ordered
 progress/log events, one final response, per-request log opt-in/thresholds, client-side
 correlation, and disconnect-driven handler cancellation. Clustered subscription fan-out,
-reverse-proxy tests, and ambiguous-delivery retry policy remain open.
+reverse-proxy tests, non-SSE POST recovery, and OAuth-aware request-stream reauthentication remain
+open. The request-stream retry matrix covers retry-once, safe-only `outcome_unknown`, a fresh
+JSON-RPC id, original-deadline enforcement, non-retryable failures and stable idempotency keys.
 
 **Exit:** the modern Streamable HTTP transport subset passes locally and against every available
 2026-07-28 harness case for headers, status codes, SSE and cancellation; the Phase 4 MRTR and

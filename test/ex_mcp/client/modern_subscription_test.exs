@@ -316,7 +316,15 @@ defmodule ExMCP.Client.ModernSubscriptionTest do
         health_check_interval: nil
       )
 
-    on_exit(fn -> if Process.alive?(client), do: Client.disconnect(client) end)
+    on_exit(fn ->
+      if Process.alive?(client) do
+        try do
+          Client.disconnect(client)
+        catch
+          :exit, _reason -> :ok
+        end
+      end
+    end)
 
     {registry, server, client}
   end

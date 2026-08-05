@@ -8,7 +8,13 @@ defmodule ExMCP.Client.ModernHTTPRequestStreamTest do
     use ExMCP.Server.Handler
 
     @impl true
-    def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
+    def init(opts) do
+      {:ok,
+       %{
+         test_pid: Keyword.fetch!(opts, :test_pid),
+         attempts: Keyword.fetch!(opts, :attempts)
+       }}
+    end
 
     @impl true
     def handle_list_tools(_cursor, state) do
@@ -26,6 +32,11 @@ defmodule ExMCP.Client.ModernHTTPRequestStreamTest do
         %{
           name: "logging",
           description: "Attempts a request-scoped log message",
+          inputSchema: %{"type" => "object"}
+        },
+        %{
+          name: "flaky",
+          description: "Breaks its first response stream",
           inputSchema: %{"type" => "object"}
         }
       ]
@@ -56,6 +67,27 @@ defmodule ExMCP.Client.ModernHTTPRequestStreamTest do
       result = Context.send_log_message(:info, "requested log")
       send(state.test_pid, {:server_log_result, result})
       {:ok, %{content: [%{type: "text", text: "done"}]}, state}
+    end
+
+    def handle_call_tool("flaky", arguments, state) do
+      token = Context.progress_token()
+
+      attempt =
+        Agent.get_and_update(state.attempts, fn attempts ->
+          next = Map.get(attempts, token, 0) + 1
+          {next, Map.put(attempts, token, next)}
+        end)
+
+      context = Context.current()
+      send(state.test_pid, {:flaky_attempt, token, attempt, context.request_id, arguments})
+
+      if attempt == 1 do
+        :ok = Context.report_progress(1, 2, "first attempt")
+        Process.exit(context.notification_target, :kill)
+        Process.sleep(:infinity)
+      else
+        {:ok, %{content: [%{type: "text", text: "retried"}]}, state}
+      end
     end
   end
 
@@ -90,13 +122,14 @@ defmodule ExMCP.Client.ModernHTTPRequestStreamTest do
   setup do
     port = free_port()
     ranch_ref = {:modern_http_request_stream_test, System.unique_integer([:positive])}
+    attempts = start_supervised!({Agent, fn -> %{} end})
 
     {:ok, _pid} =
       Plug.Cowboy.http(
         ExMCP.HttpPlug,
         [
           handler: ServerHandler,
-          handler_opts: [test_pid: self()],
+          handler_opts: [test_pid: self(), attempts: attempts],
           path: "/mcp",
           protocol_mode: :modern_only,
           allowed_origins: ["http://127.0.0.1:#{port}"]
@@ -136,7 +169,7 @@ defmodule ExMCP.Client.ModernHTTPRequestStreamTest do
       end
     end)
 
-    {:ok, client: client}
+    {:ok, client: client, attempts: attempts}
   end
 
   test "delivers only related notifications before the final response", %{client: client} do
@@ -251,6 +284,40 @@ defmodule ExMCP.Client.ModernHTTPRequestStreamTest do
 
     assert_receive {:server_log_result, :ok}, 1_000
     assert {:ok, _result} = Task.await(task, 2_000)
+  end
+
+  test "an ambiguous broken stream retries once with a new JSON-RPC id", %{client: client} do
+    task =
+      Task.async(fn ->
+        Client.call_tool(client, "flaky", %{"value" => 7},
+          progress_token: "retry-default",
+          timeout: 3_000,
+          http_stream_retry_delay: 0,
+          format: :map
+        )
+      end)
+
+    assert_receive {:flaky_attempt, "retry-default", 1, first_id, first_arguments}, 1_000
+    assert_receive {:client_progress, ^first_id, %{"progress" => 1}}, 1_000
+    assert_receive {:flaky_attempt, "retry-default", 2, second_id, second_arguments}, 2_000
+
+    assert first_id != second_id
+    assert first_arguments == second_arguments
+
+    assert {:ok, %{"content" => [%{"text" => "retried"}]}} = Task.await(task, 2_000)
+  end
+
+  test "safe-only does not reissue an unattested tool after an ambiguous break", %{client: client} do
+    assert {:error, %ExMCP.Error.TransportError{reason: :outcome_unknown}} =
+             Client.call_tool(client, "flaky", %{},
+               progress_token: "retry-safe-only",
+               timeout: 2_000,
+               http_stream_retry: :safe_only,
+               format: :map
+             )
+
+    assert_receive {:flaky_attempt, "retry-safe-only", 1, _request_id, _arguments}, 1_000
+    refute_receive {:flaky_attempt, "retry-safe-only", 2, _request_id, _arguments}, 100
   end
 
   defp free_port do

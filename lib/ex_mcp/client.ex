@@ -223,6 +223,24 @@ defmodule ExMCP.Client do
   - `:backoff_factor` - Exponential backoff multiplier (default: 2)
   - `:jitter` - Add random jitter to prevent thundering herd (default: true)
 
+  Modern HTTP response-stream recovery is deliberately separate from this
+  generic policy because a broken response has ambiguous delivery semantics.
+  Operations accept these options:
+
+  - `:http_stream_retry` - `:at_least_once` (default) reissues one broken
+    request stream with a new JSON-RPC id. `:safe_only` reissues only built-in
+    read operations or operations explicitly marked `retry_safe: true`, and
+    otherwise returns a transport error whose reason is `:outcome_unknown`.
+  - `:http_stream_retry_delay` - Delay before the one reissue (default: 200ms),
+    bounded by the operation's original deadline.
+  - `:retry_safe` - Caller-owned safety attestation. Tool annotations such as
+    `readOnlyHint` are advisory and are never used as the security decision.
+
+  `:safe_only` is intentionally non-conforming and is rejected when the client
+  is started with `conformance_mode: true`. JSON-RPC ids do not deduplicate
+  application side effects; tool authors should use an application
+  idempotency key and server-side deduplication where reissue is possible.
+
   ## Retry Policy Examples
 
       # Client with default retry policy for all operations
@@ -1041,6 +1059,10 @@ defmodule ExMCP.Client do
 
   def handle_call(:get_default_timeout, _from, state) do
     {:reply, {:ok, state.default_timeout}, state}
+  end
+
+  def handle_call(:conformance_mode?, _from, state) do
+    {:reply, Keyword.get(state.transport_opts, :conformance_mode, false), state}
   end
 
   def handle_call({:batch_request, requests}, from, state) do
@@ -2069,7 +2091,26 @@ defmodule ExMCP.Client do
   @doc false
   @spec make_request(t(), String.t(), map(), keyword(), pos_integer()) ::
           {:ok, any()} | {:error, any()}
-  def make_request(client, method, params, opts, _default_timeout) do
+  def make_request(client, method, params, opts, default_timeout) do
+    stream_retry_mode = Keyword.get(opts, :http_stream_retry, :at_least_once)
+
+    case validate_http_stream_retry_mode(client, stream_retry_mode) do
+      :ok ->
+        do_make_request(
+          client,
+          method,
+          params,
+          opts,
+          default_timeout,
+          stream_retry_mode
+        )
+
+      {:error, _reason} = error ->
+        handle_request_result(error, opts)
+    end
+  end
+
+  defp do_make_request(client, method, params, opts, default_timeout, stream_retry_mode) do
     started_at = System.monotonic_time(:millisecond)
     explicit_timeout = Keyword.get(opts, :timeout)
     retry_policy = Keyword.get(opts, :retry_policy, :use_default)
@@ -2078,7 +2119,12 @@ defmodule ExMCP.Client do
     result =
       if explicit_timeout do
         deadline = started_at + explicit_timeout
-        control = %{deadline: deadline, scope_ref: scope_ref}
+
+        control = %{
+          deadline: deadline,
+          scope_ref: scope_ref,
+          stream_retry_mode: stream_retry_mode
+        }
 
         do_mrtr_request(
           client,
@@ -2093,11 +2139,33 @@ defmodule ExMCP.Client do
       else
         first_operation = fn -> request_once(client, method, params, nil) end
 
-        case execute_with_retry_policy(first_operation, client, retry_policy) do
+        retry_operation = fn ->
+          deadline = started_at + fetch_default_timeout(client, default_timeout)
+
+          with {:ok, remaining} <- remaining_timeout(deadline) do
+            request_once(client, method, params, remaining)
+          end
+        end
+
+        case execute_with_stream_retry(
+               first_operation,
+               retry_operation,
+               client,
+               retry_policy,
+               method,
+               opts,
+               stream_retry_mode,
+               fn -> started_at + fetch_default_timeout(client, default_timeout) end
+             ) do
           {:ok, result} = complete_or_extension ->
             if MRTR.input_required?(result) do
               deadline = started_at + fetch_default_timeout(client)
-              control = %{deadline: deadline, scope_ref: scope_ref}
+
+              control = %{
+                deadline: deadline,
+                scope_ref: scope_ref,
+                stream_retry_mode: stream_retry_mode
+              }
 
               continue_mrtr(
                 client,
@@ -2134,29 +2202,40 @@ defmodule ExMCP.Client do
          round,
          control
        ) do
-    with {:ok, remaining} <- remaining_timeout(control.deadline) do
-      operation = fn -> request_once(client, method, round_params, remaining) end
-
-      case execute_with_retry_policy(operation, client, retry_policy) do
-        {:ok, result} = complete_or_extension ->
-          if MRTR.input_required?(result) do
-            continue_mrtr(
-              client,
-              method,
-              original_params,
-              result,
-              opts,
-              retry_policy,
-              round,
-              control
-            )
-          else
-            complete_or_extension
-          end
-
-        other ->
-          other
+    operation = fn ->
+      with {:ok, remaining} <- remaining_timeout(control.deadline) do
+        request_once(client, method, round_params, remaining)
       end
+    end
+
+    case execute_with_stream_retry(
+           operation,
+           operation,
+           client,
+           retry_policy,
+           method,
+           opts,
+           control.stream_retry_mode,
+           fn -> control.deadline end
+         ) do
+      {:ok, result} = complete_or_extension ->
+        if MRTR.input_required?(result) do
+          continue_mrtr(
+            client,
+            method,
+            original_params,
+            result,
+            opts,
+            retry_policy,
+            round,
+            control
+          )
+        else
+          complete_or_extension
+        end
+
+      other ->
+        other
     end
   end
 
@@ -2249,6 +2328,145 @@ defmodule ExMCP.Client do
     end
   end
 
+  defp execute_with_stream_retry(
+         operation,
+         retry_operation,
+         client,
+         retry_policy,
+         method,
+         opts,
+         stream_retry_mode,
+         deadline_fun
+       ) do
+    operation
+    |> execute_with_retry_policy(client, retry_policy)
+    |> maybe_retry_broken_stream(
+      retry_operation,
+      method,
+      opts,
+      stream_retry_mode,
+      deadline_fun
+    )
+  end
+
+  defp maybe_retry_broken_stream(
+         {:error, %Error.TransportError{reason: :response_stream_broken} = error},
+         retry_operation,
+         method,
+         opts,
+         stream_retry_mode,
+         deadline_fun
+       ) do
+    if stream_retry_allowed?(stream_retry_mode, method, opts) do
+      delay = http_stream_retry_delay(opts)
+      deadline = deadline_fun.()
+
+      case wait_for_stream_retry(delay, deadline) do
+        :ok ->
+          :telemetry.execute(
+            [:ex_mcp, :client, :http, :request, :retry],
+            %{attempt: 2},
+            %{method: method, mode: stream_retry_mode, delivery: :at_least_once}
+          )
+
+          case retry_operation.() do
+            {:error, %Error.TransportError{reason: :response_stream_broken} = second_error} ->
+              outcome_unknown(method, stream_retry_mode, 2, second_error)
+
+            result ->
+              result
+          end
+
+        {:error, :timeout} ->
+          {:error, :timeout}
+      end
+    else
+      outcome_unknown(method, stream_retry_mode, 1, error)
+    end
+  end
+
+  defp maybe_retry_broken_stream(result, _retry, _method, _opts, _mode, _deadline),
+    do: result
+
+  defp stream_retry_allowed?(:at_least_once, _method, _opts), do: true
+
+  defp stream_retry_allowed?(:safe_only, method, opts) do
+    intrinsically_safe_method?(method) or Keyword.get(opts, :retry_safe, false) == true
+  end
+
+  defp intrinsically_safe_method?(method) do
+    method in [
+      "server/discover",
+      "tools/list",
+      "resources/list",
+      "resources/templates/list",
+      "resources/read",
+      "prompts/list",
+      "prompts/get",
+      "completion/complete"
+    ]
+  end
+
+  defp http_stream_retry_delay(opts) do
+    case Keyword.get(opts, :http_stream_retry_delay, 200) do
+      delay when is_integer(delay) and delay >= 0 -> delay
+      _invalid -> 200
+    end
+  end
+
+  defp wait_for_stream_retry(delay, deadline) do
+    case deadline - System.monotonic_time(:millisecond) do
+      remaining when remaining > delay ->
+        if delay > 0, do: Process.sleep(delay)
+        :ok
+
+      _expired ->
+        {:error, :timeout}
+    end
+  end
+
+  defp outcome_unknown(method, mode, attempts, error) do
+    {:error,
+     Error.transport_error(:http, :outcome_unknown, %{
+       method: method,
+       retry_mode: mode,
+       attempts: attempts,
+       cause: error.details,
+       message:
+         "The response stream broke after delivery; the server may have completed the request."
+     })}
+  end
+
+  defp validate_http_stream_retry_mode(_client, :at_least_once), do: :ok
+
+  defp validate_http_stream_retry_mode(client, :safe_only) do
+    if conformance_mode?(client) do
+      {:error,
+       Error.validation_error(
+         :http_stream_retry,
+         :safe_only,
+         "safe_only is non-conforming and unavailable in conformance mode"
+       )}
+    else
+      :ok
+    end
+  end
+
+  defp validate_http_stream_retry_mode(_client, mode) do
+    {:error,
+     Error.validation_error(
+       :http_stream_retry,
+       mode,
+       "expected :at_least_once or :safe_only"
+     )}
+  end
+
+  defp conformance_mode?(client) do
+    GenServer.call(client, :conformance_mode?, 5_000) == true
+  catch
+    :exit, _reason -> false
+  end
+
   # First attempt runs without any pre-flight calls; the client's default
   # retry policy is only fetched when that attempt fails.
   defp execute_with_lazy_default_retry(operation, client) do
@@ -2291,13 +2509,13 @@ defmodule ExMCP.Client do
     :exit, _ -> []
   end
 
-  defp fetch_default_timeout(client) do
+  defp fetch_default_timeout(client, fallback \\ 5_000) do
     case GenServer.call(client, :get_default_timeout, 5_000) do
       {:ok, timeout} when is_integer(timeout) and timeout > 0 -> timeout
-      _other -> 5_000
+      _other -> fallback
     end
   catch
-    :exit, _reason -> 5_000
+    :exit, _reason -> fallback
   end
 
   defp handle_request_result({:ok, response}, opts) do
