@@ -573,12 +573,18 @@ defmodule ExMCP.Server.Handler do
     handle_elicitation_complete: 2
   ]
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
+    opts = Macro.prewalk(opts, &Macro.expand(&1, __CALLER__))
+    task_store_opts = task_store_options!(opts)
+
     quote do
       @behaviour ExMCP.Server.Handler
       use GenServer
       alias ExMCP.Internal.Logging
       alias ExMCP.Server.HandlerBridge
+      alias ExMCP.Tasks.Server, as: TaskServer
+
+      @ex_mcp_task_store_opts unquote(Macro.escape(task_store_opts))
 
       # Required callback defaults live in @before_compile with
       # defoverridable so the Tool DSL's @before_compile can override them.
@@ -648,8 +654,12 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl ExMCP.Server.Handler
-      def handle_task_get(_task_id, state) do
-        {:error, "Tasks not implemented", state}
+      def handle_task_get(task_id, state) do
+        if @ex_mcp_task_store_opts do
+          TaskServer.get(task_id, state, @ex_mcp_task_store_opts)
+        else
+          {:error, "Tasks not implemented", state}
+        end
       end
 
       @impl ExMCP.Server.Handler
@@ -663,14 +673,25 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl ExMCP.Server.Handler
-      def handle_task_cancel(_task_id, state) do
-        {:error, "Tasks not implemented", state}
+      def handle_task_cancel(task_id, state) do
+        if @ex_mcp_task_store_opts do
+          TaskServer.cancel(task_id, state, @ex_mcp_task_store_opts)
+        else
+          {:error, "Tasks not implemented", state}
+        end
       end
 
       @impl ExMCP.Server.Handler
-      def handle_task_update(_task_id, _input_responses, state) do
-        {:error, "Tasks not implemented", state}
+      def handle_task_update(task_id, input_responses, state) do
+        if @ex_mcp_task_store_opts do
+          TaskServer.update(task_id, input_responses, state, @ex_mcp_task_store_opts)
+        else
+          {:error, "Tasks not implemented", state}
+        end
       end
+
+      @doc false
+      def __task_store_options__, do: @ex_mcp_task_store_opts || []
 
       @impl ExMCP.Server.Handler
       def handle_elicitation_complete(_elicitation_id, state) do
@@ -697,6 +718,7 @@ defmodule ExMCP.Server.Handler do
                      handle_task_list: 2,
                      handle_task_cancel: 2,
                      handle_task_update: 3,
+                     __task_store_options__: 0,
                      handle_elicitation_complete: 2,
                      terminate: 2
 
@@ -777,6 +799,25 @@ defmodule ExMCP.Server.Handler do
 
       def handle_call(_msg, _from, state),
         do: {:reply, {:error, "Unknown message"}, state}
+    end
+  end
+
+  defp task_store_options!(opts) do
+    case Keyword.get(opts, :tasks, false) do
+      false ->
+        nil
+
+      :store ->
+        store_opts = Keyword.get(opts, :task_store_opts, [])
+
+        case Keyword.fetch(opts, :task_store) do
+          {:ok, store} -> Keyword.put_new(store_opts, :store, store)
+          :error -> store_opts
+        end
+
+      invalid ->
+        raise ArgumentError,
+              "expected :tasks to be false or :store, got: #{inspect(invalid)}"
     end
   end
 

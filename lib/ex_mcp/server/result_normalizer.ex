@@ -88,6 +88,7 @@ defmodule ExMCP.Server.ResultNormalizer do
     tools =
       tools
       |> ToolHeaders.filter_valid_tools()
+      |> Enum.map(&Map.drop(&1, ["execution"]))
       |> Enum.sort_by(&tool_sort_key/1)
 
     Map.put(result, "tools", tools)

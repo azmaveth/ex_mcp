@@ -271,6 +271,12 @@ or client restart. Enforce TTL cleanup without reassigning identifiers, and use
 atomic or concurrency-controlled transitions so late updates cannot overwrite
 a terminal state.
 
+`ExMCP.Tasks.Store.ETS` provides this guarantee only while its owning ExMCP
+application remains running. It deliberately returns the same error for a
+missing task and an ownership mismatch. Use a shared, restart-persistent
+`ExMCP.Tasks.Store` implementation when multiple nodes can serve task requests
+or server-restart recovery is required.
+
 Treat task `inputRequests` with the same consent and trust policy as the
 corresponding elicitation, sampling, or roots request. Validate each
 `inputResponses` key against the currently outstanding request set, make

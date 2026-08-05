@@ -47,6 +47,25 @@ defmodule ExMCP.Server.ResultNormalizerProtocolTest do
     end
   end
 
+  test "removes the legacy execution hint only from modern tool lists" do
+    tool = %{
+      "name" => "background",
+      "inputSchema" => %{"type" => "object"},
+      "execution" => %{"taskSupport" => "optional"}
+    }
+
+    modern =
+      ResultNormalizer.protocol_result(
+        %{"tools" => [tool]},
+        %{era: :modern, method: "tools/list"}
+      )
+
+    refute Map.has_key?(hd(modern["tools"]), "execution")
+
+    legacy = ResultNormalizer.protocol_result(%{"tools" => [tool]}, %{era: :legacy})
+    assert hd(legacy["tools"])["execution"] == %{"taskSupport" => "optional"}
+  end
+
   test "adds conservative cache defaults and preserves valid handler overrides" do
     defaulted =
       ResultNormalizer.protocol_result(

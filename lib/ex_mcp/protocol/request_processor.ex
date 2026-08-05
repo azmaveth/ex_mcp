@@ -546,7 +546,9 @@ defmodule ExMCP.Protocol.RequestProcessor do
     module = state.__module__
 
     if function_exported?(module, :handle_task_get, 2) do
-      case module.handle_task_get(task_id, state) do
+      case Context.with_context(request.__request_context__, fn ->
+             module.handle_task_get(task_id, state)
+           end) do
         {:ok, result, new_state} ->
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
@@ -570,7 +572,9 @@ defmodule ExMCP.Protocol.RequestProcessor do
     module = state.__module__
 
     if function_exported?(module, :handle_task_list, 2) do
-      case module.handle_task_list(cursor, state) do
+      case Context.with_context(request.__request_context__, fn ->
+             module.handle_task_list(cursor, state)
+           end) do
         {:ok, tasks, next_cursor, new_state} ->
           result = %{"tasks" => tasks}
           result = if next_cursor, do: Map.put(result, "nextCursor", next_cursor), else: result
@@ -596,7 +600,9 @@ defmodule ExMCP.Protocol.RequestProcessor do
     module = state.__module__
 
     if function_exported?(module, :handle_task_result, 2) do
-      case module.handle_task_result(task_id, state) do
+      case Context.with_context(request.__request_context__, fn ->
+             module.handle_task_result(task_id, state)
+           end) do
         {:ok, result, new_state} ->
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
@@ -620,7 +626,9 @@ defmodule ExMCP.Protocol.RequestProcessor do
     module = state.__module__
 
     if function_exported?(module, :handle_task_cancel, 2) do
-      case module.handle_task_cancel(task_id, state) do
+      case Context.with_context(request.__request_context__, fn ->
+             module.handle_task_cancel(task_id, state)
+           end) do
         {:ok, result, new_state} ->
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
@@ -645,7 +653,9 @@ defmodule ExMCP.Protocol.RequestProcessor do
     module = state.__module__
 
     if function_exported?(module, :handle_task_update, 3) do
-      case module.handle_task_update(task_id, input_responses, state) do
+      case Context.with_context(request.__request_context__, fn ->
+             module.handle_task_update(task_id, input_responses, state)
+           end) do
         {:ok, _result, new_state} ->
           response = ResponseBuilder.build_success_response(%{}, id)
           {:response, response, new_state}

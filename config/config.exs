@@ -17,10 +17,7 @@ config :ex_mcp,
   structured_output_enabled: false,
   # When `oauth2_enabled` is true, the server will enforce OAuth 2.1
   # for authorization.
-  oauth2_enabled: false,
-  # When `tasks_enabled` is true, the legacy negotiator advertises the
-  # 2025-11-25 tasks capability. The effective default remains disabled.
-  tasks_enabled: false
+  oauth2_enabled: false
 
 # OAuth 2.1 Server (Resource Server) Configuration
 # This configuration is used when the server needs to validate OAuth 2.1 tokens.

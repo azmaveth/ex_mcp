@@ -995,11 +995,13 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       capability fragment, declaration checks, and result-type negotiation; configured client
       capabilities flow through every request and configured server capabilities flow through
       `server/discover`. The legacy `tasks` capability never enables the extension.**
-- [ ] `CreateTaskResult` with `resultType: "task"`, returned **unsolicited** from `tools/call`
+- [x] `CreateTaskResult` with `resultType: "task"`, returned **unsolicited** from `tools/call`
       (and other supported requests) when the client declared the extension. Server MUST check
-      the client declared it first. **The result envelope and all server transport boundaries now
-      reject undeclared or malformed task handles, and the client accepts them only from its
-      declared capability set. Durable creation remains before this item can be checked.**
+      the client declared it first. **`ExMCP.Tasks.Server.create/4` checks the scoped client
+      declaration, synchronously creates the task through the configured store, and returns the
+      handle only after insertion succeeds. The result envelope and all server transport
+      boundaries reject undeclared or malformed task handles, and the client accepts them only
+      from its declared capability set.**
 - [x] `tasks/get` (poll), `tasks/update` (submit `inputResponses`), `tasks/cancel` (cooperative).
       Remove `tasks/list` and `tasks/result` from the modern table. **The shared method table,
       handler/GenServer bridges, HTTP message processor, DSL request processor, client operations,
@@ -1013,10 +1015,18 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       emits only the modern task fields. Existing `ttl`, `poll_interval`, and `result` fields stay
       intact, while the struct adds `input_requests` and `error`; generated IDs now use
       cryptographic randomness.**
-- [ ] Durable creation before responding; task IDs survive client restarts.
-- [ ] Remove DSL `execution` instruction and `taskSupport` from the modern path (keep for
-      `2025-11-25`).
-- [ ] Retire the always-off `FeatureFlags` `:tasks` gate in favour of extension negotiation.
+- [x] Durable creation before responding; task IDs survive client restarts. **The configurable
+      `ExMCP.Tasks.Store` contract covers create/get/input/cancellation/worker transitions and
+      requires ownership checks on every operation. The supervised ETS implementation is bounded,
+      TTL-aware, atomic on one node, and survives client/connection/worker restarts; deployments
+      needing application/node restart recovery configure a persistent implementation.**
+- [x] Remove DSL `execution` instruction and `taskSupport` from the modern path (keep for
+      `2025-11-25`). **The DSL retains the public instruction for legacy compatibility, while the
+      modern `tools/list` normalizer removes `execution` from every emitted tool definition.**
+- [x] Retire the always-off `FeatureFlags` `:tasks` gate in favour of extension negotiation.
+      **The 1.x API clause remains as an inert `false` result for source compatibility; its
+      application configuration was removed, modern support uses the extension declaration, and
+      2025-11-25 capability behavior remains version-defined.**
 
 ---
 

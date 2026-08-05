@@ -7,7 +7,6 @@ defmodule ExMCP.FeatureFlagsTest do
       Application.delete_env(:ex_mcp, :protocol_version_required)
       Application.delete_env(:ex_mcp, :structured_output_enabled)
       Application.delete_env(:ex_mcp, :oauth2_enabled)
-      Application.delete_env(:ex_mcp, :tasks_enabled)
     end)
   end
 
@@ -35,6 +34,13 @@ defmodule ExMCP.FeatureFlagsTest do
 
     test "returns false for an unknown feature flag" do
       refute ExMCP.FeatureFlags.enabled?(:some_unknown_feature)
+    end
+
+    test "keeps the retired tasks flag disabled regardless of application config" do
+      Application.put_env(:ex_mcp, :tasks_enabled, true)
+      refute ExMCP.FeatureFlags.enabled?(:tasks)
+    after
+      Application.delete_env(:ex_mcp, :tasks_enabled)
     end
   end
 

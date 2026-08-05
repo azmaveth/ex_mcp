@@ -231,7 +231,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # Task methods (2025-11-25). Previously unreachable on this path: the
   # handler bridge answered "Unknown method" for them (audit M15).
   def handle_task_get(conn, server_pid, params, id) do
-    request = {:task_get, Map.get(params, "taskId")}
+    request = task_request(conn, server_pid, {:task_get, Map.get(params, "taskId")})
 
     safe_call(conn, server_pid, request, id, "Task get failed", fn
       {:ok, result} -> put_success(conn, ResultNormalizer.stringify_keys(result), id)
@@ -240,7 +240,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   def handle_task_result(conn, server_pid, params, id) do
-    request = {:task_result, Map.get(params, "taskId")}
+    request = task_request(conn, server_pid, {:task_result, Map.get(params, "taskId")})
 
     safe_call(conn, server_pid, request, id, "Task result failed", fn
       {:ok, result} -> put_success(conn, ResultNormalizer.stringify_keys(result), id)
@@ -249,7 +249,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   def handle_task_cancel(conn, server_pid, params, id) do
-    request = {:task_cancel, Map.get(params, "taskId")}
+    request = task_request(conn, server_pid, {:task_cancel, Map.get(params, "taskId")})
 
     safe_call(conn, server_pid, request, id, "Task cancel failed", fn
       {:ok, result} -> put_success(conn, ResultNormalizer.stringify_keys(result), id)
@@ -259,7 +259,11 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   def handle_task_update(conn, server_pid, params, id) do
     request =
-      {:task_update, Map.get(params, "taskId"), Map.get(params, "inputResponses")}
+      task_request(
+        conn,
+        server_pid,
+        {:task_update, Map.get(params, "taskId"), Map.get(params, "inputResponses")}
+      )
 
     safe_call(conn, server_pid, request, id, "Task update failed", fn
       {:ok, _result} -> put_success(conn, %{}, id)
@@ -268,7 +272,8 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   def handle_task_list(conn, server_pid, params, id) do
-    list_call(conn, server_pid, {:task_list, cursor(params)}, id, "Task list failed", "tasks")
+    request = task_request(conn, server_pid, {:task_list, cursor(params)})
+    list_call(conn, server_pid, request, id, "Task list failed", "tasks")
   end
 
   @doc """
@@ -436,6 +441,22 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
       context -> {:mcp_context, context, request}
     end
   end
+
+  # `use ExMCP.Server.Handler` understands the scoped context envelope. Keep
+  # the original request tuple for hand-written GenServers that implement only
+  # the documented legacy bridge messages.
+  defp task_request(conn, server_pid, request) do
+    if handler_context_capable?(server_pid), do: contextual_request(conn, request), else: request
+  end
+
+  defp handler_context_capable?(server_pid) when is_pid(server_pid) do
+    {module, _function, _arity} = :proc_lib.translate_initial_call(server_pid)
+    function_exported?(module, :__task_store_options__, 0)
+  rescue
+    _error -> false
+  end
+
+  defp handler_context_capable?(_server), do: false
 
   defp put_mrtr_result(conn, params, reply, id) do
     case mrtr_reply(reply) do

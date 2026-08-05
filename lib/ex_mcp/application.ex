@@ -22,6 +22,8 @@ defmodule ExMCP.Application do
         ExMCP.Client.EraCache,
         # Optional node-local single-use enforcement for resumed MRTR requests
         ExMCP.Server.ReplayCache.ETS,
+        # Atomically retains modern task handles across client connections
+        {ExMCP.Tasks.Store.ETS, Application.get_env(:ex_mcp, ExMCP.Tasks.Store.ETS, [])},
         # Coordinates bounded MCP 2026-07-28 subscription listeners
         ExMCP.Server.Subscriptions,
         # Owns the ETS table mapping SSE session ids to handler pids for

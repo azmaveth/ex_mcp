@@ -14,7 +14,8 @@ defmodule ExMCP.FeatureFlags do
   * `:protocol_version_header` - Enforce MCP-Protocol-Version header validation
   * `:structured_output` - Enable structured tool output with schema validation
   * `:oauth2_auth` - Enable OAuth 2.1 authorization
-  * `:tasks` - Advertise tasks from the legacy capability negotiator
+  * `:tasks` - Deprecated no-op retained for 1.x source compatibility. Modern
+    Tasks use extension negotiation; the legacy capability is version-defined.
 
   ## Examples
 
@@ -38,9 +39,7 @@ defmodule ExMCP.FeatureFlags do
     Application.get_env(:ex_mcp, :oauth2_enabled, false)
   end
 
-  def enabled?(:tasks) do
-    Application.get_env(:ex_mcp, :tasks_enabled, false)
-  end
+  def enabled?(:tasks), do: false
 
   def enabled?(_unknown_feature), do: false
 

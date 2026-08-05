@@ -193,28 +193,70 @@ rejects task results unless the extension was configured, and validates the
 task handle before returning it to application code.
 
 A server must advertise the same extension from `server/discover` only when it
-has implemented a durable task store and the modern task callbacks:
+has configured an appropriate task store. The bundled node-local store is
+enabled in a Handler with `tasks: :store`:
 
 ```elixir
-def __server_capabilities__ do
-  ExMCP.Tasks.Extension.put_capability(%{"tools" => %{}})
+defmodule MyServer do
+  use ExMCP.Server.Handler, tasks: :store
+
+  def __server_capabilities__ do
+    ExMCP.Tasks.Extension.put_capability(%{"tools" => %{}})
+  end
+
+  @impl ExMCP.Server.Handler
+  def handle_call_tool("long_deploy", arguments, state) do
+    ExMCP.Tasks.Server.create(
+      "long_deploy",
+      arguments,
+      state,
+      __task_store_options__()
+    )
+  end
 end
-
-@impl ExMCP.Server.Handler
-def handle_task_get(task_id, state), do: MyTasks.get(task_id, state)
-
-@impl ExMCP.Server.Handler
-def handle_task_update(task_id, input_responses, state),
-  do: MyTasks.update(task_id, input_responses, state)
-
-@impl ExMCP.Server.Handler
-def handle_task_cancel(task_id, state), do: MyTasks.cancel(task_id, state)
 ```
 
-ExMCP provides the capability contract, dual-era routing, task state struct,
-wire validation, and client operations. The host application owns persistence,
-worker execution, authorization binding, expiry, and recovery. Do not return a
-task handle until the task is durably readable through `tasks/get`.
+The injected modern `handle_task_get/2`, `handle_task_update/3`, and
+`handle_task_cancel/2` callbacks use `ExMCP.Tasks`. Existing callbacks remain
+overridable, and legacy task methods are unchanged unless the application
+implements them explicitly. `ExMCP.Tasks.Server.create/4` inserts the task
+synchronously and returns a handle only after `tasks/get` can read it.
+
+`ExMCP.Tasks.Store.ETS` is bounded and atomic on one node. It keeps tasks
+through client reconnects, client restarts, request-process failures, and
+worker failures, but not an ExMCP application or node restart. Production
+deployments that need that stronger guarantee should implement the
+`ExMCP.Tasks.Store` behaviour, supervise the backend in their application, and
+configure it globally or on the Handler:
+
+```elixir
+# Optional limits for the bundled reference store:
+config :ex_mcp, ExMCP.Tasks.Store.ETS,
+  max_tasks: 10_000,
+  max_ttl_ms: 2_592_000_000
+
+config :ex_mcp, task_store: MyApp.Tasks.PostgresStore
+
+# Or for one server module:
+use ExMCP.Server.Handler,
+  tasks: :store,
+  task_store: MyApp.Tasks.PostgresStore,
+  task_store_opts: [repo: MyApp.Repo]
+```
+
+The store binds each task to the current request's principal, tenant, and
+endpoint. Workers running outside a request callback must retain that owner
+without credentials and pass it back explicitly:
+
+```elixir
+owner = ExMCP.Tasks.owner()
+{:ok, task} = ExMCP.Tasks.complete(task_id, result, owner: owner)
+```
+
+The host application still owns worker execution and recovery. Store adapters
+own persistence, atomicity across serving nodes, authorization binding, and
+expiry. Do not advertise the extension when the configured store cannot meet
+the deployment's durability requirements.
 
 `ExMCP.Tasks.Task.to_map/1` retains the legacy 2025-11-25 keys.
 `to_map/2` with `:modern` or `"2026-07-28"` emits `ttlMs`,

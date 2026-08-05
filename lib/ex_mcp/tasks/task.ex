@@ -4,8 +4,8 @@ defmodule ExMCP.Tasks.Task do
 
   Tasks represent async operations initiated by tool calls. This module
   provides a pure data structure and state transition validation functions.
-  It does NOT include any GenServer or process management - users implement
-  task lifecycle management themselves via handler callbacks.
+  `ExMCP.Tasks` and `ExMCP.Tasks.Store` provide the optional durable lifecycle
+  boundary; the task struct itself does not own a process.
 
   ## State Machine
 
