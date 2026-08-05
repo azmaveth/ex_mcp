@@ -9,9 +9,13 @@
 
 # Where third-party dependencies like ExDoc output generated docs.
 /doc/
-# But keep our docs folder (except auto-generated specs)
+# But keep our docs folder (except auto-generated specs). The modern JSON schema is
+# retained as a test fixture so clean checkouts can verify schema-derived behavior.
 !/docs/
-/docs/mcp-specs/
+/docs/mcp-specs/*
+!/docs/mcp-specs/2026-07-28/
+/docs/mcp-specs/2026-07-28/*
+!/docs/mcp-specs/2026-07-28/schema.json
 
 # Ignore .fetch files in case you like to edit your project deps locally.
 /.fetch

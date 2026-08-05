@@ -263,19 +263,7 @@ defmodule ExMCP.Client.ConnectionManager do
     )
   end
 
-  defp probe_failure_class({kind, _detail})
-       when kind in [
-              :transport_error,
-              :probe_timeout,
-              :http_probe_rejected,
-              :json_rpc_error,
-              :unexpected_response,
-              :invalid_discover_result,
-              :no_mutually_supported_modern_version
-            ],
-       do: kind
-
-  defp probe_failure_class(_reason), do: :other
+  defp probe_failure_class({kind, _detail}), do: kind
 
   defp cached_era(identity) do
     case EraCache.lookup(identity) do

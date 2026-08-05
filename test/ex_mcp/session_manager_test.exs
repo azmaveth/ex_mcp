@@ -13,20 +13,18 @@ defmodule ExMCP.SessionManagerTest do
     # Generate a unique name for this test's session manager
     name = :"test_session_manager_#{System.unique_integer([:positive])}"
 
-    # Start a separate session manager for each test
-    {:ok, pid} =
-      SessionManager.start_link(
-        name: name,
-        max_events_per_session: 100,
-        session_ttl_seconds: 1,
-        cleanup_interval_ms: 100
-      )
-
-    on_exit(fn ->
-      if Process.alive?(pid) do
-        GenServer.stop(pid)
-      end
-    end)
+    # Start a separate session manager under ExUnit's per-test supervisor.
+    # This avoids racing a linked process exit against an on_exit/1 stop call.
+    pid =
+      start_supervised!({
+        SessionManager,
+        [
+          name: name,
+          max_events_per_session: 100,
+          session_ttl_seconds: 1,
+          cleanup_interval_ms: 100
+        ]
+      })
 
     {:ok, session_manager: pid, session_manager_name: name}
   end
