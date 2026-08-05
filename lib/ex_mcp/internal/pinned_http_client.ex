@@ -7,8 +7,9 @@ defmodule ExMCP.Internal.PinnedHTTPClient do
           required(:body) => binary()
         }
 
-  @spec get(URI.t(), :inet.ip_address(), keyword()) ::
-          {:ok, response()} | {:error, :fetch_failed | :response_too_large}
+  @type request_result :: {:ok, response()} | {:error, :fetch_failed | :response_too_large}
+
+  @spec get(URI.t(), :inet.ip_address(), keyword()) :: request_result()
   def get(%URI{} = uri, address, opts) do
     scheme = String.to_existing_atom(uri.scheme)
     port = uri.port || default_port(scheme)
@@ -34,6 +35,13 @@ defmodule ExMCP.Internal.PinnedHTTPClient do
     _kind, _reason -> {:error, :fetch_failed}
   end
 
+  @spec request_and_receive(
+          Mint.HTTP.t(),
+          URI.t(),
+          Mint.Types.headers(),
+          non_neg_integer(),
+          pos_integer()
+        ) :: request_result()
   defp request_and_receive(conn, uri, headers, timeout, max_bytes) do
     result =
       case Mint.HTTP.request(conn, "GET", request_target(uri), headers, nil) do

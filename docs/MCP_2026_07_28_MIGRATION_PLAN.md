@@ -551,7 +551,7 @@ The legacy conformance gate remains pinned to the stable
 `@modelcontextprotocol/conformance@0.1.16` harness. The modern gate is now
 `scripts/conformance.sh modern`, pinned by default to the first exact-version-aware harness,
 `@modelcontextprotocol/conformance@0.2.0-alpha.10`. It runs the complete `all` server and client
-suites for `2026-07-28`, propagates either suite's exit status, and uses one precompiled Mix
+suites for `2026-07-28` under Node.js 22+, propagates either suite's exit status, and uses one precompiled Mix
 build for the parallel client scenarios. Prefer a stable 2026-07-28-aware harness for release
 qualification; if one is still unavailable, use the explicit official-SDK interop fallback in
 the Phase 10 gates and disclose the prerelease harness in the release notes.

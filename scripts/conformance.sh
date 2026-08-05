@@ -18,6 +18,9 @@
 #   CONFORMANCE_ALPHA_VERSION   — Alpha conformance package version (default: 0.2.0-alpha.10)
 #   CONFORMANCE_PORT          — Server port (default: 3099)
 #   CONFORMANCE_TIMEOUT       — Client timeout in ms (default: 120000)
+#   CONFORMANCE_START_TIMEOUT_SECONDS — Cold server startup timeout (default: 120)
+#
+# Modern/draft alpha harnesses require Node.js 22 or newer (`fs.globSync`).
 #
 # Results saved to: tmp/conformance_output.txt
 
@@ -33,6 +36,7 @@ CLIENT_SCRIPT="$PROJECT_DIR/test/conformance/client.exs"
 OUTPUT_FILE="$PROJECT_DIR/tmp/conformance_output.txt"
 BASELINE_FILE="$PROJECT_DIR/test/conformance/expected-failures.yml"
 TIMEOUT="${CONFORMANCE_TIMEOUT:-120000}"
+START_TIMEOUT_SECONDS="${CONFORMANCE_START_TIMEOUT_SECONDS:-120}"
 SPEC_VERSION="${CONFORMANCE_SPEC_VERSION:-}"
 
 mkdir -p "$PROJECT_DIR/tmp"
@@ -79,7 +83,8 @@ start_server() {
 
   echo "Waiting for server (pid $SERVER_PID)..."
   local i
-  for i in $(seq 1 50); do
+  local attempts=$((START_TIMEOUT_SECONDS * 10))
+  for i in $(seq 1 "$attempts"); do
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
       echo "Server process exited early!"
       tail -50 "$PROJECT_DIR/tmp/conformance_server.log" || true
@@ -92,7 +97,7 @@ start_server() {
     fi
     sleep 0.1
   done
-  echo "Server failed to start!"
+  echo "Server failed to start within ${START_TIMEOUT_SECONDS}s!"
   tail -50 "$PROJECT_DIR/tmp/conformance_server.log" || true
   stop_server
   return 1
@@ -233,6 +238,21 @@ run_draft_alpha() {
   echo "Draft alpha conformance run complete (non-gating)." | tee -a "$OUTPUT_FILE"
 }
 
+require_modern_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Modern conformance requires Node.js 22 or newer; node was not found." | tee -a "$OUTPUT_FILE"
+    return 1
+  fi
+
+  local node_major
+  node_major=$(node -p 'Number(process.versions.node.split(".")[0])')
+
+  if [ "$node_major" -lt 22 ]; then
+    echo "Modern conformance requires Node.js 22 or newer (found $(node --version))." | tee -a "$OUTPUT_FILE"
+    return 1
+  fi
+}
+
 run_modern() {
   CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.10}"
   CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
@@ -242,6 +262,8 @@ run_modern() {
   echo "========================================" | tee -a "$OUTPUT_FILE"
   echo "Gating MCP $SPEC_VERSION conformance with $CONFORMANCE" | tee -a "$OUTPUT_FILE"
   echo "========================================" | tee -a "$OUTPUT_FILE"
+
+  require_modern_node || return 1
 
   run_server_tests "" "$SPEC_VERSION" "all" || exit_code=1
   run_client_tests "" "$SPEC_VERSION" "all" || exit_code=1
@@ -296,6 +318,7 @@ case "$MODE" in
     echo "  CONFORMANCE_SPEC_VERSION=2025-06-18  Test a specific version"
     echo "  CONFORMANCE_PACKAGE_VERSION=0.1.16   Pin stable conformance package"
     echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.10 Override alpha package"
+    echo "  CONFORMANCE_START_TIMEOUT_SECONDS=120 Override cold server startup timeout"
     exit 1
     ;;
 esac

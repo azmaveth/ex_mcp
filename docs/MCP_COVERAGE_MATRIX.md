@@ -22,8 +22,8 @@ draft.
 
 | Target | Runner | Command | Last recorded result |
 |---|---|---|---|
-| MCP 2026-07-28, complete server suite | `@modelcontextprotocol/conformance@0.2.0-alpha.10` | `./scripts/conformance.sh modern` | 112/112 checks passed |
-| MCP 2026-07-28, complete client suite | `@modelcontextprotocol/conformance@0.2.0-alpha.10` | `./scripts/conformance.sh modern` | 377/377 checks passed |
+| MCP 2026-07-28, complete server suite | `@modelcontextprotocol/conformance@0.2.0-alpha.10`, Node.js 22+ | `./scripts/conformance.sh modern` | 112/112 checks passed |
+| MCP 2026-07-28, complete client suite | `@modelcontextprotocol/conformance@0.2.0-alpha.10`, Node.js 22+ | `./scripts/conformance.sh modern` | 377/377 checks passed |
 | Published legacy/core server suite | `@modelcontextprotocol/conformance@0.1.16` | `./scripts/conformance.sh server` | 39/39 checks passed |
 | Published legacy/core client suite | `@modelcontextprotocol/conformance@0.1.16` | `./scripts/conformance.sh client` | 226/226 checks passed |
 

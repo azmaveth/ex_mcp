@@ -70,7 +70,7 @@ iex -S mix            # Start interactive shell with project loaded
 
 # Official TypeScript SDK interop. test/interop/package-lock.json pins the
 # legacy SDK separately from @modelcontextprotocol/{client,server,node}@2.0.0
-# (Node.js 20+).
+# (Node.js 20+ for SDK interop; Node.js 22+ for the modern conformance harness).
 mix test --only interop_ts_client
 mix test --only interop_ex_mcp_client
 mix test --only interop_modern_ts_client

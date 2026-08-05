@@ -71,7 +71,8 @@ runner output as `mcp-2026-07-28-conformance`.
 
 The external suite is pinned to
 `@modelcontextprotocol/conformance@0.2.0-alpha.10` because no stable
-2026-07-28-aware runner is published. Official TypeScript SDK v2 interop pins
+2026-07-28-aware runner is published; its CI lane pins Node.js 22 because the
+harness imports `fs.globSync`. Official TypeScript SDK v2 interop pins
 `@modelcontextprotocol/client`, `server`, and `node` to `2.0.0`. The legacy
 conformance baseline remains pinned independently to `0.1.16`.
 

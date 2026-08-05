@@ -274,7 +274,8 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v7
       with:
-        node-version: '20'
+        # The 2026-07-28 alpha harness imports fs.globSync (Node 22+).
+        node-version: '22'
 
     - name: Restore deps/_build cache
       uses: actions/cache@v6
@@ -288,6 +289,9 @@ jobs:
 
     - name: Install dependencies
       run: mix deps.get
+
+    - name: Compile
+      run: mix compile
 
     - name: Run complete modern conformance suites
       run: ./scripts/conformance.sh modern
