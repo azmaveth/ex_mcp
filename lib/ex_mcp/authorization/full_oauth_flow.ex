@@ -131,7 +131,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   defp run_and_persist_token(as_metadata, client_info, config) do
     with {:ok, token_data} <- select_and_run_grant_flow(as_metadata, client_info, config),
          :ok <- persist_token(token_data, as_metadata, client_info, config) do
-      {:ok, token_data}
+      {:ok, Map.put(token_data, :authorization_server_issuer, as_metadata["issuer"])}
     end
   end
 
@@ -468,7 +468,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
            client_name: "ex_mcp",
            application_type: Atom.to_string(selection.application_type),
            redirect_uris: [redirect_uri],
-           grant_types: ["authorization_code"],
+           grant_types: ["authorization_code", "refresh_token"],
            response_types: ["code"],
            token_endpoint_auth_method: auth_method,
            scope: Enum.join(config[:scopes] || [], " "),
@@ -813,6 +813,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       redirect_uri: redirect_uri,
       authorization_endpoint: as_metadata["authorization_endpoint"],
       issuer: as_metadata["issuer"],
+      require_issuer: as_metadata["authorization_response_iss_parameter_supported"] == true,
       scopes: scopes,
       resource: config[:resource] || config[:resource_url]
     })

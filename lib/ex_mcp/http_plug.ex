@@ -630,6 +630,21 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(error_response))
 
+      {:error, {:invalid_modern_metadata, request_id, field}} ->
+        error_response =
+          JSONRPC.error(
+            request_id,
+            ErrorCodes.invalid_params(),
+            "Invalid request metadata",
+            %{"field" => field, "reason" => "missing_required_field"}
+          )
+
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(error_response))
+
       {:error, {:unsupported_protocol_version, request_id, version}} ->
         supported = VersionRegistry.known_versions()
 
@@ -1676,12 +1691,28 @@ defmodule ExMCP.HttpPlug do
           end
 
         _missing_version ->
-          {:error, {:header_mismatch, request_id, "Protocol version metadata is missing"}}
+          case get_req_header(conn, "mcp-protocol-version") do
+            [header_version] ->
+              if VersionRegistry.modern?(header_version) do
+                {:error,
+                 {:invalid_modern_metadata, request_id, missing_modern_metadata_field(request)}}
+              else
+                {:error, {:header_mismatch, request_id, "Protocol version metadata is missing"}}
+              end
+
+            _missing_or_duplicated ->
+              {:error, {:header_mismatch, request_id, "Protocol version metadata is missing"}}
+          end
       end
     else
       validate_legacy_protocol_version(conn)
     end
   end
+
+  defp missing_modern_metadata_field(%{"params" => %{"_meta" => meta}}) when is_map(meta),
+    do: "io.modelcontextprotocol/protocolVersion"
+
+  defp missing_modern_metadata_field(_request), do: "_meta"
 
   defp validate_legacy_protocol_version(conn) do
     if FeatureFlags.enabled?(:protocol_version_header) do

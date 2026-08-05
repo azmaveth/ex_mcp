@@ -25,6 +25,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
     "code" => :code,
     "iss" => :iss,
     "issuer" => :issuer,
+    "require_issuer" => :require_issuer,
     "state" => :state,
     "state_param" => :state_param,
     "transaction_id" => :transaction_id
@@ -32,6 +33,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
 
   @type auth_params :: %{
           optional(:issuer) => String.t(),
+          optional(:require_issuer) => boolean(),
           optional(:resource) => String.t() | [String.t()],
           optional(:additional_params) => map(),
           client_id: String.t(),
@@ -123,7 +125,8 @@ defmodule ExMCP.Authorization.OAuthFlow do
              OAuthTransactionStore.register(
                state,
                Map.get(params, :issuer),
-               redirect_uri
+               redirect_uri,
+               require_issuer: Map.get(params, :require_issuer, false)
              ) do
         # Build authorization URL only after the transaction is registered.
         query_params = build_auth_query_params(params, code_challenge, state)
@@ -134,6 +137,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
           code_verifier: code_verifier,
           state_param: state,
           issuer: Map.get(params, :issuer),
+          require_issuer: Map.get(params, :require_issuer, false),
           redirect_uri: redirect_uri,
           initiated_at: DateTime.utc_now()
         }
@@ -149,9 +153,11 @@ defmodule ExMCP.Authorization.OAuthFlow do
   Transactions returned by `start_authorization_flow/1` are consumed atomically:
   exactly one concurrent callback can succeed. The `state` value must match.
   When the authorization response includes the RFC 9207 `iss` parameter, it must
-  exactly equal the issuer recorded when the flow started. Issuers are identifiers
-  and are deliberately not URL-normalized. Validation succeeds with the
-  authorization code only after all checks pass.
+  exactly equal the issuer recorded when the flow started. If the authorization
+  server advertised `authorization_response_iss_parameter_supported: true`, the
+  transaction requires `iss` to be present as well. Issuers are identifiers and
+  are deliberately not URL-normalized. Validation succeeds with the authorization
+  code only after all checks pass.
 
   Caller-constructed transaction maps without a `transaction_id` retain the 1.x
   validation behavior for compatibility, but cannot provide process-independent
@@ -464,9 +470,10 @@ defmodule ExMCP.Authorization.OAuthFlow do
     expected_state = field(transaction, "state_param")
     callback_issuer = field(response, "iss")
     expected_issuer = field(transaction, "issuer")
+    require_issuer = field(transaction, "require_issuer") == true
 
     with :ok <- validate_state(callback_state, expected_state),
-         :ok <- validate_response_issuer(callback_issuer, expected_issuer),
+         :ok <- validate_response_issuer(callback_issuer, expected_issuer, require_issuer),
          :ok <- validate_authorization_code(code) do
       {:ok, code}
     end
@@ -493,12 +500,15 @@ defmodule ExMCP.Authorization.OAuthFlow do
 
   defp validate_state(_callback_state, _expected_state), do: {:error, :state_mismatch}
 
-  defp validate_response_issuer(nil, _expected_issuer), do: :ok
+  defp validate_response_issuer(nil, _expected_issuer, true),
+    do: {:error, :missing_callback_issuer}
 
-  defp validate_response_issuer(_callback_issuer, nil),
+  defp validate_response_issuer(nil, _expected_issuer, false), do: :ok
+
+  defp validate_response_issuer(_callback_issuer, nil, _require_issuer),
     do: {:error, :missing_expected_issuer}
 
-  defp validate_response_issuer(callback_issuer, expected_issuer) do
+  defp validate_response_issuer(callback_issuer, expected_issuer, _require_issuer) do
     Issuer.compare(expected_issuer, callback_issuer)
   end
 

@@ -44,6 +44,26 @@ defmodule ExMCP.Server.MRTRDispatchTest do
       end
     end
 
+    def handle_call_tool("stateless_collect", _arguments, state) do
+      case Context.input_responses() do
+        %{"profile" => %{"content" => %{"name" => name}}} ->
+          {:ok, %{content: [%{type: "text", text: name}]}, state}
+
+        _missing ->
+          requests = %{
+            "profile" => %{
+              "method" => "elicitation/create",
+              "params" => %{
+                "message" => "Choose a display name",
+                "requestedSchema" => %{"type" => "object"}
+              }
+            }
+          }
+
+          {:input_required, requests, nil, state}
+      end
+    end
+
     def handle_call_tool(_name, _arguments, state), do: {:error, "unknown", state}
   end
 
@@ -117,6 +137,33 @@ defmodule ExMCP.Server.MRTRDispatchTest do
     assert error["code"] == -32021
     assert error["data"]["requiredCapabilities"] == %{"elicitation" => %{"form" => %{}}}
     assert state.calls == 1
+  end
+
+  test "unsealed inputResponses are dispatched and handlers may ignore unknown response IDs" do
+    params =
+      base_params()
+      |> Map.put("name", "stateless_collect")
+      |> Map.put("inputResponses", %{
+        "profile" => %{"action" => "accept", "content" => %{"name" => "Ada"}},
+        "unknown" => %{"action" => "accept", "content" => %{"ignored" => true}}
+      })
+
+    assert {:response, %{"result" => complete}, _state} =
+             Dispatch.dispatch(request(1, params), Handler, %{calls: 0}, options())
+
+    assert complete["resultType"] == "complete"
+    assert complete["content"] == [%{"type" => "text", "text" => "Ada"}]
+
+    missing =
+      base_params()
+      |> Map.put("name", "stateless_collect")
+      |> Map.put("inputResponses", %{"unknown" => %{"action" => "decline"}})
+
+    assert {:response, %{"result" => required}, _state} =
+             Dispatch.dispatch(request(2, missing), Handler, %{calls: 0}, options())
+
+    assert required["resultType"] == "input_required"
+    assert Map.keys(required["inputRequests"]) == ["profile"]
   end
 
   defp request(id, params) do

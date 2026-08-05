@@ -192,10 +192,6 @@ defmodule ExMCP.Transport.HTTP.RequestHeaders do
           :error -> {:error, "Base64 sentinel header value is malformed"}
         end
 
-      String.starts_with?(value, @sentinel_prefix) or
-          String.ends_with?(value, @sentinel_suffix) ->
-        {:error, "Base64 sentinel header value is malformed"}
-
       plain_header_value?(value) ->
         {:ok, value}
 

@@ -13,6 +13,7 @@ defmodule ExMCP.Client.RequestHandler do
   alias ExMCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
   alias ExMCP.Tasks.Extension, as: TasksExtension
   alias ExMCP.Transport.HTTP
+  alias ExMCP.Transport.HTTP.ToolHeaders
 
   # Extra time allowed past a caller-enforced timeout before the client
   # cleans up its own pending-request bookkeeping.
@@ -879,44 +880,66 @@ defmodule ExMCP.Client.RequestHandler do
       |> Kernel.++(TasksExtension.allowed_result_types(client_capabilities))
       |> Enum.uniq()
 
-    case ResultEnvelope.validate(result, Map.get(state, :protocol_version),
-           allowed_result_types: allowed_result_types,
-           method: method
-         ) do
-      {:ok, :complete, validated_result}
-      when method == "tasks/get" and modern? and tasks_declared? ->
-        validate_task_result(validated_result, :detailed)
+    result
+    |> ResultEnvelope.validate(Map.get(state, :protocol_version),
+      allowed_result_types: allowed_result_types,
+      method: method
+    )
+    |> validate_result_envelope(method, modern?, tasks_declared?)
+  end
 
-      {:ok, :complete, _validated_result} when method == "tasks/get" and modern? ->
-        {:error,
-         %{
-           type: :protocol_error,
-           reason: :undeclared_tasks_extension,
-           message: "MCP tasks/get requires the configured Tasks extension"
-         }}
+  defp validate_result_envelope(
+         {:ok, :complete, result},
+         "tasks/get",
+         true,
+         true
+       ),
+       do: validate_task_result(result, :detailed)
 
-      {:ok, {:extension, "task"}, validated_result} when method != "tasks/get" ->
-        validate_task_result(validated_result, :create)
+  defp validate_result_envelope({:ok, :complete, _result}, "tasks/get", true, false) do
+    {:error,
+     %{
+       type: :protocol_error,
+       reason: :undeclared_tasks_extension,
+       message: "MCP tasks/get requires the configured Tasks extension"
+     }}
+  end
 
-      {:ok, {:extension, "task"}, _validated_result} ->
-        {:error,
-         %{
-           type: :protocol_error,
-           reason: {:invalid_result_type, "task"},
-           message: "MCP tasks/get resultType must be complete"
-         }}
+  defp validate_result_envelope({:ok, {:extension, "task"}, result}, method, _modern?, _tasks?)
+       when method != "tasks/get",
+       do: validate_task_result(result, :create)
 
-      {:ok, _kind, validated_result} ->
-        {:ok, validated_result}
+  defp validate_result_envelope(
+         {:ok, {:extension, "task"}, _result},
+         "tasks/get",
+         _modern?,
+         _tasks?
+       ) do
+    {:error,
+     %{
+       type: :protocol_error,
+       reason: {:invalid_result_type, "task"},
+       message: "MCP tasks/get resultType must be complete"
+     }}
+  end
 
-      {:error, reason} ->
-        {:error,
-         %{
-           type: :protocol_error,
-           reason: reason,
-           message: result_error_message(reason)
-         }}
-    end
+  defp validate_result_envelope({:ok, :complete, result}, "tools/list", true, _tasks?) do
+    {:ok,
+     Map.update(result, "tools", [], fn tools ->
+       if is_list(tools), do: ToolHeaders.filter_valid_tools(tools), else: tools
+     end)}
+  end
+
+  defp validate_result_envelope({:ok, _kind, result}, _method, _modern?, _tasks?),
+    do: {:ok, result}
+
+  defp validate_result_envelope({:error, reason}, _method, _modern?, _tasks?) do
+    {:error,
+     %{
+       type: :protocol_error,
+       reason: reason,
+       message: result_error_message(reason)
+     }}
   end
 
   defp validate_task_result(result, mode) do

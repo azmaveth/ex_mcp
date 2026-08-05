@@ -132,7 +132,9 @@ defmodule ExMCP.Client.EraProbe do
         mode
         |> VersionRegistry.enabled_versions()
         |> Enum.filter(&VersionRegistry.modern?/1)
-        |> Enum.find(&(&1 in supported and &1 not in attempted))
+        |> Enum.find(fn version ->
+          version in supported and retryable_version?(version, requested, attempted)
+        end)
 
       if candidate do
         {:ok, candidate}
@@ -147,6 +149,14 @@ defmodule ExMCP.Client.EraProbe do
   end
 
   defp retry_version(_error, _mode, _attempted), do: :not_modern_error
+
+  # A server may reject a supported version transiently and advertise that
+  # same version in UnsupportedProtocolVersionError. Retrying it once is part
+  # of version negotiation; the attempted-count bound prevents an error loop.
+  defp retryable_version?(version, requested, attempted) do
+    attempts = Enum.count(attempted, &(&1 == version))
+    attempts == 0 or (version == requested and attempts == 1)
+  end
 
   defp telemetry_version(version) do
     if VersionRegistry.known?(version), do: version, else: :unknown

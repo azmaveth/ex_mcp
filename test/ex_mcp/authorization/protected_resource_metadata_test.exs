@@ -43,8 +43,38 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadataTest do
     assert second.scopes_supported == ["tools:read"]
 
     assert_received {:request, uri, @public_address, headers}
-    assert uri.path == "/.well-known/oauth-protected-resource"
+    assert uri.path == "/.well-known/oauth-protected-resource/api"
     refute Enum.any?(headers, fn {name, _value} -> name in ["authorization", "cookie"] end)
+  end
+
+  test "falls back from path-based to root protected-resource metadata" do
+    parent = self()
+
+    client = fn uri, _address, _opts ->
+      send(parent, {:request_path, uri.path})
+
+      case uri.path do
+        "/.well-known/oauth-protected-resource/api" ->
+          {:ok, %{status: 404, headers: [], body: ""}}
+
+        "/.well-known/oauth-protected-resource" ->
+          {:ok,
+           %{
+             status: 200,
+             headers: [],
+             body: Jason.encode!(%{"authorization_servers" => ["https://auth.example"]})
+           }}
+      end
+    end
+
+    assert {:ok, %{authorization_servers: [%{issuer: "https://auth.example"}]}} =
+             ProtectedResourceMetadata.discover("https://mcp.example/api",
+               dns_resolver: public_dns(),
+               http_client: client
+             )
+
+    assert_received {:request_path, "/.well-known/oauth-protected-resource/api"}
+    assert_received {:request_path, "/.well-known/oauth-protected-resource"}
   end
 
   test "rejects HTTP resources and private DNS before requesting" do

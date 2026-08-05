@@ -51,6 +51,15 @@ defmodule ExMCP.Transport.HTTP.RequestHeadersTest do
              "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?="
   end
 
+  test "decodes only values with the complete Base64 sentinel wrapper" do
+    assert RequestHeaders.decode_value("=?base64?SGVsbG8=?=") == {:ok, "Hello"}
+    assert RequestHeaders.decode_value("=?base64?SGVsbG8=") == {:ok, "=?base64?SGVsbG8="}
+    assert RequestHeaders.decode_value("SGVsbG8=?=") == {:ok, "SGVsbG8=?="}
+
+    assert {:error, "Base64 sentinel header value is malformed"} =
+             RequestHeaders.decode_value("=?base64?SGVsbG8?=")
+  end
+
   test "legacy requests retain session and resumability headers without modern metadata" do
     state = %{state() | protocol_version: "2025-11-25"}
 

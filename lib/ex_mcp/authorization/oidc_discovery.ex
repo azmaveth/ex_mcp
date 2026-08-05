@@ -42,7 +42,7 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   """
   @spec discover(String.t(), keyword()) :: {:ok, oidc_metadata()} | {:error, term()}
   def discover(issuer, opts \\ []) do
-    with :ok <- validate_issuer_url(issuer),
+    with :ok <- validate_issuer_url(issuer, opts),
          urls <- build_discovery_urls(issuer),
          {:ok, metadata} <- try_urls(urls, metadata_options(opts), nil),
          :ok <- validate_metadata(metadata, issuer) do
@@ -172,8 +172,8 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
     Keyword.put(opts, :max_response_bytes, limit)
   end
 
-  defp validate_issuer_url(issuer) do
-    with :ok <- MetadataFetcher.validate_url(issuer),
+  defp validate_issuer_url(issuer, opts) do
+    with :ok <- MetadataFetcher.validate_url(issuer, opts),
          %URI{query: nil} <- URI.parse(issuer) do
       :ok
     else

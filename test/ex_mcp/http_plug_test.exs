@@ -781,7 +781,7 @@ defmodule ExMCP.HttpPlugTest do
         |> put_modern_headers(request)
         |> HttpPlug.call(HttpPlug.init(handler: CapabilityErrorServer, sse_enabled: false))
 
-      assert conn.status == 200
+      assert conn.status == 400
       error = Jason.decode!(conn.resp_body)["error"]
       assert error["code"] == -32021
       assert error["data"]["requiredCapabilities"] == %{"sampling" => %{}}
@@ -807,6 +807,33 @@ defmodule ExMCP.HttpPlugTest do
 
       assert mismatched.status == 400
       assert Jason.decode!(mismatched.resp_body)["error"]["code"] == -32020
+    end
+
+    test "rejects missing modern body metadata as invalid params" do
+      for {params, field} <- [
+            {%{}, "_meta"},
+            {%{"_meta" => %{"io.modelcontextprotocol/clientCapabilities" => %{}}},
+             "io.modelcontextprotocol/protocolVersion"}
+          ] do
+        request = %{
+          "jsonrpc" => "2.0",
+          "method" => "server/discover",
+          "params" => params,
+          "id" => 1051
+        }
+
+        conn =
+          conn(:post, "/", Jason.encode!(request))
+          |> put_req_header("content-type", "application/json")
+          |> put_req_header("mcp-protocol-version", "2026-07-28")
+          |> put_req_header("mcp-method", "server/discover")
+          |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+        assert conn.status == 400
+        error = Jason.decode!(conn.resp_body)["error"]
+        assert error["code"] == -32602
+        assert error["data"]["field"] == field
+      end
     end
 
     test "accepts an encoded Mcp-Name and rejects a name/body mismatch" do

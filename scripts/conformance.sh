@@ -9,11 +9,12 @@
 #   ./scripts/conformance.sh server <scenario>  # Single server scenario
 #   ./scripts/conformance.sh client <scenario>  # Single client scenario
 #   ./scripts/conformance.sh all-versions       # Test ALL protocol versions
+#   ./scripts/conformance.sh modern             # Gating MCP 2026-07-28 run
 #
 # Environment variables:
 #   CONFORMANCE_SPEC_VERSION  — Test a specific version (e.g., 2025-06-18)
 #   CONFORMANCE_PACKAGE_VERSION — Stable conformance package version (default: 0.1.16)
-#   CONFORMANCE_ALPHA_VERSION   — Alpha conformance package version (default: 0.2.0-alpha.9)
+#   CONFORMANCE_ALPHA_VERSION   — Alpha conformance package version (default: 0.2.0-alpha.10)
 #   CONFORMANCE_PORT          — Server port (default: 3099)
 #   CONFORMANCE_TIMEOUT       — Client timeout in ms (default: 120000)
 #
@@ -111,6 +112,7 @@ stop_server() {
 run_server_tests() {
   local scenario="${1:-}"
   local version="${2:-$SPEC_VERSION}"
+  local suite="${3:-active}"
   echo "=== Server Conformance Tests${version:+ (spec $version)} ==="
   echo ""
 
@@ -120,7 +122,7 @@ run_server_tests() {
   if [ -n "$scenario" ]; then
     args="$args --scenario $scenario"
   else
-    args="$args --suite active"
+    args="$args --suite $suite"
   fi
   if [ -n "$version" ]; then
     args="$args --spec-version $version"
@@ -149,7 +151,13 @@ run_client_tests() {
   echo "=== Client Conformance Tests${version:+ (spec $version)} ($target) ==="
   echo ""
 
-  local args="client --command 'elixir $CLIENT_SCRIPT' --timeout $TIMEOUT --verbose"
+  # Compile once before the harness launches its scenarios in parallel. Using
+  # `mix run --no-compile` lets those processes share the completed build
+  # instead of racing dozens of concurrent Mix.install compilations.
+  mix compile --quiet
+
+  local client_command="${CONFORMANCE_CLIENT_COMMAND:-mix run --no-compile --no-deps-check $CLIENT_SCRIPT}"
+  local args="client --command '$client_command' --timeout $TIMEOUT --verbose"
   if [ -n "$scenario" ]; then
     args="$args --scenario $scenario"
   else
@@ -210,7 +218,7 @@ run_all_versions() {
 }
 
 run_draft_alpha() {
-  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.9}"
+  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.10}"
   CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
   SPEC_VERSION="${CONFORMANCE_SPEC_VERSION:-draft}"
 
@@ -224,6 +232,22 @@ run_draft_alpha() {
   echo "Draft alpha conformance run complete (non-gating)." | tee -a "$OUTPUT_FILE"
 }
 
+run_modern() {
+  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.10}"
+  CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
+  SPEC_VERSION="2026-07-28"
+  local exit_code=0
+
+  echo "========================================" | tee -a "$OUTPUT_FILE"
+  echo "Gating MCP $SPEC_VERSION conformance with $CONFORMANCE" | tee -a "$OUTPUT_FILE"
+  echo "========================================" | tee -a "$OUTPUT_FILE"
+
+  run_server_tests "" "$SPEC_VERSION" "all" || exit_code=1
+  run_client_tests "" "$SPEC_VERSION" "all" || exit_code=1
+
+  return "$exit_code"
+}
+
 # Clear output file
 > "$OUTPUT_FILE"
 echo "MCP Conformance Test Run — $(date)" >> "$OUTPUT_FILE"
@@ -231,20 +255,21 @@ echo "========================================" >> "$OUTPUT_FILE"
 
 MODE="${1:-all}"
 SCENARIO="${2:-}"
+EXIT_CODE=0
 
 case "$MODE" in
   server)
-    run_server_tests "$SCENARIO"
+    run_server_tests "$SCENARIO" || EXIT_CODE=$?
     ;;
   client)
-    run_client_tests "$SCENARIO"
+    run_client_tests "$SCENARIO" || EXIT_CODE=$?
     ;;
   all)
     echo "Running server tests..." >> "$OUTPUT_FILE"
-    run_server_tests "$SCENARIO" || true
+    run_server_tests "$SCENARIO" || EXIT_CODE=1
     echo "" >> "$OUTPUT_FILE"
     echo "Running client tests..." >> "$OUTPUT_FILE"
-    run_client_tests "$SCENARIO" || true
+    run_client_tests "$SCENARIO" || EXIT_CODE=1
     ;;
   all-versions)
     run_all_versions
@@ -252,23 +277,28 @@ case "$MODE" in
   draft-alpha)
     run_draft_alpha
     ;;
+  modern)
+    run_modern || EXIT_CODE=$?
+    ;;
   *)
-    echo "Usage: $0 [server|client|all|all-versions|draft-alpha] [scenario]"
+    echo "Usage: $0 [server|client|all|all-versions|draft-alpha|modern] [scenario]"
     echo ""
     echo "Modes:"
     echo "  server        Run server conformance tests"
     echo "  client        Run client conformance tests"
     echo "  all           Run both (default)"
     echo "  all-versions  Test conformance-supported versions through 2025-11-25"
-    echo "  draft-alpha   Non-gating draft run using conformance 0.2.0-alpha.9"
+    echo "  draft-alpha   Non-gating draft run using the alpha conformance package"
+    echo "  modern        Gating server+client run for MCP 2026-07-28"
     echo ""
     echo "Environment:"
     echo "  CONFORMANCE_SPEC_VERSION=2025-06-18  Test a specific version"
     echo "  CONFORMANCE_PACKAGE_VERSION=0.1.16   Pin stable conformance package"
-    echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.9  Override draft-alpha package"
+    echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.10 Override alpha package"
     exit 1
     ;;
 esac
 
 echo ""
 echo "--- Results saved to $OUTPUT_FILE ---"
+exit "$EXIT_CODE"

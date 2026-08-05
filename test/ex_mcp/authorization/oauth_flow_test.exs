@@ -27,6 +27,14 @@ defmodule ExMCP.Authorization.OAuthFlowTest do
                )
     end
 
+    test "rejects an omitted issuer when the authorization server advertised it as required" do
+      assert {:error, :missing_callback_issuer} =
+               OAuthFlow.validate_authorization_response(
+                 %{"code" => "code-1", "state" => "state-1"},
+                 transaction("https://auth.example.com") |> Map.put(:require_issuer, true)
+               )
+    end
+
     test "rejects issuer mismatches without URL normalization" do
       for actual <- ["https://other.example.com", "https://auth.example.com/"] do
         assert {:error, {:issuer_mismatch, expected: "https://auth.example.com", actual: ^actual}} =
@@ -77,6 +85,26 @@ defmodule ExMCP.Authorization.OAuthFlowTest do
              })
 
     assert state.issuer == "https://auth.example.com"
+  end
+
+  test "start_authorization_flow/1 records whether RFC 9207 iss is required" do
+    assert {:ok, _url, state} =
+             OAuthFlow.start_authorization_flow(%{
+               client_id: "client-1",
+               redirect_uri: "http://127.0.0.1:8080/callback",
+               authorization_endpoint: "https://auth.example.com/authorize",
+               issuer: "https://auth.example.com",
+               require_issuer: true,
+               scopes: []
+             })
+
+    assert state.require_issuer
+
+    assert {:error, :missing_callback_issuer} =
+             OAuthFlow.validate_authorization_response(
+               %{"code" => "code-1", "state" => state.state_param},
+               state
+             )
   end
 
   test "the authorization facade preserves the configured issuer" do

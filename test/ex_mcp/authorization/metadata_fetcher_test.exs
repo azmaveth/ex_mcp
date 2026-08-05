@@ -19,6 +19,41 @@ defmodule ExMCP.Authorization.MetadataFetcherTest do
     assert :ok = MetadataFetcher.validate_url("https://metadata.example/document?version=1")
   end
 
+  test "permits HTTP loopback metadata only with an explicit option" do
+    assert {:error, {:metadata_fetch_error, :https_required}} =
+             MetadataFetcher.validate_url("http://localhost/document")
+
+    assert :ok =
+             MetadataFetcher.validate_url("http://localhost/document",
+               allow_insecure_loopback: true
+             )
+
+    assert {:error, {:metadata_fetch_error, :https_required}} =
+             MetadataFetcher.validate_url("http://metadata.example/document",
+               allow_insecure_loopback: true
+             )
+
+    client = fn uri, address, _opts ->
+      assert uri.host == "localhost"
+      assert address == {127, 0, 0, 1}
+      response(200, "{}")
+    end
+
+    assert {:ok, %{status: 200}} =
+             MetadataFetcher.fetch("http://localhost/document",
+               allow_insecure_loopback: true,
+               dns_resolver: fn _host, _timeout -> {:ok, [{127, 0, 0, 1}]} end,
+               http_client: client
+             )
+
+    assert {:error, {:metadata_fetch_error, :non_public_address}} =
+             MetadataFetcher.fetch("https://metadata.example/document",
+               allow_insecure_loopback: true,
+               dns_resolver: fn _host, _timeout -> {:ok, [{127, 0, 0, 1}]} end,
+               http_client: client
+             )
+  end
+
   test "rejects literal and resolved non-public addresses before requesting" do
     parent = self()
     client = fn _uri, _address, _opts -> send(parent, :requested) end

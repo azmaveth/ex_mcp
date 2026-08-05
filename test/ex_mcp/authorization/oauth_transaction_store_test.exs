@@ -103,6 +103,29 @@ defmodule ExMCP.Authorization.OAuthTransactionStoreTest do
              OAuthTransactionStore.validate_callback(transaction_id, callback(), server: store)
   end
 
+  test "a callback missing an advertised required issuer consumes the transaction", %{
+    store: store
+  } do
+    {:ok, transaction_id} =
+      OAuthTransactionStore.register(
+        "state-1",
+        "https://auth.example",
+        "http://127.0.0.1:8080/callback",
+        server: store,
+        require_issuer: true
+      )
+
+    assert {:error, :missing_callback_issuer} =
+             OAuthTransactionStore.validate_callback(
+               transaction_id,
+               Map.delete(callback(), "iss"),
+               server: store
+             )
+
+    assert {:error, :authorization_transaction_replayed} =
+             OAuthTransactionStore.validate_callback(transaction_id, callback(), server: store)
+  end
+
   test "authorization-code redemption is atomic and single-use", %{store: store} do
     {:ok, transaction_id} = register(store)
 

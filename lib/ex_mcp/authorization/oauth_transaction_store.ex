@@ -25,6 +25,7 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
   @type callback_error ::
           :state_mismatch
           | :missing_authorization_code
+          | :missing_callback_issuer
           | :missing_expected_issuer
           | :authorization_transaction_not_found
           | :authorization_transaction_replayed
@@ -34,6 +35,7 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
   @type entry :: %{
           state_digest: binary(),
           issuer: String.t() | nil,
+          require_issuer: boolean(),
           redirect_uri: String.t(),
           status: :pending | :consumed | :redeemed | {:code_ready, binary()},
           expires_at: integer()
@@ -64,8 +66,12 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
              is_binary(redirect_uri) and redirect_uri != "" do
     server = Keyword.get(opts, :server, @name)
     ttl_ms = Keyword.get(opts, :ttl_ms)
+    require_issuer = Keyword.get(opts, :require_issuer, false) == true
 
-    GenServer.call(server, {:register, digest(state), issuer, redirect_uri, ttl_ms})
+    GenServer.call(
+      server,
+      {:register, digest(state), issuer, require_issuer, redirect_uri, ttl_ms}
+    )
   catch
     :exit, _reason -> {:error, :oauth_transaction_store_unavailable}
   end
@@ -148,7 +154,11 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
   end
 
   @impl GenServer
-  def handle_call({:register, state_digest, issuer, redirect_uri, ttl_override}, _from, state) do
+  def handle_call(
+        {:register, state_digest, issuer, require_issuer, redirect_uri, ttl_override},
+        _from,
+        state
+      ) do
     now = now_ms()
     state = purge_expired(state, now)
 
@@ -161,6 +171,7 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
       entry = %{
         state_digest: state_digest,
         issuer: issuer,
+        require_issuer: require_issuer,
         redirect_uri: redirect_uri,
         status: :pending,
         expires_at: now + ttl_ms
@@ -248,7 +259,12 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
          state
        ) do
     if secure_equal?(state_digest, entry.state_digest) do
-      case validate_bound_callback(entry.issuer, callback_issuer, code_digest) do
+      case validate_bound_callback(
+             entry.issuer,
+             entry.require_issuer,
+             callback_issuer,
+             code_digest
+           ) do
         :ok ->
           updated = %{entry | status: {:code_ready, code_digest}}
           state = put_in(state, [:entries, transaction_id], updated)
@@ -263,18 +279,21 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
     end
   end
 
-  defp validate_bound_callback(expected_issuer, callback_issuer, code_digest) do
-    with :ok <- validate_callback_issuer(expected_issuer, callback_issuer) do
+  defp validate_bound_callback(expected_issuer, require_issuer, callback_issuer, code_digest) do
+    with :ok <- validate_callback_issuer(expected_issuer, require_issuer, callback_issuer) do
       validate_code(code_digest)
     end
   end
 
-  defp validate_callback_issuer(_expected_issuer, nil), do: :ok
+  defp validate_callback_issuer(_expected_issuer, true, nil),
+    do: {:error, :missing_callback_issuer}
 
-  defp validate_callback_issuer(nil, _callback_issuer),
+  defp validate_callback_issuer(_expected_issuer, false, nil), do: :ok
+
+  defp validate_callback_issuer(nil, _require_issuer, _callback_issuer),
     do: {:error, :missing_expected_issuer}
 
-  defp validate_callback_issuer(expected_issuer, callback_issuer),
+  defp validate_callback_issuer(expected_issuer, _require_issuer, callback_issuer),
     do: Issuer.compare(expected_issuer, callback_issuer)
 
   defp validate_code(code_digest) when is_binary(code_digest), do: :ok

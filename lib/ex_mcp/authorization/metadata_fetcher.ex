@@ -2,11 +2,13 @@ defmodule ExMCP.Authorization.MetadataFetcher do
   @moduledoc """
   Fail-closed HTTP fetch boundary for OAuth metadata documents.
 
-  Fetches use HTTPS, reject userinfo and fragments, resolve and validate every
-  address on every hop, pin the connection to one approved public address, and
-  follow only bounded same-origin redirects unless another exact HTTPS origin is
-  explicitly allowed. Requests carry fixed metadata headers and never inherit
-  authorization, cookie, or application transport headers.
+  Fetches use HTTPS by default, reject userinfo and fragments, resolve and
+  validate every address on every hop, pin the connection to one approved
+  public address, and follow only bounded same-origin redirects unless another
+  exact HTTPS origin is explicitly allowed. Tests and local development may
+  explicitly allow plain HTTP on loopback addresses. Requests carry fixed
+  metadata headers and never inherit authorization, cookie, or application
+  transport headers.
   """
 
   alias ExMCP.Authorization.MetadataHTTPClient
@@ -21,6 +23,7 @@ defmodule ExMCP.Authorization.MetadataFetcher do
     :connect_timeout_ms,
     :request_timeout_ms,
     :allowed_redirect_origins,
+    :allow_insecure_loopback,
     :dns_resolver,
     :http_client
   ]
@@ -45,6 +48,7 @@ defmodule ExMCP.Authorization.MetadataFetcher do
     connect_timeout_ms: 2_000,
     request_timeout_ms: 5_000,
     allowed_redirect_origins: [],
+    allow_insecure_loopback: false,
     dns_resolver: DNSResolver,
     http_client: MetadataHTTPClient
   ]
@@ -73,14 +77,19 @@ defmodule ExMCP.Authorization.MetadataFetcher do
   def fetch(_url, _opts), do: metadata_error(:invalid_uri)
 
   @doc "Validates the URL form accepted by the metadata fetch boundary."
-  @spec validate_url(String.t()) :: :ok | {:error, fetch_error()}
-  def validate_url(url) when is_binary(url) do
-    with {:ok, uri} <- parse_uri(url) do
-      validate_uri(uri)
+  @spec validate_url(String.t(), keyword()) :: :ok | {:error, fetch_error()}
+  def validate_url(url, opts \\ [])
+
+  def validate_url(url, opts) when is_binary(url) and is_list(opts) do
+    opts = options(opts)
+
+    with :ok <- validate_options(opts),
+         {:ok, uri} <- parse_uri(url) do
+      validate_uri(uri, opts)
     end
   end
 
-  def validate_url(_url), do: metadata_error(:invalid_uri)
+  def validate_url(_url, _opts), do: metadata_error(:invalid_uri)
 
   @doc false
   @spec options(keyword()) :: keyword()
@@ -105,7 +114,7 @@ defmodule ExMCP.Authorization.MetadataFetcher do
          {:ok, next_aggregate} <-
            add_aggregate_bytes(aggregate_bytes, byte_size(response.body), opts) do
       if response.status in @redirect_statuses do
-        with {:ok, redirected_uri} <- redirect_uri(uri, response.headers),
+        with {:ok, redirected_uri} <- redirect_uri(uri, response.headers, opts),
              :ok <- validate_redirect_origin(uri, redirected_uri, opts) do
           fetch_with_redirects(
             redirected_uri,
@@ -122,9 +131,9 @@ defmodule ExMCP.Authorization.MetadataFetcher do
   end
 
   defp validate_target(uri, opts) do
-    with :ok <- validate_uri(uri),
+    with :ok <- validate_uri(uri, opts),
          {:ok, addresses} <- resolve_addresses(uri.host, opts),
-         :ok <- validate_addresses(addresses) do
+         :ok <- validate_addresses(addresses, uri, opts) do
       {:ok, addresses |> Enum.sort() |> hd()}
     end
   end
@@ -136,14 +145,25 @@ defmodule ExMCP.Authorization.MetadataFetcher do
     end
   end
 
-  defp validate_uri(%URI{} = uri) do
+  defp validate_uri(%URI{} = uri, opts) do
     cond do
-      uri.scheme != "https" -> metadata_error(:https_required)
-      not is_nil(uri.userinfo) -> metadata_error(:userinfo_forbidden)
-      not is_nil(uri.fragment) -> metadata_error(:fragment_forbidden)
-      not is_binary(uri.host) or not valid_host?(uri.host) -> metadata_error(:invalid_uri)
-      uri.port && uri.port not in 1..65_535 -> metadata_error(:invalid_uri)
-      true -> :ok
+      uri.scheme != "https" and not allowed_insecure_loopback?(uri, opts) ->
+        metadata_error(:https_required)
+
+      not is_nil(uri.userinfo) ->
+        metadata_error(:userinfo_forbidden)
+
+      not is_nil(uri.fragment) ->
+        metadata_error(:fragment_forbidden)
+
+      not is_binary(uri.host) or not valid_host?(uri.host) ->
+        metadata_error(:invalid_uri)
+
+      uri.port && uri.port not in 1..65_535 ->
+        metadata_error(:invalid_uri)
+
+      true ->
+        :ok
     end
   end
 
@@ -177,10 +197,15 @@ defmodule ExMCP.Authorization.MetadataFetcher do
     _exception -> metadata_error(:dns_failed)
   end
 
-  defp validate_addresses(addresses) do
-    if Enum.all?(addresses, &NetworkPolicy.public_address?/1),
-      do: :ok,
-      else: metadata_error(:non_public_address)
+  defp validate_addresses(addresses, uri, opts) do
+    valid? =
+      if allowed_insecure_loopback?(uri, opts) do
+        Enum.all?(addresses, &loopback_address?/1)
+      else
+        Enum.all?(addresses, &NetworkPolicy.public_address?/1)
+      end
+
+    if valid?, do: :ok, else: metadata_error(:non_public_address)
   end
 
   defp fetch(uri, address, opts) do
@@ -226,12 +251,12 @@ defmodule ExMCP.Authorization.MetadataFetcher do
     end
   end
 
-  defp redirect_uri(base, headers) do
+  defp redirect_uri(base, headers, opts) do
     case header_values(headers, "location") do
       [location] ->
         redirected = URI.merge(base, location)
 
-        with :ok <- validate_uri(redirected) do
+        with :ok <- validate_uri(redirected, opts) do
           {:ok, redirected}
         end
 
@@ -252,6 +277,16 @@ defmodule ExMCP.Authorization.MetadataFetcher do
       do: :ok,
       else: metadata_error(:cross_origin_redirect)
   end
+
+  defp allowed_insecure_loopback?(%URI{scheme: "http", host: host}, opts) do
+    opts[:allow_insecure_loopback] == true and host in ["localhost", "127.0.0.1", "::1"]
+  end
+
+  defp allowed_insecure_loopback?(_uri, _opts), do: false
+
+  defp loopback_address?({127, _b, _c, _d}), do: true
+  defp loopback_address?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+  defp loopback_address?(_address), do: false
 
   defp check_redirect_count(count, opts) do
     if count <= opts[:max_redirects],
@@ -275,6 +310,7 @@ defmodule ExMCP.Authorization.MetadataFetcher do
 
   defp validate_options(opts) do
     with :ok <- validate_integer_options(opts),
+         :ok <- validate_boolean(opts[:allow_insecure_loopback]),
          :ok <- validate_redirect_origins(opts[:allowed_redirect_origins]),
          :ok <- validate_callback(opts[:dns_resolver], :resolve, 2) do
       validate_callback(opts[:http_client], :get, 3)
@@ -295,9 +331,12 @@ defmodule ExMCP.Authorization.MetadataFetcher do
 
   defp validate_redirect_origins(_origins), do: metadata_error(:invalid_options)
 
+  defp validate_boolean(value) when is_boolean(value), do: :ok
+  defp validate_boolean(_value), do: metadata_error(:invalid_options)
+
   defp valid_origin?(value) when is_binary(value) do
     case parse_uri(value) do
-      {:ok, uri} -> validate_uri(uri) == :ok and value == origin(uri)
+      {:ok, uri} -> validate_uri(uri, @defaults) == :ok and value == origin(uri)
       {:error, _reason} -> false
     end
   end

@@ -539,6 +539,11 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # `data.type` field carries a stable, machine-readable classification
   # instead of `inspect(reason)` output (audit M12).
   defp put_error(conn, _message, %Error.ProtocolError{} = error, id) do
+    conn =
+      if error.code == ErrorCodes.missing_required_client_capability(),
+        do: ExMCP.MessageProcessor.assign(conn, :http_status, 400),
+        else: conn
+
     %{conn | response: JSONRPC.error(id, Error.to_json_rpc(error))}
   end
 

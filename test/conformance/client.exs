@@ -13,7 +13,9 @@
 # MCP_CONFORMANCE_SCENARIO env var indicates which scenario to run.
 # MCP_CONFORMANCE_CONTEXT env var has scenario-specific data (JSON).
 
-Mix.install([{:ex_mcp, path: "."}, {:jason, "~> 1.4"}])
+if is_nil(Mix.Project.get()) do
+  Mix.install([{:ex_mcp, path: "."}, {:jason, "~> 1.4"}])
+end
 
 defmodule ConformanceClient do
   require Logger
@@ -41,11 +43,11 @@ defmodule ConformanceClient do
   end
 
   defp run_scenario(server_url, scenario, context) do
-    opts = build_connect_opts(scenario, context)
+    opts = build_connect_opts(server_url, scenario, context)
 
     case ExMCP.Client.start_link([url: server_url] ++ opts) do
       {:ok, client} ->
-        exercise_api(client, scenario)
+        exercise_api(client, scenario, context)
         ExMCP.Client.disconnect(client)
 
       {:error, reason} ->
@@ -55,23 +57,67 @@ defmodule ConformanceClient do
 
   # Build connection options. Auth config comes from conformance context;
   # everything else is standard.
-  defp build_connect_opts(_scenario, context) do
+  defp build_connect_opts(server_url, scenario, context) do
     # Per MCP Streamable HTTP spec: always POST, parse SSE responses from POST.
     # SSE GET stream opened automatically when server provides a session ID.
     # use_sse: true enables this — the transport falls back gracefully when
     # no session ID is provided (stateless servers).
+    protocol_version =
+      System.get_env("MCP_CONFORMANCE_PROTOCOL_VERSION", ExMCP.protocol_version())
+
     base = [
       transport: :http,
       use_sse: true,
+      protocol_mode: protocol_mode(protocol_version),
+      protocol_version: protocol_version,
       client_info: %{"name" => "ex_mcp-conformance-client", "version" => "0.9.0"},
       capabilities: %{"sampling" => %{}, "elicitation" => %{}}
     ]
 
-    case build_auth_from_context(context) do
+    case build_auth_for_scenario(server_url, scenario, context) do
       nil -> base
       auth -> Keyword.put(base, :auth, auth)
     end
   end
+
+  defp build_auth_for_scenario(server_url, "auth/" <> _rest = scenario, context) do
+    base = %{
+      application_type: :native,
+      redirect_port: available_redirect_port(),
+      metadata_fetch: [allow_insecure_loopback: true]
+    }
+
+    base
+    |> Map.merge(build_auth_from_context(context) || %{})
+    |> add_conformance_registration_config(server_url, scenario)
+  end
+
+  defp build_auth_for_scenario(_server_url, _scenario, _context), do: nil
+
+  # The upstream harness currently hard-codes its CIMD identifier instead of
+  # passing it in MCP_CONFORMANCE_CONTEXT. Keep that harness detail out of the
+  # production registration policy.
+  defp add_conformance_registration_config(auth, _server_url, "auth/basic-cimd") do
+    Map.put(auth, :client_metadata_url, "https://conformance-test.local/client-metadata.json")
+  end
+
+  # Pre-registered credentials are issuer-bound in ExMCP. The harness supplies
+  # the credentials but omits their issuer, so discover that missing fixture
+  # value before connecting. FullOAuthFlow repeats and validates discovery.
+  defp add_conformance_registration_config(auth, server_url, "auth/pre-registration") do
+    case ExMCP.Authorization.ProtectedResourceMetadata.discover(
+           server_url,
+           allow_insecure_loopback: true
+         ) do
+      {:ok, %{authorization_servers: [%{issuer: issuer} | _]}} ->
+        Map.put(auth, :credential_issuer, issuer)
+
+      {:error, reason} ->
+        raise "could not discover conformance credential issuer: #{inspect(reason)}"
+    end
+  end
+
+  defp add_conformance_registration_config(auth, _server_url, _scenario), do: auth
 
   defp build_auth_from_context(%{"client_id" => client_id} = ctx) do
     config = %{client_id: client_id}
@@ -115,14 +161,24 @@ defmodule ConformanceClient do
 
   defp build_auth_from_context(_), do: nil
 
+  defp available_redirect_port do
+    {:ok, socket} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(socket)
+    :ok = :gen_tcp.close(socket)
+    port
+  end
+
+  defp protocol_mode("2026-07-28"), do: :modern_only
+  defp protocol_mode(_legacy_version), do: :legacy_only
+
   # Exercise the server API based on what the scenario tests.
   # Most scenarios just need connect + list + call tools.
-  defp exercise_api(client, "initialize") do
+  defp exercise_api(_client, "initialize", _context) do
     # Initialize already happened during connect — nothing more needed.
     Process.sleep(200)
   end
 
-  defp exercise_api(client, _scenario) do
+  defp exercise_api(client, _scenario, context) do
     # Default: list tools and call each one. This covers tools_call, auth,
     # elicitation, and most other scenarios. The conformance framework
     # validates the protocol interactions, not our scenario routing.
@@ -131,9 +187,10 @@ defmodule ConformanceClient do
         tools = result["tools"] || []
         Logger.info("Listed #{length(tools)} tools")
 
-        for tool <- tools do
+        calls = requested_tool_calls(tools, context)
+
+        for {tool, args} <- calls do
           name = tool["name"]
-          args = ExMCP.Testing.SchemaGenerator.generate_args(tool["inputSchema"])
           Logger.info("Calling tool: #{name}")
 
           case ExMCP.Client.call_tool(client, name, args, format: :map) do
@@ -145,6 +202,23 @@ defmodule ConformanceClient do
       {:error, reason} ->
         Logger.warning("list_tools failed: #{inspect(reason)}")
     end
+  end
+
+  defp requested_tool_calls(tools, %{"toolCalls" => calls}) when is_list(calls) do
+    tools_by_name = Map.new(tools, &{&1["name"], &1})
+
+    Enum.flat_map(calls, fn call ->
+      case Map.fetch(tools_by_name, call["name"]) do
+        {:ok, tool} -> [{tool, call["arguments"] || %{}}]
+        :error -> []
+      end
+    end)
+  end
+
+  defp requested_tool_calls(tools, _context) do
+    Enum.map(tools, fn tool ->
+      {tool, ExMCP.Testing.SchemaGenerator.generate_args(tool["inputSchema"])}
+    end)
   end
 end
 

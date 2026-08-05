@@ -23,19 +23,29 @@ defmodule ExMCP.Server.MRTR do
           {:ok, RequestContext.t()} | {:error, Error.ProtocolError.t()}
   def prepare_context(context, params, opts \\ []) do
     context = hydrate_context(context, opts)
+
+    if context.method == "tasks/update" do
+      prepare_task_update_context(context)
+    else
+      prepare_mrtr_context(context, params, opts)
+    end
+  end
+
+  defp prepare_task_update_context(context) do
+    if is_nil(context.sealed_request_state) do
+      # Tasks extension inputResponses belong to the durable task state
+      # machine, not to an MRTR retry of the original request.
+      {:ok, %{context | input_responses: nil, mrtr_round: 0, delivery_semantics: :at_least_once}}
+    else
+      {:error, invalid("requestState is not valid for tasks/update")}
+    end
+  end
+
+  defp prepare_mrtr_context(context, params, opts) do
     input_responses = context.input_responses
     sealed_state = context.sealed_request_state
 
     cond do
-      context.method == "tasks/update" and is_nil(sealed_state) ->
-        # Tasks extension inputResponses belong to the durable task state
-        # machine, not to an MRTR retry of the original request.
-        {:ok,
-         %{context | input_responses: nil, mrtr_round: 0, delivery_semantics: :at_least_once}}
-
-      context.method == "tasks/update" ->
-        {:error, invalid("requestState is not valid for tasks/update")}
-
       is_nil(input_responses) and is_nil(sealed_state) ->
         {:ok, %{context | mrtr_round: 0, delivery_semantics: :at_least_once}}
 
@@ -45,11 +55,34 @@ defmodule ExMCP.Server.MRTR do
       context.method not in @supported_methods ->
         {:error, invalid("MRTR retry fields are not valid for this method")}
 
+      is_map(input_responses) and is_nil(sealed_state) ->
+        prepare_unsealed_retry(context, input_responses, opts)
+
       not is_map(input_responses) or not is_binary(sealed_state) ->
         {:error, invalid("inputResponses and requestState must be provided together")}
 
       true ->
         resume_context(context, params, input_responses, sealed_state, opts)
+    end
+  end
+
+  # requestState is optional on the wire. ExMCP always emits a sealed value for
+  # its own input_required results, but it must still accept a conforming
+  # stateless retry from another implementation. Without a sealed envelope the
+  # handler is responsible for deciding which response IDs it recognizes and
+  # delivery can only be at-least-once.
+  defp prepare_unsealed_retry(context, input_responses, opts) do
+    input_responses = ResultNormalizer.stringify_keys(input_responses)
+
+    with :ok <- validate_size(input_responses, opts) do
+      {:ok,
+       %{
+         context
+         | input_responses: input_responses,
+           request_state: nil,
+           mrtr_round: 1,
+           delivery_semantics: :at_least_once
+       }}
     end
   end
 

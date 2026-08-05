@@ -27,6 +27,22 @@ Application.put_env(:conformance, :test_audio, test_audio)
 defmodule ConformanceHandler do
   use ExMCP.Server.Handler
 
+  alias ExMCP.Server.Context
+
+  @json_schema_uri "https://json-schema.org/draft/2020-12/schema"
+
+  def __server_info__,
+    do: %{name: "mcp-conformance-test-server", version: "1.0.0"}
+
+  def __server_capabilities__ do
+    %{
+      "tools" => %{},
+      "resources" => %{},
+      "prompts" => %{},
+      "completions" => %{}
+    }
+  end
+
   @impl true
   def init(_args), do: {:ok, %{subscriptions: MapSet.new()}}
 
@@ -122,7 +138,32 @@ defmodule ConformanceHandler do
         name: "test_elicitation_sep1330_enums",
         description: "Tests elicitation with enums",
         inputSchema: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "json_schema_2020_12_tool",
+        description: "Tool with JSON Schema 2020-12 features",
+        inputSchema: json_schema_2020_12()
+      },
+      %{
+        name: "test_custom_header_validation",
+        description: "Tests server-side Mcp-Param validation",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            routed_value: %{
+              type: "string",
+              "x-mcp-header": "Routed-Value"
+            }
+          },
+          required: ["routed_value"]
+        }
+      },
+      %{
+        name: "test_missing_capability",
+        description: "Requires the sampling client capability",
+        inputSchema: %{type: "object", properties: %{}}
       }
+      | mrtr_tools()
     ]
 
     {:ok, tools, nil, state}
@@ -189,12 +230,25 @@ defmodule ConformanceHandler do
      ], state}
   end
 
-  # These are handled by SSE router, but we need stubs for tool listing
+  # Legacy bidirectional scenarios are handled by the fixture router. Modern
+  # request-scoped notifications are emitted by the real HttpPlug path.
   def handle_call_tool("test_tool_with_logging", _args, state),
     do: {:ok, [%{type: "text", text: "Tool with logging executed successfully"}], state}
 
-  def handle_call_tool("test_tool_with_progress", _args, state),
-    do: {:ok, [%{type: "text", text: "0"}], state}
+  def handle_call_tool("test_tool_with_progress", _args, state) do
+    token = Context.progress_token() || 0
+
+    for progress <- [0, 50, 100] do
+      :ok =
+        Context.report_progress(
+          progress,
+          100,
+          "Completed step #{progress} of 100"
+        )
+    end
+
+    {:ok, [%{type: "text", text: to_string(token)}], state}
+  end
 
   def handle_call_tool("test_sampling", %{"prompt" => p}, state),
     do: {:ok, [%{type: "text", text: "Sampling: #{p}"}], state}
@@ -207,6 +261,151 @@ defmodule ConformanceHandler do
 
   def handle_call_tool("test_elicitation_sep1330_enums", _args, state),
     do: {:ok, [%{type: "text", text: "Elicitation enums"}], state}
+
+  def handle_call_tool("json_schema_2020_12_tool", _args, state),
+    do: {:ok, [%{type: "text", text: "JSON Schema 2020-12"}], state}
+
+  def handle_call_tool("test_custom_header_validation", %{"routed_value" => value}, state),
+    do: {:ok, [%{type: "text", text: value}], state}
+
+  def handle_call_tool("test_missing_capability", _args, state) do
+    {:error, ExMCP.Error.missing_required_client_capability(%{"sampling" => %{}}), state}
+  end
+
+  def handle_call_tool("test_input_required_result_elicitation", _args, state) do
+    case Context.input_responses() do
+      %{"user_name" => %{"content" => %{"name" => name}}} when is_binary(name) ->
+        {:ok, [%{type: "text", text: "Hello, #{name}!"}], state}
+
+      _missing_or_invalid ->
+        {:input_required, elicitation_requests("user_name", "What is your name?", "name"),
+         %{"flow" => "elicitation"}, state}
+    end
+  end
+
+  def handle_call_tool("test_input_required_result_sampling", _args, state) do
+    case Context.input_responses() do
+      %{"capital_question" => response} ->
+        {:ok, [%{type: "text", text: "Sampling response: #{Jason.encode!(response)}"}], state}
+
+      _missing ->
+        requests = %{
+          "capital_question" => %{
+            "method" => "sampling/createMessage",
+            "params" => %{
+              "messages" => [
+                %{
+                  "role" => "user",
+                  "content" => %{"type" => "text", "text" => "What is the capital of France?"}
+                }
+              ],
+              "maxTokens" => 100
+            }
+          }
+        }
+
+        {:input_required, requests, %{"flow" => "sampling"}, state}
+    end
+  end
+
+  def handle_call_tool("test_input_required_result_list_roots", _args, state) do
+    case Context.input_responses() do
+      %{"client_roots" => response} ->
+        {:ok, [%{type: "text", text: "Roots: #{Jason.encode!(response)}"}], state}
+
+      _missing ->
+        {:input_required, %{"client_roots" => %{"method" => "roots/list", "params" => %{}}},
+         %{"flow" => "roots"}, state}
+    end
+  end
+
+  def handle_call_tool("test_input_required_result_request_state", _args, state) do
+    case Context.input_responses() do
+      %{"confirm" => _response} ->
+        suffix =
+          if Context.request_state() == %{"flow" => "request-state"},
+            do: "state-ok",
+            else: "state-error"
+
+        {:ok, [%{type: "text", text: suffix}], state}
+
+      _missing ->
+        {:input_required, elicitation_requests("confirm", "Please confirm", "ok", "boolean"),
+         %{"flow" => "request-state"}, state}
+    end
+  end
+
+  def handle_call_tool("test_input_required_result_multiple_inputs", _args, state) do
+    case Context.input_responses() do
+      responses when is_map(responses) and map_size(responses) == 3 ->
+        {:ok, [%{type: "text", text: "Received all inputs"}], state}
+
+      _missing ->
+        requests =
+          elicitation_requests("user_name", "What is your name?", "name")
+          |> Map.put("greeting", %{
+            "method" => "sampling/createMessage",
+            "params" => %{
+              "messages" => [
+                %{
+                  "role" => "user",
+                  "content" => %{"type" => "text", "text" => "Generate a greeting"}
+                }
+              ],
+              "maxTokens" => 50
+            }
+          })
+          |> Map.put("client_roots", %{"method" => "roots/list", "params" => %{}})
+
+        {:input_required, requests, %{"flow" => "multiple"}, state}
+    end
+  end
+
+  def handle_call_tool("test_input_required_result_multi_round", _args, state) do
+    case {Context.request_state(), Context.input_responses()} do
+      {%{"round" => 1}, %{"step1" => _response}} ->
+        {:input_required,
+         elicitation_requests("step2", "Step 2: What is your favorite color?", "color"),
+         %{"round" => 2}, state}
+
+      {%{"round" => 2}, %{"step2" => _response}} ->
+        {:ok, [%{type: "text", text: "Multi-round complete"}], state}
+
+      _initial ->
+        {:input_required, elicitation_requests("step1", "Step 1: What is your name?", "name"),
+         %{"round" => 1}, state}
+    end
+  end
+
+  def handle_call_tool("test_input_required_result_tampered_state", _args, state) do
+    case Context.input_responses() do
+      nil ->
+        {:input_required, elicitation_requests("confirm", "Please confirm", "ok", "boolean"),
+         %{"flow" => "tamper-check"}, state}
+
+      _response ->
+        {:ok, [%{type: "text", text: "State accepted"}], state}
+    end
+  end
+
+  def handle_call_tool("test_input_required_result_capabilities", _args, state) do
+    requests = %{
+      "sample" => %{
+        "method" => "sampling/createMessage",
+        "params" => %{
+          "messages" => [
+            %{
+              "role" => "user",
+              "content" => %{"type" => "text", "text" => "Capability check"}
+            }
+          ],
+          "maxTokens" => 10
+        }
+      }
+    }
+
+    {:input_required, requests, %{"flow" => "capabilities"}, state}
+  end
 
   def handle_call_tool("test_error_handling", _args, state),
     do: {:error, "This tool intentionally returns an error for testing", state}
@@ -287,7 +486,16 @@ defmodule ConformanceHandler do
      ], state}
   end
 
-  def handle_read_resource(uri, state), do: {:error, "Resource not found: #{uri}", state}
+  def handle_read_resource(uri, state) do
+    error =
+      ExMCP.Error.protocol_error(
+        ExMCP.Protocol.ErrorCodes.resource_not_found("2026-07-28"),
+        "Resource not found",
+        %{"uri" => uri}
+      )
+
+    {:error, error, state}
+  end
 
   @impl true
   def handle_list_resource_templates(_cursor, state) do
@@ -330,7 +538,11 @@ defmodule ConformanceHandler do
          description: "A prompt with embedded resource",
          arguments: [%{name: "resourceUri", description: "URI of resource", required: true}]
        },
-       %{name: "test_prompt_with_image", description: "A prompt with image content"}
+       %{name: "test_prompt_with_image", description: "A prompt with image content"},
+       %{
+         name: "test_input_required_result_prompt",
+         description: "Prompt requiring client input"
+       }
      ], nil, state}
   end
 
@@ -401,11 +613,91 @@ defmodule ConformanceHandler do
      }, state}
   end
 
+  def handle_get_prompt("test_input_required_result_prompt", _args, state) do
+    case Context.input_responses() do
+      %{"user_context" => %{"content" => %{"context" => context}}} ->
+        {:ok,
+         %{
+           messages: [
+             %{role: "user", content: %{type: "text", text: "Context: #{context}"}}
+           ]
+         }, state}
+
+      _missing ->
+        {:input_required,
+         elicitation_requests("user_context", "What context should the prompt use?", "context"),
+         %{"flow" => "prompt"}, state}
+    end
+  end
+
   def handle_get_prompt(name, _args, state), do: {:error, "Unknown prompt: #{name}", state}
 
   @impl true
   def handle_complete(_ref, _argument, state) do
     {:ok, %{completion: %{values: [], total: 0, hasMore: false}}, state}
+  end
+
+  defp json_schema_2020_12 do
+    %{
+      "$schema" => @json_schema_uri,
+      "type" => "object",
+      "$defs" => %{
+        "address" => %{
+          "$anchor" => "addressDef",
+          "type" => "object",
+          "properties" => %{
+            "street" => %{"type" => "string"},
+            "city" => %{"type" => "string"}
+          }
+        }
+      },
+      "properties" => %{
+        "name" => %{"type" => "string"},
+        "address" => %{"$ref" => "#/$defs/address"},
+        "contactMethod" => %{"type" => "string", "enum" => ["phone", "email"]},
+        "phone" => %{"type" => "string"},
+        "email" => %{"type" => "string"}
+      },
+      "allOf" => [%{"anyOf" => [%{"required" => ["phone"]}, %{"required" => ["email"]}]}],
+      "if" => %{
+        "properties" => %{"contactMethod" => %{"const" => "phone"}},
+        "required" => ["contactMethod"]
+      },
+      "then" => %{"required" => ["phone"]},
+      "else" => %{"required" => ["email"]},
+      "additionalProperties" => false
+    }
+  end
+
+  defp mrtr_tools do
+    for {name, description} <- [
+          {"test_input_required_result_elicitation", "Tests elicitation input requests"},
+          {"test_input_required_result_sampling", "Tests sampling input requests"},
+          {"test_input_required_result_list_roots", "Tests roots input requests"},
+          {"test_input_required_result_request_state", "Tests requestState round trips"},
+          {"test_input_required_result_multiple_inputs", "Tests multiple input requests"},
+          {"test_input_required_result_multi_round", "Tests multi-round input requests"},
+          {"test_input_required_result_tampered_state", "Tests requestState integrity"},
+          {"test_input_required_result_capabilities", "Tests client capability filtering"}
+        ] do
+      %{name: name, description: description, inputSchema: %{type: "object", properties: %{}}}
+    end
+  end
+
+  defp elicitation_requests(id, message, property, type \\ "string") do
+    %{
+      id => %{
+        "method" => "elicitation/create",
+        "params" => %{
+          "message" => message,
+          "requestedSchema" => %{
+            "type" => "object",
+            "properties" => %{property => %{"type" => type}},
+            "required" => [property]
+          }
+        }
+      }
+    }
   end
 end
 
@@ -427,6 +719,13 @@ defmodule ConformanceRouter do
   @mcp_opts ExMCP.HttpPlug.init(
               handler: ConformanceHandler,
               server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
+              protocol_mode: :prefer_modern,
+              mrtr: true,
+              request_state: [
+                active_key_id: "conformance",
+                keys: %{"conformance" => :binary.copy(<<42>>, 32)},
+                ttl_seconds: 300
+              ],
               sse_enabled: true,
               cors_enabled: true,
               allowed_origins: :any
@@ -445,6 +744,14 @@ defmodule ConformanceRouter do
   end
 
   defp route(%{method: "POST"} = conn) do
+    if modern_request?(conn) do
+      ExMCP.HttpPlug.call(conn, @mcp_opts)
+    else
+      route_legacy_post(conn)
+    end
+  end
+
+  defp route_legacy_post(conn) do
     {:ok, body, conn} = read_body(conn)
 
     case Jason.decode(body) do
@@ -462,6 +769,13 @@ defmodule ConformanceRouter do
 
       _ ->
         handle_normal_post(conn, body)
+    end
+  end
+
+  defp modern_request?(conn) do
+    case get_req_header(conn, "mcp-protocol-version") do
+      [version] -> version == "2026-07-28" or version not in ExMCP.supported_versions()
+      _other -> false
     end
   end
 

@@ -43,36 +43,15 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
 
   Makes a request to /.well-known/oauth-protected-resource to discover
   which authorization servers protect this resource. The request uses the
-  shared HTTPS-only, public-address, pinned metadata fetch boundary.
+  shared HTTPS-only, public-address, pinned metadata fetch boundary. Test and
+  local-development callers may explicitly enable the loopback-only HTTP
+  exception supported by `ExMCP.Authorization.MetadataFetcher`.
   """
   @spec discover(String.t(), keyword()) :: {:ok, metadata()} | {:error, term()}
   def discover(resource_url, opts \\ []) do
-    with :ok <- validate_https_endpoint(resource_url),
-         metadata_url <- build_metadata_url(resource_url) do
-      case MetadataFetcher.fetch(metadata_url, opts) do
-        {:ok, %{status: 200, body: body}} ->
-          parse_metadata_response(body)
-
-        {:ok, %{status: 404}} ->
-          {:error, :no_metadata}
-
-        {:ok, %{status: 401, headers: headers}} ->
-          # Check for WWW-Authenticate header
-          case find_www_authenticate_header(headers) do
-            {:ok, _auth_info} ->
-              # Could extract metadata URL from header
-              {:error, :unauthorized}
-
-            :error ->
-              {:error, :unauthorized}
-          end
-
-        {:ok, %{status: status, body: body}} ->
-          {:error, {:http_error, status, body}}
-
-        {:error, _reason} = error ->
-          error
-      end
+    with :ok <- validate_endpoint(resource_url, opts),
+         metadata_urls <- build_metadata_urls(resource_url) do
+      fetch_metadata(metadata_urls, opts)
     end
   end
 
@@ -101,20 +80,71 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
 
   # Private functions
 
-  defp validate_https_endpoint(url) do
-    case MetadataFetcher.validate_url(url) do
+  defp validate_endpoint(url, opts) do
+    case MetadataFetcher.validate_url(url, opts) do
       :ok -> :ok
       {:error, {:metadata_fetch_error, :https_required}} -> {:error, :https_required}
       {:error, _reason} -> {:error, :invalid_resource_url}
     end
   end
 
-  defp build_metadata_url(resource_url) do
+  defp build_metadata_urls(resource_url) do
     uri = URI.parse(resource_url)
+    resource_path = uri.path || ""
 
-    %URI{uri | path: "/.well-known/oauth-protected-resource", query: nil, fragment: nil}
-    |> URI.to_string()
+    root_url =
+      %URI{uri | path: "/.well-known/oauth-protected-resource", query: nil, fragment: nil}
+      |> URI.to_string()
+
+    case String.trim_trailing(resource_path, "/") do
+      "" ->
+        [root_url]
+
+      path ->
+        path_url =
+          %URI{
+            uri
+            | path: "/.well-known/oauth-protected-resource#{path}",
+              query: nil,
+              fragment: nil
+          }
+          |> URI.to_string()
+
+        [path_url, root_url]
+    end
   end
+
+  defp fetch_metadata([metadata_url | fallback_urls], opts) do
+    case MetadataFetcher.fetch(metadata_url, opts) do
+      {:ok, %{status: 200, body: body}} ->
+        parse_metadata_response(body)
+
+      {:ok, %{status: 404}} when fallback_urls != [] ->
+        fetch_metadata(fallback_urls, opts)
+
+      {:ok, %{status: 404}} ->
+        {:error, :no_metadata}
+
+      {:ok, %{status: 401, headers: headers}} ->
+        # Check for WWW-Authenticate header
+        case find_www_authenticate_header(headers) do
+          {:ok, _auth_info} ->
+            # Could extract metadata URL from header
+            {:error, :unauthorized}
+
+          :error ->
+            {:error, :unauthorized}
+        end
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:http_error, status, body}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp fetch_metadata([], _opts), do: {:error, :no_metadata}
 
   defp parse_metadata_response(body) do
     case Jason.decode(body) do
