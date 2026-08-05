@@ -38,6 +38,7 @@ defmodule ExMCP.Server.Tools do
       end
   """
 
+  alias ExMCP.Content.{SchemaPolicy, SchemaValidator}
   alias ExMCP.Server.Tools.ResponseNormalizer
 
   defmacro __using__(_opts) do
@@ -148,29 +149,17 @@ defmodule ExMCP.Server.Tools do
   def compile_schema(nil), do: nil
 
   def compile_schema(schema) do
-    if Code.ensure_loaded?(ExJsonSchema) do
-      try do
-        string_schema = atomize_keys_to_strings(schema)
-        ExJsonSchema.Schema.resolve(string_schema)
-      rescue
-        e ->
-          # credo:disable-for-next-line Credo.Check.Warning.RaiseInsideRescue
-          raise CompileError,
-            description:
-              "Invalid output schema provided to output_schema/1. Details: #{inspect(e)}",
-            file: __ENV__.file,
-            line: __ENV__.line
-      end
-    else
-      # If ExJsonSchema is not available, emit a compile-time warning
-      IO.warn(
-        "ExJsonSchema is not available at compile time. " <>
-          "Output schema validation will be limited to a non-nil check at runtime. " <>
-          "Please ensure {:ex_json_schema, \"~> 0.9\"} is in your mix.exs deps.",
-        []
-      )
+    case SchemaValidator.compile_schema(schema) do
+      {:ok, resolved} ->
+        resolved
 
-      schema
+      {:error, reason} ->
+        raise CompileError,
+          description:
+            "Invalid output schema provided to output_schema/1. " <>
+              SchemaPolicy.format_error(reason),
+          file: __ENV__.file,
+          line: __ENV__.line
     end
   end
 
@@ -210,31 +199,19 @@ defmodule ExMCP.Server.Tools do
 
   @doc false
   def validate_with_schema(data, resolved_schema) do
-    # Use ExJsonSchema if available, otherwise basic validation
-    if Code.ensure_loaded?(ExJsonSchema) and resolved_schema do
-      # The schema is now expected to be pre-resolved at compile time.
-      try do
-        case ExJsonSchema.Validator.validate(resolved_schema, data) do
-          :ok -> :ok
-          {:error, errors} -> {:error, errors}
-        end
-      rescue
-        e ->
-          # Log the full error for debugging
-          require Logger
+    if resolved_schema do
+      case SchemaPolicy.validate(data, resolved_schema) do
+        :ok ->
+          :ok
 
-          Logger.error("Unexpected error during output schema validation: #{inspect(e)}")
+        {:error, reason} when is_tuple(reason) or is_atom(reason) ->
+          {:error, [SchemaPolicy.format_error(reason)]}
 
-          # Return sanitized error to prevent information leakage
-          {:error, ["Output validation error. Please check server logs for details."]}
+        {:error, errors} ->
+          {:error, errors}
       end
     else
-      # Fallback: just check that data is not nil
-      if data != nil do
-        :ok
-      else
-        {:error, ["ExJsonSchema not available for validation"]}
-      end
+      :ok
     end
   end
 

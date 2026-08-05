@@ -967,7 +967,12 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [ ] JSON Schema: `$ref` MUST NOT auto-dereference network URIs (opt-in only, off by default,
       host allowlist, reject loopback/link-local/private, timeouts, size limits, logging);
       bound composition-keyword depth / subschema count / validation time. Touches
-      `ExMCP.Content.SchemaValidator` and `ExMCP.Content.Validation`.
+      `ExMCP.Content.SchemaValidator` and `ExMCP.Content.Validation`. **Offline boundary
+      complete:** every content, helper, DSL, deprecated-tools, and registry path now uses the
+      centralized `ExMCP.Content.SchemaPolicy`; external references fail before ExJsonSchema's
+      global resolver, while schema bytes/depth/object count/composition depth and resolve/
+      validation time are bounded. Network opt-in remains intentionally unavailable until the
+      next checklist item's complete fetch boundary ships.
 - [ ] If network `$ref` is enabled, apply redirect and DNS/IP revalidation on every hop, IPv4/
       IPv6 address-class checks, recursive-fetch/cycle and aggregate-byte/decompression limits,
       and an explicit proxy policy. Cache fetched schemas only inside the same trust partition.

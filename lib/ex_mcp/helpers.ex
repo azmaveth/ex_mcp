@@ -25,6 +25,7 @@ defmodule ExMCP.Helpers do
   """
 
   alias ExMCP.Client.Error
+  alias ExMCP.Content.SchemaPolicy
 
   @doc """
   Imports helper macros into the calling module.
@@ -304,17 +305,18 @@ defmodule ExMCP.Helpers do
   @doc """
   Validates tool arguments against schema.
   """
-  @spec validate_tool_args(map(), map()) :: :ok | {:error, String.t()}
-  def validate_tool_args(args, schema) when is_map(args) and is_map(schema) do
-    if Code.ensure_loaded?(ExJsonSchema.Validator) do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      case apply(ExJsonSchema.Validator, :validate, [schema, args]) do
-        :ok -> :ok
-        {:error, errors} -> {:error, format_validation_errors(errors)}
-      end
-    else
-      # ExJsonSchema not available - skip validation
-      :ok
+  @spec validate_tool_args(map(), map() | boolean()) :: :ok | {:error, String.t()}
+  def validate_tool_args(args, schema)
+      when is_map(args) and (is_map(schema) or is_boolean(schema)) do
+    case SchemaPolicy.validate(args, schema) do
+      :ok ->
+        :ok
+
+      {:error, reason} when is_tuple(reason) or is_atom(reason) ->
+        {:error, SchemaPolicy.format_error(reason)}
+
+      {:error, errors} ->
+        {:error, format_validation_errors(errors)}
     end
   end
 
@@ -323,10 +325,10 @@ defmodule ExMCP.Helpers do
   defp format_validation_errors(errors) when is_list(errors) do
     errors
     |> Enum.map_join(", ", fn
-      {path, error} when is_list(path) ->
+      {error, path} when is_list(path) ->
         "#{Enum.join(path, ".")}: #{error}"
 
-      {path, error} ->
+      {error, path} ->
         "#{path}: #{error}"
 
       error ->

@@ -39,6 +39,42 @@ Validate versions with the public negotiator:
 ExMCP.Protocol.VersionNegotiator.supported?("2025-11-25")
 ```
 
+## JSON Schema Resource Policy
+
+Every JSON Schema compiled or validated by ExMCP passes through one bounded,
+fail-closed policy. Only local fragment references (`#` and `#/...`) are
+accepted. HTTP(S), file, and relative cross-document `$ref` values are rejected
+before ExJsonSchema can resolve them, even if the host application configured
+ExJsonSchema's global `:remote_schema_resolver`.
+
+The defaults are suitable for protocol schemas and can be tightened or raised
+for a trusted application workload:
+
+```elixir
+config :ex_mcp, :json_schema,
+  max_schema_bytes: 262_144,
+  max_schema_depth: 64,
+  max_subschemas: 1_000,
+  max_composition_depth: 16,
+  resolve_timeout_ms: 1_000,
+  validation_timeout_ms: 100
+```
+
+`max_subschemas` conservatively counts schema object nodes, including nested
+property maps but excluding literal instance data in `const`, `default`, `enum`,
+and `examples`. Composition depth counts nesting through `allOf`, `anyOf`,
+`oneOf`, `not`, `if`, `then`, and `else`. A zero timeout or limit is valid and
+can be used to disable the corresponding work. Invalid values fail closed.
+
+`$schema` draft identifiers are metadata and remain accepted; bundled draft
+meta-schemas do not require a network request. Boolean JSON Schemas (`true` and
+`false`) are supported.
+
+Network schema fetching is not available in ExMCP 1.0. It will remain disabled
+until an opt-in resolver can enforce host allowlists, DNS/IP checks on every
+redirect, proxy policy, response and decompression limits, recursion/cycle
+limits, deadlines, and trust-partitioned caching as one complete boundary.
+
 ## Client Configuration
 
 You can pass options directly to `ExMCP.Client.start_link/1`:

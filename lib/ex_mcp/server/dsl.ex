@@ -29,6 +29,7 @@ defmodule ExMCP.Server.DSL do
   See the project DSL guide for full details.
   """
 
+  alias ExMCP.Content.{SchemaPolicy, SchemaValidator}
   alias ExMCP.Server.DSL.Builder
 
   defmacro __using__(opts) do
@@ -900,20 +901,26 @@ defmodule ExMCP.Server.DSL do
   defp compile_output_schema(nil), do: nil
 
   defp compile_output_schema(schema) do
-    if Code.ensure_loaded?(ExJsonSchema) do
-      schema
-      |> atom_keys_to_strings()
-      |> ExJsonSchema.Schema.resolve()
-    else
-      schema
+    case SchemaValidator.compile_schema(schema) do
+      {:ok, resolved} ->
+        resolved
+
+      {:error, reason} ->
+        raise ArgumentError, "invalid output_schema/1: " <> SchemaPolicy.format_error(reason)
     end
   end
 
   defp validate_with_schema(data, schema) do
-    if Code.ensure_loaded?(ExJsonSchema) and schema do
-      case ExJsonSchema.Validator.validate(schema, data) do
-        :ok -> :ok
-        {:error, errors} -> {:error, errors}
+    if schema do
+      case SchemaPolicy.validate(data, schema) do
+        :ok ->
+          :ok
+
+        {:error, reason} when is_tuple(reason) or is_atom(reason) ->
+          {:error, [SchemaPolicy.format_error(reason)]}
+
+        {:error, errors} ->
+          {:error, errors}
       end
     else
       :ok

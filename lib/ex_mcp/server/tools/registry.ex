@@ -14,12 +14,16 @@ defmodule ExMCP.Server.Tools.Registry do
 
   use GenServer
 
+  alias ExMCP.Content.{SchemaPolicy, SchemaValidator}
+
+  require Logger
+
   @type tool_definition :: %{
           optional(atom()) => any(),
           name: String.t(),
           description: String.t(),
-          inputSchema: map(),
-          outputSchema: map() | nil
+          inputSchema: map() | boolean(),
+          outputSchema: map() | boolean() | nil
         }
 
   @type handler :: (map(), any() -> {:ok, any()} | {:ok, any(), any()} | {:error, any()})
@@ -157,14 +161,13 @@ defmodule ExMCP.Server.Tools.Registry do
   defp compile_output_schema(nil), do: nil
 
   defp compile_output_schema(schema) do
-    if Code.ensure_loaded?(ExJsonSchema) do
-      try do
-        ExJsonSchema.Schema.resolve(schema)
-      rescue
-        _ -> nil
-      end
-    else
-      nil
+    case SchemaValidator.compile_schema(schema) do
+      {:ok, resolved} ->
+        resolved
+
+      {:error, reason} ->
+        Logger.warning("Tool output schema rejected: #{SchemaPolicy.format_error(reason)}")
+        {:schema_policy_error, reason}
     end
   end
 
@@ -188,13 +191,21 @@ defmodule ExMCP.Server.Tools.Registry do
   defp validate_output(other, _schema, _state), do: other
 
   defp validate_with_schema(data, schema) do
-    if Code.ensure_loaded?(ExJsonSchema) do
-      case ExJsonSchema.Validator.validate(schema, data) do
-        :ok -> :ok
-        {:error, errors} -> {:error, errors}
-      end
-    else
-      :ok
+    case schema do
+      {:schema_policy_error, reason} ->
+        {:error, [SchemaPolicy.format_error(reason)]}
+
+      _resolved ->
+        case SchemaPolicy.validate(data, schema) do
+          :ok ->
+            :ok
+
+          {:error, reason} when is_tuple(reason) or is_atom(reason) ->
+            {:error, [SchemaPolicy.format_error(reason)]}
+
+          {:error, errors} ->
+            {:error, errors}
+        end
     end
   end
 end

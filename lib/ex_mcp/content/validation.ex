@@ -9,7 +9,7 @@ defmodule ExMCP.Content.Validation do
 
   ## Features
 
-  - **Schema Validation**: JSON Schema via `ExJsonSchema` (`validate_schema/2`)
+  - **Schema Validation**: bounded JSON Schema via `ExJsonSchema` (`validate_schema/3`)
   - **Content Sanitization**: HTML escape, script stripping, Unicode NFC
   - **Size / MIME checks**: structural validation helpers
   - **Security scanning**: best-effort pattern checks
@@ -231,11 +231,12 @@ defmodule ExMCP.Content.Validation do
 
   Content is converted to a JSON-compatible map before validation.
   """
-  @spec validate_schema(Protocol.content(), map()) :: :ok | {:error, [String.t()]}
-  def validate_schema(content, schema) when is_map(schema) do
+  @spec validate_schema(Protocol.content(), map() | boolean(), keyword()) ::
+          :ok | {:error, [String.t()]}
+  def validate_schema(content, schema, opts \\ []) when is_map(schema) or is_boolean(schema) do
     alias ExMCP.Content.SchemaValidator
 
-    case SchemaValidator.validate_schema(content, schema) do
+    case SchemaValidator.validate_schema(content, schema, opts) do
       :ok ->
         :ok
 

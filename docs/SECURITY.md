@@ -198,6 +198,29 @@ Session ids supplied via `mcp-session-id` / legacy `x-session-id` headers are
 validated (max 128 bytes, `A-Za-z0-9._~+/=-`) and malformed values are
 rejected with `400` without being echoed back.
 
+## JSON Schema References and Resource Limits
+
+JSON Schema is executable input: resolving a reference can cause network I/O,
+and adversarial composition can consume excessive CPU or memory. ExMCP applies
+the same policy to content helpers, tool argument validation, DSL output
+schemas, the deprecated tools API, and the dynamic tool registry.
+
+- Only same-document fragment references (`#` and `#/...`) are accepted.
+- HTTP(S), file, relative, recursive cross-document, and dynamic
+  cross-document references fail before schema resolution starts.
+- Configuring ExJsonSchema's process-wide `:remote_schema_resolver` does not
+  bypass this boundary.
+- Encoded bytes, structural depth, schema-object count, composition depth,
+  resolution time, and validation time are bounded.
+- Policy errors do not include the rejected reference, avoiding accidental
+  disclosure of credentials or sensitive internal URLs.
+
+The limits and defaults are documented in the
+[Configuration Guide](CONFIGURATION.md#json-schema-resource-policy). Network
+references have no opt-in escape hatch in ExMCP 1.0. Keep referenced definitions
+inside the schema document until the full network-fetch boundary described in
+the migration plan is available.
+
 ## stdio Security
 
 stdio is appropriate when the MCP server process is trusted by the application
