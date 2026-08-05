@@ -367,6 +367,13 @@ defmodule ExMCP.Types do
   @type initialize_result :: atom_initialize_result() | wire_initialize_result()
 
   # Paginated results
+  @type cache_scope :: :public | :private | String.t()
+  @type cacheable_result :: %{
+          optional(:resultType) => String.t(),
+          optional(:ttlMs) => non_neg_integer(),
+          optional(:cacheScope) => cache_scope()
+        }
+
   @type paginated_result :: %{
           optional(:nextCursor) => cursor()
         }

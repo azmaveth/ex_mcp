@@ -934,11 +934,14 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 
 ### Phase 7 — Caching, logging, ordering, schemas
 
-- [ ] `ttlMs` + `cacheScope` on `tools/list`, `prompts/list`,
+- [x] `ttlMs` + `cacheScope` on `tools/list`, `prompts/list`,
       `resources/list`, `resources/templates/list`, `resources/read`. Never on
-      `input_required` results.
-- [ ] Modern response validation rejects missing/negative `ttlMs` or missing/unknown
+      `input_required` results. **Complete results receive safe defaults (`0`, `private`) unless
+      the handler supplies valid overrides; non-complete results have cache hints removed.**
+- [x] Modern response validation rejects missing/negative `ttlMs` or missing/unknown
       `cacheScope` on cacheable complete results. A valid `ttlMs: 0` means immediately stale.
+      **The originating method is retained for asynchronous stdio/SSE responses, so validation
+      is transport-independent; structured client responses expose both fields.**
 - [ ] `ExMCP.Client.Cache` (new): freshness = `now < t_received + ttlMs`; no background polling;
       `list_changed` notification invalidates immediately;
       MRTR retries (carrying `inputResponses`/`requestState`) **MUST NOT** be cached; per-page
@@ -951,8 +954,10 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       server explicitly returns `cacheScope: "public"`. Use monotonic overflow-checked expiry,
       entry/total-byte limits and generation-based invalidation so an older in-flight response
       cannot repopulate the cache after `list_changed`.
-- [ ] Derive the exact cacheable-result method set and required fields from the vendored
-      `2026-07-28` schema instead of maintaining another hand-written list.
+- [x] Derive the exact cacheable-result method set and required fields from the vendored
+      `2026-07-28` schema instead of maintaining another hand-written list. **A schema-sync test
+      discovers every result definition requiring `ttlMs` + `cacheScope`, maps it to its request
+      method, and pins the runtime validator to that exact set.**
 - [x] Server: per-request `logLevel` from `_meta`; **MUST NOT** emit `notifications/message` for
       requests without it. `ExMCP.Server.Context.send_log_message/3` filters below-threshold
       events and uses only the owning request stream. `logging/setLevel` remains legacy-only.

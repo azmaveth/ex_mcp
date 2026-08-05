@@ -18,8 +18,22 @@ defmodule ExMCP.Client.ModernResultValidationTest do
     end
   end
 
+  defmodule AsyncTransport do
+    def send_message(message, state) do
+      request = Jason.decode!(message)
+      send(state.owner, {:outbound_request, request})
+      {:ok, state}
+    end
+  end
+
   test "injects modern metadata and accepts a discriminated result" do
-    state = modern_state(%{"resultType" => "complete", "tools" => []})
+    state =
+      modern_state(%{
+        "resultType" => "complete",
+        "tools" => [],
+        "ttlMs" => 0,
+        "cacheScope" => "private"
+      })
 
     assert {:reply, {:ok, %{"resultType" => "complete"}}, _state} =
              RequestHandler.handle_request("tools/list", %{}, {self(), make_ref()}, state)
@@ -41,6 +55,57 @@ defmodule ExMCP.Client.ModernResultValidationTest do
     assert error.reason == :missing_result_type
   end
 
+  test "rejects missing and invalid cache hints on cacheable methods" do
+    for {result, expected_reason} <- [
+          {%{"resultType" => "complete", "tools" => [], "cacheScope" => "private"},
+           :missing_ttl_ms},
+          {%{
+             "resultType" => "complete",
+             "tools" => [],
+             "ttlMs" => -1,
+             "cacheScope" => "private"
+           }, {:invalid_ttl_ms, -1}},
+          {%{"resultType" => "complete", "tools" => [], "ttlMs" => 0}, :missing_cache_scope},
+          {%{
+             "resultType" => "complete",
+             "tools" => [],
+             "ttlMs" => 0,
+             "cacheScope" => "shared"
+           }, {:invalid_cache_scope, "shared"}}
+        ] do
+      assert {:reply, {:error, error}, _state} =
+               RequestHandler.handle_request(
+                 "tools/list",
+                 %{},
+                 {self(), make_ref()},
+                 modern_state(result)
+               )
+
+      assert error.type == :protocol_error
+      assert error.reason == expected_reason
+    end
+  end
+
+  test "carries the method through async response validation" do
+    reply_tag = make_ref()
+    state = %{modern_state(nil) | transport_mod: AsyncTransport}
+
+    assert {:noreply, state} =
+             RequestHandler.handle_request("tools/list", %{}, {self(), reply_tag}, state)
+
+    assert_receive {:outbound_request, %{"id" => request_id}}
+    assert {_, :single, "tools/list"} = state.pending_requests[request_id]
+
+    assert {:noreply, state} =
+             RequestHandler.handle_single_response(
+               {:result, %{"resultType" => "complete", "tools" => []}, request_id},
+               state
+             )
+
+    assert_receive {^reply_tag, {:error, %{reason: :missing_ttl_ms}}}
+    refute Map.has_key?(state.pending_requests, request_id)
+  end
+
   test "keeps legacy missing-resultType behavior" do
     state = %{modern_state(%{"tools" => []}) | protocol_version: "2025-11-25"}
 
@@ -49,7 +114,12 @@ defmodule ExMCP.Client.ModernResultValidationTest do
   end
 
   test "uses server/discover for modern health checks" do
-    state = modern_state(%{"resultType" => "complete"})
+    state =
+      modern_state(%{
+        "resultType" => "complete",
+        "ttlMs" => 0,
+        "cacheScope" => "private"
+      })
 
     assert {:ok, nil, _state} = RequestHandler.send_ping(state)
     assert_receive {:outbound_request, %{"method" => "server/discover"}}

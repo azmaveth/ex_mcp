@@ -142,7 +142,8 @@ defmodule ExMCP.Client.EraProbe do
   defp parse_response(response, request_id, mode, transport_state) do
     case Protocol.parse_message(response) do
       {:result, result, ^request_id} ->
-        with {:ok, :complete, _result} <- ResultEnvelope.validate(result, :modern),
+        with {:ok, :complete, _result} <-
+               ResultEnvelope.validate(result, :modern, method: "server/discover"),
              {:ok, discovery} <- Discover.parse_result(result),
              {:ok, selected_version} <- select_version(discovery.supported_versions, mode) do
           {:ok,

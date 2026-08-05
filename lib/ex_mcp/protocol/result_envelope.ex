@@ -8,6 +8,7 @@ defmodule ExMCP.Protocol.ResultEnvelope do
   """
 
   alias ExMCP.Internal.VersionRegistry
+  alias ExMCP.Protocol.CacheableResult
 
   @type result_kind :: :complete | :input_required | {:extension, String.t()}
   @type classification_error ::
@@ -15,6 +16,7 @@ defmodule ExMCP.Protocol.ResultEnvelope do
           | :missing_result_type
           | {:invalid_result_type, term()}
           | {:unknown_result_type, String.t()}
+          | CacheableResult.validation_error()
 
   @doc "Classifies a result without changing its wire representation."
   @spec classify(map(), :legacy | :modern | :unknown | String.t() | nil, keyword()) ::
@@ -54,9 +56,17 @@ defmodule ExMCP.Protocol.ResultEnvelope do
   @spec validate(map(), :legacy | :modern | :unknown | String.t() | nil, keyword()) ::
           {:ok, result_kind(), map()} | {:error, classification_error()}
   def validate(result, version_or_era, opts \\ []) do
-    case classify(result, version_or_era, opts) do
-      {:ok, kind} -> {:ok, kind, result}
-      {:error, _reason} = error -> error
+    with {:ok, kind} <- classify(result, version_or_era, opts),
+         :ok <- validate_cache_hints(result, kind, version_or_era, opts) do
+      {:ok, kind, result}
+    end
+  end
+
+  defp validate_cache_hints(result, kind, version_or_era, opts) do
+    if normalize_era(version_or_era) == :modern do
+      CacheableResult.validate(Keyword.get(opts, :method), kind, result)
+    else
+      :ok
     end
   end
 

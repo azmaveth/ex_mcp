@@ -47,4 +47,17 @@ defmodule ExMCP.Protocol.ResultEnvelopeTest do
     result = %{"resultType" => "complete", "tools" => []}
     assert {:ok, :complete, ^result} = ResultEnvelope.validate(result, :modern)
   end
+
+  test "validates cache hints when the originating method is cacheable" do
+    valid = %{"resultType" => "complete", "ttlMs" => 0, "cacheScope" => "private"}
+
+    assert {:ok, :complete, ^valid} =
+             ResultEnvelope.validate(valid, :modern, method: "tools/list")
+
+    assert {:error, :missing_ttl_ms} =
+             ResultEnvelope.validate(%{"resultType" => "complete"}, :modern, method: "tools/list")
+
+    assert {:ok, :complete, %{}} =
+             ResultEnvelope.validate(%{}, :legacy, method: "tools/list")
+  end
 end

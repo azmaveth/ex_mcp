@@ -40,7 +40,49 @@ defmodule ExMCP.Server.ResultNormalizerProtocolTest do
         )
 
       assert Enum.map(result["tools"], & &1["name"]) == expected_names
+      assert result["ttlMs"] == 0
+      assert result["cacheScope"] == "private"
     end
+  end
+
+  test "adds conservative cache defaults and preserves valid handler overrides" do
+    defaulted =
+      ResultNormalizer.protocol_result(
+        %{contents: []},
+        %{era: :modern, method: "resources/read"}
+      )
+
+    assert defaulted["ttlMs"] == 0
+    assert defaulted["cacheScope"] == "private"
+
+    overridden =
+      ResultNormalizer.protocol_result(
+        %{prompts: [], ttl_ms: 30_000, cache_scope: :public},
+        %{era: :modern, method: "prompts/list"}
+      )
+
+    assert overridden["ttlMs"] == 30_000
+    assert overridden["cacheScope"] == "public"
+  end
+
+  test "repairs invalid cache hints and removes them from non-complete results" do
+    repaired =
+      ResultNormalizer.protocol_result(
+        %{"tools" => [], "ttlMs" => -1, "cacheScope" => "shared"},
+        %{era: :modern, method: "tools/list"}
+      )
+
+    assert repaired["ttlMs"] == 0
+    assert repaired["cacheScope"] == "private"
+
+    interim =
+      ResultNormalizer.protocol_result(
+        %{"resultType" => "input_required", "ttlMs" => 10, "cacheScope" => "public"},
+        %{era: :modern, method: "resources/read"}
+      )
+
+    refute Map.has_key?(interim, "ttlMs")
+    refute Map.has_key?(interim, "cacheScope")
   end
 
   test "stamps complete modern results with canonical server metadata" do

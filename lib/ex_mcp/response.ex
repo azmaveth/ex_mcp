@@ -67,6 +67,10 @@ defmodule ExMCP.Response do
     :request_id,
     :server_info,
     :is_error,
+    # 2026-07-28 result envelope and cache metadata
+    :resultType,
+    :ttlMs,
+    :cacheScope,
     # 2025-06-18 features
     :structuredOutput,
     :resourceLinks,
@@ -94,6 +98,10 @@ defmodule ExMCP.Response do
           request_id: String.t() | nil,
           server_info: map() | nil,
           is_error: boolean(),
+          # 2026-07-28 result envelope and cache metadata
+          resultType: String.t() | nil,
+          ttlMs: non_neg_integer() | nil,
+          cacheScope: String.t() | nil,
           # 2025-06-18 features
           structuredOutput: any() | nil,
           resourceLinks: [map()] | nil,
@@ -155,11 +163,14 @@ defmodule ExMCP.Response do
 
     %__MODULE__{
       content: content,
-      meta: Map.get(raw_response, "meta"),
+      meta: Map.get(raw_response, "_meta") || Map.get(raw_response, "meta"),
       tool_name: Keyword.get(opts, :tool_name),
       request_id: Keyword.get(opts, :request_id),
       server_info: Keyword.get(opts, :server_info),
       is_error: Map.get(raw_response, "is_error", Map.get(raw_response, "isError", false)),
+      resultType: Map.get(raw_response, "resultType"),
+      ttlMs: Map.get(raw_response, "ttlMs"),
+      cacheScope: Map.get(raw_response, "cacheScope"),
       # 2025-06-18 features
       structuredOutput:
         Map.get(raw_response, "structuredOutput") || Map.get(raw_response, "structuredContent") ||

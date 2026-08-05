@@ -59,6 +59,22 @@ defmodule ExMCP.ResponseTest do
              ]
     end
 
+    test "preserves modern result and cache metadata" do
+      raw = %{
+        "resultType" => "complete",
+        "ttlMs" => 30_000,
+        "cacheScope" => "private",
+        "_meta" => %{"io.modelcontextprotocol/serverInfo" => %{"name" => "example"}}
+      }
+
+      response = Response.from_raw_response(raw)
+
+      assert response.resultType == "complete"
+      assert response.ttlMs == 30_000
+      assert response.cacheScope == "private"
+      assert response.meta == raw["_meta"]
+    end
+
     test "normalizes legacy content format" do
       raw = %{
         "content" => [

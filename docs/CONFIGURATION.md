@@ -348,6 +348,33 @@ reverse proxies, load balancers, APM agents, and access-log middleware to
 redact `Mcp-Param-*` just as they redact `Authorization` and cookies; those
 systems observe headers before ExMCP can sanitize their logs.
 
+### Modern result cache hints
+
+MCP 2026-07-28 requires `ttlMs` and `cacheScope` on complete results from
+`server/discover`, `tools/list`, `prompts/list`, `resources/list`,
+`resources/templates/list`, and `resources/read`. ExMCP supplies conservative
+defaults when a handler omits them:
+
+```elixir
+%{
+  ttlMs: 0,
+  cacheScope: :private
+}
+```
+
+`ttlMs: 0` means immediately stale; `private` prevents reuse across
+authorization contexts. A handler may return `ttl_ms` / `cache_scope` or the
+wire keys `ttlMs` / `cacheScope` to override those defaults. TTL must be a
+non-negative integer and scope must be `:public`, `:private`, `"public"`, or
+`"private"`. Only use `public` when the result is safe to share across users,
+including on authenticated endpoints. Each paginated response page carries
+its own hints, and ExMCP removes cache hints from `input_required` results.
+
+Modern clients reject missing or invalid required hints. With the default
+`:struct` response format they are available as `response.ttlMs` and
+`response.cacheScope`; `format: :map` preserves the wire keys. ExMCP currently
+parses and validates these hints but does not store or reuse responses.
+
 Pass request-local context into a handler with `:handler_opts`. The option can
 be a static term, a one-arity function called with the `Plug.Conn`, a two-arity
 function called with the `Plug.Conn` and decoded JSON-RPC request, or an MFA

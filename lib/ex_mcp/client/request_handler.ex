@@ -188,7 +188,7 @@ defmodule ExMCP.Client.RequestHandler do
               %{method: method, request_id: id}
             )
 
-            {:reply, validate_result(result, updated_state), updated_state}
+            {:reply, validate_result(result, updated_state, method), updated_state}
 
           {:error, error_data, _id} ->
             :telemetry.execute(
@@ -206,7 +206,7 @@ defmodule ExMCP.Client.RequestHandler do
       {:ok, updated_state} ->
         # SSE and streaming transports - track pending request
         maybe_schedule_request_timeout(id, meta, updated_state)
-        pending_requests = Map.put(updated_state.pending_requests, id, {from, :single})
+        pending_requests = Map.put(updated_state.pending_requests, id, {from, :single, method})
         new_state = %{updated_state | pending_requests: pending_requests}
         {:noreply, new_state}
 
@@ -459,6 +459,14 @@ defmodule ExMCP.Client.RequestHandler do
 
       _other ->
         case Map.get(state.pending_requests, request_id) do
+          {from, :single, _method} ->
+            error = request_stream_error(reason)
+
+            GenServer.reply(from, {:error, error})
+
+            {:noreply,
+             %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+
           {from, :single} ->
             error = request_stream_error(reason)
 
@@ -528,7 +536,8 @@ defmodule ExMCP.Client.RequestHandler do
   Handles a single response from the transport.
   """
   def handle_single_response({:result, result, response_id}, state) do
-    handle_response_by_id(response_id, validate_result(result, state), state)
+    method = pending_request_method(state.pending_requests, response_id)
+    handle_response_by_id(response_id, validate_result(result, state, method), state)
   end
 
   def handle_single_response({:error, error, response_id}, state) do
@@ -585,6 +594,17 @@ defmodule ExMCP.Client.RequestHandler do
 
     new_state =
       case get_request_info(pending_requests, response_id) do
+        {:ok, {from, :single, method}} ->
+          :telemetry.execute(
+            [:ex_mcp, :client, :request, :completed],
+            %{},
+            %{method: method, request_id: response_id}
+          )
+
+          GenServer.reply(from, response_data)
+          new_pending_requests = Map.delete(pending_requests, response_id)
+          %{state | pending_requests: new_pending_requests}
+
         {:ok, {from, :single}} ->
           :telemetry.execute(
             [:ex_mcp, :client, :request, :completed],
@@ -644,6 +664,9 @@ defmodule ExMCP.Client.RequestHandler do
         :error
 
       {_from, :single} = single_request_info ->
+        {:ok, single_request_info}
+
+      {_from, :single, _method} = single_request_info ->
         {:ok, single_request_info}
 
       batch_id ->
@@ -815,7 +838,14 @@ defmodule ExMCP.Client.RequestHandler do
   defp format_meta_error({:invalid_meta_field, key}), do: "field #{key} has an invalid value"
   defp format_meta_error({:invalid_meta, :not_an_object}), do: "_meta must be an object"
 
-  defp validate_result(result, state) do
+  defp pending_request_method(pending_requests, response_id) do
+    case Map.get(pending_requests, response_id) do
+      {_from, :single, method} when is_binary(method) -> method
+      _other -> nil
+    end
+  end
+
+  defp validate_result(result, state, method) do
     transport_opts = Map.get(state, :transport_opts) || []
 
     allowed_result_types =
@@ -824,7 +854,8 @@ defmodule ExMCP.Client.RequestHandler do
       |> List.wrap()
 
     case ResultEnvelope.validate(result, Map.get(state, :protocol_version),
-           allowed_result_types: allowed_result_types
+           allowed_result_types: allowed_result_types,
+           method: method
          ) do
       {:ok, _kind, validated_result} ->
         {:ok, validated_result}
@@ -849,6 +880,21 @@ defmodule ExMCP.Client.RequestHandler do
 
   defp result_error_message({:unknown_result_type, type}),
     do: "MCP resultType #{inspect(type)} was not negotiated"
+
+  defp result_error_message(:missing_ttl_ms),
+    do: "MCP cacheable result is missing required ttlMs"
+
+  defp result_error_message({:invalid_ttl_ms, _value}),
+    do: "MCP cacheable result ttlMs must be a non-negative integer"
+
+  defp result_error_message(:missing_cache_scope),
+    do: "MCP cacheable result is missing required cacheScope"
+
+  defp result_error_message({:invalid_cache_scope, _value}),
+    do: ~s(MCP cacheable result cacheScope must be "public" or "private")
+
+  defp result_error_message(:cache_hints_not_allowed),
+    do: "MCP non-complete result must not include cache hints"
 
   @doc """
   Handles server-to-client requests by routing them to the appropriate handler callback.
@@ -1076,6 +1122,12 @@ defmodule ExMCP.Client.RequestHandler do
         nil ->
           # Request already completed or doesn't exist
           {:noreply, updated_state}
+
+        {from, :single, _method} ->
+          # Reply with cancelled error and remove from pending
+          GenServer.reply(from, {:error, :cancelled})
+          new_pending = Map.delete(state.pending_requests, request_id)
+          {:noreply, %{updated_state | pending_requests: new_pending}}
 
         {from, :single} ->
           # Reply with cancelled error and remove from pending

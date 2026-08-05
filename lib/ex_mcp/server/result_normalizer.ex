@@ -21,6 +21,7 @@ defmodule ExMCP.Server.ResultNormalizer do
   require Logger
 
   alias ExMCP.Internal.VersionInfo
+  alias ExMCP.Protocol.CacheableResult
   alias ExMCP.Transport.HTTP.ToolHeaders
 
   @server_info_key "io.modelcontextprotocol/serverInfo"
@@ -58,6 +59,11 @@ defmodule ExMCP.Server.ResultNormalizer do
       server_info = Keyword.get(opts, :server_info) || default_server_info()
       result_type = normalize_result_type(Map.get(result, "resultType"))
 
+      result =
+        result
+        |> Map.put("resultType", result_type)
+        |> normalize_cache_hints(request_context, result_type)
+
       meta =
         case Map.get(result, "_meta") do
           existing when is_map(existing) -> existing
@@ -65,7 +71,6 @@ defmodule ExMCP.Server.ResultNormalizer do
         end
 
       result
-      |> Map.put("resultType", result_type)
       |> Map.put("_meta", Map.put(meta, @server_info_key, stringify_keys(server_info)))
     else
       result
@@ -90,6 +95,52 @@ defmodule ExMCP.Server.ResultNormalizer do
   defp tool_sort_key(%{"name" => name} = tool) when is_binary(name), do: {0, name, tool}
   defp tool_sort_key(tool), do: {1, "", tool}
 
+  defp normalize_cache_hints(result, %{method: method}, "complete") do
+    if CacheableResult.cacheable_method?(method) do
+      result
+      |> normalize_ttl_ms(method)
+      |> normalize_cache_scope(method)
+    else
+      result
+    end
+  end
+
+  defp normalize_cache_hints(result, %{method: method}, _result_type) do
+    if CacheableResult.cacheable_method?(method) do
+      Map.drop(result, ["ttlMs", "cacheScope"])
+    else
+      result
+    end
+  end
+
+  defp normalize_cache_hints(result, _request_context, _result_type), do: result
+
+  defp normalize_ttl_ms(%{"ttlMs" => ttl_ms} = result, _method)
+       when is_integer(ttl_ms) and ttl_ms >= 0,
+       do: result
+
+  defp normalize_ttl_ms(%{"ttlMs" => _invalid} = result, method) do
+    Logger.warning("Replacing invalid ttlMs on #{method} with the safe default 0")
+    Map.put(result, "ttlMs", 0)
+  end
+
+  defp normalize_ttl_ms(result, _method), do: Map.put(result, "ttlMs", 0)
+
+  defp normalize_cache_scope(%{"cacheScope" => scope} = result, _method)
+       when scope in ["public", "private"],
+       do: result
+
+  defp normalize_cache_scope(%{"cacheScope" => scope} = result, _method)
+       when scope in [:public, :private],
+       do: Map.put(result, "cacheScope", Atom.to_string(scope))
+
+  defp normalize_cache_scope(%{"cacheScope" => _invalid} = result, method) do
+    Logger.warning("Replacing invalid cacheScope on #{method} with the safe default private")
+    Map.put(result, "cacheScope", "private")
+  end
+
+  defp normalize_cache_scope(result, _method), do: Map.put(result, "cacheScope", "private")
+
   defp normalize_result_type(type) when is_binary(type) and type != "", do: type
 
   defp normalize_result_type(type) when is_atom(type) and not is_nil(type),
@@ -108,6 +159,8 @@ defmodule ExMCP.Server.ResultNormalizer do
   defp stringify_key(:list_pattern), do: "listPattern"
   defp stringify_key(:is_error), do: "isError"
   defp stringify_key(:is_error?), do: "isError"
+  defp stringify_key(:ttl_ms), do: "ttlMs"
+  defp stringify_key(:cache_scope), do: "cacheScope"
   defp stringify_key(key), do: Atom.to_string(key)
 
   @doc """

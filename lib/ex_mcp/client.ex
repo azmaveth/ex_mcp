@@ -1100,6 +1100,9 @@ defmodule ExMCP.Client do
 
     state.pending_requests
     |> Enum.each(fn
+      {_id, {from, :single, _method}} ->
+        GenServer.reply(from, {:error, connection_error})
+
       {_id, {from, :single}} ->
         GenServer.reply(from, {:error, connection_error})
 
@@ -1225,6 +1228,12 @@ defmodule ExMCP.Client do
       nil ->
         # Request already completed or doesn't exist
         {:reply, :ok, updated_state}
+
+      {from, :single, _method} ->
+        # Reply with cancelled error and remove from pending
+        GenServer.reply(from, {:error, :cancelled})
+        new_pending = Map.delete(state.pending_requests, request_id)
+        {:reply, :ok, %{updated_state | pending_requests: new_pending}}
 
       {from, :single} ->
         # Reply with cancelled error and remove from pending
@@ -1479,6 +1488,12 @@ defmodule ExMCP.Client do
   # that already completed find no pending entry and are ignored.
   def handle_info({:request_timeout, request_id}, state) do
     case Map.get(state.pending_requests, request_id) do
+      {from, :single, _method} ->
+        GenServer.reply(from, {:error, :timeout})
+
+        state = RequestHandler.close_request_stream(request_id, state)
+        {:noreply, %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+
       {from, :single} ->
         GenServer.reply(from, {:error, :timeout})
 
@@ -1568,6 +1583,10 @@ defmodule ExMCP.Client do
   # normal timeout/cleanup path.
   defp fail_async_post_request(state, request_id, reason) do
     case request_id && Map.get(state.pending_requests, request_id) do
+      {from, :single, _method} ->
+        GenServer.reply(from, {:error, {:transport_error, reason}})
+        %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
+
       {from, :single} ->
         GenServer.reply(from, {:error, {:transport_error, reason}})
         %{state | pending_requests: Map.delete(state.pending_requests, request_id)}
@@ -1637,6 +1656,9 @@ defmodule ExMCP.Client do
     connection_error = Error.connection_error("Transport closed: #{inspect(reason)}")
 
     Enum.each(state.pending_requests, fn
+      {id, {from, :single, _method}} ->
+        GenServer.reply(from, {:error, close_error_for(id, state, connection_error)})
+
       {id, {from, :single}} ->
         GenServer.reply(from, {:error, close_error_for(id, state, connection_error)})
 
