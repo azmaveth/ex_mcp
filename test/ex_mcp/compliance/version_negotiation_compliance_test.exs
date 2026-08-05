@@ -71,6 +71,7 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           client_info: %{name: "test-client", version: "1.0.0"},
           protocol_version: "2025-03-26"
         )
@@ -97,6 +98,7 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           client_info: %{name: "custom-client", version: "2.0.0"},
           protocol_version: "2025-03-26"
         )
@@ -119,6 +121,7 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           protocol_version: "2025-03-26"
         )
 
@@ -142,6 +145,7 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           protocol_version: "2025-03-26"
         )
 
@@ -170,6 +174,7 @@ defmodule ExMCP.Compliance.VersionNegotiationComplianceTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           protocol_version: "2025-03-26"
         )
 

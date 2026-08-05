@@ -4,22 +4,21 @@ This guide covers the supported configuration surfaces for ExMCP 1.0.
 
 ## Dependency
 
-The published `1.0.0-rc.5` package is the legacy-only baseline:
+Use the modern-preferred `1.0.0-rc.6` release candidate:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.5"}
+    {:ex_mcp, "~> 1.0.0-rc.6"}
   ]
 end
 ```
 
-The MCP 2026-07-28 options in this guide describe the current unreleased
-source tree and the next RC. Until that RC is published, test them from a
-qualified repository commit:
+The earlier `1.0.0-rc.5` package is the legacy-only characterization baseline.
+To preserve its connection policy after upgrading, set:
 
 ```elixir
-{:ex_mcp, github: "azmaveth/ex_mcp", ref: "<qualified-commit-sha>"}
+config :ex_mcp, protocol_mode: :legacy_only
 ```
 
 ## Protocol Eras and Modes
@@ -40,12 +39,10 @@ config :ex_mcp,
   protocol_version: "2025-11-25"
 ```
 
-The unreleased migration source still carries the `1.0.0-rc.5` version and
-`:legacy_only` default while the next RC is prepared; the published rc.5
-artifact does not contain modern support. A later RC will default to
-`:prefer_modern` for the required pre-1.0 soak. Stable 1.0 will copy that final
-RC behavior without another default change. Production deployments should set
-the mode explicitly while the RC rollout is in progress.
+`1.0.0-rc.6` defaults to `:prefer_modern` for the required pre-1.0 soak.
+Stable 1.0 will copy this behavior without another default change. Production
+deployments should still set the mode explicitly when rollout policy must not
+change with a dependency upgrade.
 
 | Mode | Enabled versions, in preference order | Client establishment | Server acceptance |
 |---|---|---|---|

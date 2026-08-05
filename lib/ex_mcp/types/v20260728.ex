@@ -1,10 +1,10 @@
 defmodule ExMCP.Types.V20260728 do
   @moduledoc """
-  Type definitions for the opt-in MCP protocol version 2026-07-28.
+  Type definitions for MCP protocol version 2026-07-28.
 
   This revision is a breaking, stateless protocol era. These types describe
-  its wire surface. Runtime support is enabled through explicit modern
-  protocol modes while the application default remains legacy-only.
+  its wire surface. Runtime support is selected through the dual-era protocol
+  modes, and rc.6 defaults new connections to `:prefer_modern`.
 
   Important changes represented here include per-request protocol metadata,
   typed result envelopes, discovery, caching hints, subscriptions, and

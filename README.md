@@ -36,39 +36,38 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 
 MCP 2026-07-28 is wire-incompatible with earlier revisions. The current source
 tree supports it through `:prefer_modern` and `:modern_only`, while preserving
-every legacy revision through the 1.x line. The application default remains
-`:legacy_only` while maintainers prepare a published modern-preferred RC; set
-`protocol_mode: :prefer_modern` explicitly when testing the unreleased
-dual-era implementation. `ExMCP.protocol_version/0` intentionally returns the
-newest legacy revision, `2025-11-25`, for initialize-based compatibility—it is
-not the latest upstream MCP revision. See
+every legacy revision through the 1.x line. Starting in `1.0.0-rc.6`, the
+application default is `:prefer_modern`: clients try modern discovery first
+and fall back only when the peer positively identifies itself as legacy.
+Set `protocol_mode: :legacy_only` for the exact rc.5 wire path.
+`ExMCP.protocol_version/0` intentionally returns the newest legacy revision,
+`2025-11-25`, for initialize-based compatibility—it is not the latest upstream
+MCP revision. See
 [Configuration](docs/CONFIGURATION.md#protocol-eras-and-modes) and the
 [1.0 migration guide](docs/getting-started/MIGRATION.md#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release).
 
-> **Release-state note:** The published `1.0.0-rc.5` package is legacy-only and
-> does not contain the modern modes described here. This repository now
-> contains the post-rc.5 migration work, but `mix.exs` intentionally retains
-> the rc.5 version until the next RC is cut. Do not use that version field to
-> infer the contents of the published rc.5 artifact.
+> **Release-state note:** `1.0.0-rc.6` is the modern-preferred soak release.
+> The previous `1.0.0-rc.5` package remains the legacy-only characterization
+> baseline. Stable 1.0 will preserve rc.6 behavior after the release gates and
+> minimum seven-day soak complete.
 
 ## Installation
 
-For the latest published legacy-only release:
+For the dual-era release candidate:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.5"}
+    {:ex_mcp, "~> 1.0.0-rc.6"}
   ]
 end
 ```
 
-To evaluate the unreleased dual-era implementation before the next RC is
-published, pin the repository revision you have qualified rather than using a
-floating dependency in production:
+To retain the legacy-only rc.5 connection policy during rollout, configure the
+mode explicitly:
 
 ```elixir
-{:ex_mcp, github: "azmaveth/ex_mcp", ref: "<qualified-commit-sha>"}
+config :ex_mcp, protocol_mode: :legacy_only
 ```
 
 ### API stability (1.0)

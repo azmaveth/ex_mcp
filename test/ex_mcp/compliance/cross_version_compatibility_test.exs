@@ -130,6 +130,7 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
       Client.start_link(
         transport: :test,
         server: server,
+        protocol_mode: :legacy_only,
         protocol_version: version
       )
 
@@ -157,6 +158,7 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           protocol_version: "2025-06-18"
         )
 
@@ -207,6 +209,7 @@ defmodule ExMCP.Compliance.CrossVersionCompatibilityTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           protocol_version: "not-a-real-version"
         )
 

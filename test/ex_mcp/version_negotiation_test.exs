@@ -113,6 +113,7 @@ defmodule ExMCP.VersionNegotiationTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           client_info: %{name: "test-client", version: "1.0.0"}
         )
 
@@ -263,7 +264,8 @@ defmodule ExMCP.VersionNegotiationTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       # Wait for initialization

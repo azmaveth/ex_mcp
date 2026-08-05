@@ -4,10 +4,10 @@ This report records the public Elixir API compatibility gate for the MCP
 2026-07-28 migration. The comparison is between:
 
 - baseline: `v1.0.0-rc.5` (`a2464c3423ee48ba825402cc2d17be8042f1451a`);
-- candidate: `05a1b54f2ed954ee9b755a108cad67847a182868`.
+- candidate: the `v1.0.0-rc.6` release commit.
 
-The package version deliberately remains `1.0.0-rc.5` while the final release
-gates and soak are in progress. This report compares code, not version strings.
+The rc.6 package starts the final modern-preferred soak. This report compares
+the retained rc.5 API surface with the 1.0 candidate, not version strings.
 
 ## Method
 

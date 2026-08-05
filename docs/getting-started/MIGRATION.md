@@ -68,11 +68,11 @@ forward "/mcp", ExMCP.HttpPlug,
 | `:prefer_modern` | Probes with `server/discover`; falls back only when the response proves the peer is legacy and the transport remains usable | Accepts both eras; advertises modern versions first | Target dual-era deployment after canaries pass |
 | `:modern_only` | Uses `server/discover`; never falls back | Accepts only modern requests | Conformance, new closed ecosystems, and final legacy retirement |
 
-The unreleased post-rc.5 source currently retains the `:legacy_only` default
-while maintainers prepare a published modern-preferred RC. Published rc.5 is
-legacy-only and does not contain these modes. The 1.0 release must have the
-same default and behavior as its final RC. Pin a mode explicitly if your
-deployment cannot tolerate that planned default transition.
+`1.0.0-rc.6` defaults to `:prefer_modern` and begins the required
+modern-preferred soak. Published rc.5 is legacy-only and does not contain these
+modes. Stable 1.0 must have the same default and behavior as its final RC. Pin
+a mode explicitly if your deployment cannot tolerate a release-default
+transition.
 
 ### Recommended rollout
 
@@ -361,7 +361,7 @@ If you encounter issues during migration:
 
 ## Version Support
 
-- **Post-rc.5 source, forthcoming 1.0 RCs, and upcoming stable 1.0.0**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**
+- **v1.0.0-rc.6 and upcoming stable 1.0.0**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**
 - **Published v1.0.0-rc.5**: Legacy MCP through 2025-11-25; no modern protocol modes
 - **v0.12.x**: Prior line with MCP 2025-11-25 support and ACP v1 alignment
 - **v0.11.x and earlier**: Upgrade recommended
@@ -369,8 +369,8 @@ If you encounter issues during migration:
 ### Forward-looking protocol notes
 
 - **MCP 2026-07-28** is the latest stable revision, is wire-breaking relative
-  to 2025-11-25, and is implemented in the post-rc.5 source for the forthcoming
-  ExMCP 1.0 RCs behind the explicit protocol modes above.
+  to 2025-11-25, and is implemented in rc.6 behind the explicit protocol modes
+  above. The rc.6 release default is `:prefer_modern`.
 - **ACP** adds non-breaking capabilities under major `1` (session list/close/resume,
   logout, config options, etc.). Adapter packages (Claude / Codex / Pi) should be
   re-synced periodically with upstream agent releases.

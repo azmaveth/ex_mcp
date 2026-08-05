@@ -139,6 +139,7 @@ defmodule ExMCP.Compliance.TransportVersionTest do
           transport: :http,
           url: base_url,
           protocol_version: version,
+          protocol_mode: :legacy_only,
           use_sse: false
         )
 
@@ -166,6 +167,7 @@ defmodule ExMCP.Compliance.TransportVersionTest do
           transport: :http,
           url: base_url,
           protocol_version: "unsupported-version",
+          protocol_mode: :legacy_only,
           use_sse: false
         )
 
@@ -191,7 +193,8 @@ defmodule ExMCP.Compliance.TransportVersionTest do
         Client.start_link(
           transport: :http,
           url: base_url,
-          use_sse: false
+          use_sse: false,
+          protocol_mode: :legacy_only
           # No protocol_version specified
         )
 
@@ -218,7 +221,8 @@ defmodule ExMCP.Compliance.TransportVersionTest do
           transport: :http,
           url: base_url,
           use_sse: false,
-          session_id: session_id
+          session_id: session_id,
+          protocol_mode: :legacy_only
         )
 
       # Check the initial transport state
@@ -263,6 +267,7 @@ defmodule ExMCP.Compliance.TransportVersionTest do
           transport: :http,
           url: base_url,
           protocol_version: version,
+          protocol_mode: :legacy_only,
           session_id: session_id,
           use_sse: true
         )
@@ -320,6 +325,7 @@ defmodule ExMCP.Compliance.TransportVersionTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           protocol_version: version
         )
 
@@ -337,7 +343,8 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
           # No protocol_version specified
         )
 

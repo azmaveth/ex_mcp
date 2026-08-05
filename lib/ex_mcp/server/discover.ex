@@ -3,8 +3,8 @@ defmodule ExMCP.Server.Discover do
   Assembles and validates `server/discover` results.
 
   Discovery is the modern, stateless replacement for initialize-time server
-  metadata. The protocol mode is explicit so opt-in modern support is never
-  advertised by a default legacy-only server.
+  metadata. The protocol mode controls the advertised preference order; rc.6
+  defaults servers to dual-era, modern-preferred discovery.
   """
 
   alias ExMCP.Internal.VersionRegistry

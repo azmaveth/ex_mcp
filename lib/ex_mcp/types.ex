@@ -24,10 +24,9 @@ defmodule ExMCP.Types do
 
   > #### Protocol-mode rollout {: .info}
   >
-  > Runtime use of **MCP 2026-07-28** remains behind explicit protocol modes
-  > until the final 1.0 release-candidate default is selected. The zero-arity
-  > legacy compatibility accessor continues to return 2025-11-25 during that
-  > soak.
+  > rc.6 defaults new connections to `:prefer_modern`, with evidence-based
+  > fallback to legacy peers. The zero-arity legacy compatibility accessor
+  > continues to return 2025-11-25 during the soak and throughout 1.x.
   """
 
   alias ExMCP.Protocol.ErrorCodes

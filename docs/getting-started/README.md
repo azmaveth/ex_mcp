@@ -10,10 +10,9 @@ ExMCP supports MCP clients and servers over stdio, Streamable HTTP, and BEAM-loc
 transports, plus ACP controllers and agents.
 
 MCP `2026-07-28` is the latest stable revision and is available through
-`:prefer_modern` and `:modern_only` in the unreleased post-rc.5 source tree.
-The published rc.5 package remains legacy-only. The migration source keeps
-`:legacy_only` as its application default while maintainers prepare the
-published modern-preferred soak RC; see the
+`:prefer_modern` and `:modern_only` in `1.0.0-rc.6`. rc.6 defaults to
+`:prefer_modern` for the pre-1.0 soak; set `:legacy_only` to preserve the exact
+rc.5 connection policy. See the
 [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) before
 deploying.
 

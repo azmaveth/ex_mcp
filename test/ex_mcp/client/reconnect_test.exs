@@ -235,7 +235,10 @@ defmodule ExMCP.Client.ReconnectTest do
 
   defp start_client(agent, opts) do
     {:ok, client} =
-      Client.start_link([transport: FlakyTransport, agent: agent, test_pid: self()] ++ opts)
+      Client.start_link(
+        [transport: FlakyTransport, agent: agent, test_pid: self(), protocol_mode: :legacy_only] ++
+          opts
+      )
 
     client
   end

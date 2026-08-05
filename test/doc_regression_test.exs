@@ -134,7 +134,7 @@ defmodule ExMCP.DocRegressionTest do
     end
   end
 
-  test "live docs identify 2026-07-28 as latest stable without relabeling the legacy default" do
+  test "live docs identify the modern revision and rc.6 release default" do
     readme = File.read!("README.md")
     configuration = File.read!("docs/CONFIGURATION.md")
     quickstart = File.read!("docs/getting-started/QUICKSTART.md")
@@ -156,8 +156,11 @@ defmodule ExMCP.DocRegressionTest do
 
     refute readme =~ "**2025-11-25** (latest stable)"
     assert readme =~ "2025-11-25`, for initialize-based compatibility"
-    assert readme =~ "published `1.0.0-rc.5` package is legacy-only"
-    assert readme =~ "post-rc.5 migration work"
+    assert readme =~ "`1.0.0-rc.6` is the modern-preferred soak release"
+    assert readme =~ "application default is `:prefer_modern`"
+    assert configuration =~ "`1.0.0-rc.6` defaults to `:prefer_modern`"
+    assert quickstart =~ "`:prefer_modern` is the rc.6 default"
+    assert coverage =~ "defaults to `:prefer_modern`"
     assert configuration =~ "newest legacy revision"
     assert coverage =~ "official conformance runner is\nstill published as a prerelease"
   end
@@ -242,7 +245,8 @@ defmodule ExMCP.DocRegressionTest do
     for extra <- [
           "docs/API_DIFF_RC5_TO_1_0.md",
           "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
-          "docs/MCP_COVERAGE_MATRIX.md"
+          "docs/MCP_COVERAGE_MATRIX.md",
+          "docs/RELEASE_1_0_0_RC_6.md"
         ] do
       assert mixfile =~ ~s("#{extra}"), "ExDoc extras are missing #{extra}"
     end

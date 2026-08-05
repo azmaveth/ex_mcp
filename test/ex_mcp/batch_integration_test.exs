@@ -98,6 +98,7 @@ defmodule ExMCP.BatchIntegrationTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           client_info: %{name: "test_client", version: "1.0"}
         )
 
@@ -149,6 +150,7 @@ defmodule ExMCP.BatchIntegrationTest do
         Client.start_link(
           transport: :test,
           server: server,
+          protocol_mode: :legacy_only,
           client_info: %{name: "test_client", version: "1.0"}
         )
 

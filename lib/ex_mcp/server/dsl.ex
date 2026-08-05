@@ -32,6 +32,11 @@ defmodule ExMCP.Server.DSL do
   alias ExMCP.Content.{SchemaPolicy, SchemaValidator}
   alias ExMCP.Server.DSL.Builder
 
+  # DSL schemas are trusted application declarations compiled while the module
+  # is loading. Give their worker enough scheduler headroom during parallel
+  # builds without relaxing the tighter runtime policy default.
+  @compile_time_schema_timeout_ms 5_000
+
   defmacro __using__(opts) do
     quote do
       import ExMCP.Server.DSL
@@ -901,7 +906,9 @@ defmodule ExMCP.Server.DSL do
   defp compile_output_schema(nil), do: nil
 
   defp compile_output_schema(schema) do
-    case SchemaValidator.compile_schema(schema) do
+    case SchemaValidator.compile_schema(schema,
+           resolve_timeout_ms: @compile_time_schema_timeout_ms
+         ) do
       {:ok, resolved} ->
         resolved
 

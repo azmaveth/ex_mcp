@@ -121,7 +121,8 @@ defmodule ExMCP.LifecycleEnhancementsTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       # Get server info to see capabilities
@@ -232,7 +233,8 @@ defmodule ExMCP.LifecycleEnhancementsTest do
         {:ok, client} =
           Client.start_link(
             transport: :test,
-            server: server
+            server: server,
+            protocol_mode: :legacy_only
           )
 
         # Should connect successfully
@@ -255,7 +257,8 @@ defmodule ExMCP.LifecycleEnhancementsTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       # Should still connect and be functional

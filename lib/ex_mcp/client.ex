@@ -892,7 +892,7 @@ defmodule ExMCP.Client do
   end
 
   defp select_discovered_version(server_versions, state) do
-    mode = Keyword.get(state.transport_opts, :protocol_mode) || :prefer_modern
+    mode = Keyword.get(state.transport_opts, :protocol_mode) || VersionRegistry.protocol_mode()
     enabled_versions = VersionRegistry.enabled_versions(mode)
 
     selected =

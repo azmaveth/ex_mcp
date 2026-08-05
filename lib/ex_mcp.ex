@@ -43,11 +43,10 @@ defmodule ExMCP do
   >
   > **May change in minors:** experimental content transformers and anything marked
   > deprecated. MCP 2026-07-28 is the latest stable revision and is available through
-  > `:prefer_modern` and `:modern_only`. This source tree contains unreleased
-  > post-rc.5 migration work even though its version remains rc.5 until the next
-  > release candidate is cut; the published rc.5 package is legacy-only. The
-  > application default and zero-arity compatibility helpers currently remain on
-  > the newest legacy revision, 2025-11-25.
+  > `:prefer_modern` and `:modern_only`. Starting in rc.6, new connections default
+  > to `:prefer_modern`; `:legacy_only` preserves the rc.5 wire path. The zero-arity
+  > compatibility helpers continue to report the newest initialize-compatible
+  > legacy revision, 2025-11-25.
 
   ## Quick Start
 
@@ -97,10 +96,10 @@ defmodule ExMCP do
   - **2025-03-26** - Subscriptions, roots, logging, and batch support
   - **2024-11-05** - Initial stable MCP revision
 
-  Select the modern revision with `protocol_mode: :prefer_modern` or
-  `protocol_mode: :modern_only`. The unreleased migration build currently
-  defaults to `:legacy_only`; a later published RC must default to
-  `:prefer_modern` for the pre-1.0 soak.
+  rc.6 defaults to `protocol_mode: :prefer_modern`, which tries the modern
+  revision first and retains evidence-based legacy fallback. Use
+  `protocol_mode: :modern_only` for a closed modern ecosystem or
+  `protocol_mode: :legacy_only` for the exact rc.5 wire path.
 
   See the Configuration and Migration guides for the era comparison and
   rollout policy.
@@ -281,9 +280,9 @@ defmodule ExMCP do
   @doc """
   Returns the legacy protocol revision used by zero-arity compatibility paths.
 
-  In the unreleased migration build this returns `"2025-11-25"`, the newest
-  initialize-based legacy revision. MCP `2026-07-28` is the latest stable
-  revision but is selected through `:protocol_mode`, not this scalar helper.
+  This returns `"2025-11-25"`, the newest initialize-based legacy revision.
+  MCP `2026-07-28` is the latest stable revision but is selected through
+  `:protocol_mode`, not this scalar helper.
   """
   @spec protocol_version() :: String.t()
   def protocol_version do

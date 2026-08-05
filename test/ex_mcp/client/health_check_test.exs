@@ -153,7 +153,11 @@ defmodule ExMCP.Client.HealthCheckTest do
   end
 
   defp start_client(opts) do
-    {:ok, client} = Client.start_link([transport: EchoTransport, test_pid: self()] ++ opts)
+    {:ok, client} =
+      Client.start_link(
+        [transport: EchoTransport, test_pid: self(), protocol_mode: :legacy_only] ++ opts
+      )
+
     client
   end
 

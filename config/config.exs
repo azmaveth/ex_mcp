@@ -7,6 +7,9 @@ config :ex_mcp,
   # Default: "2025-11-25" (newest legacy revision). MCP 2026-07-28 is the
   # latest stable revision and is selected through :protocol_mode.
   protocol_version: "2025-11-25",
+  # New connections try MCP 2026-07-28 first and fall back only after positive
+  # legacy evidence. Use :legacy_only for the exact rc.5 connection policy.
+  protocol_mode: :prefer_modern,
   # Feature flags for phased rollout of new MCP features.
   # These flags allow for enabling new functionality in a controlled manner.
   #

@@ -271,6 +271,44 @@ defmodule ExMCP.Client.EraProbeTest do
     GenServer.stop(server)
   end
 
+  test "default client and server prefer the modern era" do
+    {:ok, server} =
+      HandlerServer.start_link(
+        handler: ModernServer,
+        transport: :test
+      )
+
+    {:ok, client} =
+      Client.start_link(
+        transport: :test,
+        server: server,
+        capabilities: %{},
+        health_check_interval: nil
+      )
+
+    assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
+    assert :sys.get_state(server).connection_era == :modern
+
+    :ok = Client.disconnect(client)
+    GenServer.stop(server)
+  end
+
+  test "default client falls back to a legacy initialize handshake" do
+    {:ok, client} =
+      Client.start_link(
+        transport: LegacyTransport,
+        test_pid: self(),
+        health_check_interval: nil
+      )
+
+    assert_receive {:legacy_transport_request, "server/discover"}
+    assert_receive {:legacy_transport_request, "initialize"}
+    assert_receive {:legacy_transport_request, "notifications/initialized"}
+    assert {:ok, "2025-11-25"} = Client.negotiated_version(client)
+
+    :ok = Client.disconnect(client)
+  end
+
   test "modern-only servers reject requests without modern metadata" do
     {:ok, server} =
       HandlerServer.start_link(

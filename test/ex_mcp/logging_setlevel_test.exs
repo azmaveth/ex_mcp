@@ -62,7 +62,8 @@ defmodule ExMCP.LoggingSetLevelTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       on_exit(fn ->
@@ -120,7 +121,8 @@ defmodule ExMCP.LoggingSetLevelTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       # Should succeed with default implementation

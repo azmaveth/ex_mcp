@@ -116,13 +116,12 @@ or infer modern behavior from one method in feature code.
 | `:prefer_modern` | `server/discover` | Both | Initialize only with positive legacy evidence on a live transport |
 | `:modern_only` | `server/discover` | Modern | Never |
 
-The unreleased post-rc.5 migration source still carries the rc.5 version and
-defaults to `:legacy_only`; published rc.5 itself is legacy-only and does not
-contain modern support. The final pre-1.0 RC soak is intended to exercise
-`:prefer_modern`. Tests and deployments that require a specific wire shape
-must always pass a mode explicitly instead of relying on that changing
-default. Both preference modes accept both eras on a server; their preference
-controls advertised version order.
+`1.0.0-rc.6` defaults to `:prefer_modern` for the final pre-1.0 soak. Published
+rc.5 itself is legacy-only and does not contain modern support. Tests and
+deployments that require a specific wire shape must always pass a mode
+explicitly instead of relying on the release default. Both preference modes
+accept both eras on a server; their preference controls advertised version
+order.
 
 Era responsibilities:
 

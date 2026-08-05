@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "1.0.0-rc.5"
+  @version "1.0.0-rc.6"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -25,6 +25,16 @@ defmodule ExMCP.MixProject do
         list_unused_filters: false,
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts"
+      ],
+      # Cowlib 2.19.0 is the newest compatible release. These remaining
+      # advisories are mitigated by Plug/Cowboy response-header validation,
+      # and ExMCP does not call cow_cookie:cookie/1. Keep the exceptions
+      # explicit so `mix hex.audit` still fails on every new advisory.
+      hex: [
+        ignore_advisories: [
+          "EEF-CVE-2026-43966",
+          "EEF-CVE-2026-43969"
+        ]
       ],
       aliases: aliases()
     ]
@@ -122,6 +132,7 @@ defmodule ExMCP.MixProject do
           docs/DSL_GUIDE.md
           docs/MCP_2026_07_28_MIGRATION_PLAN.md
           docs/MCP_COVERAGE_MATRIX.md
+          docs/RELEASE_1_0_0_RC_6.md
           docs/SECURITY.md
           docs/TRANSPORT_GUIDE.md
           docs/TROUBLESHOOTING.md
@@ -178,6 +189,7 @@ defmodule ExMCP.MixProject do
         "docs/ACP_GUIDE.md",
         "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
         "docs/MCP_COVERAGE_MATRIX.md",
+        "docs/RELEASE_1_0_0_RC_6.md",
         "docs/API_DIFF_RC5_TO_1_0.md",
         "CHANGELOG.md"
       ],
@@ -187,7 +199,8 @@ defmodule ExMCP.MixProject do
         Introduction: ~r/README/,
         Guides:
           ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|ACP_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
-        "Release references": ~r/MCP_2026_07_28|MCP_COVERAGE_MATRIX|API_DIFF_RC5_TO_1_0/,
+        "Release references":
+          ~r/MCP_2026_07_28|MCP_COVERAGE_MATRIX|API_DIFF_RC5_TO_1_0|RELEASE_1_0_0_RC_6/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

@@ -164,7 +164,8 @@ defmodule ExMCP.ToolErrorTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       # Wait for initialization

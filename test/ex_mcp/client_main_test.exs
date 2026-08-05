@@ -242,7 +242,7 @@ defmodule ExMCP.ClientMainTest do
   describe "start_link/1" do
     test "successfully starts client with default options" do
       opts = [transport: MockTransport]
-      assert {:ok, client} = Client.start_link(opts)
+      assert {:ok, client} = start_legacy_client(opts)
       assert is_pid(client)
 
       # Verify client is ready
@@ -255,7 +255,7 @@ defmodule ExMCP.ClientMainTest do
       opts = [transport: MockTransport, fail_connect: true]
 
       assert {:error, {:transport_connect_failed, :connection_refused}} =
-               Client.start_link(opts)
+               start_legacy_client(opts)
     end
 
     test "fails when initialize response is invalid" do
@@ -268,7 +268,7 @@ defmodule ExMCP.ClientMainTest do
       Process.flag(:trap_exit, true)
       opts = [transport: MockTransport, fail_handshake: true]
 
-      assert {:error, {:initialize_error, _}} = Client.start_link(opts)
+      assert {:error, {:initialize_error, _}} = start_legacy_client(opts)
     end
 
     test "supports named client registration" do
@@ -299,7 +299,7 @@ defmodule ExMCP.ClientMainTest do
       end)
 
       opts = [transport: MockTransport, name: TestClient]
-      assert {:ok, _pid} = Client.start_link(opts)
+      assert {:ok, _pid} = start_legacy_client(opts)
 
       # Verify we can use the name
       assert {:ok, status} = Client.get_status(TestClient)
@@ -360,7 +360,7 @@ defmodule ExMCP.ClientMainTest do
     test "handles timeout" do
       # Start a client with the mock transport in timeout mode.
       # The mock transport will respond to the handshake but hang on subsequent requests.
-      {:ok, client} = Client.start_link(transport: MockTransport, timeout_mode: true)
+      {:ok, client} = start_legacy_client(transport: MockTransport, timeout_mode: true)
 
       # The GenServer.call should time out because the mock transport never replies.
       assert {:error, %ExMCP.Error.ProtocolError{code: -32603, message: "Request timeout"}} =
@@ -369,7 +369,7 @@ defmodule ExMCP.ClientMainTest do
 
     test "handles transport errors" do
       # Use a client with auto-reconnection disabled so the closure is permanent
-      {:ok, client} = Client.start_link(transport: MockTransport, reconnect: false)
+      {:ok, client} = start_legacy_client(transport: MockTransport, reconnect: false)
 
       # Simulate disconnection
       send(client, {:transport_closed, :connection_lost})
@@ -424,7 +424,7 @@ defmodule ExMCP.ClientMainTest do
       }
 
       {:ok, client} =
-        Client.start_link(transport: MockTransport, error_responses: error_responses)
+        start_legacy_client(transport: MockTransport, error_responses: error_responses)
 
       assert {:error, error} = Client.call_tool(client, "hello", %{})
       assert error.code == -32602
@@ -640,7 +640,7 @@ defmodule ExMCP.ClientMainTest do
     end
 
     test "stays disconnected after transport closure when reconnect is disabled" do
-      {:ok, client} = Client.start_link(transport: MockTransport, reconnect: false)
+      {:ok, client} = start_legacy_client(transport: MockTransport, reconnect: false)
 
       # Simulate transport closure
       send(client, {:transport_closed, :connection_lost})
@@ -669,7 +669,7 @@ defmodule ExMCP.ClientMainTest do
     test "cancels pending requests on disconnection" do
       # Start client with a transport that won't respond to tools/call
       {:ok, client} =
-        Client.start_link(
+        start_legacy_client(
           transport: MockTransport,
           no_response_methods: ["tools/call"],
           reconnect: false
@@ -791,22 +791,26 @@ defmodule ExMCP.ClientMainTest do
       end)
 
       # Verify custom transport module works
-      assert {:ok, client} = Client.start_link(transport: MockTransport)
+      assert {:ok, client} = start_legacy_client(transport: MockTransport)
       assert is_pid(client)
     end
   end
 
   # Helper functions
 
+  defp start_legacy_client(opts) do
+    Client.start_link(Keyword.put_new(opts, :protocol_mode, :legacy_only))
+  end
+
   defp start_test_client do
-    {:ok, client} = Client.start_link(transport: MockTransport)
+    {:ok, client} = start_legacy_client(transport: MockTransport)
     client
   end
 
   defp start_timeout_test_client do
     Process.flag(:trap_exit, true)
 
-    case Client.start_link(transport: MockTransport, timeout_mode: true) do
+    case start_legacy_client(transport: MockTransport, timeout_mode: true) do
       {:ok, client} -> client
       # Return nil if client fails to start due to timeout
       {:error, _} -> nil

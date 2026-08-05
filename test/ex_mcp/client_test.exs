@@ -428,7 +428,7 @@ defmodule ExMCP.ClientTest do
 
   describe "start_link/1" do
     test "successfully connects and completes handshake" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       # Give the handshake time to complete
       Process.sleep(50)
@@ -450,19 +450,19 @@ defmodule ExMCP.ClientTest do
       Process.flag(:trap_exit, true)
 
       assert {:error, {:transport_connect_failed, :connection_refused}} =
-               Client.start_link(transport: MockTransport, fail_connect: true)
+               start_legacy_client(transport: MockTransport, fail_connect: true)
     end
 
     test "returns error when MCP handshake fails" do
       Process.flag(:trap_exit, true)
 
       assert {:error, {:initialize_error, %{"code" => -32600}}} =
-               Client.start_link(transport: MockTransport, fail_handshake: true)
+               start_legacy_client(transport: MockTransport, fail_handshake: true)
     end
 
     test "accepts custom timeout and reconnection options" do
       {:ok, client} =
-        Client.start_link(
+        start_legacy_client(
           transport: MockTransport,
           timeout: 5000,
           max_reconnect_attempts: 3,
@@ -478,7 +478,7 @@ defmodule ExMCP.ClientTest do
 
   describe "tool operations" do
     setup do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       on_exit(fn ->
         # More robust cleanup with try/catch
@@ -519,7 +519,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "list_tools/2 with custom timeout" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       {:ok, result} = Client.list_tools(client, timeout: 1000)
       assert is_map(result)
@@ -530,7 +530,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "call_tool/4 with custom timeout" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       {:ok, %Response{} = response} = Client.call_tool(client, "hello", %{}, 2000)
       assert Response.text_content(response) == "Hello, World!"
@@ -541,7 +541,7 @@ defmodule ExMCP.ClientTest do
 
   describe "resource operations" do
     setup do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       on_exit(fn ->
         # More robust cleanup with try/catch
@@ -573,7 +573,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "read_resource/3 with custom timeout" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       {:ok, %Response{} = response} = Client.read_resource(client, "file:///test.txt", 1500)
       assert Response.text_content(response) == "Test content from file:///test.txt"
@@ -584,7 +584,7 @@ defmodule ExMCP.ClientTest do
 
   describe "prompt operations" do
     setup do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       on_exit(fn ->
         # More robust cleanup with try/catch
@@ -625,7 +625,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "get_prompt/4 with arguments and custom timeout" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       {:ok, %Response{} = response} =
         Client.get_prompt(client, "greet", %{"style" => "formal"}, 1500)
@@ -639,7 +639,7 @@ defmodule ExMCP.ClientTest do
 
   describe "connection status and lifecycle" do
     test "get_status/1 returns current connection information" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       {:ok, status} = Client.get_status(client)
 
@@ -655,7 +655,7 @@ defmodule ExMCP.ClientTest do
     test "client is immediately ready after start_link" do
       start_time = System.monotonic_time(:millisecond)
 
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       # This should work immediately without any sleep
       {:ok, _} = Client.list_tools(client)
@@ -670,7 +670,7 @@ defmodule ExMCP.ClientTest do
 
   describe "error handling and edge cases" do
     test "handles unknown method requests" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       # Make a request for an unknown method directly via GenServer call
       # This tests the error handling path
@@ -699,7 +699,7 @@ defmodule ExMCP.ClientTest do
     test "handles transport send failures" do
       # This test would require a more sophisticated mock transport
       # For now, test that we handle connection failures gracefully
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       # Verify client works initially
       {:ok, _} = Client.list_tools(client)
@@ -713,7 +713,7 @@ defmodule ExMCP.ClientTest do
       # Create a disconnecting transport that fails after initialization
       # Use disconnect_after: 2 to allow initialize + initialized notification
       {:ok, client} =
-        Client.start_link(
+        start_legacy_client(
           transport: DisconnectingTransport,
           test_pid: self(),
           disconnect_after: 2,
@@ -736,7 +736,7 @@ defmodule ExMCP.ClientTest do
 
   describe "concurrent requests" do
     test "handles multiple concurrent requests" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       # Make multiple concurrent requests
       tasks =
@@ -759,7 +759,7 @@ defmodule ExMCP.ClientTest do
     end
 
     test "tracks pending requests correctly" do
-      {:ok, client} = Client.start_link(transport: MockTransport)
+      {:ok, client} = start_legacy_client(transport: MockTransport)
 
       # Start a request but don't wait for completion
       task =
@@ -785,7 +785,7 @@ defmodule ExMCP.ClientTest do
     test "works with different transport options" do
       # Test with custom transport options
       {:ok, client} =
-        Client.start_link(
+        start_legacy_client(
           transport: MockTransport,
           custom_option: "test_value",
           another_option: 42
@@ -799,7 +799,7 @@ defmodule ExMCP.ClientTest do
 
     test "supports named clients" do
       {:ok, _client} =
-        Client.start_link(
+        start_legacy_client(
           transport: MockTransport,
           name: :named_test_client
         )
@@ -810,5 +810,9 @@ defmodule ExMCP.ClientTest do
 
       GenServer.stop(:named_test_client)
     end
+  end
+
+  defp start_legacy_client(opts) do
+    Client.start_link(Keyword.put_new(opts, :protocol_mode, :legacy_only))
   end
 end

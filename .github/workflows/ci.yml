@@ -72,6 +72,14 @@ jobs:
     - name: Install dependencies
       run: mix deps.get
 
+    - name: Audit locked dependencies
+      if: matrix.quality
+      run: mix hex.audit
+
+    - name: Build Hex package
+      if: matrix.quality
+      run: mix hex.build --output /tmp/ex_mcp-package.tar
+
     - name: Compile dependencies
       run: mix deps.compile
 
@@ -249,6 +257,50 @@ jobs:
 
     - name: Run modern ExMCP HTTP client to TypeScript server tests
       run: mix test --only interop_modern_ex_mcp_http_client
+
+  external-conformance:
+    name: MCP 2026-07-28 external conformance
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: ${{ env.CI_OTP_VERSION }}
+        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: '20'
+
+    - name: Restore deps/_build cache
+      uses: actions/cache@v6
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Run complete modern conformance suites
+      run: ./scripts/conformance.sh modern
+
+    - name: Preserve conformance evidence
+      if: always()
+      uses: actions/upload-artifact@v6
+      with:
+        name: mcp-2026-07-28-conformance
+        path: |
+          tmp/conformance_output.txt
+          tmp/conformance_server.log
+        if-no-files-found: error
 
   coverage:
     name: Coverage (full suite)

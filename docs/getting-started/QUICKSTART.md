@@ -6,37 +6,31 @@ This guide shows the current 1.0 server, client, and BEAM-local patterns.
 
 ## Installation
 
-The published rc.5 dependency is the legacy-only baseline:
+Install the modern-preferred rc.6 release candidate:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.5"}
+    {:ex_mcp, "~> 1.0.0-rc.6"}
   ]
 end
 ```
 
 Run `mix deps.get` to install.
 
-The modern examples below require the current unreleased source tree or the
-next published RC. Before that RC exists, use a qualified repository commit:
-
-```elixir
-{:ex_mcp, github: "azmaveth/ex_mcp", ref: "<qualified-commit-sha>"}
-```
-
-MCP `2026-07-28` is the latest stable revision. In a modern-capable build it is
-enabled explicitly so deployments can canary the wire-incompatible modern era:
+MCP `2026-07-28` is the latest stable revision. rc.6 tries it first while
+retaining evidence-based legacy fallback. Pin the mode explicitly when rollout
+policy must remain fixed:
 
 ```elixir
 # config/config.exs
 config :ex_mcp, protocol_mode: :prefer_modern
 ```
 
-`:prefer_modern` tries 2026-07-28 first and retains legacy fallback. Omit this
-setting for the migration source tree's current `:legacy_only` default, or see
-the [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) for all
-four modes.
+`:prefer_modern` is the rc.6 default. Use `:legacy_only` for the exact rc.5
+wire path, or see the
+[Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) for all four
+modes.
 
 ## DSL Server
 
@@ -122,11 +116,10 @@ Use `transport: :beam` when both the client and server are Elixir processes in t
 {:ok, result} = ExMCP.Client.call_tool(client, "echo", %{"message" => "Hello"})
 ```
 
-BEAM-local MCP uses the configured protocol mode: the unreleased migration
-build currently defaults to the legacy initialize handshake, while
-`:prefer_modern` uses MCP 2026-07-28 discovery and per-request context. The
-transport simply passes MCP-shaped maps/lists as Elixir terms between local
-processes.
+BEAM-local MCP uses the configured protocol mode. rc.6 defaults to
+`:prefer_modern`, which uses MCP 2026-07-28 discovery and per-request context;
+`:legacy_only` retains the initialize handshake. The transport simply passes
+MCP-shaped maps/lists as Elixir terms between local processes.
 
 > **Note for raw handlers:** If you are not using the DSL, start with `ExMCP.Server.HandlerServer.start_link(handler: YourHandler, transport: :beam)` (or `ExMCP.start_server/1`). DSL modules automatically provide `start_link/1`.
 

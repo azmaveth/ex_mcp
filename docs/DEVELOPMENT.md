@@ -426,7 +426,8 @@ do not move unfinished protocol work into stable 1.0.
 - [ ] `mix docs` completes without warnings and all packaged links resolve
 - [ ] CHANGELOG.md is updated
 - [ ] Version is bumped in `mix.exs`
-- [ ] Security audit passes
+- [ ] `mix hex.audit` and `mix sobelow --skip` pass with no unacknowledged findings
+- [ ] `mix hex.build` succeeds and the unpacked archive contains the documented release evidence
 - [ ] `./scripts/conformance.sh modern` has zero unexplained client or server failures; while its runner is prerelease, all four pinned official-SDK v2 stdio/HTTP interop lanes also pass
 - [ ] All legacy TypeScript SDK interop lanes remain green
 - [ ] `./scripts/conformance.sh server` and `./scripts/conformance.sh client` preserve the published legacy/core baselines

@@ -7,6 +7,27 @@ defmodule ExMCP.VersionRegistryTest do
   alias ExMCP.Internal.VersionRegistry
 
   describe "version registry" do
+    test "defaults new connections to modern-preferred with legacy fallback" do
+      previous = Application.fetch_env(:ex_mcp, :protocol_mode)
+      Application.delete_env(:ex_mcp, :protocol_mode)
+
+      on_exit(fn -> restore_env(:protocol_mode, previous) end)
+
+      assert VersionRegistry.protocol_mode() == :prefer_modern
+
+      assert VersionRegistry.enabled_versions(VersionRegistry.protocol_mode()) ==
+               ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+    end
+
+    test "invalid protocol modes fail safe to the release default" do
+      previous = Application.fetch_env(:ex_mcp, :protocol_mode)
+      Application.put_env(:ex_mcp, :protocol_mode, :invalid)
+
+      on_exit(fn -> restore_env(:protocol_mode, previous) end)
+
+      assert VersionRegistry.protocol_mode() == :prefer_modern
+    end
+
     test "lists supported versions in order" do
       versions = VersionRegistry.supported_versions()
       assert "2025-11-25" in versions
@@ -20,15 +41,16 @@ defmodule ExMCP.VersionRegistryTest do
       refute VersionRegistry.supported?("draft")
     end
 
-    test "supports 2026-07-28 only through explicit protocol modes" do
+    test "keeps modern support out of legacy compatibility accessors" do
       assert VersionRegistry.known?("2026-07-28")
-      assert VersionRegistry.version_status("2026-07-28") == :supported_opt_in
+      assert VersionRegistry.version_status("2026-07-28") == :supported
       assert VersionRegistry.era_for("2026-07-28") == :modern
       assert VersionRegistry.modern?("2026-07-28")
       assert VersionRegistry.supported?("2026-07-28", :modern_only)
       assert "2026-07-28" in VersionRegistry.supported_versions(:prefer_modern)
 
-      # Zero-arity APIs retain the legacy default during the RC opt-in stage.
+      # Zero-arity APIs retain their legacy compatibility meaning even though
+      # new connections prefer modern through protocol_mode/0.
       refute VersionRegistry.supported?("2026-07-28")
       refute "2026-07-28" in VersionRegistry.supported_versions()
       assert VersionRegistry.latest_version() == "2025-11-25"
@@ -193,6 +215,9 @@ defmodule ExMCP.VersionRegistryTest do
       assert VersionRegistry.types_module("unknown") == ExMCP.Types
     end
   end
+
+  defp restore_env(key, {:ok, value}), do: Application.put_env(:ex_mcp, key, value)
+  defp restore_env(key, :error), do: Application.delete_env(:ex_mcp, key)
 
   describe "protocol version-specific methods" do
     test "identifies version-specific methods" do

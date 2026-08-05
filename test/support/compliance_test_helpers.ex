@@ -32,6 +32,7 @@ defmodule ExMCP.ComplianceTestHelpers do
       Client.start_link(
         transport: :test,
         server: server,
+        protocol_mode: :legacy_only,
         client_info: %{name: "compliance-test-client", version: "1.0.0"},
         protocol_version: version
       )

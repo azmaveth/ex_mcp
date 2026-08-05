@@ -326,7 +326,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       # Client.start_link/1 handshakes inside init/1.
@@ -470,7 +471,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
@@ -571,7 +573,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       assert {:ok, %{connection_status: :ready}} = Client.get_status(client)
@@ -665,7 +668,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       assert {:ok, %{connection_status: :ready}} = Client.get_status(client)

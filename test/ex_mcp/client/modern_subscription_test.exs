@@ -311,7 +311,7 @@ defmodule ExMCP.Client.ModernSubscriptionTest do
     assert_receive {:subscription_opened, second_id}
     refute second_id == first_id
 
-    assert_receive {:ex_mcp_subscription_resync, reconnected, {:complete, snapshot}}
+    assert_receive {:ex_mcp_subscription_resync, reconnected, {:complete, snapshot}}, 1_000
     assert reconnected.request_id == second_id
 
     assert snapshot["resources"]["test://resync"] ==

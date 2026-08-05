@@ -78,6 +78,7 @@ defmodule DebugVersionNegotiationTest do
       Client.start_link(
         transport: :test,
         server: server,
+        protocol_mode: :legacy_only,
         protocol_version: "2025-06-18"
       )
 
@@ -102,6 +103,7 @@ defmodule DebugVersionNegotiationTest do
       Client.start_link(
         transport: :test,
         server: server,
+        protocol_mode: :legacy_only,
         protocol_version: "2025-06-18"
       )
 

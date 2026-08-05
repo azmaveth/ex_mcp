@@ -71,7 +71,8 @@ defmodule ExMCP.Compliance.RootsComplianceTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       Process.sleep(50)
@@ -111,7 +112,8 @@ defmodule ExMCP.Compliance.RootsComplianceTest do
       {:ok, client} =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       Process.sleep(50)

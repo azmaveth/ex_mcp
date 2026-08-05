@@ -7,7 +7,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   # version-specific behavior for the MCP implementation.
 
   @type version :: String.t()
-  @type version_status :: :supported | :supported_opt_in | :unknown
+  @type version_status :: :supported | :unknown
   @type protocol_mode :: :legacy_only | :modern_only | :prefer_legacy | :prefer_modern
   @type capability_key :: atom()
   @type feature :: atom()
@@ -23,9 +23,9 @@ defmodule ExMCP.Internal.VersionRegistry do
     {"2024-11-05", "Initial stable specification"}
   ]
 
-  # Modern revisions are implemented but participate only when an explicit
-  # dual-era mode enables them. The zero-arity legacy APIs intentionally keep
-  # their pre-1.0 behavior until the final RC changes the application default.
+  # Modern revisions participate according to the selected dual-era mode. The
+  # zero-arity legacy APIs intentionally retain their initialize-compatible
+  # meaning throughout 1.x even though new connections prefer modern by default.
   @modern_revisions [
     {"2026-07-28", "Latest stable stateless revision available through modern modes"}
   ]
@@ -33,7 +33,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   @modern_versions Enum.map(@modern_revisions, &elem(&1, 0))
 
   @doc """
-  Get all supported protocol versions.
+  Get all initialize-compatible legacy protocol versions.
   """
   @spec supported_versions() :: [version()]
   def supported_versions do
@@ -43,8 +43,8 @@ defmodule ExMCP.Internal.VersionRegistry do
   @doc """
   Get every protocol version implemented by ExMCP, including opt-in modern revisions.
 
-  Callers performing negotiation or advertising support must use
-  `supported_versions/0` instead.
+  Callers performing era-aware negotiation or advertising support must use
+  `supported_versions/1` with the selected protocol mode.
   """
   @spec known_versions() :: [version()]
   def known_versions do
@@ -58,9 +58,9 @@ defmodule ExMCP.Internal.VersionRegistry do
   @doc "Returns the configured dual-era protocol mode."
   @spec protocol_mode() :: protocol_mode()
   def protocol_mode do
-    case Application.get_env(:ex_mcp, :protocol_mode, :legacy_only) do
+    case Application.get_env(:ex_mcp, :protocol_mode, :prefer_modern) do
       mode when mode in [:legacy_only, :modern_only, :prefer_legacy, :prefer_modern] -> mode
-      _invalid -> :legacy_only
+      _invalid -> :prefer_modern
     end
   end
 
@@ -93,13 +93,7 @@ defmodule ExMCP.Internal.VersionRegistry do
 
   @doc "Returns the implementation status for a protocol version."
   @spec version_status(version()) :: version_status()
-  def version_status(version) do
-    cond do
-      supported?(version) -> :supported
-      version in @modern_versions -> :supported_opt_in
-      true -> :unknown
-    end
-  end
+  def version_status(version), do: if(known?(version), do: :supported, else: :unknown)
 
   @doc """
   Get the newest initialize-compatible legacy protocol revision.
@@ -130,7 +124,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   end
 
   @doc """
-  Check if a version is supported.
+  Check if a version is supported by initialize-compatible legacy paths.
   """
   @spec supported?(version()) :: boolean()
   def supported?(version) do

@@ -3,7 +3,7 @@
 **Status:** Code migration complete — Phases 0–10 implemented and local gates green; published-RC soak and rollback drill remain
 **Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28), latest stable ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current ExMCP:** `1.0.0-rc.5`, implements MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`, plus opt-in `2026-07-28`
+**Current ExMCP:** `1.0.0-rc.6`, defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
 **Last updated:** 2026-08-05
@@ -34,7 +34,7 @@ feature addition on top of `2025-11-25`; it is a re-founding of the protocol on 
 |---|---|---|
 | Compatibility | **Dual-era.** Keep `2024-11-05` … `2025-11-25` working; add `2026-07-28`. | ExMCP already supports every prior revision and users depend on it. The spec explicitly defines a dual-era model and a compatibility matrix. |
 | Default version | **Prefer `2026-07-28`, fall back by probe.** | There is no handshake to negotiate in. Clients probe with `server/discover`; servers branch on the shape of the first request. |
-| Scope | **Required modern core and applicable authorization requirements.** Tasks extension and the optional client cache may follow in `1.1` if they threaten the stabilization window. | ExMCP can truthfully support the core `2026-07-28` protocol without advertising an unimplemented optional extension or implementing an optional cache. |
+| Scope | **Required modern core, applicable authorization requirements, and the Tasks extension.** Client response storage/reuse is deferred to `1.1`; required cache metadata still ships in 1.0. | The complete Tasks implementation passed qualification without extending the RC train. Response storage remains an optional optimization and no-cache is the safe conforming fallback. |
 | Release | **`1.0.0` after additional RCs.** Do not publish stable `1.0.0` on the legacy-only architecture. | ExMCP has not made a stable 1.x API promise yet. Shipping a legacy-only 1.0 would make the first stable release obsolete on arrival and create an immediate 2.0 migration cliff. |
 | Public API removals | **None in this migration.** Keep `ExMCP.Server.Tools` and other deprecated public surface throughout 1.x; remove it in 2.0. | The protocol revision does not require unrelated library API removals. The current “removed in 1.1” promise is incompatible with SemVer and must be corrected before 1.0. |
 | Deprecated-but-live features | **Keep legacy support** for Roots / Sampling / Logging / HTTP+SSE. | The spec deprecates them with a ≥12-month window. They remain available on applicable legacy paths; modern uses MRTR/per-request logging and does not restore removed methods. |
@@ -51,8 +51,9 @@ but no stable `1.0.0` contract exists yet. The least disruptive long-term sequen
 
 1. Keep `rc.5` as the published legacy characterization baseline and test oracle (it remains a
    prerelease, not a stable package release).
-2. Ship modern support through additional RCs. Enable the modern server path and an explicit
-   client opt-in first; then flip the client default to modern-preferred for at least one RC.
+2. Ship modern support through an additional RC. The implementation and qualification work
+   completed before `rc.6`, so that candidate can start directly as modern-preferred while
+   retaining explicit opt-in/rollback modes.
 3. Release `1.0.0` only after modern-preferred + automatic legacy fallback has soaked in an RC.
 4. Preserve all four legacy revisions and deprecated ExMCP public APIs for the entire 1.x line.
 5. Reserve ExMCP `2.0.0` for deliberate public-API removals and any eventual legacy-protocol
@@ -66,16 +67,16 @@ config :ex_mcp, protocol_mode: :prefer_modern
 # :prefer_modern | :prefer_legacy | :modern_only | :legacy_only
 ```
 
-The first migration RC may default to `:prefer_legacy` while modern is exercised. The last RC
-and stable `1.0.0` should default to `:prefer_modern`. Servers should be dual-era by default.
+The original plan allowed a `:prefer_legacy` staging RC. All implementation, security,
+conformance, and interop gates completed before publication, so `rc.6` is instead the first
+migration RC and the modern-preferred soak candidate. Servers are dual-era by default.
 
-An illustrative RC train (gates matter more than the exact RC number):
+The resulting RC train is:
 
 | Candidate | Contents | Default / exit condition |
 |---|---|---|
-| `rc.6` | Phases 0–3; generated types; modern stdio `discover`/list/call; legacy characterization unchanged | Client `:prefer_legacy`, modern opt-in; seven-row stdio matrix green |
-| `rc.7` | MRTR, subscriptions, modern Streamable HTTP, required cache metadata, applicable auth changes | Dual-era server default; HTTP matrix, security and disconnect tests green |
-| `rc.8` (or later) | Conformance/official-SDK interop, performance/soak, docs and API audit | Client `:prefer_modern`; no new wire/API design changes during the soak |
+| `rc.6` | All release-scope phases: dual-era dispatch, MRTR, subscriptions, Tasks, modern Streamable HTTP, required cache metadata, auth hardening, docs/API audit, conformance and official-SDK interop | Client `:prefer_modern`; begin the minimum seven-day soak after CI and publication; complete the mixed-cluster rollback drill |
+| Additional RC only if needed | Any fix or design change discovered during the rc.6 soak | Repeat every release gate; wire-design or public-API changes restart the soak |
 | `1.0.0` | Same behavior as the final RC, plus release metadata only | Every gate in Phase 10 passes |
 
 If a gate misses, add another RC; do not move unfinished core work into stable `1.0.0` merely
@@ -84,17 +85,10 @@ to preserve the illustrative numbering.
 ### Scope boundary for 1.0
 
 The 1.0 release gate includes the modern core wire model, dual-era negotiation, MRTR,
-subscriptions, Streamable HTTP changes, required result/cache fields, schema behavior, and the
-authorization requirements that apply to enabled auth flows. Two pieces need not block 1.0:
-
-- **Tasks extension:** it is optional and outside core. Keep the legacy `2025-11-25` task path;
-  do not advertise `io.modelcontextprotocol/tasks` on modern connections until Phase 8 is done.
-- **Client response cache:** emitting and parsing the required cache metadata is in scope, but
-  actually caching responses is an optimization. It may ship in 1.1 without a compatibility
-  break. No-cache is the safe fallback.
-
-Everything else in this document remains planned work; this boundary only defines what may be
-deferred without making the 1.0 core-support claim inaccurate.
+subscriptions, Tasks, Streamable HTTP changes, required result/cache fields, schema behavior,
+and the authorization requirements that apply to enabled auth flows. All of that implementation
+is complete in rc.6. Only actual client response storage/reuse is deferred: emitting and parsing
+the required cache metadata ships in 1.0, while no-cache remains the safe conforming fallback.
 
 Within Phase 7, OTel propagation and actual response storage are optional. Required for 1.0 are
 the cache fields on the wire, per-request logging rules, deterministic tool ordering, and the
@@ -670,8 +664,8 @@ changes are covered by tests.
 - [x] `MissingRequiredClientCapabilityError` emission when a handler needs an undeclared
       capability.
 - [x] After the stdio exit tests pass, promote `2026-07-28` from known to supported behind
-      explicit `:modern_only` / `:prefer_modern` opt-in. Do not change the application default
-      until the final RC soak.
+      explicit `:modern_only` / `:prefer_modern` modes. The application default changes only in
+      rc.6, after the complete release gates pass, to start the final RC soak.
 
 **Exit:** a modern client can call `server/discover` + `tools/list` + `tools/call` against a
 modern ExMCP server over stdio, with no `initialize`.
@@ -791,8 +785,8 @@ modern ExMCP server over stdio, with no `initialize`.
 
 Current acceptance coverage exercises the complete client ↔ server flow over both the in-memory
 transport and a literal subprocess stdio connection, plus every server dispatch boundary,
-including the HTTP handler-process bridge. Phase 4 remains open only for the explicitly noted
-clustered rolling-key work above.
+including the HTTP handler-process bridge. The clustered rolling-key work is complete through the
+two-node mixed-snapshot rotation test described above.
 
 ---
 
@@ -1205,13 +1199,15 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       regression tests lock the reader-critical claims. `mix docs`, the 5-test documentation
       suite, and 107 focused era, request-context, HTTP Plug, request-stream, subscription and
       header tests pass.**
-- [x] `CHANGELOG.md` `[1.0.0]` separates MCP wire changes from ExMCP public-API compatibility.
-      The package intentionally remains `1.0.0-rc.5`; bump `mix.exs` only after the final RC
-      soak and release gates pass.
+- [x] `CHANGELOG.md` separates the rc.6 MCP wire changes from ExMCP public-API compatibility
+      and preserves the intended stable 1.0 boundary. The rc.6 package and application default
+      now start the modern-preferred soak.
 - [x] Green: `mix test.suite ci`, `mix credo`, `mix dialyzer`, `mix sobelow --skip`,
       `scripts/conformance.sh` against a 2026-07-28-aware harness. **Final local evidence on
-      2026-08-05: 20 doctests + 34 properties + 3,598 tests passed; strict Credo and Dialyzer
-      passed; Sobelow reported no high/critical findings; pinned conformance
+      2026-08-05: the default selection passed 20 doctests + 34 properties + 2,914 tests;
+      compliance passed 591 tests; integration passed 20 doctests + 34 properties + 3,623
+      tests; and performance/stress passed 20 doctests + 34 properties + 3,574 tests. Strict
+      Credo and Dialyzer passed; Sobelow reported no high/critical findings; pinned conformance
       `0.2.0-alpha.10` passed 112/112 server and 377/377 client checks with zero warnings.**
 - [x] Produce an API-diff report against `v1.0.0-rc.5`. Restore every removed public function,
       callback, struct field and return shape or delay stable 1.0; document additive APIs and
@@ -1265,18 +1261,17 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 
 **Current release status (2026-08-05):** the code and local-validation work for gates 1–6 and 8
 is complete. Gate 3 is satisfied by the pinned prerelease conformance harness plus passing,
-bidirectional official TypeScript SDK v2 interop over both stdio and Streamable HTTP. Gate 7
-requires publishing a modern-preferred RC and observing it for at least seven calendar days.
-Gate 9 requires an operator-run mixed-cluster rollback drill. Those are release operations, not
-remaining library implementation, and stable `1.0.0` must not be cut until both conditions are
-satisfied.
+bidirectional official TypeScript SDK v2 interop over both stdio and Streamable HTTP. rc.6 is the
+modern-preferred soak candidate for gate 7. Gate 9 requires an operator-run mixed-cluster
+rollback drill. Stable `1.0.0` must not be cut until the published rc.6 soak and rollback drill
+both complete.
 
-Before publishing `rc.6`, assign an owner and evidence link for every gate, define the load-test
-workload and regression budget against rc.5, and pin the qualifying conformance harness and
-official SDK by version/commit. The final modern-preferred RC soaks for at least seven calendar
-days; any wire-design or public-API change restarts that window. “Release-blocking regression”
-means a new unexplained conformance failure, legacy fixture diff, crash/data leak, unbounded
-resource growth, or critical/high security issue.
+The rc.6 release note assigns an owner and evidence source for every gate, defines the load-test
+workload and regression budget against rc.5, and records the qualifying conformance-harness and
+official-SDK pins. The final modern-preferred RC soaks for at least seven calendar days; any
+wire-design or public-API change restarts that window. “Release-blocking regression” means a new
+unexplained conformance failure, legacy fixture diff, crash/data leak, unbounded resource growth,
+or critical/high security issue.
 
 ---
 
@@ -1355,7 +1350,7 @@ Things downstream users will notice.
 | R9 | **Ambiguous HTTP delivery can duplicate side effects.** A broken response does not reveal whether `tools/call` ran. | The conforming default reissues and is at-least-once. Offer `:safe_only` for callers that prefer `:outcome_unknown`; document application idempotency keys. |
 | R10 | **A local ETS subscription registry is insufficient in a cluster.** Producers and stream owners may be on different nodes. | Adapter boundary, PubSub fan-out, owner monitoring, bounded queues and multi-node tests are release-gating for clustered HTTP support. |
 | R11 | **Perpetual-RC risk.** Adding the full optional extension/cache work could indefinitely delay 1.0. | Gate 1.0 on modern core and normative auth only; allow Tasks and the cache optimization to move to 1.1 without advertising unsupported capability. |
-| Q1 | When does modern become the default? | Modern is opt-in in the first migration RC, modern-preferred in the final RC and stable 1.0; automatic legacy fallback remains enabled. |
+| Q1 | When does modern become the default? | **Decided:** rc.6 is the first migration RC and defaults to modern-preferred because every implementation and qualification gate completed before publication; stable 1.0 retains it after the soak. Automatic legacy fallback remains enabled. |
 | Q2 | Generate `types/v20260728.ex` from `schema.json`, or hand-write? | **Decided: generate** from the vendored schema, keep the generator in `dev/`, and review the generated diff plus small handwritten ergonomic aliases. |
 | Q3 | Keep `ExMCP.SessionManager`'s event buffering at all? | Only legacy uses it. Keep, mark legacy-only, and skip supervising it when configured modern-only. |
 | Q4 | Ship `1.0.0` stable on `2025-11-25` before modern support? | **Decided: no.** Keep rc.5 as the legacy baseline, add dual-era `2026-07-28` support in further RCs, then cut stable 1.0. |

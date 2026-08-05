@@ -217,7 +217,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "2025-03-26"
+          protocol_version: "2025-03-26",
+          protocol_mode: :legacy_only
         )
 
       Process.sleep(100)
@@ -241,7 +242,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "2025-06-18"
+          protocol_version: "2025-06-18",
+          protocol_mode: :legacy_only
         )
 
       Process.sleep(100)
@@ -268,7 +270,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "2025-03-26"
+          protocol_version: "2025-03-26",
+          protocol_mode: :legacy_only
         )
 
       Process.sleep(100)
@@ -299,7 +302,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "99.99.99"
+          protocol_version: "99.99.99",
+          protocol_mode: :legacy_only
         )
 
       Process.sleep(100)
@@ -330,7 +334,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "unknown-version"
+          protocol_version: "unknown-version",
+          protocol_mode: :legacy_only
         )
 
       case result do
@@ -370,7 +375,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "unknown-future-version"
+          protocol_version: "unknown-future-version",
+          protocol_mode: :legacy_only
         )
 
       Process.sleep(100)
@@ -401,7 +407,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "2025-03-26"
+          protocol_version: "2025-03-26",
+          protocol_mode: :legacy_only
         )
 
       case result do
@@ -441,7 +448,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
           Client.start_link(
             transport: :test,
             server: server,
-            protocol_version: version
+            protocol_version: version,
+            protocol_mode: :legacy_only
           )
 
         Process.sleep(100)
@@ -502,7 +510,8 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
         Client.start_link(
           transport: :test,
           server: server,
-          protocol_version: "2025-03-26"
+          protocol_version: "2025-03-26",
+          protocol_mode: :legacy_only
         )
 
       case result do

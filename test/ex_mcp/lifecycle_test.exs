@@ -194,7 +194,8 @@ defmodule ExMCP.LifecycleTest do
       result =
         Client.start_link(
           transport: :test,
-          server: server
+          server: server,
+          protocol_mode: :legacy_only
         )
 
       case result do

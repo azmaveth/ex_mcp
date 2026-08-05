@@ -153,7 +153,12 @@ defmodule ExMCP.ClientBeamTransportTest do
     end
 
     test "connects to BEAM server", %{server_pid: server_pid} do
-      {:ok, client} = Client.start_link(transport: :beam, server: server_pid)
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: server_pid,
+          protocol_mode: :legacy_only
+        )
 
       {:ok, status} = Client.get_status(client)
       assert status.connection_status == :ready
@@ -211,7 +216,12 @@ defmodule ExMCP.ClientBeamTransportTest do
     end
 
     test "handles batch requests via BEAM transport", %{server_pid: server_pid} do
-      {:ok, client} = Client.start_link(transport: :beam, server: server_pid)
+      {:ok, client} =
+        Client.start_link(
+          transport: :beam,
+          server: server_pid,
+          protocol_mode: :legacy_only
+        )
 
       requests = [
         {"tools/call", %{"name" => "multiply", "arguments" => %{"a" => 2, "b" => 3}}},

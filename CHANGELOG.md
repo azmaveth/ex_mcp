@@ -9,9 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - Unreleased
 
-The package version remains `1.0.0-rc.5` until the final release gates and the
-modern-preferred RC soak complete. This section describes the intended stable
-1.0 boundary.
+Stable 1.0 will preserve the behavior of the final modern-preferred release
+candidate after its minimum seven-day soak and the mixed-cluster rollback drill
+complete. No wire-design or public-API changes are planned between that RC and
+stable 1.0.
+
+## [1.0.0-rc.6] - 2026-08-05
+
+This is the first published dual-era release candidate and starts the
+modern-preferred soak for stable 1.0. New connections try MCP 2026-07-28 first
+and retain evidence-based fallback to every legacy revision. Set
+`protocol_mode: :legacy_only` for the exact rc.5 wire path.
 
 ### MCP wire protocol changes
 
@@ -64,6 +72,17 @@ modern-preferred RC soak complete. This section describes the intended stable
 
 ### Operations and security
 
+- **Modern-preferred release default** — The application default is now
+  `:prefer_modern`. Servers accept both eras and advertise 2026-07-28 first;
+  clients probe with `server/discover` and initialize only after positive
+  legacy evidence. Explicit modes are unchanged.
+- **Patched HTTP dependency stack** — Mint, Mint WebSocket, Plug, Plug Cowboy,
+  Cowboy, Cowlib, HPAX, Decimal, and related runtime dependencies are updated
+  to remove every high-severity lockfile advisory. CI now gates on
+  `mix hex.audit` and a real Hex package build. The two remaining upstream
+  Cowlib medium/low advisories are explicitly acknowledged because Plug and
+  Cowboy validate response headers and ExMCP does not call the affected cookie
+  encoder; every new advisory still fails the build.
 - **Bounded modern state** — Era observations, MRTR continuations/replay data,
   subscription queues, filters, lifetimes, and task records have explicit
   bounds and cleanup behavior.

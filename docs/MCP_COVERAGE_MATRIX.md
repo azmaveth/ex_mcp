@@ -9,11 +9,10 @@ protocol revisions it implements. Status is current as of 2026-08-05.
 - **Newest legacy revision:** `2025-11-25`.
 - **Other retained legacy revisions:** `2025-06-18`, `2025-03-26`, and
   `2024-11-05`.
-- **Current repository rollout:** the unreleased post-rc.5 source enables
-  `2026-07-28` through `:prefer_modern` and `:modern_only`, while retaining the
-  rc.5 version and `:legacy_only` default until the next RC is cut. The
-  published rc.5 artifact is legacy-only. A later published RC must default to
-  `:prefer_modern` for the required soak.
+- **Current repository rollout:** `1.0.0-rc.6` enables `2026-07-28` through
+  `:prefer_modern` and `:modern_only` and defaults to `:prefer_modern` for the
+  required pre-1.0 soak. Every legacy revision remains available, and
+  `:legacy_only` preserves the exact rc.5 connection policy.
 
 The protocol revision is stable even though its official conformance runner is
 still published as a prerelease. Do not describe `2026-07-28` itself as a
@@ -58,10 +57,9 @@ rejection. Their assertions live in
 tested so SDK v2 coverage cannot mask a regression in an older protocol era.
 
 The totals above are dated maintainer-recorded snapshots, not live badges.
-Before publishing the next RC, attach durable CI run or raw-artifact links to
-its release evidence and update this table if the qualifying versions or
-results change. The listed commands and test paths are the reproducible source
-of truth until those release artifacts exist.
+The rc.6 CI workflow preserves the complete modern conformance output as a
+build artifact, and the GitHub prerelease links the exact tag commit and
+qualifying run. Update this table if the pinned versions or results change.
 
 ## Local Revision Coverage
 
@@ -132,7 +130,8 @@ has operational release gates:
 1. Replace the prerelease modern conformance runner with a stable 2026-aware
    release when available. Until then, retain the now-passing pinned official
    SDK v2 fallback and disclose both pins in release notes.
-2. Publish and observe a modern-preferred RC for at least seven calendar days.
+2. Publish and observe rc.6, the modern-preferred RC, for at least seven
+   calendar days.
 3. Complete the mixed-version cluster rollback drill with active subscriptions
    and in-flight MRTR operations.
 
