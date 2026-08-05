@@ -218,7 +218,7 @@ defmodule ExMCP.Server.RequestContext do
         parse_modern_request(message, params, meta)
 
       true ->
-        {:ok, legacy_context(message, params, meta)}
+        build_legacy_context(message, params, meta)
     end
   end
 
@@ -279,6 +279,13 @@ defmodule ExMCP.Server.RequestContext do
       meta: meta,
       trace_context: Map.take(meta, ~w(traceparent tracestate baggage))
     }
+  end
+
+  defp build_legacy_context(message, params, meta) do
+    with {:ok, sanitized_meta, trace_context} <- Meta.sanitize_trace_meta(meta) do
+      context = legacy_context(message, params, sanitized_meta)
+      {:ok, %{context | trace_context: trace_context}}
+    end
   end
 
   defp modern_metadata?(meta) do

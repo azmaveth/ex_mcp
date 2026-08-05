@@ -4,6 +4,7 @@ defmodule ExMCP.Protocol.MetaTest do
   alias ExMCP.Protocol.Meta
 
   @version "2026-07-28"
+  @traceparent "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
   describe "metadata key grammar" do
     test "accepts unprefixed and reverse-DNS-prefixed keys" do
@@ -57,7 +58,7 @@ defmodule ExMCP.Protocol.MetaTest do
                  %{sampling: %{tools: %{}}},
                  client_info: %{name: "example", version: "1.2.3"},
                  log_level: :warning,
-                 trace_context: %{traceparent: "00-abcd-1234-01"}
+                 trace_context: %{traceparent: @traceparent}
                )
 
       assert meta["io.modelcontextprotocol/protocolVersion"] == @version
@@ -74,7 +75,7 @@ defmodule ExMCP.Protocol.MetaTest do
       assert meta["io.modelcontextprotocol/logLevel"] == "warning"
       assert meta["com.example/request-id"] == "req-1"
       assert meta["progressToken"] == 42
-      assert meta["traceparent"] == "00-abcd-1234-01"
+      assert meta["traceparent"] == @traceparent
     end
 
     test "connection values replace caller-supplied identity fields" do
@@ -114,7 +115,7 @@ defmodule ExMCP.Protocol.MetaTest do
         "io.modelcontextprotocol/clientInfo" => %{"name" => "client", "version" => "1"},
         "io.modelcontextprotocol/logLevel" => "info",
         "progressToken" => "progress-1",
-        "traceparent" => "00-abcd-1234-01"
+        "traceparent" => @traceparent
       }
 
       assert {:ok, parsed} = Meta.parse(meta, :request)
@@ -123,7 +124,7 @@ defmodule ExMCP.Protocol.MetaTest do
       assert parsed.client_info["name"] == "client"
       assert parsed.log_level == "info"
       assert parsed.progress_token == "progress-1"
-      assert parsed.trace_context == %{"traceparent" => "00-abcd-1234-01"}
+      assert parsed.trace_context == %{"traceparent" => @traceparent}
     end
 
     test "requires version and capabilities on requests" do

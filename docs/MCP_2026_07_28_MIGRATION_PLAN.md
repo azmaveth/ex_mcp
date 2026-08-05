@@ -979,9 +979,12 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       compressed responses, userinfo, proxies, redirect/reference cycles, and all over-limit
       graphs fail closed. Documents are compilation-local and never enter a persistent/global
       cache, while audit logs hash URI and trust-partition identifiers.**
-- [ ] OTel `_meta` propagation conventions (`traceparent`, `tracestate`, `baggage`).
+- [x] OTel `_meta` propagation conventions (`traceparent`, `tracestate`, `baggage`).
       Bound/allowlist baggage keys and total bytes. **Optional for 1.0**; it must not delay the
-      modern core release gate.
+      modern core release gate. **All client, server, notification, and result metadata paths
+      now use one validator. Trace context is syntax- and size-checked; baggage is validated
+      before an exact, default-deny allowlist is applied; sanitized values are exposed without
+      mutating process-global OpenTelemetry state.**
 
 ---
 

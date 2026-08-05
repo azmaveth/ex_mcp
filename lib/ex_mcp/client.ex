@@ -133,6 +133,8 @@ defmodule ExMCP.Client do
     reused before probing for an upgrade again (default: 300_000 milliseconds).
   - `:reset_era_cache` - Clear the observation for this exact transport,
     endpoint, and auth configuration before connecting (default: `false`).
+  - `:trace_context` - Optional W3C `traceparent`, `tracestate`, and allowlisted
+    `baggage` values to attach to modern requests.
   - `:health_check_interval` - Interval in milliseconds between idle health
     check pings (default: 30_000). Set to `nil` or `0` to disable.
   - `:reliability` - Reliability features configuration (optional)

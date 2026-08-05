@@ -3,6 +3,8 @@ defmodule ExMCP.Internal.RequestParamsTest do
 
   alias ExMCP.Internal.RequestParams
 
+  @traceparent "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
   describe "cursor/1" do
     test "omits cursor params when no cursor is present" do
       assert RequestParams.cursor(nil) == %{}
@@ -172,6 +174,17 @@ defmodule ExMCP.Internal.RequestParamsTest do
 
       assert {:ok, %{"_meta" => meta}} = RequestParams.for_request(%{}, context)
       assert meta["io.modelcontextprotocol/clientCapabilities"] == %{"roots" => %{}}
+    end
+
+    test "propagates validated trace context from client transport options" do
+      context = %{
+        protocol_version: "2026-07-28",
+        client_info: %{"name" => "ExMCP", "version" => "1.0"},
+        transport_opts: [trace_context: %{traceparent: @traceparent}]
+      }
+
+      assert {:ok, %{"_meta" => meta}} = RequestParams.for_request(%{}, context)
+      assert meta["traceparent"] == @traceparent
     end
   end
 end

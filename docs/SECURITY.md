@@ -231,6 +231,29 @@ The complete limits, defaults, and opt-in example are in the
 [Configuration Guide](CONFIGURATION.md#json-schema-resource-policy). Prefer
 embedding definitions in the local schema whenever practical.
 
+## Trace Context and Baggage
+
+Treat `traceparent`, `tracestate`, and `baggage` in MCP `_meta` as untrusted
+wire input. ExMCP validates these fields before exposing them to handlers or
+putting them on outbound modern requests. Malformed values reject request
+metadata instead of being silently forwarded, and the sanitized `_meta` no
+longer contains baggage members removed by policy.
+
+Baggage is default-deny. Incoming baggage is subject to total-byte,
+baggage-byte, member-count, syntax, and duplicate-key checks before the
+allowlist is applied, so a disallowed member cannot bypass resource limits.
+Keep the allowlist short and limited to non-secret, low-cardinality identifiers;
+baggage can cross process and service trust boundaries and may be recorded by
+observability infrastructure.
+
+ExMCP only transports the validated strings. It does not install an
+OpenTelemetry SDK, create spans, or attach remote context to global/process
+state. Applications that choose to continue a trace must do so explicitly from
+`ExMCP.Server.RequestContext.trace_context` using their own trusted telemetry
+integration. See the
+[configuration guide](CONFIGURATION.md#opentelemetry-metadata-policy) for the
+defaults and client example.
+
 ## stdio Security
 
 stdio is appropriate when the MCP server process is trusted by the application

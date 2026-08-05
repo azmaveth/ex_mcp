@@ -122,6 +122,52 @@ Do not replace them in production: doing so replaces the DNS revalidation,
 IP-pinned connection, TLS, streaming limit, and deadline enforcement that make
 the boundary safe.
 
+## OpenTelemetry Metadata Policy
+
+ExMCP can carry W3C trace-context values in the MCP `_meta` object without
+taking a dependency on an OpenTelemetry SDK or mutating process-global tracing
+state. `traceparent` and `tracestate` are validated at every client and server
+metadata boundary. Baggage is validated and bounded before filtering, then only
+explicitly allowlisted members are retained. The default baggage allowlist is
+empty, so baggage is dropped unless the application opts in.
+
+```elixir
+config :ex_mcp, :otel_meta,
+  baggage_allowlist: ["tenant.id", "request-id"],
+  max_total_bytes: 9_216,
+  max_baggage_bytes: 8_192,
+  max_baggage_members: 64
+```
+
+The fixed `tracestate` limits are 512 bytes and 32 unique members. Configured
+byte limits cannot exceed 65,536 bytes, and baggage member/allowlist counts
+cannot exceed 64. Invalid configuration or malformed metadata fails closed.
+ExMCP currently accepts the W3C version `00` `traceparent` wire format; values
+must use lowercase hexadecimal and non-zero trace and parent identifiers.
+
+Attach a connection-level context to all modern client requests:
+
+```elixir
+ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://api.example.com/mcp",
+  trace_context: %{
+    traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    tracestate: "vendor=opaque",
+    baggage: "tenant.id=acme,secret=discarded"
+  }
+)
+```
+
+Per-request values may also be supplied in the request's `_meta`; the explicit
+client `:trace_context` wins when both sources contain the same field. On the
+server, handlers receive the sanitized map as
+`ExMCP.Server.RequestContext.trace_context`. Notification and result metadata
+go through the same policy.
+
+Allowlist only low-cardinality routing or correlation fields. Do not propagate
+credentials, authorization tokens, personal data, or other secrets as baggage.
+
 ## Client Configuration
 
 You can pass options directly to `ExMCP.Client.start_link/1`:

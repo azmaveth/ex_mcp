@@ -7,13 +7,14 @@ defmodule ExMCP.Protocol.Meta do
   grammar so outbound and inbound paths cannot drift.
   """
 
+  alias ExMCP.Protocol.TraceContext
+
   @protocol_version_key "io.modelcontextprotocol/protocolVersion"
   @client_info_key "io.modelcontextprotocol/clientInfo"
   @client_capabilities_key "io.modelcontextprotocol/clientCapabilities"
   @log_level_key "io.modelcontextprotocol/logLevel"
   @server_info_key "io.modelcontextprotocol/serverInfo"
   @subscription_id_key "io.modelcontextprotocol/subscriptionId"
-  @trace_keys ~w(traceparent tracestate baggage)
   @log_levels ~w(debug info notice warning error critical alert emergency)
 
   @label_pattern ~r/^[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/
@@ -93,9 +94,10 @@ defmodule ExMCP.Protocol.Meta do
          :ok <- validate_object(@client_capabilities_key, client_capabilities),
          :ok <- validate_optional_implementation(@client_info_key, client_info),
          :ok <- validate_optional_log_level(log_level),
-         {:ok, trace_context} <- normalize_trace_context(trace_context) do
+         {:ok, trace_context} <- merged_trace_context(meta, trace_context) do
       built =
         meta
+        |> Map.drop(TraceContext.keys())
         |> Map.merge(trace_context)
         |> Map.put(@protocol_version_key, protocol_version)
         |> Map.put(@client_capabilities_key, stringify_keys(client_capabilities))
@@ -121,16 +123,17 @@ defmodule ExMCP.Protocol.Meta do
          :ok <-
            validate_optional_implementation(@client_info_key, Map.get(meta, @client_info_key)),
          :ok <- validate_optional_log_level(Map.get(meta, @log_level_key)),
-         :ok <- validate_optional_progress_token(Map.get(meta, "progressToken")) do
+         :ok <- validate_optional_progress_token(Map.get(meta, "progressToken")),
+         {:ok, sanitized_meta, trace_context} <- sanitize_trace_meta(meta) do
       {:ok,
        %{
-         meta: meta,
+         meta: sanitized_meta,
          protocol_version: protocol_version,
          client_capabilities: client_capabilities,
          client_info: Map.get(meta, @client_info_key),
          log_level: Map.get(meta, @log_level_key),
          progress_token: Map.get(meta, "progressToken"),
-         trace_context: Map.take(meta, @trace_keys)
+         trace_context: trace_context
        }}
     end
   end
@@ -143,12 +146,13 @@ defmodule ExMCP.Protocol.Meta do
 
   def parse_notification_meta(meta) when is_map(meta) do
     with :ok <- validate(meta),
-         :ok <- validate_optional_request_id(Map.get(meta, @subscription_id_key)) do
+         :ok <- validate_optional_request_id(Map.get(meta, @subscription_id_key)),
+         {:ok, sanitized_meta, trace_context} <- sanitize_trace_meta(meta) do
       {:ok,
        %{
-         meta: meta,
+         meta: sanitized_meta,
          subscription_id: Map.get(meta, @subscription_id_key),
-         trace_context: Map.take(meta, @trace_keys)
+         trace_context: trace_context
        }}
     end
   end
@@ -162,12 +166,13 @@ defmodule ExMCP.Protocol.Meta do
   def parse_result_meta(meta) when is_map(meta) do
     with :ok <- validate(meta),
          :ok <-
-           validate_optional_implementation(@server_info_key, Map.get(meta, @server_info_key)) do
+           validate_optional_implementation(@server_info_key, Map.get(meta, @server_info_key)),
+         {:ok, sanitized_meta, trace_context} <- sanitize_trace_meta(meta) do
       {:ok,
        %{
-         meta: meta,
+         meta: sanitized_meta,
          server_info: Map.get(meta, @server_info_key),
-         trace_context: Map.take(meta, @trace_keys)
+         trace_context: trace_context
        }}
     end
   end
@@ -244,17 +249,38 @@ defmodule ExMCP.Protocol.Meta do
   defp validate_optional_request_id(_id),
     do: {:error, {:invalid_meta_field, @subscription_id_key}}
 
-  defp normalize_trace_context(trace_context) when is_map(trace_context) do
-    trace_context = stringify_keys(trace_context) |> Map.take(@trace_keys)
+  @doc false
+  @spec sanitize_trace_meta(map()) ::
+          {:ok, map(), map()} | {:error, validation_error()}
+  def sanitize_trace_meta(meta) when is_map(meta) do
+    case TraceContext.normalize(Map.take(meta, TraceContext.keys())) do
+      {:ok, trace_context} ->
+        sanitized_meta =
+          meta
+          |> Map.drop(TraceContext.keys())
+          |> Map.merge(trace_context)
 
-    if Enum.all?(trace_context, fn {_key, value} -> is_binary(value) end) do
-      {:ok, trace_context}
-    else
-      {:error, {:invalid_meta_field, "trace-context"}}
+        {:ok, sanitized_meta, trace_context}
+
+      {:error, key} ->
+        {:error, {:invalid_meta_field, key}}
     end
   end
 
-  defp normalize_trace_context(_trace_context),
+  def sanitize_trace_meta(_meta), do: {:error, {:invalid_meta, :not_an_object}}
+
+  defp merged_trace_context(meta, trace_context) when is_map(trace_context) do
+    from_meta = Map.take(meta, TraceContext.keys())
+
+    with {:ok, trace_context} <- TraceContext.select(trace_context),
+         {:ok, normalized} <- TraceContext.normalize(Map.merge(from_meta, trace_context)) do
+      {:ok, normalized}
+    else
+      {:error, key} -> {:error, {:invalid_meta_field, key}}
+    end
+  end
+
+  defp merged_trace_context(_meta, _trace_context),
     do: {:error, {:invalid_meta_field, "trace-context"}}
 
   defp normalize_log_level(nil), do: nil
