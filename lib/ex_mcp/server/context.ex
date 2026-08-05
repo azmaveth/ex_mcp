@@ -7,9 +7,11 @@ defmodule ExMCP.Server.Context do
   be read later from a spawned process.
   """
 
+  alias ExMCP.Internal.Protocol
   alias ExMCP.Server.RequestContext
 
   @key {__MODULE__, :current}
+  @log_levels ~w(debug info notice warning error critical alert emergency)
 
   @spec current() :: RequestContext.t() | nil
   def current, do: Process.get(@key)
@@ -30,6 +32,110 @@ defmodule ExMCP.Server.Context do
     end
   end
 
+  @spec progress_token() :: ExMCP.Types.progress_token() | nil
+  def progress_token do
+    case current() do
+      %RequestContext{progress_token: token} -> token
+      nil -> nil
+    end
+  end
+
+  @doc """
+  Reports progress for the currently executing request callback.
+
+  Modern streamable-HTTP handlers use this request-scoped helper instead of a
+  connection-wide server process. The request must include
+  `_meta.progressToken`, and its HTTP response must be an active SSE stream.
+  Delivery is acknowledged before this function returns, which guarantees the
+  notification is written before the request's final JSON-RPC response.
+  """
+  @spec report_progress(number(), number() | nil, String.t() | nil) ::
+          :ok
+          | {:error,
+             :no_request_context
+             | :progress_not_requested
+             | :request_not_streaming
+             | :stream_closed
+             | :stream_timeout}
+  def report_progress(progress, total \\ nil, message \\ nil) when is_number(progress) do
+    case current() do
+      %RequestContext{progress_token: nil} ->
+        {:error, :progress_not_requested}
+
+      %RequestContext{notification_target: target, progress_token: token} when is_pid(target) ->
+        deliver(target, Protocol.encode_progress(token, progress, total, message))
+
+      %RequestContext{} ->
+        {:error, :request_not_streaming}
+
+      nil ->
+        {:error, :no_request_context}
+    end
+  end
+
+  @doc """
+  Sends a log notification on the currently executing request's HTTP stream.
+
+  Request-scoped log delivery is available only while that request owns an
+  active SSE response. It never falls back to another request or subscription
+  stream.
+  """
+  @spec send_log_message(atom() | String.t(), String.t(), map()) ::
+          :ok
+          | {:error,
+             :no_request_context
+             | :logging_not_requested
+             | :invalid_log_level
+             | :request_not_streaming
+             | :stream_closed
+             | :stream_timeout}
+  def send_log_message(level, message, data \\ %{}) when is_binary(message) and is_map(data) do
+    level = to_string(level)
+
+    case current() do
+      %RequestContext{log_level: nil} ->
+        {:error, :logging_not_requested}
+
+      %RequestContext{log_level: requested, notification_target: target} ->
+        cond do
+          level not in @log_levels or requested not in @log_levels ->
+            {:error, :invalid_log_level}
+
+          not log_level_enabled?(level, requested) ->
+            :ok
+
+          not is_pid(target) ->
+            {:error, :request_not_streaming}
+
+          true ->
+            data =
+              if map_size(data) == 0,
+                do: message,
+                else: Map.put_new(data, "message", message)
+
+            notification = %{
+              "jsonrpc" => "2.0",
+              "method" => "notifications/message",
+              "params" => %{
+                "level" => level,
+                "logger" => "ExMCP.Server",
+                "data" => data
+              }
+            }
+
+            deliver(target, notification)
+        end
+
+      nil ->
+        {:error, :no_request_context}
+    end
+  end
+
+  defp log_level_enabled?(level, requested) do
+    Enum.find_index(@log_levels, &(&1 == level)) >=
+      Enum.find_index(@log_levels, &(&1 == requested))
+  end
+
   @doc false
   def with_context(%RequestContext{} = context, fun) when is_function(fun, 0) do
     previous = Process.put(@key, context)
@@ -38,6 +144,29 @@ defmodule ExMCP.Server.Context do
       fun.()
     after
       restore(previous)
+    end
+  end
+
+  defp deliver(target, notification) do
+    ref = make_ref()
+    monitor = Process.monitor(target)
+    send(target, {:ex_mcp_request_notification, self(), ref, notification})
+
+    receive do
+      {:ex_mcp_request_notification_ack, ^ref, :ok} ->
+        Process.demonitor(monitor, [:flush])
+        :ok
+
+      {:ex_mcp_request_notification_ack, ^ref, {:error, _reason}} ->
+        Process.demonitor(monitor, [:flush])
+        {:error, :stream_closed}
+
+      {:DOWN, ^monitor, :process, ^target, _reason} ->
+        {:error, :stream_closed}
+    after
+      5_000 ->
+        Process.demonitor(monitor, [:flush])
+        {:error, :stream_timeout}
     end
   end
 

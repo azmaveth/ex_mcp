@@ -168,6 +168,9 @@ defmodule ExMCP.MessageProcessor do
            RequestContext.validate_protocol_mode(request_context, Map.get(opts, :protocol_mode)),
          :ok <- RequestContext.validate_method(request_context),
          {:ok, request_context} <- MRTR.prepare_context(request_context, params, mrtr_opts) do
+      request_context =
+        %{request_context | notification_target: Map.get(opts, :request_notification_target)}
+
       conn
       |> assign(:request_context, request_context)
       |> assign(:mrtr_opts, mrtr_opts)

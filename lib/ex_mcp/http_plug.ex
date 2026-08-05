@@ -84,6 +84,13 @@ defmodule ExMCP.HttpPlug do
   comment keepalives every `:subscription_keepalive_interval_ms` milliseconds
   (default: `15_000`; set `:infinity` to disable).
 
+  An ordinary modern request that opts into progress or request logs also owns
+  its POST response stream. `notifications/progress` and
+  `notifications/message` are written only there, followed by one final
+  JSON-RPC response that closes the stream. A disconnect or chunk failure
+  cancels that request's worker and temporary handler without affecting other
+  requests or subscriptions.
+
   ### Session ids
 
   Client-supplied `mcp-session-id` (and legacy `x-session-id`) header values
@@ -104,6 +111,7 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.FeatureFlags
   alias ExMCP.HttpPlug.Core
   alias ExMCP.HttpPlug.ModernStream
+  alias ExMCP.HttpPlug.RequestStream
   alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEHandler
   alias ExMCP.Internal.{JSONRPC, VersionRegistry}
@@ -412,16 +420,30 @@ defmodule ExMCP.HttpPlug do
              session_id,
              %{transport: :http}
            ),
-         result <-
-           process_mcp_request(
-             request,
-             opts
-             |> Map.put(:session_id, session_id)
-             |> Map.put(:request_headers, conn.req_headers)
-           ) do
+         process_opts =
+           opts
+           |> Map.put(:session_id, session_id)
+           |> Map.put(:request_headers, conn.req_headers),
+         result <- process_or_open_request_stream(conn, request, process_opts) do
       Logger.debug("MCP request processed, result: #{inspect(result)}")
 
       case result do
+        {:request_stream, request_id, process_fun} ->
+          :telemetry.execute(
+            [:ex_mcp, :server, :http, :response],
+            %{},
+            %{status: 200, streaming: true, stream: :request}
+          )
+
+          conn
+          |> maybe_add_cors_headers(opts)
+          |> add_protocol_version_header()
+          |> put_resp_header("content-type", "text/event-stream")
+          |> put_resp_header("x-accel-buffering", "no")
+          |> put_resp_header("cache-control", "no-cache")
+          |> send_chunked(200)
+          |> RequestStream.serve(request_id, opts, process_fun)
+
         {:subscription, entry} ->
           :telemetry.execute(
             [:ex_mcp, :server, :http, :response],
@@ -1020,6 +1042,38 @@ defmodule ExMCP.HttpPlug do
   end
 
   # Process MCP request using the configured handler
+  defp process_or_open_request_stream(conn, request, opts) do
+    if request_stream?(conn, request) do
+      owner = self()
+
+      process_fun = fn ->
+        process_mcp_request(request, Map.put(opts, :request_notification_target, owner))
+      end
+
+      {:request_stream, Map.fetch!(request, "id"), process_fun}
+    else
+      process_mcp_request(request, opts)
+    end
+  end
+
+  defp request_stream?(conn, %{"id" => _id, "params" => %{"_meta" => meta}})
+       when is_map(meta) do
+    stream_requested? =
+      Map.has_key?(meta, "progressToken") or
+        Map.has_key?(meta, "io.modelcontextprotocol/logLevel")
+
+    modern_http_request?(conn, %{"params" => %{"_meta" => meta}}) and stream_requested? and
+      accepts_event_stream?(conn)
+  end
+
+  defp request_stream?(_conn, _request), do: false
+
+  defp accepts_event_stream?(conn) do
+    conn
+    |> get_req_header("accept")
+    |> Enum.any?(&String.contains?(&1, "text/event-stream"))
+  end
+
   defp process_mcp_request(%{"method" => "subscriptions/listen"} = request, opts) do
     open_http_subscription(request, opts)
   end
@@ -1059,6 +1113,7 @@ defmodule ExMCP.HttpPlug do
             require_replay_protection: Map.get(opts, :require_replay_protection, false),
             principal_id: Map.get(opts, :principal_id),
             tenant_id: Map.get(opts, :tenant_id),
+            request_notification_target: Map.get(opts, :request_notification_target),
             request_headers: Map.get(opts, :request_headers, [])
           })
 

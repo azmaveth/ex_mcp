@@ -1,6 +1,6 @@
 # ExMCP → MCP 2026-07-28 Migration Plan
 
-**Status:** Implementation in progress — Phases 0–3 complete; Phase 4 core implemented
+**Status:** Implementation in progress — Phases 0–4 core complete; Phase 5 local transport complete; Phase 6 in progress
 **Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28) ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
 **Current ExMCP:** `1.0.0-rc.5`, implements MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
@@ -874,9 +874,15 @@ remaining unchecked Phase 5 work is clustered PubSub fan-out.
 - [x] Server plug: modern requests never mint/echo `Mcp-Session-Id`; ignore `Last-Event-ID`.
       `GET`/`DELETE` on the MCP endpoint ⇒ `405` in a modern-only configuration.
 - [x] `X-Accel-Buffering: no` on SSE responses.
-- [ ] Closing the SSE response stream = cancellation; server stops work and sends nothing more.
-      **Complete for `subscriptions/listen`, including client-side per-request close and server
-      owner cleanup. Request-scoped SSE for ordinary operations remains open.**
+- [x] Ordinary requests carrying `progressToken` or per-request `logLevel` use a request-owned
+      SSE response. Only related `notifications/progress` / `notifications/message` events may
+      precede exactly one final JSON-RPC response; independent JSON-RPC requests are rejected.
+      Client callbacks receive the owning JSON-RPC request id so concurrent log streams remain
+      distinguishable.
+- [x] Closing the SSE response stream = cancellation; server stops work and sends nothing more.
+      This covers `subscriptions/listen` and ordinary request streams: client timeout/manual
+      cancellation closes only the owning POST, chunk failure kills its worker, and an owner
+      watchdog terminates the temporary handler if the connection disappears.
 - [x] `ExMCP.Plugs.ProtocolVersion` unconditional for modern (drop the default-off flag for the
       modern era while retaining the legacy compatibility switch).
 - [ ] Define ambiguous-delivery semantics before enabling automatic reconnect retries. The
@@ -904,8 +910,10 @@ Current Phase 6 coverage includes pure header encoding/validation, Base64 sentin
 `-32020`, server-side custom-header validation before tool dispatch, stateless modern response
 behavior, unknown-method `404`, modern-only `GET`/`DELETE` `405`, and the existing legacy HTTP
 compatibility suites, plus literal modern HTTP subscription streaming, cancellation, keepalives,
-abrupt-close reconnect and resynchronization. Request-scoped modern SSE, clustered subscription
-fan-out, reverse-proxy tests, and ambiguous-delivery retry policy remain open.
+abrupt-close reconnect and resynchronization. Literal ordinary-request coverage verifies ordered
+progress/log events, one final response, per-request log opt-in/thresholds, client-side
+correlation, and disconnect-driven handler cancellation. Clustered subscription fan-out,
+reverse-proxy tests, and ambiguous-delivery retry policy remain open.
 
 **Exit:** the modern Streamable HTTP transport subset passes locally and against every available
 2026-07-28 harness case for headers, status codes, SSE and cancellation; the Phase 4 MRTR and
@@ -935,8 +943,9 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       cannot repopulate the cache after `list_changed`.
 - [ ] Derive the exact cacheable-result method set and required fields from the vendored
       `2026-07-28` schema instead of maintaining another hand-written list.
-- [ ] Server: per-request `logLevel` from `_meta`; **MUST NOT** emit `notifications/message` for
-      requests without it. Remove `logging/setLevel` from the modern method table.
+- [x] Server: per-request `logLevel` from `_meta`; **MUST NOT** emit `notifications/message` for
+      requests without it. `ExMCP.Server.Context.send_log_message/3` filters below-threshold
+      events and uses only the owning request stream. `logging/setLevel` remains legacy-only.
 - [ ] Deterministic `tools/list` ordering.
 - [ ] JSON Schema: `$ref` MUST NOT auto-dereference network URIs (opt-in only, off by default,
       host allowlist, reject loopback/link-local/private, timeouts, size limits, logging);

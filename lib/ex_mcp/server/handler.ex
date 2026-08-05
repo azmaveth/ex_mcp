@@ -18,17 +18,15 @@ defmodule ExMCP.Server.Handler do
   - For list operations: The cursor parameter may be a map containing `_meta`
   - For other operations: Check the params for `_meta` field
 
-  Example accessing progress token in a tool:
+  Modern handlers can inspect the validated callback context and report
+  progress on the originating request's response stream:
 
       def handle_call_tool("my_tool", arguments, state) do
-        {meta, args} = Map.pop(arguments, "_meta")
-        progress_token = meta && meta["progressToken"]
-
-        if progress_token do
-          # Report progress via Server.notify_progress/5
+        if ExMCP.Server.Context.progress_token() do
+          :ok = ExMCP.Server.Context.report_progress(25, 100, "Working")
         end
 
-        # Process args without _meta...
+        # Process arguments and return the final response...
       end
 
   ## Required client capabilities
@@ -116,15 +114,12 @@ defmodule ExMCP.Server.Handler do
 
         @impl true
         def handle_call_tool("calculate", params, state) do
-          # Access progress token if provided
-          progress_token = get_in(params, ["_meta", "progressToken"])
-
           # Your tool implementation
           case eval_expression(params["expression"]) do
             {:ok, result} ->
               # Send progress updates if token provided
-              if progress_token do
-                ExMCP.Server.notify_progress(self(), progress_token, 100, 100)
+              if ExMCP.Server.Context.progress_token() do
+                :ok = ExMCP.Server.Context.report_progress(100, 100, "Complete")
               end
 
               {:ok, %{content: [%{type: "text", text: "Result: \#{result}"}]}, state}
@@ -229,29 +224,32 @@ defmodule ExMCP.Server.Handler do
 
   ### Progress Notifications
 
-  For long-running operations, use progress tokens:
+  For a modern streamable-HTTP request, report progress synchronously from the
+  callback. Each notification is written to that request's SSE response before
+  the final JSON-RPC response. The callback context is intentionally not
+  inherited by detached processes, because they could outlive or lose the
+  association with the originating request.
 
       @impl true
       def handle_call_tool("process_file", params, state) do
-        progress_token = get_in(params, ["_meta", "progressToken"])
         file_path = params["path"]
 
-        # Start async processing with progress updates
-        Task.start(fn ->
-          process_with_progress(file_path, progress_token, self())
-        end)
+        if ExMCP.Server.Context.progress_token() do
+          :ok = ExMCP.Server.Context.report_progress(10, 100, "Starting")
+        end
 
-        {:ok, [%{type: "text", text: "Processing started"}], state}
+        result = process_file(file_path)
+
+        if ExMCP.Server.Context.progress_token() do
+          :ok = ExMCP.Server.Context.report_progress(100, 100, "Complete")
+        end
+
+        {:ok, %{content: [%{type: "text", text: result}]}, state}
       end
 
-      defp process_with_progress(path, token, server) when token != nil do
-        # Send progress updates
-        ExMCP.Server.notify_progress(server, token, 0, 100)
-        # ... processing ...
-        ExMCP.Server.notify_progress(server, token, 50, 100)
-        # ... more processing ...
-        ExMCP.Server.notify_progress(server, token, 100, 100)
-      end
+  Transport-aware legacy servers may continue to use
+  `ExMCP.Server.notify_progress/4` with their server process and explicit
+  progress token.
 
   ### Dynamic Content Notifications
 

@@ -51,8 +51,8 @@ defmodule ExMCP.Client.Operations.Tools do
   - `:timeout` - Request timeout (default: 30000)
   - `:format` - Response format (default: :struct)
   - `:progress_token` - Token sent as `_meta.progressToken`, which the server
-    handler receives in its arguments map and can use to emit
-    `notifications/progress` for long-running work
+    handler can use with `ExMCP.Server.Context.report_progress/3`; modern HTTP
+    clients receive events through `ExMCP.Client.Handler.handle_progress/3`
   - `:meta` - Additional `_meta` entries; merged with `:progress_token`
 
   ## Examples

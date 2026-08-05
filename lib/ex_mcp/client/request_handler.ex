@@ -122,6 +122,9 @@ defmodule ExMCP.Client.RequestHandler do
     do: false
 
   defp retryable_subscription_stream_close?(:invalid_sse_json), do: false
+  defp retryable_subscription_stream_close?(:invalid_stream_message), do: false
+  defp retryable_subscription_stream_close?(:response_id_mismatch), do: false
+  defp retryable_subscription_stream_close?(:final_response_required), do: false
   defp retryable_subscription_stream_close?(_reason), do: true
 
   defp send_built_request(method, params, id, from, state, timeout_meta) do
@@ -147,7 +150,8 @@ defmodule ExMCP.Client.RequestHandler do
          } = state
        ) do
     with {:ok, encoded} <- encode_for_transport(HTTP, request),
-         {:ok, transport_state} <- HTTP.open_stream(encoded, transport_state, self()) do
+         {:ok, transport_state} <-
+           HTTP.open_stream(encoded, transport_state, self(), stream_kind: :subscription) do
       {:ok, %{state | transport_state: transport_state}}
     end
   end
@@ -173,7 +177,7 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp send_request(request, method, id, from, state, meta) do
-    case send_message(request, state) do
+    case send_request_message(request, state) do
       {:ok, updated_state, response_data} ->
         # Non-SSE HTTP returns response immediately
         case Protocol.parse_message(response_data) do
@@ -215,6 +219,35 @@ defmodule ExMCP.Client.RequestHandler do
            %{type: :transport_error, message: "Failed to send request: #{inspect(reason)}"}}
 
         {:reply, response, state}
+    end
+  end
+
+  defp send_request_message(
+         %{"params" => %{"_meta" => meta}} = request,
+         %{
+           transport_mod: HTTP,
+           transport_state: %HTTP{protocol_era: :modern} = transport_state
+         } = state
+       )
+       when is_map(meta) do
+    stream_requested? =
+      Map.has_key?(meta, "progressToken") or
+        Map.has_key?(meta, "io.modelcontextprotocol/logLevel")
+
+    if stream_requested? do
+      open_request_stream(request, state, transport_state)
+    else
+      send_message(request, state)
+    end
+  end
+
+  defp send_request_message(request, state), do: send_message(request, state)
+
+  defp open_request_stream(request, state, transport_state) do
+    with {:ok, encoded} <- encode_for_transport(HTTP, request),
+         {:ok, transport_state} <-
+           HTTP.open_stream(encoded, transport_state, self(), stream_kind: :request) do
+      {:ok, %{state | transport_state: transport_state}}
     end
   end
 
@@ -395,6 +428,67 @@ defmodule ExMCP.Client.RequestHandler do
     end
   end
 
+  @doc false
+  def handle_request_stream_message(
+        request_id,
+        %{"method" => "notifications/progress", "params" => params},
+        state
+      )
+      when is_map(params) do
+    dispatch_request_notification(:handle_progress, request_id, params, state)
+  end
+
+  def handle_request_stream_message(
+        request_id,
+        %{"method" => "notifications/message", "params" => params},
+        state
+      )
+      when is_map(params) do
+    dispatch_request_notification(:handle_log_message, request_id, params, state)
+  end
+
+  def handle_request_stream_message(_request_id, message, state) do
+    parse_transport_message(message, state)
+  end
+
+  @doc false
+  def handle_modern_stream_closed(request_id, reason, state) do
+    case Map.get(state.subscriptions || %{}, request_id) do
+      subscription_pid when is_pid(subscription_pid) ->
+        handle_subscription_stream_closed(request_id, reason, state)
+
+      _other ->
+        case Map.get(state.pending_requests, request_id) do
+          {from, :single} ->
+            error = %{
+              type: :transport_error,
+              message: "Request HTTP stream closed: #{inspect(reason)}"
+            }
+
+            GenServer.reply(from, {:error, error})
+
+            {:noreply,
+             %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
+
+          _not_pending ->
+            {:noreply, state}
+        end
+    end
+  end
+
+  @doc false
+  def close_request_stream(
+        request_id,
+        %{
+          transport_mod: HTTP,
+          transport_state: %HTTP{protocol_era: :modern} = transport_state
+        } = state
+      ) do
+    %{state | transport_state: HTTP.close_stream(transport_state, request_id)}
+  end
+
+  def close_request_stream(_request_id, state), do: state
+
   @doc """
   Handles a batch of responses from the transport.
   """
@@ -485,6 +579,37 @@ defmodule ExMCP.Client.RequestHandler do
       end
 
     {:noreply, new_state}
+  end
+
+  defp dispatch_request_notification(callback, request_id, params, state) do
+    :telemetry.execute(
+      [:ex_mcp, :client, :request, :notification],
+      %{count: 1},
+      %{request_id: request_id, method: callback}
+    )
+
+    {handler, handler_state, state} = ensure_client_handler(state)
+
+    if handler != :none and function_exported?(handler, callback, 3) do
+      case apply(handler, callback, [request_id, params, handler_state]) do
+        {:ok, new_handler_state} ->
+          {:noreply, update_handler_state(state, new_handler_state)}
+
+        {:error, reason, new_handler_state} ->
+          Logger.warning("Client request notification handler failed: #{inspect(reason)}")
+          {:noreply, update_handler_state(state, new_handler_state)}
+
+        other ->
+          Logger.warning("Invalid client request notification handler reply: #{inspect(other)}")
+          {:noreply, state}
+      end
+    else
+      {:noreply, state}
+    end
+  rescue
+    error ->
+      Logger.warning("Client request notification handler raised: #{Exception.message(error)}")
+      {:noreply, state}
   end
 
   defp get_request_info(pending_requests, response_id) do

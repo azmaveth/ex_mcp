@@ -1133,22 +1133,27 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   @doc false
-  @spec open_stream(binary(), t(), pid()) :: {:ok, t()} | {:error, term()}
-  def open_stream(message, %__MODULE__{protocol_era: :modern} = state, parent)
-      when is_binary(message) and is_pid(parent) do
+  @spec open_stream(binary(), t(), pid(), keyword()) :: {:ok, t()} | {:error, term()}
+  def open_stream(message, state, parent, opts \\ [])
+
+  def open_stream(message, %__MODULE__{protocol_era: :modern} = state, parent, opts)
+      when is_binary(message) and is_pid(parent) and is_list(opts) do
     request_id = extract_request_id(message)
     url = build_url(state, "")
     headers = RequestHeaders.build(message, state)
+    stream_kind = Keyword.get(opts, :stream_kind, :request)
 
-    with :ok <- validate_stream_request_id(request_id, state),
+    with :ok <- validate_stream_kind(stream_kind),
+         :ok <- validate_stream_request_id(request_id, state),
          {:ok, headers} <- validate_http_request(url, headers, state),
          {:ok, pid} <-
-           ModernStreamClient.start_link(
+           ModernStreamClient.start(
              parent: parent,
              request_id: request_id,
              url: url,
              headers: headers,
              body: message,
+             stream_kind: stream_kind,
              http_options: modern_stream_http_options(url, state),
              idle_timeout: state.timeouts.stream_idle
            ) do
@@ -1158,7 +1163,7 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  def open_stream(_message, _state, _parent), do: {:error, :modern_http_stream_required}
+  def open_stream(_message, _state, _parent, _opts), do: {:error, :modern_http_stream_required}
 
   @doc false
   @spec close_stream(t(), ExMCP.Types.request_id()) :: t()
@@ -1195,6 +1200,9 @@ defmodule ExMCP.Transport.HTTP do
       do: {:error, :duplicate_stream_request_id},
       else: :ok
   end
+
+  defp validate_stream_kind(kind) when kind in [:request, :subscription], do: :ok
+  defp validate_stream_kind(_kind), do: {:error, :invalid_modern_stream_kind}
 
   defp modern_stream_http_options(url, state) do
     options = [timeout: :infinity, connect_timeout: state.timeouts.connect, autoredirect: false]

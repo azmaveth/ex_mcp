@@ -231,6 +231,29 @@ defmodule ExMCP.Client.Handler do
               | {:error, error_info, state}
 
   @doc """
+  Handles a progress notification delivered on an ordinary request's modern
+  streamable-HTTP response.
+
+  The first argument is the JSON-RPC id of the request that owns the stream.
+  The map contains `"progressToken"`, `"progress"`, and optional `"total"`
+  and `"message"` fields. Keep this callback fast; it runs in the client
+  process before subsequent events from the same response stream are handled.
+  """
+  @callback handle_progress(ExMCP.Types.request_id(), notification :: map(), state) ::
+              {:ok, state}
+              | {:error, error_info, state}
+
+  @doc """
+  Handles a request-scoped `notifications/message` event delivered before the
+  final response on a modern streamable-HTTP request. The first argument is
+  the owning JSON-RPC request id, which is required to correlate concurrent
+  log streams because log notification params do not contain a progress token.
+  """
+  @callback handle_log_message(ExMCP.Types.request_id(), notification :: map(), state) ::
+              {:ok, state}
+              | {:error, error_info, state}
+
+  @doc """
   Called when the handler process is about to terminate.
   """
   @callback terminate(reason :: term(), state) :: :ok
@@ -272,6 +295,8 @@ defmodule ExMCP.Client.Handler do
                       handle_elicitation_create: 3,
                       handle_url_elicitation: 3,
                       handle_task_status: 2,
+                      handle_progress: 3,
+                      handle_log_message: 3,
                       handle_server_request: 3,
                       mrtr_input_concurrency: 0
 end

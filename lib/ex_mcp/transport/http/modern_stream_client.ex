@@ -28,6 +28,7 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     :parent,
     :parent_monitor,
     :request_id,
+    :stream_kind,
     :url,
     :headers,
     :body,
@@ -43,8 +44,8 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     close_notified?: false
   ]
 
-  @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+  @spec start(keyword()) :: GenServer.on_start()
+  def start(opts), do: GenServer.start(__MODULE__, opts)
 
   @spec cancel(pid()) :: :ok
   def cancel(pid) do
@@ -63,6 +64,7 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       parent: parent,
       parent_monitor: Process.monitor(parent),
       request_id: Keyword.fetch!(opts, :request_id),
+      stream_kind: Keyword.fetch!(opts, :stream_kind),
       url: Keyword.fetch!(opts, :url),
       headers: Keyword.fetch!(opts, :headers),
       body: Keyword.fetch!(opts, :body),
@@ -199,13 +201,7 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   defp deliver_event(%{"data" => data}, state) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, message} ->
-        deliver_message(message, state)
-
-        if Map.has_key?(message, "result") or Map.has_key?(message, "error") do
-          %{state | completed?: true}
-        else
-          state
-        end
+        handle_stream_message(message, state)
 
       {:error, _reason} ->
         state
@@ -215,6 +211,22 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   end
 
   defp deliver_event(_comment_or_empty_event, state), do: state
+
+  defp handle_stream_message(message, state) do
+    case validate_message(message, state.request_id, state.stream_kind) do
+      :ok ->
+        deliver_message(message, state)
+
+        if final_response?(message),
+          do: %{state | completed?: true},
+          else: state
+
+      {:error, reason} ->
+        state
+        |> notify_closed(reason)
+        |> Map.put(:failed?, true)
+    end
+  end
 
   defp deliver_message(message, state) do
     send(
@@ -226,8 +238,18 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   defp handle_complete_response(status, body, state) when status in 200..299 do
     case Jason.decode(body) do
       {:ok, message} ->
-        deliver_message(message, state)
-        %{state | completed?: true}
+        case validate_message(message, state.request_id, state.stream_kind) do
+          :ok ->
+            if final_response?(message) do
+              deliver_message(message, state)
+              %{state | completed?: true}
+            else
+              notify_closed(state, :final_response_required)
+            end
+
+          {:error, reason} ->
+            notify_closed(state, reason)
+        end
 
       {:error, _reason} ->
         notify_closed(state, :invalid_sse_json)
@@ -263,6 +285,57 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     send(state.parent, {:modern_http_stream_closed, self(), state.request_id, reason})
     %{state | close_notified?: true}
   end
+
+  @doc false
+  @spec validate_message(map(), ExMCP.Types.request_id(), :request | :subscription) ::
+          :ok | {:error, atom()}
+  def validate_message(message, request_id, stream_kind) when is_map(message) do
+    cond do
+      final_response?(message) ->
+        if Map.get(message, "id") == request_id,
+          do: :ok,
+          else: {:error, :response_id_mismatch}
+
+      notification?(message) and allowed_notification?(message["method"], stream_kind) ->
+        :ok
+
+      true ->
+        {:error, :invalid_stream_message}
+    end
+  end
+
+  def validate_message(_message, _request_id, _stream_kind),
+    do: {:error, :invalid_stream_message}
+
+  defp final_response?(%{"jsonrpc" => "2.0", "id" => _id} = message) do
+    not Map.has_key?(message, "method") and
+      Map.has_key?(message, "result") != Map.has_key?(message, "error")
+  end
+
+  defp final_response?(_message), do: false
+
+  defp notification?(%{"jsonrpc" => "2.0", "method" => method} = message)
+       when is_binary(method) do
+    not Map.has_key?(message, "id") and not Map.has_key?(message, "result") and
+      not Map.has_key?(message, "error")
+  end
+
+  defp notification?(_message), do: false
+
+  defp allowed_notification?(method, :request),
+    do: method in ["notifications/progress", "notifications/message"]
+
+  defp allowed_notification?(method, :subscription) do
+    method in [
+      "notifications/subscriptions/acknowledged",
+      "notifications/tools/list_changed",
+      "notifications/prompts/list_changed",
+      "notifications/resources/list_changed",
+      "notifications/resources/updated"
+    ]
+  end
+
+  defp allowed_notification?(_method, _stream_kind), do: false
 
   defp to_binary(value) when is_binary(value), do: value
   defp to_binary(value) when is_list(value), do: List.to_string(value)

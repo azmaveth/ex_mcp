@@ -731,9 +731,10 @@ defmodule ExMCP.Client do
   @doc """
   Sends a cancellation notification for a pending request.
 
-  This function sends a `notifications/cancelled` message to inform the server
-  that a previously-sent request should be cancelled. The server MAY stop
-  processing the request if it hasn't completed yet.
+  For modern streamable HTTP, this closes only the pending request's POST
+  response stream, which is the protocol-defined cancellation signal. Other
+  transports send `notifications/cancelled`. The server MAY stop processing
+  the request if it hasn't completed yet.
 
   ## Parameters
 
@@ -1182,8 +1183,20 @@ defmodule ExMCP.Client do
       | cancelled_requests: MapSet.put(state.cancelled_requests, request_id)
     }
 
-    # Send the cancellation notification
-    RequestHandler.handle_cast_notification(method, params, updated_state)
+    # Modern streamable HTTP cancels an ordinary request by closing only that
+    # request's response stream. Other transports retain the protocol
+    # cancellation notification.
+    updated_state =
+      case updated_state do
+        %{transport_mod: HTTP, transport_state: %HTTP{protocol_era: :modern}} ->
+          RequestHandler.close_request_stream(request_id, updated_state)
+
+        _other ->
+          {:noreply, notified_state} =
+            RequestHandler.handle_cast_notification(method, params, updated_state)
+
+          notified_state
+      end
 
     # Check if this request is still pending and complete it with :cancelled error
     case Map.get(state.pending_requests, request_id) do
@@ -1229,7 +1242,7 @@ defmodule ExMCP.Client do
         } = state
       ) do
     if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
-      RequestHandler.parse_transport_message(message, state)
+      RequestHandler.handle_request_stream_message(request_id, message, state)
     else
       {:noreply, state}
     end
@@ -1257,7 +1270,7 @@ defmodule ExMCP.Client do
     if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
       transport_state = HTTP.forget_stream(transport_state, request_id, stream_pid)
 
-      RequestHandler.handle_subscription_stream_closed(
+      RequestHandler.handle_modern_stream_closed(
         request_id,
         reason,
         %{state | transport_state: transport_state}
@@ -1446,6 +1459,8 @@ defmodule ExMCP.Client do
     case Map.get(state.pending_requests, request_id) do
       {from, :single} ->
         GenServer.reply(from, {:error, :timeout})
+
+        state = RequestHandler.close_request_stream(request_id, state)
         {:noreply, %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
 
       _ ->
