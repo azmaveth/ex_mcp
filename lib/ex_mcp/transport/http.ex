@@ -1,22 +1,31 @@
 defmodule ExMCP.Transport.HTTP do
   @moduledoc """
-  This module implements the standard MCP specification.
+  Streamable HTTP client transport for both supported MCP wire eras.
 
-  Streamable HTTP transport for MCP with enhanced SSE support.
+  MCP 2026-07-28 and the legacy 2025-03-26 through 2025-11-25 revisions use
+  the same MCP endpoint but have different lifecycle rules. Select the
+  compatibility policy with `:protocol_mode`; do not infer the wire shape
+  from `transport: :http` alone.
 
-  This transport uses HTTP POST and GET requests with optional Server-Sent Events (SSE)
-  for streaming server-to-client messages. This is one of the two
-  official MCP transports defined in the specification.
+  | Behavior | Legacy Streamable HTTP | MCP 2026-07-28 |
+  |---|---|---|
+  | Establishment | `initialize`; the server may issue `Mcp-Session-Id` | `server/discover`; stateless requests |
+  | Streaming | Optional standalone GET stream plus request-owned SSE | Request- and subscription-owned POST responses |
+  | Resumption | `Last-Event-ID` and session DELETE | Close/reissue the owning POST; no session cursor |
+
+  Modern requests always use a fresh POST. ExMCP derives
+  `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, and annotated
+  `Mcp-Param-*` routing headers from the JSON-RPC body. Modern SSE is selected
+  by the response to the owning POST and does not depend on `:use_sse`.
 
   ## Features
 
-  - **Auto-reconnection**: Automatic reconnection with exponential backoff
-  - **Keep-alive**: Built-in heartbeat mechanism for connection health
-  - **Event resumption**: Supports Last-Event-ID for event replay
-  - **Session management**: Automatic session ID generation and tracking
+  - **Dual-era negotiation**: Modern discovery with explicit, safe legacy fallback
+  - **Request-owned streaming**: JSON or SSE responses on modern POST requests
+  - **Modern subscriptions**: Long-lived `subscriptions/listen` POST streams
+  - **Legacy compatibility**: Session IDs, GET SSE, event resumption, and DELETE
   - **Configurable endpoint**: Customize the MCP endpoint path
-  - **Single response mode**: Option to use HTTP responses instead of SSE
-  - **Protocol Versioning**: Sends `mcp-protocol-version` header.
+  - **Protocol routing**: Validated version, method, name, and parameter headers
 
   ## Security Features
 
@@ -28,43 +37,40 @@ defmodule ExMCP.Transport.HTTP do
   - **Security Headers**: XSS protection, frame options, etc.
   - **TLS/SSL**: Secure connections with certificate validation
 
-  ## Example with Security
+  ## Modern-preferred example
 
       {:ok, client} = ExMCP.Client.start_link(
         transport: :http,
-        url: "https://api.example.com",
-        endpoint: "/mcp/v1",  # Configurable endpoint
-        protocol_version: "2025-06-18", # Specify protocol version
-        use_sse: true,         # Use SSE for responses (default: true)
-        session_id: "existing-session",  # Resume existing session
+        url: "https://api.example.com/mcp",
+        protocol_mode: :prefer_modern,
         security: %{
           auth: {:bearer, "your-token"},
           validate_origin: true,
-          allowed_origins: ["https://app.example.com"],
-          cors: %{
-            allowed_methods: ["GET", "POST"],
-            allow_credentials: true
-          }
+          allowed_origins: ["https://app.example.com"]
         }
       )
 
-  ## Session Management
+  With `:prefer_modern`, ExMCP probes with `server/discover` and falls back only
+  when a live peer provides positive legacy compatibility evidence. Use
+  `:modern_only` when fallback is not allowed.
 
-  The HTTP transport automatically manages sessions using the `Mcp-Session-Id` header.
-  Sessions enable:
-  - Request/response correlation
-  - Resumability after connection loss
-  - Server-side state management
+  ## Legacy session compatibility
 
-  ## Non-SSE Mode
+  `:session_id`, `:use_sse`, `Mcp-Session-Id`, `Last-Event-ID`, the standalone
+  GET stream, and DELETE termination apply only after a connection settles on
+  a legacy revision. For example:
 
-  For simpler deployments, the HTTP transport can operate without SSE:
-
-      {:ok, client} = ExMCP.Client.start_link(
+      {:ok, legacy_client} = ExMCP.Client.start_link(
         transport: :http,
         url: "https://api.example.com",
-        use_sse: false  # Responses come in HTTP response body
+        protocol_mode: :legacy_only,
+        protocol_version: "2025-11-25",
+        session_id: "existing-session",
+        use_sse: true
       )
+
+  Setting `use_sse: false` disables the legacy standalone GET stream. It does
+  not disable a modern request-owned SSE response.
 
   > #### Security Best Practices {: .warning}
   >
@@ -145,7 +151,7 @@ defmodule ExMCP.Transport.HTTP do
           timeouts: map(),
           protocol_version: String.t(),
           protocol_era: :legacy | :modern | :unknown,
-          tool_headers: %{optional(String.t()) => [ToolHeaders.annotation()]},
+          tool_headers: %{optional(String.t()) => [map()]},
           modern_streams: %{optional(ExMCP.Types.request_id()) => pid()},
           sse_deferred_attempted: boolean(),
           auth_provider: module() | nil,

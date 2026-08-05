@@ -52,7 +52,7 @@ defmodule ExMCP.Client.Operations.Tools do
   - `:format` - Response format (default: :struct)
   - `:progress_token` - Token sent as `_meta.progressToken`, which the server
     handler can use with `ExMCP.Server.Context.report_progress/3`; modern HTTP
-    clients receive events through `ExMCP.Client.Handler.handle_progress/3`
+    clients receive events through `c:ExMCP.Client.Handler.handle_progress/3`
   - `:meta` - Additional `_meta` entries; merged with `:progress_token`
   - `:http_stream_retry` - `:at_least_once` (default) retries one ambiguous
     modern HTTP response-stream break; `:safe_only` returns

@@ -9,10 +9,11 @@ A practical guide to building MCP clients and servers with ExMCP.
 3. [Low-Level Handlers](#low-level-handlers)
 4. [BEAM-Local MCP](#beam-local-mcp)
 5. [Clients](#clients)
-6. [Protocol-Deprecated Features](#protocol-deprecated-features)
-7. [Transports](#transports)
-8. [Resilience And Pipelines](#resilience-and-pipelines)
-9. [Troubleshooting](#troubleshooting)
+6. [Protocol Versions](#protocol-versions)
+7. [Protocol-Deprecated Features](#protocol-deprecated-features)
+8. [Transports](#transports)
+9. [Resilience And Pipelines](#resilience-and-pipelines)
+10. [Troubleshooting](#troubleshooting)
 
 ## Installation
 
@@ -157,9 +158,11 @@ For a raw handler (no DSL) use `ExMCP.Server.HandlerServer.start_link(handler: M
 
 **Tip:** `mix examples.getting_started` (after `mix compile`) gives a fast local run of these DSL + Client patterns for quick verification.
 
-BEAM-local MCP uses the normal initialize handshake, request IDs, capabilities,
-and handler callbacks. The transport passes MCP-shaped maps/lists as Elixir
-terms instead of JSON strings.
+BEAM-local MCP follows the selected protocol mode. The unreleased migration
+build currently defaults to the legacy initialize handshake;
+`:prefer_modern` uses discovery and
+per-request context. In either era, the transport passes MCP-shaped maps/lists
+as Elixir terms instead of JSON strings.
 
 ## Clients
 
@@ -182,6 +185,7 @@ Connect to Streamable HTTP:
   ExMCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
+    protocol_mode: :prefer_modern,
     use_sse: true,
     headers: [{"Authorization", "Bearer #{token}"}]
   )
@@ -196,6 +200,28 @@ Call server features:
 {:ok, content} = ExMCP.Client.read_resource(client, "file:///docs/readme.md")
 {:ok, prompts} = ExMCP.Client.list_prompts(client)
 ```
+
+## Protocol Versions
+
+MCP `2026-07-28` is the latest stable revision. It is wire-incompatible with
+the legacy `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`
+revisions, so ExMCP selects an era with `protocol_mode`:
+
+```elixir
+config :ex_mcp, protocol_mode: :prefer_modern
+```
+
+Use `:prefer_modern` for a dual-era client or server that tries 2026-07-28
+first, `:modern_only` for a closed modern ecosystem, `:prefer_legacy` for an
+early compatibility canary, and `:legacy_only` for exact rc.5 behavior or
+rollback. The published rc.5 package is legacy-only and does not contain these
+modes. The unreleased migration build retains `:legacy_only` while maintainers
+prepare the published modern-preferred soak RC.
+
+`ExMCP.protocol_version/0` returns `2025-11-25` because it is a legacy
+initialize compatibility helper; it does not report the latest upstream
+revision. See the [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes)
+for negotiation, fallback, and per-connection overrides.
 
 ## Protocol-Deprecated Features
 

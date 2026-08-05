@@ -114,11 +114,14 @@ defmodule ExMCP.MixProject do
           README.md
           LICENSE
           CHANGELOG.md
+          docs/API_DIFF_RC5_TO_1_0.md
           docs/ACP_GUIDE.md
           docs/ARCHITECTURE.md
           docs/CONFIGURATION.md
           docs/DEVELOPMENT.md
           docs/DSL_GUIDE.md
+          docs/MCP_2026_07_28_MIGRATION_PLAN.md
+          docs/MCP_COVERAGE_MATRIX.md
           docs/SECURITY.md
           docs/TRANSPORT_GUIDE.md
           docs/TROUBLESHOOTING.md
@@ -154,6 +157,12 @@ defmodule ExMCP.MixProject do
       main: "readme",
       name: "ExMCP",
       canonical: "https://hexdocs.pm/ex_mcp",
+      warnings_as_errors: true,
+      skip_undefined_reference_warnings_on: [
+        "CHANGELOG.md",
+        "docs/API_DIFF_RC5_TO_1_0.md",
+        "docs/MCP_2026_07_28_MIGRATION_PLAN.md"
+      ],
       extras: [
         "README.md",
         "docs/guides/USER_GUIDE.md",
@@ -167,6 +176,9 @@ defmodule ExMCP.MixProject do
         "docs/DEVELOPMENT.md",
         "docs/TROUBLESHOOTING.md",
         "docs/ACP_GUIDE.md",
+        "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
+        "docs/MCP_COVERAGE_MATRIX.md",
+        "docs/API_DIFF_RC5_TO_1_0.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",
@@ -174,7 +186,8 @@ defmodule ExMCP.MixProject do
       groups_for_extras: [
         Introduction: ~r/README/,
         Guides:
-          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|ACP_GUIDE|CONFIGURATION|MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+          ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|ACP_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
+        "Release references": ~r/MCP_2026_07_28|MCP_COVERAGE_MATRIX|API_DIFF_RC5_TO_1_0/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
@@ -185,6 +198,7 @@ defmodule ExMCP.MixProject do
           ExMCP.Server.Handler,
           ExMCP.Server.DSL,
           ExMCP.Server.DSL.Result,
+          ExMCP.Server.MRTR.InputRequired,
           ExMCP.HttpPlug,
           ExMCP.Types,
           ExMCP.Content,

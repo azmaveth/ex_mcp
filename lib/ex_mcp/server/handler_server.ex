@@ -57,7 +57,7 @@ defmodule ExMCP.Server.HandlerServer do
           transport: any(),
           transport_state: any(),
           protocol_version: String.t() | nil,
-          protocol_mode: ExMCP.Internal.VersionRegistry.protocol_mode() | nil,
+          protocol_mode: ExMCP.Types.protocol_mode() | nil,
           connection_era: :legacy | :modern | nil,
           instructions: String.t() | nil,
           request_state: keyword() | nil,

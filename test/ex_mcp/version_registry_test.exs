@@ -15,7 +15,7 @@ defmodule ExMCP.VersionRegistryTest do
       assert "2024-11-05" in versions
     end
 
-    test "identifies latest stable version" do
+    test "identifies the newest legacy revision" do
       assert VersionRegistry.latest_version() == "2025-11-25"
       refute VersionRegistry.supported?("draft")
     end

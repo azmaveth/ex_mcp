@@ -22,11 +22,11 @@ defmodule ExMCP.Compliance.Version20251125Test do
       assert VersionNegotiator.supported?("2025-11-25")
     end
 
-    test "2025-11-25 is the latest version in VersionRegistry" do
+    test "2025-11-25 is the newest legacy revision in VersionRegistry" do
       assert VersionRegistry.latest_version() == "2025-11-25"
     end
 
-    test "2025-11-25 is the latest version in VersionNegotiator" do
+    test "2025-11-25 is the newest legacy revision in VersionNegotiator" do
       assert VersionNegotiator.latest_version() == "2025-11-25"
     end
 

@@ -6,7 +6,7 @@ This guide shows the current 1.0 server, client, and BEAM-local patterns.
 
 ## Installation
 
-Add ExMCP to your `mix.exs` dependencies:
+The published rc.5 dependency is the legacy-only baseline:
 
 ```elixir
 def deps do
@@ -17,6 +17,26 @@ end
 ```
 
 Run `mix deps.get` to install.
+
+The modern examples below require the current unreleased source tree or the
+next published RC. Before that RC exists, use a qualified repository commit:
+
+```elixir
+{:ex_mcp, github: "azmaveth/ex_mcp", ref: "<qualified-commit-sha>"}
+```
+
+MCP `2026-07-28` is the latest stable revision. In a modern-capable build it is
+enabled explicitly so deployments can canary the wire-incompatible modern era:
+
+```elixir
+# config/config.exs
+config :ex_mcp, protocol_mode: :prefer_modern
+```
+
+`:prefer_modern` tries 2026-07-28 first and retains legacy fallback. Omit this
+setting for the migration source tree's current `:legacy_only` default, or see
+the [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) for all
+four modes.
 
 ## DSL Server
 
@@ -49,7 +69,10 @@ end
 {:ok, server} = MyMCPServer.start_link(transport: :stdio)
 ```
 
-The DSL generates the MCP list/read/call callbacks and initialization response from your declarations. See the [DSL Guide](../DSL_GUIDE.md) for param types (including `{:array, :string}`), compile-time checks, and `ToolResult` helpers.
+The DSL generates the MCP list/read/call callbacks plus legacy initialization
+and modern discovery metadata from your declarations. See the
+[DSL Guide](../DSL_GUIDE.md) for param types (including `{:array, :string}`),
+compile-time checks, and `ToolResult` helpers.
 
 ## Client Connections
 
@@ -82,19 +105,28 @@ Connect to a streamable HTTP server:
 Use `transport: :beam` when both the client and server are Elixir processes in the same VM:
 
 ```elixir
-{:ok, server} = MyMCPServer.start_link(transport: :beam)
+{:ok, server} =
+  MyMCPServer.start_link(
+    transport: :beam,
+    protocol_mode: :prefer_modern
+  )
 
 {:ok, client} =
   ExMCP.Client.start_link(
     transport: :beam,
-    server: server
+    server: server,
+    protocol_mode: :prefer_modern
   )
 
 {:ok, tools} = ExMCP.Client.list_tools(client)
 {:ok, result} = ExMCP.Client.call_tool(client, "echo", %{"message" => "Hello"})
 ```
 
-BEAM-local MCP still uses the standard initialize handshake, request IDs, capabilities, and handler callbacks. The transport simply passes MCP-shaped maps/lists as Elixir terms between local processes.
+BEAM-local MCP uses the configured protocol mode: the unreleased migration
+build currently defaults to the legacy initialize handshake, while
+`:prefer_modern` uses MCP 2026-07-28 discovery and per-request context. The
+transport simply passes MCP-shaped maps/lists as Elixir terms between local
+processes.
 
 > **Note for raw handlers:** If you are not using the DSL, start with `ExMCP.Server.HandlerServer.start_link(handler: YourHandler, transport: :beam)` (or `ExMCP.start_server/1`). DSL modules automatically provide `start_link/1`.
 
@@ -143,4 +175,5 @@ For HTTP server-side pipelines, compose normal Plug/Phoenix plugs around `ExMCP.
 1. Read the [DSL Guide](../DSL_GUIDE.md)
 2. Read the [User Guide](../guides/USER_GUIDE.md)
 3. Review [Transport Guide](../TRANSPORT_GUIDE.md)
-4. Explore [Examples](../../examples/)
+4. Review the [1.0 Migration Guide](MIGRATION.md) for the dual-era rollout
+5. Explore [Examples](../../examples/)

@@ -22,7 +22,7 @@ defmodule ExMCP.Compliance.Version20250618Test do
       assert VersionNegotiator.supported?("2025-06-18")
     end
 
-    test "2025-06-18 is NOT the latest version (2025-11-25 is)" do
+    test "2025-06-18 is not the newest legacy revision" do
       assert VersionRegistry.latest_version() == "2025-11-25"
       assert VersionNegotiator.latest_version() == "2025-11-25"
       refute VersionRegistry.latest_version() == "2025-06-18"
@@ -44,7 +44,7 @@ defmodule ExMCP.Compliance.Version20250618Test do
                VersionNegotiator.negotiate(["2025-06-18", "2025-03-26"])
     end
 
-    test "when client offers all 4 versions, server picks 2025-11-25 (latest)" do
+    test "when client offers all 4 legacy revisions, server picks the newest" do
       assert {:ok, "2025-11-25"} =
                VersionNegotiator.negotiate([
                  "2024-11-05",

@@ -65,7 +65,7 @@ defmodule ExMCP.Server.RequestContext do
   @type context_error ::
           Meta.validation_error()
           | {:unsupported_protocol_version, String.t()}
-          | {:protocol_mode_mismatch, VersionRegistry.protocol_mode(), :legacy | :modern}
+          | {:protocol_mode_mismatch, ExMCP.Types.protocol_mode(), :legacy | :modern}
           | {:method_not_available, String.t(), String.t()}
 
   @doc "Extracts context from a JSON-RPC request or notification."
@@ -91,7 +91,7 @@ defmodule ExMCP.Server.RequestContext do
   @spec error_response(
           context_error(),
           ExMCP.Types.request_id() | nil,
-          VersionRegistry.protocol_mode() | nil
+          ExMCP.Types.protocol_mode() | nil
         ) :: map()
   def error_response(reason, id, protocol_mode \\ nil)
 
@@ -154,7 +154,7 @@ defmodule ExMCP.Server.RequestContext do
   def http_status(_error), do: 400
 
   @doc "Validates an extracted context against an explicitly configured server mode."
-  @spec validate_protocol_mode(t(), VersionRegistry.protocol_mode() | nil) ::
+  @spec validate_protocol_mode(t(), ExMCP.Types.protocol_mode() | nil) ::
           :ok | {:error, context_error()}
   def validate_protocol_mode(_context, nil), do: :ok
 

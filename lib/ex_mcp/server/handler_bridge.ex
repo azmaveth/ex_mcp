@@ -1,13 +1,13 @@
 defmodule ExMCP.Server.HandlerBridge do
   @moduledoc """
   Normalizes `ExMCP.Server.Handler` callback returns into canonical
-  `GenServer.handle_call/3` replies.
+  `c:GenServer.handle_call/3` replies.
 
   `use ExMCP.Server.Handler` injects a thin `handle_call/3` clause per MCP
   message that delegates here. Handler authors may answer with any of the
   historical shapes (`{:ok, result, state}`, `{:ok, result}`, `{:ok, state}`,
   `{:error, reason, state}`, `{:error, reason}`); this module collapses them so
-  callers such as `ExMCP.MessageProcessor.MethodHandlers` see exactly one
+  callers such as the HTTP message processor see exactly one
   shape and handler state never leaks into a reply (audit M13):
 
     * `{:ok, result}` for single-result calls

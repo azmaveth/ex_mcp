@@ -2,7 +2,7 @@
 
 **Status:** Code migration complete — Phases 0–10 implemented and local gates green; published-RC soak and rollback drill remain
 **Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
-**Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28) ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
+**Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28), latest stable ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
 **Current ExMCP:** `1.0.0-rc.5`, implements MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`, plus opt-in `2026-07-28`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
@@ -396,7 +396,7 @@ These stay for the legacy path but must be **bypassed entirely** when `era == :m
 |---|---|
 | `lib/ex_mcp/internal/version_registry.ex` | Canonical supported-version list and era helpers landed in rc.5; it still needs known/supported/preferred status for staged modern rollout |
 | `lib/ex_mcp/protocol/version_negotiator.ex` | Version lists delegate to the registry; legacy `build_capabilities/1` is now a deprecated compatibility shim over the same canonical capability vocabulary |
-| `lib/ex_mcp/types.ex` | `latest_protocol_version/0` now delegates; moduledoc still says modern is post-1.0 and must be updated |
+| `lib/ex_mcp/types.ex` | `latest_protocol_version/0` remains a legacy compatibility accessor; the moduledoc now distinguishes shared legacy types from the MCP 2026-07-28 wire surface |
 | `config/config.exs` L8 | Legacy preferred scalar remains `protocol_version: "2025-11-25"`; introduce `protocol_mode` without changing this default prematurely |
 | `lib/ex_mcp/protocol/methods.ex` | Single method table landed in rc.5; modern-only methods are now bounded to the staged `"2026-07-28"` version rather than a phantom `"draft"` |
 | `lib/ex_mcp/transport/http_server.ex` | Canned initialize now uses the shared version-aware result builder |
@@ -414,7 +414,7 @@ capability builder, and replace remaining literal defaults with era-aware policy
 | Handler servers / stdio | `ExMCP.Server.Dispatch.do_dispatch("initialize", …)` L115-117 |
 | DSL servers | `ExMCP.Protocol.RequestProcessor.process_initialize/2` L96-144 |
 | HTTP | `ExMCP.MessageProcessor.MethodHandlers.handle_initialize/5` L21-26 |
-| HTTP transport helper | `ExMCP.Transport.HttpServer` L292-298 (canned, hardcoded version at L295) |
+| HTTP transport helper | `ExMCP.Transport.HTTPServer` L292-298 (canned, hardcoded version at L295) |
 
 Plus `HandlerServer.process_mcp_request` L640, `StdioServer.handle_request` L174,
 `Testing.MockServer` L344/L448. `notifications/initialized` is handled in `RequestProcessor`
@@ -611,7 +611,7 @@ and characterization tests pinning per-version wire output.
       separate, reviewable commits aligned with the RC train.
 - [x] Fix `RequestProcessor` L119's `"2025-06-18"` default (wire-visible for clients that omit
       `protocolVersion`; rc.5 §5.4 added the pinning test, the modern migration changes the behavior).
-- [x] Fix or delete `Transport.HttpServer` L292-298's canned `initialize` response with its
+- [x] Fix or delete `Transport.HTTPServer` L292-298's canned `initialize` response with its
       hardcoded `"2025-03-26"` (rc.5 §5.3 documented it as an example; the migration changes it).
 - [x] Resolve the `-32002` collision: move resource-not-found to `-32602` for modern while
       still *accepting* `-32002` from legacy servers, and move `consent_required` out of the
@@ -1245,8 +1245,10 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 2. The seven-row era compatibility matrix passes on stdio and HTTP, including timeouts and
    downgrade diagnostics.
 3. Modern client and server conformance have zero unexplained failures. A stable harness is
-   preferred; if unavailable, self-conformance plus bidirectional interop with an official SDK
-   implementing `2026-07-28` is required and the harness gap is disclosed in release notes.
+   preferred; while the pinned harness remains prerelease, self-conformance plus bidirectional
+   stdio and HTTP interop with the official TypeScript SDK v2 implementing `2026-07-28` is
+   required, and both pins are disclosed in release notes. **Satisfied locally: the four SDK v2
+   lanes pass with `@modelcontextprotocol/client`, `server`, and `node` pinned to `2.0.0`.**
 4. Disconnect/ambiguous-retry and MRTR tamper, concurrent replay, expiry, failover and rolling
    key/codec-rotation tests pass.
 5. Slow-subscriber, cross-tenant isolation, live authorization revocation, reconnect resync and
@@ -1262,11 +1264,12 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
    manage persisted modern pins. Rollback must not silently downgrade already-pinned clients.
 
 **Current release status (2026-08-05):** the code and local-validation work for gates 1–6 and 8
-is complete. Gate 3 uses a pinned prerelease harness, so release qualification still needs either
-a stable 2026-aware harness or the documented bidirectional official-SDK fallback. Gate 7 requires
-publishing a modern-preferred RC and observing it for at least seven calendar days. Gate 9 requires
-an operator-run mixed-cluster rollback drill. Those are release operations, not remaining library
-implementation, and stable `1.0.0` must not be cut until all three conditions are satisfied.
+is complete. Gate 3 is satisfied by the pinned prerelease conformance harness plus passing,
+bidirectional official TypeScript SDK v2 interop over both stdio and Streamable HTTP. Gate 7
+requires publishing a modern-preferred RC and observing it for at least seven calendar days.
+Gate 9 requires an operator-run mixed-cluster rollback drill. Those are release operations, not
+remaining library implementation, and stable `1.0.0` must not be cut until both conditions are
+satisfied.
 
 Before publishing `rc.6`, assign an owner and evidence link for every gate, define the load-test
 workload and regression budget against rc.5, and pin the qualifying conformance harness and
@@ -1324,8 +1327,11 @@ Things downstream users will notice.
 7b. **Track the harness to stable.** Keep `CONFORMANCE_ALPHA_VERSION` overridable and replace
    the prerelease pin with a stable 2026-aware release as soon as one is available. Until then,
    retain the official-SDK fallback and disclose the pin in release notes.
-8. **Interop** — `test/interop/` vendors the TypeScript SDK; bump it once an SDK release
-   implements 2026-07-28 and run cross-implementation tests both directions.
+8. **Interop** — `test/interop/` keeps the legacy SDK fixtures and separately pins the official
+   `@modelcontextprotocol/client`, `server`, and `node` packages at `2.0.0`. Four modern lanes run
+   both directions over stdio and Streamable HTTP, pin negotiation to `2026-07-28`, and exercise
+   discovery, request context, result envelopes, MRTR, subscriptions, routing headers,
+   POST-owned SSE, and stateless session semantics. CI runs each lane in an isolated BEAM VM.
 9. **Public API compatibility** — compile and run representative rc.5 client/server modules,
    including `ExMCP.Server.Tools`, old handler callback arities and legacy task helpers.
 10. **Chaos/load** — disconnect HTTP responses before/after dispatch, restart stdio servers,
@@ -1343,8 +1349,8 @@ Things downstream users will notice.
 | R3 | **`requestState` key management.** MRTR security depends on an AEAD key shared by every node that can resume a request. | Version the envelope, support key IDs/rotation, bind principal + request digest + expiry, and fail clearly when a configured MRTR flow cannot decrypt state. |
 | R4 | **HTTP plug complexity.** `do_dispatch/4` already has 14 clauses (L153-262); dual-era adds more. | Consider splitting modern vs legacy into separate plug modules behind a router rather than growing `do_dispatch/4`. |
 | R5 | **Stateless servers break existing user handlers** that relied on per-connection state. | The spec's answer is explicit server-minted handles as tool arguments (§"Stateful Tools"). Needs a documented migration recipe with an example. |
-| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.10` for the gating 2026-07-28 suites; the modern harness is still prerelease. | Move to a stable modern harness when available; otherwise require pinned bidirectional official-SDK interop and disclose the prerelease harness in release notes. |
-| R7 | **Spec churn.** `2026-07-28` is dated in the near past relative to this plan; errata are likely. | `mix mcp.sync_spec` has sha256/ETag change detection — run it in CI and alert on drift. |
+| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.10` for the gating 2026-07-28 suites; the modern harness is still prerelease. | Move to a stable modern harness when available. Until then, the four bidirectional stdio/HTTP lanes pinned to official TypeScript SDK v2 `2.0.0` provide the required fallback; disclose both pins in release notes. |
+| R7 | **Spec churn.** `2026-07-28` is dated in the near past relative to this plan; errata are likely. | <code>mix mcp.sync_spec</code> has sha256/ETag change detection — run it in CI and alert on drift. |
 | R8 | **Scope.** ACP (17.6k LOC) is untouched but shares `_meta` helpers. | Verify no shared-helper regressions when `RequestParams` changes. |
 | R9 | **Ambiguous HTTP delivery can duplicate side effects.** A broken response does not reveal whether `tools/call` ran. | The conforming default reissues and is at-least-once. Offer `:safe_only` for callers that prefer `:outcome_unknown`; document application idempotency keys. |
 | R10 | **A local ETS subscription registry is insufficient in a cluster.** Producers and stream owners may be on different nodes. | Adapter boundary, PubSub fan-out, owner monitoring, bounded queues and multi-node tests are release-gating for clustered HTTP support. |

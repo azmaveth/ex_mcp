@@ -99,7 +99,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
     test "handler can build standard capabilities" do
       capabilities = Capabilities.build_capabilities(FullFeaturedHandler)
 
-      # Default version is now 2025-11-25 (latest), which has listChanged for tools
+      # Default legacy revision is 2025-11-25, which has listChanged for tools.
       assert capabilities["tools"] == %{"listChanged" => true}
       # 2025-11-25 experimental features
       assert capabilities["experimental"]["elicitation"] == true

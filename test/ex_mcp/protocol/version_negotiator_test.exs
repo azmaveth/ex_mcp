@@ -76,7 +76,7 @@ defmodule ExMCP.Protocol.VersionNegotiatorTest do
   end
 
   describe "latest_version/0" do
-    test "returns the latest version" do
+    test "returns the newest legacy revision" do
       assert VersionNegotiator.latest_version() == "2025-11-25"
     end
   end

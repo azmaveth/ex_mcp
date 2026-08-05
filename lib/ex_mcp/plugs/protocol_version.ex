@@ -8,13 +8,12 @@ defmodule ExMCP.Plugs.ProtocolVersion do
   ## Behavior
 
   - If no header is present, the configured default
-    (`ExMCP.Internal.VersionRegistry.preferred_version/0`) is assumed
+    (also returned by `ExMCP.protocol_version/0`) is assumed
   - If an unsupported version is provided, returns 400 Bad Request
   - Adds the validated version to conn.assigns[:mcp_version]
 
-  The supported list and the default both come from
-  `ExMCP.Internal.VersionRegistry`, which is the single source of truth for
-  protocol versions across the client, the server transports, and this plug.
+  The supported list and default come from ExMCP's canonical internal version
+  registry, so clients, server transports, and this plug cannot drift.
 
   ## Usage
 

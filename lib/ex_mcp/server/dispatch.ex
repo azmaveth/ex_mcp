@@ -14,8 +14,8 @@ defmodule ExMCP.Server.Dispatch do
   This module owns the table. Transports keep their own framing (stdout lines
   vs. transport `send_message/2`), batching, and cancellation bookkeeping, and
   delegate callback invocation plus result shaping here. Shaping itself lives
-  in `ExMCP.Server.ResultNormalizer`, which the HTTP path
-  (`ExMCP.MessageProcessor.MethodHandlers`) shares, so every transport agrees
+  in `ExMCP.Server.ResultNormalizer`, which the HTTP message processor also
+  shares, so every transport agrees
   on tool-result shape and on which error detail is safe to return.
 
   ## Return value

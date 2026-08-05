@@ -350,7 +350,7 @@ defmodule ExMCP.Compliance.StreamableHTTPComplianceTest do
         HTTP.connect(
           url: "http://127.0.0.1:9999",
           use_sse: false
-          # No explicit version — uses default (latest)
+          # No explicit version — uses the default legacy revision.
         )
 
       headers = build_request_headers_for(state)

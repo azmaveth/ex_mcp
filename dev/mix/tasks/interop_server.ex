@@ -5,15 +5,20 @@ defmodule Mix.Tasks.InteropServer do
   ## Usage
 
       mix interop_server
+      mix interop_server modern
 
-  Starts a minimal MCP server on stdio for cross-language interop tests.
+  Starts a minimal MCP server on stdio for cross-language interop tests. The
+  optional `modern` argument pins the server to MCP 2026-07-28 and enables the
+  MRTR and subscription fixtures used by the TypeScript SDK v2 tests.
   """
 
   use Mix.Task
 
   @shortdoc "Runs a stdio MCP server for interop testing"
 
-  def run(_args) do
+  def run(args) do
+    modern? = "modern" in args
+
     Mix.Task.run("app.start")
 
     # Configure for STDIO mode
@@ -24,6 +29,8 @@ defmodule Mix.Tasks.InteropServer do
     defmodule InteropHandler do
       use ExMCP.Server.Handler
       use ExMCP.Server.DSL, name: "elixir-interop-server", version: "1.0.0"
+
+      alias ExMCP.Server.Context
 
       def __server_info__, do: %{name: "elixir-interop-server", version: "1.0.0"}
 
@@ -41,6 +48,54 @@ defmodule Mix.Tasks.InteropServer do
 
         run fn %{a: a, b: b}, state ->
           {:ok, to_string(a + b), state}
+        end
+      end
+
+      tool "inspect_context", "Returns the validated request context" do
+        run fn _arguments, state ->
+          context = Context.current()
+
+          result = %{
+            "protocolVersion" => context.protocol_version,
+            "clientInfo" => context.client_info,
+            "clientCapabilities" => context.client_capabilities
+          }
+
+          {:ok, Jason.encode!(result), state}
+        end
+      end
+
+      tool "onboard", "Collects a display name through an MCP 2026 MRTR flow" do
+        run fn _arguments, state ->
+          case Context.input_responses() do
+            nil ->
+              requests = %{
+                "profile" => %{
+                  "method" => "elicitation/create",
+                  "params" => %{
+                    "message" => "Choose an ExMCP interop display name",
+                    "requestedSchema" => %{
+                      "type" => "object",
+                      "properties" => %{"name" => %{"type" => "string"}},
+                      "required" => ["name"]
+                    }
+                  }
+                }
+              }
+
+              {:ok,
+               ExMCP.Server.DSL.Result.input_required(requests, %{"server" => "ex_mcp"}), state}
+
+            %{"profile" => %{"content" => %{"name" => name}}} ->
+              {:ok, "#{name}:#{Context.request_state()["server"]}", state}
+          end
+        end
+      end
+
+      tool "publish_tools_changed", "Publishes a tools list-changed notification" do
+        run fn _arguments, state ->
+          ExMCP.Server.notify_tools_changed(self())
+          {:ok, "published", state}
         end
       end
 
@@ -74,10 +129,31 @@ defmodule Mix.Tasks.InteropServer do
     """)
 
     # Start the server using StdioServer with the handler module
-    {:ok, _server} =
-      ExMCP.Server.StdioServer.start_link(module: InteropHandler)
+    server_opts =
+      [module: InteropHandler]
+      |> maybe_enable_modern(modern?)
 
-    # Keep the process alive
-    Process.sleep(:infinity)
+    {:ok, server} = ExMCP.Server.StdioServer.start_link(server_opts)
+
+    # Exit with the transport instead of leaving a nested BEAM VM behind after
+    # the SDK closes its end of the stdio pipe.
+    server_ref = Process.monitor(server)
+
+    receive do
+      {:DOWN, ^server_ref, :process, ^server, _reason} -> :ok
+    end
+  end
+
+  defp maybe_enable_modern(opts, false), do: opts
+
+  defp maybe_enable_modern(opts, true) do
+    Keyword.merge(opts,
+      protocol_mode: :modern_only,
+      mrtr: true,
+      request_state: [
+        active_key_id: "interop",
+        keys: %{"interop" => :binary.copy(<<77>>, 32)}
+      ]
+    )
   end
 end

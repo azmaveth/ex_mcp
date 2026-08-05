@@ -2,9 +2,9 @@ defmodule ExMCP.Types do
   @moduledoc """
   Type definitions for the Model Context Protocol.
 
-  The latest negotiated protocol version is **2025-11-25**. This module holds
-  the shared / current type surface used across ExMCP. Version-specific
-  modules document differences for older protocol revisions.
+  MCP **2026-07-28** is the latest stable protocol revision. This module holds
+  the shared type surface used across both protocol eras. Version-specific
+  modules document the wire differences for each revision.
 
   ## Version-specific modules
 
@@ -12,17 +12,22 @@ defmodule ExMCP.Types do
   - `ExMCP.Types.V20250326` — subscriptions / batch era
   - `ExMCP.Types.V20250618` — structured tool output; batching removed
   - `ExMCP.Types.V20251125` — tasks, icons, URL elicitation, sampling tool calls
-  - `ExMCP.Types.V20260728` — opt-in stateless era, MRTR, discovery, caching
+  - `ExMCP.Types.V20260728` — latest stable stateless era, MRTR, discovery, caching
 
-  Prefer `ExMCP.Types.latest_protocol_version/0` and
-  `ExMCP.Internal.VersionRegistry` for negotiation rather than hard-coding
-  version strings in application code.
+  Prefer the documented `:protocol_mode` client/server option for negotiation
+  rather than hard-coding version strings in application code.
 
-  > #### Forward looking {: .info}
+  Unqualified initialize results, roots, sampling, session, and legacy task
+  types remain here for 1.x source compatibility. For fields that changed on
+  the wire, use `ExMCP.Types.V20260728` as the modern reference instead of
+  assuming the shared legacy shape applies to MCP 2026-07-28.
+
+  > #### Protocol-mode rollout {: .info}
   >
-  > Upstream released **MCP 2026-07-28** with breaking changes. ExMCP knows
-  > about that revision. Runtime use remains behind explicit protocol modes
-  > until the final 1.0 release-candidate default is selected.
+  > Runtime use of **MCP 2026-07-28** remains behind explicit protocol modes
+  > until the final 1.0 release-candidate default is selected. The zero-arity
+  > legacy compatibility accessor continues to return 2025-11-25 during that
+  > soak.
   """
 
   alias ExMCP.Protocol.ErrorCodes
@@ -36,6 +41,7 @@ defmodule ExMCP.Types do
   @type request_id :: String.t() | integer()
   @type progress_token :: String.t() | integer()
   @type cursor :: String.t()
+  @type protocol_mode :: :legacy_only | :modern_only | :prefer_legacy | :prefer_modern
 
   # Role types
   @type role :: :user | :assistant
@@ -586,7 +592,7 @@ defmodule ExMCP.Types do
           | jsonrpc_error_response()
 
   # Accessor functions for constants
-  @doc "Returns the latest protocol version from the canonical version registry."
+  @doc "Returns the newest legacy protocol revision used by compatibility helpers."
   @spec latest_protocol_version() :: String.t()
   def latest_protocol_version, do: ExMCP.Internal.VersionRegistry.latest_version()
   def jsonrpc_version, do: @jsonrpc_version

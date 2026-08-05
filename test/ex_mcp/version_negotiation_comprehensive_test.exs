@@ -375,7 +375,7 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
 
       Process.sleep(100)
 
-      # Server should offer latest stable version
+      # Server should offer the newest legacy revision from its configured set.
       {:ok, version} = Client.negotiated_version(client)
       assert version == "2025-03-26"
 
@@ -660,7 +660,7 @@ defmodule ExMCP.VersionNegotiationComprehensiveTest do
       assert result.protocolVersion == "2025-03-26"
     end
 
-    test "server SHOULD propose latest version for unknown client version" do
+    test "server SHOULD propose its newest legacy revision for an unknown client version" do
       handler = MultiVersionHandler
 
       {:ok, state} =

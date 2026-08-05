@@ -2,11 +2,14 @@ defmodule ExMCP.Client.Handler do
   @moduledoc """
   This module implements the standard MCP specification.
 
-  Behaviour for handling server-to-client requests in MCP.
+  Behaviour for handling server-originated interactions and stream events.
 
-  The MCP protocol supports bi-directional communication where servers can
-  make requests to clients. This behaviour defines the callbacks that a
-  client handler must implement to respond to these requests.
+  Legacy MCP revisions support independent server-to-client JSON-RPC requests.
+  MCP 2026-07-28 replaces that wire pattern with multi-round-trip result
+  envelopes (MRTR) and request-owned stream notifications. ExMCP reuses the
+  specific input callbacks when satisfying compatible MRTR input requests,
+  while progress and log callbacks receive modern POST-stream events. The
+  generic `handle_server_request/3` callback belongs to the legacy wire path.
 
   > #### Protocol-deprecated callbacks {: .warning}
   >
@@ -273,11 +276,11 @@ defmodule ExMCP.Client.Handler do
   @callback terminate(reason :: term(), state) :: :ok
 
   @doc """
-  Generic handler for any server-initiated request not handled by a specific callback.
+  Handles a legacy server-to-client request without a dedicated callback.
 
-  This is called when the server sends a request (e.g., a future MCP method) that
-  doesn't have a dedicated handler callback. Implement this to handle custom or
-  new server methods without waiting for library updates.
+  This is called when an initialize-based peer sends a request that does not
+  have a dedicated handler callback. Modern MCP 2026-07-28 uses MRTR result
+  envelopes instead of arbitrary independent server requests.
 
   ## Parameters
 

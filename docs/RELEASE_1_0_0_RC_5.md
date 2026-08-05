@@ -1,8 +1,13 @@
 # ExMCP 1.0.0-rc.5
 
-rc.5 is the final consolidation release candidate before ExMCP 1.0.0. It
-removes duplicated protocol paths, hardens the client and HTTP server
-lifecycle, and fixes several live ACP adapter correctness bugs while retaining
+> **Historical release note:** This document describes rc.5 as it shipped.
+> MCP 2026-07-28 was released afterward, so rc.5 became the final
+> pre-modern consolidation RC rather than the final RC before stable 1.0.
+> Additional RCs now qualify the dual-era implementation described in the
+> [migration plan](MCP_2026_07_28_MIGRATION_PLAN.md).
+
+rc.5 removed duplicated protocol paths, hardened the client and HTTP server
+lifecycle, and fixed several live ACP adapter correctness bugs while retaining
 support for MCP `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`.
 
 ## Highlights

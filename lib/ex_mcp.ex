@@ -41,9 +41,13 @@ defmodule ExMCP do
   > **Stable for 1.0:** Client, Server Handler/DSL, documented transports, HttpPlug,
   > Types, Content builders, Authorization entry points, ACP client/agent/adapters.
   >
-  > **May change in minors:** draft MCP features, experimental content transformers,
-  > and anything marked deprecated. Default negotiated protocol version is the latest
-  > registered in the version registry (currently 2025-11-25).
+  > **May change in minors:** experimental content transformers and anything marked
+  > deprecated. MCP 2026-07-28 is the latest stable revision and is available through
+  > `:prefer_modern` and `:modern_only`. This source tree contains unreleased
+  > post-rc.5 migration work even though its version remains rc.5 until the next
+  > release candidate is cut; the published rc.5 package is legacy-only. The
+  > application default and zero-arity compatibility helpers currently remain on
+  > the newest legacy revision, 2025-11-25.
 
   ## Quick Start
 
@@ -52,20 +56,23 @@ defmodule ExMCP do
       # Connect to stdio server
       {:ok, client} = ExMCP.start_client(
         transport: :stdio,
-        command: ["python", "mcp-server.py"]
+        command: ["python", "mcp-server.py"],
+        protocol_mode: :prefer_modern
       )
 
       # Connect with HTTP
       {:ok, client} = ExMCP.start_client(
         transport: :http,
-        url: "https://api.example.com"
+        url: "https://api.example.com",
+        protocol_mode: :prefer_modern
       )
 
   ### Start a Server
 
       {:ok, server} = ExMCP.start_server(
         handler: MyApp.MCPHandler,
-        transport: :stdio
+        transport: :stdio,
+        protocol_mode: :prefer_modern
       )
 
   ### BEAM-Local Communication
@@ -74,20 +81,29 @@ defmodule ExMCP do
 
       {:ok, client} = ExMCP.start_client(
         transport: :beam,
-        server: server
+        server: server,
+        protocol_mode: :prefer_modern
       )
 
       {:ok, tools} = ExMCP.Client.list_tools(client)
 
   ## Protocol Versions
 
-  ExMCP supports multiple MCP protocol versions:
-  - **2024-11-05** - Base MCP features
-  - **2025-03-26** - Previous stable (subscriptions, roots, logging, batch support)
+  ExMCP supports two wire-incompatible MCP eras:
+  - **2026-07-28** - Latest stable revision; stateless discovery, per-request
+    context, result envelopes, MRTR, and `subscriptions/listen`
+  - **2025-11-25** - Newest legacy revision; tasks, icons, and URL elicitation
   - **2025-06-18** - Structured output, OAuth 2.1, elicitation, no batch
-  - **2025-11-25** - Current latest supported version (tasks, icons, URL elicitation)
+  - **2025-03-26** - Subscriptions, roots, logging, and batch support
+  - **2024-11-05** - Initial stable MCP revision
 
-  See the README.md for a complete feature comparison chart.
+  Select the modern revision with `protocol_mode: :prefer_modern` or
+  `protocol_mode: :modern_only`. The unreleased migration build currently
+  defaults to `:legacy_only`; a later published RC must default to
+  `:prefer_modern` for the pre-1.0 soak.
+
+  See the Configuration and Migration guides for the era comparison and
+  rollout policy.
 
   ## Features
 
@@ -113,7 +129,12 @@ defmodule ExMCP do
 
   ### Basic Client Usage
 
-      {:ok, client} = ExMCP.start_client(transport: :stdio, command: ["mcp-server"])
+      {:ok, client} =
+        ExMCP.start_client(
+          transport: :stdio,
+          command: ["mcp-server"],
+          protocol_mode: :prefer_modern
+        )
 
       # List and call tools
       {:ok, %{tools: tools}} = ExMCP.Client.list_tools(client)
@@ -140,7 +161,8 @@ defmodule ExMCP do
   >   end
   > end
   >
-  > {:ok, server} = MyServer.start_link(transport: :stdio)
+  > {:ok, server} =
+  >   MyServer.start_link(transport: :stdio, protocol_mode: :prefer_modern)
   > ```
 
       defmodule MyHandler do
@@ -167,7 +189,12 @@ defmodule ExMCP do
         end
       end
 
-      {:ok, server} = ExMCP.start_server(handler: MyHandler, transport: :stdio)
+      {:ok, server} =
+        ExMCP.start_server(
+          handler: MyHandler,
+          transport: :stdio,
+          protocol_mode: :prefer_modern
+        )
 
   ### BEAM-Local Service
 
@@ -182,8 +209,15 @@ defmodule ExMCP do
         end
       end
 
-      {:ok, server} = MyService.start_link(transport: :beam)
-      {:ok, client} = ExMCP.start_client(transport: :beam, server: server)
+      {:ok, server} =
+        MyService.start_link(transport: :beam, protocol_mode: :prefer_modern)
+
+      {:ok, client} =
+        ExMCP.start_client(
+          transport: :beam,
+          server: server,
+          protocol_mode: :prefer_modern
+        )
       {:ok, result} = ExMCP.Client.call_tool(client, "ping", %{})
   """
 
@@ -245,9 +279,11 @@ defmodule ExMCP do
   end
 
   @doc """
-  Returns the version of the MCP protocol this library implements by default.
+  Returns the legacy protocol revision used by zero-arity compatibility paths.
 
-  ExMCP supports multiple protocol versions. This returns the default/latest stable version.
+  In the unreleased migration build this returns `"2025-11-25"`, the newest
+  initialize-based legacy revision. MCP `2026-07-28` is the latest stable
+  revision but is selected through `:protocol_mode`, not this scalar helper.
   """
   @spec protocol_version() :: String.t()
   def protocol_version do
@@ -263,7 +299,11 @@ defmodule ExMCP do
   end
 
   @doc """
-  Returns information about supported protocol versions.
+  Returns the initialize-compatible legacy protocol revisions.
+
+  Modern `2026-07-28` support is enabled through `:prefer_modern` or
+  `:modern_only` and is intentionally not added to this legacy compatibility
+  list during the RC soak.
   """
   @spec supported_versions() :: [String.t()]
   def supported_versions do

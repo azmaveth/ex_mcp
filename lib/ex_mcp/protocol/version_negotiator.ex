@@ -1,17 +1,19 @@
 defmodule ExMCP.Protocol.VersionNegotiator do
   @moduledoc """
-  Handles protocol version negotiation during the MCP initialization phase.
+  Negotiates legacy MCP revisions during the `initialize` handshake.
 
-  This module is responsible for negotiating the protocol version between
-  client and server during the initialization handshake, as specified in
-  the MCP 2025-06-18 specification.
+  This compatibility API covers the initialize-based revisions from
+  2024-11-05 through 2025-11-25. MCP 2026-07-28 is wire-incompatible: clients
+  select it with `:protocol_mode` and establish it through `server/discover`,
+  not through this module. Consequently, `latest_version/0` means the newest
+  legacy revision rather than the latest upstream MCP revision.
   """
 
   require Logger
   alias ExMCP.Internal.VersionRegistry
 
   @doc """
-  Negotiate the protocol version based on client capabilities.
+  Negotiates a legacy protocol revision from the client's offered versions.
 
   Takes the client's supported versions and returns the best matching version
   that both client and server support.
@@ -27,8 +29,8 @@ defmodule ExMCP.Protocol.VersionNegotiator do
 
   ## Examples
 
-      iex> ExMCP.Protocol.VersionNegotiator.negotiate(["2025-06-18", "2025-03-26"])
-      {:ok, "2025-06-18"}
+      iex> ExMCP.Protocol.VersionNegotiator.negotiate(["2025-11-25", "2025-06-18"])
+      {:ok, "2025-11-25"}
 
       iex> ExMCP.Protocol.VersionNegotiator.negotiate(["2024-01-01"])
       {:error, :no_compatible_version}
@@ -58,19 +60,25 @@ defmodule ExMCP.Protocol.VersionNegotiator do
   def negotiate(_), do: {:error, :no_compatible_version}
 
   @doc """
-  Get the list of supported protocol versions.
+  Returns the initialize-compatible legacy revisions.
+
+  Use `ExMCP.Types.V20260728` and a modern-enabled `:protocol_mode` for MCP
+  2026-07-28 rather than expecting it in this list.
   """
   @spec supported_versions() :: [String.t()]
   def supported_versions, do: VersionRegistry.supported_versions()
 
   @doc """
-  Get the latest supported protocol version.
+  Get the newest legacy revision supported by initialize negotiation.
+
+  Modern MCP 2026-07-28 uses `server/discover` and is selected with a protocol
+  mode instead of this legacy negotiator.
   """
   @spec latest_version() :: String.t()
   def latest_version, do: VersionRegistry.latest_version()
 
   @doc """
-  Check if a specific version is supported.
+  Checks whether a revision is supported by legacy initialize negotiation.
   """
   @spec supported?(String.t()) :: boolean()
   def supported?(version) when is_binary(version) do
@@ -82,9 +90,9 @@ defmodule ExMCP.Protocol.VersionNegotiator do
   @doc """
   Build a legacy initialize-result wrapper using the canonical capability registry.
 
-  This function is retained as a 1.x compatibility shim. New code should use
-  `ExMCP.Protocol.Initialize.build_initialize_result/2`; code that only needs
-  the capability map should use `ExMCP.Server.Capabilities.build_capabilities/2`.
+  This function is retained as a 1.x compatibility shim. Initialization is
+  handled by ExMCP's server dispatchers; code that only needs the capability
+  map should use `ExMCP.Server.Capabilities.build_capabilities/2`.
   """
   @deprecated "Use ExMCP.Protocol.Initialize or ExMCP.Server.Capabilities"
   @spec build_capabilities(String.t()) :: map()

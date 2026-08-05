@@ -9,7 +9,7 @@ defmodule ExMCP.Security.Consent do
 
   Consent handlers may express a grant's lifetime in any of the forms listed in
   `t:ExMCP.ConsentHandler.expiry/0`. All of them are normalized here into the
-  monotonic seconds value `ExMCP.Internal.ConsentCache` stores.
+  monotonic-seconds value stored by ExMCP's internal consent cache.
 
   Every decision path fails closed: an expiry that cannot be interpreted, is
   already in the past, or is implausibly far in the future (the classic

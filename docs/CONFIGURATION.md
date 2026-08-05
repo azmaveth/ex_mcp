@@ -4,6 +4,8 @@ This guide covers the supported configuration surfaces for ExMCP 1.0.
 
 ## Dependency
 
+The published `1.0.0-rc.5` package is the legacy-only baseline:
+
 ```elixir
 def deps do
   [
@@ -12,12 +14,22 @@ def deps do
 end
 ```
 
+The MCP 2026-07-28 options in this guide describe the current unreleased
+source tree and the next RC. Until that RC is published, test them from a
+qualified repository commit:
+
+```elixir
+{:ex_mcp, github: "azmaveth/ex_mcp", ref: "<qualified-commit-sha>"}
+```
+
 ## Protocol Eras and Modes
 
 ExMCP 1.0 implements two wire-incompatible MCP eras:
 
-- **Legacy:** `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`.
-- **Modern:** `2026-07-28`, with stateless discovery and per-request context.
+- **Legacy:** `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`
+  (the newest legacy revision).
+- **Modern (latest stable):** `2026-07-28`, with stateless discovery and
+  per-request context.
 
 `protocol_mode` is the compatibility policy. Set it in application
 configuration for a deployment default:
@@ -28,10 +40,12 @@ config :ex_mcp,
   protocol_version: "2025-11-25"
 ```
 
-The current RC defaults to `:legacy_only`; a later RC will soak
-`:prefer_modern` before 1.0. Stable 1.0 will copy the final RC behavior without
-another default change. Production deployments should set the mode explicitly
-while the RC rollout is in progress.
+The unreleased migration source still carries the `1.0.0-rc.5` version and
+`:legacy_only` default while the next RC is prepared; the published rc.5
+artifact does not contain modern support. A later RC will default to
+`:prefer_modern` for the required pre-1.0 soak. Stable 1.0 will copy that final
+RC behavior without another default change. Production deployments should set
+the mode explicitly while the RC rollout is in progress.
 
 | Mode | Enabled versions, in preference order | Client establishment | Server acceptance |
 |---|---|---|---|
@@ -89,7 +103,8 @@ does not trigger `initialize`. Similarly, `:prefer_legacy` probes modern only
 after a protocol-level legacy failure while the transport remains usable.
 Strict modes never fall back.
 
-`protocol_version` is a revision preference, not an era switch. The
+`protocol_version` is a legacy revision preference, not an era switch or a
+statement of the latest upstream MCP revision. The
 application-level value and the compatibility helper
 `ExMCP.protocol_version/0` retain their rc.5 legacy semantics during the soak;
 use `protocol_mode` to enable modern negotiation. A per-client modern

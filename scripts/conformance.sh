@@ -3,13 +3,14 @@
 # Uses the official modelcontextprotocol/conformance framework.
 #
 # Usage:
-#   ./scripts/conformance.sh                    # Run both client and server (latest stable)
+#   ./scripts/conformance.sh                    # Run both client and server with the published legacy/core harness
 #   ./scripts/conformance.sh server             # Server tests only
 #   ./scripts/conformance.sh client             # Client tests only
 #   ./scripts/conformance.sh server <scenario>  # Single server scenario
 #   ./scripts/conformance.sh client <scenario>  # Single client scenario
 #   ./scripts/conformance.sh all-versions       # Test ALL protocol versions
 #   ./scripts/conformance.sh modern             # Gating MCP 2026-07-28 run
+#   ./scripts/conformance.sh draft-alpha        # Non-gating future-draft exploration
 #
 # Environment variables:
 #   CONFORMANCE_SPEC_VERSION  — Test a specific version (e.g., 2025-06-18)

@@ -97,6 +97,10 @@ jobs:
       # Erlang sources (notably jose) that ExMCP cannot fix locally.
       run: mix compile --warnings-as-errors --no-deps-check
 
+    - name: Generate documentation without warnings
+      if: matrix.quality
+      run: MIX_ENV=dev mix docs
+
     - name: Run unit tests
       run: mix test --exclude compliance
 
@@ -136,11 +140,13 @@ jobs:
     - name: Compile
       run: mix compile
 
-    # One job, not a per-version matrix: the compliance suite is generated
-    # across every supported protocol version in a single run
+    # One job, not a per-version matrix: the legacy compliance suite is generated
+    # across every initialize-compatible revision in a single run
     # (test/ex_mcp/compliance/version_generator.ex plus the version-specific
     # handlers in test/ex_mcp/compliance/handlers/), and 2025-11-25 behaviour is
     # covered by the dedicated files (icons_test.exs, version_*_test.exs).
+    # Modern 2026-07-28 coverage lives in the era-specific unit/integration
+    # suites and scripts/conformance.sh modern.
     # Running the same suite three times under different job names only
     # duplicated work.
     - name: Run MCP compliance tests
@@ -214,7 +220,7 @@ jobs:
       uses: actions/cache@v6
       with:
         path: test/interop/node_modules
-        key: ${{ runner.os }}-interop-node-${{ hashFiles('test/interop/package.json') }}
+        key: ${{ runner.os }}-interop-node-${{ hashFiles('test/interop/package.json', 'test/interop/package-lock.json') }}
 
     - name: Install dependencies
       run: mix deps.get
@@ -223,15 +229,26 @@ jobs:
       run: mix compile
 
     # The interop tests install their own npm deps on first run and skip
-    # themselves if `node` is unavailable.
-    # Run the nested-BEAM direction first in its own VM. Keeping the two
-    # directions isolated prevents stdio subprocess state from one SDK from
-    # affecting startup of the other.
-    - name: Run TypeScript client to ExMCP server tests
+    # themselves if `node` is unavailable. Each direction and protocol era
+    # runs in its own VM so subprocess and transport state cannot leak between
+    # the legacy SDK and the 2026-07-28 SDK.
+    - name: Run legacy TypeScript client to ExMCP server tests
       run: mix test --only interop_ts_client
 
-    - name: Run ExMCP client to TypeScript server tests
+    - name: Run legacy ExMCP client to TypeScript server tests
       run: mix test --only interop_ex_mcp_client
+
+    - name: Run modern TypeScript stdio client to ExMCP server tests
+      run: mix test --only interop_modern_ts_client
+
+    - name: Run modern ExMCP stdio client to TypeScript server tests
+      run: mix test --only interop_modern_ex_mcp_client
+
+    - name: Run modern TypeScript HTTP client to ExMCP server tests
+      run: mix test --only interop_modern_ts_http_client
+
+    - name: Run modern ExMCP HTTP client to TypeScript server tests
+      run: mix test --only interop_modern_ex_mcp_http_client
 
   coverage:
     name: Coverage (full suite)

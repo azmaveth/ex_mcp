@@ -216,9 +216,10 @@ External conformance scripts live in `scripts/` and should be run for each
 supported MCP spec version before release:
 
 ```bash
-./scripts/conformance.sh              # latest stable suite
+./scripts/conformance.sh              # published legacy/core harness
 ./scripts/conformance.sh all-versions # all negotiated legacy MCP versions
-./scripts/conformance.sh draft-alpha  # 2026-07-28 harness during the RC soak
+./scripts/conformance.sh modern       # gating 2026-07-28 complete suites
+./scripts/conformance.sh draft-alpha  # non-gating future-draft exploration
 mix mcp.sync_spec --version 2026-07-28 --force  # refresh local docs/mcp-specs
 ```
 
@@ -227,7 +228,7 @@ mix mcp.sync_spec --version 2026-07-28 --force  # refresh local docs/mcp-specs
 | Protocol era | Revisions | ExMCP 1.0 RC support |
 |---|---|---|
 | MCP legacy | `2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25` | Enabled by `:legacy_only` and both preference modes |
-| MCP modern | `2026-07-28` | Implemented; enabled by `:modern_only` and both preference modes |
+| MCP modern | `2026-07-28` (latest stable) | Implemented; enabled by `:modern_only` and both preference modes |
 | ACP | major `1` | `protocolVersion: 1` |
 
 ## Design Rules

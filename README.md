@@ -22,8 +22,9 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 
 ## Key Features
 
-- **Full MCP compliance** -- protocol versions 2024-11-05, 2025-03-26, 2025-06-18, and **2025-11-25** (latest stable)
-- **100% MCP conformance** -- 226/226 client checks, 39/39 server checks (`@modelcontextprotocol/conformance@0.1.16`, core suite, 2026-07-11)
+- **Full MCP support** -- **[2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28)** (latest stable) plus the legacy 2024-11-05, 2025-03-26, 2025-06-18, and 2025-11-25 revisions
+- **Modern MCP conformance** -- 377/377 client checks and 112/112 server checks (`@modelcontextprotocol/conformance@0.2.0-alpha.10`, complete 2026-07-28 suites, 2026-08-05)
+- **Legacy MCP conformance** -- 226/226 client checks and 39/39 server checks (`@modelcontextprotocol/conformance@0.1.16`, core suite)
 - **ACP v1** -- Agent Client Protocol major version `1` (`protocolVersion: 1`)
 - **Multiple transports** -- Streamable HTTP, stdio, and BEAM-local MCP (~15μs local calls)
 - **Phoenix Plug** -- native Phoenix integration with `ExMCP.HttpPlug`
@@ -31,11 +32,28 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD, JWT client auth (`private_key_jwt`), enterprise SSO (ID-JAG), token revocation (RFC 7009), pluggable auth providers
 - **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, 88 telemetry events
 - **Agent Client Protocol (ACP)** -- control coding agents and build native Elixir ACP agents
-- **3100+ tests** -- comprehensive suite including official MCP conformance, integration, and performance
+- **3500+ tests** -- comprehensive suite including official MCP conformance, integration, and performance
+
+MCP 2026-07-28 is wire-incompatible with earlier revisions. The current source
+tree supports it through `:prefer_modern` and `:modern_only`, while preserving
+every legacy revision through the 1.x line. The application default remains
+`:legacy_only` while maintainers prepare a published modern-preferred RC; set
+`protocol_mode: :prefer_modern` explicitly when testing the unreleased
+dual-era implementation. `ExMCP.protocol_version/0` intentionally returns the
+newest legacy revision, `2025-11-25`, for initialize-based compatibility—it is
+not the latest upstream MCP revision. See
+[Configuration](docs/CONFIGURATION.md#protocol-eras-and-modes) and the
+[1.0 migration guide](docs/getting-started/MIGRATION.md#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release).
+
+> **Release-state note:** The published `1.0.0-rc.5` package is legacy-only and
+> does not contain the modern modes described here. This repository now
+> contains the post-rc.5 migration work, but `mix.exs` intentionally retains
+> the rc.5 version until the next RC is cut. Do not use that version field to
+> infer the contents of the published rc.5 artifact.
 
 ## Installation
 
-Add `ex_mcp` to your dependencies in `mix.exs`:
+For the latest published legacy-only release:
 
 ```elixir
 def deps do
@@ -43,6 +61,14 @@ def deps do
     {:ex_mcp, "~> 1.0.0-rc.5"}
   ]
 end
+```
+
+To evaluate the unreleased dual-era implementation before the next RC is
+published, pin the repository revision you have qualified rather than using a
+floating dependency in production:
+
+```elixir
+{:ex_mcp, github: "azmaveth/ex_mcp", ref: "<qualified-commit-sha>"}
 ```
 
 ### API stability (1.0)
@@ -70,6 +96,7 @@ defmodule MyAppWeb.Router do
   scope "/api/mcp" do
     forward "/", ExMCP.HttpPlug,
       handler: MyApp.MCPHandler,
+      protocol_mode: :prefer_modern,
       server_info: %{name: "my-phoenix-app", version: "1.0.0"},
       handler_call_timeout: 10_000,
       cors_enabled: true
@@ -167,7 +194,8 @@ See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/azmavet
 # Connect to a stdio-based server
 {:ok, client} = ExMCP.Client.start_link(
   transport: :stdio,
-  command: ["node", "my-mcp-server.js"]
+  command: ["node", "my-mcp-server.js"],
+  protocol_mode: :prefer_modern
 )
 
 # List available tools
@@ -198,12 +226,17 @@ defmodule MyToolService do
   end
 end
 
-{:ok, server} = MyToolService.start_link(transport: :beam)
+{:ok, server} =
+  MyToolService.start_link(
+    transport: :beam,
+    protocol_mode: :prefer_modern
+  )
 
 {:ok, client} =
   ExMCP.Client.start_link(
     transport: :beam,
-    server: server
+    server: server,
+    protocol_mode: :prefer_modern
   )
 
 {:ok, tools} = ExMCP.Client.list_tools(client)
@@ -275,6 +308,9 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 - **[Development Guide](docs/DEVELOPMENT.md)** -- Setup, testing, and contributing
 - **[API Documentation](https://hexdocs.pm/ex_mcp)** -- Complete API reference
 - **[Architecture](docs/ARCHITECTURE.md)** -- Internal design decisions
+- **[MCP 2026-07-28 Migration Plan](docs/MCP_2026_07_28_MIGRATION_PLAN.md)** -- Implementation record and remaining release gates
+- **[MCP Coverage Matrix](docs/MCP_COVERAGE_MATRIX.md)** -- Local and official conformance evidence
+- **[rc.5 to 1.0 API Diff](docs/API_DIFF_RC5_TO_1_0.md)** -- Public compatibility audit
 - **[Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples)** -- Real-world patterns
 
 ## Contributing

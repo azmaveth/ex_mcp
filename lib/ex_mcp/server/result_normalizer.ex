@@ -3,8 +3,8 @@ defmodule ExMCP.Server.ResultNormalizer do
   Shared result and error normalization for every server dispatch path.
 
   `ExMCP.Server.Dispatch` (handler-process transports and stdio),
-  `ExMCP.MessageProcessor.MethodHandlers` (HTTP) and
-  `ExMCP.Protocol.RequestProcessor` (DSL servers) all convert handler return
+  the HTTP message processor, and `ExMCP.Protocol.RequestProcessor` (DSL
+  servers) all convert handler return
   values into JSON-RPC results. Keeping that conversion here guarantees the
   transports agree on tool-result shape, key stringification and, most
   importantly, on what is safe to send back to a client.

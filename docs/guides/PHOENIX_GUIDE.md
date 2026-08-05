@@ -187,6 +187,7 @@ defmodule MyAppWeb.Router do
     # Mount MCP server at /api/mcp
     forward "/mcp", ExMCP.HttpPlug,
       handler: MyApp.MCPHandler,
+      protocol_mode: :prefer_modern,
       server_info: %{
         name: "my-phoenix-app",
         version: "1.0.0"
@@ -195,6 +196,12 @@ defmodule MyAppWeb.Router do
   end
 end
 ```
+
+`:prefer_modern` accepts both MCP eras and advertises `2026-07-28`, the latest
+stable revision, first. Use `:modern_only` only when every client is modern;
+use `:legacy_only` as a rollback switch. The curl request below deliberately
+uses the legacy compatibility shape. ExMCP clients in a modern-enabled mode
+send the required 2026-07-28 metadata and routing headers automatically.
 
 ### 4. Test Your Integration
 
@@ -580,7 +587,7 @@ end
 
 1. **Read the [ExMCP Documentation](https://hexdocs.pm/ex_mcp)** for complete API reference
 2. **Check out [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples)** for more implementation patterns
-3. **Review [Security Guide](SECURITY.md)** for production deployment best practices
+3. **Review the [Security Guide](../SECURITY.md)** for production deployment best practices
 4. **Join the Community** - contribute to the project or ask questions in Issues
 
 ---

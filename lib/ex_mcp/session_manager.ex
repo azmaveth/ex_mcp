@@ -1,9 +1,14 @@
 defmodule ExMCP.SessionManager do
   @moduledoc """
-  Session management for streamable HTTP connections.
+  Legacy session management for Streamable HTTP connections.
 
-  This module provides session management capabilities for MCP servers
-  using streamable HTTP transports like Server-Sent Events (SSE).
+  This module supports the initialize-based MCP 2025-03-26 through
+  2025-11-25 transport lifecycle. MCP 2026-07-28 HTTP is stateless and does
+  not use this manager, `Mcp-Session-Id`, `Last-Event-ID`, GET streams, or
+  DELETE termination.
+
+  For legacy connections, this module provides session management for MCP
+  servers using Streamable HTTP and Server-Sent Events (SSE).
   It handles session lifecycle, event buffering, and session resumption
   through Last-Event-ID support.
 
@@ -125,7 +130,7 @@ defmodule ExMCP.SessionManager do
   @doc """
   Ensures a transport-issued session ID exists and refreshes its activity.
 
-  Streamable HTTP issues the ID on POST before the client opens its SSE
+  Legacy Streamable HTTP issues the ID on POST before the client opens its SSE
   channel. Retaining that exact ID associates later subscriptions and
   notifications with one client across both channels.
   """
@@ -148,7 +153,7 @@ defmodule ExMCP.SessionManager do
   @doc """
   Replays events for a session after the given event ID.
 
-  This is used when clients reconnect with a Last-Event-ID header
+  This is used when legacy clients reconnect with a Last-Event-ID header
   to resume from where they left off.
   """
   @spec replay_events_after(session_id(), event_id() | nil) ::

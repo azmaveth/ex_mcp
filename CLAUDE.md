@@ -105,7 +105,7 @@ documented test kit.
 ## MCP Protocol Eras
 
 ExMCP 1.0 supports the legacy MCP revisions (`2024-11-05` through
-`2025-11-25`) and the wire-incompatible modern revision (`2026-07-28`). Treat
+`2025-11-25`) and the wire-incompatible latest stable revision (`2026-07-28`). Treat
 the era as a first-class connection property; do not scatter date comparisons
 or infer modern behavior from one method in feature code.
 
@@ -116,11 +116,13 @@ or infer modern behavior from one method in feature code.
 | `:prefer_modern` | `server/discover` | Both | Initialize only with positive legacy evidence on a live transport |
 | `:modern_only` | `server/discover` | Modern | Never |
 
-The current RC application default is `:legacy_only`; the final pre-1.0 soak
-is intended to exercise `:prefer_modern`. Tests and deployments that require a
-specific wire shape must always pass a mode explicitly instead of relying on
-that changing default. Both preference modes accept both eras on a server;
-their preference controls advertised version order.
+The unreleased post-rc.5 migration source still carries the rc.5 version and
+defaults to `:legacy_only`; published rc.5 itself is legacy-only and does not
+contain modern support. The final pre-1.0 RC soak is intended to exercise
+`:prefer_modern`. Tests and deployments that require a specific wire shape
+must always pass a mode explicitly instead of relying on that changing
+default. Both preference modes accept both eras on a server; their preference
+controls advertised version order.
 
 Era responsibilities:
 

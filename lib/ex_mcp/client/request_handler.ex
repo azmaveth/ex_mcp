@@ -984,7 +984,10 @@ defmodule ExMCP.Client.RequestHandler do
     do: "MCP non-complete result must not include cache hints"
 
   @doc """
-  Handles server-to-client requests by routing them to the appropriate handler callback.
+  Routes a legacy server-to-client request to the appropriate handler callback.
+
+  Modern MCP 2026-07-28 supplies client input through MRTR result envelopes;
+  it does not deliver these as independent JSON-RPC requests on the stream.
   """
   def handle_server_request(method, params, request_id, state) do
     case method do

@@ -79,6 +79,24 @@ modern-preferred RC soak complete. This section describes the intended stable
   resulting token/provider state back only while that stream still owns the
   request.
 
+### Documentation and release evidence
+
+- **Protocol-era guidance is consistent across README, HexDocs, and guides** —
+  Public HTTP and callback documentation now distinguishes stateless MCP
+  2026-07-28 behavior from legacy sessions, GET streams, resumability, and
+  independent server-to-client requests. Troubleshooting covers modern
+  discovery, metadata, routing headers, result envelopes, and expected 405s.
+- **Release evidence ships with the package** — The MCP coverage matrix,
+  rc.5-to-1.0 API diff, and 2026 migration plan are packaged and linked from
+  HexDocs. The development checklist records the modern conformance, RC soak,
+  and mixed-cluster rollback gates, and CI treats ExDoc warnings as failures.
+- **Official SDK v2 interop is release-gating** — Four isolated CI lanes exercise
+  ExMCP as client and server over stdio and Streamable HTTP against the official
+  TypeScript MCP v2 client/server packages pinned at `2.0.0`. They negotiate
+  `2026-07-28` exactly and cover discovery, request context, result envelopes,
+  MRTR, subscriptions, routing headers, POST-owned SSE, and stateless sessions;
+  legacy SDK interop remains independently gated.
+
 ### Security
 
 - **OAuth metadata fetches are SSRF-hardened** — CIMD, Protected Resource Metadata,
@@ -145,7 +163,7 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
   MessageProcessor deadline. This server-side deadline is independent of
   client request and SSE timeouts.
 - **URL-mode elicitation reaches the URL callback** — `elicitation/create` requests with `mode: "url"` now dispatch to `handle_url_elicitation/3` when implemented. This is the release's one intentional behavior change: handlers implementing both elicitation callbacks will now receive URL-mode requests in the URL callback. Form-only handlers retain a compatibility fallback, receive the URL payload instead of an empty schema, and get a once-per-handler warning.
-- **Compliance coverage includes 2025-11-25** — the generated compliance matrix now derives versions from the canonical registry, requires an explicit handler for every version, and carries inherited feature coverage through the latest supported revision.
+- **Compliance coverage includes 2025-11-25** — the generated legacy compliance matrix now derives versions from the canonical registry, requires an explicit handler for every version, and carries inherited feature coverage through the newest legacy revision.
 - **Transport `close/1` no longer leaks processes** — HTTP and stdio called `Process.exit(pid, :normal)` on processes that do not trap exits (a no-op), leaving the SSE client GenServer and the stdio reader running after close.
 - **Async POST state and crashes** — The async POST task's updated transport state (session-ID rotation, refreshed OAuth token) was discarded by the client, so session and auth updates were lost between requests; the task was also unmonitored, so a crash hung the pending request until timeout.
 - **SSE handler and session-registry lifetime** — The SSE session table was created lazily inside a Cowboy request process, so every registration vanished when that request ended; it is now owned by a supervised `ExMCP.HttpPlug.SessionRegistry`. SSE handlers stop on conn-owner `:EXIT` and clean up in `terminate/2` instead of leaking with heartbeats still firing.
@@ -195,7 +213,7 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
 - **`remove_metadata` / face-color analysis stubs** — Same deprecation class; not protocol features.
 
 ### Improved
-- **Protocol sync verification (2026-07-11)** — Confirmed alignment with MCP **2025-11-25** (latest stable) and ACP major **v1**. Official conformance re-run: **39/39** server and **226/226** client (`@modelcontextprotocol/conformance@0.1.16` core suite). All-versions server/client suites green for 2025-11-25 and 2025-06-18. Refreshed local `docs/mcp-specs/2025-11-25` via `mix mcp.sync_spec --force`. Documented that MCP **2026-07-28** draft/RC is intentionally not implemented yet.
+- **Protocol sync verification (2026-07-11)** — Confirmed alignment with MCP **2025-11-25**, the latest stable revision on that date, and ACP major **v1**. Official conformance re-run: **39/39** server and **226/226** client (`@modelcontextprotocol/conformance@0.1.16` core suite). All-versions server/client suites green for 2025-11-25 and 2025-06-18. Refreshed local `docs/mcp-specs/2025-11-25` via `mix mcp.sync_spec --force`. Documented that the then-unreleased MCP **2026-07-28** draft/RC was intentionally not implemented yet.
 - **SSE bidirectional stability** — `ExMCP.Server.SSESession` waits for a live GET stream (and sole-session fallback), drops dead ETS registrations, cleans up on stream exit, and tolerates int/string request-id echoes. Conformance harness frees port 3099 between runs so elicitation/sampling tools no longer flake with “Server did not request elicitation/sampling”.
 - **DSL compile errors** — `ExMCP.Server.DSL` now raises `CompileError`s with file/line and actionable messages for missing handlers, duplicate tool/resource/prompt ids, wrong instructions per declaration kind, unknown instructions (with suggestions such as `inputSchema` → `input_schema`), non-literal values, and invalid param types.
 - **DSL docs and examples** — Documented param types, compile-time checks, and `ToolResult` scoping in the DSL guide and quick start; examples note the `ToolResult` alias.
@@ -348,7 +366,7 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
 ### Added
 - **ACP Registry helpers** — `ExMCP.ACP.Registry` can fetch, parse, search, and build `npx` commands from the public ACP Registry.
 - **ACP handler runner** — Agent-originated requests and session update handlers now run outside the ACP client process, so slow permission, file, terminal, or update handlers cannot block streamed updates or prompt completion.
-- **MCP 2025-11-25 conformance coverage** — Conformance scripts and tests now cover the latest supported MCP spec version and updated server behaviors.
+- **MCP 2025-11-25 conformance coverage** — Conformance scripts and tests cover the then-latest supported MCP revision and updated server behaviors.
 
 ### Changed
 - **ACP stable spec alignment** — Updated ACP method names, content/resource builders, permission responses, terminal delegation, config options, prompt capabilities, session capabilities, and adapter update shapes to match the current stable ACP v1 schema.
@@ -591,7 +609,7 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
 ## [0.7.0] - 2026-02-11
 
 ### Added
-- **MCP Protocol Version 2025-11-25 Support** - Latest protocol version with full spec compliance
+- **MCP Protocol Version 2025-11-25 Support** - Added the then-latest protocol version with full spec compliance
 - **Streamable HTTP Spec Compliance** - Client and server now fully comply with MCP Streamable HTTP spec:
   - Server provides session ID (not client); first POST omits `Mcp-Session-Id` header
   - `Accept: application/json, text/event-stream` header sent on requests
@@ -600,7 +618,7 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
   - POST responses return 200 with JSON body even when SSE is enabled
 - **TypeScript MCP SDK Interop Tests** - Verified interoperability with the official TypeScript MCP SDK
 - **Agent Simulation Integration Tests** - Integration tests with MockLLM for testing agent workflows
-- **`mix mcp.sync_spec` Task** - Automated task for syncing MCP protocol specifications
+- **<code>mix mcp.sync_spec</code> Task** - Automated task for syncing MCP protocol specifications
 - **Conformance Test Suites** - Automated conformance tests for all 4 protocol versions (2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25)
 - **Client State Machine Adapter** - Refactored client using GenStateMachine with:
   - Formal state transitions with guards
@@ -710,8 +728,8 @@ This release represents the completion of an 18-week comprehensive test remediat
   - Updated all BEAM transport examples to use Horde.Registry for service discovery
 - **Comprehensive Test Tagging Strategy**
   - Implemented test tagging system based on ex_llm approach for efficient test execution
-  - Created `mix test.suite` task with predefined test suites: unit, compliance, integration, transport, security, performance, all, ci
-  - Created `mix test.tags` task to list all available tags and descriptions
+  - Created <code>mix test.suite</code> task with predefined test suites: unit, compliance, integration, transport, security, performance, all, ci
+  - Created <code>mix test.tags</code> task to list all available tags and descriptions
   - Added 100+ test files with appropriate module tags for categorization
   - Default exclusions for fast development: integration, external, slow, performance tests excluded by default
   - Test categories: `:unit`, `:integration`, `:compliance`, `:security`, `:performance`, `:transport`, feature-specific tags

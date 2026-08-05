@@ -12,7 +12,14 @@ defmodule ExMCP.Server.MRTR do
   @default_max_bytes 1_048_576
 
   defmodule InputRequired do
-    @moduledoc false
+    @moduledoc """
+    A server result that suspends a modern MCP operation for client input.
+
+    Build this struct with `ExMCP.Server.DSL.Result.input_required/2` or return
+    the equivalent `{:input_required, input_requests, state}` handler tuple.
+    ExMCP validates the requested input capabilities and seals application
+    state into the modern `requestState` continuation envelope.
+    """
     @enforce_keys [:input_requests]
     defstruct [:input_requests, :request_state]
 

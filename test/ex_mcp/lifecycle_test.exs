@@ -189,7 +189,7 @@ defmodule ExMCP.LifecycleTest do
       Process.flag(:trap_exit, true)
 
       # StrictVersionHandler only accepts "2025-03-26", but the default
-      # protocol version is now "2025-11-25". The client should fail
+      # legacy protocol version is now "2025-11-25". The client should fail
       # during initialization with an error exit.
       result =
         Client.start_link(

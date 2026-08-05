@@ -183,7 +183,7 @@ defmodule ExMCP.Compliance.TransportVersionTest do
     end
 
     @tag :requires_http
-    test "client uses latest version by default", %{base_url: base_url} do
+    test "client uses the newest legacy revision by default", %{base_url: base_url} do
       # Trap exits in case HTTP connection fails asynchronously
       Process.flag(:trap_exit, true)
 
@@ -333,7 +333,7 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       Client.stop(client)
     end
 
-    test "uses latest version by default when not specified", %{server: server} do
+    test "uses the newest legacy revision by default when not specified", %{server: server} do
       {:ok, client} =
         Client.start_link(
           transport: :test,

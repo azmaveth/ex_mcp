@@ -232,22 +232,31 @@ should use Streamable HTTP and leave this option off. Selecting
 
 The BEAM-local transport carries MCP-shaped maps/lists as Elixir terms between
 local processes. It does not JSON encode/decode in the transport, but it still
-uses MCP initialize, request IDs, capabilities, and handler callbacks.
+uses the MCP lifecycle, request IDs, capabilities, and handler callbacks. Its
+protocol mode selects legacy `initialize` or modern `server/discover` plus
+per-request context, exactly as stdio does.
 
 ```elixir
-{:ok, server} = MyServer.start_link(transport: :beam)  # DSL modules provide start_link/1; for raw handlers use HandlerServer or ExMCP.start_server
+{:ok, server} =
+  MyServer.start_link(
+    transport: :beam,
+    protocol_mode: :prefer_modern
+  )
 
 {:ok, client} =
   ExMCP.Client.start_link(
     transport: :beam,
-    server: server
+    server: server,
+    protocol_mode: :prefer_modern
   )
 ```
 
 Supported options:
 
-- server side: `transport: :beam` on a DSL/handler server.
-- client side: `transport: :beam`, `server: pid`, optional `timeout`.
+- server side: `transport: :beam` on a DSL/handler server, with optional
+  `protocol_mode`.
+- client side: `transport: :beam`, `server: pid`, optional `protocol_mode` and
+  `timeout`.
 
 **Tip:** For a fast local verification of these BEAM + DSL + Client patterns (no re-installs), run `mix examples.getting_started` from the project root after `mix compile`.
 

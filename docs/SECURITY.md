@@ -166,6 +166,7 @@ scope "/mcp" do
 
   forward "/", ExMCP.HttpPlug,
     handler: MyApp.MCPServer,
+    protocol_mode: :prefer_modern,
     server_info: %{name: "my-app", version: "1.0.0"},
     cors_enabled: true
 end
@@ -256,9 +257,12 @@ three complementary controls:
   pipelines that enforces a Host allow-list (default: loopback names only)
   in front of any downstream plugs.
 
-Session ids supplied via `mcp-session-id` / legacy `x-session-id` headers are
-validated (max 128 bytes, `A-Za-z0-9._~+/=-`) and malformed values are
-rejected with `400` without being echoed back.
+On legacy Streamable HTTP paths, session IDs supplied via `mcp-session-id` /
+legacy `x-session-id` headers are validated (max 128 bytes,
+`A-Za-z0-9._~+/=-`) and malformed values are rejected with `400` without
+being echoed back. MCP 2026-07-28 is stateless; do not use a session header as
+authentication, authorization context, tenant identity, or modern request
+correlation.
 
 ## JSON Schema References and Resource Limits
 

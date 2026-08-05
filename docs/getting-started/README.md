@@ -9,6 +9,14 @@ Start with:
 ExMCP supports MCP clients and servers over stdio, Streamable HTTP, and BEAM-local
 transports, plus ACP controllers and agents.
 
+MCP `2026-07-28` is the latest stable revision and is available through
+`:prefer_modern` and `:modern_only` in the unreleased post-rc.5 source tree.
+The published rc.5 package remains legacy-only. The migration source keeps
+`:legacy_only` as its application default while maintainers prepare the
+published modern-preferred soak RC; see the
+[Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) before
+deploying.
+
 ## Current Server Shape
 
 Use `ExMCP.Server.Handler` directly, optionally with the server DSL:

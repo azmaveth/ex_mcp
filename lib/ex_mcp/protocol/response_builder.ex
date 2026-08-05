@@ -108,7 +108,11 @@ defmodule ExMCP.Protocol.ResponseBuilder do
   end
 
   @doc """
-  Builds a JSON-RPC request (used for server-to-client requests).
+  Builds a JSON-RPC request for legacy or compatibility paths.
+
+  Independent server-to-client requests belong to initialize-based MCP
+  revisions. A modern MCP 2026-07-28 server should return an `input_required`
+  MRTR result when it needs client input.
 
   ## Examples
 

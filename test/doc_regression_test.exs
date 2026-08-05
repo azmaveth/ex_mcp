@@ -134,6 +134,34 @@ defmodule ExMCP.DocRegressionTest do
     end
   end
 
+  test "live docs identify 2026-07-28 as latest stable without relabeling the legacy default" do
+    readme = File.read!("README.md")
+    configuration = File.read!("docs/CONFIGURATION.md")
+    quickstart = File.read!("docs/getting-started/QUICKSTART.md")
+    coverage = File.read!("docs/MCP_COVERAGE_MATRIX.md")
+    ex_mcp_source = File.read!("lib/ex_mcp.ex")
+
+    for {file, content} <- [
+          {"README.md", readme},
+          {"docs/CONFIGURATION.md", configuration},
+          {"docs/getting-started/QUICKSTART.md", quickstart},
+          {"docs/MCP_COVERAGE_MATRIX.md", coverage},
+          {"lib/ex_mcp.ex", ex_mcp_source}
+        ] do
+      assert content =~ "2026-07-28", "#{file} does not name the latest MCP revision"
+
+      assert String.downcase(content) =~ "latest stable",
+             "#{file} does not identify the latest MCP status"
+    end
+
+    refute readme =~ "**2025-11-25** (latest stable)"
+    assert readme =~ "2025-11-25`, for initialize-based compatibility"
+    assert readme =~ "published `1.0.0-rc.5` package is legacy-only"
+    assert readme =~ "post-rc.5 migration work"
+    assert configuration =~ "newest legacy revision"
+    assert coverage =~ "official conformance runner is\nstill published as a prerelease"
+  end
+
   test "architecture and transport guides preserve the modern wire invariants" do
     architecture = File.read!("docs/ARCHITECTURE.md")
     transport = File.read!("docs/TRANSPORT_GUIDE.md")
@@ -161,6 +189,81 @@ defmodule ExMCP.DocRegressionTest do
           "405 Method Not Allowed"
         ] do
       assert transport =~ term, "transport guide is missing #{inspect(term)}"
+    end
+  end
+
+  test "public HTTP docs do not present legacy sessions as modern behavior" do
+    http_transport = File.read!("lib/ex_mcp/transport/http.ex")
+    session_manager = File.read!("lib/ex_mcp/session_manager.ex")
+    negotiator = File.read!("lib/ex_mcp/protocol/version_negotiator.ex")
+
+    for term <- [
+          "both supported MCP wire eras",
+          "Modern requests always use a fresh POST",
+          "Legacy session compatibility",
+          "does not depend on `:use_sse`"
+        ] do
+      assert http_transport =~ term, "HTTP transport moduledoc is missing #{inspect(term)}"
+    end
+
+    assert session_manager =~ "MCP 2026-07-28 HTTP is stateless"
+    assert negotiator =~ "newest\n  legacy revision rather than the latest upstream"
+  end
+
+  test "troubleshooting and release docs cover modern migration failures and gates" do
+    troubleshooting = File.read!("docs/TROUBLESHOOTING.md")
+    development = File.read!("docs/DEVELOPMENT.md")
+    mixfile = File.read!("mix.exs")
+
+    for term <- [
+          "server/discover",
+          "Error `-32022`",
+          "Error `-32020`",
+          "io.modelcontextprotocol/clientCapabilities",
+          "Result is rejected for missing `resultType`, `ttlMs`, or `cacheScope`",
+          "GET or DELETE returns 405"
+        ] do
+      assert troubleshooting =~ term, "troubleshooting guide is missing #{inspect(term)}"
+    end
+
+    migration = File.read!("docs/getting-started/MIGRATION.md")
+    assert migration =~ "[troubleshooting guide](../TROUBLESHOOTING.md)"
+    refute migration =~ "](TROUBLESHOOTING.md)"
+
+    for term <- [
+          "./scripts/conformance.sh modern",
+          "at least seven calendar days",
+          "mixed-version cluster rollback drill",
+          "MCP_COVERAGE_MATRIX.md"
+        ] do
+      assert development =~ term, "development guide is missing #{inspect(term)}"
+    end
+
+    for extra <- [
+          "docs/API_DIFF_RC5_TO_1_0.md",
+          "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
+          "docs/MCP_COVERAGE_MATRIX.md"
+        ] do
+      assert mixfile =~ ~s("#{extra}"), "ExDoc extras are missing #{extra}"
+    end
+  end
+
+  test "public relative Markdown links resolve" do
+    files =
+      ["README.md", "CHANGELOG.md"] ++
+        (Path.wildcard("docs/**/*.md")
+         |> Enum.reject(&String.starts_with?(&1, "docs/mcp-specs/")))
+
+    for file <- files,
+        [target] <-
+          Regex.scan(~r/\[[^\]]*\]\(([^)]+)\)/, File.read!(file), capture: :all_but_first),
+        target = target |> String.split(~r/\s+"/, parts: 2) |> hd() |> String.trim("<>"),
+        target != "",
+        not String.starts_with?(target, ["#", "http://", "https://", "mailto:"]) do
+      relative_path = target |> String.split("#", parts: 2) |> hd()
+      resolved = Path.expand(relative_path, Path.dirname(file))
+
+      assert File.exists?(resolved), "#{file} links to missing relative target #{target}"
     end
   end
 end

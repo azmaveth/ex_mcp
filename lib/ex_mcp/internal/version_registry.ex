@@ -15,9 +15,9 @@ defmodule ExMCP.Internal.VersionRegistry do
   require Logger
   alias ExMCP.Protocol.Methods
 
-  # Protocol versions in order of preference (newest first)
+  # Legacy protocol versions in order of preference (newest first)
   @versions [
-    {"2025-11-25", "Latest spec with tasks, icons, and URL elicitation"},
+    {"2025-11-25", "Newest legacy revision with tasks, icons, and URL elicitation"},
     {"2025-06-18", "Previous stable specification"},
     {"2025-03-26", "Stable specification with batch support"},
     {"2024-11-05", "Initial stable specification"}
@@ -27,7 +27,7 @@ defmodule ExMCP.Internal.VersionRegistry do
   # dual-era mode enables them. The zero-arity legacy APIs intentionally keep
   # their pre-1.0 behavior until the final RC changes the application default.
   @modern_revisions [
-    {"2026-07-28", "Stateless protocol revision available by explicit opt-in"}
+    {"2026-07-28", "Latest stable stateless revision available through modern modes"}
   ]
 
   @modern_versions Enum.map(@modern_revisions, &elem(&1, 0))
@@ -102,7 +102,10 @@ defmodule ExMCP.Internal.VersionRegistry do
   end
 
   @doc """
-  Get the latest stable protocol version.
+  Get the newest initialize-compatible legacy protocol revision.
+
+  This compatibility accessor intentionally remains separate from the latest
+  upstream stable revision (`2026-07-28`) during the dual-era RC rollout.
   """
   @spec latest_version() :: version()
   def latest_version, do: @versions |> hd() |> elem(0)

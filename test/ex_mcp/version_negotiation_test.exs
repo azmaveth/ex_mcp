@@ -123,7 +123,7 @@ defmodule ExMCP.VersionNegotiationTest do
       {:ok, server_info} = Client.server_info(client)
       assert server_info["name"] == "test-version-server"
 
-      # Both should be using 2025-11-25 (latest supported)
+      # Both should be using 2025-11-25 (the newest legacy revision).
       # Now we can access the negotiated version from public API
       {:ok, negotiated_version} = Client.negotiated_version(client)
       assert negotiated_version == "2025-11-25"

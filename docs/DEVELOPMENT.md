@@ -15,8 +15,10 @@ This guide covers everything you need to know for developing, testing, and contr
 
 ### Prerequisites
 
-- Elixir 1.14+ and Erlang/OTP 25+
+- Elixir 1.17+ (enforced by `mix.exs`)
+- Erlang/OTP 27–29 (the current CI matrix)
 - Git with hooks support
+
 ### Initial Setup
 
 ```bash
@@ -55,8 +57,26 @@ mix coveralls.html    # Generate coverage report
 MIX_ENV=test mix compile              # Compile for test environment
 
 # Documentation
-mix docs              # Generate documentation (also verifies rewritten moduledocs + guides render)
+mix docs              # Generate docs; undefined references fail the build
 iex -S mix            # Start interactive shell with project loaded
+
+# Official MCP conformance
+./scripts/conformance.sh modern # Complete MCP 2026-07-28 client + server suites
+./scripts/conformance.sh server # Published legacy/core server suite
+./scripts/conformance.sh client # Published legacy/core client suite
+
+# Broader legacy/draft report; this aggregate command is intentionally non-gating.
+./scripts/conformance.sh all-versions
+
+# Official TypeScript SDK interop. test/interop/package-lock.json pins the
+# legacy SDK separately from @modelcontextprotocol/{client,server,node}@2.0.0
+# (Node.js 20+).
+mix test --only interop_ts_client
+mix test --only interop_ex_mcp_client
+mix test --only interop_modern_ts_client
+mix test --only interop_modern_ex_mcp_client
+mix test --only interop_modern_ts_http_client
+mix test --only interop_modern_ex_mcp_http_client
 
 # After doc or example changes, re-verify key snippets and the getting-started demo:
 #   mix run -e '...'   (see DOCS_EXAMPLES_AUDIT_PLAN.md for example verifiers)
@@ -189,9 +209,8 @@ test/
 │   ├── client/               # Client implementation tests
 │   ├── server/               # Server implementation tests
 │   ├── transport/            # Transport layer tests
-│   └── protocol_test.exs     # Protocol tests
+│   └── compliance/           # MCP revision/compliance tests
 ├── integration/              # Cross-component integration tests
-├── compliance/               # MCP specification compliance tests
 └── support/                  # Test helpers and utilities
 ```
 
@@ -396,12 +415,26 @@ ExMCP follows [Semantic Versioning](https://semver.org/):
 
 ### Release Checklist
 
+The [MCP 2026-07-28 migration plan](MCP_2026_07_28_MIGRATION_PLAN.md) is the
+authoritative checklist for the 1.0 protocol transition. The
+[coverage matrix](MCP_COVERAGE_MATRIX.md) records the corresponding local and
+official-suite evidence. If a gate misses, publish another release candidate;
+do not move unfinished protocol work into stable 1.0.
+
 #### Pre-Release
 - [ ] All tests pass on CI
-- [ ] Documentation is up to date
+- [ ] `mix docs` completes without warnings and all packaged links resolve
 - [ ] CHANGELOG.md is updated
 - [ ] Version is bumped in `mix.exs`
 - [ ] Security audit passes
+- [ ] `./scripts/conformance.sh modern` has zero unexplained client or server failures; while its runner is prerelease, all four pinned official-SDK v2 stdio/HTTP interop lanes also pass
+- [ ] All legacy TypeScript SDK interop lanes remain green
+- [ ] `./scripts/conformance.sh server` and `./scripts/conformance.sh client` preserve the published legacy/core baselines
+- [ ] The non-gating `./scripts/conformance.sh all-versions` report has no unexplained regression
+- [ ] The seven-row legacy/modern compatibility matrix passes on stdio and HTTP
+- [ ] A published RC has defaulted to `:prefer_modern` for at least seven calendar days without a release-blocking compatibility regression
+- [ ] A mixed-version cluster rollback drill succeeds with active subscriptions and in-flight MRTR operations
+- [ ] An owner and evidence link are recorded for every remaining 1.0 release gate
 
 #### Release
 - [ ] Tag release: `git tag vX.Y.Z`
@@ -435,6 +468,9 @@ For critical bugs in production releases:
 - **This guide**: Development setup and processes
 - **[User Guide](guides/USER_GUIDE.md)**: Feature usage and examples  
 - **[Architecture Guide](ARCHITECTURE.md)**: Internal design decisions
+- **[MCP 2026-07-28 Migration Plan](MCP_2026_07_28_MIGRATION_PLAN.md)**: Release gates and implementation record
+- **[MCP Coverage Matrix](MCP_COVERAGE_MATRIX.md)**: Protocol-by-protocol test evidence
+- **[rc.5 to 1.0 API Diff](API_DIFF_RC5_TO_1_0.md)**: Public compatibility audit
 - **[API Docs](https://hexdocs.pm/ex_mcp)**: Complete API reference
 
 ### Community
