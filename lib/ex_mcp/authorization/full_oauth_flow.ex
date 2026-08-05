@@ -26,6 +26,10 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
   require Logger
 
+  @max_callback_request_bytes 16_384
+  @max_callback_params 16
+  @max_callback_param_bytes 4_096
+
   alias ExMCP.Authorization.{
     ClientRegistration,
     HTTPClient,
@@ -651,6 +655,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       client_id: client_info.client_id,
       redirect_uri: redirect_uri,
       authorization_endpoint: as_metadata["authorization_endpoint"],
+      issuer: as_metadata["issuer"],
       scopes: scopes,
       resource: config[:resource] || config[:resource_url]
     })
@@ -666,11 +671,11 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
          config,
          token_auth_method
        ) do
-    Logger.info("OAuth authorization URL: #{auth_url}")
+    Logger.info("Starting OAuth authorization request")
     Logger.info("Token endpoint auth method: #{token_auth_method}")
 
     with {:ok, _} <- follow_authorization(auth_url),
-         {:ok, code} <- wait_for_callback(server_pid, state_data.state_param) do
+         {:ok, code} <- wait_for_callback(server_pid, state_data) do
       HTTPClient.make_token_request(
         token_endpoint,
         [
@@ -718,7 +723,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           if String.contains?(location, "127.0.0.1") do
             # This redirect goes to our callback server — follow it so the
             # callback server receives the code
-            Logger.info("Following OAuth redirect to callback: #{location}")
+            Logger.info("Following OAuth redirect to callback")
             :httpc.request(:get, {String.to_charlist(location), []}, [], [])
             {:ok, location}
           else
@@ -755,41 +760,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         # Accept one connection
         case :gen_tcp.accept(listen_socket, 30_000) do
           {:ok, socket} ->
-            case :gen_tcp.recv(socket, 0, 10_000) do
-              {:ok, data} ->
-                # Validate that the request targets the expected callback path
-                request_path = extract_request_path(data)
-
-                if request_path == "/callback" do
-                  # Parse code and state from the callback URL
-                  code = extract_code_from_request(data)
-                  callback_state = extract_state_from_request(data)
-
-                  # Send HTTP response
-                  response =
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" <>
-                      "<html><body>Authorization complete. You may close this window.</body></html>"
-
-                  :gen_tcp.send(socket, response)
-                  :gen_tcp.close(socket)
-                  :gen_tcp.close(listen_socket)
-                  send(parent, {:redirect_callback, {:ok, code, callback_state}})
-                else
-                  # Reject requests to unexpected paths (open redirect protection)
-                  response =
-                    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid callback path"
-
-                  :gen_tcp.send(socket, response)
-                  :gen_tcp.close(socket)
-                  :gen_tcp.close(listen_socket)
-                  send(parent, {:redirect_callback, {:error, :invalid_callback_path}})
-                end
-
-              {:error, reason} ->
-                :gen_tcp.close(socket)
-                :gen_tcp.close(listen_socket)
-                send(parent, {:redirect_callback, {:error, reason}})
-            end
+            receive_callback(socket, listen_socket, parent)
 
           {:error, reason} ->
             :gen_tcp.close(listen_socket)
@@ -804,18 +775,67 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     end
   end
 
-  defp wait_for_callback(_server_pid, expected_state) do
-    receive do
-      {:redirect_callback, {:ok, code, callback_state}} ->
-        # Validate the state parameter to prevent CSRF attacks
-        if callback_state == expected_state do
-          {:ok, code}
-        else
-          Logger.warning(
-            "OAuth state mismatch: expected #{inspect(expected_state)}, got #{inspect(callback_state)}"
-          )
+  defp receive_callback(socket, listen_socket, parent) do
+    case :gen_tcp.recv(socket, 0, 10_000) do
+      {:ok, data} ->
+        {response, result} = callback_response(data)
+        :gen_tcp.send(socket, response)
+        close_callback_sockets(socket, listen_socket)
+        send(parent, {:redirect_callback, result})
 
-          {:error, :state_mismatch}
+      {:error, reason} ->
+        close_callback_sockets(socket, listen_socket)
+        send(parent, {:redirect_callback, {:error, reason}})
+    end
+  end
+
+  defp callback_response(data) do
+    case extract_request_path(data) do
+      "/callback" -> callback_query_response(data)
+      _other -> {bad_callback_response("Invalid callback path"), {:error, :invalid_callback_path}}
+    end
+  end
+
+  defp callback_query_response(data) do
+    case extract_callback_params(data) do
+      {:ok, callback_params} ->
+        response =
+          "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" <>
+            "<html><body>Authorization complete. You may close this window.</body></html>"
+
+        {response, {:ok, callback_params}}
+
+      {:error, reason} ->
+        {bad_callback_response("Invalid callback query"), {:error, reason}}
+    end
+  end
+
+  defp bad_callback_response(message) do
+    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\n#{message}"
+  end
+
+  defp close_callback_sockets(socket, listen_socket) do
+    :gen_tcp.close(socket)
+    :gen_tcp.close(listen_socket)
+  end
+
+  defp wait_for_callback(_server_pid, transaction) do
+    receive do
+      {:redirect_callback, {:ok, callback_params}} ->
+        case OAuthFlow.validate_authorization_response(callback_params, transaction) do
+          {:ok, code} ->
+            {:ok, code}
+
+          {:error, :state_mismatch} = error ->
+            Logger.warning("OAuth callback state mismatch")
+            error
+
+          {:error, {:issuer_mismatch, _details}} = error ->
+            Logger.warning("OAuth callback issuer mismatch")
+            error
+
+          {:error, _reason} = error ->
+            error
         end
 
       {:redirect_callback, {:error, _reason} = error} ->
@@ -837,19 +857,32 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     end
   end
 
-  defp extract_code_from_request(data) do
-    # Parse "GET /callback?code=xxx&state=yyy HTTP/1.1\r\n..."
-    case Regex.run(~r/[?&]code=([^&\s]+)/, data) do
-      [_, code] -> code
-      _ -> nil
+  defp extract_callback_params(data) when byte_size(data) <= @max_callback_request_bytes do
+    with [_, request_target] <- Regex.run(~r/^(?:GET|POST)\s+(\S+)/, data),
+         query when is_binary(query) <- URI.parse(request_target).query,
+         {:ok, pairs} <- decode_callback_query(query) do
+      {:ok, Map.new(pairs)}
+    else
+      _invalid -> {:error, :invalid_callback_query}
     end
+  rescue
+    ArgumentError -> {:error, :invalid_callback_query}
   end
 
-  defp extract_state_from_request(data) do
-    case Regex.run(~r/[?&]state=([^&\s]+)/, data) do
-      [_, state] -> URI.decode_www_form(state)
-      _ -> nil
-    end
+  defp extract_callback_params(_data), do: {:error, :invalid_callback_query}
+
+  defp decode_callback_query(query) do
+    pairs = query |> URI.query_decoder() |> Enum.take(@max_callback_params + 1)
+
+    valid? =
+      length(pairs) <= @max_callback_params and
+        Enum.all?(pairs, fn {key, value} ->
+          byte_size(key) <= @max_callback_param_bytes and
+            byte_size(value) <= @max_callback_param_bytes
+        end) and
+        map_size(Map.new(pairs)) == length(pairs)
+
+    if valid?, do: {:ok, pairs}, else: {:error, :invalid_callback_query}
   end
 
   defp extract_resource_metadata_url(nil), do: nil

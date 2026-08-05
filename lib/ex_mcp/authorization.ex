@@ -17,6 +17,7 @@ defmodule ExMCP.Authorization do
   alias ExMCP.Authorization.{HTTPClient, OAuthFlow, PKCE, Validator}
 
   @type authorization_config :: %{
+          optional(:issuer) => String.t(),
           client_id: String.t(),
           client_secret: String.t() | nil,
           authorization_endpoint: String.t(),
@@ -66,10 +67,20 @@ defmodule ExMCP.Authorization do
       auth_params
       |> maybe_add_resource(config)
       |> maybe_add_state(config)
+      |> maybe_add_issuer(config)
       |> maybe_add_additional_params(config)
 
     OAuthFlow.start_authorization_flow(auth_params)
   end
+
+  @doc """
+  Validates an authorization callback before its code is redeemed.
+
+  This enforces the recorded `state` and, when the response contains the RFC
+  9207 `iss` parameter, exact equality with the transaction's recorded issuer.
+  """
+  @spec validate_authorization_response(map(), map()) :: {:ok, String.t()} | {:error, term()}
+  defdelegate validate_authorization_response(response, transaction), to: OAuthFlow
 
   @doc """
   Exchanges an authorization code for an access token using PKCE.
@@ -286,6 +297,13 @@ defmodule ExMCP.Authorization do
     case Map.get(config, :additional_params) do
       %{state: state} -> Map.put(params, :state, state)
       _ -> params
+    end
+  end
+
+  defp maybe_add_issuer(params, config) do
+    case Map.get(config, :issuer) do
+      issuer when is_binary(issuer) -> Map.put(params, :issuer, issuer)
+      _other -> params
     end
   end
 

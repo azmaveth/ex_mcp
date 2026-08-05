@@ -1043,7 +1043,12 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 
 ### Phase 9 — Authorization
 
-- [ ] RFC 9207: validate a present `iss` against the recorded issuer before code redemption.
+- [x] RFC 9207: validate a present `iss` against the recorded issuer before code redemption.
+      **The full authorization-code flow records the exactly discovered issuer in its in-memory
+      transaction, parses the callback query as a bounded set of OAuth parameters, and validates
+      `state` plus any returned `iss` before constructing the token request. Issuer comparison is
+      exact, with no URL normalization; a present `iss` without a recorded issuer is rejected.
+      Callback URLs, authorization codes, and state values are not written to logs.**
 - [ ] Client ID Metadata Documents: HTTPS `client_id` URL with a path component; document
       `client_id` MUST equal the URL; MUST include `client_id`, `client_name`, `redirect_uris`;
       detect `client_id_metadata_document_supported`; optional `private_key_jwt`.

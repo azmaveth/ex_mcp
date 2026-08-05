@@ -354,6 +354,20 @@ the HMAC family are rejected, so an attacker cannot swap the header's `alg`.
 `iss` and `aud` are checked only when you supply the expected values; always
 supply them when validating tokens from an identity provider.
 
+### Authorization callback issuer validation
+
+Record the authorization server issuer with each OAuth authorization-code
+transaction. `ExMCP.Authorization.validate_authorization_response/2` verifies
+the `state` value and, when the callback includes the RFC 9207 `iss`
+parameter, requires exact equality with that recorded issuer before returning
+the code for redemption. Issuer identifiers are not normalized: a trailing
+slash or path difference is a mismatch. A present `iss` is rejected when the
+transaction did not record an issuer.
+
+The built-in full OAuth flow performs this validation automatically. It also
+bounds callback request/query sizes, rejects duplicate callback parameters,
+and does not log the authorization URL, callback URL, code, or state value.
+
 ### MCP routing-header confidentiality
 
 Treat every `Mcp-Param-*` value as sensitive. These values mirror selected

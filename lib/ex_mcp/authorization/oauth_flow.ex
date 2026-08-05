@@ -12,6 +12,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
 
   @type auth_params :: %{
           optional(:state) => String.t(),
+          optional(:issuer) => String.t(),
           optional(:resource) => String.t() | [String.t()],
           client_id: String.t(),
           redirect_uri: String.t(),
@@ -90,6 +91,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
       state_data = %{
         code_verifier: code_verifier,
         state_param: state,
+        issuer: Map.get(params, :issuer),
         redirect_uri: redirect_uri,
         initiated_at: DateTime.utc_now()
       }
@@ -97,6 +99,39 @@ defmodule ExMCP.Authorization.OAuthFlow do
       {:ok, auth_url, state_data}
     end
   end
+
+  @doc """
+  Validates an authorization response against its recorded transaction.
+
+  The `state` value must match. When the authorization response includes the
+  RFC 9207 `iss` parameter, it must exactly equal the issuer recorded when the
+  flow started. Issuers are identifiers and are deliberately not URL-normalized.
+  Validation succeeds with the authorization code only after both checks pass.
+  """
+  @spec validate_authorization_response(map(), map()) ::
+          {:ok, String.t()}
+          | {:error,
+             :state_mismatch
+             | :missing_authorization_code
+             | :missing_expected_issuer
+             | {:issuer_mismatch, keyword()}}
+  def validate_authorization_response(response, transaction)
+      when is_map(response) and is_map(transaction) do
+    code = field(response, "code")
+    callback_state = field(response, "state")
+    expected_state = field(transaction, "state_param")
+    callback_issuer = field(response, "iss")
+    expected_issuer = field(transaction, "issuer")
+
+    with :ok <- validate_state(callback_state, expected_state),
+         :ok <- validate_response_issuer(callback_issuer, expected_issuer),
+         :ok <- validate_authorization_code(code) do
+      {:ok, code}
+    end
+  end
+
+  def validate_authorization_response(_response, _transaction),
+    do: {:error, :state_mismatch}
 
   @doc """
   Exchanges an authorization code for tokens.
@@ -354,6 +389,38 @@ defmodule ExMCP.Authorization.OAuthFlow do
 
   defp generate_state do
     :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+  end
+
+  defp validate_state(callback_state, expected_state)
+       when is_binary(callback_state) and is_binary(expected_state) do
+    if secure_equal?(callback_state, expected_state), do: :ok, else: {:error, :state_mismatch}
+  end
+
+  defp validate_state(_callback_state, _expected_state), do: {:error, :state_mismatch}
+
+  defp validate_response_issuer(nil, _expected_issuer), do: :ok
+
+  defp validate_response_issuer(_callback_issuer, nil),
+    do: {:error, :missing_expected_issuer}
+
+  defp validate_response_issuer(callback_issuer, expected_issuer)
+       when callback_issuer == expected_issuer,
+       do: :ok
+
+  defp validate_response_issuer(callback_issuer, expected_issuer) do
+    {:error, {:issuer_mismatch, expected: expected_issuer, actual: callback_issuer}}
+  end
+
+  defp validate_authorization_code(code) when is_binary(code) and code != "", do: :ok
+  defp validate_authorization_code(_code), do: {:error, :missing_authorization_code}
+
+  defp secure_equal?(left, right) when byte_size(left) == byte_size(right),
+    do: Plug.Crypto.secure_compare(left, right)
+
+  defp secure_equal?(_left, _right), do: false
+
+  defp field(map, key) do
+    Map.get(map, key) || Map.get(map, String.to_existing_atom(key))
   end
 
   defp build_url(base_url, query_params) do
