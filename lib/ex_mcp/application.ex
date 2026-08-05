@@ -28,7 +28,8 @@ defmodule ExMCP.Application do
         # Atomically retains modern task handles across client connections
         {ExMCP.Tasks.Store.ETS, Application.get_env(:ex_mcp, ExMCP.Tasks.Store.ETS, [])},
         # Coordinates bounded MCP 2026-07-28 subscription listeners
-        ExMCP.Server.Subscriptions,
+        {ExMCP.Server.Subscriptions,
+         Application.get_env(:ex_mcp, ExMCP.Server.Subscriptions, [])},
         # Owns the ETS table mapping SSE session ids to handler pids for
         # ExMCP.HttpPlug (must outlive individual HTTP request processes)
         ExMCP.HttpPlug.SessionRegistry,

@@ -222,6 +222,13 @@ remove the listener registration, and send no further events. Periodic SSE
 comment keepalives make this cleanup happen even when no application events
 are available to expose a disconnected peer.
 
+The PubSub adapter distributes only method names and protocol parameters; it
+does not distribute credentials or registration records. Each node matches
+against its own honoured filters and each listener re-runs publication
+authorization using its stored stable identity. Use a deployment-specific
+topic, protect access to the PubSub cluster, and do not place secrets in
+notification parameters.
+
 ### DNS rebinding protection
 
 Protection is Host-allow-list based and is **on by default for localhost

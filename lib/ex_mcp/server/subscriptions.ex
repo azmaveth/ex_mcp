@@ -257,7 +257,7 @@ defmodule ExMCP.Server.Subscriptions do
 
   def handle_call({:publish, method, params, transport_ref}, _from, state) do
     {result, state} = publish_to_matching(method, params, transport_ref, state)
-    {:reply, result, state}
+    {:reply, result, broadcast(method, params, transport_ref, state)}
   end
 
   def handle_call(:entries, _from, state) do
@@ -268,7 +268,7 @@ defmodule ExMCP.Server.Subscriptions do
   @impl true
   def handle_cast({:publish, method, params, transport_ref}, state) do
     {_result, state} = publish_to_matching(method, params, transport_ref, state)
-    {:noreply, state}
+    {:noreply, broadcast(method, params, transport_ref, state)}
   end
 
   defp publish_to_matching(method, params, transport_ref, state) do
@@ -311,6 +311,31 @@ defmodule ExMCP.Server.Subscriptions do
 
       {{^listener, token}, monitors} ->
         {:noreply, delete_entry(token, %{state | monitors: monitors})}
+    end
+  end
+
+  def handle_info(message, state) do
+    if function_exported?(state.adapter, :handle_info, 2) do
+      case state.adapter.handle_info(message, state.adapter_state) do
+        {:publish, method, params, transport_ref, adapter_state} ->
+          {_result, state} =
+            publish_to_matching(
+              method,
+              params,
+              transport_ref,
+              %{state | adapter_state: adapter_state}
+            )
+
+          {:noreply, state}
+
+        {:noreply, adapter_state} ->
+          {:noreply, %{state | adapter_state: adapter_state}}
+
+        :unhandled ->
+          {:noreply, state}
+      end
+    else
+      {:noreply, state}
     end
   end
 
@@ -682,6 +707,26 @@ defmodule ExMCP.Server.Subscriptions do
   defp delete_entry(token, state) do
     {:ok, adapter_state} = state.adapter.delete(token, state.adapter_state)
     %{state | adapter_state: adapter_state}
+  end
+
+  defp broadcast(method, params, transport_ref, state) do
+    if function_exported?(state.adapter, :broadcast, 4) do
+      case state.adapter.broadcast(method, params, transport_ref, state.adapter_state) do
+        {:ok, adapter_state} ->
+          %{state | adapter_state: adapter_state}
+
+        {:error, reason, adapter_state} ->
+          :telemetry.execute(
+            [:ex_mcp, :server, :subscription, :fanout],
+            %{count: 1},
+            %{result: :error, reason: inspect(reason)}
+          )
+
+          %{state | adapter_state: adapter_state}
+      end
+    else
+      state
+    end
   end
 
   defp remove_monitor(listener, token, state) do

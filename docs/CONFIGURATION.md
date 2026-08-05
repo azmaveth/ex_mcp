@@ -811,6 +811,38 @@ the corresponding server options (`:subscription_max_queue`,
 `:authorize_subscription_publication`). Publication authorization is checked
 again for every event; denial gracefully closes the stream.
 
+For clustered HTTP, start one named subscription registry per node after the
+application's PubSub process and route every MCP server on that node to it:
+
+```elixir
+children = [
+  {Phoenix.PubSub, name: MyApp.PubSub},
+  {ExMCP.Server.Subscriptions,
+   name: MyApp.MCPSubscriptions,
+   adapter:
+     {ExMCP.Server.Subscriptions.PubSub,
+      pubsub_server: MyApp.PubSub,
+      topic: "my_app:mcp:subscriptions:v1"}},
+  {MyApp.MCPServer,
+   subscription_registry: MyApp.MCPSubscriptions}
+]
+```
+
+`ExMCP.Server.Subscriptions.PubSub` has no hard Phoenix dependency. Its
+`:pubsub_module` defaults to `Phoenix.PubSub` and may be replaced by any module
+implementing `subscribe/2` and `broadcast_from/4`. Registrations and listener
+processes stay node-local; untargeted publications fan out and each receiving
+listener rechecks authorization. Publications carrying a `:transport_ref`
+stay on the owning node. `publish/3` counts describe synchronous work in the
+called registry, not eventual work on peers.
+
+The bundled ETS storage makes global/principal/tenant limits per-node. If a
+deployment requires cluster-wide quotas, supply a storage adapter backed by a
+shared, atomic data store via the PubSub adapter's `:storage_adapter` option.
+That adapter must still return only entries whose listener processes belong to
+the current registry; use the shared store for reservation/accounting rather
+than attempting to call remote listener PIDs as local registrations.
+
 Over modern Streamable HTTP, each `subscriptions/listen` call is a dedicated
 POST response stream. Cancelling `ExMCP.Client.Subscription` closes that HTTP
 response; it does not POST `notifications/cancelled`. An unexpected response

@@ -2,6 +2,7 @@ defmodule ExMCP.Server.SubscriptionsTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Server.Subscriptions
+  alias ExMCP.Server.Subscriptions.PubSub
   alias ExMCP.Tasks
   alias ExMCP.Tasks.{Extension, Store}
 
@@ -22,6 +23,38 @@ defmodule ExMCP.Server.SubscriptionsTest do
 
     @impl true
     def all(test_pid), do: {[], test_pid}
+  end
+
+  defmodule TestPubSub do
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
+
+    def subscribe(server, topic), do: GenServer.call(server, {:subscribe, topic})
+
+    def broadcast_from(server, from, topic, message) do
+      GenServer.call(server, {:broadcast_from, from, topic, message})
+    end
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+
+    @impl true
+    def handle_call({:subscribe, topic}, {subscriber, _tag}, state) do
+      subscribers =
+        Map.update(state, topic, MapSet.new([subscriber]), &MapSet.put(&1, subscriber))
+
+      {:reply, :ok, subscribers}
+    end
+
+    def handle_call({:broadcast_from, from, topic, message}, _caller, state) do
+      state
+      |> Map.get(topic, MapSet.new())
+      |> Enum.reject(&(&1 == from))
+      |> Enum.each(&send(&1, message))
+
+      {:reply, :ok, state}
+    end
   end
 
   @subscription_id_key "io.modelcontextprotocol/subscriptionId"
@@ -122,6 +155,54 @@ defmodule ExMCP.Server.SubscriptionsTest do
     assert_receive {:ex_mcp_subscription_message, ^listener, :complete, completed}
     assert completed["id"] == "subscription-a"
     assert completed["result"]["_meta"][@subscription_id_key] == "subscription-a"
+  end
+
+  test "PubSub adapter fans publications out to remote registries and rechecks authorization" do
+    pubsub = start_supervised!({TestPubSub, []}, id: make_ref())
+    topic = "subscriptions:#{System.unique_integer([:positive])}"
+
+    adapter =
+      {PubSub, pubsub_server: pubsub, pubsub_module: TestPubSub, topic: topic}
+
+    registry_a = start_registry(adapter: adapter)
+
+    gate = :atomics.new(1, signed: false)
+    :atomics.put(gate, 1, 1)
+
+    registry_b =
+      start_registry(
+        adapter: adapter,
+        authorize_publication: fn _method, _params, context ->
+          context.principal_id == "principal-b" and :atomics.get(gate, 1) == 1
+        end
+      )
+
+    assert {:ok, entry} =
+             Subscriptions.listen(
+               "remote-listener",
+               %{"toolsListChanged" => true},
+               self(),
+               registry: registry_b,
+               principal_id: "principal-b",
+               tenant_id: "tenant-b"
+             )
+
+    assert_receive {:ex_mcp_subscription_message, listener, :acknowledged, _ack}
+    Subscriptions.delivered(listener)
+
+    assert %{subscribers: 0, enqueued: 0} =
+             publish(registry_a, "notifications/tools/list_changed")
+
+    assert_receive {:ex_mcp_subscription_message, ^listener, :notification, notification}
+    assert notification["params"]["_meta"][@subscription_id_key] == entry.subscription_id
+    refute_receive {:ex_mcp_subscription_message, ^listener, :notification, _duplicate}, 25
+
+    Subscriptions.delivered(listener)
+    :atomics.put(gate, 1, 0)
+
+    assert %{subscribers: 0} = publish(registry_a, "notifications/tools/list_changed")
+    assert_receive {:ex_mcp_subscription_message, ^listener, :complete, _completed}
+    refute_receive {:ex_mcp_subscription_message, ^listener, :notification, _unauthorized}, 25
   end
 
   test "enforces global, principal, and tenant listener limits atomically" do

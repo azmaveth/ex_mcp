@@ -800,10 +800,11 @@ clustered rolling-key work above.
 
 - [x] `ExMCP.Server.Subscriptions` (new): registry of `{subscription_id, honoured_filter,
       transport_ref, principal_id, tenant_id, expires_at}` with no raw credential material.
-- [ ] Put the registry behind an adapter. The default local adapter may use ETS, but clustered
+- [x] Put the registry behind an adapter. The default local adapter may use ETS, but clustered
       HTTP deployments need PubSub-backed fan-out because the process producing a change may not
-      own the listen stream. **The adapter contract and node-local ETS implementation are complete;
-      the clustered PubSub adapter remains an HTTP deployment task.**
+      own the listen stream. **Complete:** the PubSub adapter composes node-local storage with a
+      Phoenix.PubSub-compatible fan-out module. Independent-registry acceptance verifies remote
+      delivery, duplicate exclusion, and authorization re-checking at the listener-owning node.
 - [x] `subscriptions/listen` handler; emit `notifications/subscriptions/acknowledged` **first**,
       reflecting only the honoured subset of the filter.
 - [x] Authorize every requested filter at acknowledgment time and every publication against the
@@ -848,8 +849,9 @@ Current coverage includes generic and resource-compatibility clients, acknowledg
 replacement, correlation/authorization/limit checks, slow-consumer coalescing and closure,
 simulated reconnect resynchronization, in-memory transport integration, a literal subprocess
 stdio resource-update stream, and a literal Cowboy/httpc POST stream covering acknowledgment,
-publication, cancellation, quiet keepalives, abrupt-close reconnect, and resynchronization. The
-remaining unchecked Phase 5 work is clustered PubSub fan-out.
+publication, cancellation, quiet keepalives, abrupt-close reconnect, and resynchronization.
+Clustered PubSub fan-out is covered with two independent registries sharing a test bus; Phoenix
+deployment configuration and the per-node quota boundary are documented.
 
 ---
 
