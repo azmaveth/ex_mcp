@@ -12,6 +12,7 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
   @moduletag :slow
 
   alias ExMCP.ConsentHandler.Test, as: TestConsentHandler
+  alias ExMCP.Internal.ConsentCache
   alias ExMCP.Internal.SecurityConfig
   alias ExMCP.Transport.SecurityGuard
 
@@ -34,6 +35,7 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
   setup do
     # Clear consent state between tests
     TestConsentHandler.clear_all_consents()
+    ConsentCache.clear()
     :ok
   end
 
@@ -105,10 +107,18 @@ defmodule ExMCP.Performance.SecurityPerformanceTest do
         user_id: "test_user"
       }
 
-      config = SecurityConfig.get_transport_config(:http)
+      config =
+        SecurityConfig.get_transport_config(:http, %{consent_handler: TestConsentHandler})
 
       # First request to populate cache
-      SecurityGuard.validate_request(request, config)
+      assert {:ok, _request} = SecurityGuard.validate_request(request, config)
+
+      # The cache write is asynchronous; synchronize with its server before
+      # measuring the direct ETS lookup path.
+      :sys.get_state(ConsentCache)
+
+      assert {:ok, _expires_at} =
+               ConsentCache.check_consent("test_user", "https://api.example.com")
 
       # Warm up cache thoroughly
       for _ <- 1..100 do
