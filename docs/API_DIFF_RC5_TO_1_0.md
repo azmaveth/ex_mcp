@@ -4,7 +4,7 @@ This report records the public Elixir API compatibility gate for the MCP
 2026-07-28 migration. The comparison is between:
 
 - baseline: `v1.0.0-rc.5` (`a2464c3423ee48ba825402cc2d17be8042f1451a`);
-- candidate: `bd344ce0f3475bd4d007117f6259f610ef727d87`.
+- candidate: `05a1b54f2ed954ee9b755a108cad67847a182868`.
 
 The package version deliberately remains `1.0.0-rc.5` while the final release
 gates and soak are in progress. This report compares code, not version strings.
@@ -29,9 +29,9 @@ The snapshot totals were:
 | Surface | rc.5 | 1.0 candidate | Removed |
 |---|---:|---:|---:|
 | Modules | 236 | 290 | 0 |
-| Exported functions | 2,288 | 2,689 | 0 |
+| Exported functions | 2,288 | 2,690 | 0 |
 | Callbacks | 93 | 115 | 0 |
-| Struct fields | 363 | 500 | 0 |
+| Struct fields | 363 | 503 | 0 |
 | Types | 485 | 588 | 0 named types |
 
 The type count treats a changed definition as one removed textual row and one
@@ -59,7 +59,9 @@ Existing structs only gained fields. The additions on rc.5 structs are:
 - `ExMCP.Tasks.Task`: `error` and `input_requests`;
 - `ExMCP.Transport.HTTP`: `protocol_era`, `modern_streams`, and `tool_headers`;
 - `ExMCP.Server.HandlerServer`: protocol-era, request-context, MRTR,
-  replay-cache, and subscription state.
+  replay-cache, and subscription state;
+- `ExMCP.Authorization.Provider.OAuth`: authorization-server issuer, rejected-issuer,
+  and granted-scope tracking used to bound migration and scope-step-up retries.
 
 The changed typespec definitions are additive or corrective except for the
 OAuth state hardening called out below:
@@ -84,7 +86,7 @@ generated `state_param` instead.
 
 ## Additive public API
 
-The candidate adds 54 modules and 401 exports. The main supported additions
+The candidate adds 54 modules and 402 exports. The main supported additions
 are grouped here rather than listing internal plumbing:
 
 - era selection and discovery: `ExMCP.Client.EraProbe`,
@@ -107,8 +109,8 @@ are grouped here rather than listing internal plumbing:
 
 Existing modules gain additive entry points such as `ExMCP.Client.discover/2`,
 `listen/3`, `get_task/3`, `update_task/4`, and `cancel_task/3`, plus schema
-compilation, version-registry, version-aware error, stream-management, and MRTR
-result helpers.
+compilation, version-registry, version-aware error, stream-management, MRTR
+result helpers, and option-aware OAuth metadata URL validation.
 
 ## Protocol-driven behavior changes
 

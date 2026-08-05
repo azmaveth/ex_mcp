@@ -1,12 +1,12 @@
 # ExMCP → MCP 2026-07-28 Migration Plan
 
-**Status:** Implementation in progress — Phases 0–4 core complete; Phase 5 local transport complete; Phase 6 in progress
+**Status:** Code migration complete — Phases 0–10 implemented and local gates green; published-RC soak and rollback drill remain
 **Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28) ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current ExMCP:** `1.0.0-rc.5`, implements MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
+**Current ExMCP:** `1.0.0-rc.5`, implements MCP `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`, plus opt-in `2026-07-28`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-05
 
 ---
 
@@ -553,14 +553,14 @@ decision: extend the generator (and backfill `2025-11-25` into it), or write ano
 reuse, but several of them (roots, sampling, elicitation, logging) describe *server-initiated
 request* flows that no longer exist in modern — they need era-conditional variants.
 
-`test/conformance/server.exs` hardcodes `mcp-protocol-version: "2025-11-25"` at L522 and the
-repo-pinned stable harness (`@modelcontextprotocol/conformance@0.1.16`) passes 39/39 server +
-226/226 client. `scripts/conformance.sh` **already has a non-gating `draft-alpha` mode**
-(`run_draft_alpha/0` L212-224, pinned to `@modelcontextprotocol/conformance@0.2.0-alpha.9`
-via `CONFORMANCE_ALPHA_VERSION`, usage L252-268, documented at
-`test/ex_mcp/compliance/MCP_COVERAGE_MATRIX.md` L9/L11). That mode is the natural early
-signal. Prefer a stable 2026-07-28-aware harness for acceptance; if one is still unavailable at
-release time, use the explicit official-SDK interop fallback in the Phase 10 gates.
+The legacy conformance gate remains pinned to the stable
+`@modelcontextprotocol/conformance@0.1.16` harness. The modern gate is now
+`scripts/conformance.sh modern`, pinned by default to the first exact-version-aware harness,
+`@modelcontextprotocol/conformance@0.2.0-alpha.10`. It runs the complete `all` server and client
+suites for `2026-07-28`, propagates either suite's exit status, and uses one precompiled Mix
+build for the parallel client scenarios. Prefer a stable 2026-07-28-aware harness for release
+qualification; if one is still unavailable, use the explicit official-SDK interop fallback in
+the Phase 10 gates and disclose the prerelease harness in the release notes.
 
 ---
 
@@ -1208,13 +1208,16 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] `CHANGELOG.md` `[1.0.0]` separates MCP wire changes from ExMCP public-API compatibility.
       The package intentionally remains `1.0.0-rc.5`; bump `mix.exs` only after the final RC
       soak and release gates pass.
-- [ ] Green: `mix test.suite ci`, `mix credo`, `mix dialyzer`, `mix sobelow --skip`,
-      `scripts/conformance.sh` against a 2026-07-28-aware harness.
+- [x] Green: `mix test.suite ci`, `mix credo`, `mix dialyzer`, `mix sobelow --skip`,
+      `scripts/conformance.sh` against a 2026-07-28-aware harness. **Final local evidence on
+      2026-08-05: 20 doctests + 34 properties + 3,598 tests passed; strict Credo and Dialyzer
+      passed; Sobelow reported no high/critical findings; pinned conformance
+      `0.2.0-alpha.10` passed 112/112 server and 377/377 client checks with zero warnings.**
 - [x] Produce an API-diff report against `v1.0.0-rc.5`. Restore every removed public function,
       callback, struct field and return shape or delay stable 1.0; document additive APIs and
       protocol-driven behavior changes, but do not use release notes to waive a public removal.
       **`docs/API_DIFF_RC5_TO_1_0.md` compares independently compiled BEAM snapshots: 236 → 290
-      modules, 2,288 → 2,689 exports, 93 → 115 callbacks, 363 → 497 struct fields, with zero
+      modules, 2,288 → 2,690 exports, 93 → 115 callbacks, 363 → 503 struct fields, with zero
       removals in those categories. Every changed typespec was inspected; callback changes are
       supersets, struct/type changes are additive or corrective, and the intentional OAuth
       caller-supplied-state hardening is disclosed as an input-behavior change.**
@@ -1257,6 +1260,13 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 9. A rollback drill succeeds from a mixed-version cluster with active subscriptions and in-flight
    MRTR: operators can select `:legacy_only`, drain/restart safely, reconcile state, and explicitly
    manage persisted modern pins. Rollback must not silently downgrade already-pinned clients.
+
+**Current release status (2026-08-05):** the code and local-validation work for gates 1–6 and 8
+is complete. Gate 3 uses a pinned prerelease harness, so release qualification still needs either
+a stable 2026-aware harness or the documented bidirectional official-SDK fallback. Gate 7 requires
+publishing a modern-preferred RC and observing it for at least seven calendar days. Gate 9 requires
+an operator-run mixed-cluster rollback drill. Those are release operations, not remaining library
+implementation, and stable `1.0.0` must not be cut until all three conditions are satisfied.
 
 Before publishing `rc.6`, assign an owner and evidence link for every gate, define the load-test
 workload and regression budget against rc.5, and pin the qualifying conformance harness and
@@ -1307,12 +1317,13 @@ Things downstream users will notice.
 6. **No `Process.sleep` for synchronization** — per `CLAUDE.md`, use `assert_receive`,
    monitors, a `ping`-equivalent flush (note: in modern the flush must be a real request such
    as `tools/list`, since `ping` is gone), telemetry assertions, or `wait_until/2`.
-7. **External conformance** — `scripts/conformance.sh` against a 2026-07-28-capable release of
-   `@modelcontextprotocol/conformance`. Un-hardcode `mcp-protocol-version` at
-   `test/conformance/server.exs` L522. Track any gaps in `expected-failures.yml` and drive to zero.
-7b. **Bump the alpha harness.** `scripts/conformance.sh` `run_draft_alpha/0` is already wired
-   up; track `CONFORMANCE_ALPHA_VERSION` forward through each phase and drive the draft
-   results from "non-gating exploration" to gating by Phase 10.
+7. **External conformance** — `scripts/conformance.sh modern` pins
+   `@modelcontextprotocol/conformance@0.2.0-alpha.10`, selects exactly `2026-07-28`, and runs
+   both complete suites. The current result is 112/112 server and 377/377 client checks with no
+   warnings or expected-failure entries.
+7b. **Track the harness to stable.** Keep `CONFORMANCE_ALPHA_VERSION` overridable and replace
+   the prerelease pin with a stable 2026-aware release as soon as one is available. Until then,
+   retain the official-SDK fallback and disclose the pin in release notes.
 8. **Interop** — `test/interop/` vendors the TypeScript SDK; bump it once an SDK release
    implements 2026-07-28 and run cross-implementation tests both directions.
 9. **Public API compatibility** — compile and run representative rc.5 client/server modules,
@@ -1332,7 +1343,7 @@ Things downstream users will notice.
 | R3 | **`requestState` key management.** MRTR security depends on an AEAD key shared by every node that can resume a request. | Version the envelope, support key IDs/rotation, bind principal + request digest + expiry, and fail clearly when a configured MRTR flow cannot decrypt state. |
 | R4 | **HTTP plug complexity.** `do_dispatch/4` already has 14 clauses (L153-262); dual-era adds more. | Consider splitting modern vs legacy into separate plug modules behind a router rather than growing `do_dispatch/4`. |
 | R5 | **Stateless servers break existing user handlers** that relied on per-connection state. | The spec's answer is explicit server-minted handles as tool arguments (§"Stateful Tools"). Needs a documented migration recipe with an example. |
-| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.9` for non-gating draft checks; registry availability may change. | Re-check and pin at implementation/release time. Prefer a stable modern harness; otherwise use self-conformance + pinned official-SDK interop and disclose the gap. |
+| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.10` for the gating 2026-07-28 suites; the modern harness is still prerelease. | Move to a stable modern harness when available; otherwise require pinned bidirectional official-SDK interop and disclose the prerelease harness in release notes. |
 | R7 | **Spec churn.** `2026-07-28` is dated in the near past relative to this plan; errata are likely. | `mix mcp.sync_spec` has sha256/ETag change detection — run it in CI and alert on drift. |
 | R8 | **Scope.** ACP (17.6k LOC) is untouched but shares `_meta` helpers. | Verify no shared-helper regressions when `RequestParams` changes. |
 | R9 | **Ambiguous HTTP delivery can duplicate side effects.** A broken response does not reveal whether `tools/call` ran. | The conforming default reissues and is at-least-once. Offer `:safe_only` for callers that prefer `:outcome_unknown`; document application idempotency keys. |
