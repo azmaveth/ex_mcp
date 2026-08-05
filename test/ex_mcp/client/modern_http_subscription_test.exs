@@ -58,7 +58,11 @@ defmodule ExMCP.Client.ModernHTTPSubscriptionTest do
       )
 
     on_exit(fn ->
-      if Process.alive?(client), do: Client.disconnect(client)
+      try do
+        if Process.alive?(client), do: Client.disconnect(client)
+      catch
+        :exit, _reason -> :ok
+      end
     end)
 
     {:ok, registry: registry, client: client}
