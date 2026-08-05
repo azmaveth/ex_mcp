@@ -3,7 +3,7 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
 
   use GenServer
 
-  alias ExMCP.Internal.SSE
+  alias ExMCP.Internal.{Headers, SSE}
 
   @httpc_profiles [
     :ex_mcp_modern_stream_0,
@@ -37,6 +37,9 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     :request_ref,
     :idle_timeout,
     :idle_timer,
+    :auth_provider,
+    :auth_provider_state,
+    auth_attempts: 0,
     buffer: "",
     completed?: false,
     failed?: false,
@@ -70,7 +73,9 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       body: Keyword.fetch!(opts, :body),
       http_options: Keyword.fetch!(opts, :http_options),
       httpc_profile: profile,
-      idle_timeout: Keyword.fetch!(opts, :idle_timeout)
+      idle_timeout: Keyword.fetch!(opts, :idle_timeout),
+      auth_provider: Keyword.get(opts, :auth_provider),
+      auth_provider_state: Keyword.get(opts, :auth_provider_state)
     }
 
     {:ok, state, {:continue, :open}}
@@ -136,19 +141,34 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   end
 
   def handle_info(
-        {:http, {ref, {{_version, status, _reason}, _headers, body}}},
+        {:http, {ref, {{_version, status, _reason}, headers, body}}},
         %{request_ref: ref} = state
       ) do
     state = cancel_idle_timer(state)
     body = to_binary(body)
 
-    state = handle_complete_response(status, body, state)
+    case maybe_retry_with_auth(status, headers, state) do
+      {:retry, state} ->
+        case open_request(%{state | request_ref: nil}) do
+          {:ok, request_ref} ->
+            {:noreply, %{state | request_ref: request_ref}}
 
-    if state.completed? do
-      send(state.parent, {:modern_http_stream_finished, self(), state.request_id})
+          {:error, reason} ->
+            {:stop, :normal, notify_closed(state, {:auth_retry_failed, reason})}
+        end
+
+      :no_retry ->
+        state = handle_complete_response(status, body, state)
+
+        if state.completed? do
+          send(state.parent, {:modern_http_stream_finished, self(), state.request_id})
+        end
+
+        {:stop, :normal, state}
+
+      {:error, reason, state} ->
+        {:stop, :normal, notify_closed(state, {:authentication_failed, reason})}
     end
-
-    {:stop, :normal, state}
   end
 
   def handle_info({:http, {ref, {:error, reason}}}, %{request_ref: ref} = state) do
@@ -258,6 +278,64 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
 
   defp handle_complete_response(status, _body, state) do
     notify_closed(state, {:http_error, status})
+  end
+
+  # A POST-owned stream gets non-2xx responses as complete httpc responses,
+  # rather than stream_start/stream_end messages. Retry at most the same two
+  # challenge steps as the ordinary HTTP path: an initial 401 followed by an
+  # optional 403 insufficient-scope step-up.
+  defp maybe_retry_with_auth(status, response_headers, state)
+       when status in [401, 403] and not is_nil(state.auth_provider) and
+              state.auth_attempts < 2 do
+    callback = if status == 401, do: :handle_unauthorized, else: :handle_forbidden
+    www_auth = Headers.get(response_headers, "www-authenticate")
+    scopes = extract_scopes(www_auth)
+
+    case apply(state.auth_provider, callback, [www_auth, scopes, state.auth_provider_state]) do
+      {:ok, token, provider_state} when is_binary(token) ->
+        headers = put_bearer_header(state.headers, token)
+
+        send(
+          state.parent,
+          {:modern_http_stream_auth_updated, self(), state.request_id,
+           %{access_token: token, auth_provider_state: provider_state}}
+        )
+
+        {:retry,
+         %{
+           state
+           | headers: headers,
+             auth_provider_state: provider_state,
+             auth_attempts: state.auth_attempts + 1,
+             buffer: "",
+             close_notified?: false,
+             failed?: false,
+             completed?: false
+         }}
+
+      {:error, reason, _provider_state} ->
+        {:error, reason, state}
+
+      other ->
+        {:error, {:invalid_provider_response, other}, state}
+    end
+  end
+
+  defp maybe_retry_with_auth(_status, _response_headers, _state), do: :no_retry
+
+  defp extract_scopes(www_auth) when is_binary(www_auth) do
+    case Regex.run(~r/scope="([^"]+)"/, www_auth) do
+      [_, scopes] -> String.split(scopes, " ", trim: true)
+      _other -> []
+    end
+  end
+
+  defp extract_scopes(_www_auth), do: []
+
+  defp put_bearer_header(headers, token) do
+    headers
+    |> Headers.delete("authorization")
+    |> List.insert_at(0, {"Authorization", "Bearer #{token}"})
   end
 
   defp reset_idle_timer(state) do

@@ -470,7 +470,8 @@ defmodule ExMCP.Transport.HTTP do
 
   defp extract_auth_status(_), do: :ok
 
-  defp apply_provider_token(%{auth_provider: provider, auth_provider_state: ps} = state) do
+  defp apply_provider_token(%{auth_provider: provider, auth_provider_state: ps} = state)
+       when not is_nil(provider) do
     case provider.get_token(ps) do
       {:ok, nil, new_ps} ->
         %{state | auth_provider_state: new_ps}
@@ -482,6 +483,8 @@ defmodule ExMCP.Transport.HTTP do
         state
     end
   end
+
+  defp apply_provider_token(state), do: state
 
   defp apply_token_to_state(state, token) do
     %{state | access_token: token, headers: put_bearer_header(state.headers, token)}
@@ -1139,6 +1142,12 @@ defmodule ExMCP.Transport.HTTP do
 
   def open_stream(message, %__MODULE__{protocol_era: :modern} = state, parent, opts)
       when is_binary(message) and is_pid(parent) and is_list(opts) do
+    # Resolve the provider's current token before deriving request headers.
+    # Unlike the ordinary POST path, a modern request stream is owned by a
+    # dedicated process, so it cannot call perform_and_maybe_auth/2. Passing
+    # the provider snapshot lets that process handle a later 401/403 and send
+    # the refreshed durable auth state back to the client.
+    state = apply_provider_token(state)
     request_id = extract_request_id(message)
     url = build_url(state, "")
     headers = RequestHeaders.build(message, state)
@@ -1156,7 +1165,9 @@ defmodule ExMCP.Transport.HTTP do
              body: message,
              stream_kind: stream_kind,
              http_options: modern_stream_http_options(url, state),
-             idle_timeout: state.timeouts.stream_idle
+             idle_timeout: state.timeouts.stream_idle,
+             auth_provider: state.auth_provider,
+             auth_provider_state: state.auth_provider_state
            ) do
       {:ok, %{state | modern_streams: Map.put(state.modern_streams, request_id, pid)}}
     else

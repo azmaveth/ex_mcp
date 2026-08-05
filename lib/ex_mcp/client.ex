@@ -39,7 +39,7 @@ defmodule ExMCP.Client do
 
   alias ExMCP.Client.{ConnectionManager, EraCache, MRTR, RequestHandler, Subscription}
   alias ExMCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
-  alias ExMCP.Internal.{Protocol, RequestParams, VersionInfo, VersionRegistry}
+  alias ExMCP.Internal.{Headers, Protocol, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
   alias ExMCP.Server.Discover
@@ -1304,6 +1304,22 @@ defmodule ExMCP.Client do
   end
 
   def handle_info(
+        {:modern_http_stream_auth_updated, stream_pid, request_id, changes},
+        %{
+          transport_mod: HTTP,
+          transport_state: %HTTP{} = transport_state
+        } = state
+      )
+      when is_map(changes) do
+    if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
+      transport_state = merge_modern_stream_auth_state(transport_state, changes)
+      {:noreply, %{state | transport_state: transport_state}}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info(
         {:modern_http_stream_finished, stream_pid, request_id},
         %{
           transport_mod: HTTP,
@@ -1593,6 +1609,28 @@ defmodule ExMCP.Client do
       %{state | transport_state: Map.merge(state.transport_state, changes)}
     else
       state
+    end
+  end
+
+  defp merge_modern_stream_auth_state(transport_state, changes) do
+    provider_state = Map.get(changes, :auth_provider_state, transport_state.auth_provider_state)
+
+    case Map.fetch(changes, :access_token) do
+      {:ok, token} when is_binary(token) ->
+        headers =
+          transport_state.headers
+          |> Headers.delete("authorization")
+          |> List.insert_at(0, {"Authorization", "Bearer #{token}"})
+
+        %{
+          transport_state
+          | access_token: token,
+            auth_provider_state: provider_state,
+            headers: headers
+        }
+
+      _other ->
+        %{transport_state | auth_provider_state: provider_state}
     end
   end
 
