@@ -908,11 +908,14 @@ deployment configuration and the per-node quota boundary are documented.
       JSON-RPC id, cancellation/protocol/HTTP errors are excluded, and `call_tool` can inject a
       stable key at a caller-selected argument path before either attempt. The application tool
       remains responsible for schema acceptance and server-side deduplication.**
-- [ ] Reject duplicate required headers, CR/LF values, oversized names/values and conflicting
+- [x] Reject duplicate required headers, CR/LF values, oversized names/values and conflicting
       case variants before dispatch. Add reverse-proxy integration tests so header normalization
-      or buffering by common proxies cannot silently change protocol behavior. **Direct Plug
-      validation covers duplicate, malformed, unsafe and oversized standard/custom headers; the
-      reverse-proxy matrix remains open.**
+      or buffering by common proxies cannot silently change protocol behavior. **Complete:** in
+      addition to direct validation, literal HTTP requests now cross a front Cowboy connection,
+      a normalizing/buffering forwarding hop, and the ExMCP Cowboy endpoint. The matrix verifies
+      valid streaming headers, duplicate/case-conflicting required fields, oversized names and
+      values, obsolete folding/injection, and no handler dispatch on rejection. Production-proxy
+      preservation/rejection and buffering requirements are documented explicitly.
 - [x] Treat every `Mcp-Param-*` value as potentially sensitive. Redact it from Plug/client debug
       logs, telemetry and proxy examples just like `Authorization`; document that operators must
       configure upstream access-log redaction too. **ExMCP does not attach raw request headers to
@@ -926,9 +929,10 @@ behavior, unknown-method `404`, modern-only `GET`/`DELETE` `405`, and the existi
 compatibility suites, plus literal modern HTTP subscription streaming, cancellation, keepalives,
 abrupt-close reconnect and resynchronization. Literal ordinary-request coverage verifies ordered
 progress/log events, one final response, per-request log opt-in/thresholds, client-side
-correlation, and disconnect-driven handler cancellation. Clustered subscription fan-out,
-reverse-proxy tests, non-SSE POST recovery, and OAuth-aware request-stream reauthentication remain
-open. The request-stream retry matrix covers retry-once, safe-only `outcome_unknown`, a fresh
+correlation, and disconnect-driven handler cancellation. Clustered subscription fan-out and the
+reverse-proxy boundary matrix are complete; non-SSE POST recovery and OAuth-aware request-stream
+reauthentication remain final release-gate checks. The request-stream retry matrix covers
+retry-once, safe-only `outcome_unknown`, a fresh
 JSON-RPC id, original-deadline enforcement, non-retryable failures and stable idempotency keys.
 
 **Exit:** the modern Streamable HTTP transport subset passes locally and against every available

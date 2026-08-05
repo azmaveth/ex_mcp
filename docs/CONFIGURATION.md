@@ -923,6 +923,22 @@ reverse proxies, load balancers, APM agents, and access-log middleware to
 redact `Mcp-Param-*` just as they redact `Authorization` and cookies; those
 systems observe headers before ExMCP can sanitize their logs.
 
+At a reverse proxy or load balancer, preserve individual request-header field
+instances through the upstream hop or reject duplicates at the edge. Do not
+collapse duplicate `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, or
+`Mcp-Param-*` fields by selecting one value: once discarded, the application
+cannot distinguish an ambiguous request from a valid one. It is safe for an
+intermediary to apply a smaller header-size limit and reject early.
+
+For response streams, use an HTTP/1.1-or-newer upstream connection, disable
+request and response buffering, disable transformation/caching, preserve
+`Content-Type: text/event-stream` and `X-Accel-Buffering: no`, and set the
+proxy idle timeout above `:subscription_keepalive_interval_ms`. The automated
+proxy-boundary matrix sends literal HTTP bytes through two Cowboy connections
+and a normalizing, buffering forwarding hop. Deployment CI should run the same
+valid/duplicate/oversized/stream cases against the exact Nginx, HAProxy,
+Envoy, ingress, or managed load-balancer configuration used in production.
+
 ### Modern result cache hints
 
 MCP 2026-07-28 requires `ttlMs` and `cacheScope` on complete results from
