@@ -29,6 +29,21 @@ defmodule ExMCP.Transport.HTTP.ToolHeadersTest do
     assert %{header: "Trace", path: ["options", "trace"], type: "boolean"} in annotations
   end
 
+  test "compiles annotations from atom-keyed DSL definitions" do
+    tool = %{
+      name: "query",
+      inputSchema: %{
+        type: "object",
+        properties: %{
+          region: %{"x-mcp-header" => "Region", type: "string"}
+        }
+      }
+    }
+
+    assert {:ok, [%{header: "Region", path: ["region"], type: "string"}]} =
+             ToolHeaders.compile(tool)
+  end
+
   test "rejects invalid names, unsupported types, duplicates, and unreachable annotations" do
     assert {:error, :invalid_header_name} =
              ToolHeaders.compile(tool_with(%{"type" => "string", "x-mcp-header" => "bad name"}))
@@ -71,6 +86,26 @@ defmodule ExMCP.Transport.HTTP.ToolHeadersTest do
       )
 
     assert Enum.map(result["tools"], & &1["name"]) == ["tool"]
+  end
+
+  test "prepares the filtered and sorted collection before custom pagination" do
+    valid_z =
+      tool_with(%{"type" => "string", "x-mcp-header" => "Region"})
+      |> Map.put("name", "z-last")
+
+    invalid =
+      tool_with(%{"type" => "array", "x-mcp-header" => "Items"})
+      |> Map.put("name", "a-invalid")
+
+    valid_a =
+      tool_with(%{"type" => "string", "x-mcp-header" => "Tenant"})
+      |> Map.put("name", "a-first")
+
+    source = ResultNormalizer.prepare_tools_list([valid_z, invalid, valid_a])
+    {page, remaining} = Enum.split(source, 1)
+
+    assert Enum.map(page, & &1["name"]) == ["a-first"]
+    assert Enum.map(remaining, & &1["name"]) == ["z-last"]
   end
 
   test "validates mirrored values, including numeric integer comparison" do

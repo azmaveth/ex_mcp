@@ -866,11 +866,13 @@ deployment configuration and the per-node quota boundary are documented.
 - [x] Client: mirror server-listed `x-mcp-header` params into `Mcp-Param-{Name}`.
       On `-32020` due to missing/mismatched `Mcp-Param-*`, re-fetch `tools/list` and retry once
       only because header mismatch is guaranteed to reject before method dispatch.
-- [ ] Server: statically validate `x-mcp-header` reachability/names while normalizing
+- [x] Server: statically validate `x-mcp-header` reachability/names while normalizing
       `tools/list`; **exclude** tools with invalid annotations from the paginated result before
-      cursor/cache calculation and log a warning. **Validation, warning, and exclusion during
-      modern result normalization are complete. Moving exclusion ahead of handler-owned cursor
-      calculation remains open.**
+      cursor/cache calculation and log a warning. **Complete:** modern normalization retains a
+      defensive filter, while `ResultNormalizer.prepare_tools_list/1` gives raw paginating
+      handlers the required filter/stringify/sort operation before they slice or calculate an
+      opaque application cursor. DSL lists are unpaginated. Atom- and string-keyed schemas are
+      both validated, and regression coverage calculates a page only after invalid removal.
 - [x] Server plug: validate header↔body agreement (numeric compare for integers, Base64 decode
       before compare) → `400` + `-32020`. Missing required header ⇒ same.
 - [x] Server plug: `404` + `-32601` for unknown methods (distinguishes a modern server from a

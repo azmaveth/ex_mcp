@@ -8,18 +8,17 @@ defmodule ExMCP.Transport.HTTP.ToolHeaders do
   @type annotation :: %{header: String.t(), path: [String.t()], type: String.t()}
 
   @spec compile(map()) :: {:ok, [annotation()]} | {:error, term()}
-  def compile(%{"inputSchema" => schema}) when is_map(schema) do
-    with {:ok, annotations} <- collect_schema(schema, []),
-         :ok <- validate_unique_names(annotations) do
-      {:ok, annotations}
-    end
-  end
+  def compile(tool) when is_map(tool) do
+    case input_schema(tool) do
+      schema when is_map(schema) ->
+        with {:ok, annotations} <- collect_schema(stringify_keys(schema), []),
+             :ok <- validate_unique_names(annotations) do
+          {:ok, annotations}
+        end
 
-  def compile(%{"input_schema" => schema} = tool) when is_map(schema) do
-    tool
-    |> Map.put("inputSchema", schema)
-    |> Map.delete("input_schema")
-    |> compile()
+      _missing_or_invalid ->
+        {:ok, []}
+    end
   end
 
   def compile(_tool), do: {:ok, []}
@@ -241,4 +240,16 @@ defmodule ExMCP.Transport.HTTP.ToolHeaders do
   end
 
   defp tool_name(tool), do: Map.get(tool, "name") || Map.get(tool, :name)
+
+  defp input_schema(tool) do
+    Map.get(tool, "inputSchema") || Map.get(tool, :inputSchema) ||
+      Map.get(tool, "input_schema") || Map.get(tool, :input_schema)
+  end
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {to_string(key), stringify_keys(value)} end)
+  end
+
+  defp stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
+  defp stringify_keys(value), do: value
 end

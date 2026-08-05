@@ -893,6 +893,24 @@ or unsupported annotations cause the server to omit that tool from a modern
 list response. On a `-32020` header mismatch the client refreshes `tools/list`
 and retries the tool call exactly once inside the original timeout.
 
+The ExMCP DSL returns its complete tool set and therefore needs no cursor
+coordination. A raw handler that paginates a dynamic tool set must filter and
+sort the full source collection before it slices the requested page:
+
+```elixir
+def handle_list_tools(cursor, state) do
+  tools =
+    state.dynamic_tools
+    |> ExMCP.Server.ResultNormalizer.prepare_tools_list()
+
+  {page, next_cursor} = MyApp.Cursor.page(tools, cursor)
+  {:ok, page, next_cursor, state}
+end
+```
+
+Result normalization repeats this validation as a defensive boundary, but it
+cannot correct a handler-owned cursor calculated from invalid definitions.
+
 The server validates standard and annotated headers against the body before
 tool dispatch. Custom raw `Mcp-Method`, `Mcp-Name`, `Mcp-Session-Id`,
 `Last-Event-ID`, and `Mcp-Param-*` values supplied through the client's

@@ -47,6 +47,27 @@ defmodule ExMCP.Server.ResultNormalizer do
   def stringify_keys(value), do: value
 
   @doc """
+  Prepares the complete source collection for a modern `tools/list` page.
+
+  Custom handlers that paginate tools must call this function before slicing
+  a page or calculating an opaque cursor. It stringifies protocol keys,
+  excludes invalid `x-mcp-header` definitions, removes ExMCP-only execution
+  metadata, and applies the deterministic modern ordering.
+
+  The normal result path applies the same operation defensively, but at that
+  point it cannot repair a cursor that a custom handler calculated from an
+  unfiltered collection.
+  """
+  @spec prepare_tools_list([map()]) :: [map()]
+  def prepare_tools_list(tools) when is_list(tools) do
+    tools
+    |> stringify_keys()
+    |> ToolHeaders.filter_valid_tools()
+    |> Enum.map(&Map.drop(&1, ["execution"]))
+    |> Enum.sort_by(&tool_sort_key/1)
+  end
+
+  @doc """
   Applies the result envelope required by the request's protocol era.
 
   Legacy results are returned unchanged. Modern results receive a
@@ -85,13 +106,7 @@ defmodule ExMCP.Server.ResultNormalizer do
 
   defp normalize_tools_list(%{"tools" => tools} = result, %{method: "tools/list"})
        when is_list(tools) do
-    tools =
-      tools
-      |> ToolHeaders.filter_valid_tools()
-      |> Enum.map(&Map.drop(&1, ["execution"]))
-      |> Enum.sort_by(&tool_sort_key/1)
-
-    Map.put(result, "tools", tools)
+    Map.put(result, "tools", prepare_tools_list(tools))
   end
 
   defp normalize_tools_list(result, _request_context), do: result
