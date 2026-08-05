@@ -964,18 +964,21 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] Deterministic `tools/list` ordering. **Modern results are sorted lexicographically by tool
       name after invalid `x-mcp-header` definitions are removed; legacy handler ordering is
       preserved.**
-- [ ] JSON Schema: `$ref` MUST NOT auto-dereference network URIs (opt-in only, off by default,
+- [x] JSON Schema: `$ref` MUST NOT auto-dereference network URIs (opt-in only, off by default,
       host allowlist, reject loopback/link-local/private, timeouts, size limits, logging);
       bound composition-keyword depth / subschema count / validation time. Touches
-      `ExMCP.Content.SchemaValidator` and `ExMCP.Content.Validation`. **Offline boundary
-      complete:** every content, helper, DSL, deprecated-tools, and registry path now uses the
-      centralized `ExMCP.Content.SchemaPolicy`; external references fail before ExJsonSchema's
-      global resolver, while schema bytes/depth/object count/composition depth and resolve/
-      validation time are bounded. Network opt-in remains intentionally unavailable until the
-      next checklist item's complete fetch boundary ships.
-- [ ] If network `$ref` is enabled, apply redirect and DNS/IP revalidation on every hop, IPv4/
+      `ExMCP.Content.SchemaValidator` and `ExMCP.Content.Validation`. **Every content, helper,
+      DSL, deprecated-tools, and registry path uses `ExMCP.Content.SchemaPolicy`. The default
+      rejects external refs before ExJsonSchema's global resolver; the opt-in resolver requires
+      an allowlist and applies bounded, IP-pinned fetching. Schema bytes/depth/object count/
+      composition depth and resolve/validation time are bounded in both modes.**
+- [x] If network `$ref` is enabled, apply redirect and DNS/IP revalidation on every hop, IPv4/
       IPv6 address-class checks, recursive-fetch/cycle and aggregate-byte/decompression limits,
       and an explicit proxy policy. Cache fetched schemas only inside the same trust partition.
+      **Every hop is re-resolved and connected to an approved public IP; mixed DNS answers,
+      compressed responses, userinfo, proxies, redirect/reference cycles, and all over-limit
+      graphs fail closed. Documents are compilation-local and never enter a persistent/global
+      cache, while audit logs hash URI and trust-partition identifiers.**
 - [ ] OTel `_meta` propagation conventions (`traceparent`, `tracestate`, `baggage`).
       Bound/allowlist baggage keys and total bytes. **Optional for 1.0**; it must not delay the
       modern core release gate.

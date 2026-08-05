@@ -205,9 +205,10 @@ and adversarial composition can consume excessive CPU or memory. ExMCP applies
 the same policy to content helpers, tool argument validation, DSL output
 schemas, the deprecated tools API, and the dynamic tool registry.
 
-- Only same-document fragment references (`#` and `#/...`) are accepted.
-- HTTP(S), file, relative, recursive cross-document, and dynamic
-  cross-document references fail before schema resolution starts.
+- Only same-document fragment references (`#` and `#/...`) are accepted by
+  default. File, recursive cross-document, and dynamic cross-document
+  references are always rejected.
+- HTTP(S) `$ref` fetching requires an explicit non-empty host allowlist.
 - Configuring ExJsonSchema's process-wide `:remote_schema_resolver` does not
   bypass this boundary.
 - Encoded bytes, structural depth, schema-object count, composition depth,
@@ -215,11 +216,20 @@ schemas, the deprecated tools API, and the dynamic tool registry.
 - Policy errors do not include the rejected reference, avoiding accidental
   disclosure of credentials or sensitive internal URLs.
 
-The limits and defaults are documented in the
-[Configuration Guide](CONFIGURATION.md#json-schema-resource-policy). Network
-references have no opt-in escape hatch in ExMCP 1.0. Keep referenced definitions
-inside the schema document until the full network-fetch boundary described in
-the migration plan is available.
+When network fetching is enabled, each redirect is independently allowlisted
+and DNS-resolved. Any non-public IPv4/IPv6 answer rejects the target, and the
+HTTP client connects to the approved IP while retaining the hostname for TLS
+certificate verification and SNI. Userinfo and credentials are forbidden;
+responses, document graphs, redirects, and deadlines are bounded; compressed
+responses and proxies are rejected. Cross-document fetch cycles fail closed.
+
+Remote documents live only inside the current compilation and are never put in
+a global cache. Fetch audit logs include the allowed host plus hashes of the URI
+and trust partition, not paths, queries, credentials, or raw partition IDs.
+
+The complete limits, defaults, and opt-in example are in the
+[Configuration Guide](CONFIGURATION.md#json-schema-resource-policy). Prefer
+embedding definitions in the local schema whenever practical.
 
 ## stdio Security
 

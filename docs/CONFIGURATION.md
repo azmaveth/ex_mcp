@@ -42,10 +42,10 @@ ExMCP.Protocol.VersionNegotiator.supported?("2025-11-25")
 ## JSON Schema Resource Policy
 
 Every JSON Schema compiled or validated by ExMCP passes through one bounded,
-fail-closed policy. Only local fragment references (`#` and `#/...`) are
-accepted. HTTP(S), file, and relative cross-document `$ref` values are rejected
-before ExJsonSchema can resolve them, even if the host application configured
-ExJsonSchema's global `:remote_schema_resolver`.
+fail-closed policy. By default, only local fragment references (`#` and
+`#/...`) are accepted. HTTP(S), file, and relative cross-document `$ref` values
+are rejected before ExJsonSchema can resolve them, even if the host application
+configured ExJsonSchema's global `:remote_schema_resolver`.
 
 The defaults are suitable for protocol schemas and can be tightened or raised
 for a trusted application workload:
@@ -70,10 +70,57 @@ can be used to disable the corresponding work. Invalid values fail closed.
 meta-schemas do not require a network request. Boolean JSON Schemas (`true` and
 `false`) are supported.
 
-Network schema fetching is not available in ExMCP 1.0. It will remain disabled
-until an opt-in resolver can enforce host allowlists, DNS/IP checks on every
-redirect, proxy policy, response and decompression limits, recursion/cycle
-limits, deadlines, and trust-partitioned caching as one complete boundary.
+### Opt-in network references
+
+Keep remote references disabled unless the schema publisher is part of the
+application's trust boundary. To opt in, provide a non-empty host allowlist and
+increase the outer resolution deadline enough to cover the bounded network
+work:
+
+```elixir
+config :ex_mcp, :json_schema,
+  resolve_timeout_ms: 10_000,
+  network_refs: [
+    enabled: true,
+    allowed_hosts: ["schemas.example.com", "*.schemas.example.net"],
+    trust_partition: "production-schema-publishers",
+    allow_http: false,
+    max_redirects: 3,
+    max_documents: 16,
+    max_reference_depth: 8,
+    max_response_bytes: 262_144,
+    max_decompressed_bytes: 262_144,
+    max_aggregate_bytes: 1_048_576,
+    dns_timeout_ms: 1_000,
+    connect_timeout_ms: 2_000,
+    request_timeout_ms: 3_000,
+    proxy: :disabled
+  ]
+```
+
+The allowlist contains hostnames, not URLs. `*.example.com` matches subdomains
+but not `example.com` itself. HTTPS is required unless `allow_http: true` is set;
+plain HTTP provides no publisher authentication or integrity and is not
+recommended. Redirects from HTTPS to HTTP are rejected even when HTTP was
+enabled for an explicitly HTTP reference.
+
+Every request and redirect target is allowlisted, independently DNS-resolved,
+checked for public-only IPv4/IPv6 addresses, and connected to an approved IP
+while TLS verification and SNI use the original hostname. A mixed DNS answer
+containing even one loopback, link-local, private, reserved, or documentation
+address is rejected. URI userinfo, compressed responses, and proxies are
+rejected. No cookies, authorization headers, or other credentials are sent.
+
+Fetched documents exist only inside one compilation; ExMCP does not persist or
+globally share a remote-schema cache. This is stronger than partitioning a
+persistent cache and prevents one tenant or principal from warming another's
+schema state. `trust_partition` is hashed in audit logs and establishes the
+partition identity for any future cache implementation.
+
+`:dns_resolver` and `:http_client` adapter overrides exist for controlled tests.
+Do not replace them in production: doing so replaces the DNS revalidation,
+IP-pinned connection, TLS, streaming limit, and deadline enforcement that make
+the boundary safe.
 
 ## Client Configuration
 
