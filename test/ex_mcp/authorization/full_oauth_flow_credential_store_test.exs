@@ -96,7 +96,40 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
     assert Agent.get(server.counter, & &1.registrations) == 0
   end
 
-  defp oauth_server(client_id, metadata_issuer \\ nil) do
+  test "preserves native and web DCR redirect rejections without a weakening retry" do
+    {:ok, store_agent} =
+      Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
+
+    response = %{
+      "error" => "invalid_redirect_uri",
+      "error_description" => "redirect URI is not registered by policy"
+    }
+
+    for application_type <- [:native, :web] do
+      server = oauth_server("unused-client", nil, registration_error: response)
+
+      config =
+        server
+        |> flow_config({StoreAdapter, store_agent})
+        |> Map.put(:application_type, application_type)
+
+      assert {:error,
+              {:redirect_uri_rejected,
+               application_type: ^application_type,
+               redirect_uri: "http://127.0.0.1:45321/callback",
+               status: 400,
+               response: ^response}} = FullOAuthFlow.execute(config)
+
+      state = Agent.get(server.counter, & &1)
+      assert state.registrations == 1
+      assert state.tokens == 0
+      assert [request] = state.registration_requests
+      assert request["application_type"] == Atom.to_string(application_type)
+      assert request["redirect_uris"] == ["http://127.0.0.1:45321/callback"]
+    end
+  end
+
+  defp oauth_server(client_id, metadata_issuer \\ nil, opts \\ []) do
     bypass = Bypass.open()
     unique = System.unique_integer([:positive])
     issuer_host = "auth-#{unique}.example"
@@ -105,7 +138,9 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
     resource_origin = "https://#{resource_host}"
     actual_origin = "http://localhost:#{bypass.port}"
     metadata_issuer = metadata_issuer || issuer
-    {:ok, counter} = Agent.start_link(fn -> %{registrations: 0, tokens: 0} end)
+
+    {:ok, counter} =
+      Agent.start_link(fn -> %{registrations: 0, registration_requests: [], tokens: 0} end)
 
     metadata_client = fn uri, _address, _opts ->
       body =
@@ -133,12 +168,25 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
     end
 
     Bypass.stub(bypass, "POST", "/register", fn conn ->
-      Agent.update(counter, &Map.update!(&1, :registrations, fn count -> count + 1 end))
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      request = Jason.decode!(body)
 
-      json(conn, 201, %{
-        "client_id" => client_id,
-        "client_secret" => "secret-for-#{client_id}"
-      })
+      Agent.update(counter, fn state ->
+        state
+        |> Map.update!(:registrations, fn count -> count + 1 end)
+        |> Map.update!(:registration_requests, &[request | &1])
+      end)
+
+      case opts[:registration_error] do
+        nil ->
+          json(conn, 201, %{
+            "client_id" => client_id,
+            "client_secret" => "secret-for-#{client_id}"
+          })
+
+        error ->
+          json(conn, 400, error)
+      end
     end)
 
     Bypass.stub(bypass, "POST", "/token", fn conn ->

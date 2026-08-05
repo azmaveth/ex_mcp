@@ -1123,9 +1123,19 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       loopback, link-local and mixed answers, rebinding across redirects, downgrade/cross-origin
       redirects, cycles, limits, compression, adapter timeouts, malformed documents and header
       confidentiality.**
-- [ ] Run an auth matrix covering pre-registered/CIMD/DCR registration, native vs web
+- [x] Run an auth matrix covering pre-registered/CIMD/DCR registration, native vs web
       `application_type`, RFC 9207 `iss` present/absent/mismatch, issuer changes, redirect
       rejection, credential partitioning, and every supported legacy/modern HTTP mode.
+      **`Authorization.CompatibilityMatrixTest` exercises all three registration strategies,
+      native and web DCR, exact RFC 9207 callback issuer outcomes, and every version enabled by
+      `:legacy_only`, `:prefer_legacy`, `:prefer_modern`, and `:modern_only`. Each negotiated
+      version is propagated through both synchronous HTTP and HTTP+SSE OAuth-provider setup.
+      Registration and token keys are varied across every issuer/client/resource/audience/
+      subject-or-client-identity/scope partition. Full-flow tests prove authorization-server
+      issuer changes force DCR re-registration and that native/web `invalid_redirect_uri`
+      responses retain structured details after exactly one attempt, with no application-type or
+      redirect weakening. The same suite covers exact pre-registered issuer binding and CIMD
+      portability across authorization servers.**
 
 ---
 
