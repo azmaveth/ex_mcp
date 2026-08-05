@@ -12,7 +12,7 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   Available in protocol version 2025-11-25.
   """
 
-  alias ExMCP.Authorization.AuthorizationServerMetadata
+  alias ExMCP.Authorization.{AuthorizationServerMetadata, Issuer}
 
   @type oidc_metadata :: %{String.t() => term()}
 
@@ -183,10 +183,9 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   end
 
   defp validate_issuer(metadata, expected_issuer) do
-    case Map.get(metadata, "issuer") do
-      ^expected_issuer -> :ok
-      nil -> {:error, :missing_issuer}
-      actual -> {:error, {:issuer_mismatch, expected: expected_issuer, actual: actual}}
+    case Issuer.compare(expected_issuer, Map.get(metadata, "issuer")) do
+      {:error, :missing_authorization_server_issuer} -> {:error, :missing_issuer}
+      result -> result
     end
   end
 

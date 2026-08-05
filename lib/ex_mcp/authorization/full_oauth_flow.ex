@@ -35,7 +35,9 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   alias ExMCP.Authorization.{
     ClientAssertion,
     ClientRegistration,
+    CredentialStore,
     HTTPClient,
+    Issuer,
     OAuthFlow,
     OIDCDiscovery,
     RegistrationPolicy
@@ -46,6 +48,9 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           optional(:client_id) => String.t(),
           optional(:client_secret) => String.t(),
           optional(:client_registration) => RegistrationPolicy.configured_strategy(),
+          optional(:credential_issuer) => String.t(),
+          optional(:credential_store) => CredentialStore.store(),
+          optional(:credential_context) => term(),
           optional(:client_metadata_url) => String.t(),
           optional(:application_type) => RegistrationPolicy.application_type(),
           optional(:redirect_port) => non_neg_integer(),
@@ -87,7 +92,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
               config
           end
 
-        select_and_run_grant_flow(as_metadata, client_info, config)
+        run_and_persist_token(as_metadata, client_info, config)
       end
 
     case result do
@@ -116,6 +121,13 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   # If the server only supports client_credentials, use that regardless.
   # Otherwise, use auth code if no pre-existing creds, client_credentials if we have them.
   @jwt_bearer_grant "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+  defp run_and_persist_token(as_metadata, client_info, config) do
+    with {:ok, token_data} <- select_and_run_grant_flow(as_metadata, client_info, config),
+         :ok <- persist_token(token_data, as_metadata, client_info, config) do
+      {:ok, token_data}
+    end
+  end
 
   defp select_and_run_grant_flow(as_metadata, client_info, config) do
     grant_types = as_metadata["grant_types_supported"] || []
@@ -193,13 +205,14 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
       case OIDCDiscovery.discover(base) do
         {:ok, metadata} ->
-          issuer = metadata["issuer"] || base
-          # Store the already-fetched metadata to avoid re-discovery
-          {:ok,
-           %{
-             authorization_servers: [%{issuer: issuer}],
-             _prefetched_as_metadata: metadata
-           }}
+          with :ok <- Issuer.compare(base, metadata["issuer"]) do
+            # Store the already-fetched metadata to avoid re-discovery
+            {:ok,
+             %{
+               authorization_servers: [%{issuer: base}],
+               _prefetched_as_metadata: metadata
+             }}
+          end
 
         {:error, _} ->
           # Last resort: construct endpoint URLs from the resource origin.
@@ -331,25 +344,33 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   defp discover_as_metadata(prm, config) do
     # Check for prefetched AS metadata (from PRM fallback path)
     case prm do
-      %{_prefetched_as_metadata: metadata} when is_map(metadata) ->
-        :telemetry.execute(
-          [:ex_mcp, :auth, :discovery, :completed],
-          %{system_time: System.system_time()},
-          %{issuer: metadata["issuer"]}
-        )
+      %{
+        _prefetched_as_metadata: metadata,
+        authorization_servers: [%{issuer: issuer} | _]
+      }
+      when is_map(metadata) ->
+        with :ok <- Issuer.compare(issuer, metadata["issuer"]) do
+          :telemetry.execute(
+            [:ex_mcp, :auth, :discovery, :completed],
+            %{system_time: System.system_time()},
+            %{issuer: issuer}
+          )
 
-        {:ok, metadata}
+          {:ok, metadata}
+        end
 
       %{authorization_servers: [%{issuer: issuer} | _]} ->
         case OIDCDiscovery.discover(issuer, http_client: config[:http_client]) do
           {:ok, metadata} ->
-            :telemetry.execute(
-              [:ex_mcp, :auth, :discovery, :completed],
-              %{system_time: System.system_time()},
-              %{issuer: issuer}
-            )
+            with :ok <- Issuer.compare(issuer, metadata["issuer"]) do
+              :telemetry.execute(
+                [:ex_mcp, :auth, :discovery, :completed],
+                %{system_time: System.system_time()},
+                %{issuer: issuer}
+              )
 
-            {:ok, metadata}
+              {:ok, metadata}
+            end
 
           {:error, reason} ->
             {:error, {:as_discovery_failed, reason}}
@@ -371,7 +392,17 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         {:ok, client_info}
 
       {:ok, {:dynamic, selection}} ->
-        do_register_client(selection, as_metadata, config)
+        case load_persisted_registration(as_metadata, config) do
+          {:ok, registration} ->
+            Logger.info("Using persisted issuer-bound OAuth client registration")
+            {:ok, Map.from_struct(registration)}
+
+          :not_found ->
+            do_register_client(selection, as_metadata, config)
+
+          {:error, _reason} = error ->
+            error
+        end
 
       {:error, _reason} = error ->
         error
@@ -405,18 +436,22 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       {:ok, reg} ->
         client_id = reg[:client_id] || reg["client_id"]
 
-        :telemetry.execute(
-          [:ex_mcp, :auth, :registration, :completed],
-          %{system_time: System.system_time()},
-          %{client_id: client_id}
-        )
+        client_info = %{
+          issuer: as_metadata["issuer"],
+          client_id: client_id,
+          client_secret: reg[:client_secret] || reg["client_secret"],
+          registration_method: :dynamic
+        }
 
-        {:ok,
-         %{
-           client_id: client_id,
-           client_secret: reg[:client_secret] || reg["client_secret"],
-           registration_method: :dynamic
-         }}
+        with :ok <- persist_registration(client_info, config) do
+          :telemetry.execute(
+            [:ex_mcp, :auth, :registration, :completed],
+            %{system_time: System.system_time()},
+            %{client_id: client_id, issuer: as_metadata["issuer"]}
+          )
+
+          {:ok, client_info}
+        end
 
       {:error, {:registration_error, status, %{"error" => "invalid_redirect_uri"} = response}} ->
         {:error,
@@ -438,6 +473,63 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       "client_secret_post" in supported -> "client_secret_post"
       true -> "none"
     end
+  end
+
+  defp load_persisted_registration(as_metadata, %{credential_store: store} = config) do
+    CredentialStore.fetch_registration(
+      store,
+      credential_context(config),
+      as_metadata["issuer"]
+    )
+  end
+
+  defp load_persisted_registration(_as_metadata, _config), do: :not_found
+
+  defp persist_registration(_client_info, config) when not is_map_key(config, :credential_store),
+    do: :ok
+
+  defp persist_registration(client_info, config) do
+    CredentialStore.put_registration(
+      config.credential_store,
+      credential_context(config),
+      client_info
+    )
+  end
+
+  defp persist_token(_token_data, _as_metadata, _client_info, config)
+       when not is_map_key(config, :credential_store),
+       do: :ok
+
+  defp persist_token(token_data, as_metadata, client_info, config) do
+    expires_at =
+      case token_field(token_data, :expires_in) do
+        seconds when is_integer(seconds) and seconds >= 0 -> System.system_time(:second) + seconds
+        _other -> nil
+      end
+
+    token = %{
+      issuer: as_metadata["issuer"],
+      client_id: client_info.client_id,
+      resource: config[:resource] || config[:resource_url],
+      audience: config[:audience],
+      subject: config[:subject],
+      client_identity: config[:client_identity] || client_info.client_id,
+      granted_scopes:
+        token_field(token_data, :scope) || config[:scopes] || config[:prm_scopes] || [],
+      access_token: token_field(token_data, :access_token),
+      refresh_token: token_field(token_data, :refresh_token),
+      token_type: token_field(token_data, :token_type) || "Bearer",
+      expires_at: expires_at
+    }
+
+    CredentialStore.put_token(config.credential_store, token)
+  end
+
+  defp credential_context(config),
+    do: config[:credential_context] || config[:resource_url]
+
+  defp token_field(token_data, field) do
+    Map.get(token_data, field) || Map.get(token_data, Atom.to_string(field))
   end
 
   # Step 4a: Client credentials flow (when we have pre-existing credentials)

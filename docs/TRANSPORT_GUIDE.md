@@ -73,6 +73,7 @@ For OAuth client registration, configure one explicit strategy:
 auth: %{
   client_registration:
     {:pre_registered, "client-id", {:env, "MCP_CLIENT_SECRET"}},
+  credential_issuer: "https://auth.example.com",
   redirect_port: 8080
 }
 
@@ -89,6 +90,13 @@ deprecated DCR only when `registration_endpoint` is advertised. DCR requires
 an explicit `application_type: :native | :web` and a stable `redirect_port`;
 ExMCP never invents a CIMD URL or guesses the application type. A missing
 strategy returns an actionable registration error.
+
+Modern pre-registered credentials must include `credential_issuer`, which is
+compared exactly with discovered AS metadata. To retain DCR credentials and
+tokens safely across flows, configure an adapter implementing
+`ExMCP.Authorization.CredentialStore`; registrations are issuer + client-ID
+bound and tokens use the complete authorization partition. See the
+[Configuration Guide](CONFIGURATION.md#issuer-bound-credential-persistence).
 
 ### Phoenix/Plug Server
 

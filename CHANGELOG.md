@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **OAuth credentials are authorization-server bound** — MCP 2026-07-28 pre-registered clients require an exact `credential_issuer`; discovered metadata, callbacks, and persisted registrations use one no-normalization issuer comparison. The new pluggable `ExMCP.Authorization.CredentialStore` partitions registrations by issuer + client ID and tokens by the complete authorization context, rejects unkeyed legacy records pending explicit migration, and redacts stored secrets from inspection. DCR credentials are reused only within the same issuer partition and a changed AS triggers registration in a new partition.
+
 ## [1.0.0-rc.5] - 2026-08-04
 
 This release closes the findings of a full-codebase audit (architecture, security,

@@ -20,7 +20,8 @@ defmodule ExMCP.Authorization.Provider.OAuth do
       # Pre-registered credentials; the secret is resolved only when needed
       {ExMCP.Authorization.Provider.OAuth, %{
         resource_url: "http://localhost:3000/mcp",
-        client_registration: {:pre_registered, "my-client", {:env, "MCP_CLIENT_SECRET"}}
+        client_registration: {:pre_registered, "my-client", {:env, "MCP_CLIENT_SECRET"}},
+        credential_issuer: "https://auth.example.com"
       }}
 
       # Deprecated DCR fallback (requires explicit application type and stable callback port)

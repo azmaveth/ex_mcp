@@ -6,12 +6,19 @@ defmodule ExMCP.Authorization.RegistrationPolicy do
   Document, deprecated Dynamic Client Registration, then an actionable error.
   A metadata URL is never invented and `application_type` is never inferred.
 
+  For modern MCP, pre-registered credentials also require a
+  `:credential_issuer` configuration value. It is compared exactly with the
+  discovered authorization-server issuer before any secret reference is
+  resolved. Client ID Metadata Document identifiers remain portable across
+  authorization servers.
+
   Existing `client_id`, `client_secret`, and `client_metadata_url` keys remain
   accepted as compatibility aliases for the explicit `:client_registration`
   option.
   """
 
-  alias ExMCP.Authorization.ClientIdMetadata
+  alias ExMCP.Authorization.{ClientIdMetadata, Issuer}
+  alias ExMCP.Internal.VersionRegistry
 
   @type application_type :: :native | :web
   @type secret_ref ::
@@ -37,7 +44,7 @@ defmodule ExMCP.Authorization.RegistrationPolicy do
 
     case strategy do
       {:pre_registered, client_id, secret_ref} ->
-        select_pre_registered(client_id, secret_ref)
+        select_pre_registered(client_id, secret_ref, as_metadata, config)
 
       {:cimd, client_id_url} ->
         select_cimd(client_id_url, as_metadata, config)
@@ -61,12 +68,16 @@ defmodule ExMCP.Authorization.RegistrationPolicy do
 
   defp configured_strategy(_config), do: :auto
 
-  defp select_pre_registered(client_id, secret_ref)
+  defp select_pre_registered(client_id, secret_ref, as_metadata, config)
        when is_binary(client_id) and client_id != "" do
-    with {:ok, client_secret} <- resolve_secret(secret_ref) do
+    discovered_issuer = as_metadata["issuer"]
+
+    with :ok <- validate_pre_registered_issuer(discovered_issuer, config),
+         {:ok, client_secret} <- resolve_secret(secret_ref) do
       {:ok,
        {:pre_registered,
         %{
+          issuer: discovered_issuer,
           client_id: client_id,
           client_secret: client_secret,
           registration_method: :pre_registered
@@ -74,8 +85,36 @@ defmodule ExMCP.Authorization.RegistrationPolicy do
     end
   end
 
-  defp select_pre_registered(_client_id, _secret_ref),
+  defp select_pre_registered(_client_id, _secret_ref, _as_metadata, _config),
     do: {:error, :invalid_pre_registered_client_id}
+
+  defp validate_pre_registered_issuer(discovered_issuer, %{credential_issuer: expected_issuer}) do
+    case Issuer.compare(expected_issuer, discovered_issuer) do
+      :ok ->
+        :ok
+
+      {:error, {:issuer_mismatch, details}} ->
+        {:error, {:pre_registered_credential_issuer_mismatch, details}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp validate_pre_registered_issuer(discovered_issuer, config) do
+    if explicit_pre_registration?(config) or VersionRegistry.modern?(config[:protocol_version]) do
+      {:error, {:pre_registered_credential_issuer_required, discovered_issuer}}
+    else
+      :ok
+    end
+  end
+
+  defp explicit_pre_registration?(%{
+         client_registration: {:pre_registered, _client_id, _secret_ref}
+       }),
+       do: true
+
+  defp explicit_pre_registration?(_config), do: false
 
   defp select_cimd(client_id_url, as_metadata, config) do
     with true <- ClientIdMetadata.supported?(as_metadata),
@@ -98,7 +137,7 @@ defmodule ExMCP.Authorization.RegistrationPolicy do
   defp select_auto(as_metadata, config) do
     cond do
       is_binary(config[:client_id]) and config[:client_id] != "" ->
-        select_pre_registered(config.client_id, config[:client_secret])
+        select_pre_registered(config.client_id, config[:client_secret], as_metadata, config)
 
       is_binary(config[:client_metadata_url]) and ClientIdMetadata.supported?(as_metadata) ->
         select_cimd(config.client_metadata_url, as_metadata, config)

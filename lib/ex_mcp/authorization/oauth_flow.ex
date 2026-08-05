@@ -8,7 +8,7 @@ defmodule ExMCP.Authorization.OAuthFlow do
   - Token refresh flow
   """
 
-  alias ExMCP.Authorization.{ClientAssertion, HTTPClient, PKCE, Validator}
+  alias ExMCP.Authorization.{ClientAssertion, HTTPClient, Issuer, PKCE, Validator}
 
   @type auth_params :: %{
           optional(:state) => String.t(),
@@ -403,12 +403,8 @@ defmodule ExMCP.Authorization.OAuthFlow do
   defp validate_response_issuer(_callback_issuer, nil),
     do: {:error, :missing_expected_issuer}
 
-  defp validate_response_issuer(callback_issuer, expected_issuer)
-       when callback_issuer == expected_issuer,
-       do: :ok
-
   defp validate_response_issuer(callback_issuer, expected_issuer) do
-    {:error, {:issuer_mismatch, expected: expected_issuer, actual: callback_issuer}}
+    Issuer.compare(expected_issuer, callback_issuer)
   end
 
   defp validate_authorization_code(code) when is_binary(code) and code != "", do: :ok

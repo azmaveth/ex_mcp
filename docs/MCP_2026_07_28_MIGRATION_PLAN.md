@@ -1078,12 +1078,23 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       and its JSON body require the explicit application type. The built-in local flow also
       requires a stable configured callback port before DCR, preserves structured AS redirect
       rejection details, and performs no weakening retry.**
-- [ ] Key persisted credentials by issuer; refuse cross-AS reuse; re-register on AS change;
-      surface an error on mismatched pre-registered credentials.
-- [ ] Use standards-defined issuer comparison with no ad hoc trailing-slash/path normalization.
+- [x] Key persisted credentials by issuer; refuse cross-AS reuse; re-register on AS change;
+      surface an error on mismatched pre-registered credentials. **A pluggable
+      `ExMCP.Authorization.CredentialStore` boundary now validates every returned key and record.
+      The full OAuth flow reuses DCR credentials only from the exact discovered-issuer partition,
+      persists new registrations and tokens when an adapter is configured, and re-registers when
+      that issuer partition misses. Modern pre-registered configuration requires an exact
+      `credential_issuer`; legacy-era `client_id` / `client_secret` aliases retain their 1.x
+      compatibility behavior, while CIMD remains portable by design.**
+- [x] Use standards-defined issuer comparison with no ad hoc trailing-slash/path normalization.
       Partition registrations by issuer + client ID and tokens by issuer + client ID + resource/
       audience + subject/client identity + granted scopes. Migrate old unkeyed entries explicitly;
-      never silently attach them to the currently discovered issuer.
+      never silently attach them to the currently discovered issuer. **`Authorization.Issuer`
+      provides one byte-for-byte comparison boundary used by discovery, callbacks, configured
+      credentials and storage. Versioned registration keys contain issuer + client ID; token keys
+      additionally contain resource, audience, subject/client identity and a sorted granted-scope
+      set, never raw tokens. Stored values redact secrets from `Inspect`; unkeyed values return
+      `credential_migration_required` and can be rebound only through explicit migration helpers.**
 - [ ] Preserve OAuth transaction protections across both eras: random single-use `state`, PKCE,
       exact redirect URI, one-time authorization-code redemption, issuer-bound callbacks, and no
       cookies/tokens in logs. Test replay and concurrent callback attempts.

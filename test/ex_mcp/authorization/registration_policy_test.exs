@@ -11,22 +11,88 @@ defmodule ExMCP.Authorization.RegistrationPolicyTest do
 
     config = %{
       client_registration: {:pre_registered, "client-1", {:env, "EX_MCP_TEST_CLIENT_SECRET"}},
+      credential_issuer: "https://auth.example",
       client_metadata_url: @cimd_url,
       application_type: :native,
       redirect_port: 8_080
     }
 
     assert {:ok, {:pre_registered, selected}} =
-             RegistrationPolicy.select(cimd_and_dcr_metadata(), config)
+             RegistrationPolicy.select(
+               Map.put(cimd_and_dcr_metadata(), "issuer", "https://auth.example"),
+               config
+             )
 
     assert selected.client_id == "client-1"
     assert selected.client_secret == "secret"
     assert selected.registration_method == :pre_registered
 
     assert {:error, :client_secret_resolver_failed} =
-             RegistrationPolicy.select(%{}, %{
-               client_registration: {:pre_registered, "client-1", fn -> raise "secret" end}
+             RegistrationPolicy.select(
+               %{"issuer" => "https://auth.example"},
+               %{
+                 client_registration: {:pre_registered, "client-1", fn -> raise "secret" end},
+                 credential_issuer: "https://auth.example"
+               }
+             )
+  end
+
+  test "modern pre-registered credentials require an exact issuer binding" do
+    metadata = Map.put(cimd_and_dcr_metadata(), "issuer", "https://auth.example")
+    strategy = {:pre_registered, "client-1", nil}
+
+    assert {:error, {:pre_registered_credential_issuer_required, "https://auth.example"}} =
+             RegistrationPolicy.select(metadata, %{
+               client_registration: strategy,
+               protocol_version: "2026-07-28"
              })
+
+    assert {:ok, {:pre_registered, selected}} =
+             RegistrationPolicy.select(metadata, %{
+               client_registration: strategy,
+               credential_issuer: "https://auth.example",
+               protocol_version: "2026-07-28"
+             })
+
+    assert selected.issuer == "https://auth.example"
+
+    assert {:error,
+            {:pre_registered_credential_issuer_mismatch,
+             expected: "https://auth.example/", actual: "https://auth.example"}} =
+             RegistrationPolicy.select(metadata, %{
+               client_registration: strategy,
+               credential_issuer: "https://auth.example/",
+               protocol_version: "2026-07-28"
+             })
+
+    test_process = self()
+
+    assert {:error, {:pre_registered_credential_issuer_mismatch, _details}} =
+             RegistrationPolicy.select(metadata, %{
+               client_registration:
+                 {:pre_registered, "client-1",
+                  fn ->
+                    send(test_process, :secret_resolved)
+                    "secret"
+                  end},
+               credential_issuer: "https://other.example",
+               protocol_version: "2026-07-28"
+             })
+
+    refute_received :secret_resolved
+  end
+
+  test "CIMD remains portable across authorization-server issuers" do
+    assert {:ok, {:cimd, selected}} =
+             RegistrationPolicy.select(
+               Map.put(cimd_and_dcr_metadata(), "issuer", "https://auth.example"),
+               %{
+                 client_registration: {:cimd, @cimd_url},
+                 protocol_version: "2026-07-28"
+               }
+             )
+
+    assert selected.client_id == @cimd_url
   end
 
   test "selects only a configured CIMD URL when the server advertises support" do

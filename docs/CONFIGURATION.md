@@ -49,7 +49,8 @@ HTTP transport's `:auth` map:
 # use time rather than embedding them in application configuration.
 auth: %{
   client_registration:
-    {:pre_registered, "client-id", {:env, "MCP_CLIENT_SECRET"}}
+    {:pre_registered, "client-id", {:env, "MCP_CLIENT_SECRET"}},
+  credential_issuer: "https://auth.example.com"
 }
 
 # Portable, self-hosted Client ID Metadata Document.
@@ -89,6 +90,49 @@ DCR requires an explicit `application_type: :native | :web` and stable local
 `redirect_port`. Registration rejections retain the authorization server's
 error response so redirect-policy failures are actionable. ExMCP does not
 silently change the application type or redirect URI.
+
+### Issuer-bound credential persistence
+
+For MCP `2026-07-28`, pre-registered credentials require
+`credential_issuer`. ExMCP compares this value byte-for-byte with the issuer in
+the discovered authorization-server metadata before resolving or using the
+secret. A trailing slash, path change, or any other textual difference is a
+mismatch; issuer identifiers are not URL-normalized. During 1.x, only the
+legacy `client_id` / `client_secret` aliases retain their old unbound behavior
+for legacy protocol versions; the new explicit pre-registration strategy is
+always issuer-bound.
+
+Applications that persist DCR registrations or tokens can provide an encrypted
+store or OS-keychain adapter implementing
+`ExMCP.Authorization.CredentialStore`:
+
+```elixir
+auth: %{
+  client_registration: :auto,
+  application_type: :native,
+  redirect_port: 8080,
+  credential_store: {MyApp.MCPCredentialStore, store_state},
+  credential_context: "desktop-installation-42"
+}
+```
+
+`credential_context` is a stable, non-secret local index (the resource URL is
+the default). The adapter still stores each registration under the exact
+versioned issuer + client-ID key supplied to it. On an authorization-server
+change, the new issuer partition misses and ExMCP performs registration again;
+an adapter returning a credential from another issuer is rejected.
+
+Tokens are partitioned by issuer, client ID, resource and/or audience,
+subject or client identity, and normalized granted scopes. Access and refresh
+tokens never appear in a storage key, and the credential structs redact secret
+fields from `Inspect`. ExMCP intentionally provides no plaintext file adapter.
+
+Old records without an issuer fail with
+`{:credential_migration_required, :registration | :token}`. After verifying
+the original authorization server out of band, migrate them explicitly with
+`CredentialStore.bind_legacy_registration/2` or
+`CredentialStore.bind_legacy_token/2`; never use the currently discovered
+issuer as an implicit migration value.
 
 ## JSON Schema Resource Policy
 

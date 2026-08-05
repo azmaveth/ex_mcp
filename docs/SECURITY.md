@@ -101,6 +101,24 @@ mistake — it would otherwise grant consent for decades — so implausible valu
 For OAuth flows, use the authorization modules or `:auth` / `:auth_provider`
 options on the HTTP transport.
 
+### OAuth credential isolation
+
+Modern pre-registered clients bind their credentials to an exact
+authorization-server issuer through `credential_issuer`. ExMCP rejects
+mismatches without normalizing trailing slashes or paths, validates discovered
+AS metadata against the issuer that led to it, and never resolves the client
+secret before that check succeeds. CIMD client IDs are the deliberate portable
+exception defined by the protocol.
+
+Persistent hosts should implement `ExMCP.Authorization.CredentialStore` using
+an encrypted database or platform keychain. Registrations are keyed by issuer
+and client ID; tokens additionally include resource/audience, subject or client
+identity, and granted scopes. Credential values redact secrets from `Inspect`,
+and adapter failures exposed through the OAuth flow omit adapter-provided error
+details so a badly behaved store cannot place token material in logs. Unkeyed
+legacy records require an explicit migration after their original issuer is
+independently verified.
+
 ### TLS
 
 HTTPS connections verify the peer against the OS trust store with TLS 1.2/1.3
