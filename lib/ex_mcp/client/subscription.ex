@@ -220,6 +220,12 @@ defmodule ExMCP.Client.Subscription do
     send(state.owner, {:ex_mcp_subscription_resync, self(), :started})
     reconnect_attempts = state.reconnect_attempts + 1
 
+    :telemetry.execute(
+      [:ex_mcp, :client, :subscription, :reconnect],
+      %{attempt: reconnect_attempts},
+      %{phase: :scheduled}
+    )
+
     Process.send_after(
       self(),
       :client_subscription_reconnect,
@@ -246,6 +252,13 @@ defmodule ExMCP.Client.Subscription do
 
   def handle_info(:resync, %{status: :resyncing} = state) do
     snapshot = resynchronize(state.client, state.acknowledged_filter, state.open_timeout)
+
+    :telemetry.execute(
+      [:ex_mcp, :client, :subscription, :reconnect],
+      %{attempt: max(state.reconnect_attempts, 1)},
+      %{phase: :complete}
+    )
+
     state = %{state | status: :active, resync?: false, reconnect_attempts: 0}
     subscription = reference(state)
     send(state.owner, {:ex_mcp_subscription_resync, subscription, {:complete, snapshot}})

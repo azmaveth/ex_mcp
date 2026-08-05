@@ -1216,12 +1216,17 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       client cache is deferred: required wire metadata is validated but responses are not stored
       or reused; missing or invalid required fields remain protocol errors. Focused regression
       tests pin both sides of this conditional gate.
-- [ ] Add bounded-cardinality telemetry for selected era/version, probe fallback/downgrade,
+- [x] Add bounded-cardinality telemetry for selected era/version, probe fallback/downgrade,
       unsupported-version retry, MRTR rounds/failures, subscription reconnect/queue pressure,
       ambiguous reissue, and cache hit/miss (if enabled). Never attach tool arguments,
       `_meta`, `inputResponses`, resource contents, `Mcp-Param-*`, `requestState`, authorization
       data or raw subscription IDs to events/logs. Add operational alerts for downgrade attempts,
       unknown/revoked MRTR key IDs, replay rejection, queue pressure and reconnect churn.
+      **Complete:** operational events use bounded phase/reason/method/version classes; response
+      cache hit/miss is not applicable because storage is deferred. A focused telemetry matrix
+      covers fallback/downgrade, MRTR round/failure/key/replay paths, reconnect/pressure and
+      ambiguous reissue while asserting sensitive values are absent. The configuration guide
+      documents alert signals and the metadata privacy contract.
 
 **1.0 release gates:**
 

@@ -1012,6 +1012,35 @@ ExMCP.Client.start_link(
 )
 ```
 
+## Observability
+
+### Operational telemetry and alerts
+
+The MCP 2026-07-28 migration emits bounded operational events for era
+selection, fallback and downgrade observations; unsupported-version retries;
+MRTR rounds, failures and replay rejection; subscription reconnect and queue
+pressure; and ambiguous HTTP reissue. See `ExMCP.Telemetry` for the event list
+and exact metadata shapes. Client response-cache hit/miss events are absent in
+1.0 because response storage/reuse is deliberately deferred.
+
+Build deployment alerts from counts and rates, not raw payload dimensions:
+
+- alert on any sustained `:downgrade_attempt`, and investigate even a single
+  unexpected event for an endpoint previously pinned modern;
+- alert immediately on MRTR `:request_state_key_unknown` or
+  `:request_state_key_revoked`, and rate-alert on `:replay_rejected` or replay
+  cache failures;
+- watch the ratio of subscription queue `:closed` to `:coalesced`, plus
+  reconnect attempts that repeatedly fail to reach `phase: :complete`;
+- investigate spikes in unsupported-version retries, legacy fallbacks, or
+  ambiguous HTTP reissues during a rollout.
+
+Choose thresholds from normal traffic volume and rollout policy. Event
+metadata never includes tool arguments, `_meta`, `inputResponses`, resource
+contents or URIs, `Mcp-Param-*`, `requestState`, key IDs, credentials, raw
+subscription IDs, filters, principals, or tenants. Preserve that boundary in
+custom telemetry handlers and exporters.
+
 ## Logging
 
 This section configures application/runtime logging. The MCP wire-level Logging

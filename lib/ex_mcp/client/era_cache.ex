@@ -101,6 +101,16 @@ defmodule ExMCP.Client.EraCache do
     stored? =
       case table_lookup(identity) do
         [{^identity, %{era: :modern}}] when era == :legacy ->
+          :telemetry.execute(
+            [:ex_mcp, :client, :era, :downgrade_attempt],
+            %{count: 1},
+            %{
+              from: :modern,
+              to: :legacy,
+              observed_version: telemetry_version(version)
+            }
+          )
+
           false
 
         _other ->
@@ -113,7 +123,7 @@ defmodule ExMCP.Client.EraCache do
       %{},
       %{
         era: era,
-        protocol_version: version,
+        protocol_version: telemetry_version(version),
         identity_kind: identity_kind(identity),
         stored: stored?
       }
@@ -130,6 +140,10 @@ defmodule ExMCP.Client.EraCache do
   def handle_call(:clear, _from, table) do
     :ets.delete_all_objects(table)
     {:reply, :ok, table}
+  end
+
+  defp telemetry_version(version) do
+    if ExMCP.Internal.VersionRegistry.known?(version), do: version, else: :unknown
   end
 
   defp transport_identity(ReliabilityWrapper, state, opts) do

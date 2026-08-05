@@ -69,8 +69,13 @@ defmodule ExMCP.Server.MRTR do
            delivery_semantics: delivery_semantics
        }}
     else
-      {:error, %Error.ProtocolError{} = error} -> {:error, error}
-      {:error, reason} -> {:error, request_state_error(reason)}
+      {:error, %Error.ProtocolError{} = error} ->
+        emit_failure(context, :resume, :protocol_error)
+        {:error, error}
+
+      {:error, reason} ->
+        emit_failure(context, :resume, failure_class(reason))
+        {:error, request_state_error(reason)}
     end
   end
 
@@ -94,8 +99,13 @@ defmodule ExMCP.Server.MRTR do
          "requestState" => token
        }}
     else
-      {:error, %Error.ProtocolError{} = error} -> {:error, error}
-      {:error, reason} -> {:error, request_state_error(reason)}
+      {:error, %Error.ProtocolError{} = error} ->
+        emit_failure(context, :seal, :protocol_error)
+        {:error, error}
+
+      {:error, reason} ->
+        emit_failure(context, :seal, failure_class(reason))
+        {:error, request_state_error(reason)}
     end
   end
 
@@ -226,6 +236,8 @@ defmodule ExMCP.Server.MRTR do
     case Keyword.get(opts, :replay_cache) do
       nil ->
         if Keyword.get(opts, :require_replay_protection, false) do
+          emit_failure(nil, :replay, :replay_cache_required)
+
           {:error,
            Error.protocol_error(
              ErrorCodes.internal_error(),
@@ -242,6 +254,8 @@ defmodule ExMCP.Server.MRTR do
         consume_with_adapter(adapter, payload, [])
 
       _other ->
+        emit_failure(nil, :replay, :invalid_replay_cache)
+
         {:error,
          Error.protocol_error(
            ErrorCodes.internal_error(),
@@ -256,15 +270,49 @@ defmodule ExMCP.Server.MRTR do
         {:ok, :single_use}
 
       {:error, :replayed} ->
+        emit_failure(nil, :replay, :replay_rejected)
         {:error, invalid("MRTR requestState has already been consumed")}
 
       {:error, _reason} ->
+        emit_failure(nil, :replay, :replay_cache_failure)
         {:error, Error.protocol_error(ErrorCodes.internal_error(), "MRTR replay cache failed")}
     end
   rescue
     _error ->
+      emit_failure(nil, :replay, :replay_cache_failure)
       {:error, Error.protocol_error(ErrorCodes.internal_error(), "MRTR replay cache failed")}
   end
+
+  defp emit_failure(context, stage, reason) do
+    method = if context, do: context.method, else: nil
+
+    :telemetry.execute(
+      [:ex_mcp, :server, :mrtr, :failure],
+      %{count: 1},
+      %{stage: stage, reason: reason, method: method_class(method)}
+    )
+  end
+
+  defp method_class(method) when method in @supported_methods, do: method
+  defp method_class(_method), do: :unknown
+
+  defp failure_class(reason)
+       when reason in [
+              :request_state_not_configured,
+              :invalid_request_state_configuration,
+              :invalid_request_state,
+              :request_state_expired,
+              :request_state_not_yet_valid,
+              :request_state_key_revoked,
+              :request_state_key_unknown,
+              :request_state_too_large,
+              :request_state_binding_mismatch,
+              :input_response_ids_mismatch,
+              :request_state_not_json
+            ],
+       do: reason
+
+  defp failure_class(_reason), do: :other
 
   defp request_state_error(:request_state_not_configured) do
     Error.protocol_error(

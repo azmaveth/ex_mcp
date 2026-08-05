@@ -164,7 +164,7 @@ defmodule ExMCP.Client.ConnectionManager do
               :telemetry.execute(
                 [:ex_mcp, :client, :era, :fallback],
                 %{},
-                %{from: :modern, to: :legacy, probe_error: probe_error}
+                %{from: :modern, to: :legacy, reason: probe_failure_class(probe_error)}
               )
 
               success
@@ -262,6 +262,20 @@ defmodule ExMCP.Client.ConnectionManager do
       %{era: era, protocol_version: version}
     )
   end
+
+  defp probe_failure_class({kind, _detail})
+       when kind in [
+              :transport_error,
+              :probe_timeout,
+              :http_probe_rejected,
+              :json_rpc_error,
+              :unexpected_response,
+              :invalid_discover_result,
+              :no_mutually_supported_modern_version
+            ],
+       do: kind
+
+  defp probe_failure_class(_reason), do: :other
 
   defp cached_era(identity) do
     case EraCache.lookup(identity) do

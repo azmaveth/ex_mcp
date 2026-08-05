@@ -142,7 +142,7 @@ defmodule ExMCP.Server.SubscriptionListener do
     if length(state.queue) < state.max_queue do
       {:ok, %{state | queue: state.queue ++ [item]}}
     else
-      emit_closed(:slow_consumer)
+      emit_queue_pressure(:closed)
       {:overflow, initiate_close(state, :slow_consumer)}
     end
   end
@@ -160,7 +160,7 @@ defmodule ExMCP.Server.SubscriptionListener do
         {:ok, %{state | queue: state.queue ++ [item]}}
 
       :not_found ->
-        emit_closed(:slow_consumer)
+        emit_queue_pressure(:closed)
         {:overflow, initiate_close(state, :slow_consumer)}
     end
   end
@@ -169,6 +169,8 @@ defmodule ExMCP.Server.SubscriptionListener do
 
   defp replace_coalesced(queue, key, item) do
     if Enum.any?(queue, fn {_kind, _message, queued_key} -> queued_key == key end) do
+      emit_queue_pressure(:coalesced)
+
       {:ok,
        Enum.map(queue, fn
          {_kind, _message, ^key} -> item
@@ -283,6 +285,14 @@ defmodule ExMCP.Server.SubscriptionListener do
       [:ex_mcp, :server, :subscription, :closed],
       %{count: 1},
       %{reason: reason}
+    )
+  end
+
+  defp emit_queue_pressure(action) do
+    :telemetry.execute(
+      [:ex_mcp, :server, :subscription, :queue_pressure],
+      %{count: 1},
+      %{action: action}
     )
   end
 end

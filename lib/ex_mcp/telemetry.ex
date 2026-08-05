@@ -29,6 +29,19 @@ defmodule ExMCP.Telemetry do
   * `[:ex_mcp, :client, :receiver, :message]` - Message received in receive loop
     * Metadata: `%{}`
 
+  #### MCP 2026-07-28 Operations
+  * `[:ex_mcp, :client, :era, :settled]` - Connection era/version selected
+  * `[:ex_mcp, :client, :era, :fallback]` - Modern probe fell back to legacy
+  * `[:ex_mcp, :client, :era, :downgrade_attempt]` - A pinned modern endpoint was observed as legacy
+  * `[:ex_mcp, :client, :era, :unsupported_version_retry]` - Discovery retried a supported modern version
+  * `[:ex_mcp, :client, :mrtr, :round | :failure]` - MRTR progress or bounded failure class
+  * `[:ex_mcp, :client, :subscription, :reconnect]` - Subscription reconnect scheduled/completed
+  * `[:ex_mcp, :client, :http, :request, :retry]` - Ambiguous HTTP stream reissue
+
+  These events use protocol method/version enums and classified reasons. They
+  never contain request parameters, `_meta`, `inputResponses`, request state,
+  credentials, or subscription identifiers.
+
   #### State & Progress (via `span/3`)
   * `[:ex_mcp, :request, :start]` - Request processing starts
     * Measurements: `%{system_time: integer()}`
@@ -81,6 +94,14 @@ defmodule ExMCP.Telemetry do
     * Metadata: `%{method: String.t(), path: String.t()}`
   * `[:ex_mcp, :server, :http, :response]` - HTTP response sent
     * Metadata: `%{status: integer()}`
+
+  #### MCP 2026-07-28 Operations
+  * `[:ex_mcp, :server, :mrtr, :failure]` - Sealing/resume/replay failure class
+  * `[:ex_mcp, :server, :subscription, :queue_pressure]` - Coalescing or slow-consumer closure
+  * `[:ex_mcp, :server, :subscription, :fanout]` - PubSub fan-out failure class
+
+  MRTR key IDs, JTIs and sealed tokens are deliberately omitted. Subscription
+  filters, resource URIs, task IDs, principals and wire IDs are also omitted.
 
   ### Transport Events (via `span/3`)
 

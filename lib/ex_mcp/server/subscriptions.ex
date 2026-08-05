@@ -719,7 +719,7 @@ defmodule ExMCP.Server.Subscriptions do
           :telemetry.execute(
             [:ex_mcp, :server, :subscription, :fanout],
             %{count: 1},
-            %{result: :error, reason: inspect(reason)}
+            %{result: :error, reason: fanout_failure_class(reason)}
           )
 
           %{state | adapter_state: adapter_state}
@@ -728,6 +728,13 @@ defmodule ExMCP.Server.Subscriptions do
       state
     end
   end
+
+  defp fanout_failure_class({kind, _detail})
+       when kind in [:pubsub_exception, :unexpected_pubsub_result],
+       do: kind
+
+  defp fanout_failure_class({:pubsub_failure, _kind, _reason}), do: :pubsub_failure
+  defp fanout_failure_class(_reason), do: :broadcast_failed
 
   defp remove_monitor(listener, token, state) do
     {ref, _value} =

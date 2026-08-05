@@ -56,6 +56,15 @@ defmodule ExMCP.Client.EraProbe do
       {:error, {:json_rpc_error, error}, updated_state} = failure ->
         case retry_version(error, mode, attempted) do
           {:ok, retry_version} ->
+            :telemetry.execute(
+              [:ex_mcp, :client, :era, :unsupported_version_retry],
+              %{attempt: length(attempted) + 1},
+              %{
+                from_version: telemetry_version(version),
+                to_version: telemetry_version(retry_version)
+              }
+            )
+
             probe_version(transport_mod, updated_state, opts, mode, retry_version, attempted)
 
           :not_modern_error ->
@@ -138,6 +147,10 @@ defmodule ExMCP.Client.EraProbe do
   end
 
   defp retry_version(_error, _mode, _attempted), do: :not_modern_error
+
+  defp telemetry_version(version) do
+    if VersionRegistry.known?(version), do: version, else: :unknown
+  end
 
   defp parse_response(response, request_id, mode, transport_state) do
     case Protocol.parse_message(response) do

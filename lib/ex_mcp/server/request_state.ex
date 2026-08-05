@@ -26,6 +26,7 @@ defmodule ExMCP.Server.RequestState do
           | :request_state_expired
           | :request_state_not_yet_valid
           | :request_state_key_revoked
+          | :request_state_key_unknown
           | :request_state_too_large
           | :request_state_binding_mismatch
           | :input_response_ids_mismatch
@@ -288,7 +289,7 @@ defmodule ExMCP.Server.RequestState do
   defp decryption_key(config, kid) do
     case Map.fetch(config.keys, kid) do
       {:ok, key} -> {:ok, key}
-      :error -> {:error, :invalid_request_state}
+      :error -> {:error, :request_state_key_unknown}
     end
   end
 

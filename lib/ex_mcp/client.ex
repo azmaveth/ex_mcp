@@ -2297,41 +2297,77 @@ defmodule ExMCP.Client do
        ) do
     maximum = Keyword.get(opts, :max_mrtr_rounds, @default_max_mrtr_rounds)
 
-    if round >= maximum do
-      {:error,
-       Error.protocol_error(
-         ErrorCodes.invalid_params(),
-         "MRTR round limit exceeded",
-         %{"maximum" => maximum}
-       )}
-    else
-      with {:ok, input_requests, request_state} <- MRTR.validate_result(method, result, opts),
-           {:ok, remaining} <- remaining_timeout(control.deadline),
-           {:ok, input_responses} <-
-             fulfill_mrtr(client, input_requests, opts, remaining, control.scope_ref) do
-        next_round = round + 1
+    outcome =
+      if round >= maximum do
+        {:error,
+         Error.protocol_error(
+           ErrorCodes.invalid_params(),
+           "MRTR round limit exceeded",
+           %{"maximum" => maximum}
+         )}
+      else
+        with {:ok, input_requests, request_state} <- MRTR.validate_result(method, result, opts),
+             {:ok, remaining} <- remaining_timeout(control.deadline),
+             {:ok, input_responses} <-
+               fulfill_mrtr(client, input_requests, opts, remaining, control.scope_ref) do
+          next_round = round + 1
 
-        :telemetry.execute(
-          [:ex_mcp, :client, :mrtr, :round],
-          %{round: next_round, input_requests: map_size(input_requests)},
-          %{method: method}
-        )
+          :telemetry.execute(
+            [:ex_mcp, :client, :mrtr, :round],
+            %{round: next_round, input_requests: map_size(input_requests)},
+            %{method: mrtr_method_class(method)}
+          )
 
-        retry_params = MRTR.retry_params(original_params, input_responses, request_state)
+          retry_params = MRTR.retry_params(original_params, input_responses, request_state)
 
-        do_mrtr_request(
-          client,
-          method,
-          original_params,
-          retry_params,
-          opts,
-          retry_policy,
-          next_round,
-          control
-        )
+          do_mrtr_request(
+            client,
+            method,
+            original_params,
+            retry_params,
+            opts,
+            retry_policy,
+            next_round,
+            control
+          )
+        end
       end
+
+    case outcome do
+      {:error, reason} = error ->
+        :telemetry.execute(
+          [:ex_mcp, :client, :mrtr, :failure],
+          %{round: round},
+          %{
+            method: mrtr_method_class(method),
+            reason: client_mrtr_failure_class(reason, round, maximum)
+          }
+        )
+
+        error
+
+      other ->
+        other
     end
   end
+
+  defp mrtr_method_class(method) when method in ["tools/call", "resources/read", "prompts/get"],
+    do: method
+
+  defp mrtr_method_class(_method), do: :unknown
+
+  defp client_mrtr_failure_class(_reason, round, maximum) when round >= maximum,
+    do: :round_limit
+
+  defp client_mrtr_failure_class(:timeout, _round, _maximum), do: :timeout
+
+  defp client_mrtr_failure_class(%Error.ProtocolError{code: -32_021}, _round, _maximum),
+    do: :missing_capability
+
+  defp client_mrtr_failure_class(%Error.ProtocolError{}, _round, _maximum),
+    do: :protocol_error
+
+  defp client_mrtr_failure_class(_reason, _round, _maximum), do: :input_fulfillment_failed
 
   defp request_once(client, method, params, timeout) when is_integer(timeout) do
     GenServer.call(client, {:request, method, params, %{timeout: timeout}}, timeout)

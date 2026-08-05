@@ -135,7 +135,7 @@ defmodule ExMCP.Server.RequestStateTest do
         clock_skew_seconds: 5
       )
 
-    assert {:error, :invalid_request_state} =
+    assert {:error, :request_state_key_unknown} =
              RequestState.unseal(old_token, context(), params(), %{}, retired_old)
 
     assert {:ok, _payload} =
