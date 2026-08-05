@@ -111,10 +111,13 @@ defmodule ExMCP.Client.MRTRTest do
 
     @impl true
     def handle_elicitation_create(_message, _schema, state) do
-      send(state.owner, :slow_mrtr_started)
-      Process.sleep(500)
-      send(state.owner, :slow_mrtr_finished)
-      {:ok, %{"action" => "decline"}, state}
+      send(state.owner, {:slow_mrtr_started, self()})
+
+      receive do
+        :finish_slow_mrtr ->
+          send(state.owner, :slow_mrtr_finished)
+          {:ok, %{"action" => "decline"}, state}
+      end
     end
   end
 
@@ -365,11 +368,17 @@ defmodule ExMCP.Client.MRTRTest do
       }
     end)
 
-    assert {:error, :timeout} =
-             Client.call_tool(client, "collect", %{}, format: :map, timeout: 30)
+    call =
+      Task.async(fn ->
+        Client.call_tool(client, "collect", %{}, format: :map, timeout: 2_000)
+      end)
 
-    assert_receive :slow_mrtr_started
-    refute_receive :slow_mrtr_finished, 100
+    assert_receive {:slow_mrtr_started, callback_pid}, 1_000
+    callback_ref = Process.monitor(callback_pid)
+
+    assert {:error, :timeout} = Task.await(call, 3_000)
+    assert_receive {:DOWN, ^callback_ref, :process, ^callback_pid, :killed}, 1_000
+    refute_receive :slow_mrtr_finished
     assert map_size(:sys.get_state(client).mrtr_tasks) == 0
   end
 
