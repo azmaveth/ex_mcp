@@ -5,20 +5,30 @@ defmodule ExMCP.Authorization.Provider.OAuth do
   This is the default provider when OAuth configuration is provided to the transport.
   It handles the complete lifecycle:
 
-  1. On 401 — discovers PRM, AS metadata, optionally registers dynamically, runs PKCE flow
+  1. On 401 — discovers PRM and AS metadata, selects configured client registration, runs PKCE
   2. On 403 with insufficient_scope — re-authorizes with broader scopes
   3. Prevents auth loops via `auth_completed` flag
 
   ## Configuration
 
-      # Minimal (browser-based PKCE flow)
-      {ExMCP.Authorization.Provider.OAuth, %{resource_url: "http://localhost:3000/mcp"}}
-
-      # With pre-existing credentials
+      # Client ID Metadata Document
       {ExMCP.Authorization.Provider.OAuth, %{
         resource_url: "http://localhost:3000/mcp",
-        client_id: "my-client",
-        client_secret: "secret"
+        client_registration: {:cimd, "https://client.example/oauth/metadata.json"}
+      }}
+
+      # Pre-registered credentials; the secret is resolved only when needed
+      {ExMCP.Authorization.Provider.OAuth, %{
+        resource_url: "http://localhost:3000/mcp",
+        client_registration: {:pre_registered, "my-client", {:env, "MCP_CLIENT_SECRET"}}
+      }}
+
+      # Deprecated DCR fallback (requires explicit application type and stable callback port)
+      {ExMCP.Authorization.Provider.OAuth, %{
+        resource_url: "http://localhost:3000/mcp",
+        client_registration: :auto,
+        application_type: :native,
+        redirect_port: 8080
       }}
   """
 

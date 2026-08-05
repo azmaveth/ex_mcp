@@ -76,6 +76,41 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
       assert {:error, {:missing_required_field, "client_name"}} =
                ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
     end
+
+    test "rejects oversized metadata documents" do
+      http_client = mock_http_client(200, String.duplicate("x", 262_145))
+
+      assert {:error, :metadata_document_too_large} =
+               ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+    end
+  end
+
+  describe "validate_url/1 and supported?/1" do
+    test "requires an HTTPS client ID with a non-root path" do
+      assert :ok = ClientIdMetadata.validate_url("https://client.example/app.json")
+
+      assert {:error, :https_client_id_required} =
+               ClientIdMetadata.validate_url("http://client.example/app.json")
+
+      assert {:error, :client_id_path_required} =
+               ClientIdMetadata.validate_url("https://client.example/")
+
+      assert {:error, :invalid_client_id_url} =
+               ClientIdMetadata.validate_url("https://user@client.example/app.json")
+
+      assert {:error, :invalid_client_id_url} =
+               ClientIdMetadata.validate_url("https://client.example/app.json#fragment")
+    end
+
+    test "recognizes only an explicit true advertisement" do
+      assert ClientIdMetadata.supported?(%{
+               "client_id_metadata_document_supported" => true
+             })
+
+      assert ClientIdMetadata.supported?(%{client_id_metadata_document_supported: true})
+      refute ClientIdMetadata.supported?(%{"client_id_metadata_document_supported" => false})
+      refute ClientIdMetadata.supported?(%{})
+    end
   end
 
   describe "validate/2" do
@@ -126,6 +161,46 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
         })
 
       assert :ok = ClientIdMetadata.validate(metadata, @valid_client_id)
+    end
+
+    test "validates required field values and redirect URI security" do
+      assert {:error, {:invalid_field, "client_name"}} =
+               ClientIdMetadata.validate(
+                 Map.put(@valid_metadata, "client_name", ""),
+                 @valid_client_id
+               )
+
+      for redirect_uris <- [[], ["http://remote.example/callback"], ["not-a-uri"]] do
+        assert {:error, {:invalid_field, "redirect_uris"}} =
+                 ClientIdMetadata.validate(
+                   Map.put(@valid_metadata, "redirect_uris", redirect_uris),
+                   @valid_client_id
+                 )
+      end
+
+      assert :ok =
+               ClientIdMetadata.validate(
+                 Map.put(@valid_metadata, "redirect_uris", ["http://127.0.0.1/callback"]),
+                 @valid_client_id
+               )
+    end
+
+    test "requires public key metadata for private_key_jwt" do
+      private_key_metadata =
+        Map.put(@valid_metadata, "token_endpoint_auth_method", "private_key_jwt")
+
+      assert {:error, :private_key_jwt_requires_jwks} =
+               ClientIdMetadata.validate(private_key_metadata, @valid_client_id)
+
+      assert :ok =
+               private_key_metadata
+               |> Map.put("jwks_uri", "https://myapp.example.com/jwks.json")
+               |> ClientIdMetadata.validate(@valid_client_id)
+
+      assert :ok =
+               private_key_metadata
+               |> Map.put("jwks", %{"keys" => [%{"kty" => "EC"}]})
+               |> ClientIdMetadata.validate(@valid_client_id)
     end
   end
 
@@ -222,6 +297,23 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
           redirect_uris: ["https://myapp.example.com/callback"]
         )
 
+      assert :ok = ClientIdMetadata.validate(metadata, @valid_client_id)
+    end
+
+    test "builds private_key_jwt metadata with a JWKS reference" do
+      metadata =
+        ClientIdMetadata.build_metadata(
+          client_id: @valid_client_id,
+          client_name: "My App",
+          redirect_uris: ["https://myapp.example.com/callback"],
+          grant_types: ["authorization_code"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks_uri: "https://myapp.example.com/jwks.json"
+        )
+
+      assert metadata["token_endpoint_auth_method"] == "private_key_jwt"
+      assert metadata["jwks_uri"] == "https://myapp.example.com/jwks.json"
       assert :ok = ClientIdMetadata.validate(metadata, @valid_client_id)
     end
   end

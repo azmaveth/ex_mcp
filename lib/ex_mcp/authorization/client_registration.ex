@@ -1,12 +1,14 @@
 defmodule ExMCP.Authorization.ClientRegistration do
   @moduledoc """
-  This module implements the standard MCP specification.
-
-  Dynamic Client Registration for OAuth 2.1.
+  Deprecated Dynamic Client Registration for OAuth 2.1.
 
   Implements RFC 7591 (OAuth 2.0 Dynamic Client Registration Protocol)
   to allow MCP clients to register themselves with authorization servers
   at runtime.
+
+  MCP 2026-07-28 deprecates this mechanism in favor of Client ID Metadata
+  Documents. Keep DCR only as a compatibility fallback for authorization
+  servers that advertise `registration_endpoint` but not a usable CIMD path.
 
   ## Example
 
@@ -14,6 +16,7 @@ defmodule ExMCP.Authorization.ClientRegistration do
       {:ok, client_info} = ExMCP.Authorization.ClientRegistration.register_client(%{
         registration_endpoint: "https://auth.example.com/register",
         client_name: "My MCP Client",
+        application_type: "native",
         redirect_uris: ["https://localhost:8080/callback"],
         grant_types: ["authorization_code"],
         response_types: ["code"],
@@ -26,6 +29,7 @@ defmodule ExMCP.Authorization.ClientRegistration do
   @type registration_request :: %{
           required(:registration_endpoint) => String.t(),
           required(:client_name) => String.t(),
+          required(:application_type) => String.t(),
           required(:redirect_uris) => [String.t()],
           required(:grant_types) => [String.t()],
           required(:response_types) => [String.t()],
@@ -56,6 +60,9 @@ defmodule ExMCP.Authorization.ClientRegistration do
   @doc """
   Registers a new client with the authorization server.
 
+  Dynamic Client Registration is deprecated by MCP 2026-07-28. New clients
+  should use a pre-registered client or Client ID Metadata Document.
+
   This implements the client registration flow from RFC 7591,
   sending client metadata to the registration endpoint and
   receiving client credentials in response.
@@ -63,10 +70,8 @@ defmodule ExMCP.Authorization.ClientRegistration do
   @spec register_client(registration_request()) ::
           {:ok, client_information()} | {:error, term()}
   def register_client(request) do
-    with :ok <- validate_registration_request(request),
+    with {:ok, registration_body} <- build_request(request),
          :ok <- validate_https_endpoint(request.registration_endpoint) do
-      registration_body = build_registration_body(request)
-
       case make_registration_request(request.registration_endpoint, registration_body) do
         {:ok, response} ->
           {:ok, parse_client_information(response)}
@@ -76,6 +81,16 @@ defmodule ExMCP.Authorization.ClientRegistration do
       end
     end
   end
+
+  @doc "Validates a deprecated DCR request and builds its JSON payload."
+  @spec build_request(registration_request()) :: {:ok, map()} | {:error, term()}
+  def build_request(request) when is_map(request) do
+    with :ok <- validate_registration_request(request) do
+      {:ok, build_registration_body(request)}
+    end
+  end
+
+  def build_request(_request), do: {:error, :invalid_registration_request}
 
   @doc """
   Retrieves client information using a registration access token.
@@ -155,7 +170,7 @@ defmodule ExMCP.Authorization.ClientRegistration do
   # Private functions
 
   defp validate_registration_request(request) do
-    required_fields = [:registration_endpoint, :client_name, :redirect_uris]
+    required_fields = [:registration_endpoint, :client_name, :application_type, :redirect_uris]
 
     missing_fields =
       Enum.filter(required_fields, fn field ->
@@ -163,10 +178,18 @@ defmodule ExMCP.Authorization.ClientRegistration do
       end)
 
     case missing_fields do
-      [] -> validate_redirect_uris(request.redirect_uris)
-      fields -> {:error, {:missing_required_fields, fields}}
+      [] ->
+        with :ok <- validate_application_type(request.application_type) do
+          validate_redirect_uris(request.redirect_uris)
+        end
+
+      fields ->
+        {:error, {:missing_required_fields, fields}}
     end
   end
+
+  defp validate_application_type(type) when type in ["native", "web"], do: :ok
+  defp validate_application_type(type), do: {:error, {:invalid_application_type, type}}
 
   defp validate_redirect_uris(uris) when is_list(uris) do
     invalid_uris =
@@ -197,6 +220,7 @@ defmodule ExMCP.Authorization.ClientRegistration do
   defp build_registration_body(request) do
     base_body = %{
       client_name: request.client_name,
+      application_type: request.application_type,
       redirect_uris: request.redirect_uris,
       grant_types: Map.get(request, :grant_types, ["authorization_code"]),
       response_types: Map.get(request, :response_types, ["code"]),

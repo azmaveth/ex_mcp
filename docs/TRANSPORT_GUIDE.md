@@ -67,6 +67,29 @@ Supported client options include:
 - `:security` - client-side security validation configuration.
 - `:auth` / `:auth_provider` - OAuth/auth provider integration.
 
+For OAuth client registration, configure one explicit strategy:
+
+```elixir
+auth: %{
+  client_registration:
+    {:pre_registered, "client-id", {:env, "MCP_CLIENT_SECRET"}},
+  redirect_port: 8080
+}
+
+# Or a self-hosted Client ID Metadata Document:
+auth: %{
+  client_registration:
+    {:cimd, "https://client.example/oauth/metadata.json"}
+}
+```
+
+`:auto` uses pre-existing compatibility keys first, then a configured
+`client_metadata_url` when the authorization server advertises CIMD, then
+deprecated DCR only when `registration_endpoint` is advertised. DCR requires
+an explicit `application_type: :native | :web` and a stable `redirect_port`;
+ExMCP never invents a CIMD URL or guesses the application type. A missing
+strategy returns an actionable registration error.
+
 ### Phoenix/Plug Server
 
 ```elixir

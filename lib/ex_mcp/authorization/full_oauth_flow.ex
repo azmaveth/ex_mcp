@@ -19,7 +19,9 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
       {:ok, token} = FullOAuthFlow.execute(%{
         resource_url: "http://localhost:3000/mcp",
-        redirect_port: 0  # auto-assign port
+        client_registration: :auto,
+        application_type: :native,
+        redirect_port: 8080
       })
 
   """
@@ -31,17 +33,25 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   @max_callback_param_bytes 4_096
 
   alias ExMCP.Authorization.{
+    ClientAssertion,
     ClientRegistration,
     HTTPClient,
     OAuthFlow,
-    OIDCDiscovery
+    OIDCDiscovery,
+    RegistrationPolicy
   }
 
   @type config :: %{
           required(:resource_url) => String.t(),
           optional(:client_id) => String.t(),
           optional(:client_secret) => String.t(),
+          optional(:client_registration) => RegistrationPolicy.configured_strategy(),
+          optional(:client_metadata_url) => String.t(),
+          optional(:application_type) => RegistrationPolicy.application_type(),
           optional(:redirect_port) => non_neg_integer(),
+          optional(:private_key) => JOSE.JWK.t(),
+          optional(:signing_algorithm) => String.t(),
+          optional(:key_id) => String.t(),
           optional(:scopes) => [String.t()],
           optional(:resource) => String.t() | [String.t()],
           optional(:http_client) => module(),
@@ -62,9 +72,6 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       %{resource_url: config[:resource_url]}
     )
 
-    # Check if caller provided pre-existing credentials (not from dynamic registration)
-    has_preexisting_creds = is_binary(config[:client_id]) and is_binary(config[:client_secret])
-
     result =
       with {:ok, prm} <- discover_resource_metadata(config),
            :ok <- validate_prm_resource(prm, config),
@@ -80,7 +87,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
               config
           end
 
-        select_and_run_grant_flow(as_metadata, client_info, config, has_preexisting_creds)
+        select_and_run_grant_flow(as_metadata, client_info, config)
       end
 
     case result do
@@ -110,11 +117,15 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   # Otherwise, use auth code if no pre-existing creds, client_credentials if we have them.
   @jwt_bearer_grant "urn:ietf:params:oauth:grant-type:jwt-bearer"
 
-  defp select_and_run_grant_flow(as_metadata, client_info, config, has_preexisting_creds) do
+  defp select_and_run_grant_flow(as_metadata, client_info, config) do
     grant_types = as_metadata["grant_types_supported"] || []
     supports_auth_code = "authorization_code" in grant_types or grant_types == []
     supports_client_creds = "client_credentials" in grant_types
     supports_jwt_bearer = @jwt_bearer_grant in grant_types
+
+    has_preexisting_creds =
+      client_info[:registration_method] == :pre_registered and
+        is_binary(client_info[:client_secret])
 
     cond do
       supports_jwt_bearer and config[:idp_id_token] ->
@@ -349,46 +360,35 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     end
   end
 
-  # Step 3: Ensure we have a client_id (via dynamic registration if needed)
-  defp ensure_client_registered(_as_metadata, %{client_id: id, client_secret: secret})
-       when is_binary(id) and is_binary(secret) do
-    {:ok, %{client_id: id, client_secret: secret}}
-  end
-
-  defp ensure_client_registered(_as_metadata, %{client_id: id}) when is_binary(id) do
-    {:ok, %{client_id: id}}
-  end
-
+  # Step 3: Select pre-registration, configured CIMD, or deprecated DCR.
   defp ensure_client_registered(as_metadata, config) do
-    # Check if server supports CIMD (Client ID Metadata Document)
-    # If so, use a URL as client_id instead of dynamic registration
-    if as_metadata["client_id_metadata_document_supported"] do
-      cimd_url =
-        config[:client_metadata_url] ||
-          "https://conformance-test.local/client-metadata.json"
+    case RegistrationPolicy.select(as_metadata, config) do
+      {:ok, {:pre_registered, client_info}} ->
+        {:ok, client_info}
 
-      Logger.info("Server supports CIMD, using URL-based client_id: #{cimd_url}")
-      {:ok, %{client_id: cimd_url}}
-    else
-      registration_endpoint = as_metadata["registration_endpoint"]
+      {:ok, {:cimd, client_info}} ->
+        Logger.info("Using configured Client ID Metadata Document")
+        {:ok, client_info}
 
-      if registration_endpoint do
-        do_register_client(registration_endpoint, as_metadata, config)
-      else
-        {:error, :no_registration_endpoint}
-      end
+      {:ok, {:dynamic, selection}} ->
+        do_register_client(selection, as_metadata, config)
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
-  defp do_register_client(registration_endpoint, as_metadata, config) do
+  defp do_register_client(selection, as_metadata, config) do
+    registration_endpoint = selection.registration_endpoint
     Logger.info("Dynamically registering OAuth client at #{registration_endpoint}")
-    redirect_uri = "http://127.0.0.1:0/callback"
+    redirect_uri = "http://127.0.0.1:#{config.redirect_port}/callback"
     supported = as_metadata["token_endpoint_auth_methods_supported"] || []
     auth_method = select_registration_auth_method(supported)
 
     case ClientRegistration.register_client(%{
            registration_endpoint: registration_endpoint,
            client_name: "ex_mcp",
+           application_type: Atom.to_string(selection.application_type),
            redirect_uris: [redirect_uri],
            grant_types: ["authorization_code"],
            response_types: ["code"],
@@ -414,8 +414,17 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         {:ok,
          %{
            client_id: client_id,
-           client_secret: reg[:client_secret] || reg["client_secret"]
+           client_secret: reg[:client_secret] || reg["client_secret"],
+           registration_method: :dynamic
          }}
+
+      {:error, {:registration_error, status, %{"error" => "invalid_redirect_uri"} = response}} ->
+        {:error,
+         {:redirect_uri_rejected,
+          application_type: selection.application_type,
+          redirect_uri: redirect_uri,
+          status: status,
+          response: response}}
 
       {:error, reason} ->
         {:error, {:registration_failed, reason}}
@@ -441,19 +450,20 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       supported_methods =
         as_metadata["token_endpoint_auth_methods_supported"] || ["client_secret_post"]
 
-      token_auth_method = select_token_auth_method(supported_methods)
-
-      Logger.info("Using client_credentials flow with #{token_auth_method} auth")
-
       # Pass token_endpoint and issuer into config for JWT audience.
       # Per MCP ext-auth, the JWT aud claim should be the issuer URL.
       config =
         config
         |> Map.put(:token_endpoint, as_metadata["issuer"] || token_endpoint)
 
-      body = build_client_credentials_body(client_info, config, token_auth_method)
-
-      result = HTTPClient.make_token_request(token_endpoint, body, auth_method: token_auth_method)
+      result =
+        with {:ok, token_auth_method} <-
+               select_token_auth_method(supported_methods, client_info, config),
+             :ok <- log_token_auth_method("client_credentials", token_auth_method),
+             {:ok, body} <-
+               build_client_credentials_body(client_info, config, token_auth_method) do
+          HTTPClient.make_token_request(token_endpoint, body, auth_method: token_auth_method)
+        end
 
       case result do
         {:ok, token_data} ->
@@ -553,30 +563,29 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       {:ok, assertion_params} ->
         resource = config[:resource] || config[:resource_url] || ""
 
-        [{"grant_type", "client_credentials"}, {"resource", resource}]
-        |> Enum.concat(assertion_params)
-        |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
+        body =
+          [{"grant_type", "client_credentials"}, {"resource", resource}]
+          |> Enum.concat(assertion_params)
+          |> Enum.reject(fn {_, v} -> is_nil(v) or v == "" end)
+
+        {:ok, body}
 
       {:error, reason} ->
-        Logger.warning("JWT assertion build failed: #{inspect(reason)}, falling back")
-
-        [
-          grant_type: "client_credentials",
-          client_id: client_info.client_id,
-          resource: config[:resource] || config[:resource_url]
-        ]
-        |> Enum.reject(fn {_, v} -> is_nil(v) end)
+        {:error, {:client_assertion_failed, reason}}
     end
   end
 
   defp build_client_credentials_body(client_info, config, _auth_method) do
-    [
-      grant_type: "client_credentials",
-      client_id: client_info.client_id,
-      client_secret: Map.get(client_info, :client_secret),
-      resource: config[:resource] || config[:resource_url]
-    ]
-    |> Enum.reject(fn {_, v} -> is_nil(v) end)
+    body =
+      [
+        grant_type: "client_credentials",
+        client_id: client_info.client_id,
+        client_secret: Map.get(client_info, :client_secret),
+        resource: config[:resource] || config[:resource_url]
+      ]
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+
+    {:ok, body}
   end
 
   # Step 4b: Run authorization code flow with PKCE
@@ -588,9 +597,9 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     supported_methods =
       as_metadata["token_endpoint_auth_methods_supported"] || ["client_secret_post"]
 
-    token_auth_method = select_token_auth_method(supported_methods)
-
     with :ok <- validate_endpoints(authorization_endpoint, token_endpoint),
+         {:ok, token_auth_method} <-
+           select_token_auth_method(supported_methods, client_info, config),
          {:ok, server_pid, redirect_uri} <- setup_redirect_server(config),
          {:ok, auth_url, state_data} <- start_flow(client_info, redirect_uri, as_metadata, config) do
       result =
@@ -675,35 +684,104 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     Logger.info("Token endpoint auth method: #{token_auth_method}")
 
     with {:ok, _} <- follow_authorization(auth_url),
-         {:ok, code} <- wait_for_callback(server_pid, state_data) do
+         {:ok, code} <- wait_for_callback(server_pid, state_data),
+         {:ok, body} <-
+           authorization_code_token_body(
+             code,
+             state_data,
+             client_info,
+             redirect_uri,
+             token_endpoint,
+             config,
+             token_auth_method
+           ) do
       HTTPClient.make_token_request(
         token_endpoint,
-        [
-          grant_type: "authorization_code",
-          code: code,
-          redirect_uri: redirect_uri,
-          client_id: client_info.client_id,
-          code_verifier: state_data.code_verifier,
-          client_secret: client_info[:client_secret],
-          resource: config[:resource] || config[:resource_url]
-        ]
-        |> Enum.reject(fn {_, v} -> is_nil(v) end),
+        body,
         auth_method: token_auth_method
       )
     end
   end
 
-  defp select_token_auth_method(supported) when is_list(supported) do
-    cond do
-      "private_key_jwt" in supported -> :private_key_jwt
-      "none" in supported -> :none
-      "client_secret_basic" in supported -> :client_secret_basic
-      "client_secret_post" in supported -> :client_secret_post
-      true -> :client_secret_post
+  defp authorization_code_token_body(
+         code,
+         state_data,
+         client_info,
+         redirect_uri,
+         token_endpoint,
+         config,
+         token_auth_method
+       ) do
+    base =
+      [
+        grant_type: "authorization_code",
+        code: code,
+        redirect_uri: redirect_uri,
+        client_id: client_info.client_id,
+        code_verifier: state_data.code_verifier,
+        client_secret: client_info[:client_secret],
+        resource: config[:resource] || config[:resource_url]
+      ]
+      |> Enum.reject(fn {_, value} -> is_nil(value) end)
+
+    maybe_add_client_assertion(base, client_info, token_endpoint, config, token_auth_method)
+  end
+
+  defp maybe_add_client_assertion(base, client_info, token_endpoint, config, :private_key_jwt) do
+    private_key = config[:private_key] || client_info[:private_key]
+
+    if is_nil(private_key) do
+      {:error, :private_key_required}
+    else
+      case ClientAssertion.build_assertion_params(
+             client_id: client_info.client_id,
+             token_endpoint: token_endpoint,
+             private_key: private_key,
+             alg: config[:signing_algorithm] || client_info[:signing_algorithm] || "ES256",
+             kid: config[:key_id] || client_info[:key_id]
+           ) do
+        {:ok, assertion_params} ->
+          base = Enum.reject(base, fn {key, _value} -> key in [:client_id, "client_id"] end)
+          {:ok, base ++ assertion_params}
+
+        {:error, reason} ->
+          {:error, {:client_assertion_failed, reason}}
+      end
     end
   end
 
-  defp select_token_auth_method(_), do: :client_secret_post
+  defp maybe_add_client_assertion(base, _client_info, _token_endpoint, _config, _auth_method),
+    do: {:ok, base}
+
+  defp select_token_auth_method(supported, client_info, config) when is_list(supported) do
+    private_key = config[:private_key] || client_info[:private_key]
+    client_secret = client_info[:client_secret]
+
+    cond do
+      "private_key_jwt" in supported and not is_nil(private_key) ->
+        {:ok, :private_key_jwt}
+
+      "client_secret_basic" in supported and is_binary(client_secret) ->
+        {:ok, :client_secret_basic}
+
+      "client_secret_post" in supported and is_binary(client_secret) ->
+        {:ok, :client_secret_post}
+
+      "none" in supported ->
+        {:ok, :none}
+
+      true ->
+        {:error, {:no_usable_token_auth_method, supported}}
+    end
+  end
+
+  defp select_token_auth_method(_supported, _client_info, _config),
+    do: {:error, :invalid_token_auth_methods}
+
+  defp log_token_auth_method(flow, token_auth_method) do
+    Logger.info("Using #{flow} flow with #{token_auth_method} auth")
+    :ok
+  end
 
   # Follow the authorization URL and its redirects (for automated testing).
   # The conformance test server auto-approves and redirects to our callback.

@@ -39,6 +39,57 @@ Validate versions with the public negotiator:
 ExMCP.Protocol.VersionNegotiator.supported?("2025-11-25")
 ```
 
+## OAuth Client Registration
+
+Modern authorization uses an explicit client registration strategy in the
+HTTP transport's `:auth` map:
+
+```elixir
+# Credentials established with this authorization server. Resolve secrets at
+# use time rather than embedding them in application configuration.
+auth: %{
+  client_registration:
+    {:pre_registered, "client-id", {:env, "MCP_CLIENT_SECRET"}}
+}
+
+# Portable, self-hosted Client ID Metadata Document.
+auth: %{
+  client_registration:
+    {:cimd, "https://client.example/oauth/metadata.json"},
+  private_key: signing_jwk,
+  signing_algorithm: "ES256",
+  key_id: "client-key-1"
+}
+
+# Automatic compatibility fallback. DCR is used only when advertised.
+auth: %{
+  client_registration: :auto,
+  client_metadata_url: "https://client.example/oauth/metadata.json",
+  application_type: :native,
+  redirect_port: 8080
+}
+```
+
+Registration priority is pre-registered credentials, a configured CIMD URL
+when the authorization server sets
+`client_id_metadata_document_supported: true`, deprecated DCR when it exposes
+`registration_endpoint`, then an actionable error. `:auto` never fabricates a
+metadata URL. Existing `client_id` / `client_secret` keys remain accepted as
+1.x compatibility aliases.
+
+A CIMD client ID must be an exact HTTPS URL with a non-root path. The JSON
+document at that URL must repeat the same `client_id` byte-for-byte and include
+non-empty `client_name` and `redirect_uris`. Use
+`ExMCP.Authorization.ClientIdMetadata.build_metadata/1` and `validate/2` before
+publishing it. For `private_key_jwt`, publish `jwks_uri` or inline `jwks` and
+configure the matching private key locally; ExMCP will not downgrade to a
+weaker token authentication method if assertion construction fails.
+
+DCR requires an explicit `application_type: :native | :web` and stable local
+`redirect_port`. Registration rejections retain the authorization server's
+error response so redirect-policy failures are actionable. ExMCP does not
+silently change the application type or redirect URI.
+
 ## JSON Schema Resource Policy
 
 Every JSON Schema compiled or validated by ExMCP passes through one bounded,

@@ -9,10 +9,15 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
   This enables dynamic client registration-like behavior without
   requiring a registration endpoint.
 
-  Available in protocol version 2025-11-25.
+  Client IDs are exact HTTPS URLs with a non-root path. The document at that
+  URL must repeat the exact client ID and provide `client_name` and
+  `redirect_uris`. Authorization servers advertise support with
+  `client_id_metadata_document_supported: true`.
   """
 
   alias ExMCP.Internal.MapBuilder
+
+  @max_document_bytes 262_144
 
   @type client_metadata :: %{String.t() => term()}
 
@@ -31,17 +36,50 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
   def fetch(client_id_url, opts \\ []) do
     http_client = Keyword.get(opts, :http_client)
 
-    case do_fetch(client_id_url, http_client) do
-      {:ok, metadata} ->
-        case validate(metadata, client_id_url) do
-          :ok -> {:ok, metadata}
-          {:error, _} = error -> error
-        end
-
-      {:error, _} = error ->
-        error
+    with :ok <- validate_url(client_id_url),
+         {:ok, metadata} <- do_fetch(client_id_url, http_client),
+         :ok <- validate(metadata, client_id_url) do
+      {:ok, metadata}
     end
   end
+
+  @doc "Returns whether authorization-server metadata advertises CIMD support."
+  @spec supported?(map()) :: boolean()
+  def supported?(metadata) when is_map(metadata) do
+    Map.get(metadata, "client_id_metadata_document_supported") == true or
+      Map.get(metadata, :client_id_metadata_document_supported) == true
+  end
+
+  def supported?(_metadata), do: false
+
+  @doc "Validates the URL form required for a CIMD client identifier."
+  @spec validate_url(String.t()) :: :ok | {:error, term()}
+  def validate_url(client_id_url) when is_binary(client_id_url) do
+    case URI.parse(client_id_url) do
+      %URI{
+        scheme: "https",
+        host: host,
+        path: path,
+        userinfo: nil,
+        fragment: nil
+      }
+      when is_binary(host) and host != "" and is_binary(path) and path not in ["", "/"] ->
+        :ok
+
+      %URI{scheme: scheme} when scheme != "https" ->
+        {:error, :https_client_id_required}
+
+      %URI{path: path} when path in [nil, "", "/"] ->
+        {:error, :client_id_path_required}
+
+      _invalid ->
+        {:error, :invalid_client_id_url}
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_client_id_url}
+  end
+
+  def validate_url(_client_id_url), do: {:error, :invalid_client_id_url}
 
   @doc """
   Validates client metadata structure.
@@ -60,11 +98,18 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
   - `policy_uri` - Privacy policy URL
   """
   @spec validate(client_metadata(), String.t()) :: :ok | {:error, term()}
-  def validate(metadata, expected_client_id) do
-    with :ok <- validate_client_id(metadata, expected_client_id) do
-      validate_required_fields(metadata)
+  def validate(metadata, expected_client_id)
+      when is_map(metadata) and is_binary(expected_client_id) do
+    with :ok <- validate_url(expected_client_id),
+         :ok <- validate_client_id(metadata, expected_client_id),
+         :ok <- validate_required_fields(metadata),
+         :ok <- validate_client_name(metadata),
+         :ok <- validate_redirect_uris(metadata) do
+      validate_private_key_jwt(metadata)
     end
   end
+
+  def validate(_metadata, _expected_client_id), do: {:error, :invalid_client_metadata}
 
   @doc """
   Builds a client metadata document for this application.
@@ -84,6 +129,14 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
     |> MapBuilder.put_if_present("contacts", Keyword.get(opts, :contacts))
     |> MapBuilder.put_if_present("tos_uri", Keyword.get(opts, :tos_uri))
     |> MapBuilder.put_if_present("policy_uri", Keyword.get(opts, :policy_uri))
+    |> MapBuilder.put_if_present("grant_types", Keyword.get(opts, :grant_types))
+    |> MapBuilder.put_if_present("response_types", Keyword.get(opts, :response_types))
+    |> MapBuilder.put_if_present(
+      "token_endpoint_auth_method",
+      Keyword.get(opts, :token_endpoint_auth_method)
+    )
+    |> MapBuilder.put_if_present("jwks_uri", Keyword.get(opts, :jwks_uri))
+    |> MapBuilder.put_if_present("jwks", Keyword.get(opts, :jwks))
   end
 
   # Private helpers
@@ -92,11 +145,15 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
 
   defp do_fetch(url, http_client) do
     case http_client.get(url, [{"accept", "application/json"}]) do
-      {:ok, %{status: 200, body: body}} when is_binary(body) ->
+      {:ok, %{status: 200, body: body}}
+      when is_binary(body) and byte_size(body) <= @max_document_bytes ->
         case Jason.decode(body) do
           {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
           _ -> {:error, :invalid_json}
         end
+
+      {:ok, %{status: 200, body: body}} when is_binary(body) ->
+        {:error, :metadata_document_too_large}
 
       {:ok, %{status: status}} ->
         {:error, {:http_error, status}}
@@ -123,4 +180,62 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
       [field | _] -> {:error, {:missing_required_field, field}}
     end
   end
+
+  defp validate_client_name(%{"client_name" => name}) when is_binary(name) and name != "",
+    do: :ok
+
+  defp validate_client_name(_metadata), do: {:error, {:invalid_field, "client_name"}}
+
+  defp validate_redirect_uris(%{"redirect_uris" => uris}) when is_list(uris) and uris != [] do
+    if Enum.all?(uris, &valid_redirect_uri?/1) and Enum.uniq(uris) == uris do
+      :ok
+    else
+      {:error, {:invalid_field, "redirect_uris"}}
+    end
+  end
+
+  defp validate_redirect_uris(_metadata), do: {:error, {:invalid_field, "redirect_uris"}}
+
+  defp valid_redirect_uri?(uri) when is_binary(uri) and uri != "" do
+    case URI.parse(uri) do
+      %URI{scheme: "https", host: host, userinfo: nil, fragment: nil}
+      when is_binary(host) and host != "" ->
+        true
+
+      %URI{scheme: "http", host: host, userinfo: nil, fragment: nil}
+      when host in ["localhost", "127.0.0.1", "[::1]", "::1"] ->
+        true
+
+      _invalid ->
+        false
+    end
+  end
+
+  defp valid_redirect_uri?(_uri), do: false
+
+  defp validate_private_key_jwt(%{"token_endpoint_auth_method" => "private_key_jwt"} = metadata) do
+    cond do
+      valid_jwks_uri?(Map.get(metadata, "jwks_uri")) -> :ok
+      valid_jwks?(Map.get(metadata, "jwks")) -> :ok
+      true -> {:error, :private_key_jwt_requires_jwks}
+    end
+  end
+
+  defp validate_private_key_jwt(_metadata), do: :ok
+
+  defp valid_jwks_uri?(uri) when is_binary(uri) do
+    case URI.parse(uri) do
+      %URI{scheme: "https", host: host, userinfo: nil, fragment: nil}
+      when is_binary(host) and host != "" ->
+        true
+
+      _invalid ->
+        false
+    end
+  end
+
+  defp valid_jwks_uri?(_uri), do: false
+
+  defp valid_jwks?(%{"keys" => keys}) when is_list(keys) and keys != [], do: true
+  defp valid_jwks?(_jwks), do: false
 end

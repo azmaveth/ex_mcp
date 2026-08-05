@@ -1049,19 +1049,35 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       `state` plus any returned `iss` before constructing the token request. Issuer comparison is
       exact, with no URL normalization; a present `iss` without a recorded issuer is rejected.
       Callback URLs, authorization codes, and state values are not written to logs.**
-- [ ] Client ID Metadata Documents: HTTPS `client_id` URL with a path component; document
+- [x] Client ID Metadata Documents: HTTPS `client_id` URL with a path component; document
       `client_id` MUST equal the URL; MUST include `client_id`, `client_name`, `redirect_uris`;
-      detect `client_id_metadata_document_supported`; optional `private_key_jwt`.
-- [ ] Add explicit client configuration: `{:pre_registered, client_id, secret_ref}`,
+      detect `client_id_metadata_document_supported`; optional `private_key_jwt`. **The existing
+      `ClientIdMetadata` surface now validates an exact HTTPS, non-root-path identifier, bounded
+      document size, required field values, secure redirect URIs, and exact document/client-ID
+      equality. It detects only an explicit `true` advertisement and can build/validate inline or
+      hosted JWKS metadata. Configured CIMD keys produce RFC 7523 client assertions for both auth
+      code and client-credentials token requests, with no downgrade when signing fails.**
+- [x] Add explicit client configuration: `{:pre_registered, client_id, secret_ref}`,
       `{:cimd, https_url}`, or `:auto`, plus `application_type: :native | :web`. ExMCP may provide
       a Plug/helper to serve a CIMD but must not imply that a CLI can magically host HTTPS.
-- [ ] Registration priority: pre-registered → configured CIMD → DCR → prompt/actionable error.
+      **`ExMCP.Authorization.RegistrationPolicy` implements these strategies. Secret references
+      may be resolved from an environment variable or zero-arity callback at use time; resolver
+      failures never expose the secret. Existing `client_id`, `client_secret`, and
+      `client_metadata_url` keys remain supported as 1.x compatibility aliases. Documentation
+      makes clear that CIMD is a self-hosted HTTPS document.**
+- [x] Registration priority: pre-registered → configured CIMD → DCR → prompt/actionable error.
       If the AS supports CIMD but no URL is configured, use DCR only when advertised/allowed;
-      never invent a metadata URL or silently weaken registration policy.
-- [ ] `application_type` on DCR (`"native"` for desktop/CLI/localhost, `"web"` otherwise) is
+      never invent a metadata URL or silently weaken registration policy. **Selection is
+      deterministic at one tested boundary. The former hard-coded conformance CIMD URL is
+      removed; `:auto` uses DCR only with an advertised registration endpoint, otherwise returns
+      an actionable configuration error.**
+- [x] `application_type` on DCR (`"native"` for desktop/CLI/localhost, `"web"` otherwise) is
       explicit configuration; an inference helper may validate an unambiguous redirect URI but
       must not guess silently. Redirect-URI rejection returns an actionable error; any retry uses
-      an explicitly configured URI and never relaxes exact redirect validation.
+      an explicitly configured URI and never relaxes exact redirect validation. **DCR validation
+      and its JSON body require the explicit application type. The built-in local flow also
+      requires a stable configured callback port before DCR, preserves structured AS redirect
+      rejection details, and performs no weakening retry.**
 - [ ] Key persisted credentials by issuer; refuse cross-AS reuse; re-register on AS change;
       surface an error on mismatched pre-registered credentials.
 - [ ] Use standards-defined issuer comparison with no ad hoc trailing-slash/path normalization.
@@ -1071,7 +1087,9 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [ ] Preserve OAuth transaction protections across both eras: random single-use `state`, PKCE,
       exact redirect URI, one-time authorization-code redemption, issuer-bound callbacks, and no
       cookies/tokens in logs. Test replay and concurrent callback attempts.
-- [ ] Mark DCR deprecated in docs and `@doc`.
+- [x] Mark DCR deprecated in docs and `@doc`. **The DCR module and registration entry point now
+      identify the 2026-07-28 deprecation and direct new deployments to pre-registration or
+      CIMD; configuration docs describe it only as an advertised compatibility fallback.**
 - [ ] Treat CIMD and authorization-server metadata fetching as SSRF-sensitive: HTTPS only,
       bounded redirects that do not cross origin without policy, DNS/IP revalidation, private/
       loopback/link-local blocking, response size/time limits, and no credential forwarding.

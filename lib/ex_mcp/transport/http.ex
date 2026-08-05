@@ -211,7 +211,8 @@ defmodule ExMCP.Transport.HTTP do
     }
 
     # OAuth config for automatic 401 → discover → token → retry flow.
-    # Pass auth: %{client_id: "...", client_secret: "...", ...} to enable.
+    # Prefer auth: %{client_registration: {:cimd, "https://..."}, ...} or an
+    # explicit pre-registered strategy. Legacy client_id/client_secret keys remain accepted.
     auth_config = Keyword.get(config, :auth)
 
     # Reconnection options (passed through to SSEClient)
