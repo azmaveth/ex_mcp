@@ -127,10 +127,21 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     # Extract Last-Event-ID if provided
     last_event_id = extract_last_event_id(conn_module, conn)
 
-    # Send initial connection event
+    # Send the configured handshake event. Streamable HTTP's legacy GET stream
+    # keeps the historical `connected` event, while the deprecated 2024-11-05
+    # HTTP+SSE transport must begin with a raw URI in an `endpoint` event.
+    {initial_event_type, initial_event_data} =
+      Map.get(opts, :initial_sse_event, {"connected", %{session_id: session_id}})
+
     event_id = generate_event_id(0)
 
-    case send_sse_event(conn_module, conn, "connected", %{session_id: session_id}, event_id) do
+    case send_sse_event(
+           conn_module,
+           conn,
+           initial_event_type,
+           initial_event_data,
+           event_id
+         ) do
       {:ok, conn} ->
         # Start heartbeat timer
         heartbeat_ref = Process.send_after(self(), :heartbeat, @heartbeat_interval)
@@ -322,7 +333,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   end
 
   defp send_sse_event(conn_module, conn, event_type, data, event_id) do
-    formatted_data = Jason.encode!(data)
+    formatted_data = format_event_data(data)
 
     message =
       case event_id do
@@ -338,6 +349,9 @@ defmodule ExMCP.HttpPlug.SSEHandler do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp format_event_data({:raw, data}) when is_binary(data), do: data
+  defp format_event_data(data), do: Jason.encode!(data)
 
   defp buffer_event(state, event_type, data, event_id) do
     # Add to buffer

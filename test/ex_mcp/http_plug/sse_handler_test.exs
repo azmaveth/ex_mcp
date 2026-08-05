@@ -93,6 +93,23 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
   end
 
   describe "SSE event formatting" do
+    test "supports the raw endpoint handshake required by legacy HTTP+SSE" do
+      conn = MockConn.new()
+
+      {:ok, handler} =
+        SSEHandler.start_link(conn, "test_session", %{
+          conn_module: MockConn,
+          initial_sse_event: {"endpoint", {:raw, "https://example.test/message?sessionId=test"}}
+        })
+
+      [initial_chunk | _] = :sys.get_state(handler).conn.chunks
+      assert initial_chunk =~ "event: endpoint"
+      assert initial_chunk =~ "data: https://example.test/message?sessionId=test"
+      refute initial_chunk =~ ~s(data: "https://)
+
+      SSEHandler.close(handler)
+    end
+
     test "sends events with proper SSE format" do
       conn = MockConn.new()
       {:ok, handler} = SSEHandler.start_link(conn, "test_session", opts())

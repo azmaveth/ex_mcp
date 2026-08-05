@@ -6,7 +6,7 @@ Start with:
 - [MIGRATION.md](MIGRATION.md) for breaking changes between versions
 - [USER_GUIDE.md](../guides/USER_GUIDE.md) for the full MCP API
 
-ExMCP supports MCP clients and servers over stdio, HTTP/SSE, and BEAM-local
+ExMCP supports MCP clients and servers over stdio, Streamable HTTP, and BEAM-local
 transports, plus ACP controllers and agents.
 
 ## Current Server Shape
@@ -28,7 +28,7 @@ end
 ## Transports
 
 - `:stdio` for subprocess JSON-RPC
-- `:http` for Streamable HTTP, with `use_sse: true` for SSE
+- `:http` for Streamable HTTP; modern POST-owned SSE streams need no server flag
 - `:beam` for local client/server processes in the same BEAM VM
 - `:test` for in-memory tests
 

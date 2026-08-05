@@ -1152,9 +1152,17 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
       `DeprecationCompatibilityTest` verifies the retained modules remain loadable and checks
       their compiled module docs and deprecation metadata for the 2.0 boundary. The final rc.5
       API-diff gate below remains the authoritative check that no other public surface vanished.**
-- [ ] HTTP+SSE (2024-11-05) is **decided:** keep it available and clearly deprecated throughout
+- [x] HTTP+SSE (2024-11-05) is **decided:** keep it available and clearly deprecated throughout
       1.x, but exclude it from new-server defaults. “Dual-era server by default” means both
       protocol eras on enabled modern transports; it does not auto-enable a deprecated transport.
+      **`ExMCP.HttpPlug` and `ExMCP.Server.Transport` now default the standalone transport off.
+      `legacy_http_sse: true` is the explicit option; rc.5's `sse_enabled: true` remains a 1.x
+      alias. The retained GET endpoint emits the required raw `endpoint` event, its announced
+      POST endpoint accepts the session query and returns `202`, and JSON-RPC responses are sent
+      as SSE `message` events. Paths are configurable, modern-only mode does not expose them,
+      startup warns when the deprecated transport is enabled, and the main server/transport/
+      configuration docs distinguish it from modern POST-owned SSE streams. Plug, handshake,
+      routing, alias, default-selection and SSE formatting tests cover the compatibility path.**
 - [ ] Keep Roots/Sampling/Logging; add deprecation notes pointing at the suggested migrations
       (tool params / resource URIs for roots; direct LLM APIs for sampling; stderr or OTel for
       logging).

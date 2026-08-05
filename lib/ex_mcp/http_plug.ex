@@ -3,10 +3,14 @@ defmodule ExMCP.HttpPlug do
   HTTP Plug for MCP (Model Context Protocol) requests.
   Compatible with Phoenix and Cowboy servers.
 
-  This plug provides HTTP transport for MCP servers, allowing integration
-  with standard Elixir web applications. It supports both regular POST
-  requests for RPC calls and Server-Sent Events (SSE) for real-time
-  communication.
+  This plug provides Streamable HTTP transport for MCP servers, allowing
+  integration with standard Elixir web applications. Modern SSE responses are
+  owned by the POST request that opened them and require no transport flag.
+
+  The deprecated MCP 2024-11-05 HTTP+SSE transport remains available throughout
+  ExMCP 1.x by explicitly setting `legacy_http_sse: true`. The rc.5
+  `sse_enabled: true` option remains an alias for compatibility. New servers do
+  not enable this deprecated transport by default.
 
   ## Handler options
 
@@ -71,7 +75,11 @@ defmodule ExMCP.HttpPlug do
   `ExMCP.Server.Transport` with a localhost bind get this allow-list by
   default.
 
-  ### Server-Sent Events (`:sse_mode`)
+  ### Deprecated HTTP+SSE (`:legacy_http_sse`, `:sse_mode`)
+
+  `:legacy_http_sse` explicitly enables the standalone GET transport used by
+  legacy MCP revisions. It defaults to `false`. `:sse_enabled` is a retained
+  1.x alias and is planned for removal in ExMCP 2.0.
 
   `:sse_mode` is `:stream` (default) or `:oneshot`. `:stream` starts an
   `ExMCP.HttpPlug.SSEHandler` and holds the request open for the lifetime of
@@ -138,6 +146,9 @@ defmodule ExMCP.HttpPlug do
   def init(opts) do
     validate_mrtr_configuration!(opts)
 
+    legacy_http_sse =
+      Keyword.get(opts, :legacy_http_sse, Keyword.get(opts, :sse_enabled, false))
+
     %{
       handler: Keyword.get(opts, :handler),
       handler_opts: Keyword.get(opts, :handler_opts, []),
@@ -164,7 +175,14 @@ defmodule ExMCP.HttpPlug do
           Keyword.get(opts, :subscription_keepalive_interval_ms, 15_000)
         ),
       session_manager: Keyword.get(opts, :session_manager, ExMCP.SessionManager),
-      sse_enabled: Keyword.get(opts, :sse_enabled, true),
+      # Keep the rc.5 field so callers that inspect initialized Plug options do
+      # not lose public shape during 1.x.
+      sse_enabled: legacy_http_sse,
+      legacy_http_sse: legacy_http_sse,
+      legacy_http_sse_path:
+        normalize_legacy_http_sse_path(Keyword.get(opts, :legacy_http_sse_path, "/sse")),
+      legacy_http_sse_post_path:
+        normalize_legacy_http_sse_path(Keyword.get(opts, :legacy_http_sse_post_path, "/message")),
       sse_mode: Keyword.get(opts, :sse_mode, default_sse_mode()),
       cors_enabled: Keyword.get(opts, :cors_enabled, false),
       allowed_origins: Keyword.get(opts, :allowed_origins, []),
@@ -206,13 +224,22 @@ defmodule ExMCP.HttpPlug do
   end
 
   defp dispatch(conn, opts) do
-    if modern_only_disallowed_method?(conn, opts) do
-      conn
-      |> put_resp_header("allow", "POST")
-      |> put_resp_content_type("application/json")
-      |> send_resp(405, Jason.encode!(%{"error" => "Method not allowed"}))
-    else
-      do_dispatch(conn.method, conn.path_info, conn, opts)
+    cond do
+      modern_only_disallowed_method?(conn, opts) ->
+        conn
+        |> put_resp_header("allow", "POST")
+        |> put_resp_content_type("application/json")
+        |> send_resp(405, Jason.encode!(%{"error" => "Method not allowed"}))
+
+      conn.method == "GET" and legacy_http_sse_path?(conn, opts) ->
+        if legacy_http_sse_enabled?(opts) do
+          handle_sse_connection(conn, legacy_sse_opts(conn, opts))
+        else
+          send_resp(conn, 404, "SSE not enabled")
+        end
+
+      true ->
+        do_dispatch(conn.method, conn.path_info, conn, opts)
     end
   end
 
@@ -248,22 +275,6 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  defp do_dispatch("GET", ["sse"], conn, opts) do
-    if opts.sse_enabled do
-      handle_sse_connection(conn, opts)
-    else
-      send_resp(conn, 404, "SSE not enabled")
-    end
-  end
-
-  defp do_dispatch("GET", ["mcp", "v1", "sse"], conn, opts) do
-    if opts.sse_enabled do
-      handle_sse_connection(conn, opts)
-    else
-      send_resp(conn, 404, "SSE not enabled")
-    end
-  end
-
   # Handle POST to OAuth endpoints - these should return 404
   defp do_dispatch("POST", [".well-known", "oauth-authorization-server"], conn, _opts) do
     conn
@@ -286,7 +297,11 @@ defmodule ExMCP.HttpPlug do
       %{method: conn.method, path: conn.request_path}
     )
 
-    handle_mcp_request(conn, opts)
+    if legacy_http_sse_enabled?(opts) and legacy_http_sse_post_path?(conn, opts) do
+      handle_legacy_http_sse_post(conn, opts)
+    else
+      handle_mcp_request(conn, opts)
+    end
   end
 
   defp do_dispatch("DELETE", ["sse", session_id], conn, opts) do
@@ -318,7 +333,7 @@ defmodule ExMCP.HttpPlug do
       |> get_req_header("accept")
       |> Enum.any?(&String.contains?(&1, "text/event-stream"))
 
-    if opts.sse_enabled and accepts_sse do
+    if legacy_http_sse_enabled?(opts) and accepts_sse do
       handle_sse_connection(conn, opts)
     else
       conn
@@ -331,6 +346,56 @@ defmodule ExMCP.HttpPlug do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(404, Jason.encode!(%{error: "Not found"}))
+  end
+
+  defp legacy_http_sse_enabled?(%{protocol_mode: :modern_only}), do: false
+
+  defp legacy_http_sse_enabled?(opts) do
+    Map.get(opts, :legacy_http_sse, Map.get(opts, :sse_enabled, false))
+  end
+
+  defp legacy_http_sse_path?(conn, opts) do
+    conn.path_info in [
+      split_path(Map.get(opts, :legacy_http_sse_path, "/sse")),
+      ["mcp", "v1", "sse"]
+    ]
+  end
+
+  defp legacy_http_sse_post_path?(conn, opts) do
+    conn.path_info == split_path(Map.get(opts, :legacy_http_sse_post_path, "/message"))
+  end
+
+  defp split_path(path) do
+    String.split(path, "/", trim: true)
+  end
+
+  defp normalize_legacy_http_sse_path("/" <> _rest = path), do: path
+  defp normalize_legacy_http_sse_path(path) when is_binary(path), do: "/" <> path
+
+  defp legacy_sse_opts(conn, opts) do
+    endpoint = legacy_http_sse_post_uri(conn, opts)
+
+    Map.put(opts, :initial_sse_event_builder, fn session_id ->
+      {"endpoint", {:raw, endpoint <> "?sessionId=" <> URI.encode_www_form(session_id)}}
+    end)
+  end
+
+  defp legacy_http_sse_post_uri(conn, opts) do
+    scheme = Atom.to_string(conn.scheme)
+
+    default_port? =
+      (scheme == "http" and conn.port == 80) or (scheme == "https" and conn.port == 443)
+
+    authority = if default_port?, do: conn.host, else: "#{conn.host}:#{conn.port}"
+
+    mount_prefix =
+      case conn.script_name do
+        [] -> ""
+        parts -> "/" <> Enum.join(parts, "/")
+      end
+
+    post_path = Map.get(opts, :legacy_http_sse_post_path, "/message")
+    scheme <> "://" <> authority <> mount_prefix <> post_path
   end
 
   # CORS preflight handling
@@ -854,6 +919,132 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  # The deprecated 2024-11-05 transport receives client messages on the URI
+  # announced by the initial `endpoint` event and sends JSON-RPC responses on
+  # the already-open SSE stream.
+  defp handle_legacy_http_sse_post(conn, opts) do
+    with {:ok, conn, session_id} <- fetch_legacy_http_sse_session(conn),
+         {:ok, handler} <- fetch_legacy_http_sse_handler(session_id),
+         true <- Process.alive?(handler),
+         {:ok, conn} <- validate_request_origin(conn, opts),
+         {:ok, body, conn} <- read_or_cached_body(conn, opts),
+         {:ok, request} <- parse_json(body),
+         conn = assign_request_protocol_version(conn, request),
+         {:ok, conn} <- validate_protocol_version(conn, request),
+         {:ok, _token_info} <- authorize_request(conn, request, opts),
+         {:ok, opts} <- resolve_handler_opts(conn, request, opts),
+         result <-
+           process_mcp_request(
+             request,
+             opts
+             |> Map.put(:session_id, session_id)
+             |> Map.put(:request_headers, conn.req_headers)
+           ),
+         :ok <- deliver_legacy_http_sse_result(handler, request, result) do
+      conn
+      |> maybe_add_cors_headers(opts)
+      |> send_resp(202, "")
+    else
+      {:error, :invalid_session_id} ->
+        reject_invalid_session_id(conn, opts)
+
+      {:error, :legacy_session_not_found} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(404, "Legacy SSE session not found")
+
+      false ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(404, "Legacy SSE session not found")
+
+      {:error, {:auth_error, {status, www_auth_header, body}}} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_header("www-authenticate", www_auth_header)
+        |> send_resp(status, body)
+
+      {:error, :origin_not_allowed} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(403, "Origin not allowed")
+
+      {:error, :body_too_large} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(413, "Request body too large")
+
+      {:error, reason} ->
+        Logger.debug("Legacy HTTP+SSE POST rejected: #{inspect(reason)}")
+
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> send_resp(400, "Invalid legacy HTTP+SSE request")
+    end
+  end
+
+  defp fetch_legacy_http_sse_session(conn) do
+    conn = fetch_query_params(conn)
+
+    case Map.get(conn.query_params, "sessionId") do
+      session_id when is_binary(session_id) ->
+        case validate_session_id_value(session_id) do
+          :ok -> {:ok, conn, session_id}
+          {:error, :invalid_session_id} = error -> error
+        end
+
+      _missing ->
+        {:error, :invalid_session_id}
+    end
+  rescue
+    Plug.Conn.InvalidQueryError -> {:error, :invalid_session_id}
+  end
+
+  defp fetch_legacy_http_sse_handler(session_id) do
+    case lookup_sse_handler(session_id) do
+      {:ok, handler} -> {:ok, handler}
+      {:error, _reason} -> {:error, :legacy_session_not_found}
+    end
+  end
+
+  defp deliver_legacy_http_sse_result(_handler, _request, {:notification, _}), do: :ok
+
+  defp deliver_legacy_http_sse_result(handler, _request, {:ok, response}) do
+    deliver_legacy_http_sse_message(handler, response)
+  end
+
+  defp deliver_legacy_http_sse_result(handler, _request, {:http_error, _status, response}) do
+    deliver_legacy_http_sse_message(handler, response)
+  end
+
+  defp deliver_legacy_http_sse_result(handler, request, {:error, reason}) do
+    Logger.error("Legacy HTTP+SSE request processing error: #{inspect(reason)}")
+
+    response =
+      JSONRPC.error(Map.get(request, "id"), ErrorCodes.internal_error(), "Internal error")
+
+    deliver_legacy_http_sse_message(handler, response)
+  end
+
+  defp deliver_legacy_http_sse_result(handler, request, _unsupported_result) do
+    response =
+      JSONRPC.error(
+        Map.get(request, "id"),
+        ErrorCodes.invalid_request(),
+        "Response streaming is not supported by the deprecated HTTP+SSE transport"
+      )
+
+    deliver_legacy_http_sse_message(handler, response)
+  end
+
+  defp deliver_legacy_http_sse_message(handler, response) do
+    with :ok <- SSEHandler.request_send(handler) do
+      SSEHandler.send_event(handler, "message", response)
+    end
+  catch
+    :exit, _reason -> {:error, :legacy_session_not_found}
+  end
+
   # Handle Server-Sent Events connections
   defp handle_sse_connection(conn, opts) do
     with :ok <- validate_session_id_headers(conn),
@@ -912,7 +1103,7 @@ defmodule ExMCP.HttpPlug do
           })
         end
 
-      serve_sse(conn, final_session_id, session_manager, opts)
+      serve_sse(conn, final_session_id, session_manager, initial_sse_opts(opts, final_session_id))
     else
       {:error, :invalid_session_id} ->
         reject_invalid_session_id(conn, opts)
@@ -933,6 +1124,15 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  defp initial_sse_opts(%{initial_sse_event_builder: builder} = opts, session_id)
+       when is_function(builder, 1) do
+    opts
+    |> Map.delete(:initial_sse_event_builder)
+    |> Map.put(:initial_sse_event, builder.(session_id))
+  end
+
+  defp initial_sse_opts(opts, _session_id), do: opts
+
   # `:sse_mode` decides how a GET SSE request is served:
   #
   #   * `:stream` (default) - start an `ExMCP.HttpPlug.SSEHandler` and keep the
@@ -949,8 +1149,11 @@ defmodule ExMCP.HttpPlug do
     serve_sse(conn, session_id, session_manager, Map.put(opts, :sse_mode, default_sse_mode()))
   end
 
-  defp serve_sse(conn, session_id, _session_manager, %{sse_mode: :oneshot}) do
-    {:ok, conn} = chunk(conn, "event: connected\ndata: {\"session_id\": \"#{session_id}\"}\n\n")
+  defp serve_sse(conn, session_id, _session_manager, %{sse_mode: :oneshot} = opts) do
+    {event_type, data} =
+      Map.get(opts, :initial_sse_event, {"connected", %{session_id: session_id}})
+
+    {:ok, conn} = chunk(conn, format_initial_sse_event(event_type, data))
 
     conn
   end
@@ -980,6 +1183,14 @@ defmodule ExMCP.HttpPlug do
 
         conn
     end
+  end
+
+  defp format_initial_sse_event(event_type, {:raw, data}) do
+    "event: #{event_type}\ndata: #{data}\n\n"
+  end
+
+  defp format_initial_sse_event(event_type, data) do
+    "event: #{event_type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
   # Default SSE mode. `:ex_mcp, :sse_mode` selects it explicitly; the legacy

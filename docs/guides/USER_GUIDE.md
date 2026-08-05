@@ -174,7 +174,7 @@ Connect to stdio:
   )
 ```
 
-Connect to HTTP/SSE:
+Connect to Streamable HTTP:
 
 ```elixir
 {:ok, client} =

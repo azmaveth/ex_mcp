@@ -6,7 +6,21 @@ defmodule ExMCP.HttpPlugTest do
 
   alias ExMCP.HttpPlug
   alias ExMCP.HttpPlug.Core
+  alias ExMCP.HttpPlug.SessionRegistry
+  alias ExMCP.HttpPlug.SSEHandler
   alias ExMCP.Transport.HTTP.RequestHeaders
+
+  defmodule LegacyCaptureConn do
+    @behaviour ExMCP.HttpPlug.SSEConnection
+
+    defstruct chunks: []
+
+    @impl true
+    def chunk(%__MODULE__{} = conn, data), do: {:ok, %{conn | chunks: conn.chunks ++ [data]}}
+
+    @impl true
+    def get_req_header(%__MODULE__{}, _header), do: []
+  end
 
   defmodule TestServer do
     use ExMCP.Server.Handler
@@ -159,7 +173,8 @@ defmodule ExMCP.HttpPlugTest do
 
       assert config.handler == TestServer
       assert config.server_info.name == "test"
-      assert config.sse_enabled == true
+      assert config.sse_enabled == false
+      assert config.legacy_http_sse == false
       assert config.cors_enabled == false
       assert config.validate_origin == true
       assert config.allowed_origins == []
@@ -171,6 +186,20 @@ defmodule ExMCP.HttpPlugTest do
 
     test "init/1 accepts a server-side handler call deadline" do
       assert HttpPlug.init(handler_call_timeout: 250).handler_call_timeout == 250
+    end
+
+    test "retains sse_enabled as an alias for the deprecated transport" do
+      assert HttpPlug.init(sse_enabled: true).legacy_http_sse == true
+      assert HttpPlug.init(legacy_http_sse: true).sse_enabled == true
+      assert HttpPlug.init(legacy_http_sse: false, sse_enabled: true).legacy_http_sse == false
+    end
+
+    test "normalizes legacy HTTP+SSE paths" do
+      config =
+        HttpPlug.init(legacy_http_sse_path: "events", legacy_http_sse_post_path: "inbox")
+
+      assert config.legacy_http_sse_path == "/events"
+      assert config.legacy_http_sse_post_path == "/inbox"
     end
 
     test "init/1 resolves the SSE mode instead of branching at request time" do
@@ -1250,15 +1279,43 @@ defmodule ExMCP.HttpPlugTest do
   end
 
   describe "SSE connections" do
+    test "does not enable the deprecated HTTP+SSE route by default" do
+      conn =
+        conn(:get, "/sse")
+        |> HttpPlug.call(HttpPlug.init([]))
+
+      assert conn.status == 404
+      assert conn.resp_body == "SSE not enabled"
+    end
+
     test "handles SSE connection request" do
       conn =
         conn(:get, "/sse")
-        |> HttpPlug.call(HttpPlug.init(sse_enabled: true))
+        |> HttpPlug.call(HttpPlug.init(legacy_http_sse: true))
 
       assert conn.status == 200
       assert get_resp_header(conn, "content-type") == ["text/event-stream"]
       assert get_resp_header(conn, "cache-control") == ["no-cache"]
       assert get_resp_header(conn, "connection") == ["keep-alive"]
+      assert conn.resp_body =~ "event: endpoint"
+      assert conn.resp_body =~ "data: http://www.example.com/message?sessionId="
+      refute conn.resp_body =~ "event: connected"
+    end
+
+    test "supports configured legacy GET and POST paths" do
+      conn =
+        conn(:get, "/events")
+        |> HttpPlug.call(
+          HttpPlug.init(
+            legacy_http_sse: true,
+            legacy_http_sse_path: "/events",
+            legacy_http_sse_post_path: "/inbox"
+          )
+        )
+
+      assert conn.status == 200
+      assert conn.resp_body =~ "event: endpoint"
+      assert conn.resp_body =~ "data: http://www.example.com/inbox?sessionId="
     end
 
     test "rejects SSE when disabled" do
@@ -1285,6 +1342,64 @@ defmodule ExMCP.HttpPlugTest do
       result_conn = HttpPlug.call(conn, opts)
       assert result_conn.status == 200
       assert get_resp_header(result_conn, "content-type") == ["text/event-stream"]
+    end
+
+    test "does not expose the deprecated route in modern-only mode" do
+      conn =
+        conn(:get, "/sse")
+        |> HttpPlug.call(HttpPlug.init(protocol_mode: :modern_only, legacy_http_sse: true))
+
+      assert conn.status == 404
+      assert conn.resp_body == "SSE not enabled"
+    end
+
+    test "legacy POST sends its JSON-RPC response on the open SSE stream" do
+      session_id = "legacy-session"
+
+      {:ok, handler} =
+        SSEHandler.start_link(%LegacyCaptureConn{}, session_id, %{
+          conn_module: LegacyCaptureConn,
+          initial_sse_event: {"endpoint", {:raw, "/message?sessionId=#{session_id}"}}
+        })
+
+      :ok = SessionRegistry.register(session_id, handler)
+
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2024-11-05",
+          "capabilities" => %{},
+          "clientInfo" => %{"name" => "legacy-client", "version" => "1.0.0"}
+        },
+        "id" => 77
+      }
+
+      conn =
+        conn(:post, "/message?sessionId=#{session_id}", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, legacy_http_sse: true))
+
+      assert conn.status == 202
+      assert conn.resp_body == ""
+
+      chunks = :sys.get_state(handler).conn.chunks
+      message = List.last(chunks)
+      assert message =~ "event: message"
+      assert message =~ ~s("id":77)
+      assert message =~ ~s("protocolVersion":"2024-11-05")
+
+      SSEHandler.close(handler)
+    end
+
+    test "legacy POST rejects an unknown SSE session" do
+      conn =
+        conn(:post, "/message?sessionId=missing", Jason.encode!(%{"jsonrpc" => "2.0"}))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, legacy_http_sse: true))
+
+      assert conn.status == 404
+      assert conn.resp_body == "Legacy SSE session not found"
     end
   end
 

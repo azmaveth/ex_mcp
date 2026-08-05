@@ -653,7 +653,7 @@ defmodule ExMCP.ACP.Types do
   @spec env_variable(String.t(), String.t()) :: map()
   def env_variable(name, value), do: %{"name" => name, "value" => value}
 
-  @doc "Creates an HTTP header entry for an HTTP/SSE MCP server."
+  @doc "Creates an HTTP header entry for a Streamable HTTP MCP server."
   @spec http_header(String.t(), String.t()) :: map()
   def http_header(name, value), do: %{"name" => name, "value" => value}
 

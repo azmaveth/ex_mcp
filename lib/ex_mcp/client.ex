@@ -82,7 +82,7 @@ defmodule ExMCP.Client do
     :default_retry_policy,
     :protocol_version,
     :default_timeout,
-    # Monitor refs of in-flight async POST tasks (HTTP/SSE transport),
+    # Monitor refs of in-flight async POST tasks (Streamable HTTP transport),
     # mapped to the request id each task serves.
     async_post_tasks: %{},
     # Memoized client handler: nil (not yet initialized), :none (no handler
@@ -1556,7 +1556,7 @@ defmodule ExMCP.Client do
     {:noreply, state}
   end
 
-  # Async POST support (HTTP/SSE transport)
+  # Async POST support (Streamable HTTP transport)
 
   defp handle_async_post_result({:ok, _new_ts, response_data}, _request_id, state) do
     # POST response contains data — parse it as a transport message

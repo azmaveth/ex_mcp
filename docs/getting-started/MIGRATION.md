@@ -158,7 +158,13 @@ ExMCP.Client.start_link(transport: :http, ...)
 MyServer.start_link(transport: :http, ...)
 ```
 
-**Rationale:** The `:sse` transport was renamed to `:http` to better reflect that it supports both regular HTTP and Server-Sent Events. In current ExMCP versions, `:sse` has been removed; use `transport: :http` with `use_sse: true` or `sse_enabled: true` when streaming is required.
+**Rationale:** The `:sse` transport identifier was renamed to `:http` before the
+1.0 release candidates. In current ExMCP versions, use `transport: :http`.
+Modern SSE streams are owned by their POST requests and require no server flag;
+`use_sse: true` retains the client GET stream for pre-2026 Streamable HTTP.
+The separate MCP 2024-11-05 HTTP+SSE transport is deprecated, disabled on new
+servers, and available during 1.x only by explicitly setting
+`legacy_http_sse: true` (`sse_enabled: true` remains an rc.5-compatible alias).
 
 ### 2. Authorization API Changes
 

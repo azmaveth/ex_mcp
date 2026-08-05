@@ -104,7 +104,7 @@ defmodule ExMCP do
   ## Transport Options
 
   - **stdio** - Process communication (standard MCP)
-  - **HTTP/SSE** - Web-friendly transport (standard MCP)
+  - **Streamable HTTP** - Web-friendly transport (standard MCP)
   - **BEAM-local MCP** - Direct Erlang process communication (ExMCP extension)
 
   ## Examples

@@ -191,7 +191,6 @@ defmodule MyAppWeb.Router do
         name: "my-phoenix-app",
         version: "1.0.0"
       },
-      sse_enabled: true,    # Enable Server-Sent Events for real-time communication
       cors_enabled: true    # Enable CORS for web clients
   end
 end

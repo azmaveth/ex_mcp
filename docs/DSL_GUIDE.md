@@ -21,8 +21,10 @@ end
 
 This generates the standard `ExMCP.Server.Handler` callbacks for listing and
 dispatching declared capabilities. The generated `start_link/1` supports
-`:beam`, `:test`, `:stdio`, and `:http` transports. Use `transport: :http`
-with `sse_enabled: true` when serving HTTP responses with SSE streaming.
+`:beam`, `:test`, `:stdio`, and `:http` transports. Modern HTTP SSE streams are
+owned by the POST request and require no server transport flag. The deprecated
+2024-11-05 two-endpoint transport remains available with
+`legacy_http_sse: true` throughout ExMCP 1.x.
 
 ## Tools
 

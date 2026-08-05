@@ -25,7 +25,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **Full MCP compliance** -- protocol versions 2024-11-05, 2025-03-26, 2025-06-18, and **2025-11-25** (latest stable)
 - **100% MCP conformance** -- 226/226 client checks, 39/39 server checks (`@modelcontextprotocol/conformance@0.1.16`, core suite, 2026-07-11)
 - **ACP v1** -- Agent Client Protocol major version `1` (`protocolVersion: 1`)
-- **Multiple transports** -- HTTP/SSE, stdio, and BEAM-local MCP (~15μs local calls)
+- **Multiple transports** -- Streamable HTTP, stdio, and BEAM-local MCP (~15μs local calls)
 - **Phoenix Plug** -- native Phoenix integration with `ExMCP.HttpPlug`
 - **DSL and Handler APIs** -- declarative tool/resource/prompt definitions via `ExMCP.Server.DSL`, or raw callback-based handlers (`ExMCP.Server.Tools` is deprecated; retained throughout 1.x and planned for removal in 2.0)
 - **OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD, JWT client auth (`private_key_jwt`), enterprise SSO (ID-JAG), token revocation (RFC 7009), pluggable auth providers
@@ -51,7 +51,7 @@ end
 |--------|------------------------|---------------------------|
 | `ExMCP.Client`, `Server.Handler`, `Server.DSL` | Content sanitize/transform helpers | `ExMCP.Server.Tools` (+ helpers) |
 | Transports (`:stdio`, `:http`, `:beam`, `:test`) | Some draft MCP handler features | Image compress/resize/thumbnail stubs |
-| `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | (MCP only needs `Content.image/2` blocks) |
+| `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | MCP 2024-11-05 HTTP+SSE transport |
 | `ExMCP.Content` builders (`text`/`image`/`audio`) | — | — |
 
 Runnable examples live in the GitHub repo under [`examples/`](https://github.com/azmaveth/ex_mcp/tree/master/examples) (not shipped in the Hex package).
@@ -72,7 +72,6 @@ defmodule MyAppWeb.Router do
       handler: MyApp.MCPHandler,
       server_info: %{name: "my-phoenix-app", version: "1.0.0"},
       handler_call_timeout: 10_000,
-      sse_enabled: true,
       cors_enabled: true
   end
 end
@@ -254,7 +253,7 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 |-----------|---------|----------|
 | **BEAM-local** | ~15us | Local Elixir processes in one VM |
 | **stdio** | ~1-5ms | Subprocess communication |
-| **HTTP/SSE** | ~5-20ms | Web applications, remote APIs |
+| **Streamable HTTP** | ~5-20ms | Web applications, remote APIs |
 
 ## Documentation
 

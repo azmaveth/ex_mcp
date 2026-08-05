@@ -1,13 +1,15 @@
 # ExMCP Transport Guide
 
-ExMCP supports stdio, streamable HTTP/SSE, BEAM-local, and test transports.
+ExMCP supports stdio, Streamable HTTP, BEAM-local, and test transports. The
+deprecated MCP 2024-11-05 HTTP+SSE transport is an explicit compatibility
+option, not a new-server default.
 
 ## Overview
 
 | Transport | Identifier | Best For |
 |-----------|------------|----------|
 | stdio | `:stdio` | Official MCP subprocess transport |
-| Streamable HTTP/SSE | `:http` | Remote servers and Phoenix apps |
+| Streamable HTTP | `:http` | Remote servers and Phoenix apps |
 | BEAM-local | `:beam` | Local Elixir client/server pairs |
 | Test | `:test` | In-memory tests |
 
@@ -33,10 +35,13 @@ Supported options:
 - `:env` - environment variables as `{"KEY", "VALUE"}` tuples.
 - `:timeout` - client operation timeout.
 
-## Streamable HTTP/SSE
+## Streamable HTTP
 
-The HTTP transport sends JSON-RPC over HTTP POST. With `use_sse: true`, it also
-uses SSE for server-to-client streaming.
+The HTTP transport sends JSON-RPC over HTTP POST. Modern MCP request and
+subscription streams use SSE on the owning POST response automatically. The
+client's `use_sse` option controls the standalone GET stream retained for
+pre-2026 Streamable HTTP revisions; it is disabled after a modern connection
+settles.
 
 ```elixir
 {:ok, client} =
@@ -56,7 +61,7 @@ Supported client options include:
 - `:url` - base URL or full MCP endpoint URL.
 - `:endpoint` - endpoint path when it is not included in `url`.
 - `:headers` - additional request headers.
-- `:use_sse` - enable SSE response stream, defaults to `true`.
+- `:use_sse` - enable the legacy Streamable HTTP GET stream, defaults to `true`.
 - `:session_id` - resume an existing streamable HTTP session.
 - `:protocol_version` - requested MCP protocol version.
 - `:timeout` - connect timeout.
@@ -107,13 +112,29 @@ scope "/mcp" do
   forward "/", ExMCP.HttpPlug,
     handler: MyApp.MCPServer,
     server_info: %{name: "my-app", version: "1.0.0"},
-    sse_enabled: true,
     cors_enabled: true
 end
 ```
 
 Put HTTP concerns in Plug pipelines before `ExMCP.HttpPlug`: authentication,
 request signing, rate limiting, CORS/origin decisions, and DNS rebinding checks.
+
+### Deprecated MCP 2024-11-05 HTTP+SSE
+
+Existing deployments can retain the old two-endpoint transport throughout
+ExMCP 1.x by opting in:
+
+```elixir
+forward "/mcp", ExMCP.HttpPlug,
+  handler: MyApp.MCPServer,
+  legacy_http_sse: true
+```
+
+The GET endpoint defaults to `/sse`; its first event is `endpoint`, containing
+the POST URI (default `/message`) and session ID. Configure those paths with
+`:legacy_http_sse_path` and `:legacy_http_sse_post_path`. The rc.5
+`:sse_enabled` option remains a deprecated alias until ExMCP 2.0. New servers
+should use Streamable HTTP and leave this option off.
 
 ## BEAM-Local
 

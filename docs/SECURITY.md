@@ -167,7 +167,6 @@ scope "/mcp" do
   forward "/", ExMCP.HttpPlug,
     handler: MyApp.MCPServer,
     server_info: %{name: "my-app", version: "1.0.0"},
-    sse_enabled: true,
     cors_enabled: true
 end
 ```

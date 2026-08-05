@@ -13,10 +13,10 @@ defmodule ExMCP.Server.Transport do
       # Start with stdio transport
       {:ok, _pid} = ExMCP.Server.Transport.start_server(MyServer, server_info, tools, transport: :stdio)
 
-      # Start HTTP with SSE enabled
+      # Explicitly retain the deprecated 2024-11-05 HTTP+SSE transport
       {:ok, _pid} = ExMCP.Server.Transport.start_server(MyServer, server_info, tools,
         transport: :http,
-        sse_enabled: true,
+        legacy_http_sse: true,
         port: 8080
       )
   """
@@ -36,7 +36,9 @@ defmodule ExMCP.Server.Transport do
   * `:host` - Host for HTTP transports (default: "localhost")
   * `:cors_enabled` - Enable CORS for HTTP transports (default: `false`, the
     same default `ExMCP.HttpPlug` uses)
-  * `:sse_enabled` - Enable SSE for HTTP transports (default: false)
+  * `:legacy_http_sse` - Enable the deprecated MCP 2024-11-05 HTTP+SSE
+    transport (default: `false`). Retained throughout ExMCP 1.x
+  * `:sse_enabled` - Deprecated rc.5 alias for `:legacy_http_sse`
   * `:allowed_hosts` - Host-header allow-list passed to `ExMCP.HttpPlug`.
     Defaults to the localhost names when binding to a localhost address
     (DNS rebinding protection), otherwise `:any`
@@ -113,8 +115,15 @@ defmodule ExMCP.Server.Transport do
   def start_http_server(module, server_info, _tools, opts) do
     port = Keyword.get(opts, :port, 4000)
     host = Keyword.get(opts, :host, "localhost")
-    # Check both :sse_enabled and :use_sse for compatibility
-    sse_enabled = Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
+    # Preserve the rc.5 server option aliases throughout 1.x, but never enable
+    # the deprecated standalone SSE transport on a new server by default.
+    legacy_http_sse =
+      Keyword.get(
+        opts,
+        :legacy_http_sse,
+        Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
+      )
+
     # Matches ExMCP.HttpPlug's own default; CORS must be opted into (audit L10).
     cors_enabled = Keyword.get(opts, :cors_enabled, false)
     ranch_ref = Keyword.get(opts, :ranch_ref)
@@ -131,7 +140,7 @@ defmodule ExMCP.Server.Transport do
       [
         handler: module,
         server_info: server_info,
-        sse_enabled: sse_enabled,
+        legacy_http_sse: legacy_http_sse,
         cors_enabled: cors_enabled,
         allowed_hosts: allowed_hosts,
         allowed_origins: allowed_origins
@@ -140,6 +149,8 @@ defmodule ExMCP.Server.Transport do
           :request_state,
           :mrtr,
           :path,
+          :legacy_http_sse_path,
+          :legacy_http_sse_post_path,
           :protocol_mode,
           :instructions,
           :server_capabilities,
@@ -150,7 +161,16 @@ defmodule ExMCP.Server.Transport do
           :require_replay_protection
         ])
 
-    Logger.info("Starting MCP HTTP server on #{host}:#{port} (SSE: #{sse_enabled})")
+    if legacy_http_sse do
+      Logger.warning(
+        "The MCP 2024-11-05 HTTP+SSE transport is deprecated; migrate clients to Streamable HTTP"
+      )
+    end
+
+    Logger.info(
+      "Starting MCP HTTP server on #{host}:#{port} " <>
+        "(deprecated HTTP+SSE: #{legacy_http_sse})"
+    )
 
     # If a custom ranch_ref is provided, use it for test isolation
     if ranch_ref do

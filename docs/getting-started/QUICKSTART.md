@@ -105,7 +105,7 @@ For a fast (compiled) run of the patterns in this guide, use `mix examples.getti
 | Transport | Best For |
 |-----------|----------|
 | `:stdio` | External MCP servers and subprocess tools |
-| `:http` | Phoenix apps, remote clients, and streamable HTTP/SSE |
+| `:http` | Phoenix apps, remote clients, and Streamable HTTP |
 | `:beam` | Trusted local Elixir client/server pairs |
 | `:test` | Unit and integration tests |
 

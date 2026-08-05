@@ -509,7 +509,7 @@ Supported options:
 - `:env`
 - `:timeout`
 
-## HTTP/SSE
+## Streamable HTTP
 
 ```elixir
 {:ok, client} =
@@ -565,7 +565,7 @@ Servers (DSL or raw handlers) can be started with:
 ```elixir
 MyServer.start_link(transport: :beam)                    # DSL modules get this
 MyServer.start_link(transport: :stdio)
-MyServer.start_link(transport: :http, port: 4000, sse_enabled: true)
+MyServer.start_link(transport: :http, port: 4000)
 
 # For a raw handler module (no DSL):
 ExMCP.Server.HandlerServer.start_link(handler: MyHandler, transport: :beam)
@@ -580,7 +580,6 @@ forward "/mcp", ExMCP.HttpPlug,
   handler: MyApp.MCPServer,
   server_info: %{name: "my-app", version: "1.0.0"},
   handler_call_timeout: 10_000,
-  sse_enabled: true,
   cors_enabled: true
 ```
 
@@ -588,6 +587,12 @@ forward "/mcp", ExMCP.HttpPlug,
 `ExMCP.HttpPlug` into the Handler process (default `10_000` milliseconds).
 It is separate from client-side `:timeout`, `:request_timeout`,
 `:stream_handshake_timeout`, and `:stream_idle_timeout` settings.
+
+The MCP 2024-11-05 HTTP+SSE transport is deprecated and disabled by default.
+Existing servers may retain it during ExMCP 1.x with
+`legacy_http_sse: true`. `sse_enabled: true` remains an rc.5-compatible alias
+until ExMCP 2.0. Optional `legacy_http_sse_path` and
+`legacy_http_sse_post_path` settings default to `/sse` and `/message`.
 
 ## Multi Round-Trip Requests (MCP 2026-07-28)
 
