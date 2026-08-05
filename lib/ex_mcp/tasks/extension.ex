@@ -49,6 +49,23 @@ defmodule ExMCP.Tasks.Extension do
     |> Map.put("extensions", Map.put(extensions, @identifier, %{}))
   end
 
+  @doc false
+  @spec put_handler_capability(map(), module() | term()) :: map()
+  def put_handler_capability(capabilities, handler)
+      when is_map(capabilities) and is_atom(handler) do
+    if Code.ensure_loaded?(handler) and
+         function_exported?(handler, :__task_store_enabled__, 0) and
+         handler.__task_store_enabled__() do
+      put_capability(capabilities)
+    else
+      capabilities
+    end
+  rescue
+    _error -> capabilities
+  end
+
+  def put_handler_capability(capabilities, _handler) when is_map(capabilities), do: capabilities
+
   @doc "Returns whether a capabilities object declares the modern extension."
   @spec declared?(term()) :: boolean()
   def declared?(capabilities) when is_map(capabilities) do

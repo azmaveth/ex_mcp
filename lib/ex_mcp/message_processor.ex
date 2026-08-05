@@ -10,6 +10,7 @@ defmodule ExMCP.MessageProcessor do
   alias ExMCP.Internal.{JSONRPC, MessageValidator}
   alias ExMCP.Protocol.{ErrorCodes, Methods, ResponseBuilder}
   alias ExMCP.Server.{MRTR, RequestContext, ResultNormalizer}
+  alias ExMCP.Tasks.Extension, as: TasksExtension
 
   require Logger
 
@@ -363,16 +364,19 @@ defmodule ExMCP.MessageProcessor do
   end
 
   defp configured_server_capabilities(handler, opts) do
-    cond do
-      is_map(Map.get(opts, :server_capabilities)) ->
-        Map.get(opts, :server_capabilities)
+    capabilities =
+      cond do
+        is_map(Map.get(opts, :server_capabilities)) ->
+          Map.get(opts, :server_capabilities)
 
-      is_atom(handler) and function_exported?(handler, :__server_capabilities__, 0) ->
-        handler.__server_capabilities__()
+        is_atom(handler) and function_exported?(handler, :__server_capabilities__, 0) ->
+          handler.__server_capabilities__()
 
-      true ->
-        %{}
-    end
+        true ->
+          %{}
+      end
+
+    TasksExtension.put_handler_capability(capabilities, handler)
   end
 
   # Process handler request through GenServer calls

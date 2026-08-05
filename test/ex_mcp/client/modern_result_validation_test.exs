@@ -42,6 +42,13 @@ defmodule ExMCP.Client.ModernResultValidationTest do
     meta = request["params"]["_meta"]
     assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
     assert meta["io.modelcontextprotocol/clientCapabilities"] == %{"roots" => %{}}
+
+    refute get_in(meta, [
+             "io.modelcontextprotocol/clientCapabilities",
+             "extensions",
+             "io.modelcontextprotocol/tasks"
+           ])
+
     assert meta["io.modelcontextprotocol/clientInfo"]["name"] == "test-client"
   end
 
@@ -165,6 +172,16 @@ defmodule ExMCP.Client.ModernResultValidationTest do
                {self(), make_ref()},
                declared
              )
+
+    assert_receive {:outbound_request, declared_request}
+
+    assert get_in(declared_request, [
+             "params",
+             "_meta",
+             "io.modelcontextprotocol/clientCapabilities",
+             "extensions",
+             "io.modelcontextprotocol/tasks"
+           ]) == %{}
 
     undeclared = modern_state(result, allowed_result_types: ["task"])
 

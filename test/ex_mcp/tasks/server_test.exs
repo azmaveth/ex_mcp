@@ -25,6 +25,10 @@ defmodule ExMCP.Tasks.ServerTest do
     end
   end
 
+  defmodule NoTasksHandler do
+    use ExMCP.Server.Handler
+  end
+
   setup do
     start_supervised!({ETS, name: @store})
     :ok
@@ -108,6 +112,46 @@ defmodule ExMCP.Tasks.ServerTest do
              Dispatch.dispatch(legacy, StoredHandler, %{}, @identity)
 
     assert legacy_error["code"] != -32021
+  end
+
+  test "advertises the extension only for an explicitly task-enabled handler" do
+    discover = modern_request(1, "server/discover", %{}, %{})
+
+    assert {:response, %{"result" => stored}, _state} =
+             Dispatch.dispatch(discover, StoredHandler, %{}, protocol_mode: :modern_only)
+
+    assert get_in(stored, ["capabilities", "extensions", "io.modelcontextprotocol/tasks"]) ==
+             %{}
+
+    assert {:response, %{"result" => plain}, _state} =
+             Dispatch.dispatch(discover, NoTasksHandler, %{}, protocol_mode: :modern_only)
+
+    refute get_in(plain, ["capabilities", "extensions", "io.modelcontextprotocol/tasks"])
+
+    stored_http =
+      discover
+      |> MessageProcessor.new()
+      |> MessageProcessor.process(%{handler: StoredHandler, protocol_mode: :modern_only})
+
+    assert get_in(stored_http.response, [
+             "result",
+             "capabilities",
+             "extensions",
+             "io.modelcontextprotocol/tasks"
+           ]) ==
+             %{}
+
+    plain_http =
+      discover
+      |> MessageProcessor.new()
+      |> MessageProcessor.process(%{handler: NoTasksHandler, protocol_mode: :modern_only})
+
+    refute get_in(plain_http.response, [
+             "result",
+             "capabilities",
+             "extensions",
+             "io.modelcontextprotocol/tasks"
+           ])
   end
 
   test "uses request identity for every handler-backed task operation" do

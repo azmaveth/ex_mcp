@@ -439,9 +439,12 @@ defmodule ExMCP.Server.Dispatch do
   end
 
   defp handler_capabilities(handler_module) do
-    if exported?(handler_module, :__server_capabilities__, 0),
-      do: handler_module.__server_capabilities__(),
-      else: %{}
+    capabilities =
+      if exported?(handler_module, :__server_capabilities__, 0),
+        do: handler_module.__server_capabilities__(),
+        else: %{}
+
+    ExMCP.Tasks.Extension.put_handler_capability(capabilities, handler_module)
   end
 
   defp protocol_mode(state) do

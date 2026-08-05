@@ -1210,9 +1210,12 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [ ] Produce an API-diff report against `v1.0.0-rc.5`. Restore every removed public function,
       callback, struct field and return shape or delay stable 1.0; document additive APIs and
       protocol-driven behavior changes, but do not use release notes to waive a public removal.
-- [ ] If Phase 8 is deferred, verify neither side advertises `io.modelcontextprotocol/tasks` in
-      modern capabilities. If the client cache is deferred, validate required wire metadata but
-      do not store/reuse responses; missing or invalid required fields remain protocol errors.
+- [x] Phase 8 shipped rather than being deferred: store-backed handlers automatically advertise
+      `io.modelcontextprotocol/tasks` through both handler and HTTP discovery paths, handlers
+      without task support do not, and clients advertise it only when explicitly configured. The
+      client cache is deferred: required wire metadata is validated but responses are not stored
+      or reused; missing or invalid required fields remain protocol errors. Focused regression
+      tests pin both sides of this conditional gate.
 - [ ] Add bounded-cardinality telemetry for selected era/version, probe fallback/downgrade,
       unsupported-version retry, MRTR rounds/failures, subscription reconnect/queue pressure,
       ambiguous reissue, and cache hit/miss (if enabled). Never attach tool arguments,

@@ -451,15 +451,12 @@ task handle before returning it to application code.
 
 A server must advertise the same extension from `server/discover` only when it
 has configured an appropriate task store. The bundled node-local store is
-enabled in a Handler with `tasks: :store`:
+enabled in a Handler with `tasks: :store`; ExMCP then adds the extension to
+discovery automatically:
 
 ```elixir
 defmodule MyServer do
   use ExMCP.Server.Handler, tasks: :store
-
-  def __server_capabilities__ do
-    ExMCP.Tasks.Extension.put_capability(%{"tools" => %{}})
-  end
 
   @impl ExMCP.Server.Handler
   def handle_call_tool("long_deploy", arguments, state) do
@@ -472,6 +469,11 @@ defmodule MyServer do
   end
 end
 ```
+
+Handlers without `tasks: :store` do not gain this capability. A custom task
+backend that overrides the task callbacks may advertise the extension
+explicitly through `:server_capabilities` or `__server_capabilities__/0` after
+it has implemented equivalent durability and ownership checks.
 
 The injected modern `handle_task_get/2`, `handle_task_update/3`, and
 `handle_task_cancel/2` callbacks use `ExMCP.Tasks`. Existing callbacks remain
