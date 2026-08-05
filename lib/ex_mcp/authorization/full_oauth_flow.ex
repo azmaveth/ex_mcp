@@ -39,6 +39,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     HTTPClient,
     Issuer,
     LogSanitizer,
+    MetadataFetcher,
     OAuthFlow,
     OAuthTransactionStore,
     OIDCDiscovery,
@@ -61,7 +62,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           optional(:key_id) => String.t(),
           optional(:scopes) => [String.t()],
           optional(:resource) => String.t() | [String.t()],
-          optional(:http_client) => module(),
+          optional(:http_client) => module() | function(),
+          optional(:metadata_fetch) => keyword(),
           optional(:www_authenticate) => String.t(),
           optional(:protocol_version) => String.t()
         }
@@ -163,18 +165,21 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   end
 
   defp discover_resource_metadata(config) do
+    fetch_opts = metadata_fetch_options(config)
+
     # Try PRM URL from WWW-Authenticate header first
     prm_url = extract_resource_metadata_url(config[:www_authenticate])
 
     prm_result =
       case prm_url do
         nil ->
-          discover_prm_with_fallback(config.resource_url)
+          discover_prm_with_fallback(config.resource_url, fetch_opts)
 
         url ->
-          case fetch_prm_directly(url) do
+          case fetch_prm_directly(url, fetch_opts) do
             {:ok, _} = ok -> ok
-            {:error, _} -> discover_prm_with_fallback(config.resource_url)
+            {:error, {:metadata_fetch_error, _reason}} = error -> error
+            {:error, _reason} -> discover_prm_with_fallback(config.resource_url, fetch_opts)
           end
       end
 
@@ -182,7 +187,10 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       {:ok, _} = ok ->
         ok
 
-      {:error, _} ->
+      {:error, {:metadata_fetch_error, _reason}} = error ->
+        error
+
+      {:error, _reason} ->
         # PRM not available — fall back to direct AS metadata discovery.
         # This is required for 2025-03-26 backcompat where PRM didn't exist,
         # and is a reasonable fallback for any version when PRM is unavailable.
@@ -207,7 +215,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
       uri = URI.parse(config[:resource_url])
       base = "#{uri.scheme}://#{uri.host}#{if uri.port, do: ":#{uri.port}", else: ""}"
 
-      case OIDCDiscovery.discover(base) do
+      case OIDCDiscovery.discover(base, metadata_fetch_options(config)) do
         {:ok, metadata} ->
           with :ok <- Issuer.compare(base, metadata["issuer"]) do
             # Store the already-fetched metadata to avoid re-discovery
@@ -218,7 +226,10 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
              }}
           end
 
-        {:error, _} ->
+        {:error, {:metadata_fetch_error, _reason}} = error ->
+          error
+
+        {:error, _reason} ->
           # Last resort: construct endpoint URLs from the resource origin.
           # Per MCP 2025-03-26, when no metadata discovery works, assume
           # standard OAuth endpoints at the resource origin.
@@ -289,7 +300,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   # Try path-based PRM discovery first, then fall back to root well-known.
   # Per MCP spec, path-based is /.well-known/oauth-protected-resource/mcp
   # and root is /.well-known/oauth-protected-resource
-  defp discover_prm_with_fallback(resource_url) do
+  defp discover_prm_with_fallback(resource_url, fetch_opts) do
     uri = URI.parse(resource_url)
     base = "#{uri.scheme}://#{uri.host}#{if uri.port, do: ":#{uri.port}", else: ""}"
     path = uri.path || ""
@@ -297,50 +308,66 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     # Try path-based first (e.g., /.well-known/oauth-protected-resource/mcp)
     path_based_url = "#{base}/.well-known/oauth-protected-resource#{path}"
 
-    case fetch_prm_directly(path_based_url) do
+    case fetch_prm_directly(path_based_url, fetch_opts) do
       {:ok, _} = ok ->
         ok
 
-      {:error, _} ->
+      {:error, {:metadata_fetch_error, _reason}} = error ->
+        error
+
+      {:error, _reason} ->
         # Fall back to root (e.g., /.well-known/oauth-protected-resource)
         root_url = "#{base}/.well-known/oauth-protected-resource"
-        fetch_prm_directly(root_url)
+        fetch_prm_directly(root_url, fetch_opts)
     end
   end
 
   # Fetch PRM from an explicit URL (from WWW-Authenticate header)
-  defp fetch_prm_directly(url) do
-    case :httpc.request(:get, {String.to_charlist(url), []}, [], []) do
-      {:ok, {{_, 200, _}, _headers, body}} ->
-        body_str = if is_list(body), do: List.to_string(body), else: body
+  defp fetch_prm_directly(url, fetch_opts) do
+    case MetadataFetcher.fetch(url, fetch_opts) do
+      {:ok, %{status: 200, body: body}} ->
+        case Jason.decode(body) do
+          {:ok, data} when is_map(data) ->
+            parse_prm_data(data)
 
-        case Jason.decode(body_str) do
-          {:ok, data} ->
-            as_list =
-              (data["authorization_servers"] || [])
-              |> Enum.map(fn issuer -> %{issuer: issuer} end)
-
-            result = %{authorization_servers: as_list}
-            # Include resource and scopes_supported for validation and scope negotiation
-            result =
-              if data["resource"], do: Map.put(result, :resource, data["resource"]), else: result
-
-            result =
-              if data["scopes_supported"],
-                do: Map.put(result, :scopes_supported, data["scopes_supported"]),
-                else: result
-
-            {:ok, result}
+          {:ok, _invalid} ->
+            {:error, :invalid_prm_metadata}
 
           {:error, reason} ->
             {:error, {:prm_parse_error, reason}}
         end
 
-      {:ok, {{_, status, _}, _headers, _body}} ->
+      {:ok, %{status: status}} ->
         {:error, {:prm_fetch_error, status}}
 
-      {:error, reason} ->
-        {:error, {:prm_request_failed, reason}}
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp parse_prm_data(data) do
+    case Map.get(data, "authorization_servers", []) do
+      issuers when is_list(issuers) ->
+        if Enum.all?(issuers, &(is_binary(&1) and &1 != "")) do
+          result = %{authorization_servers: Enum.map(issuers, &%{issuer: &1})}
+
+          result =
+            if is_binary(data["resource"]),
+              do: Map.put(result, :resource, data["resource"]),
+              else: result
+
+          result =
+            if is_list(data["scopes_supported"]),
+              do: Map.put(result, :scopes_supported, data["scopes_supported"]),
+              else: result
+
+          {:ok, result}
+        else
+          {:error, :invalid_prm_metadata}
+        end
+
+      _invalid ->
+        {:error, :invalid_prm_metadata}
     end
   end
 
@@ -364,7 +391,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         end
 
       %{authorization_servers: [%{issuer: issuer} | _]} ->
-        case OIDCDiscovery.discover(issuer, http_client: config[:http_client]) do
+        case OIDCDiscovery.discover(issuer, metadata_fetch_options(config)) do
           {:ok, metadata} ->
             with :ok <- Issuer.compare(issuer, metadata["issuer"]) do
               :telemetry.execute(
@@ -376,12 +403,28 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
               {:ok, metadata}
             end
 
+          {:error, {:issuer_mismatch, _details}} = error ->
+            error
+
           {:error, reason} ->
             {:error, {:as_discovery_failed, reason}}
         end
 
       _ ->
         {:error, :no_authorization_server_found}
+    end
+  end
+
+  defp metadata_fetch_options(config) do
+    options =
+      case config[:metadata_fetch] do
+        configured when is_list(configured) -> configured
+        _other -> []
+      end
+
+    case config[:http_client] do
+      nil -> options
+      client -> Keyword.put(options, :http_client, client)
     end
   end
 

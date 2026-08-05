@@ -1109,9 +1109,20 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] Mark DCR deprecated in docs and `@doc`. **The DCR module and registration entry point now
       identify the 2026-07-28 deprecation and direct new deployments to pre-registration or
       CIMD; configuration docs describe it only as an advertised compatibility fallback.**
-- [ ] Treat CIMD and authorization-server metadata fetching as SSRF-sensitive: HTTPS only,
+- [x] Treat CIMD and authorization-server metadata fetching as SSRF-sensitive: HTTPS only,
       bounded redirects that do not cross origin without policy, DNS/IP revalidation, private/
       loopback/link-local blocking, response size/time limits, and no credential forwarding.
+      **`Authorization.MetadataFetcher` is now the single CIMD, PRM, OIDC/RFC 8414 and JWKS
+      boundary. It rejects userinfo/fragments and every non-public IPv4/IPv6 answer, fails mixed
+      public/private DNS closed, connects to a validated address with the original TLS hostname,
+      and repeats resolution and pinning on every hop. Redirects are bounded, cycle-free and
+      same-origin unless an exact HTTPS origin is explicitly allowed; allowed destinations are
+      still revalidated. Streaming defaults bound time/body bytes, aggregate redirect bytes and
+      reject compression. Requests contain only fixed non-secret headers. URL-only custom clients
+      are rejected in favor of `get(uri, approved_address, opts)`. Adversarial tests cover private,
+      loopback, link-local and mixed answers, rebinding across redirects, downgrade/cross-origin
+      redirects, cycles, limits, compression, adapter timeouts, malformed documents and header
+      confidentiality.**
 - [ ] Run an auth matrix covering pre-registered/CIMD/DCR registration, native vs web
       `application_type`, RFC 9207 `iss` present/absent/mismatch, issuer changes, redirect
       rejection, credential partitioning, and every supported legacy/modern HTTP mode.

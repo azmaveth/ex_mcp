@@ -16,6 +16,7 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
       {:ok, auth_metadata} = Authorization.discover_server_metadata(auth_server.issuer)
   """
 
+  alias ExMCP.Authorization.MetadataFetcher
   alias ExMCP.Internal.Headers
 
   @type authorization_server :: %{
@@ -41,20 +42,21 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
   Discovers protected resource metadata from the resource URL.
 
   Makes a request to /.well-known/oauth-protected-resource to discover
-  which authorization servers protect this resource.
+  which authorization servers protect this resource. The request uses the
+  shared HTTPS-only, public-address, pinned metadata fetch boundary.
   """
-  @spec discover(String.t()) :: {:ok, metadata()} | {:error, term()}
-  def discover(resource_url) do
+  @spec discover(String.t(), keyword()) :: {:ok, metadata()} | {:error, term()}
+  def discover(resource_url, opts \\ []) do
     with :ok <- validate_https_endpoint(resource_url),
          metadata_url <- build_metadata_url(resource_url) do
-      case make_http_request(:get, metadata_url, [], "") do
-        {:ok, {{_, 200, _}, _headers, body}} ->
+      case MetadataFetcher.fetch(metadata_url, opts) do
+        {:ok, %{status: 200, body: body}} ->
           parse_metadata_response(body)
 
-        {:ok, {{_, 404, _}, _headers, _body}} ->
+        {:ok, %{status: 404}} ->
           {:error, :no_metadata}
 
-        {:ok, {{_, 401, _}, headers, _body}} ->
+        {:ok, %{status: 401, headers: headers}} ->
           # Check for WWW-Authenticate header
           case find_www_authenticate_header(headers) do
             {:ok, _auth_info} ->
@@ -65,11 +67,11 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
               {:error, :unauthorized}
           end
 
-        {:ok, {{_, status, _}, _headers, body}} ->
+        {:ok, %{status: status, body: body}} ->
           {:error, {:http_error, status, body}}
 
-        {:error, reason} ->
-          {:error, {:request_failed, reason}}
+        {:error, _reason} = error ->
+          error
       end
     end
   end
@@ -100,57 +102,24 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
   # Private functions
 
   defp validate_https_endpoint(url) do
-    case URI.parse(url) do
-      %URI{scheme: "https"} -> :ok
-      %URI{scheme: "http", host: host} when host in ["localhost", "127.0.0.1"] -> :ok
-      _ -> {:error, :https_required}
+    case MetadataFetcher.validate_url(url) do
+      :ok -> :ok
+      {:error, {:metadata_fetch_error, :https_required}} -> {:error, :https_required}
+      {:error, _reason} -> {:error, :invalid_resource_url}
     end
   end
 
   defp build_metadata_url(resource_url) do
     uri = URI.parse(resource_url)
 
-    # Build base URL (scheme + host + port) - construct manually to avoid URI type issues
-    scheme = uri.scheme || "https"
-    host = uri.host || "localhost"
-    port = uri.port
-
-    base_url =
-      if port && port != URI.default_port(scheme) do
-        "#{scheme}://#{host}:#{port}"
-      else
-        "#{scheme}://#{host}"
-      end
-
-    base_url <> "/.well-known/oauth-protected-resource"
-  end
-
-  defp make_http_request(:get, url, headers, _body) do
-    # Convert headers to charlist format for httpc
-    httpc_headers =
-      Enum.map(headers, fn {k, v} ->
-        {String.to_charlist(k), String.to_charlist(v)}
-      end)
-
-    request = {String.to_charlist(url), httpc_headers}
-
-    # SSL options for HTTPS
-    ssl_opts = [
-      ssl: [
-        verify: :verify_peer,
-        cacerts: :public_key.cacerts_get(),
-        versions: [:"tlsv1.2", :"tlsv1.3"]
-      ]
-    ]
-
-    :httpc.request(:get, request, ssl_opts, [])
+    %URI{uri | path: "/.well-known/oauth-protected-resource", query: nil, fragment: nil}
+    |> URI.to_string()
   end
 
   defp parse_metadata_response(body) do
     case Jason.decode(body) do
       {:ok, %{"authorization_servers" => servers}} when is_list(servers) ->
-        parsed_servers = Enum.map(servers, &parse_authorization_server/1)
-        {:ok, %{authorization_servers: parsed_servers}}
+        parse_authorization_servers(servers)
 
       {:ok, _} ->
         {:error, {:invalid_metadata, "Missing authorization_servers"}}
@@ -160,14 +129,37 @@ defmodule ExMCP.Authorization.ProtectedResourceMetadata do
     end
   end
 
-  defp parse_authorization_server(server) do
-    %{
-      issuer: Map.fetch!(server, "issuer"),
-      metadata_endpoint: Map.get(server, "metadata_endpoint"),
-      scopes_supported: Map.get(server, "scopes_supported"),
-      audience: Map.get(server, "audience")
-    }
+  defp parse_authorization_servers(servers) do
+    servers
+    |> Enum.reduce_while({:ok, []}, fn server, {:ok, acc} ->
+      case parse_authorization_server(server) do
+        {:ok, parsed} -> {:cont, {:ok, [parsed | acc]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, parsed} -> {:ok, %{authorization_servers: Enum.reverse(parsed)}}
+      {:error, _reason} = error -> error
+    end
   end
+
+  defp parse_authorization_server(issuer) when is_binary(issuer) and issuer != "" do
+    {:ok, %{issuer: issuer, metadata_endpoint: nil, scopes_supported: nil, audience: nil}}
+  end
+
+  defp parse_authorization_server(%{"issuer" => issuer} = server)
+       when is_binary(issuer) and issuer != "" do
+    {:ok,
+     %{
+       issuer: issuer,
+       metadata_endpoint: Map.get(server, "metadata_endpoint"),
+       scopes_supported: Map.get(server, "scopes_supported"),
+       audience: Map.get(server, "audience")
+     }}
+  end
+
+  defp parse_authorization_server(_server),
+    do: {:error, {:invalid_metadata, "Invalid authorization server"}}
 
   defp find_www_authenticate_header(headers) do
     case Headers.get(headers, "www-authenticate") do

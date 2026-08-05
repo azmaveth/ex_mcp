@@ -91,6 +91,55 @@ DCR requires an explicit `application_type: :native | :web` and stable local
 error response so redirect-policy failures are actionable. ExMCP does not
 silently change the application type or redirect URI.
 
+### OAuth metadata network policy
+
+CIMD, Protected Resource Metadata, OIDC/RFC 8414 authorization-server
+metadata, and JWKS retrieval use one fail-closed outbound fetch boundary.
+Metadata URLs must use HTTPS, including in local development. Each hostname is
+resolved on every redirect hop; a DNS answer containing any private, loopback,
+link-local, reserved, documentation, or otherwise non-public IPv4/IPv6 address
+is rejected. The connection is pinned to an approved address while the original
+hostname remains the TLS SNI and certificate-validation name.
+
+Defaults can be tightened globally:
+
+```elixir
+config :ex_mcp, :oauth_metadata_fetch,
+  max_redirects: 3,
+  max_response_bytes: 262_144,
+  max_aggregate_bytes: 524_288,
+  dns_timeout_ms: 1_000,
+  connect_timeout_ms: 2_000,
+  request_timeout_ms: 5_000,
+  allowed_redirect_origins: []
+```
+
+Redirects remain on the current origin by default. If a provider deliberately
+hosts metadata on another origin, list each destination as an exact HTTPS
+origin such as `https://metadata.example.com`; wildcards and URL paths are not
+accepted. Every allowed destination still receives fresh DNS/IP validation.
+
+The metadata client sends only `Accept`, `Accept-Encoding: identity`, and a
+non-secret user agent. It never inherits MCP transport headers, authorization,
+cookies, client secrets, or proxy credentials. Compressed responses are
+rejected and the default client enforces the byte limit while streaming.
+
+The legacy custom metadata-client shapes `get(url)` and `get(url, headers)` are
+no longer accepted because they can re-resolve DNS after validation. A custom
+`:http_client` must implement:
+
+```elixir
+get(uri, approved_address, options)
+```
+
+It must connect directly to `approved_address`, preserve `uri.host` for TLS and
+HTTP host validation, use only `options[:request_headers]`, enforce
+`options[:connect_timeout_ms]`, `options[:request_timeout_ms]`, and
+`options[:max_response_bytes]` while streaming, and return
+`{:ok, %{status: integer, headers: list, body: binary}}`. Per-flow overrides go
+under `metadata_fetch: [...]`; use them only for a tighter policy or an exact
+provider redirect.
+
 ### Issuer-bound credential persistence
 
 For MCP `2026-07-28`, pre-registered credentials require

@@ -21,7 +21,8 @@ defmodule ExMCP.Authorization.DiscoveryFlow do
           optional(:kid) => String.t(),
           optional(:scopes) => [String.t()],
           optional(:resource) => String.t() | [String.t()],
-          optional(:http_client) => module()
+          optional(:http_client) => module() | function(),
+          optional(:metadata_fetch) => keyword()
         }
 
   @doc """
@@ -42,7 +43,8 @@ defmodule ExMCP.Authorization.DiscoveryFlow do
     - `:kid` - Key ID for JWT auth
     - `:scopes` - Requested scopes
     - `:resource` - RFC 8707 resource parameter(s)
-    - `:http_client` - Custom HTTP client module for OIDC discovery
+    - `:http_client` - Custom pinned-address HTTP client for metadata discovery
+    - `:metadata_fetch` - Metadata timeout, size, DNS and redirect-policy options
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
@@ -55,8 +57,8 @@ defmodule ExMCP.Authorization.DiscoveryFlow do
   end
 
   # Step 1: Discover which AS protects the resource
-  defp discover_authorization_server(%{resource_url: resource_url}) do
-    case ProtectedResourceMetadata.discover(resource_url) do
+  defp discover_authorization_server(%{resource_url: resource_url} = config) do
+    case ProtectedResourceMetadata.discover(resource_url, metadata_fetch_options(config)) do
       {:ok, %{authorization_servers: [first | _]}} ->
         {:ok, first}
 
@@ -70,9 +72,7 @@ defmodule ExMCP.Authorization.DiscoveryFlow do
 
   # Step 2: Fetch AS metadata (token_endpoint, supported auth methods, etc.)
   defp discover_as_metadata(as_info, config) do
-    http_client = Map.get(config, :http_client)
-
-    case OIDCDiscovery.discover(as_info.issuer, http_client: http_client) do
+    case OIDCDiscovery.discover(as_info.issuer, metadata_fetch_options(config)) do
       {:ok, metadata} ->
         {:ok, metadata}
 
@@ -142,5 +142,18 @@ defmodule ExMCP.Authorization.DiscoveryFlow do
         value -> Map.put(acc, key, value)
       end
     end)
+  end
+
+  defp metadata_fetch_options(config) do
+    options =
+      case config[:metadata_fetch] do
+        configured when is_list(configured) -> configured
+        _other -> []
+      end
+
+    case config[:http_client] do
+      nil -> options
+      client -> Keyword.put(options, :http_client, client)
+    end
   end
 end

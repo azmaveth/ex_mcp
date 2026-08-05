@@ -6,14 +6,30 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
   @moduletag :oauth
 
   describe "discover/2" do
-    test "returns error when no http_client is provided and server unreachable" do
-      # With no http_client, discover uses :httpc fallback which fails
-      # for unreachable servers
-      assert {:error, _reason} = OIDCDiscovery.discover("https://auth.example.com")
+    test "uses the hardened default client and reports DNS failure" do
+      dns = fn _host, _timeout -> {:error, :dns_failed} end
+
+      assert {:error, {:metadata_fetch_error, :dns_failed}} =
+               OIDCDiscovery.discover("https://auth.example.com", dns_resolver: dns)
     end
 
-    test "returns error with no http_client and explicit empty opts" do
-      assert {:error, _reason} = OIDCDiscovery.discover("https://auth.example.com", [])
+    test "rejects an invalid custom HTTP client" do
+      assert {:error, {:metadata_fetch_error, :invalid_options}} =
+               OIDCDiscovery.discover("https://auth.example.com", http_client: nil)
+    end
+
+    test "requires HTTPS and blocks authorization-server metadata on private DNS" do
+      assert {:error, {:metadata_fetch_error, :https_required}} =
+               OIDCDiscovery.discover("http://auth.example.com")
+
+      dns = fn _host, _timeout -> {:ok, [{169, 254, 169, 254}]} end
+      client = fn _uri, _address, _opts -> flunk("request must not be made") end
+
+      assert {:error, {:metadata_fetch_error, :non_public_address}} =
+               OIDCDiscovery.discover("https://auth.example.com",
+                 dns_resolver: dns,
+                 http_client: client
+               )
     end
 
     test "fetches metadata from OIDC well-known endpoint" do
@@ -31,7 +47,7 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
         })
 
       assert {:ok, ^metadata} =
-               OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
+               discover_with_client("https://auth.example.com", http_client)
     end
 
     test "falls back to OAuth well-known endpoint when OIDC fails" do
@@ -49,7 +65,7 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
         })
 
       assert {:ok, ^metadata} =
-               OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
+               discover_with_client("https://auth.example.com", http_client)
     end
 
     test "returns error when all endpoints fail" do
@@ -60,8 +76,7 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
             {:ok, %{status: 500}}
         })
 
-      assert {:error, _reason} =
-               OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
+      assert {:error, _reason} = discover_with_client("https://auth.example.com", http_client)
     end
 
     test "returns error for invalid JSON response" do
@@ -76,8 +91,7 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
 
       # OIDC endpoint returns invalid JSON, which is an error, so it falls
       # back to OAuth endpoint which also returns invalid JSON
-      assert {:error, _reason} =
-               OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
+      assert {:error, _reason} = discover_with_client("https://auth.example.com", http_client)
     end
 
     test "returns error when http_client returns error tuple" do
@@ -88,13 +102,12 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
             {:error, :connection_refused}
         })
 
-      assert {:error, _reason} =
-               OIDCDiscovery.discover("https://auth.example.com", http_client: http_client)
+      assert {:error, _reason} = discover_with_client("https://auth.example.com", http_client)
     end
 
-    test "trims trailing slash from issuer URL" do
+    test "preserves a trailing slash in exact issuer validation" do
       metadata = %{
-        "issuer" => "https://auth.example.com",
+        "issuer" => "https://auth.example.com/",
         "authorization_endpoint" => "https://auth.example.com/authorize",
         "token_endpoint" => "https://auth.example.com/token"
       }
@@ -106,7 +119,7 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
         })
 
       assert {:ok, ^metadata} =
-               OIDCDiscovery.discover("https://auth.example.com/", http_client: http_client)
+               discover_with_client("https://auth.example.com/", http_client)
     end
   end
 
@@ -329,12 +342,19 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
     Module.create(
       module_name,
       quote do
-        def get(url) do
+        def get(uri, _address, _opts) do
+          url = to_string(uri)
           responses = Agent.get(unquote(agent_pid), & &1)
 
           case Map.get(responses, url) do
-            nil -> {:error, {:unexpected_url, url}}
-            response -> response
+            nil ->
+              {:error, {:unexpected_url, url}}
+
+            {:ok, response} when is_map(response) ->
+              {:ok, response |> Map.put_new(:headers, []) |> Map.put_new(:body, "")}
+
+            response ->
+              response
           end
         end
       end,
@@ -342,5 +362,12 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
     )
 
     module_name
+  end
+
+  defp discover_with_client(issuer, http_client) do
+    OIDCDiscovery.discover(issuer,
+      http_client: http_client,
+      dns_resolver: fn _host, _timeout -> {:ok, [{93, 184, 216, 34}]} end
+    )
   end
 end

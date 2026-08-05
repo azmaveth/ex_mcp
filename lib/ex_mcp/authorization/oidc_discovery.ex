@@ -12,12 +12,13 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   Available in protocol version 2025-11-25.
   """
 
-  alias ExMCP.Authorization.{AuthorizationServerMetadata, Issuer}
+  alias ExMCP.Authorization.{AuthorizationServerMetadata, Issuer, MetadataFetcher}
 
   @type oidc_metadata :: %{String.t() => term()}
 
   @oidc_well_known_path "/.well-known/openid-configuration"
   @oauth_well_known_path "/.well-known/oauth-authorization-server"
+  @max_document_bytes 262_144
 
   @doc """
   Discovers authorization server metadata using OIDC Discovery with
@@ -28,24 +29,25 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
 
   ## Parameters
   - `issuer` - The issuer URL to discover metadata for
-  - `opts` - Options including `:http_client` for custom HTTP client
+  - `opts` - Hardened metadata-fetch options. Custom clients use
+    `get(uri, approved_address, opts)` so DNS validation cannot be bypassed by
+    re-resolving the hostname.
 
   ## Returns
   - `{:ok, metadata}` - Successfully fetched metadata
   - `{:error, reason}` - Failed to fetch metadata
+
+  Discovery metadata is HTTPS-only, bounded, address-pinned, and issuer-checked
+  before it is returned.
   """
   @spec discover(String.t(), keyword()) :: {:ok, oidc_metadata()} | {:error, term()}
   def discover(issuer, opts \\ []) do
-    http_client = Keyword.get(opts, :http_client)
-
-    # Build candidate URLs in priority order:
-    # 1. OIDC: {issuer}/.well-known/openid-configuration
-    # 2. OAuth (OIDC style): {issuer}/.well-known/oauth-authorization-server
-    # 3. OAuth (RFC 8414 style): {base}/.well-known/oauth-authorization-server{path}
-    # 4. OIDC (RFC 8414 style): {base}/.well-known/openid-configuration{path}
-    urls = build_discovery_urls(issuer)
-
-    try_urls(urls, http_client)
+    with :ok <- validate_issuer_url(issuer),
+         urls <- build_discovery_urls(issuer),
+         {:ok, metadata} <- try_urls(urls, metadata_options(opts), nil),
+         :ok <- validate_metadata(metadata, issuer) do
+      {:ok, metadata}
+    end
   end
 
   defp build_discovery_urls(issuer) do
@@ -53,8 +55,7 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
     uri = URI.parse(trimmed)
     path = uri.path || ""
 
-    base =
-      "#{uri.scheme}://#{uri.host}#{if uri.port, do: ":#{uri.port}", else: ""}"
+    base = origin(uri)
 
     oidc_appended = trimmed <> @oidc_well_known_path
     oauth_appended = trimmed <> @oauth_well_known_path
@@ -71,12 +72,14 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
     end
   end
 
-  defp try_urls([], _http_client), do: {:error, :discovery_failed}
+  defp try_urls([], _opts, nil), do: {:error, :discovery_failed}
+  defp try_urls([], _opts, last_error), do: last_error
 
-  defp try_urls([url | rest], http_client) do
-    case fetch_metadata(url, http_client) do
+  defp try_urls([url | rest], opts, _last_error) do
+    case fetch_metadata(url, opts) do
       {:ok, metadata} -> {:ok, metadata}
-      {:error, _} -> try_urls(rest, http_client)
+      {:error, {:metadata_fetch_error, _reason}} = error -> error
+      {:error, _reason} = error -> try_urls(rest, opts, error)
     end
   end
 
@@ -147,27 +150,8 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
 
   # Private helpers
 
-  defp fetch_metadata(url, nil) do
-    # No HTTP client provided — use :httpc directly
-    case :httpc.request(:get, {String.to_charlist(url), []}, [{:timeout, 10_000}], []) do
-      {:ok, {{_, 200, _}, _headers, body}} ->
-        body_str = if is_list(body), do: List.to_string(body), else: body
-
-        case Jason.decode(body_str) do
-          {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
-          _ -> {:error, :invalid_json}
-        end
-
-      {:ok, {{_, status, _}, _headers, _body}} ->
-        {:error, {:http_error, status}}
-
-      {:error, reason} ->
-        {:error, {:request_failed, reason}}
-    end
-  end
-
-  defp fetch_metadata(url, http_client) do
-    case http_client.get(url) do
+  defp fetch_metadata(url, opts) do
+    case MetadataFetcher.fetch(url, opts) do
       {:ok, %{status: 200, body: body}} when is_binary(body) ->
         case Jason.decode(body) do
           {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
@@ -177,9 +161,31 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
       {:ok, %{status: status}} ->
         {:error, {:http_error, status}}
 
-      {:error, reason} ->
-        {:error, reason}
+      {:error, _reason} = error ->
+        error
     end
+  end
+
+  defp metadata_options(opts) do
+    limit = Keyword.get(opts, :max_response_bytes, @max_document_bytes)
+    limit = if is_integer(limit) and limit >= 0, do: min(limit, @max_document_bytes), else: limit
+    Keyword.put(opts, :max_response_bytes, limit)
+  end
+
+  defp validate_issuer_url(issuer) do
+    with :ok <- MetadataFetcher.validate_url(issuer),
+         %URI{query: nil} <- URI.parse(issuer) do
+      :ok
+    else
+      %URI{} -> {:error, :invalid_issuer}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp origin(uri) do
+    host = if String.contains?(uri.host, ":"), do: "[#{uri.host}]", else: uri.host
+    port = if uri.port, do: ":#{uri.port}", else: ""
+    "#{uri.scheme}://#{host}#{port}"
   end
 
   defp validate_issuer(metadata, expected_issuer) do

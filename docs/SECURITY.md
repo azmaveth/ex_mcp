@@ -119,6 +119,29 @@ details so a badly behaved store cannot place token material in logs. Unkeyed
 legacy records require an explicit migration after their original issuer is
 independently verified.
 
+### OAuth metadata SSRF protection
+
+Treat every URL learned during OAuth discovery as attacker-controlled. ExMCP
+routes CIMD, Protected Resource Metadata, OIDC/RFC 8414 authorization-server
+metadata, and JWKS requests through `ExMCP.Authorization.MetadataFetcher`.
+The boundary requires HTTPS; forbids URI userinfo and fragments; bounds DNS,
+connection and request time; bounds per-response and aggregate redirect bytes;
+rejects compression; and follows only a bounded, cycle-free redirect chain.
+
+DNS is resolved again for every hop. If any returned IPv4, IPv6, or IPv4-mapped
+IPv6 address is private, loopback, link-local, reserved, documentation-only, or
+otherwise non-public, the request fails before connection. The default client
+connects to one validated address directly while retaining the URL hostname for
+TLS SNI, certificate verification, and the HTTP host value. This closes the
+validation/re-resolution gap used by DNS rebinding.
+
+Redirects are same-origin unless an operator explicitly lists an exact HTTPS
+destination in `allowed_redirect_origins`; an allowed destination is still
+re-resolved and revalidated. Metadata requests use fixed non-secret headers and
+never forward bearer tokens, cookies, client credentials, MCP session headers,
+or application transport headers. URL-only custom client adapters are rejected
+because they cannot prove address pinning.
+
 ### TLS
 
 HTTPS connections verify the peer against the OS trust store with TLS 1.2/1.3

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **OAuth metadata fetches are SSRF-hardened** — CIMD, Protected Resource Metadata,
+  OIDC/RFC 8414 authorization-server metadata, and JWKS retrieval now require HTTPS and share a
+  bounded, address-pinned fetcher. It rejects any private, loopback, link-local, reserved or mixed
+  DNS result; re-resolves every redirect; blocks cross-origin redirects unless an exact HTTPS
+  origin is configured; and forwards no credentials or application headers. Legacy URL-only
+  custom metadata clients are replaced by `get(uri, approved_address, opts)` so adapters cannot
+  silently re-resolve after validation.
 - **OAuth transactions are atomic and single-use** — Library-started authorization-code flows
   now generate their own 256-bit state, reject reserved parameter overrides, retain only state/code
   digests in a bounded supervised transaction store, and bind callback issuer, PKCE, authorization

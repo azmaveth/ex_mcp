@@ -1,4 +1,4 @@
-defmodule ExMCP.Content.SchemaHTTPClient do
+defmodule ExMCP.Authorization.MetadataHTTPClient do
   @moduledoc false
 
   alias ExMCP.Internal.PinnedHTTPClient
@@ -12,12 +12,6 @@ defmodule ExMCP.Content.SchemaHTTPClient do
   @spec get(URI.t(), :inet.ip_address(), keyword()) ::
           {:ok, response()} | {:error, :fetch_failed | :response_too_large}
   def get(%URI{} = uri, address, opts) do
-    headers = [
-      {"accept", "application/schema+json, application/json"},
-      {"accept-encoding", "identity"},
-      {"user-agent", "ex_mcp-json-schema-resolver"}
-    ]
-
-    PinnedHTTPClient.get(uri, address, Keyword.put(opts, :request_headers, headers))
+    PinnedHTTPClient.get(uri, address, opts)
   end
 end

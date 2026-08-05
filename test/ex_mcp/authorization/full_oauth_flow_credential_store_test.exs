@@ -98,24 +98,39 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
 
   defp oauth_server(client_id, metadata_issuer \\ nil) do
     bypass = Bypass.open()
-    issuer = "http://localhost:#{bypass.port}"
+    unique = System.unique_integer([:positive])
+    issuer_host = "auth-#{unique}.example"
+    resource_host = "resource-#{unique}.example"
+    issuer = "https://#{issuer_host}"
+    resource_origin = "https://#{resource_host}"
+    actual_origin = "http://localhost:#{bypass.port}"
     metadata_issuer = metadata_issuer || issuer
     {:ok, counter} = Agent.start_link(fn -> %{registrations: 0, tokens: 0} end)
 
-    Bypass.stub(bypass, "GET", "/prm", fn conn ->
-      json(conn, 200, %{"authorization_servers" => [issuer]})
-    end)
+    metadata_client = fn uri, _address, _opts ->
+      body =
+        case {uri.host, uri.path} do
+          {^resource_host, "/prm"} ->
+            %{"authorization_servers" => [issuer]}
 
-    Bypass.stub(bypass, "GET", "/.well-known/openid-configuration", fn conn ->
-      json(conn, 200, %{
-        "issuer" => metadata_issuer,
-        "authorization_endpoint" => issuer <> "/authorize",
-        "token_endpoint" => issuer <> "/token",
-        "registration_endpoint" => issuer <> "/register",
-        "grant_types_supported" => ["client_credentials"],
-        "token_endpoint_auth_methods_supported" => ["client_secret_post"]
-      })
-    end)
+          {^issuer_host, "/.well-known/openid-configuration"} ->
+            %{
+              "issuer" => metadata_issuer,
+              "authorization_endpoint" => actual_origin <> "/authorize",
+              "token_endpoint" => actual_origin <> "/token",
+              "registration_endpoint" => actual_origin <> "/register",
+              "grant_types_supported" => ["client_credentials"],
+              "token_endpoint_auth_methods_supported" => ["client_secret_post"]
+            }
+
+          _other ->
+            nil
+        end
+
+      if body,
+        do: {:ok, %{status: 200, headers: [], body: Jason.encode!(body)}},
+        else: {:ok, %{status: 404, headers: [], body: ""}}
+    end
 
     Bypass.stub(bypass, "POST", "/register", fn conn ->
       Agent.update(counter, &Map.update!(&1, :registrations, fn count -> count + 1 end))
@@ -137,19 +152,29 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
       })
     end)
 
-    %{bypass: bypass, issuer: issuer, counter: counter}
+    %{
+      bypass: bypass,
+      issuer: issuer,
+      resource_origin: resource_origin,
+      metadata_client: metadata_client,
+      counter: counter
+    }
   end
 
   defp flow_config(server, store) do
     %{
-      resource_url: server.issuer <> "/mcp",
-      www_authenticate: ~s(Bearer resource_metadata="#{server.issuer}/prm"),
+      resource_url: server.resource_origin <> "/mcp",
+      www_authenticate: ~s(Bearer resource_metadata="#{server.resource_origin}/prm"),
       client_registration: :auto,
       application_type: :native,
       redirect_port: 45_321,
       credential_store: store,
       credential_context: "test-installation",
-      scopes: ["tools:read"]
+      scopes: ["tools:read"],
+      metadata_fetch: [
+        http_client: server.metadata_client,
+        dns_resolver: fn _host, _timeout -> {:ok, [{93, 184, 216, 34}]} end
+      ]
     }
   end
 

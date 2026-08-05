@@ -15,6 +15,7 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
   `client_id_metadata_document_supported: true`.
   """
 
+  alias ExMCP.Authorization.MetadataFetcher
   alias ExMCP.Internal.MapBuilder
 
   @max_document_bytes 262_144
@@ -26,18 +27,21 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
 
   ## Parameters
   - `client_id_url` - The client_id URL to fetch metadata from
-  - `opts` - Options including `:http_client` for custom HTTP client
+  - `opts` - Hardened metadata-fetch options. A custom `:http_client` must
+    implement `get(uri, approved_address, opts)` and connect to the supplied
+    address while preserving `uri.host` for TLS and HTTP host validation.
 
   ## Returns
   - `{:ok, metadata}` - Successfully fetched client metadata
   - `{:error, reason}` - Failed to fetch or parse metadata
+
+  The default client permits only HTTPS public addresses, revalidates and pins
+  every redirect hop, bounds time and response bytes, and sends no credentials.
   """
   @spec fetch(String.t(), keyword()) :: {:ok, client_metadata()} | {:error, term()}
   def fetch(client_id_url, opts \\ []) do
-    http_client = Keyword.get(opts, :http_client)
-
     with :ok <- validate_url(client_id_url),
-         {:ok, metadata} <- do_fetch(client_id_url, http_client),
+         {:ok, metadata} <- do_fetch(client_id_url, opts),
          :ok <- validate(metadata, client_id_url) do
       {:ok, metadata}
     end
@@ -141,27 +145,32 @@ defmodule ExMCP.Authorization.ClientIdMetadata do
 
   # Private helpers
 
-  defp do_fetch(_url, nil), do: {:error, :no_http_client}
+  defp do_fetch(url, opts) do
+    max_bytes = min_valid_limit(Keyword.get(opts, :max_response_bytes))
+    fetch_opts = Keyword.put(opts, :max_response_bytes, max_bytes)
 
-  defp do_fetch(url, http_client) do
-    case http_client.get(url, [{"accept", "application/json"}]) do
-      {:ok, %{status: 200, body: body}}
-      when is_binary(body) and byte_size(body) <= @max_document_bytes ->
+    case MetadataFetcher.fetch(url, fetch_opts) do
+      {:ok, %{status: 200, body: body}} ->
         case Jason.decode(body) do
           {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
           _ -> {:error, :invalid_json}
         end
 
-      {:ok, %{status: 200, body: body}} when is_binary(body) ->
-        {:error, :metadata_document_too_large}
-
       {:ok, %{status: status}} ->
         {:error, {:http_error, status}}
 
-      {:error, reason} ->
-        {:error, reason}
+      {:error, {:metadata_fetch_error, :response_too_large}} ->
+        {:error, :metadata_document_too_large}
+
+      {:error, _reason} = error ->
+        error
     end
   end
+
+  defp min_valid_limit(limit) when is_integer(limit) and limit >= 0,
+    do: min(limit, @max_document_bytes)
+
+  defp min_valid_limit(_limit), do: @max_document_bytes
 
   defp validate_client_id(metadata, expected_client_id) do
     case Map.get(metadata, "client_id") do

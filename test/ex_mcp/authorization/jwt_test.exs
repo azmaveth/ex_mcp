@@ -301,6 +301,65 @@ defmodule ExMCP.Authorization.JWTTest do
     end
   end
 
+  describe "fetch_jwks/2" do
+    test "fetches keys through the pinned metadata boundary", %{rsa_key: rsa_key} do
+      public_key = rsa_key |> JWT.to_public_key() |> JWT.to_map()
+      parent = self()
+
+      client = fn uri, address, opts ->
+        send(parent, {:jwks_request, uri, address, opts[:request_headers]})
+
+        {:ok,
+         %{
+           status: 200,
+           headers: [],
+           body: Jason.encode!(%{"keys" => [public_key]})
+         }}
+      end
+
+      assert {:ok, [_jwk]} =
+               JWT.fetch_jwks("https://auth.example/jwks",
+                 dns_resolver: public_dns(),
+                 http_client: client
+               )
+
+      assert_received {:jwks_request, uri, {93, 184, 216, 34}, headers}
+      assert uri.host == "auth.example"
+      refute Enum.any?(headers, fn {name, _value} -> name in ["authorization", "cookie"] end)
+    end
+
+    test "rejects insecure and private JWKS targets" do
+      assert {:error, {:metadata_fetch_error, :https_required}} =
+               JWT.fetch_jwks("http://auth.example/jwks")
+
+      dns = fn _host, _timeout -> {:ok, [{127, 0, 0, 1}]} end
+      client = fn _uri, _address, _opts -> flunk("request must not be made") end
+
+      assert {:error, {:metadata_fetch_error, :non_public_address}} =
+               JWT.fetch_jwks("https://auth.example/jwks",
+                 dns_resolver: dns,
+                 http_client: client
+               )
+    end
+
+    test "rejects malformed key sets without raising" do
+      client = fn _uri, _address, _opts ->
+        {:ok,
+         %{
+           status: 200,
+           headers: [],
+           body: Jason.encode!(%{"keys" => [%{"not" => "a key"}]})
+         }}
+      end
+
+      assert {:error, :invalid_jwks_format} =
+               JWT.fetch_jwks("https://auth.example/jwks",
+                 dns_resolver: public_dns(),
+                 http_client: client
+               )
+    end
+  end
+
   describe "peek_header/1" do
     test "reads header from token", %{rsa_key: rsa_key} do
       claims = %{"sub" => "test"}
@@ -314,5 +373,9 @@ defmodule ExMCP.Authorization.JWTTest do
     test "returns error for invalid token" do
       assert {:error, _} = JWT.peek_header("not-a-token")
     end
+  end
+
+  defp public_dns do
+    fn _host, _timeout -> {:ok, [{93, 184, 216, 34}]} end
   end
 end

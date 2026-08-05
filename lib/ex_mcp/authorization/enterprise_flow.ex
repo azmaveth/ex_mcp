@@ -22,7 +22,8 @@ defmodule ExMCP.Authorization.EnterpriseFlow do
           optional(:resource_url) => String.t(),
           optional(:client_id) => String.t(),
           optional(:scope) => String.t(),
-          optional(:http_client) => module()
+          optional(:http_client) => module() | function(),
+          optional(:metadata_fetch) => keyword()
         }
 
   @doc """
@@ -41,7 +42,8 @@ defmodule ExMCP.Authorization.EnterpriseFlow do
     - `:resource_url` - MCP server resource URL
     - `:client_id` - OAuth client identifier
     - `:scope` - Requested scope
-    - `:http_client` - Custom HTTP client module for discovery
+    - `:http_client` - Custom pinned-address HTTP client for discovery
+    - `:metadata_fetch` - Metadata timeout, size, DNS and redirect-policy options
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
@@ -74,9 +76,8 @@ defmodule ExMCP.Authorization.EnterpriseFlow do
     scope = Keyword.get(opts, :scope, "openid")
     state = Keyword.get(opts, :state, generate_state())
     nonce = Keyword.get(opts, :nonce, generate_nonce())
-    http_client = Keyword.get(opts, :http_client)
 
-    case OIDCDiscovery.discover(idp_issuer, http_client: http_client) do
+    case OIDCDiscovery.discover(idp_issuer, metadata_fetch_options(opts)) do
       {:ok, metadata} ->
         auth_endpoint = Map.fetch!(metadata, "authorization_endpoint")
 
@@ -113,9 +114,7 @@ defmodule ExMCP.Authorization.EnterpriseFlow do
   end
 
   defp resolve_as_token_endpoint(%{as_issuer: as_issuer} = config) do
-    http_client = Map.get(config, :http_client)
-
-    case OIDCDiscovery.discover(as_issuer, http_client: http_client) do
+    case OIDCDiscovery.discover(as_issuer, metadata_fetch_options(config)) do
       {:ok, metadata} ->
         case Map.get(metadata, "token_endpoint") do
           nil -> {:error, :missing_token_endpoint}
@@ -171,6 +170,19 @@ defmodule ExMCP.Authorization.EnterpriseFlow do
     case Map.get(config, config_key) do
       nil -> opts
       value -> Keyword.put(opts, opt_key, value)
+    end
+  end
+
+  defp metadata_fetch_options(config) do
+    options =
+      case config[:metadata_fetch] do
+        configured when is_list(configured) -> configured
+        _other -> []
+      end
+
+    case config[:http_client] do
+      nil -> options
+      client -> Keyword.put(options, :http_client, client)
     end
   end
 

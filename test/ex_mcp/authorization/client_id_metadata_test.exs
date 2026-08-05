@@ -13,19 +13,33 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
   }
 
   describe "fetch/2" do
-    test "returns {:error, :no_http_client} when no http_client is provided" do
-      assert {:error, :no_http_client} = ClientIdMetadata.fetch(@valid_client_id)
+    test "uses the hardened default client and reports DNS failures" do
+      dns = fn _host, _timeout -> {:error, :dns_failed} end
+
+      assert {:error, {:metadata_fetch_error, :dns_failed}} =
+               ClientIdMetadata.fetch(@valid_client_id, dns_resolver: dns)
     end
 
-    test "returns {:error, :no_http_client} when http_client option is nil" do
-      assert {:error, :no_http_client} =
+    test "rejects an invalid custom HTTP client" do
+      assert {:error, {:metadata_fetch_error, :invalid_options}} =
                ClientIdMetadata.fetch(@valid_client_id, http_client: nil)
+    end
+
+    test "blocks a CIMD host that resolves to a private address" do
+      dns = fn _host, _timeout -> {:ok, [{10, 0, 0, 1}]} end
+      client = fn _uri, _address, _opts -> flunk("request must not be made") end
+
+      assert {:error, {:metadata_fetch_error, :non_public_address}} =
+               ClientIdMetadata.fetch(@valid_client_id,
+                 dns_resolver: dns,
+                 http_client: client
+               )
     end
 
     test "returns {:ok, metadata} when http_client returns valid JSON" do
       http_client = mock_http_client(200, Jason.encode!(@valid_metadata))
 
-      assert {:ok, metadata} = ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+      assert {:ok, metadata} = fetch_metadata(http_client)
       assert metadata["client_id"] == @valid_client_id
       assert metadata["client_name"] == "My Test App"
       assert metadata["redirect_uris"] == ["https://myapp.example.com/callback"]
@@ -35,28 +49,27 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
       http_client = mock_http_client(404, "Not Found")
 
       assert {:error, {:http_error, 404}} =
-               ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+               fetch_metadata(http_client)
     end
 
     test "returns error when http_client returns invalid JSON" do
       http_client = mock_http_client(200, "not valid json{{{")
 
       assert {:error, :invalid_json} =
-               ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+               fetch_metadata(http_client)
     end
 
     test "returns error when http_client returns non-map JSON" do
       http_client = mock_http_client(200, Jason.encode!(["not", "a", "map"]))
 
       assert {:error, :invalid_json} =
-               ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+               fetch_metadata(http_client)
     end
 
     test "returns error when http_client returns an error" do
       http_client = mock_http_client_error(:econnrefused)
 
-      assert {:error, :econnrefused} =
-               ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+      assert {:error, {:metadata_fetch_error, :fetch_failed}} = fetch_metadata(http_client)
     end
 
     test "validates metadata after successful fetch" do
@@ -65,7 +78,7 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
       http_client = mock_http_client(200, Jason.encode!(bad_metadata))
 
       assert {:error, {:client_id_mismatch, _}} =
-               ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+               fetch_metadata(http_client)
     end
 
     test "validates required fields after successful fetch" do
@@ -74,14 +87,14 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
       http_client = mock_http_client(200, Jason.encode!(incomplete_metadata))
 
       assert {:error, {:missing_required_field, "client_name"}} =
-               ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+               fetch_metadata(http_client)
     end
 
     test "rejects oversized metadata documents" do
       http_client = mock_http_client(200, String.duplicate("x", 262_145))
 
       assert {:error, :metadata_document_too_large} =
-               ClientIdMetadata.fetch(@valid_client_id, http_client: http_client)
+               fetch_metadata(http_client)
     end
   end
 
@@ -325,8 +338,8 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
     Module.create(
       module_name,
       quote do
-        def get(_url, _headers) do
-          {:ok, %{status: unquote(status), body: unquote(body)}}
+        def get(_uri, _address, _opts) do
+          {:ok, %{status: unquote(status), headers: [], body: unquote(body)}}
         end
       end,
       Macro.Env.location(__ENV__)
@@ -342,7 +355,7 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
     Module.create(
       module_name,
       quote do
-        def get(_url, _headers) do
+        def get(_uri, _address, _opts) do
           {:error, unquote(reason)}
         end
       end,
@@ -350,5 +363,12 @@ defmodule ExMCP.Authorization.ClientIdMetadataTest do
     )
 
     module_name
+  end
+
+  defp fetch_metadata(http_client) do
+    ClientIdMetadata.fetch(@valid_client_id,
+      http_client: http_client,
+      dns_resolver: fn _host, _timeout -> {:ok, [{93, 184, 216, 34}]} end
+    )
   end
 end

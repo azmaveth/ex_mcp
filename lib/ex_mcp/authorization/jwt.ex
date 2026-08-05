@@ -6,6 +6,8 @@ defmodule ExMCP.Authorization.JWT do
   used by OAuth client assertions, ID-JAG tokens, and JWT bearer grants.
   """
 
+  alias ExMCP.Authorization.MetadataFetcher
+
   # Clock skew allowance, in seconds, applied to exp/nbf/iat comparisons.
   @default_leeway_seconds 30
 
@@ -235,23 +237,18 @@ defmodule ExMCP.Authorization.JWT do
 
   @doc """
   Fetches a JWKS (JSON Web Key Set) from a URL.
-  """
-  @spec fetch_jwks(String.t()) :: {:ok, [JOSE.JWK.t()]} | {:error, term()}
-  def fetch_jwks(url) when is_binary(url) do
-    ssl_opts = [
-      ssl: [
-        verify: :verify_peer,
-        cacerts: :public_key.cacerts_get(),
-        versions: [:"tlsv1.2", :"tlsv1.3"]
-      ]
-    ]
 
-    case :httpc.request(:get, {String.to_charlist(url), []}, ssl_opts, []) do
-      {:ok, {{_, 200, _}, _headers, body}} ->
-        case Jason.decode(to_string(body)) do
+  Uses the same HTTPS-only, public-address, pinned and bounded fetch policy as
+  authorization-server and client metadata discovery. Custom HTTP clients must
+  implement `get(uri, approved_address, opts)`.
+  """
+  @spec fetch_jwks(String.t(), keyword()) :: {:ok, [JOSE.JWK.t()]} | {:error, term()}
+  def fetch_jwks(url, opts \\ []) when is_binary(url) and is_list(opts) do
+    case MetadataFetcher.fetch(url, opts) do
+      {:ok, %{status: 200, body: body}} ->
+        case Jason.decode(body) do
           {:ok, %{"keys" => keys}} when is_list(keys) ->
-            jwks = Enum.map(keys, &JOSE.JWK.from_map/1)
-            {:ok, jwks}
+            load_jwks(keys)
 
           {:ok, _} ->
             {:error, :invalid_jwks_format}
@@ -260,12 +257,18 @@ defmodule ExMCP.Authorization.JWT do
             {:error, {:json_decode_error, reason}}
         end
 
-      {:ok, {{_, status, _}, _headers, _body}} ->
+      {:ok, %{status: status}} ->
         {:error, {:http_error, status}}
 
-      {:error, reason} ->
-        {:error, {:request_failed, reason}}
+      {:error, _reason} = error ->
+        error
     end
+  end
+
+  defp load_jwks(keys) do
+    {:ok, Enum.map(keys, &JOSE.JWK.from_map/1)}
+  rescue
+    _exception -> {:error, :invalid_jwks_format}
   end
 
   @doc """
