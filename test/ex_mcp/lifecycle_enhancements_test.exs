@@ -7,6 +7,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
   @moduletag :integration
 
   alias ExMCP.Client
+  alias ExMCP.Internal.VersionRegistry
   alias ExMCP.Server.Capabilities
   alias ExMCP.Server.Handler
   alias ExMCP.Server.HandlerServer, as: Server
@@ -242,7 +243,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
       end
     end
 
-    test "client accepts server with any protocol version and still connects" do
+    test "server normalizes an unknown handler version to a supported revision" do
       {:ok, server} =
         Server.start_link(
           transport: :test,
@@ -250,7 +251,7 @@ defmodule ExMCP.LifecycleEnhancementsTest do
           handler_args: %{version: "9999-12-31"}
         )
 
-      # Client connects and accepts the server's version without warning
+      # The handler cannot make the server advertise an unknown wire revision.
       {:ok, client} =
         Client.start_link(
           transport: :test,
@@ -260,9 +261,11 @@ defmodule ExMCP.LifecycleEnhancementsTest do
       # Should still connect and be functional
       assert {:ok, _} = Client.ping(client)
 
-      # The negotiated version should reflect what the server returned
+      # The connection remains functional on the server's preferred supported
+      # legacy revision rather than pinning the unknown handler value.
       {:ok, version} = Client.negotiated_version(client)
-      assert version == "9999-12-31"
+      assert version == VersionRegistry.preferred_version()
+      refute version == "9999-12-31"
 
       GenServer.stop(client)
       GenServer.stop(server)

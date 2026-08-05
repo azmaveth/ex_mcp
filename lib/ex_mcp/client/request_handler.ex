@@ -1482,6 +1482,18 @@ defmodule ExMCP.Client.RequestHandler do
     build_error_response(error.code, message, request_id)
   end
 
+  # Existing sampling and elicitation handlers may deliberately return a
+  # JSON-RPC error map. Preserve that explicit public message while continuing
+  # to replace arbitrary terms with the generic internal-handler error below.
+  defp kind_error_response(
+         :input_request,
+         %{"code" => code, "message" => message},
+         request_id
+       )
+       when is_integer(code) and is_binary(message) do
+    build_error_response(code, message, request_id)
+  end
+
   defp kind_error_response(_kind, error, request_id) do
     handler_error_response(error, request_id)
   end

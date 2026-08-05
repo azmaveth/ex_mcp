@@ -59,7 +59,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
         safe_call(
           conn,
           server_pid,
-          contextual_request(conn, {:call_tool, tool_name, arguments}),
+          contextual_request(conn, server_pid, {:call_tool, tool_name, arguments}),
           id,
           "Tool call failed",
           fn reply ->
@@ -114,7 +114,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     safe_call(
       conn,
       server_pid,
-      contextual_request(conn, {:read_resource, uri}),
+      contextual_request(conn, server_pid, {:read_resource, uri}),
       id,
       "Resource read failed",
       fn reply ->
@@ -186,7 +186,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     safe_call(
       conn,
       server_pid,
-      contextual_request(conn, {:get_prompt, name, arguments}),
+      contextual_request(conn, server_pid, {:get_prompt, name, arguments}),
       id,
       "Prompt get failed",
       fn reply ->
@@ -435,10 +435,14 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   defp cursor(params), do: Map.get(params, "cursor")
 
-  defp contextual_request(conn, request) do
-    case Map.get(conn.assigns, :request_context) do
-      nil -> request
-      context -> {:mcp_context, context, request}
+  defp contextual_request(conn, server_pid, request) do
+    if handler_context_capable?(server_pid) do
+      case Map.get(conn.assigns, :request_context) do
+        nil -> request
+        context -> {:mcp_context, context, request}
+      end
+    else
+      request
     end
   end
 
@@ -446,7 +450,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   # the original request tuple for hand-written GenServers that implement only
   # the documented legacy bridge messages.
   defp task_request(conn, server_pid, request) do
-    if handler_context_capable?(server_pid), do: contextual_request(conn, request), else: request
+    contextual_request(conn, server_pid, request)
   end
 
   defp handler_context_capable?(server_pid) when is_pid(server_pid) do
