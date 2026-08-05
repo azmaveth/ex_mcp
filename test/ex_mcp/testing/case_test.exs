@@ -3,10 +3,10 @@ defmodule ExMCP.Testing.CaseTest do
   Tests for the `ExMCP.TestCase` helpers.
 
   Every `Process.sleep/1` in this file is **intentional** (audit M25): these
-  tests exercise timing primitives — `measure_time/1`, `with_timeout/2`,
-  `run_parallel/2` and `wait_for_condition/2` — so the sleep *is* the workload
-  being measured or timed out. Do not "de-sleep" them; there is nothing to
-  synchronize on.
+  tests exercise timing primitives — `measure_time/1`, `with_timeout/2` and
+  `wait_for_condition/2` — so the sleep *is* the workload being measured or
+  timed out. `run_parallel/2` uses an explicit worker barrier instead of wall
+  time so scheduler load cannot make the assertion flaky.
   """
   use ExUnit.Case, async: true
 
@@ -167,28 +167,29 @@ defmodule ExMCP.Testing.CaseTest do
 
   describe "run_parallel function" do
     test "executes functions in parallel and returns results" do
-      functions = [
-        fn ->
-          Process.sleep(20)
-          1
-        end,
-        fn ->
-          Process.sleep(20)
-          2
-        end,
-        fn ->
-          Process.sleep(20)
-          3
+      test_pid = self()
+
+      functions =
+        for result <- [1, 2, 3] do
+          fn ->
+            send(test_pid, {:parallel_worker_started, self()})
+
+            receive do
+              :release_parallel_worker -> result
+            end
+          end
         end
-      ]
 
-      start_time = System.monotonic_time(:millisecond)
-      results = TestCase.run_parallel(functions)
-      end_time = System.monotonic_time(:millisecond)
+      parallel_task = Task.async(fn -> TestCase.run_parallel(functions) end)
 
-      assert results == [1, 2, 3]
-      # Should take ~20ms, not ~60ms (sequential)
-      assert end_time - start_time < 50
+      worker_pids =
+        for _index <- 1..3 do
+          assert_receive {:parallel_worker_started, worker_pid}, 1_000
+          worker_pid
+        end
+
+      Enum.each(worker_pids, &send(&1, :release_parallel_worker))
+      assert Task.await(parallel_task) == [1, 2, 3]
     end
 
     test "respects timeout option" do
