@@ -4,18 +4,18 @@ This guide helps you upgrade your ExMCP applications between versions. Each sect
 
 ## Table of Contents
 
-- [Deprecations toward 1.1.0](#deprecations-toward-110)
+- [Deprecations toward 2.0.0](#deprecations-toward-200)
 - [Upgrading to v0.6.0 from v0.5.x](#upgrading-to-v060-from-v05x)
 - [Upgrading to v0.5.0 from v0.4.x](#upgrading-to-v050-from-v04x)
 - [General Migration Tips](#general-migration-tips)
 
-## Deprecations toward 1.1.0
+## Deprecations toward 2.0.0
 
 ### `ExMCP.Server.Tools` → `ExMCP.Server.DSL`
 
 `ExMCP.Server.Tools`, `ExMCP.Server.Tools.Simplified`, and related helpers
 (`Builder`, `Helpers`, `Registry`, `ResponseNormalizer`, `ASTValidator`) are
-**deprecated** and will be **removed in 1.1.0**.
+**deprecated**, retained throughout 1.x, and planned for removal in **2.0.0**.
 
 ```elixir
 # Before (deprecated — compile warning)

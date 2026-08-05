@@ -4,7 +4,8 @@ defmodule ExMCP.Server.Tools do
 
   > #### Deprecated {: .warning}
   >
-  > `ExMCP.Server.Tools` is **deprecated** and will be **removed in 1.1.0**.
+  > `ExMCP.Server.Tools` is **deprecated**, retained throughout 1.x, and planned for
+  > **removal in 2.0.0**.
   > Use `ExMCP.Server.Handler` with `ExMCP.Server.DSL` instead (tools, resources,
   > and prompts in one API). See the project DSL guide for migration examples.
   >
@@ -43,7 +44,7 @@ defmodule ExMCP.Server.Tools do
 
   defmacro __using__(_opts) do
     IO.warn(
-      "ExMCP.Server.Tools is deprecated and will be removed in 1.1.0. " <>
+      "ExMCP.Server.Tools is deprecated and will be removed in 2.0.0. " <>
         "Use ExMCP.Server.Handler with ExMCP.Server.DSL instead " <>
         "(see ExMCP.Server.DSL and the DSL guide).",
       Macro.Env.stacktrace(__CALLER__)
@@ -253,7 +254,7 @@ defmodule ExMCP.Server.Tools do
         end
       end
   """
-  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools is removed in 1.1.0."
+  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0."
   defmacro tool(name, description \\ nil, do: block) do
     quote do
       alias ExMCP.Server.Tools
@@ -539,7 +540,7 @@ defmodule ExMCP.Server.Tools do
       param :age, :integer, default: 0
       param :tags, {:array, :string}
   """
-  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools is removed in 1.1.0."
+  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0."
   defmacro param(name, type, opts \\ []) do
     # This is handled by the tool macro
     quote do
@@ -553,7 +554,7 @@ defmodule ExMCP.Server.Tools do
   The handler receives the arguments and state, and should return
   {:ok, response} or {:ok, response, new_state}.
   """
-  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools is removed in 1.1.0."
+  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0."
   defmacro handle(func) do
     quote do
       {:handle, [], [unquote(func)]}
@@ -563,7 +564,7 @@ defmodule ExMCP.Server.Tools do
   @doc """
   Set the title for a tool (2025-06-18 feature).
   """
-  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools is removed in 1.1.0."
+  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0."
   defmacro title(title_text) do
     quote do
       {:title, [], [unquote(title_text)]}
@@ -573,7 +574,7 @@ defmodule ExMCP.Server.Tools do
   @doc """
   Set the description for a tool.
   """
-  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools is removed in 1.1.0."
+  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0."
   defmacro description(desc) do
     quote do
       {:description, [], [unquote(desc)]}
@@ -583,7 +584,7 @@ defmodule ExMCP.Server.Tools do
   @doc """
   Set the input schema for a tool.
   """
-  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools is removed in 1.1.0."
+  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0."
   defmacro input_schema(schema) do
     quote do
       {:input_schema, [], [unquote(schema)]}
@@ -593,7 +594,7 @@ defmodule ExMCP.Server.Tools do
   @doc """
   Set the output schema for a tool.
   """
-  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools is removed in 1.1.0."
+  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0."
   defmacro output_schema(schema) do
     quote do
       {:output_schema, [], [unquote(schema)]}
@@ -603,7 +604,7 @@ defmodule ExMCP.Server.Tools do
   @doc """
   Set annotations for a tool.
   """
-  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools is removed in 1.1.0."
+  @deprecated "Use ExMCP.Server.DSL instead. ExMCP.Server.Tools will be removed in 2.0.0."
   defmacro annotations(anns) do
     quote do
       {:annotations, [], [unquote(anns)]}

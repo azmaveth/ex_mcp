@@ -13,7 +13,7 @@ defmodule ExMCP.Content do
 
   MCP and ACP specify how to *carry* images (and icons with URLs). They do **not**
   require compress/resize/thumbnail APIs. Those stubs live under experimental
-  modules (`ExMCP.Content.Transformer`, `Builders`) and are deprecated for 1.1.0.
+  modules (`ExMCP.Content.Transformer`, `Builders`) and are deprecated for 2.0.0.
   """
 
   alias ExMCP.Types

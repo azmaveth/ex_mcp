@@ -48,7 +48,7 @@ support for MCP `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`.
 ## Deprecations
 
 `ExMCP.Server.Tools` and the non-protocol image transformation stubs remain
-available in rc.5 but are deprecated for removal in 1.1.0. New server code
+available in rc.5 and throughout 1.x but are deprecated for removal in 2.0.0. New server code
 should use `ExMCP.Server.Handler` with `ExMCP.Server.DSL`.
 
 ## Verification

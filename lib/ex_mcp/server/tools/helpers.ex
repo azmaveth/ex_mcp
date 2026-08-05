@@ -4,7 +4,7 @@ defmodule ExMCP.Server.Tools.Helpers do
 
   > #### Deprecated {: .warning}
   >
-  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Planned for removal in 2.0.0.**
   > Prefer `ExMCP.Server.DSL.Result` (`ToolResult` inside DSL modules) or raw
   > MCP content maps from handler callbacks.
 

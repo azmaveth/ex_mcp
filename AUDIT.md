@@ -109,7 +109,7 @@
 - **L8.** `security/validation.ex:193` accepts `verify: :verify_none` silently while rejecting weak ciphers; at least log a warning.
 - **L9.** DSL: `dsl/result.ex:47-53` has no clause for bare non-tuple handler returns → raw `FunctionClauseError` despite moduledoc claiming plain values normalize.
 - **L10.** `server/transport.ex:110-121` passes `tools:` (ignored by `HttpPlug.init`) and defaults `cors_enabled: true` vs HttpPlug's `false` (http_plug.ex:83).
-- **L11.** Deprecated `ExMCP.Server.Tools` (~2,130 LOC): zero internal callers outside itself — removal in 1.1.0 is safe, but `structured_output_test.exs` / `structured_output_compliance_test.exs` must be ported first; add `@deprecated` attributes on its public functions for compiler warnings.
+- **L11.** Deprecated `ExMCP.Server.Tools` (~2,130 LOC): zero internal callers outside itself. The original 1.1.0 removal target would violate SemVer after stable 1.0, so the API is retained throughout 1.x and removal is deferred to 2.0.0. `structured_output_test.exs` / `structured_output_compliance_test.exs` should still be ported first; public functions carry compiler deprecation warnings.
 - **L12.** CI: no `_build` caching (only deps + dialyzer PLT); every job recompiles the app.
 - **L13.** Hygiene: `.gitignore` has duplicate `/cover/` and `tmp/` entries; untracked local junk on disk (`erl_crash.dump`, `.aider*`, `doc/`, `cover/`, old `ex_mcp-*.tar`) — all gitignored, just delete locally.
 - **L14.** Health-check timer fires but performs no check (client.ex:934-941); unused `:buffer` field (stdio.ex:35); unreachable duplicate branch (connection_manager.ex:132-140).

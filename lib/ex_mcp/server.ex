@@ -23,8 +23,9 @@ defmodule ExMCP.Server do
 
   > #### Deprecated API {: .warning}
   >
-  > `ExMCP.Server.Tools` (and `Tools.Simplified`) are deprecated and will be
-  > removed in **1.1.0**. Prefer `ExMCP.Server.DSL` for new code.
+  > `ExMCP.Server.Tools` (and `Tools.Simplified`) are deprecated, retained
+  > throughout 1.x, and planned for removal in **2.0.0**. Prefer
+  > `ExMCP.Server.DSL` for new code.
   """
 
   @doc """

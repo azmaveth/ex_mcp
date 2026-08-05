@@ -27,7 +27,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 - **ACP v1** -- Agent Client Protocol major version `1` (`protocolVersion: 1`)
 - **Multiple transports** -- HTTP/SSE, stdio, and BEAM-local MCP (~15μs local calls)
 - **Phoenix Plug** -- native Phoenix integration with `ExMCP.HttpPlug`
-- **DSL and Handler APIs** -- declarative tool/resource/prompt definitions via `ExMCP.Server.DSL`, or raw callback-based handlers (`ExMCP.Server.Tools` is deprecated; removed in 1.1)
+- **DSL and Handler APIs** -- declarative tool/resource/prompt definitions via `ExMCP.Server.DSL`, or raw callback-based handlers (`ExMCP.Server.Tools` is deprecated; retained throughout 1.x and planned for removal in 2.0)
 - **OAuth 2.1** -- automatic 401→discover→PKCE→token flow, scope step-up, CIMD, JWT client auth (`private_key_jwt`), enterprise SSO (ID-JAG), token revocation (RFC 7009), pluggable auth providers
 - **OTP-native** -- supervision trees, auto-reconnection with exponential backoff, 88 telemetry events
 - **Agent Client Protocol (ACP)** -- control coding agents and build native Elixir ACP agents
@@ -47,7 +47,7 @@ end
 
 ### API stability (1.0)
 
-| Stable | Experimental / limited | Deprecated (gone in 1.1) |
+| Stable | Experimental / limited | Deprecated (retained through 1.x) |
 |--------|------------------------|---------------------------|
 | `ExMCP.Client`, `Server.Handler`, `Server.DSL` | Content sanitize/transform helpers | `ExMCP.Server.Tools` (+ helpers) |
 | Transports (`:stdio`, `:http`, `:beam`, `:test`) | Some draft MCP handler features | Image compress/resize/thumbnail stubs |

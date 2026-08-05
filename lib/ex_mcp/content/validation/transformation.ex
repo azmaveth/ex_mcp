@@ -35,7 +35,7 @@ defmodule ExMCP.Content.Validation.Transformation do
   end
 
   # Image resize/compress/thumbnail are not MCP features and never processed
-  # pixel data — keep no-ops for API compatibility until 1.1.0 removal.
+  # pixel data — keep no-ops for API compatibility until 2.0.0 removal.
   defp resize_content(content, _opts), do: content
   defp compress_content(content, _opts), do: content
   defp generate_thumbnail(content), do: content

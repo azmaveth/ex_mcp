@@ -4,7 +4,7 @@ defmodule ExMCP.Server.Tools.ASTValidator do
 
   > #### Deprecated {: .warning}
   >
-  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Planned for removal in 2.0.0.**
 
   This module provides security validation for AST nodes that will be
   evaluated using Code.eval_quoted, preventing code injection attacks.

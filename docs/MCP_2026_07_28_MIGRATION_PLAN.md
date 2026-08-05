@@ -1141,10 +1141,17 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 
 ### Phase 10 — Compatibility audit, docs, release
 
-- [ ] **Do not remove public APIs in this migration.** Keep `ExMCP.Server.Tools` + related
+- [x] **Do not remove public APIs in this migration.** Keep `ExMCP.Server.Tools` + related
       modules throughout 1.x. Update the current “removed in 1.1.0” notices in `README.md`,
       `CLAUDE.md`, `docs/DSL_GUIDE.md`, `docs/getting-started/MIGRATION.md`, and module docs to
-      “removed in 2.0.0”; removal in 1.1 would violate SemVer.
+      “removed in 2.0.0”; removal in 1.1 would violate SemVer. **All public documentation,
+      HexDocs groups, compile-time warnings, `@deprecated` metadata, rc.5 release notes and the
+      changelog now retain `Server.Tools`, `Tools.Simplified` and their companion modules for the
+      full 1.x line and target removal in 2.0.0. The audit also found and corrected the same
+      premature promise on deprecated public content transformation/sanitization stubs.
+      `DeprecationCompatibilityTest` verifies the retained modules remain loadable and checks
+      their compiled module docs and deprecation metadata for the 2.0 boundary. The final rc.5
+      API-diff gate below remains the authoritative check that no other public surface vanished.**
 - [ ] HTTP+SSE (2024-11-05) is **decided:** keep it available and clearly deprecated throughout
       1.x, but exclude it from new-server defaults. “Dual-era server by default” means both
       protocol eras on enabled modern transports; it does not auto-enable a deprecated transport.

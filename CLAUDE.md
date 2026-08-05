@@ -212,13 +212,13 @@ The client stack emits telemetry such as:
 ### Server DSL
 
 - Prefer `ExMCP.Server.Handler` + `ExMCP.Server.DSL` for tools/resources/prompts.
-- `ExMCP.Server.Tools` is **deprecated** and will be removed in **1.1.0**.
+- `ExMCP.Server.Tools` is **deprecated**, retained throughout 1.x, and planned for removal in **2.0.0**.
 
 ## Deprecated / planned removals
 
 | API | Status |
 |-----|--------|
-| `ExMCP.Server.Tools` (+ `Simplified`, helpers) | Deprecated → **removed in 1.1.0** |
+| `ExMCP.Server.Tools` (+ `Simplified`, helpers) | Deprecated → **planned for removal in 2.0.0** |
 | Client adapter layer (`LegacyAdapter`, etc.) | Already removed; use `ExMCP.Client` |
 
 ## Development notes

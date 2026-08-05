@@ -15,7 +15,7 @@ defmodule ExMCP.Content.Transformer do
   - `{:custom, fun/1}`
   - limited text format conversion in `convert_format/2`
 
-  ### Deprecated stubs (removed in 1.1.0)
+  ### Deprecated stubs (planned for removal in 2.0.0)
 
   Image processing was never part of MCP/ACP and was never implemented:
 
@@ -92,7 +92,7 @@ defmodule ExMCP.Content.Transformer do
 
   Deprecated stub — not an MCP requirement.
   """
-  @deprecated "Not implemented; not required by MCP/ACP. Removed in 1.1.0."
+  @deprecated "Not implemented; not required by MCP/ACP. Planned for removal in 2.0.0."
   @spec convert_encoding(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def convert_encoding(text, _from_encoding \\ "auto") when is_binary(text) do
     {:error, "Encoding conversion not implemented - requires external encoding library"}
@@ -130,7 +130,7 @@ defmodule ExMCP.Content.Transformer do
 
   Deprecated stub — MCP only transports image content blocks; processing is app-level.
   """
-  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0. Use app-level image tools."
+  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools."
   @spec compress_image(binary(), String.t(), keyword()) ::
           {:ok, binary()} | {:error, String.t()}
   def compress_image(_image_data, _mime_type, _opts \\ []) do
@@ -142,7 +142,7 @@ defmodule ExMCP.Content.Transformer do
 
   Deprecated stub — not required by MCP/ACP.
   """
-  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0. Use app-level image tools."
+  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools."
   @spec resize_image(binary(), String.t(), keyword()) ::
           {:ok, binary()} | {:error, String.t()}
   def resize_image(_image_data, _mime_type, _opts) do
@@ -154,7 +154,7 @@ defmodule ExMCP.Content.Transformer do
 
   Deprecated stub — not required by MCP/ACP.
   """
-  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0. Use app-level image tools."
+  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0. Use app-level image tools."
   @spec generate_thumbnail(binary(), String.t(), keyword()) ::
           {:ok, binary()} | {:error, String.t()}
   def generate_thumbnail(_image_data, _mime_type, _opts \\ []) do

@@ -4,7 +4,7 @@ defmodule ExMCP.Server.Tools.Simplified do
 
   > #### Deprecated {: .warning}
   >
-  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Planned for removal in 2.0.0.**
   > Use `ExMCP.Server.Handler` with `ExMCP.Server.DSL` instead.
   > `use ExMCP.Server.Tools.Simplified` emits a compile-time warning.
 
@@ -16,7 +16,7 @@ defmodule ExMCP.Server.Tools.Simplified do
 
   defmacro __using__(_opts) do
     IO.warn(
-      "ExMCP.Server.Tools.Simplified is deprecated and will be removed in 1.1.0. " <>
+      "ExMCP.Server.Tools.Simplified is deprecated and will be removed in 2.0.0. " <>
         "Use ExMCP.Server.Handler with ExMCP.Server.DSL instead.",
       Macro.Env.stacktrace(__CALLER__)
     )

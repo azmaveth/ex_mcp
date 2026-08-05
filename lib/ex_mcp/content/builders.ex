@@ -433,7 +433,7 @@ defmodule ExMCP.Content.Builders do
 
   Deprecated stub — not an MCP requirement. MCP image content is base64 + MIME only.
   """
-  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0."
+  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0."
   @spec resize(Protocol.image(), pos_integer(), pos_integer()) ::
           Protocol.image() | {:error, String.t()}
   def resize(%{type: :image} = _content, _width, _height) do
@@ -445,7 +445,7 @@ defmodule ExMCP.Content.Builders do
 
   Deprecated stub — not an MCP requirement.
   """
-  @deprecated "Not an MCP/ACP API; never implemented. Removed in 1.1.0."
+  @deprecated "Not an MCP/ACP API; never implemented. Planned for removal in 2.0.0."
   @spec compress(Protocol.image(), keyword()) :: Protocol.image() | {:error, String.t()}
   def compress(%{type: :image} = _content, _opts \\ []) do
     {:error, "Image compression not implemented - requires image processing library"}

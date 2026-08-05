@@ -4,7 +4,7 @@ defmodule ExMCP.Server.StructuredOutputTest do
 
   Ported off the deprecated `ExMCP.Server.Tools` DSL onto
   `ExMCP.Server.Handler` + `ExMCP.Server.DSL` (audit L11) so that nothing here
-  blocks the 1.1.0 removal of `ExMCP.Server.Tools`. The deprecated DSL keeps its
+  blocks the 2.0.0 removal of `ExMCP.Server.Tools`. The deprecated DSL keeps its
   own dedicated coverage in `test/ex_mcp/server/tools_test.exs`.
 
   Note the field name: the spec field is `structuredContent`. `structuredOutput`

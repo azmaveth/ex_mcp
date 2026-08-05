@@ -218,7 +218,7 @@ defmodule ExMCP.MixProject do
           ExMCP.ACP.Adapters.Codex,
           ExMCP.ACP.Adapters.Pi
         ],
-        "Deprecated (remove in 1.1)": [
+        "Deprecated (planned removal in 2.0)": [
           ExMCP.Server.Tools,
           ExMCP.Server.Tools.Simplified,
           ExMCP.Server.Tools.Builder,

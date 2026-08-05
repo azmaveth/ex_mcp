@@ -118,8 +118,8 @@ tests, tooling). Behavior changes are listed under **Breaking Changes** below.
 - **Server transports may return `{:ok, state, response}`** — The `ExMCP.Transport` behaviour's `send_message/2` type was widened to admit the 3-tuple the HTTP transport already returned (a widening; existing implementations still conform).
 
 ### Deprecated
-- **`ExMCP.Server.Tools` API** — `ExMCP.Server.Tools`, `ExMCP.Server.Tools.Simplified`, and companion modules (`Builder`, `Helpers`, `Registry`, `ResponseNormalizer`, `ASTValidator`) are deprecated and will be **removed in 1.1.0**. `use ExMCP.Server.Tools` and `use ExMCP.Server.Tools.Simplified` emit compile-time warnings. Migrate to `ExMCP.Server.Handler` + `ExMCP.Server.DSL` (see the DSL guide and migration guide).
-- **Image processing stubs** — Compress/resize/thumbnail/encoding conversion helpers under `ExMCP.Content.Transformer`, `ExMCP.Content.Builders`, and related Validation pipelines are deprecated for **removal in 1.1.0**. They were never required by MCP/ACP (which only define **image content blocks**: base64 + MIME). Use `ExMCP.Content.image/2` for protocol content; do image processing in the application if needed.
+- **`ExMCP.Server.Tools` API** — `ExMCP.Server.Tools`, `ExMCP.Server.Tools.Simplified`, and companion modules (`Builder`, `Helpers`, `Registry`, `ResponseNormalizer`, `ASTValidator`) are deprecated, retained throughout 1.x, and planned for **removal in 2.0.0**. `use ExMCP.Server.Tools` and `use ExMCP.Server.Tools.Simplified` emit compile-time warnings. Migrate to `ExMCP.Server.Handler` + `ExMCP.Server.DSL` (see the DSL guide and migration guide).
+- **Image processing stubs** — Compress/resize/thumbnail/encoding conversion helpers under `ExMCP.Content.Transformer`, `ExMCP.Content.Builders`, and related Validation pipelines are deprecated for **removal in 2.0.0**. They were never required by MCP/ACP (which only define **image content blocks**: base64 + MIME). Use `ExMCP.Content.image/2` for protocol content; do image processing in the application if needed.
 - **`remove_metadata` / face-color analysis stubs** — Same deprecation class; not protocol features.
 
 ### Improved

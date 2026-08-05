@@ -225,7 +225,7 @@ For a hand-written handler without the DSL:
 ## Deprecated: `ExMCP.Server.Tools`
 
 `ExMCP.Server.Tools` and `ExMCP.Server.Tools.Simplified` are **deprecated** and
-will be **removed in 1.1.0**. They only covered tools (not resources/prompts)
+will be retained throughout 1.x, with removal planned for **2.0.0**. They only covered tools (not resources/prompts)
 and overlapped with this DSL.
 
 | Old (`Server.Tools`) | New (`Server.DSL`) |

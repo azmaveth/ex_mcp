@@ -28,7 +28,7 @@ defmodule ExMCP do
   - `ExMCP.HttpPlug` - Phoenix/Plug MCP endpoint
   - `ExMCP.Error` / `ExMCP.Response` - Error and response helpers
 
-  ### Deprecated (removed in 1.1.0)
+  ### Deprecated (retained through 1.x; planned for removal in 2.0.0)
   - `ExMCP.Server.Tools` and related modules — use `ExMCP.Server.DSL`
 
   > #### Internal Modules {: .warning}

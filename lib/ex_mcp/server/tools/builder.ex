@@ -4,7 +4,7 @@ defmodule ExMCP.Server.Tools.Builder do
 
   > #### Deprecated {: .warning}
   >
-  > Part of the deprecated `ExMCP.Server.Tools` API. **Removed in 1.1.0.**
+  > Part of the deprecated `ExMCP.Server.Tools` API. **Planned for removal in 2.0.0.**
   > Use `ExMCP.Server.DSL` instead.
 
   Instead of heavy AST manipulation, this module uses a cleaner builder pattern

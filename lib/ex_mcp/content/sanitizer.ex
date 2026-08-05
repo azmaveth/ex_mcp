@@ -19,7 +19,7 @@ defmodule ExMCP.Content.Sanitizer do
 
   - `:remove_metadata` / `remove_metadata/1` — EXIF stripping was never implemented;
     not required by MCP. Prefer app-level media pipelines if needed.
-  - `:compress_media` — no-op stub; will be removed in 1.1.0
+  - `:compress_media` — no-op stub; planned for removal in 2.0.0
   """
 
   alias ExMCP.Content.Protocol
@@ -107,9 +107,9 @@ defmodule ExMCP.Content.Sanitizer do
   > #### Deprecated {: .warning}
   > Never implemented for real EXIF stripping. Not required by MCP/ACP.
   > Returns content unchanged (or clears a `:metadata` key when present).
-  > Removed in 1.1.0.
+  > Planned for removal in 2.0.0.
   """
-  @deprecated "Not implemented for EXIF; not an MCP requirement. Removed in 1.1.0."
+  @deprecated "Not implemented for EXIF; not an MCP requirement. Planned for removal in 2.0.0."
   @spec remove_metadata(Protocol.content()) :: Protocol.content()
   def remove_metadata(%{metadata: _} = content), do: Map.put(content, :metadata, %{})
   def remove_metadata(content), do: content

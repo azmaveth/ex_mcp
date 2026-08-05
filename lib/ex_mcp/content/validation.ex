@@ -15,7 +15,7 @@ defmodule ExMCP.Content.Validation do
   - **Security scanning**: best-effort pattern checks
 
   Image **processing** (compress/resize/thumbnail/face detection) is **not** part
-  of MCP/ACP and is deprecated for removal in 1.1.0. Use `ExMCP.Content.image/2`
+  of MCP/ACP and is deprecated for removal in 2.0.0. Use `ExMCP.Content.image/2`
   to build protocol image blocks only.
 
   ## Usage
