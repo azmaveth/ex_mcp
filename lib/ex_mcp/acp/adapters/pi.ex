@@ -444,11 +444,20 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {lines, remaining} = split_lines(buffer)
     state = %{state | buffer: remaining}
 
-    Enum.reduce(lines, {:skip, state}, fn line, {_result, acc} ->
-      line
-      |> translate_inbound_or_prelude(acc)
-      |> normalize_managed_inbound(port)
-    end)
+    {messages, state} =
+      Enum.reduce(lines, {[], state}, fn line, {messages, acc} ->
+        case line
+             |> translate_inbound_or_prelude(acc)
+             |> normalize_managed_inbound(port) do
+          {:skip, state} -> {messages, state}
+          {:messages, emitted, state} -> {Enum.reverse(emitted, messages), state}
+        end
+      end)
+
+    case messages do
+      [] -> {:skip, state}
+      messages -> {:messages, Enum.reverse(messages), state}
+    end
   end
 
   def handle_adapter_message({port, {:exit_status, code}}, %{port: port} = state) do
@@ -584,8 +593,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp deliver_messages_and_config_result(messages, data, state) do
     case write_managed(data, state) do
       :ok ->
-        {:messages_and_reply, messages, %{"configOptions" => config_options_for_state(state)},
-         state}
+        {:messages_and_reply, messages,
+         %{"configOptions" => confirmation_config_options_for_state(state)}, state}
 
       {:error, reason} ->
         {:error, inspect(reason), state}
@@ -1894,6 +1903,18 @@ defmodule ExMCP.ACP.Adapters.Pi do
     }
 
     session_config_options(models, modes)
+  end
+
+  # Model catalogs are advertised by session/new and config-option updates.
+  # A synchronous set_config_option result only needs to confirm currentValue;
+  # repeating Pi's full multi-provider catalog can exceed bounded ACP clients.
+  defp confirmation_config_options_for_state(state) do
+    state
+    |> config_options_for_state()
+    |> Enum.map(fn
+      %{"id" => @model_config_id} = option -> Map.delete(option, "options")
+      option -> option
+    end)
   end
 
   defp config_options_update(session_id, state) do

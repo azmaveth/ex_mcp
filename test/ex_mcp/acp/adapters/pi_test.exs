@@ -565,6 +565,57 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert option["currentValue"] == "test/beta"
     end
 
+    test "managed model confirmation does not repeat the full model catalog", %{state: state} do
+      executable = System.find_executable("elixir")
+
+      port =
+        Port.open({:spawn_executable, executable}, [
+          :binary,
+          args: ["-e", "Process.sleep(:infinity)"]
+        ])
+
+      on_exit(fn ->
+        if Port.info(port), do: Port.close(port)
+      end)
+
+      available_models =
+        Enum.map(1..300, fn index ->
+          %{
+            "modelId" => "test/model-#{index}",
+            "name" => "test/Model #{index}",
+            "description" => String.duplicate("catalog entry ", 20)
+          }
+        end)
+
+      state = %{
+        state
+        | managed?: true,
+          port: port,
+          session_id: "s1",
+          available_models: available_models,
+          current_model_id: "test/model-1"
+      }
+
+      msg = %{
+        "method" => "session/set_config_option",
+        "params" => %{"configId" => "model", "value" => "test/model-300"}
+      }
+
+      assert {:messages_and_reply, [update], %{"configOptions" => confirmation}, new_state} =
+               Pi.translate_outbound(msg, state)
+
+      confirmed_model = Enum.find(confirmation, &(&1["id"] == "model"))
+      assert confirmed_model["currentValue"] == "test/model-300"
+      refute Map.has_key?(confirmed_model, "options")
+
+      advertised_model =
+        update["params"]["update"]["configOptions"]
+        |> Enum.find(&(&1["id"] == "model"))
+
+      assert length(advertised_model["options"]) == 300
+      assert new_state.current_model_id == "test/model-300"
+    end
+
     test "thought_level config option routes to set_thinking_level and emits sync updates", %{
       state: state
     } do
@@ -788,6 +839,47 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       update = notification["params"]["update"]
       assert update["sessionUpdate"] == "agent_thought_chunk"
       assert update["content"] == %{"type" => "text", "text" => "Let me think..."}
+    end
+  end
+
+  describe "handle_adapter_message/2 — batched events" do
+    test "preserves every message when Pi emits multiple events in one port chunk", %{
+      state: state
+    } do
+      events = [
+        %{
+          "type" => "message_update",
+          "assistantMessageEvent" => %{"type" => "thinking_start", "contentIndex" => 0}
+        },
+        %{
+          "type" => "message_update",
+          "assistantMessageEvent" => %{
+            "type" => "thinking_delta",
+            "contentIndex" => 0,
+            "delta" => "Let"
+          }
+        },
+        %{
+          "type" => "message_update",
+          "assistantMessageEvent" => %{
+            "type" => "thinking_delta",
+            "contentIndex" => 0,
+            "delta" => " me"
+          }
+        }
+      ]
+
+      data = Enum.map_join(events, "\n", &Jason.encode!/1) <> "\n"
+      state = %{state | port: :pi_port}
+
+      assert {:messages, [first, second], new_state} =
+               Pi.handle_adapter_message({:pi_port, {:data, data}}, state)
+
+      assert first["params"]["update"]["sessionUpdate"] == "agent_thought_chunk"
+      assert first["params"]["update"]["content"]["text"] == "Let"
+      assert second["params"]["update"]["sessionUpdate"] == "agent_thought_chunk"
+      assert second["params"]["update"]["content"]["text"] == " me"
+      assert new_state.buffer == ""
     end
   end
 
