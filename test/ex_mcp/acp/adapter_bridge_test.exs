@@ -1,5 +1,6 @@
 defmodule ExMCP.ACP.AdapterBridgeTest do
-  use ExUnit.Case, async: true
+  # The subprocess environment regression test mutates the process-global OS env.
+  use ExUnit.Case, async: false
 
   alias ExMCP.ACP.AdapterBridge
   alias ExMCP.ACP.AdapterBridge.PortRunner
@@ -144,6 +145,50 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     assert env["CUSTOM_UNSET"] == false
   end
 
+  test "security regression: isolated adapter subprocess excludes ambient secrets" do
+    sentinel = "EX_MCP_SECURITY_REGRESSION_AMBIENT_SECRET"
+    explicit = "EX_MCP_SECURITY_REGRESSION_EXPLICIT"
+    previous = System.get_env(sentinel)
+
+    System.put_env(sentinel, "must-not-reach-child")
+
+    on_exit(fn ->
+      if previous do
+        System.put_env(sentinel, previous)
+      else
+        System.delete_env(sentinel)
+      end
+    end)
+
+    script = """
+    IO.puts("ambient=" <> inspect(System.get_env(#{inspect(sentinel)})))
+    IO.puts("explicit=" <> inspect(System.get_env(#{inspect(explicit)})))
+    IO.puts("path_present=" <> inspect(is_binary(System.get_env("PATH"))))
+    IO.puts("home_present=" <> inspect(is_binary(System.get_env("HOME"))))
+    """
+
+    assert {:ok, port} =
+             PortRunner.open(
+               System.find_executable("elixir"),
+               ["-e", script],
+               [env: [{explicit, "explicit-value"}]],
+               MockAdapter
+             )
+
+    output = collect_port_output(port)
+
+    assert output =~ "ambient=nil"
+    assert output =~ ~s(explicit="explicit-value")
+    assert output =~ "path_present=true"
+    assert output =~ "home_present=true"
+    refute output =~ "must-not-reach-child"
+  end
+
+  test "isolated adapter subprocess policy rejects unknown modes" do
+    assert {:error, {:invalid_environment_policy, :unknown}} =
+             PortRunner.open("elixir", [], [environment_policy: :unknown], MockAdapter)
+  end
+
   defmodule ManagedMockAdapter do
     @behaviour ExMCP.ACP.Adapter
 
@@ -185,6 +230,22 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def shutdown(state) do
       send(state.test_pid, :managed_shutdown)
       %{state | shutdown?: true}
+    end
+  end
+
+  defp collect_port_output(port, output \\ "") do
+    receive do
+      {^port, {:data, data}} ->
+        collect_port_output(port, output <> data)
+
+      {^port, {:exit_status, 0}} ->
+        output
+
+      {^port, {:exit_status, status}} ->
+        flunk("environment probe exited with status #{status}: #{output}")
+    after
+      10_000 ->
+        flunk("timed out waiting for environment probe: #{output}")
     end
   end
 

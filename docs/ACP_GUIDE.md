@@ -154,6 +154,18 @@ session setup, model/mode config, and richer status updates.
 | `:protocol_version` | `1` | ACP major protocol version (integer). Matches upstream [v1](https://agentclientprotocol.com/protocol/v1/overview); non-breaking features use capability negotiation. |
 | `:name` | `nil` | GenServer name registration |
 
+### Adapter Subprocess Environment
+
+Adapted agents start with an isolated environment by default. ExMCP clears the
+parent environment, retains only a small runtime baseline such as `PATH`,
+`HOME`, temporary-directory, locale, and TLS certificate settings, then applies
+the adapter's declared environment and `adapter_opts[:env]`. Pass credentials
+and provider settings explicitly through `adapter_opts[:env]`.
+
+For compatibility with a CLI that genuinely requires the complete parent
+environment, set `adapter_opts: [environment_policy: :inherit]`. This weakens
+subprocess isolation and should be used only at a trusted integration boundary.
+
 ## Session Lifecycle
 
 ACP sessions represent ongoing conversations with an agent.

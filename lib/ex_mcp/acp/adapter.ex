@@ -133,8 +133,11 @@ defmodule ExMCP.ACP.Adapter do
   Return environment variables for the child process.
 
   Values are merged with `adapter_opts[:env]`, with explicit adapter options
-  taking precedence. The bridge still clears known session-secret variables
-  before applying this environment.
+  taking precedence. Adapter subprocesses use an isolated environment by
+  default: the bridge clears the parent environment, retains a small runtime
+  baseline, and then applies these explicit values. Set
+  `adapter_opts[:environment_policy]` to `:inherit` only when compatibility
+  requires the subprocess to receive the full parent environment.
 
   Optional — defaults to an empty map.
   """

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Adapter subprocesses now use a closed environment by default: inherited
+  variables are cleared before a minimal runtime baseline and explicit adapter
+  values are restored. Callers that require the legacy behavior can opt into
+  `adapter_opts[:environment_policy] == :inherit`.
+
 ## [1.0.0] - Unreleased
 
 Stable 1.0 will preserve the behavior of the final modern-preferred release
