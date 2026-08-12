@@ -196,7 +196,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
     def handle_complete(ref, params, state) do
       # Extract _meta from params
       {meta, _params} = Map.pop(params, "_meta")
-      state = store_received_meta(state, "complete:#{ref}", meta)
+      state = store_received_meta(state, "complete:#{inspect(ref)}", meta)
 
       if meta && meta["progressToken"] do
         # Simulate streaming completion with progress
@@ -218,7 +218,7 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
               role: "assistant",
               content: %{
                 type: "text",
-                text: "Completed response for #{ref}"
+                text: "Completed response for #{inspect(ref)}"
               }
             }
           }
@@ -419,10 +419,8 @@ defmodule ExMCP.ProgressMetaComprehensiveTest do
       result =
         Client.complete(
           client,
-          "test-ref",
-          %{
-            "messages" => [%{"role" => "user", "content" => "Test"}]
-          },
+          %{"type" => "ref/prompt", "name" => "test_prompt"},
+          %{"name" => "topic", "value" => "Test"},
           meta: %{"progressToken" => token}
         )
 

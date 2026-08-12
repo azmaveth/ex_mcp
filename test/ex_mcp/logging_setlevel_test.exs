@@ -8,6 +8,7 @@ defmodule ExMCP.LoggingSetLevelTest do
   @moduletag :logging
 
   alias ExMCP.Client
+  alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Server.HandlerServer, as: Server
 
   defmodule TestHandler do
@@ -88,7 +89,8 @@ defmodule ExMCP.LoggingSetLevelTest do
 
     test "returns error for invalid log level", %{client: client} do
       assert {:error, error} = Client.set_log_level(client, "verbose")
-      assert error.message =~ "Invalid log level: verbose"
+      assert error.code == ErrorCodes.invalid_params()
+      assert error.message == "Invalid parameters"
     end
   end
 

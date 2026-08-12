@@ -220,8 +220,6 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
   defp error_class({kind, reason, _stack}) when kind in [:error, :exit, :throw],
     do: {kind, exception_module(reason)}
 
-  defp error_class(_reason), do: :handler_error
-
   defp exception_module(%{__struct__: module}) when is_atom(module), do: module
   defp exception_module(_reason), do: :non_exception
 end

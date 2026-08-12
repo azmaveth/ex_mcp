@@ -1116,6 +1116,9 @@ defmodule ExMCP.HttpPlug do
       {:error, :scope_policy_missing} ->
         scope_policy_error_response(conn, opts)
 
+      {:error, :invalid_mrtr_identity} ->
+        invalid_mrtr_identity_response(conn, opts)
+
       {:error, reason} when reason in [:session_not_found, :session_identity_mismatch] ->
         reject_unknown_session(conn, opts)
 
@@ -1447,6 +1450,9 @@ defmodule ExMCP.HttpPlug do
         |> maybe_add_cors_headers(opts)
         |> put_resp_content_type("application/json")
         |> send_resp(500, Jason.encode!(Core.oauth_guard_disabled_error()))
+
+      {:error, :invalid_mrtr_identity} ->
+        invalid_mrtr_identity_response(conn, opts)
 
       {:error, reason} when reason in [:session_not_found, :session_identity_mismatch] ->
         reject_unknown_session(conn, opts)
@@ -1798,6 +1804,15 @@ defmodule ExMCP.HttpPlug do
     |> maybe_add_cors_headers(opts)
     |> put_resp_content_type("application/json")
     |> send_resp(503, Jason.encode!(error_response))
+  end
+
+  defp invalid_mrtr_identity_response(conn, opts) do
+    error_response = JSONRPC.error(nil, ErrorCodes.internal_error(), "Internal error")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_content_type("application/json")
+    |> send_resp(500, Jason.encode!(error_response))
   end
 
   defp session_limit_response(conn, opts) do

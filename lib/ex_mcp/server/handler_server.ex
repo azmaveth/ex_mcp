@@ -57,7 +57,11 @@ defmodule ExMCP.Server.HandlerServer do
           transport: any(),
           transport_state: any(),
           protocol_version: String.t() | nil,
-          validation_state: MessageValidator.session_state(),
+          validation_state: %{
+            seen_request_ids: MapSet.t(String.t() | integer()),
+            max_request_ids: pos_integer(),
+            protocol_version: String.t() | nil
+          },
           protocol_mode: ExMCP.Types.protocol_mode() | nil,
           connection_era: :legacy | :modern | nil,
           instructions: String.t() | nil,

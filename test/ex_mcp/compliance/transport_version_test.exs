@@ -214,19 +214,20 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       # Trap exits in case HTTP connection fails asynchronously
       Process.flag(:trap_exit, true)
 
-      session_id = "session-" <> (System.unique_integer() |> Integer.to_string())
-
       {:ok, client} =
         Client.start_link(
           transport: :http,
           url: base_url,
           use_sse: false,
-          session_id: session_id,
           protocol_mode: :legacy_only
         )
 
-      # Check the initial transport state
+      # Session IDs are issued by the server during initialization. Clients
+      # must not invent an ID for a new session.
       transport_state = :sys.get_state(client).transport_state
+      session_id = transport_state.session_id
+      assert is_binary(session_id)
+      assert session_id != ""
       assert transport_state.session_id == session_id
 
       # Make a call to the server
@@ -260,7 +261,6 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       Process.flag(:trap_exit, true)
 
       version = "2025-06-18"
-      session_id = "sse-session-1"
 
       {:ok, client} =
         Client.start_link(
@@ -268,7 +268,6 @@ defmodule ExMCP.Compliance.TransportVersionTest do
           url: base_url,
           protocol_version: version,
           protocol_mode: :legacy_only,
-          session_id: session_id,
           use_sse: true
         )
 
@@ -280,7 +279,8 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       transport_state = :sys.get_state(client).transport_state
       assert transport_state.protocol_version == version
       assert transport_state.use_sse == true
-      assert transport_state.session_id == session_id
+      assert is_binary(transport_state.session_id)
+      assert transport_state.session_id != ""
 
       Client.stop(client)
     end

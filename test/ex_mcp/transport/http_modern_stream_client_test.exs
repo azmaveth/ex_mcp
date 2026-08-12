@@ -159,7 +159,10 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClientTest do
       headers: [{"accept", "application/json, text/event-stream"}],
       body: "{}",
       http_options: [connect_timeout: 500],
-      handshake_timeout: 500,
+      # Bypass can take longer to schedule while the integration suite is
+      # running at full CI concurrency. Keep this comfortably above the
+      # consumer-ack deadlines exercised by these tests.
+      handshake_timeout: 5_000,
       idle_timeout: 1_000,
       max_response_bytes: 1_024,
       max_buffer_bytes: 1_024

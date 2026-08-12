@@ -125,7 +125,10 @@ defmodule ExMCP.Transport.SSEClientSecurityTest do
       url: "http://127.0.0.1:#{bypass.port}/mcp",
       parent: self(),
       connect_timeout: 500,
-      handshake_timeout: 500,
+      # Bypass can take longer to schedule while the unit suite is running at
+      # full CI concurrency. Deadline behavior is covered above with an
+      # explicit 30 ms override.
+      handshake_timeout: 5_000,
       idle_timeout: 1_000,
       max_response_bytes: 1_024,
       max_buffer_bytes: 1_024
