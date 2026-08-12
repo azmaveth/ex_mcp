@@ -1,7 +1,7 @@
 # ExMCP 1.0.0-rc.7
 
 `1.0.0-rc.7` is the modern-preferred soak candidate that follows published
-`1.0.0-rc.6`. It keeps the dual-era MCP 2026-07-28 default while packaging the
+`1.0.0-rc.7`. It keeps the dual-era MCP 2026-07-28 default while packaging the
 post-rc.6 transport lifecycle, ACP, and security hardening that cannot promote
 directly from rc.6 to stable 1.0.
 
@@ -20,7 +20,7 @@ directly from rc.6 to stable 1.0.
   sessions and strict schema/privacy behavior.
 
 `:prefer_modern` remains the application default. `:legacy_only` preserves the
-exact rc.5 connection and wire policy. See the
+legacy protocol era connection policy (rc.7 still enforces server-issued sessions and newer lifecycle/security rules). See the
 [migration guide](getting-started/MIGRATION.md) for rollout steps and the
 [API diff](API_DIFF_RC5_TO_1_0.md) for the public compatibility audit, including
 the rc.7 delta note.
@@ -41,7 +41,7 @@ Pin the rollout policy when it must not change with a package upgrade:
 
 ```elixir
 config :ex_mcp, protocol_mode: :prefer_modern
-# Emergency rollback / exact rc.5 wire path:
+# Emergency rollback / legacy protocol era (not an exact rc.5 package rollback):
 # config :ex_mcp, protocol_mode: :legacy_only
 ```
 
@@ -123,3 +123,26 @@ Any wire-design, public-API, or documented lifecycle change requires another
 RC and restarts the soak. Current `master` packaged as rc.7 meets that
 condition because of the legacy SSE persistence/disconnect-lifecycle fix and
 the 2026-08-12 security harden described above.
+
+## Post-merge publish checklist
+
+1. Confirm CI green on the release commit, including the MCP conformance artifact and ACP 1.3.0 interop job.
+2. Tag `v1.0.0-rc.7` at that commit.
+3. Create a GitHub **prerelease** for `v1.0.0-rc.7` (prerelease checkbox on) with notes pointing at this document and `CHANGELOG.md`.
+4. `mix hex.publish`
+5. Start the ≥7-day modern-preferred soak.
+6. Complete the mixed-version cluster rollback drill before stable `1.0.0`.
+
+## rc.5 performance comparison
+
+Record the rc.5 baseline comparison before promoting any later stable candidate:
+
+```bash
+# On the same runner class used for CI performance gates:
+mix test.suite performance
+```
+
+Compare median runtime and retained memory for shared legacy workloads against the
+rc.5 baseline on that runner (rc.7 gate: no unexplained breach; shared legacy
+workloads may not regress more than 20% median runtime or 10% retained memory).
+Store the runner identity, commit SHAs, and raw outputs with the release evidence.
