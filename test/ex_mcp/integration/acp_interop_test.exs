@@ -15,6 +15,7 @@ defmodule ExMCP.Integration.ACPInteropTest do
   alias ExMCP.ACP.Client
 
   @moduletag :interop
+  @moduletag :interop_acp
   @moduletag :integration
   @moduletag timeout: 60_000
 
