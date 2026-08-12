@@ -1188,13 +1188,13 @@ defmodule ExMCP.HttpPlug do
 
     receive do
       {:DOWN, ^ref, :process, ^handler, reason} ->
-        # Clean up the session registry when handler exits
-        cleanup_sse_handler(session_id)
+        # A disconnected GET stream does not terminate its MCP session. Keep
+        # subscriptions and persisted events until explicit DELETE or TTL
+        # cleanup so Last-Event-ID can resume the stream. Scoped cleanup avoids
+        # removing a newer handler that superseded this one while it exited.
+        cleanup_sse_handler(session_id, handler)
 
-        # Terminate session in SessionManager if it was a clean shutdown
-        if reason == :normal do
-          session_manager.terminate_session(session_id)
-        end
+        Logger.debug("Legacy SSE handler exited for session #{session_id}: #{inspect(reason)}")
 
         conn
     end
@@ -1597,6 +1597,12 @@ defmodule ExMCP.HttpPlug do
 
   # Register SSE handler for a session
   defp register_sse_handler(session_id, handler_pid, session_manager) do
+    previous_handler =
+      case SessionRegistry.lookup(session_id) do
+        {:ok, previous} when previous != handler_pid -> previous
+        _other -> nil
+      end
+
     case SessionRegistry.register(session_id, handler_pid) do
       :ok ->
         :ok
@@ -1612,6 +1618,23 @@ defmodule ExMCP.HttpPlug do
     if function_exported?(session_manager, :update_session, 2) do
       session_manager.update_session(session_id, %{handler_pid: handler_pid})
     end
+
+    # Only one standalone GET stream owns a legacy session. Register the new
+    # handler first so the old handler's scoped terminate cleanup cannot erase
+    # it, then close the superseded stream.
+    if is_pid(previous_handler) and Process.alive?(previous_handler) do
+      SSEHandler.close(previous_handler)
+    end
+
+    case SSEHandler.replay(handler_pid) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to replay legacy SSE events for session #{session_id}: #{inspect(reason)}"
+        )
+    end
   end
 
   # Look up SSE handler for a session
@@ -1624,8 +1647,9 @@ defmodule ExMCP.HttpPlug do
 
   Subscription lookup is performed directly against ETS, and delivery uses
   independent tasks so backpressure from one client does not block the rest.
-  Sessions without a live SSE connection remain subscribed for reconnection
-  and are removed by `ExMCP.SessionManager` when they expire.
+  The event is persisted before live delivery; sessions without a live SSE
+  connection remain subscribed and receive it through Last-Event-ID replay
+  after reconnecting. Expired sessions are removed by `ExMCP.SessionManager`.
   """
   @spec broadcast_resource_update(String.t()) :: %{
           subscribers: non_neg_integer(),
@@ -1653,18 +1677,37 @@ defmodule ExMCP.HttpPlug do
       "params" => %{"uri" => uri}
     }
 
+    # Append independently of the connection so notifications published during
+    # a reconnect gap are available to Last-Event-ID replay.
+    case ExMCP.SessionManager.append_event(session_id, "message", notification) do
+      {:ok, event} ->
+        deliver_persisted_resource_update(session_id, notification, event.id)
+
+      {:error, _reason} ->
+        :not_delivered
+    end
+  end
+
+  defp deliver_persisted_resource_update(session_id, notification, event_id) do
     with {:ok, handler} <- lookup_sse_handler(session_id),
          true <- Process.alive?(handler),
          :ok <- SSEHandler.request_send(handler) do
-      SSEHandler.send_event(handler, "message", notification)
+      SSEHandler.send_event(handler, "message", notification,
+        event_id: event_id,
+        persist: false
+      )
     else
-      _not_connected -> :not_delivered
+      _not_connected -> :stored
     end
   end
 
   # Clean up SSE handler registration
   defp cleanup_sse_handler(session_id) do
     SessionRegistry.unregister(session_id)
+  end
+
+  defp cleanup_sse_handler(session_id, handler_pid) do
+    SessionRegistry.unregister(session_id, handler_pid)
   end
 
   # Generate a simple session ID

@@ -6,6 +6,9 @@
 **Companion doc:** [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md) — the 1.0 modern-protocol work this unblocks
 **Last updated:** 2026-08-04
 
+> **Historical plan:** This document records completed rc.5 work. The current
+> major-version plan is [`V2_ROADMAP.md`](./V2_ROADMAP.md).
+
 ---
 
 ## 1. Purpose and the hard constraint

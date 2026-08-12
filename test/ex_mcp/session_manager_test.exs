@@ -91,6 +91,23 @@ defmodule ExMCP.SessionManagerTest do
   end
 
   describe "event storage and replay" do
+    test "append_event assigns monotonic store-owned IDs", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
+
+      assert {:ok, first} =
+               GenServer.call(name, {:append_event, session_id, "message", %{index: 1}})
+
+      assert {:ok, second} =
+               GenServer.call(name, {:append_event, session_id, "message", %{index: 2}})
+
+      assert first.id != second.id
+      assert first.id == "1-0"
+      assert second.id == "2-0"
+
+      assert [^second] =
+               GenServer.call(name, {:replay_events_after, session_id, first.id})
+    end
+
     test "stores events for sessions", %{session_manager_name: name} do
       session_id = GenServer.call(name, {:create_session, %{transport: :sse}})
 
@@ -244,7 +261,7 @@ defmodule ExMCP.SessionManagerTest do
 
       # Verify the handler received the event
       assert_receive {:received_event, "notification", %{message: "Hello"},
-                      [event_id: "event-1"]},
+                      [event_id: "event-1", persist: false]},
                      1000
     end
 
@@ -329,30 +346,18 @@ defmodule ExMCP.SessionManagerTest do
 
       session_id = GenServer.call(manager, {:create_session, %{transport: :sse}})
 
-      # Store more events than the limit
-      events = [
-        %{
-          id: "event-1",
-          session_id: session_id,
-          type: "notification",
-          data: %{message: "First"},
-          timestamp: System.system_time(:microsecond)
-        },
-        %{
-          id: "event-2",
-          session_id: session_id,
-          type: "notification",
-          data: %{message: "Second"},
-          timestamp: System.system_time(:microsecond) + 1000
-        },
-        %{
-          id: "event-3",
-          session_id: session_id,
-          type: "notification",
-          data: %{message: "Third"},
-          timestamp: System.system_time(:microsecond) + 2000
-        }
-      ]
+      # Store enough events to catch counters that repeatedly over-trim after
+      # the first eviction.
+      events =
+        for i <- 1..5 do
+          %{
+            id: "event-#{i}",
+            session_id: session_id,
+            type: "notification",
+            data: %{message: "event-#{i}"},
+            timestamp: System.system_time(:microsecond) + i * 1000
+          }
+        end
 
       Enum.each(events, &GenServer.call(manager, {:store_event, session_id, &1}))
 
@@ -361,7 +366,7 @@ defmodule ExMCP.SessionManagerTest do
       assert length(replayed_events) == 2
 
       messages = Enum.map(replayed_events, & &1.data.message)
-      assert messages == ["Second", "Third"]
+      assert messages == ["event-4", "event-5"]
 
       GenServer.stop(manager)
     end

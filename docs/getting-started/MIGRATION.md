@@ -6,6 +6,7 @@ This guide helps you upgrade your ExMCP applications between versions. Each sect
 
 - [Upgrading from rc.5 / legacy MCP to the 1.0 dual-era release](#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release)
 - [Deprecations toward 2.0.0](#deprecations-toward-200)
+- [Planning for ExMCP 2.0](#planning-for-exmcp-20)
 - [Upgrading to v0.6.0 from v0.5.x](#upgrading-to-v060-from-v05x)
 - [Upgrading to v0.5.0 from v0.4.x](#upgrading-to-v050-from-v04x)
 - [General Migration Tips](#general-migration-tips)
@@ -108,6 +109,13 @@ disabled by default, and available during 1.x only with
 `legacy_http_sse: true`. A dual-era protocol mode does not enable it, and
 `:modern_only` never exposes it.
 
+Beginning with the post-rc.6 release candidate, legacy SSE events are persisted
+before delivery. An ordinary GET-stream disconnect retains the MCP session,
+subscriptions, and bounded replay history until explicit DELETE or TTL expiry.
+A reconnect using the same session and `Last-Event-ID` receives events
+published during the connection gap. Deployments should therefore size the
+session TTL and replay bound rather than relying on disconnect to delete state.
+
 See the [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) for
 the complete option reference and the
 [Transport Guide](../TRANSPORT_GUIDE.md#streamable-http) for HTTP
@@ -154,6 +162,19 @@ Notes:
 - Prefer `run` over `handle` for tool bodies.
 - DSL modules get `start_link/1` and can declare resources and prompts too.
 - See [DSL_GUIDE.md](../DSL_GUIDE.md) for param types, results, and compile-time checks.
+
+## Planning for ExMCP 2.0
+
+The [ExMCP 2.0 roadmap](../V2_ROADMAP.md) is the canonical plan for public API
+removals, per-server runtime ownership, bounded handler scheduling, replaceable
+state/replay stores, and API consolidation. It also records which ideas are
+eligible for behavior-preserving 1.x backports.
+
+An unchanged function signature is not the complete compatibility test for a
+backport. Wire output and ordering, callback process identity, links,
+cancellation, state ordering, supervision names, defaults, and documented side
+effects are part of the 1.x contract too. Lifecycle and ownership changes stay
+in 2.0 even when they could be hidden behind existing arities.
 
 ## Upgrading to v0.6.0 from v0.5.x
 
@@ -361,7 +382,7 @@ If you encounter issues during migration:
 
 ## Version Support
 
-- **v1.0.0-rc.6 and upcoming stable 1.0.0**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**
+- **v1.0.0-rc.6 and the post-rc.6 candidate line**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**. Stable 1.0 follows only after the final candidate's soak and rollback gates.
 - **Published v1.0.0-rc.5**: Legacy MCP through 2025-11-25; no modern protocol modes
 - **v0.12.x**: Prior line with MCP 2025-11-25 support and ACP v1 alignment
 - **v0.11.x and earlier**: Upgrade recommended

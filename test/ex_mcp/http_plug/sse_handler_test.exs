@@ -3,6 +3,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
 
   alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEHandler
+  alias ExMCP.SessionManager
 
   # Test double for the SSE socket. A hand-written in-process stub implementing
   # the `ExMCP.HttpPlug.SSEConnection` behaviour — no mocking library needed.
@@ -171,6 +172,53 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
       assert state.last_event_id == nil
 
       SSEHandler.close(handler)
+    end
+
+    test "persists live events and replays gap events on reconnect" do
+      session_id = "replay-#{System.unique_integer([:positive, :monotonic])}"
+      :ok = SessionManager.ensure_session(session_id, %{transport: :sse})
+
+      on_exit(fn ->
+        SessionRegistry.unregister(session_id)
+        SessionManager.terminate_session(session_id)
+      end)
+
+      managed_opts = Map.put(opts(), :session_manager, SessionManager)
+
+      {:ok, first_handler} = SSEHandler.start_link(MockConn.new(), session_id, managed_opts)
+      :ok = SessionRegistry.register(session_id, first_handler)
+
+      assert :ok = SSEHandler.request_send(first_handler)
+      SSEHandler.send_event(first_handler, "message", %{message: "before-gap"})
+      _state = :sys.get_state(first_handler)
+
+      assert [first_event] = SessionManager.replay_events_after(session_id, nil)
+      assert first_event.data == %{message: "before-gap"}
+
+      SSEHandler.close(first_handler)
+
+      assert {:ok, gap_event} =
+               SessionManager.append_event(session_id, "message", %{message: "during-gap"})
+
+      reconnect_conn =
+        MockConn.new(%{"last-event-id" => [first_event.id]})
+
+      {:ok, second_handler} = SSEHandler.start_link(reconnect_conn, session_id, managed_opts)
+      :ok = SessionRegistry.register(session_id, second_handler)
+      assert :ok = SSEHandler.replay(second_handler)
+
+      chunks = :sys.get_state(second_handler).conn.chunks
+      replayed_chunk = List.last(chunks)
+
+      assert replayed_chunk =~ "id: #{gap_event.id}"
+      assert replayed_chunk =~ "event: message"
+      assert replayed_chunk =~ ~s(data: {"message":"during-gap"})
+      refute Enum.any?(chunks, &String.contains?(&1, "before-gap"))
+
+      # Replay delivery must not append a duplicate copy to persistent history.
+      assert [^first_event, ^gap_event] = SessionManager.replay_events_after(session_id, nil)
+
+      SSEHandler.close(second_handler)
     end
   end
 

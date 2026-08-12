@@ -11,6 +11,7 @@ defmodule ExMCP.SessionManagementIntegrationTest do
   use ExUnit.Case, async: false
 
   alias ExMCP.{HttpPlug, SessionManager}
+  alias ExMCP.HttpPlug.{SessionRegistry, SSEHandler}
 
   import Plug.Test
   import Plug.Conn
@@ -225,6 +226,55 @@ defmodule ExMCP.SessionManagementIntegrationTest do
   end
 
   describe "session persistence and replay" do
+    test "a disconnected GET stream retains and replays events published during the gap", %{
+      plug_opts: opts
+    } do
+      stream_opts = Map.put(opts, :sse_mode, :stream)
+
+      first_stream =
+        Task.async(fn ->
+          conn(:get, "/sse")
+          |> put_req_header("accept", "text/event-stream")
+          |> HttpPlug.call(stream_opts)
+        end)
+
+      assert {:ok, session_id, first_handler} = await_stream_registration()
+
+      assert :ok = SSEHandler.request_send(first_handler)
+      SSEHandler.send_event(first_handler, "message", %{message: "before-gap"})
+      _state = :sys.get_state(first_handler)
+
+      assert [first_event] = SessionManager.replay_events_after(session_id, nil)
+
+      SSEHandler.close(first_handler)
+      _conn = Task.await(first_stream, 1_000)
+
+      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+      assert [^first_event] = SessionManager.replay_events_after(session_id, nil)
+
+      assert {:ok, gap_event} =
+               SessionManager.append_event(session_id, "message", %{message: "during-gap"})
+
+      second_stream =
+        Task.async(fn ->
+          conn(:get, "/sse")
+          |> put_req_header("accept", "text/event-stream")
+          |> put_req_header("mcp-session-id", session_id)
+          |> put_req_header("last-event-id", first_event.id)
+          |> HttpPlug.call(stream_opts)
+        end)
+
+      assert {:ok, ^session_id, second_handler} = await_stream_registration(session_id)
+
+      chunks = :sys.get_state(second_handler).conn.adapter |> elem(1) |> Map.fetch!(:chunks)
+      assert chunks =~ "id: #{gap_event.id}"
+      assert chunks =~ ~s(data: {"message":"during-gap"})
+      refute chunks =~ "before-gap"
+
+      SSEHandler.close(second_handler)
+      _conn = Task.await(second_stream, 1_000)
+    end
+
     test "session persists across connections", %{plug_opts: _opts} do
       # Create initial session
       session_id =
@@ -292,6 +342,30 @@ defmodule ExMCP.SessionManagementIntegrationTest do
       assert stats.total_events >= 3
       assert is_integer(stats.memory_usage)
       assert stats.memory_usage > 0
+    end
+  end
+
+  defp await_stream_registration(expected_session_id \\ nil, attempts \\ 100)
+
+  defp await_stream_registration(_expected_session_id, 0), do: {:error, :timeout}
+
+  defp await_stream_registration(expected_session_id, attempts) do
+    result =
+      SessionManager.list_sessions()
+      |> Enum.find_value(fn session ->
+        if is_nil(expected_session_id) or session.id == expected_session_id do
+          case SessionRegistry.lookup(session.id) do
+            {:ok, handler} -> {:ok, session.id, handler}
+            _other -> nil
+          end
+        end
+      end)
+
+    if result do
+      result
+    else
+      Process.sleep(10)
+      await_stream_registration(expected_session_id, attempts - 1)
     end
   end
 end

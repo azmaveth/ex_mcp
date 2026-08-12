@@ -4,6 +4,10 @@ ExMCP is organized around protocol boundaries: clients, servers, transports,
 HTTP Plug integration, ACP, authorization, and internal protocol helpers. Public
 APIs stay small; cross-cutting work is kept at transport or Plug boundaries.
 
+This guide describes the 1.x architecture. The accepted direction for
+per-server runtime ownership, bounded handler scheduling, and replaceable
+state stores is tracked separately in the [ExMCP 2.0 roadmap](./V2_ROADMAP.md).
+
 ## Public Layers
 
 ### MCP Client
@@ -244,3 +248,5 @@ mix mcp.sync_spec --version 2026-07-28 --force  # refresh local docs/mcp-specs
 - Put transport failure handling in client retry/reliability options.
 - Keep pure protocol transformations in functional modules and side effects in
   GenServer, Port, Plug, or filesystem boundaries.
+- Treat the 2.0 target architecture as future work; do not describe planned
+  runtime ownership or scheduler behavior here until it is implemented.

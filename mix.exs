@@ -172,7 +172,8 @@ defmodule ExMCP.MixProject do
       skip_undefined_reference_warnings_on: [
         "CHANGELOG.md",
         "docs/API_DIFF_RC5_TO_1_0.md",
-        "docs/MCP_2026_07_28_MIGRATION_PLAN.md"
+        "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
+        "docs/PRE_2_0_TECH_DEBT_PLAN.md"
       ],
       extras: [
         "README.md",
@@ -187,6 +188,8 @@ defmodule ExMCP.MixProject do
         "docs/DEVELOPMENT.md",
         "docs/TROUBLESHOOTING.md",
         "docs/ACP_GUIDE.md",
+        "docs/V2_ROADMAP.md",
+        "docs/PRE_2_0_TECH_DEBT_PLAN.md",
         "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
         "docs/MCP_COVERAGE_MATRIX.md",
         "docs/RELEASE_1_0_0_RC_6.md",
@@ -199,8 +202,8 @@ defmodule ExMCP.MixProject do
         Introduction: ~r/README/,
         Guides:
           ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|ACP_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
-        "Release references":
-          ~r/MCP_2026_07_28|MCP_COVERAGE_MATRIX|API_DIFF_RC5_TO_1_0|RELEASE_1_0_0_RC_6/,
+        "Planning and release references":
+          ~r/V2_ROADMAP|PRE_2_0|MCP_2026_07_28|MCP_COVERAGE_MATRIX|API_DIFF_RC5_TO_1_0|RELEASE_1_0_0_RC_6/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

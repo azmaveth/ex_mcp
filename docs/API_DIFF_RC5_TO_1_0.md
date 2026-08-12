@@ -6,8 +6,14 @@ This report records the public Elixir API compatibility gate for the MCP
 - baseline: `v1.0.0-rc.5` (`a2464c3423ee48ba825402cc2d17be8042f1451a`);
 - candidate: the `v1.0.0-rc.6` release commit.
 
-The rc.6 package starts the final modern-preferred soak. This report compares
+The rc.6 package started the first modern-preferred soak. This report compares
 the retained rc.5 API surface with the 1.0 candidate, not version strings.
+
+> **Post-rc.6 note (2026-08-11):** Current `main` adds legacy SSE persistence
+> and an additive `ExMCP.SessionManager.append_event/3` entry point. Because the
+> accompanying disconnect-lifecycle behavior requires another RC, this rc.6
+> snapshot remains historical evidence rather than the final stable audit. The
+> API comparison must be regenerated for the next candidate.
 
 ## Method
 

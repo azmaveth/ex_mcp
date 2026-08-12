@@ -78,7 +78,8 @@ defmodule ExMCP.SessionManager do
     :sessions_table,
     :events_table,
     :config,
-    :cleanup_timer
+    :cleanup_timer,
+    event_clock: 0
   ]
 
   @type session_id :: String.t()
@@ -151,6 +152,19 @@ defmodule ExMCP.SessionManager do
   end
 
   @doc """
+  Atomically appends an event using a store-owned, monotonically increasing ID.
+
+  Legacy SSE delivery uses this function before writing to the connection so
+  events remain replayable when the write races a disconnect. The returned
+  event is the public representation retained by the session manager.
+  """
+  @spec append_event(session_id(), String.t(), term()) ::
+          {:ok, event_data()} | {:error, :session_not_found}
+  def append_event(session_id, type, data) when is_binary(session_id) and is_binary(type) do
+    GenServer.call(__MODULE__, {:append_event, session_id, type, data})
+  end
+
+  @doc """
   Replays events for a session after the given event ID.
 
   This is used when legacy clients reconnect with a Last-Event-ID header
@@ -181,7 +195,7 @@ defmodule ExMCP.SessionManager do
             # Use GenServer.cast to send the event to the SSE handler
             GenServer.cast(
               handler_pid,
-              {:send_event, event.type, event.data, [event_id: event.id]}
+              {:send_event, event.type, event.data, [event_id: event.id, persist: false]}
             )
           end
         end)
@@ -201,8 +215,9 @@ defmodule ExMCP.SessionManager do
   @doc """
   Terminates a session and cleans up its events.
 
-  This should be called when SSE connections are explicitly closed
-  or when DELETE requests are received.
+  This should be called when a session is explicitly deleted or permanently
+  abandoned. A transient SSE disconnect alone does not terminate the session,
+  because its events must remain available for Last-Event-ID replay.
   """
   @spec terminate_session(session_id()) :: :ok
   def terminate_session(session_id) do
@@ -264,7 +279,8 @@ defmodule ExMCP.SessionManager do
       sessions_table: sessions_table,
       events_table: events_table,
       config: config,
-      cleanup_timer: cleanup_timer
+      cleanup_timer: cleanup_timer,
+      event_clock: 0
     }
 
     Logger.info("SessionManager started with config: #{inspect(config)}")
@@ -321,29 +337,30 @@ defmodule ExMCP.SessionManager do
   end
 
   @impl true
+  def handle_call({:append_event, session_id, type, data}, _from, state) do
+    sequence = state.event_clock + 1
+
+    event = %{
+      id: "#{sequence}-0",
+      session_id: session_id,
+      type: type,
+      data: data,
+      timestamp: System.system_time(:microsecond)
+    }
+
+    managed_event = Map.put(event, :__ex_mcp_managed__, true)
+
+    case store_event(state, session_id, managed_event) do
+      {:ok, state} -> {:reply, {:ok, event}, state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call({:store_event, session_id, event_data}, _from, state) do
-    case :ets.lookup(state.sessions_table, session_id) do
-      [{^session_id, session}] when session.status == :active ->
-        # Store the event
-        event_key = {session_id, event_data.id}
-        :ets.insert(state.events_table, {event_key, event_data})
-
-        # Update session activity and event count
-        updated_session = %{
-          session
-          | last_activity: System.system_time(:microsecond),
-            event_count: session.event_count + 1
-        }
-
-        :ets.insert(state.sessions_table, {session_id, updated_session})
-
-        # Trim old events if we exceed the limit
-        trim_old_events(state, session_id, updated_session.event_count)
-
-        {:reply, :ok, state}
-
-      _ ->
-        {:reply, {:error, :session_not_found}, state}
+    case store_event(state, session_id, event_data) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -475,26 +492,50 @@ defmodule ExMCP.SessionManager do
   end
 
   defp get_events_after(state, session_id, nil) do
-    # Return all events for the session if no last_event_id
-    pattern = {{session_id, :"$1"}, :"$2"}
-
-    :ets.match(state.events_table, pattern)
-    |> Enum.map(fn [_event_id, event_data] -> event_data end)
-    |> Enum.sort_by(& &1.timestamp)
+    events_for_session(state, session_id)
+    |> Enum.map(&strip_event_sequence/1)
   end
 
   defp get_events_after(state, session_id, last_event_id) do
-    # Find all events after the given event ID
+    events = events_for_session(state, session_id)
+
+    replay_events =
+      case Enum.find_index(events, &(&1.id == last_event_id)) do
+        nil ->
+          # Compatibility for callers that supply an ID no longer retained by
+          # the bounded buffer, or custom IDs written through store_event/2.
+          Enum.filter(events, &(compare_event_ids(&1.id, last_event_id) == :gt))
+
+        index ->
+          Enum.drop(events, index + 1)
+      end
+
+    Enum.map(replay_events, &strip_event_sequence/1)
+  end
+
+  defp events_for_session(state, session_id) do
     pattern = {{session_id, :"$1"}, :"$2"}
 
-    :ets.match(state.events_table, pattern)
-    |> Enum.map(fn [_event_id, event_data] -> event_data end)
-    |> Enum.filter(fn event ->
-      # Compare event IDs - this assumes lexicographic ordering
-      # or custom comparison logic based on your event ID format
-      compare_event_ids(event.id, last_event_id) == :gt
-    end)
-    |> Enum.sort_by(& &1.timestamp)
+    events =
+      :ets.match(state.events_table, pattern)
+      |> Enum.map(fn [_event_id, event_data] -> event_data end)
+
+    if Enum.all?(events, &Map.get(&1, :__ex_mcp_managed__, false)) do
+      Enum.sort_by(events, &Map.fetch!(&1, :__ex_mcp_sequence__))
+    else
+      # Preserve the existing timestamp ordering for callers of store_event/2.
+      # Managed SSE-only sessions use the store sequence above, which remains
+      # ordered even if the system wall clock is adjusted.
+      Enum.sort_by(events, fn event ->
+        {Map.get(event, :timestamp), Map.get(event, :__ex_mcp_sequence__, 0), event.id}
+      end)
+    end
+  end
+
+  defp strip_event_sequence(event_data) do
+    event_data
+    |> Map.delete(:__ex_mcp_sequence__)
+    |> Map.delete(:__ex_mcp_managed__)
   end
 
   defp compare_event_ids(event_id1, event_id2) do
@@ -535,26 +576,61 @@ defmodule ExMCP.SessionManager do
     end
   end
 
-  defp trim_old_events(state, session_id, event_count) do
-    if event_count > state.config.max_events_per_session do
-      # Find all events for this session
-      pattern = {{session_id, :"$1"}, :"$2"}
+  defp store_event(state, session_id, event_data) do
+    case :ets.lookup(state.sessions_table, session_id) do
+      [{^session_id, session}] when session.status == :active ->
+        event_key = {session_id, event_data.id}
 
-      events =
-        :ets.match(state.events_table, pattern)
-        |> Enum.map(fn [event_id, event_data] -> {event_id, event_data} end)
-        |> Enum.sort_by(fn {_id, event_data} -> event_data.timestamp end)
+        {event_data, state, new_event?} =
+          normalize_event_sequence(state, event_key, event_data)
 
-      # Calculate how many events to remove
-      events_to_remove = event_count - state.config.max_events_per_session
+        :ets.insert(state.events_table, {event_key, event_data})
 
-      # Remove the oldest events
-      events
-      |> Enum.take(events_to_remove)
-      |> Enum.each(fn {event_id, _event_data} ->
-        :ets.delete(state.events_table, {session_id, event_id})
-      end)
+        retained_count =
+          cond do
+            not new_event? -> session.event_count
+            session.event_count < state.config.max_events_per_session -> session.event_count + 1
+            true -> trim_old_events(state, session_id)
+          end
+
+        updated_session = %{
+          session
+          | last_activity: System.system_time(:microsecond),
+            event_count: retained_count
+        }
+
+        :ets.insert(state.sessions_table, {session_id, updated_session})
+        {:ok, state}
+
+      _ ->
+        {:error, :session_not_found, state}
     end
+  end
+
+  defp normalize_event_sequence(state, event_key, event_data) do
+    case :ets.lookup(state.events_table, event_key) do
+      [{^event_key, existing}] ->
+        sequence = Map.get(existing, :__ex_mcp_sequence__, state.event_clock)
+        {Map.put(event_data, :__ex_mcp_sequence__, sequence), state, false}
+
+      [] ->
+        sequence = state.event_clock + 1
+        event_data = Map.put(event_data, :__ex_mcp_sequence__, sequence)
+        {event_data, %{state | event_clock: max(state.event_clock, sequence)}, true}
+    end
+  end
+
+  defp trim_old_events(state, session_id) do
+    events = events_for_session(state, session_id)
+    excess = max(length(events) - state.config.max_events_per_session, 0)
+
+    events
+    |> Enum.take(excess)
+    |> Enum.each(fn event ->
+      :ets.delete(state.events_table, {session_id, event.id})
+    end)
+
+    length(events) - excess
   end
 
   defp cleanup_session_events(state, session_id) do

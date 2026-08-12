@@ -20,6 +20,14 @@ while retaining every legacy revision and the complete rc.5 public API.
 See the [migration guide](getting-started/MIGRATION.md) for rollout steps and
 the [API diff](API_DIFF_RC5_TO_1_0.md) for the public compatibility audit.
 
+> **Post-rc.6 status (2026-08-11):** Current `main` fixes legacy SSE event
+> persistence and connection-gap replay. The change intentionally retains a
+> session after an ordinary GET-stream disconnect, so rc.6 can no longer be
+> promoted directly to stable 1.0. Publish another RC, repeat the applicable
+> release gates, and restart the soak. See the
+> [2.0 roadmap backport lane](V2_ROADMAP.md#8-the-1x-backport-lane) for the
+> compatibility rule used for this decision.
+
 ## Installation
 
 ```elixir
@@ -100,12 +108,14 @@ the release commit.
 
 ## Stable 1.0 gates still open
 
-Publishing rc.6 starts, but does not complete, the stable-release clock.
-Stable `1.0.0` requires:
+Publishing rc.6 started, but did not complete, the stable-release clock. The
+post-rc.6 SSE lifecycle fix resets that clock. Stable `1.0.0` now requires:
 
-1. at least seven calendar days of modern-preferred rc.6 use without a
+1. at least seven calendar days of final modern-preferred RC use without a
    release-blocking regression; and
 2. a successful mixed-version cluster rollback drill with active
    subscriptions and in-flight MRTR operations.
 
-Any wire-design or public-API change requires another RC and restarts the soak.
+Any wire-design, public-API, or documented lifecycle change requires another
+RC and restarts the soak. Current `main` meets that condition because of the
+legacy SSE persistence and disconnect-lifecycle fix described above.

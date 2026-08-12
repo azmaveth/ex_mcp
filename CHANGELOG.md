@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a canonical ExMCP 2.0 roadmap covering runtime ownership, bounded
+  handler scheduling, state/replay adapters, public API consolidation,
+  deprecation removals, and the compatibility gate for 1.x backports.
+
+### Fixed
+
+- Legacy GET SSE streams now persist events before delivery and replay events
+  published during a connection gap after `Last-Event-ID`. Normal stream
+  disconnects retain the MCP session until explicit deletion or expiry, and
+  bounded event retention continues to keep the newest events after repeated
+  evictions.
+
 ### Security
 
 - Adapter subprocesses now use a closed environment by default: inherited

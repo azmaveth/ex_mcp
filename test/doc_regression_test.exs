@@ -134,7 +134,7 @@ defmodule ExMCP.DocRegressionTest do
     end
   end
 
-  test "live docs identify the modern revision and rc.6 release default" do
+  test "live docs identify the modern revision and current release state" do
     readme = File.read!("README.md")
     configuration = File.read!("docs/CONFIGURATION.md")
     quickstart = File.read!("docs/getting-started/QUICKSTART.md")
@@ -156,13 +156,37 @@ defmodule ExMCP.DocRegressionTest do
 
     refute readme =~ "**2025-11-25** (latest stable)"
     assert readme =~ "2025-11-25`, for initialize-based compatibility"
-    assert readme =~ "`1.0.0-rc.6` is the modern-preferred soak release"
+    assert readme =~ "`1.0.0-rc.6` is the published modern-preferred"
+    assert readme =~ "requires another RC and a fresh soak"
     assert readme =~ "application default is `:prefer_modern`"
     assert configuration =~ "`1.0.0-rc.6` defaults to `:prefer_modern`"
     assert quickstart =~ "`:prefer_modern` is the rc.6 default"
     assert coverage =~ "defaults to `:prefer_modern`"
     assert configuration =~ "newest legacy revision"
     assert coverage =~ "official conformance runner is\nstill published as a prerelease"
+  end
+
+  test "2.0 roadmap records decisions, phases, and the 1.x backport gate" do
+    roadmap = File.read!("docs/V2_ROADMAP.md")
+    release = File.read!("docs/RELEASE_1_0_0_RC_6.md")
+    mixfile = File.read!("mix.exs")
+
+    for term <- [
+          "Anubis MCP",
+          "Grok design review",
+          "Decision register",
+          "Stateful handlers remain serialized by default",
+          "Phase 0 — Finish and freeze the 1.0 baseline",
+          "The 1.x backport lane",
+          "SemVer interpretation",
+          "Legacy HTTP+SSE"
+        ] do
+      assert roadmap =~ term, "2.0 roadmap is missing #{inspect(term)}"
+    end
+
+    assert release =~ "Current `main` fixes legacy SSE event"
+    assert release =~ "Publish another RC"
+    assert mixfile =~ ~s("docs/V2_ROADMAP.md")
   end
 
   test "architecture and transport guides preserve the modern wire invariants" do

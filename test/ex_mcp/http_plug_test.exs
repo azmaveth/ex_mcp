@@ -8,6 +8,7 @@ defmodule ExMCP.HttpPlugTest do
   alias ExMCP.HttpPlug.Core
   alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEHandler
+  alias ExMCP.SessionManager
   alias ExMCP.Transport.HTTP.RequestHeaders
 
   defmodule LegacyCaptureConn do
@@ -1381,11 +1382,18 @@ defmodule ExMCP.HttpPlugTest do
     end
 
     test "legacy POST sends its JSON-RPC response on the open SSE stream" do
-      session_id = "legacy-session"
+      session_id = "legacy-session-#{System.unique_integer([:positive, :monotonic])}"
+      :ok = SessionManager.ensure_session(session_id, %{transport: :sse})
+
+      on_exit(fn ->
+        SessionRegistry.unregister(session_id)
+        SessionManager.terminate_session(session_id)
+      end)
 
       {:ok, handler} =
         SSEHandler.start_link(%LegacyCaptureConn{}, session_id, %{
           conn_module: LegacyCaptureConn,
+          session_manager: SessionManager,
           initial_sse_event: {"endpoint", {:raw, "/message?sessionId=#{session_id}"}}
         })
 
@@ -1415,6 +1423,12 @@ defmodule ExMCP.HttpPlugTest do
       assert message =~ "event: message"
       assert message =~ ~s("id":77)
       assert message =~ ~s("protocolVersion":"2024-11-05")
+
+      assert [%{type: "message", data: persisted_response}] =
+               SessionManager.replay_events_after(session_id, nil)
+
+      assert persisted_response["id"] == 77
+      assert persisted_response["result"]["protocolVersion"] == "2024-11-05"
 
       SSEHandler.close(handler)
     end

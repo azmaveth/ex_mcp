@@ -32,6 +32,10 @@ wire path, or see the
 [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) for all four
 modes.
 
+Current `main` also includes the legacy SSE persistence fix planned for the
+next release candidate; rc.6 remains the currently published installation
+target until that candidate is released.
+
 ## DSL Server
 
 Define tools, resources, and prompts next to their handlers:

@@ -98,11 +98,12 @@ defmodule ExMCP.SubscriptionRegistryTest do
       end
 
     on_exit(fn ->
-      Enum.each(sessions, &SubscriptionRegistry.remove_session/1)
+      Enum.each(sessions, &SessionManager.terminate_session/1)
       Enum.each(sessions, &SessionRegistry.unregister/1)
     end)
 
     Enum.each(sessions, fn session_id ->
+      assert :ok = SessionManager.ensure_session(session_id, %{transport: :sse})
       assert :ok = SubscriptionRegistry.subscribe(session_id, uri)
     end)
 
@@ -114,9 +115,18 @@ defmodule ExMCP.SubscriptionRegistryTest do
       "params" => %{"uri" => uri}
     }
 
-    Enum.each(handlers, fn {_session_id, handler} ->
-      assert_receive {:sse_event, ^handler, "message", ^notification, []}
+    Enum.each(handlers, fn {session_id, handler} ->
+      assert_receive {:sse_event, ^handler, "message", ^notification,
+                      [event_id: event_id, persist: false]}
+
+      assert [%{id: ^event_id, data: ^notification}] =
+               SessionManager.replay_events_after(session_id, nil)
     end)
+
+    offline_session = List.last(sessions)
+
+    assert [%{data: ^notification}] =
+             SessionManager.replay_events_after(offline_session, nil)
   end
 
   defp post_resource_request(session_id, method, uri) do

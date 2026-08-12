@@ -10,7 +10,7 @@
 
 **A complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP)**
 
-[Getting Started](https://github.com/azmaveth/ex_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) | [Changelog](CHANGELOG.md)
+[Getting Started](https://github.com/azmaveth/ex_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) | [2.0 Roadmap](docs/V2_ROADMAP.md) | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -46,10 +46,11 @@ MCP revision. See
 [Configuration](docs/CONFIGURATION.md#protocol-eras-and-modes) and the
 [1.0 migration guide](docs/getting-started/MIGRATION.md#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release).
 
-> **Release-state note:** `1.0.0-rc.6` is the modern-preferred soak release.
-> The previous `1.0.0-rc.5` package remains the legacy-only characterization
-> baseline. Stable 1.0 will preserve rc.6 behavior after the release gates and
-> minimum seven-day soak complete.
+> **Release-state note:** `1.0.0-rc.6` is the published modern-preferred
+> baseline, and `1.0.0-rc.5` remains the legacy-only characterization
+> baseline. Current `main` adds legacy SSE persist-before-delivery and
+> reconnect replay behavior, so it requires another RC and a fresh soak before
+> stable 1.0. Stable 1.0 will preserve the behavior of that final RC.
 
 ## Installation
 
@@ -80,6 +81,10 @@ config :ex_mcp, protocol_mode: :legacy_only
 | `ExMCP.Content` builders (`text`/`image`/`audio`) | — | — |
 
 Runnable examples live in the GitHub repo under [`examples/`](https://github.com/azmaveth/ex_mcp/tree/master/examples) (not shipped in the Hex package).
+
+The [ExMCP 2.0 roadmap](docs/V2_ROADMAP.md) records planned runtime and API
+changes, deprecated-surface removals, and the policy for safely backporting
+selected improvements to 1.x.
 
 ## Quick Start
 

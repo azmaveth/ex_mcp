@@ -87,11 +87,20 @@ defmodule ExMCP.HttpPlug.SSEHandler do
   @doc """
   Sends an event after permission has been granted.
 
-  This should only be called after `request_send/1` returns `:ok`.
+  This should only be called after `request_send/1` returns `:ok`. When the
+  handler was started with a session manager, the event is persisted before
+  it is written to the connection. Internal replay callers pass
+  `persist: false` to avoid recording the same event twice.
   """
   @spec send_event(pid(), String.t(), any(), keyword()) :: :ok
   def send_event(handler, event_type, data, opts \\ []) do
     GenServer.cast(handler, {:send_event, event_type, data, opts})
+  end
+
+  @doc false
+  @spec replay(pid()) :: :ok | {:error, term()}
+  def replay(handler) do
+    GenServer.call(handler, :replay_events, :infinity)
   end
 
   @doc """
@@ -160,11 +169,6 @@ defmodule ExMCP.HttpPlug.SSEHandler do
           last_event_id: last_event_id
         }
 
-        # If we have a Last-Event-ID, request replay
-        if last_event_id do
-          request_event_replay(state)
-        end
-
         {:ok, state}
 
       {:error, reason} ->
@@ -195,26 +199,38 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     end
   end
 
+  def handle_call(:replay_events, _from, state) do
+    case replay_events(state) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   @impl true
   def handle_cast({:send_event, event_type, data, opts}, state) do
-    event_id = Keyword.get(opts, :event_id, generate_event_id(state.event_counter))
+    case prepare_event(state, event_type, data, opts) do
+      {:ok, event_id} ->
+        case deliver_event(state, event_type, data, event_id) do
+          {:ok, state} ->
+            {:noreply, maybe_unblock_producers(state)}
 
-    case send_sse_event(state, event_type, data, event_id) do
-      {:ok, conn} ->
-        # Update state
-        state = %{state | conn: conn, event_counter: state.event_counter + 1}
+          {:duplicate, state} ->
+            {:noreply, maybe_unblock_producers(state)}
 
-        # Store event in buffer for potential replay
-        state = buffer_event(state, event_type, data, event_id)
+          {:error, _reason, state} ->
+            # The event was already persisted, so a reconnect can recover it
+            # even though this connection failed during the write.
+            {:stop, :normal, %{state | conn: nil}}
+        end
 
-        # Check if we can unblock any waiting producers
-        state = maybe_unblock_producers(state)
+      {:error, reason} ->
+        # Do not deliver an event with a fabricated ID when persistence is
+        # configured but unavailable; that would make Last-Event-ID lie.
+        Logger.error(
+          "Failed to persist SSE event for session #{state.session_id}: #{inspect(reason)}"
+        )
 
-        {:noreply, state}
-
-      {:error, _reason} ->
-        # Connection failed - stop the handler
-        {:stop, :normal, %{state | conn: nil}}
+        {:noreply, maybe_unblock_producers(state)}
     end
   end
 
@@ -393,18 +409,135 @@ defmodule ExMCP.HttpPlug.SSEHandler do
     end
   end
 
-  defp request_event_replay(state) do
-    # This would integrate with your session manager to replay events
-    # after the given last_event_id
+  defp prepare_event(state, event_type, data, opts) do
+    requested_id = Keyword.get(opts, :event_id)
+
+    if Keyword.get(opts, :persist, true) do
+      persist_event(state, event_type, data, requested_id)
+    else
+      {:ok, requested_id || generate_event_id(state.event_counter)}
+    end
+  end
+
+  defp persist_event(state, event_type, data, requested_id) do
     session_manager = Map.get(state.opts, :session_manager)
 
-    if session_manager && function_exported?(session_manager, :replay_events_after, 3) do
-      session_manager.replay_events_after(
-        state.session_id,
-        state.last_event_id,
-        self()
-      )
+    cond do
+      exports?(session_manager, :append_event, 3) and is_nil(requested_id) ->
+        session_manager
+        |> safe_apply(:append_event, [state.session_id, event_type, data])
+        |> normalize_append_result()
+
+      exports?(session_manager, :store_event, 2) ->
+        persist_via_store(session_manager, state, event_type, data, requested_id)
+
+      true ->
+        # Direct users without session management and custom 1.x managers that
+        # predate persistence retain historical live-delivery behavior.
+        {:ok, requested_id || generate_event_id(state.event_counter)}
     end
+  end
+
+  defp persist_via_store(session_manager, state, event_type, data, requested_id) do
+    event_id = requested_id || generate_event_id(state.event_counter)
+
+    event = %{
+      id: event_id,
+      session_id: state.session_id,
+      type: event_type,
+      data: data,
+      timestamp: System.system_time(:microsecond)
+    }
+
+    case safe_apply(session_manager, :store_event, [state.session_id, event]) do
+      :ok -> {:ok, event_id}
+      {:error, _reason} = error -> error
+      other -> {:error, {:unexpected_store_reply, other}}
+    end
+  end
+
+  defp normalize_append_result({:ok, %{id: event_id}}), do: {:ok, event_id}
+  defp normalize_append_result({:ok, event_id}) when is_binary(event_id), do: {:ok, event_id}
+  defp normalize_append_result({:error, _reason} = error), do: error
+  defp normalize_append_result(other), do: {:error, {:unexpected_append_reply, other}}
+
+  defp safe_apply(module, function, args) do
+    apply(module, function, args)
+  rescue
+    error -> {:error, {:exception, error}}
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
+  end
+
+  defp exports?(module, function, arity) when is_atom(module) do
+    Code.ensure_loaded?(module) and function_exported?(module, function, arity)
+  end
+
+  defp exports?(_module, _function, _arity), do: false
+
+  defp replay_events(%__MODULE__{last_event_id: nil} = state), do: {:ok, state}
+
+  defp replay_events(state) do
+    session_manager = Map.get(state.opts, :session_manager)
+
+    cond do
+      exports?(session_manager, :replay_events_after, 2) ->
+        case safe_apply(session_manager, :replay_events_after, [
+               state.session_id,
+               state.last_event_id
+             ]) do
+          events when is_list(events) -> replay_events(events, state)
+          {:error, reason} -> {:error, reason, state}
+          other -> {:error, {:unexpected_replay_reply, other}, state}
+        end
+
+      exports?(session_manager, :replay_events_after, 3) ->
+        case safe_apply(session_manager, :replay_events_after, [
+               state.session_id,
+               state.last_event_id,
+               self()
+             ]) do
+          :ok -> {:ok, state}
+          {:error, reason} -> {:error, reason, state}
+          other -> {:error, {:unexpected_replay_reply, other}, state}
+        end
+
+      true ->
+        {:error, :event_replay_not_supported, state}
+    end
+  end
+
+  defp replay_events(events, state) do
+    Enum.reduce_while(events, {:ok, state}, fn event, {:ok, state} ->
+      case deliver_event(state, event.type, event.data, event.id) do
+        {:ok, state} -> {:cont, {:ok, state}}
+        {:duplicate, state} -> {:cont, {:ok, state}}
+        {:error, reason, state} -> {:halt, {:error, reason, state}}
+      end
+    end)
+  end
+
+  defp deliver_event(state, event_type, data, event_id) do
+    if buffered_event?(state, event_id) do
+      {:duplicate, state}
+    else
+      case send_sse_event(state, event_type, data, event_id) do
+        {:ok, conn} ->
+          state = %{state | conn: conn, event_counter: state.event_counter + 1}
+          {:ok, buffer_event(state, event_type, data, event_id)}
+
+        {:error, reason} ->
+          {:error, reason, state}
+      end
+    end
+  end
+
+  defp buffered_event?(_state, nil), do: false
+
+  defp buffered_event?(state, event_id) do
+    state.event_buffer
+    |> :queue.to_list()
+    |> Enum.any?(fn {buffered_id, _type, _data} -> buffered_id == event_id end)
   end
 
   defp format_error(error) do
