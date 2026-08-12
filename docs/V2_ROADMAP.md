@@ -1,1 +1,1 @@
-file:///workspace/ex_mcp_rc7/docs/V2_ROADMAP.md
+@/workspace/ex_mcp_rc7/docs/V2_ROADMAP.md
