@@ -44,7 +44,7 @@ defmodule ExMCP.Transport.SSEClientSecurityTest do
              )
 
     assert_receive {:sse_error, ^pid, :stream_handshake_timeout}, 500
-    SSEClient.stop(pid)
+    stop_sse_safely(pid)
   end
 
   test "non-streaming error bodies accept the exact limit and reject one byte over" do
@@ -117,7 +117,13 @@ defmodule ExMCP.Transport.SSEClientSecurityTest do
     assert second_at - first_at >= 100
     assert {"last-event-id", "event-1"} in headers
 
+    stop_sse_safely(pid)
+  end
+
+  defp stop_sse_safely(pid) do
     SSEClient.stop(pid)
+  catch
+    :exit, _reason -> :ok
   end
 
   defp start_sse(bypass, overrides) do
