@@ -189,3 +189,12 @@ field known from the rc.6 audit was removed for rc.7. Applications that minted
 or supplied their own legacy `Mcp-Session-Id` values, or that relied on
 disconnect deleting session/replay state, must adopt server-issued sessions and
 size TTL/replay bounds as documented in the migration and configuration guides.
+
+
+## Updates for 1.0.0-rc.7 (API census addendum)
+
+- `ExMCP.ACP.Client.HandlerRunner.session_update/3` is retained as a compatibility
+  wrapper over `session_update/5`. The `/3` form applies the same default update
+  queue bounds used by `ExMCP.ACP.Client` (`max_update_queue: 32`,
+  `max_update_queue_bytes: 8_388_608`) and returns `:ok` or `:dropped`.
+- Callers that need explicit bounds should use `session_update/5`.
