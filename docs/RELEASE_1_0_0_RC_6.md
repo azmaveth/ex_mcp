@@ -10,7 +10,7 @@ while retaining every legacy revision and the complete rc.5 public API.
   and fall back to legacy `initialize` only after positive compatibility
   evidence on a live transport.
 - Default servers accept both eras and advertise MCP 2026-07-28 first.
-- `:legacy_only` preserves the exact rc.5 connection and wire policy.
+- `:legacy_only` preserves the legacy protocol era connection policy (rc.7 still enforces server-issued sessions and newer lifecycle/security rules).
 - MCP 2026-07-28 adds stateless per-request context, typed result envelopes,
   multi-round tool results, `subscriptions/listen`, stateless Streamable HTTP,
   OAuth 2026 hardening, and the negotiated Tasks extension.
@@ -38,7 +38,7 @@ Pin the rollout policy when it must not change with a package upgrade:
 
 ```elixir
 config :ex_mcp, protocol_mode: :prefer_modern
-# Emergency rollback / exact rc.5 wire path:
+# Emergency rollback / legacy protocol era (not an exact rc.5 package rollback):
 # config :ex_mcp, protocol_mode: :legacy_only
 ```
 
