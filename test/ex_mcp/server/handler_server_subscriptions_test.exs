@@ -59,7 +59,7 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
       listen_request(72, %{"resourceSubscriptions" => ["test://watched"]})
     )
 
-    assert_receive {:transport_message, _encoded_ack}
+    assert_receive {:transport_message, _encoded_ack}, 1_000
 
     cancellation = %{
       "jsonrpc" => "2.0",
