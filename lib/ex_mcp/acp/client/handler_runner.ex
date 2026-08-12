@@ -11,6 +11,21 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     GenServer.start_link(__MODULE__, {handler_mod, handler_opts, owner})
   end
 
+  # rc.6 compatibility: unbounded enqueue used Client defaults after security harden.
+  @default_max_update_queue 32
+  @default_max_update_queue_bytes 8_388_608
+
+  @doc false
+  def session_update(pid, session_id, update) do
+    session_update(
+      pid,
+      session_id,
+      update,
+      @default_max_update_queue,
+      @default_max_update_queue_bytes
+    )
+  end
+
   def session_update(pid, session_id, update, max_queue, max_queue_bytes) do
     incoming_bytes = :erlang.external_size(update)
 
