@@ -9,7 +9,7 @@ protocol revisions it implements. Status is current as of 2026-08-05.
 - **Newest legacy revision:** `2025-11-25`.
 - **Other retained legacy revisions:** `2025-06-18`, `2025-03-26`, and
   `2024-11-05`.
-- **Current repository rollout:** `1.0.0-rc.6` enables `2026-07-28` through
+- **Current repository rollout:** `1.0.0-rc.7` enables `2026-07-28` through
   `:prefer_modern` and `:modern_only` and defaults to `:prefer_modern` for the
   required pre-1.0 soak. Every legacy revision remains available, and
   `:legacy_only` preserves the exact rc.5 connection policy.
@@ -25,7 +25,7 @@ draft.
 | MCP 2026-07-28, complete server suite | `@modelcontextprotocol/conformance@0.2.0-alpha.10`, Node.js 22+ | `./scripts/conformance.sh modern` | 112/112 checks passed |
 | MCP 2026-07-28, complete client suite | `@modelcontextprotocol/conformance@0.2.0-alpha.10`, Node.js 22+ | `./scripts/conformance.sh modern` | 377/377 checks passed |
 | Published legacy/core server suite | `@modelcontextprotocol/conformance@0.1.16` | `./scripts/conformance.sh server` | 39/39 checks passed |
-| Published legacy/core client suite | `@modelcontextprotocol/conformance@0.1.16` | `./scripts/conformance.sh client` | 226/226 checks passed |
+| Published legacy/core client suite | `@modelcontextprotocol/conformance@0.1.16` | `./scripts/conformance.sh client` | 218/218 checks passed |
 
 The modern results have zero warnings and no expected-failure entries. The
 legacy runner remains pinned separately because the published stable package
