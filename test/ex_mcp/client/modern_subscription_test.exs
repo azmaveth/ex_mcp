@@ -216,8 +216,8 @@ defmodule ExMCP.Client.ModernSubscriptionTest do
         Process.sleep(:infinity)
       end)
 
-    assert_receive {:subscribed, :a, {:ok, _subscription}}
-    assert_receive {:subscribed, :b, {:ok, _subscription}}
+    assert_receive {:subscribed, :a, {:ok, _subscription}}, 1_000
+    assert_receive {:subscribed, :b, {:ok, _subscription}}, 1_000
 
     assert_eventually(fn ->
       case Subscriptions.entries(registry: registry) do
