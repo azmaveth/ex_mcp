@@ -11,7 +11,7 @@ Install the modern-preferred rc.6 release candidate:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.6"}
+    {:ex_mcp, "~> 1.0.0-rc.7"}
   ]
 end
 ```
@@ -27,7 +27,7 @@ policy must remain fixed:
 config :ex_mcp, protocol_mode: :prefer_modern
 ```
 
-`:prefer_modern` is the rc.6 default. Use `:legacy_only` for the exact rc.5
+`:prefer_modern` is the rc.7 default. Use `:legacy_only` for the exact rc.5
 wire path, or see the
 [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) for all four
 modes.
@@ -120,7 +120,7 @@ Use `transport: :beam` when both the client and server are Elixir processes in t
 {:ok, result} = ExMCP.Client.call_tool(client, "echo", %{"message" => "Hello"})
 ```
 
-BEAM-local MCP uses the configured protocol mode. rc.6 defaults to
+BEAM-local MCP uses the configured protocol mode. rc.7 defaults to
 `:prefer_modern`, which uses MCP 2026-07-28 discovery and per-request context;
 `:legacy_only` retains the initialize handshake. The transport simply passes
 MCP-shaped maps/lists as Elixir terms between local processes.
