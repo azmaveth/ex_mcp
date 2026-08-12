@@ -46,11 +46,13 @@ MCP revision. See
 [Configuration](docs/CONFIGURATION.md#protocol-eras-and-modes) and the
 [1.0 migration guide](docs/getting-started/MIGRATION.md#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release).
 
-> **Release-state note:** `1.0.0-rc.6` is the published modern-preferred
-> baseline, and `1.0.0-rc.5` remains the legacy-only characterization
-> baseline. Current `main` adds legacy SSE persist-before-delivery and
-> reconnect replay behavior, so it requires another RC and a fresh soak before
-> stable 1.0. Stable 1.0 will preserve the behavior of that final RC.
+> **Release-state note:** `1.0.0-rc.7` is the current modern-preferred soak
+> candidate. It packages the post-rc.6 legacy SSE persist/reconnect/replay
+> lifecycle, ACP Pi multi-chunk and subprocess isolation fixes, and the
+> 2026-08-12 MCP/ACP security harden. Published `1.0.0-rc.6` remains the prior
+> dual-era baseline, and `1.0.0-rc.5` remains the legacy-only characterization
+> baseline. Stable 1.0 will preserve the behavior of the final RC after its
+> soak and rollback drill.
 
 ## Installation
 
@@ -59,7 +61,7 @@ For the dual-era release candidate:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.6"}
+    {:ex_mcp, "~> 1.0.0-rc.7"}
   ]
 end
 ```
