@@ -9,11 +9,11 @@ This report records the public Elixir API compatibility gate for the MCP
 The rc.6 package started the first modern-preferred soak. This report compares
 the retained rc.5 API surface with the 1.0 candidate, not version strings.
 
-> **Post-rc.6 note (2026-08-11):** Current `main` adds legacy SSE persistence
-> and an additive `ExMCP.SessionManager.append_event/3` entry point. Because the
-> accompanying disconnect-lifecycle behavior requires another RC, this rc.6
-> snapshot remains historical evidence rather than the final stable audit. The
-> API comparison must be regenerated for the next candidate.
+> **Post-rc.6 note (2026-08-12):** `1.0.0-rc.7` packages the post-rc.6 public
+> deltas summarized in [Updates for 1.0.0-rc.7](#updates-for-100-rc7) below.
+> The full BEAM snapshot comparison against rc.5 remains the rc.6 evidence in
+> this document; regenerate a complete audit from the rc.7 tag if a fresh
+> module/export census is required for stable 1.0.
 
 ## Method
 
@@ -142,3 +142,50 @@ The public-API gate is satisfied: there are no unresolved rc.5 symbol,
 callback, named-type, struct-field, or return-shape removals. Stable 1.0 still
 depends on the conformance, security, interoperability, load, rollback, and
 minimum seven-day modern-preferred RC soak gates in the migration plan.
+
+
+## Updates for 1.0.0-rc.7
+
+> This section is an honest public delta for changes that landed after the
+> rc.6 BEAM snapshot above. It is **not** a full regenerated module/export
+> census; regenerate that audit from the tagged rc.7 commit when cutting
+> stable 1.0 if a fresh snapshot is required.
+
+### Additive public API
+
+- `ExMCP.SessionManager.append_event/3` — atomically appends a legacy SSE event
+  with a store-owned, monotonically increasing ID. Persist-before-delivery uses
+  this entry point so events remain replayable when a write races a disconnect.
+  Existing `store_event/2` and `replay_events_after/2,3` remain available.
+
+### Protocol and security behavior (no symbol removals)
+
+These are wire, lifecycle, or configuration-behavior changes rather than removed
+Elixir symbols:
+
+- **Server-issued legacy sessions** — Streamable HTTP no longer accepts
+  caller-selected session IDs. Sessions are created by initialization, exposed
+  only after a successful initialize response, identity-bound for their
+  lifetime, initialize-once, and capacity-capped. Streamable GET/POST require a
+  successfully initialized session.
+- **Duplicate request-ID rejection** — JSON-RPC request IDs are atomically
+  claimed per session/process and rejected before dispatch for the bounded
+  session lifetime.
+- **Subprocess environment isolation** — stdio MCP and ACP adapter subprocesses
+  default to `environment_policy: :isolated`. Full inheritance requires an
+  explicit `:inherit` opt-in.
+- **Outbound network policy options** — public client/server configuration now
+  documents and enforces `allowed_private_hosts`, pinned DNS/TLS destination
+  checks, and related OAuth metadata fetch bounds. Escape hatches such as
+  `legacy_unbound_tokens`, `trusted_hosts`, and Codex `trusted_mcp_servers: :all`
+  remain available but are documented as deliberate weakenings.
+- **Resource bounds** — session, request-ID, replay-byte, frame, queue, and
+  handshake limits are enforced fail-closed with slow-consumer handling.
+
+### Compatibility statement
+
+No rc.5 public module, exported function/arity, callback, named type, or struct
+field known from the rc.6 audit was removed for rc.7. Applications that minted
+or supplied their own legacy `Mcp-Session-Id` values, or that relied on
+disconnect deleting session/replay state, must adopt server-issued sessions and
+size TTL/replay bounds as documented in the migration and configuration guides.
