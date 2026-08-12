@@ -64,7 +64,7 @@ defmodule Mix.Tasks.Acp.InteropAgent do
     end
     """)
 
-    {:ok, _agent} =
+    {:ok, agent} =
       ExMCP.ACP.Agent.start_link(
         handler: AcpInteropAgentHandler,
         agent_info: %{"name" => "elixir-acp-interop-agent", "version" => "1.0.0"},
@@ -76,6 +76,14 @@ defmodule Mix.Tasks.Acp.InteropAgent do
         }
       )
 
-    Process.sleep(:infinity)
+    await_agent(agent)
+  end
+
+  defp await_agent(agent) do
+    ref = Process.monitor(agent)
+
+    receive do
+      {:DOWN, ^ref, :process, ^agent, _reason} -> :ok
+    end
   end
 end

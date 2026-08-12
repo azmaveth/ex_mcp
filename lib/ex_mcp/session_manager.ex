@@ -23,14 +23,26 @@ defmodule ExMCP.SessionManager do
 
   ## Session Lifecycle
 
-  1. **Session Creation**: New sessions are created when SSE connections are established
-  2. **Event Storage**: Events are buffered with unique IDs for potential replay
-  3. **Session Resumption**: Clients can reconnect using Last-Event-ID header
-  4. **Session Termination**: Sessions are terminated on explicit DELETE or timeout
+  1. **Session Creation**: Legacy Streamable HTTP creates a server-issued ID
+     only for `initialize`; deprecated HTTP+SSE retains its endpoint handshake.
+  2. **Initialization**: Exactly one monitored request may initialize a session;
+     success immutably binds the negotiated version and failure terminates it.
+  3. **Event Storage**: Events are buffered with unique IDs for potential replay.
+  4. **Session Resumption**: Initialized clients reconnect using the issued ID
+     and may resume events with `Last-Event-ID`.
+  5. **Session Termination**: Sessions terminate on explicit DELETE, abandoned
+     initialization, or timeout.
 
   ## Configuration
 
   - `:max_events_per_session` - Maximum events to buffer per session (default: 1000)
+  - `:max_sessions` - Maximum active/retained sessions (default: 10,000)
+  - `:max_request_ids` - Maximum claimed JSON-RPC request IDs per session
+    (default: 10,000)
+  - `:max_event_bytes` - Maximum JSON-encoded bytes for one replay event
+    (default: 1 MiB)
+  - `:max_replay_bytes_per_session` - Maximum JSON-encoded replay bytes retained
+    per session (default: 8 MiB)
   - `:session_ttl_seconds` - Session TTL in seconds (default: 3600)
   - `:cleanup_interval_ms` - Cleanup interval in milliseconds (default: 60000)
   - `:storage_backend` - Storage backend (`:ets` or `:persistent_term`, default: `:ets`)
@@ -64,21 +76,32 @@ defmodule ExMCP.SessionManager do
   use GenServer
   require Logger
 
+  alias ExMCP.Internal.LogSummary
+
   # Default configuration
   @default_max_events 1000
+  @default_max_event_bytes 1_048_576
+  @default_max_replay_bytes_per_session 8_388_608
+  @default_max_sessions 10_000
+  @default_max_request_ids 10_000
   @default_session_ttl 3600
   @default_cleanup_interval 60_000
   @default_storage_backend :ets
+  @identity_keys [:principal_id, :tenant_id, :issuer, :audience]
+  @lifecycle_keys [:initialized, :initialization_claimed]
 
   # ETS table names
   @sessions_table :session_manager_sessions
   @events_table :session_manager_events
+  @request_ids_table :session_manager_request_ids
 
   defstruct [
     :sessions_table,
     :events_table,
+    :request_ids_table,
     :config,
     :cleanup_timer,
+    initialization_claims: %{},
     event_clock: 0
   ]
 
@@ -91,7 +114,16 @@ defmodule ExMCP.SessionManager do
           created_at: integer(),
           last_activity: integer(),
           event_count: non_neg_integer(),
-          status: :active | :terminated
+          replay_bytes: non_neg_integer(),
+          request_id_count: non_neg_integer(),
+          status: :active | :terminated,
+          initialized: boolean(),
+          initialization_claimed: boolean(),
+          protocol_version: String.t() | nil,
+          principal_id: String.t() | nil,
+          tenant_id: String.t() | nil,
+          issuer: String.t() | nil,
+          audience: String.t() | [String.t()] | nil
         }
   @type event_data :: %{
           id: event_id(),
@@ -101,7 +133,11 @@ defmodule ExMCP.SessionManager do
           timestamp: integer()
         }
   @type config :: %{
+          max_sessions: pos_integer(),
+          max_request_ids: pos_integer(),
           max_events_per_session: pos_integer(),
+          max_event_bytes: pos_integer(),
+          max_replay_bytes_per_session: pos_integer(),
           session_ttl_seconds: pos_integer(),
           cleanup_interval_ms: pos_integer(),
           storage_backend: :ets | :persistent_term
@@ -123,21 +159,77 @@ defmodule ExMCP.SessionManager do
 
   Returns a unique session ID that can be used for subsequent operations.
   """
-  @spec create_session(map()) :: session_id()
+  @spec create_session(map()) :: session_id() | {:error, :session_limit_exceeded}
   def create_session(metadata \\ %{}) do
     GenServer.call(__MODULE__, {:create_session, metadata})
   end
 
   @doc """
-  Ensures a transport-issued session ID exists and refreshes its activity.
+  Verifies that a server-issued session ID exists, is active, and is bound to
+  the same authorization identity, then refreshes its activity.
 
   Legacy Streamable HTTP issues the ID on POST before the client opens its SSE
   channel. Retaining that exact ID associates later subscriptions and
   notifications with one client across both channels.
   """
-  @spec ensure_session(session_id(), map()) :: :ok
+  @spec ensure_session(session_id(), map()) ::
+          :ok | {:error, :session_not_found | :session_identity_mismatch}
   def ensure_session(session_id, metadata \\ %{}) when is_binary(session_id) do
     GenServer.call(__MODULE__, {:ensure_session, session_id, metadata})
+  end
+
+  @doc """
+  Atomically verifies that a session is active, identity-bound to the caller,
+  and has completed initialization, then refreshes its activity.
+  """
+  @spec ensure_initialized_session(session_id(), map()) ::
+          :ok
+          | {:error, :session_not_found | :session_identity_mismatch | :session_not_initialized}
+  def ensure_initialized_session(session_id, metadata \\ %{}) when is_binary(session_id) do
+    GenServer.call(__MODULE__, {:ensure_initialized_session, session_id, metadata})
+  end
+
+  @doc """
+  Atomically claims a JSON-RPC request ID for an active session.
+
+  IDs remain claimed for the session lifetime. The configured
+  `:max_request_ids` bound fails closed once reached.
+  """
+  @spec claim_request_id(session_id(), String.t() | integer()) ::
+          :ok
+          | {:error, :session_not_found | :duplicate_request_id | :request_id_limit_exceeded}
+  def claim_request_id(session_id, request_id)
+      when is_binary(session_id) and (is_binary(request_id) or is_integer(request_id)) do
+    GenServer.call(__MODULE__, {:claim_request_id, session_id, request_id})
+  end
+
+  @doc """
+  Atomically claims the one initialization attempt allowed for an active
+  legacy session. This prevents concurrent or repeated `initialize` requests
+  from racing into application handlers.
+  """
+  @spec claim_initialization(session_id()) ::
+          :ok
+          | {:error,
+             :session_not_found | :session_already_initialized | :initialization_in_progress}
+  def claim_initialization(session_id) when is_binary(session_id) do
+    GenServer.call(__MODULE__, {:claim_initialization, session_id})
+  end
+
+  @doc """
+  Completes a previously claimed initialization and immutably binds its
+  negotiated protocol version to the session.
+  """
+  @spec complete_initialization(session_id(), String.t()) ::
+          :ok
+          | {:error,
+             :session_not_found
+             | :initialization_not_claimed
+             | :initialization_owner_mismatch
+             | :session_protocol_version_mismatch}
+  def complete_initialization(session_id, protocol_version)
+      when is_binary(session_id) and is_binary(protocol_version) do
+    GenServer.call(__MODULE__, {:complete_initialization, session_id, protocol_version})
   end
 
   @doc """
@@ -146,7 +238,8 @@ defmodule ExMCP.SessionManager do
   Events are stored with their ID, type, data, and timestamp for potential
   replay during session resumption.
   """
-  @spec store_event(session_id(), event_data()) :: :ok | {:error, :session_not_found}
+  @spec store_event(session_id(), event_data()) ::
+          :ok | {:error, :session_not_found | :event_too_large | :event_not_json_encodable}
   def store_event(session_id, event_data) do
     GenServer.call(__MODULE__, {:store_event, session_id, event_data})
   end
@@ -159,7 +252,8 @@ defmodule ExMCP.SessionManager do
   event is the public representation retained by the session manager.
   """
   @spec append_event(session_id(), String.t(), term()) ::
-          {:ok, event_data()} | {:error, :session_not_found}
+          {:ok, event_data()}
+          | {:error, :session_not_found | :event_too_large | :event_not_json_encodable}
   def append_event(session_id, type, data) when is_binary(session_id) and is_binary(type) do
     GenServer.call(__MODULE__, {:append_event, session_id, type, data})
   end
@@ -207,7 +301,12 @@ defmodule ExMCP.SessionManager do
   @doc """
   Updates session metadata or activity timestamp.
   """
-  @spec update_session(session_id(), map()) :: :ok | {:error, :session_not_found}
+  @spec update_session(session_id(), map()) ::
+          :ok
+          | {:error,
+             :session_not_found
+             | :session_identity_mismatch
+             | :session_protocol_version_mismatch}
   def update_session(session_id, updates) do
     GenServer.call(__MODULE__, {:update_session, session_id, updates})
   end
@@ -257,9 +356,34 @@ defmodule ExMCP.SessionManager do
 
   @impl true
   def init(opts) do
+    max_sessions = Keyword.get(opts, :max_sessions, @default_max_sessions)
+    max_request_ids = Keyword.get(opts, :max_request_ids, @default_max_request_ids)
+
+    max_events_per_session =
+      Keyword.get(opts, :max_events_per_session, @default_max_events)
+
+    max_event_bytes = Keyword.get(opts, :max_event_bytes, @default_max_event_bytes)
+
+    max_replay_bytes_per_session =
+      Keyword.get(
+        opts,
+        :max_replay_bytes_per_session,
+        @default_max_replay_bytes_per_session
+      )
+
+    validate_positive_limit!(:max_sessions, max_sessions)
+    validate_positive_limit!(:max_request_ids, max_request_ids)
+    validate_positive_limit!(:max_events_per_session, max_events_per_session)
+    validate_positive_limit!(:max_event_bytes, max_event_bytes)
+    validate_positive_limit!(:max_replay_bytes_per_session, max_replay_bytes_per_session)
+
     # Build configuration
     config = %{
-      max_events_per_session: Keyword.get(opts, :max_events_per_session, @default_max_events),
+      max_sessions: max_sessions,
+      max_request_ids: max_request_ids,
+      max_events_per_session: max_events_per_session,
+      max_event_bytes: max_event_bytes,
+      max_replay_bytes_per_session: max_replay_bytes_per_session,
       session_ttl_seconds: Keyword.get(opts, :session_ttl_seconds, @default_session_ttl),
       cleanup_interval_ms: Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval),
       storage_backend: Keyword.get(opts, :storage_backend, @default_storage_backend)
@@ -270,6 +394,7 @@ defmodule ExMCP.SessionManager do
     # creating unreclaimable dynamic atoms for table names.
     sessions_table = :ets.new(@sessions_table, [:set, :protected])
     events_table = :ets.new(@events_table, [:ordered_set, :protected])
+    request_ids_table = :ets.new(@request_ids_table, [:set, :protected])
 
     # Start cleanup timer
     cleanup_timer =
@@ -278,62 +403,187 @@ defmodule ExMCP.SessionManager do
     state = %__MODULE__{
       sessions_table: sessions_table,
       events_table: events_table,
+      request_ids_table: request_ids_table,
       config: config,
       cleanup_timer: cleanup_timer,
+      initialization_claims: %{},
       event_clock: 0
     }
 
-    Logger.info("SessionManager started with config: #{inspect(config)}")
+    Logger.info("SessionManager started",
+      storage_backend: config.storage_backend,
+      max_sessions: config.max_sessions,
+      max_request_ids: config.max_request_ids,
+      session_ttl_seconds: config.session_ttl_seconds,
+      max_events_per_session: config.max_events_per_session,
+      max_event_bytes: config.max_event_bytes,
+      max_replay_bytes_per_session: config.max_replay_bytes_per_session,
+      cleanup_interval_ms: config.cleanup_interval_ms
+    )
+
     {:ok, state}
   end
 
   @impl true
   def handle_call({:create_session, metadata}, _from, state) do
-    session_id = generate_session_id()
-    now = System.system_time(:microsecond)
+    prune_terminated_sessions(state)
 
-    session_data = %{
-      id: session_id,
-      transport: Map.get(metadata, :transport, :http),
-      client_info: Map.get(metadata, :client_info, %{}),
-      created_at: now,
-      last_activity: now,
-      event_count: 0,
-      status: :active
-    }
-
-    :ets.insert(state.sessions_table, {session_id, session_data})
-
-    Logger.debug("Created session #{session_id} with transport #{session_data.transport}")
-    {:reply, session_id, state}
+    if :ets.info(state.sessions_table, :size) >= state.config.max_sessions do
+      {:reply, {:error, :session_limit_exceeded}, state}
+    else
+      create_session(metadata, state)
+    end
   end
 
   @impl true
   def handle_call({:ensure_session, session_id, metadata}, _from, state) do
     now = System.system_time(:microsecond)
 
-    session_data =
-      case :ets.lookup(state.sessions_table, session_id) do
-        [{^session_id, session}] ->
-          session
-          |> Map.merge(Map.take(metadata, [:transport, :client_info]))
-          |> Map.put(:status, :active)
-          |> Map.put(:last_activity, now)
+    case :ets.lookup(state.sessions_table, session_id) do
+      [{^session_id, %{status: :active} = session}] ->
+        if session_identity_matches?(session, metadata) do
+          session_data =
+            session
+            |> Map.merge(Map.take(metadata, [:transport, :client_info]))
+            |> Map.put(:last_activity, now)
 
-        [] ->
-          %{
-            id: session_id,
-            transport: Map.get(metadata, :transport, :http),
-            client_info: Map.get(metadata, :client_info, %{}),
-            created_at: now,
-            last_activity: now,
-            event_count: 0,
-            status: :active
-          }
-      end
+          :ets.insert(state.sessions_table, {session_id, session_data})
+          {:reply, :ok, state}
+        else
+          {:reply, {:error, :session_identity_mismatch}, state}
+        end
 
-    :ets.insert(state.sessions_table, {session_id, session_data})
-    {:reply, :ok, state}
+      _missing_or_terminated ->
+        {:reply, {:error, :session_not_found}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:ensure_initialized_session, session_id, metadata}, _from, state) do
+    now = System.system_time(:microsecond)
+
+    case :ets.lookup(state.sessions_table, session_id) do
+      [{^session_id, %{status: :active} = session}] ->
+        cond do
+          not session_identity_matches?(session, metadata) ->
+            {:reply, {:error, :session_identity_mismatch}, state}
+
+          not session.initialized ->
+            {:reply, {:error, :session_not_initialized}, state}
+
+          true ->
+            updated =
+              session
+              |> Map.merge(Map.take(metadata, [:transport, :client_info]))
+              |> Map.put(:last_activity, now)
+
+            :ets.insert(state.sessions_table, {session_id, updated})
+            {:reply, :ok, state}
+        end
+
+      _missing_or_terminated ->
+        {:reply, {:error, :session_not_found}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:claim_request_id, session_id, request_id}, _from, state) do
+    key = {session_id, request_id}
+
+    case :ets.lookup(state.sessions_table, session_id) do
+      [{^session_id, %{status: :active} = session}] ->
+        cond do
+          :ets.member(state.request_ids_table, key) ->
+            {:reply, {:error, :duplicate_request_id}, state}
+
+          session.request_id_count >= state.config.max_request_ids ->
+            {:reply, {:error, :request_id_limit_exceeded}, state}
+
+          true ->
+            true = :ets.insert_new(state.request_ids_table, {key})
+
+            updated_session = %{
+              session
+              | request_id_count: session.request_id_count + 1,
+                last_activity: System.system_time(:microsecond)
+            }
+
+            :ets.insert(state.sessions_table, {session_id, updated_session})
+            {:reply, :ok, state}
+        end
+
+      _missing_or_terminated ->
+        {:reply, {:error, :session_not_found}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:claim_initialization, session_id}, {owner, _tag}, state) do
+    case :ets.lookup(state.sessions_table, session_id) do
+      [{^session_id, %{status: :active} = session}] ->
+        cond do
+          session.initialized ->
+            {:reply, {:error, :session_already_initialized}, state}
+
+          session.initialization_claimed ->
+            {:reply, {:error, :initialization_in_progress}, state}
+
+          true ->
+            monitor = Process.monitor(owner)
+
+            updated = %{
+              session
+              | initialization_claimed: true,
+                last_activity: System.system_time(:microsecond)
+            }
+
+            :ets.insert(state.sessions_table, {session_id, updated})
+
+            claim = %{owner: owner, monitor: monitor}
+
+            next_state = %{
+              state
+              | initialization_claims: Map.put(state.initialization_claims, session_id, claim)
+            }
+
+            {:reply, :ok, next_state}
+        end
+
+      _missing_or_terminated ->
+        {:reply, {:error, :session_not_found}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:complete_initialization, session_id, version}, {owner, _tag}, state) do
+    case :ets.lookup(state.sessions_table, session_id) do
+      [{^session_id, %{status: :active} = session}] ->
+        cond do
+          not session.initialization_claimed ->
+            {:reply, {:error, :initialization_not_claimed}, state}
+
+          not initialization_owned_by?(state, session_id, owner) ->
+            {:reply, {:error, :initialization_owner_mismatch}, state}
+
+          not initialization_protocol_version_allowed?(session, version) ->
+            {:reply, {:error, :session_protocol_version_mismatch}, state}
+
+          true ->
+            updated = %{
+              session
+              | initialized: true,
+                initialization_claimed: false,
+                protocol_version: version,
+                last_activity: System.system_time(:microsecond)
+            }
+
+            :ets.insert(state.sessions_table, {session_id, updated})
+            {:reply, :ok, release_initialization_claim(state, session_id)}
+        end
+
+      _missing_or_terminated ->
+        {:reply, {:error, :session_not_found}, state}
+    end
   end
 
   @impl true
@@ -348,9 +598,7 @@ defmodule ExMCP.SessionManager do
       timestamp: System.system_time(:microsecond)
     }
 
-    managed_event = Map.put(event, :__ex_mcp_managed__, true)
-
-    case store_event(state, session_id, managed_event) do
+    case store_event(state, session_id, event, true) do
       {:ok, state} -> {:reply, {:ok, event}, state}
       {:error, reason, state} -> {:reply, {:error, reason}, state}
     end
@@ -379,17 +627,29 @@ defmodule ExMCP.SessionManager do
   @impl true
   def handle_call({:update_session, session_id, updates}, _from, state) do
     case :ets.lookup(state.sessions_table, session_id) do
-      [{^session_id, session}] ->
-        # Update session with new data
-        updated_session =
-          session
-          |> Map.merge(updates)
-          |> Map.put(:last_activity, System.system_time(:microsecond))
+      [{^session_id, %{status: :active} = session}] ->
+        cond do
+          not identity_update_allowed?(session, updates) ->
+            {:reply, {:error, :session_identity_mismatch}, state}
 
-        :ets.insert(state.sessions_table, {session_id, updated_session})
-        {:reply, :ok, state}
+          not protocol_version_update_allowed?(session, updates) ->
+            {:reply, {:error, :session_protocol_version_mismatch}, state}
 
-      [] ->
+          true ->
+            # Authorization identity and a negotiated protocol version are
+            # immutable for the lifetime of a session.
+            updated_session =
+              session
+              |> Map.merge(
+                Map.drop(updates, @identity_keys ++ @lifecycle_keys ++ [:protocol_version])
+              )
+              |> Map.put(:last_activity, System.system_time(:microsecond))
+
+            :ets.insert(state.sessions_table, {session_id, updated_session})
+            {:reply, :ok, state}
+        end
+
+      _missing_or_terminated ->
         {:reply, {:error, :session_not_found}, state}
     end
   end
@@ -399,20 +659,27 @@ defmodule ExMCP.SessionManager do
     # Mark session as terminated
     case :ets.lookup(state.sessions_table, session_id) do
       [{^session_id, session}] ->
-        terminated_session = %{session | status: :terminated}
+        terminated_session = %{
+          session
+          | status: :terminated,
+            event_count: 0,
+            replay_bytes: 0
+        }
+
         :ets.insert(state.sessions_table, {session_id, terminated_session})
 
         # Clean up events for this session
         cleanup_session_events(state, session_id)
+        cleanup_session_request_ids(state, session_id)
         ExMCP.SubscriptionRegistry.remove_session(session_id)
 
-        Logger.debug("Terminated session #{session_id}")
+        Logger.debug("Terminated session", session_id_hash: LogSummary.fingerprint(session_id))
 
       [] ->
         :ok
     end
 
-    {:reply, :ok, state}
+    {:reply, :ok, release_initialization_claim(state, session_id)}
   end
 
   @impl true
@@ -443,7 +710,8 @@ defmodule ExMCP.SessionManager do
     total_events = :ets.info(state.events_table, :size)
 
     memory_usage =
-      :ets.info(state.sessions_table, :memory) + :ets.info(state.events_table, :memory)
+      :ets.info(state.sessions_table, :memory) + :ets.info(state.events_table, :memory) +
+        :ets.info(state.request_ids_table, :memory)
 
     stats = %{
       total_sessions: length(sessions),
@@ -457,7 +725,7 @@ defmodule ExMCP.SessionManager do
 
   @impl true
   def handle_info(:cleanup_expired_sessions, state) do
-    cleanup_expired_sessions(state)
+    state = cleanup_expired_sessions(state)
 
     # Schedule next cleanup
     cleanup_timer =
@@ -467,8 +735,23 @@ defmodule ExMCP.SessionManager do
   end
 
   @impl true
+  def handle_info({:DOWN, monitor, :process, owner, _reason}, state) do
+    case initialization_claim_for_monitor(state, monitor, owner) do
+      {session_id, _claim} ->
+        terminate_abandoned_initialization(state, session_id)
+        {:noreply, release_initialization_claim(state, session_id, false)}
+
+      nil ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info(msg, state) do
-    Logger.warning("SessionManager received unexpected message: #{inspect(msg)}")
+    Logger.warning("SessionManager received unexpected message",
+      message_shape: LogSummary.describe(msg)
+    )
+
     {:noreply, state}
   end
 
@@ -481,14 +764,152 @@ defmodule ExMCP.SessionManager do
     # Clean up ETS tables
     :ets.delete(state.sessions_table)
     :ets.delete(state.events_table)
+    :ets.delete(state.request_ids_table)
 
     :ok
   end
 
   ## Private Functions
 
+  defp create_session(metadata, state) do
+    session_id = generate_session_id()
+    now = System.system_time(:microsecond)
+
+    session_data = %{
+      id: session_id,
+      transport: Map.get(metadata, :transport, :http),
+      client_info: Map.get(metadata, :client_info, %{}),
+      created_at: now,
+      last_activity: now,
+      event_count: 0,
+      replay_bytes: 0,
+      request_id_count: 0,
+      status: :active,
+      initialized: false,
+      initialization_claimed: false,
+      protocol_version: nil,
+      principal_id: Map.get(metadata, :principal_id),
+      tenant_id: Map.get(metadata, :tenant_id),
+      issuer: Map.get(metadata, :issuer),
+      audience: Map.get(metadata, :audience)
+    }
+
+    :ets.insert(state.sessions_table, {session_id, session_data})
+
+    Logger.debug("Created session",
+      session_id_hash: LogSummary.fingerprint(session_id),
+      transport: session_data.transport
+    )
+
+    {:reply, session_id, state}
+  end
+
   defp generate_session_id do
     :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
+  end
+
+  # Once any identity component is bound, session reuse must present it. This
+  # prevents an internal caller from accidentally bypassing the binding by
+  # omitting identity metadata on a later transport operation.
+  defp session_identity_matches?(session, metadata) do
+    Enum.all?(@identity_keys, fn key ->
+      case Map.get(session, key) do
+        nil -> not Map.has_key?(metadata, key) or is_nil(Map.get(metadata, key))
+        bound -> Map.has_key?(metadata, key) and Map.get(metadata, key) == bound
+      end
+    end)
+  end
+
+  defp identity_update_allowed?(session, metadata) do
+    Enum.all?(@identity_keys, fn key ->
+      not Map.has_key?(metadata, key) or Map.get(session, key) == Map.get(metadata, key)
+    end)
+  end
+
+  defp protocol_version_update_allowed?(session, updates) do
+    case Map.fetch(updates, :protocol_version) do
+      :error ->
+        true
+
+      {:ok, version} when is_binary(version) ->
+        is_binary(session.protocol_version) and session.protocol_version == version
+
+      {:ok, nil} ->
+        is_nil(session.protocol_version)
+
+      {:ok, _invalid} ->
+        false
+    end
+  end
+
+  defp initialization_protocol_version_allowed?(session, version) when is_binary(version) do
+    is_nil(session.protocol_version) or session.protocol_version == version
+  end
+
+  defp initialization_protocol_version_allowed?(_session, _version), do: false
+
+  defp initialization_owned_by?(state, session_id, owner) do
+    case Map.get(state.initialization_claims, session_id) do
+      %{owner: ^owner} -> true
+      _missing_or_other_owner -> false
+    end
+  end
+
+  defp initialization_claim_for_monitor(state, monitor, owner) do
+    Enum.find(state.initialization_claims, fn
+      {_session_id, %{monitor: ^monitor, owner: ^owner}} -> true
+      _other -> false
+    end)
+  end
+
+  defp release_initialization_claim(state, session_id, flush? \\ true) do
+    case Map.pop(state.initialization_claims, session_id) do
+      {nil, _claims} ->
+        state
+
+      {%{monitor: monitor}, claims} ->
+        if flush?, do: Process.demonitor(monitor, [:flush])
+        %{state | initialization_claims: claims}
+    end
+  end
+
+  defp terminate_abandoned_initialization(state, session_id) do
+    case :ets.lookup(state.sessions_table, session_id) do
+      [{^session_id, %{status: :active, initialized: false} = session}] ->
+        terminated = %{
+          session
+          | status: :terminated,
+            initialization_claimed: false,
+            event_count: 0,
+            replay_bytes: 0
+        }
+
+        :ets.insert(state.sessions_table, {session_id, terminated})
+        cleanup_session_events(state, session_id)
+        cleanup_session_request_ids(state, session_id)
+        ExMCP.SubscriptionRegistry.remove_session(session_id)
+
+        Logger.debug("Terminated abandoned initialization",
+          session_id_hash: LogSummary.fingerprint(session_id)
+        )
+
+      _missing_terminated_or_completed ->
+        :ok
+    end
+  end
+
+  defp prune_terminated_sessions(state) do
+    state.sessions_table
+    |> :ets.tab2list()
+    |> Enum.each(fn
+      {session_id, %{status: :terminated}} ->
+        cleanup_session_events(state, session_id)
+        cleanup_session_request_ids(state, session_id)
+        :ets.delete(state.sessions_table, session_id)
+
+      _active ->
+        :ok
+    end)
   end
 
   defp get_events_after(state, session_id, nil) do
@@ -536,6 +957,7 @@ defmodule ExMCP.SessionManager do
     event_data
     |> Map.delete(:__ex_mcp_sequence__)
     |> Map.delete(:__ex_mcp_managed__)
+    |> Map.delete(:__ex_mcp_encoded_bytes__)
   end
 
   defp compare_event_ids(event_id1, event_id2) do
@@ -577,35 +999,73 @@ defmodule ExMCP.SessionManager do
   end
 
   defp store_event(state, session_id, event_data) do
+    store_event(state, session_id, event_data, false)
+  end
+
+  defp store_event(state, session_id, event_data, managed?) do
     case :ets.lookup(state.sessions_table, session_id) do
       [{^session_id, session}] when session.status == :active ->
-        event_key = {session_id, event_data.id}
+        event_data = sanitize_event_metadata(event_data, managed?)
 
-        {event_data, state, new_event?} =
-          normalize_event_sequence(state, event_key, event_data)
+        with {:ok, encoded_bytes} <- encoded_event_size(event_data),
+             :ok <-
+               enforce_event_size(
+                 encoded_bytes,
+                 min(state.config.max_event_bytes, state.config.max_replay_bytes_per_session)
+               ) do
+          event_key = {session_id, event_data.id}
 
-        :ets.insert(state.events_table, {event_key, event_data})
+          {event_data, state, _new_event?} =
+            normalize_event_sequence(state, event_key, event_data)
 
-        retained_count =
-          cond do
-            not new_event? -> session.event_count
-            session.event_count < state.config.max_events_per_session -> session.event_count + 1
-            true -> trim_old_events(state, session_id)
-          end
+          event_data = Map.put(event_data, :__ex_mcp_encoded_bytes__, encoded_bytes)
+          :ets.insert(state.events_table, {event_key, event_data})
 
-        updated_session = %{
-          session
-          | last_activity: System.system_time(:microsecond),
-            event_count: retained_count
-        }
+          {retained_count, replay_bytes} = trim_events_to_limits(state, session_id)
 
-        :ets.insert(state.sessions_table, {session_id, updated_session})
-        {:ok, state}
+          updated_session = %{
+            session
+            | last_activity: System.system_time(:microsecond),
+              event_count: retained_count,
+              replay_bytes: replay_bytes
+          }
+
+          :ets.insert(state.sessions_table, {session_id, updated_session})
+          {:ok, state}
+        else
+          {:error, reason} -> {:error, reason, state}
+        end
 
       _ ->
         {:error, :session_not_found, state}
     end
   end
+
+  defp sanitize_event_metadata(event_data, managed?) do
+    event_data =
+      Map.drop(event_data, [
+        :__ex_mcp_sequence__,
+        :__ex_mcp_managed__,
+        :__ex_mcp_encoded_bytes__
+      ])
+
+    if managed?, do: Map.put(event_data, :__ex_mcp_managed__, true), else: event_data
+  end
+
+  defp encoded_event_size(event_data) do
+    event_data
+    |> strip_event_sequence()
+    |> Jason.encode_to_iodata()
+    |> case do
+      {:ok, encoded} -> {:ok, IO.iodata_length(encoded)}
+      {:error, _reason} -> {:error, :event_not_json_encodable}
+    end
+  rescue
+    _error -> {:error, :event_not_json_encodable}
+  end
+
+  defp enforce_event_size(size, maximum) when size <= maximum, do: :ok
+  defp enforce_event_size(_size, _maximum), do: {:error, :event_too_large}
 
   defp normalize_event_sequence(state, event_key, event_data) do
     case :ets.lookup(state.events_table, event_key) do
@@ -620,17 +1080,56 @@ defmodule ExMCP.SessionManager do
     end
   end
 
-  defp trim_old_events(state, session_id) do
+  defp trim_events_to_limits(state, session_id) do
     events = events_for_session(state, session_id)
-    excess = max(length(events) - state.config.max_events_per_session, 0)
 
-    events
-    |> Enum.take(excess)
-    |> Enum.each(fn event ->
+    {event_sizes, invalid_events} =
+      Enum.reduce(events, {[], []}, fn event, {valid, invalid} ->
+        case stored_event_size(event) do
+          {:ok, size} -> {[{event, size} | valid], invalid}
+          :error -> {valid, [event | invalid]}
+        end
+      end)
+
+    Enum.each(invalid_events, fn event ->
       :ets.delete(state.events_table, {session_id, event.id})
     end)
 
-    length(events) - excess
+    event_sizes = Enum.reverse(event_sizes)
+    event_count = length(event_sizes)
+    replay_bytes = Enum.reduce(event_sizes, 0, fn {_event, size}, total -> size + total end)
+
+    {discarded, retained_count, retained_bytes} =
+      Enum.reduce_while(event_sizes, {[], event_count, replay_bytes}, fn {event, event_bytes},
+                                                                         {discarded, count, bytes} ->
+        if count > state.config.max_events_per_session or
+             bytes > state.config.max_replay_bytes_per_session do
+          {:cont, {[event | discarded], count - 1, bytes - event_bytes}}
+        else
+          {:halt, {discarded, count, bytes}}
+        end
+      end)
+
+    Enum.each(discarded, fn event ->
+      :ets.delete(state.events_table, {session_id, event.id})
+    end)
+
+    {retained_count, retained_bytes}
+  end
+
+  defp stored_event_size(event) do
+    case Map.fetch(event, :__ex_mcp_encoded_bytes__) do
+      {:ok, size} when is_integer(size) and size >= 0 ->
+        {:ok, size}
+
+      _missing_or_invalid ->
+        case encoded_event_size(event) do
+          {:ok, size} -> {:ok, size}
+          {:error, _reason} -> :error
+        end
+    end
+  rescue
+    _error -> :error
   end
 
   defp cleanup_session_events(state, session_id) do
@@ -643,6 +1142,10 @@ defmodule ExMCP.SessionManager do
     end)
   end
 
+  defp cleanup_session_request_ids(state, session_id) do
+    :ets.match_delete(state.request_ids_table, {{session_id, :_}})
+  end
+
   defp cleanup_expired_sessions(state) do
     now = System.system_time(:microsecond)
     ttl_microseconds = state.config.session_ttl_seconds * 1_000_000
@@ -653,19 +1156,38 @@ defmodule ExMCP.SessionManager do
         session.status == :active and now - session.last_activity > ttl_microseconds
       end)
 
-    Enum.each(expired_sessions, fn {session_id, session} ->
-      Logger.debug("Cleaning up expired session #{session_id}")
+    state =
+      Enum.reduce(expired_sessions, state, fn {session_id, session}, acc ->
+        Logger.debug("Cleaning up expired session",
+          session_id_hash: LogSummary.fingerprint(session_id)
+        )
 
-      # Mark as terminated and clean up events
-      terminated_session = %{session | status: :terminated}
+        # Mark as terminated and clean up events
+        terminated_session = %{
+          session
+          | status: :terminated,
+            initialization_claimed: false,
+            event_count: 0,
+            replay_bytes: 0
+        }
 
-      :ets.insert(state.sessions_table, {session_id, terminated_session})
-      cleanup_session_events(state, session_id)
-      ExMCP.SubscriptionRegistry.remove_session(session_id)
-    end)
+        :ets.insert(acc.sessions_table, {session_id, terminated_session})
+        cleanup_session_events(acc, session_id)
+        cleanup_session_request_ids(acc, session_id)
+        ExMCP.SubscriptionRegistry.remove_session(session_id)
+        release_initialization_claim(acc, session_id)
+      end)
 
     if length(expired_sessions) > 0 do
       Logger.info("Cleaned up #{length(expired_sessions)} expired sessions")
+    end
+
+    state
+  end
+
+  defp validate_positive_limit!(name, value) do
+    unless is_integer(value) and value > 0 do
+      raise ArgumentError, "#{inspect(name)} must be a positive integer"
     end
   end
 end

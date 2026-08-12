@@ -4,7 +4,13 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
   alias ExMCP.ACP.Adapters.Codex
 
   setup do
-    {:ok, state} = Codex.init([])
+    {:ok, state} =
+      Codex.init(
+        workspace_roots: ["/tmp"],
+        authorize_mcp_server: fn _server, _context -> true end,
+        trust_authorized_workspaces: true
+      )
+
     %{state: state}
   end
 
@@ -55,6 +61,88 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
   end
 
   describe "session lifecycle outbound mapping" do
+    test "secure defaults reject workspaces outside the configured roots" do
+      {:ok, state} = Codex.init(cwd: File.cwd!())
+
+      msg = %{
+        "method" => "session/new",
+        "id" => 1,
+        "params" => %{"cwd" => "/tmp/outside", "mcpServers" => []}
+      }
+
+      assert {:error, "Workspace path is not authorized", ^state} =
+               Codex.translate_outbound(msg, state)
+    end
+
+    test "secure defaults reject session-supplied MCP servers" do
+      cwd = File.cwd!()
+      {:ok, state} = Codex.init(cwd: cwd)
+
+      msg = %{
+        "method" => "session/new",
+        "id" => 1,
+        "params" => %{
+          "cwd" => cwd,
+          "mcpServers" => [
+            %{
+              "type" => "http",
+              "name" => "remote",
+              "url" => "https://example.test/mcp",
+              "headers" => []
+            }
+          ]
+        }
+      }
+
+      assert {:error, "MCP server is not authorized", ^state} =
+               Codex.translate_outbound(msg, state)
+    end
+
+    test "a trusted server name cannot authorize caller-controlled connection details" do
+      cwd = File.cwd!()
+      {:ok, state} = Codex.init(cwd: cwd, trusted_mcp_servers: ["trusted-name"])
+
+      spoofed_servers = [
+        %{
+          "type" => "http",
+          "name" => "trusted-name",
+          "url" => "https://attacker.invalid/mcp",
+          "headers" => []
+        },
+        %{
+          "name" => "trusted-name",
+          "command" => "/tmp/attacker",
+          "args" => [],
+          "env" => []
+        }
+      ]
+
+      for server <- spoofed_servers do
+        msg = %{
+          "method" => "session/new",
+          "id" => 1,
+          "params" => %{"cwd" => cwd, "mcpServers" => [server]}
+        }
+
+        assert {:error, "MCP server is not authorized", ^state} =
+                 Codex.translate_outbound(msg, state)
+      end
+    end
+
+    test "authorized workspaces are not marked trusted without an explicit opt-in" do
+      cwd = File.cwd!()
+      {:ok, state} = Codex.init(workspace_roots: [cwd])
+
+      msg = %{
+        "method" => "session/new",
+        "id" => 1,
+        "params" => %{"cwd" => cwd, "mcpServers" => []}
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(msg, state)
+      refute get_in(decode(data), ["params", "config", "projects"])
+    end
+
     test "session/new sends thread/start with mode and MCP config", %{state: state} do
       msg = %{
         "method" => "session/new",
@@ -72,7 +160,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
             %{
               "type" => "stdio",
               "name" => "local tools",
-              "command" => "tools",
+              "command" => "/usr/bin/tools",
               "args" => ["--stdio"],
               "env" => [%{"name" => "A", "value" => "B"}]
             }
@@ -102,7 +190,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
                %{"Authorization" => "Bearer token"}
 
       assert get_in(codex_msg, ["params", "config", "mcp_servers", "local_tools", "command"]) ==
-               "tools"
+               "/usr/bin/tools"
 
       refute get_in(codex_msg, ["params", "config", "mcp_servers", "local_tools", "cwd"])
 

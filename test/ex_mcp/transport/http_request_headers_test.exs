@@ -25,6 +25,16 @@ defmodule ExMCP.Transport.HTTP.RequestHeadersTest do
            end) == 1
   end
 
+  test "forces identity encoding so compressed responses cannot bypass byte limits" do
+    configured = %{state() | headers: [{"Accept-Encoding", "gzip"}]}
+    headers = RequestHeaders.build(request("tools/list", %{}), configured)
+
+    assert [{"accept-encoding", "identity"}] ==
+             Enum.filter(headers, fn {name, _value} ->
+               String.downcase(name) == "accept-encoding"
+             end)
+  end
+
   test "Mcp-Name uses uri for resources/read and is absent on methods without a name source" do
     resource_headers =
       RequestHeaders.build(request("resources/read", %{"uri" => "file:///safe"}), state())

@@ -94,6 +94,13 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     HttpPlug.call(c, HttpPlug.init(init_opts))
   end
 
+  defp initialize_session(plug_opts \\ []) do
+    conn = post_request("/", initialize_request(), plug_opts: plug_opts)
+    assert conn.status == 200
+    [session_id] = get_resp_header(conn, "mcp-session-id")
+    session_id
+  end
+
   # ---------- 1. Session ID in response headers ----------
 
   describe "Mcp-Session-Id in response headers (MCP spec: server provides session ID)" do
@@ -130,7 +137,10 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "tools/list response includes Mcp-Session-Id header" do
-      conn = post_request("/", tools_list_request())
+      session_id = initialize_session()
+
+      conn =
+        post_request("/", tools_list_request(), headers: [{"mcp-session-id", session_id}])
 
       assert conn.status == 200
 
@@ -141,7 +151,10 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "tools/call response includes Mcp-Session-Id header" do
-      conn = post_request("/", tools_call_request())
+      session_id = initialize_session()
+
+      conn =
+        post_request("/", tools_call_request(), headers: [{"mcp-session-id", session_id}])
 
       assert conn.status == 200
 
@@ -158,9 +171,13 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     test "GET to root endpoint starts SSE connection" do
       # Per MCP spec, SSE GET should use the same endpoint as POST.
       # If POST goes to "/" then GET to "/" should start SSE.
+      session_id = initialize_session(sse_enabled: true)
+
       conn =
         conn(:get, "/")
         |> put_req_header("accept", "text/event-stream")
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
         |> HttpPlug.call(HttpPlug.init(handler: ComplianceTestServer, sse_enabled: true))
 
       # Should start SSE (200 with text/event-stream), not 404
@@ -172,9 +189,13 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "GET to /mcp endpoint starts SSE connection" do
+      session_id = initialize_session(sse_enabled: true)
+
       conn =
         conn(:get, "/mcp")
         |> put_req_header("accept", "text/event-stream")
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
         |> HttpPlug.call(HttpPlug.init(handler: ComplianceTestServer, sse_enabled: true))
 
       assert conn.status == 200,
@@ -184,15 +205,32 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "GET to /mcp/v1 endpoint starts SSE connection" do
+      session_id = initialize_session(sse_enabled: true)
+
       conn =
         conn(:get, "/mcp/v1")
         |> put_req_header("accept", "text/event-stream")
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
         |> HttpPlug.call(HttpPlug.init(handler: ComplianceTestServer, sse_enabled: true))
 
       assert conn.status == 200,
              "GET to /mcp/v1 should start SSE, got status #{conn.status}"
 
       assert get_resp_header(conn, "content-type") == ["text/event-stream"]
+    end
+
+    test "headerless Streamable HTTP GET does not mint a session" do
+      before_count = length(ExMCP.SessionManager.list_sessions())
+
+      conn =
+        conn(:get, "/")
+        |> put_req_header("accept", "text/event-stream")
+        |> HttpPlug.call(HttpPlug.init(handler: ComplianceTestServer, sse_enabled: true))
+
+      assert conn.status == 400
+      assert get_resp_header(conn, "mcp-session-id") == []
+      assert length(ExMCP.SessionManager.list_sessions()) == before_count
     end
   end
 
@@ -217,8 +255,13 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "tools/list returns 200 with response body when SSE is enabled" do
+      session_id = initialize_session(sse_enabled: true)
+
       conn =
-        post_request("/", tools_list_request(), plug_opts: [sse_enabled: true])
+        post_request("/", tools_list_request(),
+          plug_opts: [sse_enabled: true],
+          headers: [{"mcp-session-id", session_id}]
+        )
 
       assert conn.status == 200,
              "POST tools/list MUST return 200 with body in SSE mode, got #{conn.status}"
@@ -230,8 +273,13 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "tools/call returns 200 with response body when SSE is enabled" do
+      session_id = initialize_session(sse_enabled: true)
+
       conn =
-        post_request("/", tools_call_request(), plug_opts: [sse_enabled: true])
+        post_request("/", tools_call_request(),
+          plug_opts: [sse_enabled: true],
+          headers: [{"mcp-session-id", session_id}]
+        )
 
       assert conn.status == 200,
              "POST tools/call MUST return 200 with body in SSE mode, got #{conn.status}"
@@ -243,8 +291,13 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "notifications return 202 Accepted (no body needed)" do
+      session_id = initialize_session(sse_enabled: true)
+
       conn =
-        post_request("/", initialized_notification(), plug_opts: [sse_enabled: true])
+        post_request("/", initialized_notification(),
+          plug_opts: [sse_enabled: true],
+          headers: [{"mcp-session-id", session_id}]
+        )
 
       # Notifications (no id) SHOULD get 202 Accepted
       assert conn.status == 202,
@@ -270,8 +323,13 @@ defmodule ExMCP.Compliance.ServerStreamableHTTPComplianceTest do
     end
 
     test "protocol version header present in SSE mode responses" do
+      session_id = initialize_session(sse_enabled: true)
+
       conn =
-        post_request("/", tools_list_request(), plug_opts: [sse_enabled: true])
+        post_request("/", tools_list_request(),
+          plug_opts: [sse_enabled: true],
+          headers: [{"mcp-session-id", session_id}]
+        )
 
       # Whether SSE is enabled or not, POST responses need the version header
       version_headers = get_resp_header(conn, "mcp-protocol-version")

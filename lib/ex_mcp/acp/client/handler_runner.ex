@@ -11,9 +11,40 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     GenServer.start_link(__MODULE__, {handler_mod, handler_opts, owner})
   end
 
-  def session_update(pid, session_id, update) do
-    GenServer.cast(pid, {:session_update, session_id, update})
+  def session_update(pid, session_id, update, max_queue, max_queue_bytes) do
+    incoming_bytes = :erlang.external_size(update)
+
+    if update_mailbox_below_limits?(pid, max_queue, max_queue_bytes, incoming_bytes) do
+      GenServer.cast(pid, {:session_update, session_id, update})
+      :ok
+    else
+      :dropped
+    end
   end
+
+  defp update_mailbox_below_limits?(pid, count_limit, byte_limit, incoming_bytes) do
+    with {:message_queue_len, length} when length < count_limit <-
+           Process.info(pid, :message_queue_len),
+         {:messages, messages} when length(messages) < count_limit <-
+           Process.info(pid, :messages) do
+      queued_bytes = queued_update_bytes(messages, byte_limit)
+      incoming_bytes <= byte_limit - queued_bytes
+    else
+      _full_or_closed -> false
+    end
+  end
+
+  defp queued_update_bytes(messages, limit) do
+    Enum.reduce_while(messages, 0, fn message, total ->
+      total = total + queued_update_size(message)
+      if total >= limit, do: {:halt, total}, else: {:cont, total}
+    end)
+  end
+
+  defp queued_update_size({:"$gen_cast", {:session_update, _session_id, update}}),
+    do: :erlang.external_size(update)
+
+  defp queued_update_size(_message), do: 0
 
   def permission_request(pid, ref, session_id, tool_call, options) do
     GenServer.cast(pid, {:permission_request, ref, session_id, tool_call, options})
@@ -59,11 +90,14 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
         {:noreply, %{state | handler_state: handler_state}}
 
       {:ok, other} ->
-        Logger.warning("ACP handler returned invalid session update result: #{inspect(other)}")
+        Logger.warning("ACP handler returned invalid session update result",
+          return_shape: return_shape(other)
+        )
+
         {:noreply, state}
 
       {:error, reason} ->
-        Logger.warning("ACP handler session update failed: #{inspect(reason)}")
+        Logger.warning("ACP handler session update failed", error_class: error_class(reason))
         {:noreply, state}
     end
   end
@@ -176,4 +210,18 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     kind, reason ->
       {:error, {kind, reason, __STACKTRACE__}}
   end
+
+  defp return_shape(value) when is_tuple(value), do: {:tuple, tuple_size(value)}
+  defp return_shape(value) when is_map(value), do: :map
+  defp return_shape(value) when is_list(value), do: :list
+  defp return_shape(value) when is_atom(value), do: :atom
+  defp return_shape(_value), do: :other
+
+  defp error_class({kind, reason, _stack}) when kind in [:error, :exit, :throw],
+    do: {kind, exception_module(reason)}
+
+  defp error_class(_reason), do: :handler_error
+
+  defp exception_module(%{__struct__: module}) when is_atom(module), do: module
+  defp exception_module(_reason), do: :non_exception
 end

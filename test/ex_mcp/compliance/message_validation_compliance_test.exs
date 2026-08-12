@@ -91,6 +91,7 @@ defmodule ExMCP.Compliance.MessageValidationComplianceTest do
       assert error.code == -32600
       assert error.message == "Request ID has already been used in this session"
       assert error.data.duplicate_id == "test-123"
+      assert error.data.type == "duplicate_request_id"
     end
 
     test "client ensures request IDs are never reused" do
@@ -376,8 +377,20 @@ defmodule ExMCP.Compliance.MessageValidationComplianceTest do
       }
 
       {{:error, error2}, _} = MessageValidator.validate_message(non_string_method, session_state)
-      # This actually returns -32603 because it's treated as a response without result/error
-      assert error2.code == -32603
+      assert error2.code == -32600
+
+      structured_version = %{
+        "jsonrpc" => %{"nested" => "value"},
+        "method" => "tools/list",
+        "id" => "test-123"
+      }
+
+      assert {{:error, version_error}, _} =
+               MessageValidator.validate_message(structured_version, session_state)
+
+      assert version_error.code == -32600
+      assert version_error.message == "Invalid JSON-RPC version"
+      assert version_error.data == %{expected: "2.0", received_type: "object"}
 
       # Test invalid params type - this should be caught by request structure validation
       invalid_params = %{

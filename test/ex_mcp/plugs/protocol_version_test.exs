@@ -36,14 +36,14 @@ defmodule ExMCP.Plugs.ProtocolVersionTest do
       refute conn.halted
     end
 
-    test "ignores invalid headers when disabled" do
+    test "rejects an explicit invalid header when missing-header enforcement is disabled" do
       conn =
         conn(:post, "/mcp")
         |> put_req_header("mcp-protocol-version", "invalid-version")
         |> ProtocolVersion.call([])
 
-      assert conn.assigns[:mcp_version] == "2025-11-25"
-      refute conn.halted
+      assert conn.status == 400
+      assert conn.halted
     end
 
     test "validates and accepts the modern version even when the legacy flag is disabled" do
@@ -155,6 +155,17 @@ defmodule ExMCP.Plugs.ProtocolVersionTest do
       conn =
         conn(:post, "/mcp")
         |> put_req_header("mcp-protocol-version", "")
+        |> ProtocolVersion.call([])
+
+      assert conn.status == 400
+      assert conn.halted
+    end
+
+    test "rejects duplicate protocol version headers" do
+      conn =
+        conn(:post, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2025-11-25")
+        |> prepend_req_headers([{"mcp-protocol-version", "2025-06-18"}])
         |> ProtocolVersion.call([])
 
       assert conn.status == 400

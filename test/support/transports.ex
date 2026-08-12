@@ -432,7 +432,7 @@ defmodule ExMCP.Test.Support.Transports.Http do
 
         config = %{
           consent_handler: ExMCP.ConsentHandler.Test,
-          trusted_origins: ["localhost", "127.0.0.1"]
+          trusted_hosts: ["localhost", "127.0.0.1"]
         }
 
         case SecurityGuard.validate_request(security_request, config) do
@@ -609,7 +609,7 @@ defmodule ExMCP.Test.Support.Transports.Stdio do
 
         config = %{
           consent_handler: ExMCP.ConsentHandler.Test,
-          trusted_origins: ["localhost", "127.0.0.1"]
+          trusted_hosts: ["localhost", "127.0.0.1"]
         }
 
         case SecurityGuard.validate_request(security_request, config) do
@@ -762,7 +762,7 @@ defmodule ExMCP.Test.Support.Transports.Beam do
 
         config = %{
           consent_handler: ExMCP.ConsentHandler.Test,
-          trusted_origins: ["localhost", "127.0.0.1"]
+          trusted_hosts: ["localhost", "127.0.0.1"]
         }
 
         case SecurityGuard.validate_request(security_request, config) do
@@ -809,7 +809,7 @@ defmodule ExMCP.Test.Support.Transports.Beam do
 
       config = %{
         consent_handler: ExMCP.ConsentHandler.Test,
-        trusted_origins: ["localhost", "127.0.0.1"]
+        trusted_hosts: ["localhost", "127.0.0.1"]
       }
 
       case SecurityGuard.validate_request(security_request, config) do

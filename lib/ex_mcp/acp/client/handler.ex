@@ -68,7 +68,7 @@ defmodule ExMCP.ACP.Client.Handler do
   @callback handle_terminal_request(
               method :: String.t(),
               params :: map(),
-              id :: integer() | String.t(),
+              id :: integer() | String.t() | nil,
               state()
             ) :: {:ok, result :: map(), state()} | {:error, reason :: String.t(), state()}
 

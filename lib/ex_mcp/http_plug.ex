@@ -45,6 +45,8 @@ defmodule ExMCP.HttpPlug do
         handler: MyApp.MCPServer,
         server_info: %{name: "my-app"},
         oauth_enabled: true,
+        resource: "https://mcp.example.com/mcp",
+        authorization_servers: ["https://auth.example.com"],
         auth_config: %{
           introspection_endpoint: "https://auth.example.com/introspect",
           realm: "my-mcp-server" # Optional, defaults to server_info.name
@@ -101,8 +103,10 @@ defmodule ExMCP.HttpPlug do
 
   ### Session ids
 
-  Client-supplied `mcp-session-id` (and legacy `x-session-id`) header values
-  are validated before use: at most 128 bytes from the character set
+  Session IDs are issued by the server. Client-supplied `mcp-session-id` (and
+  legacy `x-session-id`) header values are validated and must identify an
+  existing session bound to the same authorization identity. Values are at
+  most 128 bytes from the character set
   `A-Z a-z 0-9 . _ ~ + / = -` (covering UUIDs and base64/base64url tokens).
   Invalid values are rejected with a `400` JSON-RPC error and are never
   echoed back.
@@ -123,7 +127,8 @@ defmodule ExMCP.HttpPlug do
   alias ExMCP.HttpPlug.RequestStream
   alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEHandler
-  alias ExMCP.Internal.{JSONRPC, VersionRegistry}
+  alias ExMCP.Internal.{JSONRPC, LogSummary, MessageValidator, VersionRegistry}
+  alias ExMCP.Plugs.ProtectedResourceMetadata
   alias ExMCP.Protocol.{ErrorCodes, Methods}
   alias ExMCP.Server.{RequestContext, Subscriptions}
   alias ExMCP.Transport.HTTP.RequestHeaders
@@ -145,6 +150,7 @@ defmodule ExMCP.HttpPlug do
   @impl Plug
   def init(opts) do
     validate_mrtr_configuration!(opts)
+    protected_resource_metadata = protected_resource_metadata!(opts)
 
     legacy_http_sse =
       Keyword.get(opts, :legacy_http_sse, Keyword.get(opts, :sse_enabled, false))
@@ -169,6 +175,8 @@ defmodule ExMCP.HttpPlug do
       authorize_subscription_filter: Keyword.get(opts, :authorize_subscription_filter),
       authorize_subscription_publication: Keyword.get(opts, :authorize_subscription_publication),
       subscription_max_queue: Keyword.get(opts, :subscription_max_queue),
+      subscription_max_message_bytes: Keyword.get(opts, :subscription_max_message_bytes),
+      subscription_max_queue_bytes: Keyword.get(opts, :subscription_max_queue_bytes),
       subscription_max_lifetime_ms: Keyword.get(opts, :subscription_max_lifetime_ms),
       subscription_keepalive_interval_ms:
         subscription_keepalive_interval!(
@@ -190,8 +198,77 @@ defmodule ExMCP.HttpPlug do
       validate_origin: Keyword.get(opts, :validate_origin, true),
       body_limit: Keyword.get(opts, :body_limit, 1_000_000),
       oauth_enabled: Keyword.get(opts, :oauth_enabled, false),
-      auth_config: Keyword.get(opts, :auth_config, %{})
+      auth_config: Keyword.get(opts, :auth_config, %{}),
+      # Keep the default data-only so `plug ExMCP.HttpPlug, ...` can safely
+      # escape initialized options into a module attribute at compile time.
+      # A configured mapper may still be a function.
+      scope_mapper: Keyword.get(opts, :scope_mapper),
+      protected_resource_metadata: protected_resource_metadata
     }
+  end
+
+  defp protected_resource_metadata!(opts) do
+    if Keyword.get(opts, :oauth_enabled, false) do
+      auth_config = Keyword.get(opts, :auth_config, %{})
+      resource = Keyword.get(opts, :resource) || Map.get(auth_config, :resource)
+
+      authorization_servers =
+        Keyword.get(opts, :authorization_servers) || Map.get(auth_config, :authorization_servers)
+
+      metadata_opts = [
+        resource: resource,
+        authorization_servers: authorization_servers,
+        scopes_supported: Keyword.get(opts, :scopes_supported, get_supported_scopes()),
+        bearer_methods_supported: Keyword.get(opts, :bearer_methods_supported, ["header"])
+      ]
+
+      validate_protected_resource_uri!(resource, ":resource")
+
+      unless is_list(authorization_servers) and authorization_servers != [] do
+        raise ArgumentError,
+              "OAuth-enabled ExMCP.HttpPlug requires a non-empty :authorization_servers list"
+      end
+
+      Enum.each(
+        authorization_servers,
+        &validate_authorization_server_uri!/1
+      )
+
+      unless metadata_opts[:bearer_methods_supported] == ["header"] do
+        raise ArgumentError,
+              "OAuth-enabled ExMCP.HttpPlug only supports bearer tokens in the Authorization header"
+      end
+
+      ProtectedResourceMetadata.init(metadata_opts)
+    end
+  end
+
+  defp validate_protected_resource_uri!(value, option) when is_binary(value) do
+    case URI.parse(value) do
+      %URI{scheme: "https", host: host, fragment: nil, userinfo: nil}
+      when is_binary(host) and host != "" ->
+        if String.match?(value, ~r/[\x00-\x20\x7f]/u) do
+          raise ArgumentError,
+                "#{option} entries must not contain credentials, whitespace, or control characters"
+        else
+          :ok
+        end
+
+      _other ->
+        raise ArgumentError, "#{option} entries must be absolute HTTPS URIs without fragments"
+    end
+  end
+
+  defp validate_protected_resource_uri!(_value, option) do
+    raise ArgumentError, "#{option} entries must be absolute HTTPS URIs without fragments"
+  end
+
+  defp validate_authorization_server_uri!(value) do
+    validate_protected_resource_uri!(value, ":authorization_servers")
+
+    if URI.parse(value).query do
+      raise ArgumentError, ":authorization_servers entries must not contain query components"
+    end
   end
 
   defp validate_mrtr_configuration!(opts) do
@@ -260,7 +337,20 @@ defmodule ExMCP.HttpPlug do
   end
 
   defp do_dispatch("GET", [".well-known", "oauth-protected-resource"], conn, opts) do
-    if opts.oauth_enabled do
+    if opts.oauth_enabled and protected_resource_path(opts) == [] do
+      handle_well_known_resource(conn, opts)
+    else
+      send_resp(conn, 404, "Not Found")
+    end
+  end
+
+  defp do_dispatch(
+         "GET",
+         [".well-known", "oauth-protected-resource" | resource_path],
+         conn,
+         opts
+       ) do
+    if opts.oauth_enabled and resource_path == protected_resource_path(opts) do
       handle_well_known_resource(conn, opts)
     else
       send_resp(conn, 404, "Not Found")
@@ -305,23 +395,26 @@ defmodule ExMCP.HttpPlug do
   end
 
   defp do_dispatch("DELETE", ["sse", session_id], conn, opts) do
-    handle_session_delete(conn, session_id, opts)
+    handle_session_delete(conn, session_id, opts, false)
   end
 
   defp do_dispatch("DELETE", ["mcp", "v1", "sse", session_id], conn, opts) do
-    handle_session_delete(conn, session_id, opts)
+    handle_session_delete(conn, session_id, opts, false)
   end
 
   # Per MCP spec, DELETE to the MCP endpoint with Mcp-Session-Id header terminates the session.
   defp do_dispatch("DELETE", _path, conn, opts) do
-    case get_req_header(conn, "mcp-session-id") do
-      [session_id | _] ->
-        handle_session_delete(conn, session_id, opts)
+    case fetch_session_id_header(conn, "mcp-session-id") do
+      {:ok, session_id} when is_binary(session_id) ->
+        handle_session_delete(conn, session_id, opts, true)
 
-      [] ->
+      {:ok, nil} ->
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(%{error: "Missing Mcp-Session-Id header"}))
+
+      {:error, :invalid_session_id} ->
+        reject_invalid_session_id(conn, opts)
     end
   end
 
@@ -458,40 +551,62 @@ defmodule ExMCP.HttpPlug do
         |> send_resp(413, "Request body too large")
 
       {:error, reason} ->
-        Logger.error("Failed to read MCP request body: #{inspect(reason)}")
+        Logger.error("Failed to read MCP request body", reason: LogSummary.describe(reason))
         send_resp(conn, 400, "Invalid request body")
     end
   end
 
   defp handle_legacy_mcp_request(conn, opts) do
-    case get_or_create_session_id(conn) do
-      {:ok, session_id} -> do_handle_mcp_request(conn, opts, session_id)
+    with {:ok, body, conn} <- read_or_cached_body(conn, opts),
+         {:ok, request} <- parse_json(body),
+         {:ok, session_reference} <- get_or_create_session_id(conn, request) do
+      do_handle_mcp_request(conn, opts, session_reference)
+    else
+      {:error, :session_required} -> reject_missing_session(conn, opts)
       {:error, :invalid_session_id} -> reject_invalid_session_id(conn, opts)
+      # Preserve the existing parse/body error handling in do_handle_mcp_request.
+      {:error, _reason} -> do_handle_mcp_request(conn, opts, nil)
     end
   end
 
-  defp do_handle_mcp_request(conn, opts, session_id) do
+  defp do_handle_mcp_request(conn, opts, session_reference) do
+    session_id = session_reference_id(session_reference)
+    session_manager = Map.get(opts, :session_manager, ExMCP.SessionManager)
+
     with {:ok, conn} <- validate_request_origin(conn, opts),
          {:ok, body, conn} <- read_or_cached_body(conn, opts),
          {:ok, request} <- parse_json(body),
          conn = assign_request_protocol_version(conn, request),
-         {:ok, conn} <- validate_protocol_version(conn, request),
+         {:ok, conn} <-
+           validate_protocol_version(conn, request, session_manager, session_id),
          :ok <- validate_modern_method(request),
+         :ok <- validate_request_method_params(request),
          {:ok, token_info} <- authorize_request(conn, request, opts),
          {:ok, opts} <- resolve_handler_opts(conn, request, opts),
          {:ok, opts} <- resolve_mrtr_identity(conn, request, token_info, opts),
-         :ok <-
-           maybe_ensure_session(
-             Map.get(opts, :session_manager, ExMCP.SessionManager),
-             session_id,
-             %{transport: :http}
+         {:ok, session_id} <-
+           establish_request_session(
+             session_manager,
+             session_reference,
+             request,
+             session_metadata(opts, token_info, :http)
            ),
+         :ok <- authorize_session_lifecycle(session_manager, session_id, request),
+         :ok <- claim_request_id(session_manager, session_id, request),
          process_opts =
            opts
            |> Map.put(:session_id, session_id)
            |> Map.put(:request_headers, conn.req_headers),
-         result <- process_or_open_request_stream(conn, request, process_opts) do
-      Logger.debug("MCP request processed, result: #{inspect(result)}")
+         result <- process_or_open_request_stream(conn, request, process_opts),
+         {:ok, result, conn} <-
+           finalize_legacy_protocol_version(
+             result,
+             conn,
+             request,
+             session_manager,
+             session_id
+           ) do
+      Logger.debug("MCP request processed", reply_shape: LogSummary.describe(result))
 
       case result do
         {:request_stream, request_id, process_fun} ->
@@ -580,7 +695,9 @@ defmodule ExMCP.HttpPlug do
             %{status: 500}
           )
 
-          Logger.error("Handler did not provide a response for request: #{inspect(request)}")
+          Logger.error("Handler did not provide a response",
+            message_shape: LogSummary.describe(request)
+          )
 
           error_response =
             JSONRPC.error(
@@ -603,7 +720,7 @@ defmodule ExMCP.HttpPlug do
             %{status: 500}
           )
 
-          Logger.error("Request processing error: #{inspect(reason)}")
+          Logger.error("Request processing error", reason: LogSummary.describe(reason))
 
           error_response =
             JSONRPC.error(
@@ -672,16 +789,17 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_content_type("application/json")
         |> send_resp(404, Jason.encode!(error_response))
 
-      {:error, {:protocol_version_mismatch, message}} ->
+      {:error, {:protocol_version_mismatch, message, expected_version}} ->
         error_response =
           JSONRPC.error(
             nil,
             ErrorCodes.invalid_request(),
             message,
-            %{"expectedVersion" => VersionRegistry.latest_version()}
+            %{"expectedVersion" => expected_version}
           )
 
         conn
+        |> assign(:request_protocol_version, expected_version)
         |> maybe_add_cors_headers(opts)
         |> add_protocol_version_header()
         |> maybe_put_session_header(session_id)
@@ -699,6 +817,51 @@ defmodule ExMCP.HttpPlug do
         |> maybe_add_cors_headers(opts)
         |> put_resp_content_type("application/json")
         |> send_resp(500, Jason.encode!(Core.oauth_guard_disabled_error()))
+
+      {:error, :scope_policy_missing} ->
+        scope_policy_error_response(conn, opts)
+
+      {:error, {:invalid_method_params, request_id, error}} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(JSONRPC.error(request_id, error)))
+
+      {:error, reason} when reason in [:session_not_found, :session_identity_mismatch] ->
+        reject_unknown_session(conn, opts)
+
+      {:error, :session_not_initialized} ->
+        session_lifecycle_rejection_response(
+          conn,
+          opts,
+          session_reference_id(session_reference),
+          nil,
+          :session_not_initialized
+        )
+
+      {:error, :session_limit_exceeded} ->
+        session_limit_response(conn, opts)
+
+      {:error, {:request_id_rejected, failed_session_id, request_id, reason, method}} ->
+        handle_request_id_rejection(
+          conn,
+          opts,
+          session_manager,
+          failed_session_id,
+          request_id,
+          reason,
+          method
+        )
+
+      {:error, {:session_lifecycle_rejected, request_id, reason}} ->
+        session_lifecycle_rejection_response(conn, opts, session_id, request_id, reason)
+
+      {:error, :session_required} ->
+        reject_missing_session(conn, opts)
+
+      {:error, :session_manager_unavailable} ->
+        session_manager_unavailable_response(conn, opts)
 
       {:error, :origin_not_allowed} ->
         conn
@@ -731,7 +894,7 @@ defmodule ExMCP.HttpPlug do
         |> send_resp(413, "Request body too large")
 
       {:error, reason} ->
-        Logger.error("MCP request processing failed: #{inspect(reason)}")
+        Logger.error("MCP request processing failed", reason: LogSummary.describe(reason))
 
         error_response = JSONRPC.error(nil, ErrorCodes.internal_error(), "Internal error")
 
@@ -743,6 +906,9 @@ defmodule ExMCP.HttpPlug do
         |> send_resp(500, Jason.encode!(error_response))
     end
   end
+
+  defp session_reference_id({:existing_session, session_id}), do: session_id
+  defp session_reference_id(_new_or_stateless), do: nil
 
   # Parse JSON and handle decode errors
   defp parse_json(body) do
@@ -826,7 +992,14 @@ defmodule ExMCP.HttpPlug do
         conn,
         request,
         token_info,
-        token_claim(token_info, ["sub", :sub, "principal_id", :principal_id])
+        token_claim(token_info, [
+          "sub",
+          :sub,
+          "principal_id",
+          :principal_id,
+          "client_id",
+          :client_id
+        ])
       )
 
     tenant =
@@ -877,18 +1050,30 @@ defmodule ExMCP.HttpPlug do
   defp token_claim(_token_info, _keys), do: nil
 
   # Handle session termination via DELETE request
-  defp handle_session_delete(conn, session_id, opts) do
+  defp handle_session_delete(conn, session_id, opts, require_streamable_lifecycle?) do
+    request = %{"method" => "session/delete"}
+
     with :ok <- validate_session_id_value(session_id),
          {:ok, conn} <- validate_request_origin(conn, opts),
-         {:ok, _token_info} <- authorize_request(conn, %{"method" => "session/delete"}, opts),
-         {:ok, session_manager} <- ensure_session_manager(opts.session_manager) do
-      # Terminate the session. Deletion is idempotent, so log (rather than
-      # crash on) failures and still acknowledge the request.
-      case session_manager.terminate_session(session_id) do
-        :ok -> :ok
-        error -> Logger.error("Failed to terminate MCP session: #{inspect(error)}")
-      end
-
+         {:ok, token_info} <- authorize_request(conn, request, opts),
+         {:ok, opts} <- resolve_mrtr_identity(conn, request, token_info, opts),
+         {:ok, session_manager} <- ensure_session_manager(opts.session_manager),
+         :ok <-
+           ensure_delete_session(
+             session_manager,
+             session_id,
+             session_metadata(opts, token_info, :http),
+             require_streamable_lifecycle?
+           ),
+         {:ok, conn} <-
+           validate_delete_protocol_version(
+             conn,
+             request,
+             session_manager,
+             session_id,
+             require_streamable_lifecycle?
+           ),
+         :ok <- session_manager.terminate_session(session_id) do
       ExMCP.SubscriptionRegistry.remove_session(session_id)
 
       # Try to stop the SSE handler if it exists
@@ -907,6 +1092,7 @@ defmodule ExMCP.HttpPlug do
 
       conn
       |> maybe_add_cors_headers(opts)
+      |> add_protocol_version_header()
       |> send_resp(204, "")
     else
       {:error, :invalid_session_id} ->
@@ -927,6 +1113,37 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_content_type("application/json")
         |> send_resp(500, Jason.encode!(Core.oauth_guard_disabled_error()))
 
+      {:error, :scope_policy_missing} ->
+        scope_policy_error_response(conn, opts)
+
+      {:error, reason} when reason in [:session_not_found, :session_identity_mismatch] ->
+        reject_unknown_session(conn, opts)
+
+      {:error, :session_not_initialized} ->
+        session_lifecycle_rejection_response(
+          conn,
+          opts,
+          session_id,
+          nil,
+          :session_not_initialized
+        )
+
+      {:error, {:protocol_version_mismatch, message, expected_version}} ->
+        error_response =
+          JSONRPC.error(
+            nil,
+            ErrorCodes.invalid_request(),
+            message,
+            %{"expectedVersion" => expected_version}
+          )
+
+        conn
+        |> assign(:request_protocol_version, expected_version)
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(error_response))
+
       {:error, :origin_not_allowed} ->
         conn
         |> maybe_add_cors_headers(opts)
@@ -934,20 +1151,45 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  defp ensure_delete_session(session_manager, session_id, metadata, true),
+    do: ensure_initialized_session(session_manager, session_id, metadata)
+
+  defp ensure_delete_session(session_manager, session_id, metadata, false),
+    do: session_manager.ensure_session(session_id, metadata)
+
+  defp validate_delete_protocol_version(conn, request, session_manager, session_id, true),
+    do: validate_legacy_protocol_version(conn, request, session_manager, session_id)
+
+  defp validate_delete_protocol_version(conn, _request, _manager, _session_id, false),
+    do: {:ok, conn}
+
   # The deprecated 2024-11-05 transport receives client messages on the URI
   # announced by the initial `endpoint` event and sends JSON-RPC responses on
   # the already-open SSE stream.
   defp handle_legacy_http_sse_post(conn, opts) do
     with {:ok, conn, session_id} <- fetch_legacy_http_sse_session(conn),
-         {:ok, handler} <- fetch_legacy_http_sse_handler(session_id),
-         true <- Process.alive?(handler),
          {:ok, conn} <- validate_request_origin(conn, opts),
          {:ok, body, conn} <- read_or_cached_body(conn, opts),
          {:ok, request} <- parse_json(body),
          conn = assign_request_protocol_version(conn, request),
-         {:ok, conn} <- validate_protocol_version(conn, request),
-         {:ok, _token_info} <- authorize_request(conn, request, opts),
+         {:ok, conn} <-
+           validate_protocol_version(conn, request, opts.session_manager, session_id),
+         :ok <- validate_request_method_params(request),
+         {:ok, token_info} <- authorize_request(conn, request, opts),
          {:ok, opts} <- resolve_handler_opts(conn, request, opts),
+         {:ok, opts} <- resolve_mrtr_identity(conn, request, token_info, opts),
+         {:ok, session_manager} <- ensure_session_manager(opts.session_manager),
+         :ok <-
+           ensure_deprecated_request_session(
+             session_manager,
+             session_id,
+             request,
+             session_metadata(opts, token_info, :http)
+           ),
+         :ok <- authorize_session_lifecycle(session_manager, session_id, request),
+         :ok <- claim_request_id(session_manager, session_id, request),
+         {:ok, handler} <- fetch_legacy_http_sse_handler(session_id),
+         true <- Process.alive?(handler),
          result <-
            process_mcp_request(
              request,
@@ -955,9 +1197,25 @@ defmodule ExMCP.HttpPlug do
              |> Map.put(:session_id, session_id)
              |> Map.put(:request_headers, conn.req_headers)
            ),
-         :ok <- deliver_legacy_http_sse_result(handler, request, result) do
+         {:ok, result, conn} <-
+           finalize_legacy_protocol_version(
+             result,
+             conn,
+             request,
+             session_manager,
+             session_id
+           ),
+         :ok <-
+           deliver_legacy_http_sse_result_with_rollback(
+             handler,
+             request,
+             result,
+             session_manager,
+             session_id
+           ) do
       conn
       |> maybe_add_cors_headers(opts)
+      |> add_protocol_version_header()
       |> send_resp(202, "")
     else
       {:error, :invalid_session_id} ->
@@ -967,6 +1225,23 @@ defmodule ExMCP.HttpPlug do
         conn
         |> maybe_add_cors_headers(opts)
         |> send_resp(404, "Legacy SSE session not found")
+
+      {:error, reason} when reason in [:session_not_found, :session_identity_mismatch] ->
+        reject_unknown_session(conn, opts)
+
+      {:error, {:request_id_rejected, failed_session_id, request_id, reason, method}} ->
+        handle_request_id_rejection(
+          conn,
+          opts,
+          opts.session_manager,
+          failed_session_id,
+          request_id,
+          reason,
+          method
+        )
+
+      {:error, {:session_lifecycle_rejected, request_id, reason}} ->
+        session_lifecycle_rejection_response(conn, opts, nil, request_id, reason)
 
       false ->
         conn
@@ -979,6 +1254,34 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_header("www-authenticate", www_auth_header)
         |> send_resp(status, body)
 
+      {:error, :scope_policy_missing} ->
+        scope_policy_error_response(conn, opts)
+
+      {:error, {:invalid_method_params, request_id, error}} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(JSONRPC.error(request_id, error)))
+
+      {:error, {:protocol_version_mismatch, message, expected_version}} ->
+        error_response =
+          JSONRPC.error(
+            nil,
+            ErrorCodes.invalid_request(),
+            message,
+            %{"expectedVersion" => expected_version}
+          )
+
+        conn
+        |> assign(:request_protocol_version, expected_version)
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(error_response))
+
+      {:error, :session_manager_unavailable} ->
+        session_manager_unavailable_response(conn, opts)
+
       {:error, :origin_not_allowed} ->
         conn
         |> maybe_add_cors_headers(opts)
@@ -990,7 +1293,7 @@ defmodule ExMCP.HttpPlug do
         |> send_resp(413, "Request body too large")
 
       {:error, reason} ->
-        Logger.debug("Legacy HTTP+SSE POST rejected: #{inspect(reason)}")
+        Logger.debug("Legacy HTTP+SSE POST rejected", reason: LogSummary.describe(reason))
 
         conn
         |> maybe_add_cors_headers(opts)
@@ -1022,6 +1325,26 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
+  defp deliver_legacy_http_sse_result_with_rollback(
+         handler,
+         request,
+         result,
+         session_manager,
+         session_id
+       ) do
+    case deliver_legacy_http_sse_result(handler, request, result) do
+      :ok ->
+        :ok
+
+      {:error, _reason} = error ->
+        if Map.get(request, "method") == "initialize" do
+          cleanup_failed_initialization(session_manager, session_id)
+        end
+
+        error
+    end
+  end
+
   defp deliver_legacy_http_sse_result(_handler, _request, {:notification, _}), do: :ok
 
   defp deliver_legacy_http_sse_result(handler, _request, {:ok, response}) do
@@ -1033,7 +1356,9 @@ defmodule ExMCP.HttpPlug do
   end
 
   defp deliver_legacy_http_sse_result(handler, request, {:error, reason}) do
-    Logger.error("Legacy HTTP+SSE request processing error: #{inspect(reason)}")
+    Logger.error("Legacy HTTP+SSE request processing error",
+      reason: LogSummary.describe(reason)
+    )
 
     response =
       JSONRPC.error(Map.get(request, "id"), ErrorCodes.internal_error(), "Internal error")
@@ -1062,63 +1387,48 @@ defmodule ExMCP.HttpPlug do
 
   # Handle Server-Sent Events connections
   defp handle_sse_connection(conn, opts) do
-    with :ok <- validate_session_id_headers(conn),
+    request = %{"method" => "session/listen"}
+    deprecated_http_sse? = is_function(Map.get(opts, :initial_sse_event_builder), 1)
+    session_request = if deprecated_http_sse?, do: :allow_new_session, else: request
+
+    client_info = %{
+      user_agent: get_req_header(conn, "user-agent") |> List.first(),
+      origin: get_req_header(conn, "origin") |> List.first(),
+      referer: get_req_header(conn, "referer") |> List.first(),
+      remote_ip: get_peer_data(conn).address |> :inet.ntoa() |> to_string()
+    }
+
+    with {:ok, session_reference} <- get_or_create_session_id(conn, session_request),
          {:ok, conn} <- validate_request_origin(conn, opts),
-         {:ok, _token_info} <- authorize_request(conn, %{}, opts),
-         {:ok, session_manager} <- ensure_session_manager(opts.session_manager) do
+         {:ok, token_info} <- authorize_request(conn, request, opts),
+         {:ok, opts} <- resolve_mrtr_identity(conn, request, token_info, opts),
+         {:ok, session_manager} <- ensure_session_manager(opts.session_manager),
+         {:ok, session_id} <-
+           establish_sse_session(
+             session_manager,
+             session_reference,
+             session_metadata(opts, token_info, :sse, %{client_info: client_info}),
+             deprecated_http_sse?
+           ),
+         {:ok, conn} <-
+           validate_sse_session_lifecycle(
+             conn,
+             request,
+             session_manager,
+             session_id,
+             deprecated_http_sse?
+           ) do
       conn =
         conn
         |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
         |> put_resp_header("content-type", "text/event-stream")
         |> put_resp_header("x-accel-buffering", "no")
         |> put_resp_header("cache-control", "no-cache")
         |> put_resp_header("connection", "keep-alive")
         |> send_chunked(200)
 
-      # Extract client information for session
-      client_info = %{
-        user_agent: get_req_header(conn, "user-agent") |> List.first(),
-        origin: get_req_header(conn, "origin") |> List.first(),
-        referer: get_req_header(conn, "referer") |> List.first(),
-        remote_ip: get_peer_data(conn).address |> :inet.ntoa() |> to_string()
-      }
-
-      # Create or get existing session from SessionManager
-      existing_session_id =
-        case get_req_header(conn, "mcp-session-id") do
-          [existing_id] -> existing_id
-          [] -> nil
-        end
-
-      final_session_id =
-        if existing_session_id do
-          # Check if session exists and is valid
-          case session_manager.get_session(existing_session_id) do
-            {:ok, session} when session.status == :active ->
-              # Update session activity
-              session_manager.update_session(existing_session_id, %{
-                client_info: client_info,
-                transport: :sse
-              })
-
-              existing_session_id
-
-            _ ->
-              # Session doesn't exist or is terminated, create new one
-              session_manager.create_session(%{
-                transport: :sse,
-                client_info: client_info
-              })
-          end
-        else
-          # Create new session
-          session_manager.create_session(%{
-            transport: :sse,
-            client_info: client_info
-          })
-        end
-
-      serve_sse(conn, final_session_id, session_manager, initial_sse_opts(opts, final_session_id))
+      serve_sse(conn, session_id, session_manager, initial_sse_opts(opts, session_id))
     else
       {:error, :invalid_session_id} ->
         reject_invalid_session_id(conn, opts)
@@ -1129,6 +1439,49 @@ defmodule ExMCP.HttpPlug do
         |> put_resp_header("www-authenticate", www_auth_header)
         |> send_resp(status, body)
 
+      {:error, :scope_policy_missing} ->
+        scope_policy_error_response(conn, opts)
+
+      {:error, :oauth_guard_disabled} ->
+        conn
+        |> maybe_add_cors_headers(opts)
+        |> put_resp_content_type("application/json")
+        |> send_resp(500, Jason.encode!(Core.oauth_guard_disabled_error()))
+
+      {:error, reason} when reason in [:session_not_found, :session_identity_mismatch] ->
+        reject_unknown_session(conn, opts)
+
+      {:error, :session_limit_exceeded} ->
+        session_limit_response(conn, opts)
+
+      {:error, :session_required} ->
+        reject_missing_session(conn, opts)
+
+      {:error, :session_not_initialized} ->
+        session_lifecycle_rejection_response(
+          conn,
+          opts,
+          nil,
+          nil,
+          :session_not_initialized
+        )
+
+      {:error, {:protocol_version_mismatch, message, expected_version}} ->
+        error_response =
+          JSONRPC.error(
+            nil,
+            ErrorCodes.invalid_request(),
+            message,
+            %{"expectedVersion" => expected_version}
+          )
+
+        conn
+        |> assign(:request_protocol_version, expected_version)
+        |> maybe_add_cors_headers(opts)
+        |> add_protocol_version_header()
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(error_response))
+
       {:error, :session_manager_unavailable} ->
         session_manager_unavailable_response(conn, opts)
 
@@ -1137,6 +1490,36 @@ defmodule ExMCP.HttpPlug do
         |> maybe_add_cors_headers(opts)
         |> send_resp(403, "Origin not allowed")
     end
+  end
+
+  defp establish_sse_session(session_manager, :new_session, metadata, true) do
+    create_session(session_manager, metadata)
+  end
+
+  defp establish_sse_session(_session_manager, :new_session, _metadata, false),
+    do: {:error, :session_required}
+
+  defp establish_sse_session(session_manager, {:existing_session, session_id}, metadata, legacy?) do
+    result =
+      if legacy? do
+        session_manager.ensure_session(session_id, metadata)
+      else
+        ensure_initialized_session(session_manager, session_id, metadata)
+      end
+
+    case result do
+      :ok -> {:ok, session_id}
+      {:error, reason} -> {:error, reason}
+    end
+  catch
+    :exit, _reason -> {:error, :session_not_found}
+  end
+
+  defp validate_sse_session_lifecycle(conn, _request, _manager, _session_id, true),
+    do: {:ok, conn}
+
+  defp validate_sse_session_lifecycle(conn, request, session_manager, session_id, false) do
+    validate_legacy_protocol_version(conn, request, session_manager, session_id)
   end
 
   defp initial_sse_opts(%{initial_sse_event_builder: builder} = opts, session_id)
@@ -1194,7 +1577,10 @@ defmodule ExMCP.HttpPlug do
         # removing a newer handler that superseded this one while it exited.
         cleanup_sse_handler(session_id, handler)
 
-        Logger.debug("Legacy SSE handler exited for session #{session_id}: #{inspect(reason)}")
+        Logger.debug("Legacy SSE handler exited",
+          session_id_hash: LogSummary.fingerprint(session_id),
+          reason: LogSummary.describe(reason)
+        )
 
         conn
     end
@@ -1240,20 +1626,166 @@ defmodule ExMCP.HttpPlug do
 
   defp ensure_session_manager(session_manager), do: {:ok, session_manager}
 
-  defp maybe_ensure_session(_session_manager, nil, _metadata), do: :ok
+  defp establish_request_session(_session_manager, nil, _request, _metadata), do: {:ok, nil}
 
-  defp maybe_ensure_session(session_manager, session_id, metadata) do
-    if function_exported?(session_manager, :ensure_session, 2) do
-      session_manager.ensure_session(session_id, metadata)
-    else
-      :ok
+  defp establish_request_session(session_manager, :new_session, _request, metadata) do
+    with {:ok, session_manager} <- ensure_session_manager(session_manager) do
+      create_session(session_manager, metadata)
     end
   end
 
-  defp maybe_put_session_header(conn, nil), do: conn
+  defp establish_request_session(
+         session_manager,
+         {:existing_session, session_id},
+         %{"method" => "initialize"},
+         metadata
+       ) do
+    with {:ok, session_manager} <- ensure_session_manager(session_manager),
+         :ok <- session_manager.ensure_session(session_id, metadata) do
+      {:ok, session_id}
+    end
+  catch
+    :exit, _reason -> {:error, :session_not_found}
+  end
+
+  defp establish_request_session(
+         session_manager,
+         {:existing_session, session_id},
+         request,
+         metadata
+       ) do
+    with {:ok, session_manager} <- ensure_session_manager(session_manager),
+         :ok <-
+           normalize_initialized_session_result(
+             ensure_initialized_session(session_manager, session_id, metadata),
+             Map.get(request, "id")
+           ) do
+      {:ok, session_id}
+    end
+  catch
+    :exit, _reason -> {:error, :session_not_found}
+  end
+
+  defp ensure_deprecated_request_session(
+         session_manager,
+         session_id,
+         %{"method" => "initialize"},
+         metadata
+       ) do
+    session_manager.ensure_session(session_id, metadata)
+  end
+
+  defp ensure_deprecated_request_session(session_manager, session_id, _request, metadata) do
+    normalize_initialized_session_result(
+      ensure_initialized_session(session_manager, session_id, metadata),
+      nil
+    )
+  end
+
+  defp normalize_initialized_session_result({:error, :session_not_initialized}, request_id),
+    do: {:error, {:session_lifecycle_rejected, request_id, :session_not_initialized}}
+
+  defp normalize_initialized_session_result(result, _request_id), do: result
+
+  defp ensure_initialized_session(session_manager, session_id, metadata) do
+    if is_atom(session_manager) and
+         function_exported?(session_manager, :ensure_initialized_session, 2) do
+      session_manager.ensure_initialized_session(session_id, metadata)
+    else
+      {:error, :session_manager_unavailable}
+    end
+  end
+
+  # Notifications and modern stateless requests do not participate in legacy
+  # session request-ID tracking. Valid request IDs are claimed atomically by
+  # the session manager before any handler code runs.
+  defp claim_request_id(_session_manager, nil, _request), do: :ok
+
+  defp claim_request_id(session_manager, session_id, %{"id" => request_id} = request)
+       when is_binary(request_id) or is_integer(request_id) do
+    if is_atom(session_manager) and function_exported?(session_manager, :claim_request_id, 2) do
+      case session_manager.claim_request_id(session_id, request_id) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          {:error,
+           {:request_id_rejected, session_id, request_id, reason, Map.get(request, "method")}}
+
+        _invalid ->
+          {:error,
+           {:request_id_rejected, session_id, request_id, :tracking_unavailable,
+            Map.get(request, "method")}}
+      end
+    else
+      {:error,
+       {:request_id_rejected, session_id, request_id, :tracking_unavailable,
+        Map.get(request, "method")}}
+    end
+  catch
+    :exit, _reason ->
+      {:error,
+       {:request_id_rejected, session_id, request_id, :tracking_unavailable,
+        Map.get(request, "method")}}
+  end
+
+  defp claim_request_id(_session_manager, _session_id, _notification_or_invalid_request), do: :ok
+
+  defp authorize_session_lifecycle(_session_manager, nil, _request), do: :ok
+
+  defp authorize_session_lifecycle(
+         session_manager,
+         session_id,
+         %{"method" => "initialize"} = request
+       ) do
+    request_id = Map.get(request, "id")
+
+    if is_atom(session_manager) and function_exported?(session_manager, :claim_initialization, 1) do
+      case session_manager.claim_initialization(session_id) do
+        :ok -> :ok
+        {:error, :session_not_found} = error -> error
+        {:error, reason} -> {:error, {:session_lifecycle_rejected, request_id, reason}}
+        _invalid -> {:error, :session_manager_unavailable}
+      end
+    else
+      {:error, :session_manager_unavailable}
+    end
+  catch
+    :exit, _reason -> {:error, :session_not_found}
+  end
+
+  defp authorize_session_lifecycle(_session_manager, _session_id, _request), do: :ok
+
+  defp session_metadata(opts, token_info, transport, extra \\ %{}) do
+    %{
+      transport: transport,
+      principal_id: Map.get(opts, :principal_id),
+      tenant_id: Map.get(opts, :tenant_id),
+      issuer: token_claim(token_info, ["iss", :iss]),
+      audience:
+        token_claim(token_info, ["aud", :aud]) ||
+          get_in(opts, [:protected_resource_metadata, :resource]),
+      client_info: Map.get(extra, :client_info, %{})
+    }
+  end
+
+  defp maybe_put_session_header(%{assigns: %{suppress_session_header: true}} = conn, _session_id),
+    do: conn
+
+  defp maybe_put_session_header(conn, session_id) when not is_binary(session_id), do: conn
 
   defp maybe_put_session_header(conn, session_id) do
     put_resp_header(conn, "mcp-session-id", session_id)
+  end
+
+  defp create_session(session_manager, metadata) do
+    case session_manager.create_session(metadata) do
+      session_id when is_binary(session_id) -> {:ok, session_id}
+      {:error, :session_limit_exceeded} = error -> error
+      _invalid -> {:error, :session_manager_unavailable}
+    end
+  catch
+    :exit, _reason -> {:error, :session_manager_unavailable}
   end
 
   defp session_manager_unavailable_response(conn, opts) do
@@ -1266,6 +1798,111 @@ defmodule ExMCP.HttpPlug do
     |> maybe_add_cors_headers(opts)
     |> put_resp_content_type("application/json")
     |> send_resp(503, Jason.encode!(error_response))
+  end
+
+  defp session_limit_response(conn, opts) do
+    error_response =
+      JSONRPC.error(nil, ErrorCodes.internal_error(), "Service unavailable", %{
+        "type" => "session_capacity_exceeded"
+      })
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_header("retry-after", "1")
+    |> put_resp_content_type("application/json")
+    |> send_resp(503, Jason.encode!(error_response))
+  end
+
+  defp request_id_rejection_response(conn, opts, session_id, request_id, reason) do
+    {status, message, type} =
+      case reason do
+        :duplicate_request_id ->
+          {400, "Request ID has already been used in this session", "duplicate_request_id"}
+
+        :request_id_limit_exceeded ->
+          {429, "Request ID tracking capacity exceeded", "request_id_capacity_exceeded"}
+
+        _other ->
+          {503, "Service unavailable", "request_id_tracking_unavailable"}
+      end
+
+    error_response =
+      JSONRPC.error(request_id, ErrorCodes.invalid_request(), message, %{"type" => type})
+
+    conn =
+      conn
+      |> maybe_add_cors_headers(opts)
+      |> add_protocol_version_header()
+      |> maybe_put_session_header(session_id)
+      |> put_resp_content_type("application/json")
+
+    conn = if status in [429, 503], do: put_resp_header(conn, "retry-after", "1"), else: conn
+    send_resp(conn, status, Jason.encode!(error_response))
+  end
+
+  defp handle_request_id_rejection(
+         conn,
+         opts,
+         session_manager,
+         session_id,
+         request_id,
+         reason,
+         "initialize"
+       ) do
+    cleanup_failed_initialization(session_manager, session_id)
+    request_id_rejection_response(conn, opts, nil, request_id, reason)
+  end
+
+  defp handle_request_id_rejection(
+         conn,
+         opts,
+         _session_manager,
+         session_id,
+         request_id,
+         reason,
+         _method
+       ) do
+    request_id_rejection_response(conn, opts, session_id, request_id, reason)
+  end
+
+  defp session_lifecycle_rejection_response(conn, opts, session_id, request_id, reason) do
+    {message, type} =
+      case reason do
+        :session_not_initialized ->
+          {"Session initialization has not completed", "session_not_initialized"}
+
+        :session_already_initialized ->
+          {"Session is already initialized", "session_already_initialized"}
+
+        :initialization_in_progress ->
+          {"Session initialization is already in progress", "initialization_in_progress"}
+
+        _other ->
+          {"Session lifecycle request rejected", "session_lifecycle_rejected"}
+      end
+
+    response =
+      JSONRPC.error(request_id, ErrorCodes.invalid_request(), message, %{"type" => type})
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> maybe_put_session_header(session_id)
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(response))
+  end
+
+  defp scope_policy_error_response(conn, opts) do
+    body =
+      Jason.encode!(%{
+        "error" => "insufficient_scope",
+        "error_description" => "No OAuth scope policy is configured for this MCP method"
+      })
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> put_resp_content_type("application/json")
+    |> send_resp(403, body)
   end
 
   # Process MCP request using the configured handler
@@ -1519,26 +2156,27 @@ defmodule ExMCP.HttpPlug do
     }
   end
 
-  # Extract session ID from request or generate a new one.
-  # Per MCP spec, the server provides the session ID — the client's first
-  # request should not include one, and the server generates it.
-  # Both supported session headers are validated even though only
-  # mcp-session-id is used on this path.
-  defp get_or_create_session_id(conn) do
+  # A missing session header asks the server to issue an ID only during initialize.
+  # A supplied ID is only a reference to an existing server-issued session.
+  defp get_or_create_session_id(conn, request) do
     with {:ok, session_id} <- fetch_session_id_header(conn, "mcp-session-id"),
-         {:ok, _legacy} <- fetch_session_id_header(conn, "x-session-id") do
-      {:ok, session_id || generate_session_id()}
+         {:ok, legacy_id} <- fetch_session_id_header(conn, "x-session-id") do
+      case {session_id, legacy_id} do
+        {nil, nil} -> missing_session_reference(request)
+        {id, nil} -> {:ok, {:existing_session, id}}
+        {nil, id} -> {:ok, {:existing_session, id}}
+        {id, id} -> {:ok, {:existing_session, id}}
+        {_mcp, _legacy} -> {:error, :invalid_session_id}
+      end
     end
   end
 
-  # Validates both supported session id headers (mcp-session-id plus the
-  # legacy x-session-id) without selecting either.
-  defp validate_session_id_headers(conn) do
-    with {:ok, _} <- fetch_session_id_header(conn, "mcp-session-id"),
-         {:ok, _} <- fetch_session_id_header(conn, "x-session-id") do
-      :ok
-    end
-  end
+  defp missing_session_reference(%{"method" => "initialize", "id" => _id}),
+    do: {:ok, :new_session}
+
+  defp missing_session_reference(:allow_new_session), do: {:ok, :new_session}
+
+  defp missing_session_reference(_request), do: {:error, :session_required}
 
   defp fetch_session_id_header(conn, header) do
     case get_req_header(conn, header) do
@@ -1595,6 +2233,26 @@ defmodule ExMCP.HttpPlug do
     |> send_resp(400, Jason.encode!(error_response))
   end
 
+  defp reject_unknown_session(conn, opts) do
+    error_response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Session not found")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(404, Jason.encode!(error_response))
+  end
+
+  defp reject_missing_session(conn, opts) do
+    error_response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Session ID required")
+
+    conn
+    |> maybe_add_cors_headers(opts)
+    |> add_protocol_version_header()
+    |> put_resp_content_type("application/json")
+    |> send_resp(400, Jason.encode!(error_response))
+  end
+
   # Register SSE handler for a session
   defp register_sse_handler(session_id, handler_pid, session_manager) do
     previous_handler =
@@ -1609,8 +2267,9 @@ defmodule ExMCP.HttpPlug do
 
       {:error, :registry_not_started} ->
         Logger.error(
-          "ExMCP.HttpPlug.SessionRegistry is not running; SSE handler for session " <>
-            "#{session_id} cannot be registered. Ensure the :ex_mcp application is started."
+          "ExMCP.HttpPlug.SessionRegistry is not running; SSE handler cannot be registered. " <>
+            "Ensure the :ex_mcp application is started.",
+          session_id_hash: LogSummary.fingerprint(session_id)
         )
     end
 
@@ -1631,8 +2290,9 @@ defmodule ExMCP.HttpPlug do
         :ok
 
       {:error, reason} ->
-        Logger.error(
-          "Failed to replay legacy SSE events for session #{session_id}: #{inspect(reason)}"
+        Logger.error("Failed to replay legacy SSE events",
+          session_id_hash: LogSummary.fingerprint(session_id),
+          reason: LogSummary.describe(reason)
         )
     end
   end
@@ -1710,16 +2370,9 @@ defmodule ExMCP.HttpPlug do
     SessionRegistry.unregister(session_id, handler_pid)
   end
 
-  # Generate a simple session ID
-  defp generate_session_id do
-    "sse_" <>
-      (:crypto.strong_rand_bytes(16)
-       |> Base.encode16(case: :lower))
-  end
-
   # --- New Helper Functions ---
 
-  defp validate_protocol_version(conn, request) do
+  defp validate_protocol_version(conn, request, session_manager, session_id) do
     if modern_http_request?(conn, request) do
       request_id = Map.get(request, "id")
 
@@ -1748,7 +2401,7 @@ defmodule ExMCP.HttpPlug do
           end
       end
     else
-      validate_legacy_protocol_version(conn)
+      validate_legacy_protocol_version(conn, request, session_manager, session_id)
     end
   end
 
@@ -1757,26 +2410,223 @@ defmodule ExMCP.HttpPlug do
 
   defp missing_modern_metadata_field(_request), do: "_meta"
 
-  defp validate_legacy_protocol_version(conn) do
-    if FeatureFlags.enabled?(:protocol_version_header) do
-      supported = VersionRegistry.supported_versions()
-      latest = VersionRegistry.latest_version()
+  # The legacy lifecycle negotiates its version in `initialize`; the HTTP
+  # header is required only on subsequent requests. If a client nevertheless
+  # sends the header during initialization, validate it and require it to agree
+  # with the requested version so two conflicting protocol interpretations can
+  # never reach the handler.
+  defp validate_legacy_protocol_version(
+         conn,
+         %{"method" => "initialize"} = request,
+         _session_manager,
+         _session_id
+       ) do
+    requested_version = get_in(request, ["params", "protocolVersion"])
+    response_version = supported_or_preferred_version(requested_version)
 
-      case get_req_header(conn, "mcp-protocol-version") do
-        [version] when is_binary(version) ->
-          if version in supported do
-            {:ok, conn}
-          else
-            message = "Unsupported MCP-Protocol-Version: #{version}. Server supports #{latest}."
-            {:error, {:protocol_version_mismatch, message}}
-          end
+    case get_req_header(conn, "mcp-protocol-version") do
+      [] ->
+        {:ok, assign(conn, :request_protocol_version, response_version)}
 
-        [] ->
-          message = "Missing MCP-Protocol-Version header. Server requires version #{latest}."
-          {:error, {:protocol_version_mismatch, message}}
+      [version] when is_binary(version) ->
+        cond do
+          not VersionRegistry.supported?(version) ->
+            protocol_version_error(
+              "Unsupported MCP-Protocol-Version: #{version}. Server supports #{response_version}.",
+              response_version
+            )
+
+          is_binary(requested_version) and version != requested_version ->
+            protocol_version_error(
+              "MCP-Protocol-Version header does not match initialize params.protocolVersion.",
+              response_version
+            )
+
+          true ->
+            {:ok, assign(conn, :request_protocol_version, response_version)}
+        end
+
+      _duplicated ->
+        protocol_version_error(
+          "MCP-Protocol-Version header must occur exactly once.",
+          response_version
+        )
+    end
+  end
+
+  defp validate_legacy_protocol_version(conn, _request, session_manager, session_id) do
+    expected_version =
+      session_protocol_version(session_manager, session_id) || VersionRegistry.latest_version()
+
+    case get_req_header(conn, "mcp-protocol-version") do
+      [version] when is_binary(version) ->
+        cond do
+          not VersionRegistry.supported?(version) ->
+            protocol_version_error(
+              "Unsupported MCP-Protocol-Version: #{version}. Server supports #{expected_version}.",
+              expected_version
+            )
+
+          is_binary(session_id) and version != expected_version ->
+            protocol_version_error(
+              "MCP-Protocol-Version #{version} does not match the negotiated version #{expected_version}.",
+              expected_version
+            )
+
+          true ->
+            {:ok, assign(conn, :request_protocol_version, version)}
+        end
+
+      [] ->
+        if FeatureFlags.enabled?(:protocol_version_header) do
+          protocol_version_error(
+            "Missing MCP-Protocol-Version header. Server requires version #{expected_version}.",
+            expected_version
+          )
+        else
+          {:ok, assign(conn, :request_protocol_version, expected_version)}
+        end
+
+      _duplicated ->
+        protocol_version_error(
+          "MCP-Protocol-Version header must occur exactly once.",
+          expected_version
+        )
+    end
+  end
+
+  defp protocol_version_error(message, expected_version) do
+    {:error, {:protocol_version_mismatch, message, expected_version}}
+  end
+
+  defp supported_or_preferred_version(version) when is_binary(version) do
+    if VersionRegistry.supported?(version),
+      do: version,
+      else: VersionRegistry.preferred_version()
+  end
+
+  defp supported_or_preferred_version(_missing), do: VersionRegistry.preferred_version()
+
+  defp session_protocol_version(session_manager, session_id) when is_binary(session_id) do
+    if is_atom(session_manager) and function_exported?(session_manager, :get_session, 1) do
+      case session_manager.get_session(session_id) do
+        {:ok, session} when is_map(session) ->
+          Map.get(session, :protocol_version) || Map.get(session, "protocol_version")
+
+        _missing ->
+          nil
+      end
+    end
+  catch
+    :exit, _reason -> nil
+  end
+
+  defp session_protocol_version(_session_manager, _session_id), do: nil
+
+  defp finalize_legacy_protocol_version(
+         {:ok, %{"error" => _error}} = result,
+         conn,
+         %{"method" => "initialize"},
+         session_manager,
+         session_id
+       ) do
+    abort_session_initialization(result, conn, session_manager, session_id)
+  end
+
+  defp finalize_legacy_protocol_version(
+         {:ok, %{error: _error}} = result,
+         conn,
+         %{"method" => "initialize"},
+         session_manager,
+         session_id
+       ) do
+    abort_session_initialization(result, conn, session_manager, session_id)
+  end
+
+  defp finalize_legacy_protocol_version(
+         {:ok, response} = result,
+         conn,
+         %{"method" => "initialize"},
+         session_manager,
+         session_id
+       ) do
+    version = initialize_response_version(response)
+    expected_version = conn.assigns[:request_protocol_version]
+
+    with true <- VersionRegistry.supported?(version) and version == expected_version,
+         :ok <- complete_session_initialization(session_manager, session_id, version) do
+      {:ok, result, assign(conn, :request_protocol_version, version)}
+    else
+      false -> fail_session_initialization(conn, session_manager, session_id)
+      {:error, _reason} -> fail_session_initialization(conn, session_manager, session_id)
+    end
+  end
+
+  defp finalize_legacy_protocol_version(
+         result,
+         conn,
+         %{"method" => "initialize"},
+         session_manager,
+         session_id
+       ) do
+    abort_session_initialization(result, conn, session_manager, session_id)
+  end
+
+  defp finalize_legacy_protocol_version(result, conn, _request, _session_manager, _session_id),
+    do: {:ok, result, conn}
+
+  defp initialize_response_version(%{"result" => result}) when is_map(result),
+    do: Map.get(result, "protocolVersion") || Map.get(result, :protocolVersion)
+
+  defp initialize_response_version(%{result: result}) when is_map(result),
+    do: Map.get(result, "protocolVersion") || Map.get(result, :protocolVersion)
+
+  defp initialize_response_version(_response), do: nil
+
+  defp complete_session_initialization(_session_manager, nil, _version), do: :ok
+
+  defp complete_session_initialization(session_manager, session_id, version) do
+    if is_atom(session_manager) and
+         function_exported?(session_manager, :complete_initialization, 2) do
+      case session_manager.complete_initialization(session_id, version) do
+        :ok -> :ok
+        other -> {:error, other}
       end
     else
-      {:ok, conn}
+      {:error, :unsupported_session_manager}
+    end
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  defp abort_session_initialization(result, conn, session_manager, session_id) do
+    cleanup_failed_initialization(session_manager, session_id)
+
+    {:ok, result, assign(conn, :suppress_session_header, true)}
+  catch
+    :exit, _reason -> {:ok, result, assign(conn, :suppress_session_header, true)}
+  end
+
+  defp fail_session_initialization(_conn, session_manager, session_id) do
+    cleanup_failed_initialization(session_manager, session_id)
+    {:error, :session_manager_unavailable}
+  catch
+    :exit, _reason -> {:error, :session_manager_unavailable}
+  end
+
+  defp cleanup_failed_initialization(session_manager, session_id) do
+    if is_binary(session_id) and is_atom(session_manager) and
+         function_exported?(session_manager, :terminate_session, 1) do
+      _ = session_manager.terminate_session(session_id)
+    end
+
+    case lookup_sse_handler(session_id) do
+      {:ok, handler} ->
+        if Process.alive?(handler), do: SSEHandler.close(handler)
+        cleanup_sse_handler(session_id, handler)
+
+      {:error, _reason} ->
+        :ok
     end
   end
 
@@ -1788,11 +2638,23 @@ defmodule ExMCP.HttpPlug do
       known? =
         Enum.any?(Methods.rows(), fn {known, _min, _max, _kind, _handlers} -> known == method end)
 
-      if known? and Methods.available?(method, version),
+      # Reject protocol methods that are unavailable in the negotiated era,
+      # while leaving explicitly implemented extension methods dispatchable.
+      if not known? or Methods.available?(method, version),
         do: :ok,
         else: {:error, {:modern_method_not_found, Map.get(request, "id")}}
     else
       :ok
+    end
+  end
+
+  defp validate_request_method_params(request) do
+    method = Map.get(request, "method")
+    params = if Map.has_key?(request, "params"), do: Map.get(request, "params"), else: %{}
+
+    case MessageValidator.validate_method_params(method, params) do
+      :ok -> :ok
+      {:error, error} -> {:error, {:invalid_method_params, Map.get(request, "id"), error}}
     end
   end
 
@@ -1805,7 +2667,6 @@ defmodule ExMCP.HttpPlug do
 
   defp authorize_request(conn, request, opts) do
     if opts.oauth_enabled do
-      required_scopes = ScopeValidator.get_required_scopes(request)
       # Set default realm if not provided in config
       auth_config =
         if Map.has_key?(opts.auth_config, :realm) do
@@ -1814,34 +2675,70 @@ defmodule ExMCP.HttpPlug do
           Map.put(opts.auth_config, :realm, opts.server_info.name)
         end
 
-      case ServerGuard.authorize(conn.req_headers, required_scopes, auth_config) do
-        {:ok, token_info} ->
-          {:ok, token_info}
+      case ScopeValidator.get_required_scopes(request, opts.scope_mapper) do
+        {:error, reason} ->
+          Logger.warning("OAuth scope policy rejected MCP method", reason: reason)
+          {:error, :scope_policy_missing}
 
-        {:error, error_response} ->
-          {:error, {:auth_error, error_response}}
+        required_scopes ->
+          case ServerGuard.authorize(conn.req_headers, required_scopes, auth_config) do
+            {:ok, token_info} ->
+              {:ok, token_info}
 
-        :ok ->
-          # ServerGuard returns :ok only when the global OAuth feature flag is
-          # disabled. If this plug opted into OAuth, fail closed instead of
-          # silently allowing unauthenticated MCP requests.
-          {:error, :oauth_guard_disabled}
+            {:error, error_response} ->
+              {:error, {:auth_error, add_resource_metadata(error_response, opts)}}
+
+            :ok ->
+              # ServerGuard returns :ok only when the global OAuth feature flag is
+              # disabled. If this plug opted into OAuth, fail closed instead of
+              # silently allowing unauthenticated MCP requests.
+              {:error, :oauth_guard_disabled}
+          end
       end
     else
       {:ok, nil}
     end
   end
 
-  defp handle_well_known_resource(conn, opts) do
-    metadata = %{
-      "resource" => opts.server_info.name,
-      "scopes_supported" => get_supported_scopes(),
-      "bearer_token_types_supported" => ["bearer"]
+  defp add_resource_metadata({status, challenge, body}, opts) do
+    parameter = ~s(resource_metadata="#{resource_metadata_uri(opts)}")
+
+    challenge =
+      if String.contains?(challenge, "resource_metadata="),
+        do: challenge,
+        else: challenge <> ", " <> parameter
+
+    {status, challenge, body}
+  end
+
+  defp resource_metadata_uri(opts) do
+    resource = opts.protected_resource_metadata.resource
+    uri = URI.parse(resource)
+    path = String.trim_trailing(uri.path || "", "/")
+
+    %URI{
+      uri
+      | path: "/.well-known/oauth-protected-resource" <> path,
+        query: nil,
+        fragment: nil
     }
+    |> URI.to_string()
+  end
+
+  defp protected_resource_path(opts) do
+    opts.protected_resource_metadata.resource
+    |> URI.parse()
+    |> Map.get(:path)
+    |> then(&split_path(&1 || "/"))
+  end
+
+  defp handle_well_known_resource(conn, opts) do
+    metadata = ProtectedResourceMetadata.build_metadata(opts.protected_resource_metadata)
 
     conn
     |> maybe_add_cors_headers(opts)
     |> put_resp_content_type("application/json")
+    |> put_resp_header("cache-control", "public, max-age=3600")
     |> send_resp(200, Jason.encode!(metadata))
   end
 

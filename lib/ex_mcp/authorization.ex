@@ -152,7 +152,7 @@ defmodule ExMCP.Authorization do
   def discover_server_metadata(issuer_url) do
     with :ok <- Validator.validate_https_endpoint(issuer_url) do
       metadata_url = build_metadata_url(issuer_url)
-      HTTPClient.fetch_server_metadata(metadata_url)
+      HTTPClient.fetch_server_metadata(metadata_url, expected_issuer: issuer_url)
     end
   end
 
@@ -161,15 +161,15 @@ defmodule ExMCP.Authorization do
 
   Uses HTTPClient for the introspection request.
   """
-  @spec validate_token(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
-  def validate_token(token, introspection_endpoint) do
+  @spec validate_token(String.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def validate_token(token, introspection_endpoint, opts \\ []) do
     with :ok <- Validator.validate_https_endpoint(introspection_endpoint) do
-      request_body = %{
-        token: token,
-        token_type_hint: "access_token"
-      }
+      request_body =
+        %{token: token, token_type_hint: "access_token"}
+        |> maybe_put_introspection_credential(:client_id, opts)
+        |> maybe_put_introspection_credential(:client_secret, opts)
 
-      case HTTPClient.make_introspection_request(introspection_endpoint, request_body) do
+      case HTTPClient.make_introspection_request(introspection_endpoint, request_body, opts) do
         {:ok, %{active: true} = response} ->
           {:ok, response}
 
@@ -179,6 +179,13 @@ defmodule ExMCP.Authorization do
         error ->
           error
       end
+    end
+  end
+
+  defp maybe_put_introspection_credential(body, key, opts) do
+    case Keyword.get(opts, key) do
+      value when is_binary(value) -> Map.put(body, key, value)
+      _other -> body
     end
   end
 

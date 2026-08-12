@@ -42,10 +42,8 @@ defmodule ExMCP.Security.Consent do
           map()
         ) :: :ok | {:error, :consent_denied | :consent_required | :consent_error}
   def ensure_user_consent(user_id, url, transport, handler, config) do
-    trusted_origins = Map.get(config, :trusted_origins, [])
-
     with {:ok, origin} <- TokenHandler.extract_origin(url),
-         :external <- TokenHandler.classify_url(url, trusted_origins) do
+         :external <- TokenHandler.classify_url(url, config) do
       do_ensure_user_consent(user_id, origin, transport, handler, config)
     else
       :internal ->

@@ -114,6 +114,7 @@ defmodule ExMCP.Client.ModernHTTPStreamAuthTest do
                     }},
                    1_000
 
+    send(stream_pid, {:modern_http_stream_ack, self(), 42})
     assert_receive {:modern_http_stream_finished, ^stream_pid, 42}, 1_000
     assert Agent.get(attempts, & &1) == 2
   end
@@ -191,6 +192,7 @@ defmodule ExMCP.Client.ModernHTTPStreamAuthTest do
                     %{"jsonrpc" => "2.0", "id" => 84, "result" => %{}}},
                    1_000
 
+    send(stream_pid, {:modern_http_stream_ack, self(), 84})
     assert_receive {:modern_http_stream_finished, ^stream_pid, 84}, 1_000
     assert Agent.get(attempts, & &1) == 3
   end

@@ -437,7 +437,7 @@ defmodule ExMCP.MessageProcessorTest do
       assert_receive {:log_level_set, "debug"}
     end
 
-    test "logging/setLevel surfaces handler rejection instead of a canned success" do
+    test "logging/setLevel rejects invalid levels before handler dispatch" do
       conn =
         21
         |> protocol_request("logging/setLevel", %{"level" => "verbose"})
@@ -448,8 +448,9 @@ defmodule ExMCP.MessageProcessorTest do
         })
 
       assert %{"error" => error} = conn.response
-      assert error["code"] == -32603
-      assert error["message"] == "Set log level failed"
+      assert error["code"] == -32602
+      assert error["message"] == "Invalid parameters"
+      refute_received {:log_level_set, "verbose"}
     end
 
     test "task methods reach the handler" do

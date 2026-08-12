@@ -154,6 +154,8 @@ defmodule ExMCP.Tasks.StoreTest do
                tenant_id: @alice.tenant_id,
                audience: @alice.audience,
                client_capabilities: Extension.put_capability(%{}),
+               authorize_filter: fn requested, _context -> {:ok, requested} end,
+               authorize_publication: fn _method, _params, _context -> true end,
                task_store_opts: [store: ETS, server: server]
              )
 

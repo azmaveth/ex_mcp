@@ -1,7 +1,10 @@
 defmodule ExMCP.Authorization.IdJagHandlerTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias ExMCP.Authorization.{IdJag, IdJagHandler, JWT}
+  alias ExMCP.Internal.LogSummary
 
   setup do
     idp_key = JWT.generate_rsa_key(size: 2048)
@@ -67,23 +70,31 @@ defmodule ExMCP.Authorization.IdJagHandlerTest do
     end
 
     test "rejects untrusted IdP", %{idp_key: idp_key} do
+      issuer = "https://untrusted-idp-#{System.unique_integer([:positive])}.example.com"
+
       {:ok, id_jag} =
         IdJag.create(
           private_key: idp_key,
-          issuer: "https://untrusted-idp.example.com",
+          issuer: issuer,
           subject: "user123",
           audience: "https://as.example.com",
           resource: "https://mcp.example.com",
           client_id: "my-client"
         )
 
-      assert {:error, {:untrusted_idp, "https://untrusted-idp.example.com"}} =
-               IdJagHandler.handle_grant(
-                 assertion: id_jag,
-                 expected_audience: "https://as.example.com",
-                 expected_resource: "https://mcp.example.com",
-                 trusted_idps: %{}
-               )
+      log =
+        capture_log([metadata: [:issuer_hash]], fn ->
+          assert {:error, {:untrusted_idp, ^issuer}} =
+                   IdJagHandler.handle_grant(
+                     assertion: id_jag,
+                     expected_audience: "https://as.example.com",
+                     expected_resource: "https://mcp.example.com",
+                     trusted_idps: %{}
+                   )
+        end)
+
+      refute log =~ issuer
+      assert log =~ LogSummary.fingerprint(issuer)
     end
 
     test "rejects non-ID-JAG assertion", %{idp_key: idp_key, trusted_idps: trusted_idps} do

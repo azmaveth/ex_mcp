@@ -36,9 +36,9 @@ defmodule ExMCP.ACP.Protocol do
 
   @doc "Parses a raw ACP JSON-RPC message with structural validation."
   @spec parse_message(String.t() | map()) ::
-          {:request, String.t(), map(), integer() | String.t()}
+          {:request, String.t(), map(), integer() | String.t() | nil}
           | {:notification, String.t(), map()}
-          | {:result, any(), integer() | String.t()}
+          | {:result, any(), integer() | String.t() | nil}
           | {:error, map(), integer() | String.t() | nil}
           | {:error, :invalid_message}
   def parse_message(data) when is_binary(data) do
@@ -76,7 +76,7 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   defp parse_method_message(%{"method" => method, "id" => id} = message)
-       when is_binary(method) and (is_integer(id) or is_binary(id)) do
+       when is_binary(method) and (is_integer(id) or is_binary(id) or is_nil(id)) do
     case Map.get(message, "params", %{}) do
       params when is_map(params) -> {:request, method, params, id}
       _ -> {:error, :invalid_message}
@@ -97,7 +97,7 @@ defmodule ExMCP.ACP.Protocol do
   defp parse_method_message(_), do: {:error, :invalid_message}
 
   defp parse_result_message(%{"result" => result, "id" => id})
-       when is_integer(id) or is_binary(id) do
+       when is_integer(id) or is_binary(id) or is_nil(id) do
     {:result, result, id}
   end
 
@@ -293,9 +293,12 @@ defmodule ExMCP.ACP.Protocol do
   @doc "Encodes a `session/set_config_option` request."
   @spec encode_session_set_config_option(String.t(), String.t(), any()) :: map()
   def encode_session_set_config_option(session_id, config_id, value) do
+    params = %{"sessionId" => session_id, "configId" => config_id, "value" => value}
+    params = if is_boolean(value), do: Map.put(params, "type", "boolean"), else: params
+
     Envelope.request(
       "session/set_config_option",
-      %{"sessionId" => session_id, "configId" => config_id, "value" => value},
+      params,
       generate_id()
     )
   end
@@ -326,7 +329,7 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   @doc "Encodes a `session/new`, `session/load`, or similar session ID response."
-  @spec encode_session_response(integer() | String.t(), String.t() | map() | nil) :: map()
+  @spec encode_session_response(integer() | String.t() | nil, String.t() | map() | nil) :: map()
   def encode_session_response(id, session_id) when is_binary(session_id) do
     encode_response(%{"sessionId" => session_id}, id)
   end
@@ -336,7 +339,8 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   @doc "Encodes a `session/list` response."
-  @spec encode_session_list_response(integer() | String.t(), [map()], String.t() | nil) :: map()
+  @spec encode_session_list_response(integer() | String.t() | nil, [map()], String.t() | nil) ::
+          map()
   def encode_session_list_response(id, sessions, next_cursor \\ nil) when is_list(sessions) do
     %{"sessions" => sessions}
     |> Maps.put_present("nextCursor", next_cursor)
@@ -344,7 +348,7 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   @doc "Encodes a `session/prompt` response."
-  @spec encode_prompt_response(integer() | String.t(), String.t() | map()) :: map()
+  @spec encode_prompt_response(integer() | String.t() | nil, String.t() | map()) :: map()
   def encode_prompt_response(id, stop_reason) when is_binary(stop_reason) do
     encode_response(%{"stopReason" => validate_stop_reason!(stop_reason)}, id)
   end
@@ -570,7 +574,7 @@ defmodule ExMCP.ACP.Protocol do
   # Responses to agent requests
 
   @doc "Encodes a response to a `session/request_permission` request from the agent."
-  @spec encode_permission_response(integer() | String.t(), map()) :: map()
+  @spec encode_permission_response(integer() | String.t() | nil, map()) :: map()
   def encode_permission_response(id, %{"outcome" => %{"outcome" => _}} = response) do
     encode_response(response, id)
   end
@@ -580,13 +584,13 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   @doc "Encodes a response to a `fs/read_text_file` request from the agent."
-  @spec encode_file_read_response(integer() | String.t(), String.t()) :: map()
+  @spec encode_file_read_response(integer() | String.t() | nil, String.t()) :: map()
   def encode_file_read_response(id, content) do
     encode_response(%{"content" => content}, id)
   end
 
   @doc "Encodes a response to a `fs/write_text_file` request from the agent."
-  @spec encode_file_write_response(integer() | String.t()) :: map()
+  @spec encode_file_write_response(integer() | String.t() | nil) :: map()
   def encode_file_write_response(id) do
     encode_response(%{}, id)
   end

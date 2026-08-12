@@ -13,18 +13,17 @@ defmodule ExMCP.Authorization.Validator do
   localhost for development purposes.
   """
   @spec validate_https_endpoint(String.t()) :: :ok | {:error, term()}
-  def validate_https_endpoint(url) do
-    case URI.parse(url) do
-      %URI{scheme: "https"} ->
-        :ok
+  def validate_https_endpoint(url) when is_binary(url) do
+    case URI.new(url) do
+      {:ok, %URI{} = uri} ->
+        if valid_secure_uri?(uri), do: :ok, else: {:error, :https_required}
 
-      %URI{scheme: "http", host: host} when host in ["localhost", "127.0.0.1"] ->
-        :ok
-
-      _ ->
+      {:error, _reason} ->
         {:error, :https_required}
     end
   end
+
+  def validate_https_endpoint(_url), do: {:error, :https_required}
 
   @doc """
   Validates that a redirect URI is properly formed and secure.
@@ -33,18 +32,17 @@ defmodule ExMCP.Authorization.Validator do
   are properly validated.
   """
   @spec validate_redirect_uri(String.t()) :: :ok | {:error, term()}
-  def validate_redirect_uri(uri) do
-    case URI.parse(uri) do
-      %URI{scheme: "https"} ->
-        :ok
+  def validate_redirect_uri(uri) when is_binary(uri) do
+    case URI.new(uri) do
+      {:ok, %URI{} = parsed} ->
+        if valid_secure_uri?(parsed), do: :ok, else: {:error, :invalid_redirect_uri}
 
-      %URI{scheme: "http", host: host} when host in ["localhost", "127.0.0.1"] ->
-        :ok
-
-      _ ->
+      {:error, _reason} ->
         {:error, :invalid_redirect_uri}
     end
   end
+
+  def validate_redirect_uri(_uri), do: {:error, :invalid_redirect_uri}
 
   @doc """
   Validates resource parameters according to RFC 8707.
@@ -137,6 +135,25 @@ defmodule ExMCP.Authorization.Validator do
   end
 
   # Private validation helpers
+
+  defp valid_secure_uri?(%URI{} = uri) do
+    valid_uri_host?(uri.host) and secure_uri_scheme?(uri.scheme, uri.host) and
+      is_nil(uri.userinfo) and is_nil(uri.fragment) and
+      (is_nil(uri.port) or uri.port in 1..65_535)
+  end
+
+  defp valid_uri_host?(host) when is_binary(host) do
+    host != "" and byte_size(host) <= 253 and not String.contains?(host, ["\r", "\n"])
+  end
+
+  defp valid_uri_host?(_host), do: false
+
+  defp secure_uri_scheme?("https", _host), do: true
+
+  defp secure_uri_scheme?("http", host),
+    do: String.downcase(host || "") in ["localhost", "127.0.0.1", "::1"]
+
+  defp secure_uri_scheme?(_scheme, _host), do: false
 
   defp validate_resource_uri(uri_string) when is_binary(uri_string) do
     if String.trim(uri_string) == "" do

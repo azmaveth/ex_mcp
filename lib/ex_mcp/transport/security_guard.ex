@@ -9,14 +9,15 @@ defmodule ExMCP.Transport.SecurityGuard do
   ## The trust boundary
 
   Every outbound URL is classified as `:internal` or `:external` by comparing
-  its host against `:trusted_origins`. External requests
+  its exact `(scheme, host, effective port)` origin against `:trusted_origins`.
+  Deliberately broad host-only matching lives in `:trusted_hosts`. External requests
 
     1. have their credential headers removed (token passthrough prevention), and
     2. must be approved by the configured `:consent_handler`.
 
-  `:trusted_origins` defaults to loopback only and `:consent_handler` defaults
-  to `ExMCP.ConsentHandler.Deny`, so **an MCP server that is not on localhost is
-  blocked until its origin is added to `:trusted_origins`**:
+  `:trusted_origins` defaults to empty, `:trusted_hosts` defaults to loopback,
+  and `:consent_handler` defaults to `ExMCP.ConsentHandler.Deny`, so **a remote
+  MCP server is blocked until its exact origin is added to `:trusted_origins`**:
 
       config :ex_mcp, :security,
         trusted_origins: ["https://mcp.example.com"]
@@ -30,7 +31,7 @@ defmodule ExMCP.Transport.SecurityGuard do
   prefer declaring `:trusted_origins` over disabling a control.
   """
 
-  alias ExMCP.Internal.Security
+  alias ExMCP.Internal.{LogSummary, Security}
   alias ExMCP.Transport.SecurityError
 
   require Logger
@@ -85,16 +86,12 @@ defmodule ExMCP.Transport.SecurityGuard do
   """
   @spec validate_request(request(), map()) :: security_result()
   def validate_request(request, config \\ %{}) do
-    Logger.debug("SecurityGuard validating request",
-      url: request.url,
-      transport: request.transport,
-      user_id: request.user_id
-    )
+    Logger.debug("SecurityGuard validating request", transport: request.transport)
 
     with {:ok, headers_after_token_check} <- check_token_passthrough(request, config),
          {:ok, :consent_granted} <- check_user_consent(request, config) do
       sanitized_request = %{request | headers: headers_after_token_check}
-      Logger.debug("SecurityGuard: Request approved", url: request.url)
+      Logger.debug("SecurityGuard: Request approved", transport: request.transport)
       {:ok, sanitized_request}
     else
       {:error, :consent_required} ->
@@ -105,10 +102,7 @@ defmodule ExMCP.Transport.SecurityGuard do
             %{url: request.url, user_id: request.user_id, transport: request.transport}
           )
 
-        Logger.info("SecurityGuard: Consent required. " <> remediation_hint(request),
-          url: request.url,
-          user_id: request.user_id
-        )
+        Logger.info("SecurityGuard: Consent required. " <> remediation_hint())
 
         {:error, error}
 
@@ -120,10 +114,7 @@ defmodule ExMCP.Transport.SecurityGuard do
             %{url: request.url, user_id: request.user_id, transport: request.transport}
           )
 
-        Logger.warning("SecurityGuard: Consent denied. " <> remediation_hint(request),
-          url: request.url,
-          user_id: request.user_id
-        )
+        Logger.warning("SecurityGuard: Consent denied. " <> remediation_hint())
 
         {:error, error}
 
@@ -135,10 +126,7 @@ defmodule ExMCP.Transport.SecurityGuard do
             %{url: request.url, user_id: request.user_id, transport: request.transport}
           )
 
-        Logger.error("SecurityGuard: Consent processing error",
-          url: request.url,
-          user_id: request.user_id
-        )
+        Logger.error("SecurityGuard: Consent processing error")
 
         {:error, error}
     end
@@ -150,7 +138,8 @@ defmodule ExMCP.Transport.SecurityGuard do
   @spec get_security_config(map()) :: map()
   def get_security_config(config \\ %{}) do
     default_config = %{
-      trusted_origins: ["localhost", "127.0.0.1", "::1"],
+      trusted_origins: [],
+      trusted_hosts: ["localhost", "127.0.0.1", "::1"],
       consent_handler: ExMCP.ConsentHandler.Deny,
       log_security_actions: true,
       enable_token_passthrough_prevention: true,
@@ -216,10 +205,7 @@ defmodule ExMCP.Transport.SecurityGuard do
       other ->
         # Log unexpected values for debugging and treat as consent error
         # This is a defensive pattern for robustness against malformed consent handlers
-        Logger.warning("SecurityGuard: Unexpected consent result: #{inspect(other)}",
-          url: request.url,
-          user_id: request.user_id
-        )
+        Logger.warning("SecurityGuard: Unexpected consent result: #{LogSummary.describe(other)}")
 
         {:error, :consent_error}
     end
@@ -233,25 +219,16 @@ defmodule ExMCP.Transport.SecurityGuard do
     if sanitized_headers != request.headers do
       Logger.warning(
         "SecurityGuard: removed credential headers from a request to an untrusted origin. " <>
-          remediation_hint(request),
-        transport: request.transport,
-        user_id: request.user_id
+          remediation_hint(),
+        transport: request.transport
       )
     end
 
     :ok
   end
 
-  defp remediation_hint(request) do
-    case Security.extract_origin(request.url) do
-      {:ok, origin} ->
-        "If #{origin} is a server this application is meant to talk to, declare it as " <>
-          "trusted (this exempts it from both header stripping and consent): " <>
-          ~s|config :ex_mcp, :security, trusted_origins: ["#{origin}"]|
-
-      {:error, _reason} ->
-        "Declare the origins this application is meant to talk to in " <>
-          "config :ex_mcp, :security, trusted_origins: [...]"
-    end
+  defp remediation_hint do
+    "Declare the exact origins this application is meant to talk to in " <>
+      "config :ex_mcp, :security, trusted_origins: [...]"
   end
 end

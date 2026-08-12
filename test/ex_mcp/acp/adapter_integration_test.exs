@@ -506,7 +506,8 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
     alias ExMCP.ACP.Adapters.Codex
 
     test "full outbound→inbound flow for thread lifecycle" do
-      {:ok, state} = Codex.init(model: "gpt-4o")
+      cwd = File.cwd!()
+      {:ok, state} = Codex.init(model: "gpt-4o", cwd: cwd)
 
       # post_connect sends initialize
       {:ok, init_data, state} = Codex.post_connect(state)
@@ -531,7 +532,11 @@ defmodule ExMCP.ACP.AdapterIntegrationTest do
       # session/new → thread/start
       {:ok, thread_data, state} =
         Codex.translate_outbound(
-          %{"method" => "session/new", "id" => 10, "params" => %{}},
+          %{
+            "method" => "session/new",
+            "id" => 10,
+            "params" => %{"cwd" => cwd, "mcpServers" => []}
+          },
           state
         )
 

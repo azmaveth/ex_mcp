@@ -6,6 +6,8 @@ defmodule ExMCP.Authorization.HTTPClient do
   including token requests, introspection, and metadata discovery.
   """
 
+  alias ExMCP.Authorization.{EndpointPolicy, Issuer, SecureHTTP}
+
   @doc """
   Makes a token request to the authorization server.
 
@@ -29,11 +31,11 @@ defmodule ExMCP.Authorization.HTTPClient do
 
     encoded_body = URI.encode_query(body)
 
-    case make_http_request(:post, endpoint, headers, encoded_body) do
+    case make_http_request(:post, endpoint, headers, encoded_body, opts) do
       {:ok, {{_, 200, _}, _response_headers, response_body}} ->
         case Jason.decode(response_body) do
           {:ok, token_data} ->
-            {:ok, parse_token_response(token_data)}
+            parse_token_response(token_data)
 
           {:error, reason} ->
             {:error, {:json_decode_error, reason}}
@@ -58,21 +60,25 @@ defmodule ExMCP.Authorization.HTTPClient do
 
   Used for validating access tokens with the authorization server.
   """
-  @spec make_introspection_request(String.t(), map()) ::
+  @spec make_introspection_request(String.t(), map() | keyword(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  def make_introspection_request(endpoint, body) do
+  def make_introspection_request(endpoint, body, opts \\ []) do
+    auth_method = Keyword.get(opts, :auth_method, :none)
+    {auth_headers, body} = apply_token_auth_method(auth_method, body)
+
     headers = [
       {"content-type", "application/x-www-form-urlencoded"},
       {"accept", "application/json"}
+      | auth_headers
     ]
 
     encoded_body = URI.encode_query(body)
 
-    case make_http_request(:post, endpoint, headers, encoded_body) do
+    case make_http_request(:post, endpoint, headers, encoded_body, opts) do
       {:ok, {{_, 200, _}, _response_headers, response_body}} ->
         case Jason.decode(response_body) do
           {:ok, introspection_data} ->
-            {:ok, parse_introspection_response(introspection_data)}
+            parse_introspection_response(introspection_data)
 
           {:error, reason} ->
             {:error, {:json_decode_error, reason}}
@@ -97,14 +103,20 @@ defmodule ExMCP.Authorization.HTTPClient do
 
   Implements RFC 8414 OAuth 2.0 Authorization Server Metadata discovery.
   """
-  @spec fetch_server_metadata(String.t()) ::
+  @spec fetch_server_metadata(String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  def fetch_server_metadata(metadata_url) do
-    case make_http_request(:get, metadata_url, [], "") do
+  def fetch_server_metadata(metadata_url, opts \\ []) do
+    case make_http_request(:get, metadata_url, [{"accept", "application/json"}], "", opts) do
       {:ok, {{_, 200, _}, _headers, body}} ->
         case Jason.decode(body) do
-          {:ok, metadata} ->
-            {:ok, parse_server_metadata(metadata)}
+          {:ok, %{"issuer" => issuer} = metadata} when is_binary(issuer) ->
+            with :ok <- validate_expected_issuer(issuer, opts),
+                 :ok <- EndpointPolicy.validate_metadata(metadata, issuer, opts) do
+              parse_server_metadata(metadata)
+            end
+
+          {:ok, _metadata} ->
+            {:error, :invalid_server_metadata}
 
           {:error, reason} ->
             {:error, {:json_decode_error, reason}}
@@ -135,7 +147,11 @@ defmodule ExMCP.Authorization.HTTPClient do
       end)
 
     # Add Basic auth header
-    credentials = Base.encode64("#{client_id}:#{client_secret}")
+    credentials =
+      Base.encode64(
+        "#{URI.encode_www_form(to_string(client_id))}:#{URI.encode_www_form(to_string(client_secret))}"
+      )
+
     {[{"authorization", "Basic #{credentials}"}], filtered_body}
   end
 
@@ -165,87 +181,83 @@ defmodule ExMCP.Authorization.HTTPClient do
     {[], body}
   end
 
-  defp make_http_request(method, url, headers, body) do
-    # Convert headers to charlist format for httpc
-    httpc_headers =
-      Enum.map(headers, fn {k, v} ->
-        {String.to_charlist(k), String.to_charlist(v)}
-      end)
-
-    request =
-      case method do
-        :get ->
-          {String.to_charlist(url), httpc_headers}
-
-        :post ->
-          {String.to_charlist(url), httpc_headers, ~c"application/x-www-form-urlencoded",
-           String.to_charlist(body)}
-      end
-
-    # SSL options for HTTPS
-    ssl_opts = [
-      ssl: [
-        verify: :verify_peer,
-        cacerts: :public_key.cacerts_get(),
-        versions: [:"tlsv1.2", :"tlsv1.3"]
-      ]
-    ]
-
-    :httpc.request(method, request, ssl_opts, [])
-  end
+  defp make_http_request(method, url, headers, body, opts),
+    do: SecureHTTP.request(method, url, headers, body, opts)
 
   # Response parsing helpers
 
-  defp parse_token_response(data) do
-    base = %{
-      access_token: Map.fetch!(data, "access_token"),
+  defp parse_token_response(%{"access_token" => access_token} = data)
+       when is_binary(access_token) do
+    token = %{
+      access_token: access_token,
       token_type: Map.get(data, "token_type", "Bearer"),
       expires_in: Map.get(data, "expires_in"),
       refresh_token: Map.get(data, "refresh_token"),
       scope: Map.get(data, "scope")
     }
 
-    # Include issued_token_type for RFC 8693 token exchange responses
-    case Map.get(data, "issued_token_type") do
-      nil -> base
-      issued_type -> Map.put(base, :issued_token_type, issued_type)
+    token =
+      case Map.get(data, "issued_token_type") do
+        nil -> token
+        issued_type -> Map.put(token, :issued_token_type, issued_type)
+      end
+
+    {:ok, token}
+  end
+
+  defp parse_token_response(_data), do: {:error, :invalid_token_response}
+
+  defp parse_introspection_response(%{"active" => active} = data) when is_boolean(active) do
+    {:ok,
+     %{
+       active: Map.get(data, "active", false),
+       scope: Map.get(data, "scope"),
+       client_id: Map.get(data, "client_id"),
+       username: Map.get(data, "username"),
+       token_type: Map.get(data, "token_type"),
+       exp: Map.get(data, "exp"),
+       iat: Map.get(data, "iat"),
+       nbf: Map.get(data, "nbf"),
+       sub: Map.get(data, "sub"),
+       aud: Map.get(data, "aud"),
+       iss: Map.get(data, "iss"),
+       jti: Map.get(data, "jti")
+     }}
+  end
+
+  defp parse_introspection_response(_data), do: {:error, :invalid_introspection_response}
+
+  defp parse_server_metadata(
+         %{"authorization_endpoint" => authorization_endpoint, "token_endpoint" => token_endpoint} =
+           data
+       )
+       when is_binary(authorization_endpoint) and is_binary(token_endpoint) do
+    {:ok,
+     %{
+       authorization_endpoint: authorization_endpoint,
+       token_endpoint: token_endpoint,
+       registration_endpoint: Map.get(data, "registration_endpoint"),
+       scopes_supported: Map.get(data, "scopes_supported", []),
+       response_types_supported: Map.get(data, "response_types_supported", ["code"]),
+       grant_types_supported:
+         Map.get(data, "grant_types_supported", ["authorization_code", "client_credentials"]),
+       code_challenge_methods_supported:
+         Map.get(data, "code_challenge_methods_supported", ["S256"]),
+       token_endpoint_auth_methods_supported:
+         Map.get(data, "token_endpoint_auth_methods_supported", ["client_secret_post"]),
+       token_endpoint_auth_signing_alg_values_supported:
+         Map.get(data, "token_endpoint_auth_signing_alg_values_supported"),
+       issuer: Map.get(data, "issuer"),
+       jwks_uri: Map.get(data, "jwks_uri")
+     }}
+  end
+
+  defp parse_server_metadata(_data), do: {:error, :invalid_server_metadata}
+
+  defp validate_expected_issuer(actual, opts) do
+    case Keyword.get(opts, :expected_issuer) do
+      nil -> :ok
+      expected -> Issuer.compare(expected, actual)
     end
-  end
-
-  defp parse_introspection_response(data) do
-    %{
-      active: Map.get(data, "active", false),
-      scope: Map.get(data, "scope"),
-      client_id: Map.get(data, "client_id"),
-      username: Map.get(data, "username"),
-      token_type: Map.get(data, "token_type"),
-      exp: Map.get(data, "exp"),
-      iat: Map.get(data, "iat"),
-      nbf: Map.get(data, "nbf"),
-      sub: Map.get(data, "sub"),
-      aud: Map.get(data, "aud"),
-      iss: Map.get(data, "iss"),
-      jti: Map.get(data, "jti")
-    }
-  end
-
-  defp parse_server_metadata(data) do
-    %{
-      authorization_endpoint: Map.fetch!(data, "authorization_endpoint"),
-      token_endpoint: Map.fetch!(data, "token_endpoint"),
-      registration_endpoint: Map.get(data, "registration_endpoint"),
-      scopes_supported: Map.get(data, "scopes_supported", []),
-      response_types_supported: Map.get(data, "response_types_supported", ["code"]),
-      grant_types_supported:
-        Map.get(data, "grant_types_supported", ["authorization_code", "client_credentials"]),
-      code_challenge_methods_supported:
-        Map.get(data, "code_challenge_methods_supported", ["S256"]),
-      token_endpoint_auth_methods_supported:
-        Map.get(data, "token_endpoint_auth_methods_supported", ["client_secret_post"]),
-      token_endpoint_auth_signing_alg_values_supported:
-        Map.get(data, "token_endpoint_auth_signing_alg_values_supported"),
-      issuer: Map.get(data, "issuer"),
-      jwks_uri: Map.get(data, "jwks_uri")
-    }
   end
 end

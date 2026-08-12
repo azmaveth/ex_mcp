@@ -9,8 +9,8 @@ defmodule ExMCP.Authorization.ScopeValidator do
 
   ## Standard Scopes
 
-  The following standard scopes are defined. More specific scopes can be satisfied
-  by granting a less specific, "wildcard" scope. For example, a token with the
+  The following standard scopes are defined. Only explicitly declared wildcard
+  scopes can satisfy more-specific scopes. For example, a token with the
   `mcp:tools:execute` scope can access any tool, satisfying the more specific
   `mcp:tools:execute:<tool_name>` requirement.
 
@@ -81,7 +81,43 @@ defmodule ExMCP.Authorization.ScopeValidator do
   @type token_scopes :: [String.t()]
   @type required_scopes :: [String.t()]
   @type request :: map()
+  @type mapping_error :: :unmapped_method | :invalid_scope_mapping
   @type custom_mapper :: (request() -> required_scopes() | nil)
+  @type optional_mapper :: custom_mapper() | nil
+
+  @declared_wildcards %{
+    "mcp:tools:execute" => "mcp:tools:execute:"
+  }
+
+  @static_scopes [
+    "mcp:server:discover",
+    "mcp:tools:list",
+    "mcp:tools:get",
+    "mcp:tools:execute",
+    "mcp:resources:list",
+    "mcp:resources:get",
+    "mcp:resources:create",
+    "mcp:resources:update",
+    "mcp:resources:delete",
+    "mcp:resources:subscribe",
+    "mcp:prompts:list",
+    "mcp:prompts:get",
+    "mcp:prompts:execute",
+    "mcp:completion:complete",
+    "mcp:logging:set",
+    "mcp:roots:list",
+    "mcp:sampling:create",
+    "mcp:elicitation:create",
+    "mcp:tasks:get",
+    "mcp:tasks:list",
+    "mcp:tasks:result",
+    "mcp:tasks:cancel",
+    "mcp:tasks:update",
+    "mcp:subscriptions:listen",
+    "mcp:requests:cancel",
+    "mcp:sessions:listen",
+    "mcp:sessions:delete"
+  ]
 
   @doc """
   Retrieves the list of required OAuth scopes for a given MCP request.
@@ -89,15 +125,25 @@ defmodule ExMCP.Authorization.ScopeValidator do
   This function inspects the `method` and `params` of the request to determine
   the necessary scopes. It can be extended with a custom mapping function.
   """
-  @spec get_required_scopes(request(), custom_mapper()) :: required_scopes()
-  def get_required_scopes(request, custom_mapper \\ fn _ -> nil end)
+  @spec get_required_scopes(request(), optional_mapper()) ::
+          required_scopes() | {:error, mapping_error()}
+  def get_required_scopes(request, custom_mapper \\ nil)
 
-  def get_required_scopes(request, custom_mapper) do
+  def get_required_scopes(request, nil), do: default_scope_mapping(request)
+
+  def get_required_scopes(request, custom_mapper) when is_function(custom_mapper, 1) do
     case custom_mapper.(request) do
       nil -> default_scope_mapping(request)
-      scopes when is_list(scopes) -> scopes
+      scopes when is_list(scopes) -> validate_scope_mapping(scopes)
+      _invalid -> {:error, :invalid_scope_mapping}
     end
+  rescue
+    _error -> {:error, :invalid_scope_mapping}
+  catch
+    _kind, _reason -> {:error, :invalid_scope_mapping}
   end
+
+  def get_required_scopes(_request, _invalid_mapper), do: {:error, :invalid_scope_mapping}
 
   @doc """
   Validates that a set of token scopes satisfies a set of required scopes.
@@ -131,24 +177,7 @@ defmodule ExMCP.Authorization.ScopeValidator do
   include dynamically generated scopes like `mcp:tools:execute:<tool_name>`.
   """
   @spec get_all_static_scopes() :: [String.t()]
-  def get_all_static_scopes do
-    [
-      "mcp:tools:list",
-      "mcp:tools:get",
-      "mcp:tools:execute",
-      "mcp:resources:list",
-      "mcp:resources:get",
-      "mcp:resources:create",
-      "mcp:resources:update",
-      "mcp:resources:delete",
-      "mcp:prompts:list",
-      "mcp:prompts:get",
-      "mcp:prompts:execute",
-      "mcp:completion:complete",
-      "mcp:sessions:delete",
-      "mcp:unknown"
-    ]
-  end
+  def get_all_static_scopes, do: @static_scopes
 
   #
   # Private Functions
@@ -188,6 +217,10 @@ defmodule ExMCP.Authorization.ScopeValidator do
   defp default_scope_mapping(%{"method" => "resources/update"}), do: ["mcp:resources:update"]
   defp default_scope_mapping(%{"method" => "resources/delete"}), do: ["mcp:resources:delete"]
 
+  defp default_scope_mapping(%{"method" => method})
+       when method in ["resources/subscribe", "resources/unsubscribe"],
+       do: ["mcp:resources:subscribe"]
+
   defp default_scope_mapping(%{"method" => "prompts/list"}), do: ["mcp:prompts:list"]
   defp default_scope_mapping(%{"method" => "prompts/get"}), do: ["mcp:prompts:get"]
   defp default_scope_mapping(%{"method" => "prompts/execute"}), do: ["mcp:prompts:execute"]
@@ -197,31 +230,72 @@ defmodule ExMCP.Authorization.ScopeValidator do
 
   defp default_scope_mapping(%{"method" => "session/delete"}), do: ["mcp:sessions:delete"]
 
+  defp default_scope_mapping(%{"method" => "session/listen"}),
+    do: ["mcp:sessions:listen"]
+
+  defp default_scope_mapping(%{"method" => "server/discover"}),
+    do: ["mcp:server:discover"]
+
+  defp default_scope_mapping(%{"method" => "subscriptions/listen"}),
+    do: ["mcp:subscriptions:listen"]
+
+  defp default_scope_mapping(%{"method" => "logging/setLevel"}), do: ["mcp:logging:set"]
+  defp default_scope_mapping(%{"method" => "roots/list"}), do: ["mcp:roots:list"]
+
+  defp default_scope_mapping(%{"method" => "sampling/createMessage"}),
+    do: ["mcp:sampling:create"]
+
+  defp default_scope_mapping(%{"method" => "elicitation/create"}),
+    do: ["mcp:elicitation:create"]
+
+  defp default_scope_mapping(%{"method" => "tasks/get"}), do: ["mcp:tasks:get"]
+  defp default_scope_mapping(%{"method" => "tasks/list"}), do: ["mcp:tasks:list"]
+  defp default_scope_mapping(%{"method" => "tasks/result"}), do: ["mcp:tasks:result"]
+  defp default_scope_mapping(%{"method" => "tasks/cancel"}), do: ["mcp:tasks:cancel"]
+  defp default_scope_mapping(%{"method" => "tasks/update"}), do: ["mcp:tasks:update"]
+
+  defp default_scope_mapping(%{"method" => "notifications/cancelled"}),
+    do: ["mcp:requests:cancel"]
+
   defp default_scope_mapping(%{"method" => method})
        when method in ["initialize", "initialized", "ping", "notifications/initialized"],
        do: []
 
-  defp default_scope_mapping(_request), do: ["mcp:unknown"]
+  # The remaining notification methods are emitted by servers or clients as
+  # protocol bookkeeping. They do not grant access to application resources.
+  defp default_scope_mapping(%{"method" => method})
+       when method in [
+              "notifications/tools/list_changed",
+              "notifications/resources/list_changed",
+              "notifications/prompts/list_changed",
+              "notifications/progress",
+              "notifications/message",
+              "notifications/resources/updated",
+              "notifications/roots/list_changed",
+              "notifications/tasks/status",
+              "notifications/tasks",
+              "notifications/elicitation/complete"
+            ],
+       do: []
+
+  # There is deliberately no universal catch-all scope. Extensions must supply
+  # an explicit mapper, otherwise OAuth authorization fails closed.
+  defp default_scope_mapping(_request), do: {:error, :unmapped_method}
 
   defp scope_satisfied?(required_scope, token_scope_set) do
-    # A required scope is satisfied if it is present in the token scopes,
-    # or if a less specific, wildcard scope is present.
-    # e.g., required "mcp:tools:execute:foo" is satisfied by "mcp:tools:execute" in token.
-
-    # 1. Check for exact match
     if MapSet.member?(token_scope_set, required_scope) do
       true
     else
-      # 2. Check for parent wildcard scopes
-      required_parts = String.split(required_scope, ":")
-
-      parent_scopes =
-        Stream.iterate(1, &(&1 + 1))
-        |> Stream.take(length(required_parts) - 1)
-        |> Stream.map(&Enum.take(required_parts, &1))
-        |> Stream.map(&Enum.join(&1, ":"))
-
-      Enum.any?(parent_scopes, &MapSet.member?(token_scope_set, &1))
+      Enum.any?(@declared_wildcards, fn {wildcard, required_prefix} ->
+        MapSet.member?(token_scope_set, wildcard) and
+          String.starts_with?(required_scope, required_prefix)
+      end)
     end
+  end
+
+  defp validate_scope_mapping(scopes) do
+    if scopes != [] and Enum.all?(scopes, &(is_binary(&1) and &1 != "")),
+      do: scopes,
+      else: {:error, :invalid_scope_mapping}
   end
 end

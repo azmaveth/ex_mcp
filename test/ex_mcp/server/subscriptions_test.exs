@@ -172,6 +172,7 @@ defmodule ExMCP.Server.SubscriptionsTest do
     registry_b =
       start_registry(
         adapter: adapter,
+        authorize_filter: fn requested, _context -> {:ok, requested} end,
         authorize_publication: fn _method, _params, context ->
           context.principal_id == "principal-b" and :atomics.get(gate, 1) == 1
         end
@@ -206,7 +207,14 @@ defmodule ExMCP.Server.SubscriptionsTest do
   end
 
   test "enforces global, principal, and tenant listener limits atomically" do
-    registry = start_registry(max_global: 3, max_per_principal: 1, max_per_tenant: 2)
+    registry =
+      start_registry(
+        max_global: 3,
+        max_per_principal: 1,
+        max_per_tenant: 2,
+        authorize_filter: fn requested, _context -> {:ok, requested} end,
+        authorize_publication: fn _method, _params, _context -> true end
+      )
 
     assert {:ok, _entry} =
              listen(registry, 1, principal_id: "p1", tenant_id: "shared")
@@ -228,7 +236,12 @@ defmodule ExMCP.Server.SubscriptionsTest do
   end
 
   test "coalesces safe updates and closes a listener whose bounded queue overflows" do
-    registry = start_registry(max_queue: 1)
+    registry =
+      start_registry(
+        max_queue: 1,
+        authorize_filter: fn requested, _context -> {:ok, requested} end,
+        authorize_publication: fn _method, _params, _context -> true end
+      )
 
     assert {:ok, entry} =
              Subscriptions.listen(
@@ -257,9 +270,91 @@ defmodule ExMCP.Server.SubscriptionsTest do
     refute_receive {:ex_mcp_subscription_message, ^listener, :notification, _message}
   end
 
+  test "accepts a message at the encoded byte cap and closes at one byte over" do
+    subscription_id = "message-byte-cap"
+    uri = "test://byte-cap"
+    payload = String.duplicate("x", 1_024)
+    exact_params = %{"uri" => uri, "value" => payload}
+    one_over_params = %{"uri" => uri, "value" => payload <> "x"}
+    exact_bytes = notification_bytes(subscription_id, exact_params)
+
+    assert notification_bytes(subscription_id, one_over_params) == exact_bytes + 1
+
+    registry =
+      start_registry(
+        max_queue: 10,
+        max_message_bytes: exact_bytes,
+        max_queue_bytes: exact_bytes * 2,
+        authorize_filter: fn requested, _context -> {:ok, requested} end,
+        authorize_publication: fn _method, _params, _context -> true end
+      )
+
+    assert {:ok, _entry} =
+             Subscriptions.listen(
+               subscription_id,
+               %{"resourceSubscriptions" => [uri]},
+               self(),
+               registry: registry
+             )
+
+    assert_receive {:ex_mcp_subscription_message, listener, :acknowledged, _ack}
+    assert %{enqueued: 1} = publish(registry, "notifications/resources/updated", exact_params)
+
+    assert %{closed: 1} =
+             publish(registry, "notifications/resources/updated", one_over_params)
+
+    Subscriptions.delivered(listener)
+    assert_receive {:ex_mcp_subscription_message, ^listener, :complete, _completed}
+    refute_receive {:ex_mcp_subscription_message, ^listener, :notification, _message}
+  end
+
+  test "accounts coalesced queue bytes and closes when a replacement is one byte over budget" do
+    subscription_id = "queue-byte-cap"
+    uri = "test://queue-byte-cap"
+    payload = String.duplicate("x", 1_024)
+    exact_params = %{"uri" => uri, "value" => payload}
+    one_over_params = %{"uri" => uri, "value" => payload <> "x"}
+    exact_bytes = notification_bytes(subscription_id, exact_params)
+
+    assert notification_bytes(subscription_id, one_over_params) == exact_bytes + 1
+
+    registry =
+      start_registry(
+        max_queue: 10,
+        max_message_bytes: exact_bytes + 1,
+        max_queue_bytes: exact_bytes,
+        authorize_filter: fn requested, _context -> {:ok, requested} end,
+        authorize_publication: fn _method, _params, _context -> true end
+      )
+
+    assert {:ok, _entry} =
+             Subscriptions.listen(
+               subscription_id,
+               %{"resourceSubscriptions" => [uri]},
+               self(),
+               registry: registry
+             )
+
+    assert_receive {:ex_mcp_subscription_message, listener, :acknowledged, _ack}
+    assert %{enqueued: 1} = publish(registry, "notifications/resources/updated", exact_params)
+
+    assert %{closed: 1} =
+             publish(registry, "notifications/resources/updated", one_over_params)
+
+    Subscriptions.delivered(listener)
+    assert_receive {:ex_mcp_subscription_message, ^listener, :complete, _completed}
+    refute_receive {:ex_mcp_subscription_message, ^listener, :notification, _message}
+  end
+
   test "authorizes task IDs against the task owner and coalesces full-state updates" do
     task_store = start_supervised!({Store.ETS, name: nil}, id: make_ref())
-    registry = start_registry(max_queue: 1)
+
+    registry =
+      start_registry(
+        max_queue: 1,
+        authorize_filter: fn requested, _context -> {:ok, requested} end,
+        authorize_publication: fn _method, _params, _context -> true end
+      )
 
     alice = %{principal_id: "alice", tenant_id: "acme", audience: "mcp://tasks"}
     bob = %{principal_id: "bob", tenant_id: "acme", audience: "mcp://tasks"}
@@ -376,6 +471,19 @@ defmodule ExMCP.Server.SubscriptionsTest do
     assert Subscriptions.entries(registry: registry) == []
   end
 
+  test "requires both authorizers for identity-bound subscriptions" do
+    registry = start_registry()
+
+    assert {:error, :subscription_filter_authorizer_required} =
+             Subscriptions.listen(1, %{}, self(),
+               registry: registry,
+               principal_id: "principal-1",
+               tenant_id: "tenant-1"
+             )
+
+    assert Subscriptions.entries(registry: registry) == []
+  end
+
   test "terminates a listener when adapter registration fails" do
     registry = start_registry(adapter: {RejectingAdapter, test_pid: self()})
 
@@ -398,6 +506,16 @@ defmodule ExMCP.Server.SubscriptionsTest do
 
   defp publish(registry, method, params \\ %{}) do
     Subscriptions.publish(method, params, registry: registry)
+  end
+
+  defp notification_bytes(subscription_id, params) do
+    message = %{
+      "jsonrpc" => "2.0",
+      "method" => "notifications/resources/updated",
+      "params" => Map.put(params, "_meta", %{@subscription_id_key => subscription_id})
+    }
+
+    message |> Jason.encode!() |> byte_size()
   end
 
   defp assert_eventually(fun, attempts \\ 50)

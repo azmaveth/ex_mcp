@@ -27,6 +27,20 @@ defmodule ExMCP.ACP.Client do
   - `:protocol_version` — integer (default: 1)
   - `:initialize_timeout` — total initialize-handshake timeout in milliseconds
     (default: 30_000)
+  - `:max_frame_bytes` — maximum inbound or outbound JSON-RPC frame size
+    (default: 1 MiB)
+  - `:max_pending_requests` — maximum concurrent requests in either direction
+    (default: 1,024)
+  - `:max_prompt_text_bytes` — maximum streamed prompt text retained per session
+    (default: 1 MiB)
+  - `:pending_request_timeout` — server-side lifetime for outbound requests
+    (default: 30_000 ms)
+  - `:handler_request_timeout` — lifetime for inbound client-handler callbacks
+    (default: 30_000 ms)
+  - `:max_update_queue` — mailbox cutoff for handler/listener session updates;
+    excess updates are dropped (default: 32)
+  - `:max_update_queue_bytes` — aggregate encoded size cutoff for queued
+    handler/listener session updates (default: 8 MiB)
   - `:name` — GenServer name registration
   """
 
@@ -34,14 +48,22 @@ defmodule ExMCP.ACP.Client do
 
   require Logger
 
-  alias ExMCP.ACP.{Capabilities, LifecycleParams, Maps, PendingRequests}
+  alias ExMCP.ACP.{Capabilities, LifecycleParams, Maps, PendingRequests, RequestValidation}
   alias ExMCP.ACP.Client.DefaultHandler
   alias ExMCP.ACP.Client.HandlerRunner
   alias ExMCP.ACP.Protocol
+  alias ExMCP.Internal.LogSummary
   alias ExMCP.Transport.Stdio
 
   @default_initialize_timeout 30_000
   @maximum_initialize_timeout 4_294_967_295
+  @default_max_frame_bytes 1_048_576
+  @default_max_pending_requests 1_024
+  @default_max_prompt_text_bytes 1_048_576
+  @default_pending_request_timeout 30_000
+  @default_handler_request_timeout 30_000
+  @default_max_update_queue 32
+  @default_max_update_queue_bytes 8_388_608
   @supported_protocol_versions [1]
 
   defstruct [
@@ -50,12 +72,21 @@ defmodule ExMCP.ACP.Client do
     :receiver_pid,
     :agent_info,
     :agent_capabilities,
+    :client_capabilities,
     :auth_methods,
     :handler_mod,
     :handler_pid,
     :event_listener,
     :protocol_version,
+    max_frame_bytes: @default_max_frame_bytes,
+    max_pending_requests: @default_max_pending_requests,
+    max_prompt_text_bytes: @default_max_prompt_text_bytes,
+    pending_request_timeout: @default_pending_request_timeout,
+    handler_request_timeout: @default_handler_request_timeout,
+    max_update_queue: @default_max_update_queue,
+    max_update_queue_bytes: @default_max_update_queue_bytes,
     pending_requests: %{},
+    pending_caller_monitors: %{},
     pending_agent_requests: %{},
     sessions: %{},
     # Accumulates streamed agent_message_chunk text per session so a synchronous
@@ -279,7 +310,23 @@ defmodule ExMCP.ACP.Client do
           handler_mod: handler_mod,
           handler_pid: handler_pid,
           event_listener: Keyword.get(opts, :event_listener),
-          protocol_version: Keyword.get(opts, :protocol_version, 1)
+          protocol_version: Keyword.get(opts, :protocol_version, 1),
+          max_frame_bytes: positive_limit(opts, :max_frame_bytes, @default_max_frame_bytes),
+          max_pending_requests:
+            positive_limit(opts, :max_pending_requests, @default_max_pending_requests),
+          max_prompt_text_bytes:
+            positive_limit(opts, :max_prompt_text_bytes, @default_max_prompt_text_bytes),
+          pending_request_timeout:
+            positive_limit(opts, :pending_request_timeout, @default_pending_request_timeout),
+          handler_request_timeout:
+            positive_limit(opts, :handler_request_timeout, @default_handler_request_timeout),
+          max_update_queue: positive_limit(opts, :max_update_queue, @default_max_update_queue),
+          max_update_queue_bytes:
+            positive_limit(
+              opts,
+              :max_update_queue_bytes,
+              @default_max_update_queue_bytes
+            )
         }
 
         # Allow skipping connection for tests
@@ -302,7 +349,7 @@ defmodule ExMCP.ACP.Client do
     with :ok <- LifecycleParams.validate_cwd(cwd),
          :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
       msg = Protocol.encode_session_new(cwd, lifecycle_opts)
-      send_request(msg, from, state, :new_session)
+      send_request(msg, from, state, {:new_session, session_roots(cwd, lifecycle_opts)})
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -345,7 +392,13 @@ defmodule ExMCP.ACP.Client do
         with :ok <- LifecycleParams.validate_cwd(cwd),
              :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
           msg = Protocol.encode_session_load(session_id, cwd, lifecycle_opts)
-          send_request(msg, from, state)
+
+          send_request(
+            msg,
+            from,
+            state,
+            {:load_session, session_id, session_roots(cwd, lifecycle_opts)}
+          )
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -365,7 +418,13 @@ defmodule ExMCP.ACP.Client do
         with :ok <- LifecycleParams.validate_cwd(cwd),
              :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
           msg = Protocol.encode_session_resume(session_id, cwd, lifecycle_opts)
-          send_request(msg, from, state)
+
+          send_request(
+            msg,
+            from,
+            state,
+            {:resume_session, session_id, session_roots(cwd, lifecycle_opts)}
+          )
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -385,7 +444,7 @@ defmodule ExMCP.ACP.Client do
         with :ok <- LifecycleParams.validate_cwd(cwd),
              :ok <- LifecycleParams.validate(lifecycle_opts, state.agent_capabilities) do
           msg = Protocol.encode_session_fork(session_id, cwd, lifecycle_opts)
-          send_request(msg, from, state)
+          send_request(msg, from, state, {:fork_session, session_roots(cwd, lifecycle_opts)})
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -401,7 +460,7 @@ defmodule ExMCP.ACP.Client do
       :telemetry.execute(
         [:ex_mcp, :acp, :prompt, :sent],
         %{system_time: System.system_time()},
-        %{session_id: session_id}
+        %{session_id_hash: session_id_hash(session_id)}
       )
 
       msg = Protocol.encode_session_prompt(session_id, blocks)
@@ -459,7 +518,7 @@ defmodule ExMCP.ACP.Client do
     case ensure_capability(state, :session_delete) do
       :ok ->
         msg = Protocol.encode_session_delete(session_id)
-        send_request(msg, from, state)
+        send_request(msg, from, state, {:delete_session, session_id})
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -474,7 +533,7 @@ defmodule ExMCP.ACP.Client do
 
       {:error, {:unsupported_capability, :session_close}} ->
         emit_session_ended(session_id)
-        {:reply, :ok, state}
+        {:reply, :ok, %{state | sessions: Map.delete(state.sessions, session_id)}}
     end
   end
 
@@ -503,6 +562,23 @@ defmodule ExMCP.ACP.Client do
   end
 
   @impl true
+  def handle_info({:transport_message, receiver, raw_message}, state) when is_pid(receiver) do
+    result = handle_info({:transport_message, raw_message}, state)
+    send(receiver, {:transport_message_ack, self()})
+    result
+  end
+
+  def handle_info({:transport_message, raw_message}, state)
+      when is_binary(raw_message) and byte_size(raw_message) > state.max_frame_bytes do
+    Logger.warning("ACP client closed an oversized inbound frame",
+      size: byte_size(raw_message),
+      limit: state.max_frame_bytes
+    )
+
+    state = do_disconnect(state)
+    {:noreply, state}
+  end
+
   def handle_info({:transport_message, raw_message}, state) do
     case Protocol.parse_message(raw_message) do
       {:result, result, id} ->
@@ -514,7 +590,21 @@ defmodule ExMCP.ACP.Client do
         {:noreply, state}
 
       {:notification, "session/update", params} ->
-        state = handle_session_update(params, state)
+        state =
+          case RequestValidation.validate_session_update(params) do
+            :ok ->
+              if authorized_session_id?(params["sessionId"], state) do
+                handle_session_update(params, state)
+              else
+                Logger.warning("ACP client ignored an update for an unknown session")
+                state
+              end
+
+            {:error, :invalid_params} ->
+              Logger.warning("ACP client ignored an invalid session update")
+              state
+          end
+
         {:noreply, state}
 
       {:notification, "$/cancel_request", params} ->
@@ -522,11 +612,14 @@ defmodule ExMCP.ACP.Client do
         {:noreply, state}
 
       {:request, method, params, id} ->
-        state = handle_agent_request(method, params, id, state)
+        state = validate_and_handle_agent_request(method, params, id, state)
         {:noreply, state}
 
       other ->
-        Logger.debug("ACP client received unexpected message: #{inspect(other)}")
+        Logger.debug("ACP client received unexpected message",
+          message_shape: LogSummary.describe(other)
+        )
+
         {:noreply, state}
     end
   end
@@ -536,6 +629,64 @@ defmodule ExMCP.ACP.Client do
     {:noreply, state}
   end
 
+  def handle_info({:pending_request_timeout, request_id}, state) do
+    case PendingRequests.pop(state.pending_requests, request_id) do
+      {nil, _pending} ->
+        {:noreply, state}
+
+      {{from, telemetry_tag, monitor_ref, _timer_ref} = request, pending} ->
+        Process.demonitor(monitor_ref, [:flush])
+        GenServer.reply(from, {:error, :request_timeout})
+
+        state = %{
+          state
+          | pending_requests: pending,
+            pending_caller_monitors: Map.delete(state.pending_caller_monitors, monitor_ref)
+        }
+
+        state = clear_abandoned_prompt_text(request, state)
+        emit_resolve_telemetry(telemetry_tag, {:error, :request_timeout})
+
+        if state.status == :ready do
+          send_to_transport(Protocol.encode_cancel_request(request_id), state)
+        end
+
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:agent_handler_timeout, ref}, state) do
+    case PendingRequests.pop(state.pending_agent_requests, ref) do
+      {nil, _pending} ->
+        {:noreply, state}
+
+      {request, pending} ->
+        response = Protocol.encode_error(-32603, "Client handler timed out", nil, request.id)
+        send_to_transport(response, state)
+        {:noreply, %{state | pending_agent_requests: pending}}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Map.fetch(state.pending_caller_monitors, ref) do
+      :error ->
+        {:noreply, state}
+
+      {:ok, request_id} ->
+        monitors = Map.delete(state.pending_caller_monitors, ref)
+        {pending, requests} = PendingRequests.pop(state.pending_requests, request_id)
+        cancel_pending_timer(pending)
+        state = %{state | pending_requests: requests, pending_caller_monitors: monitors}
+        state = clear_abandoned_prompt_text(pending, state)
+
+        if state.status == :ready do
+          send_to_transport(Protocol.encode_cancel_request(request_id), state)
+        end
+
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:transport_closed, _reason}, state) do
     Logger.info("ACP transport closed")
     state = reply_all_pending({:error, :transport_closed}, state)
@@ -543,7 +694,10 @@ defmodule ExMCP.ACP.Client do
   end
 
   def handle_info({:transport_error, reason}, state) do
-    Logger.warning("ACP transport error: #{inspect(reason)}")
+    Logger.warning("ACP transport error",
+      reason_shape: LogSummary.describe(reason)
+    )
+
     state = reply_all_pending({:error, {:transport_error, reason}}, state)
     {:noreply, %{state | status: :disconnected}}
   end
@@ -552,14 +706,19 @@ defmodule ExMCP.ACP.Client do
     cond do
       pid == state.receiver_pid ->
         if reason != :normal do
-          Logger.warning("ACP receiver exited: #{inspect(reason)}")
+          Logger.warning("ACP receiver exited",
+            reason_shape: LogSummary.describe(reason)
+          )
         end
 
         state = reply_all_pending({:error, :receiver_exited}, state)
         {:noreply, %{state | status: :disconnected, receiver_pid: nil}}
 
       pid == state.handler_pid ->
-        Logger.warning("ACP handler runner exited: #{inspect(reason)}")
+        Logger.warning("ACP handler runner exited",
+          reason_shape: LogSummary.describe(reason)
+        )
+
         state = fail_pending_agent_requests("Handler unavailable", state)
         {:noreply, %{state | handler_pid: nil}}
 
@@ -617,22 +776,28 @@ defmodule ExMCP.ACP.Client do
     init_msg = Protocol.encode_initialize(client_info, capabilities, state.protocol_version)
 
     with {:ok, _} <- do_send(init_msg, state),
-         {:ok, result} <- receive_init_response(init_msg["id"], initialize_timeout) do
-      protocol_version = result["protocolVersion"] || state.protocol_version
-
-      if protocol_version in @supported_protocol_versions do
-        {:ok,
-         %{
-           state
-           | agent_info: result["agentInfo"],
-             agent_capabilities: result["agentCapabilities"],
-             auth_methods: result["authMethods"] || [],
-             protocol_version: protocol_version,
-             status: :ready
-         }}
-      else
-        {:error, {:unsupported_protocol_version, protocol_version}}
-      end
+         {:ok, result} when is_map(result) <-
+           receive_init_response(init_msg["id"], initialize_timeout, state.max_frame_bytes),
+         protocol_version <- Map.get(result, "protocolVersion"),
+         :ok <-
+           RequestValidation.validate_protocol_version(
+             protocol_version,
+             @supported_protocol_versions
+           ) do
+      {:ok,
+       %{
+         state
+         | agent_info: result["agentInfo"],
+           agent_capabilities: result["agentCapabilities"],
+           client_capabilities: capabilities,
+           auth_methods: result["authMethods"] || [],
+           protocol_version: protocol_version,
+           status: :ready
+       }}
+    else
+      {:ok, _invalid_result} -> {:error, :invalid_initialize_response}
+      {:error, :invalid_protocol_version} -> {:error, :invalid_initialize_protocol_version}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -665,6 +830,12 @@ defmodule ExMCP.ACP.Client do
     :capabilities,
     :protocol_version,
     :initialize_timeout,
+    :max_pending_requests,
+    :max_prompt_text_bytes,
+    :pending_request_timeout,
+    :handler_request_timeout,
+    :max_update_queue,
+    :max_update_queue_bytes,
     :transport_mod,
     :_skip_connect
   ]
@@ -681,8 +852,12 @@ defmodule ExMCP.ACP.Client do
   defp receiver_loop(parent, transport_mod, transport_state) do
     case transport_mod.receive_message(transport_state) do
       {:ok, message, new_state} ->
-        send(parent, {:transport_message, message})
-        receiver_loop(parent, transport_mod, new_state)
+        send(parent, {:transport_message, self(), message})
+
+        receive do
+          {:transport_message_ack, ^parent} ->
+            receiver_loop(parent, transport_mod, new_state)
+        end
 
       {:error, :closed} ->
         send(parent, {:transport_closed, :normal})
@@ -692,30 +867,24 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
-  defp receive_init_response(request_id, timeout) do
+  defp receive_init_response(request_id, timeout, max_frame_bytes) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    do_receive_init_response(request_id, deadline)
+    do_receive_init_response(request_id, deadline, max_frame_bytes)
   end
 
-  defp do_receive_init_response(request_id, deadline) do
+  defp do_receive_init_response(request_id, deadline, max_frame_bytes) do
     remaining = max(deadline - System.monotonic_time(:millisecond), 0)
 
     if remaining == 0 do
       {:error, :init_timeout}
     else
       receive do
+        {:transport_message, receiver, raw} when is_pid(receiver) ->
+          send(receiver, {:transport_message_ack, self()})
+          handle_init_frame(raw, request_id, deadline, max_frame_bytes)
+
         {:transport_message, raw} ->
-          case Protocol.parse_message(raw) do
-            {:result, result, ^request_id} ->
-              {:ok, result}
-
-            {:error, error, ^request_id} ->
-              {:error, {:agent_error, error}}
-
-            _other ->
-              # Skip non-matching messages during init without resetting the deadline.
-              do_receive_init_response(request_id, deadline)
-          end
+          handle_init_frame(raw, request_id, deadline, max_frame_bytes)
       after
         remaining ->
           {:error, :init_timeout}
@@ -723,43 +892,118 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
+  defp handle_init_frame(raw, request_id, deadline, max_frame_bytes) do
+    if is_binary(raw) and byte_size(raw) > max_frame_bytes do
+      {:error, :frame_too_large}
+    else
+      case Protocol.parse_message(raw) do
+        {:result, result, ^request_id} ->
+          {:ok, result}
+
+        {:error, error, ^request_id} ->
+          {:error, {:agent_error, error}}
+
+        _other ->
+          # Skip non-matching messages during init without resetting the deadline.
+          do_receive_init_response(request_id, deadline, max_frame_bytes)
+      end
+    end
+  end
+
   defp send_request(msg, from, state, telemetry_tag \\ nil) do
     id = msg["id"]
 
-    case do_send(msg, state) do
-      {:ok, new_state} ->
-        pending = PendingRequests.put(state.pending_requests, id, {from, telemetry_tag})
-        {:noreply, %{new_state | pending_requests: pending}}
+    cond do
+      Map.has_key?(state.pending_requests, id) ->
+        {:reply, {:error, :duplicate_request_id}, state}
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+      map_size(state.pending_requests) >= state.max_pending_requests ->
+        {:reply, {:error, :too_many_pending_requests}, state}
+
+      true ->
+        case do_send(msg, state) do
+          {:ok, new_state} ->
+            monitor_ref = Process.monitor(elem(from, 0))
+
+            timer_ref =
+              Process.send_after(
+                self(),
+                {:pending_request_timeout, id},
+                state.pending_request_timeout
+              )
+
+            pending =
+              PendingRequests.put(
+                state.pending_requests,
+                id,
+                {from, telemetry_tag, monitor_ref, timer_ref}
+              )
+
+            monitors = Map.put(state.pending_caller_monitors, monitor_ref, id)
+
+            {:noreply,
+             %{
+               new_state
+               | pending_requests: pending,
+                 pending_caller_monitors: monitors
+             }}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
     end
   end
 
   defp send_to_transport(msg, state) do
     case do_send(msg, state) do
-      {:ok, _state} -> :ok
-      {:error, reason} -> Logger.warning("ACP send failed: #{inspect(reason)}")
+      {:ok, _state} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("ACP send failed",
+          reason_shape: LogSummary.describe(reason)
+        )
     end
   end
 
   defp do_send(msg, state) do
     encoded = Jason.encode!(msg)
 
-    case state.transport_mod.send_message(encoded, state.transport_state) do
-      {:ok, new_transport_state} ->
-        {:ok, %{state | transport_state: new_transport_state}}
+    if byte_size(encoded) > state.max_frame_bytes do
+      {:error, :frame_too_large}
+    else
+      case state.transport_mod.send_message(encoded, state.transport_state) do
+        {:ok, new_transport_state} ->
+          {:ok, %{state | transport_state: new_transport_state}}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
   defp resolve_pending(id, reply, state) do
     case PendingRequests.pop(state.pending_requests, id) do
       {nil, _pending} ->
-        Logger.debug("ACP received response for unknown request #{id}")
+        Logger.debug("ACP received response for unknown request",
+          request_id_hash: LogSummary.fingerprint(id)
+        )
+
         state
+
+      {{from, telemetry_tag, monitor_ref, timer_ref}, pending} ->
+        cancel_timer(timer_ref)
+        Process.demonitor(monitor_ref, [:flush])
+        {reply, state} = maybe_merge_prompt_text(telemetry_tag, reply, state)
+        state = apply_session_resolution(telemetry_tag, reply, state)
+        emit_resolve_telemetry(telemetry_tag, reply)
+        GenServer.reply(from, reply)
+
+        %{
+          state
+          | pending_requests: pending,
+            pending_caller_monitors: Map.delete(state.pending_caller_monitors, monitor_ref)
+        }
 
       {{from, telemetry_tag}, pending} ->
         {reply, state} = maybe_merge_prompt_text(telemetry_tag, reply, state)
@@ -805,13 +1049,13 @@ defmodule ExMCP.ACP.Client do
 
   defp maybe_merge_prompt_text(_tag, reply, state), do: {reply, state}
 
-  defp emit_resolve_telemetry(:new_session, {:ok, result}) do
+  defp emit_resolve_telemetry({:new_session, _roots}, {:ok, result}) do
     session_id = result["sessionId"]
 
     :telemetry.execute(
       [:ex_mcp, :acp, :session, :started],
       %{system_time: System.system_time()},
-      %{session_id: session_id}
+      %{session_id_hash: session_id_hash(session_id)}
     )
   end
 
@@ -821,7 +1065,7 @@ defmodule ExMCP.ACP.Client do
     :telemetry.execute(
       [:ex_mcp, :acp, :prompt, :completed],
       %{system_time: System.system_time()},
-      %{session_id: session_id, stop_reason: stop_reason}
+      %{session_id_hash: session_id_hash(session_id), stop_reason: stop_reason}
     )
   end
 
@@ -830,6 +1074,37 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp emit_resolve_telemetry(_, _), do: :ok
+
+  defp apply_session_resolution(
+         {:new_session, roots},
+         {:ok, %{"sessionId" => session_id}},
+         state
+       )
+       when is_binary(session_id) and session_id != "" do
+    %{state | sessions: Map.put(state.sessions, session_id, %{roots: roots})}
+  end
+
+  defp apply_session_resolution({kind, session_id, roots}, {:ok, _result}, state)
+       when kind in [:load_session, :resume_session] and is_binary(session_id) and
+              session_id != "" do
+    %{state | sessions: Map.put(state.sessions, session_id, %{roots: roots})}
+  end
+
+  defp apply_session_resolution(
+         {:fork_session, roots},
+         {:ok, %{"sessionId" => session_id}},
+         state
+       )
+       when is_binary(session_id) and session_id != "" do
+    %{state | sessions: Map.put(state.sessions, session_id, %{roots: roots})}
+  end
+
+  defp apply_session_resolution({kind, session_id}, {:ok, _result}, state)
+       when kind in [:close_session, :delete_session] do
+    %{state | sessions: Map.delete(state.sessions, session_id)}
+  end
+
+  defp apply_session_resolution(_tag, _reply, state), do: state
 
   # Build a clientCapabilities map reflecting which optional ACP callbacks
   # the handler module actually exports. Per spec, capabilities omitted in
@@ -870,9 +1145,11 @@ defmodule ExMCP.ACP.Client do
     :telemetry.execute(
       [:ex_mcp, :acp, :session, :ended],
       %{system_time: System.system_time()},
-      %{session_id: session_id}
+      %{session_id_hash: session_id_hash(session_id)}
     )
   end
+
+  defp session_id_hash(session_id), do: LogSummary.fingerprint({:acp_session, session_id})
 
   defp ensure_capability(state, capability) do
     Capabilities.ensure(state.agent_capabilities || %{}, capability)
@@ -923,29 +1200,66 @@ defmodule ExMCP.ACP.Client do
   defp reply_all_pending(error, state) do
     for pending <- PendingRequests.values(state.pending_requests) do
       case pending do
-        {from, _tag} -> GenServer.reply(from, error)
-        from -> GenServer.reply(from, error)
+        {from, _tag, monitor_ref, timer_ref} ->
+          cancel_timer(timer_ref)
+          Process.demonitor(monitor_ref, [:flush])
+          GenServer.reply(from, error)
+
+        {from, _tag, monitor_ref} ->
+          Process.demonitor(monitor_ref, [:flush])
+          GenServer.reply(from, error)
+
+        {from, _tag} ->
+          GenServer.reply(from, error)
+
+        from ->
+          GenServer.reply(from, error)
       end
     end
 
-    %{state | pending_requests: PendingRequests.empty(), pending_agent_requests: %{}}
+    Enum.each(state.pending_agent_requests, fn {_ref, request} ->
+      cancel_timer(Map.get(request, :timer_ref))
+    end)
+
+    %{
+      state
+      | pending_requests: PendingRequests.empty(),
+        pending_caller_monitors: %{},
+        pending_agent_requests: %{},
+        prompt_text: %{},
+        sessions: %{}
+    }
   end
 
   defp handle_session_update(params, state) do
     session_id = params["sessionId"]
     update = params["update"]
+    update_bytes = :erlang.external_size(update)
 
     # Buffer streamed answer text so prompt/3 can return it (see prompt_text).
     state = accumulate_prompt_text(state, session_id, update)
 
     # Notify event listener from the client process so a slow handler cannot
     # stall the update stream.
-    if state.event_listener do
+    if is_pid(state.event_listener) and
+         update_mailbox_below_limits?(
+           state.event_listener,
+           state.max_update_queue,
+           state.max_update_queue_bytes,
+           update_bytes,
+           :listener
+         ) do
       send(state.event_listener, {:acp_session_update, session_id, update})
     end
 
     if state.handler_pid do
-      HandlerRunner.session_update(state.handler_pid, session_id, update)
+      HandlerRunner.session_update(
+        state.handler_pid,
+        session_id,
+        update,
+        state.max_update_queue,
+        state.max_update_queue_bytes
+      )
     end
 
     state
@@ -962,7 +1276,15 @@ defmodule ExMCP.ACP.Client do
     if prompt_pending?(state, session_id) do
       case get_in(update, ["content", "text"]) do
         text when is_binary(text) and text != "" ->
-          %{state | prompt_text: Map.update(state.prompt_text, session_id, text, &(&1 <> text))}
+          buffered = Map.get(state.prompt_text, session_id, "")
+          remaining = max(state.max_prompt_text_bytes - byte_size(buffered), 0)
+          text = valid_utf8_prefix(text, remaining)
+
+          if text == "" do
+            state
+          else
+            %{state | prompt_text: Map.put(state.prompt_text, session_id, buffered <> text)}
+          end
 
         _ ->
           state
@@ -976,9 +1298,172 @@ defmodule ExMCP.ACP.Client do
 
   defp prompt_pending?(state, session_id) do
     Enum.any?(state.pending_requests, fn
+      {_id, {_from, {:prompt, ^session_id}, _monitor_ref}} -> true
+      {_id, {_from, {:prompt, ^session_id}, _monitor_ref, _timer_ref}} -> true
       {_id, {_from, {:prompt, ^session_id}}} -> true
       _ -> false
     end)
+  end
+
+  defp clear_abandoned_prompt_text({_from, {:prompt, session_id}, _monitor_ref}, state),
+    do: %{state | prompt_text: Map.delete(state.prompt_text, session_id)}
+
+  defp clear_abandoned_prompt_text(
+         {_from, {:prompt, session_id}, _monitor_ref, _timer_ref},
+         state
+       ),
+       do: %{state | prompt_text: Map.delete(state.prompt_text, session_id)}
+
+  defp clear_abandoned_prompt_text(_pending, state), do: state
+
+  defp validate_and_handle_agent_request(method, params, id, state) do
+    with :ok <- ensure_agent_request_id_available(id, state),
+         :ok <- ensure_advertised_client_capability(method, state),
+         :ok <- RequestValidation.validate_agent_request(method, params),
+         :ok <- ensure_agent_session_authority(method, params, state),
+         :ok <- ensure_agent_request_capacity(state) do
+      handle_agent_request(method, params, id, state)
+    else
+      {:error, :duplicate_request_id} ->
+        send_agent_request_error(state, id, -32_600, "Request id is already in use")
+
+      {:error, :unsupported_client_capability} ->
+        send_agent_request_error(state, id, -32_601, "Method not supported")
+
+      {:error, :method_not_found} ->
+        send_agent_request_error(state, id, -32_601, "Method not found")
+
+      {:error, :invalid_params} ->
+        send_agent_request_error(state, id, -32_602, "Invalid request parameters")
+
+      {:error, :unknown_session} ->
+        send_agent_request_error(state, id, -32_602, "Unknown session")
+
+      {:error, :path_not_authorized} ->
+        send_agent_request_error(state, id, -32_602, "Path is outside the session workspace")
+
+      {:error, :too_many_pending_requests} ->
+        send_agent_request_error(state, id, -32_000, "Too many pending requests")
+    end
+  end
+
+  defp ensure_agent_request_id_available(id, state) do
+    if Enum.any?(state.pending_agent_requests, fn {_ref, request} -> request.id == id end) do
+      {:error, :duplicate_request_id}
+    else
+      :ok
+    end
+  end
+
+  defp ensure_advertised_client_capability("fs/read_text_file", state) do
+    if state.client_capabilities |> Maps.get("fs") |> Maps.get("readTextFile") == true,
+      do: :ok,
+      else: {:error, :unsupported_client_capability}
+  end
+
+  defp ensure_advertised_client_capability("fs/write_text_file", state) do
+    if state.client_capabilities |> Maps.get("fs") |> Maps.get("writeTextFile") == true,
+      do: :ok,
+      else: {:error, :unsupported_client_capability}
+  end
+
+  defp ensure_advertised_client_capability("terminal/" <> _method, state) do
+    if Maps.get(state.client_capabilities, "terminal") == true,
+      do: :ok,
+      else: {:error, :unsupported_client_capability}
+  end
+
+  defp ensure_advertised_client_capability(_method, _state), do: :ok
+
+  defp ensure_agent_session_authority("session/request_permission", params, state) do
+    ensure_known_session(params["sessionId"], state)
+  end
+
+  defp ensure_agent_session_authority(method, params, state)
+       when method in ["fs/read_text_file", "fs/write_text_file"] do
+    with {:ok, roots} <- session_roots_for(params["sessionId"], state),
+         true <- path_within_roots?(params["path"], roots) do
+      :ok
+    else
+      {:error, :unknown_session} -> {:error, :unknown_session}
+      false -> {:error, :path_not_authorized}
+    end
+  end
+
+  defp ensure_agent_session_authority("terminal/create", params, state) do
+    with {:ok, roots} <- session_roots_for(params["sessionId"], state) do
+      case params["cwd"] do
+        nil -> :ok
+        cwd -> if path_within_roots?(cwd, roots), do: :ok, else: {:error, :path_not_authorized}
+      end
+    end
+  end
+
+  defp ensure_agent_session_authority("terminal/" <> _method, params, state) do
+    ensure_known_session(params["sessionId"], state)
+  end
+
+  defp ensure_agent_session_authority(_method, _params, _state), do: :ok
+
+  defp authorized_session_id?(session_id, state)
+       when is_binary(session_id) and session_id != "" do
+    Map.has_key?(state.sessions, session_id) or pending_session_open?(session_id, state)
+  end
+
+  defp authorized_session_id?(_session_id, _state), do: false
+
+  defp ensure_known_session(session_id, state) do
+    if authorized_session_id?(session_id, state), do: :ok, else: {:error, :unknown_session}
+  end
+
+  defp session_roots_for(session_id, state) do
+    case Map.get(state.sessions, session_id) do
+      %{roots: roots} when is_list(roots) -> {:ok, roots}
+      _missing -> pending_session_roots(session_id, state)
+    end
+  end
+
+  defp pending_session_open?(session_id, state) do
+    match?({:ok, _roots}, pending_session_roots(session_id, state))
+  end
+
+  defp pending_session_roots(session_id, state) do
+    Enum.any?(state.pending_requests, fn
+      {_id, {_from, {kind, ^session_id, _roots}, _monitor_ref, _timer_ref}}
+      when kind in [:load_session, :resume_session] ->
+        true
+
+      _pending ->
+        false
+    end)
+    |> case do
+      false ->
+        {:error, :unknown_session}
+
+      true ->
+        {_id, {_from, {_kind, ^session_id, roots}, _monitor_ref, _timer_ref}} =
+          Enum.find(state.pending_requests, fn
+            {_id, {_from, {kind, candidate, _roots}, _monitor_ref, _timer_ref}} ->
+              kind in [:load_session, :resume_session] and candidate == session_id
+
+            _pending ->
+              false
+          end)
+
+        {:ok, roots}
+    end
+  end
+
+  defp ensure_agent_request_capacity(state) do
+    if map_size(state.pending_agent_requests) < state.max_pending_requests,
+      do: :ok,
+      else: {:error, :too_many_pending_requests}
+  end
+
+  defp send_agent_request_error(state, id, code, message) do
+    response = Protocol.encode_error(code, message, nil, id)
+    send_to_transport(response, state)
+    state
   end
 
   defp handle_agent_request("session/request_permission", params, id, state) do
@@ -1032,6 +1517,7 @@ defmodule ExMCP.ACP.Client do
   # Terminal operations — spec-defined but delegated to handler
   defp handle_agent_request("terminal/" <> _ = method, params, id, state) do
     if state.handler_pid && function_exported?(state.handler_mod, :handle_terminal_request, 4) do
+      params = terminal_params_with_workspace_default(method, params, state)
       ref = make_ref()
       HandlerRunner.terminal_request(state.handler_pid, ref, method, params, id)
       track_agent_request(state, ref, :terminal, id, params["sessionId"], %{method: method})
@@ -1043,11 +1529,27 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp handle_agent_request(method, _params, id, state) do
-    Logger.debug("ACP client received unknown agent request: #{method}")
+    Logger.debug("ACP client received unknown agent request",
+      method_hash: LogSummary.fingerprint(method)
+    )
+
     response = Protocol.encode_error(-32601, "Method not found: #{method}", nil, id)
     send_to_transport(response, state)
     state
   end
+
+  defp terminal_params_with_workspace_default("terminal/create", params, state) do
+    if is_nil(params["cwd"]) do
+      case session_roots_for(params["sessionId"], state) do
+        {:ok, [cwd | _roots]} -> Map.put(params, "cwd", cwd)
+        _missing -> params
+      end
+    else
+      params
+    end
+  end
+
+  defp terminal_params_with_workspace_default(_method, params, _state), do: params
 
   defp handle_handler_result(ref, result, state) do
     case PendingRequests.pop(state.pending_agent_requests, ref) do
@@ -1055,6 +1557,7 @@ defmodule ExMCP.ACP.Client do
         state
 
       {request, pending} ->
+        cancel_timer(request.timer_ref)
         state = %{state | pending_agent_requests: pending}
         response = encode_handler_response(request, result)
         send_to_transport(response, state)
@@ -1087,15 +1590,20 @@ defmodule ExMCP.ACP.Client do
   end
 
   defp encode_handler_response(%{id: id}, {_kind, {:error, reason}}) do
-    Protocol.encode_error(-32603, format_handler_error(reason), nil, id)
+    Logger.warning("ACP client handler failed", reason: safe_error_class(reason))
+    Protocol.encode_error(-32603, "Client handler failed", nil, id)
   end
 
-  defp encode_handler_response(%{id: id}, unexpected) do
-    Protocol.encode_error(-32603, "Unexpected handler result: #{inspect(unexpected)}", nil, id)
+  defp encode_handler_response(%{id: id}, _unexpected) do
+    Protocol.encode_error(-32603, "Client handler returned an invalid result", nil, id)
   end
 
   defp track_agent_request(state, ref, kind, id, session_id, extra \\ %{}) do
-    request = Map.merge(%{kind: kind, id: id, session_id: session_id}, extra)
+    timer_ref =
+      Process.send_after(self(), {:agent_handler_timeout, ref}, state.handler_request_timeout)
+
+    request =
+      Map.merge(%{kind: kind, id: id, session_id: session_id, timer_ref: timer_ref}, extra)
 
     %{
       state
@@ -1105,6 +1613,7 @@ defmodule ExMCP.ACP.Client do
 
   defp fail_pending_agent_requests(reason, state) do
     Enum.each(state.pending_agent_requests, fn {_ref, request} ->
+      cancel_timer(request.timer_ref)
       response = Protocol.encode_error(-32603, reason, nil, request.id)
       send_to_transport(response, state)
     end)
@@ -1119,6 +1628,7 @@ defmodule ExMCP.ACP.Client do
       end)
 
     Enum.each(to_cancel, fn {_ref, request} ->
+      cancel_timer(request.timer_ref)
       response = Protocol.encode_permission_response(request.id, %{"outcome" => "cancelled"})
       send_to_transport(response, state)
     end)
@@ -1133,6 +1643,7 @@ defmodule ExMCP.ACP.Client do
       end)
 
     Enum.each(to_cancel, fn {_ref, request} ->
+      cancel_timer(request.timer_ref)
       response = Protocol.encode_request_cancelled_error(request.id)
       send_to_transport(response, state)
     end)
@@ -1142,13 +1653,127 @@ defmodule ExMCP.ACP.Client do
 
   defp handle_cancel_request_notification(_params, state), do: state
 
-  defp format_handler_error(reason) when is_binary(reason), do: reason
+  defp safe_error_class({kind, reason, _stack}) when kind in [:error, :exit, :throw],
+    do: "#{kind}:#{inspect(error_module(reason))}"
 
-  defp format_handler_error({kind, reason, stack}) when is_list(stack) do
-    Exception.format(kind, reason, stack)
+  defp safe_error_class(reason), do: inspect(error_module(reason))
+
+  defp error_module(%{__struct__: module}) when is_atom(module), do: module
+  defp error_module(_reason), do: :error
+
+  defp update_mailbox_below_limits?(pid, count_limit, byte_limit, incoming_bytes, kind) do
+    with {:message_queue_len, length} when length < count_limit <-
+           Process.info(pid, :message_queue_len),
+         {:messages, messages} when length(messages) < count_limit <-
+           Process.info(pid, :messages) do
+      queued_bytes = queued_update_bytes(messages, kind, byte_limit)
+      incoming_bytes <= byte_limit - queued_bytes
+    else
+      _full_or_closed -> false
+    end
   end
 
-  defp format_handler_error(reason), do: inspect(reason)
+  defp queued_update_bytes(messages, kind, limit) do
+    Enum.reduce_while(messages, 0, fn message, total ->
+      total = total + queued_update_size(message, kind)
+      if total >= limit, do: {:halt, total}, else: {:cont, total}
+    end)
+  end
+
+  defp queued_update_size({:acp_session_update, _session_id, update}, :listener),
+    do: :erlang.external_size(update)
+
+  defp queued_update_size(_message, _kind), do: 0
+
+  defp cancel_pending_timer({_from, _tag, _monitor_ref, timer_ref}), do: cancel_timer(timer_ref)
+  defp cancel_pending_timer(_pending), do: :ok
+
+  defp cancel_timer(nil), do: :ok
+  defp cancel_timer(timer_ref), do: Process.cancel_timer(timer_ref, async: true, info: false)
+
+  defp valid_utf8_prefix(_text, 0), do: ""
+
+  defp valid_utf8_prefix(text, limit) when byte_size(text) <= limit, do: text
+
+  defp valid_utf8_prefix(text, limit) do
+    prefix = binary_part(text, 0, limit)
+    trim_invalid_utf8_suffix(prefix)
+  end
+
+  defp trim_invalid_utf8_suffix(<<>>), do: ""
+
+  defp trim_invalid_utf8_suffix(prefix) do
+    if String.valid?(prefix) do
+      prefix
+    else
+      trim_invalid_utf8_suffix(binary_part(prefix, 0, byte_size(prefix) - 1))
+    end
+  end
+
+  defp session_roots(cwd, lifecycle_opts) do
+    [cwd | LifecycleParams.additional_directories(lifecycle_opts) || []]
+    |> Enum.map(&canonical_path/1)
+    |> Enum.uniq()
+  end
+
+  defp path_within_roots?(path, roots) when is_binary(path) and is_list(roots) do
+    canonical = canonical_path(path)
+    Enum.any?(roots, &path_within?(canonical, &1))
+  end
+
+  defp path_within_roots?(_path, _roots), do: false
+
+  defp path_within?(path, root) do
+    relative = Path.relative_to(path, root)
+
+    relative == "." or
+      (Path.type(relative) == :relative and relative != ".." and
+         not String.starts_with?(relative, "../"))
+  end
+
+  # Resolve every symlink that exists at authorization time. Nonexistent final
+  # components retain their lexical location under the resolved parent so safe
+  # create/write requests remain possible without trusting symlink escapes.
+  defp canonical_path(path), do: resolve_path_components(Path.expand(path), 0)
+
+  defp resolve_path_components(path, depth) when depth >= 40, do: path
+
+  defp resolve_path_components(path, depth) do
+    case Path.split(path) do
+      [base | components] ->
+        Enum.reduce(components, base, &resolve_path_component(&1, &2, depth))
+
+      [] ->
+        path
+    end
+  end
+
+  defp resolve_path_component(component, resolved_parent, depth) do
+    candidate = Path.join(resolved_parent, component)
+
+    case :file.read_link(to_charlist(candidate)) do
+      {:ok, target} -> resolve_link_target(to_string(target), candidate, depth)
+      {:error, _reason} -> candidate
+    end
+  end
+
+  defp resolve_link_target(target, candidate, depth) do
+    target =
+      if Path.type(target) == :absolute,
+        do: target,
+        else: Path.join(Path.dirname(candidate), target)
+
+    target
+    |> Path.expand()
+    |> resolve_path_components(depth + 1)
+  end
+
+  defp positive_limit(opts, key, default) do
+    case Keyword.get(opts, key, default) do
+      value when is_integer(value) and value > 0 -> value
+      _invalid -> default
+    end
+  end
 
   defp do_disconnect(state) do
     if state.receiver_pid && Process.alive?(state.receiver_pid) do

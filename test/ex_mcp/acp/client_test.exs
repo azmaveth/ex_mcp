@@ -137,7 +137,10 @@ defmodule ExMCP.ACP.ClientTest do
       load_updates = Keyword.get(opts, :load_updates, [])
       permission_request = Keyword.get(opts, :permission_request)
       cancel_permission_request = Keyword.get(opts, :cancel_permission_request, false)
+      agent_request = Keyword.get(opts, :agent_request)
+      protocol_version = Keyword.get(opts, :protocol_version, 1)
       initialize_delay_ms = Keyword.get(opts, :initialize_delay_ms, 0)
+      ignore_method = Keyword.get(opts, :ignore_method)
 
       capabilities =
         Keyword.get(opts, :capabilities, %{
@@ -167,7 +170,10 @@ defmodule ExMCP.ACP.ClientTest do
           load_updates: load_updates,
           permission_request: permission_request,
           cancel_permission_request: cancel_permission_request,
+          agent_request: agent_request,
+          protocol_version: protocol_version,
           initialize_delay_ms: initialize_delay_ms,
+          ignore_method: ignore_method,
           capabilities: capabilities,
           auth_methods: auth_methods,
           test_pid: test_pid
@@ -187,6 +193,11 @@ defmodule ExMCP.ACP.ClientTest do
       end
     end
 
+    defp handle_message(%{"method" => method}, %{ignore_method: method} = state) do
+      send(state.test_pid, {:ignored_request, method})
+      :ok
+    end
+
     defp handle_message(%{"method" => "initialize", "id" => id} = msg, state) do
       send(state.test_pid, {:initialize_request, msg["params"] || %{}})
       Process.sleep(state.initialize_delay_ms)
@@ -198,7 +209,7 @@ defmodule ExMCP.ACP.ClientTest do
             "agentInfo" => %{"name" => "mock_agent", "version" => "1.0.0"},
             "agentCapabilities" => state.capabilities,
             "authMethods" => state.auth_methods,
-            "protocolVersion" => 1
+            "protocolVersion" => state.protocol_version
           },
           "id" => id
         })
@@ -355,6 +366,29 @@ defmodule ExMCP.ACP.ClientTest do
             send(state.test_pid, {:permission_response, resp})
 
           {:error, _} ->
+            :ok
+        end
+      end
+
+      if state.agent_request do
+        {method, request_params} = state.agent_request
+        request_id = System.unique_integer([:positive])
+
+        request =
+          Jason.encode!(%{
+            "jsonrpc" => "2.0",
+            "method" => method,
+            "params" => Map.put_new(request_params, "sessionId", session_id),
+            "id" => request_id
+          })
+
+        MessageRelay.push(state.to_client, request)
+
+        case MessageRelay.pop(state.to_agent) do
+          {:ok, json} ->
+            send(state.test_pid, {:agent_request_response, Jason.decode!(json)})
+
+          {:error, _reason} ->
             :ok
         end
       end
@@ -520,6 +554,20 @@ defmodule ExMCP.ACP.ClientTest do
     {client, agent_pid}
   end
 
+  defp session_update_frame(session_id, text) do
+    Jason.encode!(%{
+      "jsonrpc" => "2.0",
+      "method" => "session/update",
+      "params" => %{
+        "sessionId" => session_id,
+        "update" => %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => text}
+        }
+      }
+    })
+  end
+
   describe "initialize handshake" do
     test "stores agent capabilities" do
       {client, _agent} = start_client()
@@ -589,6 +637,28 @@ defmodule ExMCP.ACP.ClientTest do
         start_client([initialize_delay_ms: 40], initialize_timeout: 200)
 
       assert Client.status(client) == :ready
+    end
+
+    test "rejects initialize responses with a missing protocolVersion" do
+      {:ok, to_client_relay} = MessageRelay.start_link()
+      {:ok, to_agent_relay} = MessageRelay.start_link()
+
+      agent_pid =
+        MockACPAgent.start(to_client_relay, to_agent_relay, protocol_version: nil)
+
+      assert {:error, :invalid_initialize_protocol_version} =
+               Task.async(fn ->
+                 Process.flag(:trap_exit, true)
+
+                 Client.start_link(
+                   transport_mod: MockACPTransport,
+                   command: ["mock"],
+                   agent_pid: agent_pid,
+                   to_client_relay: to_client_relay,
+                   to_agent_relay: to_agent_relay
+                 )
+               end)
+               |> Task.await()
     end
 
     test "rejects invalid initialize timeout values before opening the transport" do
@@ -711,6 +781,166 @@ defmodule ExMCP.ACP.ClientTest do
 
       assert get_in(params["clientCapabilities"], ["fs", "readTextFile"]) == false,
              "Explicit :capabilities opt must override auto-advertisement."
+    end
+  end
+
+  describe "inbound agent request hardening" do
+    test "rejects filesystem requests not advertised during initialize" do
+      {client, _agent} =
+        start_client(
+          [agent_request: {"fs/read_text_file", %{"path" => "/tmp/file.txt"}}],
+          handler: FullCapabilityHandler,
+          capabilities: %{}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "read")
+
+      assert_receive {:agent_request_response, %{"error" => error}}
+      assert error["code"] == -32_601
+    end
+
+    test "rejects relative filesystem paths before invoking the handler" do
+      {client, _agent} =
+        start_client(
+          [agent_request: {"fs/read_text_file", %{"path" => "relative.txt"}}],
+          handler: FullCapabilityHandler,
+          capabilities: %{"fs" => %{"readTextFile" => true}}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "read")
+
+      assert_receive {:agent_request_response, %{"error" => error}}
+      assert error["code"] == -32_602
+    end
+
+    test "rejects the non-1-based read_text_file line zero" do
+      {client, _agent} =
+        start_client(
+          [agent_request: {"fs/read_text_file", %{"path" => "/tmp/file.txt", "line" => 0}}],
+          handler: FullCapabilityHandler,
+          capabilities: %{"fs" => %{"readTextFile" => true}}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "read")
+
+      assert_receive {:agent_request_response, %{"error" => error}}
+      assert error["code"] == -32_602
+    end
+
+    test "rejects sensitive requests for a session not established by this client" do
+      {client, _agent} =
+        start_client(
+          [
+            agent_request:
+              {"fs/read_text_file",
+               %{
+                 "sessionId" => "attacker-session",
+                 "path" => "/tmp/file.txt"
+               }}
+          ],
+          handler: FullCapabilityHandler,
+          capabilities: %{"fs" => %{"readTextFile" => true}}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "read")
+
+      assert_receive {:agent_request_response, %{"error" => error}}
+      assert error["code"] == -32_602
+      assert error["message"] == "Unknown session"
+    end
+
+    test "rejects filesystem requests outside the established session roots" do
+      {client, _agent} =
+        start_client(
+          [agent_request: {"fs/read_text_file", %{"path" => "/etc/passwd"}}],
+          handler: FullCapabilityHandler,
+          capabilities: %{"fs" => %{"readTextFile" => true}}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "read")
+
+      assert_receive {:agent_request_response, %{"error" => error}}
+      assert error["code"] == -32_602
+      assert error["message"] == "Path is outside the session workspace"
+    end
+
+    test "resolves existing symlinks before authorizing a filesystem path" do
+      root =
+        Path.join(System.tmp_dir!(), "ex_mcp_acp_root_#{System.unique_integer([:positive])}")
+
+      outside =
+        Path.join(System.tmp_dir!(), "ex_mcp_acp_outside_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(root)
+      File.mkdir_p!(outside)
+      File.ln_s!(outside, Path.join(root, "escape"))
+
+      on_exit(fn ->
+        File.rm_rf!(root)
+        File.rm_rf!(outside)
+      end)
+
+      {client, _agent} =
+        start_client(
+          [agent_request: {"fs/read_text_file", %{"path" => Path.join(root, "escape/new.txt")}}],
+          handler: FullCapabilityHandler,
+          capabilities: %{"fs" => %{"readTextFile" => true}}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, root)
+      assert {:ok, _result} = Client.prompt(client, session_id, "read")
+
+      assert_receive {:agent_request_response, %{"error" => error}}
+      assert error["message"] == "Path is outside the session workspace"
+    end
+
+    test "allows a nonexistent path below an established session root" do
+      {client, _agent} =
+        start_client(
+          [agent_request: {"fs/read_text_file", %{"path" => "/tmp/not-created-yet/file.txt"}}],
+          handler: FullCapabilityHandler,
+          capabilities: %{"fs" => %{"readTextFile" => true}}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "read")
+
+      assert_receive {:agent_request_response, %{"result" => %{"content" => "content"}}}
+    end
+
+    test "rejects terminal working directories outside the established session roots" do
+      {client, _agent} =
+        start_client(
+          [agent_request: {"terminal/create", %{"command" => "echo", "cwd" => "/etc"}}],
+          handler: FullCapabilityHandler,
+          capabilities: %{"terminal" => true}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "terminal")
+
+      assert_receive {:agent_request_response, %{"error" => error}}
+      assert error["message"] == "Path is outside the session workspace"
+    end
+
+    test "rejects unknown terminal methods even when terminal support was advertised" do
+      {client, _agent} =
+        start_client(
+          [agent_request: {"terminal/arbitrary", %{}}],
+          handler: FullCapabilityHandler,
+          capabilities: %{"terminal" => true}
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "terminal")
+
+      assert_receive {:agent_request_response, %{"error" => error}}
+      assert error["code"] == -32_601
     end
   end
 
@@ -900,7 +1130,10 @@ defmodule ExMCP.ACP.ClientTest do
   describe "prompt/4" do
     test "blocks until response with streaming events" do
       updates = [
-        %{"sessionUpdate" => "status", "status" => "working"},
+        %{
+          "sessionUpdate" => "session_info_update",
+          "_meta" => %{"status" => "working"}
+        },
         %{
           "sessionUpdate" => "agent_message_chunk",
           "content" => %{"type" => "text", "text" => "I'll fix that bug."}
@@ -1205,9 +1438,230 @@ defmodule ExMCP.ACP.ClientTest do
       send(handler_pid, :release_permission_handler)
       refute_receive {:permission_response, _late_response}, 200
     end
+
+    test "expires a client handler request and ignores its late result" do
+      tool_call = %{"toolCallId" => "tc_wait", "toolName" => "file_write"}
+      options = [%{"optionId" => "deny", "name" => "Deny", "kind" => "reject_once"}]
+
+      {client, _agent} =
+        start_client(
+          [permission_request: {tool_call, options}],
+          handler: BlockingPermissionHandler,
+          handler_opts: [parent: self()],
+          handler_request_timeout: 20
+        )
+
+      {:ok, _} = Client.new_session(client, "/tmp")
+      task = Task.async(fn -> Client.prompt(client, "sess_mock_001", "wait", timeout: 1_000) end)
+
+      assert_receive {:blocking_permission_handler_started, handler_pid}
+      assert_receive {:permission_response, response}, 500
+      assert response["error"]["code"] == -32_603
+      assert response["error"]["message"] == "Client handler timed out"
+      assert {:ok, _} = Task.await(task, 1_000)
+      assert :sys.get_state(client).pending_agent_requests == %{}
+
+      send(handler_pid, :release_permission_handler)
+      refute_receive {:permission_response, _late_response}, 100
+    end
+  end
+
+  describe "pending request limits" do
+    test "expires an unanswered request even while its caller remains alive" do
+      {client, _agent} =
+        start_client(
+          [ignore_method: "session/new"],
+          pending_request_timeout: 20
+        )
+
+      assert {:error, :request_timeout} = Client.new_session(client, "/tmp", timeout: 500)
+      assert_receive {:ignored_request, "session/new"}
+
+      state = :sys.get_state(client)
+      assert state.pending_requests == %{}
+      assert state.pending_caller_monitors == %{}
+    end
+  end
+
+  describe "stream pressure limits" do
+    test "receiver permits at most one unacknowledged transport frame" do
+      {:ok, to_client_relay} = MessageRelay.start_link()
+      {:ok, to_agent_relay} = MessageRelay.start_link()
+      agent_pid = MockACPAgent.start(to_client_relay, to_agent_relay)
+
+      {:ok, client} =
+        Client.start_link(
+          transport_mod: MockACPTransport,
+          command: ["mock"],
+          agent_pid: agent_pid,
+          to_client_relay: to_client_relay,
+          to_agent_relay: to_agent_relay
+        )
+
+      :ok = :sys.suspend(client)
+
+      frame =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "test/pressure",
+          "params" => %{}
+        })
+
+      for _index <- 1..50, do: MessageRelay.push(to_client_relay, frame)
+      Process.sleep(20)
+
+      assert {:message_queue_len, queued} = Process.info(client, :message_queue_len)
+      assert queued <= 1
+      :ok = :sys.resume(client)
+    end
+
+    test "bounds queued updates for a blocked handler" do
+      {client, _agent} =
+        start_client([],
+          handler: BlockingUpdateHandler,
+          handler_opts: [parent: self()],
+          max_update_queue: 2
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      raw = session_update_frame(session_id, "queued")
+
+      send(client, {:transport_message, raw})
+      assert_receive {:blocking_update_handler_started, handler_pid, _update}
+
+      for _index <- 1..20, do: send(client, {:transport_message, raw})
+      _state = :sys.get_state(client)
+
+      assert {:message_queue_len, queued} = Process.info(handler_pid, :message_queue_len)
+      assert queued <= 2
+      send(handler_pid, :release_update_handler)
+    end
+
+    test "bounds queued updates for a slow event listener" do
+      listener = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(listener, :kill) end)
+
+      {client, _agent} = start_client([], event_listener: listener, max_update_queue: 2)
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      raw = session_update_frame(session_id, "queued")
+
+      for _index <- 1..20, do: send(client, {:transport_message, raw})
+      _state = :sys.get_state(client)
+
+      assert {:message_queue_len, queued} = Process.info(listener, :message_queue_len)
+      assert queued <= 2
+    end
+
+    test "rejects malformed and unknown session updates before dispatch" do
+      {client, _agent} = start_client([], event_listener: self())
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+
+      invalid =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => session_id,
+            "update" => %{"sessionUpdate" => "unknown", "secret" => "do-not-dispatch"}
+          }
+        })
+
+      send(client, {:transport_message, invalid})
+      _state = :sys.get_state(client)
+
+      refute_receive {:acp_session_update, ^session_id, _update}
+    end
+
+    test "bounds queued update bytes for a blocked handler" do
+      update = %{
+        "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => String.duplicate("h", 256)}
+      }
+
+      update_bytes = :erlang.external_size(update)
+
+      {client, _agent} =
+        start_client([],
+          handler: BlockingUpdateHandler,
+          handler_opts: [parent: self()],
+          max_update_queue: 100,
+          max_update_queue_bytes: update_bytes * 2
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      raw = session_update_frame(session_id, get_in(update, ["content", "text"]))
+
+      send(client, {:transport_message, raw})
+      assert_receive {:blocking_update_handler_started, handler_pid, _update}
+
+      for _index <- 1..20, do: send(client, {:transport_message, raw})
+      _state = :sys.get_state(client)
+
+      assert {:message_queue_len, queued} = Process.info(handler_pid, :message_queue_len)
+      assert queued <= 2
+      send(handler_pid, :release_update_handler)
+    end
+
+    test "bounds queued update bytes for a slow event listener" do
+      listener = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(listener, :kill) end)
+
+      update = %{
+        "sessionUpdate" => "agent_message_chunk",
+        "content" => %{"type" => "text", "text" => String.duplicate("l", 256)}
+      }
+
+      update_bytes = :erlang.external_size(update)
+
+      {client, _agent} =
+        start_client([],
+          event_listener: listener,
+          max_update_queue: 100,
+          max_update_queue_bytes: update_bytes * 2
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      raw = session_update_frame(session_id, get_in(update, ["content", "text"]))
+
+      for _index <- 1..20, do: send(client, {:transport_message, raw})
+      _state = :sys.get_state(client)
+
+      assert {:message_queue_len, queued} = Process.info(listener, :message_queue_len)
+      assert queued <= 2
+    end
   end
 
   describe "DefaultHandler permission policy" do
+    test "bounds retained event history" do
+      {:ok, state} = DefaultHandler.init(max_events: 2)
+      {:ok, state} = DefaultHandler.handle_session_update("sess", %{"n" => 1}, state)
+      {:ok, state} = DefaultHandler.handle_session_update("sess", %{"n" => 2}, state)
+      {:ok, state} = DefaultHandler.handle_session_update("sess", %{"n" => 3}, state)
+
+      assert state.events == [%{"n" => 3}, %{"n" => 2}]
+    end
+
+    test "bounds retained event history by encoded bytes" do
+      {:ok, state} = DefaultHandler.init(max_events: 100, max_event_bytes: 80)
+
+      {:ok, state} =
+        DefaultHandler.handle_session_update(
+          "sess",
+          %{"text" => String.duplicate("a", 40)},
+          state
+        )
+
+      {:ok, state} =
+        DefaultHandler.handle_session_update(
+          "sess",
+          %{"text" => String.duplicate("b", 40)},
+          state
+        )
+
+      assert state.event_bytes <= 80
+      assert state.events == [%{"text" => String.duplicate("b", 40)}]
+    end
+
     test "denies by default using a reject option when available" do
       {:ok, state} = DefaultHandler.init([])
 
@@ -1277,6 +1731,44 @@ defmodule ExMCP.ACP.ClientTest do
       assert_receive {:acp_session_update, "sess_mock_001", update}, 5_000
       assert update["sessionUpdate"] == "agent_message_chunk"
       assert update["content"] == %{"type" => "text", "text" => "Hello from agent"}
+    end
+  end
+
+  describe "telemetry privacy" do
+    test "emits a fingerprint instead of a raw ACP session id" do
+      handler_id = "acp-session-privacy-#{System.unique_integer([:positive])}"
+      parent = self()
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [
+            [:ex_mcp, :acp, :session, :started],
+            [:ex_mcp, :acp, :prompt, :sent],
+            [:ex_mcp, :acp, :prompt, :completed]
+          ],
+          fn event, _measurements, metadata, _config ->
+            send(parent, {:acp_telemetry, event, metadata})
+          end,
+          nil
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {client, _agent} = start_client()
+      {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      {:ok, _result} = Client.prompt(client, session_id, "private")
+
+      for event <- [
+            [:ex_mcp, :acp, :session, :started],
+            [:ex_mcp, :acp, :prompt, :sent],
+            [:ex_mcp, :acp, :prompt, :completed]
+          ] do
+        assert_receive {:acp_telemetry, ^event, metadata}
+        refute Map.has_key?(metadata, :session_id)
+        assert is_binary(metadata.session_id_hash)
+        refute metadata.session_id_hash == session_id
+      end
     end
   end
 

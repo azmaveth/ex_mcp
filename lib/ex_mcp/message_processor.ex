@@ -7,7 +7,7 @@ defmodule ExMCP.MessageProcessor do
   """
 
   alias ExMCP.Error
-  alias ExMCP.Internal.{JSONRPC, MessageValidator}
+  alias ExMCP.Internal.{JSONRPC, LogSummary, MessageValidator}
   alias ExMCP.Protocol.{ErrorCodes, Methods, ResponseBuilder}
   alias ExMCP.Server.{MRTR, RequestContext, ResultNormalizer}
   alias ExMCP.Tasks.Extension, as: TasksExtension
@@ -114,7 +114,11 @@ defmodule ExMCP.MessageProcessor do
           {:error, error_data} ->
             # Notifications that fail validation are just logged, no response
             require Logger
-            Logger.warning("Invalid notification received: #{inspect(error_data)}")
+
+            Logger.warning("Invalid notification received",
+              error_shape: LogSummary.describe(error_data)
+            )
+
             conn
         end
       else
@@ -127,7 +131,8 @@ defmodule ExMCP.MessageProcessor do
             # Request is invalid, construct and return an error response.
             # Note: for validation errors, the ID might be null or invalid.
             # We still try to get it to adhere to JSON-RPC, but it might be nil.
-            error_response = JSONRPC.error(get_request_id(conn.request), error_data)
+            error_response =
+              JSONRPC.error(get_request_id(conn.request), json_rpc_validation_error(error_data))
 
             put_response(conn, error_response)
         end
@@ -228,7 +233,10 @@ defmodule ExMCP.MessageProcessor do
       |> process_validated_notification(opts)
     else
       {:error, reason} ->
-        Logger.warning("Invalid notification metadata: #{inspect(reason)}")
+        Logger.warning("Invalid notification metadata",
+          reason_shape: LogSummary.describe(reason)
+        )
+
         conn
     end
   end
@@ -304,7 +312,10 @@ defmodule ExMCP.MessageProcessor do
 
       {:error, reason} ->
         # Log the detail; never embed it in the JSON-RPC response (audit M12).
-        Logger.error("Failed to start handler #{inspect(handler_module)}: #{inspect(reason)}")
+        Logger.error("Failed to start request handler",
+          handler: handler_module,
+          reason_shape: LogSummary.describe(reason)
+        )
 
         error_response =
           JSONRPC.error(
@@ -428,6 +439,13 @@ defmodule ExMCP.MessageProcessor do
   defp get_request_id(request) when is_map(request), do: Map.get(request, "id")
   defp get_request_id(_), do: nil
 
+  defp json_rpc_validation_error(error) do
+    Map.new(error, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+      entry -> entry
+    end)
+  end
+
   # Progress notification helpers for MCP 2025-06-18 compliance
 
   # Extracts the progress token from a request's _meta field.
@@ -450,13 +468,18 @@ defmodule ExMCP.MessageProcessor do
   def start_progress_tracking(%Conn{progress_token: nil} = conn), do: conn
 
   def start_progress_tracking(%Conn{progress_token: token} = conn) when not is_nil(token) do
-    case ExMCP.ProgressTracker.start_progress(token, self()) do
+    case ExMCP.ProgressTracker.start_progress(token, self(), owner: progress_owner(conn)) do
       {:ok, _tracker} ->
         conn
 
       {:error, reason} ->
         require Logger
-        Logger.warning("Failed to start progress tracking", token: token, reason: reason)
+
+        Logger.warning("Failed to start progress tracking",
+          progress_id: LogSummary.fingerprint(token),
+          reason: LogSummary.describe(reason)
+        )
+
         conn
     end
   end
@@ -472,13 +495,20 @@ defmodule ExMCP.MessageProcessor do
 
   def update_progress(%Conn{progress_token: token} = conn, progress, total, message)
       when not is_nil(token) do
-    case ExMCP.ProgressTracker.update_progress(token, progress, total, message) do
+    case ExMCP.ProgressTracker.update_progress(token, progress, total, message,
+           owner: progress_owner(conn)
+         ) do
       :ok ->
         conn
 
       {:error, reason} ->
         require Logger
-        Logger.warning("Failed to update progress", token: token, reason: reason)
+
+        Logger.warning("Failed to update progress",
+          progress_id: LogSummary.fingerprint(token),
+          reason: LogSummary.describe(reason)
+        )
+
         conn
     end
   end
@@ -493,13 +523,18 @@ defmodule ExMCP.MessageProcessor do
   def complete_progress(%Conn{progress_token: nil} = conn), do: conn
 
   def complete_progress(%Conn{progress_token: token} = conn) when not is_nil(token) do
-    case ExMCP.ProgressTracker.complete_progress(token) do
+    case ExMCP.ProgressTracker.complete_progress(token, owner: progress_owner(conn)) do
       :ok ->
         conn
 
       {:error, reason} ->
         require Logger
-        Logger.warning("Failed to complete progress", token: token, reason: reason)
+
+        Logger.warning("Failed to complete progress",
+          progress_id: LogSummary.fingerprint(token),
+          reason: LogSummary.describe(reason)
+        )
+
         conn
     end
   end
@@ -516,7 +551,12 @@ defmodule ExMCP.MessageProcessor do
   defp validate_notification(notification) do
     # Simple validation for notifications - just check required fields
     with :ok <- validate_jsonrpc_version(notification),
-         :ok <- validate_notification_structure(notification) do
+         :ok <- validate_notification_structure(notification),
+         :ok <-
+           MessageValidator.validate_method_params(
+             Map.get(notification, "method"),
+             notification_params(notification)
+           ) do
       {:ok, notification}
     else
       {:error, error_data} -> {:error, error_data}
@@ -538,6 +578,15 @@ defmodule ExMCP.MessageProcessor do
     {:error,
      %{"code" => ErrorCodes.invalid_request(), "message" => "Notification must have method field"}}
   end
+
+  defp notification_params(notification) do
+    if Map.has_key?(notification, "params"), do: Map.get(notification, "params"), else: %{}
+  end
+
+  defp progress_owner(%Conn{session_id: session_id}) when is_binary(session_id),
+    do: {:session, session_id}
+
+  defp progress_owner(%Conn{} = conn), do: {:connection, self(), conn.transport}
 
   defp process_validated_notification(%Conn{} = conn, opts) do
     # Notifications don't generate responses, just process them

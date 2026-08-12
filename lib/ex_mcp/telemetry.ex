@@ -145,6 +145,8 @@ defmodule ExMCP.Telemetry do
 
   require Logger
 
+  alias ExMCP.Internal.LogSummary
+
   @doc """
   Attaches a default logger that logs all ExMCP events.
 
@@ -180,50 +182,67 @@ defmodule ExMCP.Telemetry do
 
   # Default event handler that logs events
   defp handle_event([:ex_mcp, :request, :start], _measurements, metadata, _config) do
-    Logger.debug("Starting request #{metadata.request_id} - #{metadata.method}")
+    Logger.debug("Starting request",
+      request_id_hash: LogSummary.fingerprint(metadata.request_id),
+      method: metadata.method
+    )
   end
 
   defp handle_event([:ex_mcp, :request, :stop], measurements, metadata, _config) do
     duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
 
-    Logger.info(
-      "Request #{metadata.request_id} completed in #{duration_ms}ms - status: #{metadata.status}"
+    Logger.info("Request completed",
+      request_id_hash: LogSummary.fingerprint(metadata.request_id),
+      method: metadata.method,
+      duration_ms: duration_ms,
+      status: metadata.status
     )
   end
 
   defp handle_event([:ex_mcp, :request, :exception], measurements, metadata, _config) do
     duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
 
-    Logger.error(
-      "Request #{metadata.request_id} failed after #{duration_ms}ms - #{inspect(metadata.error)}"
+    Logger.error("Request failed",
+      request_id_hash: LogSummary.fingerprint(metadata.request_id),
+      method: metadata.method,
+      duration_ms: duration_ms,
+      error: LogSummary.describe(metadata.error)
     )
   end
 
   defp handle_event([:ex_mcp, :tool | _], _measurements, metadata, _config) do
-    Logger.debug("Tool event: #{inspect(metadata)}")
+    Logger.debug("Tool event", metadata_keys: metadata_keys(metadata))
   end
 
   defp handle_event([:ex_mcp, :resource | _], _measurements, metadata, _config) do
-    Logger.debug("Resource event: #{inspect(metadata)}")
+    Logger.debug("Resource event", metadata_keys: metadata_keys(metadata))
   end
 
   defp handle_event([:ex_mcp, :connection, :established], _measurements, metadata, _config) do
-    Logger.info(
-      "Connection established - transport: #{metadata.transport}, server: #{metadata.server}"
+    Logger.info("Connection established",
+      transport: metadata.transport,
+      server_hash: LogSummary.fingerprint(metadata.server)
     )
   end
 
   defp handle_event([:ex_mcp, :connection, :lost], measurements, metadata, _config) do
     uptime_s = System.convert_time_unit(measurements.uptime, :native, :second)
 
-    Logger.warning(
-      "Connection lost after #{uptime_s}s - transport: #{metadata.transport}, reason: #{inspect(metadata.reason)}"
+    Logger.warning("Connection lost",
+      uptime_seconds: uptime_s,
+      transport: metadata.transport,
+      reason: LogSummary.describe(metadata.reason)
     )
   end
 
   defp handle_event(_event, _measurements, _metadata, _config) do
     :ok
   end
+
+  defp metadata_keys(metadata) when is_map(metadata),
+    do: metadata |> Map.keys() |> Enum.map(&to_string/1) |> Enum.sort()
+
+  defp metadata_keys(_metadata), do: []
 
   @doc """
   Executes a function and emits telemetry events.

@@ -29,8 +29,11 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   require Logger
 
   @max_callback_request_bytes 16_384
+  @callback_header_timeout_ms 10_000
   @max_callback_params 16
   @max_callback_param_bytes 4_096
+  @max_authorization_redirects 5
+  @authorization_deadline_ms 15_000
 
   alias ExMCP.Authorization.{
     ClientAssertion,
@@ -38,13 +41,15 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     CredentialStore,
     HTTPClient,
     Issuer,
-    LogSanitizer,
     MetadataFetcher,
     OAuthFlow,
     OAuthTransactionStore,
     OIDCDiscovery,
-    RegistrationPolicy
+    RegistrationPolicy,
+    SecureHTTP
   }
+
+  alias ExMCP.Internal.LogSummary
 
   @type config :: %{
           required(:resource_url) => String.t(),
@@ -64,9 +69,16 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           optional(:resource) => String.t() | [String.t()],
           optional(:http_client) => module() | function(),
           optional(:metadata_fetch) => keyword(),
+          optional(:oauth_http) => keyword(),
+          optional(:authorization_max_redirects) => 0..10,
+          optional(:authorization_deadline_ms) => 1..60_000,
           optional(:www_authenticate) => String.t(),
           optional(:protocol_version) => String.t()
         }
+
+  @typep authorization_redirect_result :: {:ok, String.t()} | {:error, term()}
+  @typep redirect_visited :: %{optional(String.t()) => true}
+  @typep redirect_context :: {redirect_visited(), String.t()}
 
   @doc """
   Execute the full OAuth flow.
@@ -75,12 +87,12 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   """
   @spec execute(config()) :: {:ok, map()} | {:error, term()}
   def execute(config) do
-    telemetry_resource = LogSanitizer.sanitize(config[:resource_url])
+    resource_hash = LogSummary.fingerprint(config[:resource_url])
 
     :telemetry.execute(
       [:ex_mcp, :auth, :flow, :started],
       %{system_time: System.system_time()},
-      %{resource_url: telemetry_resource}
+      %{resource_hash: resource_hash}
     )
 
     result =
@@ -106,7 +118,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         :telemetry.execute(
           [:ex_mcp, :auth, :flow, :completed],
           %{system_time: System.system_time()},
-          %{resource_url: telemetry_resource}
+          %{resource_hash: resource_hash}
         )
 
         ok
@@ -115,7 +127,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         :telemetry.execute(
           [:ex_mcp, :auth, :flow, :failed],
           %{system_time: System.system_time()},
-          %{resource_url: telemetry_resource, reason: LogSanitizer.sanitize(reason)}
+          %{resource_hash: resource_hash, reason: LogSummary.describe(reason)}
         )
 
         err
@@ -233,7 +245,9 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           # Last resort: construct endpoint URLs from the resource origin.
           # Per MCP 2025-03-26, when no metadata discovery works, assume
           # standard OAuth endpoints at the resource origin.
-          Logger.info("No AS metadata found, constructing endpoints from origin: #{base}")
+          Logger.info("No AS metadata found; constructing endpoints",
+            server_hash: LogSummary.fingerprint(base)
+          )
 
           synthetic_metadata = %{
             "issuer" => base,
@@ -270,7 +284,11 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     if urls_match?(prm_resource, server_url) do
       :ok
     else
-      Logger.warning("PRM resource mismatch: #{prm_resource} != #{server_url}")
+      Logger.warning("PRM resource mismatch",
+        resource_hash: LogSummary.fingerprint(prm_resource),
+        server_hash: LogSummary.fingerprint(server_url)
+      )
+
       {:error, {:resource_mismatch, prm_resource, server_url}}
     end
   end
@@ -384,7 +402,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           :telemetry.execute(
             [:ex_mcp, :auth, :discovery, :completed],
             %{system_time: System.system_time()},
-            %{issuer: issuer}
+            %{issuer_hash: LogSummary.fingerprint(issuer)}
           )
 
           {:ok, metadata}
@@ -397,7 +415,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
               :telemetry.execute(
                 [:ex_mcp, :auth, :discovery, :completed],
                 %{system_time: System.system_time()},
-                %{issuer: issuer}
+                %{issuer_hash: LogSummary.fingerprint(issuer)}
               )
 
               {:ok, metadata}
@@ -458,7 +476,11 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
   defp do_register_client(selection, as_metadata, config) do
     registration_endpoint = selection.registration_endpoint
-    Logger.info("Dynamically registering OAuth client at #{registration_endpoint}")
+
+    Logger.info("Dynamically registering OAuth client",
+      registration_endpoint_hash: LogSummary.fingerprint(registration_endpoint)
+    )
+
     redirect_uri = "http://127.0.0.1:#{config.redirect_port}/callback"
     supported = as_metadata["token_endpoint_auth_methods_supported"] || []
     auth_method = select_registration_auth_method(supported)
@@ -494,7 +516,10 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           :telemetry.execute(
             [:ex_mcp, :auth, :registration, :completed],
             %{system_time: System.system_time()},
-            %{client_id: client_id, issuer: as_metadata["issuer"]}
+            %{
+              client_id_hash: LogSummary.fingerprint(client_id),
+              issuer_hash: LogSummary.fingerprint(as_metadata["issuer"])
+            }
           )
 
           {:ok, client_info}
@@ -832,7 +857,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     Logger.info("Starting OAuth authorization request")
     Logger.info("Token endpoint auth method: #{token_auth_method}")
 
-    with {:ok, _} <- follow_authorization(auth_url),
+    with {:ok, _} <- follow_authorization(auth_url, redirect_uri, config),
          {:ok, code} <- wait_for_callback(server_pid, state_data),
          {:ok, body} <-
            authorization_code_token_body(
@@ -938,45 +963,348 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     :ok
   end
 
-  # Follow the authorization URL and its redirects (for automated testing).
-  # The conformance test server auto-approves and redirects to our callback.
-  # We follow redirects until we hit our callback URL (127.0.0.1).
-  defp follow_authorization(url) do
-    case :httpc.request(:get, {String.to_charlist(url), []}, [{:autoredirect, false}], []) do
-      {:ok, {{_, status, _}, headers, _body}} when status in [301, 302, 303, 307, 308] ->
-        location =
-          headers
-          |> Enum.find(fn {k, _} -> String.downcase(List.to_string(k)) == "location" end)
-          |> case do
-            {_, loc} -> List.to_string(loc)
-            nil -> nil
-          end
+  # The non-interactive conformance flow follows redirects through the same
+  # pinned and bounded network boundary as token requests. Intermediate hops
+  # remain on the authorization endpoint's origin; the only cross-origin hop
+  # permitted is an exact match to the local callback URI.
+  @doc false
+  def follow_authorization_redirects(url, callback_uri, config \\ %{}),
+    do: follow_authorization(url, callback_uri, config)
 
-        if location do
-          if String.contains?(location, "127.0.0.1") do
-            # This redirect goes to our callback server — follow it so the
-            # callback server receives the code
-            Logger.info("Following OAuth redirect to callback")
-            :httpc.request(:get, {String.to_charlist(location), []}, [], [])
-            {:ok, location}
-          else
-            # Intermediate redirect — follow it
-            follow_authorization(location)
-          end
-        else
-          {:error, :no_redirect_location}
-        end
+  defp follow_authorization(url, callback_uri, config) do
+    max_redirects =
+      bounded_integer(config[:authorization_max_redirects], @max_authorization_redirects, 0, 10)
+
+    deadline_ms =
+      bounded_integer(
+        config[:authorization_deadline_ms],
+        @authorization_deadline_ms,
+        1,
+        60_000
+      )
+
+    with {:ok, start_uri} <- parse_authorization_uri(url),
+         {:ok, callback_uri} <- parse_authorization_uri(callback_uri),
+         {:ok, authorization_origin} <- exact_origin(start_uri) do
+      follow_authorization_hop(
+        start_uri,
+        callback_uri,
+        authorization_origin,
+        secure_http_options(config),
+        max_redirects,
+        System.monotonic_time(:millisecond) + deadline_ms,
+        %{}
+      )
+    end
+  end
+
+  @spec follow_authorization_hop(
+          URI.t(),
+          URI.t(),
+          String.t(),
+          keyword(),
+          non_neg_integer(),
+          integer(),
+          redirect_visited()
+        ) :: authorization_redirect_result()
+  defp follow_authorization_hop(
+         uri,
+         callback_uri,
+         authorization_origin,
+         http_opts,
+         redirects_left,
+         deadline,
+         visited
+       ) do
+    canonical = URI.to_string(uri)
+
+    cond do
+      System.monotonic_time(:millisecond) >= deadline ->
+        {:error, :authorization_deadline_exceeded}
+
+      Map.has_key?(visited, canonical) ->
+        {:error, :authorization_redirect_cycle}
+
+      true ->
+        request_authorization_hop(
+          uri,
+          callback_uri,
+          authorization_origin,
+          http_opts,
+          redirects_left,
+          deadline,
+          visited,
+          canonical
+        )
+    end
+  end
+
+  @spec request_authorization_hop(
+          URI.t(),
+          URI.t(),
+          String.t(),
+          keyword(),
+          non_neg_integer(),
+          integer(),
+          redirect_visited(),
+          String.t()
+        ) :: authorization_redirect_result()
+  defp request_authorization_hop(
+         uri,
+         callback_uri,
+         authorization_origin,
+         http_opts,
+         redirects_left,
+         deadline,
+         visited,
+         canonical
+       ) do
+    case bounded_authorization_request(
+           canonical,
+           [{"accept", "text/html"}],
+           http_opts,
+           deadline
+         ) do
+      {:ok, {{_, status, _}, headers, _body}} when status in [301, 302, 303, 307, 308] ->
+        follow_authorization_redirect(
+          uri,
+          callback_uri,
+          authorization_origin,
+          http_opts,
+          redirects_left,
+          deadline,
+          {visited, canonical},
+          headers
+        )
 
       {:ok, {{_, 200, _}, _headers, _body}} ->
-        {:ok, url}
+        {:ok, canonical}
 
-      {:ok, {{_, status, _}, _headers, body}} ->
-        {:error, {:auth_server_error, status, List.to_string(body)}}
+      {:ok, {{_, status, _}, _headers, _body}} ->
+        {:error, {:auth_server_error, status}}
+
+      {:error, :authorization_deadline_exceeded} = error ->
+        error
 
       {:error, reason} ->
         {:error, {:auth_request_failed, reason}}
     end
   end
+
+  @spec follow_authorization_redirect(
+          URI.t(),
+          URI.t(),
+          String.t(),
+          keyword(),
+          non_neg_integer(),
+          integer(),
+          redirect_context(),
+          list()
+        ) :: authorization_redirect_result()
+  defp follow_authorization_redirect(
+         uri,
+         callback_uri,
+         authorization_origin,
+         http_opts,
+         redirects_left,
+         deadline,
+         redirect_context,
+         headers
+       ) do
+    {visited, canonical} = redirect_context
+
+    with true <- redirects_left > 0,
+         {:ok, next_uri} <- redirect_location(uri, headers),
+         :ok <- validate_authorization_redirect(next_uri, callback_uri, authorization_origin) do
+      follow_authorization_target(
+        next_uri,
+        callback_uri,
+        authorization_origin,
+        http_opts,
+        redirects_left,
+        deadline,
+        visited,
+        canonical
+      )
+    else
+      false -> {:error, :authorization_redirect_limit}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @spec follow_authorization_target(
+          URI.t(),
+          URI.t(),
+          String.t(),
+          keyword(),
+          non_neg_integer(),
+          integer(),
+          redirect_visited(),
+          String.t()
+        ) :: authorization_redirect_result()
+  defp follow_authorization_target(
+         next_uri,
+         callback_uri,
+         authorization_origin,
+         http_opts,
+         redirects_left,
+         deadline,
+         visited,
+         canonical
+       ) do
+    if exact_callback?(next_uri, callback_uri) do
+      request_authorization_callback(next_uri, http_opts, deadline)
+    else
+      follow_authorization_hop(
+        next_uri,
+        callback_uri,
+        authorization_origin,
+        http_opts,
+        redirects_left - 1,
+        deadline,
+        Map.put(visited, canonical, true)
+      )
+    end
+  end
+
+  defp request_authorization_callback(callback_uri, http_opts, deadline) do
+    Logger.info("Following OAuth redirect to callback")
+
+    case bounded_authorization_request(URI.to_string(callback_uri), [], http_opts, deadline) do
+      {:ok, {{_, status, _}, _headers, _body}} when status in 200..399 ->
+        {:ok, URI.to_string(callback_uri)}
+
+      {:ok, {{_, status, _}, _headers, _body}} ->
+        {:error, {:callback_error, status}}
+
+      {:error, :authorization_deadline_exceeded} = error ->
+        error
+
+      {:error, reason} ->
+        {:error, {:callback_request_failed, reason}}
+    end
+  end
+
+  defp redirect_location(base_uri, headers) do
+    locations =
+      for {name, value} <- headers,
+          String.downcase(to_string(name)) == "location",
+          do: String.trim(to_string(value))
+
+    case locations do
+      [location] when location != "" ->
+        try do
+          base_uri
+          |> URI.merge(location)
+          |> URI.to_string()
+          |> parse_authorization_uri()
+        rescue
+          _exception -> {:error, :invalid_redirect_location}
+        end
+
+      [] ->
+        {:error, :no_redirect_location}
+
+      _multiple ->
+        {:error, :invalid_redirect_location}
+    end
+  end
+
+  defp validate_authorization_redirect(uri, callback_uri, authorization_origin) do
+    with {:ok, origin} <- exact_origin(uri) do
+      if exact_callback?(uri, callback_uri) or origin == authorization_origin,
+        do: :ok,
+        else: {:error, :cross_origin_authorization_redirect}
+    end
+  end
+
+  defp exact_callback?(candidate, callback) do
+    String.downcase(candidate.scheme) == String.downcase(callback.scheme) and
+      String.downcase(candidate.host) == String.downcase(callback.host) and
+      effective_port(candidate) == effective_port(callback) and candidate.path == callback.path and
+      is_nil(candidate.fragment) and is_nil(candidate.userinfo)
+  end
+
+  defp exact_origin(uri) do
+    if is_binary(uri.host) and is_binary(uri.scheme) do
+      host = String.downcase(uri.host)
+      host = if String.contains?(host, ":"), do: "[#{host}]", else: host
+      {:ok, "#{String.downcase(uri.scheme)}://#{host}:#{effective_port(uri)}"}
+    else
+      {:error, :invalid_authorization_uri}
+    end
+  end
+
+  defp effective_port(%URI{port: port}) when is_integer(port), do: port
+  defp effective_port(%URI{scheme: "https"}), do: 443
+  defp effective_port(%URI{scheme: "http"}), do: 80
+  defp effective_port(_uri), do: nil
+
+  defp parse_authorization_uri(url) when is_binary(url) do
+    case URI.new(url) do
+      {:ok, %URI{host: host, scheme: scheme} = uri}
+      when is_binary(host) and scheme in ["http", "https"] ->
+        if is_nil(uri.userinfo) and is_nil(uri.fragment),
+          do: {:ok, uri},
+          else: {:error, :invalid_authorization_uri}
+
+      _other ->
+        {:error, :invalid_authorization_uri}
+    end
+  end
+
+  defp parse_authorization_uri(_url), do: {:error, :invalid_authorization_uri}
+
+  defp secure_http_options(config) do
+    case config[:oauth_http] do
+      opts when is_list(opts) -> opts
+      _other -> []
+    end
+  end
+
+  defp bounded_authorization_request(url, headers, http_opts, deadline) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining <= 0 do
+      {:error, :authorization_deadline_exceeded}
+    else
+      hop_opts =
+        http_opts
+        |> Keyword.put(
+          :request_timeout_ms,
+          min(http_opts[:request_timeout_ms] || 5_000, remaining)
+        )
+        |> Keyword.put(
+          :connect_timeout_ms,
+          min(http_opts[:connect_timeout_ms] || 2_000, remaining)
+        )
+        |> Keyword.put(:dns_timeout_ms, min(http_opts[:dns_timeout_ms] || 1_000, remaining))
+        |> Keyword.put(
+          :max_response_bytes,
+          min(http_opts[:max_response_bytes] || 1_048_576, 262_144)
+        )
+
+      task = Task.async(fn -> SecureHTTP.request(:get, url, headers, nil, hop_opts) end)
+
+      case Task.yield(task, remaining) do
+        {:ok, result} ->
+          result
+
+        {:exit, _reason} ->
+          {:error, :auth_request_failed}
+
+        nil ->
+          Task.shutdown(task, :brutal_kill)
+          {:error, :authorization_deadline_exceeded}
+      end
+    end
+  end
+
+  defp bounded_integer(value, _default, min_value, max_value)
+       when is_integer(value) and value >= min_value and value <= max_value,
+       do: value
+
+  defp bounded_integer(_value, default, _min_value, _max_value), do: default
 
   # Start a minimal HTTP server to receive the OAuth callback
   defp start_redirect_server(port) do
@@ -985,7 +1313,12 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     pid =
       spawn_link(fn ->
         {:ok, listen_socket} =
-          :gen_tcp.listen(port, [:binary, active: false, reuseaddr: true])
+          :gen_tcp.listen(port, [
+            :binary,
+            active: false,
+            reuseaddr: true,
+            ip: {127, 0, 0, 1}
+          ])
 
         {:ok, actual_port} = :inet.port(listen_socket)
         send(parent, {:redirect_server_started, actual_port})
@@ -1009,7 +1342,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
   end
 
   defp receive_callback(socket, listen_socket, parent) do
-    case :gen_tcp.recv(socket, 0, 10_000) do
+    case read_callback_headers(socket) do
       {:ok, data} ->
         {response, result} = callback_response(data)
         :gen_tcp.send(socket, response)
@@ -1020,6 +1353,80 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         close_callback_sockets(socket, listen_socket)
         send(parent, {:redirect_callback, {:error, reason}})
     end
+  end
+
+  @doc false
+  @spec read_callback_headers(port(), pos_integer()) ::
+          {:ok, binary()}
+          | {:error,
+             :callback_headers_too_large
+             | :callback_header_timeout
+             | :invalid_callback_headers
+             | term()}
+  def read_callback_headers(socket, timeout_ms \\ @callback_header_timeout_ms)
+
+  def read_callback_headers(socket, timeout_ms)
+      when is_port(socket) and is_integer(timeout_ms) and timeout_ms > 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_read_callback_headers(socket, deadline, [], 0)
+  end
+
+  def read_callback_headers(_socket, _timeout_ms), do: {:error, :invalid_callback_headers}
+
+  defp do_read_callback_headers(_socket, _deadline, _chunks, bytes_read)
+       when bytes_read >= @max_callback_request_bytes,
+       do: {:error, :callback_headers_too_large}
+
+  defp do_read_callback_headers(socket, deadline, chunks, bytes_read) do
+    remaining_bytes = @max_callback_request_bytes - bytes_read
+    remaining_ms = deadline - System.monotonic_time(:millisecond)
+
+    if remaining_ms <= 0 do
+      {:error, :callback_header_timeout}
+    else
+      with :ok <-
+             :inet.setopts(socket,
+               packet: :line,
+               packet_size: remaining_bytes,
+               active: false
+             ),
+           {:ok, chunk} <- recv_callback_header_chunk(socket, remaining_ms) do
+        new_size = bytes_read + byte_size(chunk)
+
+        if new_size > @max_callback_request_bytes do
+          {:error, :callback_headers_too_large}
+        else
+          chunks = [chunk | chunks]
+          data = chunks |> Enum.reverse() |> IO.iodata_to_binary()
+
+          case :binary.match(data, "\r\n\r\n") do
+            {offset, 4} ->
+              {:ok, binary_part(data, 0, offset + 4)}
+
+            :nomatch ->
+              if valid_callback_line_endings?(data) do
+                do_read_callback_headers(socket, deadline, chunks, new_size)
+              else
+                {:error, :invalid_callback_headers}
+              end
+          end
+        end
+      end
+    end
+  end
+
+  defp recv_callback_header_chunk(socket, remaining_ms) do
+    case :gen_tcp.recv(socket, 0, remaining_ms) do
+      {:error, :emsgsize} -> {:error, :callback_headers_too_large}
+      {:error, :timeout} -> {:error, :callback_header_timeout}
+      result -> result
+    end
+  end
+
+  defp valid_callback_line_endings?(data) do
+    data
+    |> :binary.matches("\n")
+    |> Enum.all?(fn {offset, 1} -> offset > 0 and :binary.at(data, offset - 1) == ?\r end)
   end
 
   defp callback_response(data) do

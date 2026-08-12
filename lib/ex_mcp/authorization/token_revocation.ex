@@ -24,6 +24,8 @@ defmodule ExMCP.Authorization.TokenRevocation do
       )
   """
 
+  alias ExMCP.Authorization.{SecureHTTP, Validator}
+
   @type revocation_opts :: [
           token_type_hint: String.t(),
           client_id: String.t(),
@@ -49,7 +51,7 @@ defmodule ExMCP.Authorization.TokenRevocation do
   @spec revoke(String.t(), String.t(), revocation_opts()) ::
           {:ok, :revoked} | {:error, term()}
   def revoke(token, revocation_endpoint, opts \\ []) do
-    with :ok <- validate_endpoint(revocation_endpoint) do
+    with :ok <- Validator.validate_https_endpoint(revocation_endpoint) do
       body = build_revocation_body(token, opts)
       headers = build_headers(opts)
 
@@ -70,14 +72,6 @@ defmodule ExMCP.Authorization.TokenRevocation do
         {:error, reason} ->
           {:error, {:request_failed, reason}}
       end
-    end
-  end
-
-  defp validate_endpoint(url) do
-    case URI.parse(url) do
-      %URI{scheme: "https"} -> :ok
-      %URI{scheme: "http", host: host} when host in ["localhost", "127.0.0.1"] -> :ok
-      _ -> {:error, :https_required}
     end
   end
 
@@ -113,7 +107,10 @@ defmodule ExMCP.Authorization.TokenRevocation do
     if auth_method == :client_secret_basic do
       client_id = Keyword.get(opts, :client_id, "")
       client_secret = Keyword.get(opts, :client_secret, "")
-      credentials = Base.encode64("#{client_id}:#{client_secret}")
+
+      credentials =
+        Base.encode64("#{URI.encode_www_form(client_id)}:#{URI.encode_www_form(client_secret)}")
+
       [{"authorization", "Basic #{credentials}"} | base_headers]
     else
       base_headers
@@ -124,25 +121,7 @@ defmodule ExMCP.Authorization.TokenRevocation do
   defp maybe_add_param(body, key, value), do: [{key, value} | body]
 
   defp make_revocation_request(endpoint, headers, body) do
-    httpc_headers =
-      Enum.map(headers, fn {k, v} ->
-        {String.to_charlist(k), String.to_charlist(v)}
-      end)
-
     encoded_body = URI.encode_query(body)
-
-    request =
-      {String.to_charlist(endpoint), httpc_headers, ~c"application/x-www-form-urlencoded",
-       String.to_charlist(encoded_body)}
-
-    ssl_opts = [
-      ssl: [
-        verify: :verify_peer,
-        cacerts: :public_key.cacerts_get(),
-        versions: [:"tlsv1.2", :"tlsv1.3"]
-      ]
-    ]
-
-    :httpc.request(:post, request, ssl_opts, [])
+    SecureHTTP.request(:post, endpoint, headers, encoded_body)
   end
 end

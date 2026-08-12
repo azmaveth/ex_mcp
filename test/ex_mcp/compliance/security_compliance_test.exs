@@ -312,7 +312,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
       }
 
       require_config = %{
-        trusted_origins: ["api.internal.com"],
+        trusted_hosts: ["api.internal.com"],
         consent_handler: RequireConsentHandler
       }
 
@@ -330,7 +330,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
       }
 
       deny_config = %{
-        trusted_origins: ["api.internal.com"],
+        trusted_hosts: ["api.internal.com"],
         consent_handler: DenyConsentHandler
       }
 
@@ -348,7 +348,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
       }
 
       allow_config = %{
-        trusted_origins: ["api.internal.com"],
+        trusted_hosts: ["api.internal.com"],
         consent_handler: AllowConsentHandler
       }
 
@@ -366,7 +366,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
 
       # Using DenyConsentHandler to prove the handler is not even called for internal URLs.
       deny_config = %{
-        trusted_origins: ["api.internal.com"],
+        trusted_hosts: ["api.internal.com"],
         consent_handler: DenyConsentHandler
       }
 
@@ -386,7 +386,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
 
         # Using DenyConsentHandler to prove the handler is not called.
         deny_config = %{
-          trusted_origins: ["api.internal.com"],
+          trusted_hosts: ["api.internal.com"],
           consent_handler: DenyConsentHandler
         }
 
@@ -406,7 +406,7 @@ defmodule ExMCP.Compliance.SecurityComplianceTest do
 
       # Use AllowConsentHandler to test caching of approvals
       config = %{
-        trusted_origins: ["api.internal.com"],
+        trusted_hosts: ["api.internal.com"],
         consent_handler: AllowConsentHandler
       }
 

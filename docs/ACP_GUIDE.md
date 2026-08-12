@@ -152,6 +152,13 @@ session setup, model/mode config, and richer status updates.
 | `:client_info` | `%{"name" => "ex_mcp", ...}` | Client identification |
 | `:capabilities` | `%{}` | Client capabilities map |
 | `:protocol_version` | `1` | ACP major protocol version (integer). Matches upstream [v1](https://agentclientprotocol.com/protocol/v1/overview); non-breaking features use capability negotiation. |
+| `:max_frame_bytes` | `1_048_576` | Maximum inbound or outbound ACP JSON-RPC frame size |
+| `:max_pending_requests` | `1_024` | Maximum concurrent requests in either direction |
+| `:max_prompt_text_bytes` | `1_048_576` | Maximum streamed prompt text retained per session |
+| `:pending_request_timeout` | `30_000` | Server-side lifetime for outbound requests and pending prompts |
+| `:handler_request_timeout` | `30_000` | Maximum lifetime for inbound handler callbacks |
+| `:max_update_queue` | `32` | Mailbox cutoff for handler and event-listener session updates; excess updates are dropped |
+| `:max_outbox_bytes` | `4_194_304` | Aggregate byte limit for an adapter bridge's undelivered messages |
 | `:name` | `nil` | GenServer name registration |
 
 ### Adapter Subprocess Environment
@@ -165,6 +172,33 @@ and provider settings explicitly through `adapter_opts[:env]`.
 For compatibility with a CLI that genuinely requires the complete parent
 environment, set `adapter_opts: [environment_policy: :inherit]`. This weakens
 subprocess isolation and should be used only at a trusted integration boundary.
+
+### Codex Workspace and MCP Authority
+
+Treat every workspace path and MCP server definition received over ACP as
+untrusted. The Codex adapter confines session `cwd` and
+`additionalDirectories` to `:workspace_roots` (the adapter working directory
+by default) using canonical, symlink-aware containment. Deployments with a
+different tenancy model can supply fail-closed callbacks:
+
+```elixir
+adapter_opts: [
+  workspace_roots: ["/srv/workspaces"],
+  authorize_workspace: fn path, %{kind: kind} ->
+    MyApp.Workspaces.allowed?(path, kind)
+  end,
+  authorize_mcp_server: fn server, %{cwd: cwd} ->
+    MyApp.MCPPolicy.allowed?(server, cwd)
+  end
+]
+```
+
+Without `:authorize_mcp_server`, `:trusted_mcp_servers` must contain the exact
+operator-owned server map; a matching name alone grants nothing. Avoid
+`trusted_mcp_servers: :all`: it deliberately accepts peer-supplied HTTP URLs,
+headers, stdio commands, arguments, and environment values. Set
+`:trust_authorized_workspaces` only when the same authorization decision should
+also mark that path trusted in Codex's project configuration.
 
 ## Session Lifecycle
 
@@ -274,6 +308,9 @@ defmodule MyApp.ACPHandler do
 
   # Optional: handle file read requests from the agent
   def handle_file_read(_session_id, path, _opts, state) do
+    # ExMCP admits only absolute paths contained by the canonical session cwd or
+    # additionalDirectories. The handler should still open files defensively to
+    # close application-specific policy and filesystem TOCTOU gaps.
     case File.read(path) do
       {:ok, content} -> {:ok, content, state}
       {:error, reason} -> {:error, to_string(reason), state}
@@ -287,6 +324,12 @@ defmodule MyApp.ACPHandler do
   end
 end
 ```
+
+The client records canonical workspace roots when a session is created, loaded,
+resumed, or forked. It rejects filesystem paths and terminal working directories
+outside those roots, including escapes through existing symlinks. Nonexistent
+children below a trusted root are permitted so write/create handlers can work;
+custom handlers remain responsible for rechecking policy at the point of use.
 
 ### Event Listener
 

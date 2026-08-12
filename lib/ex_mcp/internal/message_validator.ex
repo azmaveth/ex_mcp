@@ -18,7 +18,8 @@ defmodule ExMCP.Internal.MessageValidator do
 
   @type validation_result :: {:ok, map()} | {:error, map()}
   @type session_state :: %{
-          seen_request_ids: MapSet.t(String.t()),
+          seen_request_ids: MapSet.t(String.t() | integer()),
+          max_request_ids: pos_integer(),
           protocol_version: String.t() | nil
         }
 
@@ -27,13 +28,21 @@ defmodule ExMCP.Internal.MessageValidator do
   @invalid_request ErrorCodes.invalid_request()
   @invalid_params ErrorCodes.invalid_params()
   @internal_error ErrorCodes.internal_error()
+  @default_max_request_ids 10_000
 
   @doc """
   Creates a new validation session state.
   """
-  def new_session(protocol_version \\ nil) do
+  def new_session(protocol_version \\ nil, opts \\ []) do
+    max_request_ids = Keyword.get(opts, :max_request_ids, @default_max_request_ids)
+
+    unless is_integer(max_request_ids) and max_request_ids > 0 do
+      raise ArgumentError, ":max_request_ids must be a positive integer"
+    end
+
     %{
       seen_request_ids: MapSet.new(),
+      max_request_ids: max_request_ids,
       protocol_version: protocol_version
     }
   end
@@ -46,7 +55,8 @@ defmodule ExMCP.Internal.MessageValidator do
     with :ok <- validate_jsonrpc_version(request),
          :ok <- validate_request_structure(request),
          :ok <- validate_request_id(request),
-         :ok <- validate_method_exists(request) do
+         :ok <- validate_method_exists(request),
+         :ok <- validate_request_method_params(request) do
       {:ok, request}
     else
       {:error, error_data} -> {:error, error_data}
@@ -144,8 +154,8 @@ defmodule ExMCP.Internal.MessageValidator do
 
   defp validate_jsonrpc_version(%{"jsonrpc" => version}) do
     {:error,
-     create_error(@invalid_request, "Invalid JSON-RPC version: #{version}", %{
-       received: version,
+     create_error(@invalid_request, "Invalid JSON-RPC version", %{
+       received_type: type_of(version),
        expected: "2.0"
      })}
   end
@@ -210,7 +220,9 @@ defmodule ExMCP.Internal.MessageValidator do
 
   defp validate_method_exists(%{"method" => method}) do
     {:error,
-     create_error(@internal_error, "Method must be non-empty string", %{received: method})}
+     create_error(@invalid_request, "Method must be non-empty string", %{
+       received_type: type_of(method)
+     })}
   end
 
   defp validate_method_exists(_) do
@@ -278,16 +290,34 @@ defmodule ExMCP.Internal.MessageValidator do
         # Check for duplicate request ID
         request_id = Map.get(request, "id")
 
-        if MapSet.member?(state.seen_request_ids, request_id) do
-          error =
-            create_error(@invalid_request, "Request ID has already been used in this session", %{
-              duplicate_id: request_id
-            })
+        cond do
+          MapSet.member?(state.seen_request_ids, request_id) ->
+            error =
+              create_error(
+                @invalid_request,
+                "Request ID has already been used in this session",
+                %{type: "duplicate_request_id", duplicate_id: request_id}
+              )
 
-          {{:error, error}, state}
-        else
-          new_state = %{state | seen_request_ids: MapSet.put(state.seen_request_ids, request_id)}
-          {{:ok, validated_request}, new_state}
+            {{:error, error}, state}
+
+          MapSet.size(state.seen_request_ids) >=
+              Map.get(state, :max_request_ids, @default_max_request_ids) ->
+            error =
+              create_error(@invalid_request, "Request ID tracking capacity exceeded", %{
+                type: "request_id_capacity_exceeded",
+                limit: Map.get(state, :max_request_ids, @default_max_request_ids)
+              })
+
+            {{:error, error}, state}
+
+          true ->
+            new_state = %{
+              state
+              | seen_request_ids: MapSet.put(state.seen_request_ids, request_id)
+            }
+
+            {{:ok, validated_request}, new_state}
         end
 
       {:error, error} ->
@@ -297,7 +327,8 @@ defmodule ExMCP.Internal.MessageValidator do
 
   defp validate_notification_with_state(notification, state) do
     with :ok <- validate_jsonrpc_version(notification),
-         :ok <- validate_method_exists(notification) do
+         :ok <- validate_method_exists(notification),
+         :ok <- validate_request_method_params(notification) do
       {{:ok, notification}, state}
     else
       {:error, error} -> {{:error, error}, state}
@@ -337,99 +368,160 @@ defmodule ExMCP.Internal.MessageValidator do
   Validates that required parameters are present for specific methods.
   """
   @spec validate_method_params(String.t(), map()) :: :ok | {:error, map()}
-  def validate_method_params(method, params) when is_map(params) do
-    case method do
-      "tools/call" -> validate_tool_call_params(params)
-      "resources/read" -> validate_resource_read_params(params)
-      "prompts/get" -> validate_prompt_get_params(params)
-      "resources/subscribe" -> validate_resource_subscribe_params(params)
-      "resources/unsubscribe" -> validate_resource_unsubscribe_params(params)
-      _ -> :ok
-    end
-  end
+  def validate_method_params("tools/call", params) when is_map(params),
+    do: validate_tool_call_params(params)
+
+  def validate_method_params("tools/execute", params) when is_map(params),
+    do: require_nonempty_string(params, "tool_name")
+
+  def validate_method_params("resources/read", params) when is_map(params),
+    do: validate_resource_read_params(params)
+
+  def validate_method_params("prompts/get", params) when is_map(params),
+    do: validate_prompt_get_params(params)
+
+  def validate_method_params("resources/subscribe", params) when is_map(params),
+    do: validate_resource_subscribe_params(params)
+
+  def validate_method_params("resources/unsubscribe", params) when is_map(params),
+    do: validate_resource_unsubscribe_params(params)
+
+  def validate_method_params("completion/complete", params) when is_map(params),
+    do: validate_completion_params(params)
+
+  def validate_method_params("subscriptions/listen", params) when is_map(params),
+    do: require_object(params, "notifications")
+
+  def validate_method_params(method, params)
+      when is_map(params) and
+             method in ["tasks/get", "tasks/result", "tasks/cancel", "tasks/update"],
+      do: require_nonempty_string(params, "taskId")
+
+  def validate_method_params("logging/setLevel", params) when is_map(params),
+    do: validate_log_level(params)
+
+  def validate_method_params("notifications/cancelled", params) when is_map(params),
+    do: require_request_id(params, "requestId")
+
+  def validate_method_params("notifications/elicitation/complete", params) when is_map(params),
+    do: require_nonempty_string(params, "elicitationId")
+
+  def validate_method_params(_method, params) when is_map(params), do: :ok
 
   def validate_method_params(_, _) do
     {:error, create_error(@invalid_params, "Parameters must be an object")}
   end
 
   defp validate_tool_call_params(params) do
-    required = ["name"]
-    missing = Enum.reject(required, &Map.has_key?(params, &1))
-
-    if missing == [] do
-      validate_tool_name(Map.get(params, "name"))
-    else
-      {:error, create_error(@invalid_params, "Missing required parameters", %{missing: missing})}
+    with :ok <- require_nonempty_string(params, "name") do
+      validate_optional_object(params, "arguments")
     end
   end
 
   defp validate_resource_read_params(params) do
-    required = ["uri"]
-    missing = Enum.reject(required, &Map.has_key?(params, &1))
-
-    if missing == [] do
-      validate_uri(Map.get(params, "uri"))
-    else
-      {:error, create_error(@invalid_params, "Missing required parameters", %{missing: missing})}
-    end
+    validate_uri_field(params, "uri")
   end
 
   defp validate_prompt_get_params(params) do
-    required = ["name"]
-    missing = Enum.reject(required, &Map.has_key?(params, &1))
-
-    if missing == [] do
-      validate_prompt_name(Map.get(params, "name"))
-    else
-      {:error, create_error(@invalid_params, "Missing required parameters", %{missing: missing})}
+    with :ok <- require_nonempty_string(params, "name") do
+      validate_optional_object(params, "arguments")
     end
   end
 
   defp validate_resource_subscribe_params(params) do
-    required = ["uri"]
-    missing = Enum.reject(required, &Map.has_key?(params, &1))
-
-    if missing == [] do
-      validate_uri(Map.get(params, "uri"))
-    else
-      {:error, create_error(@invalid_params, "Missing required parameters", %{missing: missing})}
-    end
+    validate_uri_field(params, "uri")
   end
 
   defp validate_resource_unsubscribe_params(params) do
-    required = ["uri"]
-    missing = Enum.reject(required, &Map.has_key?(params, &1))
+    validate_uri_field(params, "uri")
+  end
 
-    if missing == [] do
-      validate_uri(Map.get(params, "uri"))
-    else
-      {:error, create_error(@invalid_params, "Missing required parameters", %{missing: missing})}
+  defp validate_request_method_params(%{"method" => method} = request) do
+    params = if Map.has_key?(request, "params"), do: Map.get(request, "params"), else: %{}
+    validate_method_params(method, params)
+  end
+
+  defp validate_request_method_params(_request), do: :ok
+
+  defp validate_uri_field(params, key), do: require_nonempty_string(params, key)
+
+  defp validate_completion_params(params) do
+    with :ok <- require_object(params, "ref"),
+         :ok <- require_object(params, "argument"),
+         :ok <- require_nonempty_string(Map.get(params, "argument", %{}), "name") do
+      require_string(Map.get(params, "argument", %{}), "value")
     end
   end
 
-  defp validate_tool_name(name) when is_binary(name) and byte_size(name) > 0, do: :ok
+  defp validate_log_level(params) do
+    case Map.get(params, "level") do
+      level
+      when level in [
+             "debug",
+             "info",
+             "notice",
+             "warning",
+             "error",
+             "critical",
+             "alert",
+             "emergency"
+           ] ->
+        :ok
 
-  defp validate_tool_name(_) do
-    {:error, create_error(@invalid_params, "Tool name must be non-empty string")}
-  end
+      nil ->
+        missing_parameter("level")
 
-  defp validate_prompt_name(name) when is_binary(name) and byte_size(name) > 0, do: :ok
-
-  defp validate_prompt_name(_) do
-    {:error, create_error(@invalid_params, "Prompt name must be non-empty string")}
-  end
-
-  defp validate_uri(uri) when is_binary(uri) and byte_size(uri) > 0 do
-    # Basic URI validation - could be enhanced
-    if String.contains?(uri, "://") or String.starts_with?(uri, "/") do
-      :ok
-    else
-      {:error, create_error(@invalid_params, "Invalid URI format")}
+      _invalid ->
+        invalid_parameter("level", "must be a valid logging level")
     end
   end
 
-  defp validate_uri(_) do
-    {:error, create_error(@invalid_params, "URI must be non-empty string")}
+  defp require_request_id(params, key) do
+    case Map.get(params, key) do
+      value when is_binary(value) or is_integer(value) -> :ok
+      nil -> missing_parameter(key)
+      _invalid -> invalid_parameter(key, "must be a string or integer")
+    end
+  end
+
+  defp require_nonempty_string(params, key) do
+    case Map.get(params, key) do
+      value when is_binary(value) and byte_size(value) > 0 -> :ok
+      nil -> missing_parameter(key)
+      _invalid -> invalid_parameter(key, "must be a non-empty string")
+    end
+  end
+
+  defp require_string(params, key) do
+    case Map.get(params, key) do
+      value when is_binary(value) -> :ok
+      nil -> missing_parameter(key)
+      _invalid -> invalid_parameter(key, "must be a string")
+    end
+  end
+
+  defp require_object(params, key) do
+    case Map.get(params, key) do
+      value when is_map(value) -> :ok
+      nil -> missing_parameter(key)
+      _invalid -> invalid_parameter(key, "must be an object")
+    end
+  end
+
+  defp validate_optional_object(params, key) do
+    case Map.fetch(params, key) do
+      :error -> :ok
+      {:ok, value} when is_map(value) -> :ok
+      {:ok, _invalid} -> invalid_parameter(key, "must be an object")
+    end
+  end
+
+  defp missing_parameter(key) do
+    {:error, create_error(@invalid_params, "Missing required parameters", %{missing: [key]})}
+  end
+
+  defp invalid_parameter(key, reason) do
+    {:error, create_error(@invalid_params, "Invalid parameters", %{field: key, reason: reason})}
   end
 
   @doc """

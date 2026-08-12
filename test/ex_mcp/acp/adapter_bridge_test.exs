@@ -109,6 +109,44 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip, state}
   end
 
+  defmodule BlockingOneShotAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    defstruct [:test_pid]
+
+    @impl true
+    def init(opts), do: {:ok, %__MODULE__{test_pid: Keyword.fetch!(opts, :test_pid)}}
+
+    @impl true
+    def command(_opts), do: :one_shot
+
+    @impl true
+    def capabilities, do: %{}
+
+    @impl true
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+    def translate_outbound(%{"method" => "session/prompt", "id" => id}, state) do
+      test_pid = state.test_pid
+
+      cmd_fn = fn ->
+        send(test_pid, {:one_shot_started, self()})
+
+        receive do
+          :release ->
+            {:ok, [Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "result" => %{}})]}
+        end
+      end
+
+      {:one_shot, cmd_fn, state}
+    end
+
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
   defmodule ErrorMockAdapter do
     @behaviour ExMCP.ACP.Adapter
 
@@ -182,6 +220,26 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     assert output =~ "path_present=true"
     assert output =~ "home_present=true"
     refute output =~ "must-not-reach-child"
+  end
+
+  test "rejects ACP frames larger than the configured bridge limit" do
+    {:ok, bridge} =
+      AdapterBridge.start_link(
+        adapter: OneShotMockAdapter,
+        adapter_opts: [],
+        max_buffer_bytes: 64
+      )
+
+    oversized =
+      Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "session/prompt",
+        "params" => %{"prompt" => [%{"type" => "text", "text" => String.duplicate("x", 64)}]},
+        "id" => 1
+      })
+
+    assert {:error, :frame_too_large} = AdapterBridge.send_message(bridge, oversized)
+    assert :ok = AdapterBridge.close(bridge)
   end
 
   test "isolated adapter subprocess policy rejects unknown modes" do
@@ -477,6 +535,42 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
       AdapterBridge.close(bridge)
     end
+
+    test "bounds concurrent one-shot tasks and frees capacity on completion" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(
+          adapter: BlockingOneShotAdapter,
+          adapter_opts: [test_pid: self()],
+          max_one_shot_tasks: 1
+        )
+
+      _init = send_initialize(bridge)
+
+      prompt = fn id ->
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "session/prompt",
+          "params" => %{"sessionId" => "s1", "prompt" => [%{"type" => "text", "text" => "x"}]},
+          "id" => id
+        })
+      end
+
+      assert :ok = AdapterBridge.send_message(bridge, prompt.(1))
+      assert_receive {:one_shot_started, task_pid}
+      assert {:error, :too_many_one_shot_tasks} = AdapterBridge.send_message(bridge, prompt.(2))
+
+      send(task_pid, :release)
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+      assert Jason.decode!(raw)["id"] == 1
+
+      assert :ok = AdapterBridge.send_message(bridge, prompt.(3))
+      assert_receive {:one_shot_started, next_task_pid}
+      send(next_task_pid, :release)
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+      assert Jason.decode!(raw)["id"] == 3
+
+      AdapterBridge.close(bridge)
+    end
   end
 
   describe "adapter-managed adapter" do
@@ -497,6 +591,31 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
       AdapterBridge.close(bridge)
       assert_receive :managed_shutdown
+    end
+
+    test "closes before aggregate outbox bytes exceed the configured limit" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(
+          adapter: ManagedMockAdapter,
+          adapter_opts: [test_pid: self()],
+          max_outbox_messages: 100,
+          max_outbox_bytes: 600
+        )
+
+      _init = send_initialize(bridge)
+      text = String.duplicate("x", 300)
+
+      send(bridge, {:managed_emit, text})
+      state = :sys.get_state(bridge)
+      assert state.status == :ready
+      assert state.outbox_bytes > 0
+      assert state.outbox_bytes < state.max_outbox_bytes
+
+      send(bridge, {:managed_emit, text})
+      state = :sys.get_state(bridge)
+      assert state.status == :closed
+      assert state.outbox_bytes == 0
+      assert :queue.is_empty(state.outbox)
     end
   end
 
@@ -533,6 +652,32 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       assert {:ok, raw} = Task.await(task, 10_000)
       msg = Jason.decode!(raw)
       assert msg["params"]["update"]["content"] == %{"type" => "text", "text" => "delayed"}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "a timed-out receive cannot consume a later message" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      assert catch_exit(AdapterBridge.receive_message(bridge, 10))
+      Process.sleep(15)
+
+      prompt = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/prompt",
+        "params" => %{
+          "sessionId" => "s1",
+          "prompt" => [%{"type" => "text", "text" => "after timeout"}]
+        },
+        "id" => 7
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(prompt))
+      assert {:ok, raw} = AdapterBridge.receive_message(bridge, 1_000)
+
+      assert get_in(Jason.decode!(raw), ["params", "update", "content", "text"]) ==
+               "after timeout"
 
       AdapterBridge.close(bridge)
     end

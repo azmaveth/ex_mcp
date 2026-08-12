@@ -42,13 +42,13 @@ defmodule ExMCP.Plugs.ProtocolVersion do
         validate_modern_only_header(conn, values)
 
       {_legacy_or_missing, _mode} ->
-        if ExMCP.FeatureFlags.enabled?(:protocol_version_header) do
-          validate_protocol_version(conn)
-        else
-          # Legacy enforcement remains behind its compatibility flag. Modern
-          # headers are always validated by the clauses above.
-          assign(conn, :mcp_version, default_version())
-        end
+        # This standalone Plug cannot determine whether a request is the
+        # lifecycle's header-optional initialize request. It therefore keeps
+        # the specification's backwards-compatible missing-header default,
+        # while always rejecting any explicit malformed, duplicate, or
+        # unsupported value. HttpPlug additionally enforces the negotiated
+        # per-session version on subsequent requests.
+        validate_protocol_version(conn)
     end
   end
 
@@ -78,13 +78,16 @@ defmodule ExMCP.Plugs.ProtocolVersion do
         Logger.debug("No MCP-Protocol-Version header found, using default: #{default}")
         assign(conn, :mcp_version, default)
 
-      [version | _] ->
+      [version] ->
         if VersionRegistry.supported?(version) do
           Logger.debug("Valid MCP-Protocol-Version: #{version}")
           assign(conn, :mcp_version, version)
         else
           reject_version(conn, version)
         end
+
+      _duplicates ->
+        reject_version(conn, "duplicate")
     end
   end
 

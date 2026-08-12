@@ -15,11 +15,15 @@ defmodule ExMCP.Server.SubscriptionListener do
     :principal_id,
     :tenant_id,
     :publication_authorizer,
+    :authorization_required,
     :max_queue,
+    :max_message_bytes,
+    :max_queue_bytes,
     :in_flight_kind,
     active?: false,
     closing?: false,
-    queue: []
+    queue: [],
+    queue_bytes: 0
   ]
 
   @type notification_kind :: :acknowledged | :notification | :complete
@@ -70,10 +74,22 @@ defmodule ExMCP.Server.SubscriptionListener do
       principal_id: Keyword.get(opts, :principal_id),
       tenant_id: Keyword.get(opts, :tenant_id),
       publication_authorizer: Keyword.get(opts, :publication_authorizer),
-      max_queue: Keyword.fetch!(opts, :max_queue)
+      authorization_required: Keyword.get(opts, :authorization_required, false),
+      max_queue: Keyword.fetch!(opts, :max_queue),
+      max_message_bytes: Keyword.fetch!(opts, :max_message_bytes),
+      max_queue_bytes: Keyword.fetch!(opts, :max_queue_bytes)
     }
 
-    {:ok, state}
+    with {:ok, acknowledgment_bytes} <-
+           encoded_size(acknowledgment(state.subscription_id, state.filter)),
+         true <- acknowledgment_bytes <= state.max_message_bytes,
+         {:ok, completion_bytes} <- encoded_size(completion(state.subscription_id)),
+         true <- completion_bytes <= state.max_message_bytes,
+         true <- completion_bytes <= state.max_queue_bytes do
+      {:ok, state}
+    else
+      _invalid_limits -> {:stop, :subscription_message_limit_too_small}
+    end
   end
 
   @impl true
@@ -108,10 +124,17 @@ defmodule ExMCP.Server.SubscriptionListener do
       message = notification(state.subscription_id, method, params)
       key = coalescing_key(method, params)
 
-      case enqueue_message(state, {:notification, message, key}) do
-        {:ok, new_state} -> {:reply, :ok, deliver_next(new_state)}
-        {:coalesced, new_state} -> {:reply, :coalesced, new_state}
-        {:overflow, new_state} -> {:reply, {:closed, :slow_consumer}, new_state}
+      case queue_item(:notification, message, key, state.max_message_bytes) do
+        {:ok, item} ->
+          case enqueue_message(state, item) do
+            {:ok, new_state} -> {:reply, :ok, deliver_next(new_state)}
+            {:coalesced, new_state} -> {:reply, :coalesced, new_state}
+            {:overflow, new_state} -> {:reply, {:closed, :slow_consumer}, new_state}
+          end
+
+        {:error, reason} ->
+          emit_queue_pressure(:closed)
+          {:reply, {:closed, reason}, initiate_close(state, reason)}
       end
     else
       {:reply, {:closed, :authorization_revoked}, initiate_close(state, :authorization_revoked)}
@@ -139,43 +162,90 @@ defmodule ExMCP.Server.SubscriptionListener do
   end
 
   defp enqueue_message(%{active?: false} = state, item) do
-    if length(state.queue) < state.max_queue do
-      {:ok, %{state | queue: state.queue ++ [item]}}
+    if queue_has_capacity?(state, item) do
+      {:ok, append_item(state, item)}
     else
       emit_queue_pressure(:closed)
       {:overflow, initiate_close(state, :slow_consumer)}
     end
   end
 
-  defp enqueue_message(%{in_flight_kind: nil, queue: []} = state, {kind, message, _key}) do
+  defp enqueue_message(
+         %{in_flight_kind: nil, queue: []} = state,
+         {kind, message, _key, _bytes}
+       ) do
     {:ok, deliver(kind, message, state)}
   end
 
-  defp enqueue_message(state, {_kind, _message, key} = item) do
+  defp enqueue_message(state, {_kind, _message, key, _bytes} = item) do
     case replace_coalesced(state.queue, key, item) do
-      {:ok, queue} ->
-        {:coalesced, %{state | queue: queue}}
+      {:ok, queue, replaced_bytes} ->
+        new_queue_bytes = state.queue_bytes - replaced_bytes + item_bytes(item)
 
-      :not_found when length(state.queue) < state.max_queue ->
-        {:ok, %{state | queue: state.queue ++ [item]}}
+        if new_queue_bytes <= state.max_queue_bytes do
+          emit_queue_pressure(:coalesced)
+          {:coalesced, %{state | queue: queue, queue_bytes: new_queue_bytes}}
+        else
+          emit_queue_pressure(:closed)
+          {:overflow, initiate_close(state, :slow_consumer)}
+        end
 
       :not_found ->
-        emit_queue_pressure(:closed)
-        {:overflow, initiate_close(state, :slow_consumer)}
+        if queue_has_capacity?(state, item) do
+          {:ok, append_item(state, item)}
+        else
+          emit_queue_pressure(:closed)
+          {:overflow, initiate_close(state, :slow_consumer)}
+        end
     end
+  end
+
+  defp queue_has_capacity?(state, item) do
+    length(state.queue) < state.max_queue and
+      state.queue_bytes + item_bytes(item) <= state.max_queue_bytes
+  end
+
+  defp append_item(state, item) do
+    %{
+      state
+      | queue: state.queue ++ [item],
+        queue_bytes: state.queue_bytes + item_bytes(item)
+    }
+  end
+
+  defp queue_item(kind, message, key, max_message_bytes) do
+    case encoded_size(message) do
+      {:ok, bytes} when bytes <= max_message_bytes ->
+        {:ok, {kind, message, key, bytes}}
+
+      {:ok, _bytes} ->
+        {:error, :message_too_large}
+
+      {:error, _reason} ->
+        {:error, :invalid_message}
+    end
+  end
+
+  defp encoded_size(message) do
+    case Jason.encode_to_iodata(message) do
+      {:ok, encoded} -> {:ok, IO.iodata_length(encoded)}
+      {:error, reason} -> {:error, reason}
+    end
+  rescue
+    error -> {:error, error}
   end
 
   defp replace_coalesced(_queue, nil, _item), do: :not_found
 
   defp replace_coalesced(queue, key, item) do
-    if Enum.any?(queue, fn {_kind, _message, queued_key} -> queued_key == key end) do
-      emit_queue_pressure(:coalesced)
+    if Enum.any?(queue, fn {_kind, _message, queued_key, _bytes} -> queued_key == key end) do
+      {queue, replaced_bytes} =
+        Enum.map_reduce(queue, 0, fn
+          {_kind, _message, ^key, bytes}, _replaced_bytes -> {item, bytes}
+          queued, replaced_bytes -> {queued, replaced_bytes}
+        end)
 
-      {:ok,
-       Enum.map(queue, fn
-         {_kind, _message, ^key} -> item
-         queued -> queued
-       end)}
+      {:ok, queue, replaced_bytes}
     else
       :not_found
     end
@@ -183,8 +253,8 @@ defmodule ExMCP.Server.SubscriptionListener do
 
   defp deliver_next(%{active?: false} = state), do: state
 
-  defp deliver_next(%{in_flight_kind: nil, queue: [{kind, message, _key} | rest]} = state) do
-    deliver(kind, message, %{state | queue: rest})
+  defp deliver_next(%{in_flight_kind: nil, queue: [{kind, message, _key, bytes} | rest]} = state) do
+    deliver(kind, message, %{state | queue: rest, queue_bytes: state.queue_bytes - bytes})
   end
 
   defp deliver_next(state), do: state
@@ -203,9 +273,19 @@ defmodule ExMCP.Server.SubscriptionListener do
   defp initiate_close(state, reason) do
     emit_closed(reason)
     message = completion(state.subscription_id)
-    state = %{state | closing?: true, queue: [{:complete, message, nil}]}
+    {:ok, item} = queue_item(:complete, message, nil, state.max_message_bytes)
+    state = %{state | closing?: true, queue: [item], queue_bytes: item_bytes(item)}
     deliver_next(state)
   end
+
+  defp item_bytes({_kind, _message, _key, bytes}), do: bytes
+
+  defp publication_authorized?(
+         %{publication_authorizer: nil, authorization_required: true},
+         _method,
+         _params
+       ),
+       do: false
 
   defp publication_authorized?(%{publication_authorizer: nil}, _method, _params), do: true
 

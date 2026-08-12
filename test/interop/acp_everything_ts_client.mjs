@@ -253,7 +253,15 @@ try {
 } catch (error) {
   results.error = error?.stack ?? error?.message ?? String(error);
 } finally {
-  agentProcess.kill();
+  agentProcess.stdin.end();
+  await Promise.race([
+    new Promise((resolve) => agentProcess.once("exit", resolve)),
+    new Promise((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+
+  if (agentProcess.exitCode === null) {
+    agentProcess.kill();
+  }
 }
 
 process.stderr.write(JSON.stringify(results) + "\n");

@@ -3,6 +3,11 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
   alias ExMCP.Transport.Stdio
 
+  test "incremental frame accumulation accepts the limit and rejects one byte over" do
+    assert {:ok, "abcd"} = Stdio.append_frame("ab", "cd", 4)
+    assert {:error, :frame_too_large} = Stdio.append_frame("ab", "cde", 4)
+  end
+
   @moduletag :stdio
 
   setup_all do
@@ -31,6 +36,45 @@ defmodule ExMCP.Transport.StdioIsolationTest do
              Stdio.connect(command: [shell, "-c", probe], env: [{key, false}])
 
     assert_receive {^port, {:exit_status, 0}}, 1_000
+  end
+
+  test "stdio environment is isolated by default" do
+    key = "EX_MCP_STDIO_DEFAULT_ISOLATION_TEST"
+    previous = System.get_env(key)
+    System.put_env(key, "must-not-reach-child")
+
+    on_exit(fn ->
+      if is_binary(previous), do: System.put_env(key, previous), else: System.delete_env(key)
+    end)
+
+    shell = System.find_executable("sh") || flunk("sh executable is required for stdio test")
+    probe = ~s(test -z "${#{key}+x}")
+
+    assert {:ok, %Stdio{port: port}} = Stdio.connect(command: [shell, "-c", probe])
+    assert_receive {^port, {:exit_status, 0}}, 1_000
+  end
+
+  test "trusted deployments can explicitly inherit the parent environment" do
+    key = "EX_MCP_STDIO_EXPLICIT_INHERIT_TEST"
+    previous = System.get_env(key)
+    System.put_env(key, "inherited-value")
+
+    on_exit(fn ->
+      if is_binary(previous), do: System.put_env(key, previous), else: System.delete_env(key)
+    end)
+
+    shell = System.find_executable("sh") || flunk("sh executable is required for stdio test")
+    probe = ~s(test "$#{key}" = "inherited-value")
+
+    assert {:ok, %Stdio{port: port}} =
+             Stdio.connect(command: [shell, "-c", probe], environment_policy: :inherit)
+
+    assert_receive {^port, {:exit_status, 0}}, 1_000
+  end
+
+  test "rejects unknown environment policies" do
+    assert {:error, {:invalid_environment_policy, :unsafe}} =
+             Stdio.connect(command: ["unused"], environment_policy: :unsafe)
   end
 
   describe "Stdio Transport Isolation" do
@@ -99,6 +143,10 @@ defmodule ExMCP.Transport.StdioIsolationTest do
 
         {:error, {:send_failed, _}} ->
           # Expected error due to mock port
+          assert true
+
+        {:error, {:transport_error, {:send_failed, _}}} ->
+          # Expected error due to mock port (normalized transport error)
           assert true
 
         {:error, {:security_violation, _}} ->

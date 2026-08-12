@@ -29,6 +29,18 @@ defmodule ExMCP.ProtocolVersionTest do
     # Basic test handler
     handler = fn request ->
       case request do
+        %{"method" => "initialize", "id" => id} ->
+          {:ok,
+           %{
+             "jsonrpc" => "2.0",
+             "result" => %{
+               "protocolVersion" => "2025-06-18",
+               "capabilities" => %{},
+               "serverInfo" => %{"name" => "test-server", "version" => "1.0.0"}
+             },
+             "id" => id
+           }}
+
         %{"method" => "test/echo", "params" => params} ->
           {:ok, %{"jsonrpc" => "2.0", "result" => params, "id" => request["id"]}}
 
@@ -49,8 +61,40 @@ defmodule ExMCP.ProtocolVersionTest do
     {:ok, opts: opts}
   end
 
+  defp initialize_session(opts) do
+    request = %{
+      "jsonrpc" => "2.0",
+      "method" => "initialize",
+      "params" => %{
+        "protocolVersion" => "2025-06-18",
+        "capabilities" => %{},
+        "clientInfo" => %{"name" => "protocol-version-test", "version" => "1.0.0"}
+      },
+      "id" => 0
+    }
+
+    conn =
+      conn(:post, "/", Jason.encode!(request))
+      |> put_req_header("content-type", "application/json")
+      |> HttpPlug.call(opts)
+
+    assert conn.status == 200
+    assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
+    [session_id] = get_resp_header(conn, "mcp-session-id")
+    session_id
+  end
+
   describe "request validation" do
+    test "initialization negotiates from the body without an HTTP version header", %{opts: opts} do
+      session_id = initialize_session(opts)
+
+      assert {:ok, %{protocol_version: "2025-06-18"}} =
+               ExMCP.SessionManager.get_session(session_id)
+    end
+
     test "accepts requests with correct protocol version header", %{opts: opts} do
+      session_id = initialize_session(opts)
+
       request = %{
         "jsonrpc" => "2.0",
         "method" => "test/echo",
@@ -61,6 +105,7 @@ defmodule ExMCP.ProtocolVersionTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "2025-06-18")
         |> HttpPlug.call(opts)
 
@@ -71,6 +116,8 @@ defmodule ExMCP.ProtocolVersionTest do
     end
 
     test "rejects requests with incorrect protocol version", %{opts: opts} do
+      session_id = initialize_session(opts)
+
       request = %{
         "jsonrpc" => "2.0",
         "method" => "test/echo",
@@ -81,6 +128,7 @@ defmodule ExMCP.ProtocolVersionTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "2024-01-01")
         |> HttpPlug.call(opts)
 
@@ -89,10 +137,12 @@ defmodule ExMCP.ProtocolVersionTest do
       response = Jason.decode!(conn.resp_body)
       assert response["error"]["code"] == -32600
       assert response["error"]["message"] =~ "Unsupported MCP-Protocol-Version: 2024-01-01"
-      assert response["error"]["data"]["expectedVersion"] == "2025-11-25"
+      assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
     end
 
     test "rejects requests missing protocol version header", %{opts: opts} do
+      session_id = initialize_session(opts)
+
       request = %{
         "jsonrpc" => "2.0",
         "method" => "test/echo",
@@ -103,6 +153,7 @@ defmodule ExMCP.ProtocolVersionTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
         |> HttpPlug.call(opts)
 
       assert conn.status == 400
@@ -110,12 +161,40 @@ defmodule ExMCP.ProtocolVersionTest do
       response = Jason.decode!(conn.resp_body)
       assert response["error"]["code"] == -32600
       assert response["error"]["message"] =~ "Missing MCP-Protocol-Version header"
-      assert response["error"]["data"]["expectedVersion"] == "2025-11-25"
+      assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
+    end
+
+    test "rejects a supported header that differs from the negotiated session version", %{
+      opts: opts
+    } do
+      session_id = initialize_session(opts)
+
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "test/echo",
+        "params" => %{"message" => "hello"},
+        "id" => 1
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-protocol-version", "2025-11-25")
+        |> HttpPlug.call(opts)
+
+      assert conn.status == 400
+      response = Jason.decode!(conn.resp_body)
+      assert response["error"]["message"] =~ "does not match the negotiated version"
+      assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
+      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
     end
   end
 
   describe "response headers" do
     test "includes protocol version header in successful responses", %{opts: opts} do
+      session_id = initialize_session(opts)
+
       request = %{
         "jsonrpc" => "2.0",
         "method" => "test/echo",
@@ -126,14 +205,17 @@ defmodule ExMCP.ProtocolVersionTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "2025-06-18")
         |> HttpPlug.call(opts)
 
       assert conn.status == 200
-      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-11-25"]
+      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
     end
 
     test "includes protocol version header in error responses", %{opts: opts} do
+      session_id = initialize_session(opts)
+
       request = %{
         "jsonrpc" => "2.0",
         "method" => "test/echo",
@@ -144,16 +226,19 @@ defmodule ExMCP.ProtocolVersionTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
         |> put_req_header("mcp-protocol-version", "wrong-version")
         |> HttpPlug.call(opts)
 
       assert conn.status == 400
-      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-11-25"]
+      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
     end
   end
 
   describe "feature flag" do
     test "bypasses validation when feature flag is disabled", %{opts: opts} do
+      session_id = initialize_session(opts)
+
       # Disable the feature flag
       Application.put_env(:ex_mcp, :protocol_version_required, false)
 
@@ -168,6 +253,7 @@ defmodule ExMCP.ProtocolVersionTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
         |> HttpPlug.call(opts)
 
       assert conn.status == 200
@@ -176,7 +262,34 @@ defmodule ExMCP.ProtocolVersionTest do
 
       # Per MCP spec, server MUST always include mcp-protocol-version in responses,
       # even when incoming validation is disabled by feature flag
-      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-11-25"]
+      assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
+    end
+
+    test "still rejects an explicitly invalid header when missing-header enforcement is disabled",
+         %{
+           opts: opts
+         } do
+      session_id = initialize_session(opts)
+      Application.put_env(:ex_mcp, :protocol_version_required, false)
+
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "test/echo",
+        "params" => %{"message" => "hello"},
+        "id" => 1
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-protocol-version", "invalid")
+        |> HttpPlug.call(opts)
+
+      assert conn.status == 400
+
+      assert Jason.decode!(conn.resp_body)["error"]["message"] =~
+               "Unsupported MCP-Protocol-Version"
     end
   end
 

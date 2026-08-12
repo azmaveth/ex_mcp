@@ -557,6 +557,15 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   end
 
   defp put_method_not_found(conn, id) do
+    conn =
+      case conn.assigns do
+        %{request_context: %{era: :modern}} ->
+          ExMCP.MessageProcessor.assign(conn, :http_status, 404)
+
+        _legacy_or_unscoped ->
+          conn
+      end
+
     %{conn | response: JSONRPC.error(id, -32601, "Method not found")}
   end
 end

@@ -68,7 +68,7 @@ defmodule ExMCP.Security.SecurityGuardTest do
         end)
 
       assert log =~ "trusted_origins"
-      assert log =~ "https://mcp.example.com"
+      refute log =~ "https://mcp.example.com"
       # The remediation must never quote the credentials it stripped.
       refute log =~ "s3cret"
     end
@@ -104,14 +104,14 @@ defmodule ExMCP.Security.SecurityGuardTest do
       assert header_names(sanitized.headers) == ["authorization", "content-type", "cookie"]
     end
 
-    test "a host entry matches regardless of scheme" do
-      config = %{trusted_origins: ["mcp.example.com"]}
+    test "an explicitly broad trusted host matches regardless of scheme" do
+      config = %{trusted_hosts: ["mcp.example.com"]}
       assert {:ok, sanitized} = SecurityGuard.validate_request(request(), config)
       assert length(sanitized.headers) == 3
     end
 
     test "a wildcard entry matches subdomains" do
-      config = %{trusted_origins: ["*.example.com"]}
+      config = %{trusted_hosts: ["*.example.com"]}
       assert {:ok, sanitized} = SecurityGuard.validate_request(request(), config)
       assert length(sanitized.headers) == 3
     end

@@ -105,8 +105,8 @@ defmodule ExMCP.Server.DispatchTest do
     def handle_call_tool(_name, _args, state), do: {:error, "no tools", state}
   end
 
-  defp request(method, params \\ %{}, id \\ 1) do
-    %{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => id}
+  defp request(method, params) do
+    %{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => 1}
   end
 
   defp dispatch(method, params \\ %{}, handler \\ FullHandler, state \\ %{level: nil}) do
@@ -318,12 +318,26 @@ defmodule ExMCP.Server.DispatchTest do
     end
 
     test "callbacks a handler does not implement are -32601" do
-      req = request("completion/complete")
+      req =
+        request("completion/complete", %{
+          "ref" => %{},
+          "argument" => %{"name" => "value", "value" => ""}
+        })
 
       assert {:response, %{"error" => error}, _state} =
                Dispatch.dispatch(req, BareHandler, %{})
 
       assert error["code"] == -32601
+    end
+
+    test "invalid method parameters never reach the handler" do
+      request = request("tools/call", %{"arguments" => %{}})
+
+      assert {:response, %{"error" => error}, %{level: nil}} =
+               Dispatch.dispatch(request, FullHandler, %{level: nil})
+
+      assert error["code"] == -32602
+      assert error["data"] == %{missing: ["name"]}
     end
 
     test "handler-authored string reasons are preserved" do

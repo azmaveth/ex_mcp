@@ -63,6 +63,39 @@ defmodule ExMCP.ProgressTrackerTest do
     end
   end
 
+  describe "owner isolation" do
+    test "the same client token is isolated across sessions" do
+      assert {:ok, _} =
+               ProgressTracker.start_progress("shared", self(), owner: {:session, "session-a"})
+
+      assert {:ok, _} =
+               ProgressTracker.start_progress("shared", self(), owner: {:session, "session-b"})
+
+      assert :ok =
+               ProgressTracker.update_progress("shared", 1, nil, "a",
+                 owner: {:session, "session-a"}
+               )
+
+      assert {:ok, session_a} =
+               ProgressTracker.get_progress_state("shared", owner: {:session, "session-a"})
+
+      assert {:ok, session_b} =
+               ProgressTracker.get_progress_state("shared", owner: {:session, "session-b"})
+
+      assert session_a.current_progress == 1
+      assert session_b.current_progress == 0
+
+      assert :ok =
+               ProgressTracker.complete_progress("shared", owner: {:session, "session-a"})
+
+      assert {:error, :not_found} =
+               ProgressTracker.get_progress_state("shared", owner: {:session, "session-a"})
+
+      assert {:ok, _} =
+               ProgressTracker.get_progress_state("shared", owner: {:session, "session-b"})
+    end
+  end
+
   describe "update_progress/4" do
     setup do
       sender_pid = self()

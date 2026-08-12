@@ -142,7 +142,7 @@ defmodule ExMCP.ACP.Agent.HandlerRunner do
   end
 
   defp normalize_callback_result({:ok, other}, state) do
-    Logger.warning("ACP agent handler returned invalid result: #{inspect(other)}")
+    Logger.warning("ACP agent handler returned invalid result", return_shape: return_shape(other))
     {{:error, {:invalid_return, other}}, state}
   end
 
@@ -156,4 +156,10 @@ defmodule ExMCP.ACP.Agent.HandlerRunner do
     kind, reason ->
       {:error, {kind, reason, __STACKTRACE__}}
   end
+
+  defp return_shape(value) when is_tuple(value), do: {:tuple, tuple_size(value)}
+  defp return_shape(value) when is_map(value), do: :map
+  defp return_shape(value) when is_list(value), do: :list
+  defp return_shape(value) when is_atom(value), do: :atom
+  defp return_shape(_value), do: :other
 end

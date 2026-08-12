@@ -26,7 +26,8 @@ defmodule ExMCP.Authorization.ServerGuardScopeTest do
 
       config = %{
         introspection_endpoint: "http://localhost:#{bypass.port}/introspect",
-        realm: "test-server"
+        realm: "test-server",
+        legacy_unbound_tokens: true
       }
 
       {:ok, bypass: bypass, config: config}

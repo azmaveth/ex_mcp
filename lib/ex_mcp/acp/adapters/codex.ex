@@ -5,6 +5,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
   Translates between ACP JSON-RPC and Codex's app-server JSON-RPC protocol.
   The adapter keeps Codex app-server as the subprocess boundary and owns the
   pure protocol mapping needed to present a stable ACP surface.
+
+  Session-provided workspace paths and MCP servers are treated as untrusted.
+  `:workspace_roots` defaults to the adapter working directory. Deployments
+  may provide `:authorize_workspace` and `:authorize_mcp_server` callbacks;
+  `:trust_authorized_workspaces` must also be set to opt into Codex's trusted
+  project setting. `:trusted_mcp_servers` accepts exact server maps; `:all` is
+  an explicit unsafe compatibility escape hatch. Names alone never authorize
+  caller-controlled connection details.
   """
 
   @behaviour ExMCP.ACP.Adapter
@@ -311,18 +319,26 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   def translate_outbound(%{"method" => "session/list", "id" => acp_id, "params" => params}, state) do
-    {id, state} = next_request_id(state)
+    cwd = session_list_cwd(params, state)
 
-    wire_params =
-      %{}
-      |> maybe_put("cwd", params["cwd"])
-      |> maybe_put("cursor", params["cursor"])
-      |> maybe_put("limit", params["limit"])
-      |> maybe_put("archived", false)
+    case authorize_optional_workspace(cwd, :session_list, state) do
+      :ok ->
+        {id, state} = next_request_id(state)
 
-    request = encode_request(id, "thread/list", wire_params)
-    state = track_request(state, id, :session_list, acp_id)
-    {:ok, request, state}
+        wire_params =
+          %{}
+          |> maybe_put("cwd", cwd)
+          |> maybe_put("cursor", params["cursor"])
+          |> maybe_put("limit", params["limit"])
+          |> maybe_put("archived", false)
+
+        request = encode_request(id, "thread/list", wire_params)
+        state = track_request(state, id, :session_list, acp_id)
+        {:ok, request, state}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
   end
 
   def translate_outbound(%{"method" => "session/close", "params" => params}, state) do
@@ -2594,17 +2610,27 @@ defmodule ExMCP.ACP.Adapters.Codex do
   # Session config / MCP mapping
 
   defp session_config(params, cwd, state) do
-    with {:ok, additional_directories} <- additional_directories(params, cwd),
-         {:ok, mcp_config} <- mcp_config(params["mcpServers"], cwd) do
+    with :ok <- authorize_workspace(cwd, :cwd, state),
+         {:ok, additional_directories} <- additional_directories(params, cwd),
+         :ok <- authorize_additional_directories(additional_directories, cwd, state),
+         {:ok, mcp_config} <- mcp_config(params["mcpServers"], cwd, state) do
       config =
         state.opts
         |> codex_config()
         |> merge_gateway_config(state.gateway_config)
-        |> merge_trusted_projects(cwd, additional_directories)
+        |> maybe_merge_trusted_projects(cwd, additional_directories, state.opts)
         |> merge_sandbox_workspace_roots(additional_directories)
         |> merge_config(mcp_config)
 
       {:ok, empty_to_nil(config), additional_directories}
+    end
+  end
+
+  defp maybe_merge_trusted_projects(config, cwd, additional_directories, opts) do
+    if Keyword.get(opts, :trust_authorized_workspaces, false) do
+      merge_trusted_projects(config, cwd, additional_directories)
+    else
+      config
     end
   end
 
@@ -2732,15 +2758,212 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
-  defp mcp_config(nil, _cwd), do: {:ok, nil}
-  defp mcp_config([], _cwd), do: {:ok, nil}
+  defp authorize_optional_workspace(nil, _kind, _state), do: :ok
+  defp authorize_optional_workspace(path, kind, state), do: authorize_workspace(path, kind, state)
 
-  defp mcp_config(servers, cwd) when is_list(servers) do
+  defp session_list_cwd(params, state) do
+    cond do
+      is_binary(params["cwd"]) -> params["cwd"]
+      Keyword.get(state.opts, :allow_unscoped_session_list, false) -> nil
+      true -> Keyword.get(state.opts, :cwd, File.cwd!())
+    end
+  end
+
+  defp authorize_workspace(path, kind, state) do
+    if is_binary(path) and path != "" and Path.type(path) == :absolute do
+      context = %{kind: kind, adapter: __MODULE__}
+
+      case Keyword.get(state.opts, :authorize_workspace) do
+        callback when is_function(callback, 2) ->
+          callback
+          |> safe_authorize(path, context)
+          |> authorization_result("Workspace path is not authorized")
+
+        callback when is_function(callback, 1) ->
+          callback
+          |> safe_authorize(path)
+          |> authorization_result("Workspace path is not authorized")
+
+        nil ->
+          if within_workspace_roots?(path, state.opts),
+            do: :ok,
+            else: {:error, "Workspace path is not authorized"}
+
+        _invalid ->
+          {:error, "Invalid workspace authorization callback"}
+      end
+    else
+      {:error, "Workspace paths must be absolute"}
+    end
+  end
+
+  defp authorize_additional_directories(directories, cwd, state) do
+    Enum.reduce_while(directories, :ok, fn directory, :ok ->
+      case authorize_workspace(directory, {:additional_directory, cwd}, state) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp within_workspace_roots?(path, opts) do
+    roots =
+      case Keyword.get(opts, :workspace_roots) do
+        roots when is_list(roots) -> roots
+        nil -> [Keyword.get(opts, :cwd, File.cwd!())]
+        root -> [root]
+      end
+
+    path = canonical_path(path)
+
+    Enum.any?(roots, fn
+      root when is_binary(root) and root != "" ->
+        Path.type(root) == :absolute and path_within?(path, canonical_path(root))
+
+      _invalid ->
+        false
+    end)
+  end
+
+  defp path_within?(path, root) do
+    relative = Path.relative_to(path, root)
+
+    relative == "." or
+      (Path.type(relative) == :relative and relative != ".." and
+         not String.starts_with?(relative, "../"))
+  end
+
+  defp canonical_path(path), do: resolve_path_components(Path.expand(path), 0)
+
+  defp resolve_path_components(path, depth) when depth >= 40, do: path
+
+  defp resolve_path_components(path, depth) do
+    case Path.split(path) do
+      [base | components] ->
+        Enum.reduce(components, base, &resolve_path_component(&1, &2, depth))
+
+      [] ->
+        path
+    end
+  end
+
+  defp resolve_path_component(component, resolved_parent, depth) do
+    candidate = Path.join(resolved_parent, component)
+
+    case :file.read_link(to_charlist(candidate)) do
+      {:ok, target} -> resolve_link_target(to_string(target), candidate, depth)
+      {:error, _reason} -> candidate
+    end
+  end
+
+  defp resolve_link_target(target, candidate, depth) do
+    target =
+      if Path.type(target) == :absolute,
+        do: target,
+        else: Path.join(Path.dirname(candidate), target)
+
+    target
+    |> Path.expand()
+    |> resolve_path_components(depth + 1)
+  end
+
+  defp authorize_mcp_server(server, cwd, state) do
+    context = %{cwd: cwd, transport: server["type"], adapter: __MODULE__}
+
+    result =
+      case Keyword.get(state.opts, :authorize_mcp_server) do
+        callback when is_function(callback, 2) -> safe_authorize(callback, server, context)
+        callback when is_function(callback, 1) -> safe_authorize(callback, server)
+        nil -> trusted_mcp_server?(server, Keyword.get(state.opts, :trusted_mcp_servers, []))
+        _invalid -> false
+      end
+
+    authorization_result(result, "MCP server is not authorized")
+  end
+
+  defp trusted_mcp_server?(_server, :all), do: true
+
+  defp trusted_mcp_server?(server, trusted) when is_list(trusted) do
+    Enum.any?(trusted, fn
+      trusted_server when is_map(trusted_server) -> trusted_server == server
+      _other -> false
+    end)
+  end
+
+  defp trusted_mcp_server?(_server, _trusted), do: false
+
+  defp safe_authorize(callback, value, context) do
+    callback.(value, context)
+  rescue
+    exception ->
+      Logger.warning("Codex authorization callback failed", error_class: exception.__struct__)
+      false
+  catch
+    _kind, _reason -> false
+  end
+
+  defp safe_authorize(callback, value) do
+    callback.(value)
+  rescue
+    exception ->
+      Logger.warning("Codex authorization callback failed", error_class: exception.__struct__)
+      false
+  catch
+    _kind, _reason -> false
+  end
+
+  defp authorization_result(result, _message) when result in [:ok, true], do: :ok
+  defp authorization_result({:ok, _value}, _message), do: :ok
+  defp authorization_result(_result, message), do: {:error, message}
+
+  defp validate_http_mcp_server(server) do
+    uri = if is_binary(server["url"]), do: URI.parse(server["url"]), else: %URI{}
+
+    if valid_mcp_name?(server["name"]) and uri.scheme in ["http", "https"] and
+         is_binary(uri.host) and uri.host != "" and valid_name_value_list?(server["headers"]) do
+      :ok
+    else
+      {:error, "Invalid HTTP MCP server configuration"}
+    end
+  end
+
+  defp validate_stdio_mcp_server(server) do
+    if valid_mcp_name?(server["name"]) and is_binary(server["command"]) and
+         server["command"] != "" and Path.type(server["command"]) == :absolute and
+         is_list(server["args"]) and Enum.all?(server["args"], &is_binary/1) and
+         valid_name_value_list?(server["env"]) do
+      :ok
+    else
+      {:error, "Invalid stdio MCP server configuration"}
+    end
+  end
+
+  defp valid_mcp_name?(name), do: is_binary(name) and String.trim(name) != ""
+
+  defp valid_name_value_list?(values) when is_list(values) do
+    Enum.all?(values, fn
+      %{"name" => name, "value" => value} -> is_binary(name) and is_binary(value)
+      {name, value} -> is_binary(name) and is_binary(value)
+      _other -> false
+    end)
+  end
+
+  defp valid_name_value_list?(_values), do: false
+
+  defp mcp_config(nil, _cwd, _state), do: {:ok, nil}
+  defp mcp_config([], _cwd, _state), do: {:ok, nil}
+
+  defp mcp_config(servers, cwd, state) when is_list(servers) do
     Enum.reduce_while(servers, {:ok, %{}}, fn server, {:ok, acc} ->
-      case mcp_server_config(server, cwd) do
-        {:ok, nil} -> {:cont, {:ok, acc}}
-        {:ok, {name, config}} -> {:cont, {:ok, Map.put(acc, name, config)}}
-        {:error, reason} -> {:halt, {:error, reason}}
+      case mcp_server_config(server, cwd, state) do
+        {:ok, {name, _config}} when is_map_key(acc, name) ->
+          {:halt, {:error, "MCP server names must be unique"}}
+
+        {:ok, {name, config}} ->
+          {:cont, {:ok, Map.put(acc, name, config)}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
       end
     end)
     |> case do
@@ -2750,44 +2973,50 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
-  defp mcp_config(_servers, _cwd), do: {:ok, nil}
+  defp mcp_config(_servers, _cwd, _state), do: {:error, "mcpServers must be a list"}
 
-  defp mcp_server_config(%{"type" => "http"} = server, _cwd) do
-    name = sanitize_mcp_server_name(server["name"])
+  defp mcp_server_config(%{"type" => "http"} = server, cwd, state) do
+    with :ok <- validate_http_mcp_server(server),
+         :ok <- authorize_mcp_server(server, cwd, state) do
+      name = sanitize_mcp_server_name(server["name"])
 
-    {:ok,
-     {name,
-      %{}
-      |> Map.put("url", server["url"])
-      |> maybe_put("http_headers", headers_to_map(server["headers"]))}}
-  end
-
-  defp mcp_server_config(%{"type" => "stdio"} = server, _cwd) do
-    name = sanitize_mcp_server_name(server["name"])
-
-    {:ok,
-     {name,
-      %{}
-      |> Map.put("command", server["command"])
-      |> maybe_put("args", server["args"] || [])
-      |> maybe_put("env", env_to_map(server["env"]))}}
-  end
-
-  defp mcp_server_config(%{"type" => "sse"}, _cwd),
-    do: {:error, "Codex doesn't support MCP SSE transport protocol"}
-
-  defp mcp_server_config(%{"type" => "acp"}, _cwd),
-    do: {:error, "Codex doesn't support MCP ACP transport protocol"}
-
-  defp mcp_server_config(server, _cwd) when is_map(server) do
-    if Map.has_key?(server, "command") do
-      mcp_server_config(Map.put(server, "type", "stdio"), nil)
-    else
-      {:ok, nil}
+      {:ok,
+       {name,
+        %{}
+        |> Map.put("url", server["url"])
+        |> maybe_put("http_headers", headers_to_map(server["headers"]))}}
     end
   end
 
-  defp mcp_server_config(_server, _cwd), do: {:ok, nil}
+  defp mcp_server_config(%{"type" => "stdio"} = server, cwd, state) do
+    with :ok <- validate_stdio_mcp_server(server),
+         :ok <- authorize_mcp_server(server, cwd, state) do
+      name = sanitize_mcp_server_name(server["name"])
+
+      {:ok,
+       {name,
+        %{}
+        |> Map.put("command", server["command"])
+        |> maybe_put("args", server["args"])
+        |> maybe_put("env", env_to_map(server["env"]))}}
+    end
+  end
+
+  defp mcp_server_config(%{"type" => "sse"}, _cwd, _state),
+    do: {:error, "Codex doesn't support MCP SSE transport protocol"}
+
+  defp mcp_server_config(%{"type" => "acp"}, _cwd, _state),
+    do: {:error, "Codex doesn't support MCP ACP transport protocol"}
+
+  defp mcp_server_config(server, cwd, state) when is_map(server) do
+    if Map.has_key?(server, "command") do
+      mcp_server_config(Map.put(server, "type", "stdio"), cwd, state)
+    else
+      {:error, "Unsupported MCP server transport"}
+    end
+  end
+
+  defp mcp_server_config(_server, _cwd, _state), do: {:error, "Invalid MCP server"}
 
   defp sanitize_mcp_server_name(nil), do: "mcp_server"
 

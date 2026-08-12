@@ -26,6 +26,8 @@ defmodule ExMCP.Authorization.ClientRegistration do
       # Use the returned client_id and client_secret for authorization flows
   """
 
+  alias ExMCP.Authorization.{SecureHTTP, Validator}
+
   @type registration_request :: %{
           required(:registration_endpoint) => String.t(),
           required(:client_name) => String.t(),
@@ -71,7 +73,7 @@ defmodule ExMCP.Authorization.ClientRegistration do
           {:ok, client_information()} | {:error, term()}
   def register_client(request) do
     with {:ok, registration_body} <- build_request(request),
-         :ok <- validate_https_endpoint(request.registration_endpoint) do
+         :ok <- Validator.validate_https_endpoint(request.registration_endpoint) do
       case make_registration_request(request.registration_endpoint, registration_body) do
         {:ok, response} ->
           {:ok, parse_client_information(response)}
@@ -101,7 +103,7 @@ defmodule ExMCP.Authorization.ClientRegistration do
   @spec get_client_information(String.t(), String.t()) ::
           {:ok, client_information()} | {:error, term()}
   def get_client_information(registration_client_uri, registration_access_token) do
-    with :ok <- validate_https_endpoint(registration_client_uri) do
+    with :ok <- Validator.validate_https_endpoint(registration_client_uri) do
       headers = [
         {"authorization", "Bearer #{registration_access_token}"},
         {"accept", "application/json"}
@@ -135,7 +137,7 @@ defmodule ExMCP.Authorization.ClientRegistration do
   @spec update_client_information(String.t(), String.t(), map()) ::
           {:ok, client_information()} | {:error, term()}
   def update_client_information(registration_client_uri, registration_access_token, updates) do
-    with :ok <- validate_https_endpoint(registration_client_uri) do
+    with :ok <- Validator.validate_https_endpoint(registration_client_uri) do
       headers = [
         {"authorization", "Bearer #{registration_access_token}"},
         {"content-type", "application/json"},
@@ -209,14 +211,6 @@ defmodule ExMCP.Authorization.ClientRegistration do
 
   defp validate_redirect_uris(_), do: {:error, :redirect_uris_must_be_list}
 
-  defp validate_https_endpoint(url) do
-    case URI.parse(url) do
-      %URI{scheme: "https"} -> :ok
-      %URI{scheme: "http", host: host} when host in ["localhost", "127.0.0.1"] -> :ok
-      _ -> {:error, :https_required}
-    end
-  end
-
   defp build_registration_body(request) do
     base_body = %{
       client_name: request.client_name,
@@ -284,38 +278,8 @@ defmodule ExMCP.Authorization.ClientRegistration do
     end
   end
 
-  defp make_http_request(method, url, headers, body) do
-    # Convert headers to charlist format for httpc
-    httpc_headers =
-      Enum.map(headers, fn {k, v} ->
-        {String.to_charlist(k), String.to_charlist(v)}
-      end)
-
-    request =
-      case method do
-        :get ->
-          {String.to_charlist(url), httpc_headers}
-
-        method when method in [:post, :put] ->
-          content_type =
-            if String.contains?(body, "{"),
-              do: ~c"application/json",
-              else: ~c"application/x-www-form-urlencoded"
-
-          {String.to_charlist(url), httpc_headers, content_type, String.to_charlist(body)}
-      end
-
-    # SSL options for HTTPS
-    ssl_opts = [
-      ssl: [
-        verify: :verify_peer,
-        cacerts: :public_key.cacerts_get(),
-        versions: [:"tlsv1.2", :"tlsv1.3"]
-      ]
-    ]
-
-    :httpc.request(method, request, ssl_opts, [])
-  end
+  defp make_http_request(method, url, headers, body),
+    do: SecureHTTP.request(method, url, headers, body)
 
   defp parse_client_information(data) do
     %{

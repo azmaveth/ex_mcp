@@ -1,7 +1,7 @@
 defmodule ExMCP.HttpPlugTest do
   use ExUnit.Case, async: false
   import Plug.Test
-  import Plug.Conn
+  import Plug.Conn, except: [get_session: 1, get_session: 2]
   import ExUnit.CaptureLog
 
   alias ExMCP.HttpPlug
@@ -120,29 +120,135 @@ defmodule ExMCP.HttpPlugTest do
   defmodule TrackingSessionManager do
     @table :http_plug_test_session_manager
 
-    def start_link(owner) do
+    def start_link(owner, opts \\ []) do
       if :ets.whereis(@table) != :undefined do
         :ets.delete(@table)
       end
 
       :ets.new(@table, [:named_table, :public, :set])
       :ets.insert(@table, {:owner, owner})
+      :ets.insert(@table, {:max_request_ids, Keyword.get(opts, :max_request_ids, :infinity)})
+      :ets.insert(@table, {:claim_behavior, Keyword.get(opts, :claim_behavior, :normal)})
       {:ok, self()}
     end
 
-    def get_session(_session_id), do: {:error, :not_found}
+    def get_session(session_id) do
+      case :ets.lookup(@table, {:session, session_id}) do
+        [{{:session, ^session_id}, session}] -> {:ok, session}
+        [] -> {:error, :session_not_found}
+      end
+    end
 
-    def create_session(_attrs), do: "tracked_session"
+    def create_session(attrs) do
+      :ets.insert(@table, {
+        {:session, "tracked_session"},
+        Map.merge(attrs, %{
+          id: "tracked_session",
+          status: :active,
+          initialized: false,
+          initialization_claimed: false,
+          protocol_version: nil
+        })
+      })
+
+      notify({:session_created, "tracked_session", attrs})
+      "tracked_session"
+    end
 
     def update_session(session_id, attrs) do
+      with {:ok, session} <- get_session(session_id) do
+        :ets.insert(@table, {{:session, session_id}, Map.merge(session, attrs)})
+      end
+
       notify({:session_updated, session_id, attrs})
     end
 
     def ensure_session(session_id, attrs) do
-      notify({:session_ensured, session_id, attrs})
+      case get_session(session_id) do
+        {:ok, _session} -> notify({:session_ensured, session_id, attrs})
+        {:error, _reason} = error -> error
+      end
+    end
+
+    def ensure_initialized_session(session_id, attrs) do
+      with {:ok, session} <- get_session(session_id) do
+        cond do
+          session.status != :active -> {:error, :session_not_found}
+          session.initialized != true -> {:error, :session_not_initialized}
+          true -> notify({:session_ensured, session_id, attrs})
+        end
+      end
+    end
+
+    def claim_initialization(session_id) do
+      with {:ok, session} <- get_session(session_id) do
+        cond do
+          session.initialized ->
+            {:error, :session_already_initialized}
+
+          session.initialization_claimed ->
+            {:error, :initialization_in_progress}
+
+          true ->
+            :ets.insert(
+              @table,
+              {{:session, session_id}, %{session | initialization_claimed: true}}
+            )
+
+            :ok
+        end
+      end
+    end
+
+    def complete_initialization(session_id, version) do
+      with {:ok, session} <- get_session(session_id) do
+        :ets.insert(
+          @table,
+          {{:session, session_id},
+           %{
+             session
+             | initialized: true,
+               initialization_claimed: false,
+               protocol_version: version
+           }}
+        )
+
+        :ok
+      end
+    end
+
+    def claim_request_id(session_id, request_id) do
+      case :ets.lookup(@table, :claim_behavior) do
+        [{:claim_behavior, :invalid}] ->
+          :invalid
+
+        [{:claim_behavior, :exit}] ->
+          exit(:claim_failed)
+
+        _normal ->
+          key = {:request_id, session_id, request_id}
+
+          cond do
+            :ets.member(@table, key) ->
+              {:error, :duplicate_request_id}
+
+            request_id_capacity_reached?(session_id) ->
+              {:error, :request_id_limit_exceeded}
+
+            :ets.insert_new(@table, {key, true}) ->
+              :ok
+
+            true ->
+              {:error, :duplicate_request_id}
+          end
+      end
     end
 
     def terminate_session(session_id) do
+      with {:ok, session} <- get_session(session_id) do
+        :ets.insert(@table, {{:session, session_id}, %{session | status: :terminated}})
+      end
+
       notify({:session_terminated, session_id})
     end
 
@@ -154,6 +260,21 @@ defmodule ExMCP.HttpPlugTest do
 
       :ok
     end
+
+    defp request_id_capacity_reached?(session_id) do
+      [{:max_request_ids, max_request_ids}] = :ets.lookup(@table, :max_request_ids)
+
+      max_request_ids != :infinity and
+        length(:ets.match_object(@table, {{:request_id, session_id, :_}, :_})) >=
+          max_request_ids
+    end
+  end
+
+  defmodule FullSessionManager do
+    def create_session(_attrs), do: {:error, :session_limit_exceeded}
+    def ensure_session(_session_id, _attrs), do: {:error, :session_not_found}
+    def claim_request_id(_session_id, _request_id), do: {:error, :session_not_found}
+    def terminate_session(_session_id), do: :ok
   end
 
   describe "HTTP Plug behavior" do
@@ -183,10 +304,28 @@ defmodule ExMCP.HttpPlugTest do
       assert config.body_limit == 1_000_000
       assert config.handler_opts == []
       assert config.handler_call_timeout == 10_000
+      assert config.subscription_max_message_bytes == nil
+      assert config.subscription_max_queue_bytes == nil
+    end
+
+    test "init/1 preserves subscription byte limits" do
+      config =
+        HttpPlug.init(
+          handler: TestServer,
+          subscription_max_message_bytes: 12_345,
+          subscription_max_queue_bytes: 67_890
+        )
+
+      assert config.subscription_max_message_bytes == 12_345
+      assert config.subscription_max_queue_bytes == 67_890
     end
 
     test "init/1 accepts a server-side handler call deadline" do
       assert HttpPlug.init(handler_call_timeout: 250).handler_call_timeout == 250
+    end
+
+    test "default initialized options are safe to embed at compile time" do
+      assert Macro.escape(HttpPlug.init([]))
     end
 
     test "retains sse_enabled as an alias for the deprecated transport" do
@@ -213,14 +352,97 @@ defmodule ExMCP.HttpPlugTest do
   describe "session deletion" do
     test "uses the configured session manager" do
       {:ok, _} = TrackingSessionManager.start_link(self())
+      session_id = TrackingSessionManager.create_session(%{transport: :http})
+      :ok = TrackingSessionManager.claim_initialization(session_id)
+      :ok = TrackingSessionManager.complete_initialization(session_id, "2025-06-18")
 
       conn =
         conn(:delete, "/mcp")
-        |> put_req_header("mcp-session-id", "custom-session")
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
         |> HttpPlug.call(HttpPlug.init(session_manager: TrackingSessionManager))
 
       assert conn.status == 204
-      assert_received {:session_terminated, "custom-session"}
+      assert_received {:session_terminated, ^session_id}
+    end
+
+    test "rejects duplicate session headers without terminating the session" do
+      opts = HttpPlug.init(handler: TestServer, sse_enabled: false)
+      initialized = initialize_session_conn(1_201) |> HttpPlug.call(opts)
+      [session_id] = get_resp_header(initialized, "mcp-session-id")
+
+      base =
+        conn(:delete, "/mcp")
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
+
+      for values <- [[session_id, session_id], [session_id, "different-session"]] do
+        duplicated = %{
+          base
+          | req_headers:
+              Enum.map(values, &{"mcp-session-id", &1}) ++
+                Enum.reject(base.req_headers, fn {name, _value} -> name == "mcp-session-id" end)
+        }
+
+        rejected = HttpPlug.call(duplicated, opts)
+        assert rejected.status == 400
+        assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+      end
+    end
+
+    test "requires the negotiated protocol version before standard DELETE" do
+      previous = Application.get_env(:ex_mcp, :protocol_version_required)
+      Application.put_env(:ex_mcp, :protocol_version_required, true)
+
+      on_exit(fn ->
+        if is_nil(previous),
+          do: Application.delete_env(:ex_mcp, :protocol_version_required),
+          else: Application.put_env(:ex_mcp, :protocol_version_required, previous)
+      end)
+
+      opts = HttpPlug.init(handler: TestServer, sse_enabled: false)
+      initialized = initialize_session_conn(1_202) |> HttpPlug.call(opts)
+      [session_id] = get_resp_header(initialized, "mcp-session-id")
+
+      missing =
+        conn(:delete, "/mcp")
+        |> put_req_header("mcp-session-id", session_id)
+        |> HttpPlug.call(opts)
+
+      assert missing.status == 400
+      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+
+      mismatched =
+        conn(:delete, "/mcp")
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-protocol-version", "2025-03-26")
+        |> HttpPlug.call(opts)
+
+      assert mismatched.status == 400
+      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+
+      duplicate_base =
+        conn(:delete, "/mcp")
+        |> put_req_header("mcp-session-id", session_id)
+
+      duplicated_version = %{
+        duplicate_base
+        | req_headers: [
+            {"mcp-protocol-version", "2025-06-18"},
+            {"mcp-protocol-version", "2025-06-18"} | duplicate_base.req_headers
+          ]
+      }
+
+      assert HttpPlug.call(duplicated_version, opts).status == 400
+      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+
+      valid =
+        conn(:delete, "/mcp")
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
+        |> HttpPlug.call(opts)
+
+      assert valid.status == 204
+      assert {:ok, %{status: :terminated}} = SessionManager.get_session(session_id)
     end
   end
 
@@ -238,6 +460,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_active_legacy_session()
         |> HttpPlug.call(
           HttpPlug.init(
             handler: BlockingRequestServer,
@@ -435,6 +658,32 @@ defmodule ExMCP.HttpPlugTest do
     |> put_req_header("content-type", "application/json")
   end
 
+  defp initialize_session_conn(id \\ 10) do
+    request = %{
+      "jsonrpc" => "2.0",
+      "method" => "initialize",
+      "params" => %{
+        "protocolVersion" => "2025-06-18",
+        "capabilities" => %{},
+        "clientInfo" => %{"name" => "test-client", "version" => "1.0.0"}
+      },
+      "id" => id
+    }
+
+    conn(:post, "/", Jason.encode!(request))
+    |> put_req_header("content-type", "application/json")
+  end
+
+  defp put_active_legacy_session(conn) do
+    session_id = SessionManager.create_session(%{transport: :http})
+    :ok = SessionManager.claim_initialization(session_id)
+    :ok = SessionManager.complete_initialization(session_id, "2025-06-18")
+
+    on_exit(fn -> SessionManager.terminate_session(session_id) end)
+
+    put_req_header(conn, "mcp-session-id", session_id)
+  end
+
   describe "host validation" do
     test "default allowed_hosts :any accepts any Host" do
       conn =
@@ -549,7 +798,7 @@ defmodule ExMCP.HttpPlugTest do
       {:ok, _} = TrackingSessionManager.start_link(self())
 
       conn =
-        session_request_conn()
+        initialize_session_conn()
         |> HttpPlug.call(
           HttpPlug.init(
             handler: TestServer,
@@ -561,19 +810,237 @@ defmodule ExMCP.HttpPlugTest do
 
       assert conn.status == 200
       assert [session_id] = get_resp_header(conn, "mcp-session-id")
-      assert_received {:session_ensured, ^session_id, %{transport: :http}}
+      assert session_id == "tracked_session"
+      assert_received {:session_created, ^session_id, %{transport: :http}}
     end
 
-    test "accepts and echoes a UUID session id" do
+    test "rejects a duplicate request ID in the same legacy session before dispatch" do
+      {:ok, _} = TrackingSessionManager.start_link(self())
+
+      opts =
+        HttpPlug.init(
+          handler: TestServer,
+          protocol_mode: :prefer_modern,
+          session_manager: TrackingSessionManager,
+          sse_enabled: false
+        )
+
+      initialized = initialize_session_conn(991) |> HttpPlug.call(opts)
+      assert initialized.status == 200
+      assert [session_id] = get_resp_header(initialized, "mcp-session-id")
+
+      request = %{"jsonrpc" => "2.0", "method" => "tools/list", "id" => 991}
+
+      duplicate =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
+        |> HttpPlug.call(opts)
+
+      assert duplicate.status == 400
+      assert get_resp_header(duplicate, "mcp-session-id") == [session_id]
+
+      assert %{
+               "id" => 991,
+               "error" => %{
+                 "code" => -32600,
+                 "data" => %{"type" => "duplicate_request_id"}
+               }
+             } = Jason.decode!(duplicate.resp_body)
+    end
+
+    test "rejects a second initialize for an established legacy session" do
+      opts = HttpPlug.init(handler: TestServer, sse_enabled: false)
+
+      initialized = initialize_session_conn(1_101) |> HttpPlug.call(opts)
+      assert initialized.status == 200
+      assert [session_id] = get_resp_header(initialized, "mcp-session-id")
+
+      duplicate =
+        initialize_session_conn(1_102)
+        |> put_req_header("mcp-session-id", session_id)
+        |> HttpPlug.call(opts)
+
+      assert duplicate.status == 400
+      assert get_resp_header(duplicate, "mcp-session-id") == [session_id]
+
+      assert %{
+               "id" => 1_102,
+               "error" => %{"data" => %{"type" => "session_already_initialized"}}
+             } = Jason.decode!(duplicate.resp_body)
+    end
+
+    test "rejects requests on a legacy session whose initialization has not completed" do
+      session_id = SessionManager.create_session(%{transport: :http})
+      on_exit(fn -> SessionManager.terminate_session(session_id) end)
+
+      rejected =
+        session_request_conn()
+        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header(
+          "mcp-protocol-version",
+          ExMCP.Internal.VersionRegistry.latest_version()
+        )
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert rejected.status == 400
+
+      assert %{"error" => %{"data" => %{"type" => "session_not_initialized"}}} =
+               Jason.decode!(rejected.resp_body)
+    end
+
+    test "terminates and does not expose a session when initialization fails" do
+      handler = fn _request -> {:error, :initialization_failed} end
+
+      failed =
+        initialize_session_conn(1_103)
+        |> HttpPlug.call(HttpPlug.init(handler: handler, sse_enabled: false))
+
+      assert failed.status == 500
+      assert get_resp_header(failed, "mcp-session-id") == []
+    end
+
+    test "rejects a successful initialize response with a different supported version" do
+      handler = fn request ->
+        %{
+          "jsonrpc" => "2.0",
+          "id" => request["id"],
+          "result" => %{
+            "protocolVersion" => "2025-03-26",
+            "capabilities" => %{},
+            "serverInfo" => %{"name" => "bad-version", "version" => "1"}
+          }
+        }
+      end
+
+      rejected =
+        initialize_session_conn(1_104)
+        |> HttpPlug.call(HttpPlug.init(handler: handler, sse_enabled: false))
+
+      assert rejected.status == 503
+      assert get_resp_header(rejected, "mcp-session-id") == []
+
+      assert Jason.decode!(rejected.resp_body)["error"]["data"]["type"] ==
+               "session_manager_unavailable"
+    end
+
+    test "fails closed with a bounded response when a legacy session reaches its ID cap" do
+      {:ok, _} = TrackingSessionManager.start_link(self(), max_request_ids: 1)
+
+      opts =
+        HttpPlug.init(
+          handler: TestServer,
+          protocol_mode: :prefer_modern,
+          session_manager: TrackingSessionManager,
+          sse_enabled: false
+        )
+
+      initialized = initialize_session_conn(992) |> HttpPlug.call(opts)
+      assert initialized.status == 200
+      assert [session_id] = get_resp_header(initialized, "mcp-session-id")
+
+      request = %{"jsonrpc" => "2.0", "method" => "tools/list", "id" => 993}
+
+      rejected =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-session-id", session_id)
+        |> HttpPlug.call(opts)
+
+      assert rejected.status == 429
+      assert get_resp_header(rejected, "retry-after") == ["1"]
+      assert get_resp_header(rejected, "mcp-session-id") == [session_id]
+
+      assert %{
+               "id" => 993,
+               "error" => %{
+                 "code" => -32600,
+                 "data" => %{"type" => "request_id_capacity_exceeded"}
+               }
+             } = Jason.decode!(rejected.resp_body)
+    end
+
+    for claim_behavior <- [:invalid, :exit] do
+      test "rolls back initialization when request-ID tracking returns #{claim_behavior}" do
+        claim_behavior = unquote(claim_behavior)
+        {:ok, _} = TrackingSessionManager.start_link(self(), claim_behavior: claim_behavior)
+
+        failed =
+          initialize_session_conn(1_105)
+          |> HttpPlug.call(
+            HttpPlug.init(
+              handler: TestServer,
+              session_manager: TrackingSessionManager,
+              sse_enabled: false
+            )
+          )
+
+        assert failed.status == 503
+        assert get_resp_header(failed, "mcp-session-id") == []
+        assert_received {:session_terminated, "tracked_session"}
+      end
+    end
+
+    test "rejects a well-formed but unknown UUID session id" do
       uuid = "123e4567-e89b-12d3-a456-426614174000"
 
       conn =
-        session_request_conn()
+        initialize_session_conn()
         |> put_req_header("mcp-session-id", uuid)
         |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
-      assert conn.status == 200
-      assert get_resp_header(conn, "mcp-session-id") == [uuid]
+      assert conn.status == 404
+      assert get_resp_header(conn, "mcp-session-id") == []
+    end
+
+    test "returns a bounded overload response when session capacity is exhausted" do
+      conn =
+        initialize_session_conn()
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            session_manager: FullSessionManager,
+            sse_enabled: false
+          )
+        )
+
+      assert conn.status == 503
+      assert get_resp_header(conn, "retry-after") == ["1"]
+
+      assert Jason.decode!(conn.resp_body)["error"]["data"]["type"] ==
+               "session_capacity_exceeded"
+    end
+
+    test "requires initialization before a headerless legacy request" do
+      session_count = length(SessionManager.list_sessions())
+
+      conn =
+        session_request_conn()
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 400
+      assert get_resp_header(conn, "mcp-session-id") == []
+      assert Jason.decode!(conn.resp_body)["error"]["message"] == "Session ID required"
+      assert length(SessionManager.list_sessions()) == session_count
+    end
+
+    test "does not mint a session for a headerless legacy notification" do
+      session_count = length(SessionManager.list_sessions())
+
+      notification = %{
+        "jsonrpc" => "2.0",
+        "method" => "notifications/initialized",
+        "params" => %{}
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(notification))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 400
+      assert get_resp_header(conn, "mcp-session-id") == []
+      assert length(SessionManager.list_sessions()) == session_count
     end
 
     test "rejects session ids longer than 128 bytes without echoing them" do
@@ -866,7 +1333,7 @@ defmodule ExMCP.HttpPlugTest do
       assert Jason.decode!(rejected.resp_body)["error"]["code"] == -32020
     end
 
-    test "returns HTTP 404 and JSON-RPC method-not-found for unknown modern methods" do
+    test "allows extension methods to reach the handler in modern mode" do
       request = modern_request("unknown/modern", %{}, 107)
 
       conn =
@@ -1094,6 +1561,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_active_legacy_session()
         |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
@@ -1119,6 +1587,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_active_legacy_session()
         |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
@@ -1192,6 +1661,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_active_legacy_session()
         |> HttpPlug.call(opts)
 
       assert conn.status == 200
@@ -1256,7 +1726,14 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
-        |> HttpPlug.call(HttpPlug.init(handler: TestServer, oauth_enabled: true))
+        |> HttpPlug.call(
+          HttpPlug.init(
+            handler: TestServer,
+            oauth_enabled: true,
+            resource: "https://mcp.test/",
+            authorization_servers: ["https://auth.test"]
+          )
+        )
 
       assert conn.status == 500
 
@@ -1274,6 +1751,7 @@ defmodule ExMCP.HttpPlugTest do
       conn =
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
+        |> put_active_legacy_session()
         |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
 
       assert conn.status == 200
@@ -1361,10 +1839,16 @@ defmodule ExMCP.HttpPlugTest do
       # but we can verify the headers are processed
       opts = HttpPlug.init(sse_enabled: true)
 
-      # Create a mock conn to test header extraction
+      session_id = SessionManager.create_session(%{transport: :sse})
+
+      on_exit(fn ->
+        SessionRegistry.unregister(session_id)
+        SessionManager.terminate_session(session_id)
+      end)
+
       conn =
         conn(:get, "/sse")
-        |> put_req_header("x-session-id", "custom-session-123")
+        |> put_req_header("x-session-id", session_id)
 
       # Test that the plug would start SSE (indicated by chunked response)
       result_conn = HttpPlug.call(conn, opts)
@@ -1382,8 +1866,7 @@ defmodule ExMCP.HttpPlugTest do
     end
 
     test "legacy POST sends its JSON-RPC response on the open SSE stream" do
-      session_id = "legacy-session-#{System.unique_integer([:positive, :monotonic])}"
-      :ok = SessionManager.ensure_session(session_id, %{transport: :sse})
+      session_id = SessionManager.create_session(%{transport: :sse})
 
       on_exit(fn ->
         SessionRegistry.unregister(session_id)
@@ -1433,6 +1916,58 @@ defmodule ExMCP.HttpPlugTest do
       SSEHandler.close(handler)
     end
 
+    test "legacy initialization rolls back when its SSE response cannot be delivered" do
+      session_id = SessionManager.create_session(%{transport: :sse})
+
+      {:ok, handler} =
+        SSEHandler.start_link(%LegacyCaptureConn{}, session_id, %{
+          conn_module: LegacyCaptureConn,
+          session_manager: SessionManager,
+          initial_sse_event: {"endpoint", {:raw, "/message?sessionId=#{session_id}"}}
+        })
+
+      Process.unlink(handler)
+      :ok = SessionRegistry.register(session_id, handler)
+
+      on_exit(fn ->
+        SessionRegistry.unregister(session_id)
+        SessionManager.terminate_session(session_id)
+      end)
+
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2024-11-05",
+          "capabilities" => %{},
+          "clientInfo" => %{"name" => "legacy-client", "version" => "1.0.0"}
+        },
+        "id" => 78
+      }
+
+      failing_handler = fn request ->
+        Process.exit(handler, :kill)
+
+        %{
+          "jsonrpc" => "2.0",
+          "id" => request["id"],
+          "result" => %{
+            "protocolVersion" => "2024-11-05",
+            "capabilities" => %{},
+            "serverInfo" => %{"name" => "legacy", "version" => "1"}
+          }
+        }
+      end
+
+      failed =
+        conn(:post, "/message?sessionId=#{session_id}", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(HttpPlug.init(handler: failing_handler, legacy_http_sse: true))
+
+      assert failed.status == 404
+      assert {:ok, %{status: :terminated}} = SessionManager.get_session(session_id)
+    end
+
     test "legacy POST rejects an unknown SSE session" do
       conn =
         conn(:post, "/message?sessionId=missing", Jason.encode!(%{"jsonrpc" => "2.0"}))
@@ -1440,7 +1975,7 @@ defmodule ExMCP.HttpPlugTest do
         |> HttpPlug.call(HttpPlug.init(handler: TestServer, legacy_http_sse: true))
 
       assert conn.status == 404
-      assert conn.resp_body == "Legacy SSE session not found"
+      assert Jason.decode!(conn.resp_body)["error"]["message"] == "Session not found"
     end
   end
 

@@ -16,7 +16,7 @@ defmodule Mix.Tasks.Acp.EverythingAgent do
 
     Mix.Task.run("app.start")
 
-    {:ok, _agent} =
+    {:ok, agent} =
       ExMCP.ACP.Agent.start_link(
         handler: Mix.Tasks.Acp.EverythingAgent.Handler,
         agent_info: %{"name" => "elixir-acp-everything-agent", "version" => "1.0.0"},
@@ -42,7 +42,15 @@ defmodule Mix.Tasks.Acp.EverythingAgent do
           )
       )
 
-    Process.sleep(:infinity)
+    await_agent(agent)
+  end
+
+  defp await_agent(agent) do
+    ref = Process.monitor(agent)
+
+    receive do
+      {:DOWN, ^ref, :process, ^agent, _reason} -> :ok
+    end
   end
 end
 

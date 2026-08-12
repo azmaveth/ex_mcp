@@ -107,6 +107,21 @@ application-level value and the compatibility helper
 use `protocol_mode` to enable modern negotiation. A per-client modern
 `protocol_version` is honored only when its mode enables the modern era.
 
+For legacy Streamable HTTP, `initialize` negotiates the version from
+`params.protocolVersion`; it does not require an `MCP-Protocol-Version` HTTP
+header. When `protocol_version_required: true`, every subsequent request must
+carry exactly one header matching the version stored for that server-issued
+session. ExMCP always rejects an explicit malformed, unsupported, duplicate, or
+session-mismatched header, even when missing-header enforcement is disabled.
+Modern requests always carry matching HTTP and `_meta` protocol versions.
+
+The server issues a legacy Streamable HTTP session only for `initialize` and
+atomically allows one initialization attempt. It exposes the session ID only
+after a successful response binds that exact negotiated version. Later POST
+and GET/SSE requests require the issued initialized session; failed or
+abandoned initialization is terminated. The deprecated 2024 HTTP+SSE endpoint
+uses its separate endpoint-event handshake and is unaffected by this rule.
+
 Use the public negotiator for legacy compatibility checks:
 
 ```elixir
@@ -589,7 +604,14 @@ Supported options:
 - `:command`
 - `:cd`
 - `:env`
+- `:environment_policy` (`:isolated` by default; `:inherit` is an explicit
+  compatibility opt-in)
 - `:timeout`
+
+The isolated policy passes a small runtime baseline and the explicitly supplied
+`:env` entries. It prevents unrelated API, cloud, and session credentials from
+being inherited by a third-party MCP or ACP subprocess; it does not provide a
+filesystem or network sandbox.
 
 ## Streamable HTTP
 
@@ -604,7 +626,11 @@ Supported options:
     request_timeout: 30_000,
     stream_handshake_timeout: 15_000,
     stream_idle_timeout: 60_000,
-    max_retry_delay: 60_000
+    max_retry_delay: 60_000,
+    dns_timeout_ms: 1_000,
+    max_request_bytes: 8_388_608,
+    max_response_bytes: 8_388_608,
+    max_stream_buffer_bytes: 1_048_576
   )
 ```
 
@@ -622,9 +648,23 @@ Supported options include:
 - `:stream_handshake_timeout`
 - `:stream_idle_timeout`
 - `:max_retry_delay`
+- `:dns_timeout_ms` (DNS lookup deadline; defaults to `1_000`)
+- `:dns_resolver` (custom resolver for controlled testing)
+- `:allowed_private_hosts` (exact internal hostnames allowed to resolve to
+  RFC 1918/IPv6 ULA addresses; no wildcards)
+- `:max_request_bytes`
+- `:max_response_bytes`
+- `:max_stream_buffer_bytes` (maximum delimiter-free/incomplete SSE data)
 - `:security`
 - `:auth`
 - `:auth_provider`
+
+Every POST, GET/SSE, retry, and DELETE resolves the destination, validates the
+entire answer set, and pins the connection to an approved address. The original
+hostname remains the Host/SNI/certificate name. Public destinations are allowed
+by default, as are literal/named loopback destinations for local MCP servers.
+Internal destinations require an exact `:allowed_private_hosts` entry;
+link-local, reserved, and mixed public/private answers remain forbidden.
 
 `use_sse` controls the legacy standalone GET stream. It may remain `true` on a
 dual-era client: once `server/discover` succeeds, ExMCP disables that stream,
@@ -662,6 +702,12 @@ ExMCP.Server.HandlerServer.start_link(handler: MyHandler, transport: :beam)
 ExMCP.start_server(handler: MyHandler, transport: :stdio)
 ```
 
+`HandlerServer`-based BEAM/test servers and stdio servers retain request IDs for
+the lifetime of the server process so a client cannot execute the same
+JSON-RPC request ID twice. The retained set is bounded to 10,000 IDs by
+default; set `max_request_ids: positive_integer` on server startup to choose a
+deployment-specific fail-closed bound.
+
 Phoenix/Plug applications usually mount `ExMCP.HttpPlug`:
 
 ```elixir
@@ -685,6 +731,67 @@ until ExMCP 2.0. Optional `legacy_http_sse_path` and
 `legacy_http_sse_post_path` settings default to `/sse` and `/message`.
 Neither dual-era preference mode enables this transport. `:modern_only`
 disables it even when the compatibility option or its rc.5 alias is present.
+
+### OAuth protected-resource metadata
+
+When `oauth_enabled: true`, `ExMCP.HttpPlug` requires the canonical HTTPS
+resource identifier and at least one HTTPS authorization-server issuer. Mount
+the plug so the RFC 9728 path-specific metadata URL is reachable:
+
+```elixir
+forward "/", ExMCP.HttpPlug,
+  endpoint: "/mcp",
+  handler: MyApp.MCPServer,
+  oauth_enabled: true,
+  resource: "https://mcp.example.com/mcp",
+  authorization_servers: ["https://auth.example.com"],
+  auth_config: %{
+    introspection_endpoint: "https://auth.example.com/introspect",
+    client_id: System.fetch_env!("MCP_RESOURCE_CLIENT_ID"),
+    client_secret: System.fetch_env!("MCP_RESOURCE_CLIENT_SECRET"),
+    expected_issuer: "https://auth.example.com",
+    expected_audience: "https://mcp.example.com/mcp"
+  }
+```
+
+This serves `/.well-known/oauth-protected-resource/mcp`; bearer challenges
+point clients to that metadata document. Custom MCP methods also need an
+explicit `:scope_mapper` returning a non-empty list of scopes. Unmapped or
+invalid policies are denied rather than sharing a catch-all scope.
+
+Legacy session storage is bounded to 10,000 active sessions by default. Each
+session also retains at most 10,000 distinct request IDs, preventing duplicate
+execution without allowing unbounded replay state. Set deployment-specific
+limits when supervising `ExMCP.SessionManager` directly:
+
+```elixir
+{ExMCP.SessionManager,
+ max_sessions: 2_000,
+ max_request_ids: 5_000,
+ max_events_per_session: 500,
+ max_event_bytes: 1_048_576,
+ max_replay_bytes_per_session: 8_388_608,
+ session_ttl_seconds: 900}
+```
+
+At capacity, new session allocation returns HTTP `503` with `Retry-After`;
+existing active sessions continue to work. When a session's request-ID bound
+is reached, new IDs fail closed with HTTP `429`; duplicates return JSON-RPC
+`Invalid Request`. Terminated entries and their request IDs are reclaimed
+before allocating a replacement.
+
+Replay retention also fails closed for any single JSON-encoded event larger
+than `:max_event_bytes`. The per-session replay window evicts its oldest events
+when either `:max_events_per_session` (default 1,000) or
+`:max_replay_bytes_per_session` (default 8 MiB) would be exceeded. The default
+single-event cap is 1 MiB. Counts and byte totals are reset when a session is
+terminated or expires.
+
+The resource server authenticates to introspection with
+`:client_secret_basic` by default; `:client_secret_post` is available through
+`:introspection_auth_method`. An active token is still rejected unless its
+issuer, audience/resource, `exp`, and optional `nbf` satisfy this configuration.
+Only migration deployments should use `legacy_unbound_tokens: true`.
 
 ## Multi Round-Trip Requests (MCP 2026-07-28)
 
@@ -817,13 +924,17 @@ generic subscription or `{:ex_mcp_resource_resync, subscription, snapshot}`
 for the resource compatibility wrapper before releasing queued events.
 
 Server listener defaults are 1,000 global registrations, 100 per principal,
-500 per tenant, 100 queued events per listener, a one-hour maximum lifetime,
-256 resource URIs, 256 task IDs, and a 64 KiB filter. Configure the registry
-child or pass
-the corresponding server options (`:subscription_max_queue`,
+500 per tenant, 100 queued events per listener, a 1 MiB encoded-message cap,
+an 8 MiB aggregate queue cap, a one-hour maximum lifetime, 256 resource URIs,
+256 task IDs, and a 64 KiB filter. Configure the registry child directly with
+`:max_queue`, `:max_message_bytes`, and `:max_queue_bytes`, or pass the
+corresponding server options (`:subscription_max_queue`,
+`:subscription_max_message_bytes`, `:subscription_max_queue_bytes`,
 `:subscription_max_lifetime_ms`, `:authorize_subscription_filter`, and
-`:authorize_subscription_publication`). Publication authorization is checked
-again for every event; denial gracefully closes the stream.
+`:authorize_subscription_publication`). A message that exceeds its individual
+cap, or a slow consumer that exhausts either queue bound, is closed fail-safe.
+Publication authorization is checked again for every event; denial gracefully
+closes the stream.
 
 For clustered HTTP, start one named subscription registry per node after the
 application's PubSub process and route every MCP server on that node to it:
@@ -1068,6 +1179,12 @@ Send ad hoc diagnostics to stderr:
 ```elixir
 IO.puts(:stderr, "debug")
 ```
+
+Security-boundary logs describe payload types and sizes and use short hashes
+for opaque session, progress, and origin identifiers. OAuth failures and HTTP
+handler results are not rendered verbatim. Preserve that rule in custom
+handlers: record a correlation ID and safe error class locally, and return a
+stable generic error across the wire.
 
 For HTTP and BEAM-local development:
 

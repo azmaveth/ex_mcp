@@ -40,8 +40,12 @@ defmodule ExMCP.SubscriptionRegistryTest do
 
   test "HTTP sessions subscribe and unsubscribe independently" do
     uri = "test://shared"
-    session_a = unique_session("a")
-    session_b = unique_session("b")
+    session_a = SessionManager.create_session(%{transport: :http})
+    session_b = SessionManager.create_session(%{transport: :http})
+    :ok = SessionManager.claim_initialization(session_a)
+    :ok = SessionManager.complete_initialization(session_a, "2025-06-18")
+    :ok = SessionManager.claim_initialization(session_b)
+    :ok = SessionManager.complete_initialization(session_b, "2025-06-18")
 
     on_exit(fn ->
       SessionManager.terminate_session(session_a)
@@ -67,17 +71,15 @@ defmodule ExMCP.SubscriptionRegistryTest do
         {SessionManager, name: manager_name, session_ttl_seconds: 0, cleanup_interval_ms: 60_000}
       )
 
-    terminated = unique_session("terminated")
-    expired = unique_session("expired")
+    terminated = GenServer.call(manager, {:create_session, %{transport: :http}})
+    expired = GenServer.call(manager, {:create_session, %{transport: :http}})
 
-    :ok = GenServer.call(manager, {:ensure_session, terminated, %{transport: :http}})
     :ok = SubscriptionRegistry.subscribe(terminated, "test://one")
     :ok = SubscriptionRegistry.subscribe(terminated, "test://two")
 
     :ok = GenServer.call(manager, {:terminate_session, terminated})
     assert SubscriptionRegistry.subscriptions(terminated) == []
 
-    :ok = GenServer.call(manager, {:ensure_session, expired, %{transport: :http}})
     :ok = SubscriptionRegistry.subscribe(expired, "test://one")
 
     send(manager, :cleanup_expired_sessions)
@@ -87,7 +89,7 @@ defmodule ExMCP.SubscriptionRegistryTest do
 
   test "resource broadcasts deliver independently to every connected subscriber" do
     uri = "test://broadcast"
-    sessions = Enum.map(["a", "b", "offline"], &unique_session/1)
+    sessions = Enum.map(1..3, fn _ -> SessionManager.create_session(%{transport: :sse}) end)
 
     handlers =
       for session_id <- Enum.take(sessions, 2) do
@@ -103,7 +105,6 @@ defmodule ExMCP.SubscriptionRegistryTest do
     end)
 
     Enum.each(sessions, fn session_id ->
-      assert :ok = SessionManager.ensure_session(session_id, %{transport: :sse})
       assert :ok = SubscriptionRegistry.subscribe(session_id, uri)
     end)
 
@@ -141,9 +142,5 @@ defmodule ExMCP.SubscriptionRegistryTest do
     |> put_req_header("content-type", "application/json")
     |> put_req_header("mcp-session-id", session_id)
     |> HttpPlug.call(HttpPlug.init(handler: SubscriptionHandler, sse_enabled: false))
-  end
-
-  defp unique_session(prefix) do
-    "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
   end
 end

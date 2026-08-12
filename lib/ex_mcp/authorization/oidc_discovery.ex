@@ -12,7 +12,12 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   Available in protocol version 2025-11-25.
   """
 
-  alias ExMCP.Authorization.{AuthorizationServerMetadata, Issuer, MetadataFetcher}
+  alias ExMCP.Authorization.{
+    AuthorizationServerMetadata,
+    EndpointPolicy,
+    Issuer,
+    MetadataFetcher
+  }
 
   @type oidc_metadata :: %{String.t() => term()}
 
@@ -45,7 +50,7 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
     with :ok <- validate_issuer_url(issuer, opts),
          urls <- build_discovery_urls(issuer),
          {:ok, metadata} <- try_urls(urls, metadata_options(opts), nil),
-         :ok <- validate_metadata(metadata, issuer) do
+         :ok <- validate_metadata(metadata, issuer, opts) do
       {:ok, metadata}
     end
   end
@@ -97,10 +102,11 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   - `id_token_signing_alg_values_supported`
   - `subject_types_supported`
   """
-  @spec validate_metadata(oidc_metadata(), String.t()) :: :ok | {:error, term()}
-  def validate_metadata(metadata, expected_issuer) do
-    with :ok <- validate_issuer(metadata, expected_issuer) do
-      validate_required_endpoints(metadata)
+  @spec validate_metadata(oidc_metadata(), String.t(), keyword()) :: :ok | {:error, term()}
+  def validate_metadata(metadata, expected_issuer, opts \\ []) do
+    with :ok <- validate_issuer(metadata, expected_issuer),
+         :ok <- validate_required_endpoints(metadata) do
+      EndpointPolicy.validate_metadata(metadata, expected_issuer, opts)
     end
   end
 

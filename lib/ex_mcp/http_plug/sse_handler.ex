@@ -27,6 +27,7 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   alias ExMCP.HttpPlug.SessionRegistry
   alias ExMCP.HttpPlug.SSEConnection
+  alias ExMCP.Internal.LogSummary
 
   @max_mailbox_size 10
   @heartbeat_interval 30_000
@@ -226,8 +227,9 @@ defmodule ExMCP.HttpPlug.SSEHandler do
       {:error, reason} ->
         # Do not deliver an event with a fabricated ID when persistence is
         # configured but unavailable; that would make Last-Event-ID lie.
-        Logger.error(
-          "Failed to persist SSE event for session #{state.session_id}: #{inspect(reason)}"
+        Logger.error("Failed to persist SSE event",
+          session_id_hash: LogSummary.fingerprint(state.session_id),
+          reason: LogSummary.describe(reason)
         )
 
         {:noreply, maybe_unblock_producers(state)}
@@ -295,7 +297,10 @@ defmodule ExMCP.HttpPlug.SSEHandler do
 
   @impl true
   def handle_info(msg, state) do
-    Logger.warning("SSE handler received unexpected message: #{inspect(msg)}")
+    Logger.warning("SSE handler received unexpected message",
+      message_shape: LogSummary.describe(msg)
+    )
+
     {:noreply, state}
   end
 
@@ -552,17 +557,17 @@ defmodule ExMCP.HttpPlug.SSEHandler do
            ] ->
         ExMCP.Error.to_json_rpc(e)
 
-      {type, reason} ->
+      {type, _reason} when is_atom(type) ->
         %{
           code: -32000,
-          message: "#{type}: #{inspect(reason)}",
+          message: "#{type}: internal error",
           data: nil
         }
 
-      reason ->
+      _reason ->
         %{
           code: -32000,
-          message: inspect(reason),
+          message: "Internal server error",
           data: nil
         }
     end

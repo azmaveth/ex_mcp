@@ -114,7 +114,7 @@ defmodule ExMCP.SessionManagementIntegrationTest do
       assert session.transport == :sse
     end
 
-    test "creates new session when referenced session doesn't exist", %{
+    test "rejects a referenced session that does not exist", %{
       plug_opts: opts,
       baseline_count: baseline
     } do
@@ -125,18 +125,12 @@ defmodule ExMCP.SessionManagementIntegrationTest do
         |> put_req_header("mcp-session-id", "non-existent-session")
         |> HttpPlug.call(opts)
 
-      assert conn.status == 200
+      assert conn.status == 404
 
-      # Should create new session (not reuse the non-existent one)
+      # A caller-supplied ID is never allowed to mint a replacement session.
       sessions = SessionManager.list_sessions()
-      assert length(sessions) >= baseline + 1
-
-      # None of the sessions should have the non-existent ID
+      assert length(sessions) == baseline
       refute Enum.any?(sessions, &(&1.id == "non-existent-session"))
-
-      # At least one SSE session should exist
-      sse_sessions = Enum.filter(sessions, &(&1.transport == :sse))
-      assert length(sse_sessions) >= 1
     end
   end
 
@@ -214,14 +208,13 @@ defmodule ExMCP.SessionManagementIntegrationTest do
       assert session.status == :terminated
     end
 
-    test "handles DELETE for non-existent session gracefully", %{plug_opts: opts} do
+    test "rejects DELETE for a non-existent session", %{plug_opts: opts} do
       # Send DELETE request for non-existent session
       conn =
         conn(:delete, "/sse/non-existent-session")
         |> HttpPlug.call(opts)
 
-      # Should return 204 without error
-      assert conn.status == 204
+      assert conn.status == 404
     end
   end
 

@@ -1,8 +1,11 @@
 defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias ExMCP.Authorization.CredentialStore
   alias ExMCP.Authorization.FullOAuthFlow
+  alias ExMCP.Internal.LogSummary
 
   defmodule StoreAdapter do
     @behaviour CredentialStore
@@ -129,6 +132,110 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
     end
   end
 
+  test "OAuth logs and telemetry expose only fingerprints for private identifiers" do
+    unique = System.unique_integer([:positive])
+    client_id = "private-client-#{unique}"
+    server = oauth_server(client_id)
+    resource_url = server.resource_origin <> "/mcp"
+    registration_endpoint = server.actual_origin <> "/register"
+
+    {:ok, store_agent} =
+      Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
+
+    events = [
+      [:ex_mcp, :auth, :flow, :started],
+      [:ex_mcp, :auth, :discovery, :completed],
+      [:ex_mcp, :auth, :registration, :completed],
+      [:ex_mcp, :auth, :flow, :completed]
+    ]
+
+    handler_id = "oauth-privacy-success-#{unique}"
+    owner = self()
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        events,
+        fn event, _measurements, metadata, pid -> send(pid, {event, metadata}) end,
+        owner
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      capture_log([metadata: [:registration_endpoint_hash]], fn ->
+        assert {:ok, %{access_token: "token-for-" <> ^client_id}} =
+                 server
+                 |> flow_config({StoreAdapter, store_agent})
+                 |> FullOAuthFlow.execute()
+      end)
+
+    assert_receive {[:ex_mcp, :auth, :flow, :started], started}
+    assert started == %{resource_hash: LogSummary.fingerprint(resource_url)}
+
+    assert_receive {[:ex_mcp, :auth, :discovery, :completed], discovery}
+    assert discovery == %{issuer_hash: LogSummary.fingerprint(server.issuer)}
+
+    assert_receive {[:ex_mcp, :auth, :registration, :completed], registration}
+
+    assert registration == %{
+             client_id_hash: LogSummary.fingerprint(client_id),
+             issuer_hash: LogSummary.fingerprint(server.issuer)
+           }
+
+    assert_receive {[:ex_mcp, :auth, :flow, :completed], completed}
+    assert completed == %{resource_hash: LogSummary.fingerprint(resource_url)}
+
+    refute log =~ registration_endpoint
+    refute log =~ server.issuer
+    refute log =~ resource_url
+    refute log =~ client_id
+    assert log =~ LogSummary.fingerprint(registration_endpoint)
+  end
+
+  test "PRM mismatch logs and failure telemetry do not expose either resource URL" do
+    unique = System.unique_integer([:positive])
+    private_prm_resource = "https://private-prm-#{unique}.example/resource"
+    server = oauth_server("unused-client", nil, prm_resource: private_prm_resource)
+    server_url = server.resource_origin <> "/mcp"
+
+    {:ok, store_agent} =
+      Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
+
+    handler_id = "oauth-privacy-failure-#{unique}"
+    owner = self()
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:ex_mcp, :auth, :flow, :failed],
+        fn event, _measurements, metadata, pid -> send(pid, {event, metadata}) end,
+        owner
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      capture_log([metadata: [:resource_hash, :server_hash]], fn ->
+        assert {:error, {:resource_mismatch, ^private_prm_resource, ^server_url}} =
+                 server
+                 |> flow_config({StoreAdapter, store_agent})
+                 |> FullOAuthFlow.execute()
+      end)
+
+    assert_receive {[:ex_mcp, :auth, :flow, :failed], metadata}
+
+    assert metadata == %{
+             resource_hash: LogSummary.fingerprint(server_url),
+             reason: "tuple(size=3)"
+           }
+
+    refute log =~ private_prm_resource
+    refute log =~ server_url
+    assert log =~ LogSummary.fingerprint(private_prm_resource)
+    assert log =~ LogSummary.fingerprint(server_url)
+  end
+
   defp oauth_server(client_id, metadata_issuer \\ nil, opts \\ []) do
     bypass = Bypass.open()
     unique = System.unique_integer([:positive])
@@ -147,6 +254,7 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
         case {uri.host, uri.path} do
           {^resource_host, "/prm"} ->
             %{"authorization_servers" => [issuer]}
+            |> maybe_put("resource", opts[:prm_resource])
 
           {^issuer_host, "/.well-known/openid-configuration"} ->
             %{
@@ -204,6 +312,7 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
       bypass: bypass,
       issuer: issuer,
       resource_origin: resource_origin,
+      actual_origin: actual_origin,
       metadata_client: metadata_client,
       counter: counter
     }
@@ -221,7 +330,9 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
       scopes: ["tools:read"],
       metadata_fetch: [
         http_client: server.metadata_client,
-        dns_resolver: fn _host, _timeout -> {:ok, [{93, 184, 216, 34}]} end
+        dns_resolver: fn _host, _timeout -> {:ok, [{93, 184, 216, 34}]} end,
+        allowed_endpoint_origins: [server.actual_origin],
+        allow_insecure_loopback: true
       ]
     }
   end
@@ -231,4 +342,7 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
     |> Plug.Conn.put_resp_content_type("application/json")
     |> Plug.Conn.resp(status, Jason.encode!(body))
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

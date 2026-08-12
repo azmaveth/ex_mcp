@@ -15,6 +15,8 @@ defmodule ExMCP.Protocol.RequestTracker do
 
   require Logger
 
+  alias ExMCP.Internal.LogSummary
+
   @type request_id :: String.t() | integer()
   @type from :: GenServer.from()
   @type state :: map()
@@ -197,7 +199,10 @@ defmodule ExMCP.Protocol.RequestTracker do
 
       :error ->
         # Not pending, just keep the cancellation mark
-        Logger.debug("Request #{request_id} not found in pending requests")
+        Logger.debug("Request not found in pending requests",
+          request_id_hash: LogSummary.fingerprint(request_id)
+        )
+
         {:noreply, new_state}
     end
   end

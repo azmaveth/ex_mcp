@@ -7,11 +7,12 @@ defmodule ExMCP.Internal.SecurityConfig do
 
   ## Defaults are fail-closed
 
-  `:trusted_origins` defaults to loopback only and `:consent_handler` defaults
-  to `ExMCP.ConsentHandler.Deny`. `ExMCP.Transport.SecurityGuard` runs on every
-  outbound request, so a client pointed at a server that is **not** on
-  localhost has its credential headers stripped and is then denied, until the
-  application declares that origin:
+  `:trusted_origins` defaults to empty, `:trusted_hosts` contains loopback
+  compatibility entries, and `:consent_handler` defaults to
+  `ExMCP.ConsentHandler.Deny`. `ExMCP.Transport.SecurityGuard` runs on every
+  outbound request, so a client pointed at a non-loopback server has its
+  credential headers stripped and is then denied until the application
+  declares that exact origin:
 
       config :ex_mcp, :security,
         trusted_origins: ["https://mcp.example.com"]
@@ -23,8 +24,11 @@ defmodule ExMCP.Internal.SecurityConfig do
 
   ## Settings
 
-    * `:trusted_origins` - hosts or origins treated as the same security
-      domain. `"*.example.com"` matches subdomains.
+    * `:trusted_origins` - exact HTTP(S) origins. Scheme, normalized host, and
+      effective port must all match.
+    * `:trusted_hosts` - deliberately broad host-only trust across schemes and
+      ports. `"*.example.com"` matches subdomains but not the apex. This exists
+      for loopback compatibility; prefer exact origins for remote services.
     * `:consent_handler` - module implementing `ExMCP.ConsentHandler`, asked to
       approve access to origins that are *not* trusted.
     * `:consent_ttl` - lifetime of a cached consent decision, **in
@@ -41,9 +45,12 @@ defmodule ExMCP.Internal.SecurityConfig do
 
   require Logger
 
+  alias ExMCP.Security.TokenHandler
+
   @default_config %{
     # Token passthrough prevention
-    trusted_origins: ["localhost", "127.0.0.1", "::1"],
+    trusted_origins: [],
+    trusted_hosts: ["localhost", "127.0.0.1", "::1"],
     additional_sensitive_headers: [],
 
     # Consent management
@@ -99,6 +106,7 @@ defmodule ExMCP.Internal.SecurityConfig do
   @spec validate_config(map()) :: {:ok, map()} | {:error, String.t()}
   def validate_config(config) do
     with :ok <- validate_trusted_origins(config.trusted_origins),
+         :ok <- validate_trusted_hosts(Map.get(config, :trusted_hosts, [])),
          :ok <- validate_consent_handler(config.consent_handler),
          :ok <- validate_ttl_values(config),
          :ok <- validate_enforcement_switches(config),
@@ -162,14 +170,22 @@ defmodule ExMCP.Internal.SecurityConfig do
   # Private validation functions
 
   defp validate_trusted_origins(origins) when is_list(origins) do
-    if Enum.all?(origins, &is_binary/1) do
+    if Enum.all?(origins, &TokenHandler.valid_trusted_origin?/1) do
       :ok
     else
-      {:error, "trusted_origins must be a list of strings"}
+      {:error, "trusted_origins must contain exact HTTP(S) origins"}
     end
   end
 
   defp validate_trusted_origins(_), do: {:error, "trusted_origins must be a list"}
+
+  defp validate_trusted_hosts(hosts) when is_list(hosts) do
+    if Enum.all?(hosts, &TokenHandler.valid_trusted_host?/1),
+      do: :ok,
+      else: {:error, "trusted_hosts must contain host names or explicit *.example.com patterns"}
+  end
+
+  defp validate_trusted_hosts(_hosts), do: {:error, "trusted_hosts must be a list"}
 
   defp validate_consent_handler(handler) when is_atom(handler) do
     if Code.ensure_loaded?(handler) and function_exported?(handler, :request_consent, 3) do

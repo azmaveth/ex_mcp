@@ -19,7 +19,7 @@ pointing a client at a remote server.
 | OAuth 2.1 flows | Yes | No | No |
 | TLS | Yes | No | Only through distributed Erlang if you add it |
 | Origin/CORS checks | Yes | No | Not applicable |
-| DNS rebinding protection | Origin + Host allow-lists (`:allowed_origins`, `:allowed_hosts`, `ExMCP.Plugs.DnsRebinding`) | Not applicable | Not applicable |
+| DNS rebinding protection | Server Host/origin checks plus outbound complete-answer validation and IP pinning | Not applicable | Not applicable |
 | Outbound origin trust (`SecurityGuard`) | Yes | Yes, for `resources/*` URIs | Not applicable |
 | Process isolation | Server process | Subprocess | Local BEAM process |
 
@@ -28,7 +28,8 @@ pointing a client at a remote server.
 `ExMCP.Transport.SecurityGuard` runs on every outbound HTTP POST — the
 JSON-RPC channel — and on the URIs of `resources/read` / `resources/list`
 requests sent over stdio. It classifies the target URL against
-`:trusted_origins` and, for anything that is **not** trusted:
+`:trusted_origins` (exact origins) and `:trusted_hosts` (an explicitly broad
+compatibility policy). For anything that is **not** trusted it:
 
 1. removes credential headers (`authorization`, `cookie`, `x-api-key`,
    `x-auth-token`, `x-csrf-token`) so a token issued for one origin is never
@@ -37,7 +38,8 @@ requests sent over stdio. It classifies the target URL against
    decision until it expires.
 
 **The defaults are fail-closed and this bites first-time users.**
-`:trusted_origins` is loopback-only and `:consent_handler` is
+`:trusted_origins` is empty, `:trusted_hosts` contains only loopback names, and
+`:consent_handler` is
 `ExMCP.ConsentHandler.Deny`, so a client pointed at a server that is not on
 localhost has its `Authorization` header stripped and the request denied with
 `consent_denied`. Declare the servers your application talks to:
@@ -49,13 +51,16 @@ config :ex_mcp, :security,
 
 A trusted origin is exempt from *both* checks — it is never stripped and never
 prompts for consent. Consent then applies only to origins your application did
-not declare. Prefer this over disabling a control. The SecurityGuard logs the
-exact setting to add whenever it strips credentials or blocks a request, so
-this failure mode is loud rather than silent.
+not declare. Exact trust compares the URI scheme, normalized host, and effective
+port: trusting `https://mcp.example.com` does not trust HTTP or port 8443 on the
+same host. Prefer this over disabling a control. Security logs identify the
+decision using a non-reversible origin fingerprint rather than disclosing the
+full URL or query string.
 
 | Setting | Default | Effect |
 |---------|---------|--------|
-| `:trusted_origins` | `["localhost", "127.0.0.1", "::1"]` | Same security domain. `"*.example.com"` matches subdomains. |
+| `:trusted_origins` | `[]` | Exact HTTP(S) origins. Scheme, host, and effective port must match. Userinfo, query strings, fragments, and wildcards are rejected. |
+| `:trusted_hosts` | `["localhost", "127.0.0.1", "::1"]` | Broad host-only compatibility trust across schemes and ports. `"*.example.com"` matches subdomains but not the apex. Avoid for remote production services. |
 | `:consent_handler` | `ExMCP.ConsentHandler.Deny` | Consulted for untrusted origins. `CLI` prompts; `Web` defers to an out-of-band flow. |
 | `:consent_ttl` | 24 hours (milliseconds) | Lifetime of a cached consent decision. |
 | `:enable_token_passthrough_prevention` | `true` | Set `false` to forward credentials to untrusted origins. |
@@ -101,6 +106,20 @@ mistake — it would otherwise grant consent for decades — so implausible valu
 For OAuth flows, use the authorization modules or `:auth` / `:auth_provider`
 options on the HTTP transport.
 
+The HTTP transport applies finite connection/request deadlines, disables
+automatic redirects, requests identity encoding, and enforces request,
+response, and incomplete-stream limits incrementally. Configure
+`:max_request_bytes`, `:max_response_bytes`, and `:max_stream_buffer_bytes` for
+your application's largest legitimate message; over-limit peers are closed.
+
+Every MCP POST, GET/SSE, authentication retry, and DELETE resolves the target,
+rejects any mixed or non-public A/AAAA answer, and connects to one approved IP
+while retaining the URI hostname for HTTP authority, TLS SNI, and certificate
+verification. Caller-supplied `Host` is discarded. Named and literal loopback
+targets remain available for local servers. An internal RFC 1918 or IPv6 ULA
+target requires an exact `:allowed_private_hosts` entry; wildcards, link-local,
+reserved, and metadata-service addresses remain denied.
+
 ### OAuth credential isolation
 
 Modern pre-registered clients bind their credentials to an exact
@@ -142,6 +161,15 @@ never forward bearer tokens, cookies, client credentials, MCP session headers,
 or application transport headers. URL-only custom client adapters are rejected
 because they cannot prove address pinning.
 
+The same network policy now applies to endpoints *contained in* discovered
+authorization-server metadata. Token, authorization, registration,
+introspection, revocation, and JWKS endpoints must be HTTPS, resolve only to
+public addresses, and share the issuer's exact origin unless an operator grants
+an exact exception. OAuth POST clients disable redirects and bound request and
+response sizes. The loopback exception used for an application's own redirect
+URI never permits a remote authorization server to advertise an internal
+endpoint.
+
 ### TLS
 
 HTTPS connections verify the peer against the OS trust store with TLS 1.2/1.3
@@ -175,6 +203,23 @@ end
 Keep request authentication and authorization at the HTTP edge. Keep
 tool/resource authorization in handler code when it depends on the specific
 tool, resource URI, user, tenant, or project.
+
+Legacy Streamable HTTP sessions are issued only by `initialize`. The server
+atomically permits one initialization attempt, monitors its request process,
+and exposes the session ID only after a successful response binds the negotiated
+version. Later POST and GET requests require that issued initialized session,
+matching authorization identity, and matching protocol-version header. Failed,
+abandoned, repeated, and concurrent initialization attempts fail closed. The
+deprecated 2024 HTTP+SSE endpoint remains a separate compatibility transport.
+
+When `oauth_enabled: true`, configure a canonical HTTPS `:resource`, at least
+one HTTPS `:authorization_servers` issuer, and an `:auth_config` that contains
+the introspection endpoint, resource-server credentials, `:expected_issuer`,
+and `:expected_audience` (or `:expected_resource`). Introspection uses
+authenticated client credentials and rejects tokens with a missing or wrong
+issuer/audience, expired `exp`, or future `nbf`, even when the endpoint reports
+`active: true`. `legacy_unbound_tokens: true` is a migration-only escape hatch
+that deliberately disables these bindings.
 
 ### MRTR request state
 
@@ -260,9 +305,12 @@ three complementary controls:
 On legacy Streamable HTTP paths, session IDs supplied via `mcp-session-id` /
 legacy `x-session-id` headers are validated (max 128 bytes,
 `A-Za-z0-9._~+/=-`) and malformed values are rejected with `400` without
-being echoed back. MCP 2026-07-28 is stateless; do not use a session header as
-authentication, authorization context, tenant identity, or modern request
-correlation.
+being echoed back. A syntactically valid client-selected or expired ID is also
+rejected: only server-issued active IDs are accepted. Each legacy session is
+immutably bound to its authenticated principal, tenant, token issuer, and
+resource audience, and POST, GET, and DELETE all re-check that binding. MCP
+2026-07-28 is stateless; do not use a session header as authentication,
+authorization context, tenant identity, or modern request correlation.
 
 ## JSON Schema References and Resource Limits
 
@@ -364,10 +412,17 @@ that launches it.
 Best practices:
 
 - Use absolute commands or controlled PATHs for production.
-- Set `cd` and `env` explicitly.
+- Keep the default `environment_policy: :isolated`, which passes only a small
+  runtime allowlist, and grant required variables explicitly with `:env`.
+- Use `environment_policy: :inherit` only for a fully trusted subprocess that
+  genuinely needs the complete parent environment.
+- Set `cd` explicitly.
 - Do not log to stdout; stdout is protocol traffic.
 - Run subprocesses with the least privileges needed.
 - Validate tool arguments before touching filesystem or network resources.
+
+Environment isolation prevents accidental credential inheritance; it is not a
+filesystem, process, or network sandbox.
 
 ## BEAM-Local Security
 
@@ -486,8 +541,8 @@ but `Mcp-Param-*` values are never echoed.
 
 **`{:security_violation, %ExMCP.Transport.SecurityError{type: :consent_denied}}`**
 
-The server's origin is not in `:trusted_origins` and the default consent
-handler denied it. Add the origin — see
+The server's origin is not in `:trusted_origins` or `:trusted_hosts`, and the
+default consent handler denied it. Add the exact origin — see
 [Outbound Requests](#outbound-requests-trusted-origins-and-consent).
 
 **401/403 from HTTP server**

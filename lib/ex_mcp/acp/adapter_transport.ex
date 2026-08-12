@@ -27,10 +27,15 @@ defmodule ExMCP.ACP.AdapterTransport do
     adapter_opts = Keyword.get(opts, :adapter_opts, [])
     receive_timeout = Keyword.get(opts, :receive_timeout, :infinity)
 
-    bridge_opts = [
-      adapter: adapter,
-      adapter_opts: adapter_opts
-    ]
+    bridge_opts =
+      [adapter: adapter, adapter_opts: adapter_opts] ++
+        Keyword.take(opts, [
+          :max_buffer_bytes,
+          :max_outbox_messages,
+          :max_outbox_bytes,
+          :max_waiters,
+          :max_one_shot_tasks
+        ])
 
     case AdapterBridge.start_link(bridge_opts) do
       {:ok, bridge} ->

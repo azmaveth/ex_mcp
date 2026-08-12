@@ -28,8 +28,11 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
       opts =
         HttpPlug.init(
           handler: nil,
+          endpoint: "/mcp",
           server_info: %{name: "test-server", version: "1.0.0"},
           oauth_enabled: true,
+          resource: "https://mcp.test/mcp",
+          authorization_servers: ["https://auth.test.com"],
           cors_enabled: true,
           allowed_origins: :any
         )
@@ -63,6 +66,18 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
       assert metadata["introspection_endpoint"] == "https://auth.test.com/introspect"
     end
 
+    test "serves canonical RFC 9728 protected-resource metadata", %{opts: opts} do
+      conn = conn(:get, "/.well-known/oauth-protected-resource/mcp")
+      result_conn = HttpPlug.call(conn, opts)
+
+      assert result_conn.status == 200
+      metadata = Jason.decode!(result_conn.resp_body)
+      assert metadata["resource"] == "https://mcp.test/mcp"
+      assert metadata["authorization_servers"] == ["https://auth.test.com"]
+      assert metadata["bearer_methods_supported"] == ["header"]
+      refute "mcp:unknown" in metadata["scopes_supported"]
+    end
+
     test "includes CORS headers when CORS is enabled", %{opts: opts} do
       conn = conn(:get, "/.well-known/oauth-authorization-server")
 
@@ -78,6 +93,7 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
       opts =
         HttpPlug.init(
           handler: nil,
+          endpoint: "/mcp",
           server_info: %{name: "test-server"},
           # OAuth disabled
           oauth_enabled: false
@@ -102,8 +118,11 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
       opts =
         HttpPlug.init(
           handler: nil,
+          endpoint: "/mcp",
           server_info: %{name: "test-server"},
-          oauth_enabled: true
+          oauth_enabled: true,
+          resource: "https://mcp.test/mcp",
+          authorization_servers: ["https://auth.test.com"]
         )
 
       conn = conn(:get, "/.well-known/oauth-authorization-server")
@@ -212,6 +231,16 @@ defmodule ExMCP.HttpPlugOAuthAuthorizationServerTest do
       assert metadata["issuer"] == "https://minimal.test.com"
       assert metadata["authorization_endpoint"] == "https://minimal.test.com/auth"
       assert metadata["token_endpoint"] == "https://minimal.test.com/token"
+    end
+
+    test "rejects OAuth configuration without protected-resource metadata" do
+      assert_raise ArgumentError, ~r/requires.*authorization_servers/, fn ->
+        HttpPlug.init(
+          handler: nil,
+          oauth_enabled: true,
+          resource: "https://mcp.test/mcp"
+        )
+      end
     end
   end
 end

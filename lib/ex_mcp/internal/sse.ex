@@ -52,7 +52,7 @@ defmodule ExMCP.Internal.SSE do
 
       String.starts_with?(line, "retry: ") ->
         case Integer.parse(String.trim_leading(line, "retry: ")) do
-          {ms, _} -> Map.put(acc, :retry, ms)
+          {ms, ""} when ms >= 0 -> Map.put(acc, :retry, ms)
           _ -> acc
         end
 

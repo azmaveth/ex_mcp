@@ -9,7 +9,7 @@ defmodule ExMCP.Client.RequestHandler do
   require Logger
   alias ExMCP.Client.{InputDispatcher, MRTR}
   alias ExMCP.Error
-  alias ExMCP.Internal.{JSONRPC, Maps, Protocol, RequestParams, VersionRegistry}
+  alias ExMCP.Internal.{JSONRPC, LogSummary, Maps, Protocol, RequestParams, VersionRegistry}
   alias ExMCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
   alias ExMCP.Tasks.Extension, as: TasksExtension
   alias ExMCP.Transport.HTTP
@@ -415,7 +415,10 @@ defmodule ExMCP.Client.RequestHandler do
         handle_cancellation_notification(params, state)
 
       {:notification, method, _params} ->
-        Logger.info("Received notification: #{method}")
+        Logger.info("Received unsupported notification",
+          method_hash: LogSummary.fingerprint(method)
+        )
+
         {:noreply, state}
 
       {:request, method, params, id} ->
@@ -428,7 +431,10 @@ defmodule ExMCP.Client.RequestHandler do
         handle_batch_response(parsed_responses, state)
 
       {:error, reason} ->
-        Logger.error("Failed to parse transport message: #{inspect(reason)}")
+        Logger.error("Failed to parse transport message",
+          reason_shape: LogSummary.describe(reason)
+        )
+
         {:noreply, state}
     end
   end
@@ -551,7 +557,8 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   def handle_single_response(other, state) do
-    Logger.warning("Received unexpected response format: #{inspect(other)}")
+    Logger.warning("Received unexpected response format: #{LogSummary.describe(other)}")
+
     {:noreply, state}
   end
 
@@ -579,7 +586,8 @@ defmodule ExMCP.Client.RequestHandler do
           {:noreply, new_state}
 
         nil ->
-          Logger.warning("Received response without an ID: #{inspect(response_data)}")
+          Logger.warning("Received response without an ID: #{LogSummary.describe(response_data)}")
+
           {:noreply, state}
       end
     else
@@ -625,7 +633,10 @@ defmodule ExMCP.Client.RequestHandler do
           handle_batch_response_item(response_data, response_id, batch_id, state)
 
         :error ->
-          Logger.warning("Received response for unknown request ID: #{response_id}")
+          Logger.warning("Received response for unknown request ID",
+            request_id_hash: LogSummary.fingerprint(response_id)
+          )
+
           state
       end
 
@@ -647,11 +658,17 @@ defmodule ExMCP.Client.RequestHandler do
           {:noreply, update_handler_state(state, new_handler_state)}
 
         {:error, reason, new_handler_state} ->
-          Logger.warning("Client request notification handler failed: #{inspect(reason)}")
+          Logger.warning("Client request notification handler failed",
+            reason_shape: LogSummary.describe(reason)
+          )
+
           {:noreply, update_handler_state(state, new_handler_state)}
 
         other ->
-          Logger.warning("Invalid client request notification handler reply: #{inspect(other)}")
+          Logger.warning("Invalid client request notification handler reply",
+            reply_shape: LogSummary.describe(other)
+          )
+
           {:noreply, state}
       end
     else
@@ -659,7 +676,10 @@ defmodule ExMCP.Client.RequestHandler do
     end
   rescue
     error ->
-      Logger.warning("Client request notification handler raised: #{Exception.message(error)}")
+      Logger.warning("Client request notification handler raised",
+        error_class: LogSummary.describe(error)
+      )
+
       {:noreply, state}
   end
 
@@ -706,8 +726,9 @@ defmodule ExMCP.Client.RequestHandler do
         end
 
       _ ->
-        Logger.error(
-          "Inconsistent state: found batch_id #{inspect(batch_id)} for request #{response_id}, but no batch info."
+        Logger.error("Inconsistent batch response state",
+          batch_id_hash: LogSummary.fingerprint(batch_id),
+          request_id_hash: LogSummary.fingerprint(response_id)
         )
 
         state
@@ -736,7 +757,10 @@ defmodule ExMCP.Client.RequestHandler do
         {:noreply, state}
 
       {:error, reason} ->
-        Logger.error("Failed to send notification: #{inspect(reason)}")
+        Logger.error("Failed to send notification",
+          reason_shape: LogSummary.describe(reason)
+        )
+
         {:noreply, state}
     end
   end
@@ -1357,7 +1381,9 @@ defmodule ExMCP.Client.RequestHandler do
         {:noreply, state}
 
       {{_ref, from, _scope_ref}, tasks} ->
-        Logger.error("MRTR input handler task exited: #{inspect(reason)}")
+        Logger.error("MRTR input handler task exited",
+          reason_shape: LogSummary.describe(reason)
+        )
 
         GenServer.reply(
           from,
@@ -1390,7 +1416,9 @@ defmodule ExMCP.Client.RequestHandler do
   defp normalize_mrtr_error(%Error.ProtocolError{} = error), do: error
 
   defp normalize_mrtr_error(reason) do
-    Logger.error("MRTR input handler failed: #{inspect(reason)}")
+    Logger.error("MRTR input handler failed",
+      reason_shape: LogSummary.describe(reason)
+    )
 
     Error.protocol_error(
       ErrorCodes.internal_error(),
@@ -1440,16 +1468,20 @@ defmodule ExMCP.Client.RequestHandler do
             {response, state} = map_callback_return(kind, callback_return, request_id, state)
             send_response(response, state)
 
-          {:handler_raised, error, stacktrace} ->
-            Logger.error(
-              "Client handler for #{kind} raised: " <>
-                Exception.format(:error, error, stacktrace)
+          {:handler_raised, error, _stacktrace} ->
+            Logger.error("Client handler raised",
+              handler_kind: kind,
+              error_class: LogSummary.describe(error)
             )
 
             send_response(internal_handler_error(request_id), state)
 
           {:handler_caught, detail} ->
-            Logger.error("Client handler for #{kind} exited: #{inspect(detail)}")
+            Logger.error("Client handler exited",
+              handler_kind: kind,
+              detail_shape: LogSummary.describe(detail)
+            )
+
             send_response(internal_handler_error(request_id), state)
         end
     end
@@ -1464,7 +1496,12 @@ defmodule ExMCP.Client.RequestHandler do
 
       {{_ref, request_id, kind}, tasks} ->
         state = %{state | server_request_tasks: tasks}
-        Logger.error("Client handler task for #{kind} exited: #{inspect(reason)}")
+
+        Logger.error("Client handler task exited",
+          handler_kind: kind,
+          reason_shape: LogSummary.describe(reason)
+        )
+
         send_response(internal_handler_error(request_id), state)
     end
   end
@@ -1480,7 +1517,11 @@ defmodule ExMCP.Client.RequestHandler do
         {kind_error_response(kind, error, request_id), state}
 
       other ->
-        Logger.error("Client handler for #{kind} returned unexpected value: #{inspect(other)}")
+        Logger.error("Client handler returned unexpected value",
+          handler_kind: kind,
+          reply_shape: LogSummary.describe(other)
+        )
+
         {internal_handler_error(request_id), state}
     end
   end
@@ -1532,7 +1573,10 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp handler_error_response(error, request_id) do
-    Logger.error("Client handler error: #{inspect(error)}")
+    Logger.error("Client handler error",
+      error_shape: LogSummary.describe(error)
+    )
+
     internal_handler_error(request_id)
   end
 
@@ -1558,7 +1602,10 @@ defmodule ExMCP.Client.RequestHandler do
         end
 
       {:error, reason} ->
-        Logger.error("Failed to send response to server: #{inspect(reason)}")
+        Logger.error("Failed to send response to server",
+          reason_shape: LogSummary.describe(reason)
+        )
+
         {:noreply, state}
     end
   end

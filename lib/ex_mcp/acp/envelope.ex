@@ -21,7 +21,7 @@ defmodule ExMCP.ACP.Envelope do
   defdelegate request(method, params), to: JSONRPC
 
   @doc "Builds a JSON-RPC request envelope with params and id."
-  @spec request(String.t(), map(), integer() | String.t()) :: map()
+  @spec request(String.t(), map(), integer() | String.t() | nil) :: map()
   defdelegate request(method, params, id), to: JSONRPC
 
   @doc "Builds a JSON-RPC notification envelope."
@@ -29,7 +29,7 @@ defmodule ExMCP.ACP.Envelope do
   defdelegate notification(method, params \\ %{}), to: JSONRPC
 
   @doc "Builds a JSON-RPC success response envelope."
-  @spec response(integer() | String.t(), any()) :: map()
+  @spec response(integer() | String.t() | nil, any()) :: map()
   defdelegate response(id, result), to: JSONRPC
 
   @doc "Builds a JSON-RPC error response from an error map."

@@ -7,6 +7,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # Tag coverage map (see test/test_helper.exs for the default exclusions and
 # test/TAGGING_STRATEGY.md for the meaning of each tag):
 #
@@ -51,16 +54,18 @@ jobs:
             quality: false
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
-      uses: erlef/setup-beam@v1
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{matrix.otp}}
         elixir-version: ${{matrix.elixir}}
 
     - name: Restore deps/_build cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           deps
@@ -124,16 +129,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
-      uses: erlef/setup-beam@v1
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
 
     - name: Restore deps/_build cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           deps
@@ -167,16 +174,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
-      uses: erlef/setup-beam@v1
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
 
     - name: Restore deps/_build cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           deps
@@ -201,21 +210,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
-      uses: erlef/setup-beam@v1
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
 
     - name: Set up Node.js
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
         node-version: '20'
 
     - name: Restore deps/_build cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           deps
@@ -225,7 +236,7 @@ jobs:
           ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
 
     - name: Cache interop node_modules
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: test/interop/node_modules
         key: ${{ runner.os }}-interop-node-${{ hashFiles('test/interop/package.json', 'test/interop/package-lock.json') }}
@@ -268,22 +279,24 @@ jobs:
       MIX_ENV: dev
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
-      uses: erlef/setup-beam@v1
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
 
     - name: Set up Node.js
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
         # The 2026-07-28 alpha harness imports fs.globSync (Node 22+).
         node-version: '22'
 
     - name: Restore deps/_build cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           deps
@@ -303,7 +316,7 @@ jobs:
 
     - name: Preserve conformance evidence
       if: always()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
         name: mcp-2026-07-28-conformance
         path: |
@@ -316,16 +329,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
-      uses: erlef/setup-beam@v1
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
 
     - name: Restore deps/_build cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           deps
@@ -359,16 +374,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
 
     - name: Set up Elixir
-      uses: erlef/setup-beam@v1
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
       with:
         otp-version: ${{ env.CI_OTP_VERSION }}
         elixir-version: ${{ env.CI_ELIXIR_VERSION }}
 
     - name: Restore deps/_build cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           deps
@@ -378,7 +395,7 @@ jobs:
           ${{ runner.os }}-mix-${{ env.CI_OTP_VERSION }}-${{ env.CI_ELIXIR_VERSION }}-
 
     - name: Restore PLT cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       id: plt_cache
       with:
         path: priv/plts

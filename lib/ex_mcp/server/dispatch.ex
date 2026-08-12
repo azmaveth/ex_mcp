@@ -29,7 +29,7 @@ defmodule ExMCP.Server.Dispatch do
   """
 
   alias ExMCP.Error
-  alias ExMCP.Internal.JSONRPC
+  alias ExMCP.Internal.{JSONRPC, MessageValidator}
   alias ExMCP.Protocol.{ErrorCodes, Initialize, Methods}
   alias ExMCP.Server.{Context, Discover, MRTR, RequestContext, ResultNormalizer}
 
@@ -62,8 +62,19 @@ defmodule ExMCP.Server.Dispatch do
   def dispatch(request, handler_module, handler_state, opts)
 
   def dispatch(%{"method" => method} = request, handler_module, state, opts) do
-    params = Map.get(request, "params") || %{}
+    params = if Map.has_key?(request, "params"), do: Map.get(request, "params"), else: %{}
 
+    case MessageValidator.validate_method_params(method, params) do
+      :ok -> dispatch_validated(request, method, params, handler_module, state, opts)
+      {:error, error} -> parameter_error_result(request, error, state)
+    end
+  end
+
+  def dispatch(_invalid_request, _handler_module, state, _opts) do
+    {:response, JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid Request"), state}
+  end
+
+  defp dispatch_validated(request, method, params, handler_module, state, opts) do
     case RequestContext.from_message(request) do
       {:ok, request_context} ->
         with :ok <-
@@ -96,10 +107,6 @@ defmodule ExMCP.Server.Dispatch do
     end
   end
 
-  def dispatch(_invalid_request, _handler_module, state, _opts) do
-    {:response, JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid Request"), state}
-  end
-
   defp context_error_result(request, %Error.ProtocolError{} = error, state, _opts) do
     if Map.has_key?(request, "id") do
       {:response, JSONRPC.error(Map.get(request, "id"), Error.to_json_rpc(error)), state}
@@ -121,6 +128,23 @@ defmodule ExMCP.Server.Dispatch do
     else
       {:notification, state}
     end
+  end
+
+  defp parameter_error_result(request, error, state) do
+    if Map.has_key?(request, "id") do
+      {:response, JSONRPC.error(Map.get(request, "id"), json_rpc_error(error)), state}
+    else
+      # JSON-RPC notifications never receive responses, including when their
+      # method parameters are invalid.
+      {:notification, state}
+    end
+  end
+
+  defp json_rpc_error(error) do
+    Map.new(error, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+      entry -> entry
+    end)
   end
 
   @doc """

@@ -175,8 +175,7 @@ defmodule ExMCP.HttpPlug.SSEHandlerTest do
     end
 
     test "persists live events and replays gap events on reconnect" do
-      session_id = "replay-#{System.unique_integer([:positive, :monotonic])}"
-      :ok = SessionManager.ensure_session(session_id, %{transport: :sse})
+      session_id = SessionManager.create_session(%{transport: :sse})
 
       on_exit(fn ->
         SessionRegistry.unregister(session_id)

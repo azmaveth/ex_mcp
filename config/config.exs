@@ -13,8 +13,10 @@ config :ex_mcp,
   # Feature flags for phased rollout of new MCP features.
   # These flags allow for enabling new functionality in a controlled manner.
   #
-  # When `protocol_version_required` is true, the server will require the
-  # `mcp-protocol-version` header on incoming requests.
+  # When `protocol_version_required` is true, legacy HTTP servers require the
+  # `mcp-protocol-version` header on requests after initialization. The
+  # initialize request negotiates its version in params.protocolVersion and
+  # never requires the HTTP header. Explicit headers are always validated.
   protocol_version_required: false,
   # When `structured_output_enabled` is true, tools can return structured
   # content alongside the standard content blocks.
@@ -75,7 +77,8 @@ config :ex_mcp,
 # the setting into YOUR application's config.
 #
 # The defaults are fail-closed. `ExMCP.Transport.SecurityGuard` classifies
-# every outbound URL against :trusted_origins; anything else has its
+# every outbound URL against exact :trusted_origins and explicit broad
+# :trusted_hosts; anything else has its
 # credential headers stripped and must be approved by :consent_handler, which
 # denies by default. A client pointed at a non-localhost MCP server therefore
 # needs that server's origin declared:
@@ -86,9 +89,13 @@ config :ex_mcp,
 # A trusted origin is exempt from both stripping and consent. See
 # docs/SECURITY.md.
 config :ex_mcp, :security,
-  # Origins treated as the same security domain. "*.example.com" matches
-  # subdomains. Add the MCP servers this application connects to.
-  trusted_origins: ["localhost", "127.0.0.1", "::1"],
+  # Exact origins treated as the same security domain. Scheme and effective
+  # port are part of the match. Add the MCP servers this application connects to.
+  trusted_origins: [],
+  # Explicitly broad compatibility policy across schemes and ports. Wildcards
+  # such as "*.example.com" match subdomains but not the apex. Prefer exact
+  # origins for remote services.
+  trusted_hosts: ["localhost", "127.0.0.1", "::1"],
   additional_sensitive_headers: [],
 
   # Consent management. Asked to approve access to origins that are NOT
@@ -115,20 +122,55 @@ config :ex_mcp, :security,
 config :logger, :console,
   metadata: [
     :request_id,
+    :request_id_hash,
+    :progress_id,
+    :session_id_hash,
+    :event_id_hash,
+    :endpoint_hash,
+    :issuer_hash,
+    :resource_hash,
+    :registration_endpoint_hash,
+    :duration_ms,
+    :status,
+    :server_hash,
+    :metadata_keys,
+    :uptime_seconds,
+    :batch_id_hash,
+    :method_hash,
+    :reason_shape,
+    :error_shape,
+    :message_shape,
+    :line_shape,
+    :reply_shape,
+    :detail_shape,
+    :error_class,
+    :handler,
+    :handler_kind,
+    :return_shape,
+    :size,
+    :limit,
     :tag,
     :audit,
     :client_id,
     :reason,
     :registration_type,
     :service_id,
+    :event_type,
+    :data_size,
+    :use_sse,
+    :storage_backend,
+    :max_sessions,
+    :max_request_ids,
+    :session_ttl_seconds,
+    :max_events_per_session,
+    :max_event_bytes,
+    :max_replay_bytes_per_session,
+    :cleanup_interval_ms,
     :method,
     :module,
     :function,
     :error,
-    :url,
-    :transport,
-    :user_id,
-    :token
+    :transport
   ]
 
 # Environment-specific configuration
@@ -138,20 +180,55 @@ if Mix.env() in [:dev, :test] do
   config :logger, :console,
     metadata: [
       :request_id,
+      :request_id_hash,
+      :progress_id,
+      :session_id_hash,
+      :event_id_hash,
+      :endpoint_hash,
+      :issuer_hash,
+      :resource_hash,
+      :registration_endpoint_hash,
+      :duration_ms,
+      :status,
+      :server_hash,
+      :metadata_keys,
+      :uptime_seconds,
+      :batch_id_hash,
+      :method_hash,
+      :reason_shape,
+      :error_shape,
+      :message_shape,
+      :line_shape,
+      :reply_shape,
+      :detail_shape,
+      :error_class,
+      :handler,
+      :handler_kind,
+      :return_shape,
+      :size,
+      :limit,
       :tag,
       :audit,
       :client_id,
       :reason,
       :registration_type,
       :service_id,
+      :event_type,
+      :data_size,
+      :use_sse,
+      :storage_backend,
+      :max_sessions,
+      :max_request_ids,
+      :session_ttl_seconds,
+      :max_events_per_session,
+      :max_event_bytes,
+      :max_replay_bytes_per_session,
+      :cleanup_interval_ms,
       :method,
       :module,
       :function,
       :error,
-      :url,
       :transport,
-      :user_id,
-      :token,
       :file,
       :line
     ]

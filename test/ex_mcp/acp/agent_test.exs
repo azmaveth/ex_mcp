@@ -2,7 +2,7 @@ defmodule ExMCP.ACP.AgentTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.ACP.Agent
-  alias ExMCP.ACP.Agent.Transport.Memory
+  alias ExMCP.ACP.Agent.Transport.{Memory, Stdio}
   alias ExMCP.ACP.Client
   alias ExMCP.ACP.Client.Handler, as: ClientHandler
 
@@ -126,8 +126,12 @@ defmodule ExMCP.ACP.AgentTest do
           [%{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"}]
         )
 
-      {:ok, %{"content" => content}} = Agent.read_text_file(ctx.agent, session_id, "/tmp/a.txt")
-      {:ok, _} = Agent.write_text_file(ctx.agent, session_id, "/tmp/b.txt", "updated")
+      {:ok, %{"content" => content}} =
+        Agent.read_text_file(ctx.agent, session_id, "/tmp/project/a.txt")
+
+      {:ok, _} =
+        Agent.write_text_file(ctx.agent, session_id, "/tmp/project/b.txt", "updated")
+
       {:ok, %{"terminalId" => terminal_id}} = Agent.terminal_create(ctx.agent, session_id, "mix")
       {:ok, %{"output" => "compiled"}} = Agent.terminal_output(ctx.agent, session_id, terminal_id)
       {:ok, %{"exitCode" => 0}} = Agent.terminal_wait_for_exit(ctx.agent, session_id, terminal_id)
@@ -153,6 +157,22 @@ defmodule ExMCP.ACP.AgentTest do
       send(state.test_pid, Agent.read_text_file(ctx.agent, session_id, "/tmp/a.txt"))
       {:reply, "refusal", state}
     end
+  end
+
+  defmodule HangingAgent do
+    @behaviour ExMCP.ACP.Agent.Handler
+
+    @impl true
+    def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
+
+    @impl true
+    def handle_new_session(_params, _ctx, state) do
+      send(state.test_pid, :hanging_handler_started)
+      Process.sleep(:infinity)
+    end
+
+    @impl true
+    def handle_prompt(_session_id, _prompt, _ctx, state), do: {:noreply, state}
   end
 
   defmodule RequestClientHandler do
@@ -326,8 +346,8 @@ defmodule ExMCP.ACP.AgentTest do
                Client.prompt(client, session_id, "use client")
 
       assert_receive {:permission_request, ^session_id, %{"toolName" => "read"}, [_]}
-      assert_receive {:file_read, ^session_id, "/tmp/a.txt", %{}}
-      assert_receive {:file_write, ^session_id, "/tmp/b.txt", "updated"}
+      assert_receive {:file_read, ^session_id, "/tmp/project/a.txt", %{}}
+      assert_receive {:file_write, ^session_id, "/tmp/project/b.txt", "updated"}
       assert_receive {:terminal_request, "terminal/create", %{"command" => "mix"}}
       assert_receive {:terminal_request, "terminal/output", %{"terminalId" => "term_1"}}
       assert_receive {:terminal_request, "terminal/wait_for_exit", %{"terminalId" => "term_1"}}
@@ -435,5 +455,154 @@ defmodule ExMCP.ACP.AgentTest do
 
       assert_receive {:DOWN, ^ref, :process, ^agent, :normal}
     end
+  end
+
+  describe "native agent protocol hardening" do
+    test "rejects requests before initialize" do
+      {_agent, transport} = start_raw_agent(EchoAgent)
+
+      send_raw_request(transport, 1, "session/new", %{"cwd" => "/tmp", "mcpServers" => []})
+
+      assert %{"id" => 1, "error" => %{"code" => -32_002}} = receive_raw(transport)
+    end
+
+    test "requires protocolVersion and permits a valid initialize after invalid params" do
+      {_agent, transport} = start_raw_agent(EchoAgent)
+
+      send_raw_request(transport, 1, "initialize", %{"clientCapabilities" => %{}})
+      assert %{"id" => 1, "error" => %{"code" => -32_602}} = receive_raw(transport)
+
+      initialize_raw(transport, 2)
+      assert %{"id" => 2, "result" => %{"protocolVersion" => 1}} = receive_raw(transport)
+    end
+
+    test "initialize succeeds exactly once" do
+      {_agent, transport} = start_raw_agent(EchoAgent)
+
+      initialize_raw(transport, 1)
+      assert %{"id" => 1, "result" => %{}} = receive_raw(transport)
+
+      initialize_raw(transport, 2)
+      assert %{"id" => 2, "error" => %{"code" => -32_600}} = receive_raw(transport)
+    end
+
+    test "rejects a duplicate outstanding JSON-RPC id without replacing the prompt" do
+      {agent, transport} = start_raw_agent(CancelAgent)
+
+      initialize_raw(transport, 1)
+      assert %{"result" => %{}} = receive_raw(transport)
+
+      prompt = %{
+        "sessionId" => "session-one",
+        "prompt" => [%{"type" => "text", "text" => "wait"}]
+      }
+
+      send_raw_request(transport, "duplicate", "session/prompt", prompt)
+      assert_receive {:prompt_waiting, "duplicate"}
+
+      send_raw_request(transport, "duplicate", "session/prompt", prompt)
+
+      assert %{"id" => "duplicate", "error" => %{"code" => -32_600}} =
+               receive_raw(transport)
+
+      assert :ok = Agent.finish_prompt(agent, "duplicate", "end_turn")
+
+      assert %{"id" => "duplicate", "result" => %{"stopReason" => "end_turn"}} =
+               receive_raw(transport)
+    end
+
+    test "expires a handler callback and removes it from pending state" do
+      {agent, transport} = start_raw_agent(HangingAgent, handler_request_timeout: 20)
+
+      initialize_raw(transport, 1)
+      assert %{"id" => 1, "result" => %{}} = receive_raw(transport)
+
+      send_raw_request(transport, 2, "session/new", %{"cwd" => "/tmp", "mcpServers" => []})
+      assert_receive :hanging_handler_started
+
+      assert %{
+               "id" => 2,
+               "error" => %{"code" => -32_603, "message" => "Agent handler timed out"}
+             } = receive_raw(transport)
+
+      assert :sys.get_state(agent).pending_callbacks == %{}
+    end
+  end
+
+  describe "native agent stdio framing" do
+    test "custom IO devices do not mutate the global logger level" do
+      level = :logger.get_primary_config()[:level]
+      {:ok, input} = StringIO.open("")
+
+      assert {:ok, _transport} =
+               Stdio.connect(input: input, output: input)
+
+      assert :logger.get_primary_config()[:level] == level
+    end
+
+    test "aborts an oversized frame without a newline using bounded reads" do
+      {:ok, input} = StringIO.open(String.duplicate("x", 65))
+
+      {:ok, transport} =
+        Stdio.connect(
+          input: input,
+          output: input,
+          max_frame_bytes: 64
+        )
+
+      assert {:error, :frame_too_large} =
+               Stdio.receive_message(transport)
+    end
+
+    test "retains additional newline-delimited frames read in the same bounded chunk" do
+      {:ok, input} = StringIO.open(~s({"first":true}\n{"second":true}\n))
+
+      {:ok, transport} =
+        Stdio.connect(
+          input: input,
+          output: input,
+          max_frame_bytes: 64
+        )
+
+      assert {:ok, "{\"first\":true}", transport} =
+               Stdio.receive_message(transport)
+
+      assert {:ok, "{\"second\":true}", _transport} =
+               Stdio.receive_message(transport)
+    end
+  end
+
+  defp start_raw_agent(handler, opts \\ []) do
+    {:ok, peer} = Memory.new_pair()
+
+    {:ok, agent} =
+      Agent.start_link(
+        Keyword.merge(
+          [handler: handler, handler_opts: [test_pid: self()], transport: {:memory, peer}],
+          opts
+        )
+      )
+
+    {:ok, transport} = Memory.connect(peer: peer, role: :client)
+    {agent, transport}
+  end
+
+  defp initialize_raw(transport, id) do
+    send_raw_request(transport, id, "initialize", %{
+      "protocolVersion" => 1,
+      "clientCapabilities" => %{}
+    })
+  end
+
+  defp send_raw_request(transport, id, method, params) do
+    message =
+      Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "method" => method, "params" => params})
+
+    assert {:ok, _transport} = Memory.send_message(message, transport)
+  end
+
+  defp receive_raw(transport) do
+    assert {:ok, message, _transport} = Memory.receive_message(transport)
+    Jason.decode!(message)
   end
 end

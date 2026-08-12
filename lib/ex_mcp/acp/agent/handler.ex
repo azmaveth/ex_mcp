@@ -10,8 +10,8 @@ defmodule ExMCP.ACP.Agent.Handler do
   @type state :: any()
   @type context :: %{
           required(:agent) => GenServer.server(),
-          required(:request_id) => integer() | String.t(),
-          optional(:prompt_id) => integer() | String.t(),
+          required(:request_id) => integer() | String.t() | nil,
+          optional(:prompt_id) => integer() | String.t() | nil,
           optional(:session_id) => String.t(),
           optional(:client_info) => map() | nil,
           optional(:client_capabilities) => map() | nil,

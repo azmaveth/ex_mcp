@@ -88,6 +88,247 @@ defmodule ExMCP.SessionManagerTest do
 
       assert :ok = GenServer.call(name, {:terminate_session, "non-existent"})
     end
+
+    test "does not create caller-selected session IDs", %{session_manager_name: name} do
+      assert {:error, :session_not_found} =
+               GenServer.call(name, {
+                 :ensure_session,
+                 "caller-selected",
+                 %{transport: :http, principal_id: "principal-1"}
+               })
+
+      assert {:error, :session_not_found} =
+               GenServer.call(name, {:get_session, "caller-selected"})
+    end
+
+    test "binds authorization identity immutably", %{session_manager_name: name} do
+      identity = %{
+        transport: :http,
+        principal_id: "principal-1",
+        tenant_id: "tenant-1",
+        issuer: "https://auth.test",
+        audience: "https://mcp.test/mcp"
+      }
+
+      session_id = GenServer.call(name, {:create_session, identity})
+
+      assert :ok = GenServer.call(name, {:ensure_session, session_id, identity})
+
+      assert {:error, :session_identity_mismatch} =
+               GenServer.call(name, {:ensure_session, session_id, %{transport: :http}})
+
+      assert {:error, :session_identity_mismatch} =
+               GenServer.call(
+                 name,
+                 {:ensure_session, session_id, %{identity | principal_id: "principal-2"}}
+               )
+
+      assert {:error, :session_identity_mismatch} =
+               GenServer.call(name, {
+                 :update_session,
+                 session_id,
+                 %{principal_id: "principal-2"}
+               })
+
+      assert {:ok, session} = GenServer.call(name, {:get_session, session_id})
+      assert session.principal_id == "principal-1"
+    end
+
+    test "binds a protocol version only through completed initialization", %{
+      session_manager_name: name
+    } do
+      session_id =
+        GenServer.call(name, {
+          :create_session,
+          %{transport: :http, protocol_version: "2025-11-25"}
+        })
+
+      assert {:ok, %{initialized: false, protocol_version: nil}} =
+               GenServer.call(name, {:get_session, session_id})
+
+      assert :ok = GenServer.call(name, {:claim_initialization, session_id})
+
+      assert :ok =
+               GenServer.call(name, {
+                 :complete_initialization,
+                 session_id,
+                 "2025-11-25"
+               })
+
+      assert :ok =
+               GenServer.call(name, {
+                 :ensure_session,
+                 session_id,
+                 %{transport: :sse, client_info: %{name: "resumed"}}
+               })
+
+      assert {:ok, %{protocol_version: "2025-11-25"}} =
+               GenServer.call(name, {:get_session, session_id})
+
+      assert :ok =
+               GenServer.call(name, {
+                 :update_session,
+                 session_id,
+                 %{protocol_version: "2025-11-25"}
+               })
+
+      assert {:error, :session_protocol_version_mismatch} =
+               GenServer.call(name, {
+                 :update_session,
+                 session_id,
+                 %{protocol_version: "2025-03-26"}
+               })
+
+      unbound = GenServer.call(name, {:create_session, %{transport: :http}})
+
+      assert {:error, :session_protocol_version_mismatch} =
+               GenServer.call(name, {
+                 :update_session,
+                 unbound,
+                 %{protocol_version: "2025-03-26"}
+               })
+
+      assert {:ok, %{initialized: false, protocol_version: nil}} =
+               GenServer.call(name, {:get_session, unbound})
+    end
+
+    test "claims and completes initialization exactly once", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :http}})
+
+      assert :ok = GenServer.call(name, {:claim_initialization, session_id})
+
+      assert {:error, :initialization_in_progress} =
+               GenServer.call(name, {:claim_initialization, session_id})
+
+      assert :ok =
+               GenServer.call(name, {
+                 :complete_initialization,
+                 session_id,
+                 "2025-11-25"
+               })
+
+      assert {:ok,
+              %{
+                initialized: true,
+                initialization_claimed: false,
+                protocol_version: "2025-11-25"
+              }} = GenServer.call(name, {:get_session, session_id})
+
+      assert {:error, :session_already_initialized} =
+               GenServer.call(name, {:claim_initialization, session_id})
+
+      assert :ok =
+               GenServer.call(name, {:update_session, session_id, %{initialized: false}})
+
+      assert {:ok, %{initialized: true}} = GenServer.call(name, {:get_session, session_id})
+    end
+
+    test "refuses to complete an initialization that was not claimed", %{
+      session_manager_name: name
+    } do
+      session_id = GenServer.call(name, {:create_session, %{transport: :http}})
+
+      assert {:error, :initialization_not_claimed} =
+               GenServer.call(name, {
+                 :complete_initialization,
+                 session_id,
+                 "2025-11-25"
+               })
+    end
+
+    test "terminates an uncompleted initialization when its request process dies", %{
+      session_manager_name: name
+    } do
+      session_id = GenServer.call(name, {:create_session, %{transport: :http}})
+      parent = self()
+
+      owner =
+        spawn(fn ->
+          result = GenServer.call(name, {:claim_initialization, session_id})
+          send(parent, {:initialization_claimed, result})
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive {:initialization_claimed, :ok}
+      monitor = Process.monitor(owner)
+      Process.exit(owner, :kill)
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :killed}
+
+      assert_eventually(fn ->
+        match?(
+          {:ok, %{status: :terminated, initialization_claimed: false}},
+          GenServer.call(name, {:get_session, session_id})
+        )
+      end)
+    end
+
+    test "bounds session allocation and reclaims terminated entries" do
+      name = :"bounded_session_manager_#{System.unique_integer([:positive])}"
+
+      manager =
+        start_supervised!(
+          {
+            SessionManager,
+            [name: name, max_sessions: 1, cleanup_interval_ms: 60_000]
+          },
+          id: make_ref()
+        )
+
+      first = GenServer.call(manager, {:create_session, %{transport: :http}})
+      assert is_binary(first)
+
+      assert {:error, :session_limit_exceeded} =
+               GenServer.call(manager, {:create_session, %{transport: :http}})
+
+      assert :ok = GenServer.call(manager, {:terminate_session, first})
+
+      replacement = GenServer.call(manager, {:create_session, %{transport: :http}})
+      assert is_binary(replacement)
+      assert replacement != first
+      assert {:error, :session_not_found} = GenServer.call(manager, {:get_session, first})
+    end
+  end
+
+  describe "request ID claims" do
+    test "atomically rejects duplicate IDs within one session", %{session_manager_name: name} do
+      session_id = GenServer.call(name, {:create_session, %{transport: :http}})
+
+      results =
+        1..8
+        |> Enum.map(fn _ ->
+          Task.async(fn -> GenServer.call(name, {:claim_request_id, session_id, "same-id"}) end)
+        end)
+        |> Task.await_many()
+
+      assert Enum.count(results, &(&1 == :ok)) == 1
+      assert Enum.count(results, &(&1 == {:error, :duplicate_request_id})) == 7
+
+      other_session = GenServer.call(name, {:create_session, %{transport: :http}})
+      assert :ok = GenServer.call(name, {:claim_request_id, other_session, "same-id"})
+    end
+
+    test "fails closed at the configured per-session request ID cap" do
+      name = :"request_id_cap_#{System.unique_integer([:positive])}"
+
+      manager =
+        start_supervised!(
+          {SessionManager, name: name, max_request_ids: 1, cleanup_interval_ms: 60_000},
+          id: make_ref()
+        )
+
+      session_id = GenServer.call(manager, {:create_session, %{transport: :http}})
+
+      assert :ok = GenServer.call(manager, {:claim_request_id, session_id, 1})
+
+      assert {:error, :duplicate_request_id} =
+               GenServer.call(manager, {:claim_request_id, session_id, 1})
+
+      assert {:error, :request_id_limit_exceeded} =
+               GenServer.call(manager, {:claim_request_id, session_id, 2})
+
+      assert {:ok, %{request_id_count: 1}} =
+               GenServer.call(manager, {:get_session, session_id})
+    end
   end
 
   describe "event storage and replay" do
@@ -339,6 +580,86 @@ defmodule ExMCP.SessionManagerTest do
   end
 
   describe "event limits and cleanup" do
+    test "accepts an exactly-sized replay event and rejects one encoded byte over" do
+      placeholder_session_id = String.duplicate("s", 22)
+      payload = String.duplicate("x", 128)
+      template = replay_event(placeholder_session_id, "event-1", payload)
+      exact_bytes = encoded_bytes(template)
+      name = :"event_byte_limit_#{System.unique_integer([:positive])}"
+
+      manager =
+        start_supervised!(
+          {SessionManager,
+           name: name,
+           max_event_bytes: exact_bytes,
+           max_replay_bytes_per_session: exact_bytes * 2,
+           cleanup_interval_ms: 60_000},
+          id: make_ref()
+        )
+
+      session_id = GenServer.call(manager, {:create_session, %{transport: :sse}})
+      exact = replay_event(session_id, "event-1", payload)
+      one_over = replay_event(session_id, "event-2", payload <> "x")
+
+      assert encoded_bytes(exact) == exact_bytes
+      assert encoded_bytes(one_over) == exact_bytes + 1
+      assert :ok = GenServer.call(manager, {:store_event, session_id, exact})
+
+      assert {:error, :event_too_large} =
+               GenServer.call(manager, {:store_event, session_id, one_over})
+
+      assert [^exact] = GenServer.call(manager, {:replay_events_after, session_id, nil})
+
+      assert {:ok, %{event_count: 1, replay_bytes: ^exact_bytes}} =
+               GenServer.call(manager, {:get_session, session_id})
+    end
+
+    test "evicts oldest replay events when a replacement exceeds the byte budget by one" do
+      placeholder_session_id = String.duplicate("s", 22)
+      payload = String.duplicate("x", 128)
+      template = replay_event(placeholder_session_id, "event-1", payload)
+      event_bytes = encoded_bytes(template)
+      replay_budget = event_bytes * 2
+      name = :"replay_byte_budget_#{System.unique_integer([:positive])}"
+
+      manager =
+        start_supervised!(
+          {SessionManager,
+           name: name,
+           max_event_bytes: event_bytes + 1,
+           max_replay_bytes_per_session: replay_budget,
+           cleanup_interval_ms: 60_000},
+          id: make_ref()
+        )
+
+      session_id = GenServer.call(manager, {:create_session, %{transport: :sse}})
+      first = replay_event(session_id, "event-1", payload)
+      second = replay_event(session_id, "event-2", payload)
+      replacement = replay_event(session_id, "event-2", payload <> "x")
+
+      assert :ok = GenServer.call(manager, {:store_event, session_id, first})
+      assert :ok = GenServer.call(manager, {:store_event, session_id, second})
+
+      assert {:ok, %{event_count: 2, replay_bytes: ^replay_budget}} =
+               GenServer.call(manager, {:get_session, session_id})
+
+      assert encoded_bytes(first) + encoded_bytes(replacement) == replay_budget + 1
+      assert :ok = GenServer.call(manager, {:store_event, session_id, replacement})
+
+      assert [^replacement] =
+               GenServer.call(manager, {:replay_events_after, session_id, nil})
+
+      replacement_bytes = event_bytes + 1
+
+      assert {:ok, %{event_count: 1, replay_bytes: ^replacement_bytes}} =
+               GenServer.call(manager, {:get_session, session_id})
+
+      assert :ok = GenServer.call(manager, {:terminate_session, session_id})
+
+      assert {:ok, %{event_count: 0, replay_bytes: 0}} =
+               GenServer.call(manager, {:get_session, session_id})
+    end
+
     test "trims old events when limit is exceeded" do
       # Use a small event limit for testing
       name = :"test_event_limit_#{System.unique_integer([:positive])}"
@@ -463,4 +784,29 @@ defmodule ExMCP.SessionManagerTest do
       assert hd(replayed_events).data.message == "Second"
     end
   end
+
+  defp replay_event(session_id, event_id, payload) do
+    %{
+      id: event_id,
+      session_id: session_id,
+      type: "notification",
+      data: %{"payload" => payload},
+      timestamp: 1
+    }
+  end
+
+  defp encoded_bytes(event), do: event |> Jason.encode!() |> byte_size()
+
+  defp assert_eventually(fun, attempts \\ 20)
+
+  defp assert_eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(5)
+      assert_eventually(fun, attempts - 1)
+    end
+  end
+
+  defp assert_eventually(_fun, 0), do: flunk("condition did not become true")
 end

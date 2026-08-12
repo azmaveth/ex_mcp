@@ -41,7 +41,7 @@ defmodule ExMCP.Server.HandlerServer do
   require Logger
 
   alias ExMCP.Error.ProtocolError
-  alias ExMCP.Internal.{JSONRPC, VersionRegistry}
+  alias ExMCP.Internal.{JSONRPC, LogSummary, MessageValidator, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Server.{CancellationTracker, Dispatch, RequestContext, RequestState, Subscriptions}
   alias ExMCP.Transport.{Local, Test}
@@ -57,6 +57,7 @@ defmodule ExMCP.Server.HandlerServer do
           transport: any(),
           transport_state: any(),
           protocol_version: String.t() | nil,
+          validation_state: MessageValidator.session_state(),
           protocol_mode: ExMCP.Types.protocol_mode() | nil,
           connection_era: :legacy | :modern | nil,
           instructions: String.t() | nil,
@@ -85,6 +86,9 @@ defmodule ExMCP.Server.HandlerServer do
     `ExMCP.Server.CancellationTracker` used to propagate
     `notifications/cancelled` into handler state
     (default: `ExMCP.Server.CancellationTracker.Default`)
+  * `:max_request_ids` - Maximum number of distinct client request IDs retained
+    for this server process (default: `10_000`). Once reached, new request IDs
+    fail closed while already-seen IDs continue to be rejected as duplicates.
   * Other options are passed to the transport
   """
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -124,6 +128,10 @@ defmodule ExMCP.Server.HandlerServer do
               transport: transport_mod,
               transport_state: transport_state,
               protocol_version: nil,
+              validation_state:
+                MessageValidator.new_session(nil,
+                  max_request_ids: Keyword.get(opts, :max_request_ids, 10_000)
+                ),
               protocol_mode: Keyword.get(opts, :protocol_mode),
               connection_era: nil,
               instructions: Keyword.get(opts, :instructions),
@@ -203,13 +211,19 @@ defmodule ExMCP.Server.HandlerServer do
         end
 
       {:error, error} ->
-        Logger.error("Failed to decode message: #{inspect(error)}")
+        Logger.error("Failed to decode message",
+          error_shape: LogSummary.describe(error)
+        )
+
         {:noreply, state}
     end
   end
 
   def handle_info({:transport_error, reason}, state) do
-    Logger.error("Transport error: #{inspect(reason)}")
+    Logger.error("Transport error",
+      reason_shape: LogSummary.describe(reason)
+    )
+
     {:noreply, state}
   end
 
@@ -256,20 +270,29 @@ defmodule ExMCP.Server.HandlerServer do
 
   def handle_info({:cancelled, request_id}, state) do
     # Handle cancellation notifications from clients
-    Logger.debug("Received cancellation for request: #{request_id}")
+    Logger.debug("Received cancellation for request",
+      request_id_hash: LogSummary.fingerprint(request_id)
+    )
 
     # Check if this request is still pending and cancel it
     case Map.get(state.pending_requests, request_id) do
       nil ->
         # Request not found - either completed, cancelled, or never existed
-        Logger.debug("Cancellation for unknown request: #{request_id}")
+        Logger.debug("Cancellation for unknown request",
+          request_id_hash: LogSummary.fingerprint(request_id)
+        )
+
         {:noreply, state}
 
       _pending_request ->
         # Cancel the pending request
         new_pending = Map.delete(state.pending_requests, request_id)
         new_state = %{state | pending_requests: new_pending}
-        Logger.debug("Cancelled pending request: #{request_id}")
+
+        Logger.debug("Cancelled pending request",
+          request_id_hash: LogSummary.fingerprint(request_id)
+        )
+
         {:noreply, new_state}
     end
   end
@@ -592,7 +615,11 @@ defmodule ExMCP.Server.HandlerServer do
   defp handle_client_response(%{"id" => request_id} = response, state) do
     case Map.get(state.pending_requests, request_id) do
       nil ->
-        Logger.warning("Received response for unknown request ID: #{request_id}")
+        Logger.warning(
+          "Received response for unknown request ID",
+          request_id_hash: LogSummary.fingerprint(request_id)
+        )
+
         {:noreply, state}
 
       {from, :server_request} ->
@@ -611,7 +638,8 @@ defmodule ExMCP.Server.HandlerServer do
 
       _ ->
         Logger.warning(
-          "Received response for request with unexpected pending state: #{request_id}"
+          "Received response for request with unexpected pending state",
+          request_id_hash: LogSummary.fingerprint(request_id)
         )
 
         {:noreply, state}
@@ -619,14 +647,19 @@ defmodule ExMCP.Server.HandlerServer do
   end
 
   defp handle_client_response(response, state) do
-    Logger.warning("Received response without ID: #{inspect(response)}")
+    Logger.warning("Received response without ID: #{LogSummary.describe(response)}")
+
     {:noreply, state}
   end
 
   # Handle cancellation notifications from clients
   defp handle_cancellation_notification(%{"requestId" => request_id} = params, state) do
     reason = Map.get(params, "reason", "Request cancelled by client")
-    Logger.debug("Received cancellation for request #{request_id}: #{reason}")
+
+    Logger.debug("Received cancellation request",
+      request_id_hash: LogSummary.fingerprint(request_id),
+      reason_shape: LogSummary.describe(reason)
+    )
 
     # Mark the request as cancelled and let the configured tracker propagate
     # it into the handler's own state.
@@ -653,7 +686,8 @@ defmodule ExMCP.Server.HandlerServer do
   end
 
   defp handle_cancellation_notification(params, state) do
-    Logger.warning("Invalid cancellation notification: #{inspect(params)}")
+    Logger.warning("Invalid cancellation notification: #{LogSummary.describe(params)}")
+
     {:noreply, state}
   end
 
@@ -702,7 +736,24 @@ defmodule ExMCP.Server.HandlerServer do
   # that every transport answers the same set of methods identically (audit
   # M9). Only the pieces that are specific to this process — protocol version
   # capture, telemetry, and cancellation bookkeeping — stay here.
-  defp process_mcp_request(%{"method" => "initialize"} = request, state) do
+  defp process_mcp_request(request, state) do
+    case MessageValidator.validate_message(request, state.validation_state) do
+      {{:ok, _validated_request}, validation_state} ->
+        do_process_mcp_request(request, %{state | validation_state: validation_state})
+
+      {{:error, error}, validation_state} ->
+        state = %{state | validation_state: validation_state}
+
+        if notification?(request) do
+          {:notification, state}
+        else
+          {:response, JSONRPC.error(response_id(request), json_rpc_validation_error(error)),
+           state}
+        end
+    end
+  end
+
+  defp do_process_mcp_request(%{"method" => "initialize"} = request, state) do
     case dispatch(request, state) do
       {:response, %{"result" => result} = response, new_state} ->
         emit_initialize_telemetry(result)
@@ -715,7 +766,7 @@ defmodule ExMCP.Server.HandlerServer do
     end
   end
 
-  defp process_mcp_request(%{"method" => "tools/call"} = request, state) do
+  defp do_process_mcp_request(%{"method" => "tools/call"} = request, state) do
     id = Map.get(request, "id")
     params = Map.get(request, "params", %{})
 
@@ -748,34 +799,68 @@ defmodule ExMCP.Server.HandlerServer do
     end
   end
 
-  defp process_mcp_request(%{"method" => "subscriptions/listen"} = request, state) do
+  defp do_process_mcp_request(%{"method" => "subscriptions/listen"} = request, state) do
     open_subscription(request, state)
   end
 
-  defp process_mcp_request(%{"method" => "notifications/cancelled"} = request, state) do
+  defp do_process_mcp_request(%{"method" => "notifications/cancelled"} = request, state) do
     params = Map.get(request, "params", %{})
-    request_id = Map.get(params, "requestId")
 
-    case Map.pop(state.subscriptions, request_id) do
-      {nil, _subscriptions} ->
-        {_, new_state} = handle_cancellation_notification(params, state)
-        {:notification, new_state}
+    case MessageValidator.validate_method_params("notifications/cancelled", params) do
+      :ok ->
+        request_id = Map.get(params, "requestId")
 
-      {_listener, subscriptions} ->
-        :ok = Subscriptions.cancel(self(), request_id, state.subscription_options)
-        {:notification, %{state | subscriptions: subscriptions}}
+        case Map.pop(state.subscriptions, request_id) do
+          {nil, _subscriptions} ->
+            {_, new_state} = handle_cancellation_notification(params, state)
+            {:notification, new_state}
+
+          {_listener, subscriptions} ->
+            :ok = Subscriptions.cancel(self(), request_id, state.subscription_options)
+            {:notification, %{state | subscriptions: subscriptions}}
+        end
+
+      {:error, _validation_error} ->
+        {:notification, state}
     end
   end
 
-  defp process_mcp_request(%{"method" => _method} = request, state) do
+  defp do_process_mcp_request(%{"method" => _method} = request, state) do
     dispatch(request, state)
   end
 
-  defp process_mcp_request(_invalid_request, state) do
+  defp do_process_mcp_request(_invalid_request, state) do
     # Invalid request format (e.g. not a map)
     response = JSONRPC.error(nil, ErrorCodes.invalid_request(), "Invalid Request")
     {:response, response, state}
   end
+
+  defp notification?(request) when is_map(request) do
+    Map.has_key?(request, "method") and not Map.has_key?(request, "id")
+  end
+
+  defp notification?(_request), do: false
+
+  defp response_id(request) when is_map(request) do
+    case Map.get(request, "id") do
+      id when is_binary(id) or is_integer(id) -> id
+      _invalid_or_missing -> nil
+    end
+  end
+
+  defp response_id(_request), do: nil
+
+  defp json_rpc_validation_error(error), do: stringify_map_keys(error)
+
+  defp stringify_map_keys(value) when is_map(value) do
+    Map.new(value, fn {key, nested} ->
+      key = if is_atom(key), do: Atom.to_string(key), else: key
+      {key, stringify_map_keys(nested)}
+    end)
+  end
+
+  defp stringify_map_keys(value) when is_list(value), do: Enum.map(value, &stringify_map_keys/1)
+  defp stringify_map_keys(value), do: value
 
   # Runs the shared dispatcher against the handler module and folds the new
   # handler state back into the server state.
@@ -877,7 +962,8 @@ defmodule ExMCP.Server.HandlerServer do
     id = Map.get(request, "id")
     params = Map.get(request, "params") || %{}
 
-    with {:ok, context} <- RequestContext.from_message(request),
+    with :ok <- MessageValidator.validate_method_params("subscriptions/listen", params),
+         {:ok, context} <- RequestContext.from_message(request),
          :ok <- RequestContext.validate_protocol_mode(context, effective_protocol_mode(state)),
          :ok <- RequestContext.validate_method(context),
          :modern <- context.era,
@@ -907,6 +993,10 @@ defmodule ExMCP.Server.HandlerServer do
     JSONRPC.error(id, error.code, error.message, error.data)
   end
 
+  defp subscription_error(id, %{code: code, message: message} = error) do
+    JSONRPC.error(id, code, message, Map.get(error, :data))
+  end
+
   defp subscription_error(id, reason) do
     JSONRPC.error(id, ErrorCodes.invalid_params(), "Subscription request rejected", %{
       "reason" => to_string_reason(reason)
@@ -914,7 +1004,7 @@ defmodule ExMCP.Server.HandlerServer do
   end
 
   defp to_string_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp to_string_reason(reason), do: inspect(reason)
+  defp to_string_reason(_reason), do: "invalid_subscription"
 
   defp publish_or_send(method, params, state) do
     if modern_connection?(state) do

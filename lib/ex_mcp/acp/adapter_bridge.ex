@@ -12,6 +12,9 @@ defmodule ExMCP.ACP.AdapterBridge do
   - **One-shot** — adapter manages subprocess per prompt (Codex pattern)
   - **Adapter-managed** — adapter owns one or more persistent subprocess Ports
 
+  Pending output is bounded by both `:max_outbox_messages` (1,024 by default)
+  and `:max_outbox_bytes` (4 MiB by default). `:max_one_shot_tasks` defaults to 8.
+
   ## Usage
 
       {:ok, bridge} = AdapterBridge.start_link(
@@ -30,6 +33,11 @@ defmodule ExMCP.ACP.AdapterBridge do
   alias ExMCP.Internal.Maps
 
   @type t :: GenServer.server()
+  @default_max_buffer_bytes 1_048_576
+  @default_max_outbox_messages 1_024
+  @default_max_outbox_bytes 4_194_304
+  @default_max_waiters 128
+  @default_max_one_shot_tasks 8
 
   defstruct [
     :adapter_mod,
@@ -38,6 +46,14 @@ defmodule ExMCP.ACP.AdapterBridge do
     :port,
     :outbox,
     :waiters,
+    max_buffer_bytes: @default_max_buffer_bytes,
+    max_outbox_messages: @default_max_outbox_messages,
+    max_outbox_bytes: @default_max_outbox_bytes,
+    outbox_bytes: 0,
+    max_waiters: @default_max_waiters,
+    max_one_shot_tasks: @default_max_one_shot_tasks,
+    one_shot_tasks: %{},
+    one_shot_monitors: %{},
     buffer: "",
     status: :connecting
   ]
@@ -60,7 +76,7 @@ defmodule ExMCP.ACP.AdapterBridge do
   @doc "Receive the next ACP message from the agent. Blocks until available."
   @spec receive_message(t(), timeout()) :: {:ok, String.t()} | {:error, term()}
   def receive_message(bridge, timeout \\ 30_000) do
-    GenServer.call(bridge, :receive, timeout)
+    GenServer.call(bridge, {:receive, timeout, deadline(timeout)}, timeout)
   end
 
   @doc "Close the bridge and terminate the subprocess."
@@ -85,7 +101,13 @@ defmodule ExMCP.ACP.AdapterBridge do
       adapter_state: adapter_state,
       adapter_opts: adapter_opts,
       outbox: :queue.new(),
-      waiters: :queue.new()
+      waiters: :queue.new(),
+      max_buffer_bytes: positive_limit(opts, :max_buffer_bytes, @default_max_buffer_bytes),
+      max_outbox_messages:
+        positive_limit(opts, :max_outbox_messages, @default_max_outbox_messages),
+      max_outbox_bytes: positive_limit(opts, :max_outbox_bytes, @default_max_outbox_bytes),
+      max_waiters: positive_limit(opts, :max_waiters, @default_max_waiters),
+      max_one_shot_tasks: positive_limit(opts, :max_one_shot_tasks, @default_max_one_shot_tasks)
     }
 
     case adapter_mod.command(adapter_opts) do
@@ -113,6 +135,11 @@ defmodule ExMCP.ACP.AdapterBridge do
   @impl true
   def handle_call({:send, _json}, _from, %{status: :closed} = state) do
     {:reply, {:error, :closed}, state}
+  end
+
+  def handle_call({:send, json}, _from, state)
+      when is_binary(json) and byte_size(json) > state.max_buffer_bytes do
+    {:reply, {:error, :frame_too_large}, state}
   end
 
   def handle_call({:send, json}, from, state) do
@@ -145,17 +172,33 @@ defmodule ExMCP.ACP.AdapterBridge do
     end
   end
 
-  def handle_call(:receive, from, state) do
+  def handle_call({:receive, timeout, waiter_deadline}, from, state) do
     case :queue.out(state.outbox) do
       {{:value, message}, rest} ->
-        {:reply, {:ok, message}, %{state | outbox: rest}}
+        {:reply, {:ok, message},
+         %{state | outbox: rest, outbox_bytes: state.outbox_bytes - byte_size(message)}}
 
       {:empty, _} ->
         if state.status == :closed do
           {:reply, {:error, :closed}, state}
         else
-          waiters = :queue.in(from, state.waiters)
-          {:noreply, %{state | waiters: waiters}}
+          waiters = prune_dead_waiters(state.waiters)
+
+          if :queue.len(waiters) >= state.max_waiters do
+            {:reply, {:error, :too_many_waiters}, %{state | waiters: waiters}}
+          else
+            token = make_ref()
+            timer_ref = schedule_waiter_timeout(token, timeout)
+
+            waiter = %{
+              from: from,
+              token: token,
+              timer_ref: timer_ref,
+              deadline: waiter_deadline
+            }
+
+            {:noreply, %{state | waiters: :queue.in(waiter, waiters)}}
+          end
         end
     end
   end
@@ -186,9 +229,41 @@ defmodule ExMCP.ACP.AdapterBridge do
     {:noreply, state}
   end
 
-  def handle_info({:one_shot_result, messages}, state) do
-    state = push_messages(state, messages)
-    {:noreply, state}
+  def handle_info({:one_shot_result, token, messages}, state) do
+    case Map.pop(state.one_shot_tasks, token) do
+      {nil, _tasks} ->
+        {:noreply, state}
+
+      {%{monitor_ref: monitor_ref}, tasks} ->
+        Process.demonitor(monitor_ref, [:flush])
+
+        state = %{
+          state
+          | one_shot_tasks: tasks,
+            one_shot_monitors: Map.delete(state.one_shot_monitors, monitor_ref)
+        }
+
+        {:noreply, push_messages(state, messages)}
+    end
+  end
+
+  def handle_info({:DOWN, monitor_ref, :process, _pid, _reason}, state) do
+    case Map.pop(state.one_shot_monitors, monitor_ref) do
+      {nil, _monitors} ->
+        {:noreply, state}
+
+      {token, monitors} ->
+        {:noreply,
+         %{
+           state
+           | one_shot_tasks: Map.delete(state.one_shot_tasks, token),
+             one_shot_monitors: monitors
+         }}
+    end
+  end
+
+  def handle_info({:waiter_timeout, token}, state) do
+    {:noreply, %{state | waiters: delete_waiter(state.waiters, token)}}
   end
 
   def handle_info(msg, state) do
@@ -819,8 +894,10 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp handle_translated_outbound({:one_shot, cmd_fn, adapter_state}, _msg) do
-    start_one_shot_task(cmd_fn)
-    {:reply, :ok, adapter_state}
+    case start_one_shot_task(cmd_fn, adapter_state) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
+    end
   end
 
   defp synthesize_translated_reply(%{"id" => id}, result, state) do
@@ -829,18 +906,35 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   defp synthesize_translated_reply(_msg, _result, state), do: {:reply, :ok, state}
 
-  defp start_one_shot_task(cmd_fn) do
-    bridge_pid = self()
+  defp start_one_shot_task(cmd_fn, state) do
+    if map_size(state.one_shot_tasks) >= state.max_one_shot_tasks do
+      {:error, :too_many_one_shot_tasks, state}
+    else
+      bridge_pid = self()
+      token = make_ref()
 
-    Task.start(fn ->
-      case cmd_fn.() do
-        {:ok, messages} ->
-          send(bridge_pid, {:one_shot_result, messages})
+      {:ok, task_pid} =
+        Task.start(fn ->
+          messages =
+            case cmd_fn.() do
+              {:ok, messages} when is_list(messages) -> messages
+              {:error, _reason} -> []
+              _invalid -> []
+            end
 
-        {:error, _reason} ->
-          send(bridge_pid, {:one_shot_result, []})
-      end
-    end)
+          send(bridge_pid, {:one_shot_result, token, messages})
+        end)
+
+      monitor_ref = Process.monitor(task_pid)
+      task = %{pid: task_pid, monitor_ref: monitor_ref}
+
+      {:ok,
+       %{
+         state
+         | one_shot_tasks: Map.put(state.one_shot_tasks, token, task),
+           one_shot_monitors: Map.put(state.one_shot_monitors, monitor_ref, token)
+       }}
+    end
   end
 
   defp synthesize_after_translate(msg, id, state, result_fun) do
@@ -957,32 +1051,46 @@ defmodule ExMCP.ACP.AdapterBridge do
   defp process_port_data(state, data) do
     buffer = state.buffer <> data
     {lines, remaining} = split_lines(buffer)
-    state = %{state | buffer: remaining}
 
-    Enum.reduce(lines, state, fn line, acc ->
-      case acc.adapter_mod.translate_inbound(line, acc.adapter_state) do
-        {:messages, messages, new_adapter_state} ->
-          acc = %{acc | adapter_state: new_adapter_state}
-          push_messages(acc, Enum.map(messages, &Jason.encode!/1))
+    if byte_size(remaining) > state.max_buffer_bytes or
+         Enum.any?(lines, &(byte_size(&1) > state.max_buffer_bytes)) do
+      overflow_close(state, :frame_too_large)
+    else
+      state = %{state | buffer: remaining}
 
-        {:messages_and_write, messages, write_data, new_adapter_state} ->
-          acc = %{acc | adapter_state: new_adapter_state}
-          acc = push_messages(acc, Enum.map(messages, &Jason.encode!/1))
-          _ = write_to_port(acc, write_data)
-          acc
+      Enum.reduce_while(lines, state, fn line, acc ->
+        if acc.status == :closed do
+          {:halt, acc}
+        else
+          {:cont, translate_port_line(acc, line)}
+        end
+      end)
+    end
+  end
 
-        {:skip_and_write, write_data, new_adapter_state} ->
-          acc = %{acc | adapter_state: new_adapter_state}
-          _ = write_to_port(acc, write_data)
-          acc
+  defp translate_port_line(state, line) do
+    case state.adapter_mod.translate_inbound(line, state.adapter_state) do
+      {:messages, messages, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        push_messages(state, Enum.map(messages, &Jason.encode!/1))
 
-        {:partial, new_adapter_state} ->
-          %{acc | adapter_state: new_adapter_state}
+      {:messages_and_write, messages, write_data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        _ = write_to_port(state, write_data)
+        state
 
-        {:skip, new_adapter_state} ->
-          %{acc | adapter_state: new_adapter_state}
-      end
-    end)
+      {:skip_and_write, write_data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, write_data)
+        state
+
+      {:partial, new_adapter_state} ->
+        %{state | adapter_state: new_adapter_state}
+
+      {:skip, new_adapter_state} ->
+        %{state | adapter_state: new_adapter_state}
+    end
   end
 
   defp flush_buffer(%{buffer: ""} = state), do: state
@@ -1010,13 +1118,49 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp push_message(state, message) do
+    cond do
+      byte_size(message) > state.max_buffer_bytes ->
+        overflow_close(state, :frame_too_large)
+
+      state.status == :closed ->
+        state
+
+      true ->
+        deliver_or_enqueue(state, message)
+    end
+  end
+
+  defp deliver_or_enqueue(state, message) do
     case :queue.out(state.waiters) do
+      {{:value, %{from: from, timer_ref: timer_ref} = waiter}, rest} ->
+        cancel_timer(timer_ref)
+
+        if caller_alive?(from) and not waiter_expired?(waiter) do
+          GenServer.reply(from, {:ok, message})
+          %{state | waiters: rest}
+        else
+          deliver_or_enqueue(%{state | waiters: rest}, message)
+        end
+
       {{:value, waiter}, rest} ->
-        GenServer.reply(waiter, {:ok, message})
-        %{state | waiters: rest}
+        if caller_alive?(waiter) do
+          GenServer.reply(waiter, {:ok, message})
+          %{state | waiters: rest}
+        else
+          deliver_or_enqueue(%{state | waiters: rest}, message)
+        end
 
       {:empty, _} ->
-        %{state | outbox: :queue.in(message, state.outbox)}
+        if :queue.len(state.outbox) >= state.max_outbox_messages or
+             state.outbox_bytes + byte_size(message) > state.max_outbox_bytes do
+          overflow_close(state, :outbox_overflow)
+        else
+          %{
+            state
+            | outbox: :queue.in(message, state.outbox),
+              outbox_bytes: state.outbox_bytes + byte_size(message)
+          }
+        end
     end
   end
 
@@ -1027,9 +1171,76 @@ defmodule ExMCP.ACP.AdapterBridge do
   defp reply_error_to_waiters(state, reason) do
     state.waiters
     |> :queue.to_list()
-    |> Enum.each(&GenServer.reply(&1, {:error, reason}))
+    |> Enum.each(fn
+      %{from: from, timer_ref: timer_ref} ->
+        cancel_timer(timer_ref)
+        GenServer.reply(from, {:error, reason})
+
+      from ->
+        GenServer.reply(from, {:error, reason})
+    end)
 
     %{state | waiters: :queue.new()}
+  end
+
+  defp prune_dead_waiters(waiters) do
+    waiters
+    |> :queue.to_list()
+    |> Enum.filter(fn
+      %{from: from, timer_ref: timer_ref} = waiter ->
+        keep? = caller_alive?(from) and not waiter_expired?(waiter)
+        if not keep?, do: cancel_timer(timer_ref)
+        keep?
+
+      from ->
+        caller_alive?(from)
+    end)
+    |> :queue.from_list()
+  end
+
+  defp delete_waiter(waiters, token) do
+    waiters
+    |> :queue.to_list()
+    |> Enum.reject(fn
+      %{token: ^token} -> true
+      _waiter -> false
+    end)
+    |> :queue.from_list()
+  end
+
+  defp schedule_waiter_timeout(_token, :infinity), do: nil
+
+  defp schedule_waiter_timeout(token, timeout) when is_integer(timeout) and timeout > 0,
+    do: Process.send_after(self(), {:waiter_timeout, token}, timeout)
+
+  defp schedule_waiter_timeout(token, _timeout),
+    do: Process.send_after(self(), {:waiter_timeout, token}, 0)
+
+  defp cancel_timer(nil), do: :ok
+  defp cancel_timer(timer_ref), do: Process.cancel_timer(timer_ref, async: true, info: false)
+
+  defp deadline(:infinity), do: :infinity
+
+  defp deadline(timeout) when is_integer(timeout) and timeout > 0,
+    do: System.monotonic_time(:millisecond) + timeout
+
+  defp deadline(_timeout), do: System.monotonic_time(:millisecond)
+
+  defp waiter_expired?(%{deadline: :infinity}), do: false
+
+  defp waiter_expired?(%{deadline: deadline}) when is_integer(deadline),
+    do: System.monotonic_time(:millisecond) >= deadline
+
+  defp waiter_expired?(_waiter), do: false
+
+  defp caller_alive?({pid, _tag}) when is_pid(pid), do: Process.alive?(pid)
+  defp caller_alive?(_from), do: false
+
+  defp overflow_close(state, reason) do
+    state
+    |> do_close()
+    |> Map.merge(%{buffer: "", outbox: :queue.new(), outbox_bytes: 0, status: :closed})
+    |> reply_error_to_waiters(reason)
   end
 
   defp handle_adapter_message(msg, state) do
@@ -1070,10 +1281,23 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp shutdown_adapter(state) do
+    Enum.each(state.one_shot_tasks, fn {_token, %{pid: pid}} ->
+      if Process.alive?(pid), do: Process.exit(pid, :shutdown)
+    end)
+
+    state = %{state | one_shot_tasks: %{}, one_shot_monitors: %{}}
+
     if function_exported?(state.adapter_mod, :shutdown, 1) do
       %{state | adapter_state: state.adapter_mod.shutdown(state.adapter_state)}
     else
       state
+    end
+  end
+
+  defp positive_limit(opts, key, default) do
+    case Keyword.get(opts, key, default) do
+      value when is_integer(value) and value > 0 -> value
+      _invalid -> default
     end
   end
 end

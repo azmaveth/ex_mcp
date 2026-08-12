@@ -44,6 +44,11 @@ defmodule ExMCP.Internal.SSETest do
       assert SSE.parse_complete("\n\n: comment\n\nnot-a-field\n\n") == []
       assert SSE.parse_complete(nil) == []
     end
+
+    test "ignores negative and partially parsed retry values" do
+      assert SSE.parse_complete("retry: -1\ndata: one\n\n") == [%{data: "one"}]
+      assert SSE.parse_complete("retry: 999junk\ndata: two\n\n") == [%{data: "two"}]
+    end
   end
 
   describe "parse_stream/1" do

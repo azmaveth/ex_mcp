@@ -10,7 +10,12 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
     use ExMCP.Server.Handler
 
     @impl true
-    def init(_opts), do: {:ok, %{}}
+    def init(_opts), do: {:ok, %{list_calls: 0}}
+
+    @impl true
+    def handle_list_tools(_cursor, state) do
+      {:ok, [], nil, Map.update!(state, :list_calls, &(&1 + 1))}
+    end
   end
 
   test "listen remains open while correlated notifications flow over the test transport" do
@@ -104,6 +109,77 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
     refute get_in(progress, ["params", "_meta", @subscription_id_key])
   end
 
+  test "the process lifetime rejects a duplicate request ID before handler dispatch" do
+    registry = start_registry()
+    server = start_server(registry)
+    connect(server)
+
+    request = tools_list_request(81)
+    send_request(server, request)
+    assert_receive {:transport_message, first_response}
+    assert %{"id" => 81, "result" => %{"tools" => []}} = Jason.decode!(first_response)
+
+    send_request(server, request)
+    assert_receive {:transport_message, duplicate_response}
+
+    assert %{
+             "id" => 81,
+             "error" => %{
+               "code" => -32600,
+               "data" => %{"type" => "duplicate_request_id"}
+             }
+           } = Jason.decode!(duplicate_response)
+
+    assert :sys.get_state(server).handler_state.list_calls == 1
+  end
+
+  test "the process lifetime fails closed when request ID storage reaches its cap" do
+    registry = start_registry()
+    server = start_server(registry, max_request_ids: 1)
+    connect(server)
+
+    send_request(server, tools_list_request(82))
+    assert_receive {:transport_message, first_response}
+    assert %{"id" => 82, "result" => %{"tools" => []}} = Jason.decode!(first_response)
+
+    send_request(server, tools_list_request(83))
+    assert_receive {:transport_message, capacity_response}
+
+    assert %{
+             "id" => 83,
+             "error" => %{
+               "code" => -32600,
+               "data" => %{"type" => "request_id_capacity_exceeded", "limit" => 1}
+             }
+           } = Jason.decode!(capacity_response)
+
+    assert :sys.get_state(server).handler_state.list_calls == 1
+  end
+
+  test "BEAM-local transport shares the same process-lifetime duplicate guard" do
+    registry = start_registry()
+    server = start_server(registry, transport: :beam)
+    connect(server)
+
+    request = tools_list_request("beam-duplicate")
+    send(server, {:transport_message, request})
+
+    assert_receive {:transport_message, %{"id" => "beam-duplicate", "result" => %{"tools" => []}}}
+
+    send(server, {:transport_message, request})
+
+    assert_receive {:transport_message,
+                    %{
+                      "id" => "beam-duplicate",
+                      "error" => %{
+                        "code" => -32600,
+                        "data" => %{"type" => "duplicate_request_id"}
+                      }
+                    }}
+
+    assert :sys.get_state(server).handler_state.list_calls == 1
+  end
+
   defp start_registry do
     child =
       Supervisor.child_spec(
@@ -114,16 +190,21 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
     start_supervised!(child)
   end
 
-  defp start_server(registry) do
-    start_supervised!(
-      {HandlerServer,
-       handler: Handler,
-       transport: :test,
-       protocol_mode: :modern_only,
-       subscription_registry: registry,
-       principal_id: "principal-1",
-       tenant_id: "tenant-1"}
-    )
+  defp start_server(registry, extra_opts \\ []) do
+    opts =
+      [
+        handler: Handler,
+        transport: :test,
+        protocol_mode: :modern_only,
+        subscription_registry: registry,
+        principal_id: "principal-1",
+        tenant_id: "tenant-1",
+        authorize_subscription_filter: fn requested, _context -> {:ok, requested} end,
+        authorize_subscription_publication: fn _method, _params, _context -> true end
+      ]
+      |> Keyword.merge(extra_opts)
+
+    start_supervised!({HandlerServer, opts})
   end
 
   defp connect(server), do: send(server, {:test_transport_connect, self()})
@@ -147,6 +228,24 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
           }
         },
         "notifications" => filter
+      }
+    }
+  end
+
+  defp tools_list_request(id) do
+    %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "method" => "tools/list",
+      "params" => %{
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities" => %{},
+          "io.modelcontextprotocol/clientInfo" => %{
+            "name" => "request-id-test",
+            "version" => "1"
+          }
+        }
       }
     }
   end

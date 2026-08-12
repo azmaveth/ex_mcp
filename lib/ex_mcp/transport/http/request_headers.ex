@@ -47,6 +47,8 @@ defmodule ExMCP.Transport.HTTP.RequestHeaders do
     |> add_tool_parameter_headers(message, state, modern?)
     |> add_origin(state.origin)
     |> add_security_headers(state.security)
+    |> Headers.delete("accept-encoding")
+    |> List.insert_at(0, {"accept-encoding", "identity"})
   end
 
   @spec encode_value(String.t() | integer() | boolean()) :: String.t()

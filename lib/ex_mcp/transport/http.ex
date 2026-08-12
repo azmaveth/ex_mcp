@@ -85,29 +85,17 @@ defmodule ExMCP.Transport.HTTP do
   require Logger
 
   alias ExMCP.Authorization.{FullOAuthFlow, LogSanitizer}
-  alias ExMCP.Internal.{Headers, Security, SecurityConfig, SSE}
+  alias ExMCP.Internal.{DNSResolver, Headers, LogSummary, Security, SecurityConfig, SSE}
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
-  alias ExMCP.Transport.HTTP.{ModernStreamClient, RequestHeaders, ToolHeaders}
 
-  @async_post_profiles [
-    :ex_mcp_async_post_0,
-    :ex_mcp_async_post_1,
-    :ex_mcp_async_post_2,
-    :ex_mcp_async_post_3,
-    :ex_mcp_async_post_4,
-    :ex_mcp_async_post_5,
-    :ex_mcp_async_post_6,
-    :ex_mcp_async_post_7,
-    :ex_mcp_async_post_8,
-    :ex_mcp_async_post_9,
-    :ex_mcp_async_post_10,
-    :ex_mcp_async_post_11,
-    :ex_mcp_async_post_12,
-    :ex_mcp_async_post_13,
-    :ex_mcp_async_post_14,
-    :ex_mcp_async_post_15
-  ]
+  alias ExMCP.Transport.HTTP.{
+    BoundedClient,
+    ModernStreamClient,
+    RequestHeaders,
+    TargetPolicy,
+    ToolHeaders
+  }
 
   defstruct [
     :base_url,
@@ -130,6 +118,12 @@ defmodule ExMCP.Transport.HTTP do
     :max_retry_delay,
     :auth_provider,
     :auth_provider_state,
+    :max_response_bytes,
+    :max_stream_buffer_bytes,
+    :max_request_bytes,
+    :dns_timeout_ms,
+    :dns_resolver,
+    :allowed_private_hosts,
     tool_headers: %{},
     modern_streams: %{},
     sse_deferred_attempted: false,
@@ -155,12 +149,21 @@ defmodule ExMCP.Transport.HTTP do
           modern_streams: %{optional(ExMCP.Types.request_id()) => pid()},
           sse_deferred_attempted: boolean(),
           auth_provider: module() | nil,
-          auth_provider_state: any()
+          auth_provider_state: any(),
+          max_response_bytes: pos_integer(),
+          max_stream_buffer_bytes: pos_integer(),
+          max_request_bytes: pos_integer(),
+          dns_timeout_ms: pos_integer(),
+          dns_resolver: module() | function(),
+          allowed_private_hosts: [String.t()]
         }
 
   @default_endpoint "/mcp/v1"
   @session_header "Mcp-Session-Id"
   @protocol_version_header "mcp-protocol-version"
+  @default_max_response_bytes 8 * 1_024 * 1_024
+  @default_max_stream_buffer_bytes 1 * 1_024 * 1_024
+  @default_max_request_bytes 8 * 1_024 * 1_024
 
   @impl true
   def connect(config) do
@@ -188,7 +191,21 @@ defmodule ExMCP.Transport.HTTP do
     stream_handshake_timeout = Keyword.get(config, :stream_handshake_timeout, 15_000)
     stream_idle_timeout = Keyword.get(config, :stream_idle_timeout, 60_000)
 
-    Logger.debug("HTTP transport connecting with use_sse: #{use_sse}, endpoint: #{endpoint}")
+    max_response_bytes =
+      positive_limit(config, :max_response_bytes, @default_max_response_bytes)
+
+    max_stream_buffer_bytes =
+      positive_limit(config, :max_stream_buffer_bytes, @default_max_stream_buffer_bytes)
+
+    max_request_bytes = positive_limit(config, :max_request_bytes, @default_max_request_bytes)
+    dns_timeout_ms = positive_limit(config, :dns_timeout_ms, 1_000)
+    dns_resolver = Keyword.get(config, :dns_resolver, DNSResolver)
+    allowed_private_hosts = Keyword.get(config, :allowed_private_hosts, [])
+
+    Logger.debug("HTTP transport connecting",
+      use_sse: use_sse,
+      endpoint_hash: LogSummary.fingerprint({base_url, endpoint})
+    )
 
     # Extract origin if provided
     origin =
@@ -251,14 +268,21 @@ defmodule ExMCP.Transport.HTTP do
       auth_config: auth_config,
       max_retry_delay: max_retry_delay,
       auth_provider: auth_provider,
-      auth_provider_state: auth_provider_state
+      auth_provider_state: auth_provider_state,
+      max_response_bytes: max_response_bytes,
+      max_stream_buffer_bytes: max_stream_buffer_bytes,
+      max_request_bytes: max_request_bytes,
+      dns_timeout_ms: dns_timeout_ms,
+      dns_resolver: dns_resolver,
+      allowed_private_hosts: allowed_private_hosts
     }
 
     # Validate security configuration
     # Per MCP spec, session ID comes from the server after initialization.
     # SSE is deferred until after the first successful POST (which provides
     # the session ID needed for the GET SSE stream).
-    with :ok <- validate_security(state) do
+    with :ok <- validate_security(state),
+         :ok <- TargetPolicy.validate_options(network_policy_options(state)) do
       if use_sse do
         Logger.debug("HTTP transport configured with SSE (deferred until after initialization)")
       else
@@ -267,7 +291,7 @@ defmodule ExMCP.Transport.HTTP do
 
       :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
         transport: :http,
-        url: base_url
+        endpoint_hash: LogSummary.fingerprint(base_url)
       })
 
       {:ok, state}
@@ -341,13 +365,6 @@ defmodule ExMCP.Transport.HTTP do
     # exit-trapping client's {:EXIT, ...} transport handling is untouched.
     {_task_pid, task_ref} =
       spawn_monitor(fn ->
-        # Use a bounded pool of predeclared httpc profiles for async POST
-        # requests. Creating fresh atoms per request would exhaust the VM atom
-        # table under repeated connections.
-        profile = async_post_profile()
-        ensure_httpc_profile!(profile)
-        Process.put(:httpc_profile, profile)
-
         result =
           case perform_and_maybe_auth(message, state) do
             {:ok, response} -> handle_http_response(response, state, message)
@@ -474,8 +491,6 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp extract_auth_status(_), do: :ok
-
   defp apply_provider_token(%{auth_provider: provider, auth_provider_state: ps} = state)
        when not is_nil(provider) do
     case provider.get_token(ps) do
@@ -530,8 +545,6 @@ defmodule ExMCP.Transport.HTTP do
         :no_challenge
     end
   end
-
-  defp handle_auth_challenge(_, _, _), do: :no_challenge
 
   # Attempt OAuth discovery and retry if auth_config is available
   defp maybe_oauth_retry(headers, original_body, %{auth_config: nil} = state) do
@@ -655,36 +668,39 @@ defmodule ExMCP.Transport.HTTP do
   defp perform_http_request(body, state) do
     # According to MCP spec, POST directly to the MCP endpoint, not /messages
     url = build_url(state, "")
-    Logger.debug("HTTP request to URL: #{url}")
+    Logger.debug("HTTP request", endpoint_hash: LogSummary.fingerprint(url))
 
     :telemetry.execute([:ex_mcp, :transport, :message, :sent], %{size: byte_size(body)}, %{
       transport: :http,
-      endpoint: state.endpoint
+      endpoint_hash: LogSummary.fingerprint(url)
     })
 
     headers = RequestHeaders.build(body, state)
 
     # Security validation before making external request
-    case validate_http_request(url, headers, state) do
+    case sanitize_http_request("POST", url, headers, state) do
       {:ok, sanitized_headers} ->
         make_http_request(url, sanitized_headers, body, state)
 
       {:error, security_error} ->
         Logger.warning("HTTP request blocked by security policy",
-          url: url,
-          error: security_error
+          error: LogSummary.describe(security_error)
         )
 
         {:error, {:security_violation, security_error}}
     end
   end
 
-  defp validate_http_request(url, headers, state) do
+  @doc false
+  @spec sanitize_http_request(String.t(), String.t(), list(), t()) ::
+          {:ok, list()} | {:error, term()}
+  def sanitize_http_request(method, url, headers, state)
+      when is_binary(method) and is_binary(url) and is_list(headers) do
     # Build SecurityGuard request
     security_request = %{
       url: url,
       headers: headers,
-      method: "POST",
+      method: String.upcase(method),
       transport: :http,
       user_id: extract_user_id(state)
     }
@@ -702,20 +718,22 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp make_http_request(url, headers, body, state) do
-    request = {
-      String.to_charlist(url),
-      Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end),
-      String.to_charlist("application/json"),
-      body
-    }
+    transport_opts =
+      case URI.parse(url).scheme do
+        "https" -> build_ssl_options_from_state(state)
+        _other -> []
+      end
 
-    http_opts = httpc_http_options(url, state)
-
-    # Use process dictionary profile if set (for async POST isolation)
-    case Process.get(:httpc_profile) do
-      nil -> :httpc.request(:post, request, http_opts, [])
-      profile -> :httpc.request(:post, request, http_opts, [], profile)
-    end
+    BoundedClient.request(:post, url, headers, "application/json", body,
+      connect_timeout: state.timeouts.connect,
+      request_timeout: state.timeouts.request,
+      max_request_bytes: state.max_request_bytes,
+      max_response_bytes: state.max_response_bytes,
+      transport_opts: transport_opts,
+      dns_timeout_ms: state.dns_timeout_ms,
+      dns_resolver: state.dns_resolver,
+      allowed_private_hosts: state.allowed_private_hosts
+    )
   end
 
   @doc false
@@ -733,18 +751,6 @@ defmodule ExMCP.Transport.HTTP do
     case URI.parse(url).scheme do
       "https" -> [{:ssl, build_ssl_options_from_state(state)} | base_http_opts]
       _other -> base_http_opts
-    end
-  end
-
-  defp async_post_profile do
-    index = rem(:erlang.unique_integer([:positive, :monotonic]), length(@async_post_profiles))
-    Enum.at(@async_post_profiles, index)
-  end
-
-  defp ensure_httpc_profile!(profile) do
-    case :inets.start(:httpc, [{:profile, profile}]) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
     end
   end
 
@@ -829,7 +835,7 @@ defmodule ExMCP.Transport.HTTP do
 
           # Check session ID as fallback
           state.session_id ->
-            "session_#{state.session_id}"
+            "session_#{LogSummary.fingerprint(state.session_id)}"
 
           # Default fallback
           true ->
@@ -878,10 +884,6 @@ defmodule ExMCP.Transport.HTTP do
     end
   end
 
-  defp handle_http_response({:error, reason}, _state, _request_body) do
-    {:error, reason}
-  end
-
   defp handle_non_sse_response(body, headers, state, request_body) do
     content_type = Headers.get(headers, "content-type") || ""
 
@@ -925,55 +927,56 @@ defmodule ExMCP.Transport.HTTP do
   # will come via GET SSE stream — start/ensure SSE is connected.
   defp handle_sse_post_response(body, state, request_body) do
     events = SSE.parse_complete(body)
+    state = apply_sse_event_metadata(events, state)
+    handle_sse_json_data(sse_json_data(events), state, request_body)
+  end
 
-    # Extract retry field and last event ID from events
-    state =
-      Enum.reduce(events, state, fn event, acc ->
-        acc =
-          case event[:retry] do
-            nil -> acc
-            ms -> %{acc | retry_delay: ms}
-          end
+  defp apply_sse_event_metadata(events, state) do
+    Enum.reduce(events, state, fn event, acc ->
+      acc
+      |> apply_sse_retry(event[:retry])
+      |> apply_sse_event_id(event[:id])
+    end)
+  end
 
-        case event[:id] do
-          nil -> acc
-          id -> %{acc | last_event_id: id}
-        end
-      end)
+  defp apply_sse_retry(state, ms) when is_integer(ms) and ms >= 0,
+    do: %{state | retry_delay: min(ms, state.max_retry_delay)}
 
-    # Find the JSON data event (if any)
-    json_data =
-      events
-      |> Enum.flat_map(fn event ->
-        case event[:data] do
-          nil -> []
-          "" -> []
-          data -> [data]
-        end
-      end)
-      |> Enum.join("")
+  defp apply_sse_retry(state, _missing_or_invalid), do: state
 
-    if json_data != "" do
-      case Jason.decode(json_data) do
-        {:ok, response} ->
-          state = cache_tool_headers(state, request_body, response)
-          {:ok, %{state | last_response: response}, Jason.encode!(response)}
+  defp apply_sse_event_id(state, nil), do: state
+  defp apply_sse_event_id(state, id), do: %{state | last_event_id: id}
 
-        {:error, _} ->
-          # SSE had data but it wasn't valid JSON — treat as no response.
-          # Close existing GET stream so it reconnects with retry delay.
-          trigger_sse_reconnect(state)
-          state = maybe_start_deferred_sse(state)
-          {:ok, state}
+  defp sse_json_data(events) do
+    events
+    |> Enum.flat_map(fn event ->
+      case event[:data] do
+        nil -> []
+        "" -> []
+        data -> [data]
       end
-    else
-      # No JSON data in SSE response (just priming events).
-      # Result will arrive via GET SSE stream.
-      # Close existing GET stream to trigger reconnection with retry delay.
-      trigger_sse_reconnect(state)
-      state = maybe_start_deferred_sse(state)
-      {:ok, state}
+    end)
+    |> Enum.join("")
+  end
+
+  defp handle_sse_json_data("", state, _request_body), do: reconnect_deferred_sse(state)
+
+  defp handle_sse_json_data(json_data, state, request_body) do
+    case Jason.decode(json_data) do
+      {:ok, response} ->
+        state = cache_tool_headers(state, request_body, response)
+        {:ok, %{state | last_response: response}, Jason.encode!(response)}
+
+      {:error, _reason} ->
+        reconnect_deferred_sse(state)
     end
+  end
+
+  # The POST contained only priming events (or invalid JSON); the result must
+  # arrive on the GET stream. Reconnect it using the latest bounded retry.
+  defp reconnect_deferred_sse(state) do
+    trigger_sse_reconnect(state)
+    {:ok, maybe_start_deferred_sse(state)}
   end
 
   @impl true
@@ -985,6 +988,8 @@ defmodule ExMCP.Transport.HTTP do
 
     receive do
       {:sse_event, ^sse_pid, %{data: data} = event} ->
+        send(sse_pid, {:sse_event_ack, self()})
+
         # The enhanced SSE client sends structured events
         event_id = Map.get(event, :id)
         new_state = if event_id, do: %{state | last_event_id: event_id}, else: state
@@ -1063,20 +1068,33 @@ defmodule ExMCP.Transport.HTTP do
       | state.headers
     ]
 
-    charlist_url = String.to_charlist(url)
+    result =
+      with {:ok, sanitized_headers} <- sanitize_http_request("DELETE", url, headers, state) do
+        transport_opts =
+          case URI.parse(url).scheme do
+            "https" -> build_ssl_options_from_state(state)
+            _other -> []
+          end
 
-    charlist_headers =
-      Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
+        BoundedClient.request(:delete, url, sanitized_headers, "application/json", "",
+          connect_timeout: state.timeouts.connect,
+          request_timeout: state.timeouts.request,
+          max_request_bytes: state.max_request_bytes,
+          max_response_bytes: state.max_response_bytes,
+          transport_opts: transport_opts,
+          dns_timeout_ms: state.dns_timeout_ms,
+          dns_resolver: state.dns_resolver,
+          allowed_private_hosts: state.allowed_private_hosts
+        )
+      end
 
-    http_opts = [{:timeout, state.timeouts.connect}]
-
-    case :httpc.request(:delete, {charlist_url, charlist_headers}, http_opts, []) do
+    case result do
       {:ok, {{_, status, _}, _, _}} when status in [200, 202, 204] ->
         :telemetry.execute([:ex_mcp, :transport, :session, :terminated], %{}, %{
-          session_id: session_id
+          session_id_hash: LogSummary.fingerprint(session_id)
         })
 
-        Logger.debug("Session #{session_id} terminated (HTTP #{status})")
+        Logger.debug("Session terminated", status: status)
         :ok
 
       {:ok, {{_, status, _}, _, _}} ->
@@ -1084,7 +1102,10 @@ defmodule ExMCP.Transport.HTTP do
         :ok
 
       {:error, reason} ->
-        Logger.debug("Session termination failed: #{inspect(reason)} (non-fatal)")
+        Logger.debug("Session termination failed (non-fatal)",
+          reason: LogSummary.describe(reason)
+        )
+
         :ok
     end
   end
@@ -1093,7 +1114,7 @@ defmodule ExMCP.Transport.HTTP do
   def close(%__MODULE__{} = state) do
     :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{
       transport: :http,
-      session_id: state.session_id
+      session_id_hash: if(state.session_id, do: LogSummary.fingerprint(state.session_id))
     })
 
     # Best-effort session termination before closing
@@ -1159,9 +1180,10 @@ defmodule ExMCP.Transport.HTTP do
     headers = RequestHeaders.build(message, state)
     stream_kind = Keyword.get(opts, :stream_kind, :request)
 
-    with :ok <- validate_stream_kind(stream_kind),
+    with :ok <- request_within_limit(message, state.max_request_bytes),
+         :ok <- validate_stream_kind(stream_kind),
          :ok <- validate_stream_request_id(request_id, state),
-         {:ok, headers} <- validate_http_request(url, headers, state),
+         {:ok, headers} <- sanitize_http_request("POST", url, headers, state),
          {:ok, pid} <-
            ModernStreamClient.start(
              parent: parent,
@@ -1171,9 +1193,15 @@ defmodule ExMCP.Transport.HTTP do
              body: message,
              stream_kind: stream_kind,
              http_options: modern_stream_http_options(url, state),
+             handshake_timeout: state.timeouts.stream_handshake,
              idle_timeout: state.timeouts.stream_idle,
+             max_response_bytes: state.max_response_bytes,
+             max_buffer_bytes: state.max_stream_buffer_bytes,
              auth_provider: state.auth_provider,
-             auth_provider_state: state.auth_provider_state
+             auth_provider_state: state.auth_provider_state,
+             header_sanitizer: fn retry_headers ->
+               sanitize_http_request("POST", url, retry_headers, state)
+             end
            ) do
       {:ok, %{state | modern_streams: Map.put(state.modern_streams, request_id, pid)}}
     else
@@ -1222,8 +1250,19 @@ defmodule ExMCP.Transport.HTTP do
   defp validate_stream_kind(kind) when kind in [:request, :subscription], do: :ok
   defp validate_stream_kind(_kind), do: {:error, :invalid_modern_stream_kind}
 
+  defp request_within_limit(body, limit) do
+    if byte_size(body) <= limit, do: :ok, else: {:error, :request_too_large}
+  end
+
   defp modern_stream_http_options(url, state) do
-    options = [timeout: :infinity, connect_timeout: state.timeouts.connect, autoredirect: false]
+    options = [
+      timeout: :infinity,
+      connect_timeout: state.timeouts.connect,
+      autoredirect: false,
+      dns_timeout_ms: state.dns_timeout_ms,
+      dns_resolver: state.dns_resolver,
+      allowed_private_hosts: state.allowed_private_hosts
+    ]
 
     case URI.parse(url).scheme do
       "https" -> [{:ssl, build_ssl_options_from_state(state)} | options]
@@ -1260,7 +1299,10 @@ defmodule ExMCP.Transport.HTTP do
            state
        )
        when is_binary(session_id) do
-    Logger.debug("Starting deferred SSE connection with session ID: #{session_id}")
+    Logger.debug("Starting deferred SSE connection",
+      session_id_hash: LogSummary.fingerprint(session_id)
+    )
+
     state = %{state | sse_deferred_attempted: true}
 
     case start_sse(state) do
@@ -1273,16 +1315,25 @@ defmodule ExMCP.Transport.HTTP do
             %{state | sse_pid: sse_pid}
 
           {:sse_error, ^sse_pid, reason} ->
-            Logger.debug("Deferred SSE connection failed: #{inspect(reason)}, falling back")
+            stop_sse_client(sse_pid)
+
+            Logger.debug("Deferred SSE connection failed; falling back",
+              reason: LogSummary.describe(reason)
+            )
+
             state
         after
           handshake_timeout ->
+            stop_sse_client(sse_pid)
             Logger.debug("Deferred SSE connection timeout, falling back to non-SSE")
             state
         end
 
       {:error, reason} ->
-        Logger.debug("Failed to start deferred SSE: #{inspect(reason)}, falling back")
+        Logger.debug("Failed to start deferred SSE; falling back",
+          reason: LogSummary.describe(reason)
+        )
+
         state
     end
   end
@@ -1327,8 +1378,13 @@ defmodule ExMCP.Transport.HTTP do
 
   defp start_sse(state) do
     url = build_url(state, "")
-    Logger.debug("Starting SSE connection to: #{url}")
-    ssl_opts = build_ssl_options_from_state(state)
+    Logger.debug("Starting SSE connection", endpoint_hash: LogSummary.fingerprint(url))
+
+    transport_opts =
+      case URI.parse(url).scheme do
+        "https" -> build_ssl_options_from_state(state)
+        _other -> []
+      end
 
     # Build headers including session
     sse_headers = [
@@ -1343,26 +1399,34 @@ defmodule ExMCP.Transport.HTTP do
         sse_headers
       end
 
-    # Use the enhanced SSE client with keep-alive and reconnection.
-    # Pass retry_delay from POST SSE response if available.
-    opts = [
-      url: url,
-      headers: sse_headers,
-      initial_retry_delay: state.retry_delay,
-      max_retry_delay: state.max_retry_delay,
-      ssl_opts: ssl_opts,
-      parent: self(),
-      connect_timeout: state.timeouts.connect,
-      idle_timeout: state.timeouts.stream_idle
-    ]
+    with {:ok, sse_headers} <- sanitize_http_request("GET", url, sse_headers, state) do
+      # Use the enhanced SSE client with keep-alive and reconnection.
+      # Pass retry_delay from POST SSE response if available.
+      opts = [
+        url: url,
+        headers: sse_headers,
+        initial_retry_delay: state.retry_delay,
+        max_retry_delay: state.max_retry_delay,
+        ssl_opts: transport_opts,
+        parent: self(),
+        connect_timeout: state.timeouts.connect,
+        handshake_timeout: state.timeouts.stream_handshake,
+        idle_timeout: state.timeouts.stream_idle,
+        max_response_bytes: state.max_response_bytes,
+        max_buffer_bytes: state.max_stream_buffer_bytes,
+        dns_timeout_ms: state.dns_timeout_ms,
+        dns_resolver: state.dns_resolver,
+        allowed_private_hosts: state.allowed_private_hosts
+      ]
 
-    case SSEClient.start_link(opts) do
-      {:ok, sse_pid} ->
-        # Return immediately, connection happens asynchronously
-        {:ok, sse_pid}
+      case SSEClient.start_link(opts) do
+        {:ok, sse_pid} ->
+          # Return immediately, connection happens asynchronously
+          {:ok, sse_pid}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -1386,6 +1450,21 @@ defmodule ExMCP.Transport.HTTP do
 
   defp ensure_leading_slash("/" <> _ = endpoint), do: endpoint
   defp ensure_leading_slash(endpoint), do: "/" <> endpoint
+
+  defp positive_limit(config, key, default) do
+    case Keyword.get(config, key, default) do
+      limit when is_integer(limit) and limit > 0 -> limit
+      _invalid -> default
+    end
+  end
+
+  defp network_policy_options(state) do
+    [
+      dns_timeout_ms: state.dns_timeout_ms,
+      dns_resolver: state.dns_resolver,
+      allowed_private_hosts: state.allowed_private_hosts
+    ]
+  end
 
   # Security-related helper functions
 

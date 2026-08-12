@@ -1296,11 +1296,15 @@ defmodule ExMCP.Client do
           transport_state: %HTTP{} = transport_state
         } = state
       ) do
-    if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
-      RequestHandler.handle_request_stream_message(request_id, message, state)
-    else
-      {:noreply, state}
-    end
+    result =
+      if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
+        RequestHandler.handle_request_stream_message(request_id, message, state)
+      else
+        {:noreply, state}
+      end
+
+    send(stream_pid, {:modern_http_stream_ack, self(), request_id})
+    result
   end
 
   def handle_info(

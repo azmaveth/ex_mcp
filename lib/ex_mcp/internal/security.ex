@@ -229,10 +229,10 @@ defmodule ExMCP.Internal.Security do
   @doc """
   Classifies a URL as `:internal` or `:external` based on trusted origins.
 
-  Trusted origins are hosts that are considered part of the same security
-  domain. Wildcard matching (`*.example.com`) is supported for subdomains.
+  Exact origins match scheme, host, and effective port. Pass a security config
+  map to also apply the explicitly broad `:trusted_hosts` policy.
   """
-  @spec classify_url(String.t(), [String.t()]) :: :internal | :external
+  @spec classify_url(String.t(), [String.t()] | map()) :: :internal | :external
   defdelegate classify_url(url, trusted_origins), to: TokenHandler
 
   @doc """

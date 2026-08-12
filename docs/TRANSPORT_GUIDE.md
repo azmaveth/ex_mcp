@@ -66,7 +66,11 @@ not require `use_sse: true`.
     headers: [{"Authorization", "Bearer #{token}"}],
     request_timeout: 30_000,
     stream_handshake_timeout: 15_000,
-    stream_idle_timeout: 60_000
+    stream_idle_timeout: 60_000,
+    dns_timeout_ms: 1_000,
+    max_request_bytes: 8_388_608,
+    max_response_bytes: 8_388_608,
+    max_stream_buffer_bytes: 1_048_576
   )
 ```
 
@@ -85,9 +89,26 @@ Supported client options include:
 - `:request_timeout` - single request timeout.
 - `:stream_handshake_timeout` - wait for SSE stream startup.
 - `:stream_idle_timeout` - allowed SSE idle time.
+- `:dns_timeout_ms` - DNS-resolution deadline, defaults to one second.
+- `:dns_resolver` - injectable resolver used primarily for controlled testing.
+- `:allowed_private_hosts` - exact hostnames intentionally permitted to resolve
+  to RFC 1918 or IPv6 ULA addresses. Wildcards are rejected; loopback hostnames
+  and literals are supported without an exception for local MCP servers.
 - `:max_retry_delay` - cap for SSE reconnect delay.
+- `:max_request_bytes` - maximum encoded HTTP request body.
+- `:max_response_bytes` - maximum JSON or complete streamed response body.
+- `:max_stream_buffer_bytes` - maximum incomplete SSE data retained while
+  waiting for a frame delimiter.
 - `:security` - client-side security validation configuration.
 - `:auth` / `:auth_provider` - OAuth/auth provider integration.
+
+HTTP requests use finite absolute deadlines, identity encoding, redirect-free
+clients, and incremental response limits. A delimiter-free SSE slow drip cannot
+extend the idle deadline indefinitely; the peer must complete a frame within
+the configured timeout and buffer limit. Before every connection ExMCP validates
+the complete DNS answer and pins the socket to an approved address while keeping
+the original hostname for HTTP Host, TLS SNI, and certificate validation. Mixed
+public/private answers, link-local addresses, and reserved ranges fail closed.
 
 For OAuth client registration, configure one explicit strategy:
 

@@ -33,6 +33,8 @@ defmodule ExMCP.Server.Subscriptions do
     :max_per_principal,
     :max_per_tenant,
     :max_queue,
+    :max_message_bytes,
+    :max_queue_bytes,
     :max_lifetime_ms,
     :max_filter_uris,
     :max_filter_task_ids,
@@ -118,6 +120,8 @@ defmodule ExMCP.Server.Subscriptions do
       :authorize_subscription_filter,
       :authorize_subscription_publication,
       :subscription_max_queue,
+      :subscription_max_message_bytes,
+      :subscription_max_queue_bytes,
       :subscription_max_lifetime_ms,
       :task_store_opts,
       :client_capabilities
@@ -127,6 +131,8 @@ defmodule ExMCP.Server.Subscriptions do
       {:authorize_subscription_filter, value} -> {:authorize_filter, value}
       {:authorize_subscription_publication, value} -> {:authorize_publication, value}
       {:subscription_max_queue, value} -> {:max_queue, value}
+      {:subscription_max_message_bytes, value} -> {:max_message_bytes, value}
+      {:subscription_max_queue_bytes, value} -> {:max_queue_bytes, value}
       {:subscription_max_lifetime_ms, value} -> {:max_lifetime_ms, value}
       {:task_store_opts, value} -> {:task_store_opts, value}
       {:client_capabilities, value} -> {:client_capabilities, value}
@@ -134,6 +140,12 @@ defmodule ExMCP.Server.Subscriptions do
     |> Keyword.put(:principal_id, Keyword.get(opts, :principal_id))
     |> Keyword.put(:tenant_id, Keyword.get(opts, :tenant_id))
     |> Keyword.put(:audience, Keyword.get(opts, :audience, Keyword.get(opts, :endpoint)))
+    |> Keyword.put(
+      :authorization_required,
+      Keyword.get(opts, :oauth_enabled, false) or
+        not is_nil(Keyword.get(opts, :principal_id)) or
+        not is_nil(Keyword.get(opts, :tenant_id))
+    )
   end
 
   @doc false
@@ -176,6 +188,8 @@ defmodule ExMCP.Server.Subscriptions do
          max_per_principal: limits.max_per_principal,
          max_per_tenant: limits.max_per_tenant,
          max_queue: limits.max_queue,
+         max_message_bytes: limits.max_message_bytes,
+         max_queue_bytes: limits.max_queue_bytes,
          max_lifetime_ms: limits.max_lifetime_ms,
          max_filter_uris: limits.max_filter_uris,
          max_filter_task_ids: limits.max_filter_task_ids,
@@ -186,6 +200,7 @@ defmodule ExMCP.Server.Subscriptions do
 
   @impl true
   def handle_call({:listen, subscription_id, requested, transport_ref, opts}, _from, state) do
+    opts = ensure_authorization_context(opts)
     {entries, state} = all_entries(state)
 
     with :ok <- validate_subscription_id(subscription_id),
@@ -199,6 +214,7 @@ defmodule ExMCP.Server.Subscriptions do
            validate_publication_authorizer(
              Keyword.get(opts, :authorize_publication, state.publication_authorizer)
            ),
+         :ok <- require_identity_authorizers(opts, state),
          {:ok, requested} <- normalize_filter(requested, state),
          :ok <- validate_task_capability(requested, opts),
          supported = honour_supported(requested, state.supported_notifications),
@@ -346,6 +362,13 @@ defmodule ExMCP.Server.Subscriptions do
       min(option(opts, :max_lifetime_ms, state.max_lifetime_ms), state.max_lifetime_ms)
 
     max_queue = min(option(opts, :max_queue, state.max_queue), state.max_queue)
+
+    max_message_bytes =
+      min(option(opts, :max_message_bytes, state.max_message_bytes), state.max_message_bytes)
+
+    max_queue_bytes =
+      min(option(opts, :max_queue_bytes, state.max_queue_bytes), state.max_queue_bytes)
+
     expires_at = System.system_time(:millisecond) + max_lifetime_ms
 
     listener_opts = [
@@ -358,7 +381,10 @@ defmodule ExMCP.Server.Subscriptions do
       tenant_id: Keyword.get(opts, :tenant_id),
       publication_authorizer:
         Keyword.get(opts, :authorize_publication, state.publication_authorizer),
+      authorization_required: Keyword.get(opts, :authorization_required, false),
       max_queue: max_queue,
+      max_message_bytes: max_message_bytes,
+      max_queue_bytes: max_queue_bytes,
       max_lifetime_ms: max_lifetime_ms
     ]
 
@@ -405,9 +431,16 @@ defmodule ExMCP.Server.Subscriptions do
 
     result =
       case authorizer do
-        nil -> {:ok, requested}
-        callback when is_function(callback, 2) -> callback.(requested, context)
-        _invalid -> {:error, :invalid_filter_authorizer}
+        nil ->
+          if Keyword.get(opts, :authorization_required, false),
+            do: {:error, :subscription_filter_authorizer_required},
+            else: {:ok, requested}
+
+        callback when is_function(callback, 2) ->
+          callback.(requested, context)
+
+        _invalid ->
+          {:error, :invalid_filter_authorizer}
       end
 
     with {:ok, authorised} <- normalize_authorization_result(result),
@@ -663,6 +696,32 @@ defmodule ExMCP.Server.Subscriptions do
   defp validate_publication_authorizer(_invalid),
     do: {:error, :invalid_publication_authorizer}
 
+  defp require_identity_authorizers(opts, state) do
+    if Keyword.get(opts, :authorization_required, false) do
+      filter_authorizer = Keyword.get(opts, :authorize_filter, state.filter_authorizer)
+
+      publication_authorizer =
+        Keyword.get(opts, :authorize_publication, state.publication_authorizer)
+
+      cond do
+        is_nil(filter_authorizer) -> {:error, :subscription_filter_authorizer_required}
+        is_nil(publication_authorizer) -> {:error, :subscription_publication_authorizer_required}
+        true -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp ensure_authorization_context(opts) do
+    required =
+      Keyword.get(opts, :authorization_required, false) or
+        not is_nil(Keyword.get(opts, :principal_id)) or
+        not is_nil(Keyword.get(opts, :tenant_id))
+
+    Keyword.put(opts, :authorization_required, required)
+  end
+
   defp identity_context(transport_ref, opts) do
     %{
       principal_id: Keyword.get(opts, :principal_id),
@@ -678,6 +737,8 @@ defmodule ExMCP.Server.Subscriptions do
       max_per_principal: Keyword.get(opts, :max_per_principal, 100),
       max_per_tenant: Keyword.get(opts, :max_per_tenant, 500),
       max_queue: Keyword.get(opts, :max_queue, 100),
+      max_message_bytes: Keyword.get(opts, :max_message_bytes, 1_048_576),
+      max_queue_bytes: Keyword.get(opts, :max_queue_bytes, 8_388_608),
       max_lifetime_ms: Keyword.get(opts, :max_lifetime_ms, 3_600_000),
       max_filter_uris: Keyword.get(opts, :max_filter_uris, 256),
       max_filter_task_ids: Keyword.get(opts, :max_filter_task_ids, 256),

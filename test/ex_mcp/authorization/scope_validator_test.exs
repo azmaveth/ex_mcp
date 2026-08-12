@@ -2,6 +2,7 @@ defmodule ExMCP.Authorization.ScopeValidatorTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Authorization.ScopeValidator
+  alias ExMCP.Protocol.Methods
 
   describe "get_required_scopes/2" do
     test "returns correct scopes for standard methods" do
@@ -63,14 +64,14 @@ defmodule ExMCP.Authorization.ScopeValidatorTest do
              ]
     end
 
-    test "requires catch-all scope for unknown methods" do
-      assert ScopeValidator.get_required_scopes(%{"method" => "unknown/method"}) == [
-               "mcp:unknown"
-             ]
+    test "fails closed for unknown methods" do
+      assert ScopeValidator.get_required_scopes(%{"method" => "unknown/method"}) ==
+               {:error, :unmapped_method}
     end
 
-    test "requires catch-all scope for request without method" do
-      assert ScopeValidator.get_required_scopes(%{"params" => %{}}) == ["mcp:unknown"]
+    test "fails closed for request without method" do
+      assert ScopeValidator.get_required_scopes(%{"params" => %{}}) ==
+               {:error, :unmapped_method}
     end
 
     test "uses custom mapper when provided" do
@@ -98,6 +99,24 @@ defmodule ExMCP.Authorization.ScopeValidatorTest do
                custom_mapper
              ) == ["mcp:tools:list"]
     end
+
+    test "rejects invalid custom mapper output" do
+      assert ScopeValidator.get_required_scopes(%{"method" => "custom/op"}, fn _ -> "admin" end) ==
+               {:error, :invalid_scope_mapping}
+
+      assert ScopeValidator.get_required_scopes(%{"method" => "custom/op"}, fn _ -> [] end) ==
+               {:error, :invalid_scope_mapping}
+    end
+
+    test "has an explicit policy for every canonical MCP method" do
+      for {method, _min, _max, _kind, _handlers} <- Methods.rows() do
+        refute match?(
+                 {:error, _reason},
+                 ScopeValidator.get_required_scopes(%{"method" => method})
+               ),
+               "missing scope policy for #{method}"
+      end
+    end
   end
 
   describe "validate/2" do
@@ -119,10 +138,12 @@ defmodule ExMCP.Authorization.ScopeValidatorTest do
       assert ScopeValidator.validate(token_scopes, required_scopes) == :ok
     end
 
-    test "returns :ok for multi-level wildcard scope match" do
+    test "does not infer undeclared parent scopes as wildcards" do
       token_scopes = ["mcp:resources"]
       required_scopes = ["mcp:resources:get:specific_res"]
-      assert ScopeValidator.validate(token_scopes, required_scopes) == :ok
+
+      assert ScopeValidator.validate(token_scopes, required_scopes) ==
+               {:error, :insufficient_scope}
     end
 
     test "returns :ok with a mix of exact and wildcard scopes" do
@@ -185,8 +206,21 @@ defmodule ExMCP.Authorization.ScopeValidatorTest do
         "mcp:prompts:get",
         "mcp:prompts:execute",
         "mcp:completion:complete",
-        "mcp:sessions:delete",
-        "mcp:unknown"
+        "mcp:server:discover",
+        "mcp:resources:subscribe",
+        "mcp:logging:set",
+        "mcp:roots:list",
+        "mcp:sampling:create",
+        "mcp:elicitation:create",
+        "mcp:tasks:get",
+        "mcp:tasks:list",
+        "mcp:tasks:result",
+        "mcp:tasks:cancel",
+        "mcp:tasks:update",
+        "mcp:subscriptions:listen",
+        "mcp:requests:cancel",
+        "mcp:sessions:listen",
+        "mcp:sessions:delete"
       ]
 
       assert ScopeValidator.get_all_static_scopes() -- expected_scopes == []

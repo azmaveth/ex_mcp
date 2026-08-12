@@ -7,6 +7,7 @@ defmodule ExMCP.Authorization.IdJagHandler do
   """
 
   alias ExMCP.Authorization.{IdJag, JWT}
+  alias ExMCP.Internal.LogSummary
   require Logger
 
   @doc """
@@ -114,7 +115,7 @@ defmodule ExMCP.Authorization.IdJagHandler do
   defp lookup_trusted_idp(issuer, trusted_idps) do
     case Map.get(trusted_idps, issuer) do
       nil ->
-        Logger.warning("Untrusted IdP: #{issuer}")
+        Logger.warning("Untrusted IdP", issuer_hash: LogSummary.fingerprint(issuer))
         {:error, {:untrusted_idp, issuer}}
 
       config ->

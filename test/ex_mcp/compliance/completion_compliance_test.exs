@@ -540,14 +540,11 @@ defmodule ExMCP.CompletionComplianceTest do
     test "handles malformed arguments", %{client: client} do
       ref = %{"type" => "ref/prompt", "name" => "code_generator"}
 
-      # Missing required argument fields should be handled
+      # Missing required argument fields fail closed at the protocol boundary.
       arg = %{"invalid" => "structure"}
 
-      {:ok, result} = Client.complete(client, ref, arg)
-
-      completion = result.completion
-      # Should not crash, should return empty or handle gracefully
-      assert is_list(completion.values)
+      assert {:error, %ExMCP.Error.ProtocolError{code: -32602}} =
+               Client.complete(client, ref, arg)
     end
 
     test "rate limiting is implemented", %{client: client} do

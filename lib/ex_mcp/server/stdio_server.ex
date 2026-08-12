@@ -51,7 +51,7 @@ defmodule ExMCP.Server.StdioServer do
   require Logger
 
   alias ExMCP.Error.ProtocolError
-  alias ExMCP.Internal.{JSONRPC, StdioLoggerConfig, VersionRegistry}
+  alias ExMCP.Internal.{JSONRPC, LogSummary, MessageValidator, StdioLoggerConfig, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Server.{Dispatch, RequestContext, RequestState, ResultNormalizer, Subscriptions}
 
@@ -61,6 +61,8 @@ defmodule ExMCP.Server.StdioServer do
   ## Options
 
   * `:module` - The handler module implementing server callbacks
+  * `:max_request_ids` - Maximum number of distinct client request IDs retained
+    for the lifetime of this stdio server process (default: `10_000`)
   * Other options are passed to GenServer.start_link
   """
   def start_link(opts) do
@@ -100,6 +102,10 @@ defmodule ExMCP.Server.StdioServer do
       handler_module: module,
       handler_state: initial_state,
       request_id: 0,
+      validation_state:
+        MessageValidator.new_session(nil,
+          max_request_ids: Keyword.get(opts, :max_request_ids, 10_000)
+        ),
       protocol_mode: Keyword.get(opts, :protocol_mode),
       connection_era: nil,
       instructions: Keyword.get(opts, :instructions),
@@ -153,7 +159,10 @@ defmodule ExMCP.Server.StdioServer do
         # During startup, Mix.install and other tools may output non-JSON lines
         # We silently ignore these instead of sending error responses
         # Only log at debug level to avoid stderr contamination
-        Logger.debug("Ignoring non-JSON line: #{inspect(line)}")
+        Logger.debug("Ignoring non-JSON line",
+          line_shape: LogSummary.describe(line)
+        )
+
         {:noreply, state}
     end
   end
@@ -238,7 +247,26 @@ defmodule ExMCP.Server.StdioServer do
   # logging/setLevel or the task methods. Only stdio-specific concerns —
   # protocol version negotiation and the custom `handle_request/3` escape
   # hatch — live here.
-  defp handle_request(%{"method" => "initialize"} = request, state) do
+  defp handle_request(request, state) do
+    case MessageValidator.validate_message(request, state.validation_state) do
+      {{:ok, _validated_request}, validation_state} ->
+        do_handle_request(request, %{state | validation_state: validation_state})
+
+      {{:error, error}, validation_state} ->
+        state = %{state | validation_state: validation_state}
+
+        unless notification?(request) do
+          send_response(
+            JSONRPC.error(response_id(request), json_rpc_validation_error(error)),
+            state
+          )
+        end
+
+        {:noreply, state}
+    end
+  end
+
+  defp do_handle_request(%{"method" => "initialize"} = request, state) do
     params = Map.get(request, "params", %{})
     negotiated_version = negotiate_version(params)
 
@@ -250,11 +278,11 @@ defmodule ExMCP.Server.StdioServer do
     |> put_protocol_version(negotiated_version)
   end
 
-  defp handle_request(%{"method" => "subscriptions/listen"} = request, state) do
+  defp do_handle_request(%{"method" => "subscriptions/listen"} = request, state) do
     open_subscription(request, state)
   end
 
-  defp handle_request(%{"method" => "notifications/cancelled"} = request, state) do
+  defp do_handle_request(%{"method" => "notifications/cancelled"} = request, state) do
     request_id = get_in(request, ["params", "requestId"])
 
     case Map.pop(state.subscriptions, request_id) do
@@ -267,7 +295,7 @@ defmodule ExMCP.Server.StdioServer do
     end
   end
 
-  defp handle_request(%{"method" => method} = request, state) do
+  defp do_handle_request(%{"method" => method} = request, state) do
     cond do
       Dispatch.known_method?(method) ->
         dispatch(state, request)
@@ -281,9 +309,36 @@ defmodule ExMCP.Server.StdioServer do
     end
   end
 
-  defp handle_request(request, state) do
+  defp do_handle_request(request, state) do
     dispatch(state, request)
   end
+
+  defp notification?(request) when is_map(request) do
+    Map.has_key?(request, "method") and not Map.has_key?(request, "id")
+  end
+
+  defp notification?(_request), do: false
+
+  defp response_id(request) when is_map(request) do
+    case Map.get(request, "id") do
+      id when is_binary(id) or is_integer(id) -> id
+      _invalid_or_missing -> nil
+    end
+  end
+
+  defp response_id(_request), do: nil
+
+  defp json_rpc_validation_error(error), do: stringify_map_keys(error)
+
+  defp stringify_map_keys(value) when is_map(value) do
+    Map.new(value, fn {key, nested} ->
+      key = if is_atom(key), do: Atom.to_string(key), else: key
+      {key, stringify_map_keys(nested)}
+    end)
+  end
+
+  defp stringify_map_keys(value) when is_list(value), do: Enum.map(value, &stringify_map_keys/1)
+  defp stringify_map_keys(value), do: value
 
   defp dispatch(state, request) do
     state = maybe_pin_connection_era(request, state)
@@ -403,7 +458,10 @@ defmodule ExMCP.Server.StdioServer do
         send(server_pid, {:stdin_closed})
 
       {:error, reason} ->
-        Logger.error("STDIN read error: #{inspect(reason)}")
+        Logger.error("STDIN read error",
+          reason_shape: LogSummary.describe(reason)
+        )
+
         send(server_pid, {:stdin_closed})
 
       line when is_binary(line) ->
@@ -471,7 +529,7 @@ defmodule ExMCP.Server.StdioServer do
   end
 
   defp to_string_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp to_string_reason(reason), do: inspect(reason)
+  defp to_string_reason(_reason), do: "invalid_subscription"
 
   defp publish_or_send(method, params, state) do
     if modern_connection?(state) do

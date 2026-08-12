@@ -155,4 +155,43 @@ defmodule ExMCP.Transport.HTTPSslOptionsTest do
              }
     end
   end
+
+  describe "sanitize_http_request/4" do
+    test "applies the same credential policy to GET and DELETE as POST" do
+      previous = Application.get_env(:ex_mcp, :security)
+
+      Application.put_env(:ex_mcp, :security,
+        trusted_origins: [],
+        trusted_hosts: [],
+        consent_handler: ExMCP.ConsentHandler.Deny,
+        enable_token_passthrough_prevention: true,
+        enable_user_consent_validation: false
+      )
+
+      on_exit(fn ->
+        if is_nil(previous),
+          do: Application.delete_env(:ex_mcp, :security),
+          else: Application.put_env(:ex_mcp, :security, previous)
+      end)
+
+      state = %HTTP{headers: [], security: nil}
+      headers = [{"Authorization", "Bearer sentinel"}, {"X-Safe", "value"}]
+
+      for method <- ["GET", "POST", "DELETE"] do
+        assert {:ok, sanitized} =
+                 HTTP.sanitize_http_request(
+                   method,
+                   "https://untrusted.example/mcp",
+                   headers,
+                   state
+                 )
+
+        refute Enum.any?(sanitized, fn {name, _} ->
+                 String.downcase(to_string(name)) == "authorization"
+               end)
+
+        assert {"X-Safe", "value"} in sanitized
+      end
+    end
+  end
 end

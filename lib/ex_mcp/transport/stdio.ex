@@ -14,6 +14,11 @@ defmodule ExMCP.Transport.Stdio do
   - `:cd` - Working directory for the process
   - `:env` - Environment variables as a list of `{"KEY", "VALUE"}` tuples;
     use `{"KEY", false}` to remove an inherited variable from the child
+  - `:environment_policy` - `:isolated` (default) passes only a small runtime
+    allowlist plus explicit `:env`; `:inherit` preserves the parent environment
+    for explicitly trusted deployments
+  - `:max_frame_bytes` - maximum inbound or outbound JSON-RPC frame size
+    (default: 1 MiB)
 
   ## Example
 
@@ -29,16 +34,34 @@ defmodule ExMCP.Transport.Stdio do
 
   require Logger
 
-  alias ExMCP.Internal.{LineBuffer, SecurityConfig}
+  alias ExMCP.Internal.{LineBuffer, LogSummary, SecurityConfig}
   alias ExMCP.Transport.{Error, SecurityGuard}
 
   @termination_poll_ms 10
   @termination_grace_attempts 10
+  @default_max_frame_bytes 1_048_576
+  @isolated_env_allowlist ~w(
+    HOME LANG LOGNAME NIX_SSL_CERT_FILE PATH SHELL SSL_CERT_DIR SSL_CERT_FILE
+    TEMP TMP TMPDIR TZ USER
+  )
 
-  defstruct [:port, :os_pid, :line_buffer, :subscriber, :reader_pid]
+  defstruct [
+    :port,
+    :os_pid,
+    :line_buffer,
+    :subscriber,
+    :reader_pid,
+    max_frame_bytes: @default_max_frame_bytes
+  ]
 
   @impl true
   def connect(opts) do
+    with :ok <- validate_environment_policy(opts) do
+      do_connect(opts)
+    end
+  end
+
+  defp do_connect(opts) do
     command = Keyword.fetch!(opts, :command)
 
     port_opts = [
@@ -48,19 +71,14 @@ defmodule ExMCP.Transport.Stdio do
       :hide,
       :stream,
       line: 1_000_000,
-      args: tl(command)
+      args: tl(command),
+      env: safe_env(opts)
     ]
 
     port_opts =
       case Keyword.get(opts, :cd) do
         nil -> port_opts
         dir -> [{:cd, to_charlist(dir)} | port_opts]
-      end
-
-    port_opts =
-      case Keyword.get(opts, :env) do
-        nil -> port_opts
-        env -> [{:env, format_env(env)} | port_opts]
       end
 
     executable = hd(command)
@@ -93,12 +111,14 @@ defmodule ExMCP.Transport.Stdio do
       state = %__MODULE__{
         port: port,
         os_pid: port_os_pid(port),
-        line_buffer: ""
+        line_buffer: "",
+        max_frame_bytes: positive_limit(opts, :max_frame_bytes, @default_max_frame_bytes)
       }
 
       :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
         transport: :stdio,
-        command: hd(command)
+        command_basename: Path.basename(executable_path),
+        command_hash: LogSummary.fingerprint(executable_path)
       })
 
       {:ok, state}
@@ -111,6 +131,16 @@ defmodule ExMCP.Transport.Stdio do
   @impl true
   def send_message(message, %__MODULE__{port: port} = state) do
     # Check if message contains external resource requests that need security validation
+    case request_within_limit(message, state.max_frame_bytes) do
+      {:error, :frame_too_large} = error ->
+        error
+
+      :ok ->
+        do_send_message(message, port, state)
+    end
+  end
+
+  defp do_send_message(message, port, state) do
     case validate_stdio_message(message, state) do
       {:ok, validated_message} ->
         # MCP uses newline-delimited JSON
@@ -444,7 +474,7 @@ defmodule ExMCP.Transport.Stdio do
     reader =
       spawn_link(fn ->
         receive do
-          :port_transferred -> stdio_reader_loop(port, "", pid)
+          :port_transferred -> stdio_reader_loop(port, "", pid, state.max_frame_bytes)
         end
       end)
 
@@ -500,13 +530,19 @@ defmodule ExMCP.Transport.Stdio do
     binary_data =
       case data do
         {:eol, line} -> line <> "\n"
+        {:noeol, line} -> line
         binary when is_binary(binary) -> binary
         _ -> ""
       end
 
-    # Accumulate data until we have a complete line
-    new_buffer = state.line_buffer <> binary_data
+    # Accumulate data until we have a complete line, but never retain an
+    # attacker-controlled delimiter-free frame beyond the configured bound.
+    with {:ok, new_buffer} <- append_frame(state.line_buffer, binary_data, state.max_frame_bytes) do
+      process_received_buffer(new_buffer, state, timeout)
+    end
+  end
 
+  defp process_received_buffer(new_buffer, state, timeout) do
     case String.split(new_buffer, "\n", parts: 2) do
       [line, rest] ->
         # We have a complete line
@@ -519,7 +555,7 @@ defmodule ExMCP.Transport.Stdio do
 
           # Skip non-JSON output like "Secure MCP Filesystem Server..."
           not String.starts_with?(trimmed, "{") and not String.starts_with?(trimmed, "[") ->
-            Logger.debug("Skipping non-JSON output: #{inspect(trimmed)}")
+            Logger.debug("Skipping non-JSON output", line_shape: LogSummary.describe(trimmed))
             receive_loop(%{state | line_buffer: rest}, timeout)
 
           true ->
@@ -541,19 +577,26 @@ defmodule ExMCP.Transport.Stdio do
 
   # Internal reader process for push mode.
   # Reads port data, buffers lines, parses JSON, pushes to subscriber.
-  defp stdio_reader_loop(port, line_buffer, subscriber) do
+  defp stdio_reader_loop(port, line_buffer, subscriber, max_frame_bytes) do
     receive do
       {^port, {:data, data}} ->
         binary_data =
           case data do
             {:eol, line} -> line <> "\n"
+            {:noeol, line} -> line
             binary when is_binary(binary) -> binary
             _ -> ""
           end
 
-        new_buffer = line_buffer <> binary_data
-        remaining = process_buffer(new_buffer, subscriber)
-        stdio_reader_loop(port, remaining, subscriber)
+        case append_frame(line_buffer, binary_data, max_frame_bytes) do
+          {:ok, new_buffer} ->
+            remaining = process_buffer(new_buffer, subscriber, max_frame_bytes)
+            stdio_reader_loop(port, remaining, subscriber, max_frame_bytes)
+
+          {:error, :frame_too_large} ->
+            Kernel.send(subscriber, {:transport_closed, :frame_too_large})
+            close_port(port)
+        end
 
       {^port, {:exit_status, status}} ->
         Kernel.send(subscriber, {:transport_closed, {:process_exited, status}})
@@ -565,7 +608,7 @@ defmodule ExMCP.Transport.Stdio do
 
   # Process buffered data, sending complete JSON messages to subscriber.
   # Returns remaining incomplete buffer.
-  defp process_buffer(buffer, subscriber) do
+  defp process_buffer(buffer, subscriber, max_frame_bytes) do
     {messages, invalid_lines, partial} = LineBuffer.drain_json(buffer)
 
     Enum.each(messages, fn message ->
@@ -573,11 +616,26 @@ defmodule ExMCP.Transport.Stdio do
     end)
 
     Enum.each(invalid_lines, fn {:invalid_json, line} ->
-      Logger.debug("Skipping invalid JSON: #{inspect(line)}")
+      Logger.debug("Skipping invalid JSON", line_shape: LogSummary.describe(line))
     end)
 
-    partial
+    if byte_size(partial) <= max_frame_bytes, do: partial, else: ""
   end
+
+  @doc false
+  @spec append_frame(binary(), iodata(), pos_integer()) ::
+          {:ok, binary()} | {:error, :frame_too_large}
+  def append_frame(buffer, data, limit)
+      when is_binary(buffer) and is_integer(limit) and limit > 0 do
+    data = IO.iodata_to_binary(data)
+
+    if byte_size(buffer) + byte_size(data) <= limit,
+      do: {:ok, buffer <> data},
+      else: {:error, :frame_too_large}
+  end
+
+  defp request_within_limit(message, limit) when byte_size(message) <= limit, do: :ok
+  defp request_within_limit(_message, _limit), do: {:error, :frame_too_large}
 
   defp format_env(env) do
     Enum.map(env, fn
@@ -588,4 +646,62 @@ defmodule ExMCP.Transport.Stdio do
         {to_charlist(key), to_charlist(value)}
     end)
   end
+
+  defp safe_env(opts) do
+    opts
+    |> Keyword.get(:environment_policy, :isolated)
+    |> base_env()
+    |> Map.merge(normalize_env(Keyword.get(opts, :env, [])))
+    |> format_env()
+  end
+
+  defp base_env(:inherit), do: %{}
+
+  defp base_env(:isolated) do
+    parent_env = System.get_env()
+
+    retained =
+      Map.filter(parent_env, fn {name, _value} ->
+        name in @isolated_env_allowlist or String.starts_with?(name, "LC_")
+      end)
+
+    parent_env
+    |> Map.new(fn {name, _value} -> {name, false} end)
+    |> Map.merge(retained)
+  end
+
+  defp validate_environment_policy(opts) do
+    case Keyword.get(opts, :environment_policy, :isolated) do
+      policy when policy in [:isolated, :inherit] -> :ok
+      policy -> {:error, {:invalid_environment_policy, policy}}
+    end
+  end
+
+  defp positive_limit(opts, key, default) do
+    case Keyword.get(opts, key, default) do
+      value when is_integer(value) and value > 0 -> value
+      _invalid -> default
+    end
+  end
+
+  defp normalize_env(env) when is_map(env) do
+    Map.new(env, fn {name, value} -> {to_string(name), normalize_env_value(value)} end)
+  end
+
+  defp normalize_env(env) when is_list(env) do
+    Map.new(env, fn
+      %{"name" => name, "value" => value} ->
+        {to_string(name), normalize_env_value(value)}
+
+      %{name: name, value: value} ->
+        {to_string(name), normalize_env_value(value)}
+
+      {name, value} ->
+        {to_string(name), normalize_env_value(value)}
+    end)
+  end
+
+  defp normalize_env(_env), do: %{}
+  defp normalize_env_value(false), do: false
+  defp normalize_env_value(value), do: to_string(value)
 end

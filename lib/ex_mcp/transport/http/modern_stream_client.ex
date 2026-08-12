@@ -4,6 +4,7 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   use GenServer
 
   alias ExMCP.Internal.{Headers, SSE}
+  alias ExMCP.Transport.HTTP.BoundedStream
 
   @httpc_profiles [
     :ex_mcp_modern_stream_0,
@@ -35,10 +36,16 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     :http_options,
     :httpc_profile,
     :request_ref,
+    :handshake_timeout,
+    :handshake_timer,
     :idle_timeout,
     :idle_timer,
+    :max_response_bytes,
+    :max_buffer_bytes,
     :auth_provider,
     :auth_provider_state,
+    :header_sanitizer,
+    :consumer_ack_timeout,
     auth_attempts: 0,
     buffer: "",
     completed?: false,
@@ -57,6 +64,10 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     :exit, _reason -> :ok
   end
 
+  @doc false
+  @spec handshake_timer_active?(pid()) :: boolean()
+  def handshake_timer_active?(pid), do: GenServer.call(pid, :handshake_timer_active?)
+
   @impl true
   def init(opts) do
     parent = Keyword.fetch!(opts, :parent)
@@ -73,9 +84,14 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       body: Keyword.fetch!(opts, :body),
       http_options: Keyword.fetch!(opts, :http_options),
       httpc_profile: profile,
+      handshake_timeout: Keyword.fetch!(opts, :handshake_timeout),
       idle_timeout: Keyword.fetch!(opts, :idle_timeout),
+      max_response_bytes: Keyword.fetch!(opts, :max_response_bytes),
+      max_buffer_bytes: Keyword.fetch!(opts, :max_buffer_bytes),
       auth_provider: Keyword.get(opts, :auth_provider),
-      auth_provider_state: Keyword.get(opts, :auth_provider_state)
+      auth_provider_state: Keyword.get(opts, :auth_provider_state),
+      header_sanitizer: Keyword.get(opts, :header_sanitizer),
+      consumer_ack_timeout: positive_limit(Keyword.get(opts, :consumer_ack_timeout), 5_000)
     }
 
     {:ok, state, {:continue, :open}}
@@ -85,11 +101,16 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   def handle_continue(:open, state) do
     case open_request(state) do
       {:ok, request_ref} ->
-        {:noreply, %{state | request_ref: request_ref}}
+        {:noreply, state |> Map.put(:request_ref, request_ref) |> reset_handshake_timer()}
 
       {:error, reason} ->
         {:stop, :normal, notify_closed(state, reason)}
     end
+  end
+
+  @impl true
+  def handle_call(:handshake_timer_active?, _from, state) do
+    {:reply, is_reference(state.handshake_timer), state}
   end
 
   @impl true
@@ -99,38 +120,61 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   end
 
   @impl true
-  def handle_info({:http, {ref, :stream_start, _headers}}, %{request_ref: ref} = state) do
-    {:noreply, reset_idle_timer(state)}
+  def handle_info(
+        {:bounded_http, ref, {:stream_start, _status, _headers}},
+        %{request_ref: ref} = state
+      ) do
+    BoundedStream.ack(ref)
+    {:noreply, state |> cancel_handshake_timer() |> reset_idle_timer()}
   end
 
-  def handle_info({:http, {ref, :stream, chunk}}, %{request_ref: ref} = state) do
-    buffer = state.buffer <> to_binary(chunk)
-    {events, remaining} = SSE.parse_stream(buffer)
+  def handle_info({:bounded_http, ref, {:stream, chunk}}, %{request_ref: ref} = state) do
+    case append_chunk(state.buffer, chunk, state.max_buffer_bytes) do
+      {:ok, buffer} ->
+        {events, remaining} = SSE.parse_stream(buffer)
 
-    state =
-      Enum.reduce_while(events, %{reset_idle_timer(state) | buffer: remaining}, fn event, acc ->
-        state = deliver_event(event, acc)
+        state =
+          if events != [] or complete_sse_frame?(buffer),
+            do: reset_idle_timer(state),
+            else: state
 
-        if state.completed? or state.failed?, do: {:halt, state}, else: {:cont, state}
-      end)
+        state =
+          Enum.reduce_while(events, %{state | buffer: remaining}, fn event, acc ->
+            state = deliver_event(event, acc)
 
-    cond do
-      state.completed? ->
+            if state.completed? or state.failed?, do: {:halt, state}, else: {:cont, state}
+          end)
+
+        cond do
+          state.completed? ->
+            cancel_request(state)
+            send(state.parent, {:modern_http_stream_finished, self(), state.request_id})
+            {:stop, :normal, cancel_idle_timer(state)}
+
+          state.failed? ->
+            cancel_request(state)
+            {:stop, :normal, cancel_idle_timer(state)}
+
+          true ->
+            BoundedStream.ack(ref)
+            {:noreply, state}
+        end
+
+      {:error, :stream_buffer_limit_exceeded} ->
         cancel_request(state)
-        send(state.parent, {:modern_http_stream_finished, self(), state.request_id})
-        {:stop, :normal, cancel_idle_timer(state)}
 
-      state.failed? ->
-        cancel_request(state)
-        {:stop, :normal, cancel_idle_timer(state)}
-
-      true ->
-        {:noreply, state}
+        {:stop, :normal,
+         state
+         |> cancel_idle_timer()
+         |> notify_closed(:stream_buffer_limit_exceeded)}
     end
   end
 
-  def handle_info({:http, {ref, :stream_end, _headers}}, %{request_ref: ref} = state) do
-    state = cancel_idle_timer(state)
+  def handle_info(
+        {:bounded_http, ref, {:stream_end, _headers}},
+        %{request_ref: ref} = state
+      ) do
+    state = state |> cancel_handshake_timer() |> cancel_idle_timer()
 
     if state.completed? do
       send(state.parent, {:modern_http_stream_finished, self(), state.request_id})
@@ -141,17 +185,67 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   end
 
   def handle_info(
-        {:http, {ref, {{_version, status, _reason}, headers, body}}},
+        {:bounded_http, ref, {:complete, status, headers, body}},
         %{request_ref: ref} = state
       ) do
-    state = cancel_idle_timer(state)
+    state = state |> cancel_handshake_timer() |> cancel_idle_timer()
     body = to_binary(body)
 
+    if byte_size(body) > state.max_response_bytes do
+      {:stop, :normal, notify_closed(state, :response_too_large)}
+    else
+      handle_complete_http_response(status, headers, body, state)
+    end
+  end
+
+  def handle_info({:bounded_http, ref, {:error, reason}}, %{request_ref: ref} = state) do
+    {:stop, :normal,
+     state |> cancel_handshake_timer() |> cancel_idle_timer() |> notify_closed(reason)}
+  end
+
+  def handle_info(:handshake_timeout, %{request_ref: ref} = state) when not is_nil(ref) do
+    cancel_request(state)
+
+    {:stop, :normal,
+     state
+     |> Map.put(:handshake_timer, nil)
+     |> cancel_idle_timer()
+     |> notify_closed(:stream_handshake_timeout)}
+  end
+
+  def handle_info(:handshake_timeout, state), do: {:noreply, state}
+
+  def handle_info(:idle_timeout, state) do
+    cancel_request(state)
+    {:stop, :normal, notify_closed(state, :stream_idle_timeout)}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, parent, _reason},
+        %{parent_monitor: ref, parent: parent} = state
+      ) do
+    cancel_request(state)
+    {:stop, :normal, %{state | cancelled?: true}}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    cancel_handshake_timer(state)
+    cancel_idle_timer(state)
+
+    unless state.cancelled? or state.completed? or state.close_notified? do
+      send(state.parent, {:modern_http_stream_closed, self(), state.request_id, :stream_stopped})
+    end
+
+    :ok
+  end
+
+  defp handle_complete_http_response(status, headers, body, state) do
     case maybe_retry_with_auth(status, headers, state) do
       {:retry, state} ->
         case open_request(%{state | request_ref: nil}) do
           {:ok, request_ref} ->
-            {:noreply, %{state | request_ref: request_ref}}
+            {:noreply, state |> Map.put(:request_ref, request_ref) |> reset_handshake_timer()}
 
           {:error, reason} ->
             {:stop, :normal, notify_closed(state, {:auth_retry_failed, reason})}
@@ -171,50 +265,25 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     end
   end
 
-  def handle_info({:http, {ref, {:error, reason}}}, %{request_ref: ref} = state) do
-    {:stop, :normal, state |> cancel_idle_timer() |> notify_closed(reason)}
-  end
-
-  def handle_info(:idle_timeout, state) do
-    cancel_request(state)
-    {:stop, :normal, notify_closed(state, :stream_idle_timeout)}
-  end
-
-  def handle_info(
-        {:DOWN, ref, :process, parent, _reason},
-        %{parent_monitor: ref, parent: parent} = state
-      ) do
-    cancel_request(state)
-    {:stop, :normal, %{state | cancelled?: true}}
-  end
-
-  @impl true
-  def terminate(_reason, state) do
-    cancel_idle_timer(state)
-
-    unless state.cancelled? or state.completed? or state.close_notified? do
-      send(state.parent, {:modern_http_stream_closed, self(), state.request_id, :stream_stopped})
-    end
-
-    :ok
-  end
-
   defp open_request(state) do
-    request = {
-      String.to_charlist(state.url),
-      Enum.map(state.headers, fn {name, value} ->
-        {String.to_charlist(name), String.to_charlist(value)}
-      end),
-      ~c"application/json",
-      state.body
-    }
+    headers =
+      state.headers
+      |> put_header_if_missing("content-type", "application/json")
+      |> put_header_if_missing("accept-encoding", "identity")
 
-    :httpc.request(
+    BoundedStream.start(
+      self(),
       :post,
-      request,
-      state.http_options,
-      [sync: false, stream: :self, body_format: :binary],
-      state.httpc_profile
+      state.url,
+      headers,
+      state.body,
+      connect_timeout: Keyword.get(state.http_options, :connect_timeout, state.handshake_timeout),
+      transport_opts: Keyword.get(state.http_options, :ssl, []),
+      max_response_bytes: state.max_response_bytes,
+      delivery_timeout: state.consumer_ack_timeout + 1_000,
+      dns_timeout_ms: Keyword.get(state.http_options, :dns_timeout_ms, 1_000),
+      dns_resolver: Keyword.get(state.http_options, :dns_resolver, ExMCP.Internal.DNSResolver),
+      allowed_private_hosts: Keyword.get(state.http_options, :allowed_private_hosts, [])
     )
   end
 
@@ -235,11 +304,17 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   defp handle_stream_message(message, state) do
     case validate_message(message, state.request_id, state.stream_kind) do
       :ok ->
-        deliver_message(message, state)
+        case deliver_message(message, state) do
+          :ok ->
+            if final_response?(message),
+              do: %{state | completed?: true},
+              else: state
 
-        if final_response?(message),
-          do: %{state | completed?: true},
-          else: state
+          {:error, reason} ->
+            state
+            |> notify_closed(reason)
+            |> Map.put(:failed?, true)
+        end
 
       {:error, reason} ->
         state
@@ -253,6 +328,18 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       state.parent,
       {:modern_http_stream_message, self(), state.request_id, message}
     )
+
+    receive do
+      {:modern_http_stream_ack, parent, request_id}
+      when parent == state.parent and request_id == state.request_id ->
+        :ok
+
+      {:DOWN, monitor, :process, parent, _reason}
+      when monitor == state.parent_monitor and parent == state.parent ->
+        {:error, :stream_consumer_closed}
+    after
+      state.consumer_ack_timeout -> {:error, :stream_consumer_timeout}
+    end
   end
 
   defp handle_complete_response(status, body, state) when status in 200..299 do
@@ -293,25 +380,29 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
 
     case apply(state.auth_provider, callback, [www_auth, scopes, state.auth_provider_state]) do
       {:ok, token, provider_state} when is_binary(token) ->
-        headers = put_bearer_header(state.headers, token)
+        case sanitize_retry_headers(put_bearer_header(state.headers, token), state) do
+          {:ok, headers} ->
+            send(
+              state.parent,
+              {:modern_http_stream_auth_updated, self(), state.request_id,
+               %{access_token: token, auth_provider_state: provider_state}}
+            )
 
-        send(
-          state.parent,
-          {:modern_http_stream_auth_updated, self(), state.request_id,
-           %{access_token: token, auth_provider_state: provider_state}}
-        )
+            {:retry,
+             %{
+               state
+               | headers: headers,
+                 auth_provider_state: provider_state,
+                 auth_attempts: state.auth_attempts + 1,
+                 buffer: "",
+                 close_notified?: false,
+                 failed?: false,
+                 completed?: false
+             }}
 
-        {:retry,
-         %{
-           state
-           | headers: headers,
-             auth_provider_state: provider_state,
-             auth_attempts: state.auth_attempts + 1,
-             buffer: "",
-             close_notified?: false,
-             failed?: false,
-             completed?: false
-         }}
+          {:error, reason} ->
+            {:error, {:security_policy_rejected, reason}, state}
+        end
 
       {:error, reason, _provider_state} ->
         {:error, reason, state}
@@ -322,6 +413,17 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   end
 
   defp maybe_retry_with_auth(_status, _response_headers, _state), do: :no_retry
+
+  defp sanitize_retry_headers(headers, %{header_sanitizer: sanitizer})
+       when is_function(sanitizer, 1) do
+    sanitizer.(headers)
+  rescue
+    _exception -> {:error, :header_sanitizer_failed}
+  catch
+    _kind, _reason -> {:error, :header_sanitizer_failed}
+  end
+
+  defp sanitize_retry_headers(_headers, _state), do: {:error, :header_sanitizer_missing}
 
   defp extract_scopes(www_auth) when is_binary(www_auth) do
     case Regex.run(~r/scope="([^"]+)"/, www_auth) do
@@ -343,6 +445,22 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     %{state | idle_timer: Process.send_after(self(), :idle_timeout, state.idle_timeout)}
   end
 
+  defp reset_handshake_timer(state) do
+    state = cancel_handshake_timer(state)
+
+    %{
+      state
+      | handshake_timer: Process.send_after(self(), :handshake_timeout, state.handshake_timeout)
+    }
+  end
+
+  defp cancel_handshake_timer(%{handshake_timer: nil} = state), do: state
+
+  defp cancel_handshake_timer(state) do
+    Process.cancel_timer(state.handshake_timer, async: false, info: false)
+    %{state | handshake_timer: nil}
+  end
+
   defp cancel_idle_timer(%{idle_timer: nil} = state), do: state
 
   defp cancel_idle_timer(state) do
@@ -353,8 +471,7 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
   defp cancel_request(%{request_ref: nil}), do: :ok
 
   defp cancel_request(state) do
-    :httpc.cancel_request(state.request_ref, state.httpc_profile)
-    :ok
+    BoundedStream.cancel(state.request_ref)
   end
 
   defp notify_closed(%{close_notified?: true} = state, _reason), do: state
@@ -418,6 +535,32 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
 
   defp to_binary(value) when is_binary(value), do: value
   defp to_binary(value) when is_list(value), do: List.to_string(value)
+
+  @doc false
+  @spec append_chunk(binary(), iodata(), pos_integer()) ::
+          {:ok, binary()} | {:error, :stream_buffer_limit_exceeded}
+  def append_chunk(buffer, chunk, max_bytes)
+      when is_binary(buffer) and is_integer(max_bytes) and max_bytes > 0 do
+    chunk = to_binary(chunk)
+
+    if byte_size(buffer) + byte_size(chunk) <= max_bytes,
+      do: {:ok, buffer <> chunk},
+      else: {:error, :stream_buffer_limit_exceeded}
+  end
+
+  defp complete_sse_frame?(buffer) do
+    String.contains?(buffer, "\n\n") or String.contains?(buffer, "\r\r") or
+      String.contains?(buffer, "\r\n\r\n")
+  end
+
+  defp put_header_if_missing(headers, name, value) do
+    if Enum.any?(headers, fn {key, _value} -> String.downcase(to_string(key)) == name end),
+      do: headers,
+      else: [{name, value} | headers]
+  end
+
+  defp positive_limit(value, _default) when is_integer(value) and value > 0, do: value
+  defp positive_limit(_value, default), do: default
 
   defp httpc_profile do
     index = rem(:erlang.unique_integer([:positive, :monotonic]), length(@httpc_profiles))

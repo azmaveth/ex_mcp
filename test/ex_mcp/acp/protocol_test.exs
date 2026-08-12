@@ -257,6 +257,13 @@ defmodule ExMCP.ACP.ProtocolTest do
       assert msg["params"]["configId"] == "theme"
       assert msg["params"]["value"] == "dark"
     end
+
+    test "includes the required discriminator for boolean values" do
+      msg = Protocol.encode_session_set_config_option("sess_1", "auto_retry", false)
+
+      assert msg["params"]["value"] == false
+      assert msg["params"]["type"] == "boolean"
+    end
   end
 
   describe "encode_permission_request/3" do
@@ -614,7 +621,7 @@ defmodule ExMCP.ACP.ProtocolTest do
                })
     end
 
-    test "rejects non-map params and unsupported request ids" do
+    test "rejects non-map params and accepts the ACP null request id" do
       assert {:error, :invalid_message} =
                Protocol.parse_message(%{
                  "jsonrpc" => "2.0",
@@ -623,7 +630,7 @@ defmodule ExMCP.ACP.ProtocolTest do
                  "id" => 1
                })
 
-      assert {:error, :invalid_message} =
+      assert {:request, "session/new", %{}, nil} =
                Protocol.parse_message(%{
                  "jsonrpc" => "2.0",
                  "method" => "session/new",

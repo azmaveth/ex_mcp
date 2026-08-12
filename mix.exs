@@ -28,8 +28,11 @@ defmodule ExMCP.MixProject do
       ],
       # Cowlib 2.19.0 is the newest compatible release. These remaining
       # advisories are mitigated by Plug/Cowboy response-header validation,
-      # and ExMCP does not call cow_cookie:cookie/1. Keep the exceptions
-      # explicit so `mix hex.audit` still fails on every new advisory.
+      # and ExMCP does not call cow_cookie:cookie/1. Those assumptions are
+      # locked by dependency_advisory_mitigation_test.exs. Security owner:
+      # project maintainers; review/remove these exceptions by 2026-09-12 or
+      # immediately when a patched Cowlib is published. Keep the exceptions
+      # exact so `mix hex.audit` still fails on every new advisory.
       hex: [
         ignore_advisories: [
           "EEF-CVE-2026-43966",

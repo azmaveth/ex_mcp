@@ -18,7 +18,8 @@ defmodule ExMCP.Transport.SSEClient do
   use GenServer
   require Logger
 
-  alias ExMCP.Internal.SSE
+  alias ExMCP.Internal.{Headers, LogSummary, SSE}
+  alias ExMCP.Transport.HTTP.BoundedStream
 
   @initial_retry_delay 1_000
   @max_retry_delay 60_000
@@ -56,8 +57,16 @@ defmodule ExMCP.Transport.SSEClient do
     :last_event_id,
     :reconnect_timer,
     :connect_timeout,
+    :handshake_timeout,
+    :handshake_ref,
     :idle_timeout,
+    :max_response_bytes,
+    :max_buffer_bytes,
     :max_retry_delay,
+    :consumer_ack_timeout,
+    :dns_timeout_ms,
+    :dns_resolver,
+    :allowed_private_hosts,
     :httpc_profile
   ]
 
@@ -74,8 +83,16 @@ defmodule ExMCP.Transport.SSEClient do
           last_event_id: String.t() | nil,
           reconnect_timer: reference() | nil,
           connect_timeout: non_neg_integer(),
+          handshake_timeout: non_neg_integer(),
+          handshake_ref: reference() | nil,
           idle_timeout: non_neg_integer(),
+          max_response_bytes: pos_integer(),
+          max_buffer_bytes: pos_integer(),
           max_retry_delay: non_neg_integer(),
+          consumer_ack_timeout: pos_integer(),
+          dns_timeout_ms: pos_integer(),
+          dns_resolver: module() | function(),
+          allowed_private_hosts: [String.t()],
           httpc_profile: atom() | nil
         }
 
@@ -92,7 +109,14 @@ defmodule ExMCP.Transport.SSEClient do
   - `:initial_retry_delay` - Initial reconnection delay in ms (default: #{@initial_retry_delay})
   - `:max_retry_delay` - Maximum reconnection delay in ms (default: #{@max_retry_delay})
   - `:connect_timeout` - Connection timeout in ms (default: #{@connection_timeout})
+  - `:handshake_timeout` - Maximum time to receive response headers
   - `:idle_timeout` - Idle/heartbeat timeout in ms (default: #{@heartbeat_interval})
+  - `:max_response_bytes` - Maximum non-streaming response size
+  - `:max_buffer_bytes` - Maximum bytes retained for an incomplete SSE frame
+  - `:consumer_ack_timeout` - Maximum time a downstream event consumer may stall
+  - `:dns_timeout_ms` - Maximum time allowed for DNS resolution
+  - `:dns_resolver` - Resolver module or function used before pinning the connection
+  - `:allowed_private_hosts` - Exact hostnames explicitly permitted to resolve privately
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -107,6 +131,10 @@ defmodule ExMCP.Transport.SSEClient do
     GenServer.stop(client)
   end
 
+  @doc false
+  @spec handshake_timer_active?(GenServer.server()) :: boolean()
+  def handshake_timer_active?(client), do: GenServer.call(client, :handshake_timer_active?)
+
   # GenServer callbacks
 
   @impl true
@@ -117,7 +145,14 @@ defmodule ExMCP.Transport.SSEClient do
     parent = Keyword.get(opts, :parent, self())
     # Accept configurable timeouts with fallback to defaults
     connect_timeout = Keyword.get(opts, :connect_timeout, @connection_timeout)
+    handshake_timeout = Keyword.get(opts, :handshake_timeout, connect_timeout)
     idle_timeout = Keyword.get(opts, :idle_timeout, @heartbeat_interval)
+    max_response_bytes = Keyword.get(opts, :max_response_bytes, 8 * 1_024 * 1_024)
+    max_buffer_bytes = Keyword.get(opts, :max_buffer_bytes, 1 * 1_024 * 1_024)
+    consumer_ack_timeout = positive_delay(Keyword.get(opts, :consumer_ack_timeout), 5_000)
+    dns_timeout_ms = positive_delay(Keyword.get(opts, :dns_timeout_ms), 1_000)
+    dns_resolver = Keyword.get(opts, :dns_resolver, ExMCP.Internal.DNSResolver)
+    allowed_private_hosts = Keyword.get(opts, :allowed_private_hosts, [])
 
     # Use a bounded pool of predeclared httpc profiles to avoid creating
     # unreclaimable atoms per SSE connection.
@@ -125,8 +160,13 @@ defmodule ExMCP.Transport.SSEClient do
     ensure_httpc_profile!(profile)
 
     # Use server-specified retry delay if provided (from POST SSE response)
-    initial_delay = Keyword.get(opts, :initial_retry_delay) || @initial_retry_delay
-    max_delay = Keyword.get(opts, :max_retry_delay, @max_retry_delay)
+    max_delay = positive_delay(Keyword.get(opts, :max_retry_delay), @max_retry_delay)
+
+    initial_delay =
+      opts
+      |> Keyword.get(:initial_retry_delay)
+      |> nonnegative_delay(@initial_retry_delay)
+      |> min(max_delay)
 
     state = %__MODULE__{
       url: url,
@@ -137,12 +177,24 @@ defmodule ExMCP.Transport.SSEClient do
       retry_delay: initial_delay,
       retry_count: 0,
       connect_timeout: connect_timeout,
+      handshake_timeout: handshake_timeout,
       idle_timeout: idle_timeout,
+      max_response_bytes: max_response_bytes,
+      max_buffer_bytes: max_buffer_bytes,
       max_retry_delay: max_delay,
+      consumer_ack_timeout: consumer_ack_timeout,
+      dns_timeout_ms: dns_timeout_ms,
+      dns_resolver: dns_resolver,
+      allowed_private_hosts: allowed_private_hosts,
       httpc_profile: profile
     }
 
     {:ok, state, {:continue, :connect}}
+  end
+
+  @impl true
+  def handle_call(:handshake_timer_active?, _from, state) do
+    {:reply, is_reference(state.handshake_ref), state}
   end
 
   @impl true
@@ -152,23 +204,32 @@ defmodule ExMCP.Transport.SSEClient do
         # Store the reference but don't send connected message yet
         # We'll send it when we receive :stream_start
         # Don't reset retry_delay here - only reset when stream actually starts
-        new_state = %{
-          state
-          | ref: ref
-        }
+        new_state = state |> Map.put(:ref, ref) |> reset_handshake_timer()
 
         {:noreply, new_state}
 
       {:error, reason} ->
-        Logger.warning("SSE connection failed: #{inspect(reason)}")
+        Logger.warning("SSE connection failed",
+          reason_shape: LogSummary.describe(reason)
+        )
+
         schedule_reconnect(state)
     end
   end
 
   @impl true
-  def handle_info({:http, {ref, :stream_start, headers}}, %{ref: ref} = state) do
+  def handle_info(
+        {:bounded_http, ref, {:stream_start, _status, headers}},
+        %{ref: ref} = state
+      ) do
+    state = cancel_handshake_timer(state)
+    BoundedStream.ack(ref)
+
     # Connection is now established, send notification
-    :telemetry.execute([:ex_mcp, :transport, :sse, :connected], %{}, %{url: state.url})
+    :telemetry.execute([:ex_mcp, :transport, :sse, :connected], %{}, %{
+      endpoint_hash: LogSummary.fingerprint(state.url)
+    })
+
     send(state.parent, {:sse_connected, self()})
 
     # Start heartbeat monitoring using configurable idle timeout
@@ -181,7 +242,8 @@ defmodule ExMCP.Transport.SSEClient do
     # Preserve current retry_delay (may be set from SSE retry field or initial config).
     new_state =
       if retry_after do
-        %{state | retry_delay: retry_after * 1000, heartbeat_ref: heartbeat_ref, retry_count: 0}
+        retry_delay = min(retry_after, div(state.max_retry_delay, 1000)) * 1000
+        %{state | retry_delay: retry_delay, heartbeat_ref: heartbeat_ref, retry_count: 0}
       else
         %{state | heartbeat_ref: heartbeat_ref, retry_count: 0}
       end
@@ -189,85 +251,100 @@ defmodule ExMCP.Transport.SSEClient do
     {:noreply, new_state}
   end
 
-  def handle_info({:http, {ref, :stream, chunk}}, %{ref: ref} = state) do
-    # Reset heartbeat timer on data received
-    if state.heartbeat_ref do
-      Process.cancel_timer(state.heartbeat_ref)
-    end
+  def handle_info({:bounded_http, ref, {:stream, chunk}}, %{ref: ref} = state) do
+    case append_chunk(state.buffer, chunk, state.max_buffer_bytes) do
+      {:ok, buffer} ->
+        {events, remaining} = SSE.parse_stream(buffer)
 
-    heartbeat_ref = Process.send_after(self(), :check_heartbeat, state.idle_timeout)
-
-    # Process the chunk
-    buffer = state.buffer <> chunk
-    {events, remaining} = SSE.parse_stream(buffer)
-
-    # Debug logging
-    if length(events) > 0 do
-      Logger.debug("SSE Client parsed #{length(events)} events from chunk")
-    end
-
-    # Process events — extract retry field and send data events to parent
-    new_state =
-      Enum.reduce(events, %{state | buffer: remaining, heartbeat_ref: heartbeat_ref}, fn event,
-                                                                                         acc ->
-        # Check for retry field (SSE spec: sets reconnection delay)
-        acc =
-          case Map.get(event, "retry") do
-            nil ->
-              acc
-
-            retry_str ->
-              case Integer.parse(retry_str) do
-                {ms, _} when ms >= 0 ->
-                  Logger.debug("SSE retry field set to #{ms}ms")
-                  %{acc | retry_delay: ms}
-
-                _ ->
-                  acc
-              end
-          end
-
-        # Track last event ID for resumption
-        acc =
-          case Map.get(event, "id") do
-            nil -> acc
-            id -> %{acc | last_event_id: id}
-          end
-
-        # Forward data events to parent
-        if Map.has_key?(event, "data") do
-          process_event(event, acc)
+        if events != [] do
+          Logger.debug("SSE Client parsed #{length(events)} events from chunk")
         end
 
-        acc
-      end)
+        state =
+          if events != [] or complete_sse_frame?(buffer),
+            do: reset_heartbeat(state),
+            else: state
 
-    {:noreply, new_state}
+        case process_events(events, %{state | buffer: remaining}) do
+          {:ok, new_state} ->
+            BoundedStream.ack(ref)
+            {:noreply, new_state}
+
+          {:error, reason, new_state} ->
+            BoundedStream.cancel(ref)
+            send(state.parent, {:sse_error, self(), reason})
+            {:stop, :normal, new_state}
+        end
+
+      {:error, :stream_buffer_limit_exceeded} ->
+        BoundedStream.cancel(state.ref)
+        send(state.parent, {:sse_error, self(), :stream_buffer_limit_exceeded})
+        {:stop, :normal, state}
+    end
   end
 
-  def handle_info({:http, {ref, :stream_end, _headers}}, %{ref: ref} = state) do
-    :telemetry.execute([:ex_mcp, :transport, :sse, :disconnected], %{}, %{url: state.url})
+  def handle_info(
+        {:bounded_http, ref, {:stream_end, _headers}},
+        %{ref: ref} = state
+      ) do
+    :telemetry.execute([:ex_mcp, :transport, :sse, :disconnected], %{}, %{
+      endpoint_hash: LogSummary.fingerprint(state.url)
+    })
+
     Logger.info("SSE stream ended, reconnecting...")
     send(state.parent, {:sse_closed, self()})
     schedule_reconnect(state)
   end
 
   # Non-streaming HTTP response (e.g., 405 Method Not Allowed)
-  def handle_info({:http, {ref, {{_, 405, _}, _headers, _body}}}, %{ref: ref} = state) do
+  def handle_info(
+        {:bounded_http, ref, {:complete, 405, _headers, _body}},
+        %{ref: ref} = state
+      ) do
+    state = cancel_handshake_timer(state)
+
     Logger.info("SSE: server returned 405 — SSE not supported, disabling")
     send(state.parent, {:sse_not_supported, self()})
     {:noreply, %{state | ref: nil}}
   end
 
-  def handle_info({:http, {ref, {{_, status, _}, _headers, _body}}}, %{ref: ref} = state)
+  def handle_info(
+        {:bounded_http, ref, {:complete, status, _headers, _body}},
+        %{ref: ref} = state
+      )
       when status >= 400 do
+    state = cancel_handshake_timer(state)
+
     Logger.warning("SSE: server returned HTTP #{status}")
     send(state.parent, {:sse_error, self(), {:http_error, status}})
     schedule_reconnect(state)
   end
 
-  def handle_info({:http, {ref, {:error, reason}}}, %{ref: ref} = state) do
-    Logger.error("SSE error: #{inspect(reason)}")
+  def handle_info(
+        {:bounded_http, ref, {:complete, status, _headers, _body}},
+        %{ref: ref} = state
+      ) do
+    state = cancel_handshake_timer(state)
+    send(state.parent, {:sse_error, self(), {:invalid_sse_response, status}})
+    schedule_reconnect(state)
+  end
+
+  def handle_info(
+        {:bounded_http, ref, {:error, :response_too_large}},
+        %{ref: ref} = state
+      ) do
+    state = cancel_handshake_timer(state)
+    send(state.parent, {:sse_error, self(), :response_too_large})
+    {:stop, :normal, state}
+  end
+
+  def handle_info({:bounded_http, ref, {:error, reason}}, %{ref: ref} = state) do
+    state = cancel_handshake_timer(state)
+
+    Logger.error("SSE error",
+      reason_shape: LogSummary.describe(reason)
+    )
+
     send(state.parent, {:sse_error, self(), reason})
     schedule_reconnect(state)
   end
@@ -277,11 +354,20 @@ defmodule ExMCP.Transport.SSEClient do
     Logger.warning("SSE heartbeat timeout, reconnecting...")
 
     if state.ref do
-      :httpc.cancel_request(state.ref, state.httpc_profile)
+      BoundedStream.cancel(state.ref)
     end
 
     schedule_reconnect(state)
   end
+
+  def handle_info(:handshake_timeout, %{ref: ref, heartbeat_ref: nil} = state)
+      when not is_nil(ref) do
+    BoundedStream.cancel(ref)
+    send(state.parent, {:sse_error, self(), :stream_handshake_timeout})
+    schedule_reconnect(%{state | handshake_ref: nil})
+  end
+
+  def handle_info(:handshake_timeout, state), do: {:noreply, state}
 
   def handle_info(:reconnect, state) do
     {:noreply, state, {:continue, :connect}}
@@ -298,7 +384,7 @@ defmodule ExMCP.Transport.SSEClient do
 
   def handle_info(:do_force_reconnect, state) do
     if state.ref do
-      :httpc.cancel_request(state.ref, state.httpc_profile)
+      BoundedStream.cancel(state.ref)
     end
 
     if state.heartbeat_ref do
@@ -309,9 +395,11 @@ defmodule ExMCP.Transport.SSEClient do
   end
 
   # Update retry delay from parent (e.g., from POST SSE retry field)
-  def handle_info({:update_retry_delay, delay}, state) when is_integer(delay) do
-    {:noreply, %{state | retry_delay: delay}}
+  def handle_info({:update_retry_delay, delay}, state) when is_integer(delay) and delay >= 0 do
+    {:noreply, %{state | retry_delay: min(delay, state.max_retry_delay)}}
   end
+
+  def handle_info({:update_retry_delay, _invalid}, state), do: {:noreply, state}
 
   # Update last event ID from parent (e.g., from SSE event received before force_reconnect)
   def handle_info({:update_last_event_id, id}, state) when is_binary(id) do
@@ -329,7 +417,7 @@ defmodule ExMCP.Transport.SSEClient do
   @impl true
   def terminate(_reason, state) do
     if state.ref do
-      :httpc.cancel_request(state.ref, state.httpc_profile)
+      BoundedStream.cancel(state.ref)
     end
 
     if state.heartbeat_ref do
@@ -340,6 +428,8 @@ defmodule ExMCP.Transport.SSEClient do
       Process.cancel_timer(state.reconnect_timer)
     end
 
+    cancel_handshake_timer(state)
+
     :ok
   end
 
@@ -348,35 +438,19 @@ defmodule ExMCP.Transport.SSEClient do
   defp connect_sse(state) do
     headers = build_headers(state)
 
-    request = {
-      String.to_charlist(state.url),
-      Enum.map(headers, fn {k, v} ->
-        {String.to_charlist(k), String.to_charlist(v)}
-      end)
-    }
-
-    # For SSE connections, :timeout is the total request time — we use infinity
-    # since SSE connections are long-lived. The SSEClient's heartbeat mechanism
-    # handles idle detection. :connect_timeout limits just the TCP connection.
-    http_opts =
-      case URI.parse(state.url).scheme do
-        "https" ->
-          [
-            {:ssl, state.ssl_opts},
-            {:timeout, :infinity},
-            {:connect_timeout, state.connect_timeout}
-          ]
-
-        _ ->
-          [{:timeout, :infinity}, {:connect_timeout, state.connect_timeout}]
-      end
-
-    :httpc.request(
+    BoundedStream.start(
+      self(),
       :get,
-      request,
-      http_opts,
-      [{:sync, false}, {:stream, :self}],
-      state.httpc_profile
+      state.url,
+      headers,
+      nil,
+      connect_timeout: state.connect_timeout,
+      transport_opts: state.ssl_opts,
+      max_response_bytes: state.max_response_bytes,
+      delivery_timeout: state.consumer_ack_timeout + 1_000,
+      dns_timeout_ms: state.dns_timeout_ms,
+      dns_resolver: state.dns_resolver,
+      allowed_private_hosts: state.allowed_private_hosts
     )
   end
 
@@ -395,6 +469,7 @@ defmodule ExMCP.Transport.SSEClient do
   defp build_headers(state) do
     base_headers = [
       {"accept", "text/event-stream"},
+      {"accept-encoding", "identity"},
       {"cache-control", "no-cache"},
       {"connection", "keep-alive"}
     ]
@@ -408,7 +483,10 @@ defmodule ExMCP.Transport.SSEClient do
       end
 
     # Merge with user-provided headers
-    Enum.uniq_by(state.headers ++ headers_with_id, fn {k, _} -> k end)
+    state.headers
+    |> Headers.delete("accept-encoding")
+    |> Kernel.++(headers_with_id)
+    |> Enum.uniq_by(fn {k, _} -> String.downcase(to_string(k)) end)
   end
 
   defp process_event(event, state) do
@@ -417,14 +495,11 @@ defmodule ExMCP.Transport.SSEClient do
     event_type = Map.get(event, "event", "message")
     id = Map.get(event, "id")
 
-    Logger.debug(
-      "SSE Client processing event: type=#{event_type}, id=#{inspect(id)}, data_size=#{byte_size(data)}"
+    Logger.debug("SSE Client processing event",
+      event_type: event_type,
+      event_id_hash: if(id, do: LogSummary.fingerprint(id)),
+      data_size: byte_size(data)
     )
-
-    # Update last event ID if provided
-    if id do
-      GenServer.cast(self(), {:update_last_id, id})
-    end
 
     :telemetry.execute([:ex_mcp, :transport, :sse, :event], %{size: byte_size(data)}, %{
       event_type: event_type
@@ -440,9 +515,100 @@ defmodule ExMCP.Transport.SSEClient do
          id: id
        }}
     )
+
+    receive do
+      {:sse_event_ack, parent} when parent == state.parent -> :ok
+    after
+      state.consumer_ack_timeout -> {:error, :stream_consumer_timeout}
+    end
+  end
+
+  defp process_events(events, state) do
+    Enum.reduce_while(events, {:ok, state}, fn event, {:ok, acc} ->
+      acc = update_retry_delay(event, acc)
+      id = Map.get(event, "id")
+
+      # A zero-length `data:` field is a legal SSE priming event. It may carry
+      # `retry` and `id`, but it is not an MCP JSON message and must not enter
+      # the downstream acknowledgement path. Waiting for a consumer to decode
+      # and acknowledge an empty payload blocks this GenServer, preventing the
+      # reconnect timer and Last-Event-ID state from being applied.
+      if Map.get(event, "data") not in [nil, ""] do
+        case process_event(event, acc) do
+          :ok -> {:cont, {:ok, maybe_put_last_event_id(acc, id)}}
+          {:error, reason} -> {:halt, {:error, reason, acc}}
+        end
+      else
+        {:cont, {:ok, maybe_put_last_event_id(acc, id)}}
+      end
+    end)
+  end
+
+  defp maybe_put_last_event_id(state, nil), do: state
+  defp maybe_put_last_event_id(state, id), do: %{state | last_event_id: id}
+
+  defp update_retry_delay(event, state) do
+    case Map.get(event, "retry") do
+      nil ->
+        state
+
+      retry_str ->
+        case Integer.parse(retry_str) do
+          {ms, ""} when ms >= 0 ->
+            delay = min(ms, state.max_retry_delay)
+            Logger.debug("SSE retry field set to #{delay}ms")
+            %{state | retry_delay: delay}
+
+          _invalid ->
+            state
+        end
+    end
+  end
+
+  defp reset_heartbeat(state) do
+    if state.heartbeat_ref do
+      Process.cancel_timer(state.heartbeat_ref, async: false, info: false)
+    end
+
+    %{state | heartbeat_ref: Process.send_after(self(), :check_heartbeat, state.idle_timeout)}
+  end
+
+  defp reset_handshake_timer(state) do
+    state = cancel_handshake_timer(state)
+
+    %{
+      state
+      | handshake_ref: Process.send_after(self(), :handshake_timeout, state.handshake_timeout)
+    }
+  end
+
+  defp cancel_handshake_timer(%{handshake_ref: nil} = state), do: state
+
+  defp cancel_handshake_timer(state) do
+    Process.cancel_timer(state.handshake_ref, async: false, info: false)
+    %{state | handshake_ref: nil}
+  end
+
+  @doc false
+  @spec append_chunk(binary(), iodata(), pos_integer()) ::
+          {:ok, binary()} | {:error, :stream_buffer_limit_exceeded}
+  def append_chunk(buffer, chunk, max_bytes)
+      when is_binary(buffer) and is_integer(max_bytes) and max_bytes > 0 do
+    chunk = IO.iodata_to_binary(chunk)
+
+    if byte_size(buffer) + byte_size(chunk) <= max_bytes,
+      do: {:ok, buffer <> chunk},
+      else: {:error, :stream_buffer_limit_exceeded}
+  end
+
+  defp complete_sse_frame?(buffer) do
+    String.contains?(buffer, "\n\n") or String.contains?(buffer, "\r\r") or
+      String.contains?(buffer, "\r\n\r\n")
   end
 
   defp schedule_reconnect(state) do
+    state = cancel_handshake_timer(state)
+
     :telemetry.execute(
       [:ex_mcp, :transport, :sse, :reconnecting],
       %{delay_ms: state.retry_delay},
@@ -455,7 +621,7 @@ defmodule ExMCP.Transport.SSEClient do
     end
 
     if state.ref do
-      :httpc.cancel_request(state.ref)
+      BoundedStream.cancel(state.ref)
     end
 
     # Use server-specified retry delay, or exponential backoff
@@ -470,7 +636,7 @@ defmodule ExMCP.Transport.SSEClient do
 
     # Add small buffer to ensure we never reconnect early per spec requirement.
     # The MCP spec says client MUST wait at least the retry time.
-    buffered_delay = delay + 50
+    buffered_delay = min(delay + 50, state.max_retry_delay)
     Logger.info("Scheduling SSE reconnection in #{buffered_delay}ms (retry: #{delay}ms)")
 
     reconnect_timer = Process.send_after(self(), :reconnect, buffered_delay)
@@ -495,7 +661,7 @@ defmodule ExMCP.Transport.SSEClient do
     |> case do
       {_, value} ->
         case Integer.parse(to_string(value)) do
-          {seconds, _} -> seconds
+          {seconds, ""} when seconds >= 0 -> seconds
           _ -> nil
         end
 
@@ -503,6 +669,12 @@ defmodule ExMCP.Transport.SSEClient do
         nil
     end
   end
+
+  defp positive_delay(value, _default) when is_integer(value) and value > 0, do: value
+  defp positive_delay(_value, default), do: default
+
+  defp nonnegative_delay(value, _default) when is_integer(value) and value >= 0, do: value
+  defp nonnegative_delay(_value, default), do: default
 
   @impl true
   def handle_cast({:update_last_id, id}, state) do

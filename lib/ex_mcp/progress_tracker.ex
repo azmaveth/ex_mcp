@@ -40,6 +40,7 @@ defmodule ExMCP.ProgressTracker do
   use GenServer
   require Logger
 
+  alias ExMCP.Internal.LogSummary
   alias ExMCP.Types
 
   # Rate limiting: max 10 notifications per second per token
@@ -47,6 +48,7 @@ defmodule ExMCP.ProgressTracker do
   @rate_limit_window_ms 1000
 
   defstruct [
+    :owner,
     :progress_token,
     :sender_pid,
     :current_progress,
@@ -58,6 +60,7 @@ defmodule ExMCP.ProgressTracker do
   ]
 
   @type progress_state :: %__MODULE__{
+          owner: term(),
           progress_token: Types.progress_token(),
           sender_pid: pid(),
           current_progress: number(),
@@ -94,10 +97,13 @@ defmodule ExMCP.ProgressTracker do
   - `{:error, :token_exists}` - Progress token is already in use
   - `{:error, :invalid_token}` - Progress token is not string or integer
   """
-  @spec start_progress(Types.progress_token(), pid()) ::
+  @spec start_progress(Types.progress_token(), pid(), keyword()) ::
           {:ok, progress_state()} | {:error, :token_exists | :invalid_token}
-  def start_progress(progress_token, sender_pid) do
-    GenServer.call(__MODULE__, {:start_progress, progress_token, sender_pid})
+  def start_progress(progress_token, sender_pid, opts \\ []) do
+    GenServer.call(
+      __MODULE__,
+      {:start_progress, progress_namespace(opts), progress_token, sender_pid}
+    )
   end
 
   @doc """
@@ -117,10 +123,28 @@ defmodule ExMCP.ProgressTracker do
   - `{:error, :not_increasing}` - Progress value must increase
   - `{:error, :rate_limited}` - Too many notifications too quickly
   """
-  @spec update_progress(Types.progress_token(), number(), number() | nil, String.t() | nil) ::
+  @spec update_progress(
+          Types.progress_token(),
+          number(),
+          number() | nil,
+          String.t() | nil,
+          keyword()
+        ) ::
           :ok | {:error, :not_found | :not_increasing | :rate_limited}
-  def update_progress(progress_token, progress, total \\ nil, message \\ nil) do
-    GenServer.call(__MODULE__, {:update_progress, progress_token, progress, total, message})
+  def update_progress(progress_token, progress),
+    do: update_progress(progress_token, progress, nil, nil, [])
+
+  def update_progress(progress_token, progress, total),
+    do: update_progress(progress_token, progress, total, nil, [])
+
+  def update_progress(progress_token, progress, total, message),
+    do: update_progress(progress_token, progress, total, message, [])
+
+  def update_progress(progress_token, progress, total, message, opts) do
+    GenServer.call(
+      __MODULE__,
+      {:update_progress, progress_namespace(opts), progress_token, progress, total, message}
+    )
   end
 
   @doc """
@@ -135,9 +159,9 @@ defmodule ExMCP.ProgressTracker do
   - `:ok` - Operation completed and cleaned up
   - `{:error, :not_found}` - Progress token not found
   """
-  @spec complete_progress(Types.progress_token()) :: :ok | {:error, :not_found}
-  def complete_progress(progress_token) do
-    GenServer.call(__MODULE__, {:complete_progress, progress_token})
+  @spec complete_progress(Types.progress_token(), keyword()) :: :ok | {:error, :not_found}
+  def complete_progress(progress_token, opts \\ []) do
+    GenServer.call(__MODULE__, {:complete_progress, progress_namespace(opts), progress_token})
   end
 
   @doc """
@@ -152,10 +176,10 @@ defmodule ExMCP.ProgressTracker do
   - `{:ok, progress_state}` - Current state of the operation
   - `{:error, :not_found}` - Progress token not found
   """
-  @spec get_progress_state(Types.progress_token()) ::
+  @spec get_progress_state(Types.progress_token(), keyword()) ::
           {:ok, progress_state()} | {:error, :not_found}
-  def get_progress_state(progress_token) do
-    GenServer.call(__MODULE__, {:get_progress_state, progress_token})
+  def get_progress_state(progress_token, opts \\ []) do
+    GenServer.call(__MODULE__, {:get_progress_state, progress_namespace(opts), progress_token})
   end
 
   @doc """
@@ -165,9 +189,9 @@ defmodule ExMCP.ProgressTracker do
 
   List of all currently active progress tokens.
   """
-  @spec list_active_tokens() :: [Types.progress_token()]
-  def list_active_tokens do
-    GenServer.call(__MODULE__, :list_active_tokens)
+  @spec list_active_tokens(keyword()) :: [Types.progress_token()]
+  def list_active_tokens(opts \\ []) do
+    GenServer.call(__MODULE__, {:list_active_tokens, progress_namespace(opts)})
   end
 
   @doc """
@@ -191,18 +215,21 @@ defmodule ExMCP.ProgressTracker do
   end
 
   @impl true
-  def handle_call({:start_progress, progress_token, sender_pid}, _from, state) do
+  def handle_call({:start_progress, owner, progress_token, sender_pid}, _from, state) do
+    key = {owner, progress_token}
+
     cond do
       not valid_progress_token?(progress_token) ->
         {:reply, {:error, :invalid_token}, state}
 
-      :ets.member(@table_name, progress_token) ->
+      :ets.member(@table_name, key) ->
         {:reply, {:error, :token_exists}, state}
 
       true ->
         now = System.monotonic_time(:millisecond)
 
         progress_state = %__MODULE__{
+          owner: owner,
           progress_token: progress_token,
           sender_pid: sender_pid,
           current_progress: 0,
@@ -213,18 +240,24 @@ defmodule ExMCP.ProgressTracker do
           last_notification_time: now
         }
 
-        :ets.insert(@table_name, {progress_token, progress_state})
+        :ets.insert(@table_name, {key, progress_state})
         {:reply, {:ok, progress_state}, state}
     end
   end
 
   @impl true
-  def handle_call({:update_progress, progress_token, progress, total, message}, _from, state) do
-    case :ets.lookup(@table_name, progress_token) do
+  def handle_call(
+        {:update_progress, owner, progress_token, progress, total, message},
+        _from,
+        state
+      ) do
+    key = {owner, progress_token}
+
+    case :ets.lookup(@table_name, key) do
       [] ->
         {:reply, {:error, :not_found}, state}
 
-      [{^progress_token, current_state}] ->
+      [{^key, current_state}] ->
         cond do
           progress <= current_state.current_progress ->
             {:reply, {:error, :not_increasing}, state}
@@ -244,7 +277,7 @@ defmodule ExMCP.ProgressTracker do
                 last_notification_time: now
             }
 
-            :ets.insert(@table_name, {progress_token, new_state})
+            :ets.insert(@table_name, {key, new_state})
 
             # Send progress notification
             send_progress_notification(new_state)
@@ -255,34 +288,41 @@ defmodule ExMCP.ProgressTracker do
   end
 
   @impl true
-  def handle_call({:complete_progress, progress_token}, _from, state) do
-    case :ets.lookup(@table_name, progress_token) do
+  def handle_call({:complete_progress, owner, progress_token}, _from, state) do
+    key = {owner, progress_token}
+
+    case :ets.lookup(@table_name, key) do
       [] ->
         {:reply, {:error, :not_found}, state}
 
-      [{^progress_token, _progress_state}] ->
-        :ets.delete(@table_name, progress_token)
+      [{^key, _progress_state}] ->
+        :ets.delete(@table_name, key)
         {:reply, :ok, state}
     end
   end
 
   @impl true
-  def handle_call({:get_progress_state, progress_token}, _from, state) do
-    case :ets.lookup(@table_name, progress_token) do
+  def handle_call({:get_progress_state, owner, progress_token}, _from, state) do
+    key = {owner, progress_token}
+
+    case :ets.lookup(@table_name, key) do
       [] ->
         {:reply, {:error, :not_found}, state}
 
-      [{^progress_token, progress_state}] ->
+      [{^key, progress_state}] ->
         {:reply, {:ok, progress_state}, state}
     end
   end
 
   @impl true
-  def handle_call(:list_active_tokens, _from, state) do
+  def handle_call({:list_active_tokens, owner}, _from, state) do
     tokens =
       @table_name
       |> :ets.tab2list()
-      |> Enum.map(fn {token, _state} -> token end)
+      |> Enum.flat_map(fn
+        {{^owner, token}, _state} -> [token]
+        {_other_key, _state} -> []
+      end)
 
     {:reply, tokens, state}
   end
@@ -294,6 +334,8 @@ defmodule ExMCP.ProgressTracker do
   end
 
   ## Private Functions
+
+  defp progress_namespace(opts), do: Keyword.get(opts, :owner, {:process, self()})
 
   @spec valid_progress_token?(any()) :: boolean()
   defp valid_progress_token?(token) when is_binary(token) or is_integer(token), do: true
@@ -320,7 +362,9 @@ defmodule ExMCP.ProgressTracker do
     if Process.alive?(state.sender_pid) do
       send(state.sender_pid, {:progress_notification, notification})
     else
-      Logger.warning("Progress notification sender process is dead", token: state.progress_token)
+      Logger.warning("Progress notification sender process is dead",
+        progress_id: LogSummary.fingerprint(state.progress_token)
+      )
     end
 
     :ok
