@@ -69,8 +69,8 @@ forward "/mcp", ExMCP.HttpPlug,
 | `:prefer_modern` | Probes with `server/discover`; falls back only when the response proves the peer is legacy and the transport remains usable | Accepts both eras; advertises modern versions first | Target dual-era deployment after canaries pass |
 | `:modern_only` | Uses `server/discover`; never falls back | Accepts only modern requests | Conformance, new closed ecosystems, and final legacy retirement |
 
-`1.0.0-rc.6` defaults to `:prefer_modern` and begins the required
-modern-preferred soak. Published rc.5 is legacy-only and does not contain these
+`1.0.0-rc.6` introduced the `:prefer_modern` application default; `1.0.0-rc.7`
+retains that default and restarts the required modern-preferred soak. Published rc.5 is legacy-only and does not contain these
 modes. Stable 1.0 must have the same default and behavior as its final RC. Pin
 a mode explicitly if your deployment cannot tolerate a release-default
 transition.
@@ -109,7 +109,7 @@ disabled by default, and available during 1.x only with
 `legacy_http_sse: true`. A dual-era protocol mode does not enable it, and
 `:modern_only` never exposes it.
 
-Beginning with the post-rc.6 release candidate, legacy SSE events are persisted
+Beginning with `1.0.0-rc.7`, legacy SSE events are persisted
 before delivery. An ordinary GET-stream disconnect retains the MCP session,
 subscriptions, and bounded replay history until explicit DELETE or TTL expiry.
 A reconnect using the same session and `Last-Event-ID` receives events
@@ -382,7 +382,8 @@ If you encounter issues during migration:
 
 ## Version Support
 
-- **v1.0.0-rc.6 and the post-rc.6 candidate line**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**. Stable 1.0 follows only after the final candidate's soak and rollback gates.
+- **v1.0.0-rc.7**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**. Current modern-preferred soak candidate after the post-rc.6 SSE lifecycle, ACP, and security harden work. Stable 1.0 follows only after this candidate's soak and rollback gates.
+- **Published v1.0.0-rc.6**: Prior dual-era modern-preferred baseline; superseded as soak candidate by rc.7
 - **Published v1.0.0-rc.5**: Legacy MCP through 2025-11-25; no modern protocol modes
 - **v0.12.x**: Prior line with MCP 2025-11-25 support and ACP v1 alignment
 - **v0.11.x and earlier**: Upgrade recommended
@@ -390,8 +391,8 @@ If you encounter issues during migration:
 ### Forward-looking protocol notes
 
 - **MCP 2026-07-28** is the latest stable revision, is wire-breaking relative
-  to 2025-11-25, and is implemented in rc.6 behind the explicit protocol modes
-  above. The rc.6 release default is `:prefer_modern`.
+  to 2025-11-25, and is implemented behind the explicit protocol modes above.
+  The rc.6/rc.7 release default is `:prefer_modern`.
 - **ACP** adds non-breaking capabilities under major `1` (session list/close/resume,
   logout, config options, etc.). Adapter packages (Claude / Codex / Pi) should be
   re-synced periodically with upstream agent releases.
