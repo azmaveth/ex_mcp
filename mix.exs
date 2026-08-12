@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "1.0.0-rc.6"
+  @version "1.0.0-rc.7"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -136,6 +136,7 @@ defmodule ExMCP.MixProject do
           docs/MCP_2026_07_28_MIGRATION_PLAN.md
           docs/MCP_COVERAGE_MATRIX.md
           docs/RELEASE_1_0_0_RC_6.md
+          docs/RELEASE_1_0_0_RC_7.md
           docs/SECURITY.md
           docs/TRANSPORT_GUIDE.md
           docs/TROUBLESHOOTING.md
@@ -196,6 +197,7 @@ defmodule ExMCP.MixProject do
         "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
         "docs/MCP_COVERAGE_MATRIX.md",
         "docs/RELEASE_1_0_0_RC_6.md",
+        "docs/RELEASE_1_0_0_RC_7.md",
         "docs/API_DIFF_RC5_TO_1_0.md",
         "CHANGELOG.md"
       ],
@@ -206,7 +208,7 @@ defmodule ExMCP.MixProject do
         Guides:
           ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|ACP_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
         "Planning and release references":
-          ~r/V2_ROADMAP|PRE_2_0|MCP_2026_07_28|MCP_COVERAGE_MATRIX|API_DIFF_RC5_TO_1_0|RELEASE_1_0_0_RC_6/,
+          ~r/V2_ROADMAP|PRE_2_0|MCP_2026_07_28|MCP_COVERAGE_MATRIX|API_DIFF_RC5_TO_1_0|RELEASE_1_0_0_RC_6|RELEASE_1_0_0_RC_7/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [
