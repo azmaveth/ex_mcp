@@ -158,7 +158,7 @@ For a raw handler (no DSL) use `ExMCP.Server.HandlerServer.start_link(handler: M
 
 **Tip:** `mix examples.getting_started` (after `mix compile`) gives a fast local run of these DSL + Client patterns for quick verification.
 
-BEAM-local MCP follows the selected protocol mode. rc.6 defaults to
+BEAM-local MCP follows the selected protocol mode. rc.7 defaults to
 `:prefer_modern`, which uses discovery and per-request context;
 `:legacy_only` uses the legacy initialize handshake. In either era, the
 transport passes MCP-shaped maps/lists as Elixir terms instead of JSON strings.
