@@ -276,6 +276,13 @@ Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control cod
   adapter_opts: [model: "anthropic/claude-sonnet-4", thinking_level: "medium"]
 )
 
+# ZCode via the app-server adapter
+{:ok, client} = ExMCP.ACP.start_client(
+  transport_mod: ExMCP.ACP.AdapterTransport,
+  adapter: ExMCP.ACP.Adapters.ZCode,
+  adapter_opts: [cli_path: "zcode", cwd: "/my/project", mode_id: "build"]
+)
+
 # Native Elixir ACP agent over stdio
 {:ok, agent} = ExMCP.ACP.start_agent(
   handler: MyApp.AgentHandler,
