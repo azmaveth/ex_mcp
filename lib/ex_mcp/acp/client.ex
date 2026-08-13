@@ -52,7 +52,7 @@ defmodule ExMCP.ACP.Client do
   alias ExMCP.ACP.Client.DefaultHandler
   alias ExMCP.ACP.Client.HandlerRunner
   alias ExMCP.ACP.Protocol
-  alias ExMCP.Internal.LogSummary
+  alias ExMCP.Internal.{LogSummary, Options}
   alias ExMCP.Transport.Stdio
 
   @default_initialize_timeout 30_000
@@ -311,18 +311,28 @@ defmodule ExMCP.ACP.Client do
           handler_pid: handler_pid,
           event_listener: Keyword.get(opts, :event_listener),
           protocol_version: Keyword.get(opts, :protocol_version, 1),
-          max_frame_bytes: positive_limit(opts, :max_frame_bytes, @default_max_frame_bytes),
+          max_frame_bytes:
+            Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
           max_pending_requests:
-            positive_limit(opts, :max_pending_requests, @default_max_pending_requests),
+            Options.positive_integer(opts, :max_pending_requests, @default_max_pending_requests),
           max_prompt_text_bytes:
-            positive_limit(opts, :max_prompt_text_bytes, @default_max_prompt_text_bytes),
+            Options.positive_integer(opts, :max_prompt_text_bytes, @default_max_prompt_text_bytes),
           pending_request_timeout:
-            positive_limit(opts, :pending_request_timeout, @default_pending_request_timeout),
+            Options.positive_integer(
+              opts,
+              :pending_request_timeout,
+              @default_pending_request_timeout
+            ),
           handler_request_timeout:
-            positive_limit(opts, :handler_request_timeout, @default_handler_request_timeout),
-          max_update_queue: positive_limit(opts, :max_update_queue, @default_max_update_queue),
+            Options.positive_integer(
+              opts,
+              :handler_request_timeout,
+              @default_handler_request_timeout
+            ),
+          max_update_queue:
+            Options.positive_integer(opts, :max_update_queue, @default_max_update_queue),
           max_update_queue_bytes:
-            positive_limit(
+            Options.positive_integer(
               opts,
               :max_update_queue_bytes,
               @default_max_update_queue_bytes
@@ -1766,13 +1776,6 @@ defmodule ExMCP.ACP.Client do
     target
     |> Path.expand()
     |> resolve_path_components(depth + 1)
-  end
-
-  defp positive_limit(opts, key, default) do
-    case Keyword.get(opts, key, default) do
-      value when is_integer(value) and value > 0 -> value
-      _invalid -> default
-    end
   end
 
   defp do_disconnect(state) do

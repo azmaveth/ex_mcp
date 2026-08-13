@@ -8,7 +8,7 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
 
   @behaviour ExMCP.ACP.Agent.Transport
 
-  alias ExMCP.Internal.StdioLoggerConfig
+  alias ExMCP.Internal.{Options, StdioLoggerConfig}
 
   @default_max_frame_bytes 1_048_576
   @collector_chunk_bytes 4_096
@@ -30,7 +30,7 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
      %__MODULE__{
        input: Keyword.get(opts, :input, :stdio),
        output: output,
-       max_frame_bytes: positive_limit(opts, :max_frame_bytes, @default_max_frame_bytes)
+       max_frame_bytes: Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes)
      }}
   end
 
@@ -108,11 +108,4 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
 
   @impl true
   def connected?(%__MODULE__{closed?: closed?}), do: not closed?
-
-  defp positive_limit(opts, key, default) do
-    case Keyword.get(opts, key, default) do
-      value when is_integer(value) and value > 0 -> value
-      _invalid -> default
-    end
-  end
 end

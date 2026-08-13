@@ -30,7 +30,7 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   alias ExMCP.ACP.AdapterBridge.PortRunner
   alias ExMCP.ACP.{Capabilities, Envelope}
-  alias ExMCP.Internal.Maps
+  alias ExMCP.Internal.{Maps, Options}
 
   @type t :: GenServer.server()
   @default_max_buffer_bytes 1_048_576
@@ -102,12 +102,15 @@ defmodule ExMCP.ACP.AdapterBridge do
       adapter_opts: adapter_opts,
       outbox: :queue.new(),
       waiters: :queue.new(),
-      max_buffer_bytes: positive_limit(opts, :max_buffer_bytes, @default_max_buffer_bytes),
+      max_buffer_bytes:
+        Options.positive_integer(opts, :max_buffer_bytes, @default_max_buffer_bytes),
       max_outbox_messages:
-        positive_limit(opts, :max_outbox_messages, @default_max_outbox_messages),
-      max_outbox_bytes: positive_limit(opts, :max_outbox_bytes, @default_max_outbox_bytes),
-      max_waiters: positive_limit(opts, :max_waiters, @default_max_waiters),
-      max_one_shot_tasks: positive_limit(opts, :max_one_shot_tasks, @default_max_one_shot_tasks)
+        Options.positive_integer(opts, :max_outbox_messages, @default_max_outbox_messages),
+      max_outbox_bytes:
+        Options.positive_integer(opts, :max_outbox_bytes, @default_max_outbox_bytes),
+      max_waiters: Options.positive_integer(opts, :max_waiters, @default_max_waiters),
+      max_one_shot_tasks:
+        Options.positive_integer(opts, :max_one_shot_tasks, @default_max_one_shot_tasks)
     }
 
     case adapter_mod.command(adapter_opts) do
@@ -1291,13 +1294,6 @@ defmodule ExMCP.ACP.AdapterBridge do
       %{state | adapter_state: state.adapter_mod.shutdown(state.adapter_state)}
     else
       state
-    end
-  end
-
-  defp positive_limit(opts, key, default) do
-    case Keyword.get(opts, key, default) do
-      value when is_integer(value) and value > 0 -> value
-      _invalid -> default
     end
   end
 end

@@ -34,17 +34,12 @@ defmodule ExMCP.Transport.Stdio do
 
   require Logger
 
-  alias ExMCP.Internal.{LineBuffer, LogSummary, SecurityConfig}
+  alias ExMCP.Internal.{LineBuffer, LogSummary, Options, PortEnvironment, SecurityConfig}
   alias ExMCP.Transport.{Error, SecurityGuard}
 
   @termination_poll_ms 10
   @termination_grace_attempts 10
   @default_max_frame_bytes 1_048_576
-  @isolated_env_allowlist ~w(
-    HOME LANG LOGNAME NIX_SSL_CERT_FILE PATH SHELL SSL_CERT_DIR SSL_CERT_FILE
-    TEMP TMP TMPDIR TZ USER
-  )
-
   defstruct [
     :port,
     :os_pid,
@@ -56,7 +51,7 @@ defmodule ExMCP.Transport.Stdio do
 
   @impl true
   def connect(opts) do
-    with :ok <- validate_environment_policy(opts) do
+    with :ok <- PortEnvironment.validate_policy(opts) do
       do_connect(opts)
     end
   end
@@ -112,7 +107,8 @@ defmodule ExMCP.Transport.Stdio do
         port: port,
         os_pid: port_os_pid(port),
         line_buffer: "",
-        max_frame_bytes: positive_limit(opts, :max_frame_bytes, @default_max_frame_bytes)
+        max_frame_bytes:
+          Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes)
       }
 
       :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
@@ -637,71 +633,10 @@ defmodule ExMCP.Transport.Stdio do
   defp request_within_limit(message, limit) when byte_size(message) <= limit, do: :ok
   defp request_within_limit(_message, _limit), do: {:error, :frame_too_large}
 
-  defp format_env(env) do
-    Enum.map(env, fn
-      {key, false} ->
-        {to_charlist(key), false}
-
-      {key, value} ->
-        {to_charlist(key), to_charlist(value)}
-    end)
-  end
-
   defp safe_env(opts) do
     opts
-    |> Keyword.get(:environment_policy, :isolated)
-    |> base_env()
-    |> Map.merge(normalize_env(Keyword.get(opts, :env, [])))
-    |> format_env()
+    |> PortEnvironment.base()
+    |> Map.merge(PortEnvironment.normalize(Keyword.get(opts, :env, [])))
+    |> PortEnvironment.to_port()
   end
-
-  defp base_env(:inherit), do: %{}
-
-  defp base_env(:isolated) do
-    parent_env = System.get_env()
-
-    retained =
-      Map.filter(parent_env, fn {name, _value} ->
-        name in @isolated_env_allowlist or String.starts_with?(name, "LC_")
-      end)
-
-    parent_env
-    |> Map.new(fn {name, _value} -> {name, false} end)
-    |> Map.merge(retained)
-  end
-
-  defp validate_environment_policy(opts) do
-    case Keyword.get(opts, :environment_policy, :isolated) do
-      policy when policy in [:isolated, :inherit] -> :ok
-      policy -> {:error, {:invalid_environment_policy, policy}}
-    end
-  end
-
-  defp positive_limit(opts, key, default) do
-    case Keyword.get(opts, key, default) do
-      value when is_integer(value) and value > 0 -> value
-      _invalid -> default
-    end
-  end
-
-  defp normalize_env(env) when is_map(env) do
-    Map.new(env, fn {name, value} -> {to_string(name), normalize_env_value(value)} end)
-  end
-
-  defp normalize_env(env) when is_list(env) do
-    Map.new(env, fn
-      %{"name" => name, "value" => value} ->
-        {to_string(name), normalize_env_value(value)}
-
-      %{name: name, value: value} ->
-        {to_string(name), normalize_env_value(value)}
-
-      {name, value} ->
-        {to_string(name), normalize_env_value(value)}
-    end)
-  end
-
-  defp normalize_env(_env), do: %{}
-  defp normalize_env_value(false), do: false
-  defp normalize_env_value(value), do: to_string(value)
 end

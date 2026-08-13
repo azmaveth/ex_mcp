@@ -38,7 +38,7 @@ defmodule ExMCP.ACP.Agent do
   alias ExMCP.ACP.PendingRequests
   alias ExMCP.ACP.Protocol
   alias ExMCP.ACP.RequestValidation
-  alias ExMCP.Internal.LogSummary
+  alias ExMCP.Internal.{LogSummary, Options}
 
   @default_protocol_version 1
   @supported_protocol_versions [1]
@@ -366,13 +366,22 @@ defmodule ExMCP.ACP.Agent do
         agent_capabilities: agent_capabilities(opts, handler_mod),
         auth_methods: auth_methods(opts, handler_mod),
         protocol_version: Keyword.get(opts, :protocol_version, @default_protocol_version),
-        max_frame_bytes: positive_limit(opts, :max_frame_bytes, @default_max_frame_bytes),
+        max_frame_bytes:
+          Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
         max_pending_requests:
-          positive_limit(opts, :max_pending_requests, @default_max_pending_requests),
+          Options.positive_integer(opts, :max_pending_requests, @default_max_pending_requests),
         pending_request_timeout:
-          positive_limit(opts, :pending_request_timeout, @default_pending_request_timeout),
+          Options.positive_integer(
+            opts,
+            :pending_request_timeout,
+            @default_pending_request_timeout
+          ),
         handler_request_timeout:
-          positive_limit(opts, :handler_request_timeout, @default_handler_request_timeout)
+          Options.positive_integer(
+            opts,
+            :handler_request_timeout,
+            @default_handler_request_timeout
+          )
       }
 
       receiver_pid = start_receiver(self(), transport_mod, transport_state)
@@ -592,7 +601,7 @@ defmodule ExMCP.ACP.Agent do
       |> Keyword.drop(@agent_keys)
       |> Keyword.put_new(
         :max_frame_bytes,
-        positive_limit(opts, :max_frame_bytes, @default_max_frame_bytes)
+        Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes)
       )
 
     cond do
@@ -1591,13 +1600,6 @@ defmodule ExMCP.ACP.Agent do
 
   defp cancel_timer(nil), do: :ok
   defp cancel_timer(timer_ref), do: Process.cancel_timer(timer_ref, async: true, info: false)
-
-  defp positive_limit(opts, key, default) do
-    case Keyword.get(opts, key, default) do
-      value when is_integer(value) and value > 0 -> value
-      _invalid -> default
-    end
-  end
 
   defp normalize_terminal_params(params) do
     params = Maps.stringify_keys(params)

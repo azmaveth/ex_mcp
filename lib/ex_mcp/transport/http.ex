@@ -85,7 +85,7 @@ defmodule ExMCP.Transport.HTTP do
   require Logger
 
   alias ExMCP.Authorization.{FullOAuthFlow, LogSanitizer}
-  alias ExMCP.Internal.{DNSResolver, Headers, LogSummary, Security, SecurityConfig, SSE}
+  alias ExMCP.Internal.{DNSResolver, Headers, LogSummary, Options, Security, SecurityConfig, SSE}
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
 
@@ -192,13 +192,15 @@ defmodule ExMCP.Transport.HTTP do
     stream_idle_timeout = Keyword.get(config, :stream_idle_timeout, 60_000)
 
     max_response_bytes =
-      positive_limit(config, :max_response_bytes, @default_max_response_bytes)
+      Options.positive_integer(config, :max_response_bytes, @default_max_response_bytes)
 
     max_stream_buffer_bytes =
-      positive_limit(config, :max_stream_buffer_bytes, @default_max_stream_buffer_bytes)
+      Options.positive_integer(config, :max_stream_buffer_bytes, @default_max_stream_buffer_bytes)
 
-    max_request_bytes = positive_limit(config, :max_request_bytes, @default_max_request_bytes)
-    dns_timeout_ms = positive_limit(config, :dns_timeout_ms, 1_000)
+    max_request_bytes =
+      Options.positive_integer(config, :max_request_bytes, @default_max_request_bytes)
+
+    dns_timeout_ms = Options.positive_integer(config, :dns_timeout_ms, 1_000)
     dns_resolver = Keyword.get(config, :dns_resolver, DNSResolver)
     allowed_private_hosts = Keyword.get(config, :allowed_private_hosts, [])
 
@@ -1450,13 +1452,6 @@ defmodule ExMCP.Transport.HTTP do
 
   defp ensure_leading_slash("/" <> _ = endpoint), do: endpoint
   defp ensure_leading_slash(endpoint), do: "/" <> endpoint
-
-  defp positive_limit(config, key, default) do
-    case Keyword.get(config, key, default) do
-      limit when is_integer(limit) and limit > 0 -> limit
-      _invalid -> default
-    end
-  end
 
   defp network_policy_options(state) do
     [
