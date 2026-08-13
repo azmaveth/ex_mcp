@@ -52,7 +52,7 @@ defmodule ExMCP.ACP.Client do
   alias ExMCP.ACP.Client.DefaultHandler
   alias ExMCP.ACP.Client.HandlerRunner
   alias ExMCP.ACP.Protocol
-  alias ExMCP.Internal.{LogSummary, Options}
+  alias ExMCP.Internal.{LogSummary, Options, WorkspacePath}
   alias ExMCP.Transport.Stdio
 
   @default_initialize_timeout 30_000
@@ -1722,61 +1722,15 @@ defmodule ExMCP.ACP.Client do
 
   defp session_roots(cwd, lifecycle_opts) do
     [cwd | LifecycleParams.additional_directories(lifecycle_opts) || []]
-    |> Enum.map(&canonical_path/1)
+    |> Enum.map(&WorkspacePath.canonical/1)
     |> Enum.uniq()
   end
 
   defp path_within_roots?(path, roots) when is_binary(path) and is_list(roots) do
-    canonical = canonical_path(path)
-    Enum.any?(roots, &path_within?(canonical, &1))
+    Enum.any?(roots, &WorkspacePath.within?(path, &1))
   end
 
   defp path_within_roots?(_path, _roots), do: false
-
-  defp path_within?(path, root) do
-    relative = Path.relative_to(path, root)
-
-    relative == "." or
-      (Path.type(relative) == :relative and relative != ".." and
-         not String.starts_with?(relative, "../"))
-  end
-
-  # Resolve every symlink that exists at authorization time. Nonexistent final
-  # components retain their lexical location under the resolved parent so safe
-  # create/write requests remain possible without trusting symlink escapes.
-  defp canonical_path(path), do: resolve_path_components(Path.expand(path), 0)
-
-  defp resolve_path_components(path, depth) when depth >= 40, do: path
-
-  defp resolve_path_components(path, depth) do
-    case Path.split(path) do
-      [base | components] ->
-        Enum.reduce(components, base, &resolve_path_component(&1, &2, depth))
-
-      [] ->
-        path
-    end
-  end
-
-  defp resolve_path_component(component, resolved_parent, depth) do
-    candidate = Path.join(resolved_parent, component)
-
-    case :file.read_link(to_charlist(candidate)) do
-      {:ok, target} -> resolve_link_target(to_string(target), candidate, depth)
-      {:error, _reason} -> candidate
-    end
-  end
-
-  defp resolve_link_target(target, candidate, depth) do
-    target =
-      if Path.type(target) == :absolute,
-        do: target,
-        else: Path.join(Path.dirname(candidate), target)
-
-    target
-    |> Path.expand()
-    |> resolve_path_components(depth + 1)
-  end
 
   defp do_disconnect(state) do
     if state.receiver_pid && Process.alive?(state.receiver_pid) do
