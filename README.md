@@ -65,7 +65,7 @@ def deps do
 end
 ```
 
-To retain the legacy-only rc.5 connection policy during rollout, configure the
+To retain the legacy protocol era during rollout, configure the
 mode explicitly:
 
 ```elixir
