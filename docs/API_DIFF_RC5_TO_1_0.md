@@ -6,10 +6,9 @@ This report records the public Elixir API compatibility gate for the MCP
 - baseline: `v1.0.0-rc.5` (`a2464c3423ee48ba825402cc2d17be8042f1451a`);
 - candidate: `1.0.0-rc.7` on `master` (current soak candidate).
 
-The original BEAM snapshot below was taken against the `v1.0.0-rc.6` release
-commit. rc.7 is additive on that surface: exported functions went from 2,288
-in rc.5 to 2,753 here with zero removals. Callbacks, types, and structs still
-need a regenerated census from the tagged rc.7 commit before stable 1.0.
+The original BEAM snapshot was taken against the `v1.0.0-rc.6` release
+commit. An independent rc.7 census (2026-08-13) updated the candidate totals
+below. There are zero removals versus rc.5.
 
 > **Post-rc.6 note (2026-08-13):** `1.0.0-rc.7` is the current 1.0 soak
 > candidate. Public deltas after the rc.6 snapshot are summarized in
@@ -32,13 +31,13 @@ compared:
 
 The snapshot totals were:
 
-| Surface | rc.5 | 1.0 candidate | Removed |
+| Surface | rc.5 | 1.0.0-rc.7 | Removed |
 |---|---:|---:|---:|
-| Modules | 236 | 290 | 0 |
-| Exported functions | 2,288 | 2,690 | 0 |
+| Modules | 236 | 300 | 0 |
+| Exported functions | 2,288 | 2,753 | 0 |
 | Callbacks | 93 | 115 | 0 |
-| Struct fields | 363 | 503 | 0 |
-| Types | 485 | 588 | 0 named types |
+| Struct fields | 363 | 557 | 0 |
+| Types | 485 | 600 | 0 named types |
 
 The type count treats a changed definition as one removed textual row and one
 added textual row. Those changes were inspected individually as described
@@ -92,7 +91,7 @@ generated `state_param` instead.
 
 ## Additive public API
 
-The candidate adds 54 modules and 402 exports. The main supported additions
+The candidate adds 64 modules and 465 exports. The main supported additions
 are grouped here rather than listing internal plumbing:
 
 - era selection and discovery: `ExMCP.Client.EraProbe`,
@@ -138,18 +137,18 @@ without a simultaneous package-API rewrite.
 
 ## Release decision
 
-The public-API gate is satisfied: there are no unresolved rc.5 symbol,
-callback, named-type, struct-field, or return-shape removals. Stable 1.0 still
-depends on the conformance, security, interoperability, load, rollback, and
-minimum seven-day modern-preferred RC soak gates in the migration plan.
+The public-API gate is satisfied on the rc.7 census: there are no unresolved
+rc.5 symbol, callback, named-type, struct-field, or return-shape removals.
+Stable 1.0 still depends on the conformance, security, interoperability, load,
+rollback, and minimum seven-day modern-preferred RC soak gates in the
+migration plan.
 
 
 ## Updates for 1.0.0-rc.7
 
-> This section is an honest public delta for changes that landed after the
-> rc.6 BEAM snapshot above. It is **not** a full regenerated module/export
-> census; regenerate that audit from the tagged rc.7 commit when cutting
-> stable 1.0 if a fresh snapshot is required.
+> This section is the public delta for changes that landed after the rc.6
+> BEAM snapshot. The table above is the rc.7 census (modules, exports,
+> callbacks, struct fields, and named types).
 
 ### Additive public API
 
