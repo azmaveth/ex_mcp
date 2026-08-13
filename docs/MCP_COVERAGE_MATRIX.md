@@ -12,7 +12,7 @@ protocol revisions it implements. Status is current as of 2026-08-05.
 - **Current repository rollout:** `1.0.0-rc.7` enables `2026-07-28` through
   `:prefer_modern` and `:modern_only` and defaults to `:prefer_modern` for the
   required pre-1.0 soak. Every legacy revision remains available, and
-  `:legacy_only` preserves the exact rc.5 connection policy.
+  `:legacy_only` preserves the legacy protocol era (not an exact rc.5 package rollback).
 
 The protocol revision is stable even though its official conformance runner is
 still published as a prerelease. Do not describe `2026-07-28` itself as a
@@ -57,7 +57,7 @@ rejection. Their assertions live in
 tested so SDK v2 coverage cannot mask a regression in an older protocol era.
 
 The totals above are dated maintainer-recorded snapshots, not live badges.
-The rc.6 CI workflow preserves the complete modern conformance output as a
+The rc.7 CI workflow preserves the complete modern conformance output as a
 build artifact, and the GitHub prerelease links the exact tag commit and
 qualifying run. Update this table if the pinned versions or results change.
 
@@ -130,7 +130,7 @@ has operational release gates:
 1. Replace the prerelease modern conformance runner with a stable 2026-aware
    release when available. Until then, retain the now-passing pinned official
    SDK v2 fallback and disclose both pins in release notes.
-2. Publish and observe rc.6, the modern-preferred RC, for at least seven
+2. Publish and observe rc.7, the modern-preferred RC, for at least seven
    calendar days.
 3. Complete the mixed-version cluster rollback drill with active subscriptions
    and in-flight MRTR operations.
