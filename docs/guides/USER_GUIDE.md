@@ -212,9 +212,11 @@ config :ex_mcp, protocol_mode: :prefer_modern
 
 Use `:prefer_modern` for a dual-era client or server that tries 2026-07-28
 first, `:modern_only` for a closed modern ecosystem, `:prefer_legacy` for an
-early compatibility canary, and `:legacy_only` for exact rc.5 behavior or
-rollback. rc.6 defaults to `:prefer_modern`; the published rc.5 package remains
-the legacy-only characterization baseline and does not contain these modes.
+early compatibility canary, and `:legacy_only` to preserve the legacy protocol
+era. Exact rc.5 wire and session behavior still requires package rollback to
+`1.0.0-rc.5`. rc.7 defaults to `:prefer_modern`; the published rc.5 package
+remains the legacy-only characterization baseline and does not contain these
+modes.
 
 `ExMCP.protocol_version/0` returns `2025-11-25` because it is a legacy
 initialize compatibility helper; it does not report the latest upstream
