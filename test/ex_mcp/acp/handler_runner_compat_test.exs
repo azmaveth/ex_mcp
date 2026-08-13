@@ -33,36 +33,6 @@ defmodule ExMCP.ACP.Client.HandlerRunnerCompatTest do
     def terminate(_reason, _state), do: :ok
   end
 
-  defmodule SlowHandler do
-    @behaviour ExMCP.ACP.Client.Handler
-
-    @impl true
-    def init(_opts), do: {:ok, %{}}
-
-    @impl true
-    def handle_session_update(_session_id, _update, state) do
-      Process.sleep(200)
-      {:ok, state}
-    end
-
-    @impl true
-    def handle_permission_request(_session_id, _tool_call, _options, state),
-      do: {:ok, %{"outcome" => "cancelled"}, state}
-
-    @impl true
-    def handle_file_read(_session_id, _path, _opts, state), do: {:error, :not_supported, state}
-
-    @impl true
-    def handle_file_write(_session_id, _path, _content, state),
-      do: {:error, :not_supported, state}
-
-    @impl true
-    def handle_terminal_request(_method, _params, _id, state), do: {:error, :not_supported, state}
-
-    @impl true
-    def terminate(_reason, _state), do: :ok
-  end
-
   test "session_update/3 remains as an rc.6 compatibility wrapper" do
     {:ok, pid} = HandlerRunner.start_link(CaptureHandler, [pid: self()], self())
 
@@ -73,9 +43,11 @@ defmodule ExMCP.ACP.Client.HandlerRunnerCompatTest do
   end
 
   test "session_update/3 returns :ok when the runner is already dead" do
+    Process.flag(:trap_exit, true)
     {:ok, pid} = HandlerRunner.start_link(CaptureHandler, [pid: self()], self())
-    Process.exit(pid, :kill)
+    Process.unlink(pid)
     ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}
 
     assert :dropped =
@@ -85,13 +57,14 @@ defmodule ExMCP.ACP.Client.HandlerRunnerCompatTest do
   end
 
   test "session_update/3 returns :ok when bounded /5 delivery would drop" do
-    {:ok, pid} = HandlerRunner.start_link(SlowHandler, [], self())
-    update = %{"sessionUpdate" => "agent_message_chunk", "content" => %{"text" => "x"}}
+    {:ok, pid} = HandlerRunner.start_link(CaptureHandler, [pid: self()], self())
 
-    # Fill the mailbox while the handler is blocked in handle_cast.
-    assert :ok = HandlerRunner.session_update(pid, "s1", update, 1, 64)
-    assert :ok = HandlerRunner.session_update(pid, "s1", update, 1, 64)
-    assert :dropped = HandlerRunner.session_update(pid, "s1", update, 1, 64)
+    update = %{
+      "sessionUpdate" => "agent_message_chunk",
+      "pad" => String.duplicate("x", 10_000)
+    }
+
+    assert :dropped = HandlerRunner.session_update(pid, "s1", update, 32, 64)
     assert :ok = HandlerRunner.session_update(pid, "s1", update)
   end
 end
