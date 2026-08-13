@@ -1220,9 +1220,9 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] Produce an API-diff report against `v1.0.0-rc.5`. Restore every removed public function,
       callback, struct field and return shape or delay stable 1.0; document additive APIs and
       protocol-driven behavior changes, but do not use release notes to waive a public removal.
-      **`docs/API_DIFF_RC5_TO_1_0.md` compares independently compiled BEAM snapshots: 236 → 290
-      modules, 2,288 → 2,690 exports, 93 → 115 callbacks, 363 → 503 struct fields, with zero
-      removals in those categories. Every changed typespec was inspected; callback changes are
+      **`docs/API_DIFF_RC5_TO_1_0.md` records the rc.7 census versus `v1.0.0-rc.5`: 236 → 300
+      modules, 2,288 → 2,753 exports, 93 → 115 callbacks, 363 → 557 struct fields, 485 → 600
+      named types, with zero removals in those categories. Every changed typespec was inspected; callback changes are
       supersets, struct/type changes are additive or corrective, and the intentional OAuth
       caller-supplied-state hardening is disclosed as an input-behavior change.**
 - [x] Phase 8 shipped rather than being deferred: store-backed handlers automatically advertise
