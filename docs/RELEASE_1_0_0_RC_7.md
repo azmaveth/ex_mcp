@@ -1,7 +1,7 @@
 # ExMCP 1.0.0-rc.7
 
 `1.0.0-rc.7` is the modern-preferred soak candidate that follows published
-`1.0.0-rc.7`. It keeps the dual-era MCP 2026-07-28 default while packaging the
+`1.0.0-rc.6`. It keeps the dual-era MCP 2026-07-28 default while packaging the
 post-rc.6 transport lifecycle, ACP, and security hardening that cannot promote
 directly from rc.6 to stable 1.0.
 
@@ -135,14 +135,8 @@ the 2026-08-12 security harden described above.
 
 ## rc.5 performance comparison
 
-Record the rc.5 baseline comparison before promoting any later stable candidate:
-
-```bash
-# On the same runner class used for CI performance gates:
-mix test.suite performance
-```
-
-Compare median runtime and retained memory for shared legacy workloads against the
-rc.5 baseline on that runner (rc.7 gate: no unexplained breach; shared legacy
-workloads may not regress more than 20% median runtime or 10% retained memory).
-Store the runner identity, commit SHAs, and raw outputs with the release evidence.
+rc.7 CI records current-head performance and stress thresholds only. A
+same-runner rc.5 vs rc.7 comparison (median runtime and retained memory for
+shared legacy workloads, plus runner identity, commit SHAs, and raw outputs)
+is **not** a publish gate for this candidate. Record that evidence before
+stable `1.0.0`.
