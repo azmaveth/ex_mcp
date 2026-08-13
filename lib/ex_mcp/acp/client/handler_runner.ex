@@ -17,13 +17,16 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
 
   @doc false
   def session_update(pid, session_id, update) do
-    session_update(
-      pid,
-      session_id,
-      update,
-      @default_max_update_queue,
-      @default_max_update_queue_bytes
-    )
+    _ =
+      session_update(
+        pid,
+        session_id,
+        update,
+        @default_max_update_queue,
+        @default_max_update_queue_bytes
+      )
+
+    :ok
   end
 
   def session_update(pid, session_id, update, max_queue, max_queue_bytes) do
