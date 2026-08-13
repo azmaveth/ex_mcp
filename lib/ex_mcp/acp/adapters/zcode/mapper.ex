@@ -880,7 +880,7 @@ defmodule ExMCP.ACP.Adapters.ZCode.Mapper do
       "nativeSearchEnhancementsEnabled" => false,
       "memoryEnabled" => false,
       "askUserQuestionAutoResolutionEnabled" => false,
-      "modelContextBudgetStrategy" => "auto"
+      "modelContextBudgetStrategy" => "preflight-v1"
     }
   end
 

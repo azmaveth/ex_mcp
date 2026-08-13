@@ -1,7 +1,27 @@
 defmodule ExMCP.ACP.Adapters.ZCode.MapperTest do
   use ExUnit.Case, async: true
 
+  alias ExMCP.ACP.Adapters.ZCode
   alias ExMCP.ACP.Adapters.ZCode.{Mapper, Protocol}
+
+  describe "runtime preferences" do
+    test "uses a context-budget strategy accepted by current ZCode releases" do
+      {:ok, state} = ZCode.init([])
+
+      {[], [wire], ^state} =
+        Mapper.reduce_message(
+          %{
+            "id" => "preferences-1",
+            "method" => "session/requestRuntimePreferences",
+            "params" => %{}
+          },
+          state
+        )
+
+      assert %{"result" => preferences} = wire |> IO.iodata_to_binary() |> Jason.decode!()
+      assert preferences["modelContextBudgetStrategy"] == "preflight-v1"
+    end
+  end
 
   describe "Protocol.workspace_ref/1" do
     test "uses the local path as ZCode's fallback workspace key" do
