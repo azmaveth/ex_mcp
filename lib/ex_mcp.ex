@@ -44,7 +44,8 @@ defmodule ExMCP do
   > **May change in minors:** experimental content transformers and anything marked
   > deprecated. MCP 2026-07-28 is the latest stable revision and is available through
   > `:prefer_modern` and `:modern_only`. Starting in rc.6, new connections default
-  > to `:prefer_modern`; `:legacy_only` preserves the rc.5 wire path. The zero-arity
+  > to `:prefer_modern`; `:legacy_only` preserves the legacy protocol era, not an
+  > exact rc.5 package rollback. The zero-arity
   > compatibility helpers continue to report the newest initialize-compatible
   > legacy revision, 2025-11-25.
 
@@ -96,10 +97,12 @@ defmodule ExMCP do
   - **2025-03-26** - Subscriptions, roots, logging, and batch support
   - **2024-11-05** - Initial stable MCP revision
 
-  rc.6 defaults to `protocol_mode: :prefer_modern`, which tries the modern
+  rc.7 defaults to `protocol_mode: :prefer_modern`, which tries the modern
   revision first and retains evidence-based legacy fallback. Use
   `protocol_mode: :modern_only` for a closed modern ecosystem or
-  `protocol_mode: :legacy_only` for the exact rc.5 wire path.
+  `protocol_mode: :legacy_only` to preserve the legacy protocol era. Exact
+  rc.5 wire and session behavior still requires package rollback to
+  `1.0.0-rc.5`.
 
   See the Configuration and Migration guides for the era comparison and
   rollout policy.

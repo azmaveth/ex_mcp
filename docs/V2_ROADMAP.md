@@ -2,8 +2,9 @@
 
 - **Status:** Living roadmap — direction accepted; individual designs require their phase gates
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
-- **Last updated:** 2026-08-11
-- **Related release work:** [`RELEASE_1_0_0_RC_6.md`](./RELEASE_1_0_0_RC_6.md),
+- **Last updated:** 2026-08-12
+- **Related release work:** [`RELEASE_1_0_0_RC_7.md`](./RELEASE_1_0_0_RC_7.md),
+  [`RELEASE_1_0_0_RC_6.md`](./RELEASE_1_0_0_RC_6.md),
   [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md)
 
 ---
@@ -103,11 +104,11 @@ The 1.0 line already provides:
 - conformance, characterization, property, security, and interoperability
   coverage.
 
-The current unreleased branch also wires legacy SSE persistence end to end:
+The `1.0.0-rc.7` candidate packages legacy SSE persistence end to end:
 events are stored before delivery, connection gaps retain their session, and
-`Last-Event-ID` resumes from the retained cursor. This is 1.0 release work, not
-a reason to wait for 2.0. Because it changes transport lifecycle behavior, it
-requires another release candidate and a fresh soak before stable 1.0.
+`Last-Event-ID` resumes from the retained cursor. Together with the
+2026-08-12 security harden and ACP fixes, this is 1.0 release work, not a
+reason to wait for 2.0. It requires a fresh soak before stable 1.0.
 
 The remaining architectural pressure is concentrated in runtime ownership,
 callback execution, storage contracts, duplicated public concepts, and the
@@ -184,9 +185,10 @@ does not merge to the 2.0 release branch until its prerequisites pass.
 
 **Goal:** establish the exact behavior from which 2.0 migrates.
 
-- Publish the legacy SSE persistence fix in another 1.0 RC.
+- Publish `1.0.0-rc.7` with the legacy SSE persistence fix, ACP fixes, and
+  2026-08-12 security harden.
 - Repeat the full conformance, interop, security, API, and load gates.
-- Restart the minimum soak after that RC is published.
+- Restart the minimum soak after rc.7 is published.
 - Complete the mixed-version rollback drill.
 - Tag stable 1.0 only from a release candidate with identical wire and public
   behavior.
@@ -349,7 +351,7 @@ another 1.x RC or document a patch-level correctness/security exception.
 
 | Change | 1.x decision | Notes |
 |---|---|---|
-| Legacy SSE persist-before-delivery, gap replay, and session retention | Backport to the next 1.0 RC | Implemented on the current branch; behavior correction requires a fresh RC soak. |
+| Legacy SSE persist-before-delivery, gap replay, and session retention | Packaged in `1.0.0-rc.7` | Behavior correction requires a fresh RC soak. |
 | Correct bounded replay-buffer retention | Backport with SSE fix | Correctness fix with regression coverage. |
 | Documentation, examples, diagnostics, and characterization tests | Backport | No runtime compatibility cost. |
 | Additive dispatch telemetry | Eligible for a 1.x minor | Preserve existing events; bounded metadata only; payload capture opt-in. |

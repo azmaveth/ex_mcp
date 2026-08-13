@@ -156,11 +156,11 @@ defmodule ExMCP.DocRegressionTest do
 
     refute readme =~ "**2025-11-25** (latest stable)"
     assert readme =~ "2025-11-25`, for initialize-based compatibility"
-    assert readme =~ "`1.0.0-rc.6` is the published modern-preferred"
-    assert readme =~ "requires another RC and a fresh soak"
+    assert readme =~ "`1.0.0-rc.7` is the current modern-preferred soak"
+    assert readme =~ "soak candidate"
     assert readme =~ "application default is `:prefer_modern`"
-    assert configuration =~ "`1.0.0-rc.6` defaults to `:prefer_modern`"
-    assert quickstart =~ "`:prefer_modern` is the rc.6 default"
+    assert configuration =~ "defaults to `:prefer_modern`"
+    assert quickstart =~ "`:prefer_modern`"
     assert coverage =~ "defaults to `:prefer_modern`"
     assert configuration =~ "newest legacy revision"
     assert coverage =~ "official conformance runner is\nstill published as a prerelease"
@@ -184,8 +184,8 @@ defmodule ExMCP.DocRegressionTest do
       assert roadmap =~ term, "2.0 roadmap is missing #{inspect(term)}"
     end
 
-    assert release =~ "Current `main` fixes legacy SSE event"
-    assert release =~ "Publish another RC"
+    assert release =~ "`1.0.0-rc.7` is the next modern-preferred"
+    assert release =~ "RELEASE_1_0_0_RC_7.md"
     assert mixfile =~ ~s("docs/V2_ROADMAP.md")
   end
 
@@ -270,7 +270,11 @@ defmodule ExMCP.DocRegressionTest do
           "docs/API_DIFF_RC5_TO_1_0.md",
           "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
           "docs/MCP_COVERAGE_MATRIX.md",
-          "docs/RELEASE_1_0_0_RC_6.md"
+          "docs/RELEASE_1_0_0_RC_6.md",
+          "docs/RELEASE_1_0_0_RC_7.md",
+          "docs/SECURITY_AUDIT_2026-08-12.md",
+          "docs/V2_ROADMAP.md",
+          "docs/PRE_2_0_TECH_DEBT_PLAN.md"
         ] do
       assert mixfile =~ ~s("#{extra}"), "ExDoc extras are missing #{extra}"
     end

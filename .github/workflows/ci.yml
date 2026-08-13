@@ -269,6 +269,9 @@ jobs:
     - name: Run modern ExMCP HTTP client to TypeScript server tests
       run: mix test --only interop_modern_ex_mcp_http_client
 
+    - name: Run ACP 1.3.0 SDK interop tests
+      run: mix test --only interop_acp
+
   external-conformance:
     name: MCP 2026-07-28 external conformance
     runs-on: ubuntu-latest

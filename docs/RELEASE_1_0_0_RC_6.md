@@ -10,7 +10,7 @@ while retaining every legacy revision and the complete rc.5 public API.
   and fall back to legacy `initialize` only after positive compatibility
   evidence on a live transport.
 - Default servers accept both eras and advertise MCP 2026-07-28 first.
-- `:legacy_only` preserves the exact rc.5 connection and wire policy.
+- `:legacy_only` preserves the legacy protocol era connection policy (rc.7 still enforces server-issued sessions and newer lifecycle/security rules).
 - MCP 2026-07-28 adds stateless per-request context, typed result envelopes,
   multi-round tool results, `subscriptions/listen`, stateless Streamable HTTP,
   OAuth 2026 hardening, and the negotiated Tasks extension.
@@ -20,13 +20,13 @@ while retaining every legacy revision and the complete rc.5 public API.
 See the [migration guide](getting-started/MIGRATION.md) for rollout steps and
 the [API diff](API_DIFF_RC5_TO_1_0.md) for the public compatibility audit.
 
-> **Post-rc.6 status (2026-08-11):** Current `main` fixes legacy SSE event
-> persistence and connection-gap replay. The change intentionally retains a
-> session after an ordinary GET-stream disconnect, so rc.6 can no longer be
-> promoted directly to stable 1.0. Publish another RC, repeat the applicable
-> release gates, and restart the soak. See the
-> [2.0 roadmap backport lane](V2_ROADMAP.md#8-the-1x-backport-lane) for the
-> compatibility rule used for this decision.
+> **Post-rc.6 status (2026-08-12):** `1.0.0-rc.7` is the next modern-preferred
+> soak candidate. Current `master` after rc.6 includes legacy SSE
+> persist/reconnect/replay, ACP Pi multi-chunk and subprocess isolation fixes,
+> the 2026-08-12 security harden, and CI/compat follow-ups. rc.6 itself is not
+> promoted to stable 1.0. See
+> [RELEASE_1_0_0_RC_7.md](RELEASE_1_0_0_RC_7.md) and the
+> [2.0 roadmap backport lane](V2_ROADMAP.md#8-the-1x-backport-lane).
 
 ## Installation
 
@@ -38,7 +38,7 @@ Pin the rollout policy when it must not change with a package upgrade:
 
 ```elixir
 config :ex_mcp, protocol_mode: :prefer_modern
-# Emergency rollback / exact rc.5 wire path:
+# Emergency rollback / legacy protocol era (not an exact rc.5 package rollback):
 # config :ex_mcp, protocol_mode: :legacy_only
 ```
 
@@ -117,5 +117,5 @@ post-rc.6 SSE lifecycle fix resets that clock. Stable `1.0.0` now requires:
    subscriptions and in-flight MRTR operations.
 
 Any wire-design, public-API, or documented lifecycle change requires another
-RC and restarts the soak. Current `main` meets that condition because of the
+RC and restarts the soak. Current `master` met that condition because of the
 legacy SSE persistence and disconnect-lifecycle fix described above.

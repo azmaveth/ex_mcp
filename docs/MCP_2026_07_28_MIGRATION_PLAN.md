@@ -1,12 +1,12 @@
 # ExMCP → MCP 2026-07-28 Migration Plan
 
-**Status:** Code migration complete — Phases 0–10 implemented and local gates green; a post-rc.6 legacy SSE fix requires another RC, soak, and rollback drill
+**Status:** Code migration complete — Phases 0–10 implemented and local gates green; `1.0.0-rc.7` packages the post-rc.6 SSE lifecycle, ACP, and security harden work and restarts the soak
 **Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28), latest stable ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current ExMCP:** `1.0.0-rc.6`, defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
+**Current ExMCP:** `1.0.0-rc.7` candidate line, defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
-**Last updated:** 2026-08-11
+**Last updated:** 2026-08-12
 
 ---
 
@@ -79,10 +79,11 @@ The resulting RC train is:
 | Additional RC only if needed | Any fix or design change discovered during the rc.6 soak | Repeat every release gate; wire-design or public-API changes restart the soak |
 | `1.0.0` | Same behavior as the final RC, plus release metadata only | Every gate in Phase 10 passes |
 
-The additional-RC row is now active: current `main` persists legacy SSE events
-before delivery, retains sessions across connection gaps, and replays from
-`Last-Event-ID`. That correctness fix changes documented transport lifecycle,
-so it must ship in another RC and restart the soak before stable 1.0.
+The additional-RC row is `1.0.0-rc.7`: current `master` persists legacy SSE
+events before delivery, retains sessions across connection gaps, and replays
+from `Last-Event-ID`, plus ACP and 2026-08-12 security harden work. That
+correctness and security packaging restarts the soak before stable 1.0.
+See [`RELEASE_1_0_0_RC_7.md`](./RELEASE_1_0_0_RC_7.md).
 
 If a gate misses, add another RC; do not move unfinished core work into stable `1.0.0` merely
 to preserve the illustrative numbering.
@@ -1219,9 +1220,9 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 - [x] Produce an API-diff report against `v1.0.0-rc.5`. Restore every removed public function,
       callback, struct field and return shape or delay stable 1.0; document additive APIs and
       protocol-driven behavior changes, but do not use release notes to waive a public removal.
-      **`docs/API_DIFF_RC5_TO_1_0.md` compares independently compiled BEAM snapshots: 236 → 290
-      modules, 2,288 → 2,690 exports, 93 → 115 callbacks, 363 → 503 struct fields, with zero
-      removals in those categories. Every changed typespec was inspected; callback changes are
+      **`docs/API_DIFF_RC5_TO_1_0.md` records the rc.7 census versus `v1.0.0-rc.5`: 236 → 300
+      modules, 2,288 → 2,753 exports, 93 → 115 callbacks, 363 → 557 struct fields, 485 → 600
+      named types, with zero removals in those categories. Every changed typespec was inspected; callback changes are
       supersets, struct/type changes are additive or corrective, and the intentional OAuth
       caller-supplied-state hardening is disclosed as an input-behavior change.**
 - [x] Phase 8 shipped rather than being deferred: store-backed handlers automatically advertise
@@ -1266,12 +1267,12 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
    MRTR: operators can select `:legacy_only`, drain/restart safely, reconcile state, and explicitly
    manage persisted modern pins. Rollback must not silently downgrade already-pinned clients.
 
-**Current release status (2026-08-05):** the code and local-validation work for gates 1–6 and 8
+**Current release status (2026-08-12):** the code and local-validation work for gates 1–6 and 8
 is complete. Gate 3 is satisfied by the pinned prerelease conformance harness plus passing,
-bidirectional official TypeScript SDK v2 interop over both stdio and Streamable HTTP. rc.6 is the
-modern-preferred soak candidate for gate 7. Gate 9 requires an operator-run mixed-cluster
-rollback drill. Stable `1.0.0` must not be cut until the published rc.6 soak and rollback drill
-both complete.
+bidirectional official TypeScript SDK v2 interop over both stdio and Streamable HTTP. `1.0.0-rc.7`
+is the modern-preferred soak candidate for gate 7 after the post-rc.6 SSE lifecycle, ACP, and
+security harden work. Gate 9 requires an operator-run mixed-cluster rollback drill. Stable
+`1.0.0` must not be cut until the published rc.7 soak and rollback drill both complete.
 
 The rc.6 release note assigns an owner and evidence source for every gate, defines the load-test
 workload and regression budget against rc.5, and records the qualifying conformance-harness and
