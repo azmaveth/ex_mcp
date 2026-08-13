@@ -1,5 +1,8 @@
 # ExMCP 1.0.0-rc.7
 
+> **Historical release record:** rc.7 was published on 2026-08-13. The
+> behavior-preserving rc.8 follow-up supersedes it as the active soak candidate.
+
 `1.0.0-rc.7` is the modern-preferred soak candidate that follows published
 `1.0.0-rc.6`. It keeps the dual-era MCP 2026-07-28 default while packaging the
 post-rc.6 transport lifecycle, ACP, and security hardening that cannot promote

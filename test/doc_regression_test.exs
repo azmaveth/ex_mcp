@@ -156,8 +156,8 @@ defmodule ExMCP.DocRegressionTest do
 
     refute readme =~ "**2025-11-25** (latest stable)"
     assert readme =~ "2025-11-25`, for initialize-based compatibility"
-    assert readme =~ "`1.0.0-rc.7` is the current modern-preferred soak"
-    assert readme =~ "soak candidate"
+    assert readme =~ "`1.0.0-rc.8` is the current modern-preferred soak"
+    assert readme =~ "> candidate. It preserves rc.7 behavior"
     assert readme =~ "application default is `:prefer_modern`"
     assert configuration =~ "defaults to `:prefer_modern`"
     assert quickstart =~ "`:prefer_modern`"
@@ -186,7 +186,7 @@ defmodule ExMCP.DocRegressionTest do
 
     assert release =~ "`1.0.0-rc.7` is the next modern-preferred"
     assert release =~ "RELEASE_1_0_0_RC_7.md"
-    assert mixfile =~ ~s("docs/V2_ROADMAP.md")
+    refute mixfile =~ ~s("docs/V2_ROADMAP.md")
   end
 
   test "architecture and transport guides preserve the modern wire invariants" do
@@ -266,17 +266,33 @@ defmodule ExMCP.DocRegressionTest do
       assert development =~ term, "development guide is missing #{inspect(term)}"
     end
 
-    for extra <- [
+    for repository_only_doc <- [
           "docs/API_DIFF_RC5_TO_1_0.md",
           "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
           "docs/MCP_COVERAGE_MATRIX.md",
           "docs/RELEASE_1_0_0_RC_6.md",
           "docs/RELEASE_1_0_0_RC_7.md",
+          "docs/RELEASE_1_0_0_RC_8.md",
           "docs/SECURITY_AUDIT_2026-08-12.md",
           "docs/V2_ROADMAP.md",
-          "docs/PRE_2_0_TECH_DEBT_PLAN.md"
+          "docs/PRE_2_0_TECH_DEBT_PLAN.md",
+          "docs/POST_1_0_MAINTENANCE_PLAN.md"
         ] do
-      assert mixfile =~ ~s("#{extra}"), "ExDoc extras are missing #{extra}"
+      refute mixfile =~ repository_only_doc,
+             "Hex package/ExDoc config unexpectedly includes #{repository_only_doc}"
+    end
+
+    for packaged_guide <- [
+          "docs/ACP_GUIDE.md",
+          "docs/ARCHITECTURE.md",
+          "docs/CONFIGURATION.md",
+          "docs/DEVELOPMENT.md",
+          "docs/DSL_GUIDE.md",
+          "docs/SECURITY.md",
+          "docs/TRANSPORT_GUIDE.md",
+          "docs/TROUBLESHOOTING.md"
+        ] do
+      assert mixfile =~ packaged_guide, "Hex package/ExDoc config is missing #{packaged_guide}"
     end
   end
 

@@ -69,8 +69,9 @@ forward "/mcp", ExMCP.HttpPlug,
 | `:prefer_modern` | Probes with `server/discover`; falls back only when the response proves the peer is legacy and the transport remains usable | Accepts both eras; advertises modern versions first | Target dual-era deployment after canaries pass |
 | `:modern_only` | Uses `server/discover`; never falls back | Accepts only modern requests | Conformance, new closed ecosystems, and final legacy retirement |
 
-`1.0.0-rc.6` introduced the `:prefer_modern` application default; `1.0.0-rc.7`
-retains that default and restarts the required modern-preferred soak. Published rc.5 is legacy-only and does not contain these
+`1.0.0-rc.6` introduced the `:prefer_modern` application default;
+`1.0.0-rc.8` retains that default and restarts the required modern-preferred
+soak from the final-candidate artifact. Published rc.5 is legacy-only and does not contain these
 modes. Stable 1.0 must have the same default and behavior as its final RC. Pin
 a mode explicitly if your deployment cannot tolerate a release-default
 transition.
@@ -165,7 +166,7 @@ Notes:
 
 ## Planning for ExMCP 2.0
 
-The [ExMCP 2.0 roadmap](../V2_ROADMAP.md) is the canonical plan for public API
+The [ExMCP 2.0 roadmap](https://github.com/azmaveth/ex_mcp/blob/master/docs/V2_ROADMAP.md) is the canonical plan for public API
 removals, per-server runtime ownership, bounded handler scheduling, replaceable
 state/replay stores, and API consolidation. It also records which ideas are
 eligible for behavior-preserving 1.x backports.
@@ -382,7 +383,8 @@ If you encounter issues during migration:
 
 ## Version Support
 
-- **v1.0.0-rc.7**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**. Current modern-preferred soak candidate after the post-rc.6 SSE lifecycle, ACP, and security harden work. Stable 1.0 follows only after this candidate's soak and rollback gates.
+- **v1.0.0-rc.8**: Current modern-preferred soak candidate; preserves rc.7 wire behavior while adding real adapter-CLI lifecycle evidence, Pi configuration isolation, internal helper deduplication, and slimmer Hex packaging.
+- **Published v1.0.0-rc.7**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**. Security/SSE lifecycle baseline superseded as soak candidate by rc.8.
 - **Published v1.0.0-rc.6**: Prior dual-era modern-preferred baseline; superseded as soak candidate by rc.7
 - **Published v1.0.0-rc.5**: Legacy MCP through 2025-11-25; no modern protocol modes
 - **v0.12.x**: Prior line with MCP 2025-11-25 support and ACP v1 alignment
@@ -392,7 +394,7 @@ If you encounter issues during migration:
 
 - **MCP 2026-07-28** is the latest stable revision, is wire-breaking relative
   to 2025-11-25, and is implemented behind the explicit protocol modes above.
-  The rc.6/rc.7 release default is `:prefer_modern`.
+  The rc.6 through rc.8 release default is `:prefer_modern`.
 - **ACP** adds non-breaking capabilities under major `1` (session list/close/resume,
   logout, config options, etc.). Adapter packages (Claude / Codex / Pi) should be
   re-synced periodically with upstream agent releases.

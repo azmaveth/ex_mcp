@@ -20,7 +20,7 @@ A practical guide to building MCP clients and servers with ExMCP.
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.7"}
+    {:ex_mcp, "~> 1.0.0-rc.8"}
   ]
 end
 ```
@@ -158,7 +158,7 @@ For a raw handler (no DSL) use `ExMCP.Server.HandlerServer.start_link(handler: M
 
 **Tip:** `mix examples.getting_started` (after `mix compile`) gives a fast local run of these DSL + Client patterns for quick verification.
 
-BEAM-local MCP follows the selected protocol mode. rc.7 defaults to
+BEAM-local MCP follows the selected protocol mode. rc.8 defaults to
 `:prefer_modern`, which uses discovery and per-request context;
 `:legacy_only` uses the legacy initialize handshake. In either era, the
 transport passes MCP-shaped maps/lists as Elixir terms instead of JSON strings.
@@ -214,7 +214,7 @@ Use `:prefer_modern` for a dual-era client or server that tries 2026-07-28
 first, `:modern_only` for a closed modern ecosystem, `:prefer_legacy` for an
 early compatibility canary, and `:legacy_only` to preserve the legacy protocol
 era. Exact rc.5 wire and session behavior still requires package rollback to
-`1.0.0-rc.5`. rc.7 defaults to `:prefer_modern`; the published rc.5 package
+`1.0.0-rc.5`. rc.8 defaults to `:prefer_modern`; the published rc.5 package
 remains the legacy-only characterization baseline and does not contain these
 modes.
 

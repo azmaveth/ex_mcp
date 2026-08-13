@@ -116,7 +116,7 @@ or infer modern behavior from one method in feature code.
 | `:prefer_modern` | `server/discover` | Both | Initialize only with positive legacy evidence on a live transport |
 | `:modern_only` | `server/discover` | Modern | Never |
 
-`1.0.0-rc.7` defaults to `:prefer_modern` for the final pre-1.0 soak. Published
+`1.0.0-rc.8` defaults to `:prefer_modern` for the final pre-1.0 soak. Published
 rc.5 itself is legacy-only and does not contain modern support. Tests and
 deployments that require a specific wire shape must always pass a mode
 explicitly instead of relying on the release default. Both preference modes

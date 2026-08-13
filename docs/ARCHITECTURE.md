@@ -6,7 +6,8 @@ APIs stay small; cross-cutting work is kept at transport or Plug boundaries.
 
 This guide describes the 1.x architecture. The accepted direction for
 per-server runtime ownership, bounded handler scheduling, and replaceable
-state stores is tracked separately in the [ExMCP 2.0 roadmap](./V2_ROADMAP.md).
+state stores is tracked separately in the
+[ExMCP 2.0 roadmap](https://github.com/azmaveth/ex_mcp/blob/master/docs/V2_ROADMAP.md).
 
 ## Public Layers
 

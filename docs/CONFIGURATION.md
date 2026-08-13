@@ -4,12 +4,12 @@ This guide covers the supported configuration surfaces for ExMCP 1.0.
 
 ## Dependency
 
-Use the modern-preferred `1.0.0-rc.7` release candidate:
+Use the modern-preferred `1.0.0-rc.8` release candidate:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.7"}
+    {:ex_mcp, "~> 1.0.0-rc.8"}
   ]
 end
 ```
@@ -39,7 +39,7 @@ config :ex_mcp,
   protocol_version: "2025-11-25"
 ```
 
-`1.0.0-rc.7` defaults to `:prefer_modern` for the required pre-1.0 soak.
+`1.0.0-rc.8` defaults to `:prefer_modern` for the required pre-1.0 soak.
 Stable 1.0 will copy this behavior without another default change. Production
 deployments should still set the mode explicitly when rollout policy must not
 change with a dependency upgrade.

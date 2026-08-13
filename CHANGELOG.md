@@ -14,7 +14,49 @@ candidate after its minimum seven-day soak and the mixed-cluster rollback drill
 complete. No wire-design or public-API changes are planned between that RC and
 stable 1.0.
 
-## [1.0.0-rc.7] - Unreleased
+## [1.0.0-rc.8] - Unreleased
+
+This narrow follow-up candidate preserves rc.7's MCP/ACP wire behavior and
+`:prefer_modern` default while adding real adapter lifecycle evidence, fixing
+Pi configuration isolation, and reducing duplicated internal code. Publishing
+rc.8 starts the final-candidate soak from the rc.8 artifact.
+
+### Fixed
+
+- The Pi adapter now consistently honors `:agent_dir` while discovering
+  settings, prompts, and sessions, allowing tests and embedded callers to avoid
+  the developer's real Pi state. Slash-command input hints are normalized to
+  the ACP object shape before advertisement.
+- ACP adapter examples now use `ExMCP.ACP.AdapterTransport`, matching the
+  actual Claude SDK, Codex, and Pi adapter lifecycle.
+
+### Added
+
+- Opt-in, credential-free lifecycle tests launch the real Claude Code, Codex,
+  and Pi CLIs through their adapters. The tests initialize, create/list/close a
+  session, and shut down without sending a prompt or making an LLM request.
+- Post-1.0 maintenance and 2.0 roadmap notes now track adapter decomposition,
+  pure functional cores, dependency-cycle cleanup, configuration ownership,
+  and the evidence required before considering separate MCP and ACP packages.
+
+### Changed
+
+- Subprocess environment isolation, positive-integer option handling, and
+  symlink-aware workspace containment now use shared internal helpers with
+  focused characterization tests; public options and security defaults are
+  unchanged.
+- Internal planning, audit, migration, coverage, and release-history documents
+  remain in the repository but are no longer installed in the Hex source
+  package or rendered as normal HexDocs guides. The user-facing architecture,
+  configuration, transport, security, troubleshooting, ACP, DSL, migration,
+  and getting-started guides remain packaged.
+
+### Release evidence
+
+- See the repository-only
+  [rc.8 release record](https://github.com/azmaveth/ex_mcp/blob/v1.0.0-rc.8/docs/RELEASE_1_0_0_RC_8.md).
+
+## [1.0.0-rc.7] - 2026-08-13
 
 This release candidate packages the post-rc.6 transport lifecycle, ACP, and
 security hardening work that requires a fresh modern-preferred soak before
@@ -43,7 +85,7 @@ rules.
 
 - MCP and ACP protocol implementations were hardened across lifecycle,
   identity, authorization, network, resource, and privacy boundaries. See
-  [`docs/SECURITY_AUDIT_2026-08-12.md`](docs/SECURITY_AUDIT_2026-08-12.md).
+  [the 2026-08-12 security audit](https://github.com/azmaveth/ex_mcp/blob/v1.0.0-rc.7/docs/SECURITY_AUDIT_2026-08-12.md).
 - Legacy Streamable HTTP sessions are server-issued only, identity-bound for
   their lifetime, initialize-once, and capacity-capped. Duplicate JSON-RPC
   request IDs are rejected before dispatch.
@@ -69,7 +111,7 @@ rules.
 ### Documentation and release evidence
 
 - Release packaging for `1.0.0-rc.7`, including
-  [`docs/RELEASE_1_0_0_RC_7.md`](docs/RELEASE_1_0_0_RC_7.md) and an updated
+  [the rc.7 release record](https://github.com/azmaveth/ex_mcp/blob/v1.0.0-rc.7/docs/RELEASE_1_0_0_RC_7.md) and an updated
   public API delta note for post-rc.6 changes.
 
 ## [1.0.0-rc.6] - 2026-08-05
@@ -114,8 +156,8 @@ and retain evidence-based fallback to every legacy revision. Set
 - **No rc.5 public surface was removed** — The compiled API comparison found no
   removed module, exported function/arity, callback, named type, or struct
   field. Existing handler callbacks are widened for MRTR and existing structs
-  only gain fields. See
-  [`docs/API_DIFF_RC5_TO_1_0.md`](docs/API_DIFF_RC5_TO_1_0.md).
+  only gain fields. See the
+  [rc.5-to-1.0 API diff](https://github.com/azmaveth/ex_mcp/blob/v1.0.0-rc.6/docs/API_DIFF_RC5_TO_1_0.md).
 - **Modern APIs are additive** — Discovery, request context, MRTR,
   subscriptions, Tasks-extension, era control, modern HTTP, and OAuth security
   APIs are added alongside the rc.5 surface.

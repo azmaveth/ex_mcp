@@ -10,7 +10,7 @@
 
 **A complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP)**
 
-[Getting Started](https://github.com/azmaveth/ex_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) | [2.0 Roadmap](docs/V2_ROADMAP.md) | [Changelog](CHANGELOG.md)
+[Getting Started](https://github.com/azmaveth/ex_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) | [2.0 Roadmap](https://github.com/azmaveth/ex_mcp/blob/master/docs/V2_ROADMAP.md) | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -39,19 +39,20 @@ tree supports it through `:prefer_modern` and `:modern_only`, while preserving
 every legacy revision through the 1.x line. Starting in `1.0.0-rc.6`, the
 application default is `:prefer_modern`: clients try modern discovery first
 and fall back only when the peer positively identifies itself as legacy.
-Set `protocol_mode: :legacy_only` to preserve the **legacy protocol era**. Exact rc.5 wire and session behavior still requires package rollback to `1.0.0-rc.5`; rc.7 continues to enforce server-issued sessions and newer lifecycle/security rules.
+Set `protocol_mode: :legacy_only` to preserve the **legacy protocol era**. Exact rc.5 wire and session behavior still requires package rollback to `1.0.0-rc.5`; rc.8 continues to enforce server-issued sessions and newer lifecycle/security rules.
 `ExMCP.protocol_version/0` intentionally returns the newest legacy revision,
 `2025-11-25`, for initialize-based compatibility—it is not the latest upstream
 MCP revision. See
 [Configuration](docs/CONFIGURATION.md#protocol-eras-and-modes) and the
 [1.0 migration guide](docs/getting-started/MIGRATION.md#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release).
 
-> **Release-state note:** `1.0.0-rc.7` is the current modern-preferred soak candidate. It packages the post-rc.6 legacy SSE persist/reconnect/replay
-> lifecycle, ACP Pi multi-chunk and subprocess isolation fixes, and the
-> 2026-08-12 MCP/ACP security harden. Published `1.0.0-rc.6` remains the prior
-> dual-era baseline, and `1.0.0-rc.5` remains the legacy-only characterization
-> baseline. Stable 1.0 will preserve the behavior of the final RC after its
-> soak and rollback drill.
+> **Release-state note:** `1.0.0-rc.8` is the current modern-preferred soak
+> candidate. It preserves rc.7 behavior while adding credential-free lifecycle
+> coverage for the real Claude Code, Codex, and Pi CLIs, Pi configuration
+> isolation, and internal safety-helper deduplication. Published `1.0.0-rc.7`
+> remains the security/SSE lifecycle baseline, and `1.0.0-rc.5` remains the
+> legacy-only characterization baseline. Stable 1.0 will preserve the behavior
+> of the final RC after its soak and rollback drill.
 
 ## Installation
 
@@ -60,7 +61,7 @@ For the dual-era release candidate:
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.7"}
+    {:ex_mcp, "~> 1.0.0-rc.8"}
   ]
 end
 ```
@@ -83,7 +84,7 @@ config :ex_mcp, protocol_mode: :legacy_only
 
 Runnable examples live in the GitHub repo under [`examples/`](https://github.com/azmaveth/ex_mcp/tree/master/examples) (not shipped in the Hex package).
 
-The [ExMCP 2.0 roadmap](docs/V2_ROADMAP.md) records planned runtime and API
+The [ExMCP 2.0 roadmap](https://github.com/azmaveth/ex_mcp/blob/master/docs/V2_ROADMAP.md) records planned runtime and API
 changes, deprecated-surface removals, and the policy for safely backporting
 selected improvements to 1.x.
 
@@ -320,9 +321,9 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 - **[Development Guide](docs/DEVELOPMENT.md)** -- Setup, testing, and contributing
 - **[API Documentation](https://hexdocs.pm/ex_mcp)** -- Complete API reference
 - **[Architecture](docs/ARCHITECTURE.md)** -- Internal design decisions
-- **[MCP 2026-07-28 Migration Plan](docs/MCP_2026_07_28_MIGRATION_PLAN.md)** -- Implementation record and remaining release gates
-- **[MCP Coverage Matrix](docs/MCP_COVERAGE_MATRIX.md)** -- Local and official conformance evidence
-- **[rc.5 to 1.0 API Diff](docs/API_DIFF_RC5_TO_1_0.md)** -- Public compatibility audit
+- **[MCP 2026-07-28 Migration Plan](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md)** -- Implementation record and remaining release gates
+- **[MCP Coverage Matrix](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)** -- Local and official conformance evidence
+- **[rc.5 to 1.0 API Diff](https://github.com/azmaveth/ex_mcp/blob/master/docs/API_DIFF_RC5_TO_1_0.md)** -- Public compatibility audit
 - **[Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples)** -- Real-world patterns
 
 ## Contributing

@@ -1,8 +1,10 @@
 # Post-1.0 Maintenance Plan
 
-- **Status:** Proposed and tracked; execute in small, independently reviewable changes
-- **Baseline:** ExMCP `1.0.0-rc.7`
-- **Scope:** ACP adapter modularization and Hex source-package cleanup
+- **Status:** Rc.8 packaging work complete; larger maintenance items remain
+  proposed and tracked
+- **Baseline:** ExMCP `1.0.0-rc.8` candidate
+- **Scope:** behavior-preserving modularization, functional-core extraction,
+  dependency cleanup, and Hex source-package cleanup
 - **Last updated:** 2026-08-13
 
 This is a repository-maintenance document, not user-facing package
@@ -18,13 +20,24 @@ into the final 1.0 release-candidate cycle.
 - Keep the root adapter modules as the public behaviour implementations; move
   cohesive private responsibilities behind them.
 - Prefer a few substantial boundaries over many tiny helper modules.
+- Separate deterministic decisions from side effects where doing so creates a
+  testable semantic boundary. Pass clocks, identifiers, resolved configuration,
+  and working directories into pure code rather than reading process-global
+  state there.
+- Keep GenServers, Ports, ETS, HTTP clients, `Plug.Conn`, telemetry, and logging
+  at orchestration edges. Pure cores may return tagged actions for those shells
+  to execute; they must not pretend to be pure while calling `System`, `File`,
+  `Application`, or process APIs internally.
 - Do not create a shared Codex/ZCode abstraction merely because private
   functions have similar names. Share behavior only after golden tests prove
   that its inputs, outputs, errors, ordering, and lifecycle are identical.
 
-The rc.8 internal-dedup work establishes reusable subprocess-environment,
-positive-option, and workspace-containment helpers. The larger adapter changes
-below remain deferred until after stable 1.0.
+The rc.8 work is limited to credential-free real-CLI lifecycle tests for the
+Claude SDK, Codex, and Pi adapters; Pi configuration normalization/isolation;
+reusable subprocess-environment, positive-option, and workspace-containment
+helpers; and the Hex documentation cleanup below. The CLI tests do not send
+prompts or call an LLM. The larger adapter changes below remain
+deferred until after stable 1.0.
 
 ## Codex adapter restructuring
 
@@ -116,9 +129,114 @@ not merge modules solely to reduce the file count.
 - Golden RPC fixtures and ACP event ordering are unchanged.
 - No test reads the developer's real Pi settings, prompts, models, or sessions.
 
+## Functional-core and effect-boundary follow-up
+
+These extractions are candidates for the supported 1.x line after stable 1.0,
+not a requirement to perform all of them. Each must land behind characterization
+tests and remain independently revertible. If an extraction changes process
+ownership, callback identity, restart behavior, cancellation, ordering, or a
+public return shape, it belongs in the 2.0 roadmap instead.
+
+The canonical 1.x compatibility gate is
+[`V2_ROADMAP.md` section 8.1](./V2_ROADMAP.md#81-required-backport-tests); this
+document's candidate lists do not weaken or replace it.
+
+The preferred shape is a reducer such as
+`transition(state, event, now) -> {new_state, actions}`. Actions can describe
+effects such as `{:send, message}`, `{:reply, caller, result}`,
+`{:schedule, deadline}`, or `{:emit, event}`. The owning process executes those
+actions and feeds outcomes back as later events. This makes state transitions
+exhaustively testable without weakening OTP ownership.
+
+Before extracting a reducer, characterize action ordering, effect-failure
+feedback, request correlation/idempotency, duplicate and late events, and timer
+or cancellation races. Reducer events/actions are private implementation
+contracts unless a separate public design explicitly says otherwise.
+
+### Priority candidates
+
+1. **Client request lifecycle** — extract request planning, correlation,
+   timeout/cancellation decisions, and response reduction from
+   `ExMCP.Client` and `ExMCP.Client.RequestHandler`. Keep transport calls,
+   `GenServer.reply/2`, timers, and telemetry in the client process.
+2. **Session lifecycle** — extract identity binding, initialization claims,
+   replay ordering, retention, and expiry decisions from
+   `ExMCP.SessionManager`. Keep ETS, monitors, clocks, logging, and subscription
+   cleanup in the owner.
+3. **HTTP client state** — extract option normalization plus Mint response/SSE
+   event reduction from `ExMCP.Transport.HTTP`. Keep sockets, OAuth callbacks,
+   process messages, and telemetry at the edge.
+4. **HTTP server routing** — expand the existing `ExMCP.HttpPlug.Core` pattern
+   to cover protocol-era, route, session, and response planning from plain data.
+   Keep `Plug.Conn`, request-body reads, stores, and SSE streaming in the Plug.
+5. **OAuth decisions** — extract redirect policy, callback parsing, discovery
+   choices, and token-request construction from
+   `ExMCP.Authorization.FullOAuthFlow`. Keep browser, listener socket, HTTP,
+   credential-store, and transaction-store operations in the flow shell.
+6. **ACP adapters** — use the Codex and Pi boundaries above as pure protocol,
+   content, permission, configuration, event, and prompt-flow cores. The root
+   adapters continue to own subprocesses and ACP lifecycle orchestration.
+7. **ACP pending requests** — either promote `ExMCP.ACP.PendingRequests` into a
+   real request-lifecycle core with explicit entry, resolve, cancel, expire, and
+   late-response transitions, or remove the shallow map wrapper. Do not retain
+   an abstraction that owns neither policy nor invariants.
+
+### Shared HTTP framing
+
+`ExMCP.Internal.PinnedHTTPClient`,
+`ExMCP.Authorization.PinnedHTTPClient`, and
+`ExMCP.Transport.HTTP.BoundedClient` contain overlapping Mint response
+accumulation and bounded-body decisions. Extract one small pure HTTP event
+reducer and contract suite while keeping DNS, target, TLS, redirect, OAuth, and
+authorization policies in their current owners. Do not merge the policy layers
+merely because all three use Mint.
+
+## Focused correctness and contract cleanup
+
+Resolve these as separate fixes, with the documented behavior and release lane
+chosen explicitly before changing code:
+
+| Area | Current mismatch or risk | Follow-up | Release lane |
+|---|---|---|---|
+| Circuit breaker clocks | `ExMCP.Reliability.CircuitBreaker.Core` calls `System.system_time/1`, despite presenting itself as a pure core. Wall time can also move backwards during duration calculations. | Pass `now_ms` from the process shell and use monotonic time for elapsed durations. Audit session expiry for the same distinction between wall-clock timestamps and elapsed time. | Eligible for 1.x as a characterized correctness fix; preserve timeout and telemetry behavior. |
+| Session storage option | `ExMCP.SessionManager` documents `storage_backend: :persistent_term`, but its runtime always creates ETS state. | Specify the store contract and either implement the backend or deprecate the no-op option while continuing to accept it throughout 1.x. Do not leave a durability setting that silently does nothing. | Contract/backend may be additive in a later 1.x minor; option removal is 2.0-only. |
+| Client fallback | `ExMCP.connect/2` documents a transport list as fallback, while the implementation selects only `List.first/1`. | Specify ordered errors, ownership, and cleanup before implementing fallback. If those semantics are not accepted, correct the docs and deprecate the list form while preserving 1.x acceptance. | A fully characterized spec-correctness fix may qualify for a 1.x minor; otherwise defer behavior change/removal to 2.0. |
+| Stdio logging | `ExMCP.Internal.StdioLoggerConfig.configure/0` mutates VM-global Logger/Application/OTP logger behavior. | Route protocol output through a dedicated IO device and logs to stderr without changing unrelated host-application logging. | Document the hazard in 1.x; replace the global behavior in 2.0 unless compatibility evidence proves a safe 1.x path. |
+| Client capability detection | Resource operations inspect the process dictionary's `$initial_call` to infer a modern client. | Replace the heuristic with an explicit internal connection-info or capability query. | Eligible for 1.x only with identical results for all supported client entry points. |
+| Ambient inputs | Several paths read application/system environment, current directory, time, or generate IDs inside decision code. | Normalize configuration once at startup and pass resolved values into cores. | Internal injection is eligible for 1.x if precedence and generated wire values remain identical; precedence changes are 2.0-only. |
+
+## Dependency-direction cleanup
+
+At commit `4591af6`, `mix xref graph --format stats` reports eight dependency
+cycles. Break them through narrow dependency inversion rather than moving code
+between large modules:
+
+- move concrete `get_transport/1` selection out of the `ExMCP.Transport`
+  behaviour and into a registry or factory;
+- introduce a small revision catalog so version data does not cycle through
+  `VersionRegistry`, `Protocol.Methods`, error codes, and generated types;
+- have client operation modules call an internal request-executor contract
+  instead of depending back on the public `ExMCP.Client` facade;
+- replace the `MessageProcessor`/`MethodHandlers` mutual call with a one-way
+  invocation boundary;
+- separate content-validation rules and schema-policy resolution into acyclic
+  decision modules; and
+- move TLS option construction out of `ExMCP.Transport.HTTP` into a neutral
+  security module so `ExMCP.Internal.Security` does not depend back on the HTTP
+  transport that consumes it.
+
+Record the cycle count in each cleanup PR and add an xref regression threshold
+once the existing cycles are eliminated. Cycle removal is eligible for 1.x only
+when runtime and compile-time characterization remains unchanged.
+
+Reproduce the baseline with `mix xref graph --format stats` and inspect the
+specific strongly connected components with
+`mix xref graph --format cycles`. Update the commit anchor when this plan is
+rebased onto a different maintenance baseline.
+
 ## Hex source-package documentation cleanup
 
-The rc.7 `package.files` list ships approximately 195 KB of raw internal
+The rc.7 `package.files` list ships 204,602 bytes (approximately 200 KB) of raw internal
 planning, audit, coverage, and release-candidate history:
 
 - `docs/API_DIFF_RC5_TO_1_0.md`
@@ -136,31 +254,42 @@ guides on HexDocs.
 
 ### Packaging change checklist
 
-- [ ] Confirm the stable user migration guide contains any still-relevant
+- [x] Confirm the stable user migration guide contains any still-relevant
       upgrade instructions from the RC-specific documents.
-- [ ] Keep `README.md`, `CHANGELOG.md`, `docs/SECURITY.md`, architecture,
+- [x] Keep `README.md`, `CHANGELOG.md`, `docs/SECURITY.md`, architecture,
       configuration, transport, troubleshooting, ACP, DSL, and getting-started
       guides in the package.
-- [ ] Remove the internal files above from `package.files`.
-- [ ] Remove the same files from ExDoc `extras` and their documentation group in
+- [x] Remove the internal files above from `package.files`.
+- [x] Remove the same files from ExDoc `extras` and their documentation group in
       the same commit so `mix docs` works from an unpacked Hex package.
-- [ ] Preserve repository links from release notes or contributor documentation
+- [x] Preserve repository links from release notes or contributor documentation
       where historical context remains useful.
-- [ ] Run `mix hex.build`, inspect the tarball file list, and record compressed
-      size before and after.
-- [ ] Run `mix docs` with warnings as errors and verify that no retained guide
-      links to an omitted local file.
+- [x] Run `mix hex.build`, inspect the tarball file list, and record compressed
+      size before and after. The compressed package contents decreased from
+      798,062 to 728,416 bytes; the outer Hex archive decreased from 819,200 to
+      749,568 bytes.
+- [x] Run `mix docs` with warnings as errors and verify that no retained guide
+      links to an omitted local file. An unpacked-package link scan found no
+      missing relative Markdown targets.
 
-This cleanup is packaging-only and can ship in rc.8 if the migration-content
-check is complete. Otherwise, remove RC-specific documents immediately after
-stable 1.0 rather than risking the loss of useful upgrade guidance.
+This packaging-only cleanup is complete for rc.8. The files remain available
+in the repository, and packaged references to them use repository URLs.
 
 ## Execution order
 
-1. Land rc.8's behavior-preserving internal helper deduplication.
-2. Decide and, if safe, apply the Hex documentation cleanup separately.
+1. Land rc.8's credential-free ACP CLI lifecycle coverage, Pi isolation fix,
+   behavior-preserving internal helper deduplication, and Hex documentation
+   cleanup.
+2. Qualify and publish rc.8, then run the fresh final-candidate soak.
 3. Release stable 1.0 with no adapter decomposition mixed into the release diff.
-4. Modularize Codex one characterized boundary at a time.
-5. Modularize Pi one characterized boundary at a time.
-6. Re-evaluate shared app-server pieces while preparing the post-1.0 ZCode
+4. Resolve the focused contract mismatches as small correctness or documentation
+   changes.
+5. Extract the shared HTTP reducer and the smallest high-value functional cores
+   behind characterization tests.
+6. Modularize Codex one characterized boundary at a time.
+7. Modularize Pi one characterized boundary at a time.
+8. Reduce dependency cycles without changing public or lifecycle semantics.
+9. Re-evaluate shared app-server pieces while preparing the post-1.0 ZCode
    adapter; keep vendor-specific protocol semantics separate by default.
+10. Make any MCP/ACP package-topology change only through the 2.0 decision and
+    migration process in `V2_ROADMAP.md`.

@@ -6,19 +6,19 @@ This guide shows the current 1.0 server, client, and BEAM-local patterns.
 
 ## Installation
 
-Install the modern-preferred rc.7 release candidate:
+Install the modern-preferred rc.8 release candidate:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.7"}
+    {:ex_mcp, "~> 1.0.0-rc.8"}
   ]
 end
 ```
 
 Run `mix deps.get` to install.
 
-MCP `2026-07-28` is the latest stable revision. rc.7 tries it first while
+MCP `2026-07-28` is the latest stable revision. rc.8 tries it first while
 retaining evidence-based legacy fallback. Pin the mode explicitly when rollout
 policy must remain fixed:
 
@@ -27,13 +27,13 @@ policy must remain fixed:
 config :ex_mcp, protocol_mode: :prefer_modern
 ```
 
-`:prefer_modern` is the rc.7 default. Use `:legacy_only` to preserve the
+`:prefer_modern` is the rc.8 default. Use `:legacy_only` to preserve the
 legacy protocol era. Exact rc.5 wire and session behavior still requires
 package rollback to `1.0.0-rc.5`. See the
 [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) for all four
 modes.
 
-`1.0.0-rc.7` is the current modern-preferred soak candidate and the
+`1.0.0-rc.8` is the current modern-preferred soak candidate and the
 installation target for this tree.
 
 ## DSL Server
@@ -120,7 +120,7 @@ Use `transport: :beam` when both the client and server are Elixir processes in t
 {:ok, result} = ExMCP.Client.call_tool(client, "echo", %{"message" => "Hello"})
 ```
 
-BEAM-local MCP uses the configured protocol mode. rc.7 defaults to
+BEAM-local MCP uses the configured protocol mode. rc.8 defaults to
 `:prefer_modern`, which uses MCP 2026-07-28 discovery and per-request context;
 `:legacy_only` retains the initialize handshake. The transport simply passes
 MCP-shaped maps/lists as Elixir terms between local processes.

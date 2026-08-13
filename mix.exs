@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "1.0.0-rc.7"
+  @version "1.0.0-rc.8"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -127,20 +127,12 @@ defmodule ExMCP.MixProject do
           README.md
           LICENSE
           CHANGELOG.md
-          docs/API_DIFF_RC5_TO_1_0.md
           docs/ACP_GUIDE.md
           docs/ARCHITECTURE.md
           docs/CONFIGURATION.md
           docs/DEVELOPMENT.md
           docs/DSL_GUIDE.md
-          docs/MCP_2026_07_28_MIGRATION_PLAN.md
-          docs/MCP_COVERAGE_MATRIX.md
-          docs/RELEASE_1_0_0_RC_6.md
-          docs/RELEASE_1_0_0_RC_7.md
           docs/SECURITY.md
-          docs/PRE_2_0_TECH_DEBT_PLAN.md
-          docs/V2_ROADMAP.md
-          docs/SECURITY_AUDIT_2026-08-12.md
           docs/TRANSPORT_GUIDE.md
           docs/TROUBLESHOOTING.md
           docs/getting-started
@@ -176,12 +168,7 @@ defmodule ExMCP.MixProject do
       name: "ExMCP",
       canonical: "https://hexdocs.pm/ex_mcp",
       warnings_as_errors: true,
-      skip_undefined_reference_warnings_on: [
-        "CHANGELOG.md",
-        "docs/API_DIFF_RC5_TO_1_0.md",
-        "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
-        "docs/PRE_2_0_TECH_DEBT_PLAN.md"
-      ],
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
       extras: [
         "README.md",
         "docs/guides/USER_GUIDE.md",
@@ -191,18 +178,10 @@ defmodule ExMCP.MixProject do
         "docs/CONFIGURATION.md",
         "docs/getting-started/MIGRATION.md",
         "docs/SECURITY.md",
-        "docs/SECURITY_AUDIT_2026-08-12.md",
         "docs/ARCHITECTURE.md",
         "docs/DEVELOPMENT.md",
         "docs/TROUBLESHOOTING.md",
         "docs/ACP_GUIDE.md",
-        "docs/V2_ROADMAP.md",
-        "docs/PRE_2_0_TECH_DEBT_PLAN.md",
-        "docs/MCP_2026_07_28_MIGRATION_PLAN.md",
-        "docs/MCP_COVERAGE_MATRIX.md",
-        "docs/RELEASE_1_0_0_RC_6.md",
-        "docs/RELEASE_1_0_0_RC_7.md",
-        "docs/API_DIFF_RC5_TO_1_0.md",
         "CHANGELOG.md"
       ],
       extra_section: "GUIDES",
@@ -211,8 +190,6 @@ defmodule ExMCP.MixProject do
         Introduction: ~r/README/,
         Guides:
           ~r/USER_GUIDE|PHOENIX_GUIDE|DSL_GUIDE|TRANSPORT_GUIDE|ACP_GUIDE|CONFIGURATION|getting-started\/MIGRATION|SECURITY|ARCHITECTURE|DEVELOPMENT|TROUBLESHOOTING/,
-        "Planning and release references":
-          ~r/V2_ROADMAP|PRE_2_0|SECURITY_AUDIT|MCP_2026_07_28|MCP_COVERAGE_MATRIX|API_DIFF_RC5_TO_1_0|RELEASE_1_0_0_RC_6|RELEASE_1_0_0_RC_7/,
         Changelog: ~r/CHANGELOG/
       ],
       groups_for_modules: [

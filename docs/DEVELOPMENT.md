@@ -415,9 +415,9 @@ ExMCP follows [Semantic Versioning](https://semver.org/):
 
 ### Release Checklist
 
-The [MCP 2026-07-28 migration plan](MCP_2026_07_28_MIGRATION_PLAN.md) is the
+The [MCP 2026-07-28 migration plan](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md) is the
 authoritative checklist for the 1.0 protocol transition. The
-[coverage matrix](MCP_COVERAGE_MATRIX.md) records the corresponding local and
+[coverage matrix](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md) records the corresponding local and
 official-suite evidence. If a gate misses, publish another release candidate;
 do not move unfinished protocol work into stable 1.0.
 
@@ -469,9 +469,9 @@ For critical bugs in production releases:
 - **This guide**: Development setup and processes
 - **[User Guide](guides/USER_GUIDE.md)**: Feature usage and examples  
 - **[Architecture Guide](ARCHITECTURE.md)**: Internal design decisions
-- **[MCP 2026-07-28 Migration Plan](MCP_2026_07_28_MIGRATION_PLAN.md)**: Release gates and implementation record
-- **[MCP Coverage Matrix](MCP_COVERAGE_MATRIX.md)**: Protocol-by-protocol test evidence
-- **[rc.5 to 1.0 API Diff](API_DIFF_RC5_TO_1_0.md)**: Public compatibility audit
+- **[MCP 2026-07-28 Migration Plan](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md)**: Release gates and implementation record
+- **[MCP Coverage Matrix](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)**: Protocol-by-protocol test evidence
+- **[rc.5 to 1.0 API Diff](https://github.com/azmaveth/ex_mcp/blob/master/docs/API_DIFF_RC5_TO_1_0.md)**: Public compatibility audit
 - **[API Docs](https://hexdocs.pm/ex_mcp)**: Complete API reference
 
 ### Community

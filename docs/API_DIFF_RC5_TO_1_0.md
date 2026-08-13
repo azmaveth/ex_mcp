@@ -4,15 +4,17 @@ This report records the public Elixir API compatibility gate for the MCP
 2026-07-28 migration. The comparison is between:
 
 - baseline: `v1.0.0-rc.5` (`a2464c3423ee48ba825402cc2d17be8042f1451a`);
-- candidate: `1.0.0-rc.7` on `master` (current soak candidate).
+- candidate: `1.0.0-rc.8` on the release-preparation branch (current soak
+  candidate).
 
 The original BEAM snapshot was taken against the `v1.0.0-rc.6` release
-commit. An independent rc.7 census (2026-08-13) updated the candidate totals
-below. There are zero removals versus rc.5.
+commit. Independent rc.7 and rc.8 censuses (2026-08-13) updated the candidate
+totals below. There are zero removals versus rc.5.
 
-> **Post-rc.6 note (2026-08-13):** `1.0.0-rc.7` is the current 1.0 soak
+> **Post-rc.6 note (2026-08-13):** `1.0.0-rc.8` is the current 1.0 soak
 > candidate. Public deltas after the rc.6 snapshot are summarized in
-> [Updates for 1.0.0-rc.7](#updates-for-100-rc7).
+> [Updates for 1.0.0-rc.7](#updates-for-100-rc7) and
+> [Updates for 1.0.0-rc.8](#updates-for-100-rc8).
 
 ## Method
 
@@ -31,13 +33,13 @@ compared:
 
 The snapshot totals were:
 
-| Surface | rc.5 | 1.0.0-rc.7 | Removed |
+| Surface | rc.5 | 1.0.0-rc.8 | Removed |
 |---|---:|---:|---:|
-| Modules | 236 | 300 | 0 |
-| Exported functions | 2,288 | 2,753 | 0 |
+| Modules | 236 | 303 | 0 |
+| Exported functions | 2,288 | 2,763 | 0 |
 | Callbacks | 93 | 115 | 0 |
 | Struct fields | 363 | 557 | 0 |
-| Types | 485 | 600 | 0 named types |
+| Types | 485 | 602 | 0 named types |
 
 The type count treats a changed definition as one removed textual row and one
 added textual row. Those changes were inspected individually as described
@@ -91,7 +93,7 @@ generated `state_param` instead.
 
 ## Additive public API
 
-The candidate adds 64 modules and 465 exports. The main supported additions
+The candidate adds 67 modules and 475 exports. The main supported additions
 are grouped here rather than listing internal plumbing:
 
 - era selection and discovery: `ExMCP.Client.EraProbe`,
@@ -137,7 +139,7 @@ without a simultaneous package-API rewrite.
 
 ## Release decision
 
-The public-API gate is satisfied on the rc.7 census: there are no unresolved
+The public-API gate is satisfied on the rc.8 census: there are no unresolved
 rc.5 symbol, callback, named-type, struct-field, or return-shape removals.
 Stable 1.0 still depends on the conformance, security, interoperability, load,
 rollback, and minimum seven-day modern-preferred RC soak gates in the
@@ -199,3 +201,22 @@ size TTL/replay bounds as documented in the migration and configuration guides.
   rc.6 contract even when bounded `/5` delivery drops.
 - Callers that need explicit bounds and a `:dropped` result should use
   `session_update/5`.
+
+## Updates for 1.0.0-rc.8
+
+The conservative census counts every compiled module whose source is under
+`lib/`, including modules hidden from HexDocs. Rc.8 adds the internal
+`ExMCP.Internal.Options`, `ExMCP.Internal.PortEnvironment`, and
+`ExMCP.Internal.WorkspacePath` modules, with seven exports and two named types.
+
+Three additional hidden Pi exports are additive compatibility entry points:
+
+- `ExMCP.ACP.Adapters.Pi.Settings.agent_dir/1`; `agent_dir/0` remains available
+  through its default argument;
+- `ExMCP.ACP.Adapters.Pi.SlashCommands.load/2`; `load/1` remains available; and
+- `ExMCP.ACP.Adapters.Pi.SlashCommands.normalize_input/1`.
+
+No rc.5 or rc.7 module, exported function/arity, callback, named type, or
+struct field was removed. The shared internal helpers preserve existing
+options, errors, ordering, and wire output. The Pi `:agent_dir` isolation fix
+does not change an existing public function or return shape.

@@ -2,7 +2,7 @@
 
 - **Status:** Living roadmap — direction accepted; individual designs require their phase gates
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
-- **Last updated:** 2026-08-12
+- **Last updated:** 2026-08-13
 - **Related release work:** [`RELEASE_1_0_0_RC_7.md`](./RELEASE_1_0_0_RC_7.md),
   [`RELEASE_1_0_0_RC_6.md`](./RELEASE_1_0_0_RC_6.md),
   [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md)
@@ -91,6 +91,19 @@ regularize callback/result contracts. Cosmetic renames, duplicate aliases, and
 speculative abstraction consume migration effort without producing the same
 value.
 
+### 3.6 Use functional cores inside OTP-owned shells
+
+Processes should own mutable state and effects, but they need not own every
+decision. Model request, session, retry, dispatch, and protocol transitions as
+pure reducers where that produces a coherent semantic boundary. Reducers
+receive time, identifiers, and normalized configuration explicitly and return
+new state plus tagged effects for the owning process to execute.
+
+This is not a mandate to turn every helper into a module or to replace OTP with
+an application framework. The objective is to make ordering, cancellation,
+expiry, and error decisions testable without a running process while leaving
+Ports, ETS, HTTP, `Plug.Conn`, telemetry, logging, and supervision at the edge.
+
 ## 4. Current 1.0 baseline
 
 The 1.0 line already provides:
@@ -104,7 +117,7 @@ The 1.0 line already provides:
 - conformance, characterization, property, security, and interoperability
   coverage.
 
-The `1.0.0-rc.7` candidate packages legacy SSE persistence end to end:
+The published `1.0.0-rc.7` package includes legacy SSE persistence end to end:
 events are stored before delivery, connection gaps retain their session, and
 `Last-Event-ID` resumes from the retained cursor. Together with the
 2026-08-12 security harden and ACP fixes, this is 1.0 release work, not a
@@ -119,6 +132,8 @@ size of the compatibility surface.
 | Idea | Source | Decision | Target | Rationale |
 |---|---|---|---|---|
 | Per-server runtime and scoped registries | Anubis comparison; ExMCP review | Adopt | 2.0 | Makes ownership, multi-server isolation, restart behavior, and testing explicit. |
+| Pure transition cores with effectful OTP shells | ExMCP architecture review | Adopt with constraints | Post-1.0 foundation; complete in 2.0 | Extract cohesive state machines, inject ambient inputs, and preserve process ownership and observable lifecycle. |
+| Validated configuration structs | ExMCP architecture review | Adopt | 2.0 | Resolve application/system environment and defaults once; stop deep code from rediscovering precedence. |
 | Supervised handler scheduler | Grok review | Adopt with constraints | 2.0 | Use bounded `Task.Supervisor` work, cancellation propagation, and explicit state semantics; never fire-and-forget tasks. |
 | One dispatch/context/result pipeline | Both reviews; existing ExMCP drift | Adopt | 2.0 foundation | All transports should observe the same authorization, timeout, telemetry, normalization, and error behavior. |
 | Event and session store behaviours | Grok review; SSE implementation | Adopt | Design in 2.0; adapter may later backport | ETS remains the default; append/replay/TTL/delete semantics must be specified before adapters are public. |
@@ -129,6 +144,8 @@ size of the compatibility surface.
 | Central additive telemetry | Grok review | Adopt | 1.x-compatible subset, complete in 2.0 | Instrument the shared dispatch boundary; payload capture stays opt-in and bounded. |
 | Public middleware/pipeline API | Grok review | Defer | Reconsider after internal pipeline lands | First prove stable phases and use cases internally; a premature public pipeline becomes another compatibility surface. |
 | General protocol-dialect framework | Grok review | Defer | Only with two concrete consumers | Keep existing era/version modules unless a second protocol family demonstrates that a general dialect abstraction removes real duplication. |
+| Separate MCP and ACP Hex packages | Package-footprint review | Investigate | Phase 1 decision | ACP is substantial and lightly coupled, but package/release topology and migration cost need a focused design. |
+| Third shared runtime package | Package-footprint review | Defer pending split design | 2.0 only if justified | Centralize security-sensitive JSON-RPC/framing/process code only if both packages need a stable neutral contract; do not publish a grab-bag of tiny helpers. |
 | Built-in distributed database/event sourcing | External review extrapolation | Reject for core | External adapters | ExMCP should define contracts, not require a database or event-source all runtime state. |
 | Copy Anubis APIs or rewrite ExMCP around them | Comparison exercise | Reject | — | ExMCP has broader protocol, transport, authorization, ACP, and compatibility requirements. |
 | Treat every additive API as a safe 1.x backport | Backport discussion | Reject | — | Additions create support obligations and can still change lifecycle, defaults, ordering, or wire behavior. |
@@ -185,10 +202,15 @@ does not merge to the 2.0 release branch until its prerequisites pass.
 
 **Goal:** establish the exact behavior from which 2.0 migrates.
 
-- Publish `1.0.0-rc.7` with the legacy SSE persistence fix, ACP fixes, and
-  2026-08-12 security harden.
-- Repeat the full conformance, interop, security, API, and load gates.
-- Restart the minimum soak after rc.7 is published.
+- Treat the published `1.0.0-rc.7` artifact, including the legacy SSE
+  persistence fix, ACP fixes, and 2026-08-12 security harden, as the release
+  baseline.
+- Rc.8 carries the credential-free Claude SDK/Codex/Pi CLI lifecycle tests,
+  Pi configuration isolation, internal subprocess/option/workspace helper
+  deduplication, and Hex documentation cleanup described in
+  `POST_1_0_MAINTENANCE_PLAN.md`. Repeat the full conformance, interop,
+  security, API, and load gates against rc.8 and restart the minimum soak from
+  that artifact.
 - Complete the mixed-version rollback drill.
 - Tag stable 1.0 only from a release candidate with identical wire and public
   behavior.
@@ -208,6 +230,14 @@ fixtures are committed as the 2.0 comparison baseline.
 - Add characterization tests for callback process identity, links, timeout and
   cancellation behavior, state ordering, and per-server isolation.
 - Define the migration path for every removal before deleting it.
+- Decide package topology, namespaces, dependency direction, version policy,
+  and whether existing `ExMCP.ACP.*` modules move or remain compatibility
+  namespaces.
+- Define validated configuration structs and preserve the 1.x precedence table
+  as an explicit migration contract.
+- Specify reducer/action ordering, effect-failure feedback, correlation and
+  idempotency, late/duplicate event handling, and timer/cancellation races.
+  Keep reducer action schemas private unless deliberately accepted as public.
 
 **Exit:** maintainers can answer what breaks, why it breaks, and how users
 migrate without referring to implementation diffs.
@@ -232,6 +262,8 @@ independently; no request/session/subscription state crosses the boundary.
 **Goal:** make every transport use the same request semantics.
 
 - Route stdio, HTTP, BEAM-local, and test requests through one dispatch entry.
+- Express dispatch/request lifecycle as a pure transition core where practical;
+  the runtime executes returned transport, reply, timer, and telemetry actions.
 - Centralize request context, authorization outcome, method lookup, deadlines,
   telemetry, result normalization, and error mapping.
 - Execute eligible callbacks through a runtime-owned `Task.Supervisor` with
@@ -355,7 +387,7 @@ another 1.x RC or document a patch-level correctness/security exception.
 | Correct bounded replay-buffer retention | Backport with SSE fix | Correctness fix with regression coverage. |
 | Documentation, examples, diagnostics, and characterization tests | Backport | No runtime compatibility cost. |
 | Additive dispatch telemetry | Eligible for a 1.x minor | Preserve existing events; bounded metadata only; payload capture opt-in. |
-| Store adapter seam | Possible later 1.x minor | Only after the 2.0 contract is designed; ETS must remain the default and current behavior unchanged. |
+| Store adapter seam | Possible later 1.x minor | Only after a standalone store ADR and contract suite are accepted; the design need not wait for 2.0 runtime implementation. ETS must remain the default and current behavior unchanged. |
 | Internal dispatch deduplication | Case by case | Backport only when golden tests prove identical wire, errors, ordering, and lifecycle. |
 | Richer DSL constraints | Hold for 2.0 | Additive, but expands the stable public language before its design is settled. |
 | Result facade and client lifecycle helpers | Hold for 2.0 | Technically additive, but would create parallel APIs and long-term support obligations. |
@@ -395,6 +427,109 @@ ExMCP 2.0 is not intended to:
 
 ## 10. Open decisions
 
+### 10.1 MCP/ACP package topology
+
+ACP is large enough to justify evaluating a split: at commit `4591af6`, the
+tree contains 45 ACP source files and approximately 20,020 of 90,237 library
+lines (about 22%). The coupling is much smaller than the line count. At the
+2026-08-13 baseline, xref reports 23 direct edges from ACP files to ten non-ACP
+files:
+
+- `Internal.NameValue` and `Internal.WorkspacePath` are ACP-only despite their
+  current location and can move into an ACP-owned namespace;
+- six genuinely shared utility files total approximately 281 lines: JSON-RPC
+  envelopes/parsing, bounded option normalization, map helpers, port-environment
+  policy, redacted log summaries, and stdio logger configuration; and
+- the remaining two edges are the 208-line MCP transport behaviour/factory and
+  the 642-line child-process stdio transport. The behaviour currently selects
+  concrete MCP transports, and the stdio implementation mixes reusable Port and
+  NDJSON mechanics with MCP-specific validation and security policy.
+
+ACP source directly uses Jason and telemetry but not Mint, Plug, JOSE, or the
+JSON Schema dependency. A clean `ex_acp` package could therefore have a much
+smaller runtime dependency set than `ex_mcp`; making `ex_acp` depend on
+`ex_mcp` would preserve code sharing but largely defeat that benefit.
+
+ACP's session lifecycle includes `mcpServers`, but that does not by itself
+create an implementation dependency on an MCP library. These values are ACP
+wire descriptors telling the agent how to launch or reach an MCP server. The
+ACP package should own their ACP types, builders, normalization, validation,
+and authorization as plain data; it need not own an MCP client/server runtime.
+This is also the correct trust boundary because session-supplied commands,
+environment variables, URLs, and headers are untrusted even when the target
+protocol is MCP.
+
+An Elixir ACP agent that wants ExMCP to connect to those descriptors can install
+both packages and use an optional bridge. Keep conversion from ExMCP-specific
+configuration structs out of the core ACP API so the dependency remains
+one-way and optional. The existing ExMCP-specific BEAM MCP capability/descriptor
+is an integration extension and should move to that bridge (or require both
+packages), rather than forcing all ACP consumers to depend on ExMCP. An
+integration module/package is distinct from the proposed neutral shared runtime:
+the latter must not own either protocol's configuration schema.
+
+The package-topology design must compare these options:
+
+| Shape | Advantages | Costs and risks |
+|---|---|---|
+| Keep one `ex_mcp` package | One release train, no migration or cross-package compatibility matrix | MCP-only and ACP-only users compile and receive unrelated capabilities; adapter growth remains coupled to MCP releases. |
+| `ex_acp` depends on `ex_mcp` | Smallest implementation change and no copied code | ACP-only users still install MCP, HTTP, OAuth, and schema dependencies; release coupling remains. |
+| Independent `ex_mcp` and `ex_acp` with copied helpers | Two simple dependency graphs and independent releases | Security, framing, environment, and JSON-RPC fixes can drift. Copying those implementations is not acceptable. |
+| `ex_mcp` and `ex_acp` depend on a small shared package | No duplicated security-sensitive code; independent protocol packages and dependency sets | Adds a third public app, versioning policy, release order, compatibility matrix, and another release/maintenance coordination surface. |
+
+The preliminary direction is a same-repository, multi-package design spike,
+not an immediate split. First move ACP-only helpers under ACP ownership and
+separate the generic transport behaviour from concrete MCP transport selection.
+Then factor the subprocess transport into a neutral bounded-NDJSON/Port core
+with MCP- and ACP-specific validation wrappers and remeasure the residual shared
+surface.
+
+Create a third package only if the residual code forms a cohesive, stable
+runtime contract used by both packages. Its scope should be limited to
+mechanics such as JSON-RPC envelopes, bounded line framing, subprocess
+lifecycle/environment policy, and payload-safe diagnostics. Protocol methods,
+MCP resource policy, ACP session semantics, adapter mappings, and public client
+APIs stay in their owning packages. Trivial map construction may be separately
+owned rather than forcing a dependency on a miscellaneous helper package.
+
+If a shared package is justified, keep all packages in one repository, release
+the shared package first, use explicit compatible version ranges, and run a CI
+matrix against the lowest and newest supported shared version. One contract
+suite should execute against both protocol wrappers, and security/framing fixes
+must update that suite before either consumer releases. The Phase 1 design must
+also choose whether the existing `ExMCP.ACP.*` namespace remains in `ex_acp`,
+migrates to `ExACP.*`, or is preserved temporarily by a compatibility package.
+
+The design spike must record, for the monolith and each viable split:
+
+- compressed Hex archive size, clean compile time, and runtime dependency/app
+  count for an MCP-only and an ACP-only consumer;
+- the residual shared modules and why each is a cohesive neutral contract rather
+  than a coincidental helper;
+- CI jobs, release ordering, supported-version matrix, and estimated ongoing
+  maintenance cost;
+- source/API/namespace migration cost for existing ACP users; and
+- whether an intentionally broken shared-package version is caught by each
+  consumer's lowest/newest-version contract jobs.
+
+Choose a split only when those measured dependency and maintenance benefits
+outweigh the added release surface; source-line reduction by itself is not an
+exit criterion.
+
+Reproduce the source measurements with:
+
+```text
+find lib/ex_mcp/acp -type f -name '*.ex' -print0 | xargs -0 wc -l
+find lib -type f -name '*.ex' -print0 | xargs -0 wc -l
+mix xref graph --format json --output xref-graph.json
+```
+
+For the edge count, select xref entries whose source begins with
+`lib/ex_mcp/acp/` and whose target does not. Recompute all figures at the start
+of the spike rather than treating this baseline as a target.
+
+### 10.2 Other open decisions
+
 These need focused design records during Phase 1:
 
 1. **Handler state model:** whether 2.0 supports serialized stateful and
@@ -409,6 +544,9 @@ These need focused design records during Phase 1:
    runtime registration and how capability-change notifications are emitted.
 6. **Public pipeline:** whether concrete authorization/telemetry middleware use
    cases justify exposing the internal dispatch phases.
+7. **Package topology:** whether measured compile/dependency/release benefits
+   justify separate MCP and ACP packages and, if so, the shared-runtime and
+   namespace strategy described above.
 
 An open decision is not permission to let an implementation choose the public
 contract accidentally.
