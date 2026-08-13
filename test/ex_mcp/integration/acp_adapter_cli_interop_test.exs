@@ -23,7 +23,6 @@ defmodule ExMCP.Integration.ACPAdapterCLIInteropTest do
   alias ExMCP.ACP.Adapters.{ClaudeSDK, Codex, Pi}
 
   @moduletag :external
-  @moduletag :integration
   @moduletag :interop_acp_cli
   @moduletag timeout: 90_000
 
