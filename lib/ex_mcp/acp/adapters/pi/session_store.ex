@@ -81,16 +81,16 @@ defmodule ExMCP.ACP.Adapters.Pi.SessionStore do
       dir = Keyword.get(opts, :session_dir) ->
         dir
 
-      dir = pi_agent_settings_session_dir(pi_agent_dir()) ->
+      dir = pi_agent_settings_session_dir(pi_agent_dir(opts)) ->
         dir
 
       true ->
-        Path.join(pi_agent_dir(), "sessions")
+        Path.join(pi_agent_dir(opts), "sessions")
     end
   end
 
-  defp pi_agent_dir do
-    case System.get_env("PI_CODING_AGENT_DIR") do
+  defp pi_agent_dir(opts) do
+    case Keyword.get(opts, :agent_dir) || System.get_env("PI_CODING_AGENT_DIR") do
       nil -> Path.join(System.user_home!(), ".pi/agent")
       "" -> Path.join(System.user_home!(), ".pi/agent")
       dir -> Path.expand(dir)

@@ -1,6 +1,8 @@
 defmodule ExMCP.ACP.Adapters.Pi.SlashCommands do
   @moduledoc false
 
+  alias ExMCP.ACP.Adapters.Pi.Settings
+
   @builtin_commands [
     %{
       "name" => "compact",
@@ -31,12 +33,12 @@ defmodule ExMCP.ACP.Adapters.Pi.SlashCommands do
   @spec builtin_commands() :: [map()]
   def builtin_commands, do: @builtin_commands
 
-  @spec load(String.t() | nil) :: [map()]
-  def load(cwd) do
+  @spec load(String.t() | nil, keyword()) :: [map()]
+  def load(cwd, opts \\ []) do
     cwd = cwd || File.cwd!()
 
     [
-      {Path.join([System.user_home!(), ".pi", "agent", "prompts"]), "user"},
+      {Path.join(Settings.agent_dir(opts), "prompts"), "user"},
       {Path.expand(Path.join([".pi", "prompts"]), cwd), "project"}
     ]
     |> Enum.flat_map(fn {dir, source} -> load_dir(dir, source) end)
@@ -49,7 +51,12 @@ defmodule ExMCP.ACP.Adapters.Pi.SlashCommands do
       name = command["name"]
 
       if is_binary(name) and not MapSet.member?(seen, name) do
-        {MapSet.put(seen, name), [Map.take(command, ["name", "description", "input"]) | acc]}
+        normalized =
+          command
+          |> Map.take(["name", "description", "input"])
+          |> normalize_input()
+
+        {MapSet.put(seen, name), [normalized | acc]}
       else
         {seen, acc}
       end
@@ -57,6 +64,20 @@ defmodule ExMCP.ACP.Adapters.Pi.SlashCommands do
     |> elem(1)
     |> Enum.reverse()
   end
+
+  @doc false
+  @spec normalize_input(map()) :: map()
+  def normalize_input(%{"input" => hint} = command) when is_binary(hint) do
+    Map.put(command, "input", %{"hint" => hint})
+  end
+
+  def normalize_input(%{"input" => %{"hint" => hint} = input} = command)
+      when is_binary(hint) do
+    Map.put(command, "input", Map.take(input, ["hint", "_meta"]))
+  end
+
+  def normalize_input(%{"input" => _invalid} = command), do: Map.delete(command, "input")
+  def normalize_input(command), do: command
 
   @spec parse(String.t()) :: {:ok, String.t(), [String.t()]} | :error
   def parse(text) when is_binary(text) do

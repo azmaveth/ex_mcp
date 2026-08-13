@@ -3,19 +3,20 @@ defmodule ExMCP.ACP.Adapters.Pi.Settings do
 
   @spec load(String.t() | nil, keyword()) :: map()
   def load(cwd, opts \\ []) do
-    global = read_json(Path.join(agent_dir(), "settings.json"))
+    agent_dir = agent_dir(opts)
+    global = read_json(Path.join(agent_dir, "settings.json"))
     project = read_json(project_settings_path(cwd))
 
     global
     |> deep_merge(project)
-    |> Map.put("_agentDir", agent_dir())
+    |> Map.put("_agentDir", agent_dir)
     |> Map.put("_cwd", cwd)
     |> Map.put("_opts", opts)
   end
 
-  @spec agent_dir() :: String.t()
-  def agent_dir do
-    case System.get_env("PI_CODING_AGENT_DIR") do
+  @spec agent_dir(keyword()) :: String.t()
+  def agent_dir(opts \\ []) do
+    case Keyword.get(opts, :agent_dir) || System.get_env("PI_CODING_AGENT_DIR") do
       nil -> Path.join(System.user_home!(), ".pi/agent")
       "" -> Path.join(System.user_home!(), ".pi/agent")
       dir -> Path.expand(dir)

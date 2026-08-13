@@ -203,7 +203,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
     cwd = params["cwd"] || state.last_session_cwd
 
     all_sessions =
-      [session_dir: state.session_dir]
+      [
+        session_dir: state.session_dir,
+        agent_dir: Keyword.get(state.opts, :agent_dir)
+      ]
       |> SessionStore.list_pi_sessions()
       |> filter_sessions_by_cwd(cwd)
 
@@ -239,7 +242,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     with :ok <- require_absolute_cwd(cwd),
          session_file when is_binary(session_file) <- find_session_file(session_id, state),
          {:ok, state} <- prepare_session_process(cwd, session_file, state) do
-      file_commands = SlashCommands.load(cwd)
+      file_commands = SlashCommands.load(cwd, state.opts)
       settings = Settings.load(cwd, state.opts)
 
       {switch_id, switch_session} = rpc("switch_session", %{"sessionPath" => session_file})
@@ -290,7 +293,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     with :ok <- require_absolute_cwd(cwd),
          session_file when is_binary(session_file) <- find_session_file(session_id, state),
          {:ok, state} <- prepare_session_process(cwd, session_file, state) do
-      file_commands = SlashCommands.load(cwd)
+      file_commands = SlashCommands.load(cwd, state.opts)
       settings = Settings.load(cwd, state.opts)
 
       {switch_id, switch_session} = rpc("switch_session", %{"sessionPath" => session_file})
@@ -739,7 +742,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp do_start_session_new(acp_id, cwd, state) do
-    file_commands = SlashCommands.load(cwd)
+    file_commands = SlashCommands.load(cwd, state.opts)
     settings = Settings.load(cwd, state.opts)
 
     {new_id, new_session} = rpc("new_session")
@@ -1979,6 +1982,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
           "description" => command["description"] || "(command)",
           "input" => command["input"]
         }
+        |> SlashCommands.normalize_input()
         |> compact()
       end)
 
@@ -2091,7 +2095,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
         session_file
 
       _ ->
-        SessionStore.find_pi_session_file(session_id, session_dir: state.session_dir)
+        SessionStore.find_pi_session_file(session_id,
+          session_dir: state.session_dir,
+          agent_dir: Keyword.get(state.opts, :agent_dir)
+        )
     end
   end
 
@@ -2130,7 +2137,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp safe_delete_session_file(state, session_file) do
     root =
       state.session_dir ||
-        Path.join(Settings.agent_dir(), "sessions")
+        Path.join(Settings.agent_dir(state.opts), "sessions")
 
     expanded_root = Path.expand(root)
     expanded_file = Path.expand(session_file)
