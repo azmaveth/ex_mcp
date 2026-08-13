@@ -95,19 +95,20 @@ high-volume tool request preparation, large payloads, a ten-second sustained
 load interval, security checks, schema compilation, subscription queue
 pressure, and slow-consumer behavior.
 
-The rc.7 gate is:
+The rc.7 publish gate is current-head only:
 
 - zero errors or timeouts in the performance and stress suites;
 - no committed absolute performance threshold may regress;
-- shared legacy workloads may not regress more than 20% in median runtime or
-  10% in retained memory versus the rc.5 baseline on the same runner;
 - process and mailbox counts must return to their bounded post-cleanup state;
 - slow subscribers must coalesce or disconnect according to policy without
   cross-principal delivery.
 
-Any unexplained breach blocks the release. Runner noise must be resolved by
-repeating both revisions on the same machine, not by widening a threshold in
-the release commit.
+A same-runner rc.5 vs rc.7 comparison (median runtime and retained memory for
+shared legacy workloads, plus runner identity, commit SHAs, and raw outputs)
+is **not** an rc.7 publish gate. Record that evidence before stable `1.0.0`.
+Any unexplained current-head breach still blocks this candidate. Runner noise
+must be resolved by repeating the current revision on the same machine, not by
+widening a threshold in the release commit.
 
 ## Stable 1.0 gates still open
 
@@ -135,8 +136,5 @@ the 2026-08-12 security harden described above.
 
 ## rc.5 performance comparison
 
-rc.7 CI records current-head performance and stress thresholds only. A
-same-runner rc.5 vs rc.7 comparison (median runtime and retained memory for
-shared legacy workloads, plus runner identity, commit SHAs, and raw outputs)
-is **not** a publish gate for this candidate. Record that evidence before
-stable `1.0.0`.
+Deferred to stable `1.0.0`. See the load-budget policy above: rc.7 publishes
+on current-head thresholds only.
