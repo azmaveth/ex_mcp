@@ -116,9 +116,12 @@ Publishing rc.7 restarts, but does not complete, the stable-release clock.
 Stable `1.0.0` requires:
 
 1. at least seven calendar days of final modern-preferred RC use without a
-   release-blocking regression; and
+   release-blocking regression;
 2. a successful mixed-version cluster rollback drill with active
-   subscriptions and in-flight MRTR operations.
+   subscriptions and in-flight MRTR operations; and
+3. a same-runner rc.5 vs rc.7 performance comparison (median runtime and
+   retained memory for shared legacy workloads, plus runner identity, commit
+   SHAs, and raw outputs).
 
 Any wire-design, public-API, or documented lifecycle change requires another
 RC and restarts the soak. Current `master` packaged as rc.7 meets that
