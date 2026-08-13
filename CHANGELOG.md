@@ -14,7 +14,7 @@ candidate after its minimum seven-day soak and the mixed-cluster rollback drill
 complete. No wire-design or public-API changes are planned between that RC and
 stable 1.0.
 
-## [1.0.0-rc.7] - 2026-08-12
+## [1.0.0-rc.7] - Unreleased
 
 This release candidate packages the post-rc.6 transport lifecycle, ACP, and
 security hardening work that requires a fresh modern-preferred soak before
