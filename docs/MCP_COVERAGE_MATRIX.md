@@ -1,7 +1,7 @@
 # MCP Specification Test Coverage Matrix
 
 This document maps ExMCP's local and external conformance coverage to the MCP
-protocol revisions it implements. Status is current as of 2026-08-05.
+protocol revisions it implements. Status is current as of 2026-08-13.
 
 ## Protocol Status
 
