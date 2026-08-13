@@ -19,7 +19,10 @@ stable 1.0.
 This release candidate packages the post-rc.6 transport lifecycle, ACP, and
 security hardening work that requires a fresh modern-preferred soak before
 stable 1.0. The application default remains `:prefer_modern`. Set
-`protocol_mode: :legacy_only` for the exact rc.5 wire path.
+`protocol_mode: :legacy_only` to preserve the legacy protocol era. Exact rc.5
+wire and session behavior still requires package rollback to `1.0.0-rc.5`;
+rc.7 continues to enforce server-issued sessions and newer lifecycle/security
+rules.
 
 ### Fixed
 
