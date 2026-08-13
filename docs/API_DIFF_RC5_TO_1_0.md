@@ -4,16 +4,16 @@ This report records the public Elixir API compatibility gate for the MCP
 2026-07-28 migration. The comparison is between:
 
 - baseline: `v1.0.0-rc.5` (`a2464c3423ee48ba825402cc2d17be8042f1451a`);
-- candidate: the `v1.0.0-rc.6` release commit.
+- candidate: `1.0.0-rc.7` on `master` (current soak candidate).
 
-The rc.6 package started the first modern-preferred soak. This report compares
-the retained rc.5 API surface with the 1.0 candidate, not version strings.
+The original BEAM snapshot below was taken against the `v1.0.0-rc.6` release
+commit. rc.7 is additive on that surface: exported functions went from 2,288
+in rc.5 to 2,753 here with zero removals. Callbacks, types, and structs still
+need a regenerated census from the tagged rc.7 commit before stable 1.0.
 
-> **Post-rc.6 note (2026-08-12):** `1.0.0-rc.7` packages the post-rc.6 public
-> deltas summarized in [Updates for 1.0.0-rc.7](#updates-for-100-rc7) below.
-> The full BEAM snapshot comparison against rc.5 remains the rc.6 evidence in
-> this document; regenerate a complete audit from the rc.7 tag if a fresh
-> module/export census is required for stable 1.0.
+> **Post-rc.6 note (2026-08-13):** `1.0.0-rc.7` is the current 1.0 soak
+> candidate. Public deltas after the rc.6 snapshot are summarized in
+> [Updates for 1.0.0-rc.7](#updates-for-100-rc7).
 
 ## Method
 
@@ -196,5 +196,7 @@ size TTL/replay bounds as documented in the migration and configuration guides.
 - `ExMCP.ACP.Client.HandlerRunner.session_update/3` is retained as a compatibility
   wrapper over `session_update/5`. The `/3` form applies the same default update
   queue bounds used by `ExMCP.ACP.Client` (`max_update_queue: 32`,
-  `max_update_queue_bytes: 8_388_608`) and returns `:ok` or `:dropped`.
-- Callers that need explicit bounds should use `session_update/5`.
+  `max_update_queue_bytes: 8_388_608`) but always returns `:ok`, matching the
+  rc.6 contract even when bounded `/5` delivery drops.
+- Callers that need explicit bounds and a `:dropped` result should use
+  `session_update/5`.
