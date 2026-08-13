@@ -264,16 +264,23 @@ Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control cod
 
 # Claude Code via the SDK-compatible adapter
 {:ok, client} = ExMCP.ACP.start_client(
-  command: ["claude"],
+  transport_mod: ExMCP.ACP.AdapterTransport,
   adapter: ExMCP.ACP.Adapters.ClaudeSDK,
   adapter_opts: [model: "sonnet", cwd: "/my/project"]
 )
 
-# Pi coding agent through the ACP-native adapter
+# Codex via the app-server adapter
 {:ok, client} = ExMCP.ACP.start_client(
-  command: ["pi"],
+  transport_mod: ExMCP.ACP.AdapterTransport,
+  adapter: ExMCP.ACP.Adapters.Codex,
+  adapter_opts: [cwd: "/my/project"]
+)
+
+# Pi coding agent via its RPC adapter
+{:ok, client} = ExMCP.ACP.start_client(
+  transport_mod: ExMCP.ACP.AdapterTransport,
   adapter: ExMCP.ACP.Adapters.Pi,
-  adapter_opts: [model: "anthropic/claude-sonnet-4", thinking_level: "medium"]
+  adapter_opts: [cwd: "/my/project", thinking_level: "medium"]
 )
 
 # Native Elixir ACP agent over stdio

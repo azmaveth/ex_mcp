@@ -99,7 +99,7 @@ end
 
 ```elixir
 {:ok, client} = ExMCP.ACP.start_client(
-  command: ["claude"],
+  transport_mod: ExMCP.ACP.AdapterTransport,
   adapter: ExMCP.ACP.Adapters.ClaudeSDK,
   adapter_opts: [model: "sonnet", cwd: "/my/project"]
 )
@@ -117,7 +117,7 @@ session setup, model/mode config, and richer status updates.
 
 ```elixir
 {:ok, client} = ExMCP.ACP.start_client(
-  command: ["codex"],
+  transport_mod: ExMCP.ACP.AdapterTransport,
   adapter: ExMCP.ACP.Adapters.Codex,
   adapter_opts: [model: "gpt-4o"]
 )
@@ -127,7 +127,7 @@ session setup, model/mode config, and richer status updates.
 
 ```elixir
 {:ok, client} = ExMCP.ACP.start_client(
-  command: ["pi"],
+  transport_mod: ExMCP.ACP.AdapterTransport,
   adapter: ExMCP.ACP.Adapters.Pi,
   adapter_opts: [
     session_path: "/path/to/session.jsonl"  # optional: resume session
@@ -566,7 +566,7 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 
 **Config options:** Session responses include upstream-compatible `model` and `thought_level` selectors, plus ExMCP's existing `auto_compaction`, `auto_retry`, `steering_mode`, and `follow_up_mode` controls. Prefer `set_config_option/4` with config id `model` for model changes; `ExMCP.ACP.Client.set_model/3` is retained for compatibility with older adapters.
 
-**Startup options:** `cli_path`/`pi_command`, `session_path`, `session_dir`, `session_map_path`, `delete_session_files`, and `update_notice`. The live Pi subprocess is started like upstream `pi-acp`, with `--mode rpc --no-themes` and optional `--session <path>`; cwd is applied as the child process working directory. `session/delete` removes ExMCP session-map state by default; backing Pi JSONL files are deleted only when `delete_session_files: true` is set and the file is under the configured Pi session directory. Registry update checks are disabled unless `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true` is set.
+**Startup options:** `cli_path`/`pi_command`, `agent_dir`, `session_path`, `session_dir`, `session_map_path`, `delete_session_files`, and `update_notice`. The live Pi subprocess is started like upstream `pi-acp`, with `--mode rpc --no-themes` and optional `--session <path>`; cwd is applied as the child process working directory. `agent_dir` isolates the settings and user-prompt directory used by the adapter; also pass the same path as `PI_CODING_AGENT_DIR` in `env` so the Pi subprocess uses it. `session/delete` removes ExMCP session-map state by default; backing Pi JSONL files are deleted only when `delete_session_files: true` is set and the file is under the configured Pi session directory. Registry update checks are disabled unless `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true` is set.
 
 **Breaking change:** Pi-specific `_ex_mcp.pi/*` and legacy `pi/*` extension methods are no longer implemented. Use the ACP session methods above or slash commands in prompts.
 
@@ -631,6 +631,22 @@ agent = ExMCP.ACP.Registry.get_agent(registry, "codex-acp")
 ```
 
 Use `ExMCP.ACP.Registry.find_agents/2` to search the decoded registry by agent id, name, or description.
+
+## Adapter CLI Interop Tests
+
+The standard `:interop_acp` suite checks both ACP roles against the official
+TypeScript SDK. A separate opt-in suite launches the real Claude Code, Codex,
+and Pi CLIs through their adapters:
+
+```bash
+mix test --only interop_acp_cli
+```
+
+These tests stop at session lifecycle operations and never send a prompt, so
+they do not make LLM calls or consume model credits. They use isolated config
+directories and fail if a required executable is missing. Set
+`CLAUDE_CODE_EXECUTABLE`, `CODEX_PATH`, or `PI_ACP_PI_COMMAND` when a CLI is not
+on `PATH`.
 
 ## API Reference
 

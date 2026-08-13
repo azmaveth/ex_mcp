@@ -22,8 +22,9 @@ permissions:
 #   slow / performance / stress
 #                         `extended` job -> mix test.suite performance
 #   interop ............... `interop` job (Node.js + npm)
-#   external / live_server  no tests currently carry these tags; they stay in
-#                           the default exclusion list for future use only.
+#   external .............. opt-in real-CLI ACP adapter interop; vendor CLIs
+#                           are not installed by the standard CI jobs.
+#   live_server ........... reserved for tests requiring a live service.
 #   wip / skip ............ intentionally never run; `scripts/check_skip_tags.sh`
 #                           fails the build if a test is left tagged :skip.
 

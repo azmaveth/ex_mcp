@@ -2,6 +2,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.ACP.Adapters.Pi
+  alias ExMCP.ACP.Adapters.Pi.{Settings, SlashCommands}
   alias ExMCP.ACP.PromptQueue
 
   setup do
@@ -73,6 +74,42 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       {_cmd, args} = Pi.cli_command(api_key: "secret")
       refute "--api-key" in args
       refute "secret" in args
+    end
+  end
+
+  describe "isolated configuration" do
+    test "loads global settings and prompts from an explicit agent directory", %{tmp_dir: tmp_dir} do
+      agent_dir = Path.join(tmp_dir, "agent")
+      prompts_dir = Path.join(agent_dir, "prompts")
+      File.mkdir_p!(prompts_dir)
+      File.write!(Path.join(agent_dir, "settings.json"), Jason.encode!(%{"quietStartup" => true}))
+      File.write!(Path.join(prompts_dir, "review.md"), "Review this change")
+
+      settings = Settings.load(tmp_dir, agent_dir: agent_dir)
+      commands = SlashCommands.load(tmp_dir, agent_dir: agent_dir)
+
+      assert settings["quietStartup"] == true
+      assert settings["_agentDir"] == agent_dir
+      assert Enum.any?(commands, &(&1["name"] == "review" and &1["source"] =~ "user"))
+    end
+
+    test "normalizes command input strings to ACP input hints" do
+      commands = SlashCommands.available_commands([])
+
+      assert Enum.find(commands, &(&1["name"] == "compact"))["input"] == %{
+               "hint" => "optional instructions"
+             }
+
+      assert Enum.find(commands, &(&1["name"] == "autocompact"))["input"] == %{
+               "hint" => "on | off"
+             }
+
+      assert SlashCommands.normalize_input(%{
+               "name" => "custom",
+               "input" => %{"hint" => "value", "unsupported" => true}
+             }) == %{"name" => "custom", "input" => %{"hint" => "value"}}
+
+      refute Map.has_key?(SlashCommands.normalize_input(%{"input" => ["invalid"]}), "input")
     end
   end
 
