@@ -16,9 +16,17 @@ defmodule ExMCP.Security.DependencyAdvisoryMitigationTest do
   end
 
   test "ExMCP modules do not import cow_cookie:cookie/1 from EEF-CVE-2026-43969" do
-    {:ok, modules} = :application.get_key(:ex_mcp, :modules)
+    refute {:cow_cookie, :cookie, 1} in application_imports([:ex_mcp])
+  end
 
-    imports =
+  test "the ExMCP server stack does not import cow_link:link/1 from EEF-CVE-2026-43971" do
+    refute {:cow_link, :link, 1} in application_imports([:ex_mcp, :plug, :plug_cowboy, :cowboy])
+  end
+
+  defp application_imports(applications) do
+    Enum.flat_map(applications, fn application ->
+      {:ok, modules} = :application.get_key(application, :modules)
+
       Enum.flat_map(modules, fn module ->
         {:module, ^module} = Code.ensure_loaded(module)
 
@@ -33,7 +41,6 @@ defmodule ExMCP.Security.DependencyAdvisoryMitigationTest do
             []
         end
       end)
-
-    refute {:cow_cookie, :cookie, 1} in imports
+    end)
   end
 end

@@ -7,14 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-08-22
 
-Stable 1.0 will preserve the behavior of the final modern-preferred release
-candidate after its minimum seven-day soak and the mixed-cluster rollback drill
-complete. No wire-design or public-API changes are planned between that RC and
-stable 1.0.
+Stable 1.0 preserves the public API, MCP/ACP wire behavior, security posture,
+and `:prefer_modern` default of `1.0.0-rc.8`. The final candidate soaked for
+more than seven calendar days without a release-blocking regression. There are
+no production-code, protocol-default, wire-design, or public-API changes
+between rc.8 and this release.
 
-## [1.0.0-rc.8] - Unreleased
+### Release evidence
+
+- See the repository-only
+  [1.0 release record](https://github.com/azmaveth/ex_mcp/blob/v1.0.0/docs/RELEASE_1_0_0.md).
+- The mixed-version rollback gate passed with a modern node holding an active
+  subscription and paused MRTR request while an exact `1.0.0-rc.5` stdio node
+  remained live. The drill drained modern work, reconciled state on rc.5, and
+  verified that modern era pins require explicit operator reset.
+
+### Security
+
+- Acknowledge `EEF-CVE-2026-43971` while Cowlib has no patched Hex release.
+  ExMCP and its Plug/Cowboy server stack do not call the affected
+  `cow_link:link/1` encoder; a BEAM-import regression test locks that
+  assumption, and the exception expires with the existing Cowlib review date.
+
+## [1.0.0-rc.8] - 2026-08-13
 
 This narrow follow-up candidate preserves rc.7's MCP/ACP wire behavior and
 `:prefer_modern` default while adding real adapter lifecycle evidence, fixing

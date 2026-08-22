@@ -1,11 +1,11 @@
 # Post-1.0 Maintenance Plan
 
-- **Status:** Rc.8 packaging work complete; larger maintenance items remain
+- **Status:** Stable 1.0 packaging work complete; larger maintenance items remain
   proposed and tracked
-- **Baseline:** ExMCP `1.0.0-rc.8` candidate
+- **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-08-13
+- **Last updated:** 2026-08-22
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
@@ -280,8 +280,8 @@ in the repository, and packaged references to them use repository URLs.
 1. Land rc.8's credential-free ACP CLI lifecycle coverage, Pi isolation fix,
    behavior-preserving internal helper deduplication, and Hex documentation
    cleanup.
-2. Qualify and publish rc.8, then run the fresh final-candidate soak.
-3. Release stable 1.0 with no adapter decomposition mixed into the release diff.
+2. Qualify and publish rc.8, then run the fresh final-candidate soak. **Complete.**
+3. Release stable 1.0 with no adapter decomposition mixed into the release diff. **Complete.**
 4. Resolve the focused contract mismatches as small correctness or documentation
    changes.
 5. Extract the shared HTTP reducer and the smallest high-value functional cores

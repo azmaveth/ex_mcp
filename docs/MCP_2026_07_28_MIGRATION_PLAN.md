@@ -1,12 +1,12 @@
 # ExMCP → MCP 2026-07-28 Migration Plan
 
-**Status:** Code migration complete — Phases 0–10 implemented and local gates green; `1.0.0-rc.8` preserves rc.7 wire behavior while adding adapter lifecycle evidence, Pi isolation, and internal/package cleanup, and restarts the final-candidate soak
+**Status:** Code migration and all 1.0 release gates complete — Phases 0–10 implemented; the rc.8 final-candidate soak and mixed-version rollback drill completed without a release-blocking regression
 **Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28), latest stable ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current ExMCP:** `1.0.0-rc.8` candidate line, defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
+**Current ExMCP:** `1.0.0` release-preparation tree, behavior-identical to rc.8; defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-22
 
 ---
 
@@ -1269,13 +1269,17 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
    MRTR: operators can select `:legacy_only`, drain/restart safely, reconcile state, and explicitly
    manage persisted modern pins. Rollback must not silently downgrade already-pinned clients.
 
-**Current release status (2026-08-13):** the code and local-validation work for gates 1–6 and 8
-is complete. Gate 3 is satisfied by the pinned prerelease conformance harness plus passing,
-bidirectional official TypeScript SDK v2 interop over both stdio and Streamable HTTP. `1.0.0-rc.8`
-is the final modern-preferred soak candidate for gate 7; it preserves rc.7 wire behavior while
-adding credential-free real-adapter lifecycle evidence and Pi isolation. Gate 9 requires an
-operator-run mixed-cluster rollback drill. Stable `1.0.0` must not be cut until the published
-rc.8 soak and rollback drill both complete.
+**Current release status (2026-08-22):** the code and validation work for gates 1–8 is complete.
+Gate 3 is satisfied by the pinned prerelease conformance harness plus passing, bidirectional
+official TypeScript SDK v2 interop over both stdio and Streamable HTTP. Published `1.0.0-rc.8`
+completed the final modern-preferred soak without a release-blocking regression. Stable 1.0 is
+behavior-identical to rc.8 and changes release metadata, documentation, and release tests only.
+Gate 9 passed on 2026-08-22: the automated drill held a modern subscription and paused MRTR
+request while a legacy node was live, then closed the subscription, completed MRTR, restarted
+legacy-only, reconciled external state, rejected silent modern-pin downgrade, and accepted legacy
+only after explicit cache reset. The operator reran the same test with a server compiled from the
+exact `v1.0.0-rc.5` tag; it negotiated `2025-11-25` and reported package version `1.0.0-rc.5`.
+See `test/ex_mcp/integration/rollback_drill_test.exs` and `docs/RELEASE_1_0_0.md`.
 
 The rc.6 release note assigns an owner and evidence source for every gate, defines the load-test
 workload and regression budget against rc.5, and records the qualifying conformance-harness and

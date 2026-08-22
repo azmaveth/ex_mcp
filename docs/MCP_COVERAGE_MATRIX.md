@@ -1,7 +1,7 @@
 # MCP Specification Test Coverage Matrix
 
 This document maps ExMCP's local and external conformance coverage to the MCP
-protocol revisions it implements. Status is current as of 2026-08-13.
+protocol revisions it implements. Status is current as of 2026-08-22.
 
 ## Protocol Status
 
@@ -9,9 +9,9 @@ protocol revisions it implements. Status is current as of 2026-08-13.
 - **Newest legacy revision:** `2025-11-25`.
 - **Other retained legacy revisions:** `2025-06-18`, `2025-03-26`, and
   `2024-11-05`.
-- **Current repository rollout:** `1.0.0-rc.8` enables `2026-07-28` through
-  `:prefer_modern` and `:modern_only` and defaults to `:prefer_modern` for the
-  required pre-1.0 soak. Every legacy revision remains available, and
+- **Current stable release:** `1.0.0` enables `2026-07-28` through
+  `:prefer_modern` and `:modern_only` and defaults to `:prefer_modern`. Every
+  legacy revision remains available, and
   `:legacy_only` preserves the legacy protocol era (not an exact rc.5 package rollback).
 
 The protocol revision is stable even though its official conformance runner is
@@ -122,18 +122,20 @@ the four `version_*_test.exs` files, and the transport integration suites. MCP
 2026-07-28 removals are tested separately so retaining a legacy feature cannot
 accidentally expose it on the modern wire path.
 
-## Remaining Release Qualification
+## Stable Release Qualification
 
-The implementation and test coverage are complete, but stable ExMCP 1.0 still
-has operational release gates:
+The implementation, test coverage, and final-candidate soak for stable ExMCP
+1.0 are complete. Ongoing qualification policy is:
 
 1. Replace the prerelease modern conformance runner with a stable 2026-aware
    release when available. Until then, retain the now-passing pinned official
    SDK v2 fallback and disclose both pins in release notes.
-2. Publish and observe rc.8, the final modern-preferred RC, for at least seven
-   calendar days.
-3. Complete the mixed-version cluster rollback drill with active subscriptions
-   and in-flight MRTR operations.
+2. Preserve rc.8's published qualification evidence as the behavioral baseline
+   for the 1.x line.
+3. Repeat the mixed-version rollback exercise when changing protocol lifecycle
+   behavior in a future 1.x release. The stable-1.0 baseline is the 2026-08-22
+   run of `test/ex_mcp/integration/rollback_drill_test.exs`, including its
+   opt-in exact-`v1.0.0-rc.5` subprocess path.
 
 See the [MCP 2026-07-28 migration plan](MCP_2026_07_28_MIGRATION_PLAN.md) for
 gate ownership, rollback requirements, and the complete implementation record.

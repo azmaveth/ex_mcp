@@ -434,7 +434,7 @@ do not move unfinished protocol work into stable 1.0.
 - [ ] The non-gating `./scripts/conformance.sh all-versions` report has no unexplained regression
 - [ ] The seven-row legacy/modern compatibility matrix passes on stdio and HTTP
 - [ ] A published RC has defaulted to `:prefer_modern` for at least seven calendar days without a release-blocking compatibility regression
-- [ ] A mixed-version cluster rollback drill succeeds with active subscriptions and in-flight MRTR operations
+- [x] A mixed-version cluster rollback drill succeeds with active subscriptions and in-flight MRTR operations (completed for 1.0 on 2026-08-22; see `docs/RELEASE_1_0_0.md`)
 - [ ] An owner and evidence link are recorded for every remaining 1.0 release gate
 
 #### Release

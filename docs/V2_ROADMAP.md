@@ -2,8 +2,9 @@
 
 - **Status:** Living roadmap — direction accepted; individual designs require their phase gates
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
-- **Last updated:** 2026-08-13
-- **Related release work:** [`RELEASE_1_0_0_RC_7.md`](./RELEASE_1_0_0_RC_7.md),
+- **Last updated:** 2026-08-22
+- **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
+  [`RELEASE_1_0_0_RC_7.md`](./RELEASE_1_0_0_RC_7.md),
   [`RELEASE_1_0_0_RC_6.md`](./RELEASE_1_0_0_RC_6.md),
   [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md)
 
@@ -202,16 +203,15 @@ does not merge to the 2.0 release branch until its prerequisites pass.
 
 **Goal:** establish the exact behavior from which 2.0 migrates.
 
-- Treat the published `1.0.0-rc.7` artifact, including the legacy SSE
-  persistence fix, ACP fixes, and 2026-08-12 security harden, as the release
-  baseline.
-- Rc.8 carries the credential-free Claude SDK/Codex/Pi CLI lifecycle tests,
+- Treat the published `1.0.0-rc.8` artifact, including the legacy SSE
+  persistence fix, ACP fixes, 2026-08-12 security harden, credential-free
+  Claude SDK/Codex/Pi CLI lifecycle tests,
   Pi configuration isolation, internal subprocess/option/workspace helper
   deduplication, and Hex documentation cleanup described in
-  `POST_1_0_MAINTENANCE_PLAN.md`. Repeat the full conformance, interop,
-  security, API, and load gates against rc.8 and restart the minimum soak from
-  that artifact.
-- Complete the mixed-version rollback drill.
+  `POST_1_0_MAINTENANCE_PLAN.md`, as the stable 1.0 behavioral baseline.
+- Preserve stable 1.0 as a release-metadata-only change from rc.8.
+- Preserve the completed 2026-08-22 mixed-version rollback drill as the 1.0
+  lifecycle baseline.
 - Tag stable 1.0 only from a release candidate with identical wire and public
   behavior.
 

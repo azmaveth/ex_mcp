@@ -69,10 +69,9 @@ forward "/mcp", ExMCP.HttpPlug,
 | `:prefer_modern` | Probes with `server/discover`; falls back only when the response proves the peer is legacy and the transport remains usable | Accepts both eras; advertises modern versions first | Target dual-era deployment after canaries pass |
 | `:modern_only` | Uses `server/discover`; never falls back | Accepts only modern requests | Conformance, new closed ecosystems, and final legacy retirement |
 
-`1.0.0-rc.6` introduced the `:prefer_modern` application default;
-`1.0.0-rc.8` retains that default and restarts the required modern-preferred
-soak from the final-candidate artifact. Published rc.5 is legacy-only and does not contain these
-modes. Stable 1.0 must have the same default and behavior as its final RC. Pin
+`1.0.0-rc.6` introduced the `:prefer_modern` application default. Stable
+`1.0.0` retains the same default and behavior as the final rc.8 candidate.
+Published rc.5 is legacy-only and does not contain these modes. Pin
 a mode explicitly if your deployment cannot tolerate a release-default
 transition.
 
@@ -383,7 +382,8 @@ If you encounter issues during migration:
 
 ## Version Support
 
-- **v1.0.0-rc.8**: Current modern-preferred soak candidate; preserves rc.7 wire behavior while adding real adapter-CLI lifecycle evidence, Pi configuration isolation, internal helper deduplication, and slimmer Hex packaging.
+- **v1.0.0**: Stable modern-preferred release; behavior-identical to rc.8 after its final-candidate soak.
+- **Published v1.0.0-rc.8**: Final modern-preferred candidate; preserves rc.7 wire behavior while adding real adapter-CLI lifecycle evidence, Pi configuration isolation, internal helper deduplication, and slimmer Hex packaging.
 - **Published v1.0.0-rc.7**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**. Security/SSE lifecycle baseline superseded as soak candidate by rc.8.
 - **Published v1.0.0-rc.6**: Prior dual-era modern-preferred baseline; superseded as soak candidate by rc.7
 - **Published v1.0.0-rc.5**: Legacy MCP through 2025-11-25; no modern protocol modes

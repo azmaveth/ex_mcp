@@ -39,29 +39,28 @@ tree supports it through `:prefer_modern` and `:modern_only`, while preserving
 every legacy revision through the 1.x line. Starting in `1.0.0-rc.6`, the
 application default is `:prefer_modern`: clients try modern discovery first
 and fall back only when the peer positively identifies itself as legacy.
-Set `protocol_mode: :legacy_only` to preserve the **legacy protocol era**. Exact rc.5 wire and session behavior still requires package rollback to `1.0.0-rc.5`; rc.8 continues to enforce server-issued sessions and newer lifecycle/security rules.
+Set `protocol_mode: :legacy_only` to preserve the **legacy protocol era**.
+Exact rc.5 wire and session behavior still requires package rollback to
+`1.0.0-rc.5`; 1.0 continues to enforce server-issued sessions and newer
+lifecycle/security rules.
 `ExMCP.protocol_version/0` intentionally returns the newest legacy revision,
 `2025-11-25`, for initialize-based compatibility—it is not the latest upstream
 MCP revision. See
 [Configuration](docs/CONFIGURATION.md#protocol-eras-and-modes) and the
 [1.0 migration guide](docs/getting-started/MIGRATION.md#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release).
 
-> **Release-state note:** `1.0.0-rc.8` is the current modern-preferred soak
-> candidate. It preserves rc.7 behavior while adding credential-free lifecycle
-> coverage for the real Claude Code, Codex, and Pi CLIs, Pi configuration
-> isolation, and internal safety-helper deduplication. Published `1.0.0-rc.7`
-> remains the security/SSE lifecycle baseline, and `1.0.0-rc.5` remains the
-> legacy-only characterization baseline. Stable 1.0 will preserve the behavior
-> of the final RC after its soak and rollback drill.
+> **Release-state note:** `1.0.0` is the stable modern-preferred release. It is
+> behavior-identical to rc.8 after the final candidate completed its soak.
+> Published `1.0.0-rc.5` remains the legacy-only characterization baseline.
 
 ## Installation
 
-For the dual-era release candidate:
+For the stable dual-era release:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.8"}
+    {:ex_mcp, "~> 1.0"}
   ]
 end
 ```

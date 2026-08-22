@@ -1,7 +1,7 @@
 defmodule ExMCP.MixProject do
   use Mix.Project
 
-  @version "1.0.0-rc.8"
+  @version "1.0.0"
   @github_url "https://github.com/azmaveth/ex_mcp"
 
   def project do
@@ -27,8 +27,9 @@ defmodule ExMCP.MixProject do
         plt_core_path: "priv/plts"
       ],
       # Cowlib 2.19.0 is the newest compatible release. These remaining
-      # advisories are mitigated by Plug/Cowboy response-header validation,
-      # and ExMCP does not call cow_cookie:cookie/1. Those assumptions are
+      # advisories are mitigated by Plug/Cowboy response-header validation;
+      # ExMCP does not call cow_cookie:cookie/1; and the ExMCP/Plug/Cowboy
+      # server stack does not call cow_link:link/1. Those assumptions are
       # locked by dependency_advisory_mitigation_test.exs. Security owner:
       # project maintainers; review/remove these exceptions by 2026-09-12 or
       # immediately when a patched Cowlib is published. Keep the exceptions
@@ -36,7 +37,8 @@ defmodule ExMCP.MixProject do
       hex: [
         ignore_advisories: [
           "EEF-CVE-2026-43966",
-          "EEF-CVE-2026-43969"
+          "EEF-CVE-2026-43969",
+          "EEF-CVE-2026-43971"
         ]
       ],
       aliases: aliases()
