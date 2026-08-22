@@ -301,6 +301,29 @@ advancing the pinned commit. Port relevant behavior behind characterization
 tests; a pin update alone is not evidence that ExMCP remains behaviorally
 aligned.
 
+### 2026-08-22 reference sync
+
+The first scheduled-review baseline now pins Claude Agent ACP
+`996d488589b8db7a0f9af3dfc7b886d9d47ebae9`, Codex ACP
+`ba5bcc3d7759250dde9d4d2286a1bec11b363208`, and Pi ACP
+`d1cffc047ab37a096ee70ca39cfc1de463db8d12`. The review produced characterized
+adapter fixes rather than a pin-only update:
+
+- shared ACP form/URL elicitation, explicit per-mode capability negotiation,
+  URL completion, and validation;
+- Claude `AskUserQuestion`, truthful durable permissions, Exit Plan effects,
+  dynamic modes, the SDK marker update, and background-subagent settlement;
+- Codex close/delete fencing, structured non-secret user input, MCP URL
+  completion, and request-scoped device authentication;
+- Pi's `agent_settled` completion boundary and select/confirm extension UI
+  response bridge.
+
+Follow-up reviews should promote these cases into live CLI or deterministic
+fixture tiers when the upstream CLIs expose a credential-free trigger. The
+current real-CLI lifecycle suite deliberately avoids prompts and therefore
+cannot exercise LLM-originated permission, elicitation, or background-task
+events; the adapter unit tests are the executable evidence for those paths.
+
 ## Execution order
 
 1. Land rc.8's credential-free ACP CLI lifecycle coverage, Pi isolation fix,

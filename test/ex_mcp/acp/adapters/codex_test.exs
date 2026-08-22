@@ -41,6 +41,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       ids = Codex.auth_methods([]) |> Enum.map(& &1["id"])
       assert "chat-gpt" in ids
       assert "api-key" in ids
+      refute "chat-gpt-device-code" in ids
 
       api_key = Enum.find(Codex.auth_methods([]), &(&1["id"] == "api-key"))
       assert api_key["_meta"]["api-key"]["provider"] == "openai"
@@ -237,7 +238,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       msg = %{"method" => "session/close", "id" => 5, "params" => %{"sessionId" => "thread-1"}}
 
-      assert {:reply_and_write, %{}, data, new_state} = Codex.translate_outbound(msg, state)
+      assert {:messages_and_write, [], data, new_state} = Codex.translate_outbound(msg, state)
       [interrupt, unsubscribe] = decode_lines(data)
 
       assert interrupt["method"] == "turn/interrupt"
@@ -1129,6 +1130,342 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       assert decode(data) == %{"id" => 101, "result" => %{"decision" => structured_decision}}
       assert new_state.pending_client_requests == %{}
+    end
+  end
+
+  describe "elicitation and close parity" do
+    test "requestUserInput round-trips form answers and refuses secret fields", %{state: state} do
+      state = %{
+        state
+        | client_capabilities: %{"elicitation" => %{"form" => %{}}}
+      }
+
+      line =
+        Jason.encode!(%{
+          "id" => 201,
+          "method" => "item/tool/requestUserInput",
+          "params" => %{
+            "threadId" => "thread-1",
+            "itemId" => "question-tool",
+            "questions" => [
+              %{
+                "id" => "color",
+                "header" => "Color",
+                "question" => "Which color?",
+                "options" => [%{"label" => "Blue", "description" => "Cool"}]
+              }
+            ]
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+      assert request["method"] == "elicitation/create"
+      assert request["params"]["mode"] == "form"
+      assert request["params"]["message"] == "Which color?"
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{"action" => "accept", "content" => %{"color" => "Blue"}}
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(response, state)
+
+      assert decode(data) == %{
+               "id" => 201,
+               "result" => %{"answers" => %{"color" => %{"answers" => ["Blue"]}}}
+             }
+
+      secret_line =
+        Jason.encode!(%{
+          "id" => 202,
+          "method" => "item/tool/requestUserInput",
+          "params" => %{
+            "threadId" => "thread-1",
+            "questions" => [
+              %{"id" => "token", "question" => "API token", "isSecret" => true}
+            ]
+          }
+        })
+
+      assert {:skip_and_write, secret_data, _state} =
+               Codex.translate_inbound(secret_line, state)
+
+      assert decode(secret_data) == %{"id" => 202, "result" => %{"answers" => %{}}}
+    end
+
+    test "requestUserInput gives Other fields collision-safe ids", %{state: state} do
+      state = %{state | client_capabilities: %{"elicitation" => %{"form" => %{}}}}
+
+      line =
+        Jason.encode!(%{
+          "id" => 209,
+          "method" => "item/tool/requestUserInput",
+          "params" => %{
+            "threadId" => "thread-1",
+            "itemId" => "question-tool",
+            "questions" => [
+              %{
+                "id" => "color",
+                "question" => "Which color?",
+                "isOther" => true,
+                "options" => [%{"label" => "Blue"}]
+              },
+              %{"id" => "color__other", "question" => "Real second question"}
+            ]
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+      properties = request["params"]["requestedSchema"]["properties"]
+      assert properties["color__other"]["description"] == "Real second question"
+      assert properties["color__other1"]["_meta"]["codex"]["isOtherAnswer"] == true
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "action" => "accept",
+          "content" => %{"color__other1" => "Green", "color__other" => "second"}
+        }
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(response, state)
+
+      assert decode(data)["result"]["answers"] == %{
+               "color" => %{"answers" => ["Green"]},
+               "color__other" => %{"answers" => ["second"]}
+             }
+    end
+
+    test "form MCP elicitation normalizes legacy enumNames recursively", %{state: state} do
+      state = %{state | client_capabilities: %{"elicitation" => %{"form" => %{}}}}
+
+      line =
+        Jason.encode!(%{
+          "id" => 210,
+          "method" => "mcpServer/elicitation/request",
+          "params" => %{
+            "threadId" => "thread-1",
+            "mode" => "form",
+            "message" => "Pick a color",
+            "requestedSchema" => %{
+              "type" => "object",
+              "properties" => %{
+                "color" => %{
+                  "type" => "string",
+                  "enum" => ["red", "blue"],
+                  "enumNames" => ["Red", "Blue"]
+                }
+              }
+            }
+          }
+        })
+
+      assert {:messages, [request], _state} = Codex.translate_inbound(line, state)
+
+      assert request["params"]["requestedSchema"]["properties"]["color"] == %{
+               "type" => "string",
+               "oneOf" => [
+                 %{"const" => "red", "title" => "Red"},
+                 %{"const" => "blue", "title" => "Blue"}
+               ]
+             }
+    end
+
+    test "openai/form MCP elicitation stays on permission fallback", %{state: state} do
+      state = %{state | client_capabilities: %{"elicitation" => %{"form" => %{}}}}
+
+      line =
+        Jason.encode!(%{
+          "id" => 211,
+          "method" => "mcpServer/elicitation/request",
+          "params" => %{
+            "threadId" => "thread-1",
+            "mode" => "openai/form",
+            "message" => "Unsupported arbitrary form",
+            "requestedSchema" => %{}
+          }
+        })
+
+      assert {:messages, [request], _state} = Codex.translate_inbound(line, state)
+      assert request["method"] == "session/request_permission"
+    end
+
+    test "URL MCP elicitation completes the accepted client UI", %{state: state} do
+      state = %{
+        state
+        | client_capabilities: %{"elicitation" => %{"url" => %{}}}
+      }
+
+      line =
+        Jason.encode!(%{
+          "id" => 203,
+          "method" => "mcpServer/elicitation/request",
+          "params" => %{
+            "threadId" => "thread-1",
+            "mode" => "url",
+            "elicitationId" => "oauth-1",
+            "url" => "https://example.com/authorize",
+            "message" => "Authorize the MCP server"
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+      assert request["method"] == "elicitation/create"
+
+      assert {:ok, data, state} =
+               Codex.translate_outbound(
+                 %{
+                   "id" => request["id"],
+                   "result" => %{"action" => "accept", "content" => %{}}
+                 },
+                 state
+               )
+
+      assert decode(data) == %{
+               "id" => 203,
+               "result" => %{"action" => "accept", "content" => %{}}
+             }
+
+      completed =
+        Jason.encode!(%{
+          "method" => "serverRequest/resolved",
+          "params" => %{"threadId" => "thread-1", "requestId" => 203}
+        })
+
+      assert {:messages, [notification], _state} = Codex.translate_inbound(completed, state)
+      assert notification["method"] == "elicitation/complete"
+      assert notification["params"]["elicitationId"] == "oauth-1"
+    end
+
+    test "concurrent URL MCP elicitations complete only their matching request", %{state: state} do
+      state = %{state | client_capabilities: %{"elicitation" => %{"url" => %{}}}}
+
+      {requests, state} =
+        Enum.map_reduce([{212, "oauth-1"}, {213, "oauth-2"}], state, fn {id, elicitation_id},
+                                                                        state ->
+          line =
+            Jason.encode!(%{
+              "id" => id,
+              "method" => "mcpServer/elicitation/request",
+              "params" => %{
+                "threadId" => "thread-1",
+                "mode" => "url",
+                "elicitationId" => elicitation_id,
+                "url" => "https://example.com/#{elicitation_id}",
+                "message" => "Authorize"
+              }
+            })
+
+          assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+
+          assert {:ok, _data, state} =
+                   Codex.translate_outbound(
+                     %{"id" => request["id"], "result" => %{"action" => "accept"}},
+                     state
+                   )
+
+          {request, state}
+        end)
+
+      assert map_size(state.url_elicitations) == 2
+
+      completed =
+        Jason.encode!(%{
+          "method" => "serverRequest/resolved",
+          "params" => %{"threadId" => "thread-1", "requestId" => 212}
+        })
+
+      assert {:messages, [notification], state} = Codex.translate_inbound(completed, state)
+      assert notification["params"]["elicitationId"] == "oauth-1"
+      assert map_size(state.url_elicitations) == 1
+      assert Enum.all?(requests, &(&1["method"] == "elicitation/create"))
+    end
+
+    test "ChatGPT device login uses request-scoped URL elicitation", %{state: state} do
+      state = %{
+        state
+        | client_capabilities: %{"elicitation" => %{"url" => %{}}}
+      }
+
+      assert Enum.any?(Codex.auth_methods([], state), &(&1["id"] == "chat-gpt-device-code"))
+      assert Enum.any?(Codex.auth_methods([], %Codex{}), &(&1["id"] == "chat-gpt"))
+
+      assert {:ok, login_data, state} =
+               Codex.translate_outbound(
+                 %{
+                   "id" => 204,
+                   "method" => "authenticate",
+                   "params" => %{"methodId" => "chat-gpt-device-code"}
+                 },
+                 state
+               )
+
+      login_request = decode(login_data)
+
+      app_response =
+        Jason.encode!(%{
+          "id" => login_request["id"],
+          "result" => %{
+            "type" => "chatgptDeviceCode",
+            "loginId" => "login-1",
+            "verificationUrl" => "https://chatgpt.com/device",
+            "userCode" => "ABCD-EFGH"
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(app_response, state)
+      assert request["method"] == "elicitation/create"
+      assert request["params"]["requestId"] == 204
+
+      assert {:ok, :skip, state} =
+               Codex.translate_outbound(
+                 %{"id" => request["id"], "result" => %{"action" => "accept"}},
+                 state
+               )
+
+      completed =
+        Jason.encode!(%{
+          "method" => "account/login/completed",
+          "params" => %{"loginId" => "login-1", "success" => true}
+        })
+
+      assert {:messages, [notification, response], state} =
+               Codex.translate_inbound(completed, state)
+
+      assert notification["method"] == "elicitation/complete"
+      assert response == %{"jsonrpc" => "2.0", "id" => 204, "result" => %{}}
+      assert state.pending_auth == nil
+    end
+
+    test "closing an active prompt cancels it and fences late events", %{state: state} do
+      state =
+        put_test_session(state, "thread-1", %{
+          turn_id: "turn-1",
+          active_prompt_acp_id: 205
+        })
+
+      request = %{
+        "id" => 206,
+        "method" => "session/close",
+        "params" => %{"sessionId" => "thread-1"}
+      }
+
+      assert {:messages_and_write, [response], _data, state} =
+               Codex.translate_outbound(request, state)
+
+      assert response["id"] == 205
+      assert response["result"]["stopReason"] == "cancelled"
+
+      late =
+        Jason.encode!(%{
+          "method" => "turn/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turn" => %{"id" => "turn-1", "status" => "completed"}
+          }
+        })
+
+      assert {:skip, ^state} = Codex.translate_inbound(late, state)
     end
   end
 

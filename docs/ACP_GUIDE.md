@@ -342,6 +342,23 @@ defmodule MyApp.ACPHandler do
     end
   end
 
+  # Optional: each elicitation mode is advertised only when its callback exists.
+  # Form elicitation is for non-sensitive structured input; never request
+  # passwords, API keys, or other secrets through a form.
+  def handle_form_elicitation(params, state) do
+    {:ok, %{"action" => "decline"}, state}
+  end
+
+  def handle_url_elicitation(params, state) do
+    # Display the destination and wait for explicit user consent before opening.
+    {:ok, %{"action" => "decline"}, state}
+  end
+
+  def handle_elicitation_complete(elicitation_id, state) do
+    # Dismiss any UI retained for this URL-mode elicitation.
+    {:ok, state}
+  end
+
   # Optional: handle file read requests from the agent
   def handle_file_read(_session_id, path, _opts, state) do
     # ExMCP admits only absolute paths contained by the canonical session cwd or
@@ -521,17 +538,18 @@ Translates between ACP and Claude Code's SDK-compatible stream-json control
 protocol. This is the recommended Claude adapter for new code.
 
 **Features:**
-- SDK entrypoint launch environment and `--permission-prompt-tool stdio`, tracking Claude Agent SDK `0.3.198`
+- SDK entrypoint launch environment and `--permission-prompt-tool stdio`, tracking Claude Agent SDK `0.3.238`
 - Partial message and pending tool-call lifecycle mapping
 - `session/cancel` via SDK `interrupt`
-- ACP permission requests bridged from Claude SDK `can_use_tool`, with pending `tool_call` emitted before the permission request
-- Runtime mode, model, effort, fast-mode, and agent config controls where supported by the SDK session
+- ACP permission requests bridged from Claude SDK `can_use_tool`, with pending `tool_call` emitted before the permission request and durable choices shown only when Claude supplies a durable update
+- `AskUserQuestion` bridged through ACP form elicitation when the client advertises it; otherwise it fails closed
+- Runtime mode, model, effort, fast-mode, and agent config controls where supported by the SDK session; `auto` is model-gated and bypass mode requires explicit dangerous-mode opt-in
 - Initialize-aware terminal login auth methods, opt-in gateway auth methods, and ACP `auth.logout`
 - Live session setup/load/resume/fork/close ACP surface
 - Disk-backed `session/list`, `session/delete`, and `session/fork` for Claude Code's SDK store
 - Full `session/load` replay from persisted Claude JSONL transcripts
 - FIFO prompt queueing with queued prompt cancellation responses
-- Plan updates from `TodoWrite` and task progress events
+- Plan updates from `TodoWrite` and task progress events, with prompt settlement held while spawned background subagents remain live
 - Resource links, embedded text resources, HTTP/base64 images, and MCP slash-command prompt rewriting
 - Rich tool metadata, Codex-style Bash terminal metadata, result usage updates, and improved stop reasons
 - Official ACP `mcpCapabilities` plus ExMCP `_meta` support for BEAM-local MCP transport
@@ -570,13 +588,14 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 - Image content, resource links, embedded text/binary resources, and additional workspace directories in prompts/session setup
 - Codex slash commands in prompts: `/compact`, `/init`, `/review`, `/review-branch`, `/review-commit`, `/status`, and `/logout`
 - ACP HTTP and stdio MCP server descriptors forwarded into Codex session config
-- Codex auth methods for `chat-gpt`, `api-key`, and opt-in custom `gateway` auth
-- Approval and MCP elicitation requests bridged through ACP `session/request_permission`
+- Codex auth methods for `chat-gpt`, `api-key`, and opt-in custom `gateway` auth; ChatGPT device login uses request-scoped ACP URL elicitation and is advertised only to URL-capable clients
+- Approval requests bridged through ACP `session/request_permission`; MCP form/URL requests and non-secret `requestUserInput` questions use ACP elicitation
+- Active prompt and pending client-request cancellation on close/delete, plus a closed-session fence for late app-server events
 
 **Modes:** `read-only`, `agent`, `agent-full-access`. Legacy `suggest`, `auto-edit`, `auto`, `full-auto`, and `full-access` aliases are no longer accepted.
 **Config options:** `mode`, `model`, `reasoning_effort`, and `fast-mode` (when supported by the selected model) are returned with Codex session responses. Runtime changes are kept in adapter session state and applied to subsequent `turn/start` requests.
 
-**Unsupported Codex app-server requests:** Dynamic tool calls, request-user-input prompts, ChatGPT token refresh, and attestation generation are rejected explicitly because ACP does not provide compatible structured responses for those app-server request schemas.
+**Unsupported Codex app-server requests:** Dynamic tool calls, ChatGPT token refresh, and attestation generation are rejected explicitly. Secret `requestUserInput` questions are answered empty instead of being exposed through ACP form elicitation.
 
 ### ZCode (`ExMCP.ACP.Adapters.ZCode`)
 
@@ -626,13 +645,13 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 - ACP-native `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`, `session/set_config_option`, and `session/set_mode`, with legacy `session/set_model` compatibility
 - Terminal authentication method advertisement through `authMethods`
 - Pi session discovery from JSONL files plus a local ExMCP session map at `~/.ex_mcp/pi/session-map.json`, with cursor pagination and last-cwd default filtering
-- Prompt queuing while another Pi turn is active
+- Prompt queuing while another Pi turn is active; prompt completion waits for Pi's `agent_settled` event rather than the earlier `agent_end` usage snapshot
 - Per-session `model` and `thought_level` config options, with ACP config-option sync updates after model/thinking changes
 - Global/project Pi settings merge for skill command filtering and quiet startup
 - Startup info for Pi version, context, prompts, skills, extensions, and captured CLI prelude; registry update notices are opt-in
 - Markdown slash commands loaded from `~/.pi/agent/prompts` and `<cwd>/.pi/prompts`
 - Built-in slash commands: `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/steering`, `/follow-up`, and `/changelog`
-- Text/thinking streaming, tool-call streaming, tool execution lifecycle, compaction, retry, and extension UI metadata events
+- Text/thinking streaming, tool-call streaming, tool execution lifecycle, compaction, retry, and extension UI events; select/confirm bridge to ACP permission choices while input/editor requests fail closed with a Pi cancellation response
 - Enhanced tool result parsing with content blocks, structured edit diffs, stdout/stderr/exitCode formatting, and file locations
 - Image support with data-url prefix stripping
 - Resource links and embedded text resources folded into Pi prompt text; audio blocks are represented as unsupported markers
@@ -642,6 +661,9 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 **Config options:** Session responses include upstream-compatible `model` and `thought_level` selectors, plus ExMCP's existing `auto_compaction`, `auto_retry`, `steering_mode`, and `follow_up_mode` controls. Prefer `set_config_option/4` with config id `model` for model changes; `ExMCP.ACP.Client.set_model/3` is retained for compatibility with older adapters.
 
 **Startup options:** `cli_path`/`pi_command`, `agent_dir`, `session_path`, `session_dir`, `session_map_path`, `delete_session_files`, and `update_notice`. The live Pi subprocess is started like upstream `pi-acp`, with `--mode rpc --no-themes` and optional `--session <path>`; cwd is applied as the child process working directory. `agent_dir` isolates the settings and user-prompt directory used by the adapter; also pass the same path as `PI_CODING_AGENT_DIR` in `env` so the Pi subprocess uses it. `session/delete` removes ExMCP session-map state by default; backing Pi JSONL files are deleted only when `delete_session_files: true` is set and the file is under the configured Pi session directory. Registry update checks are disabled unless `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true` is set.
+
+Pi `0.80.4` or newer is required for the `agent_settled` completion boundary;
+the credential-free real-CLI suite currently pins Pi `0.84.1`.
 
 **Breaking change:** Pi-specific `_ex_mcp.pi/*` and legacy `pi/*` extension methods are no longer implemented. Use the ACP session methods above or slash commands in prompts.
 

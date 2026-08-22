@@ -80,7 +80,42 @@ defmodule ExMCP.ACP.Types do
             optional(:readTextFile) => boolean(),
             optional(:writeTextFile) => boolean()
           },
-          optional(:terminal) => boolean()
+          optional(:terminal) => boolean(),
+          optional(:elicitation) => %{
+            optional(:form) => map() | nil,
+            optional(:url) => map() | nil
+          }
+        }
+
+  @type form_elicitation_request ::
+          %{
+            required(:mode) => :form,
+            required(:message) => String.t(),
+            required(:requestedSchema) => map(),
+            optional(:sessionId) => String.t(),
+            optional(:toolCallId) => String.t() | nil,
+            optional(:requestId) => integer() | String.t(),
+            optional(:_meta) => map() | nil
+          }
+
+  @type url_elicitation_request ::
+          %{
+            required(:mode) => :url,
+            required(:message) => String.t(),
+            required(:elicitationId) => String.t(),
+            required(:url) => String.t(),
+            optional(:sessionId) => String.t(),
+            optional(:toolCallId) => String.t() | nil,
+            optional(:requestId) => integer() | String.t(),
+            optional(:_meta) => map() | nil
+          }
+
+  @type elicitation_request :: form_elicitation_request() | url_elicitation_request()
+
+  @type elicitation_response :: %{
+          required(:action) => :accept | :decline | :cancel,
+          optional(:content) => map() | nil,
+          optional(:_meta) => map() | nil
         }
 
   @type agent_capabilities :: %{

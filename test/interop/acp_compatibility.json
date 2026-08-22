@@ -102,7 +102,7 @@
       "adapter": "ExMCP.ACP.Adapters.Codex",
       "repository": "https://github.com/zed-industries/codex-acp",
       "branch": "main",
-      "commit": "296069e841634cd4bb9bc4515602d836e49231ec"
+      "commit": "ba5bcc3d7759250dde9d4d2286a1bec11b363208"
     },
     {
       "id": "pi-acp",

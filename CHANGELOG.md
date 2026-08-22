@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- ACP v1 form and URL elicitation support across the shared client and agent
+  APIs, including capability negotiation, request validation,
+  `elicitation/complete`, and fail-closed default handlers.
+- Adapter regression coverage for Claude `AskUserQuestion`, Codex user input,
+  MCP and device-auth URL elicitations, Pi extension UI requests, prompt-close
+  fencing, and background-agent settlement.
+
+### Fixed
+
+- The Pi adapter now waits for `agent_settled` before completing an ACP prompt,
+  preserving follow-up work that can arrive after `agent_end`, and always
+  answers extension UI requests it cannot represent.
+- The Codex adapter now cancels active prompts and pending client requests when
+  a session closes, ignores late events from closed sessions, bridges
+  non-secret structured user input through ACP forms, and completes URL
+  elicitation UI after the app server resolves it.
+- The Claude SDK adapter now tracks SDK `0.3.238`, gates model-specific modes,
+  removes permission choices whose durable effect cannot be honored, maps
+  Exit Plan mode selections, and keeps a prompt open while its background
+  subagents still need to stream output or request permission.
+
+### Security
+
+- Form elicitation refuses Codex and Claude secret-input shapes, URL
+  elicitation accepts only HTTP(S) URLs without embedded credentials, and
+  ChatGPT device-code authentication is advertised only when the client
+  explicitly supports URL elicitation.
+
 ## [1.0.0] - 2026-08-22
 
 Stable 1.0 preserves the public API, MCP/ACP wire behavior, security posture,

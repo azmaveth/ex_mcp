@@ -137,6 +137,17 @@ defmodule ExMCP.ACP.AgentTest do
       {:ok, %{"exitCode" => 0}} = Agent.terminal_wait_for_exit(ctx.agent, session_id, terminal_id)
       {:ok, _} = Agent.terminal_release(ctx.agent, session_id, terminal_id)
 
+      {:ok, %{"action" => "accept", "content" => %{"choice" => "blue"}}} =
+        Agent.create_elicitation(ctx.agent, %{
+          "mode" => "form",
+          "sessionId" => session_id,
+          "message" => "Choose a color",
+          "requestedSchema" => %{
+            "type" => "object",
+            "properties" => %{"choice" => %{"type" => "string"}}
+          }
+        })
+
       send(state.test_pid, :client_requests_completed)
 
       {:reply, %{"stopReason" => "end_turn", "text" => content}, state}
@@ -215,6 +226,12 @@ defmodule ExMCP.ACP.AgentTest do
         end
 
       {:ok, result, state}
+    end
+
+    @impl true
+    def handle_form_elicitation(params, state) do
+      send(state.test_pid, {:form_elicitation, params})
+      {:ok, %{"action" => "accept", "content" => %{"choice" => "blue"}}, state}
     end
   end
 
@@ -336,7 +353,8 @@ defmodule ExMCP.ACP.AgentTest do
           handler_opts: [test_pid: self()],
           capabilities: %{
             "fs" => %{"readTextFile" => true, "writeTextFile" => true},
-            "terminal" => true
+            "terminal" => true,
+            "elicitation" => %{"form" => %{}}
           }
         )
 
@@ -352,6 +370,7 @@ defmodule ExMCP.ACP.AgentTest do
       assert_receive {:terminal_request, "terminal/output", %{"terminalId" => "term_1"}}
       assert_receive {:terminal_request, "terminal/wait_for_exit", %{"terminalId" => "term_1"}}
       assert_receive {:terminal_request, "terminal/release", %{"terminalId" => "term_1"}}
+      assert_receive {:form_elicitation, %{"mode" => "form", "sessionId" => ^session_id}}
       assert_receive :client_requests_completed
     end
 

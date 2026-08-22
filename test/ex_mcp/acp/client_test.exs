@@ -534,6 +534,27 @@ defmodule ExMCP.ACP.ClientTest do
     end
   end
 
+  defmodule FormElicitationHandler do
+    @behaviour ExMCP.ACP.Client.Handler
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+
+    @impl true
+    def handle_session_update(_session_id, _update, state), do: {:ok, state}
+
+    @impl true
+    def handle_permission_request(_session_id, _tool_call, _options, state) do
+      {:ok, %{"outcome" => "cancelled"}, state}
+    end
+
+    @impl true
+    def handle_form_elicitation(params, state) do
+      value = get_in(params, ["requestedSchema", "properties", "choice", "default"]) || "blue"
+      {:ok, %{"action" => "accept", "content" => %{"choice" => value}}, state}
+    end
+  end
+
   defp start_client(agent_opts \\ [], client_opts \\ []) do
     {:ok, to_client_relay} = MessageRelay.start_link()
     {:ok, to_agent_relay} = MessageRelay.start_link()
@@ -767,6 +788,20 @@ defmodule ExMCP.ACP.ClientTest do
       assert caps["terminal"] == true
     end
 
+    test "advertises only the elicitation modes implemented by the handler" do
+      {_client, _agent} =
+        start_client([],
+          handler: FormElicitationHandler,
+          handler_opts: []
+        )
+
+      assert_receive {:initialize_request, params}, 5_000
+      caps = params["clientCapabilities"] || %{}
+
+      assert get_in(caps, ["elicitation", "form"]) == %{}
+      assert get_in(caps, ["elicitation", "url"]) == nil
+    end
+
     test "explicit :capabilities opt overrides auto-advertisement" do
       # If the caller explicitly passes :capabilities, that wins. The
       # auto-advertisement is a sensible default, not a forced policy.
@@ -785,6 +820,33 @@ defmodule ExMCP.ACP.ClientTest do
   end
 
   describe "inbound agent request hardening" do
+    test "dispatches an advertised form elicitation and returns accepted content" do
+      {client, _agent} =
+        start_client(
+          [
+            agent_request:
+              {"elicitation/create",
+               %{
+                 "mode" => "form",
+                 "message" => "Choose",
+                 "requestedSchema" => %{
+                   "type" => "object",
+                   "properties" => %{
+                     "choice" => %{"type" => "string", "default" => "green"}
+                   }
+                 }
+               }}
+          ],
+          handler: FormElicitationHandler
+        )
+
+      assert {:ok, %{"sessionId" => session_id}} = Client.new_session(client, "/tmp")
+      assert {:ok, _result} = Client.prompt(client, session_id, "choose")
+
+      assert_receive {:agent_request_response, response}
+      assert response["result"] == %{"action" => "accept", "content" => %{"choice" => "green"}}
+    end
+
     test "rejects filesystem requests not advertised during initialize" do
       {client, _agent} =
         start_client(

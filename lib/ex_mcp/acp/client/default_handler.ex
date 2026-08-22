@@ -97,6 +97,12 @@ defmodule ExMCP.ACP.Client.DefaultHandler do
   end
 
   @impl true
+  def handle_form_elicitation(_params, state), do: {:ok, %{"action" => "decline"}, state}
+
+  @impl true
+  def handle_url_elicitation(_params, state), do: {:ok, %{"action" => "decline"}, state}
+
+  @impl true
   def terminate(_reason, _state), do: :ok
 
   defp event_size(event) do

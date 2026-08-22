@@ -10,7 +10,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
   alias ExMCP.ACP.Maps
   alias ExMCP.Internal.Maps, as: MapHelpers
 
-  @sdk_version "0.3.198"
+  @sdk_version "0.3.238"
 
   @permission_modes %{
     default: "default",
@@ -174,18 +174,62 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
 
   @doc "Builds ACP permission options for a Claude SDK permission request."
   @spec permission_options(map()) :: [map()]
-  def permission_options(%{"permission_suggestions" => suggestions}) when is_list(suggestions) do
+  def permission_options(%{"tool_name" => "ExitPlanMode"} = request) do
+    modes = MapSet.new(request["_available_modes"] || [])
+
+    elevated =
+      cond do
+        MapSet.member?(modes, "auto") ->
+          %{
+            "optionId" => "exit-plan-auto",
+            "name" => "Yes, and use auto mode",
+            "kind" => "allow_always"
+          }
+
+        MapSet.member?(modes, "bypassPermissions") ->
+          %{
+            "optionId" => "exit-plan-bypass",
+            "name" => "Yes, and bypass permissions",
+            "kind" => "allow_always"
+          }
+
+        true ->
+          %{
+            "optionId" => "exit-plan-accept-edits",
+            "name" => "Yes, auto-accept edits",
+            "kind" => "allow_always"
+          }
+      end
+
     [
-      %{"optionId" => "allow_once", "name" => "Allow once", "kind" => "allow_once"},
+      elevated,
       %{
-        "optionId" => "allow_always",
-        "name" => "Always allow",
-        "kind" => "allow_always",
-        "_meta" => %{"ex_mcp.claude_sdk" => %{"updatedPermissions" => suggestions}}
+        "optionId" => "exit-plan-default",
+        "name" => "Yes, manually approve edits",
+        "kind" => "allow_once"
       },
-      %{"optionId" => "reject_once", "name" => "Reject", "kind" => "reject_once"},
-      %{"optionId" => "reject_always", "name" => "Always reject", "kind" => "reject_always"}
+      %{"optionId" => "reject", "name" => "No, keep planning", "kind" => "reject_once"}
     ]
+  end
+
+  def permission_options(%{"permission_suggestions" => suggestions}) when is_list(suggestions) do
+    persistent =
+      if suggestions == [] do
+        []
+      else
+        [
+          %{
+            "optionId" => "allow_always",
+            "name" => "Always allow",
+            "kind" => "allow_always",
+            "_meta" => %{"ex_mcp.claude_sdk" => %{"updatedPermissions" => suggestions}}
+          }
+        ]
+      end
+
+    [%{"optionId" => "allow_once", "name" => "Allow once", "kind" => "allow_once"}] ++
+      persistent ++
+      [%{"optionId" => "reject_once", "name" => "Reject", "kind" => "reject_once"}]
   end
 
   def permission_options(_request) do
@@ -201,27 +245,79 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
     do: permission_result(nested, request)
 
   def permission_result(%{"outcome" => "selected", "optionId" => "allow_once"}, request) do
-    %{"behavior" => "allow", "toolUseID" => request["tool_use_id"]}
+    %{
+      "behavior" => "allow",
+      "updatedInput" => request["input"] || %{},
+      "toolUseID" => request["tool_use_id"]
+    }
     |> maybe_put("decisionClassification", "user_temporary")
   end
 
   def permission_result(%{"outcome" => "selected", "optionId" => "allow_always"}, request) do
-    %{"behavior" => "allow", "toolUseID" => request["tool_use_id"]}
-    |> maybe_put("updatedPermissions", request["permission_suggestions"])
-    |> maybe_put("decisionClassification", "user_permanent")
+    case request["permission_suggestions"] do
+      suggestions when is_list(suggestions) and suggestions != [] ->
+        %{
+          "behavior" => "allow",
+          "updatedInput" => request["input"] || %{},
+          "toolUseID" => request["tool_use_id"],
+          "updatedPermissions" => suggestions,
+          "decisionClassification" => "user_permanent"
+        }
+
+      _ ->
+        cancelled_permission(request)
+    end
   end
 
   def permission_result(%{"outcome" => "selected", "optionId" => option_id}, request)
-      when option_id in ["reject_once", "reject_always"] do
+      when option_id in [
+             "exit-plan-auto",
+             "exit-plan-bypass",
+             "exit-plan-accept-edits",
+             "exit-plan-default"
+           ] do
+    mode =
+      %{
+        "exit-plan-auto" => "auto",
+        "exit-plan-bypass" => "bypassPermissions",
+        "exit-plan-accept-edits" => "acceptEdits",
+        "exit-plan-default" => "default"
+      }[option_id]
+
+    if Enum.any?(permission_options(request), &(&1["optionId"] == option_id)) do
+      %{
+        "behavior" => "allow",
+        "updatedInput" => request["input"] || %{},
+        "updatedPermissions" => [
+          %{"type" => "setMode", "mode" => mode, "destination" => "session"}
+        ],
+        "toolUseID" => request["tool_use_id"],
+        "decisionClassification" =>
+          if(mode == "default", do: "user_temporary", else: "user_permanent")
+      }
+    else
+      cancelled_permission(request)
+    end
+  end
+
+  def permission_result(%{"outcome" => "selected", "optionId" => option_id}, request)
+      when option_id in ["reject_once", "reject"] do
     %{
       "behavior" => "deny",
-      "message" => request["decision_reason"] || "Permission denied",
+      "message" =>
+        if(option_id == "reject" and request["tool_name"] == "ExitPlanMode",
+          do: "User chose to keep planning",
+          else: request["decision_reason"] || "Permission denied"
+        ),
+      "interrupt" => option_id == "reject" and request["tool_name"] == "ExitPlanMode",
       "toolUseID" => request["tool_use_id"],
       "decisionClassification" => "user_reject"
     }
   end
 
-  def permission_result(_outcome, request) do
+  def permission_result(_outcome, request), do: cancelled_permission(request)
+
+  defp cancelled_permission(request) do
     %{
       "behavior" => "deny",
       "message" => "Permission request cancelled",
