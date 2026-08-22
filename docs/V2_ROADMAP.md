@@ -1,11 +1,11 @@
 # ExMCP 2.0 Roadmap
 
-- **Status:** Living roadmap — direction accepted; individual designs require their phase gates
+- **Status:** Living roadmap — Phase 0 complete; Phase 1 contract design is next
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
 - **Last updated:** 2026-08-22
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
-  [`RELEASE_1_0_0_RC_7.md`](./RELEASE_1_0_0_RC_7.md),
-  [`RELEASE_1_0_0_RC_6.md`](./RELEASE_1_0_0_RC_6.md),
+  [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
+  [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
   [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md)
 
 ---
@@ -118,11 +118,24 @@ The 1.0 line already provides:
 - conformance, characterization, property, security, and interoperability
   coverage.
 
-The published `1.0.0-rc.7` package includes legacy SSE persistence end to end:
-events are stored before delivery, connection gaps retain their session, and
-`Last-Event-ID` resumes from the retained cursor. Together with the
-2026-08-12 security harden and ACP fixes, this is 1.0 release work, not a
-reason to wait for 2.0. It requires a fresh soak before stable 1.0.
+Stable `v1.0.0` was published on 2026-08-22 after the final `1.0.0-rc.8`
+candidate completed a one-week soak. The release includes dual-era MCP,
+legacy SSE persistence end to end, the 2026-08-12 security hardening, and the
+credential-free Claude SDK, Codex, and Pi CLI lifecycle suite. The stable tag
+also contains the deterministic OAuth callback field-lookup fix described in
+the release record; it does not change the rc.8 public or wire surface.
+
+The public API census is recorded in
+[`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md), and committed protocol
+fixtures pin capability and initialize behavior across supported revisions.
+The mixed-version rollback drill, modern conformance suites, official SDK v2
+interop, security checks, and performance/load gates provide the remaining
+release evidence.
+
+Current `master` contains post-1.0 additive work: the ZCode ACP adapter and a
+four-adapter real-CLI lifecycle suite. Those changes remain part of the next
+1.x baseline and must not be described retroactively as contents of the
+`v1.0.0` artifact.
 
 The remaining architectural pressure is concentrated in runtime ownership,
 callback execution, storage contracts, duplicated public concepts, and the
@@ -203,22 +216,23 @@ does not merge to the 2.0 release branch until its prerequisites pass.
 
 **Goal:** establish the exact behavior from which 2.0 migrates.
 
-- Treat the published `1.0.0-rc.8` artifact, including the legacy SSE
-  persistence fix, ACP fixes, 2026-08-12 security harden, credential-free
-  Claude SDK/Codex/Pi CLI lifecycle tests,
-  Pi configuration isolation, internal subprocess/option/workspace helper
-  deduplication, and Hex documentation cleanup described in
-  `POST_1_0_MAINTENANCE_PLAN.md`, as the stable 1.0 behavioral baseline.
-- Preserve rc.8's wire, public-API, and protocol-default baseline in stable
-  1.0; permit only release-gate correctness fixes with focused regression
-  evidence.
-- Preserve the completed 2026-08-22 mixed-version rollback drill as the 1.0
-  lifecycle baseline.
-- Tag stable 1.0 only from a release candidate with identical wire and public
-  behavior.
+**Status: Complete (2026-08-22).**
 
-**Exit:** stable `1.0.0` is published, and its public/wire characterization
-fixtures are committed as the 2.0 comparison baseline.
+- `v1.0.0` was tagged at `e1e7e7a` and published as a stable GitHub release
+  and Hex package after the one-week rc.8 soak and final release gates passed.
+- The stable release preserves rc.8's public API, wire behavior, and protocol
+  defaults while adding only the characterized OAuth callback correctness fix.
+- The API census, protocol capability and initialize fixtures, release record,
+  conformance results, official-SDK interoperability, security evidence,
+  performance/load gates, and mixed-version rollback drill form the durable
+  1.0 comparison baseline.
+- Post-release ZCode adapter and real-CLI coverage are explicitly tracked as
+  additive 1.x work rather than being folded into the historical 1.0 artifact.
+
+**Exit achieved:** stable `1.0.0` is published, and its public and wire
+characterization evidence is committed as the 2.0 comparison baseline. Phase 1
+should turn the existing API census into a reproducible machine-readable
+manifest before proposing removals.
 
 ### Phase 1 — Specify the 2.0 contract before moving code
 
@@ -385,8 +399,8 @@ another 1.x RC or document a patch-level correctness/security exception.
 
 | Change | 1.x decision | Notes |
 |---|---|---|
-| Legacy SSE persist-before-delivery, gap replay, and session retention | Packaged in `1.0.0-rc.7` | Behavior correction requires a fresh RC soak. |
-| Correct bounded replay-buffer retention | Backport with SSE fix | Correctness fix with regression coverage. |
+| Legacy SSE persist-before-delivery, gap replay, and session retention | Released in `1.0.0` | Soaked through rc.8 and retained in the stable baseline. |
+| Correct bounded replay-buffer retention | Released in `1.0.0` | Correctness fix with regression coverage. |
 | Documentation, examples, diagnostics, and characterization tests | Backport | No runtime compatibility cost. |
 | Additive dispatch telemetry | Eligible for a 1.x minor | Preserve existing events; bounded metadata only; payload capture opt-in. |
 | Store adapter seam | Possible later 1.x minor | Only after a standalone store ADR and contract suite are accepted; the design need not wait for 2.0 runtime implementation. ETS must remain the default and current behavior unchanged. |
@@ -431,11 +445,11 @@ ExMCP 2.0 is not intended to:
 
 ### 10.1 MCP/ACP package topology
 
-ACP is large enough to justify evaluating a split: at commit `4591af6`, the
-tree contains 45 ACP source files and approximately 20,020 of 90,237 library
-lines (about 22%). The coupling is much smaller than the line count. At the
-2026-08-13 baseline, xref reports 23 direct edges from ACP files to ten non-ACP
-files:
+ACP is large enough to justify evaluating a split: at commit `db8a998`, after
+the post-1.0 ZCode adapter and CLI interop merge, the tree contains 50 ACP
+source files and 22,591 of 92,812 library lines (about 24.3%). The coupling is
+much smaller than the line count. At this 2026-08-22 baseline, xref reports 26
+direct edges from ACP files to ten non-ACP files:
 
 - `Internal.NameValue` and `Internal.WorkspacePath` are ACP-only despite their
   current location and can move into an ACP-owned namespace;
