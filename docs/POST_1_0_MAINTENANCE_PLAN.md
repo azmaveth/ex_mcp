@@ -275,6 +275,22 @@ guides on HexDocs.
 This packaging-only cleanup is complete for rc.8. The files remain available
 in the repository, and packaged references to them use repository URLs.
 
+## MCP conformance harness tracking
+
+Keep release CI deterministic by pinning the reviewed modern conformance
+harness in `scripts/conformance.sh`. Separately, the weekly `MCP conformance
+upstream` workflow resolves the highest published
+`@modelcontextprotocol/conformance` version and runs both complete 2026-07-28
+suites. A manual dispatch can select an exact version for prerelease review.
+
+The scheduled lane is intentionally advisory and never rewrites the pin. It
+records the selected package version and uploads the complete client, server,
+and runner logs even when the harness exposes a failure. For each upstream
+failure, review the conformance release diff, determine whether the change is a
+new protocol assertion or a harness regression, add focused local coverage for
+newly required behavior, and advance the release pin only after the full suite
+passes.
+
 ## ACP ecosystem and reference-adapter tracking
 
 Post-1.0 ACP compatibility must cover both protocol conformance and differences

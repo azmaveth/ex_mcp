@@ -1,0 +1,119 @@
+name: MCP conformance upstream
+
+on:
+  schedule:
+    # Weekly early warning without making an unreviewed harness a PR gate.
+    - cron: '43 13 * * 3'
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: Exact conformance package version (empty selects newest published)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-conformance-upstream
+  cancel-in-progress: false
+
+env:
+  MIX_ENV: dev
+  CI_OTP_VERSION: '27.0'
+  CI_ELIXIR_VERSION: '1.17.3'
+
+jobs:
+  conformance:
+    name: Highest published MCP conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+      with:
+        otp-version: ${{ env.CI_OTP_VERSION }}
+        elixir-version: ${{ env.CI_ELIXIR_VERSION }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - id: harness
+      name: Resolve highest published conformance harness
+      shell: bash
+      env:
+        REQUESTED_VERSION: ${{ inputs.package_version }}
+      run: |
+        set -euo pipefail
+
+        version="${REQUESTED_VERSION:-}"
+        source="manual workflow input"
+
+        if [ -z "$version" ]; then
+          version="$(
+            npm view @modelcontextprotocol/conformance versions --json |
+              node -e '
+                let input = "";
+                process.stdin.on("data", chunk => input += chunk);
+                process.stdin.on("end", () => {
+                  const parsed = JSON.parse(input);
+                  const versions = Array.isArray(parsed) ? parsed : [parsed];
+                  if (versions.length === 0) process.exit(1);
+                  process.stdout.write(versions[versions.length - 1]);
+                });
+              '
+          )"
+          source="highest version published to npm"
+        fi
+
+        if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+          echo "Invalid conformance package version: $version" >&2
+          exit 1
+        fi
+
+        published="$(npm view "@modelcontextprotocol/conformance@$version" version)"
+        if [ "$published" != "$version" ]; then
+          echo "npm resolved $published instead of requested $version" >&2
+          exit 1
+        fi
+
+        mkdir -p tmp
+        printf '%s\n' "$version" > tmp/conformance_upstream_version.txt
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### MCP conformance upstream check"
+          echo
+          echo "Testing \`@modelcontextprotocol/conformance@$version\` ($source)."
+          echo "The release CI gate remains pinned independently in \`scripts/conformance.sh\`."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Compile
+      run: mix compile
+
+    - name: Run complete modern suites with newest harness
+      run: ./scripts/conformance.sh modern
+      env:
+        CONFORMANCE_ALPHA_VERSION: ${{ steps.harness.outputs.version }}
+
+    - name: Preserve upstream conformance evidence
+      if: always()
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: mcp-conformance-upstream-${{ steps.harness.outputs.version || 'unresolved' }}
+        path: |
+          tmp/conformance_upstream_version.txt
+          tmp/conformance_output.txt
+          tmp/conformance_server.log
+        if-no-files-found: warn
+        retention-days: 14

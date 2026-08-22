@@ -33,6 +33,14 @@ does not exercise the 2026-07-28 wire model. `./scripts/conformance.sh
 draft-alpha` is non-gating exploration for future draft scenarios; it is not
 the 2026-07-28 qualification command.
 
+The weekly `MCP conformance upstream` workflow selects the highest version in
+the package's published npm version list and runs the same complete modern
+suites. It is an advisory early-warning lane: it uploads the selected version
+and full logs, but it does not mutate the reviewed pin used by release CI.
+Manual runs may select an exact package version. Review any failure against the
+upstream release diff, add a local regression test for newly exposed behavior,
+and advance the pinned gate only after the new harness passes.
+
 ## Official SDK Interoperability
 
 `test/interop/package.json` and its committed lockfile pin the official MCP

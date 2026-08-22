@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A weekly advisory workflow now runs the complete MCP 2026-07-28 conformance
+  suites against the newest published official harness while keeping release CI
+  pinned to a reviewed version.
 - ACP v1 form and URL elicitation support across the shared client and agent
   APIs, including capability negotiation, request validation,
   `elicitation/complete`, and fail-closed default handlers.

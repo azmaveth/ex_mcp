@@ -65,6 +65,9 @@ iex -S mix            # Start interactive shell with project loaded
 ./scripts/conformance.sh server # Published legacy/core server suite
 ./scripts/conformance.sh client # Published legacy/core client suite
 
+# Emulate the scheduled upstream check with a specific newly published harness.
+CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.11 ./scripts/conformance.sh modern
+
 # Broader legacy/draft report; this aggregate command is intentionally non-gating.
 ./scripts/conformance.sh all-versions
 
