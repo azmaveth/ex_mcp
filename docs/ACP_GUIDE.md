@@ -636,7 +636,7 @@ Use `ExMCP.ACP.Registry.find_agents/2` to search the decoded registry by agent i
 
 The standard `:interop_acp` suite checks both ACP roles against the official
 TypeScript SDK. A separate opt-in suite launches the real Claude Code, Codex,
-and Pi CLIs through their adapters:
+Pi, and ZCode CLIs through their adapters:
 
 ```bash
 mix test --only interop_acp_cli
@@ -645,8 +645,9 @@ mix test --only interop_acp_cli
 These tests stop at session lifecycle operations and never send a prompt, so
 they do not make LLM calls or consume model credits. They use isolated config
 directories and fail if a required executable is missing. Set
-`CLAUDE_CODE_EXECUTABLE`, `CODEX_PATH`, or `PI_ACP_PI_COMMAND` when a CLI is not
-on `PATH`.
+`CLAUDE_CODE_EXECUTABLE`, `CODEX_PATH`, `PI_ACP_PI_COMMAND`, or
+`ZCODE_EXECUTABLE` when a CLI is not on `PATH`. On macOS, the suite also finds
+the runtime bundled with `/Applications/ZCode.app`.
 
 ## API Reference
 
