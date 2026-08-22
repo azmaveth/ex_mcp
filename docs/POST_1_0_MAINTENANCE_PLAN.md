@@ -275,6 +275,32 @@ guides on HexDocs.
 This packaging-only cleanup is complete for rc.8. The files remain available
 in the repository, and packaged references to them use repository URLs.
 
+## ACP ecosystem and reference-adapter tracking
+
+Post-1.0 ACP compatibility must cover both protocol conformance and differences
+between real agent implementations. The repository therefore maintains a
+reviewed manifest at `test/interop/acp_compatibility.json` with three distinct
+inputs:
+
+- membership of the public ACP agents page;
+- IDs and versions from the machine-readable ACP Registry; and
+- exact upstream revisions for `claude-agent-acp`, `codex-acp`, and `pi-acp`,
+  whose behavior informed ExMCP's Claude, Codex, and Pi adapters.
+
+`mix acp.compat.check` reports additions, removals, registry releases, and
+reference-repository commits without installing or running remote catalog
+content. A separate reviewed matrix runs credential-free initialization against
+version-pinned native ACP commands in isolated scratch environments. It starts
+with Claude Agent ACP, Codex ACP, Gemini CLI, and Pi ACP; expand it toward every
+documented agent as installation, platform, licensing, and authentication
+requirements are characterized.
+
+When reference-adapter drift appears, review the compare link for protocol
+mapping, capability, event-ordering, security, and lifecycle changes before
+advancing the pinned commit. Port relevant behavior behind characterization
+tests; a pin update alone is not evidence that ExMCP remains behaviorally
+aligned.
+
 ## Execution order
 
 1. Land rc.8's credential-free ACP CLI lifecycle coverage, Pi isolation fix,
@@ -293,3 +319,6 @@ in the repository, and packaged references to them use repository URLs.
    adapter; keep vendor-specific protocol semantics separate by default.
 10. Make any MCP/ACP package-topology change only through the 2.0 decision and
     migration process in `V2_ROADMAP.md`.
+11. Expand the reviewed native ACP matrix and promote agents from initialization
+    to session and mock-prompt tiers where their supported configuration permits
+    credential-free testing.

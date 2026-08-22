@@ -724,6 +724,44 @@ directories and fail if a required executable is missing. Set
 `ZCODE_EXECUTABLE` when a CLI is not on `PATH`. On macOS, the suite also finds
 the runtime bundled with `/Applications/ZCode.app`.
 
+## Ecosystem Compatibility Tracking
+
+The repository tracks the public ACP agents page, the machine-readable ACP
+Registry, and reviewed executable smoke tests in
+`test/interop/acp_compatibility.json`. Check the pinned snapshot against live
+sources with:
+
+```bash
+# Network-free manifest validation
+mix acp.compat.check --offline
+
+# Live catalog, registry version, and adapter-reference checks
+mix acp.compat.check
+
+# Run one reviewed, version-pinned native ACP command
+ACP_ECOSYSTEM_AGENT_ID=gemini mix test --only interop_acp_ecosystem
+```
+
+The native smoke tier verifies process startup, ACP initialization, capability
+decoding, authentication-method decoding, and clean shutdown without sending a
+prompt. Entries marked with the stronger `session` tier also create a session
+and exercise advertised list/close capabilities. The initial executable matrix
+covers Claude Agent ACP, Codex ACP, Gemini CLI, and Pi ACP; every entry is
+version-pinned and runs with an isolated home and scratch working directory.
+
+The same manifest pins the reference revisions used to inform ExMCP's Claude,
+Codex, and Pi protocol adapters:
+
+- `agentclientprotocol/claude-agent-acp`
+- `zed-industries/codex-acp`
+- `svkozak/pi-acp`
+
+Upstream commit drift produces a direct compare URL for adapter review. Catalog
+or registry changes are never executed automatically: maintainers must review
+the package, command, platform and authentication requirements before adding
+or changing an `interopAgents` entry. The scheduled `ACP ecosystem
+compatibility` workflow runs weekly and can also be dispatched manually.
+
 ## API Reference
 
 - `ExMCP.ACP` — Facade module

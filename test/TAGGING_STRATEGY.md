@@ -27,6 +27,7 @@ Tests are tagged to categorize them by:
 - **`:requires_beam`** - Tests requiring BEAM transport
 - **`:external`** - Tests requiring external services
 - **`:interop_acp_cli`** - Opt-in, credential-free lifecycle tests against all four adapter CLIs
+- **`:interop_acp_ecosystem`** - Opt-in initialization/session smoke test for one reviewed native ACP command
 
 ### Characteristics
 
