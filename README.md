@@ -1,5 +1,3 @@
-
-
 # ExMCP
 
 <div align="center">
