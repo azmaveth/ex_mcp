@@ -12,8 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Stable 1.0 preserves the public API, MCP/ACP wire behavior, security posture,
 and `:prefer_modern` default of `1.0.0-rc.8`. The final candidate soaked for
 more than seven calendar days without a release-blocking regression. There are
-no production-code, protocol-default, wire-design, or public-API changes
-between rc.8 and this release.
+no protocol-default, wire-design, or public-API changes between rc.8 and this
+release.
+
+### Fixed
+
+- OAuth callback parsing now uses a closed mapping for the supported atom-key
+  representation instead of relying on those atoms to have been loaded by
+  unrelated code first. This fixes a test-order-dependent crash without
+  accepting dynamic keys or changing the callback wire format.
 
 ### Release evidence
 

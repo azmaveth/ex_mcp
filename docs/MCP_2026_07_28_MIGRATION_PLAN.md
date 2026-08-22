@@ -3,7 +3,7 @@
 **Status:** Code migration and all 1.0 release gates complete — Phases 0–10 implemented; the rc.8 final-candidate soak and mixed-version rollback drill completed without a release-blocking regression
 **Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28), latest stable ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current ExMCP:** `1.0.0` release-preparation tree, behavior-identical to rc.8; defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
+**Current ExMCP:** `1.0.0` release-preparation tree, wire- and API-compatible with rc.8 plus an internal OAuth callback parser fix; defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
 **Last updated:** 2026-08-22
@@ -78,7 +78,7 @@ The resulting RC train is:
 | `rc.6` | All release-scope phases: dual-era dispatch, MRTR, subscriptions, Tasks, modern Streamable HTTP, required cache metadata, auth hardening, docs/API audit, conformance and official-SDK interop | Client `:prefer_modern`; begin the minimum seven-day soak after CI and publication; complete the mixed-cluster rollback drill |
 | `rc.7` | Legacy SSE persistence/disconnect lifecycle plus MCP/ACP security hardening | Restart the soak for observable lifecycle/security changes |
 | `rc.8` | Credential-free adapter CLI lifecycle evidence, Pi config isolation, behavior-preserving helper deduplication, and slimmer Hex packaging | Repeat every release gate and soak the final candidate artifact |
-| `1.0.0` | Same behavior as the final RC, plus release metadata only | Every gate in Phase 10 passes |
+| `1.0.0` | Same wire, public API, and protocol defaults as the final RC; release metadata plus release-gate correctness fixes only | Every gate in Phase 10 passes |
 
 `1.0.0-rc.7` persists legacy SSE events before delivery, retains sessions
 across connection gaps, and replays from `Last-Event-ID`, plus ACP and
@@ -1273,7 +1273,9 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
 Gate 3 is satisfied by the pinned prerelease conformance harness plus passing, bidirectional
 official TypeScript SDK v2 interop over both stdio and Streamable HTTP. Published `1.0.0-rc.8`
 completed the final modern-preferred soak without a release-blocking regression. Stable 1.0 is
-behavior-identical to rc.8 and changes release metadata, documentation, and release tests only.
+wire- and API-compatible with rc.8. Its only production-code delta replaces a test-order-dependent
+OAuth callback atom lookup with a closed mapping of the same three supported fields; no protocol
+default, wire shape, or public API changes.
 Gate 9 passed on 2026-08-22: the automated drill held a modern subscription and paused MRTR
 request while a legacy node was live, then closed the subscription, completed MRTR, restarted
 legacy-only, reconciled external state, rejected silent modern-pin downgrade, and accepted legacy

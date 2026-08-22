@@ -2,7 +2,7 @@
 
 ExMCP 1.0 is the first stable release of the dual-era MCP and ACP library. It
 preserves the public API, wire behavior, security posture, lifecycle semantics,
-and `:prefer_modern` default of `1.0.0-rc.8` without production-code changes.
+and `:prefer_modern` default of `1.0.0-rc.8`.
 
 ## Installation
 
@@ -35,8 +35,12 @@ config :ex_mcp, protocol_mode: :prefer_modern
 
 `1.0.0-rc.8` was published on 2026-08-13 and soaked through 2026-08-22 without
 a release-blocking compatibility, security, lifecycle, or resource regression.
-Stable 1.0 changes release metadata and documentation only, so it does not
-restart the behavioral soak.
+Stable 1.0 introduces no wire, public-API, or protocol-default change. Its one
+internal production fix replaces a runtime-order-dependent
+`String.to_existing_atom/1` OAuth callback lookup with a closed mapping for the
+same supported `code`, `state`, and `iss` fields. The fix restores documented
+callback behavior, cannot create atoms from input, and has a focused regression
+test, so it does not restart the protocol-behavior soak.
 
 The release commit must pass the complete CI matrix, including:
 

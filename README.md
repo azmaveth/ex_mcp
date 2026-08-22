@@ -50,7 +50,8 @@ MCP revision. See
 [1.0 migration guide](docs/getting-started/MIGRATION.md#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release).
 
 > **Release-state note:** `1.0.0` is the stable modern-preferred release. It is
-> behavior-identical to rc.8 after the final candidate completed its soak.
+> wire- and API-compatible with rc.8 after the final candidate completed its
+> soak, with one internal OAuth callback parser fix for a runtime-order crash.
 > Published `1.0.0-rc.5` remains the legacy-only characterization baseline.
 
 ## Installation

@@ -4,8 +4,8 @@ This report records the public Elixir API compatibility gate for the MCP
 2026-07-28 migration. The comparison is between:
 
 - baseline: `v1.0.0-rc.5` (`a2464c3423ee48ba825402cc2d17be8042f1451a`);
-- stable release: `v1.0.0`, behavior-identical to the rc.8 candidate measured
-  below.
+- stable release: `v1.0.0`, with the same public and wire surface as the rc.8
+  candidate measured below.
 
 The original BEAM snapshot was taken against the `v1.0.0-rc.6` release
 commit. Independent rc.7 and rc.8 censuses (2026-08-13) updated the candidate

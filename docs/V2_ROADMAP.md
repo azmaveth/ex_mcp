@@ -209,7 +209,9 @@ does not merge to the 2.0 release branch until its prerequisites pass.
   Pi configuration isolation, internal subprocess/option/workspace helper
   deduplication, and Hex documentation cleanup described in
   `POST_1_0_MAINTENANCE_PLAN.md`, as the stable 1.0 behavioral baseline.
-- Preserve stable 1.0 as a release-metadata-only change from rc.8.
+- Preserve rc.8's wire, public-API, and protocol-default baseline in stable
+  1.0; permit only release-gate correctness fixes with focused regression
+  evidence.
 - Preserve the completed 2026-08-22 mixed-version rollback drill as the 1.0
   lifecycle baseline.
 - Tag stable 1.0 only from a release candidate with identical wire and public

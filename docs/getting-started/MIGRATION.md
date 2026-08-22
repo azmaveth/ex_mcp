@@ -382,7 +382,7 @@ If you encounter issues during migration:
 
 ## Version Support
 
-- **v1.0.0**: Stable modern-preferred release; behavior-identical to rc.8 after its final-candidate soak.
+- **v1.0.0**: Stable modern-preferred release; wire- and API-compatible with rc.8 after its final-candidate soak, plus an internal OAuth callback parser fix for a runtime-order crash.
 - **Published v1.0.0-rc.8**: Final modern-preferred candidate; preserves rc.7 wire behavior while adding real adapter-CLI lifecycle evidence, Pi configuration isolation, internal helper deduplication, and slimmer Hex packaging.
 - **Published v1.0.0-rc.7**: MCP **2026-07-28** modern support plus the negotiated 2024-11-05 through 2025-11-25 legacy revisions; ACP major **v1**. Security/SSE lifecycle baseline superseded as soak candidate by rc.8.
 - **Published v1.0.0-rc.6**: Prior dual-era modern-preferred baseline; superseded as soak candidate by rc.7
