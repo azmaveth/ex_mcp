@@ -26,7 +26,7 @@ Tests are tagged to categorize them by:
 - **`:requires_stdio`** - Tests requiring stdio transport
 - **`:requires_beam`** - Tests requiring BEAM transport
 - **`:external`** - Tests requiring external services
-- **`:interop_acp_cli`** - Opt-in, credential-free lifecycle tests against the three released adapter CLIs
+- **`:interop_acp_cli`** - Opt-in, credential-free lifecycle tests against all four adapter CLIs
 
 ### Characteristics
 
