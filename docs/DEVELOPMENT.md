@@ -78,6 +78,14 @@ mix test --only interop_modern_ex_mcp_client
 mix test --only interop_modern_ts_http_client
 mix test --only interop_modern_ex_mcp_http_client
 
+# ACP ecosystem tracking and credential-free real-agent initialization.
+mix acp.compat.check --offline
+mix acp.compat.check
+ACP_ECOSYSTEM_AGENT_ID=gemini mix test --only interop_acp_ecosystem
+
+# Built-in adapters against their native vendor CLIs (all four CLIs required).
+mix test --only interop_acp_cli
+
 # After doc or example changes, re-verify key snippets and the getting-started demo:
 #   mix run -e '...'   (see DOCS_EXAMPLES_AUDIT_PLAN.md for example verifiers)
 #   elixir examples/getting_started/demo_client.exs
