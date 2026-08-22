@@ -43,7 +43,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     current_block_type: nil,
     current_assistant_text_streamed?: false,
     tool_calls: %{},
-    message_ids: %{}
+    message_ids: %{},
+    background_subagents: MapSet.new(),
+    deferred_result: nil
   ]
 
   @impl true
@@ -322,23 +324,29 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   end
 
   defp handle_request("session/set_mode", %{"params" => %{"modeId" => mode_id}}, state) do
-    permission_mode = encode_permission_mode(mode_id)
-    request_id = control_id("set_permission_mode")
+    available = Mapper.modes_result(state)["availableModes"]
 
-    state = %{
-      state
-      | permission_mode: permission_mode,
-        pending_controls: Map.put(state.pending_controls, request_id, :set_permission_mode)
-    }
+    if Enum.any?(available, &(&1["id"] == mode_id)) do
+      permission_mode = encode_permission_mode(mode_id)
+      request_id = control_id("set_permission_mode")
 
-    data =
-      ClaudeProtocol.control_request(request_id, %{
-        "subtype" => "set_permission_mode",
-        "mode" => permission_mode
-      })
-      |> ClaudeProtocol.line()
+      state = %{
+        state
+        | permission_mode: permission_mode,
+          pending_controls: Map.put(state.pending_controls, request_id, :set_permission_mode)
+      }
 
-    {:reply_and_write, %{"modes" => Mapper.modes_result(state)}, data, state}
+      data =
+        ClaudeProtocol.control_request(request_id, %{
+          "subtype" => "set_permission_mode",
+          "mode" => permission_mode
+        })
+        |> ClaudeProtocol.line()
+
+      {:reply_and_write, %{"modes" => Mapper.modes_result(state)}, data, state}
+    else
+      {:error, "Unsupported Claude permission mode: #{mode_id}", state}
+    end
   end
 
   defp handle_request(
@@ -346,19 +354,46 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
          %{"params" => %{"configId" => "model", "value" => model}},
          state
        ) do
-    request_id = control_id("set_model")
+    model_request_id = control_id("set_model")
 
     state = %{
       state
       | model: model,
-        pending_controls: Map.put(state.pending_controls, request_id, :set_model)
+        pending_controls: Map.put(state.pending_controls, model_request_id, :set_model)
     }
 
-    data =
-      ClaudeProtocol.control_request(request_id, %{"subtype" => "set_model", "model" => model})
+    model_write =
+      ClaudeProtocol.control_request(model_request_id, %{
+        "subtype" => "set_model",
+        "model" => model
+      })
       |> ClaudeProtocol.line()
 
-    {:reply_and_write, %{"configOptions" => Mapper.config_options(state)}, data, state}
+    {writes, state} =
+      if Mapper.modes_result(state)["currentModeId"] == "default" and
+           state.permission_mode != "default" do
+        mode_request_id = control_id("set_permission_mode")
+
+        mode_write =
+          ClaudeProtocol.control_request(mode_request_id, %{
+            "subtype" => "set_permission_mode",
+            "mode" => "default"
+          })
+          |> ClaudeProtocol.line()
+
+        state = %{
+          state
+          | permission_mode: "default",
+            pending_controls:
+              Map.put(state.pending_controls, mode_request_id, :set_permission_mode)
+        }
+
+        {[model_write, mode_write], state}
+      else
+        {[model_write], state}
+      end
+
+    {:reply_and_write, %{"configOptions" => Mapper.config_options(state)}, writes, state}
   end
 
   defp handle_request(
@@ -464,7 +499,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     session_id = params["sessionId"] || state.active_prompt_session_id || state.session_id
     {cancelled_messages, state} = cancel_queued_prompts(state, session_id)
     request_id = control_id("interrupt")
-    state = %{state | pending_controls: Map.put(state.pending_controls, request_id, :interrupt)}
+
+    state = %{
+      state
+      | pending_controls: Map.put(state.pending_controls, request_id, :interrupt),
+        background_subagents: MapSet.new(),
+        deferred_result: nil
+    }
 
     data =
       ClaudeProtocol.control_request(request_id, %{"subtype" => "interrupt"})
@@ -537,7 +578,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         thinking_blocks: [],
         current_block_type: nil,
         current_assistant_text_streamed?: false,
-        tool_calls: %{}
+        tool_calls: %{},
+        background_subagents: MapSet.new(),
+        deferred_result: nil
     }
   end
 
@@ -557,7 +600,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
               thinking_blocks: [],
               current_block_type: nil,
               current_assistant_text_streamed?: false,
-              tool_calls: %{}
+              tool_calls: %{},
+              background_subagents: MapSet.new(),
+              deferred_result: nil
           }
 
         {:ok, ClaudeProtocol.line(message), state}
@@ -600,7 +645,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
             thinking_blocks: [],
             current_block_type: nil,
             current_assistant_text_streamed?: false,
-            tool_calls: %{}
+            tool_calls: %{},
+            background_subagents: MapSet.new(),
+            deferred_result: nil
         }
       else
         state
@@ -624,7 +671,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
           thinking_blocks: [],
           current_block_type: nil,
           current_assistant_text_streamed?: false,
-          tool_calls: %{}
+          tool_calls: %{},
+          background_subagents: MapSet.new(),
+          deferred_result: nil
       }
 
     {messages, state}

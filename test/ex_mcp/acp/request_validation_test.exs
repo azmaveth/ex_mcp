@@ -112,4 +112,76 @@ defmodule ExMCP.ACP.RequestValidationTest do
 
     assert {:error, :invalid_params} = RequestValidation.validate_session_update(%{})
   end
+
+  test "validates form and URL elicitation scopes and responses" do
+    form = %{
+      "mode" => "form",
+      "sessionId" => @session_id,
+      "toolCallId" => "tool-1",
+      "message" => "Choose a color",
+      "requestedSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "color" => %{
+            "type" => "string",
+            "oneOf" => [%{"const" => "blue", "title" => "Blue"}]
+          }
+        }
+      }
+    }
+
+    assert :ok = RequestValidation.validate_agent_request("elicitation/create", form)
+
+    url = %{
+      "mode" => "url",
+      "requestId" => 9,
+      "message" => "Authorize",
+      "url" => "https://example.com/oauth",
+      "elicitationId" => "oauth-1"
+    }
+
+    assert :ok = RequestValidation.validate_agent_request("elicitation/create", url)
+
+    assert {:error, :invalid_params} =
+             RequestValidation.validate_agent_request(
+               "elicitation/create",
+               Map.put(url, "url", "https://user:password@example.com/oauth")
+             )
+
+    assert {:error, :invalid_params} =
+             RequestValidation.validate_agent_request(
+               "elicitation/create",
+               Map.put(form, "requestId", 9)
+             )
+
+    password_form =
+      put_in(form, ["requestedSchema", "properties", "color"], %{
+        "type" => "string",
+        "format" => "password"
+      })
+
+    assert {:error, :invalid_params} =
+             RequestValidation.validate_agent_request("elicitation/create", password_form)
+
+    codex_secret_form =
+      put_in(form, ["requestedSchema", "properties", "color"], %{
+        "type" => "string",
+        "_meta" => %{"codex" => %{"isSecret" => true}}
+      })
+
+    assert {:error, :invalid_params} =
+             RequestValidation.validate_agent_request("elicitation/create", codex_secret_form)
+
+    assert :ok =
+             RequestValidation.validate_elicitation_response(%{
+               "action" => "accept",
+               "content" => %{"color" => "blue"}
+             })
+
+    assert {:error, :invalid_params} =
+             RequestValidation.validate_elicitation_response(%{
+               "action" => "accept",
+               "content" => "not an object"
+             })
+  end
 end

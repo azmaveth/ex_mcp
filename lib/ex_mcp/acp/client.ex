@@ -559,7 +559,7 @@ defmodule ExMCP.ACP.Client do
 
   @impl true
   def handle_cast({:cancel, session_id}, state) do
-    state = cancel_pending_permissions(session_id, state)
+    state = cancel_pending_interactions(session_id, state)
     msg = Protocol.encode_session_cancel(session_id)
     send_to_transport(msg, state)
     {:noreply, state}
@@ -590,48 +590,8 @@ defmodule ExMCP.ACP.Client do
   end
 
   def handle_info({:transport_message, raw_message}, state) do
-    case Protocol.parse_message(raw_message) do
-      {:result, result, id} ->
-        state = resolve_pending(id, {:ok, result}, state)
-        {:noreply, state}
-
-      {:error, error, id} ->
-        state = resolve_pending(id, {:error, error}, state)
-        {:noreply, state}
-
-      {:notification, "session/update", params} ->
-        state =
-          case RequestValidation.validate_session_update(params) do
-            :ok ->
-              if authorized_session_id?(params["sessionId"], state) do
-                handle_session_update(params, state)
-              else
-                Logger.warning("ACP client ignored an update for an unknown session")
-                state
-              end
-
-            {:error, :invalid_params} ->
-              Logger.warning("ACP client ignored an invalid session update")
-              state
-          end
-
-        {:noreply, state}
-
-      {:notification, "$/cancel_request", params} ->
-        state = handle_cancel_request_notification(params, state)
-        {:noreply, state}
-
-      {:request, method, params, id} ->
-        state = validate_and_handle_agent_request(method, params, id, state)
-        {:noreply, state}
-
-      other ->
-        Logger.debug("ACP client received unexpected message",
-          message_shape: LogSummary.describe(other)
-        )
-
-        {:noreply, state}
-    end
+    state = raw_message |> Protocol.parse_message() |> handle_parsed_message(state)
+    {:noreply, state}
   end
 
   def handle_info({:acp_handler_result, ref, result}, state) do
@@ -738,6 +698,56 @@ defmodule ExMCP.ACP.Client do
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp handle_parsed_message({:result, result, id}, state),
+    do: resolve_pending(id, {:ok, result}, state)
+
+  defp handle_parsed_message({:error, error, id}, state),
+    do: resolve_pending(id, {:error, error}, state)
+
+  defp handle_parsed_message({:notification, "session/update", params}, state) do
+    case RequestValidation.validate_session_update(params) do
+      :ok ->
+        if authorized_session_id?(params["sessionId"], state) do
+          handle_session_update(params, state)
+        else
+          Logger.warning("ACP client ignored an update for an unknown session")
+          state
+        end
+
+      {:error, :invalid_params} ->
+        Logger.warning("ACP client ignored an invalid session update")
+        state
+    end
+  end
+
+  defp handle_parsed_message({:notification, "$/cancel_request", params}, state),
+    do: handle_cancel_request_notification(params, state)
+
+  defp handle_parsed_message(
+         {:notification, "elicitation/complete", %{"elicitationId" => elicitation_id}},
+         state
+       )
+       when is_binary(elicitation_id) and elicitation_id != "" do
+    if is_map(state.client_capabilities |> Maps.get("elicitation") |> Maps.get("url")) &&
+         state.handler_pid &&
+         function_exported?(state.handler_mod, :handle_elicitation_complete, 2) do
+      HandlerRunner.elicitation_complete(state.handler_pid, elicitation_id)
+    end
+
+    state
+  end
+
+  defp handle_parsed_message({:request, method, params, id}, state),
+    do: validate_and_handle_agent_request(method, params, id, state)
+
+  defp handle_parsed_message(other, state) do
+    Logger.debug("ACP client received unexpected message",
+      message_shape: LogSummary.describe(other)
+    )
+
+    state
+  end
 
   @impl true
   def terminate(_reason, state) do
@@ -1133,6 +1143,16 @@ defmodule ExMCP.ACP.Client do
     caps = %{}
     caps = if map_size(fs) > 0, do: Map.put(caps, "fs", fs), else: caps
 
+    elicitation =
+      %{}
+      |> maybe_put_cap("form", function_exported?(handler_mod, :handle_form_elicitation, 2), %{})
+      |> maybe_put_cap("url", function_exported?(handler_mod, :handle_url_elicitation, 2), %{})
+
+    caps =
+      if map_size(elicitation) > 0,
+        do: Map.put(caps, "elicitation", elicitation),
+        else: caps
+
     caps =
       if function_exported?(handler_mod, :handle_terminal_request, 4) do
         Map.put(caps, "terminal", true)
@@ -1145,6 +1165,8 @@ defmodule ExMCP.ACP.Client do
 
   defp maybe_put_cap(map, _key, false), do: map
   defp maybe_put_cap(map, key, true), do: Map.put(map, key, true)
+  defp maybe_put_cap(map, _key, false, _value), do: map
+  defp maybe_put_cap(map, key, true, value), do: Map.put(map, key, value)
 
   # Explicit :capabilities opt fully replaces auto-detected. Auto only
   # fills in when no explicit caps are passed. This preserves the
@@ -1328,7 +1350,7 @@ defmodule ExMCP.ACP.Client do
 
   defp validate_and_handle_agent_request(method, params, id, state) do
     with :ok <- ensure_agent_request_id_available(id, state),
-         :ok <- ensure_advertised_client_capability(method, state),
+         :ok <- ensure_advertised_client_capability(method, params, state),
          :ok <- RequestValidation.validate_agent_request(method, params),
          :ok <- ensure_agent_session_authority(method, params, state),
          :ok <- ensure_agent_request_capacity(state) do
@@ -1365,28 +1387,44 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
-  defp ensure_advertised_client_capability("fs/read_text_file", state) do
+  defp ensure_advertised_client_capability("fs/read_text_file", _params, state) do
     if state.client_capabilities |> Maps.get("fs") |> Maps.get("readTextFile") == true,
       do: :ok,
       else: {:error, :unsupported_client_capability}
   end
 
-  defp ensure_advertised_client_capability("fs/write_text_file", state) do
+  defp ensure_advertised_client_capability("fs/write_text_file", _params, state) do
     if state.client_capabilities |> Maps.get("fs") |> Maps.get("writeTextFile") == true,
       do: :ok,
       else: {:error, :unsupported_client_capability}
   end
 
-  defp ensure_advertised_client_capability("terminal/" <> _method, state) do
+  defp ensure_advertised_client_capability("terminal/" <> _method, _params, state) do
     if Maps.get(state.client_capabilities, "terminal") == true,
       do: :ok,
       else: {:error, :unsupported_client_capability}
   end
 
-  defp ensure_advertised_client_capability(_method, _state), do: :ok
+  defp ensure_advertised_client_capability("elicitation/create", %{"mode" => mode}, state) do
+    if is_map(state.client_capabilities |> Maps.get("elicitation") |> Maps.get(mode)),
+      do: :ok,
+      else: {:error, :unsupported_client_capability}
+  end
+
+  defp ensure_advertised_client_capability(_method, _params, _state), do: :ok
 
   defp ensure_agent_session_authority("session/request_permission", params, state) do
     ensure_known_session(params["sessionId"], state)
+  end
+
+  defp ensure_agent_session_authority("elicitation/create", %{"sessionId" => session_id}, state) do
+    ensure_known_session(session_id, state)
+  end
+
+  defp ensure_agent_session_authority("elicitation/create", %{"requestId" => request_id}, state) do
+    if Map.has_key?(state.pending_requests, request_id),
+      do: :ok,
+      else: {:error, :unknown_session}
   end
 
   defp ensure_agent_session_authority(method, params, state)
@@ -1492,6 +1530,21 @@ defmodule ExMCP.ACP.Client do
     end
   end
 
+  defp handle_agent_request("elicitation/create", params, id, state) do
+    mode = params["mode"]
+    callback = if mode == "form", do: :handle_form_elicitation, else: :handle_url_elicitation
+
+    if state.handler_pid && function_exported?(state.handler_mod, callback, 2) do
+      ref = make_ref()
+      HandlerRunner.elicitation_request(state.handler_pid, ref, mode, params)
+      track_agent_request(state, ref, :elicitation, id, params["sessionId"], %{mode: mode})
+    else
+      response = Protocol.encode_error(-32_601, "Elicitation mode not supported", nil, id)
+      send_to_transport(response, state)
+      state
+    end
+  end
+
   defp handle_agent_request("fs/read_text_file", params, id, state) do
     session_id = params["sessionId"]
     path = params["path"]
@@ -1579,6 +1632,18 @@ defmodule ExMCP.ACP.Client do
     Protocol.encode_permission_response(id, outcome)
   end
 
+  defp encode_handler_response(%{kind: :elicitation, id: id}, {:elicitation, {:ok, response}}) do
+    response = Maps.stringify_keys(response)
+
+    case RequestValidation.validate_elicitation_response(response) do
+      :ok ->
+        Protocol.encode_elicitation_response(id, response)
+
+      {:error, :invalid_params} ->
+        Protocol.encode_error(-32_603, "Invalid elicitation response", nil, id)
+    end
+  end
+
   defp encode_handler_response(%{kind: :file_read, id: id}, {:file_read, {:ok, content}}) do
     Protocol.encode_file_read_response(id, content)
   end
@@ -1631,15 +1696,24 @@ defmodule ExMCP.ACP.Client do
     %{state | pending_agent_requests: %{}}
   end
 
-  defp cancel_pending_permissions(session_id, state) do
+  defp cancel_pending_interactions(session_id, state) do
     {to_cancel, keep} =
       Enum.split_with(state.pending_agent_requests, fn {_ref, request} ->
-        request.kind == :permission and request.session_id == session_id
+        request.kind in [:permission, :elicitation] and request.session_id == session_id
       end)
 
     Enum.each(to_cancel, fn {_ref, request} ->
       cancel_timer(request.timer_ref)
-      response = Protocol.encode_permission_response(request.id, %{"outcome" => "cancelled"})
+
+      response =
+        case request.kind do
+          :permission ->
+            Protocol.encode_permission_response(request.id, %{"outcome" => "cancelled"})
+
+          :elicitation ->
+            Protocol.encode_elicitation_response(request.id, %{"action" => "cancel"})
+        end
+
       send_to_transport(response, state)
     end)
 
