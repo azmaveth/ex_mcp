@@ -22,6 +22,8 @@ end
 defmodule ConformanceClient do
   require Logger
 
+  alias ExMCP.Conformance.ClientScenarios
+
   def run do
     server_url = List.last(System.argv()) || raise "No server URL provided"
     scenario = System.get_env("MCP_CONFORMANCE_SCENARIO", "")
@@ -180,7 +182,7 @@ defmodule ConformanceClient do
     Process.sleep(200)
   end
 
-  defp exercise_api(client, _scenario, context) do
+  defp exercise_api(client, scenario, context) do
     # Default: list tools and call each one. This covers tools_call, auth,
     # elicitation, and most other scenarios. The conformance framework
     # validates the protocol interactions, not our scenario routing.
@@ -189,7 +191,7 @@ defmodule ConformanceClient do
         tools = result["tools"] || []
         Logger.info("Listed #{length(tools)} tools")
 
-        calls = requested_tool_calls(tools, context)
+        calls = ClientScenarios.tool_calls(tools, scenario, context)
 
         for {tool, args} <- calls do
           name = tool["name"]
@@ -205,23 +207,8 @@ defmodule ConformanceClient do
         Logger.warning("list_tools failed: #{inspect(reason)}")
     end
   end
-
-  defp requested_tool_calls(tools, %{"toolCalls" => calls}) when is_list(calls) do
-    tools_by_name = Map.new(tools, &{&1["name"], &1})
-
-    Enum.flat_map(calls, fn call ->
-      case Map.fetch(tools_by_name, call["name"]) do
-        {:ok, tool} -> [{tool, call["arguments"] || %{}}]
-        :error -> []
-      end
-    end)
-  end
-
-  defp requested_tool_calls(tools, _context) do
-    Enum.map(tools, fn tool ->
-      {tool, ExMCP.Testing.SchemaGenerator.generate_args(tool["inputSchema"])}
-    end)
-  end
 end
 
-ConformanceClient.run()
+unless Process.get(:ex_mcp_conformance_compile_only, false) do
+  ConformanceClient.run()
+end

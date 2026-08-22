@@ -1,11 +1,11 @@
 # Post-1.0 Maintenance Plan
 
-- **Status:** Rc.8 packaging work complete; larger maintenance items remain
+- **Status:** Stable 1.0 packaging work complete; larger maintenance items remain
   proposed and tracked
-- **Baseline:** ExMCP `1.0.0-rc.8` candidate
+- **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-08-13
+- **Last updated:** 2026-08-22
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
@@ -275,13 +275,78 @@ guides on HexDocs.
 This packaging-only cleanup is complete for rc.8. The files remain available
 in the repository, and packaged references to them use repository URLs.
 
+## MCP conformance harness tracking
+
+Keep release CI deterministic by pinning the reviewed modern conformance
+harness in `scripts/conformance.sh`. Separately, the weekly `MCP conformance
+upstream` workflow resolves the highest published
+`@modelcontextprotocol/conformance` version and runs both complete 2026-07-28
+suites. A manual dispatch can select an exact version for prerelease review.
+
+The scheduled lane is intentionally advisory and never rewrites the pin. It
+records the selected package version and uploads the complete client, server,
+and runner logs even when the harness exposes a failure. For each upstream
+failure, review the conformance release diff, determine whether the change is a
+new protocol assertion or a harness regression, add focused local coverage for
+newly required behavior, and advance the release pin only after the full suite
+passes.
+
+## ACP ecosystem and reference-adapter tracking
+
+Post-1.0 ACP compatibility must cover both protocol conformance and differences
+between real agent implementations. The repository therefore maintains a
+reviewed manifest at `test/interop/acp_compatibility.json` with three distinct
+inputs:
+
+- membership of the public ACP agents page;
+- IDs and versions from the machine-readable ACP Registry; and
+- exact upstream revisions for `claude-agent-acp`, `codex-acp`, and `pi-acp`,
+  whose behavior informed ExMCP's Claude, Codex, and Pi adapters.
+
+`mix acp.compat.check` reports additions, removals, registry releases, and
+reference-repository commits without installing or running remote catalog
+content. A separate reviewed matrix runs credential-free initialization against
+version-pinned native ACP commands in isolated scratch environments. It starts
+with Claude Agent ACP, Codex ACP, Gemini CLI, and Pi ACP; expand it toward every
+documented agent as installation, platform, licensing, and authentication
+requirements are characterized.
+
+When reference-adapter drift appears, review the compare link for protocol
+mapping, capability, event-ordering, security, and lifecycle changes before
+advancing the pinned commit. Port relevant behavior behind characterization
+tests; a pin update alone is not evidence that ExMCP remains behaviorally
+aligned.
+
+### 2026-08-22 reference sync
+
+The first scheduled-review baseline now pins Claude Agent ACP
+`996d488589b8db7a0f9af3dfc7b886d9d47ebae9`, Codex ACP
+`ba5bcc3d7759250dde9d4d2286a1bec11b363208`, and Pi ACP
+`d1cffc047ab37a096ee70ca39cfc1de463db8d12`. The review produced characterized
+adapter fixes rather than a pin-only update:
+
+- shared ACP form/URL elicitation, explicit per-mode capability negotiation,
+  URL completion, and validation;
+- Claude `AskUserQuestion`, truthful durable permissions, Exit Plan effects,
+  dynamic modes, the SDK marker update, and background-subagent settlement;
+- Codex close/delete fencing, structured non-secret user input, MCP URL
+  completion, and request-scoped device authentication;
+- Pi's `agent_settled` completion boundary and select/confirm extension UI
+  response bridge.
+
+Follow-up reviews should promote these cases into live CLI or deterministic
+fixture tiers when the upstream CLIs expose a credential-free trigger. The
+current real-CLI lifecycle suite deliberately avoids prompts and therefore
+cannot exercise LLM-originated permission, elicitation, or background-task
+events; the adapter unit tests are the executable evidence for those paths.
+
 ## Execution order
 
 1. Land rc.8's credential-free ACP CLI lifecycle coverage, Pi isolation fix,
    behavior-preserving internal helper deduplication, and Hex documentation
    cleanup.
-2. Qualify and publish rc.8, then run the fresh final-candidate soak.
-3. Release stable 1.0 with no adapter decomposition mixed into the release diff.
+2. Qualify and publish rc.8, then run the fresh final-candidate soak. **Complete.**
+3. Release stable 1.0 with no adapter decomposition mixed into the release diff. **Complete.**
 4. Resolve the focused contract mismatches as small correctness or documentation
    changes.
 5. Extract the shared HTTP reducer and the smallest high-value functional cores
@@ -293,3 +358,6 @@ in the repository, and packaged references to them use repository URLs.
    adapter; keep vendor-specific protocol semantics separate by default.
 10. Make any MCP/ACP package-topology change only through the 2.0 decision and
     migration process in `V2_ROADMAP.md`.
+11. Expand the reviewed native ACP matrix and promote agents from initialization
+    to session and mock-prompt tiers where their supported configuration permits
+    credential-free testing.

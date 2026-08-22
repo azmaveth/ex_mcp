@@ -7,14 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - Unreleased
+### Added
 
-Stable 1.0 will preserve the behavior of the final modern-preferred release
-candidate after its minimum seven-day soak and the mixed-cluster rollback drill
-complete. No wire-design or public-API changes are planned between that RC and
-stable 1.0.
+- A weekly advisory workflow now runs the complete MCP 2026-07-28 conformance
+  suites against the newest published official harness while keeping release CI
+  pinned to a reviewed version.
+- ACP v1 form and URL elicitation support across the shared client and agent
+  APIs, including capability negotiation, request validation,
+  `elicitation/complete`, and fail-closed default handlers.
+- Adapter regression coverage for Claude `AskUserQuestion`, Codex user input,
+  MCP and device-auth URL elicitations, Pi extension UI requests, prompt-close
+  fencing, and background-agent settlement.
 
-## [1.0.0-rc.8] - Unreleased
+### Changed
+
+- The gating MCP 2026-07-28 conformance runner now pins
+  `@modelcontextprotocol/conformance@0.2.0-alpha.11`, including wire-schema,
+  HTTP session-lifecycle, and client schema-preservation coverage.
+
+### Fixed
+
+- The external MCP conformance client now round-trips complete JSON Schema
+  2020-12 tool schemas without replacing them with generated arguments.
+- The Pi adapter now waits for `agent_settled` before completing an ACP prompt,
+  preserving follow-up work that can arrive after `agent_end`, and always
+  answers extension UI requests it cannot represent.
+- The Codex adapter now cancels active prompts and pending client requests when
+  a session closes, ignores late events from closed sessions, bridges
+  non-secret structured user input through ACP forms, and completes URL
+  elicitation UI after the app server resolves it.
+- The Claude SDK adapter now tracks SDK `0.3.238`, gates model-specific modes,
+  removes permission choices whose durable effect cannot be honored, maps
+  Exit Plan mode selections, and keeps a prompt open while its background
+  subagents still need to stream output or request permission.
+
+### Security
+
+- Form elicitation refuses Codex and Claude secret-input shapes, URL
+  elicitation accepts only HTTP(S) URLs without embedded credentials, and
+  ChatGPT device-code authentication is advertised only when the client
+  explicitly supports URL elicitation.
+
+## [1.0.0] - 2026-08-22
+
+Stable 1.0 preserves the public API, MCP/ACP wire behavior, security posture,
+and `:prefer_modern` default of `1.0.0-rc.8`. The final candidate soaked for
+more than seven calendar days without a release-blocking regression. There are
+no protocol-default, wire-design, or public-API changes between rc.8 and this
+release.
+
+### Fixed
+
+- OAuth callback parsing now uses a closed mapping for the supported atom-key
+  representation instead of relying on those atoms to have been loaded by
+  unrelated code first. This fixes a test-order-dependent crash without
+  accepting dynamic keys or changing the callback wire format.
+
+### Release evidence
+
+- See the repository-only
+  [1.0 release record](https://github.com/azmaveth/ex_mcp/blob/v1.0.0/docs/RELEASE_1_0_0.md).
+- The mixed-version rollback gate passed with a modern node holding an active
+  subscription and paused MRTR request while an exact `1.0.0-rc.5` stdio node
+  remained live. The drill drained modern work, reconciled state on rc.5, and
+  verified that modern era pins require explicit operator reset.
+
+### Security
+
+- Acknowledge `EEF-CVE-2026-43971` while Cowlib has no patched Hex release.
+  ExMCP and its Plug/Cowboy server stack do not call the affected
+  `cow_link:link/1` encoder; a BEAM-import regression test locks that
+  assumption, and the exception expires with the existing Cowlib review date.
+
+## [1.0.0-rc.8] - 2026-08-13
 
 This narrow follow-up candidate preserves rc.7's MCP/ACP wire behavior and
 `:prefer_modern` default while adding real adapter lifecycle evidence, fixing

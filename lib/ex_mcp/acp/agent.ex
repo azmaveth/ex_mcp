@@ -276,6 +276,25 @@ defmodule ExMCP.ACP.Agent do
     GenServer.call(agent, {:client_request, msg, :permission}, timeout)
   end
 
+  @doc "Requests structured user input from the ACP client."
+  @spec create_elicitation(GenServer.server(), map(), keyword()) ::
+          {:ok, map() | nil} | {:error, any()}
+  def create_elicitation(agent, params, opts \\ []) when is_map(params) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    params = Maps.stringify_keys(params)
+    capability = {:elicitation, params["mode"]}
+    msg = Protocol.encode_elicitation_request(params)
+    GenServer.call(agent, {:client_request, msg, capability}, timeout)
+  end
+
+  @doc "Notifies the ACP client that a URL elicitation completed out of band."
+  @spec complete_elicitation(GenServer.server(), String.t(), keyword()) :: :ok | {:error, any()}
+  def complete_elicitation(agent, elicitation_id, opts \\ []) when is_binary(elicitation_id) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    msg = Protocol.encode_elicitation_complete(elicitation_id)
+    GenServer.call(agent, {:notification, msg, {:elicitation, "url"}}, timeout)
+  end
+
   @doc "Requests text file contents from the ACP client."
   @spec read_text_file(GenServer.server(), String.t(), String.t(), keyword()) ::
           {:ok, map() | nil} | {:error, any()}
@@ -413,6 +432,13 @@ defmodule ExMCP.ACP.Agent do
     else
       {:error, :invalid_params} -> {:reply, {:error, :invalid_params}, state}
       {:error, :method_not_found} -> {:reply, {:error, :unsupported_terminal_method}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:notification, msg, capability}, _from, state) do
+    case ensure_client_capability(state, capability) do
+      :ok -> reply_with_send(msg, state)
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -1416,6 +1442,17 @@ defmodule ExMCP.ACP.Agent do
       {:error, {:unsupported_client_capability, :terminal}}
     end
   end
+
+  defp ensure_client_capability(state, {:elicitation, mode}) when mode in ["form", "url"] do
+    if is_map(state.client_capabilities |> Maps.get("elicitation") |> Maps.get(mode)) do
+      :ok
+    else
+      {:error, {:unsupported_client_capability, {:elicitation, mode}}}
+    end
+  end
+
+  defp ensure_client_capability(_state, {:elicitation, _mode}),
+    do: {:error, {:unsupported_client_capability, :elicitation}}
 
   defp default_initialize_result(state) do
     %{

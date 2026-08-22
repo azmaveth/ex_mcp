@@ -48,6 +48,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
     active_tool_executions: %{},
     current_tool_calls: %{},
     edit_snapshots: %{},
+    pending_extension_ui: %{},
+    last_usage: %{},
     pending_controls: %{},
     control_groups: %{},
     msg_counter: 0
@@ -418,6 +420,21 @@ defmodule ExMCP.ACP.Adapters.Pi do
     translate_config_option(params["configId"], params["value"], state)
   end
 
+  def translate_outbound(%{"id" => acp_id, "result" => result}, state) do
+    resolve_extension_ui_response(acp_id, result, state)
+  end
+
+  def translate_outbound(%{"id" => acp_id, "error" => _error}, state) do
+    resolve_extension_ui_response(acp_id, %{"action" => "cancel"}, state)
+  end
+
+  def translate_outbound(
+        %{"method" => "$/cancel_request", "params" => %{"requestId" => acp_id}},
+        state
+      ) do
+    resolve_extension_ui_response(acp_id, %{"action" => "cancel"}, state)
+  end
+
   def translate_outbound(%{"method" => method}, state) do
     if String.starts_with?(method, "_ex_mcp.pi/") or String.starts_with?(method, "pi/") do
       {:error, "Pi extension methods were removed; use ACP session methods or slash commands",
@@ -548,7 +565,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
         control_groups: %{},
         active_tool_executions: %{},
         current_tool_calls: %{},
-        edit_snapshots: %{}
+        edit_snapshots: %{},
+        pending_extension_ui: %{},
+        last_usage: %{}
     }
   end
 
@@ -728,6 +747,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
       | session_id: params["sessionId"] || state.session_id,
         pending_prompt: %{acp_id: acp_id, msg_id: msg_id, cancel_requested: false},
         text_acc: [],
+        last_usage: %{},
         msg_counter: state.msg_counter + 1
     }
 
@@ -1172,8 +1192,15 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp process_event(%{"type" => "agent_end"} = event, state) do
+    {:skip, %{state | last_usage: usage_from_agent_end(event)}}
+  end
+
+  defp process_event(%{"type" => "agent_settled"}, %{pending_prompt: nil} = state) do
+    {:skip, %{state | last_usage: %{}}}
+  end
+
+  defp process_event(%{"type" => "agent_settled"}, state) do
     text = state.text_acc |> Enum.reverse() |> Enum.join("")
-    usage = usage_from_agent_end(event)
 
     stop_reason =
       if state.pending_prompt && state.pending_prompt.cancel_requested,
@@ -1185,11 +1212,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
     response =
       Envelope.response(acp_id, %{
         "stopReason" => stop_reason,
-        "usage" => usage,
+        "usage" => state.last_usage,
         "_meta" => %{"ex_mcp" => %{"text" => text, "sessionId" => state.session_id || "default"}}
       })
 
-    state = %{state | pending_prompt: nil, text_acc: []}
+    state = %{state | pending_prompt: nil, text_acc: [], last_usage: %{}}
 
     case start_next_queued_prompt(state) do
       {:ok, messages, nil, state} ->
@@ -1231,12 +1258,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp process_event(%{"type" => "extension_ui_request"} = event, state) do
-    notification =
-      AdapterEvents.session_info_update(state.session_id, %{
-        "_meta" => %{"ex_mcp" => %{"pi" => %{"extensionUiRequest" => event}}}
-      })
-
-    {:messages, [notification], state}
+    handle_extension_ui_request(event, state)
   end
 
   defp process_event(%{"type" => type}, state)
@@ -1254,6 +1276,157 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp process_event(event, state) do
     Logger.debug("[Pi Adapter] Unhandled event: #{inspect(event["type"])}")
     {:skip, state}
+  end
+
+  defp handle_extension_ui_request(%{"id" => id, "method" => "select"} = event, state)
+       when is_binary(id) and id != "" do
+    options = Enum.map(List.wrap(event["options"]), &to_string/1)
+
+    if options == [] do
+      cancel_extension_ui(id, [], state)
+    else
+      permission_options =
+        options
+        |> Enum.with_index()
+        |> Enum.map(fn {name, index} ->
+          %{"optionId" => "choice-#{index}", "name" => name, "kind" => "allow_once"}
+        end)
+
+      request_extension_ui_permission(id, :select, event, options, permission_options, state)
+    end
+  end
+
+  defp handle_extension_ui_request(%{"id" => id, "method" => "confirm"} = event, state)
+       when is_binary(id) and id != "" do
+    permission_options = [
+      %{"optionId" => "yes", "name" => "Yes", "kind" => "allow_once"},
+      %{"optionId" => "no", "name" => "No", "kind" => "reject_once"}
+    ]
+
+    request_extension_ui_permission(id, :confirm, event, [], permission_options, state)
+  end
+
+  defp handle_extension_ui_request(%{"id" => id, "method" => method}, state)
+       when is_binary(id) and method in ["input", "editor"] do
+    message =
+      AdapterEvents.agent_message_chunk(
+        state.session_id,
+        "Pi #{method} UI request is not supported in ACP yet; cancelling it."
+      )
+
+    cancel_extension_ui(id, [message], state)
+  end
+
+  defp handle_extension_ui_request(%{"id" => id, "method" => "notify"} = event, state)
+       when is_binary(id) do
+    message =
+      AdapterEvents.agent_message_chunk(state.session_id, event["message"] || "Pi notification")
+      |> put_in(["params", "update", "_meta"], %{
+        "piAcp" => %{"notify" => %{"level" => event["notifyType"] || "info"}}
+      })
+
+    cancel_extension_ui(id, [message], state)
+  end
+
+  defp handle_extension_ui_request(%{"id" => id}, state) when is_binary(id) do
+    cancel_extension_ui(id, [], state)
+  end
+
+  defp handle_extension_ui_request(_event, state), do: {:skip, state}
+
+  defp request_extension_ui_permission(
+         pi_id,
+         kind,
+         event,
+         options,
+         permission_options,
+         state
+       ) do
+    counter = state.msg_counter + 1
+    acp_id = "pi-extension-#{counter}"
+
+    tool_call = %{
+      "toolCallId" => "pi-ui-#{pi_id}",
+      "title" => event["title"] || event["message"] || "Pi extension request",
+      "kind" => "other",
+      "status" => "pending",
+      "rawInput" => extension_ui_raw_input(event)
+    }
+
+    request =
+      Envelope.request(
+        "session/request_permission",
+        %{
+          "sessionId" => state.session_id,
+          "toolCall" => tool_call,
+          "options" => permission_options,
+          "_meta" => %{"piAcp" => %{"extensionUi" => %{"method" => event["method"]}}}
+        },
+        acp_id
+      )
+
+    pending =
+      Map.put(state.pending_extension_ui, acp_id, %{
+        pi_id: pi_id,
+        kind: kind,
+        options: options
+      })
+
+    {:messages, [request], %{state | pending_extension_ui: pending, msg_counter: counter}}
+  end
+
+  defp extension_ui_raw_input(event) do
+    Enum.reduce(
+      ["title", "message", "options", "placeholder", "prefill"],
+      %{"method" => event["method"]},
+      fn key, raw_input ->
+        if Map.has_key?(event, key), do: Map.put(raw_input, key, event[key]), else: raw_input
+      end
+    )
+  end
+
+  defp cancel_extension_ui(pi_id, messages, state) do
+    data = encode_rpc(%{"type" => "extension_ui_response", "id" => pi_id, "cancelled" => true})
+    deliver_messages_and_write(messages, data, state)
+  end
+
+  defp resolve_extension_ui_response(acp_id, result, state) do
+    case Map.pop(state.pending_extension_ui, acp_id) do
+      {nil, _pending} ->
+        {:ok, :skip, state}
+
+      {request, pending} ->
+        response = extension_ui_response(request, result)
+        deliver_pending(encode_rpc(response), %{state | pending_extension_ui: pending})
+    end
+  end
+
+  defp extension_ui_response(request, result) do
+    option_id = get_in(result, ["outcome", "optionId"])
+    selected? = get_in(result, ["outcome", "outcome"]) == "selected"
+
+    case {request.kind, selected?, option_id} do
+      {:confirm, true, "yes"} ->
+        %{"type" => "extension_ui_response", "id" => request.pi_id, "confirmed" => true}
+
+      {:confirm, true, "no"} ->
+        %{"type" => "extension_ui_response", "id" => request.pi_id, "confirmed" => false}
+
+      {:select, true, "choice-" <> index} ->
+        with {index, ""} <- Integer.parse(index),
+             value when is_binary(value) <- Enum.at(request.options, index) do
+          %{"type" => "extension_ui_response", "id" => request.pi_id, "value" => value}
+        else
+          _invalid -> cancelled_extension_ui_response(request.pi_id)
+        end
+
+      _cancelled ->
+        cancelled_extension_ui_response(request.pi_id)
+    end
+  end
+
+  defp cancelled_extension_ui_response(pi_id) do
+    %{"type" => "extension_ui_response", "id" => pi_id, "cancelled" => true}
   end
 
   defp handle_control_response(%{group_id: group_id, kind: kind, rpc_id: rpc_id}, event, state) do

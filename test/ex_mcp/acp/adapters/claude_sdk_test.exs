@@ -29,7 +29,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
     test "exposes SDK entrypoint env" do
       assert ClaudeSDK.env([]) == %{
                "CLAUDE_CODE_ENTRYPOINT" => "sdk-ts",
-               "CLAUDE_AGENT_SDK_VERSION" => "0.3.198"
+               "CLAUDE_AGENT_SDK_VERSION" => "0.3.238"
              }
     end
 
@@ -794,6 +794,235 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
              }
 
       refute Map.has_key?(state.tool_calls, "toolu_bash")
+    end
+  end
+
+  describe "upstream capability parity" do
+    test "gates auto by model support and bypass by explicit opt-in", %{state: state} do
+      base_ids = Mapper.modes_result(state)["availableModes"] |> Enum.map(& &1["id"])
+      refute "auto" in base_ids
+      refute "bypassPermissions" in base_ids
+      refute "dontAsk" in base_ids
+
+      state = %{
+        state
+        | available_models: [%{"value" => "sonnet", "supportsAutoMode" => true}],
+          opts: [allow_dangerously_skip_permissions: true]
+      }
+
+      ids = Mapper.modes_result(state)["availableModes"] |> Enum.map(& &1["id"])
+      assert "auto" in ids
+      assert "bypassPermissions" in ids
+    end
+
+    test "rejects a mode that is not currently advertised", %{state: state} do
+      request = %{
+        "id" => 10,
+        "method" => "session/set_mode",
+        "params" => %{"sessionId" => "s1", "modeId" => "auto"}
+      }
+
+      assert {:error, "Unsupported Claude permission mode: auto", ^state} =
+               ClaudeSDK.translate_outbound(request, state)
+    end
+
+    test "permission choices only promise persistence when Claude supplied an update", %{
+      state: state
+    } do
+      event = %{
+        "type" => "control_request",
+        "request_id" => "claude-permission-1",
+        "request" => %{
+          "subtype" => "can_use_tool",
+          "tool_name" => "Bash",
+          "tool_use_id" => "tool-1",
+          "input" => %{"command" => "mix test"},
+          "decision_reason" => "Runs tests",
+          "permission_suggestions" => []
+        }
+      }
+
+      assert {:messages, messages, _state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(event), state)
+
+      request = Enum.find(messages, &(&1["method"] == "session/request_permission"))
+
+      assert Enum.map(request["params"]["options"], & &1["optionId"]) == [
+               "allow_once",
+               "reject_once"
+             ]
+
+      assert get_in(request, ["_meta", "permission", "description"]) == "Reason: Runs tests"
+    end
+
+    test "ExitPlanMode applies the selected session mode", %{state: state} do
+      state = %{
+        state
+        | available_models: [%{"value" => "sonnet", "supportsAutoMode" => true}]
+      }
+
+      event = %{
+        "type" => "control_request",
+        "request_id" => "exit-plan-1",
+        "request" => %{
+          "subtype" => "can_use_tool",
+          "tool_name" => "ExitPlanMode",
+          "tool_use_id" => "plan-tool",
+          "input" => %{"plan" => "Implement it"}
+        }
+      }
+
+      assert {:messages, messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(event), state)
+
+      request = Enum.find(messages, &(&1["method"] == "session/request_permission"))
+      assert hd(request["params"]["options"])["optionId"] == "exit-plan-auto"
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "outcome" => %{"outcome" => "selected", "optionId" => "exit-plan-auto"}
+        }
+      }
+
+      assert {:ok, data, _state} = ClaudeSDK.translate_outbound(response, state)
+      control = data |> IO.iodata_to_binary() |> String.trim() |> Jason.decode!()
+
+      assert get_in(control, ["response", "response", "updatedPermissions"]) == [
+               %{"type" => "setMode", "mode" => "auto", "destination" => "session"}
+             ]
+    end
+
+    test "AskUserQuestion round-trips through ACP form elicitation", %{state: state} do
+      state = %{
+        state
+        | session_id: "s1",
+          client_capabilities: %{"elicitation" => %{"form" => %{}}}
+      }
+
+      event = %{
+        "type" => "control_request",
+        "request_id" => "ask-1",
+        "request" => %{
+          "subtype" => "can_use_tool",
+          "tool_name" => "AskUserQuestion",
+          "tool_use_id" => "question-tool",
+          "input" => %{
+            "questions" => [
+              %{
+                "question" => "Which color?",
+                "header" => "Color",
+                "multiSelect" => false,
+                "options" => [
+                  %{"label" => "Blue", "description" => "Cool", "preview" => "#00f"}
+                ]
+              }
+            ]
+          }
+        }
+      }
+
+      assert {:messages, [request], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(event), state)
+
+      assert request["method"] == "elicitation/create"
+      assert request["params"]["mode"] == "form"
+      assert request["params"]["toolCallId"] == "question-tool"
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{"action" => "accept", "content" => %{"question_0" => "Blue"}}
+      }
+
+      assert {:ok, data, _state} = ClaudeSDK.translate_outbound(response, state)
+      control = data |> IO.iodata_to_binary() |> String.trim() |> Jason.decode!()
+
+      assert get_in(control, ["response", "response", "updatedInput", "answers"]) == %{
+               "Which color?" => "Blue"
+             }
+    end
+
+    test "AskUserQuestion fails closed without form elicitation", %{state: state} do
+      event = %{
+        "type" => "control_request",
+        "request_id" => "ask-unsupported",
+        "request" => %{
+          "subtype" => "can_use_tool",
+          "tool_name" => "AskUserQuestion",
+          "tool_use_id" => "question-tool",
+          "input" => %{
+            "questions" => [
+              %{"question" => "Continue?", "options" => [%{"label" => "Yes"}]}
+            ]
+          }
+        }
+      }
+
+      assert {:skip_and_write, data, _state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(event), state)
+
+      control = data |> IO.iodata_to_binary() |> String.trim() |> Jason.decode!()
+      assert get_in(control, ["response", "response", "behavior"]) == "deny"
+      assert get_in(control, ["response", "response", "interrupt"]) == true
+    end
+
+    test "keeps the prompt open until spawned background subagents drain", %{state: state} do
+      state = %{state | pending_prompt_id: 321, session_id: "s1"}
+
+      started = %{
+        "type" => "system",
+        "subtype" => "task_started",
+        "session_id" => "s1",
+        "task_id" => "agent-1",
+        "tool_use_id" => "tool-1",
+        "subagent_type" => "general-purpose",
+        "description" => "Check the tests"
+      }
+
+      assert {:messages, [_plan], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(started), state)
+
+      result = %{
+        "type" => "result",
+        "subtype" => "success",
+        "session_id" => "s1",
+        "result" => "initial answer",
+        "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      }
+
+      assert {:messages, messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(result), state)
+
+      refute Enum.any?(messages, &(&1["id"] == 321))
+      assert state.pending_prompt_id == 321
+      assert state.deferred_result == result
+
+      completed = %{
+        "type" => "system",
+        "subtype" => "task_notification",
+        "session_id" => "s1",
+        "task_id" => "agent-1",
+        "status" => "completed",
+        "summary" => "Done"
+      }
+
+      assert {:messages, [_plan], state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(completed), state)
+
+      idle = %{
+        "type" => "system",
+        "subtype" => "session_state_changed",
+        "session_id" => "s1",
+        "state" => "idle"
+      }
+
+      assert {:messages, messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(idle), state)
+
+      response = Enum.find(messages, &(&1["id"] == 321))
+      assert response["result"]["stopReason"] == "end_turn"
+      assert state.pending_prompt_id == nil
+      assert state.deferred_result == nil
     end
   end
 

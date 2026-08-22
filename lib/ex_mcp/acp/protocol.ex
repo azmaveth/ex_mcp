@@ -496,6 +496,18 @@ defmodule ExMCP.ACP.Protocol do
     )
   end
 
+  @doc "Encodes an `elicitation/create` request from agent to client."
+  @spec encode_elicitation_request(map()) :: map()
+  def encode_elicitation_request(params) when is_map(params) do
+    Envelope.request("elicitation/create", Maps.stringify_keys(params), generate_id())
+  end
+
+  @doc "Encodes an `elicitation/complete` notification for a URL elicitation."
+  @spec encode_elicitation_complete(String.t()) :: map()
+  def encode_elicitation_complete(elicitation_id) when is_binary(elicitation_id) do
+    Envelope.notification("elicitation/complete", %{"elicitationId" => elicitation_id})
+  end
+
   defp validate_permission_tool_call!(tool_call) when is_map(tool_call) do
     tool_call = Maps.stringify_keys(tool_call)
 
@@ -581,6 +593,12 @@ defmodule ExMCP.ACP.Protocol do
 
   def encode_permission_response(id, outcome) do
     encode_response(%{"outcome" => outcome}, id)
+  end
+
+  @doc "Encodes a response to an `elicitation/create` request from the agent."
+  @spec encode_elicitation_response(integer() | String.t() | nil, map()) :: map()
+  def encode_elicitation_response(id, response) when is_map(response) do
+    encode_response(Maps.stringify_keys(response), id)
   end
 
   @doc "Encodes a response to a `fs/read_text_file` request from the agent."

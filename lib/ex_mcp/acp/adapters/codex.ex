@@ -34,6 +34,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
     phase: :initializing,
     pending_requests: %{},
     pending_client_requests: %{},
+    client_capabilities: %{},
+    closed_sessions: %{},
+    url_elicitations: %{},
+    pending_auth: nil,
     sessions: %{},
     gateway_config: nil,
     opts: []
@@ -123,6 +127,23 @@ defmodule ExMCP.ACP.Adapters.Codex do
     with_legacy_auth_methods(methods)
   end
 
+  @impl true
+  def auth_methods(opts, state) do
+    if client_supports_elicitation?(state, "url") do
+      auth_methods(opts) ++
+        [
+          %{
+            "id" => "chat-gpt-device-code",
+            "name" => "ChatGPT (device code)",
+            "description" =>
+              "Sign in to ChatGPT by opening a verification page and entering a one-time code"
+          }
+        ]
+    else
+      auth_methods(opts)
+    end
+  end
+
   defp legacy_auth_methods do
     [
       env_auth_method("codex-api-key", "Use CODEX_API_KEY", "CODEX_API_KEY"),
@@ -174,7 +195,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
   # Outbound: ACP -> Codex app-server
 
   @impl true
-  def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+  def translate_outbound(%{"method" => "initialize", "params" => params}, state) do
+    {:ok, :skip, %{state | client_capabilities: params["clientCapabilities"] || %{}}}
+  end
 
   def translate_outbound(%{"method" => "authenticate", "id" => acp_id, "params" => params}, state) do
     method_id = params["methodId"] || params["provider"] || params["id"]
@@ -367,8 +390,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
           {state, close_request}
         end
 
-      state = %{state | sessions: Map.delete(state.sessions, session_id)}
-      {:reply_and_write, %{}, data, state}
+      {messages, pending_responses, state} = close_session_state(session_id, session, state)
+      {:messages_and_write, messages, List.wrap(data) ++ pending_responses, state}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -419,12 +442,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
         archive_request =
           encode_request(archive_id, "thread/archive", %{"threadId" => session_id})
 
-        state =
-          state
-          |> Map.update!(:sessions, &Map.delete(&1, session_id))
-          |> track_request(archive_id, :thread_archive, nil, %{session_id: session_id})
+        {messages, pending_responses, state} =
+          close_session_state(session_id, session, state)
 
-        {:reply_and_write, %{}, requests ++ [archive_request], state}
+        state = track_request(state, archive_id, :thread_archive, nil, %{session_id: session_id})
+
+        {:messages_and_write, messages, requests ++ pending_responses ++ [archive_request], state}
 
       {:error, reason} ->
         {:error, reason, state}
@@ -532,11 +555,70 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
       {entry, pending} ->
         state = %{state | pending_client_requests: pending}
-        {:ok, encode_response(entry.codex_id, permission_response(entry, response)), state}
+
+        case client_request_result(entry, response, state) do
+          {:native, result, state} ->
+            {:ok, encode_response(entry.codex_id, result), state}
+
+          {:defer, state} ->
+            {:ok, :skip, state}
+
+          {:messages_and_write, messages, data, state} ->
+            {:messages_and_write, messages, data, state}
+        end
     end
   end
 
   def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+  defp close_session_state(session_id, session, state) do
+    prompt_messages =
+      case session && session[:active_prompt_acp_id] do
+        nil -> []
+        acp_id -> [Envelope.response(acp_id, %{"stopReason" => "cancelled"})]
+      end
+
+    {cancelled, pending} =
+      Enum.split_with(state.pending_client_requests, fn {_acp_id, entry} ->
+        Map.get(entry, :session_id) == session_id
+      end)
+
+    native_responses =
+      Enum.map(cancelled, fn {_acp_id, entry} ->
+        encode_response(entry.codex_id, cancelled_client_request_result(entry))
+      end)
+
+    {closed_elicitations, open_elicitations} =
+      Enum.split_with(state.url_elicitations, fn {_request_id, elicitation} ->
+        elicitation.session_id == session_id
+      end)
+
+    completion_messages =
+      Enum.map(closed_elicitations, fn {_request_id, elicitation} ->
+        Envelope.notification("elicitation/complete", %{
+          "elicitationId" => elicitation.elicitation_id
+        })
+      end)
+
+    state = %{
+      state
+      | sessions: Map.delete(state.sessions, session_id),
+        pending_client_requests: Map.new(pending),
+        closed_sessions: Map.put(state.closed_sessions, session_id, true),
+        url_elicitations: Map.new(open_elicitations)
+    }
+
+    {prompt_messages ++ completion_messages, native_responses, state}
+  end
+
+  defp cancelled_client_request_result(%{kind: :user_input}), do: %{"answers" => %{}}
+  defp cancelled_client_request_result(%{kind: :elicitation}), do: %{"action" => "cancel"}
+  defp cancelled_client_request_result(%{method: method}), do: codex_cancel_response(method)
+
+  defp closed_session_params?(params, state) do
+    session_id = params["threadId"] || params["sessionId"] || get_in(params, ["turn", "threadId"])
+    is_binary(session_id) and Map.has_key?(state.closed_sessions, session_id)
+  end
 
   defp translate_user_prompt(input_items, acp_id, session_id, session, params, state) do
     {id, state} = next_request_id(state)
@@ -761,7 +843,13 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_inbound_message(%{"method" => method, "params" => params}, state)
        when is_binary(method) do
-    handle_notification(method, params || %{}, state)
+    params = params || %{}
+
+    if closed_session_params?(params, state) do
+      {:skip, state}
+    else
+      handle_notification(method, params, state)
+    end
   end
 
   defp handle_inbound_message(%{"method" => method}, state) when is_binary(method) do
@@ -794,13 +882,35 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_typed_response(:model_list, _entry, {:error, _error}, state), do: {:skip, state}
 
-  defp handle_typed_response(:authenticate, %{acp_id: acp_id}, {:ok, result}, state) do
-    response =
-      result
-      |> auth_response_result()
-      |> then(&Envelope.response(acp_id, &1))
+  defp handle_typed_response(
+         :authenticate,
+         %{acp_id: acp_id, meta: %{method_id: "chat-gpt-device-code"}},
+         {:ok, result},
+         state
+       )
+       when is_map(result) do
+    case result["verificationUrl"] do
+      url when is_binary(url) and url != "" ->
+        start_auth_url_elicitation(acp_id, result, state)
 
-    {:messages, [response], state}
+      _missing_url ->
+        {:messages,
+         [
+           Envelope.error(
+             acp_id,
+             -32_603,
+             "Codex device-code authentication did not return a verification URL"
+           )
+         ], state}
+    end
+  end
+
+  defp handle_typed_response(:authenticate, %{acp_id: acp_id}, {:ok, result}, state)
+       when is_map(result),
+       do: finish_authenticate(acp_id, result, state)
+
+  defp handle_typed_response(:authenticate, %{acp_id: acp_id}, {:ok, result}, state) do
+    finish_authenticate(acp_id, result, state)
   end
 
   defp handle_typed_response(:authenticate, %{acp_id: acp_id}, {:error, error}, state) do
@@ -825,6 +935,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
       |> Map.put(:additional_directories, meta[:additional_directories] || [])
 
     state = Sessions.put(state, session_id, session)
+    state = %{state | closed_sessions: Map.delete(state.closed_sessions, session_id)}
 
     replay_messages =
       if type == :thread_resume do
@@ -885,6 +996,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_typed_response(:thread_unsubscribe, _entry, _reply, state), do: {:skip, state}
   defp handle_typed_response(:thread_archive, _entry, _reply, state), do: {:skip, state}
   defp handle_typed_response(_type, _entry, _reply, state), do: {:skip, state}
+
+  defp finish_authenticate(acp_id, result, state) do
+    response =
+      result
+      |> auth_response_result()
+      |> then(&Envelope.response(acp_id, &1))
+
+    {:messages, [response], state}
+  end
 
   # Notifications
 
@@ -1102,8 +1222,58 @@ defmodule ExMCP.ACP.Adapters.Codex do
         entry.codex_id == request_id
       end)
 
-    {:skip, %{state | pending_client_requests: pending}}
+    {elicitation, url_elicitations} = Map.pop(state.url_elicitations, request_id)
+
+    messages =
+      case elicitation do
+        %{elicitation_id: elicitation_id} ->
+          [Envelope.notification("elicitation/complete", %{"elicitationId" => elicitation_id})]
+
+        nil ->
+          []
+      end
+
+    state = %{
+      state
+      | pending_client_requests: pending,
+        url_elicitations: url_elicitations
+    }
+
+    if messages == [], do: {:skip, state}, else: {:messages, messages, state}
   end
+
+  defp handle_notification("account/login/completed", params, %{pending_auth: pending} = state)
+       when is_map(pending) do
+    if is_nil(params["loginId"]) or params["loginId"] == pending.login_id do
+      {_, client_requests} =
+        PendingRequests.pop(state.pending_client_requests, pending.client_request_acp_id)
+
+      auth_response =
+        if params["success"] == true do
+          Envelope.response(pending.auth_acp_id, %{})
+        else
+          Envelope.error(
+            pending.auth_acp_id,
+            -32_603,
+            params["error"] || "Codex authentication failed"
+          )
+        end
+
+      messages = [
+        Envelope.notification("elicitation/complete", %{
+          "elicitationId" => pending.elicitation_id
+        }),
+        auth_response
+      ]
+
+      {:messages, messages,
+       %{state | pending_auth: nil, pending_client_requests: client_requests}}
+    else
+      {:skip, state}
+    end
+  end
+
+  defp handle_notification("account/login/completed", _params, state), do: {:skip, state}
 
   defp handle_notification("item/patch/created", params, state) do
     session_id = Sessions.id_from_params(params, state)
@@ -1442,7 +1612,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
               "remoteControl/status/changed",
               "mcpServer/startupStatus/updated",
               "account/updated",
-              "account/login/completed",
               "skills/changed",
               "deprecationNotice"
             ],
@@ -1455,15 +1624,69 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   # Codex app-server requests that need ACP client interaction.
 
+  defp handle_server_request(codex_id, method, %{"threadId" => session_id}, state)
+       when is_map_key(state.closed_sessions, session_id) do
+    {:skip_and_write, encode_response(codex_id, late_server_request_result(method)), state}
+  end
+
   defp handle_server_request(codex_id, method, params, state)
        when method in [
               "item/commandExecution/requestApproval",
               "item/fileChange/requestApproval",
               "execCommandApproval",
               "applyPatchApproval",
-              "item/permissions/requestApproval",
-              "mcpServer/elicitation/request"
+              "item/permissions/requestApproval"
             ] do
+    request_permission_from_client(codex_id, method, params, state)
+  end
+
+  defp handle_server_request(codex_id, "mcpServer/elicitation/request" = method, params, state) do
+    mode = normalize_elicitation_mode(params["mode"])
+
+    if mode && client_supports_elicitation?(state, mode) do
+      start_elicitation_request(codex_id, params, mcp_elicitation_request(params, mode), state)
+    else
+      request_permission_from_client(codex_id, method, params, state)
+    end
+  end
+
+  defp handle_server_request(codex_id, "item/tool/requestUserInput", params, state) do
+    cond do
+      not client_supports_elicitation?(state, "form") ->
+        {:skip_and_write, encode_response(codex_id, %{"answers" => %{}}), state}
+
+      Enum.any?(List.wrap(params["questions"]), &(&1["isSecret"] == true)) ->
+        Logger.warning(
+          "Codex secret user-input request was not forwarded through form elicitation"
+        )
+
+        {:skip_and_write, encode_response(codex_id, %{"answers" => %{}}), state}
+
+      true ->
+        start_user_input_request(codex_id, params, state)
+    end
+  end
+
+  defp handle_server_request(codex_id, method, _params, state)
+       when method in [
+              "item/tool/call",
+              "account/chatgptAuthTokens/refresh",
+              "attestation/generate"
+            ] do
+    Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
+
+    {:skip_and_write,
+     encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+  end
+
+  defp handle_server_request(codex_id, method, _params, state) do
+    Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
+
+    {:skip_and_write,
+     encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+  end
+
+  defp request_permission_from_client(codex_id, method, params, state) do
     session_id = Sessions.id_from_params(params, state)
     acp_id = "codex-permission-#{System.unique_integer([:positive])}"
 
@@ -1494,25 +1717,316 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [request], state}
   end
 
-  defp handle_server_request(codex_id, method, _params, state)
-       when method in [
-              "item/tool/requestUserInput",
-              "item/tool/call",
-              "account/chatgptAuthTokens/refresh",
-              "attestation/generate"
-            ] do
-    Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
+  defp normalize_elicitation_mode("form"), do: "form"
+  defp normalize_elicitation_mode("url"), do: "url"
+  defp normalize_elicitation_mode(_mode), do: nil
 
-    {:skip_and_write,
-     encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+  defp client_supports_elicitation?(state, mode) do
+    is_map(get_in(state.client_capabilities, ["elicitation", mode]))
   end
 
-  defp handle_server_request(codex_id, method, _params, state) do
-    Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
+  defp start_elicitation_request(codex_id, params, elicitation_params, state) do
+    acp_id = "codex-elicitation-#{System.unique_integer([:positive])}"
 
-    {:skip_and_write,
-     encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+    entry = %{
+      kind: :elicitation,
+      codex_id: codex_id,
+      method: "mcpServer/elicitation/request",
+      params: params,
+      session_id: elicitation_params["sessionId"],
+      mode: elicitation_params["mode"],
+      elicitation_id: elicitation_params["elicitationId"]
+    }
+
+    state = %{
+      state
+      | pending_client_requests: PendingRequests.put(state.pending_client_requests, acp_id, entry)
+    }
+
+    request = Envelope.request("elicitation/create", elicitation_params, acp_id)
+    {:messages, [request], state}
   end
+
+  defp mcp_elicitation_request(params, "form") do
+    %{
+      "sessionId" => params["threadId"] || params["sessionId"],
+      "mode" => "form",
+      "message" => params["message"] || "Input requested",
+      "requestedSchema" => normalize_elicitation_schema(params["requestedSchema"]),
+      "_meta" => params["_meta"]
+    }
+    |> maybe_put("toolCallId", params["toolCallId"] || params["itemId"])
+  end
+
+  defp mcp_elicitation_request(params, "url") do
+    %{
+      "sessionId" => params["threadId"] || params["sessionId"],
+      "mode" => "url",
+      "message" => params["message"] || "Open the requested URL to continue",
+      "url" => params["url"],
+      "elicitationId" => params["elicitationId"],
+      "_meta" => params["_meta"]
+    }
+  end
+
+  defp normalize_elicitation_schema(%{} = schema) do
+    schema
+    |> normalize_elicitation_schema_value()
+    |> Map.put("type", "object")
+    |> Map.put_new("properties", %{})
+  end
+
+  defp normalize_elicitation_schema(_schema), do: %{"type" => "object", "properties" => %{}}
+
+  defp normalize_elicitation_schema_value(value) when is_list(value) do
+    Enum.map(value, &normalize_elicitation_schema_value/1)
+  end
+
+  defp normalize_elicitation_schema_value(%{} = value) do
+    normalized =
+      Map.new(value, fn {key, nested} -> {key, normalize_elicitation_schema_value(nested)} end)
+
+    if normalized["type"] == "string" and is_list(normalized["enum"]) and
+         is_list(normalized["enumNames"]) and not is_list(normalized["oneOf"]) do
+      names = normalized["enumNames"]
+
+      one_of =
+        normalized["enum"]
+        |> Enum.with_index()
+        |> Enum.map(fn {enum_value, index} ->
+          title = Enum.at(names, index, enum_value)
+          %{"const" => to_string(enum_value), "title" => to_string(title)}
+        end)
+
+      normalized
+      |> Map.drop(["enum", "enumNames"])
+      |> Map.put("oneOf", one_of)
+    else
+      normalized
+    end
+  end
+
+  defp normalize_elicitation_schema_value(value), do: value
+
+  defp start_user_input_request(codex_id, params, state) do
+    questions =
+      params["questions"]
+      |> List.wrap()
+      |> Enum.filter(fn question ->
+        is_map(question) and is_binary(question["id"]) and question["id"] != ""
+      end)
+
+    {properties, required, other_fields} = user_input_schema(questions)
+    session_id = Sessions.id_from_params(params, state)
+    acp_id = "codex-user-input-#{System.unique_integer([:positive])}"
+
+    request_params = %{
+      "sessionId" => session_id,
+      "toolCallId" => params["itemId"],
+      "mode" => "form",
+      "message" => user_input_message(params, questions),
+      "requestedSchema" =>
+        %{"type" => "object", "properties" => properties}
+        |> maybe_put("required", if(required == [], do: nil, else: required)),
+      "_meta" => %{
+        "codexAcp" => %{
+          "autoResolutionMs" => params["autoResolutionMs"],
+          "isBlocking" => params["isBlocking"]
+        }
+      }
+    }
+
+    entry = %{
+      kind: :user_input,
+      codex_id: codex_id,
+      method: "item/tool/requestUserInput",
+      params: params,
+      questions: questions,
+      other_fields: other_fields,
+      session_id: session_id
+    }
+
+    state = %{
+      state
+      | pending_client_requests: PendingRequests.put(state.pending_client_requests, acp_id, entry)
+    }
+
+    {:messages, [Envelope.request("elicitation/create", request_params, acp_id)], state}
+  end
+
+  defp user_input_schema(questions) do
+    question_ids = MapSet.new(questions, & &1["id"])
+
+    Enum.reduce(questions, {%{}, [], %{}}, fn question, {properties, required, other_fields} ->
+      id = question["id"]
+
+      if is_binary(id) and id != "" do
+        property = user_input_property(question)
+        properties = Map.put(properties, id, property)
+        has_other_answer = question["isOther"] == true and List.wrap(question["options"]) != []
+
+        {properties, other_fields} =
+          if has_other_answer do
+            other_id = user_input_other_field_id(id, question_ids)
+
+            property = %{
+              "type" => "string",
+              "title" => "Other",
+              "description" => "Type your own answer instead of choosing an option above.",
+              "_meta" => %{
+                "codex" => %{
+                  "questionId" => id,
+                  "isOtherAnswer" => true,
+                  "isSecret" => question["isSecret"] == true
+                }
+              }
+            }
+
+            {Map.put(properties, other_id, property), Map.put(other_fields, id, other_id)}
+          else
+            {properties, other_fields}
+          end
+
+        required = if has_other_answer, do: required, else: required ++ [id]
+        {properties, required, other_fields}
+      else
+        {properties, required, other_fields}
+      end
+    end)
+  end
+
+  defp user_input_message(params, [question]) do
+    params["message"] || question["question"] || "Input requested"
+  end
+
+  defp user_input_message(params, _questions), do: params["message"] || "Input requested"
+
+  defp user_input_other_field_id(question_id, question_ids, suffix \\ "") do
+    candidate = question_id <> "__other" <> suffix
+
+    if MapSet.member?(question_ids, candidate) do
+      next_suffix =
+        if suffix == "", do: "1", else: Integer.to_string(String.to_integer(suffix) + 1)
+
+      user_input_other_field_id(question_id, question_ids, next_suffix)
+    else
+      candidate
+    end
+  end
+
+  defp user_input_property(question) do
+    base = %{
+      "type" => "string",
+      "title" => question["header"] || "Input",
+      "description" => question["question"],
+      "_meta" => %{
+        "codex" => %{
+          "isOther" => question["isOther"] == true,
+          "isSecret" => question["isSecret"] == true
+        }
+      }
+    }
+
+    case question["options"] do
+      options when is_list(options) and options != [] ->
+        Map.put(base, "oneOf", Enum.map(options, &user_input_option/1))
+
+      _no_options ->
+        base
+    end
+  end
+
+  defp user_input_option(option) do
+    %{"const" => option["label"], "title" => option["label"]}
+    |> maybe_put("description", option["description"])
+  end
+
+  defp client_request_result(%{kind: :user_input} = entry, response, state) do
+    {:native, user_input_response(entry, response), state}
+  end
+
+  defp client_request_result(%{kind: :elicitation} = entry, response, state) do
+    {result, accepted?} = elicitation_response(response)
+
+    state =
+      if accepted? and entry.mode == "url" and is_binary(entry.elicitation_id) do
+        update_in(state.url_elicitations, fn elicitations ->
+          Map.put(elicitations, entry.codex_id, %{
+            session_id: entry.session_id,
+            elicitation_id: entry.elicitation_id
+          })
+        end)
+      else
+        state
+      end
+
+    {:native, result, state}
+  end
+
+  defp client_request_result(%{kind: :auth_url} = entry, response, state) do
+    case elicitation_response(response) do
+      {_result, true} ->
+        {:defer, put_in(state.pending_auth[:consented], true)}
+
+      {_result, false} ->
+        {cancel_id, state} = next_request_id(state)
+
+        cancel =
+          encode_request(cancel_id, "account/login/cancel", %{"loginId" => entry.login_id})
+
+        error =
+          Envelope.error(entry.auth_acp_id, -32_603, "Codex authentication was cancelled")
+
+        {:messages_and_write, [error], cancel, %{state | pending_auth: nil}}
+    end
+  end
+
+  defp client_request_result(entry, response, state) do
+    {:native, permission_response(entry, response), state}
+  end
+
+  defp elicitation_response(%{"result" => %{"action" => "accept"} = result}) do
+    content = result["content"]
+
+    if is_nil(content) or is_map(content) do
+      {result, true}
+    else
+      {%{"action" => "cancel"}, false}
+    end
+  end
+
+  defp elicitation_response(%{"result" => %{"action" => action} = result})
+       when action in ["decline", "cancel"],
+       do: {result, false}
+
+  defp elicitation_response(_response), do: {%{"action" => "cancel"}, false}
+
+  defp user_input_response(entry, %{"result" => %{"action" => "accept", "content" => content}})
+       when is_map(content) do
+    answers =
+      Enum.reduce(entry.questions, %{}, fn question, answers ->
+        id = question["id"]
+        custom = content[entry.other_fields[id]]
+        value = if is_binary(custom) and String.trim(custom) != "", do: custom, else: content[id]
+
+        values =
+          case value do
+            value when is_binary(value) and value != "" -> [value]
+            values when is_list(values) -> Enum.filter(values, &is_binary/1)
+            _missing -> []
+          end
+
+        if values == [], do: answers, else: Map.put(answers, id, %{"answers" => values})
+      end)
+
+    %{"answers" => answers}
+  end
+
+  defp user_input_response(_entry, _response), do: %{"answers" => %{}}
+
+  defp late_server_request_result("item/tool/requestUserInput"), do: %{"answers" => %{}}
+  defp late_server_request_result("mcpServer/elicitation/request"), do: %{"action" => "cancel"}
+  defp late_server_request_result(method), do: codex_cancel_response(method)
 
   # Item completion / replay helpers
 
@@ -1998,6 +2512,63 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp auth_response_result(_result), do: %{}
+
+  defp start_auth_url_elicitation(auth_acp_id, result, state) do
+    login_id = result["loginId"] || "codex-login-#{System.unique_integer([:positive])}"
+    elicitation_id = to_string(login_id)
+    client_request_acp_id = "codex-auth-elicitation-#{System.unique_integer([:positive])}"
+
+    request =
+      Envelope.request(
+        "elicitation/create",
+        %{
+          "requestId" => auth_acp_id,
+          "mode" => "url",
+          "elicitationId" => elicitation_id,
+          "url" => auth_url(result),
+          "message" => auth_url_message(result)
+        },
+        client_request_acp_id
+      )
+
+    entry = %{
+      kind: :auth_url,
+      codex_id: nil,
+      auth_acp_id: auth_acp_id,
+      client_request_acp_id: client_request_acp_id,
+      login_id: login_id,
+      session_id: nil
+    }
+
+    pending_auth = %{
+      auth_acp_id: auth_acp_id,
+      client_request_acp_id: client_request_acp_id,
+      elicitation_id: elicitation_id,
+      login_id: login_id,
+      consented: false
+    }
+
+    state = %{
+      state
+      | pending_auth: pending_auth,
+        pending_client_requests:
+          PendingRequests.put(state.pending_client_requests, client_request_acp_id, entry)
+    }
+
+    {:messages, [request], state}
+  end
+
+  defp auth_url(result), do: result["verificationUrl"] || result["authUrl"]
+
+  defp auth_url_message(result) do
+    case result["userCode"] do
+      code when is_binary(code) and code != "" ->
+        "Sign in to ChatGPT and enter this code: #{code}"
+
+      _no_code ->
+        "Sign in to ChatGPT to continue."
+    end
+  end
 
   defp put_optional_result(%{"result" => _result} = response, _key, nil), do: response
 
@@ -2527,6 +3098,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp auth_request_params("chat-gpt", _params, _state), do: {:ok, %{"type" => "chatgpt"}}
   defp auth_request_params("chatgpt", _params, _state), do: {:ok, %{"type" => "chatgpt"}}
+
+  defp auth_request_params("chat-gpt-device-code", _params, state) do
+    if client_supports_elicitation?(state, "url") do
+      {:ok, %{"type" => "chatgptDeviceCode"}}
+    else
+      {:error, "ChatGPT device-code authentication requires ACP URL elicitation support"}
+    end
+  end
 
   defp auth_request_params("api-key", params, state) do
     case explicit_api_key_from_request(params) do

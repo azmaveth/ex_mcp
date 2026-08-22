@@ -65,6 +65,9 @@ iex -S mix            # Start interactive shell with project loaded
 ./scripts/conformance.sh server # Published legacy/core server suite
 ./scripts/conformance.sh client # Published legacy/core client suite
 
+# Emulate the scheduled upstream check with a specific newly published harness.
+CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.11 ./scripts/conformance.sh modern
+
 # Broader legacy/draft report; this aggregate command is intentionally non-gating.
 ./scripts/conformance.sh all-versions
 
@@ -77,6 +80,14 @@ mix test --only interop_modern_ts_client
 mix test --only interop_modern_ex_mcp_client
 mix test --only interop_modern_ts_http_client
 mix test --only interop_modern_ex_mcp_http_client
+
+# ACP ecosystem tracking and credential-free real-agent initialization.
+mix acp.compat.check --offline
+mix acp.compat.check
+ACP_ECOSYSTEM_AGENT_ID=gemini mix test --only interop_acp_ecosystem
+
+# Built-in adapters against their native vendor CLIs (all four CLIs required).
+mix test --only interop_acp_cli
 
 # After doc or example changes, re-verify key snippets and the getting-started demo:
 #   mix run -e '...'   (see DOCS_EXAMPLES_AUDIT_PLAN.md for example verifiers)
@@ -434,7 +445,7 @@ do not move unfinished protocol work into stable 1.0.
 - [ ] The non-gating `./scripts/conformance.sh all-versions` report has no unexplained regression
 - [ ] The seven-row legacy/modern compatibility matrix passes on stdio and HTTP
 - [ ] A published RC has defaulted to `:prefer_modern` for at least seven calendar days without a release-blocking compatibility regression
-- [ ] A mixed-version cluster rollback drill succeeds with active subscriptions and in-flight MRTR operations
+- [x] A mixed-version cluster rollback drill succeeds with active subscriptions and in-flight MRTR operations (completed for 1.0 on 2026-08-22; see `docs/RELEASE_1_0_0.md`)
 - [ ] An owner and evidence link are recorded for every remaining 1.0 release gate
 
 #### Release

@@ -4,7 +4,7 @@ The [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) is a standar
 
 ## Overview
 
-ACP uses JSON-RPC 2.0 over stdio (the same wire format as MCP) with methods for session management and bidirectional communication. Most coding agents speak ACP natively. For agents with their own protocols (Claude Code, Codex, Pi), ExMCP provides an adapter system that translates between ACP and the agent's native protocol.
+ACP uses JSON-RPC 2.0 over stdio (the same wire format as MCP) with methods for session management and bidirectional communication. Most coding agents speak ACP natively. For agents with their own protocols (Claude Code, Codex, Pi, and ZCode), ExMCP provides an adapter system that translates between ACP and the agent's native protocol.
 
 ### Architecture
 
@@ -17,7 +17,7 @@ ExMCP.ACP.Client (GenServer)
     ├─── Native ACP agents (Gemini CLI, Hermes, OpenCode, Qwen Code, ...)
     │       └── stdio JSON-RPC directly
     │
-    └─── Adapted agents (Claude Code, Codex, Pi)
+    └─── Adapted agents (Claude Code, Codex, Pi, ZCode)
             └── AdapterBridge → Adapter → agent-native protocol
 
 ACP Client
@@ -123,6 +123,27 @@ session setup, model/mode config, and richer status updates.
 )
 ```
 
+### Adapted Agent (ZCode)
+
+```elixir
+{:ok, client} = ExMCP.ACP.start_client(
+  transport_mod: ExMCP.ACP.AdapterTransport,
+  adapter: ExMCP.ACP.Adapters.ZCode,
+  adapter_opts: [
+    cwd: "/my/project",
+    workspace_roots: ["/my/project"],
+    mode_id: "build"
+  ]
+)
+
+{:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/my/project")
+{:ok, _} = ExMCP.ACP.Client.set_config_option(client, sid, "thought_level", "medium")
+{:ok, result} = ExMCP.ACP.Client.prompt(client, sid, "Fix the failing tests")
+```
+
+The adapter launches `zcode app-server`. Set `adapter_opts[:cli_path]` or the
+`ZCODE_EXECUTABLE` environment variable when `zcode` is not on `PATH`.
+
 ### Adapted Agent (Pi)
 
 ```elixir
@@ -200,6 +221,21 @@ headers, stdio commands, arguments, and environment values. Set
 `:trust_authorized_workspaces` only when the same authorization decision should
 also mark that path trusted in Codex's project configuration.
 
+### ZCode Workspace and MCP Authority
+
+The ZCode adapter applies the same fail-closed boundary to session workspaces
+and MCP server definitions. `:workspace_roots` defaults to the adapter's
+working directory, and `:authorize_workspace` may authorize paths for a
+specific operation such as `:session_new`, `:session_load`, or
+`:session_resume`. ZCode Protocol v1 does not support ACP
+`additionalDirectories`, so the adapter rejects non-empty values.
+
+MCP servers must either exactly match a map in `:trusted_mcp_servers` or pass
+`:authorize_mcp_server`. Names alone do not authorize peer-controlled URLs,
+headers, commands, arguments, or environment values. As with Codex,
+`trusted_mcp_servers: :all` is an unsafe compatibility escape hatch and should
+only be used at a trusted integration boundary.
+
 ## Session Lifecycle
 
 ACP sessions represent ongoing conversations with an agent.
@@ -272,7 +308,7 @@ defmodule MyApp.ACPHandler do
         status = update["status"]  # "pending", "in_progress", "completed", or "failed"
         IO.puts("[#{status}] #{update["title"]}")
 
-        # Rich metadata available for ClaudeSDK/Codex/Pi adapters:
+        # Rich metadata available for ClaudeSDK/Codex/Pi/ZCode adapters:
         # update["kind"]      — "read", "edit", "execute", "search", "think"
         # update["locations"] — [%{"path" => "/src/app.ex", "line" => 10}]
         # update["content"]   — [%{"type" => "diff", "oldText" => ..., "newText" => ...}]
@@ -304,6 +340,23 @@ defmodule MyApp.ACPHandler do
       nil -> {:ok, %{"outcome" => "cancelled"}, state}
       option -> {:ok, %{"outcome" => "selected", "optionId" => option["optionId"]}, state}
     end
+  end
+
+  # Optional: each elicitation mode is advertised only when its callback exists.
+  # Form elicitation is for non-sensitive structured input; never request
+  # passwords, API keys, or other secrets through a form.
+  def handle_form_elicitation(params, state) do
+    {:ok, %{"action" => "decline"}, state}
+  end
+
+  def handle_url_elicitation(params, state) do
+    # Display the destination and wait for explicit user consent before opening.
+    {:ok, %{"action" => "decline"}, state}
+  end
+
+  def handle_elicitation_complete(elicitation_id, state) do
+    # Dismiss any UI retained for this URL-mode elicitation.
+    {:ok, state}
   end
 
   # Optional: handle file read requests from the agent
@@ -485,17 +538,18 @@ Translates between ACP and Claude Code's SDK-compatible stream-json control
 protocol. This is the recommended Claude adapter for new code.
 
 **Features:**
-- SDK entrypoint launch environment and `--permission-prompt-tool stdio`, tracking Claude Agent SDK `0.3.198`
+- SDK entrypoint launch environment and `--permission-prompt-tool stdio`, tracking Claude Agent SDK `0.3.238`
 - Partial message and pending tool-call lifecycle mapping
 - `session/cancel` via SDK `interrupt`
-- ACP permission requests bridged from Claude SDK `can_use_tool`, with pending `tool_call` emitted before the permission request
-- Runtime mode, model, effort, fast-mode, and agent config controls where supported by the SDK session
+- ACP permission requests bridged from Claude SDK `can_use_tool`, with pending `tool_call` emitted before the permission request and durable choices shown only when Claude supplies a durable update
+- `AskUserQuestion` bridged through ACP form elicitation when the client advertises it; otherwise it fails closed
+- Runtime mode, model, effort, fast-mode, and agent config controls where supported by the SDK session; `auto` is model-gated and bypass mode requires explicit dangerous-mode opt-in
 - Initialize-aware terminal login auth methods, opt-in gateway auth methods, and ACP `auth.logout`
 - Live session setup/load/resume/fork/close ACP surface
 - Disk-backed `session/list`, `session/delete`, and `session/fork` for Claude Code's SDK store
 - Full `session/load` replay from persisted Claude JSONL transcripts
 - FIFO prompt queueing with queued prompt cancellation responses
-- Plan updates from `TodoWrite` and task progress events
+- Plan updates from `TodoWrite` and task progress events, with prompt settlement held while spawned background subagents remain live
 - Resource links, embedded text resources, HTTP/base64 images, and MCP slash-command prompt rewriting
 - Rich tool metadata, Codex-style Bash terminal metadata, result usage updates, and improved stop reasons
 - Official ACP `mcpCapabilities` plus ExMCP `_meta` support for BEAM-local MCP transport
@@ -534,13 +588,53 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 - Image content, resource links, embedded text/binary resources, and additional workspace directories in prompts/session setup
 - Codex slash commands in prompts: `/compact`, `/init`, `/review`, `/review-branch`, `/review-commit`, `/status`, and `/logout`
 - ACP HTTP and stdio MCP server descriptors forwarded into Codex session config
-- Codex auth methods for `chat-gpt`, `api-key`, and opt-in custom `gateway` auth
-- Approval and MCP elicitation requests bridged through ACP `session/request_permission`
+- Codex auth methods for `chat-gpt`, `api-key`, and opt-in custom `gateway` auth; ChatGPT device login uses request-scoped ACP URL elicitation and is advertised only to URL-capable clients
+- Approval requests bridged through ACP `session/request_permission`; MCP form/URL requests and non-secret `requestUserInput` questions use ACP elicitation
+- Active prompt and pending client-request cancellation on close/delete, plus a closed-session fence for late app-server events
 
 **Modes:** `read-only`, `agent`, `agent-full-access`. Legacy `suggest`, `auto-edit`, `auto`, `full-auto`, and `full-access` aliases are no longer accepted.
 **Config options:** `mode`, `model`, `reasoning_effort`, and `fast-mode` (when supported by the selected model) are returned with Codex session responses. Runtime changes are kept in adapter session state and applied to subsequent `turn/start` requests.
 
-**Unsupported Codex app-server requests:** Dynamic tool calls, request-user-input prompts, ChatGPT token refresh, and attestation generation are rejected explicitly because ACP does not provide compatible structured responses for those app-server request schemas.
+**Unsupported Codex app-server requests:** Dynamic tool calls, ChatGPT token refresh, and attestation generation are rejected explicitly. Secret `requestUserInput` questions are answered empty instead of being exposed through ACP form elicitation.
+
+### ZCode (`ExMCP.ACP.Adapters.ZCode`)
+
+Translates between ACP and the ZCode Protocol v1 NDJSON stream exposed by the
+persistent `zcode app-server` process.
+
+**Features:**
+- Startup workspace-state handshake and dynamic model catalog loading
+- ACP `session/new`, `session/load`, `session/resume`, `session/list`,
+  `session/fork`, `session/close`, `session/prompt`, and `session/cancel`
+- FIFO prompt queueing, queued-prompt cancellation, and prompt stop-reason mapping
+- Streaming agent text and reasoning, rich tool-call lifecycle metadata,
+  session title/mode updates, and context-window usage updates
+- ZCode permission requests bridged through ACP `session/request_permission`
+- Runtime mode, model, and thought-level controls with ACP config-option updates
+- HTTP, SSE, and authorized stdio MCP server descriptors
+- Terminal authentication through `zcode login`
+- Canonical, symlink-aware workspace confinement and fail-closed MCP authorization
+
+**Modes:** `plan` disables tool execution; `build` uses normal permission
+prompts; `edit` auto-accepts file edits; `auto` uses ZCode's classifier to
+approve requests; and `yolo` allows operations without prompting.
+
+**Config options:** `mode`, `model` (after the app server returns its model
+catalog), and `thought_level`. The fallback thought levels are `off`,
+`minimal`, `low`, `medium`, and `high`; a selected model may provide its own
+supported levels. Legacy `session/set_model` remains available for compatibility.
+
+**Startup options:** `cli_path`, `cwd`, `workspace_roots`,
+`authorize_workspace`, `authorize_mcp_server`, `trusted_mcp_servers`, `model`,
+`mode_id`, `thought_level`, and `env`. The shared adapter bridge also accepts
+`environment_policy: :inherit` when an explicitly trusted deployment requires
+the complete parent environment.
+
+**Protocol limitations:** ZCode Protocol v1 accepts text prompts only, so image
+and embedded-context prompt capabilities are not advertised. Non-empty
+`additionalDirectories` and ACP `session/delete` are unsupported. ZCode
+request-user-input calls are answered as cancelled because ACP does not expose
+the corresponding structured response schema.
 
 ### Pi (`ExMCP.ACP.Adapters.Pi`)
 
@@ -551,13 +645,13 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 - ACP-native `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`, `session/set_config_option`, and `session/set_mode`, with legacy `session/set_model` compatibility
 - Terminal authentication method advertisement through `authMethods`
 - Pi session discovery from JSONL files plus a local ExMCP session map at `~/.ex_mcp/pi/session-map.json`, with cursor pagination and last-cwd default filtering
-- Prompt queuing while another Pi turn is active
+- Prompt queuing while another Pi turn is active; prompt completion waits for Pi's `agent_settled` event rather than the earlier `agent_end` usage snapshot
 - Per-session `model` and `thought_level` config options, with ACP config-option sync updates after model/thinking changes
 - Global/project Pi settings merge for skill command filtering and quiet startup
 - Startup info for Pi version, context, prompts, skills, extensions, and captured CLI prelude; registry update notices are opt-in
 - Markdown slash commands loaded from `~/.pi/agent/prompts` and `<cwd>/.pi/prompts`
 - Built-in slash commands: `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/steering`, `/follow-up`, and `/changelog`
-- Text/thinking streaming, tool-call streaming, tool execution lifecycle, compaction, retry, and extension UI metadata events
+- Text/thinking streaming, tool-call streaming, tool execution lifecycle, compaction, retry, and extension UI events; select/confirm bridge to ACP permission choices while input/editor requests fail closed with a Pi cancellation response
 - Enhanced tool result parsing with content blocks, structured edit diffs, stdout/stderr/exitCode formatting, and file locations
 - Image support with data-url prefix stripping
 - Resource links and embedded text resources folded into Pi prompt text; audio blocks are represented as unsupported markers
@@ -567,6 +661,9 @@ Translates between ACP and Pi's RPC NDJSON protocol.
 **Config options:** Session responses include upstream-compatible `model` and `thought_level` selectors, plus ExMCP's existing `auto_compaction`, `auto_retry`, `steering_mode`, and `follow_up_mode` controls. Prefer `set_config_option/4` with config id `model` for model changes; `ExMCP.ACP.Client.set_model/3` is retained for compatibility with older adapters.
 
 **Startup options:** `cli_path`/`pi_command`, `agent_dir`, `session_path`, `session_dir`, `session_map_path`, `delete_session_files`, and `update_notice`. The live Pi subprocess is started like upstream `pi-acp`, with `--mode rpc --no-themes` and optional `--session <path>`; cwd is applied as the child process working directory. `agent_dir` isolates the settings and user-prompt directory used by the adapter; also pass the same path as `PI_CODING_AGENT_DIR` in `env` so the Pi subprocess uses it. `session/delete` removes ExMCP session-map state by default; backing Pi JSONL files are deleted only when `delete_session_files: true` is set and the file is under the configured Pi session directory. Registry update checks are disabled unless `update_notice: true` or `PI_ACP_UPDATE_NOTICE=true` is set.
+
+Pi `0.80.4` or newer is required for the `agent_settled` completion boundary;
+the credential-free real-CLI suite currently pins Pi `0.84.1`.
 
 **Breaking change:** Pi-specific `_ex_mcp.pi/*` and legacy `pi/*` extension methods are no longer implemented. Use the ACP session methods above or slash commands in prompts.
 
@@ -636,7 +733,7 @@ Use `ExMCP.ACP.Registry.find_agents/2` to search the decoded registry by agent i
 
 The standard `:interop_acp` suite checks both ACP roles against the official
 TypeScript SDK. A separate opt-in suite launches the real Claude Code, Codex,
-and Pi CLIs through their adapters:
+Pi, and ZCode CLIs through their adapters:
 
 ```bash
 mix test --only interop_acp_cli
@@ -645,8 +742,47 @@ mix test --only interop_acp_cli
 These tests stop at session lifecycle operations and never send a prompt, so
 they do not make LLM calls or consume model credits. They use isolated config
 directories and fail if a required executable is missing. Set
-`CLAUDE_CODE_EXECUTABLE`, `CODEX_PATH`, or `PI_ACP_PI_COMMAND` when a CLI is not
-on `PATH`.
+`CLAUDE_CODE_EXECUTABLE`, `CODEX_PATH`, `PI_ACP_PI_COMMAND`, or
+`ZCODE_EXECUTABLE` when a CLI is not on `PATH`. On macOS, the suite also finds
+the runtime bundled with `/Applications/ZCode.app`.
+
+## Ecosystem Compatibility Tracking
+
+The repository tracks the public ACP agents page, the machine-readable ACP
+Registry, and reviewed executable smoke tests in
+`test/interop/acp_compatibility.json`. Check the pinned snapshot against live
+sources with:
+
+```bash
+# Network-free manifest validation
+mix acp.compat.check --offline
+
+# Live catalog, registry version, and adapter-reference checks
+mix acp.compat.check
+
+# Run one reviewed, version-pinned native ACP command
+ACP_ECOSYSTEM_AGENT_ID=gemini mix test --only interop_acp_ecosystem
+```
+
+The native smoke tier verifies process startup, ACP initialization, capability
+decoding, authentication-method decoding, and clean shutdown without sending a
+prompt. Entries marked with the stronger `session` tier also create a session
+and exercise advertised list/close capabilities. The initial executable matrix
+covers Claude Agent ACP, Codex ACP, Gemini CLI, and Pi ACP; every entry is
+version-pinned and runs with an isolated home and scratch working directory.
+
+The same manifest pins the reference revisions used to inform ExMCP's Claude,
+Codex, and Pi protocol adapters:
+
+- `agentclientprotocol/claude-agent-acp`
+- `zed-industries/codex-acp`
+- `svkozak/pi-acp`
+
+Upstream commit drift produces a direct compare URL for adapter review. Catalog
+or registry changes are never executed automatically: maintainers must review
+the package, command, platform and authentication requirements before adding
+or changing an `interopAgents` entry. The scheduled `ACP ecosystem
+compatibility` workflow runs weekly and can also be dispatched manually.
 
 ## API Reference
 
@@ -662,4 +798,5 @@ on `PATH`.
 - `ExMCP.ACP.AdapterBridge` — GenServer bridge managing Port and message queue
 - `ExMCP.ACP.Adapters.ClaudeSDK` — Claude Code SDK-protocol adapter
 - `ExMCP.ACP.Adapters.Codex` — Codex adapter
+- `ExMCP.ACP.Adapters.ZCode` — ZCode app-server adapter
 - `ExMCP.ACP.Adapters.Pi` — Pi adapter

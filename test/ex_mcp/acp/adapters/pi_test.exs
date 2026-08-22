@@ -752,11 +752,14 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert {:messages, [_notice, _info], queued_state} = Pi.translate_outbound(msg, state)
       assert PromptQueue.len(queued_state.prompt_queue) == 1
 
-      assert {:messages_and_write, [first_response, _start_notice, _queue_info], data, next_state} =
+      assert {:skip, queued_state} =
                Pi.translate_inbound(
                  Jason.encode!(%{"type" => "agent_end", "messages" => []}),
                  queued_state
                )
+
+      assert {:messages_and_write, [first_response, _start_notice, _queue_info], data, next_state} =
+               Pi.translate_inbound(Jason.encode!(%{"type" => "agent_settled"}), queued_state)
 
       assert first_response["id"] == 1
       assert decode_one(data)["message"] == "second"
@@ -920,8 +923,8 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
   end
 
-  describe "translate_inbound/2 — agent_end" do
-    test "produces prompt response with accumulated text and usage", %{state: state} do
+  describe "translate_inbound/2 — agent settlement" do
+    test "agent_end records usage and agent_settled produces the prompt response", %{state: state} do
       state = %{
         state
         | session_id: "s1",
@@ -935,7 +938,12 @@ defmodule ExMCP.ACP.Adapters.PiTest do
           "messages" => [%{"role" => "assistant", "usage" => %{"input" => 10, "output" => 2}}]
         })
 
-      assert {:messages, [response], new_state} = Pi.translate_inbound(line, state)
+      assert {:skip, state} = Pi.translate_inbound(line, state)
+      assert state.pending_prompt.acp_id == 5
+
+      assert {:messages, [response], new_state} =
+               Pi.translate_inbound(Jason.encode!(%{"type" => "agent_settled"}), state)
+
       assert response["id"] == 5
       assert response["result"]["_meta"]["ex_mcp"]["text"] == "Hello world"
       assert response["result"]["usage"]["inputTokens"] == 10
@@ -1050,6 +1058,78 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert hd(update["content"])["type"] == "diff"
       assert hd(update["content"])["oldText"] == "old\n"
       assert hd(update["content"])["newText"] == "new\n"
+    end
+  end
+
+  describe "extension UI interop" do
+    test "select requests round-trip through ACP permission choices", %{state: state} do
+      state = %{state | session_id: "s1"}
+
+      event = %{
+        "type" => "extension_ui_request",
+        "id" => "ui-1",
+        "method" => "select",
+        "title" => "Choose a target",
+        "options" => ["staging", "production"],
+        "internal" => "must not cross the ACP boundary"
+      }
+
+      assert {:messages, [request], state} =
+               Pi.translate_inbound(Jason.encode!(event), state)
+
+      assert request["method"] == "session/request_permission"
+
+      assert Enum.map(request["params"]["options"], & &1["optionId"]) == [
+               "choice-0",
+               "choice-1"
+             ]
+
+      assert request["params"]["toolCall"]["toolCallId"] == "pi-ui-ui-1"
+
+      assert request["params"]["toolCall"]["rawInput"] == %{
+               "method" => "select",
+               "title" => "Choose a target",
+               "options" => ["staging", "production"]
+             }
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "outcome" => %{"outcome" => "selected", "optionId" => "choice-1"}
+        }
+      }
+
+      assert {:ok, data, state} = Pi.translate_outbound(response, state)
+
+      assert decode_one(data) == %{
+               "type" => "extension_ui_response",
+               "id" => "ui-1",
+               "value" => "production"
+             }
+
+      assert state.pending_extension_ui == %{}
+    end
+
+    test "unsupported input UI always receives a cancellation response", %{state: state} do
+      state = %{state | session_id: "s1"}
+
+      event = %{
+        "type" => "extension_ui_request",
+        "id" => "ui-input",
+        "method" => "input",
+        "message" => "Secret?"
+      }
+
+      assert {:messages_and_write, [notice], data, _state} =
+               Pi.translate_inbound(Jason.encode!(event), state)
+
+      assert get_in(notice, ["params", "update", "content", "text"]) =~ "not supported"
+
+      assert decode_one(data) == %{
+               "type" => "extension_ui_response",
+               "id" => "ui-input",
+               "cancelled" => true
+             }
     end
   end
 

@@ -34,6 +34,9 @@ defmodule ExMCP.ACP.RequestValidation do
   def validate_agent_request("session/request_permission", params),
     do: validate_permission_request(params)
 
+  def validate_agent_request("elicitation/create", params),
+    do: validate_elicitation_request(params)
+
   def validate_agent_request("fs/read_text_file", params), do: validate_file_read(params)
   def validate_agent_request("fs/write_text_file", params), do: validate_file_write(params)
   def validate_agent_request("terminal/create", params), do: validate_terminal_create(params)
@@ -43,6 +46,20 @@ defmodule ExMCP.ACP.RequestValidation do
 
   def validate_agent_request("terminal/" <> _method, _params), do: {:error, :method_not_found}
   def validate_agent_request(_method, _params), do: :ok
+
+  @spec validate_elicitation_response(term()) :: :ok | {:error, :invalid_params}
+  def validate_elicitation_response(%{"action" => "accept"} = response) do
+    if optional_map?(response["content"]) and optional_meta?(response),
+      do: :ok,
+      else: {:error, :invalid_params}
+  end
+
+  def validate_elicitation_response(%{"action" => action} = response)
+      when action in ["decline", "cancel"] do
+    if optional_meta?(response), do: :ok, else: {:error, :invalid_params}
+  end
+
+  def validate_elicitation_response(_response), do: {:error, :invalid_params}
 
   @spec validate_client_request(String.t(), term()) :: :ok | {:error, :invalid_params}
   def validate_client_request("authenticate", %{"methodId" => method_id}),
@@ -106,6 +123,120 @@ defmodule ExMCP.ACP.RequestValidation do
       do: {:error, :invalid_params}
 
   def validate_client_request(_method, _params), do: :ok
+
+  defp validate_elicitation_request(%{"mode" => "form"} = params) do
+    with :ok <- validate_elicitation_scope(params),
+         :ok <- require_non_empty_string(params["message"]),
+         true <- valid_elicitation_schema?(params["requestedSchema"]),
+         true <- optional_meta?(params) do
+      :ok
+    else
+      _invalid -> {:error, :invalid_params}
+    end
+  end
+
+  defp validate_elicitation_request(%{"mode" => "url"} = params) do
+    with :ok <- validate_elicitation_scope(params),
+         :ok <- require_non_empty_string(params["message"]),
+         :ok <- require_non_empty_string(params["elicitationId"]),
+         true <- safe_elicitation_url?(params["url"]),
+         true <- optional_meta?(params) do
+      :ok
+    else
+      _invalid -> {:error, :invalid_params}
+    end
+  end
+
+  defp validate_elicitation_request(_params), do: {:error, :invalid_params}
+
+  defp validate_elicitation_scope(%{"sessionId" => session_id} = params)
+       when is_binary(session_id) and session_id != "" do
+    if is_nil(params["requestId"]) and
+         (is_nil(params["toolCallId"]) or non_empty_string?(params["toolCallId"])),
+       do: :ok,
+       else: {:error, :invalid_params}
+  end
+
+  defp validate_elicitation_scope(%{"requestId" => request_id} = params)
+       when (is_integer(request_id) or is_binary(request_id)) and request_id != "" do
+    if is_nil(params["sessionId"]) and is_nil(params["toolCallId"]),
+      do: :ok,
+      else: {:error, :invalid_params}
+  end
+
+  defp validate_elicitation_scope(_params), do: {:error, :invalid_params}
+
+  defp valid_elicitation_schema?(%{"type" => "object", "properties" => properties} = schema)
+       when is_map(properties) do
+    required = Map.get(schema, "required")
+
+    (is_nil(required) or
+       (is_list(required) and Enum.all?(required, &non_empty_string?/1) and
+          Enum.all?(required, &Map.has_key?(properties, &1)))) and
+      Enum.all?(properties, fn {name, property} ->
+        non_empty_string?(name) and valid_elicitation_property?(property)
+      end)
+  end
+
+  defp valid_elicitation_schema?(_schema), do: false
+
+  defp valid_elicitation_property?(%{"type" => type} = property)
+       when type in ["string", "number", "integer", "boolean", "array"] do
+    not sensitive_elicitation_property?(property) and optional_string?(property["title"]) and
+      optional_string?(property["description"]) and valid_elicitation_options?(property) and
+      valid_elicitation_array_items?(type, property["items"])
+  end
+
+  defp valid_elicitation_property?(_property), do: false
+
+  defp sensitive_elicitation_property?(property) do
+    property["writeOnly"] == true or property["isSecret"] == true or
+      property["format"] in ["password", "secret"] or
+      get_in(property, ["_meta", "sensitive"]) == true or
+      get_in(property, ["_meta", "secret"]) == true or
+      get_in(property, ["_meta", "codex", "isSecret"]) == true
+  end
+
+  defp valid_elicitation_options?(property) do
+    Enum.all?([property["oneOf"], property["anyOf"]], fn
+      nil -> true
+      options when is_list(options) and options != [] -> Enum.all?(options, &valid_enum_option?/1)
+      _invalid -> false
+    end)
+  end
+
+  defp valid_enum_option?(%{"const" => value} = option)
+       when is_binary(value) or is_number(value) or is_boolean(value) do
+    optional_string?(option["title"]) and optional_string?(option["description"])
+  end
+
+  defp valid_enum_option?(_option), do: false
+
+  defp valid_elicitation_array_items?("array", %{"anyOf" => options})
+       when is_list(options) and options != [],
+       do: Enum.all?(options, &valid_enum_option?/1)
+
+  defp valid_elicitation_array_items?("array", _items), do: false
+  defp valid_elicitation_array_items?(_type, nil), do: true
+  defp valid_elicitation_array_items?(_type, _items), do: false
+
+  defp optional_string?(nil), do: true
+  defp optional_string?(value), do: is_binary(value)
+
+  defp safe_elicitation_url?(url) when is_binary(url) and url != "" do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host} when scheme in ["https", "http"] ->
+        is_binary(host) and host != "" and is_nil(URI.parse(url).userinfo)
+
+      _invalid ->
+        false
+    end
+  end
+
+  defp safe_elicitation_url?(_url), do: false
+
+  defp optional_map?(nil), do: true
+  defp optional_map?(value), do: is_map(value)
 
   @spec validate_session_update(term()) :: :ok | {:error, :invalid_params}
   def validate_session_update(%{"sessionId" => session_id, "update" => update} = params)

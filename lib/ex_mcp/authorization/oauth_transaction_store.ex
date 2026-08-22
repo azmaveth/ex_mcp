@@ -20,6 +20,7 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
   @name __MODULE__
   @default_ttl_ms 600_000
   @default_max_entries 10_000
+  @field_atoms %{"code" => :code, "iss" => :iss, "state" => :state}
 
   @type transaction_id :: String.t()
   @type callback_error ::
@@ -355,7 +356,10 @@ defmodule ExMCP.Authorization.OAuthTransactionStore do
   defp secure_equal?(_left, _right), do: false
 
   defp field(map, key) do
-    Map.get(map, key) || Map.get(map, String.to_existing_atom(key))
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Map.fetch!(@field_atoms, key))
+    end
   end
 
   defp now_ms, do: System.monotonic_time(:millisecond)

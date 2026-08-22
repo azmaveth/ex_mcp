@@ -23,7 +23,7 @@ ExMCP is a comprehensive Elixir implementation of the [Model Context Protocol](h
 ## Key Features
 
 - **Full MCP support** -- **[2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28)** (latest stable) plus the legacy 2024-11-05, 2025-03-26, 2025-06-18, and 2025-11-25 revisions
-- **Modern MCP conformance** -- 377/377 client checks and 112/112 server checks (`@modelcontextprotocol/conformance@0.2.0-alpha.10`, complete 2026-07-28 suites, 2026-08-05)
+- **Modern MCP conformance** -- 387/387 client checks and 149/149 server checks (`@modelcontextprotocol/conformance@0.2.0-alpha.11`, complete 2026-07-28 suites, 2026-08-22)
 - **Legacy MCP conformance** -- 218/218 client checks and 39/39 server checks (`@modelcontextprotocol/conformance@0.1.16`, latest executed core suite)
 - **ACP v1** -- Agent Client Protocol major version `1` (`protocolVersion: 1`)
 - **Multiple transports** -- Streamable HTTP, stdio, and BEAM-local MCP (~15μs local calls)
@@ -39,29 +39,29 @@ tree supports it through `:prefer_modern` and `:modern_only`, while preserving
 every legacy revision through the 1.x line. Starting in `1.0.0-rc.6`, the
 application default is `:prefer_modern`: clients try modern discovery first
 and fall back only when the peer positively identifies itself as legacy.
-Set `protocol_mode: :legacy_only` to preserve the **legacy protocol era**. Exact rc.5 wire and session behavior still requires package rollback to `1.0.0-rc.5`; rc.8 continues to enforce server-issued sessions and newer lifecycle/security rules.
+Set `protocol_mode: :legacy_only` to preserve the **legacy protocol era**.
+Exact rc.5 wire and session behavior still requires package rollback to
+`1.0.0-rc.5`; 1.0 continues to enforce server-issued sessions and newer
+lifecycle/security rules.
 `ExMCP.protocol_version/0` intentionally returns the newest legacy revision,
 `2025-11-25`, for initialize-based compatibility—it is not the latest upstream
 MCP revision. See
 [Configuration](docs/CONFIGURATION.md#protocol-eras-and-modes) and the
 [1.0 migration guide](docs/getting-started/MIGRATION.md#upgrading-from-rc5--legacy-mcp-to-the-10-dual-era-release).
 
-> **Release-state note:** `1.0.0-rc.8` is the current modern-preferred soak
-> candidate. It preserves rc.7 behavior while adding credential-free lifecycle
-> coverage for the real Claude Code, Codex, and Pi CLIs, Pi configuration
-> isolation, and internal safety-helper deduplication. Published `1.0.0-rc.7`
-> remains the security/SSE lifecycle baseline, and `1.0.0-rc.5` remains the
-> legacy-only characterization baseline. Stable 1.0 will preserve the behavior
-> of the final RC after its soak and rollback drill.
+> **Release-state note:** `1.0.0` is the stable modern-preferred release. It is
+> wire- and API-compatible with rc.8 after the final candidate completed its
+> soak, with one internal OAuth callback parser fix for a runtime-order crash.
+> Published `1.0.0-rc.5` remains the legacy-only characterization baseline.
 
 ## Installation
 
-For the dual-era release candidate:
+For the stable dual-era release:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.8"}
+    {:ex_mcp, "~> 1.0"}
   ]
 end
 ```
@@ -282,6 +282,13 @@ Use the [Agent Client Protocol](https://agentclientprotocol.com/) to control cod
   transport_mod: ExMCP.ACP.AdapterTransport,
   adapter: ExMCP.ACP.Adapters.Pi,
   adapter_opts: [cwd: "/my/project", thinking_level: "medium"]
+)
+
+# ZCode via the app-server adapter
+{:ok, client} = ExMCP.ACP.start_client(
+  transport_mod: ExMCP.ACP.AdapterTransport,
+  adapter: ExMCP.ACP.Adapters.ZCode,
+  adapter_opts: [cli_path: "zcode", cwd: "/my/project", mode_id: "build"]
 )
 
 # Native Elixir ACP agent over stdio
