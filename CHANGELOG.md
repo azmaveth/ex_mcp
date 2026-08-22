@@ -16,8 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MCP and device-auth URL elicitations, Pi extension UI requests, prompt-close
   fencing, and background-agent settlement.
 
+### Changed
+
+- The gating MCP 2026-07-28 conformance runner now pins
+  `@modelcontextprotocol/conformance@0.2.0-alpha.11`, including wire-schema,
+  HTTP session-lifecycle, and client schema-preservation coverage.
+
 ### Fixed
 
+- The external MCP conformance client now round-trips complete JSON Schema
+  2020-12 tool schemas without replacing them with generated arguments.
 - The Pi adapter now waits for `agent_settled` before completing an ACP prompt,
   preserving follow-up work that can arrive after `agent_end`, and always
   answers extension UI requests it cannot represent.

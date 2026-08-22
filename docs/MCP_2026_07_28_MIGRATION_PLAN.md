@@ -558,7 +558,7 @@ request* flows that no longer exist in modern — they need era-conditional vari
 The legacy conformance gate remains pinned to the stable
 `@modelcontextprotocol/conformance@0.1.16` harness. The modern gate is now
 `scripts/conformance.sh modern`, pinned by default to the first exact-version-aware harness,
-`@modelcontextprotocol/conformance@0.2.0-alpha.10`. It runs the complete `all` server and client
+`@modelcontextprotocol/conformance@0.2.0-alpha.11`. It runs the complete `all` server and client
 suites for `2026-07-28` under Node.js 22+, propagates either suite's exit status, and uses one precompiled Mix
 build for the parallel client scenarios. Prefer a stable 2026-07-28-aware harness for release
 qualification; if one is still unavailable, use the explicit official-SDK interop fallback in
@@ -1333,8 +1333,8 @@ Things downstream users will notice.
    monitors, a `ping`-equivalent flush (note: in modern the flush must be a real request such
    as `tools/list`, since `ping` is gone), telemetry assertions, or `wait_until/2`.
 7. **External conformance** — `scripts/conformance.sh modern` pins
-   `@modelcontextprotocol/conformance@0.2.0-alpha.10`, selects exactly `2026-07-28`, and runs
-   both complete suites. The current result is 112/112 server and 377/377 client checks with no
+   `@modelcontextprotocol/conformance@0.2.0-alpha.11`, selects exactly `2026-07-28`, and runs
+   both complete suites. The current result is 149/149 server and 387/387 client checks with no
    warnings or expected-failure entries.
 7b. **Track the harness to stable.** Keep `CONFORMANCE_ALPHA_VERSION` overridable and replace
    the prerelease pin with a stable 2026-aware release as soon as one is available. Until then,
@@ -1361,7 +1361,7 @@ Things downstream users will notice.
 | R3 | **`requestState` key management.** MRTR security depends on an AEAD key shared by every node that can resume a request. | Version the envelope, support key IDs/rotation, bind principal + request digest + expiry, and fail clearly when a configured MRTR flow cannot decrypt state. |
 | R4 | **HTTP plug complexity.** `do_dispatch/4` already has 14 clauses (L153-262); dual-era adds more. | Consider splitting modern vs legacy into separate plug modules behind a router rather than growing `do_dispatch/4`. |
 | R5 | **Stateless servers break existing user handlers** that relied on per-connection state. | The spec's answer is explicit server-minted handles as tool arguments (§"Stateful Tools"). Needs a documented migration recipe with an example. |
-| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.10` for the gating 2026-07-28 suites; the modern harness is still prerelease. | Move to a stable modern harness when available. Until then, the four bidirectional stdio/HTTP lanes pinned to official TypeScript SDK v2 `2.0.0` provide the required fallback; disclose both pins in release notes. |
+| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.11` for the gating 2026-07-28 suites; the modern harness is still prerelease. | Move to a stable modern harness when available. Until then, the four bidirectional stdio/HTTP lanes pinned to official TypeScript SDK v2 `2.0.0` provide the required fallback; disclose both pins in release notes. |
 | R7 | **Spec churn.** `2026-07-28` is dated in the near past relative to this plan; errata are likely. | <code>mix mcp.sync_spec</code> has sha256/ETag change detection — run it in CI and alert on drift. |
 | R8 | **Scope.** ACP (17.6k LOC) is untouched but shares `_meta` helpers. | Verify no shared-helper regressions when `RequestParams` changes. |
 | R9 | **Ambiguous HTTP delivery can duplicate side effects.** A broken response does not reveal whether `tools/call` ran. | The conforming default reissues and is at-least-once. Offer `:safe_only` for callers that prefer `:outcome_unknown`; document application idempotency keys. |
