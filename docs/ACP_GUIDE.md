@@ -4,7 +4,7 @@ The [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) is a standar
 
 ## Overview
 
-ACP uses JSON-RPC 2.0 over stdio (the same wire format as MCP) with methods for session management and bidirectional communication. Most coding agents speak ACP natively. For agents with their own protocols (Claude Code, Codex, Pi), ExMCP provides an adapter system that translates between ACP and the agent's native protocol.
+ACP uses JSON-RPC 2.0 over stdio (the same wire format as MCP) with methods for session management and bidirectional communication. Most coding agents speak ACP natively. For agents with their own protocols (Claude Code, Codex, Pi, and ZCode), ExMCP provides an adapter system that translates between ACP and the agent's native protocol.
 
 ### Architecture
 
@@ -17,7 +17,7 @@ ExMCP.ACP.Client (GenServer)
     ├─── Native ACP agents (Gemini CLI, Hermes, OpenCode, Qwen Code, ...)
     │       └── stdio JSON-RPC directly
     │
-    └─── Adapted agents (Claude Code, Codex, Pi)
+    └─── Adapted agents (Claude Code, Codex, Pi, ZCode)
             └── AdapterBridge → Adapter → agent-native protocol
 
 ACP Client
@@ -123,6 +123,27 @@ session setup, model/mode config, and richer status updates.
 )
 ```
 
+### Adapted Agent (ZCode)
+
+```elixir
+{:ok, client} = ExMCP.ACP.start_client(
+  transport_mod: ExMCP.ACP.AdapterTransport,
+  adapter: ExMCP.ACP.Adapters.ZCode,
+  adapter_opts: [
+    cwd: "/my/project",
+    workspace_roots: ["/my/project"],
+    mode_id: "build"
+  ]
+)
+
+{:ok, %{"sessionId" => sid}} = ExMCP.ACP.Client.new_session(client, "/my/project")
+{:ok, _} = ExMCP.ACP.Client.set_config_option(client, sid, "thought_level", "medium")
+{:ok, result} = ExMCP.ACP.Client.prompt(client, sid, "Fix the failing tests")
+```
+
+The adapter launches `zcode app-server`. Set `adapter_opts[:cli_path]` or the
+`ZCODE_EXECUTABLE` environment variable when `zcode` is not on `PATH`.
+
 ### Adapted Agent (Pi)
 
 ```elixir
@@ -200,6 +221,21 @@ headers, stdio commands, arguments, and environment values. Set
 `:trust_authorized_workspaces` only when the same authorization decision should
 also mark that path trusted in Codex's project configuration.
 
+### ZCode Workspace and MCP Authority
+
+The ZCode adapter applies the same fail-closed boundary to session workspaces
+and MCP server definitions. `:workspace_roots` defaults to the adapter's
+working directory, and `:authorize_workspace` may authorize paths for a
+specific operation such as `:session_new`, `:session_load`, or
+`:session_resume`. ZCode Protocol v1 does not support ACP
+`additionalDirectories`, so the adapter rejects non-empty values.
+
+MCP servers must either exactly match a map in `:trusted_mcp_servers` or pass
+`:authorize_mcp_server`. Names alone do not authorize peer-controlled URLs,
+headers, commands, arguments, or environment values. As with Codex,
+`trusted_mcp_servers: :all` is an unsafe compatibility escape hatch and should
+only be used at a trusted integration boundary.
+
 ## Session Lifecycle
 
 ACP sessions represent ongoing conversations with an agent.
@@ -272,7 +308,7 @@ defmodule MyApp.ACPHandler do
         status = update["status"]  # "pending", "in_progress", "completed", or "failed"
         IO.puts("[#{status}] #{update["title"]}")
 
-        # Rich metadata available for ClaudeSDK/Codex/Pi adapters:
+        # Rich metadata available for ClaudeSDK/Codex/Pi/ZCode adapters:
         # update["kind"]      — "read", "edit", "execute", "search", "think"
         # update["locations"] — [%{"path" => "/src/app.ex", "line" => 10}]
         # update["content"]   — [%{"type" => "diff", "oldText" => ..., "newText" => ...}]
@@ -542,6 +578,45 @@ Translates between ACP and Codex's app-server JSON-RPC protocol.
 
 **Unsupported Codex app-server requests:** Dynamic tool calls, request-user-input prompts, ChatGPT token refresh, and attestation generation are rejected explicitly because ACP does not provide compatible structured responses for those app-server request schemas.
 
+### ZCode (`ExMCP.ACP.Adapters.ZCode`)
+
+Translates between ACP and the ZCode Protocol v1 NDJSON stream exposed by the
+persistent `zcode app-server` process.
+
+**Features:**
+- Startup workspace-state handshake and dynamic model catalog loading
+- ACP `session/new`, `session/load`, `session/resume`, `session/list`,
+  `session/fork`, `session/close`, `session/prompt`, and `session/cancel`
+- FIFO prompt queueing, queued-prompt cancellation, and prompt stop-reason mapping
+- Streaming agent text and reasoning, rich tool-call lifecycle metadata,
+  session title/mode updates, and context-window usage updates
+- ZCode permission requests bridged through ACP `session/request_permission`
+- Runtime mode, model, and thought-level controls with ACP config-option updates
+- HTTP, SSE, and authorized stdio MCP server descriptors
+- Terminal authentication through `zcode login`
+- Canonical, symlink-aware workspace confinement and fail-closed MCP authorization
+
+**Modes:** `plan` disables tool execution; `build` uses normal permission
+prompts; `edit` auto-accepts file edits; `auto` uses ZCode's classifier to
+approve requests; and `yolo` allows operations without prompting.
+
+**Config options:** `mode`, `model` (after the app server returns its model
+catalog), and `thought_level`. The fallback thought levels are `off`,
+`minimal`, `low`, `medium`, and `high`; a selected model may provide its own
+supported levels. Legacy `session/set_model` remains available for compatibility.
+
+**Startup options:** `cli_path`, `cwd`, `workspace_roots`,
+`authorize_workspace`, `authorize_mcp_server`, `trusted_mcp_servers`, `model`,
+`mode_id`, `thought_level`, and `env`. The shared adapter bridge also accepts
+`environment_policy: :inherit` when an explicitly trusted deployment requires
+the complete parent environment.
+
+**Protocol limitations:** ZCode Protocol v1 accepts text prompts only, so image
+and embedded-context prompt capabilities are not advertised. Non-empty
+`additionalDirectories` and ACP `session/delete` are unsupported. ZCode
+request-user-input calls are answered as cancelled because ACP does not expose
+the corresponding structured response schema.
+
 ### Pi (`ExMCP.ACP.Adapters.Pi`)
 
 Translates between ACP and Pi's RPC NDJSON protocol.
@@ -663,4 +738,5 @@ the runtime bundled with `/Applications/ZCode.app`.
 - `ExMCP.ACP.AdapterBridge` — GenServer bridge managing Port and message queue
 - `ExMCP.ACP.Adapters.ClaudeSDK` — Claude Code SDK-protocol adapter
 - `ExMCP.ACP.Adapters.Codex` — Codex adapter
+- `ExMCP.ACP.Adapters.ZCode` — ZCode app-server adapter
 - `ExMCP.ACP.Adapters.Pi` — Pi adapter
