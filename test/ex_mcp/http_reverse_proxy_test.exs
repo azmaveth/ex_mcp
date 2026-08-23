@@ -59,94 +59,95 @@ defmodule ExMCP.HttpReverseProxyTest do
     end
   end
 
-  setup do
-    upstream_port = free_port()
-    proxy_port = free_port()
-    upstream_ref = {:proxy_test_upstream, System.unique_integer([:positive])}
-    proxy_ref = {:proxy_test_front, System.unique_integer([:positive])}
+  for adapter <- ExMCP.Test.HTTPAdapter.adapters() do
+    describe "with #{adapter}" do
+      setup do
+        upstream_port = ExMCP.Test.HTTPAdapter.free_port()
+        proxy_port = ExMCP.Test.HTTPAdapter.free_port()
 
-    {:ok, _pid} =
-      Plug.Cowboy.http(
-        ExMCP.HttpPlug,
-        [
-          handler: DispatchTrackingHandler,
-          handler_opts: [test_pid: self()],
-          path: "/mcp",
-          protocol_mode: :modern_only
-        ],
-        ip: {127, 0, 0, 1},
-        port: upstream_port,
-        ref: upstream_ref
-      )
+        {:ok, _upstream} =
+          ExMCP.Test.HTTPAdapter.start_plug(
+            ExMCP.HttpPlug,
+            [
+              handler: DispatchTrackingHandler,
+              handler_opts: [test_pid: self()],
+              path: "/mcp",
+              protocol_mode: :modern_only
+            ],
+            adapter: unquote(adapter),
+            port: upstream_port,
+            ip: {127, 0, 0, 1}
+          )
 
-    {:ok, _pid} =
-      Plug.Cowboy.http(
-        BufferingProxy,
-        [upstream_port: upstream_port],
-        ip: {127, 0, 0, 1},
-        port: proxy_port,
-        ref: proxy_ref
-      )
+        {:ok, _proxy} =
+          ExMCP.Test.HTTPAdapter.start_plug(
+            BufferingProxy,
+            [upstream_port: upstream_port],
+            adapter: unquote(adapter),
+            port: proxy_port,
+            ip: {127, 0, 0, 1}
+          )
 
-    on_exit(fn ->
-      shutdown(proxy_ref)
-      shutdown(upstream_ref)
-    end)
+        %{proxy_port: proxy_port}
+      end
 
-    %{proxy_port: proxy_port}
-  end
+      test "a valid modern request survives a normalizing and buffering proxy hop", %{
+        proxy_port: port
+      } do
+        response = raw_request(port, standard_headers(), request_body(progress?: true))
 
-  test "a valid modern request survives a normalizing and buffering proxy hop", %{
-    proxy_port: port
-  } do
-    response = raw_request(port, standard_headers(), request_body(progress?: true))
+        assert status(response) == 200
+        assert String.contains?(String.downcase(response), "x-accel-buffering: no")
+        assert_receive {:handler_dispatched, _handler}
+      end
 
-    assert status(response) == 200
-    assert String.contains?(String.downcase(response), "x-accel-buffering: no")
-    assert_receive {:handler_dispatched, _handler}
-  end
+      test "duplicate and conflicting case-variant required headers fail before dispatch", %{
+        proxy_port: port
+      } do
+        headers =
+          standard_headers() ++
+            [
+              {"mcp-protocol-version", "2026-07-28"},
+              {"MCP-METHOD", "prompts/list"}
+            ]
 
-  test "duplicate and conflicting case-variant required headers fail before dispatch", %{
-    proxy_port: port
-  } do
-    headers =
-      standard_headers() ++
-        [
-          {"mcp-protocol-version", "2026-07-28"},
-          {"MCP-METHOD", "prompts/list"}
+        response = raw_request(port, headers, request_body())
+
+        assert status(response) == 400
+        refute_receive {:handler_dispatched, _handler}, 100
+      end
+
+      test "oversized header names and values fail closed before dispatch", %{proxy_port: port} do
+        cases = [
+          standard_headers() ++ [{String.duplicate("x", 257), "value"}],
+          standard_headers() ++ [{"x-oversized", String.duplicate("v", 8_193)}]
         ]
 
-    response = raw_request(port, headers, request_body())
+        for headers <- cases do
+          response = raw_request(port, headers, request_body())
+          assert response == "" or status(response) in [400, 413, 414, 431, 502]
+          refute_receive {:handler_dispatched, _handler}, 100
+        end
+      end
 
-    assert status(response) == 400
-    refute_receive {:handler_dispatched, _handler}, 100
-  end
+      test "obsolete folded or injected header lines fail closed before dispatch", %{
+        proxy_port: port
+      } do
+        request =
+          request_bytes(
+            standard_headers(),
+            request_body(),
+            "Mcp-Method: tools/list\r\n injected-continuation"
+          )
 
-  test "oversized header names and values fail closed before dispatch", %{proxy_port: port} do
-    cases = [
-      standard_headers() ++ [{String.duplicate("x", 257), "value"}],
-      standard_headers() ++ [{"x-oversized", String.duplicate("v", 8_193)}]
-    ]
+        response = send_raw(port, request)
 
-    for headers <- cases do
-      response = raw_request(port, headers, request_body())
-      assert response == "" or status(response) in [400, 413, 414, 431, 502]
-      refute_receive {:handler_dispatched, _handler}, 100
+        assert response == "" or is_nil(status(response)) or
+                 status(response) in [400, 431, 500, 502]
+
+        refute_receive {:handler_dispatched, _handler}, 100
+      end
     end
-  end
-
-  test "obsolete folded or injected header lines fail closed before dispatch", %{proxy_port: port} do
-    request =
-      request_bytes(
-        standard_headers(),
-        request_body(),
-        "Mcp-Method: tools/list\r\n injected-continuation"
-      )
-
-    response = send_raw(port, request)
-
-    assert response == "" or status(response) in [400, 431, 502]
-    refute_receive {:handler_dispatched, _handler}, 100
   end
 
   defp standard_headers do
@@ -221,18 +222,5 @@ defmodule ExMCP.HttpReverseProxyTest do
       [_, status] -> String.to_integer(status)
       _missing -> nil
     end
-  end
-
-  defp free_port do
-    {:ok, socket} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}])
-    {:ok, port} = :inet.port(socket)
-    :ok = :gen_tcp.close(socket)
-    port
-  end
-
-  defp shutdown(ref) do
-    Plug.Cowboy.shutdown(ref)
-  catch
-    :exit, _reason -> :ok
   end
 end

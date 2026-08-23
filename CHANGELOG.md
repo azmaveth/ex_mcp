@@ -38,8 +38,21 @@ rc.8 starts the final-candidate soak from the rc.8 artifact.
 - Post-1.0 maintenance and 2.0 roadmap notes now track adapter decomposition,
   pure functional cores, dependency-cycle cleanup, configuration ownership,
   and the evidence required before considering separate MCP and ACP packages.
+- Standalone HTTP servers can run on Bandit. Add `{:bandit, "~> 1.0"}` or
+  `{:plug_cowboy, "~> 2.8"}` when using `transport: :http`. Phoenix apps that
+  already mount `ExMCP.HttpPlug` need no extra adapter.
 
 ### Changed
+
+- **BREAKING:** `plug_cowboy` is now optional. Standalone
+  `start_link(transport: :http)` no longer pulls Cowboy transitively; add
+  `{:bandit, "~> 1.0"}` or `{:plug_cowboy, "~> 2.8"}` to the host mix.exs.
+  Phoenix applications that already provide Bandit or Cowboy are unchanged.
+  `:adapter` (`:auto`, `:bandit`, `:cowboy`) selects the server; `:auto`
+  prefers Bandit.
+- Cowboy `unique_listener: true` mints an isolated listener so two HTTP
+  servers can run on one node. The default stays the named
+  `ExMCP.HttpPlug.HTTP` singleton. `:ranch_ref` is removed.
 
 - Subprocess environment isolation, positive-integer option handling, and
   symlink-aware workspace containment now use shared internal helpers with

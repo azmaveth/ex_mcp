@@ -2,7 +2,9 @@ defmodule ExMCP.TestHelpers do
   @moduledoc """
   Helpers for setting up test servers and managing test infrastructure.
   """
-  import ExUnit.Callbacks
+
+  alias ExMCP.Test.HTTPAdapter
+  alias ExMCP.TestServer
 
   @doc """
   Ensures the `ExMCP.TestServer` module is compiled and loaded.
@@ -23,47 +25,12 @@ defmodule ExMCP.TestHelpers do
   Returns `{:ok, server_pid, port}` or `{:error, reason}`.
   """
   def start_http_server(opts \\ []) do
-    # Start ranch if it's not already running
-    ensure_ranch_started()
-
-    port = find_available_port(Keyword.get(opts, :preferred_port, 8080))
-
-    server_opts =
-      [
-        transport: :http,
-        port: port,
-        host: "localhost",
-        # Disable SSE for simpler testing
-        sse_enabled: false
-      ] ++ opts
-
     ensure_test_server_loaded()
+    opts = Keyword.put_new(opts, :adapter, :cowboy)
 
-    case ExMCP.TestServer.start_link(server_opts) do
-      {:ok, pid} ->
-        # No sleep: wait_for_server_ready/1 polls the listener until it accepts.
-        :ok = wait_for_server_ready(port)
-        {:ok, pid, port}
-
-      {:error, {:transport_error, {:start_server_failed, _reason}}} ->
-        # Server failed to start, likely port conflict
-        # Try to find another port
-        retry_port = find_available_port(port + 1)
-
-        server_opts = Keyword.put(server_opts, :port, retry_port)
-        ensure_test_server_loaded()
-
-        case ExMCP.TestServer.start_link(server_opts) do
-          {:ok, pid} ->
-            :ok = wait_for_server_ready(retry_port)
-            {:ok, pid, retry_port}
-
-          error ->
-            error
-        end
-
-      error ->
-        error
+    case HTTPAdapter.start_mcp_http(TestServer, opts) do
+      {:ok, handle} -> {:ok, handle.pid, handle.port}
+      error -> error
     end
   end
 
@@ -204,149 +171,17 @@ defmodule ExMCP.TestHelpers do
       end
   """
   def start_test_servers_for_api(context) do
-    ensure_ranch_started()
     ensure_session_manager_started()
+    adapter = Map.get(context, :http_adapter, :cowboy)
 
-    {server_name, ranch_ref, port} = generate_server_config(context)
-    server_opts = build_server_opts(server_name, ranch_ref, port)
+    {:ok, handle} =
+      HTTPAdapter.start_mcp_http(ApiTestServer,
+        adapter: adapter,
+        sse_enabled: false,
+        server_info: %{name: "api-test-server", version: "1.0.0"}
+      )
 
-    start_server_with_retries(server_opts, server_name, ranch_ref, port)
-  end
-
-  # Extract server configuration generation
-  defp generate_server_config(context) do
-    test_name = Map.get(context, :test, :default_test)
-    unique_id = System.unique_integer([:positive])
-    server_name = :"ApiTestServer_#{test_name}_#{unique_id}"
-    ranch_ref = :"ranch_listener_#{test_name}_#{unique_id}"
-
-    base_port = 8080 + :rand.uniform(5000)
-    port = find_available_port(base_port)
-
-    {server_name, ranch_ref, port}
-  end
-
-  # Extract server options building
-  defp build_server_opts(server_name, ranch_ref, port) do
-    [
-      transport: :http,
-      port: port,
-      sse_enabled: false,
-      name: server_name,
-      ranch_ref: ranch_ref
-    ]
-  end
-
-  # Main server starting logic with retries
-  defp start_server_with_retries(server_opts, server_name, ranch_ref, port) do
-    case ApiTestServer.start_link(server_opts) do
-      {:ok, _pid} ->
-        handle_successful_start(server_name, ranch_ref, port)
-
-      {:error, {:already_started, _}} ->
-        handle_already_started_error(server_opts, server_name, port)
-
-      {:error, reason} when reason in [:eaddrinuse, :eacces, :enotfound] ->
-        handle_port_binding_error(server_name, port)
-
-      {:error, {:transport_error, {:start_server_failed, _reason}}} ->
-        # Pass through transport errors
-        raise "Failed to start test HTTP server due to transport error"
-
-      {:error, reason} ->
-        raise "Failed to start test HTTP server: #{inspect(reason)}"
-    end
-  end
-
-  # Handle successful server start
-  defp handle_successful_start(server_name, ranch_ref, port) do
-    # ensure_server_ready/1 polls the listening socket; no fixed sleep needed.
-    ensure_server_ready(port)
-    register_cleanup(server_name, ranch_ref)
-    %{http_url: "http://localhost:#{port}"}
-  end
-
-  # Handle already started error by retrying with different ranch ref
-  defp handle_already_started_error(server_opts, server_name, port) do
-    test_name = server_opts[:name]
-    unique_id = System.unique_integer([:positive])
-    retry_ranch_ref = :"ranch_listener_retry_#{test_name}_#{unique_id}"
-    retry_opts = Keyword.put(server_opts, :ranch_ref, retry_ranch_ref)
-
-    case ApiTestServer.start_link(retry_opts) do
-      {:ok, _pid} ->
-        ensure_server_ready(port)
-        register_cleanup(server_name, retry_ranch_ref)
-        %{http_url: "http://localhost:#{port}"}
-
-      {:error, reason} ->
-        raise "Failed to restart test HTTP server: #{inspect(reason)}"
-    end
-  end
-
-  # Handle port binding errors by trying a different port
-  defp handle_port_binding_error(_server_name, original_port) do
-    retry_port = find_available_port(original_port + 1)
-    server_opts = [transport: :http, port: retry_port, sse_enabled: false]
-
-    case ApiTestServer.start_link(server_opts) do
-      {:ok, pid} ->
-        ensure_server_ready(retry_port)
-        register_simple_cleanup(pid)
-        %{http_url: "http://localhost:#{retry_port}"}
-
-      {:error, reason} ->
-        raise "Failed to start test HTTP server on retry: #{inspect(reason)}"
-    end
-  end
-
-  # Ensure server is ready or raise error
-  defp ensure_server_ready(port) do
-    case wait_for_server_ready(port, 100) do
-      :ok -> :ok
-      {:error, reason} -> raise "Server not ready: #{inspect(reason)}"
-    end
-  end
-
-  # Register cleanup for server and ranch listener.
-  # `:ranch.stop_listener/1` and `GenServer.stop/3` are both synchronous, so
-  # once they return the port is released — no settling sleep required.
-  defp register_cleanup(server_name, ranch_ref) do
-    on_exit(fn ->
-      cleanup_ranch_listener(ranch_ref)
-      safe_stop_process(server_name)
-    end)
-  end
-
-  # Register simple cleanup for just the process
-  defp register_simple_cleanup(pid) do
-    on_exit(fn ->
-      ref = Process.monitor(pid)
-      safe_stop_process(pid, :shutdown, 500)
-
-      # Guarantees the process is gone before the next test binds the port.
-      receive do
-        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-      after
-        1_000 -> Process.demonitor(ref, [:flush])
-      end
-    end)
-  end
-
-  # Extract ranch cleanup logic
-  defp cleanup_ranch_listener(ranch_ref) do
-    :ranch.stop_listener(ranch_ref)
-  catch
-    :exit, _ -> :ok
-  end
-
-  # Private helpers
-
-  defp ensure_ranch_started do
-    case Application.ensure_all_started(:ranch) do
-      {:ok, _} -> :ok
-      {:error, _} -> :ok
-    end
+    %{http_url: "http://localhost:#{handle.port}"}
   end
 
   defp ensure_session_manager_started do
@@ -362,42 +197,6 @@ defmodule ExMCP.TestHelpers do
 
       _pid ->
         :ok
-    end
-  end
-
-  defp find_available_port(preferred_port, max_attempts \\ 100) do
-    case :gen_tcp.listen(preferred_port, []) do
-      {:ok, socket} ->
-        :gen_tcp.close(socket)
-        preferred_port
-
-      {:error, :eaddrinuse} when max_attempts > 0 ->
-        find_available_port(preferred_port + 1, max_attempts - 1)
-
-      {:error, _} ->
-        # Fallback or raise error if we can't find any port
-        if max_attempts > 0 do
-          find_available_port(preferred_port + 1, max_attempts - 1)
-        else
-          raise "Could not find available port after 100 attempts starting from #{preferred_port - 100}"
-        end
-    end
-  end
-
-  defp wait_for_server_ready(port, attempts \\ 50) do
-    case :gen_tcp.connect(~c"localhost", port, []) do
-      {:ok, socket} ->
-        :gen_tcp.close(socket)
-        :ok
-
-      {:error, :econnrefused} when attempts > 0 ->
-        # Intentional bounded poll: there is no event to subscribe to for
-        # "the OS accepted a bind", so we retry the connect until it succeeds.
-        Process.sleep(50)
-        wait_for_server_ready(port, attempts - 1)
-
-      {:error, reason} ->
-        {:error, {:server_not_ready, reason}}
     end
   end
 

@@ -3,7 +3,8 @@
 # HTTP MCP server with SSE enabled.
 
 Mix.install([
-  {:ex_mcp, path: Path.expand("../..", __DIR__)}
+  {:ex_mcp, path: Path.expand("../..", __DIR__)},
+  {:bandit, "~> 1.0"}
 ], verbose: false)
 
 Logger.configure(level: :info)

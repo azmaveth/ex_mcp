@@ -398,96 +398,97 @@ defmodule ExMCP.Integration.ModernInteropTest do
   describe "TypeScript SDK v2 HTTP client → ExMCP modern HTTP server" do
     @describetag :interop_modern_ts_http_client
 
-    test "uses POST-owned SSE without sessions, GET, or DELETE", %{node_path: node_path} do
-      require_node!(node_path)
-      registry = start_supervised!({Subscriptions, name: nil})
-      port = free_port()
-      ranch_ref = {:modern_http_interop, System.unique_integer([:positive])}
+    for adapter <- ExMCP.Test.HTTPAdapter.adapters() do
+      test "uses POST-owned SSE without sessions, GET, or DELETE (#{adapter})", %{
+        node_path: node_path
+      } do
+        require_node!(node_path)
+        registry = start_supervised!({Subscriptions, name: nil})
+        port = free_port()
 
-      {:ok, _pid} =
-        Plug.Cowboy.http(
-          ExMCP.HttpPlug,
-          [
-            handler: ModernHTTPHandler,
-            handler_opts: [registry: registry],
-            path: "/mcp",
-            protocol_mode: :modern_only,
-            server_info: %{
-              name: "elixir-modern-http-interop-server",
-              version: "1.0.0"
-            },
-            mrtr: true,
-            request_state: [
-              active_key_id: "interop-http",
-              keys: %{"interop-http" => :binary.copy(<<78>>, 32)}
+        {:ok, _server} =
+          ExMCP.Test.HTTPAdapter.start_plug(
+            ExMCP.HttpPlug,
+            [
+              handler: ModernHTTPHandler,
+              handler_opts: [registry: registry],
+              path: "/mcp",
+              protocol_mode: :modern_only,
+              server_info: %{
+                name: "elixir-modern-http-interop-server",
+                version: "1.0.0"
+              },
+              mrtr: true,
+              request_state: [
+                active_key_id: "interop-http",
+                keys: %{"interop-http" => :binary.copy(<<78>>, 32)}
+              ],
+              subscription_registry: registry,
+              subscription_keepalive_interval_ms: 100,
+              subscription_max_lifetime_ms: 30_000,
+              allowed_origins: ["http://127.0.0.1:#{port}"]
             ],
-            subscription_registry: registry,
-            subscription_keepalive_interval_ms: 100,
-            subscription_max_lifetime_ms: 30_000,
-            allowed_origins: ["http://127.0.0.1:#{port}"]
-          ],
-          ip: {127, 0, 0, 1},
-          port: port,
-          ref: ranch_ref
-        )
+            adapter: unquote(adapter),
+            port: port,
+            ip: {127, 0, 0, 1}
+          )
 
-      on_exit(fn -> shutdown_cowboy(ranch_ref) end)
+        url = "http://127.0.0.1:#{port}/mcp"
 
-      url = "http://127.0.0.1:#{port}/mcp"
+        {output, exit_code} =
+          System.cmd(
+            node_path,
+            [@ts_http_client_script, url],
+            cd: @project_dir,
+            stderr_to_stdout: true
+          )
 
-      {output, exit_code} =
-        System.cmd(
-          node_path,
-          [@ts_http_client_script, url],
-          cd: @project_dir,
-          stderr_to_stdout: true
-        )
+        results = parse_json_result(output)
 
-      results = parse_json_result(output)
+        assert results["connected"] == true, "TypeScript HTTP client did not connect: #{output}"
+        assert results["success"] == true, "TypeScript HTTP operations failed: #{output}"
+        assert results["negotiated_version"] == @protocol_version
+        assert results["protocol_era"] == "modern"
+        assert results["server_info"]["name"] == "elixir-modern-http-interop-server"
+        assert is_nil(results["transport_session_id"])
+        assert results["echo"] == "Echo: hello over modern HTTP"
+        assert results["request_context"]["protocolVersion"] == @protocol_version
 
-      assert results["connected"] == true, "TypeScript HTTP client did not connect: #{output}"
-      assert results["success"] == true, "TypeScript HTTP operations failed: #{output}"
-      assert results["negotiated_version"] == @protocol_version
-      assert results["protocol_era"] == "modern"
-      assert results["server_info"]["name"] == "elixir-modern-http-interop-server"
-      assert is_nil(results["transport_session_id"])
-      assert results["echo"] == "Echo: hello over modern HTTP"
-      assert results["request_context"]["protocolVersion"] == @protocol_version
+        assert results["request_context"]["clientInfo"]["name"] ==
+                 "ts-modern-http-interop-client"
 
-      assert results["request_context"]["clientInfo"]["name"] ==
-               "ts-modern-http-interop-client"
+        assert results["onboard"] == "TypeScript HTTP Client:ex_mcp_http"
+        assert results["subscription_filter"] == %{"toolsListChanged" => true}
+        assert results["subscription_closed"] == true
 
-      assert results["onboard"] == "TypeScript HTTP Client:ex_mcp_http"
-      assert results["subscription_filter"] == %{"toolsListChanged" => true}
-      assert results["subscription_closed"] == true
+        assert is_binary(results["tools_changed_meta"]["io.modelcontextprotocol/subscriptionId"])
 
-      assert is_binary(results["tools_changed_meta"]["io.modelcontextprotocol/subscriptionId"])
+        requests = results["requests"]
+        assert requests != []
+        assert Enum.all?(requests, &(&1["http_method"] == "POST"))
+        assert Enum.all?(requests, &is_nil(&1["request_session_id"]))
+        assert Enum.all?(requests, &is_nil(&1["response_session_id"]))
 
-      requests = results["requests"]
-      assert requests != []
-      assert Enum.all?(requests, &(&1["http_method"] == "POST"))
-      assert Enum.all?(requests, &is_nil(&1["request_session_id"]))
-      assert Enum.all?(requests, &is_nil(&1["response_session_id"]))
+        request_messages = Enum.filter(requests, &(&1["rpc_request"] == true))
 
-      request_messages = Enum.filter(requests, &(&1["rpc_request"] == true))
+        assert Enum.all?(request_messages, fn request ->
+                 request["protocol_version"] == @protocol_version and
+                   request["mcp_method"] == request["rpc_method"]
+               end)
 
-      assert Enum.all?(request_messages, fn request ->
-               request["protocol_version"] == @protocol_version and
-                 request["mcp_method"] == request["rpc_method"]
-             end)
+        assert Enum.any?(requests, fn request ->
+                 request["rpc_method"] == "tools/call" and
+                   request["rpc_name"] == "inspect_context" and
+                   request["mcp_name"] == "inspect_context"
+               end)
 
-      assert Enum.any?(requests, fn request ->
-               request["rpc_method"] == "tools/call" and
-                 request["rpc_name"] == "inspect_context" and
-                 request["mcp_name"] == "inspect_context"
-             end)
+        assert Enum.any?(requests, fn request ->
+                 request["rpc_method"] == "subscriptions/listen" and
+                   String.starts_with?(request["content_type"] || "", "text/event-stream")
+               end)
 
-      assert Enum.any?(requests, fn request ->
-               request["rpc_method"] == "subscriptions/listen" and
-                 String.starts_with?(request["content_type"] || "", "text/event-stream")
-             end)
-
-      assert exit_code == 0, "TypeScript HTTP client exited with #{exit_code}: #{output}"
+        assert exit_code == 0, "TypeScript HTTP client exited with #{exit_code}: #{output}"
+      end
     end
   end
 
@@ -612,12 +613,6 @@ defmodule ExMCP.Integration.ModernInteropTest do
     {:ok, {_address, port}} = :inet.sockname(socket)
     :ok = :gen_tcp.close(socket)
     port
-  end
-
-  defp shutdown_cowboy(ref) do
-    Plug.Cowboy.shutdown(ref)
-  catch
-    :exit, _reason -> :ok
   end
 
   defp close_port(port) do

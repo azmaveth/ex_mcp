@@ -25,6 +25,7 @@ end)
 {:ok, _} = Application.ensure_all_started(:ssl)
 {:ok, _} = Application.ensure_all_started(:ranch)
 {:ok, _} = Application.ensure_all_started(:cowboy)
+_ = Application.ensure_all_started(:bandit)
 
 # Start test consent handler agent
 {:ok, _} = ExMCP.ConsentHandler.Test.start_link()

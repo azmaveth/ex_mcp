@@ -19,7 +19,11 @@ For scripts with `Mix.install/2`, configure logging before installing deps:
 Application.put_env(:ex_mcp, :stdio_mode, true)
 Application.put_env(:logger, :level, :emergency)
 
-Mix.install([{:ex_mcp, "~> 1.0.0-rc.8"}], verbose: false)
+Mix.install([
+  {:ex_mcp, "~> 1.0.0-rc.8"},
+  # Required only for standalone `transport: :http` (not Phoenix mounts):
+  # {:bandit, "~> 1.0"}
+], verbose: false)
 ```
 
 ### Server hangs after starting

@@ -19,20 +19,28 @@ defmodule ExMCP.MixProject do
       source_url: @github_url,
       homepage_url: @github_url,
       test_coverage: [tool: ExCoveralls],
+      elixirc_options: [
+        # Optional HTTP adapters. Remote calls are guarded at runtime.
+        no_warn_undefined: [Plug.Cowboy, Bandit, :cowboy, :ranch]
+      ],
       dialyzer: [
-        plt_add_apps: [:mix, :ex_unit],
+        plt_add_apps: [:mix, :ex_unit, :plug_cowboy, :cowboy, :bandit],
         ignore_warnings: ".dialyzer_ignore.exs",
         list_unused_filters: false,
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts"
       ],
-      # Cowlib 2.19.0 is the newest compatible release. These remaining
-      # advisories are mitigated by Plug/Cowboy response-header validation,
-      # and ExMCP does not call cow_cookie:cookie/1. Those assumptions are
-      # locked by dependency_advisory_mitigation_test.exs. Security owner:
-      # project maintainers; review/remove these exceptions by 2026-09-12 or
-      # immediately when a patched Cowlib is published. Keep the exceptions
-      # exact so `mix hex.audit` still fails on every new advisory.
+      # These exceptions apply to this repo's optional Cowboy tree and to
+      # Bypass (test-only). Hex consumers that omit plug_cowboy do not
+      # fetch Cowlib and do not inherit these advisories. Cowlib 2.19.0
+      # is the newest compatible release. Remaining advisories are
+      # mitigated by Plug/Cowboy response-header validation, and ExMCP
+      # does not call cow_cookie:cookie/1. Those assumptions are locked
+      # by dependency_advisory_mitigation_test.exs. Security owner:
+      # project maintainers; review/remove these exceptions by 2026-09-12
+      # or immediately when a patched Cowlib is published. Keep the
+      # exceptions exact so `mix hex.audit` still fails on every new
+      # advisory.
       hex: [
         ignore_advisories: [
           "EEF-CVE-2026-43966",
@@ -90,8 +98,9 @@ defmodule ExMCP.MixProject do
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
       {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
-      {:plug_cowboy, "~> 2.7"},
       {:plug, "~> 1.16"},
+      {:plug_cowboy, "~> 2.8", optional: true},
+      {:bandit, "~> 1.0", optional: true},
       {:fuse, "~> 2.4", optional: true},
       # MCP protocol support
       {:ex_json_schema, "~> 0.10"},

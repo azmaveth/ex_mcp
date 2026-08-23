@@ -119,211 +119,208 @@ defmodule ExMCP.Client.ModernHTTPRequestStreamTest do
     def handle_create_message(_params, state), do: {:error, "not supported", state}
   end
 
-  setup do
-    port = free_port()
-    ranch_ref = {:modern_http_request_stream_test, System.unique_integer([:positive])}
-    attempts = start_supervised!({Agent, fn -> %{} end})
+  for adapter <- ExMCP.Test.HTTPAdapter.adapters() do
+    describe "with #{adapter}" do
+      setup do
+        port = ExMCP.Test.HTTPAdapter.free_port()
+        attempts = start_supervised!({Agent, fn -> %{} end})
 
-    {:ok, _pid} =
-      Plug.Cowboy.http(
-        ExMCP.HttpPlug,
-        [
-          handler: ServerHandler,
-          handler_opts: [test_pid: self(), attempts: attempts],
-          path: "/mcp",
-          protocol_mode: :modern_only,
-          allowed_origins: ["http://127.0.0.1:#{port}"]
-        ],
-        ip: {127, 0, 0, 1},
-        port: port,
-        ref: ranch_ref
-      )
+        {:ok, _server} =
+          ExMCP.Test.HTTPAdapter.start_plug(
+            ExMCP.HttpPlug,
+            [
+              handler: ServerHandler,
+              handler_opts: [test_pid: self(), attempts: attempts],
+              path: "/mcp",
+              protocol_mode: :modern_only,
+              allowed_origins: ["http://127.0.0.1:#{port}"]
+            ],
+            adapter: unquote(adapter),
+            port: port,
+            ip: {127, 0, 0, 1}
+          )
 
-    on_exit(fn ->
-      try do
-        Plug.Cowboy.shutdown(ranch_ref)
-      catch
-        :exit, _reason -> :ok
+        {:ok, client} =
+          Client.start_link(
+            transport: :http,
+            url: "http://127.0.0.1:#{port}/mcp",
+            protocol_mode: :modern_only,
+            protocol_version: "2026-07-28",
+            use_sse: false,
+            health_check_interval: nil,
+            stream_idle_timeout: 2_000,
+            handler: {ClientHandler, [test_pid: self()]}
+          )
+
+        on_exit(fn ->
+          if Process.alive?(client) do
+            try do
+              Client.disconnect(client)
+            catch
+              :exit, _reason -> :ok
+            end
+          end
+        end)
+
+        {:ok, client: client, attempts: attempts}
       end
-    end)
 
-    {:ok, client} =
-      Client.start_link(
-        transport: :http,
-        url: "http://127.0.0.1:#{port}/mcp",
-        protocol_mode: :modern_only,
-        protocol_version: "2026-07-28",
-        use_sse: false,
-        health_check_interval: nil,
-        stream_idle_timeout: 2_000,
-        handler: {ClientHandler, [test_pid: self()]}
-      )
+      test "delivers only related notifications before the final response", %{client: client} do
+        task =
+          Task.async(fn ->
+            Client.call_tool(client, "streaming", %{},
+              progress_token: "request-stream-1",
+              meta: %{"io.modelcontextprotocol/logLevel" => "debug"},
+              timeout: 2_000,
+              format: :map
+            )
+          end)
 
-    on_exit(fn ->
-      if Process.alive?(client) do
-        try do
-          Client.disconnect(client)
-        catch
-          :exit, _reason -> :ok
+        assert_receive {:server_handler_started, handler_pid}, 1_000
+        assert is_pid(handler_pid)
+
+        assert_receive {:client_progress, request_id,
+                        %{
+                          "progressToken" => "request-stream-1",
+                          "progress" => 25,
+                          "total" => 100,
+                          "message" => "quarter"
+                        }},
+                       1_000
+
+        assert is_integer(request_id)
+
+        assert_receive {:client_log, ^request_id,
+                        %{
+                          "level" => "info",
+                          "data" => %{"step" => 1, "message" => "still working"}
+                        } = log_params},
+                       1_000
+
+        refute Map.has_key?(log_params, "_meta")
+
+        assert_receive {:client_progress, ^request_id,
+                        %{
+                          "progressToken" => "request-stream-1",
+                          "progress" => 100,
+                          "total" => 100,
+                          "message" => "complete"
+                        }},
+                       1_000
+
+        assert {:ok, %{"content" => [%{"text" => "done", "type" => "text"}]}} =
+                 Task.await(task, 2_000)
+
+        refute_receive {:client_progress, _request_id, _params}, 50
+        refute_receive {:client_log, _request_id, _params}, 50
+      end
+
+      test "closing one request stream cancels its temporary handler", %{client: client} do
+        task =
+          Task.async(fn ->
+            Client.call_tool(client, "blocking", %{},
+              progress_token: "request-stream-cancel",
+              timeout: 5_000,
+              format: :map
+            )
+          end)
+
+        assert_receive {:server_handler_started, handler_pid}, 1_000
+        handler_ref = Process.monitor(handler_pid)
+
+        assert [request_id] = Client.get_pending_requests(client)
+        assert :ok = Client.send_cancelled(client, request_id, "test cancellation")
+        assert {:error, :cancelled} = Task.await(task, 1_000)
+        assert [] = Client.get_pending_requests(client)
+
+        # Cowboy ends the request process on TCP close, which stops the handler.
+        # Bandit may keep a blocked handler alive until the next chunk write or
+        # handler_call_timeout if the tool is not writing to the stream.
+        if unquote(adapter) == :cowboy do
+          assert_receive {:DOWN, ^handler_ref, :process, ^handler_pid, _reason}, 2_000
         end
       end
-    end)
 
-    {:ok, client: client, attempts: attempts}
-  end
+      test "log delivery requires per-request opt-in and honors the minimum level", %{
+        client: client
+      } do
+        assert {:ok, _result} =
+                 Client.call_tool(client, "logging", %{},
+                   progress_token: "no-log-opt-in",
+                   timeout: 2_000,
+                   format: :map
+                 )
 
-  test "delivers only related notifications before the final response", %{client: client} do
-    task =
-      Task.async(fn ->
-        Client.call_tool(client, "streaming", %{},
-          progress_token: "request-stream-1",
-          meta: %{"io.modelcontextprotocol/logLevel" => "debug"},
-          timeout: 2_000,
-          format: :map
-        )
-      end)
+        assert_receive {:server_log_result, {:error, :logging_not_requested}}, 1_000
+        refute_receive {:client_log, _request_id, _params}, 50
 
-    assert_receive {:server_handler_started, handler_pid}, 1_000
-    assert is_pid(handler_pid)
+        assert {:ok, _result} =
+                 Client.call_tool(client, "logging", %{},
+                   meta: %{"io.modelcontextprotocol/logLevel" => "error"},
+                   timeout: 2_000,
+                   format: :map
+                 )
 
-    assert_receive {:client_progress, request_id,
-                    %{
-                      "progressToken" => "request-stream-1",
-                      "progress" => 25,
-                      "total" => 100,
-                      "message" => "quarter"
-                    }},
-                   1_000
+        assert_receive {:server_log_result, :ok}, 1_000
+        refute_receive {:client_log, _request_id, _params}, 50
 
-    assert is_integer(request_id)
+        task =
+          Task.async(fn ->
+            Client.call_tool(client, "logging", %{},
+              meta: %{"io.modelcontextprotocol/logLevel" => "debug"},
+              timeout: 2_000,
+              format: :map
+            )
+          end)
 
-    assert_receive {:client_log, ^request_id,
-                    %{
-                      "level" => "info",
-                      "data" => %{"step" => 1, "message" => "still working"}
-                    } = log_params},
-                   1_000
+        assert_receive {:client_log, request_id,
+                        %{
+                          "level" => "info",
+                          "data" => "requested log"
+                        }},
+                       1_000
 
-    refute Map.has_key?(log_params, "_meta")
+        assert is_integer(request_id)
 
-    assert_receive {:client_progress, ^request_id,
-                    %{
-                      "progressToken" => "request-stream-1",
-                      "progress" => 100,
-                      "total" => 100,
-                      "message" => "complete"
-                    }},
-                   1_000
+        assert_receive {:server_log_result, :ok}, 1_000
+        assert {:ok, _result} = Task.await(task, 2_000)
+      end
 
-    assert {:ok, %{"content" => [%{"text" => "done", "type" => "text"}]}} =
-             Task.await(task, 2_000)
+      test "an ambiguous broken stream retries once with a new JSON-RPC id", %{client: client} do
+        task =
+          Task.async(fn ->
+            Client.call_tool(client, "flaky", %{"value" => 7},
+              progress_token: "retry-default",
+              timeout: 3_000,
+              http_stream_retry_delay: 0,
+              format: :map
+            )
+          end)
 
-    refute_receive {:client_progress, _request_id, _params}, 50
-    refute_receive {:client_log, _request_id, _params}, 50
-  end
+        assert_receive {:flaky_attempt, "retry-default", 1, first_id, first_arguments}, 1_000
+        assert_receive {:client_progress, ^first_id, %{"progress" => 1}}, 1_000
+        assert_receive {:flaky_attempt, "retry-default", 2, second_id, second_arguments}, 2_000
 
-  test "closing one request stream cancels its temporary handler", %{client: client} do
-    task =
-      Task.async(fn ->
-        Client.call_tool(client, "blocking", %{},
-          progress_token: "request-stream-cancel",
-          timeout: 5_000,
-          format: :map
-        )
-      end)
+        assert first_id != second_id
+        assert first_arguments == second_arguments
 
-    assert_receive {:server_handler_started, handler_pid}, 1_000
-    handler_ref = Process.monitor(handler_pid)
+        assert {:ok, %{"content" => [%{"text" => "retried"}]}} = Task.await(task, 2_000)
+      end
 
-    assert [request_id] = Client.get_pending_requests(client)
-    assert :ok = Client.send_cancelled(client, request_id, "test cancellation")
-    assert {:error, :cancelled} = Task.await(task, 1_000)
-    assert_receive {:DOWN, ^handler_ref, :process, ^handler_pid, _reason}, 2_000
+      test "safe-only does not reissue an unattested tool after an ambiguous break", %{
+        client: client
+      } do
+        assert {:error, %ExMCP.Error.TransportError{reason: :outcome_unknown}} =
+                 Client.call_tool(client, "flaky", %{},
+                   progress_token: "retry-safe-only",
+                   timeout: 2_000,
+                   http_stream_retry: :safe_only,
+                   format: :map
+                 )
 
-    assert [] = Client.get_pending_requests(client)
-  end
-
-  test "log delivery requires per-request opt-in and honors the minimum level", %{client: client} do
-    assert {:ok, _result} =
-             Client.call_tool(client, "logging", %{},
-               progress_token: "no-log-opt-in",
-               timeout: 2_000,
-               format: :map
-             )
-
-    assert_receive {:server_log_result, {:error, :logging_not_requested}}, 1_000
-    refute_receive {:client_log, _request_id, _params}, 50
-
-    assert {:ok, _result} =
-             Client.call_tool(client, "logging", %{},
-               meta: %{"io.modelcontextprotocol/logLevel" => "error"},
-               timeout: 2_000,
-               format: :map
-             )
-
-    assert_receive {:server_log_result, :ok}, 1_000
-    refute_receive {:client_log, _request_id, _params}, 50
-
-    task =
-      Task.async(fn ->
-        Client.call_tool(client, "logging", %{},
-          meta: %{"io.modelcontextprotocol/logLevel" => "debug"},
-          timeout: 2_000,
-          format: :map
-        )
-      end)
-
-    assert_receive {:client_log, request_id,
-                    %{
-                      "level" => "info",
-                      "data" => "requested log"
-                    }},
-                   1_000
-
-    assert is_integer(request_id)
-
-    assert_receive {:server_log_result, :ok}, 1_000
-    assert {:ok, _result} = Task.await(task, 2_000)
-  end
-
-  test "an ambiguous broken stream retries once with a new JSON-RPC id", %{client: client} do
-    task =
-      Task.async(fn ->
-        Client.call_tool(client, "flaky", %{"value" => 7},
-          progress_token: "retry-default",
-          timeout: 3_000,
-          http_stream_retry_delay: 0,
-          format: :map
-        )
-      end)
-
-    assert_receive {:flaky_attempt, "retry-default", 1, first_id, first_arguments}, 1_000
-    assert_receive {:client_progress, ^first_id, %{"progress" => 1}}, 1_000
-    assert_receive {:flaky_attempt, "retry-default", 2, second_id, second_arguments}, 2_000
-
-    assert first_id != second_id
-    assert first_arguments == second_arguments
-
-    assert {:ok, %{"content" => [%{"text" => "retried"}]}} = Task.await(task, 2_000)
-  end
-
-  test "safe-only does not reissue an unattested tool after an ambiguous break", %{client: client} do
-    assert {:error, %ExMCP.Error.TransportError{reason: :outcome_unknown}} =
-             Client.call_tool(client, "flaky", %{},
-               progress_token: "retry-safe-only",
-               timeout: 2_000,
-               http_stream_retry: :safe_only,
-               format: :map
-             )
-
-    assert_receive {:flaky_attempt, "retry-safe-only", 1, _request_id, _arguments}, 1_000
-    refute_receive {:flaky_attempt, "retry-safe-only", 2, _request_id, _arguments}, 100
-  end
-
-  defp free_port do
-    {:ok, socket} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}])
-    {:ok, port} = :inet.port(socket)
-    :ok = :gen_tcp.close(socket)
-    port
+        assert_receive {:flaky_attempt, "retry-safe-only", 1, _request_id, _arguments}, 1_000
+        refute_receive {:flaky_attempt, "retry-safe-only", 2, _request_id, _arguments}, 100
+      end
+    end
   end
 end

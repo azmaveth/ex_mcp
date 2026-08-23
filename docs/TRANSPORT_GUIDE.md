@@ -230,6 +230,33 @@ end
 Put HTTP concerns in Plug pipelines before `ExMCP.HttpPlug`: authentication,
 request signing, rate limiting, CORS/origin decisions, and DNS rebinding checks.
 
+Phoenix already provides Bandit or Cowboy. Mount `ExMCP.HttpPlug` in the
+router; do not call `MyServer.start_link(transport: :http)` beside the
+endpoint (that starts a second listener).
+
+### Standalone HTTP server
+
+`transport: :http` starts Bandit or Cowboy itself. Add **one** adapter to the
+host mix.exs (ExMCP does not pull Cowboy by default):
+
+```elixir
+{:bandit, "~> 1.0"}
+# or
+{:plug_cowboy, "~> 2.8"}
+```
+
+`:adapter` is `:auto` (prefer Bandit), `:bandit`, or `:cowboy`. Override per
+start or with `config :ex_mcp, :http_adapter, :cowboy`.
+
+```elixir
+MyServer.start_link(transport: :http, port: 4000)
+MyServer.start_link(transport: :http, port: 4000, adapter: :cowboy)
+```
+
+Cowboy defaults to one named listener (`ExMCP.HttpPlug.HTTP`). Leave
+`unique_listener` off in production. If a test needs two Cowboy listeners
+on one node, pass `unique_listener: true`.
+
 ### Deprecated MCP 2024-11-05 HTTP+SSE
 
 Existing deployments can retain the old two-endpoint transport throughout
