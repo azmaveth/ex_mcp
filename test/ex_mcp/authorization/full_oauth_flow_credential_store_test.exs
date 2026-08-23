@@ -99,6 +99,35 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
     assert Agent.get(server.counter, & &1.registrations) == 0
   end
 
+  test "treats malformed optional PRM fields as absent" do
+    {:ok, store_agent} =
+      Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
+
+    server =
+      oauth_server("client-with-malformed-prm", nil,
+        prm_resource: 42,
+        prm_scopes: "not-a-list"
+      )
+
+    assert {:ok, %{access_token: "token-for-client-with-malformed-prm"}} =
+             server
+             |> flow_config({StoreAdapter, store_agent})
+             |> FullOAuthFlow.execute()
+  end
+
+  test "preserves token endpoint errors across the client credentials flow" do
+    {:ok, store_agent} =
+      Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
+
+    response = %{"error" => "invalid_client", "error_description" => "credentials rejected"}
+    server = oauth_server("rejected-client", nil, token_error: response)
+
+    assert {:error, {:oauth_error, 401, ^response}} =
+             server
+             |> flow_config({StoreAdapter, store_agent})
+             |> FullOAuthFlow.execute()
+  end
+
   test "preserves native and web DCR redirect rejections without a weakening retry" do
     {:ok, store_agent} =
       Agent.start_link(fn -> %{index: %{}, registrations: %{}, tokens: %{}} end)
@@ -255,6 +284,7 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
           {^resource_host, "/prm"} ->
             %{"authorization_servers" => [issuer]}
             |> maybe_put("resource", opts[:prm_resource])
+            |> maybe_put("scopes_supported", opts[:prm_scopes])
 
           {^issuer_host, "/.well-known/openid-configuration"} ->
             %{
@@ -300,12 +330,18 @@ defmodule ExMCP.Authorization.FullOAuthFlowCredentialStoreTest do
     Bypass.stub(bypass, "POST", "/token", fn conn ->
       Agent.update(counter, &Map.update!(&1, :tokens, fn count -> count + 1 end))
 
-      json(conn, 200, %{
-        "access_token" => "token-for-#{client_id}",
-        "token_type" => "Bearer",
-        "expires_in" => 3_600,
-        "scope" => "tools:read"
-      })
+      case opts[:token_error] do
+        nil ->
+          json(conn, 200, %{
+            "access_token" => "token-for-#{client_id}",
+            "token_type" => "Bearer",
+            "expires_in" => 3_600,
+            "scope" => "tools:read"
+          })
+
+        error ->
+          json(conn, 401, error)
+      end
     end)
 
     %{
