@@ -41,7 +41,7 @@ defmodule ExMCP.HttpPlug do
           port: 4000
         )
 
-      # Standalone Cowboy (add `{:plug_cowboy, "~> 2.8"}` to mix.exs)
+      # Standalone Cowboy
       {:ok, _} = Plug.Cowboy.http(ExMCP.HttpPlug, [
         handler: MyApp.MCPServer,
         server_info: %{name: "my-app", version: "1.0.0"}

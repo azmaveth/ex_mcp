@@ -11,8 +11,8 @@ ExMCP provides seamless integration with Phoenix applications through the `ExMCP
 defp deps do
   [
     {:ex_mcp, "~> 1.0"},
-    # Phoenix already depends on Bandit or plug_cowboy. Do not add
-    # plug_cowboy just because you mount ExMCP.HttpPlug.
+    # Mount ExMCP.HttpPlug in the endpoint. Do not also call
+    # start_link(transport: :http) — that starts a second listener.
   ]
 end
 ```

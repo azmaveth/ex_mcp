@@ -15,8 +15,8 @@ defmodule ExMCP.Test.HTTPAdapter do
   @doc """
   Starts `plug` under `adapter` and shuts it down when the test exits.
 
-  Cowboy uses a unique Ranch ref so two listeners can coexist. Bandit
-  isolation is the supervisor pid plus a free port.
+  Cowboy injects a unique `:ranch_ref` so two listeners can coexist.
+  Bandit isolation is the supervisor pid plus a free port.
   """
   def start_plug(plug, plug_opts, opts) do
     adapter = Keyword.fetch!(opts, :adapter)
@@ -45,7 +45,7 @@ defmodule ExMCP.Test.HTTPAdapter do
       |> Keyword.put(:transport, :http)
       |> Keyword.put(:adapter, adapter)
       |> Keyword.put(:port, port)
-      |> maybe_put_unique_listener(adapter)
+      |> maybe_put_cowboy_ref(adapter)
 
     case Transport.start_http_server(handler, server_info, [], start_opts) do
       {:ok, pid} ->
@@ -53,7 +53,7 @@ defmodule ExMCP.Test.HTTPAdapter do
           adapter: adapter,
           pid: pid,
           port: port,
-          ref: nil
+          ref: Keyword.get(start_opts, :ranch_ref)
         }
 
         :ok = wait_until_listening(port)
@@ -69,13 +69,10 @@ defmodule ExMCP.Test.HTTPAdapter do
   Stops a listener started by `start_plug/3` or `start_mcp_http/2`.
   """
   def shutdown(%{adapter: :cowboy, ref: ref}) when not is_nil(ref) do
-    try do
-      Plug.Cowboy.shutdown(ref)
-    catch
-      :exit, _ -> :ok
-    end
-
+    Plug.Cowboy.shutdown(ref)
     :ok
+  catch
+    :exit, _ -> :ok
   end
 
   def shutdown(%{pid: pid}) when is_pid(pid) do
@@ -120,11 +117,11 @@ defmodule ExMCP.Test.HTTPAdapter do
     {spec, nil}
   end
 
-  defp maybe_put_unique_listener(opts, :cowboy) do
-    Keyword.put_new(opts, :unique_listener, true)
+  defp maybe_put_cowboy_ref(opts, :cowboy) do
+    Keyword.put_new(opts, :ranch_ref, {:ex_mcp_test_cowboy, System.unique_integer([:positive])})
   end
 
-  defp maybe_put_unique_listener(opts, _adapter), do: opts
+  defp maybe_put_cowboy_ref(opts, _adapter), do: opts
 
   defp wait_until_listening(port, attempts \\ 50)
 

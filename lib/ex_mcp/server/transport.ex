@@ -35,8 +35,7 @@ defmodule ExMCP.Server.Transport do
   * `:adapter` - HTTP server adapter (`:auto`, `:bandit`, or `:cowboy`).
     `:auto` (the default) prefers Bandit when it is loaded, then Cowboy.
     Override with this option or `config :ex_mcp, :http_adapter, ...`.
-    Standalone HTTP requires `{:bandit, "~> 1.0"}` or
-    `{:plug_cowboy, "~> 2.8"}` in the host application's mix.exs.
+    Cowboy ships with ExMCP. Add `{:bandit, "~> 1.0"}` to use Bandit.
   * `:port` - Port number for HTTP transports (default: 4000)
   * `:host` - Host for HTTP transports (default: "localhost")
   * `:cors_enabled` - Enable CORS for HTTP transports (default: `false`, the
@@ -50,9 +49,9 @@ defmodule ExMCP.Server.Transport do
   * `:allowed_origins` - Origin allow-list passed to `ExMCP.HttpPlug`.
     Defaults to localhost origins for the bound port when binding to a
     localhost address, otherwise `[]` (reject all cross-origin browsers)
-  * `:unique_listener` - When `true`, Cowboy registers an isolated listener
-    instead of the named `ExMCP.HttpPlug.HTTP` singleton (default: `false`).
-    Bandit ignores this option
+  * `:ranch_ref` - Cowboy-only Ranch listener name. Omitted by default so
+    Plug.Cowboy registers the named `ExMCP.HttpPlug.HTTP` singleton. Bandit
+    ignores this option.
 
   ## Examples
 
@@ -116,13 +115,13 @@ defmodule ExMCP.Server.Transport do
   Starts an HTTP-based MCP server using Bandit or Cowboy.
 
   Phoenix applications should mount `ExMCP.HttpPlug` in the endpoint instead
-  of calling this function. Standalone servers need an HTTP adapter in the
-  host mix.exs: `{:bandit, "~> 1.0"}` or `{:plug_cowboy, "~> 2.8"}`.
+  of calling this function. Cowboy is included with ExMCP. Add
+  `{:bandit, "~> 1.0"}` to start Bandit instead.
 
   `:adapter` selects the server (`:auto`, `:bandit`, or `:cowboy`). `:auto`
-  prefers Bandit when both are present. Pass `unique_listener: true` for an
-  isolated Cowboy listener. The default is the named `ExMCP.HttpPlug.HTTP`
-  singleton. Bandit ignores `:unique_listener`.
+  prefers Bandit when it is loaded. `:ranch_ref` is Cowboy-only and selects
+  the Ranch listener name. The default is the named `ExMCP.HttpPlug.HTTP`
+  singleton. Bandit ignores `:ranch_ref`.
   """
   @spec start_http_server(module(), map(), list(), keyword()) ::
           {:ok, pid()} | {:error, term()}
@@ -141,7 +140,7 @@ defmodule ExMCP.Server.Transport do
 
       # Matches ExMCP.HttpPlug's own default; CORS must be opted into (audit L10).
       cors_enabled = Keyword.get(opts, :cors_enabled, false)
-      unique_listener = Keyword.get(opts, :unique_listener, false)
+      ranch_ref = Keyword.get(opts, :ranch_ref)
 
       # Localhost-bound servers are the prime target for DNS rebinding, so
       # they get a Host allow-list (and matching localhost Origin allow-list)
@@ -187,26 +186,20 @@ defmodule ExMCP.Server.Transport do
           "(deprecated HTTP+SSE: #{legacy_http_sse})"
       )
 
-      start_http_listener(adapter, plug_opts, port, parse_host(host), unique_listener)
+      start_http_listener(adapter, plug_opts, port, parse_host(host), ranch_ref)
     end
   end
 
   @doc """
-  Stops a listener started by `start_http_server/4`.
+  Stops a Bandit listener started by `start_http_server/4`.
 
-  Works for both Bandit and Cowboy. Prefer this over adapter-specific
-  shutdown APIs.
+  Cowboy listeners use Ranch refs. Stop them with `Plug.Cowboy.shutdown/1`
+  and the `:ranch_ref` you passed, or `ExMCP.HttpPlug.HTTP` for the default
+  named singleton.
   """
   @spec stop_http_server(pid()) :: :ok
   def stop_http_server(pid) when is_pid(pid) do
-    case ranch_listener_ref(pid) do
-      {:ok, ref} ->
-        _ = Plug.Cowboy.shutdown(ref)
-        :ok
-
-      :error ->
-        stop_supervisor(pid)
-    end
+    stop_supervisor(pid)
   end
 
   @doc """
@@ -364,15 +357,14 @@ defmodule ExMCP.Server.Transport do
     }
   end
 
-  defp start_http_listener(:cowboy, plug_opts, port, ip, unique_listener) do
+  defp start_http_listener(:cowboy, plug_opts, port, ip, ranch_ref) do
     _ = Application.ensure_all_started(:plug_cowboy)
 
     cowboy_opts =
-      if unique_listener == true do
-        [port: port, ip: ip, ref: {:ex_mcp_http, System.unique_integer([:positive])}]
-      else
-        [port: port, ip: ip]
-      end
+      [port: port, ip: ip]
+      |> then(fn opts ->
+        if ranch_ref, do: Keyword.put(opts, :ref, ranch_ref), else: opts
+      end)
 
     case Plug.Cowboy.http(ExMCP.HttpPlug, plug_opts, cowboy_opts) do
       {:ok, pid} ->
@@ -389,7 +381,7 @@ defmodule ExMCP.Server.Transport do
     end
   end
 
-  defp start_http_listener(:bandit, plug_opts, port, ip, _unique_listener) do
+  defp start_http_listener(:bandit, plug_opts, port, ip, _ranch_ref) do
     _ = Application.ensure_all_started(:bandit)
 
     spec =
@@ -422,27 +414,16 @@ defmodule ExMCP.Server.Transport do
     end
   end
 
-  defp ranch_listener_ref(pid) do
-    if Code.ensure_loaded?(:ranch) and function_exported?(:ranch, :info, 0) and
-         Process.whereis(:ranch_server) do
-      Enum.find_value(:ranch.info(), :error, fn {ref, info} ->
-        if Keyword.get(info, :pid) == pid, do: {:ok, ref}
-      end)
-    else
-      :error
-    end
-  end
-
   defp missing_http_adapter_message(:bandit) do
     "HTTP transport adapter :bandit is not available. Add {:bandit, \"~> 1.0\"} to your mix.exs dependencies."
   end
 
   defp missing_http_adapter_message(:cowboy) do
-    "HTTP transport adapter :cowboy is not available. Add {:plug_cowboy, \"~> 2.8\"} to your mix.exs dependencies."
+    "HTTP transport adapter :cowboy is not available. Add {:plug_cowboy, \"~> 2.7\"} to your mix.exs dependencies."
   end
 
   defp missing_http_adapter_message(:auto) do
-    "HTTP transport requires an adapter. Add {:bandit, \"~> 1.0\"} or {:plug_cowboy, \"~> 2.8\"} to your mix.exs dependencies."
+    "HTTP transport requires an adapter. Cowboy is included with ExMCP. Add {:bandit, \"~> 1.0\"} to use Bandit."
   end
 
   # Configure logging for STDIO transport to prevent stdout contamination

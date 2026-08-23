@@ -140,15 +140,7 @@ defmodule ExMCP.Server.TransportTest do
       {:ok, pid1} =
         Transport.start_http_server(TestServer, info, [], adapter: :cowboy, port: port1)
 
-      on_exit(fn ->
-        Transport.stop_http_server(pid1)
-
-        try do
-          Plug.Cowboy.shutdown(ExMCP.HttpPlug.HTTP)
-        catch
-          :exit, _ -> :ok
-        end
-      end)
+      on_exit(fn -> shutdown_cowboy(ExMCP.HttpPlug.HTTP) end)
 
       {:ok, pid2} =
         Transport.start_http_server(TestServer, info, [], adapter: :cowboy, port: port2)
@@ -158,28 +150,30 @@ defmodule ExMCP.Server.TransportTest do
     end
 
     @tag :requires_http
-    test "unique_listener starts isolated Cowboy listeners" do
+    test "distinct ranch_ref values start isolated Cowboy listeners" do
       info = %{name: "test", version: "1.0.0"}
       port1 = ExMCP.Test.HTTPAdapter.free_port()
       port2 = ExMCP.Test.HTTPAdapter.free_port()
+      ref1 = {:ex_mcp_test_cowboy, System.unique_integer([:positive])}
+      ref2 = {:ex_mcp_test_cowboy, System.unique_integer([:positive])}
 
       {:ok, pid1} =
         Transport.start_http_server(TestServer, info, [],
           adapter: :cowboy,
           port: port1,
-          unique_listener: true
+          ranch_ref: ref1
         )
 
       {:ok, pid2} =
         Transport.start_http_server(TestServer, info, [],
           adapter: :cowboy,
           port: port2,
-          unique_listener: true
+          ranch_ref: ref2
         )
 
       on_exit(fn ->
-        Transport.stop_http_server(pid1)
-        Transport.stop_http_server(pid2)
+        shutdown_cowboy(ref1)
+        shutdown_cowboy(ref2)
       end)
 
       assert Process.alive?(pid1)
@@ -192,12 +186,12 @@ defmodule ExMCP.Server.TransportTest do
 
   describe "Bandit listener identity" do
     @tag :requires_http
-    test "unique_listener is ignored and still starts" do
+    test "ranch_ref is ignored and still starts" do
       {:ok, pid} =
         Transport.start_http_server(TestServer, %{name: "test", version: "1.0.0"}, [],
           adapter: :bandit,
           port: ExMCP.Test.HTTPAdapter.free_port(),
-          unique_listener: true
+          ranch_ref: :ignored
         )
 
       on_exit(fn -> Transport.stop_http_server(pid) end)
@@ -295,6 +289,12 @@ defmodule ExMCP.Server.TransportTest do
       assert spec.restart == :permanent
       assert spec.shutdown == 500
     end
+  end
+
+  defp shutdown_cowboy(ref) do
+    Plug.Cowboy.shutdown(ref)
+  catch
+    :exit, _ -> :ok
   end
 
   defp listening?(port) do

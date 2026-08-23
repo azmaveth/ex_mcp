@@ -21,7 +21,7 @@ Application.put_env(:logger, :level, :emergency)
 
 Mix.install([
   {:ex_mcp, "~> 1.0"},
-  # Required only for standalone `transport: :http` (not Phoenix mounts):
+  # Optional: use Bandit instead of the Cowboy that ships with ExMCP
   # {:bandit, "~> 1.0"}
 ], verbose: false)
 ```

@@ -20,11 +20,11 @@ defmodule ExMCP.MixProject do
       homepage_url: @github_url,
       test_coverage: [tool: ExCoveralls],
       elixirc_options: [
-        # Optional HTTP adapters. Remote calls are guarded at runtime.
-        no_warn_undefined: [Plug.Cowboy, Bandit, :cowboy, :ranch]
+        # Bandit is optional. Remote calls are guarded at runtime.
+        no_warn_undefined: [Bandit]
       ],
       dialyzer: [
-        plt_add_apps: [:mix, :ex_unit, :plug_cowboy, :cowboy, :bandit],
+        plt_add_apps: [:mix, :ex_unit, :bandit],
         ignore_warnings: ".dialyzer_ignore.exs",
         list_unused_filters: false,
         plt_local_path: "priv/plts",
@@ -97,7 +97,7 @@ defmodule ExMCP.MixProject do
       {:excoveralls, "~> 0.18", only: :test},
       {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
       {:plug, "~> 1.16"},
-      {:plug_cowboy, "~> 2.8", optional: true},
+      {:plug_cowboy, "~> 2.7"},
       {:bandit, "~> 1.0", optional: true},
       {:fuse, "~> 2.4", optional: true},
       # MCP protocol support
