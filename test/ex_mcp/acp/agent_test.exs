@@ -495,6 +495,29 @@ defmodule ExMCP.ACP.AgentTest do
       assert %{"id" => 2, "result" => %{"protocolVersion" => 1}} = receive_raw(transport)
     end
 
+    test "negotiates a draft-v2 initialize request down to the supported v1 surface" do
+      {_agent, transport} = start_raw_agent(EchoAgent)
+
+      send_raw_request(transport, 1, "initialize", %{
+        "protocolVersion" => 2,
+        "info" => %{"name" => "draft-v2-client", "version" => "0.1.0"},
+        "capabilities" => %{}
+      })
+
+      assert %{
+               "id" => 1,
+               "result" => %{
+                 "protocolVersion" => 1,
+                 "agentCapabilities" => agent_capabilities
+               }
+             } = receive_raw(transport)
+
+      assert is_map(agent_capabilities)
+
+      send_raw_request(transport, 2, "session/new", %{"cwd" => "/tmp", "mcpServers" => []})
+      assert %{"id" => 2, "result" => %{"sessionId" => "sess_echo"}} = receive_raw(transport)
+    end
+
     test "initialize succeeds exactly once" do
       {_agent, transport} = start_raw_agent(EchoAgent)
 

@@ -4,6 +4,14 @@ defmodule ExMCP.ACP.Capabilities do
 
   ACP capabilities are JSON-shaped maps, but callers may pass atom-keyed maps
   in tests or local APIs. This module centralizes those lookups.
+
+  ACP v1 clients that can present boolean session configuration options must
+  opt in explicitly:
+
+      Capabilities.put(%{}, :boolean_config_options, true)
+
+  ExMCP does not infer that UI capability from a generic session-update
+  callback.
   """
 
   alias ExMCP.ACP.Maps
@@ -33,6 +41,14 @@ defmodule ExMCP.ACP.Capabilities do
 
   @spec supported?(map() | nil, atom()) :: boolean()
   def supported?(caps, :load_session), do: caps |> Maps.get("loadSession") |> Maps.truthy?()
+
+  def supported?(caps, :boolean_config_options) do
+    caps
+    |> Maps.get("session")
+    |> Maps.get("configOptions")
+    |> Maps.get("boolean")
+    |> Maps.truthy?()
+  end
 
   def supported?(caps, :logout) do
     caps
@@ -81,6 +97,21 @@ defmodule ExMCP.ACP.Capabilities do
 
   def put(caps, :load_session, true), do: Map.put(caps, "loadSession", true)
 
+  def put(caps, :boolean_config_options, true) do
+    config_options =
+      caps
+      |> client_session_caps()
+      |> Maps.get("configOptions")
+      |> case do
+        map when is_map(map) -> map
+        _ -> %{}
+      end
+      |> Map.put("boolean", %{})
+
+    session = caps |> client_session_caps() |> Map.put("configOptions", config_options)
+    Map.put(caps, "session", session)
+  end
+
   def put(caps, :logout, true) do
     caps
     |> auth_caps()
@@ -126,6 +157,13 @@ defmodule ExMCP.ACP.Capabilities do
 
   defp auth_caps(caps) do
     case Maps.get(caps, "auth") do
+      map when is_map(map) -> map
+      _ -> %{}
+    end
+  end
+
+  defp client_session_caps(caps) do
+    case Maps.get(caps, "session") do
       map when is_map(map) -> map
       _ -> %{}
     end

@@ -15,6 +15,31 @@ env:
   CI_ELIXIR_VERSION: '1.17.3'
 
 jobs:
+  protocol-drift:
+    name: ACP v1 and v2 draft schema drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      with:
+        node-version: '22'
+
+    # This scheduled-only lane intentionally installs the newest SDK. A new SDK
+    # version or schema change fails for maintainer review but never gates PRs.
+    - name: Install newest ACP SDK without updating the lockfile
+      working-directory: test/interop
+      run: npm install --ignore-scripts --no-save --package-lock=false @agentclientprotocol/sdk@latest
+
+    - name: Check reviewed ACP v1 and v2 draft contracts
+      working-directory: test/interop
+      run: node acp_v2_draft_probe.mjs
+
   drift:
     name: Catalog and adapter upstream drift
     runs-on: ubuntu-latest

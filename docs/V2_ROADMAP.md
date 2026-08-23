@@ -6,6 +6,7 @@
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
+  [`ACP_V2_TRACKING.md`](./ACP_V2_TRACKING.md),
   [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md)
 
 ---
@@ -29,6 +30,11 @@ This roadmap records:
 It is the canonical ExMCP 2.0 planning document. The similarly named
 [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) is completed rc.5
 release history, not the 2.0 roadmap.
+
+ACP protocol v2 is a separate upstream wire-version effort. Its monitoring,
+versioned protocol boundaries, and adoption gates are recorded in
+[`ACP_V2_TRACKING.md`](./ACP_V2_TRACKING.md); ExMCP `2.0.0` neither implies nor
+requires ACP `protocolVersion: 2`.
 
 ## 2. Inputs are evidence, not specifications
 

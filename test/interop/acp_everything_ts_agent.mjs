@@ -13,9 +13,14 @@ class EverythingAgent {
     this.sessions = new Map();
     this.modeId = "code";
     this.model = "fast";
+    this.autoRetry = false;
+    this.supportsBooleanConfig = false;
   }
 
-  async initialize(_params) {
+  async initialize(params) {
+    this.supportsBooleanConfig =
+      params.clientCapabilities?.session?.configOptions?.boolean != null;
+
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: "ts-acp-everything-agent", version: "1.0.0" },
@@ -107,11 +112,19 @@ class EverythingAgent {
   }
 
   async setSessionConfigOption(params) {
-    if (params.configId !== "model") {
-      throw new Error(`unknown config option: ${params.configId}`);
+    if (params.configId === "model") {
+      this.model = params.value;
+    } else if (
+      params.configId === "auto_retry" &&
+      params.type === "boolean" &&
+      typeof params.value === "boolean" &&
+      this.supportsBooleanConfig
+    ) {
+      this.autoRetry = params.value;
+    } else {
+      throw new Error(`unknown or unsupported config option: ${params.configId}`);
     }
 
-    this.model = params.value;
     const configOptions = this.configOptions();
 
     await this.connection.sessionUpdate({
@@ -349,7 +362,7 @@ class EverythingAgent {
   }
 
   configOptions() {
-    return [
+    const options = [
       {
         id: "model",
         name: "Model",
@@ -362,6 +375,18 @@ class EverythingAgent {
         ],
       },
     ];
+
+    if (this.supportsBooleanConfig) {
+      options.push({
+        id: "auto_retry",
+        name: "Auto retry",
+        category: "model_config",
+        type: "boolean",
+        currentValue: this.autoRetry,
+      });
+    }
+
+    return options;
   }
 }
 

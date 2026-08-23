@@ -12,7 +12,7 @@ defmodule ExMCP.Integration.ACPInteropTest do
 
   use ExUnit.Case, async: false
 
-  alias ExMCP.ACP.Client
+  alias ExMCP.ACP.{Capabilities, Client}
 
   @moduletag :interop
   @moduletag :interop_acp
@@ -24,8 +24,11 @@ defmodule ExMCP.Integration.ACPInteropTest do
   @ts_client_script Path.join(@interop_dir, "acp_ts_client.mjs")
   @ts_everything_agent_script Path.join(@interop_dir, "acp_everything_ts_agent.mjs")
   @ts_everything_client_script Path.join(@interop_dir, "acp_everything_ts_client.mjs")
+  @v2_contract_probe_script Path.join(@interop_dir, "acp_v2_draft_probe.mjs")
   @node_modules Path.join(@interop_dir, "node_modules")
   @acp_sdk_package Path.join(@node_modules, "@agentclientprotocol/sdk/package.json")
+  @dual_version_agent_path "@agentclientprotocol/sdk/dist/examples/dual-version-agent.js"
+  @ts_dual_version_agent_script Path.join(@node_modules, @dual_version_agent_path)
 
   defmodule EverythingClientHandler do
     @behaviour ExMCP.ACP.Client.Handler
@@ -194,10 +197,15 @@ defmodule ExMCP.Integration.ACPInteropTest do
           handler: EverythingClientHandler,
           handler_opts: [test_pid: self()],
           client_info: %{"name" => "ex-mcp-acp-everything-client", "version" => "1.0.0"},
-          capabilities: %{
-            "fs" => %{"readTextFile" => true, "writeTextFile" => true},
-            "terminal" => true
-          }
+          capabilities:
+            Capabilities.put(
+              %{
+                "fs" => %{"readTextFile" => true, "writeTextFile" => true},
+                "terminal" => true
+              },
+              :boolean_config_options,
+              true
+            )
         )
 
       try do
@@ -208,6 +216,10 @@ defmodule ExMCP.Integration.ACPInteropTest do
 
         assert get_in(session, ["modes", "currentModeId"]) == "code"
         assert Enum.any?(session["configOptions"], &(&1["id"] == "model"))
+
+        assert Enum.find(session["configOptions"], &(&1["id"] == "auto_retry"))[
+                 "currentValue"
+               ] == false
 
         assert {:ok, _} = Client.load_session(client, session_id, File.cwd!(), timeout: 10_000)
         assert {:ok, _} = Client.resume_session(client, session_id, File.cwd!(), timeout: 10_000)
@@ -221,6 +233,11 @@ defmodule ExMCP.Integration.ACPInteropTest do
                  Client.set_config_option(client, session_id, "model", "deep")
 
         assert Enum.find(config_options, &(&1["id"] == "model"))["currentValue"] == "deep"
+
+        assert {:ok, %{"configOptions" => config_options}} =
+                 Client.set_config_option(client, session_id, "auto_retry", true)
+
+        assert Enum.find(config_options, &(&1["id"] == "auto_retry"))["currentValue"] == true
 
         {:ok, result} =
           Client.prompt(
@@ -320,6 +337,8 @@ defmodule ExMCP.Integration.ACPInteropTest do
       assert results["stopReason"] == "end_turn"
       assert results["cancelStopReason"] == "cancelled"
       assert results["text"] =~ "Hello from ExMCP everything agent"
+      assert results["booleanConfigBefore"] == false
+      assert results["booleanConfigAfterSet"] == true
 
       for method <- [
             "session/request_permission",
@@ -359,6 +378,45 @@ defmodule ExMCP.Integration.ACPInteropTest do
 
       assert exit_code == 0,
              "TS ACP everything client exited with code #{exit_code}: #{output}"
+    end
+  end
+
+  describe "draft-v2 routing guard" do
+    test "pinned SDK matches the reviewed draft-v2 contract", context do
+      skip_without_node(context)
+
+      {output, exit_code} =
+        System.cmd(context.node_path, [@v2_contract_probe_script],
+          cd: @interop_dir,
+          stderr_to_stdout: true
+        )
+
+      assert exit_code == 0, "ACP v2 draft contract probe failed: #{output}"
+      assert Jason.decode!(String.trim(output))["ok"] == true
+    end
+
+    test "v1 client selects the v1 surface of the official dual-version agent", context do
+      skip_without_node(context)
+
+      {:ok, client} =
+        ExMCP.ACP.start_client(
+          command: [context.node_path, @ts_dual_version_agent_script],
+          cd: @interop_dir,
+          event_listener: self(),
+          client_info: %{"name" => "ex-mcp-v1-routing-probe", "version" => "1.0.0"}
+        )
+
+      try do
+        assert {:ok, %{"sessionId" => session_id}} =
+                 Client.new_session(client, File.cwd!(), timeout: 10_000)
+
+        assert {:ok, %{"stopReason" => "end_turn", "text" => text}} =
+                 Client.prompt(client, session_id, "route me to v1", timeout: 10_000)
+
+        assert text == "Hello from the v1 implementation."
+      after
+        Client.disconnect(client)
+      end
     end
   end
 

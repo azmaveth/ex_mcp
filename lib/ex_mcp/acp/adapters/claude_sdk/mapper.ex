@@ -6,7 +6,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias ExMCP.ACP.Adapters.ClaudeSDK.ToolInfo
   alias ExMCP.ACP.Protocol, as: ACPProtocol
-  alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests, PromptQueue}
+  alias ExMCP.ACP.{AdapterEvents, Capabilities, Envelope, PendingRequests, PromptQueue}
 
   @stop_reasons %{
     "end_turn" => "end_turn",
@@ -1197,7 +1197,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     model = current_model_info(state)
 
     if model["supportsFastMode"] == true or model["supports_fast_mode"] == true do
-      if client_supports_boolean_config?(state.client_capabilities) do
+      if Capabilities.supported?(state.client_capabilities, :boolean_config_options) do
         %{
           "id" => "fast",
           "name" => "Fast mode",
@@ -1329,10 +1329,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp fast_mode_enabled?(state, _fallback) when state in ["on", "cooldown"], do: true
   defp fast_mode_enabled?(nil, fallback), do: fallback == true
   defp fast_mode_enabled?(_, fallback), do: fallback == true
-
-  defp client_supports_boolean_config?(capabilities) do
-    get_in(capabilities || %{}, ["session", "configOptions", "boolean"]) != nil
-  end
 
   defp humanize_config_value(value) when is_binary(value) do
     value

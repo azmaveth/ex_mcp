@@ -340,6 +340,31 @@ current real-CLI lifecycle suite deliberately avoids prompts and therefore
 cannot exercise LLM-originated permission, elicitation, or background-task
 events; the adapter unit tests are the executable evidence for those paths.
 
+## ACP v1 completion and v2 monitoring
+
+The July 2026 stable ACP v1 additions are represented in the runtime and
+adapter tests. Boolean session config options require an explicit v1 client
+capability, so ExMCP provides `Capabilities.put/3` with
+`:boolean_config_options` and exercises the opt-in in both directions against
+the official TypeScript SDK. Do not auto-advertise this capability merely
+because a generic event handler can decode the update; the integrating client
+must be able to present and change the value correctly.
+
+ACP protocol v2 is Draft and is not part of ExMCP's advertised production
+surface. The pinned interop lane validates the reviewed v1 and v2 schemas,
+while the scheduled ACP ecosystem workflow installs the newest SDK to detect
+release or schema drift. Version downgrade and SDK dual-router tests protect
+continued v1 operation. The versioned architecture, schema-review procedure,
+and Preview and Stable adoption gates live in
+[`ACP_V2_TRACKING.md`](./ACP_V2_TRACKING.md).
+
+The SDK 1.4.0 unstable compaction experiment is tracked but deliberately not
+advertised or implemented. Revisit it only after the capability and update
+contract enter the specification; until then, vendor-native compaction events
+remain adapter details rather than claims of protocol-level support. The
+removed experimental `env_var` auth variant remains available only through the
+existing, disabled-by-default Codex legacy compatibility option.
+
 ## Execution order
 
 1. Land rc.8's credential-free ACP CLI lifecycle coverage, Pi isolation fix,
@@ -361,3 +386,6 @@ events; the adapter unit tests are the executable evidence for those paths.
 11. Expand the reviewed native ACP matrix and promote agents from initialization
     to session and mock-prompt tiers where their supported configuration permits
     credential-free testing.
+12. Keep ACP v2 monitoring non-shipping until its Preview adoption gates are
+    met; then implement separate v1/v2 protocol surfaces around shared session
+    and effect cores.

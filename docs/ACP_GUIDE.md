@@ -182,6 +182,31 @@ The adapter launches `zcode app-server`. Set `adapter_opts[:cli_path]` or the
 | `:max_outbox_bytes` | `4_194_304` | Aggregate byte limit for an adapter bridge's undelivered messages |
 | `:name` | `nil` | GenServer name registration |
 
+### Boolean Config Options
+
+ACP v1 clients must explicitly advertise that they can present and change
+boolean session config options. Build that capability without hand-authoring
+the nested wire map:
+
+```elixir
+capabilities =
+  %{}
+  |> ExMCP.ACP.Capabilities.put(:boolean_config_options, true)
+
+{:ok, client} = ExMCP.ACP.start_client(
+  command: ["my-agent", "--acp"],
+  capabilities: capabilities
+)
+
+{:ok, _} =
+  ExMCP.ACP.Client.set_config_option(client, session_id, "auto_retry", true)
+```
+
+Only opt in when the integrating client can render boolean options and return
+user changes. ExMCP deliberately does not infer this UI capability from the
+generic session-update callback. Boolean values are encoded with ACP's
+required `type: "boolean"` discriminator.
+
 ### Adapter Subprocess Environment
 
 Adapted agents start with an isolated environment by default. ExMCP clears the
@@ -791,6 +816,7 @@ compatibility` workflow runs weekly and can also be dispatched manually.
 - `ExMCP.ACP.Agent.Handler` — Agent-side handler behaviour
 - `ExMCP.ACP.Client` — GenServer client with full session API
 - `ExMCP.ACP.Client.Handler` — Handler behaviour
+- `ExMCP.ACP.Capabilities` — Capability inspection and construction helpers
 - `ExMCP.ACP.Protocol` — ACP JSON-RPC message encoding
 - `ExMCP.ACP.Types` — Type specs and builders
 - `ExMCP.ACP.Registry` — Public ACP Registry fetch and lookup helpers

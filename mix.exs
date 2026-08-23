@@ -226,6 +226,7 @@ defmodule ExMCP.MixProject do
           ExMCP.ACP.Client,
           ExMCP.ACP.Client.Handler,
           ExMCP.ACP.Client.DefaultHandler,
+          ExMCP.ACP.Capabilities,
           ExMCP.ACP.Protocol,
           ExMCP.ACP.Types,
           ExMCP.ACP.Registry,
