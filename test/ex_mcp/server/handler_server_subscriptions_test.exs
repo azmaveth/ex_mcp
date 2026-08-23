@@ -164,9 +164,13 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
     request = tools_list_request("beam-duplicate")
     send(server, {:transport_message, request})
 
+    assert :sys.get_state(server).handler_state.list_calls == 1
+
     assert_receive {:transport_message, %{"id" => "beam-duplicate", "result" => %{"tools" => []}}}
 
     send(server, {:transport_message, request})
+
+    assert :sys.get_state(server).handler_state.list_calls == 1
 
     assert_receive {:transport_message,
                     %{
@@ -176,8 +180,6 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
                         "data" => %{"type" => "duplicate_request_id"}
                       }
                     }}
-
-    assert :sys.get_state(server).handler_state.list_calls == 1
   end
 
   defp start_registry do

@@ -10,7 +10,7 @@ ExMCP provides seamless integration with Phoenix applications through the `ExMCP
 # In mix.exs
 defp deps do
   [
-    {:ex_mcp, "~> 1.0.0-rc.8"}
+    {:ex_mcp, "~> 1.0"},
     # Phoenix already depends on Bandit or plug_cowboy. Do not add
     # plug_cowboy just because you mount ExMCP.HttpPlug.
   ]

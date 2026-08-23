@@ -59,13 +59,21 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
 
   @behaviour ExMCP.ACP.Agent.Handler
 
-  alias ExMCP.ACP.Agent
+  alias ExMCP.ACP.{Agent, Capabilities}
 
   @updated_at "2026-05-29T00:00:00Z"
 
   @impl true
   def init(_opts) do
-    {:ok, %{sessions: %{}, authenticated?: false, mode_id: "code", model: "fast"}}
+    {:ok,
+     %{
+       sessions: %{},
+       authenticated?: false,
+       mode_id: "code",
+       model: "fast",
+       auto_retry: false,
+       boolean_config?: false
+     }}
   end
 
   @impl true
@@ -83,9 +91,14 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
   end
 
   @impl true
-  def handle_new_session(params, _ctx, state) do
+  def handle_new_session(params, ctx, state) do
     session_id = "sess_elixir_everything"
     cwd = params["cwd"] || File.cwd!()
+
+    state = %{
+      state
+      | boolean_config?: Capabilities.supported?(ctx.client_capabilities, :boolean_config_options)
+    }
 
     session = %{
       "sessionId" => session_id,
@@ -133,6 +146,13 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
   @impl true
   def handle_set_config_option(session_id, "model", model, ctx, state) when is_binary(model) do
     state = %{state | model: model}
+    :ok = Agent.config_options(ctx.agent, session_id, config_options(state))
+    {:reply, %{"configOptions" => config_options(state)}, state}
+  end
+
+  def handle_set_config_option(session_id, "auto_retry", value, ctx, state)
+      when is_boolean(value) and state.boolean_config? do
+    state = %{state | auto_retry: value}
     :ok = Agent.config_options(ctx.agent, session_id, config_options(state))
     {:reply, %{"configOptions" => config_options(state)}, state}
   end
@@ -282,7 +302,7 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
   end
 
   defp config_options(state) do
-    [
+    options = [
       %{
         "id" => "model",
         "name" => "Model",
@@ -295,5 +315,20 @@ defmodule Mix.Tasks.Acp.EverythingAgent.Handler do
         ]
       }
     ]
+
+    if state.boolean_config? do
+      options ++
+        [
+          %{
+            "id" => "auto_retry",
+            "name" => "Auto retry",
+            "category" => "model_config",
+            "type" => "boolean",
+            "currentValue" => state.auto_retry
+          }
+        ]
+    else
+      options
+    end
   end
 end

@@ -1,18 +1,18 @@
-# Public API diff: v1.0.0-rc.5 to 1.0 candidate
+# Public API diff: v1.0.0-rc.5 to v1.0.0
 
 This report records the public Elixir API compatibility gate for the MCP
 2026-07-28 migration. The comparison is between:
 
 - baseline: `v1.0.0-rc.5` (`a2464c3423ee48ba825402cc2d17be8042f1451a`);
-- candidate: `1.0.0-rc.8` on the release-preparation branch (current soak
-  candidate).
+- stable release: `v1.0.0`, with the same public and wire surface as the rc.8
+  candidate measured below.
 
 The original BEAM snapshot was taken against the `v1.0.0-rc.6` release
 commit. Independent rc.7 and rc.8 censuses (2026-08-13) updated the candidate
 totals below. There are zero removals versus rc.5.
 
-> **Post-rc.6 note (2026-08-13):** `1.0.0-rc.8` is the current 1.0 soak
-> candidate. Public deltas after the rc.6 snapshot are summarized in
+> **Stable-release note (2026-08-22):** `1.0.0` preserves the measured rc.8
+> public surface. Public deltas after the rc.6 snapshot are summarized in
 > [Updates for 1.0.0-rc.7](#updates-for-100-rc7) and
 > [Updates for 1.0.0-rc.8](#updates-for-100-rc8).
 
@@ -33,7 +33,7 @@ compared:
 
 The snapshot totals were:
 
-| Surface | rc.5 | 1.0.0-rc.8 | Removed |
+| Surface | rc.5 | 1.0.0 | Removed |
 |---|---:|---:|---:|
 | Modules | 236 | 303 | 0 |
 | Exported functions | 2,288 | 2,763 | 0 |

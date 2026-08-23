@@ -112,6 +112,11 @@ try {
         writeTextFile: true,
       },
       terminal: true,
+      session: {
+        configOptions: {
+          boolean: {},
+        },
+      },
     },
   });
 
@@ -130,6 +135,9 @@ try {
   results.modes = sessionResult.modes?.availableModes?.map((mode) => mode.id) ?? [];
   results.configOptions =
     sessionResult.configOptions?.map((option) => option.id) ?? [];
+  results.booleanConfigBefore =
+    sessionResult.configOptions?.find((option) => option.id === "auto_retry")
+      ?.currentValue ?? null;
   results.lifecycle.push("session/new");
 
   await connection.loadSession({
@@ -163,6 +171,16 @@ try {
   });
   results.configAfterSet =
     configResult.configOptions?.find((option) => option.id === "model")
+      ?.currentValue ?? null;
+
+  const booleanConfigResult = await connection.setSessionConfigOption({
+    sessionId: sessionResult.sessionId,
+    configId: "auto_retry",
+    type: "boolean",
+    value: true,
+  });
+  results.booleanConfigAfterSet =
+    booleanConfigResult.configOptions?.find((option) => option.id === "auto_retry")
       ?.currentValue ?? null;
   results.lifecycle.push("session/set_config_option");
 
@@ -246,6 +264,9 @@ try {
     results.connected &&
     results.stopReason === "end_turn" &&
     results.cancelStopReason === "cancelled" &&
+    results.configOptions.includes("auto_retry") &&
+    results.booleanConfigBefore === false &&
+    results.booleanConfigAfterSet === true &&
     expectedUpdates.every((type) => results.updates.includes(type)) &&
     expectedClientRequests.every((method) => results.clientRequests.includes(method)) &&
     results.sessions.includes(results.sessionId) &&

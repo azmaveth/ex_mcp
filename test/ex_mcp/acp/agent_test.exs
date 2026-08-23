@@ -137,6 +137,17 @@ defmodule ExMCP.ACP.AgentTest do
       {:ok, %{"exitCode" => 0}} = Agent.terminal_wait_for_exit(ctx.agent, session_id, terminal_id)
       {:ok, _} = Agent.terminal_release(ctx.agent, session_id, terminal_id)
 
+      {:ok, %{"action" => "accept", "content" => %{"choice" => "blue"}}} =
+        Agent.create_elicitation(ctx.agent, %{
+          "mode" => "form",
+          "sessionId" => session_id,
+          "message" => "Choose a color",
+          "requestedSchema" => %{
+            "type" => "object",
+            "properties" => %{"choice" => %{"type" => "string"}}
+          }
+        })
+
       send(state.test_pid, :client_requests_completed)
 
       {:reply, %{"stopReason" => "end_turn", "text" => content}, state}
@@ -215,6 +226,12 @@ defmodule ExMCP.ACP.AgentTest do
         end
 
       {:ok, result, state}
+    end
+
+    @impl true
+    def handle_form_elicitation(params, state) do
+      send(state.test_pid, {:form_elicitation, params})
+      {:ok, %{"action" => "accept", "content" => %{"choice" => "blue"}}, state}
     end
   end
 
@@ -336,7 +353,8 @@ defmodule ExMCP.ACP.AgentTest do
           handler_opts: [test_pid: self()],
           capabilities: %{
             "fs" => %{"readTextFile" => true, "writeTextFile" => true},
-            "terminal" => true
+            "terminal" => true,
+            "elicitation" => %{"form" => %{}}
           }
         )
 
@@ -352,6 +370,7 @@ defmodule ExMCP.ACP.AgentTest do
       assert_receive {:terminal_request, "terminal/output", %{"terminalId" => "term_1"}}
       assert_receive {:terminal_request, "terminal/wait_for_exit", %{"terminalId" => "term_1"}}
       assert_receive {:terminal_request, "terminal/release", %{"terminalId" => "term_1"}}
+      assert_receive {:form_elicitation, %{"mode" => "form", "sessionId" => ^session_id}}
       assert_receive :client_requests_completed
     end
 
@@ -474,6 +493,29 @@ defmodule ExMCP.ACP.AgentTest do
 
       initialize_raw(transport, 2)
       assert %{"id" => 2, "result" => %{"protocolVersion" => 1}} = receive_raw(transport)
+    end
+
+    test "negotiates a draft-v2 initialize request down to the supported v1 surface" do
+      {_agent, transport} = start_raw_agent(EchoAgent)
+
+      send_raw_request(transport, 1, "initialize", %{
+        "protocolVersion" => 2,
+        "info" => %{"name" => "draft-v2-client", "version" => "0.1.0"},
+        "capabilities" => %{}
+      })
+
+      assert %{
+               "id" => 1,
+               "result" => %{
+                 "protocolVersion" => 1,
+                 "agentCapabilities" => agent_capabilities
+               }
+             } = receive_raw(transport)
+
+      assert is_map(agent_capabilities)
+
+      send_raw_request(transport, 2, "session/new", %{"cwd" => "/tmp", "mcpServers" => []})
+      assert %{"id" => 2, "result" => %{"sessionId" => "sess_echo"}} = receive_raw(transport)
     end
 
     test "initialize succeeds exactly once" do

@@ -1,12 +1,12 @@
 # ExMCP → MCP 2026-07-28 Migration Plan
 
-**Status:** Code migration complete — Phases 0–10 implemented and local gates green; `1.0.0-rc.8` preserves rc.7 wire behavior while adding adapter lifecycle evidence, Pi isolation, and internal/package cleanup, and restarts the final-candidate soak
+**Status:** Code migration and all 1.0 release gates complete — Phases 0–10 implemented; the rc.8 final-candidate soak and mixed-version rollback drill completed without a release-blocking regression
 **Target release:** ExMCP `1.0.0`, through additional release candidates after `rc.5`
 **Spec revision:** [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28), latest stable ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog))
-**Current ExMCP:** `1.0.0-rc.8` candidate line, defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
+**Current ExMCP:** `1.0.0` release-preparation tree, wire- and API-compatible with rc.8 plus an internal OAuth callback parser fix; defaults to modern-preferred MCP `2026-07-28` with fallback to `2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25`
 **Prerequisite:** [`PRE_2_0_TECH_DEBT_PLAN.md`](./PRE_2_0_TECH_DEBT_PLAN.md) — behavior-preserving cleanup completed in `1.0.0-rc.5` (historical filename retained)
 **Author:** living implementation plan
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-22
 
 ---
 
@@ -78,7 +78,7 @@ The resulting RC train is:
 | `rc.6` | All release-scope phases: dual-era dispatch, MRTR, subscriptions, Tasks, modern Streamable HTTP, required cache metadata, auth hardening, docs/API audit, conformance and official-SDK interop | Client `:prefer_modern`; begin the minimum seven-day soak after CI and publication; complete the mixed-cluster rollback drill |
 | `rc.7` | Legacy SSE persistence/disconnect lifecycle plus MCP/ACP security hardening | Restart the soak for observable lifecycle/security changes |
 | `rc.8` | Credential-free adapter CLI lifecycle evidence, Pi config isolation, behavior-preserving helper deduplication, and slimmer Hex packaging | Repeat every release gate and soak the final candidate artifact |
-| `1.0.0` | Same behavior as the final RC, plus release metadata only | Every gate in Phase 10 passes |
+| `1.0.0` | Same wire, public API, and protocol defaults as the final RC; release metadata plus release-gate correctness fixes only | Every gate in Phase 10 passes |
 
 `1.0.0-rc.7` persists legacy SSE events before delivery, retains sessions
 across connection gaps, and replays from `Last-Event-ID`, plus ACP and
@@ -558,7 +558,7 @@ request* flows that no longer exist in modern — they need era-conditional vari
 The legacy conformance gate remains pinned to the stable
 `@modelcontextprotocol/conformance@0.1.16` harness. The modern gate is now
 `scripts/conformance.sh modern`, pinned by default to the first exact-version-aware harness,
-`@modelcontextprotocol/conformance@0.2.0-alpha.10`. It runs the complete `all` server and client
+`@modelcontextprotocol/conformance@0.2.0-alpha.11`. It runs the complete `all` server and client
 suites for `2026-07-28` under Node.js 22+, propagates either suite's exit status, and uses one precompiled Mix
 build for the parallel client scenarios. Prefer a stable 2026-07-28-aware harness for release
 qualification; if one is still unavailable, use the explicit official-SDK interop fallback in
@@ -1269,13 +1269,19 @@ conformance remains a Phase 10 gate after Phases 7 and 9.
    MRTR: operators can select `:legacy_only`, drain/restart safely, reconcile state, and explicitly
    manage persisted modern pins. Rollback must not silently downgrade already-pinned clients.
 
-**Current release status (2026-08-13):** the code and local-validation work for gates 1–6 and 8
-is complete. Gate 3 is satisfied by the pinned prerelease conformance harness plus passing,
-bidirectional official TypeScript SDK v2 interop over both stdio and Streamable HTTP. `1.0.0-rc.8`
-is the final modern-preferred soak candidate for gate 7; it preserves rc.7 wire behavior while
-adding credential-free real-adapter lifecycle evidence and Pi isolation. Gate 9 requires an
-operator-run mixed-cluster rollback drill. Stable `1.0.0` must not be cut until the published
-rc.8 soak and rollback drill both complete.
+**Current release status (2026-08-22):** the code and validation work for gates 1–8 is complete.
+Gate 3 is satisfied by the pinned prerelease conformance harness plus passing, bidirectional
+official TypeScript SDK v2 interop over both stdio and Streamable HTTP. Published `1.0.0-rc.8`
+completed the final modern-preferred soak without a release-blocking regression. Stable 1.0 is
+wire- and API-compatible with rc.8. Its only production-code delta replaces a test-order-dependent
+OAuth callback atom lookup with a closed mapping of the same three supported fields; no protocol
+default, wire shape, or public API changes.
+Gate 9 passed on 2026-08-22: the automated drill held a modern subscription and paused MRTR
+request while a legacy node was live, then closed the subscription, completed MRTR, restarted
+legacy-only, reconciled external state, rejected silent modern-pin downgrade, and accepted legacy
+only after explicit cache reset. The operator reran the same test with a server compiled from the
+exact `v1.0.0-rc.5` tag; it negotiated `2025-11-25` and reported package version `1.0.0-rc.5`.
+See `test/ex_mcp/integration/rollback_drill_test.exs` and `docs/RELEASE_1_0_0.md`.
 
 The rc.6 release note assigns an owner and evidence source for every gate, defines the load-test
 workload and regression budget against rc.5, and records the qualifying conformance-harness and
@@ -1327,8 +1333,8 @@ Things downstream users will notice.
    monitors, a `ping`-equivalent flush (note: in modern the flush must be a real request such
    as `tools/list`, since `ping` is gone), telemetry assertions, or `wait_until/2`.
 7. **External conformance** — `scripts/conformance.sh modern` pins
-   `@modelcontextprotocol/conformance@0.2.0-alpha.10`, selects exactly `2026-07-28`, and runs
-   both complete suites. The current result is 112/112 server and 377/377 client checks with no
+   `@modelcontextprotocol/conformance@0.2.0-alpha.11`, selects exactly `2026-07-28`, and runs
+   both complete suites. The current result is 149/149 server and 387/387 client checks with no
    warnings or expected-failure entries.
 7b. **Track the harness to stable.** Keep `CONFORMANCE_ALPHA_VERSION` overridable and replace
    the prerelease pin with a stable 2026-aware release as soon as one is available. Until then,
@@ -1355,7 +1361,7 @@ Things downstream users will notice.
 | R3 | **`requestState` key management.** MRTR security depends on an AEAD key shared by every node that can resume a request. | Version the envelope, support key IDs/rotation, bind principal + request digest + expiry, and fail clearly when a configured MRTR flow cannot decrypt state. |
 | R4 | **HTTP plug complexity.** `do_dispatch/4` already has 14 clauses (L153-262); dual-era adds more. | Consider splitting modern vs legacy into separate plug modules behind a router rather than growing `do_dispatch/4`. |
 | R5 | **Stateless servers break existing user handlers** that relied on per-connection state. | The spec's answer is explicit server-minted handles as tool arguments (§"Stateful Tools"). Needs a documented migration recipe with an example. |
-| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.10` for the gating 2026-07-28 suites; the modern harness is still prerelease. | Move to a stable modern harness when available. Until then, the four bidirectional stdio/HTTP lanes pinned to official TypeScript SDK v2 `2.0.0` provide the required fallback; disclose both pins in release notes. |
+| R6 | **Conformance harness availability.** The repo pins stable `0.1.16` for legacy and `0.2.0-alpha.11` for the gating 2026-07-28 suites; the modern harness is still prerelease. | Move to a stable modern harness when available. Until then, the four bidirectional stdio/HTTP lanes pinned to official TypeScript SDK v2 `2.0.0` provide the required fallback; disclose both pins in release notes. |
 | R7 | **Spec churn.** `2026-07-28` is dated in the near past relative to this plan; errata are likely. | <code>mix mcp.sync_spec</code> has sha256/ETag change detection — run it in CI and alert on drift. |
 | R8 | **Scope.** ACP (17.6k LOC) is untouched but shares `_meta` helpers. | Verify no shared-helper regressions when `RequestParams` changes. |
 | R9 | **Ambiguous HTTP delivery can duplicate side effects.** A broken response does not reveal whether `tools/call` ran. | The conforming default reissues and is at-least-once. Offer `:safe_only` for callers that prefer `:outcome_unknown`; document application idempotency keys. |

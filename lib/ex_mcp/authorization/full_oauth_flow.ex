@@ -111,6 +111,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
           end
 
         run_and_persist_token(as_metadata, client_info, config)
+      else
+        {:error, _reason} = error -> error
       end
 
     case result do
@@ -144,6 +146,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     with {:ok, token_data} <- select_and_run_grant_flow(as_metadata, client_info, config),
          :ok <- persist_token(token_data, as_metadata, client_info, config) do
       {:ok, Map.put(token_data, :authorization_server_issuer, as_metadata["issuer"])}
+    else
+      {:error, _reason} = error -> error
     end
   end
 
@@ -367,19 +371,15 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
     case Map.get(data, "authorization_servers", []) do
       issuers when is_list(issuers) ->
         if Enum.all?(issuers, &(is_binary(&1) and &1 != "")) do
-          result = %{authorization_servers: Enum.map(issuers, &%{issuer: &1})}
+          resource = if is_binary(data["resource"]), do: data["resource"], else: nil
+          scopes = if is_list(data["scopes_supported"]), do: data["scopes_supported"], else: nil
 
-          result =
-            if is_binary(data["resource"]),
-              do: Map.put(result, :resource, data["resource"]),
-              else: result
-
-          result =
-            if is_list(data["scopes_supported"]),
-              do: Map.put(result, :scopes_supported, data["scopes_supported"]),
-              else: result
-
-          {:ok, result}
+          {:ok,
+           %{
+             authorization_servers: Enum.map(issuers, &%{issuer: &1}),
+             resource: resource,
+             scopes_supported: scopes
+           }}
         else
           {:error, :invalid_prm_metadata}
         end
@@ -627,6 +627,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
              {:ok, body} <-
                build_client_credentials_body(client_info, config, token_auth_method) do
           HTTPClient.make_token_request(token_endpoint, body, auth_method: token_auth_method)
+        else
+          {:error, _reason} = error -> error
         end
 
       case result do
@@ -639,7 +641,7 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
           {:ok, token_data}
 
-        error ->
+        {:error, _reason} = error ->
           error
       end
     end
@@ -799,9 +801,11 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
 
           {:ok, token_data}
 
-        error ->
+        {:error, _reason} = error ->
           error
       end
+    else
+      {:error, _reason} = error -> error
     end
   end
 
@@ -880,6 +884,8 @@ defmodule ExMCP.Authorization.FullOAuthFlow do
         body,
         auth_method: token_auth_method
       )
+    else
+      {:error, _reason} = error -> error
     end
   end
 

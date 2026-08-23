@@ -36,6 +36,7 @@ defmodule ExMCP.ACP.CapabilitiesTest do
         "mcpCapabilities" => %{
           "_meta" => %{"ex_mcp.mcpCapabilities" => %{"beam" => true}}
         },
+        "session" => %{"configOptions" => %{"boolean" => %{}}},
         "auth" => %{"logout" => %{}}
       }
 
@@ -46,6 +47,7 @@ defmodule ExMCP.ACP.CapabilitiesTest do
       assert Capabilities.supported?(caps, :additional_directories)
       assert Capabilities.supported?(caps, :mcp_beam)
       assert Capabilities.supported?(caps, :logout)
+      assert Capabilities.supported?(caps, :boolean_config_options)
       refute Capabilities.supported?(caps, :session_delete)
     end
 
@@ -53,6 +55,34 @@ defmodule ExMCP.ACP.CapabilitiesTest do
       caps = %{sessionCapabilities: %{delete: %{}}}
 
       assert Capabilities.supported?(caps, :session_delete)
+    end
+  end
+
+  describe "put/3 client capabilities" do
+    test "explicitly opts a v1 client into boolean config options" do
+      caps =
+        %{"session" => %{"existing" => %{}}}
+        |> Capabilities.put(:boolean_config_options, true)
+
+      assert caps == %{
+               "session" => %{
+                 "existing" => %{},
+                 "configOptions" => %{"boolean" => %{}}
+               }
+             }
+
+      assert Capabilities.supported?(caps, :boolean_config_options)
+      refute Capabilities.supported?(%{}, :boolean_config_options)
+      assert Capabilities.put(%{}, :boolean_config_options, false) == %{}
+    end
+
+    test "preserves existing config option capabilities" do
+      caps = %{"session" => %{"configOptions" => %{"_meta" => %{"ui" => "native"}}}}
+
+      assert get_in(Capabilities.put(caps, :boolean_config_options, true), [
+               "session",
+               "configOptions"
+             ]) == %{"_meta" => %{"ui" => "native"}, "boolean" => %{}}
     end
   end
 

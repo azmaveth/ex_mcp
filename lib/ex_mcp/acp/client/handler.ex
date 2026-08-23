@@ -72,6 +72,17 @@ defmodule ExMCP.ACP.Client.Handler do
               state()
             ) :: {:ok, result :: map(), state()} | {:error, reason :: String.t(), state()}
 
+  @doc "Called when the agent requests a form-mode elicitation."
+  @callback handle_form_elicitation(params :: map(), state()) ::
+              {:ok, response :: map(), state()} | {:error, reason :: term(), state()}
+
+  @doc "Called when the agent requests a URL-mode elicitation."
+  @callback handle_url_elicitation(params :: map(), state()) ::
+              {:ok, response :: map(), state()} | {:error, reason :: term(), state()}
+
+  @doc "Called when an accepted URL elicitation completes out of band."
+  @callback handle_elicitation_complete(elicitation_id :: String.t(), state()) :: {:ok, state()}
+
   @doc "Called when the handler is being terminated."
   @callback terminate(reason :: any(), state()) :: :ok
 
@@ -79,6 +90,9 @@ defmodule ExMCP.ACP.Client.Handler do
     handle_file_read: 4,
     handle_file_write: 4,
     handle_terminal_request: 4,
+    handle_form_elicitation: 2,
+    handle_url_elicitation: 2,
+    handle_elicitation_complete: 2,
     terminate: 2
   ]
 end

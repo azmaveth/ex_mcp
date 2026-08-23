@@ -86,6 +86,17 @@ defmodule ExMCP.Authorization.OAuthTransactionStoreTest do
     refute retained_state =~ "code-1"
   end
 
+  test "callbacks accept the fixed atom-key representation", %{store: store} do
+    {:ok, transaction_id} = register(store)
+
+    assert {:ok, "code-1"} =
+             OAuthTransactionStore.validate_callback(
+               transaction_id,
+               %{state: "state-1", code: "code-1", iss: "https://auth.example"},
+               server: store
+             )
+  end
+
   test "a callback that knows state but fails issuer validation consumes the transaction", %{
     store: store
   } do

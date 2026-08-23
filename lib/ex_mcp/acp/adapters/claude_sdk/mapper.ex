@@ -6,7 +6,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias ExMCP.ACP.Adapters.ClaudeSDK.ToolInfo
   alias ExMCP.ACP.Protocol, as: ACPProtocol
-  alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests, PromptQueue}
+  alias ExMCP.ACP.{AdapterEvents, Capabilities, Envelope, PendingRequests, PromptQueue}
 
   @stop_reasons %{
     "end_turn" => "end_turn",
@@ -47,41 +47,65 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   @spec modes_result(map()) :: map()
   def modes_result(state) do
     %{
-      "availableModes" => modes(),
-      "currentModeId" => permission_mode_to_mode(state.permission_mode || "default")
+      "availableModes" => modes(state),
+      "currentModeId" => effective_mode(state)
     }
   end
 
-  @doc "Static mode list for Claude permission modes."
+  @doc "Static, universally available Claude permission modes."
   @spec modes() :: [map()]
   def modes do
     [
       %{
         "id" => "default",
-        "name" => "Default",
-        "description" => "Standard behavior, prompts for dangerous operations"
+        "name" => "Manual",
+        "description" => "Always ask before making changes"
       },
       %{
         "id" => "acceptEdits",
-        "name" => "Accept Edits",
-        "description" => "Auto-accept file edit operations"
+        "name" => "Accept edits",
+        "description" => "Automatically accept all file edits"
       },
       %{
         "id" => "plan",
-        "name" => "Plan Mode",
-        "description" => "Planning mode, no actual tool execution"
-      },
-      %{
-        "id" => "auto",
-        "name" => "Auto",
-        "description" => "Use a model classifier to approve/deny permission prompts"
-      },
-      %{
-        "id" => "dontAsk",
-        "name" => "Don't Ask",
-        "description" => "Don't prompt for permissions, deny if not pre-approved"
+        "name" => "Plan",
+        "description" => "Create a plan before making changes"
       }
     ]
+  end
+
+  @doc "Mode list gated by the selected model and explicit dangerous-mode opt-in."
+  @spec modes(map()) :: [map()]
+  def modes(state) do
+    model = current_model_info(state)
+
+    modes =
+      if model["supportsAutoMode"] == true or model["supports_auto_mode"] == true do
+        modes() ++
+          [
+            %{
+              "id" => "auto",
+              "name" => "Auto",
+              "description" => "Claude handles permission decisions"
+            }
+          ]
+      else
+        modes()
+      end
+
+    if Keyword.get(Map.get(state, :opts, []), :allow_dangerously_skip_permissions, false) or
+         Map.get(state, :permission_mode) == "bypassPermissions" do
+      modes ++
+        [
+          %{
+            "id" => "bypassPermissions",
+            "name" => "Bypass permissions",
+            "description" => "Accepts all permissions"
+          }
+        ]
+    else
+      modes
+    end
   end
 
   @doc "Classifies a Claude SDK result into an ACP stop reason."
@@ -205,6 +229,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         {:ok, ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line(),
          state}
 
+      {%{request_id: request_id, request: request, kind: :elicitation_question}, state} ->
+        response = ask_user_question_result(result, request)
+
+        {:ok, ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line(),
+         state}
+
       {%{request_id: request_id, kind: :file_read, request: request}, state} ->
         response =
           %{
@@ -226,6 +256,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     case pop_pending_client_request(state, id) do
       {nil, _state} ->
         :unknown
+
+      {%{request_id: request_id, request: request, kind: :elicitation_question}, state} ->
+        response = ask_user_question_result(%{"action" => "cancel"}, request)
+
+        {:ok, ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line(),
+         state}
 
       {%{request_id: request_id}, state} ->
         message = error["message"] || "ACP client request failed"
@@ -339,7 +375,48 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp handle_control_response(_event, state), do: {[], [], state}
 
+  defp handle_control_request(
+         request_id,
+         %{"subtype" => "can_use_tool", "tool_name" => "AskUserQuestion"} = request,
+         state
+       ) do
+    case ask_user_question_request(request, state) do
+      {:ok, params, questions} ->
+        acp_id = ACPProtocol.generate_id()
+        message = Envelope.request("elicitation/create", params, acp_id)
+
+        request =
+          request
+          |> Map.put("_questions", questions)
+          |> Map.put_new("input", %{})
+
+        state =
+          put_pending_client_request(
+            state,
+            acp_id,
+            request_id,
+            :elicitation_question,
+            request
+          )
+
+        {[message], [], state}
+
+      {:error, reason} ->
+        response = %{
+          "behavior" => "deny",
+          "message" => reason,
+          "interrupt" => true,
+          "toolUseID" => request["tool_use_id"],
+          "decisionClassification" => "user_reject"
+        }
+
+        {[], [ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line()],
+         state}
+    end
+  end
+
   defp handle_control_request(request_id, %{"subtype" => "can_use_tool"} = request, state) do
+    request = Map.put(request, "_available_modes", Enum.map(modes(state), & &1["id"]))
     acp_id = ACPProtocol.generate_id()
     tool_call = ClaudeProtocol.permission_tool_call(request, state.cwd)
     options = ClaudeProtocol.permission_options(request)
@@ -347,6 +424,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     message =
       ACPProtocol.encode_permission_request(session_id(state), tool_call, options)
+      |> Map.put("_meta", permission_meta(request, tool_call))
       |> Map.put("id", acp_id)
 
     tool_message =
@@ -393,6 +471,164 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
        ClaudeProtocol.control_error(request_id, "Malformed Claude SDK control request")
        |> ClaudeProtocol.line()
      ], state}
+  end
+
+  defp ask_user_question_request(request, state) do
+    questions =
+      request
+      |> get_in(["input", "questions"])
+      |> valid_questions()
+
+    cond do
+      not is_map(get_in(state.client_capabilities || %{}, ["elicitation", "form"])) ->
+        {:error, "AskUserQuestion requires ACP form elicitation support"}
+
+      questions == [] ->
+        {:error, "AskUserQuestion called with no valid questions"}
+
+      true ->
+        properties =
+          questions
+          |> Enum.with_index()
+          |> Enum.reduce(%{}, fn {question, index}, acc ->
+            options =
+              Enum.map(question["options"], fn option ->
+                %{"const" => option["label"], "title" => option["label"]}
+                |> maybe_put("description", option["description"])
+                |> maybe_put(
+                  "_meta",
+                  if(is_binary(option["preview"]),
+                    do: %{"_claude/askUserQuestionOption" => %{"preview" => option["preview"]}},
+                    else: nil
+                  )
+                )
+              end)
+
+            description = if length(questions) == 1, do: nil, else: question["question"]
+
+            selection =
+              if question["multiSelect"] == true do
+                %{"type" => "array", "items" => %{"anyOf" => options}}
+              else
+                %{"type" => "string", "oneOf" => options}
+              end
+              |> maybe_put("title", question["header"])
+              |> maybe_put("description", description)
+
+            custom = %{
+              "type" => "string",
+              "title" => "Other",
+              "description" =>
+                "Type your own answer instead of choosing an option above (optional).",
+              "_meta" => %{
+                "_askUserQuestionCustomAnswer" => %{
+                  "questionId" => "question_#{index}",
+                  "isCustomAnswer" => true
+                }
+              }
+            }
+
+            acc
+            |> Map.put("question_#{index}", selection)
+            |> Map.put("question_#{index}_custom", custom)
+          end)
+
+        message =
+          if length(questions) == 1,
+            do: hd(questions)["question"],
+            else: "Please answer the following questions."
+
+        params = %{
+          "mode" => "form",
+          "sessionId" => session_id(state),
+          "toolCallId" => request["tool_use_id"],
+          "message" => message,
+          "requestedSchema" => %{"type" => "object", "properties" => properties}
+        }
+
+        {:ok, params, questions}
+    end
+  end
+
+  defp valid_questions(questions) when is_list(questions) do
+    Enum.filter(questions, fn
+      %{"question" => question, "options" => options}
+      when is_binary(question) and is_list(options) and options != [] ->
+        Enum.all?(options, fn
+          %{"label" => label} when is_binary(label) and label != "" -> true
+          _ -> false
+        end)
+
+      _ ->
+        false
+    end)
+  end
+
+  defp valid_questions(_questions), do: []
+
+  defp ask_user_question_result(%{"action" => "decline"}, request) do
+    allow_ask_user_question(request, %{})
+  end
+
+  defp ask_user_question_result(%{"action" => "accept", "content" => content}, request)
+       when is_map(content) do
+    answers =
+      request["_questions"]
+      |> Enum.with_index()
+      |> Enum.reduce(%{}, fn {question, index}, acc ->
+        custom = content["question_#{index}_custom"]
+        selected = content["question_#{index}"]
+
+        answer =
+          cond do
+            is_binary(custom) and String.trim(custom) != "" -> String.trim(custom)
+            is_list(selected) -> Enum.map_join(selected, ", ", &to_string/1)
+            is_binary(selected) -> selected
+            true -> nil
+          end
+
+        if is_binary(answer) and answer != "",
+          do: Map.put(acc, question["question"], answer),
+          else: acc
+      end)
+
+    allow_ask_user_question(request, answers)
+  end
+
+  defp ask_user_question_result(_response, request) do
+    %{
+      "behavior" => "deny",
+      "message" => "User cancelled AskUserQuestion",
+      "interrupt" => true,
+      "toolUseID" => request["tool_use_id"],
+      "decisionClassification" => "user_reject"
+    }
+  end
+
+  defp allow_ask_user_question(request, answers) do
+    %{
+      "behavior" => "allow",
+      "updatedInput" => Map.put(request["input"] || %{}, "answers", answers),
+      "toolUseID" => request["tool_use_id"],
+      "decisionClassification" => "user_temporary"
+    }
+  end
+
+  defp permission_meta(request, tool_call) do
+    title =
+      if request["tool_name"] == "ExitPlanMode", do: "Ready to code?", else: tool_call["title"]
+
+    %{
+      "permission" =>
+        %{"version" => 1, "title" => title || request["tool_name"] || "Use tool?"}
+        |> maybe_put(
+          "description",
+          if(is_binary(request["decision_reason"]),
+            do: "Reason: #{request["decision_reason"]}",
+            else: nil
+          )
+        )
+    }
   end
 
   defp handle_stream_event(%{"type" => "content_block_start", "content_block" => block}, state) do
@@ -530,6 +766,53 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         fast_mode_enabled?(result["fast_mode_state"], state.fast_mode_enabled)
       )
 
+    cond do
+      not is_nil(state.deferred_result) and MapSet.size(state.background_subagents) == 0 ->
+        settle_result(state.deferred_result, %{state | deferred_result: nil})
+
+      not is_nil(state.deferred_result) ->
+        {[], [], state}
+
+      not is_nil(state.pending_prompt_id) and MapSet.size(state.background_subagents) > 0 ->
+        defer_result(result, state)
+
+      true ->
+        settle_result(result, state)
+    end
+  end
+
+  defp defer_result(result, state) do
+    session_id = result["session_id"] || state.session_id || "default"
+    usage = format_usage(result["usage"] || %{})
+
+    text =
+      case state.text_acc do
+        [] -> result["result"] || ""
+        acc -> IO.iodata_to_binary(Enum.reverse(acc))
+      end
+
+    messages =
+      [
+        usage_update(session_id, usage, result, state),
+        config_option_update(state),
+        AdapterEvents.session_info_update(session_id, %{
+          "_meta" => %{"ex_mcp.claude_sdk" => %{"status" => "waiting_for_subagents"}}
+        }),
+        result_text_chunk(session_id, text, state)
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    state = %{
+      state
+      | deferred_result: result,
+        session_id: session_id,
+        text_acc: if(state.text_acc == [] and text != "", do: [text], else: state.text_acc)
+    }
+
+    {messages, [], state}
+  end
+
+  defp settle_result(result, state) do
     session_id = result["session_id"] || state.session_id || "default"
     usage = format_usage(result["usage"] || %{})
 
@@ -584,7 +867,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         thinking_blocks: [],
         current_block_type: nil,
         current_assistant_text_streamed?: false,
-        session_id: session_id
+        session_id: session_id,
+        deferred_result: nil,
+        background_subagents: MapSet.new()
     }
 
     {writes, state} = start_next_queued_prompt(state)
@@ -659,8 +944,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp handle_system(%{"subtype" => "session_state_changed"} = event, state) do
     update = %{"_meta" => %{"ex_mcp.claude_sdk" => %{"sessionState" => event["state"]}}}
+    info = AdapterEvents.session_info_update(session_id(state), update)
 
-    {[AdapterEvents.session_info_update(session_id(state), update)], [], state}
+    if event["state"] == "idle" and not is_nil(state.deferred_result) and
+         MapSet.size(state.background_subagents) == 0 do
+      {messages, writes, state} = settle_result(state.deferred_result, state)
+      {[info | messages], writes, state}
+    else
+      {[info], [], state}
+    end
   end
 
   defp handle_system(%{"subtype" => "commands_changed", "commands" => commands}, state) do
@@ -668,8 +960,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp handle_system(%{"subtype" => subtype} = event, state)
-       when subtype in ["task_started", "task_progress", "task_updated", "task_notification"] do
-    {[AdapterEvents.plan(session_id(state), task_plan_entries(event))], [], state}
+       when subtype in [
+              "task_started",
+              "task_progress",
+              "task_updated",
+              "task_notification",
+              "background_tasks_changed"
+            ] do
+    state = track_background_subagents(event, state)
+    entries = task_plan_entries(event)
+    messages = if entries == [], do: [], else: [AdapterEvents.plan(session_id(state), entries)]
+    {messages, [], state}
   end
 
   defp handle_system(%{"subtype" => "permission_denied"} = event, state) do
@@ -815,9 +1116,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       "description" => "Session permission mode",
       "category" => "mode",
       "type" => "select",
-      "currentValue" => permission_mode_to_mode(state.permission_mode || "default"),
+      "currentValue" => effective_mode(state),
       "options" =>
-        Enum.map(modes(), fn mode ->
+        Enum.map(modes(state), fn mode ->
           %{
             "name" => mode["name"],
             "value" => mode["id"],
@@ -896,7 +1197,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     model = current_model_info(state)
 
     if model["supportsFastMode"] == true or model["supports_fast_mode"] == true do
-      if client_supports_boolean_config?(state.client_capabilities) do
+      if Capabilities.supported?(state.client_capabilities, :boolean_config_options) do
         %{
           "id" => "fast",
           "name" => "Fast mode",
@@ -953,7 +1254,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp current_mode_update(state) do
     AdapterEvents.current_mode_update(
       session_id(state),
-      permission_mode_to_mode(state.permission_mode || "default")
+      effective_mode(state)
     )
   end
 
@@ -1029,10 +1330,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp fast_mode_enabled?(nil, fallback), do: fallback == true
   defp fast_mode_enabled?(_, fallback), do: fallback == true
 
-  defp client_supports_boolean_config?(capabilities) do
-    get_in(capabilities || %{}, ["session", "configOptions", "boolean"]) != nil
-  end
-
   defp humanize_config_value(value) when is_binary(value) do
     value
     |> String.split(~r/[_-]+/, trim: true)
@@ -1043,6 +1340,50 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp humanize_config_value(value), do: to_string(value)
+
+  defp track_background_subagents(
+         %{"subtype" => "task_started", "task_id" => task_id, "subagent_type" => subagent_type},
+         %{pending_prompt_id: pending_prompt_id} = state
+       )
+       when is_binary(task_id) and task_id != "" and is_binary(subagent_type) and
+              subagent_type != "" and
+              not is_nil(pending_prompt_id) do
+    %{state | background_subagents: MapSet.put(state.background_subagents, task_id)}
+  end
+
+  defp track_background_subagents(
+         %{"subtype" => "task_notification", "task_id" => task_id},
+         state
+       )
+       when is_binary(task_id) do
+    %{state | background_subagents: MapSet.delete(state.background_subagents, task_id)}
+  end
+
+  defp track_background_subagents(
+         %{"subtype" => "task_updated", "task_id" => task_id, "patch" => %{"status" => status}},
+         state
+       )
+       when is_binary(task_id) and status in ["completed", "failed", "killed", "cancelled"] do
+    %{state | background_subagents: MapSet.delete(state.background_subagents, task_id)}
+  end
+
+  defp track_background_subagents(
+         %{"subtype" => "background_tasks_changed", "tasks" => tasks},
+         state
+       )
+       when is_list(tasks) do
+    live_ids =
+      tasks
+      |> Enum.flat_map(fn
+        %{"task_id" => task_id} when is_binary(task_id) -> [task_id]
+        _ -> []
+      end)
+      |> MapSet.new()
+
+    %{state | background_subagents: MapSet.intersection(state.background_subagents, live_ids)}
+  end
+
+  defp track_background_subagents(_event, state), do: state
 
   defp task_plan_entries(%{"subtype" => "task_started"} = event) do
     [
@@ -1087,6 +1428,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       }
     ]
   end
+
+  defp task_plan_entries(%{"subtype" => "background_tasks_changed"}), do: []
+  defp task_plan_entries(_event), do: []
 
   defp finalize_block(%{current_block_type: "thinking", thinking_acc: acc} = state)
        when acc != [] do
@@ -1253,7 +1597,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
               thinking_blocks: [],
               current_block_type: nil,
               current_assistant_text_streamed?: false,
-              tool_calls: %{}
+              tool_calls: %{},
+              background_subagents: MapSet.new(),
+              deferred_result: nil
           }
 
         {[ClaudeProtocol.line(queued.message)], state}
@@ -1277,10 +1623,20 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp permission_mode_to_mode("plan"), do: "plan"
   defp permission_mode_to_mode("auto"), do: "auto"
   defp permission_mode_to_mode("dontAsk"), do: "dontAsk"
+  defp permission_mode_to_mode("bypassPermissions"), do: "bypassPermissions"
   defp permission_mode_to_mode(_), do: "default"
+
+  defp effective_mode(state) do
+    current = permission_mode_to_mode(state.permission_mode || "default")
+
+    if Enum.any?(modes(state), &(&1["id"] == current)), do: current, else: "default"
+  end
 
   defp maybe_set(state, _key, nil), do: state
   defp maybe_set(state, key, value), do: Map.put(state, key, value)
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp compact(map) do
     map

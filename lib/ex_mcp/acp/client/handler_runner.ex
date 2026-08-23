@@ -80,6 +80,14 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     GenServer.cast(pid, {:terminal_request, ref, method, params, id})
   end
 
+  def elicitation_request(pid, ref, mode, params) do
+    GenServer.cast(pid, {:elicitation_request, ref, mode, params})
+  end
+
+  def elicitation_complete(pid, elicitation_id) do
+    GenServer.cast(pid, {:elicitation_complete, elicitation_id})
+  end
+
   @impl true
   def init({handler_mod, handler_opts, owner}) do
     Process.flag(:trap_exit, true)
@@ -210,6 +218,40 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
       end
 
     send(state.owner, {:acp_handler_result, ref, {:terminal, result}})
+    {:noreply, state}
+  end
+
+  def handle_cast({:elicitation_request, ref, mode, params}, state) do
+    callback = if mode == "form", do: :handle_form_elicitation, else: :handle_url_elicitation
+
+    {result, state} =
+      case safe_call(fn -> apply(state.handler_mod, callback, [params, state.handler_state]) end) do
+        {:ok, {:ok, response, handler_state}} ->
+          {{:ok, response}, %{state | handler_state: handler_state}}
+
+        {:ok, {:error, reason, handler_state}} ->
+          {{:error, reason}, %{state | handler_state: handler_state}}
+
+        {:ok, other} ->
+          {{:error, {:invalid_return, other}}, state}
+
+        {:error, reason} ->
+          {{:error, reason}, state}
+      end
+
+    send(state.owner, {:acp_handler_result, ref, {:elicitation, result}})
+    {:noreply, state}
+  end
+
+  def handle_cast({:elicitation_complete, elicitation_id}, state) do
+    state =
+      case safe_call(fn ->
+             state.handler_mod.handle_elicitation_complete(elicitation_id, state.handler_state)
+           end) do
+        {:ok, {:ok, handler_state}} -> %{state | handler_state: handler_state}
+        _invalid_or_failed -> state
+      end
+
     {:noreply, state}
   end
 

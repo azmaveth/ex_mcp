@@ -540,6 +540,58 @@ defmodule ExMCP.ACP.ProtocolTest do
     end
   end
 
+  describe "elicitation encoding" do
+    test "encodes form and URL requests and completion notifications" do
+      form =
+        Protocol.encode_elicitation_request(%{
+          "mode" => "form",
+          "sessionId" => "s1",
+          "message" => "Choose",
+          "requestedSchema" => %{
+            "type" => "object",
+            "properties" => %{"choice" => %{"type" => "string"}}
+          }
+        })
+
+      assert form["method"] == "elicitation/create"
+      assert form["params"]["mode"] == "form"
+
+      url =
+        Protocol.encode_elicitation_request(%{
+          "mode" => "url",
+          "requestId" => 9,
+          "message" => "Authorize",
+          "url" => "https://example.com/oauth",
+          "elicitationId" => "oauth-1"
+        })
+
+      assert url["params"]["requestId"] == 9
+
+      assert Protocol.encode_elicitation_complete("oauth-1") == %{
+               "jsonrpc" => "2.0",
+               "method" => "elicitation/complete",
+               "params" => %{"elicitationId" => "oauth-1"}
+             }
+    end
+
+    test "normalizes handler results into ACP actions" do
+      assert Protocol.encode_elicitation_response(41, %{"action" => "decline"}) == %{
+               "jsonrpc" => "2.0",
+               "id" => 41,
+               "result" => %{"action" => "decline"}
+             }
+
+      assert Protocol.encode_elicitation_response(42, %{
+               action: "accept",
+               content: %{"choice" => "blue"}
+             }) == %{
+               "jsonrpc" => "2.0",
+               "id" => 42,
+               "result" => %{"action" => "accept", "content" => %{"choice" => "blue"}}
+             }
+    end
+  end
+
   describe "round-trip encoding" do
     test "encode → JSON → decode → parse" do
       msg = Protocol.encode_session_new("/tmp")

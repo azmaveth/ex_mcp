@@ -20,7 +20,7 @@ Application.put_env(:ex_mcp, :stdio_mode, true)
 Application.put_env(:logger, :level, :emergency)
 
 Mix.install([
-  {:ex_mcp, "~> 1.0.0-rc.8"},
+  {:ex_mcp, "~> 1.0"},
   # Required only for standalone `transport: :http` (not Phoenix mounts):
   # {:bandit, "~> 1.0"}
 ], verbose: false)

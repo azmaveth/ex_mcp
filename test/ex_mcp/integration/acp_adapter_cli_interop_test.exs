@@ -4,23 +4,24 @@ defmodule ExMCP.Integration.ACPAdapterCLIInteropTest do
 
   The tests exercise process startup, each vendor's native control protocol, ACP
   initialization, session creation/listing/close, and clean shutdown. They never
-  send `session/prompt`, so no LLM request is made. Pi receives an isolated dummy
-  OpenAI-compatible model definition because it requires a configured model even
-  to create a session; the deliberately unreachable endpoint is never contacted.
+  send `session/prompt`, so no LLM request is made. Pi and ZCode receive isolated
+  dummy model definitions because both require a configured model even to create
+  a session; the deliberately unreachable endpoints are never contacted.
 
-  Run all three explicitly with:
+  Run all four explicitly with:
 
       mix test --only interop_acp_cli
 
   Executables are resolved from PATH or `CLAUDE_CODE_EXECUTABLE`, `CODEX_PATH`,
-  and `PI_ACP_PI_COMMAND`. The suite fails when a requested CLI is unavailable
-  instead of silently skipping coverage.
+  `PI_ACP_PI_COMMAND`, and `ZCODE_EXECUTABLE`. On macOS, ZCode also resolves the
+  runtime bundled with the official desktop app. The suite fails when a
+  requested CLI is unavailable instead of silently skipping coverage.
   """
 
   use ExUnit.Case, async: false
 
   alias ExMCP.ACP.Client
-  alias ExMCP.ACP.Adapters.{ClaudeSDK, Codex, Pi}
+  alias ExMCP.ACP.Adapters.{ClaudeSDK, Codex, Pi, ZCode}
 
   @moduletag :external
   @moduletag :interop_acp_cli
@@ -67,6 +68,41 @@ defmodule ExMCP.Integration.ACPAdapterCLIInteropTest do
         workspace_roots: [root],
         no_browser: true,
         env: [{"HOME", home}, {"CODEX_HOME", codex_home}, {"NO_BROWSER", "1"}]
+      ],
+      root
+    )
+  end
+
+  test "ZCode app-server adapter completes a no-model ACP lifecycle", %{root: root} do
+    home = mkdir!(root, "home")
+    zcode_home = mkdir!(root, "zcode")
+    config_dir = mkdir!(home, ".zcode/cli")
+
+    write_json!(Path.join(config_dir, "config.json"), %{
+      "model" => %{"main" => "ex-mcp-interop/no-model-call"},
+      "provider" => %{
+        "ex-mcp-interop" => %{
+          "kind" => "anthropic",
+          "name" => "ExMCP interop",
+          "options" => %{
+            "apiKey" => "interop-placeholder",
+            "apiKeyRequired" => true,
+            "baseURL" => "http://127.0.0.1:1"
+          },
+          "models" => %{
+            "no-model-call" => %{"name" => "No model call"}
+          }
+        }
+      }
+    })
+
+    exercise_adapter(
+      ZCode,
+      [
+        cli_path: executable!(:zcode),
+        cwd: root,
+        workspace_roots: [root],
+        env: [{"HOME", home}, {"ZCODE_HOME", zcode_home}]
       ],
       root
     )
@@ -159,6 +195,15 @@ defmodule ExMCP.Integration.ACPAdapterCLIInteropTest do
 
   defp executable!(:codex), do: resolve_executable!("Codex", "CODEX_PATH", "codex", [])
   defp executable!(:pi), do: resolve_executable!("Pi", "PI_ACP_PI_COMMAND", "pi", [])
+
+  defp executable!(:zcode) do
+    resolve_executable!(
+      "ZCode",
+      "ZCODE_EXECUTABLE",
+      "zcode",
+      ["/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs"]
+    )
+  end
 
   defp resolve_executable!(name, env_name, command, fallbacks) do
     candidates = [System.get_env(env_name), System.find_executable(command) | fallbacks]

@@ -15,7 +15,7 @@
 # Environment variables:
 #   CONFORMANCE_SPEC_VERSION  — Test a specific version (e.g., 2025-06-18)
 #   CONFORMANCE_PACKAGE_VERSION — Stable conformance package version (default: 0.1.16)
-#   CONFORMANCE_ALPHA_VERSION   — Alpha conformance package version (default: 0.2.0-alpha.10)
+#   CONFORMANCE_ALPHA_VERSION   — Alpha conformance package version (default: 0.2.0-alpha.11)
 #   CONFORMANCE_PORT          — Server port (default: 3099)
 #   CONFORMANCE_TIMEOUT       — Client timeout in ms (default: 120000)
 #   CONFORMANCE_START_TIMEOUT_SECONDS — Cold server startup timeout (default: 120)
@@ -232,7 +232,7 @@ run_all_versions() {
 }
 
 run_draft_alpha() {
-  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.10}"
+  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.11}"
   CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
   SPEC_VERSION="${CONFORMANCE_SPEC_VERSION:-draft}"
 
@@ -267,7 +267,7 @@ run_modern() {
   # its shared CounterStrike DETS file. Conformance exercises the packaged
   # runtime, so exclude test-only dependencies unless explicitly overridden.
   export MIX_ENV="${CONFORMANCE_MIX_ENV:-dev}"
-  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.10}"
+  CONFORMANCE_PACKAGE_VERSION="${CONFORMANCE_ALPHA_VERSION:-0.2.0-alpha.11}"
   CONFORMANCE="npx @modelcontextprotocol/conformance@$CONFORMANCE_PACKAGE_VERSION"
   SPEC_VERSION="2026-07-28"
   local exit_code=0
@@ -330,7 +330,7 @@ case "$MODE" in
     echo "Environment:"
     echo "  CONFORMANCE_SPEC_VERSION=2025-06-18  Test a specific version"
     echo "  CONFORMANCE_PACKAGE_VERSION=0.1.16   Pin stable conformance package"
-    echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.10 Override alpha package"
+    echo "  CONFORMANCE_ALPHA_VERSION=0.2.0-alpha.11 Override alpha package"
     echo "  CONFORMANCE_START_TIMEOUT_SECONDS=120 Override cold server startup timeout"
     echo "  CONFORMANCE_MIX_ENV=dev               Override compiled-client Mix environment"
     exit 1

@@ -88,7 +88,7 @@ The library follows a layered architecture:
 4. **ACP Layer** (`lib/ex_mcp/acp/`)
    - Agent Client Protocol for controlling coding agents
    - `ExMCP.ACP.Client`: GenServer managing agent connections over stdio
-   - `ExMCP.ACP.Adapter`: Behaviour for adapting non-native agents (Claude Code, Codex)
+   - `ExMCP.ACP.Adapter`: Behaviour for adapting non-native agents (Claude Code, Codex, Pi, ZCode)
    - `ExMCP.ACP.AdapterBridge`: Bridge between ACP and agent-native protocols
 
 5. **Application Layer** (`lib/ex_mcp/application.ex`)
@@ -116,12 +116,12 @@ or infer modern behavior from one method in feature code.
 | `:prefer_modern` | `server/discover` | Both | Initialize only with positive legacy evidence on a live transport |
 | `:modern_only` | `server/discover` | Modern | Never |
 
-`1.0.0-rc.8` defaults to `:prefer_modern` for the final pre-1.0 soak. Published
-rc.5 itself is legacy-only and does not contain modern support. Tests and
-deployments that require a specific wire shape must always pass a mode
-explicitly instead of relying on the release default. Both preference modes
-accept both eras on a server; their preference controls advertised version
-order.
+`1.0.0` defaults to `:prefer_modern`, matching the final rc.8 candidate.
+Published rc.5 itself is legacy-only and does not contain modern support.
+Tests and deployments that require a specific wire shape must always pass a
+mode explicitly instead of relying on the release default. Both preference
+modes accept both eras on a server; their preference controls advertised
+version order.
 
 Era responsibilities:
 

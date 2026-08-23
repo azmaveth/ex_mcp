@@ -156,8 +156,8 @@ defmodule ExMCP.DocRegressionTest do
 
     refute readme =~ "**2025-11-25** (latest stable)"
     assert readme =~ "2025-11-25`, for initialize-based compatibility"
-    assert readme =~ "`1.0.0-rc.8` is the current modern-preferred soak"
-    assert readme =~ "> candidate. It preserves rc.7 behavior"
+    assert readme =~ "`1.0.0` is the stable modern-preferred release"
+    assert readme =~ "wire- and API-compatible with rc.8"
     assert readme =~ "application default is `:prefer_modern`"
     assert configuration =~ "defaults to `:prefer_modern`"
     assert quickstart =~ "`:prefer_modern`"
@@ -273,6 +273,7 @@ defmodule ExMCP.DocRegressionTest do
           "docs/RELEASE_1_0_0_RC_6.md",
           "docs/RELEASE_1_0_0_RC_7.md",
           "docs/RELEASE_1_0_0_RC_8.md",
+          "docs/RELEASE_1_0_0.md",
           "docs/SECURITY_AUDIT_2026-08-12.md",
           "docs/V2_ROADMAP.md",
           "docs/PRE_2_0_TECH_DEBT_PLAN.md",
