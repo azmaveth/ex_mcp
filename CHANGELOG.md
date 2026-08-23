@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Full OAuth flow verification no longer expands broad inferred error and map
+  unions that made compiling the module take minutes under Elixir 1.20.
 - The external MCP conformance client now round-trips complete JSON Schema
   2020-12 tool schemas without replacing them with generated arguments.
 - The Pi adapter now waits for `agent_settled` before completing an ACP prompt,
