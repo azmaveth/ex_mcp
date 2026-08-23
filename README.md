@@ -304,7 +304,7 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 
 | Transport | Latency | Best For |
 |-----------|---------|----------|
-| **BEAM-local** | ~15us | Local Elixir processes in one VM |
+| **BEAM-local** | ~15μs | Local Elixir processes in one VM |
 | **stdio** | ~1-5ms | Subprocess communication |
 | **Streamable HTTP** | ~5-20ms | Web applications, remote APIs |
 
