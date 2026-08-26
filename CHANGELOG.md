@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **ACP Claude SDK adapter — updates dropped as "unknown session" with Claude
+  Code 2.1.x** — `ExMCP.ACP.Adapters.ClaudeSDK` adopted the CLI's own session
+  UUID (stamped on every stream-json event) as its session id, so every
+  `session/update` went out under an id the client never received from
+  `session/new`; `ExMCP.ACP.Client` logged `ACP client ignored an update for an
+  unknown session` for each and the prompt returned empty text. The ACP-facing
+  id now stays the one `session/new` returned; the CLI's UUID is kept in the new
+  `claude_session_id` state field and still surfaces as the prompt result's
+  `_meta."ex_mcp.claude_sdk".sessionId` for resume / correlation.
+
 ### Added
 
 - A weekly advisory workflow now runs the complete MCP 2026-07-28 conformance

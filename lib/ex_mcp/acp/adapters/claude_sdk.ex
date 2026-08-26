@@ -19,6 +19,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   defstruct [
     :session_id,
+    # Claude Code's own session UUID (from the stream-json `init` event). Kept
+    # apart from the ACP-facing `session_id` — see Mapper.maybe_set_session/2.
+    :claude_session_id,
     :model,
     :permission_mode,
     :effort,

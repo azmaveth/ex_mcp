@@ -420,6 +420,60 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
   end
 
   describe "SDK event mapping" do
+    test "regression: updates keep the ACP session id even when the CLI reports its own UUID",
+         %{state: state} do
+      # Claude Code 2.1.x stamps every stream-json event with the UUID it
+      # minted for the process. The adapter used to adopt that UUID as
+      # `state.session_id`, so every session/update went out under an id the
+      # ACP client never saw from session/new and was dropped as "unknown
+      # session" — the turn came back empty.
+      request = %{
+        "id" => 7,
+        "method" => "session/new",
+        "params" => %{"cwd" => "/tmp/project"}
+      }
+
+      assert {:reply, %{"sessionId" => acp_id}, state} =
+               ClaudeSDK.translate_outbound(request, state)
+
+      cli_uuid = "496377d0-00a4-4627-ad73-06a13d682836"
+      refute acp_id == cli_uuid
+
+      init = %{
+        "type" => "system",
+        "subtype" => "init",
+        "session_id" => cli_uuid,
+        "cwd" => "/tmp/project",
+        "model" => "claude-opus-4-8",
+        "tools" => []
+      }
+
+      assert {:messages, init_messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(init), state)
+
+      for message <- init_messages, message["method"] == "session/update" do
+        assert message["params"]["sessionId"] == acp_id
+      end
+
+      assistant = %{
+        "type" => "assistant",
+        "session_id" => cli_uuid,
+        "message" => %{
+          "model" => "claude-opus-4-8",
+          "content" => [%{"type" => "text", "text" => "ready"}]
+        }
+      }
+
+      assert {:messages, messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(assistant), state)
+
+      assert [message | _] = messages
+      assert message["method"] == "session/update"
+      assert message["params"]["sessionId"] == acp_id
+      assert state.session_id == acp_id
+      assert state.claude_session_id == cli_uuid
+    end
+
     test "emits pending tool_call from partial tool start", %{state: state} do
       event = %{
         "type" => "stream_event",

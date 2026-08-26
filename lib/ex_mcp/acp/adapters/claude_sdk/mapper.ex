@@ -683,7 +683,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     state =
       state
       |> maybe_set(:model, message["model"])
-      |> maybe_set(:session_id, message["session_id"])
+      |> maybe_set_session(message)
 
     {messages, writes, state} =
       Enum.reduce(content, {[], [], state}, fn block, {messages, writes, acc} ->
@@ -782,7 +782,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp defer_result(result, state) do
-    session_id = result["session_id"] || state.session_id || "default"
+    # Provider metadata (`_meta.sessionId`) carries the CLI's own UUID so
+    # consumers can correlate with / resume the underlying Claude session.
+    session_id =
+      result["session_id"] || state.claude_session_id || state.session_id || "default"
+
     usage = format_usage(result["usage"] || %{})
 
     text =
@@ -813,7 +817,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp settle_result(result, state) do
-    session_id = result["session_id"] || state.session_id || "default"
+    # Provider metadata (`_meta.sessionId`) carries the CLI's own UUID so
+    # consumers can correlate with / resume the underlying Claude session.
+    session_id =
+      result["session_id"] || state.claude_session_id || state.session_id || "default"
+
     usage = format_usage(result["usage"] || %{})
 
     text =
@@ -887,7 +895,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp handle_system(%{"subtype" => "init"} = event, state) do
     state =
       state
-      |> maybe_set(:session_id, event["session_id"])
+      |> maybe_set_session(event)
       |> maybe_set(:model, event["model"])
       |> maybe_set(:permission_mode, event["permissionMode"])
       |> Map.put(
@@ -1612,9 +1620,22 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp session_id(%{session_id: nil}), do: "default"
   defp session_id(%{session_id: session_id}), do: session_id
 
+  # The ACP-facing session id is the one `session/new` returned to the client
+  # (`claude_sdk_<n>` unless the caller supplied one). Claude Code mints its own
+  # UUID for the process and stamps every stream-json event with it; adopting
+  # that UUID here re-labelled every `session/update` with an id the ACP client
+  # never registered, so `ExMCP.ACP.Client` dropped all of them ("ignored an
+  # update for an unknown session") and the turn came back empty (seen with
+  # Claude Code 2.1.215, 2026-08-25). Keep the ACP id stable once set; remember
+  # the CLI's id separately for `--resume` and provider metadata.
+  defp maybe_set_session(%{session_id: nil} = state, %{"session_id" => session_id})
+       when is_binary(session_id) and session_id != "" do
+    %{state | session_id: session_id, claude_session_id: session_id}
+  end
+
   defp maybe_set_session(state, %{"session_id" => session_id})
        when is_binary(session_id) and session_id != "" do
-    %{state | session_id: session_id}
+    %{state | claude_session_id: session_id}
   end
 
   defp maybe_set_session(state, _event), do: state
