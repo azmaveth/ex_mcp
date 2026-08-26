@@ -485,6 +485,19 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
         assert message["params"]["sessionId"] == acp_id
       end
 
+      init_info =
+        Enum.find(init_messages, fn message ->
+          get_in(message, ["params", "update", "sessionUpdate"]) == "session_info_update"
+        end)
+
+      assert get_in(init_info, [
+               "params",
+               "update",
+               "_meta",
+               "ex_mcp.claude_sdk",
+               "sessionId"
+             ]) == cli_uuid
+
       assistant = %{
         "type" => "assistant",
         "session_id" => cli_uuid,

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The Claude SDK adapter now exposes Claude Code's native session UUID in the
+  initial `session_info_update` metadata, allowing clients to retain the
+  provider resume id even when a prompt times out before its final response.
+
 ## [1.1.0] - 2026-08-25
 
 ### Added
