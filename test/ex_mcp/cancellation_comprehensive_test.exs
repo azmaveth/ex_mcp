@@ -336,24 +336,18 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # "The sender of the cancellation notification SHOULD ignore any
       #  response to the request that arrives afterward"
 
-      # Start multiple cancellable requests
-      tasks =
-        for i <- 1..3 do
-          Task.async(fn ->
-            {i, Client.call_tool(client, "cancellable_tool", %{"iterations" => 20, "index" => i})}
-          end)
-        end
-
-      wait_until(fn -> length(Client.get_pending_requests(client)) == 3 end, timeout: 5_000)
-      pending = Client.get_pending_requests(client)
-      assert length(pending) == 3
+      # Start each request and capture the newly registered id before starting
+      # the next one. Map key order does not identify which concurrent task
+      # owns a request id.
+      {task1, req1} = start_indexed_request(client, 1, [])
+      {task2, req2} = start_indexed_request(client, 2, [req1])
+      {task3, _req3} = start_indexed_request(client, 3, [req1, req2])
 
       # Cancel the second request
-      [_req1, req2, _req3] = pending
       :ok = Client.send_cancelled(client, req2, "Cancelled second request")
 
       # Collect results (increased timeout to handle case where cancellation doesn't work)
-      results = Task.await_many(tasks, 8000)
+      results = Task.await_many([task1, task2, task3], 8000)
 
       # First and third should succeed, second should be cancelled
       assert [{1, {:ok, _}}, {2, {:error, :cancelled}}, {3, {:ok, _}}] = results
@@ -721,5 +715,23 @@ defmodule ExMCP.CancellationComprehensiveTest do
       # The implementation logs: "Request X cancelled: reason"
       assert true
     end
+  end
+
+  defp start_indexed_request(client, index, known_request_ids) do
+    task =
+      Task.async(fn ->
+        {index,
+         Client.call_tool(client, "cancellable_tool", %{"iterations" => 20, "index" => index})}
+      end)
+
+    expected_count = length(known_request_ids) + 1
+
+    wait_until(
+      fn -> length(Client.get_pending_requests(client)) == expected_count end,
+      timeout: 5_000
+    )
+
+    assert [request_id] = Client.get_pending_requests(client) -- known_request_ids
+    {task, request_id}
   end
 end

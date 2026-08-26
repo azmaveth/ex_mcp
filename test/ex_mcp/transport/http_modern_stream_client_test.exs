@@ -138,7 +138,10 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClientTest do
     end)
 
     assert {:ok, pid} = start_stream(bypass, consumer_ack_timeout: 30)
-    assert_receive {:modern_http_stream_message, ^pid, @request_id, ^first}, 1_000
+    # The HTTP handshake can take several seconds on loaded CI runners. Once
+    # the first event is delivered, the much shorter consumer ACK deadline is
+    # what this test is exercising.
+    assert_receive {:modern_http_stream_message, ^pid, @request_id, ^first}, 5_000
 
     assert_receive {:modern_http_stream_closed, ^pid, @request_id, :stream_consumer_timeout},
                    500

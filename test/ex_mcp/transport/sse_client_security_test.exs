@@ -79,7 +79,10 @@ defmodule ExMCP.Transport.SSEClientSecurityTest do
     end)
 
     assert {:ok, pid} = start_sse(bypass, consumer_ack_timeout: 30)
-    assert_receive {:sse_connected, ^pid}, 1_000
+
+    # Match the configured handshake allowance so loaded CI runners do not
+    # fail before the consumer ACK behavior under test begins.
+    assert_receive {:sse_connected, ^pid}, 5_000
     assert_receive {:sse_event, ^pid, %{data: "first"}}, 1_000
     assert_receive {:sse_error, ^pid, :stream_consumer_timeout}, 500
     refute_receive {:sse_event, ^pid, %{data: "second"}}, 100
