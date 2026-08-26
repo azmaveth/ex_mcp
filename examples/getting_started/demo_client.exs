@@ -8,7 +8,8 @@ Application.put_env(:logger, :level, :error)
 
 Mix.install(
   [
-    {:ex_mcp, path: Path.expand("../..", __DIR__)}
+    {:ex_mcp, path: Path.expand("../..", __DIR__)},
+    {:bandit, "~> 1.0"}
   ],
   verbose: false
 )
@@ -101,14 +102,12 @@ defmodule DemoClient do
   defp demo_http do
     IO.puts("\n2. HTTP transport")
     port = open_port()
-    ref = :"demo_http_#{port}"
 
-    {:ok, _server} =
+    {:ok, server} =
       DemoHttpServer.start_link(
         transport: :http,
         port: port,
-        use_sse: false,
-        ranch_ref: ref
+        use_sse: false
       )
 
     try do
@@ -129,21 +128,19 @@ defmodule DemoClient do
       IO.puts("Resource text: #{field(content, :text)}")
       Client.stop(client)
     after
-      Plug.Cowboy.shutdown(ref)
+      ExMCP.Server.Transport.stop_http_server(server)
     end
   end
 
   defp demo_http_sse do
     IO.puts("\n3. HTTP+SSE transport")
     port = open_port()
-    ref = :"demo_sse_#{port}"
 
-    {:ok, _server} =
+    {:ok, server} =
       DemoSseServer.start_link(
         transport: :http,
         port: port,
-        use_sse: true,
-        ranch_ref: ref
+        use_sse: true
       )
 
     try do
@@ -164,7 +161,7 @@ defmodule DemoClient do
       IO.puts("Prompt text: #{message |> field(:content) |> field(:text)}")
       Client.stop(client)
     after
-      Plug.Cowboy.shutdown(ref)
+      ExMCP.Server.Transport.stop_http_server(server)
     end
   end
 

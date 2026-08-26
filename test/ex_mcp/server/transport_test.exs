@@ -53,42 +53,6 @@ defmodule ExMCP.Server.TransportTest do
                Transport.start_server(TestServer, %{}, [], transport: :invalid)
     end
 
-    @tag :requires_http
-    test "starts HTTP transport" do
-      # This test requires Cowboy to be available
-      if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
-        {:ok, pid} =
-          Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
-            # Use port 0 for auto-assignment
-            transport: :http,
-            port: 0
-          )
-
-        assert is_pid(pid)
-        Plug.Cowboy.shutdown(pid)
-      else
-        # Skip if Cowboy not available
-        :skip
-      end
-    end
-
-    @tag :requires_http
-    test "starts HTTP transport with SSE enabled" do
-      if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
-        {:ok, pid} =
-          Transport.start_server(TestServer, %{name: "test", version: "1.0.0"}, [],
-            transport: :http,
-            sse_enabled: true,
-            port: 0
-          )
-
-        assert is_pid(pid)
-        Plug.Cowboy.shutdown(pid)
-      else
-        :skip
-      end
-    end
-
     test "starts stdio transport with fallback" do
       # This should fall back to basic GenServer since StdioServer likely isn't available
       {:ok, pid} =
@@ -117,18 +81,122 @@ defmodule ExMCP.Server.TransportTest do
       assert Process.alive?(pid)
       GenServer.stop(pid)
     end
+  end
+
+  for adapter <- ExMCP.Test.HTTPAdapter.adapters() do
+    describe "HTTP transport (#{adapter})" do
+      @tag :requires_http
+      test "starts HTTP transport" do
+        {:ok, handle} =
+          ExMCP.Test.HTTPAdapter.start_mcp_http(TestServer,
+            adapter: unquote(adapter),
+            server_info: %{name: "test", version: "1.0.0"}
+          )
+
+        assert is_pid(handle.pid)
+        assert Process.alive?(handle.pid)
+      end
+
+      @tag :requires_http
+      test "starts HTTP transport with SSE enabled" do
+        {:ok, handle} =
+          ExMCP.Test.HTTPAdapter.start_mcp_http(TestServer,
+            adapter: unquote(adapter),
+            server_info: %{name: "test", version: "1.0.0"},
+            sse_enabled: true
+          )
+
+        assert is_pid(handle.pid)
+      end
+
+      @tag :requires_http
+      test "start_http_server/4" do
+        {:ok, handle} =
+          ExMCP.Test.HTTPAdapter.start_mcp_http(TestServer,
+            adapter: unquote(adapter),
+            server_info: %{name: "test", version: "1.0.0"}
+          )
+
+        assert is_pid(handle.pid)
+      end
+
+      @tag :requires_http
+      test "start_link with transport: :http" do
+        {:ok, handle} =
+          ExMCP.Test.HTTPAdapter.start_mcp_http(TestServer, adapter: unquote(adapter))
+
+        assert is_pid(handle.pid)
+      end
+    end
+  end
+
+  describe "Cowboy listener identity" do
+    @tag :requires_http
+    test "default Cowboy start is a named singleton" do
+      info = %{name: "test", version: "1.0.0"}
+      port1 = ExMCP.Test.HTTPAdapter.free_port()
+      port2 = ExMCP.Test.HTTPAdapter.free_port()
+
+      {:ok, pid1} =
+        Transport.start_http_server(TestServer, info, [], adapter: :cowboy, port: port1)
+
+      on_exit(fn -> shutdown_cowboy(ExMCP.HttpPlug.HTTP) end)
+
+      {:ok, pid2} =
+        Transport.start_http_server(TestServer, info, [], adapter: :cowboy, port: port2)
+
+      assert pid2 == pid1
+      assert Process.alive?(pid1)
+    end
 
     @tag :requires_http
-    test "start_http_server/4" do
-      if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
-        {:ok, pid} =
-          Transport.start_http_server(TestServer, %{name: "test", version: "1.0.0"}, [], port: 0)
+    test "distinct ranch_ref values start isolated Cowboy listeners" do
+      info = %{name: "test", version: "1.0.0"}
+      port1 = ExMCP.Test.HTTPAdapter.free_port()
+      port2 = ExMCP.Test.HTTPAdapter.free_port()
+      ref1 = {:ex_mcp_test_cowboy, System.unique_integer([:positive])}
+      ref2 = {:ex_mcp_test_cowboy, System.unique_integer([:positive])}
 
-        assert is_pid(pid)
-        Plug.Cowboy.shutdown(pid)
-      else
-        :skip
-      end
+      {:ok, pid1} =
+        Transport.start_http_server(TestServer, info, [],
+          adapter: :cowboy,
+          port: port1,
+          ranch_ref: ref1
+        )
+
+      {:ok, pid2} =
+        Transport.start_http_server(TestServer, info, [],
+          adapter: :cowboy,
+          port: port2,
+          ranch_ref: ref2
+        )
+
+      on_exit(fn ->
+        shutdown_cowboy(ref1)
+        shutdown_cowboy(ref2)
+      end)
+
+      assert Process.alive?(pid1)
+      assert Process.alive?(pid2)
+      assert pid1 != pid2
+      ExMCP.TestHelpers.wait_until(fn -> listening?(port1) end)
+      ExMCP.TestHelpers.wait_until(fn -> listening?(port2) end)
+    end
+  end
+
+  describe "Bandit listener identity" do
+    @tag :requires_http
+    test "ranch_ref is ignored and still starts" do
+      {:ok, pid} =
+        Transport.start_http_server(TestServer, %{name: "test", version: "1.0.0"}, [],
+          adapter: :bandit,
+          port: ExMCP.Test.HTTPAdapter.free_port(),
+          ranch_ref: :ignored
+        )
+
+      on_exit(fn -> Transport.stop_http_server(pid) end)
+
+      assert Process.alive?(pid)
     end
   end
 
@@ -184,7 +252,16 @@ defmodule ExMCP.Server.TransportTest do
 
       # Others depend on dependencies
       assert is_boolean(transports.stdio.available)
-      assert is_boolean(transports.http.available)
+      assert transports.http.available == true
+    end
+
+    test "prefers Bandit when both adapters are loaded" do
+      assert {:ok, :bandit} = Transport.resolve_http_adapter(adapter: :auto)
+      assert {:ok, :bandit} = Transport.resolve_http_adapter(adapter: :bandit)
+      assert {:ok, :cowboy} = Transport.resolve_http_adapter(adapter: :cowboy)
+
+      assert {:error, {:invalid_http_adapter, :ftp}} =
+               Transport.resolve_http_adapter(adapter: :ftp)
     end
   end
 
@@ -194,18 +271,6 @@ defmodule ExMCP.Server.TransportTest do
 
       assert Process.alive?(pid)
       GenServer.stop(pid)
-    end
-
-    @tag :requires_http
-    test "start_link with transport: :http" do
-      if match?({:module, _}, Code.ensure_loaded(Plug.Cowboy)) do
-        {:ok, pid} = TestServer.start_link(transport: :http, port: 0)
-
-        assert is_pid(pid)
-        Plug.Cowboy.shutdown(pid)
-      else
-        :skip
-      end
     end
 
     test "start_link defaults to BEAM transport" do
@@ -223,6 +288,23 @@ defmodule ExMCP.Server.TransportTest do
       assert spec.type == :worker
       assert spec.restart == :permanent
       assert spec.shutdown == 500
+    end
+  end
+
+  defp shutdown_cowboy(ref) do
+    Plug.Cowboy.shutdown(ref)
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp listening?(port) do
+    case :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false], 200) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        true
+
+      {:error, _} ->
+        false
     end
   end
 end

@@ -1,7 +1,7 @@
 defmodule ExMCP.HttpPlug do
   @moduledoc """
   HTTP Plug for MCP (Model Context Protocol) requests.
-  Compatible with Phoenix and Cowboy servers.
+  Compatible with Phoenix, Bandit, and Cowboy.
 
   This plug provides Streamable HTTP transport for MCP servers, allowing
   integration with standard Elixir web applications. Modern SSE responses are
@@ -26,16 +26,26 @@ defmodule ExMCP.HttpPlug do
 
   ## Usage
 
-      # With Cowboy
+      # With Phoenix (recommended). Phoenix already provides Bandit or Cowboy;
+      # do not start a second listener via `transport: :http`.
+      plug ExMCP.HttpPlug,
+        handler: MyApp.MCPServer,
+        server_info: %{name: "my-app", version: "1.0.0"}
+
+      # Standalone Bandit (add `{:bandit, "~> 1.0"}` to mix.exs)
+      {:ok, _} =
+        Bandit.start_link(
+          plug: {ExMCP.HttpPlug,
+            [handler: MyApp.MCPServer, server_info: %{name: "my-app", version: "1.0.0"}]},
+          scheme: :http,
+          port: 4000
+        )
+
+      # Standalone Cowboy
       {:ok, _} = Plug.Cowboy.http(ExMCP.HttpPlug, [
         handler: MyApp.MCPServer,
         server_info: %{name: "my-app", version: "1.0.0"}
       ], port: 4000)
-
-      # With Phoenix
-      plug ExMCP.HttpPlug,
-        handler: MyApp.MCPServer,
-        server_info: %{name: "my-app", version: "1.0.0"}
 
   ## OAuth 2.1 Integration
 

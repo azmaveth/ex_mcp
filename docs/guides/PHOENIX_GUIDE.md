@@ -11,7 +11,8 @@ ExMCP provides seamless integration with Phoenix applications through the `ExMCP
 defp deps do
   [
     {:ex_mcp, "~> 1.0"},
-    # ... your other dependencies
+    # Mount ExMCP.HttpPlug in the endpoint. Do not also call
+    # start_link(transport: :http) — that starts a second listener.
   ]
 end
 ```

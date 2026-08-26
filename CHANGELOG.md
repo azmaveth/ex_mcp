@@ -30,9 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Adapter regression coverage for Claude `AskUserQuestion`, Codex user input,
   MCP and device-auth URL elicitations, Pi extension UI requests, prompt-close
   fencing, and background-agent settlement.
+- Standalone HTTP servers can run on Bandit. Add `{:bandit, "~> 1.0"}` to
+  use it. Cowboy still ships with ExMCP. Phoenix apps that already mount
+  `ExMCP.HttpPlug` need no extra adapter.
 
 ### Changed
 
+- `:adapter` (`:auto`, `:bandit`, `:cowboy`) selects the HTTP server for
+  `transport: :http`. `:auto` prefers Bandit when it is loaded. Cowboy
+  remains required; `:ranch_ref` and the named `ExMCP.HttpPlug.HTTP`
+  singleton are unchanged.
 - The gating MCP 2026-07-28 conformance runner now pins
   `@modelcontextprotocol/conformance@0.2.0-alpha.11`, including wire-schema,
   HTTP session-lifecycle, and client schema-preservation coverage.

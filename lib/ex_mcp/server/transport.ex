@@ -32,6 +32,10 @@ defmodule ExMCP.Server.Transport do
   ## Options
 
   * `:transport` - The transport type (`:stdio`, `:http`, `:beam`, `:test`)
+  * `:adapter` - HTTP server adapter (`:auto`, `:bandit`, or `:cowboy`).
+    `:auto` (the default) prefers Bandit when it is loaded, then Cowboy.
+    Override with this option or `config :ex_mcp, :http_adapter, ...`.
+    Cowboy ships with ExMCP. Add `{:bandit, "~> 1.0"}` to use Bandit.
   * `:port` - Port number for HTTP transports (default: 4000)
   * `:host` - Host for HTTP transports (default: "localhost")
   * `:cors_enabled` - Enable CORS for HTTP transports (default: `false`, the
@@ -45,6 +49,9 @@ defmodule ExMCP.Server.Transport do
   * `:allowed_origins` - Origin allow-list passed to `ExMCP.HttpPlug`.
     Defaults to localhost origins for the bound port when binding to a
     localhost address, otherwise `[]` (reject all cross-origin browsers)
+  * `:ranch_ref` - Cowboy-only Ranch listener name. Omitted by default so
+    Plug.Cowboy registers the named `ExMCP.HttpPlug.HTTP` singleton. Bandit
+    ignores this option.
 
   ## Examples
 
@@ -105,117 +112,141 @@ defmodule ExMCP.Server.Transport do
   end
 
   @doc """
-  Starts an HTTP-based MCP server using Cowboy.
+  Starts an HTTP-based MCP server using Bandit or Cowboy.
 
-  The HTTP transport allows integration with web applications and provides
-  REST-like access to MCP functionality.
+  Phoenix applications should mount `ExMCP.HttpPlug` in the endpoint instead
+  of calling this function. Cowboy is included with ExMCP. Add
+  `{:bandit, "~> 1.0"}` to start Bandit instead.
+
+  `:adapter` selects the server (`:auto`, `:bandit`, or `:cowboy`). `:auto`
+  prefers Bandit when it is loaded. `:ranch_ref` is Cowboy-only and selects
+  the Ranch listener name. The default is the named `ExMCP.HttpPlug.HTTP`
+  singleton. Bandit ignores `:ranch_ref`.
   """
   @spec start_http_server(module(), map(), list(), keyword()) ::
           {:ok, pid()} | {:error, term()}
   def start_http_server(module, server_info, _tools, opts) do
-    port = Keyword.get(opts, :port, 4000)
-    host = Keyword.get(opts, :host, "localhost")
-    # Preserve the rc.5 server option aliases throughout 1.x, but never enable
-    # the deprecated standalone SSE transport on a new server by default.
-    legacy_http_sse =
-      Keyword.get(
-        opts,
-        :legacy_http_sse,
-        Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
+    with {:ok, adapter} <- resolve_http_adapter(opts) do
+      port = Keyword.get(opts, :port, 4000)
+      host = Keyword.get(opts, :host, "localhost")
+      # Preserve the rc.5 server option aliases throughout 1.x, but never enable
+      # the deprecated standalone SSE transport on a new server by default.
+      legacy_http_sse =
+        Keyword.get(
+          opts,
+          :legacy_http_sse,
+          Keyword.get(opts, :sse_enabled, false) || Keyword.get(opts, :use_sse, false)
+        )
+
+      # Matches ExMCP.HttpPlug's own default; CORS must be opted into (audit L10).
+      cors_enabled = Keyword.get(opts, :cors_enabled, false)
+      ranch_ref = Keyword.get(opts, :ranch_ref)
+
+      # Localhost-bound servers are the prime target for DNS rebinding, so
+      # they get a Host allow-list (and matching localhost Origin allow-list)
+      # by default. Explicit :allowed_hosts / :allowed_origins always win.
+      allowed_hosts = Keyword.get(opts, :allowed_hosts, default_allowed_hosts(host))
+      allowed_origins = Keyword.get(opts, :allowed_origins, default_allowed_origins(host, port))
+
+      # Configure the HTTP Plug. Tools are read from the handler module, so the
+      # `tools` argument is not forwarded (ExMCP.HttpPlug.init/1 ignores it).
+      plug_opts =
+        [
+          handler: module,
+          server_info: server_info,
+          legacy_http_sse: legacy_http_sse,
+          cors_enabled: cors_enabled,
+          allowed_hosts: allowed_hosts,
+          allowed_origins: allowed_origins
+        ] ++
+          Keyword.take(opts, [
+            :request_state,
+            :mrtr,
+            :path,
+            :legacy_http_sse_path,
+            :legacy_http_sse_post_path,
+            :protocol_mode,
+            :instructions,
+            :server_capabilities,
+            :handler_call_timeout,
+            :max_input_requests,
+            :max_mrtr_bytes,
+            :replay_cache,
+            :require_replay_protection
+          ])
+
+      if legacy_http_sse do
+        Logger.warning(
+          "The MCP 2024-11-05 HTTP+SSE transport is deprecated; migrate clients to Streamable HTTP"
+        )
+      end
+
+      Logger.info(
+        "Starting MCP HTTP server (#{adapter}) on #{host}:#{port} " <>
+          "(deprecated HTTP+SSE: #{legacy_http_sse})"
       )
 
-    # Matches ExMCP.HttpPlug's own default; CORS must be opted into (audit L10).
-    cors_enabled = Keyword.get(opts, :cors_enabled, false)
-    ranch_ref = Keyword.get(opts, :ranch_ref)
-
-    # Localhost-bound servers are the prime target for DNS rebinding, so
-    # they get a Host allow-list (and matching localhost Origin allow-list)
-    # by default. Explicit :allowed_hosts / :allowed_origins always win.
-    allowed_hosts = Keyword.get(opts, :allowed_hosts, default_allowed_hosts(host))
-    allowed_origins = Keyword.get(opts, :allowed_origins, default_allowed_origins(host, port))
-
-    # Configure the HTTP Plug. Tools are read from the handler module, so the
-    # `tools` argument is not forwarded (ExMCP.HttpPlug.init/1 ignores it).
-    plug_opts =
-      [
-        handler: module,
-        server_info: server_info,
-        legacy_http_sse: legacy_http_sse,
-        cors_enabled: cors_enabled,
-        allowed_hosts: allowed_hosts,
-        allowed_origins: allowed_origins
-      ] ++
-        Keyword.take(opts, [
-          :request_state,
-          :mrtr,
-          :path,
-          :legacy_http_sse_path,
-          :legacy_http_sse_post_path,
-          :protocol_mode,
-          :instructions,
-          :server_capabilities,
-          :handler_call_timeout,
-          :max_input_requests,
-          :max_mrtr_bytes,
-          :replay_cache,
-          :require_replay_protection
-        ])
-
-    if legacy_http_sse do
-      Logger.warning(
-        "The MCP 2024-11-05 HTTP+SSE transport is deprecated; migrate clients to Streamable HTTP"
-      )
-    end
-
-    Logger.info(
-      "Starting MCP HTTP server on #{host}:#{port} " <>
-        "(deprecated HTTP+SSE: #{legacy_http_sse})"
-    )
-
-    # If a custom ranch_ref is provided, use it for test isolation
-    if ranch_ref do
-      # Use Plug.Cowboy with the custom ref option
-      cowboy_opts = [
-        port: port,
-        ip: parse_host(host),
-        ref: ranch_ref
-      ]
-
-      case Plug.Cowboy.http(ExMCP.HttpPlug, plug_opts, cowboy_opts) do
-        {:ok, pid} ->
-          Logger.info("MCP HTTP server started successfully with ref #{inspect(ranch_ref)}")
-          {:ok, pid}
-
-        {:error, {:already_started, pid}} ->
-          Logger.info("MCP HTTP server already running with ref #{inspect(ranch_ref)}")
-          {:ok, pid}
-
-        {:error, reason} ->
-          Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
-          {:error, reason}
-      end
-    else
-      # Use default Plug.Cowboy approach for production
-      cowboy_opts = [
-        port: port,
-        ip: parse_host(host)
-      ]
-
-      case Plug.Cowboy.http(ExMCP.HttpPlug, plug_opts, cowboy_opts) do
-        {:ok, pid} ->
-          Logger.info("MCP HTTP server started successfully")
-          {:ok, pid}
-
-        {:error, {:already_started, pid}} ->
-          Logger.info("MCP HTTP server already running")
-          {:ok, pid}
-
-        {:error, reason} ->
-          Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
-          {:error, reason}
-      end
+      start_http_listener(adapter, plug_opts, port, parse_host(host), ranch_ref)
     end
   end
+
+  @doc """
+  Stops a Bandit listener started by `start_http_server/4`.
+
+  Cowboy listeners use Ranch refs. Stop them with `Plug.Cowboy.shutdown/1`
+  and the `:ranch_ref` you passed, or `ExMCP.HttpPlug.HTTP` for the default
+  named singleton.
+  """
+  @spec stop_http_server(pid()) :: :ok
+  def stop_http_server(pid) when is_pid(pid) do
+    stop_supervisor(pid)
+  end
+
+  @doc """
+  Resolves the HTTP adapter from options and application env.
+
+  `:adapter` on the start options wins, then `config :ex_mcp, :http_adapter`,
+  then `:auto`. `:auto` prefers Bandit when it is loaded.
+  """
+  @spec resolve_http_adapter(keyword()) ::
+          {:ok, :bandit | :cowboy}
+          | {:error, {:missing_http_adapter, String.t()}}
+          | {:error, {:invalid_http_adapter, term()}}
+  def resolve_http_adapter(opts \\ []) do
+    requested =
+      Keyword.get(opts, :adapter, Application.get_env(:ex_mcp, :http_adapter, :auto))
+
+    case requested do
+      :auto ->
+        cond do
+          http_adapter_loaded?(:bandit) -> {:ok, :bandit}
+          http_adapter_loaded?(:cowboy) -> {:ok, :cowboy}
+          true -> {:error, {:missing_http_adapter, missing_http_adapter_message(:auto)}}
+        end
+
+      :bandit ->
+        if http_adapter_loaded?(:bandit) do
+          {:ok, :bandit}
+        else
+          {:error, {:missing_http_adapter, missing_http_adapter_message(:bandit)}}
+        end
+
+      :cowboy ->
+        if http_adapter_loaded?(:cowboy) do
+          {:ok, :cowboy}
+        else
+          {:error, {:missing_http_adapter, missing_http_adapter_message(:cowboy)}}
+        end
+
+      other ->
+        {:error, {:invalid_http_adapter, other}}
+    end
+  end
+
+  @doc false
+  @spec http_adapter_loaded?(:bandit | :cowboy) :: boolean()
+  def http_adapter_loaded?(:bandit), do: Code.ensure_loaded?(Bandit)
+  def http_adapter_loaded?(:cowboy), do: Code.ensure_loaded?(Plug.Cowboy)
 
   @doc """
   Starts a BEAM-local MCP server.
@@ -312,7 +343,7 @@ defmodule ExMCP.Server.Transport do
         description: "Standard input/output transport for CLI tools"
       },
       http: %{
-        available: Code.ensure_loaded?(Plug.Cowboy),
+        available: http_adapter_loaded?(:bandit) or http_adapter_loaded?(:cowboy),
         description: "HTTP transport with REST-like API"
       },
       beam: %{
@@ -324,6 +355,75 @@ defmodule ExMCP.Server.Transport do
         description: "In-memory transport for testing"
       }
     }
+  end
+
+  defp start_http_listener(:cowboy, plug_opts, port, ip, ranch_ref) do
+    _ = Application.ensure_all_started(:plug_cowboy)
+
+    cowboy_opts =
+      [port: port, ip: ip]
+      |> then(fn opts ->
+        if ranch_ref, do: Keyword.put(opts, :ref, ranch_ref), else: opts
+      end)
+
+    case Plug.Cowboy.http(ExMCP.HttpPlug, plug_opts, cowboy_opts) do
+      {:ok, pid} ->
+        Logger.info("MCP HTTP server started successfully")
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} ->
+        Logger.info("MCP HTTP server already running")
+        {:ok, pid}
+
+      {:error, reason} ->
+        Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp start_http_listener(:bandit, plug_opts, port, ip, _ranch_ref) do
+    _ = Application.ensure_all_started(:bandit)
+
+    spec =
+      Supervisor.child_spec(
+        {Bandit, plug: {ExMCP.HttpPlug, plug_opts}, scheme: :http, port: port, ip: ip},
+        id: {:ex_mcp_http_bandit, System.unique_integer([:positive])},
+        restart: :temporary
+      )
+
+    case DynamicSupervisor.start_child(ExMCP.DynamicSupervisor, spec) do
+      {:ok, pid} ->
+        Logger.info("MCP HTTP server started successfully")
+        {:ok, pid}
+
+      {:error, reason} ->
+        Logger.error("Failed to start MCP HTTP server: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp stop_supervisor(pid) do
+    if Process.alive?(pid) do
+      try do
+        Supervisor.stop(pid, :normal, 5_000)
+      catch
+        :exit, _ -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp missing_http_adapter_message(:bandit) do
+    "HTTP transport adapter :bandit is not available. Add {:bandit, \"~> 1.0\"} to your mix.exs dependencies."
+  end
+
+  defp missing_http_adapter_message(:cowboy) do
+    "HTTP transport adapter :cowboy is not available. Add {:plug_cowboy, \"~> 2.7\"} to your mix.exs dependencies."
+  end
+
+  defp missing_http_adapter_message(:auto) do
+    "HTTP transport requires an adapter. Cowboy is included with ExMCP. Add {:bandit, \"~> 1.0\"} to use Bandit."
   end
 
   # Configure logging for STDIO transport to prevent stdout contamination
