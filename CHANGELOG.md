@@ -7,20 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **ACP Claude SDK adapter — updates dropped as "unknown session" with Claude
-  Code 2.1.x** — `ExMCP.ACP.Adapters.ClaudeSDK` adopted the CLI's own session
-  UUID (stamped on every stream-json event) as its session id, so every
-  `session/update` went out under an id the client never received from
-  `session/new`; `ExMCP.ACP.Client` logged `ACP client ignored an update for an
-  unknown session` for each and the prompt returned empty text. The ACP-facing
-  id now stays the one `session/new` returned; the CLI's UUID is kept in the new
-  `claude_session_id` state field and still surfaces as the prompt result's
-  `_meta."ex_mcp.claude_sdk".sessionId` for resume / correlation.
+## [1.1.0] - 2026-08-25
 
 ### Added
 
+- A ZCode ACP adapter with app-server translation, model and mode selection,
+  permission handling, session persistence, MCP configuration forwarding, and
+  credential-free real-CLI lifecycle coverage.
 - A weekly advisory workflow now runs the complete MCP 2026-07-28 conformance
   suites against the newest published official harness while keeping release CI
   pinned to a reviewed version.
@@ -36,9 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The gating MCP 2026-07-28 conformance runner now pins
   `@modelcontextprotocol/conformance@0.2.0-alpha.11`, including wire-schema,
   HTTP session-lifecycle, and client schema-preservation coverage.
+- ACP compatibility tracking now follows Codex ACP in its canonical
+  `agentclientprotocol/codex-acp` repository after the Zed repository moved.
 
 ### Fixed
 
+- **ACP Claude SDK adapter — updates dropped as "unknown session" with Claude
+  Code 2.1.x** — `ExMCP.ACP.Adapters.ClaudeSDK` adopted the CLI's own session
+  UUID (stamped on every stream-json event) as its session id, so every
+  `session/update` went out under an id the client never received from
+  `session/new`; `ExMCP.ACP.Client` logged `ACP client ignored an update for an
+  unknown session` for each and the prompt returned empty text. The ACP-facing
+  id now stays the one `session/new` returned through final and deferred
+  results; the CLI's UUID is kept separately and surfaces only as provider
+  metadata for correlation.
 - Full OAuth flow verification no longer expands broad inferred error and map
   unions that made compiling the module take minutes under Elixir 1.20.
 - The external MCP conformance client now round-trips complete JSON Schema

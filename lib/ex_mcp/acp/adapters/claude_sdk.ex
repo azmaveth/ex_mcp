@@ -58,6 +58,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
        opts: opts,
        cwd: Keyword.get(opts, :cwd),
        session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
+       claude_session_id: Keyword.get(opts, :session_id) || Keyword.get(opts, :resume),
        model: Keyword.get(opts, :model),
        permission_mode: encode_permission_mode(Keyword.get(opts, :permission_mode, :default)),
        effort: Keyword.get(opts, :effort),
@@ -166,7 +167,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     |> then(&SessionStore.fork_session(session_id, &1))
     |> case do
       {:ok, forked_session_id} ->
-        state = %{state | session_id: forked_session_id, cwd: params["cwd"] || state.cwd}
+        state = %{
+          state
+          | session_id: forked_session_id,
+            claude_session_id: forked_session_id,
+            cwd: params["cwd"] || state.cwd
+        }
+
         {:ok, Mapper.session_result(state, forked_session_id), state}
 
       {:error, reason} ->
@@ -195,7 +202,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   defp handle_request("session/new", %{"id" => _id, "params" => params}, state) do
     session_id = state.session_id || params["sessionId"] || generated_session_id()
-    state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
+
+    state = %{
+      state
+      | session_id: session_id,
+        claude_session_id: if(state.session_id, do: state.claude_session_id, else: nil),
+        cwd: params["cwd"] || state.cwd
+    }
+
     {:reply, Mapper.session_result(state, session_id), state}
   end
 
@@ -242,7 +256,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   defp handle_request("session/load", %{"params" => params}, state) do
     session_id = params["sessionId"] || state.session_id || generated_session_id()
-    state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
+
+    state = %{
+      state
+      | session_id: session_id,
+        claude_session_id: session_id,
+        cwd: params["cwd"] || state.cwd
+    }
 
     case SessionStore.read_session_messages(session_id, session_store_opts(params, state)) do
       {:ok, events} ->
@@ -256,7 +276,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   defp handle_request("session/resume", %{"params" => params}, state) do
     session_id = params["sessionId"] || state.session_id || generated_session_id()
-    state = %{state | session_id: session_id, cwd: params["cwd"] || state.cwd}
+
+    state = %{
+      state
+      | session_id: session_id,
+        claude_session_id: session_id,
+        cwd: params["cwd"] || state.cwd
+    }
+
     {:reply, Mapper.session_result(state, session_id), state}
   end
 
@@ -573,6 +600,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     %{
       state
       | session_id: nil,
+        claude_session_id: nil,
         pending_prompt_id: nil,
         active_prompt_session_id: nil,
         prompt_queue: PromptQueue.new(),
@@ -643,6 +671,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         %{
           state
           | session_id: nil,
+            claude_session_id: nil,
             text_acc: [],
             thinking_acc: [],
             thinking_blocks: [],

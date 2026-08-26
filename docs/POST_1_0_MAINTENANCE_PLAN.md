@@ -340,6 +340,26 @@ current real-CLI lifecycle suite deliberately avoids prompts and therefore
 cannot exercise LLM-originated permission, elicitation, or background-task
 events; the adapter unit tests are the executable evidence for those paths.
 
+### 2026-08-25 pending reference drift
+
+Codex ACP development moved from `zed-industries/codex-acp` to
+`agentclientprotocol/codex-acp`; the manifest now follows the canonical
+repository while retaining the last behaviorally reviewed commit. Do not
+advance the Claude or Codex reference pins until the following post-baseline
+changes have focused ExMCP parity decisions and tests:
+
+- Codex `8ff9e67f79335345ce53b3157b3d690c191ea027` adds permission presentation,
+  provider decision preservation, and permission lifecycle isolation;
+- Codex `50f69e57ca761ccafd2ca29de7fb591068277516` changes mode presentation and
+  adds `_meta.kind` semantics; and
+- Claude `caf609b56c91f677ffe82b6e9d11d9e9dfd99d45` advertises a stable mode
+  catalog, adds `_meta.kind`, and falls unsupported Auto mode back to Accept
+  edits with a client-visible warning.
+
+These are genuine unreleased behavior changes rather than repository-move
+noise. Keeping the reviewed commits pinned makes the scheduled drift check
+continue to report the work until parity is deliberately accepted or ported.
+
 ## ACP v1 completion and v2 monitoring
 
 The July 2026 stable ACP v1 additions are represented in the runtime and

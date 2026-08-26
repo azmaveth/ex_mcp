@@ -100,7 +100,7 @@
     {
       "id": "codex-acp",
       "adapter": "ExMCP.ACP.Adapters.Codex",
-      "repository": "https://github.com/zed-industries/codex-acp",
+      "repository": "https://github.com/agentclientprotocol/codex-acp",
       "branch": "main",
       "commit": "ba5bcc3d7759250dde9d4d2286a1bec11b363208"
     },

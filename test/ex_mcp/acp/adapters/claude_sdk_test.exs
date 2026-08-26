@@ -140,6 +140,24 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert Enum.any?(result["configOptions"], &(&1["id"] == "model"))
     end
 
+    test "session/close clears both ACP and provider session identities", %{state: state} do
+      state = %{
+        state
+        | session_id: "claude_sdk_7",
+          claude_session_id: "0ab10f45-9463-42ad-9733-a5b07089e47f"
+      }
+
+      msg = %{
+        "id" => 2,
+        "method" => "session/close",
+        "params" => %{"sessionId" => "claude_sdk_7"}
+      }
+
+      assert {:reply, %{}, state} = ClaudeSDK.translate_outbound(msg, state)
+      assert state.session_id == nil
+      assert state.claude_session_id == nil
+    end
+
     test "session/list reads Claude SDK sessions from disk" do
       {config_dir, cwd, session_id} = write_store_fixture("list me")
       {:ok, state} = ClaudeSDK.init(cwd: cwd, claude_config_dir: config_dir)
@@ -164,6 +182,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
 
       assert {:reply, %{}, state} = ClaudeSDK.translate_outbound(msg, state)
       assert state.session_id == nil
+      assert state.claude_session_id == nil
       assert {:ok, [], _state} = ClaudeSDK.list_sessions(%{"cwd" => cwd}, state)
     end
 
@@ -436,6 +455,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert {:reply, %{"sessionId" => acp_id}, state} =
                ClaudeSDK.translate_outbound(request, state)
 
+      prompt = %{
+        "id" => 8,
+        "method" => "session/prompt",
+        "params" => %{
+          "sessionId" => acp_id,
+          "prompt" => [%{"type" => "text", "text" => "Say ready"}]
+        }
+      }
+
+      assert {:ok, _line, state} = ClaudeSDK.translate_outbound(prompt, state)
+
       cli_uuid = "496377d0-00a4-4627-ad73-06a13d682836"
       refute acp_id == cli_uuid
 
@@ -470,6 +500,29 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert [message | _] = messages
       assert message["method"] == "session/update"
       assert message["params"]["sessionId"] == acp_id
+      assert state.session_id == acp_id
+      assert state.claude_session_id == cli_uuid
+
+      result = %{
+        "type" => "result",
+        "subtype" => "success",
+        "session_id" => cli_uuid,
+        "result" => "ready",
+        "usage" => %{"input_tokens" => 3, "output_tokens" => 2},
+        "modelUsage" => %{
+          "claude-opus-4-8" => %{"contextWindow" => 200_000}
+        }
+      }
+
+      assert {:messages, result_messages, state} =
+               ClaudeSDK.translate_inbound(Jason.encode!(result), state)
+
+      assert_update_session_ids(result_messages, acp_id)
+      response = Enum.find(result_messages, &(&1["id"] == 8))
+
+      assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "sessionId"]) ==
+               cli_uuid
+
       assert state.session_id == acp_id
       assert state.claude_session_id == cli_uuid
     end
@@ -1021,12 +1074,20 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
     end
 
     test "keeps the prompt open until spawned background subagents drain", %{state: state} do
-      state = %{state | pending_prompt_id: 321, session_id: "s1"}
+      acp_id = "claude_sdk_42"
+      cli_uuid = "d59acfec-f910-4c3b-bb2f-087ab4c4bd62"
+
+      state = %{
+        state
+        | pending_prompt_id: 321,
+          session_id: acp_id,
+          claude_session_id: cli_uuid
+      }
 
       started = %{
         "type" => "system",
         "subtype" => "task_started",
-        "session_id" => "s1",
+        "session_id" => cli_uuid,
         "task_id" => "agent-1",
         "tool_use_id" => "tool-1",
         "subagent_type" => "general-purpose",
@@ -1039,7 +1100,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       result = %{
         "type" => "result",
         "subtype" => "success",
-        "session_id" => "s1",
+        "session_id" => cli_uuid,
         "result" => "initial answer",
         "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
       }
@@ -1048,13 +1109,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
                ClaudeSDK.translate_inbound(Jason.encode!(result), state)
 
       refute Enum.any?(messages, &(&1["id"] == 321))
+      assert_update_session_ids(messages, acp_id)
       assert state.pending_prompt_id == 321
       assert state.deferred_result == result
+      assert state.session_id == acp_id
+      assert state.claude_session_id == cli_uuid
 
       completed = %{
         "type" => "system",
         "subtype" => "task_notification",
-        "session_id" => "s1",
+        "session_id" => cli_uuid,
         "task_id" => "agent-1",
         "status" => "completed",
         "summary" => "Done"
@@ -1066,7 +1130,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       idle = %{
         "type" => "system",
         "subtype" => "session_state_changed",
-        "session_id" => "s1",
+        "session_id" => cli_uuid,
         "state" => "idle"
       }
 
@@ -1075,9 +1139,22 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
 
       response = Enum.find(messages, &(&1["id"] == 321))
       assert response["result"]["stopReason"] == "end_turn"
+
+      assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "sessionId"]) ==
+               cli_uuid
+
+      assert_update_session_ids(messages, acp_id)
       assert state.pending_prompt_id == nil
       assert state.deferred_result == nil
+      assert state.session_id == acp_id
+      assert state.claude_session_id == cli_uuid
     end
+  end
+
+  defp assert_update_session_ids(messages, expected_session_id) do
+    updates = Enum.filter(messages, &(&1["method"] == "session/update"))
+    assert updates != []
+    assert Enum.all?(updates, &(&1["params"]["sessionId"] == expected_session_id))
   end
 
   defp write_store_fixture(summary) when is_binary(summary) do

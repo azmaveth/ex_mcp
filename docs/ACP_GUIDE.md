@@ -800,7 +800,7 @@ The same manifest pins the reference revisions used to inform ExMCP's Claude,
 Codex, and Pi protocol adapters:
 
 - `agentclientprotocol/claude-agent-acp`
-- `zed-industries/codex-acp`
+- `agentclientprotocol/codex-acp`
 - `svkozak/pi-acp`
 
 Upstream commit drift produces a direct compare URL for adapter review. Catalog
