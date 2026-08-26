@@ -570,6 +570,7 @@ protocol. This is the recommended Claude adapter for new code.
 - `AskUserQuestion` bridged through ACP form elicitation when the client advertises it; otherwise it fails closed
 - Runtime mode, model, effort, fast-mode, and agent config controls where supported by the SDK session; `auto` is model-gated and bypass mode requires explicit dangerous-mode opt-in
 - Initialize-aware terminal login auth methods, opt-in gateway auth methods, and ACP `auth.logout`
+- Initial session metadata exposes Claude Code's native session UUID at `_meta.ex_mcp.claude_sdk.sessionId` so clients can resume a turn that times out before its final result
 - Live session setup/load/resume/fork/close ACP surface
 - Disk-backed `session/list`, `session/delete`, and `session/fork` for Claude Code's SDK store
 - Full `session/load` replay from persisted Claude JSONL transcripts

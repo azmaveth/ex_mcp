@@ -910,6 +910,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
             "ex_mcp.claude_sdk" =>
               %{
                 "status" => "initialized",
+                "sessionId" => state.claude_session_id,
                 "claudeCodeVersion" => event["claude_code_version"],
                 "cwd" => event["cwd"],
                 "tools" => event["tools"],
