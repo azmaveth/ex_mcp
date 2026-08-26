@@ -782,10 +782,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp defer_result(result, state) do
-    # Provider metadata (`_meta.sessionId`) carries the CLI's own UUID so
-    # consumers can correlate with / resume the underlying Claude session.
-    session_id =
-      result["session_id"] || state.claude_session_id || state.session_id || "default"
+    acp_session_id = session_id(state)
+    claude_session_id = result["session_id"] || state.claude_session_id
 
     usage = format_usage(result["usage"] || %{})
 
@@ -797,19 +795,20 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     messages =
       [
-        usage_update(session_id, usage, result, state),
+        usage_update(acp_session_id, usage, result, state),
         config_option_update(state),
-        AdapterEvents.session_info_update(session_id, %{
+        AdapterEvents.session_info_update(acp_session_id, %{
           "_meta" => %{"ex_mcp.claude_sdk" => %{"status" => "waiting_for_subagents"}}
         }),
-        result_text_chunk(session_id, text, state)
+        result_text_chunk(acp_session_id, text, state)
       ]
       |> Enum.reject(&is_nil/1)
 
     state = %{
       state
       | deferred_result: result,
-        session_id: session_id,
+        session_id: acp_session_id,
+        claude_session_id: claude_session_id,
         text_acc: if(state.text_acc == [] and text != "", do: [text], else: state.text_acc)
     }
 
@@ -817,10 +816,10 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp settle_result(result, state) do
-    # Provider metadata (`_meta.sessionId`) carries the CLI's own UUID so
-    # consumers can correlate with / resume the underlying Claude session.
-    session_id =
-      result["session_id"] || state.claude_session_id || state.session_id || "default"
+    # Provider metadata carries Claude Code's UUID for correlation while every
+    # ACP envelope keeps the client-visible id returned by session/new.
+    acp_session_id = session_id(state)
+    claude_session_id = result["session_id"] || state.claude_session_id
 
     usage = format_usage(result["usage"] || %{})
 
@@ -838,7 +837,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
           "ex_mcp.claude_sdk" =>
             %{
               "text" => text,
-              "sessionId" => session_id,
+              "sessionId" => claude_session_id,
               "modelUsage" => result["modelUsage"],
               "totalCostUsd" => result["total_cost_usd"],
               "errors" => result["errors"]
@@ -850,12 +849,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     messages =
       [
-        usage_update(session_id, usage, result, state),
+        usage_update(acp_session_id, usage, result, state),
         config_option_update(state),
-        AdapterEvents.session_info_update(session_id, %{
+        AdapterEvents.session_info_update(acp_session_id, %{
           "_meta" => %{"ex_mcp.claude_sdk" => %{"status" => "completed"}}
         }),
-        result_text_chunk(session_id, text, state)
+        result_text_chunk(acp_session_id, text, state)
       ]
       |> Enum.reject(&is_nil/1)
 
@@ -875,7 +874,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         thinking_blocks: [],
         current_block_type: nil,
         current_assistant_text_streamed?: false,
-        session_id: session_id,
+        session_id: acp_session_id,
+        claude_session_id: claude_session_id,
         deferred_result: nil,
         background_subagents: MapSet.new()
     }
@@ -1627,7 +1627,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   # never registered, so `ExMCP.ACP.Client` dropped all of them ("ignored an
   # update for an unknown session") and the turn came back empty (seen with
   # Claude Code 2.1.215, 2026-08-25). Keep the ACP id stable once set; remember
-  # the CLI's id separately for `--resume` and provider metadata.
+  # the CLI's id separately for provider metadata and correlation.
   defp maybe_set_session(%{session_id: nil} = state, %{"session_id" => session_id})
        when is_binary(session_id) and session_id != "" do
     %{state | session_id: session_id, claude_session_id: session_id}

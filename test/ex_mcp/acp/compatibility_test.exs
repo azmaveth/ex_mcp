@@ -221,7 +221,7 @@ defmodule ExMCP.ACPCompatTest do
       repositories = Enum.map(manifest["adapterUpstreams"], & &1["repository"])
 
       assert "https://github.com/agentclientprotocol/claude-agent-acp" in repositories
-      assert "https://github.com/zed-industries/codex-acp" in repositories
+      assert "https://github.com/agentclientprotocol/codex-acp" in repositories
       assert "https://github.com/svkozak/pi-acp" in repositories
 
       assert Enum.sort(Enum.map(manifest["interopAgents"], & &1["id"])) ==
