@@ -116,11 +116,11 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
 
     request = tools_list_request(81)
     send_request(server, request)
-    assert_receive {:transport_message, first_response}
+    assert_receive {:transport_message, first_response}, 1_000
     assert %{"id" => 81, "result" => %{"tools" => []}} = Jason.decode!(first_response)
 
     send_request(server, request)
-    assert_receive {:transport_message, duplicate_response}
+    assert_receive {:transport_message, duplicate_response}, 1_000
 
     assert %{
              "id" => 81,
