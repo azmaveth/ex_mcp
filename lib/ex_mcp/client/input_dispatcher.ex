@@ -50,11 +50,19 @@ defmodule ExMCP.Client.InputDispatcher do
 
   defp do_dispatch("elicitation/create", %{"mode" => "url"} = params, handler, state, caps) do
     message = Map.get(params, "message", "")
+    url = Map.get(params, "url", "")
+    elicitation_id = Map.get(params, "elicitationId")
 
     cond do
+      callback?(handler, :handle_url_elicitation, 4) ->
+        normalize_callback_return(
+          handler.handle_url_elicitation(message, url, elicitation_id, state),
+          state
+        )
+
       callback?(handler, :handle_url_elicitation, 3) ->
         normalize_callback_return(
-          handler.handle_url_elicitation(message, Map.get(params, "url", ""), state),
+          handler.handle_url_elicitation(message, url, state),
           state
         )
 

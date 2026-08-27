@@ -172,4 +172,114 @@ defmodule ExMCP.Server do
       result -> result
     end
   end
+
+  @doc """
+  Builds an `elicitation/create` entry for a modern MRTR `input_required` result.
+
+  This is a builder, not a server-to-client POST. Return it from a tool,
+  resource, or prompt handler inside `{:input_required, requests, state}`.
+  On a modern connection the client satisfies the request through MRTR; you
+  do not POST `elicitation/create` yourself.
+
+  Form mode uses `message` plus `requested_schema` (or `requestedSchema`).
+  URL mode uses `mode: "url"` and `url`. `elicitationId` is generated when
+  omitted.
+
+  Keys may be atoms or strings, in snake_case or camelCase.
+
+  ## Examples
+
+      requests = %{
+        "profile" =>
+          ExMCP.Server.elicit(%{
+            message: "Choose a display name",
+            requested_schema: %{
+              "type" => "object",
+              "properties" => %{"name" => %{"type" => "string"}}
+            }
+          })
+      }
+
+      {:input_required, requests, state}
+
+      requests = %{
+        "login" =>
+          ExMCP.Server.elicit(%{
+            message: "Sign in to continue",
+            mode: "url",
+            url: "https://auth.example.com/login"
+          })
+      }
+
+  The raw `%{"method" => "elicitation/create", "params" => ...}` map is
+  equivalent.
+  """
+  @spec elicit(map()) :: %{String.t() => term()}
+  def elicit(params) when is_map(params) do
+    %{
+      "method" => "elicitation/create",
+      "params" => elicit_params(params)
+    }
+  end
+
+  defp elicit_params(params) do
+    message = elicit_get(params, :message) || ""
+
+    if elicit_url_mode?(params) do
+      elicit_url_params(params, message)
+    else
+      schema = elicit_get(params, :requested_schema) || %{}
+      %{"message" => message, "requestedSchema" => schema}
+    end
+  end
+
+  defp elicit_url_mode?(params) do
+    case elicit_get(params, :mode) do
+      mode when mode in ["url", :url] -> true
+      mode when mode in ["form", :form] -> false
+      _other -> is_binary(elicit_get(params, :url))
+    end
+  end
+
+  defp elicit_url_params(params, message) do
+    url = elicit_get(params, :url) || ""
+    id = elicit_get(params, :elicitation_id)
+
+    %{
+      "message" => message,
+      "mode" => "url",
+      "url" => url,
+      "elicitationId" => elicit_id(id)
+    }
+  end
+
+  defp elicit_id(id) when is_binary(id) and id != "", do: id
+
+  defp elicit_id(_id) do
+    "elicit-#{System.unique_integer([:positive, :monotonic])}"
+  end
+
+  @elicit_aliases %{
+    message: ["message", :message],
+    requested_schema: [
+      "requestedSchema",
+      :requestedSchema,
+      "requested_schema",
+      :requested_schema
+    ],
+    mode: ["mode", :mode],
+    url: ["url", :url],
+    elicitation_id: [
+      "elicitationId",
+      :elicitationId,
+      "elicitation_id",
+      :elicitation_id
+    ]
+  }
+
+  defp elicit_get(map, key) do
+    Enum.find_value(@elicit_aliases[key], fn alias_key ->
+      if Map.has_key?(map, alias_key), do: Map.get(map, alias_key)
+    end)
+  end
 end

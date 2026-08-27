@@ -218,11 +218,15 @@ defmodule ExMCP.Client.Handler do
   Instead of a form schema, the server sends a URL for the client to navigate to.
   Available in protocol version 2025-11-25.
 
-  URL-mode requests are routed here whenever this callback is implemented. For
-  compatibility, handlers that only implement `handle_elicitation_create/3`
-  continue to receive URL-mode requests through that callback; its second
-  argument is then a map containing `"mode"`, `"url"`, and
-  `"elicitationId"`, and ExMCP logs a once-per-handler warning.
+  Prefer `c:handle_url_elicitation/4`, which also receives `elicitationId`.
+  This `/3` callback is kept for 1.x compatibility and does not receive the
+  id.
+
+  URL-mode requests are routed here whenever `/4` is not implemented and this
+  callback is. For compatibility, handlers that only implement
+  `handle_elicitation_create/3` continue to receive URL-mode requests through
+  that callback; its second argument is then a map containing `"mode"`,
+  `"url"`, and `"elicitationId"`, and ExMCP logs a once-per-handler warning.
 
   ## Parameters
 
@@ -234,6 +238,41 @@ defmodule ExMCP.Client.Handler do
   Same as handle_elicitation_create - action and optional content.
   """
   @callback handle_url_elicitation(message :: String.t(), url :: String.t(), state) ::
+              {:ok, map(), state}
+              | {:error, error_info, state}
+
+  @doc """
+  Handles a URL-mode elicitation request, including `elicitationId`.
+
+  Preferred over `c:handle_url_elicitation/3` because the id can be used
+  directly in `notifications/elicitation/complete` without stashing it in
+  application state.
+
+  ## Parameters
+
+  - `message` - Human-readable message explaining what information is needed
+  - `url` - URL for the client to open/navigate to
+  - `elicitation_id` - Server-provided id for the complete notification
+
+  ## Response
+
+  Same as handle_elicitation_create - action and optional content.
+
+  ## Example
+
+      def handle_url_elicitation(message, url, elicitation_id, state) do
+        _ = {message, open_browser(url)}
+
+        {:ok, %{action: "accept", content: %{"authenticated" => true}},
+         Map.put(state, :elicitation_id, elicitation_id)}
+      end
+  """
+  @callback handle_url_elicitation(
+              message :: String.t(),
+              url :: String.t(),
+              elicitation_id :: String.t() | nil,
+              state
+            ) ::
               {:ok, map(), state}
               | {:error, error_info, state}
 
@@ -311,6 +350,7 @@ defmodule ExMCP.Client.Handler do
   @optional_callbacks terminate: 2,
                       handle_elicitation_create: 3,
                       handle_url_elicitation: 3,
+                      handle_url_elicitation: 4,
                       handle_task_status: 2,
                       handle_progress: 3,
                       handle_log_message: 3,

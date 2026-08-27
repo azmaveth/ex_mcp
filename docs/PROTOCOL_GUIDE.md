@@ -45,11 +45,10 @@ def handle_call_tool("onboard", _args, state) do
   case ExMCP.Server.Context.input_responses() do
     nil ->
       requests = %{
-        "profile" => %{
-          "method" => "elicitation/create",
-          "params" => %{
-            "message" => "Choose a display name",
-            "requestedSchema" => %{
+        "profile" =>
+          ExMCP.Server.elicit(%{
+            message: "Choose a display name",
+            requested_schema: %{
               "$schema" => "https://json-schema.org/draft/2020-12/schema",
               "type" => "object",
               "properties" => %{
@@ -57,8 +56,7 @@ def handle_call_tool("onboard", _args, state) do
               },
               "required" => ["name"]
             }
-          }
-        }
+          })
       }
 
       {:input_required, requests, %{"step" => "profile"}, state}
@@ -86,40 +84,43 @@ end
 
 `ExMCP.Client.call_tool/3` retries the original method with the handler's
 response. You do not POST `elicitation/create` yourself on a modern
-connection.
+connection. The raw
+`%{"method" => "elicitation/create", "params" => %{"message" => ...,
+"requestedSchema" => ...}}` map is equivalent to `ExMCP.Server.elicit/1`.
 
 ### URL mode
 
 URL mode sends the user to a page instead of a form. Advertise
-`elicitation.url` and implement `handle_url_elicitation/3`:
+`elicitation.url` and implement `handle_url_elicitation/4`:
 
 ```elixir
 # Server
 requests = %{
-  "login" => %{
-    "method" => "elicitation/create",
-    "params" => %{
-      "message" => "Sign in to continue",
-      "mode" => "url",
-      "url" => "https://auth.example.com/login",
-      "elicitationId" => "elicit-login-1"
-    }
-  }
+  "login" =>
+    ExMCP.Server.elicit(%{
+      message: "Sign in to continue",
+      mode: "url",
+      url: "https://auth.example.com/login",
+      elicitationId: "elicit-login-1"
+    })
 }
 
 {:input_required, requests, state}
 
 # Client
 @impl true
-def handle_url_elicitation(message, url, state) do
+def handle_url_elicitation(message, url, elicitation_id, state) do
   _ = {message, open_browser(url)}
-  {:ok, %{action: "accept", content: %{"authenticated" => true}}, state}
+
+  {:ok, %{action: "accept", content: %{"authenticated" => true}},
+   Map.put(state, :elicitation_id, elicitation_id)}
 end
 ```
 
 If the handler only implements `handle_elicitation_create/3`, URL-mode
 requests still arrive there. The second argument is then a map with
-`"mode"`, `"url"`, and `"elicitationId"`.
+`"mode"`, `"url"`, and `"elicitationId"`. `handle_url_elicitation/3`
+remains for 1.x compatibility and does not receive the id.
 
 ### Schema validation
 
@@ -193,12 +194,13 @@ The client should only accept one of those values. The same schema is what
 
 After a URL-mode flow finishes out of band, the client notifies the server
 with `notifications/elicitation/complete`. There is no dedicated wrapper;
-use `ExMCP.Client.notify/3`:
+use `ExMCP.Client.notify/3` with the `elicitationId` from
+`handle_url_elicitation/4`:
 
 ```elixir
 :ok =
   ExMCP.Client.notify(client, "notifications/elicitation/complete", %{
-    "elicitationId" => "elicit-login-1"
+    "elicitationId" => elicitation_id
   })
 
 # Server
@@ -207,10 +209,6 @@ def handle_elicitation_complete(elicitation_id, state) do
   {:ok, Map.put(state, :last_elicitation, elicitation_id)}
 end
 ```
-
-`handle_url_elicitation/3` receives only `message` and `url`. Keep
-`elicitationId` in your own state, or implement `handle_elicitation_create/3`
-so the URL payload includes it.
 
 ## Sampling
 

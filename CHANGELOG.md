@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ExMCP.Server.Context.cancelled?/0` so a running handler can see
   `notifications/cancelled` without polling `get_pending_requests/1`.
+- `ExMCP.Server.elicit/1` builds an `elicitation/create` MRTR input-request
+  entry for form and URL mode. `handle_url_elicitation/4` receives
+  `elicitationId` so `notifications/elicitation/complete` does not need
+  out-of-band state; `handle_url_elicitation/3` is unchanged.
 
 ## [1.1.0] - 2026-08-25
 

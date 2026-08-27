@@ -266,6 +266,7 @@ defmodule ExMCP.Compliance.UrlElicitationTest do
     test "handle_url_elicitation is an optional callback" do
       optional = ExMCP.Client.Handler.behaviour_info(:optional_callbacks)
       assert {:handle_url_elicitation, 3} in optional
+      assert {:handle_url_elicitation, 4} in optional
     end
   end
 end
