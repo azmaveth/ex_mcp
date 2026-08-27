@@ -9,7 +9,7 @@ defmodule ExMCP.MessageProcessor do
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, LogSummary, MessageValidator}
   alias ExMCP.Protocol.{ErrorCodes, Methods, ResponseBuilder}
-  alias ExMCP.Server.{MRTR, RequestContext, ResultNormalizer}
+  alias ExMCP.Server.{Cancellation, MRTR, RequestContext, ResultNormalizer}
   alias ExMCP.Tasks.Extension, as: TasksExtension
 
   require Logger
@@ -589,6 +589,10 @@ defmodule ExMCP.MessageProcessor do
   defp progress_owner(%Conn{} = conn), do: {:connection, self(), conn.transport}
 
   defp process_validated_notification(%Conn{} = conn, opts) do
+    # Record cancel before invoking the handler so a request running on
+    # another process can observe Context.cancelled?/0 immediately.
+    Cancellation.mark_from_message(conn.request)
+
     # Notifications don't generate responses, just process them
     handler = Map.get(opts, :handler)
 

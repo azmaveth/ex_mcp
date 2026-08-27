@@ -25,6 +25,7 @@ defmodule ExMCP.Transport.Test do
 
   @behaviour ExMCP.Transport
 
+  alias ExMCP.Server.Cancellation
   alias ExMCP.Transport.Error
 
   # State for server side (when acting as server transport)
@@ -100,6 +101,7 @@ defmodule ExMCP.Transport.Test do
   def send_message(message, %__MODULE__{peer_pid: peer_pid} = state) when peer_pid != nil do
     case Error.validate_connection(state, &connected?/1) do
       :ok ->
+        maybe_mark_cancelled(state.role, message)
         Kernel.send(peer_pid, {:transport_message, message})
         {:ok, state}
 
@@ -146,4 +148,7 @@ defmodule ExMCP.Transport.Test do
   def receive(state) do
     receive_message(state, 5_000)
   end
+
+  defp maybe_mark_cancelled(:client, message), do: Cancellation.mark_from_message(message)
+  defp maybe_mark_cancelled(_role, _message), do: :ok
 end

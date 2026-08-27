@@ -53,7 +53,15 @@ defmodule ExMCP.Server.StdioServer do
   alias ExMCP.Error.ProtocolError
   alias ExMCP.Internal.{JSONRPC, LogSummary, MessageValidator, StdioLoggerConfig, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
-  alias ExMCP.Server.{Dispatch, RequestContext, RequestState, ResultNormalizer, Subscriptions}
+
+  alias ExMCP.Server.{
+    Cancellation,
+    Dispatch,
+    RequestContext,
+    RequestState,
+    ResultNormalizer,
+    Subscriptions
+  }
 
   @doc """
   Starts the STDIO server.
@@ -468,6 +476,8 @@ defmodule ExMCP.Server.StdioServer do
         line = String.trim(line)
 
         if line != "" do
+          # Mark cancel here so a blocked handle_call_tool can observe it.
+          Cancellation.mark_from_message(line)
           send(server_pid, {:stdin_line, line})
         end
 

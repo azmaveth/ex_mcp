@@ -382,3 +382,19 @@ You cannot cancel `initialize`. `send_cancelled/3` returns
 
 This is request cancellation, not the experimental Tasks extension
 (`ExMCP.Client.cancel_task/3`).
+
+A long-running handler can check the current request between steps. The
+server MAY stop; ExMCP does not automatically abort the JSON-RPC request.
+
+```elixir
+@impl true
+def handle_call_tool("slow_import", _args, state) do
+  Enum.reduce_while(import_steps(), {:ok, state}, fn step, {:ok, state} ->
+    if ExMCP.Server.Context.cancelled?() do
+      {:halt, {:error, "Import cancelled", state}}
+    else
+      {:cont, run_import_step(step, state)}
+    end
+  end)
+end
+```

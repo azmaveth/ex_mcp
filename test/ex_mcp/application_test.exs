@@ -45,6 +45,7 @@ defmodule ExMCP.ApplicationTest do
       session_manager_pid = Process.whereis(ExMCP.SessionManager)
       progress_tracker_pid = Process.whereis(ExMCP.ProgressTracker)
       task_store_pid = Process.whereis(ExMCP.Tasks.Store.ETS)
+      cancellation_pid = Process.whereis(ExMCP.Server.Cancellation)
 
       assert is_pid(session_manager_pid)
       assert Process.alive?(session_manager_pid)
@@ -52,6 +53,8 @@ defmodule ExMCP.ApplicationTest do
       assert Process.alive?(progress_tracker_pid)
       assert is_pid(task_store_pid)
       assert Process.alive?(task_store_pid)
+      assert is_pid(cancellation_pid)
+      assert Process.alive?(cancellation_pid)
 
       # Clean up
       Process.exit(sup_pid, :normal)

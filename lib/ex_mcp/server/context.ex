@@ -5,16 +5,40 @@ defmodule ExMCP.Server.Context do
   This is primarily useful for MRTR-aware handlers that retain their existing
   callback arity. The value is scoped to the callback invocation and must not
   be read later from a spawned process.
+
+  `cancelled?/0` reports whether the current request id has been cancelled.
   """
 
   alias ExMCP.Internal.Protocol
-  alias ExMCP.Server.RequestContext
+  alias ExMCP.Server.{Cancellation, RequestContext}
 
   @key {__MODULE__, :current}
   @log_levels ~w(debug info notice warning error critical alert emergency)
 
   @spec current() :: RequestContext.t() | nil
   def current, do: Process.get(@key)
+
+  @doc """
+  Returns true if the current request id has been cancelled.
+
+  Safe to call from inside a running handler: cancel is recorded out of
+  band when `notifications/cancelled` is accepted, so this does not wait
+  for the server GenServer to finish the current callback.
+
+  Returns `false` when there is no request context or the current id has
+  not been cancelled. The server MAY stop work when this is true; ExMCP
+  does not automatically abort the JSON-RPC request.
+  """
+  @spec cancelled?() :: boolean()
+  def cancelled? do
+    case current() do
+      %RequestContext{request_id: request_id} when not is_nil(request_id) ->
+        Cancellation.cancelled?(request_id)
+
+      _other ->
+        false
+    end
+  end
 
   @spec input_responses() :: map() | nil
   def input_responses do
@@ -148,6 +172,7 @@ defmodule ExMCP.Server.Context do
       fun.()
     after
       restore(previous)
+      Cancellation.clear(context.request_id)
     end
   end
 

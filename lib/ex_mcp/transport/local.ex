@@ -29,7 +29,9 @@ defmodule ExMCP.Transport.Local do
 
   @behaviour ExMCP.Transport
 
+  alias ExMCP.Server.Cancellation
   alias ExMCP.Transport.Error
+
   defstruct [:server_pid, :role, :connected, :timeout, :subscriber, :forwarder_pid]
 
   @type t :: %__MODULE__{
@@ -137,6 +139,7 @@ defmodule ExMCP.Transport.Local do
               role: transport.role
             })
 
+            Cancellation.mark_from_message(message)
             Kernel.send(transport.server_pid, {:transport_message, message})
             {:ok, transport}
 

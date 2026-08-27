@@ -33,6 +33,9 @@ defmodule ExMCP.Application do
         # Owns the ETS table mapping SSE session ids to handler pids for
         # ExMCP.HttpPlug (must outlive individual HTTP request processes)
         ExMCP.HttpPlug.SessionRegistry,
+        # Owns the ETS table of cancelled request ids so handlers can call
+        # Context.cancelled?/0 without waiting on the server GenServer
+        ExMCP.Server.Cancellation,
         # Owns the ETS indexes for streamable-HTTP resource subscriptions
         ExMCP.SubscriptionRegistry,
         # Start the Session Manager for streamable HTTP sessions

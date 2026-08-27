@@ -43,7 +43,16 @@ defmodule ExMCP.Server.HandlerServer do
   alias ExMCP.Error.ProtocolError
   alias ExMCP.Internal.{JSONRPC, LogSummary, MessageValidator, VersionRegistry}
   alias ExMCP.Protocol.ErrorCodes
-  alias ExMCP.Server.{CancellationTracker, Dispatch, RequestContext, RequestState, Subscriptions}
+
+  alias ExMCP.Server.{
+    Cancellation,
+    CancellationTracker,
+    Dispatch,
+    RequestContext,
+    RequestState,
+    Subscriptions
+  }
+
   alias ExMCP.Transport.{Local, Test}
 
   # JSON-RPC batches were removed from the spec in 2025-06-18 and have not
@@ -664,6 +673,10 @@ defmodule ExMCP.Server.HandlerServer do
       request_id_hash: LogSummary.fingerprint(request_id),
       reason_shape: LogSummary.describe(reason)
     )
+
+    # Record the cancel out of band so a running handler can see it via
+    # Context.cancelled?/0 even though this GenServer is otherwise busy.
+    Cancellation.mark_cancelled(request_id)
 
     # Mark the request as cancelled and let the configured tracker propagate
     # it into the handler's own state.
