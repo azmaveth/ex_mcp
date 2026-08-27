@@ -162,6 +162,16 @@ defmodule ConformanceHandler do
         name: "test_missing_capability",
         description: "Requires the sampling client capability",
         inputSchema: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "test_streaming_elicitation",
+        description: "Diagnostic tool validating response progress streams",
+        inputSchema: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "test_logging_tool",
+        description: "Diagnostic logging validator tool",
+        inputSchema: %{type: "object", properties: %{}}
       }
       | mrtr_tools()
     ]
@@ -409,6 +419,16 @@ defmodule ConformanceHandler do
 
   def handle_call_tool("test_error_handling", _args, state),
     do: {:error, "This tool intentionally returns an error for testing", state}
+
+  def handle_call_tool("test_streaming_elicitation", _args, state) do
+    _ = Context.report_progress(50, 100)
+    {:ok, [%{type: "text", text: "Streaming complete"}], state}
+  end
+
+  def handle_call_tool("test_logging_tool", _args, state) do
+    _ = Context.send_log_message(:info, "Diagnostic trace logging activated")
+    {:ok, [%{type: "text", text: "Logging evaluated"}], state}
+  end
 
   def handle_call_tool(name, _args, state), do: {:error, "Unknown tool: #{name}", state}
 
