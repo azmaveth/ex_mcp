@@ -113,6 +113,9 @@ defmodule ExMCP.Server.Tools.Simplified do
             normalized = ResponseNormalizer.normalize(result)
             {:ok, normalized, state}
 
+          {:error, %ExMCP.Error.ProtocolError{} = reason} ->
+            {:error, reason, state}
+
           {:error, reason} ->
             {:ok,
              %{

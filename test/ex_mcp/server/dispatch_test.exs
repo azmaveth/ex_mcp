@@ -343,7 +343,7 @@ defmodule ExMCP.Server.DispatchTest do
     test "handler-authored string reasons are preserved" do
       params = %{"name" => "missing", "arguments" => %{}}
       assert {:response, %{"error" => error}, _state} = dispatch("tools/call", params)
-      assert error["code"] == -32000
+      assert error["code"] == -32602
       assert error["message"] == "Tool call error: Unknown tool: missing"
     end
 

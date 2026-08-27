@@ -179,16 +179,25 @@ defmodule ExMCPTest do
     test "handles invalid tool calls gracefully", %{http_url: http_url} do
       {:ok, client} = ExMCP.connect(http_url, client_type: :simple, use_sse: false)
 
-      # Try to call a non-existent tool — MCP spec returns isError: true, not JSON-RPC error
+      # Unknown tool names are a JSON-RPC invalid-params error, not isError.
       result = ExMCP.call(client, "nonexistent_tool", %{})
 
       case result do
-        {:error, _error} -> :ok
-        {:ok, %{"isError" => true}} -> :ok
-        {:ok, %{isError: true}} -> :ok
-        # Some server paths return raw error strings (normalized content)
-        {:ok, msg} when is_binary(msg) -> :ok
-        other -> flunk("Expected error response, got: #{inspect(other)}")
+        {:error, %{code: -32602}} ->
+          :ok
+
+        {:error, %{"code" => -32602}} ->
+          :ok
+
+        {:error, %_{code: -32602}} ->
+          :ok
+
+        {:error, error} ->
+          code = Map.get(error, :code) || Map.get(error, "code")
+          assert code == -32602
+
+        other ->
+          flunk("Expected JSON-RPC error -32602, got: #{inspect(other)}")
       end
 
       ExMCP.disconnect(client)

@@ -522,10 +522,10 @@ defmodule ExMCP.Integration.AgentSimulationTest do
     end
 
     test "unknown tool returns error", %{client: client} do
-      {:ok, result} = Client.call_tool(client, "nonexistent", %{})
+      {:error, error} = Client.call_tool(client, "nonexistent", %{})
 
-      assert result.is_error
-      assert Enum.at(result.content, 0).text == "Unknown tool: nonexistent"
+      assert error.code == -32602
+      assert error.message == "Unknown tool: nonexistent"
     end
   end
 
@@ -561,8 +561,8 @@ defmodule ExMCP.Integration.AgentSimulationTest do
 
     test "returns error for unknown resource", %{client: client} do
       {:error, error} = Client.read_resource(client, "unknown://resource")
-      # Error may be wrapped - verify we get an error struct/map
-      assert is_struct(error) or is_map(error)
+      assert error.code == -32602
+      assert error.message =~ "Resource not found"
     end
   end
 
@@ -587,6 +587,7 @@ defmodule ExMCP.Integration.AgentSimulationTest do
 
     test "returns error for unknown prompt", %{client: client} do
       {:error, error} = Client.get_prompt(client, "nonexistent", %{})
+      assert error.code == -32602
       assert error.message =~ "Prompt not found"
     end
   end

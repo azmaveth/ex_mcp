@@ -145,7 +145,8 @@ defmodule ExMCP.Server.Tools.Registry do
         {:reply, validated_result, state}
 
       nil ->
-        {:reply, {:error, "Unknown tool: #{tool_name}"}, state}
+        {:reply, {:error, ExMCP.Error.protocol_error(-32602, "Unknown tool: #{tool_name}")},
+         state}
     end
   end
 

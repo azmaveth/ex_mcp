@@ -126,11 +126,7 @@ defmodule ExMCP.Server.Tools do
             validated_result
 
           nil ->
-            {:ok,
-             %{
-               content: [%{type: "text", text: "Unknown tool: #{name}"}],
-               isError: true
-             }, state}
+            {:error, ExMCP.Error.protocol_error(-32602, "Unknown tool: #{name}"), state}
         end
       end
     end
