@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-27
+
 ### Added
 
 - `transport: :sse` is a first-class client connector for the deprecated
@@ -19,12 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry for form and URL mode. `handle_url_elicitation/4` receives
   `elicitationId` so `notifications/elicitation/complete` does not need
   out-of-band state; `handle_url_elicitation/3` is unchanged.
+- SEP-1730 how-tos for protocol and content coverage gaps.
 
 ### Fixed
 
+- Unknown tool, resource, and prompt names now return JSON-RPC `-32602`
+  instead of a tool-result `isError` or a generic server error (#25).
+- HTTP registered-tool execution errors stay result `isError: true` after
+  the #25 protocol-error change.
+- The conformance fixture server now implements the SEP-2575
+  `server-stateless` diagnostic tools that the official harness calls.
 - HTTP `prompts/get` and `resources/read` now return JSON-RPC `-32602` when a
-  handler reports an unknown name as a string, matching tools after #25.
-  Non-name handler strings stay `-32603`.
+  handler reports an unknown name as a string. Non-name handler strings stay
+  `-32603`.
 
 ## [1.1.0] - 2026-08-25
 
