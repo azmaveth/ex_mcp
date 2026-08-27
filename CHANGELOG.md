@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `elicitationId` so `notifications/elicitation/complete` does not need
   out-of-band state; `handle_url_elicitation/3` is unchanged.
 
+### Fixed
+
+- HTTP `prompts/get` and `resources/read` now return JSON-RPC `-32602` when a
+  handler reports an unknown name as a string, matching tools after #25.
+  Non-name handler strings stay `-32603`.
+
 ## [1.1.0] - 2026-08-25
 
 ### Added

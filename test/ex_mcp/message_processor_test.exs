@@ -161,6 +161,33 @@ defmodule ExMCP.MessageProcessorTest do
       do: {:error, "Unknown tool: #{name}", state}
   end
 
+  defmodule StringNameHandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(_args), do: {:ok, %{}}
+
+    @impl true
+    def handle_list_prompts(_cursor, state), do: {:ok, [], nil, state}
+
+    @impl true
+    def handle_get_prompt("broken", _args, state),
+      do: {:error, "render exploded", state}
+
+    def handle_get_prompt(name, _args, state),
+      do: {:error, "Unknown prompt: #{name}", state}
+
+    @impl true
+    def handle_list_resources(_cursor, state), do: {:ok, [], nil, state}
+
+    @impl true
+    def handle_read_resource("test://boom", state),
+      do: {:error, "disk exploded", state}
+
+    def handle_read_resource(uri, state),
+      do: {:error, "Resource not found: #{uri}", state}
+  end
+
   defmodule FailingInitHandlerServer do
     use ExMCP.Server.Handler
 
@@ -378,6 +405,58 @@ defmodule ExMCP.MessageProcessorTest do
       refute Map.has_key?(conn.response, "result")
       assert error["code"] == -32602
       assert error["message"] =~ "Unknown tool: nope"
+    end
+  end
+
+  describe "process/2 prompt and resource unknown-name strings" do
+    @describetag capture_log: true
+
+    test "unknown prompt name string is JSON-RPC -32602, not -32603" do
+      conn =
+        32
+        |> protocol_request("prompts/get", %{"name" => "nope", "arguments" => %{}})
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: StringNameHandlerServer})
+
+      assert %{"error" => error} = conn.response
+      refute Map.has_key?(conn.response, "result")
+      assert error["code"] == -32602
+      assert error["message"] =~ "Unknown prompt: nope"
+    end
+
+    test "unknown resource string is JSON-RPC -32602, not -32603" do
+      conn =
+        33
+        |> protocol_request("resources/read", %{"uri" => "missing://x"})
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: StringNameHandlerServer})
+
+      assert %{"error" => error} = conn.response
+      refute Map.has_key?(conn.response, "result")
+      assert error["code"] == -32602
+      assert error["message"] =~ "Resource not found: missing://x"
+    end
+
+    test "non-unknown prompt string stays -32603" do
+      conn =
+        34
+        |> protocol_request("prompts/get", %{"name" => "broken", "arguments" => %{}})
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: StringNameHandlerServer})
+
+      assert %{"error" => error} = conn.response
+      assert error["code"] == -32603
+    end
+
+    test "non-unknown resource string stays -32603" do
+      conn =
+        35
+        |> protocol_request("resources/read", %{"uri" => "test://boom"})
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: StringNameHandlerServer})
+
+      assert %{"error" => error} = conn.response
+      assert error["code"] == -32603
     end
   end
 

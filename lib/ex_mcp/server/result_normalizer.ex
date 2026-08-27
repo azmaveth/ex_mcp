@@ -332,27 +332,42 @@ defmodule ExMCP.Server.ResultNormalizer do
   def error_code("Invalid cursor" <> _, _default), do: -32602
 
   def error_code(reason, default) when is_binary(reason) do
-    lowered = String.downcase(reason)
-
-    cond do
-      String.contains?(lowered, "unknown tool") ->
-        -32602
-
-      String.contains?(lowered, "tool not found") ->
-        -32602
-
-      String.contains?(lowered, "prompt not found") ->
-        -32602
-
-      String.contains?(lowered, "resource not found") ->
-        ErrorCodes.resource_not_found(:modern)
-
-      true ->
-        default
+    case classify_name_error(reason) do
+      {:unknown_name, code} -> code
+      :other -> default
     end
   end
 
   def error_code(_reason, default), do: default
+
+  @doc false
+  @spec unknown_name_reason?(term()) :: boolean()
+  def unknown_name_reason?(reason) when is_binary(reason) do
+    match?({:unknown_name, _}, classify_name_error(reason))
+  end
+
+  def unknown_name_reason?(_reason), do: false
+
+  defp classify_name_error(reason) do
+    lowered = String.downcase(reason)
+
+    cond do
+      String.contains?(lowered, "unknown tool") or
+          String.contains?(lowered, "tool not found") ->
+        {:unknown_name, -32602}
+
+      String.contains?(lowered, "unknown prompt") or
+          String.contains?(lowered, "prompt not found") ->
+        {:unknown_name, -32602}
+
+      String.contains?(lowered, "unknown resource") or
+          String.contains?(lowered, "resource not found") ->
+        {:unknown_name, ErrorCodes.resource_not_found(:modern)}
+
+      true ->
+        :other
+    end
+  end
 
   defp client_safe_detail(reason) when is_binary(reason), do: reason
   defp client_safe_detail(reason) when is_boolean(reason) or is_nil(reason), do: nil

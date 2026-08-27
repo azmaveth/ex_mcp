@@ -197,4 +197,15 @@ defmodule ExMCP.Server.ResultNormalizerProtocolTest do
 
     assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "configured"
   end
+
+  test "error_code maps unknown-name strings to -32602" do
+    assert ResultNormalizer.error_code("Unknown tool: nope") == -32602
+    assert ResultNormalizer.error_code("Unknown prompt: nope") == -32602
+    assert ResultNormalizer.error_code("Prompt not found: nope") == -32602
+    assert ResultNormalizer.error_code("Unknown resource: missing://x") == -32602
+    assert ResultNormalizer.error_code("Resource not found: missing://x") == -32602
+    assert ResultNormalizer.error_code("render exploded") == -32000
+    assert ResultNormalizer.unknown_name_reason?("Unknown prompt: nope")
+    refute ResultNormalizer.unknown_name_reason?("render exploded")
+  end
 end
