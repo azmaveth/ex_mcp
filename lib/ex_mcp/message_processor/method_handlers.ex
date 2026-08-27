@@ -493,29 +493,22 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     do: put_error(conn, "Tool call failed", error, id)
 
   defp handle_tool_reply(conn, {:error, reason}, id) do
-    put_error(conn, "Tool call failed", handler_reason_to_protocol_error(reason), id)
-  end
+    message = reason_message(reason)
 
-  defp handler_reason_to_protocol_error(reason) when is_binary(reason) do
-    if unknown_name_reason?(reason) do
-      Error.protocol_error(-32602, reason)
+    if unknown_name_reason?(message) do
+      put_error(conn, "Tool call failed", Error.protocol_error(-32602, message), id)
     else
-      Error.protocol_error(-32000, reason)
+      put_success(conn, ResultNormalizer.tool_error_result(reason), id)
     end
   end
 
-  defp handler_reason_to_protocol_error(reason) do
-    message =
-      cond do
-        is_atom(reason) -> Atom.to_string(reason)
-        is_exception(reason) -> Exception.message(reason)
-        true -> inspect(reason)
-      end
+  defp reason_message(reason) when is_binary(reason), do: reason
 
-    if unknown_name_reason?(message) do
-      Error.protocol_error(-32602, message)
-    else
-      Error.protocol_error(-32000, message)
+  defp reason_message(reason) do
+    cond do
+      is_atom(reason) -> Atom.to_string(reason)
+      is_exception(reason) -> Exception.message(reason)
+      true -> inspect(reason)
     end
   end
 

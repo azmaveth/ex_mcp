@@ -135,6 +135,32 @@ defmodule ExMCP.MessageProcessorTest do
     end
   end
 
+  defmodule ToolErrorHandlerServer do
+    use ExMCP.Server.Handler
+
+    @impl true
+    def init(_args), do: {:ok, %{}}
+
+    @impl true
+    def handle_list_tools(_cursor, state) do
+      {:ok,
+       [
+         %{
+           name: "test_error_handling",
+           description: "Tests error response handling",
+           inputSchema: %{type: "object", properties: %{}}
+         }
+       ], nil, state}
+    end
+
+    @impl true
+    def handle_call_tool("test_error_handling", _args, state),
+      do: {:error, "This tool intentionally returns an error for testing", state}
+
+    def handle_call_tool(name, _args, state),
+      do: {:error, "Unknown tool: #{name}", state}
+  end
+
   defmodule FailingInitHandlerServer do
     use ExMCP.Server.Handler
 
@@ -323,6 +349,35 @@ defmodule ExMCP.MessageProcessorTest do
                "name" => "configured-handler",
                "version" => "2.0.0"
              }
+    end
+  end
+
+  describe "process/2 tools/call protocol vs execution errors" do
+    test "registered tool {:error, reason} stays result isError, not JSON-RPC" do
+      conn =
+        30
+        |> tools_call_request("test_error_handling")
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: ToolErrorHandlerServer})
+
+      assert %{"result" => result} = conn.response
+      refute Map.has_key?(conn.response, "error")
+      assert result["isError"] == true
+      assert [%{"type" => "text", "text" => text}] = result["content"]
+      assert text =~ "This tool intentionally returns an error for testing"
+    end
+
+    test "unknown tool name string is JSON-RPC -32602, not isError" do
+      conn =
+        31
+        |> tools_call_request("nope")
+        |> MessageProcessor.new()
+        |> MessageProcessor.process(%{handler: ToolErrorHandlerServer})
+
+      assert %{"error" => error} = conn.response
+      refute Map.has_key?(conn.response, "result")
+      assert error["code"] == -32602
+      assert error["message"] =~ "Unknown tool: nope"
     end
   end
 
@@ -552,6 +607,15 @@ defmodule ExMCP.MessageProcessorTest do
 
   defp protocol_request(id, method, params) do
     %{"jsonrpc" => "2.0", "method" => method, "params" => params, "id" => id}
+  end
+
+  defp tools_call_request(id, name, arguments \\ %{}) do
+    %{
+      "jsonrpc" => "2.0",
+      "method" => "tools/call",
+      "params" => %{"name" => name, "arguments" => arguments},
+      "id" => id
+    }
   end
 
   defp tools_list_request(id) do

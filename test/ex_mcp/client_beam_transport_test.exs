@@ -185,7 +185,7 @@ defmodule ExMCP.ClientBeamTransportTest do
 
       assert divide_error =~ "Division by zero"
 
-      assert {:error, %{"code" => -32000, "message" => unknown_error}} =
+      assert {:error, %{"code" => -32602, "message" => unknown_error}} =
                Client.call_tool(client, "unknown_method", %{}, format: :map)
 
       assert unknown_error =~ "Tool not found: unknown_method"

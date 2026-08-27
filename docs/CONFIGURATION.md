@@ -930,7 +930,7 @@ URI from the ref-counted modern set. Implement
 ### List-changed notifications
 
 Listen for catalog changes, then refetch. The server publishes with the
-matching `ExMCP.Server.notify_*_changed/1` helper:
+matching `ExMCP.Server.notify_tools_changed/1`, `ExMCP.Server.notify_resources_changed/1`, or `ExMCP.Server.notify_prompts_changed/1` helper:
 
 ```elixir
 {:ok, subscription} =
