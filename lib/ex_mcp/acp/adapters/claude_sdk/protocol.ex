@@ -498,6 +498,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
   defp append_csv(args, opts, key, flag) do
     case Keyword.get(opts, key) do
       nil -> args
+      # `tools: []` is a real instruction — Claude Code's `--tools ""` disables
+      # every built-in tool — whereas an empty allow/deny list means "no opinion".
+      [] when key == :tools -> args ++ [flag, ""]
       [] -> args
       list when is_list(list) -> args ++ [flag, Enum.map_join(list, ",", &to_string/1)]
       "default" when key == :tools -> args ++ [flag, "default"]
