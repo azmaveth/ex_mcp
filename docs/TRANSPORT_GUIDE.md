@@ -10,6 +10,7 @@ option, not a new-server default.
 |-----------|------------|----------|
 | stdio | `:stdio` | Official MCP subprocess transport |
 | Streamable HTTP | `:http` | Remote servers and Phoenix apps |
+| Legacy HTTP+SSE | `:sse` | Deprecated 2024-11-05 `GET /sse` + `POST /message` |
 | BEAM-local | `:beam` | Local Elixir client/server pairs |
 | Test | `:test` | In-memory tests |
 
@@ -258,43 +259,43 @@ on the GET stream.
 
 ```elixir
 # Server — two-endpoint transport (not Streamable HTTP)
-forward "/mcp", ExMCP.HttpPlug,
-  handler: MyApp.MCPServer,
-  protocol_mode: :legacy_only,
-  legacy_http_sse: true,
-  legacy_http_sse_path: "/sse",
-  legacy_http_sse_post_path: "/message"
+{:ok, _} =
+  Plug.Cowboy.http(
+    ExMCP.HttpPlug,
+    [
+      handler: MyApp.MCPServer,
+      protocol_mode: :legacy_only,
+      legacy_http_sse: true,
+      legacy_http_sse_path: "/sse",
+      legacy_http_sse_post_path: "/message"
+    ],
+    port: 4000
+  )
 
-# After the endpoint event, POST JSON-RPC to the advertised URI.
-session_id = "server-issued-session"
-{:ok, {{_, status, _}, _headers, _body}} =
-  :httpc.request(
-    :post,
-    {~c"http://localhost:4000/message?sessionId=#{session_id}",
-     [{~c"content-type", ~c"application/json"}],
-     ~c"application/json",
-     Jason.encode!(%{
-       "jsonrpc" => "2.0",
-       "id" => 1,
-       "method" => "initialize",
-       "params" => %{
-         "protocolVersion" => "2024-11-05",
-         "capabilities" => %{},
-         "clientInfo" => %{name: "sse-client", version: "1.0.0"}
-       }
-     })},
-    [],
-    []
+# Client — GET /sse first, then POST to the advertised /message URI
+{:ok, client} =
+  ExMCP.Client.start_link(
+    transport: :sse,
+    url: "http://localhost:4000"
+  )
+
+# If the plug is forwarded under a prefix, include that prefix in url.
+# Custom GET/POST paths match :legacy_http_sse_path / :legacy_http_sse_post_path.
+{:ok, client} =
+  ExMCP.Client.start_link(
+    transport: :sse,
+    url: "http://localhost:4000/mcp",
+    sse_path: "/events",
+    post_path: "/inbox"
   )
 ```
 
-Open GET `/sse` with `Accept: text/event-stream` before that POST. This is
-**not** Streamable HTTP. `ExMCP.Client.start_link(transport: :http, use_sse:
-true)` GETs the same MCP endpoint after `initialize`; `use_sse: false`
-disables that standalone GET. `transport: :sse` is rejected
-(`"Unsupported transport :sse. Use :http with use_sse: true."`).
-`ExMCP.Client` does not implement the 2024-11-05 GET `/sse` then POST
-`/message` handshake.
+Open GET `/sse` with `Accept: text/event-stream` first. The first event is
+`endpoint`; JSON-RPC then goes to the advertised POST URI (default
+`/message?sessionId=...`). This is **not** Streamable HTTP.
+`ExMCP.Client.start_link(transport: :http, use_sse: true)` GETs the same MCP
+endpoint after `initialize`; `use_sse: false` disables that standalone GET.
+`transport: :sse` is the 2024-11-05 two-endpoint client.
 
 ## BEAM-Local
 

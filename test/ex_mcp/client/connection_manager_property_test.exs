@@ -11,6 +11,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
 
   alias ExMCP.Client.ConnectionManager
   alias ExMCP.Transport.{HTTP, Stdio, Test}
+  alias ExMCP.Transport.HTTP.LegacySSE
 
   # We'll test through the public prepare_transport_config function
   defmodule TestWrapper do
@@ -34,22 +35,32 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
 
       assert native_reason =~ "Unsupported transport :native"
 
-      assert {:error, sse_reason} =
-               ConnectionManager.prepare_transport_config(transport: :sse)
+      assert {:error, _reason} =
+               ConnectionManager.prepare_transport_config(transport: {:native, []})
 
-      assert sse_reason =~ "Unsupported transport :sse"
+      assert {:error, _reason} =
+               ConnectionManager.prepare_transport_config(transport: [type: :native])
+    end
 
-      for removed_transport <- [:native, :sse] do
-        assert {:error, _reason} =
-                 ConnectionManager.prepare_transport_config(transport: {removed_transport, []})
+    test "transport :sse is the legacy HTTP+SSE connector" do
+      assert {:ok, [transports: [{LegacySSE, opts}]]} =
+               ConnectionManager.prepare_transport_config(
+                 transport: :sse,
+                 url: "http://localhost:4000"
+               )
 
-        assert {:error, _reason} =
-                 ConnectionManager.prepare_transport_config(transport: [type: removed_transport])
-      end
+      assert opts[:url] == "http://localhost:4000"
+      refute opts[:use_sse]
+
+      assert {:ok, [transports: [{LegacySSE, _}]]} =
+               ConnectionManager.prepare_transport_config(transport: {:sse, []})
+
+      assert {:ok, [transports: [{LegacySSE, _}]]} =
+               ConnectionManager.prepare_transport_config(transport: [type: :sse])
     end
 
     property "normalize_transport_spec handles all atom transport types" do
-      forall transport_atom <- oneof([:stdio, :http, :test, :mock, :beam]) do
+      forall transport_atom <- oneof([:stdio, :http, :sse, :test, :mock, :beam]) do
         forall opts <- list({atom(), term()}) do
           case TestWrapper.normalize_transport_spec(transport_atom, opts) do
             {transport_mod, merged_opts} when is_atom(transport_mod) and is_list(merged_opts) ->
@@ -71,7 +82,7 @@ defmodule ExMCP.Client.ConnectionManagerPropertyTest do
 
     property "normalize_transport_spec handles tuple transport specifications" do
       forall {transport_atom, transport_opts} <- {
-               oneof([:stdio, :http, :test, :mock, :beam]),
+               oneof([:stdio, :http, :sse, :test, :mock, :beam]),
                list({atom(), term()})
              } do
         case TestWrapper.normalize_transport_spec({transport_atom, transport_opts}, []) do

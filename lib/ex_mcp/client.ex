@@ -119,7 +119,7 @@ defmodule ExMCP.Client do
 
   ## Options
 
-  - `:transport` - Transport type (:stdio, :http, :beam, etc.)
+  - `:transport` - Transport type (`:stdio`, `:http`, `:sse`, `:beam`, etc.)
   - `:transports` - List of transports for fallback
   - `:name` - Optional GenServer name
   - `:handshake_timeout` - Maximum time in milliseconds to wait for the

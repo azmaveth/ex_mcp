@@ -12,6 +12,7 @@ defmodule ExMCP.Client.ConnectionManager do
   alias ExMCP.Internal.{Protocol, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Transport.{HTTP, Local, ReliabilityWrapper, Stdio, Test}
+  alias ExMCP.Transport.HTTP.LegacySSE
 
   @default_handshake_timeout 10_000
 
@@ -46,6 +47,8 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp do_establish_connection(state, opts) do
+    opts = maybe_default_legacy_sse_opts(opts)
+
     with {:ok, transport_manager_opts} <- prepare_transport_config(opts),
          {:ok, {transport_mod, transport_state}} <- connect_transport(transport_manager_opts),
          era_identity = EraCache.identity(transport_mod, transport_state, opts),
@@ -438,7 +441,7 @@ defmodule ExMCP.Client.ConnectionManager do
         {:error, "Unsupported transport :native. Use :beam for local BEAM MCP transport."}
 
       :sse ->
-        {:error, "Unsupported transport :sse. Use :http with use_sse: true."}
+        {LegacySSE, opts}
 
       :beam ->
         {Local, opts}
@@ -513,6 +516,38 @@ defmodule ExMCP.Client.ConnectionManager do
   # Handle invalid transport types gracefully
   defp normalize_transport_spec(invalid_transport, _opts) do
     {:error, "Invalid transport specification: #{inspect(invalid_transport)}"}
+  end
+
+  defp maybe_default_legacy_sse_opts(opts) do
+    if legacy_sse_transport?(opts) do
+      opts
+      |> Keyword.put_new(:protocol_mode, :legacy_only)
+      |> Keyword.put_new(:protocol_version, "2024-11-05")
+    else
+      opts
+    end
+  end
+
+  defp legacy_sse_transport?(opts) do
+    case Keyword.get(opts, :transport) do
+      :sse ->
+        true
+
+      {:sse, _transport_opts} ->
+        true
+
+      LegacySSE ->
+        true
+
+      {LegacySSE, _transport_opts} ->
+        true
+
+      spec when is_list(spec) ->
+        Keyword.get(spec, :type) in [:sse, LegacySSE]
+
+      _other ->
+        false
+    end
   end
 
   defp do_handshake(transport_mod, transport_state, opts) do

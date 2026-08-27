@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `transport: :sse` is a first-class client connector for the deprecated
+  MCP 2024-11-05 HTTP+SSE handshake (`GET /sse`, then POST to the
+  advertised `/message?sessionId=` URI). This is not Streamable HTTP;
+  `use_sse: true` still GETs the MCP endpoint after `initialize`.
 - `ExMCP.Server.Context.cancelled?/0` so a running handler can see
   `notifications/cancelled` without polling `get_pending_requests/1`.
 - `ExMCP.Server.elicit/1` builds an `elicitation/create` MRTR input-request

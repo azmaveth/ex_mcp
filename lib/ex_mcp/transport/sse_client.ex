@@ -67,7 +67,8 @@ defmodule ExMCP.Transport.SSEClient do
     :dns_timeout_ms,
     :dns_resolver,
     :allowed_private_hosts,
-    :httpc_profile
+    :httpc_profile,
+    reconnect: true
   ]
 
   @type t :: %__MODULE__{
@@ -93,7 +94,8 @@ defmodule ExMCP.Transport.SSEClient do
           dns_timeout_ms: pos_integer(),
           dns_resolver: module() | function(),
           allowed_private_hosts: [String.t()],
-          httpc_profile: atom() | nil
+          httpc_profile: atom() | nil,
+          reconnect: boolean()
         }
 
   # Client API
@@ -117,6 +119,7 @@ defmodule ExMCP.Transport.SSEClient do
   - `:dns_timeout_ms` - Maximum time allowed for DNS resolution
   - `:dns_resolver` - Resolver module or function used before pinning the connection
   - `:allowed_private_hosts` - Exact hostnames explicitly permitted to resolve privately
+  - `:reconnect` - Automatically reconnect after stream end or error (default: true)
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -153,6 +156,7 @@ defmodule ExMCP.Transport.SSEClient do
     dns_timeout_ms = positive_delay(Keyword.get(opts, :dns_timeout_ms), 1_000)
     dns_resolver = Keyword.get(opts, :dns_resolver, ExMCP.Internal.DNSResolver)
     allowed_private_hosts = Keyword.get(opts, :allowed_private_hosts, [])
+    reconnect = Keyword.get(opts, :reconnect, true)
 
     # Use a bounded pool of predeclared httpc profiles to avoid creating
     # unreclaimable atoms per SSE connection.
@@ -186,7 +190,8 @@ defmodule ExMCP.Transport.SSEClient do
       dns_timeout_ms: dns_timeout_ms,
       dns_resolver: dns_resolver,
       allowed_private_hosts: allowed_private_hosts,
-      httpc_profile: profile
+      httpc_profile: profile,
+      reconnect: reconnect
     }
 
     {:ok, state, {:continue, :connect}}
@@ -604,6 +609,20 @@ defmodule ExMCP.Transport.SSEClient do
   defp complete_sse_frame?(buffer) do
     String.contains?(buffer, "\n\n") or String.contains?(buffer, "\r\r") or
       String.contains?(buffer, "\r\n\r\n")
+  end
+
+  defp schedule_reconnect(%{reconnect: false} = state) do
+    state = cancel_handshake_timer(state)
+
+    if state.heartbeat_ref do
+      Process.cancel_timer(state.heartbeat_ref)
+    end
+
+    if state.ref do
+      BoundedStream.cancel(state.ref)
+    end
+
+    {:stop, :normal, %{state | ref: nil, heartbeat_ref: nil}}
   end
 
   defp schedule_reconnect(state) do

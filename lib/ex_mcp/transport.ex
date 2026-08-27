@@ -12,6 +12,7 @@ defmodule ExMCP.Transport do
 
   - **`:stdio`** - Standard I/O communication (MCP specification)
   - **`:http`** - HTTP with optional SSE streaming (MCP specification)
+  - **`:sse`** - Deprecated MCP 2024-11-05 HTTP+SSE (`GET /sse` + `POST /message`)
   - **`:test`** - In-memory transport for testing
   - **`:beam`** - BEAM-local transport carrying MCP-shaped messages as Elixir terms.
 
@@ -196,12 +197,14 @@ defmodule ExMCP.Transport do
   ## Transport identifiers:
   - `:stdio` - Standard I/O transport (official MCP transport)
   - `:http` - Streamable HTTP transport with SSE (official MCP transport)
+  - `:sse` - Deprecated MCP 2024-11-05 HTTP+SSE (`GET /sse` + `POST /message`)
   - `:test` - In-memory transport for testing (non-standard)
   - `:beam` - BEAM-local transport carrying MCP-shaped messages as Elixir terms.
   """
-  @spec get_transport(:stdio | :http | :test | :beam | module()) :: module()
+  @spec get_transport(:stdio | :http | :sse | :test | :beam | module()) :: module()
   def get_transport(:stdio), do: ExMCP.Transport.Stdio
   def get_transport(:http), do: ExMCP.Transport.HTTP
+  def get_transport(:sse), do: ExMCP.Transport.HTTP.LegacySSE
   def get_transport(:test), do: ExMCP.Transport.Test
   def get_transport(:beam), do: ExMCP.Transport.Local
   def get_transport(module) when is_atom(module), do: module
