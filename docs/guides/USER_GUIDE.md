@@ -198,7 +198,12 @@ Call server features:
 {:ok, resources} = ExMCP.Client.list_resources(client)
 {:ok, content} = ExMCP.Client.read_resource(client, "file:///docs/readme.md")
 {:ok, prompts} = ExMCP.Client.list_prompts(client)
+{:ok, prompt} = ExMCP.Client.get_prompt(client, "summarize")
 ```
+
+Image, audio, blob, and `get_prompt` patterns are in the
+[DSL Guide](../DSL_GUIDE.md). Elicitation, sampling, roots, ping, progress,
+and cancellation are in the [Protocol Guide](../PROTOCOL_GUIDE.md).
 
 ## Protocol Versions
 

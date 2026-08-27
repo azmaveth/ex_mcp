@@ -324,6 +324,11 @@ remains redeemed; restart authorization instead of retrying the code.
 
 ## JSON Schema Resource Policy
 
+Tool `inputSchema` / `outputSchema` (DSL: `input_schema` / `output_schema`)
+and elicitation `requestedSchema` use the **JSON Schema 2020-12** dialect
+(`https://json-schema.org/draft/2020-12/schema`). `$schema` draft identifiers
+are metadata; bundled 2020-12 meta-schemas do not require a network request.
+
 Every JSON Schema compiled or validated by ExMCP passes through one bounded,
 fail-closed policy. By default, only local fragment references (`#` and
 `#/...`) are accepted. HTTP(S), file, and relative cross-document `$ref` values
@@ -914,6 +919,41 @@ subscription ID delivers compatibility events:
 receive do
   {:ex_mcp_resource_updated, ^uri, params} -> handle_update(params)
 end
+
+{:ok, _result} = ExMCP.Client.unsubscribe_resource(client, uri)
+```
+
+`unsubscribe_resource/3` sends `resources/unsubscribe` (legacy) or drops the
+URI from the ref-counted modern set. Implement
+`c:ExMCP.Server.Handler.handle_unsubscribe_resource/2` on a raw handler.
+
+### List-changed notifications
+
+Listen for catalog changes, then refetch. The server publishes with the
+matching `ExMCP.Server.notify_*_changed/1` helper:
+
+```elixir
+{:ok, subscription} =
+  ExMCP.Client.listen(client, %{
+    "resourcesListChanged" => true,
+    "promptsListChanged" => true,
+    "toolsListChanged" => true
+  })
+
+receive do
+  {:ex_mcp_subscription, ^subscription, "notifications/resources/list_changed", _params} ->
+    {:ok, resources} = ExMCP.Client.list_resources(client)
+
+  {:ex_mcp_subscription, ^subscription, "notifications/prompts/list_changed", _params} ->
+    {:ok, prompts} = ExMCP.Client.list_prompts(client)
+
+  {:ex_mcp_subscription, ^subscription, "notifications/tools/list_changed", _params} ->
+    {:ok, tools} = ExMCP.Client.list_tools(client)
+end
+
+:ok = ExMCP.Server.notify_resources_changed(server)
+:ok = ExMCP.Server.notify_prompts_changed(server)
+:ok = ExMCP.Server.notify_tools_changed(server)
 ```
 
 After reconnect, subscriptions are opened with fresh JSON-RPC IDs. ExMCP
@@ -986,6 +1026,50 @@ forward "/mcp", ExMCP.HttpPlug,
 Set `:subscription_keepalive_interval_ms` to a positive integer or
 `:infinity`. Disabling keepalives delays detection of a quiet peer disconnect
 until the next notification or server-initiated closure.
+
+## Completions
+
+`completion/complete` suggests values for a prompt argument or a resource
+template argument. The client sends a `ref` map; the server callback receives
+that same map as its first argument.
+
+```elixir
+# Prompt argument
+{:ok, result} =
+  ExMCP.Client.complete(
+    client,
+    %{"type" => "ref/prompt", "name" => "code_review"},
+    %{"name" => "language", "value" => "el"}
+  )
+
+# Resource template argument
+{:ok, result} =
+  ExMCP.Client.complete(
+    client,
+    %{"type" => "ref/resource", "uri" => "file:///"},
+    %{"name" => "path", "value" => "/src"}
+  )
+
+# Server
+@impl true
+def handle_complete(%{"type" => "ref/prompt", "name" => "code_review"}, argument, state) do
+  prefix = Map.get(argument, "value", "")
+  values = Enum.filter(["elixir", "erlang"], &String.starts_with?(&1, prefix))
+  {:ok, %{completion: %{values: values, total: length(values), hasMore: false}}, state}
+end
+
+def handle_complete(%{"type" => "ref/resource", "uri" => "file:///"}, argument, state) do
+  prefix = Map.get(argument, "value", "")
+  values = Enum.filter(["/src", "/test"], &String.starts_with?(&1, prefix))
+  {:ok, %{completion: %{values: values, hasMore: false}}, state}
+end
+```
+
+Advertise `completions: %{}` from `handle_initialize/2` or
+`server/discover` when the handler implements `handle_complete/3`.
+
+Protocol ping, progress tokens, and request cancellation live in the
+[Protocol Guide](PROTOCOL_GUIDE.md).
 
 ## Modern Streamable HTTP headers (MCP 2026-07-28)
 
