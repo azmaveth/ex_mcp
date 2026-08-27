@@ -115,6 +115,30 @@ defmodule ExMCP.Server.DSLTest do
     assert message =~ "Output validation failed"
   end
 
+  test "unknown tool names are a JSON-RPC invalid-params protocol error" do
+    assert {:error, %ExMCP.Error.ProtocolError{} = error, %{}} =
+             ModernServer.handle_call_tool("nope", %{}, %{})
+
+    assert error.code == -32602
+    assert error.message == "Unknown tool: nope"
+  end
+
+  test "unknown resource names are a JSON-RPC invalid-params protocol error" do
+    assert {:error, %ExMCP.Error.ProtocolError{} = error, %{}} =
+             ModernServer.handle_read_resource("missing://x", %{})
+
+    assert error.code == ExMCP.Protocol.ErrorCodes.resource_not_found(:modern)
+    assert error.message == "Resource not found: missing://x"
+  end
+
+  test "unknown prompt names are a JSON-RPC invalid-params protocol error" do
+    assert {:error, %ExMCP.Error.ProtocolError{} = error, %{}} =
+             ModernServer.handle_get_prompt("nope", %{}, %{})
+
+    assert error.code == -32602
+    assert error.message == "Prompt not found: nope"
+  end
+
   test "lists and reads static resources" do
     assert {:ok, resources, nil, %{}} = ModernServer.handle_list_resources(nil, %{})
     assert [%{uri: "config://app", title: "App Config", mimeType: "application/json"}] = resources

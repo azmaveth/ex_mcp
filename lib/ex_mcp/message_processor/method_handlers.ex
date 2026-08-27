@@ -492,8 +492,41 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   defp handle_tool_reply(conn, {:error, %Error.ProtocolError{} = error}, id),
     do: put_error(conn, "Tool call failed", error, id)
 
-  defp handle_tool_reply(conn, {:error, reason}, id),
-    do: put_success(conn, ResultNormalizer.tool_error_result(reason), id)
+  defp handle_tool_reply(conn, {:error, reason}, id) do
+    put_error(conn, "Tool call failed", handler_reason_to_protocol_error(reason), id)
+  end
+
+  defp handler_reason_to_protocol_error(reason) when is_binary(reason) do
+    if unknown_name_reason?(reason) do
+      Error.protocol_error(-32602, reason)
+    else
+      Error.protocol_error(-32000, reason)
+    end
+  end
+
+  defp handler_reason_to_protocol_error(reason) do
+    message =
+      cond do
+        is_atom(reason) -> Atom.to_string(reason)
+        is_exception(reason) -> Exception.message(reason)
+        true -> inspect(reason)
+      end
+
+    if unknown_name_reason?(message) do
+      Error.protocol_error(-32602, message)
+    else
+      Error.protocol_error(-32000, message)
+    end
+  end
+
+  defp unknown_name_reason?(reason) when is_binary(reason) do
+    lowered = String.downcase(reason)
+
+    String.contains?(lowered, "unknown tool") or
+      String.contains?(lowered, "tool not found") or
+      String.contains?(lowered, "prompt not found") or
+      String.contains?(lowered, "resource not found")
+  end
 
   defp handle_resource_reply(conn, {:ok, contents}, id) do
     contents = ResultNormalizer.stringify_keys(List.wrap(contents))

@@ -721,7 +721,7 @@ defmodule ExMCP.Server.DSL do
             end
 
           nil ->
-            {:ok, Result.error("Unknown tool: #{name}"), state}
+            {:error, ExMCP.Error.protocol_error(-32602, "Unknown tool: #{name}"), state}
         end
       end
 
@@ -805,7 +805,12 @@ defmodule ExMCP.Server.DSL do
             :error ->
               nil
           end
-        end) || {:error, "Resource not found: #{uri}", state}
+        end) ||
+          {:error,
+           ExMCP.Error.protocol_error(
+             ExMCP.Protocol.ErrorCodes.resource_not_found(:modern),
+             "Resource not found: #{uri}"
+           ), state}
       end
     end
   end
@@ -897,7 +902,7 @@ defmodule ExMCP.Server.DSL do
             Result.normalize_prompt(result, state)
 
           nil ->
-            {:error, "Prompt not found: #{name}", state}
+            {:error, ExMCP.Error.protocol_error(-32602, "Prompt not found: #{name}"), state}
         end
       end
     end

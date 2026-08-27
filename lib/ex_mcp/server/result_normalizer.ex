@@ -22,6 +22,7 @@ defmodule ExMCP.Server.ResultNormalizer do
 
   alias ExMCP.Internal.VersionInfo
   alias ExMCP.Protocol.CacheableResult
+  alias ExMCP.Protocol.ErrorCodes
   alias ExMCP.Tasks.Extension, as: TasksExtension
   alias ExMCP.Transport.HTTP.ToolHeaders
 
@@ -329,6 +330,28 @@ defmodule ExMCP.Server.ResultNormalizer do
   @spec error_code(term(), integer()) :: integer()
   def error_code(reason, default \\ -32000)
   def error_code("Invalid cursor" <> _, _default), do: -32602
+
+  def error_code(reason, default) when is_binary(reason) do
+    lowered = String.downcase(reason)
+
+    cond do
+      String.contains?(lowered, "unknown tool") ->
+        -32602
+
+      String.contains?(lowered, "tool not found") ->
+        -32602
+
+      String.contains?(lowered, "prompt not found") ->
+        -32602
+
+      String.contains?(lowered, "resource not found") ->
+        ErrorCodes.resource_not_found(:modern)
+
+      true ->
+        default
+    end
+  end
+
   def error_code(_reason, default), do: default
 
   defp client_safe_detail(reason) when is_binary(reason), do: reason

@@ -110,7 +110,7 @@ defmodule ExMCP.ToolErrorTest do
 
     def handle_call_tool(name, _args, state) do
       # Protocol error - unknown tool
-      {:error, "Unknown tool: #{name}", state}
+      {:error, ExMCP.Error.protocol_error(-32602, "Unknown tool: #{name}"), state}
     end
 
     # Required callbacks
@@ -234,7 +234,7 @@ defmodule ExMCP.ToolErrorTest do
       {:error, error} = Client.call_tool(client, "unknown_tool", %{})
 
       # The error should be a protocol-level error with struct access
-      assert error.code == -32000
+      assert error.code == -32602
       assert error.message =~ "Unknown tool: unknown_tool"
     end
   end

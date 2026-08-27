@@ -399,6 +399,17 @@ defmodule ExMCP.Protocol.RequestProcessor do
   end
 
   defp handle_resource_read_result(
+         {:error, %Error.ProtocolError{} = error, new_state},
+         _uri,
+         id,
+         _request,
+         _metadata
+       ) do
+    error_response = ResponseBuilder.build_error_response(error, id)
+    {:response, error_response, new_state}
+  end
+
+  defp handle_resource_read_result(
          {:error, reason, new_state},
          uri,
          id,
@@ -467,6 +478,10 @@ defmodule ExMCP.Protocol.RequestProcessor do
           result = ResultNormalizer.stringify_keys(result)
           response = ResponseBuilder.build_success_response(result, id)
           {:response, response, new_state}
+
+        {:error, %Error.ProtocolError{} = error, new_state} ->
+          error_response = ResponseBuilder.build_error_response(error, id)
+          {:response, error_response, new_state}
 
         {:error, reason, new_state} ->
           # Handler-authored detail only; other terms are logged (audit M12).

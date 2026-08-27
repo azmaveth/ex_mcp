@@ -620,8 +620,12 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl ExMCP.Server.Handler
-      def handle_read_resource(_uri, state) do
-        {:error, "Resource reading not implemented", state}
+      def handle_read_resource(uri, state) do
+        {:error,
+         ExMCP.Error.protocol_error(
+           ExMCP.Protocol.ErrorCodes.resource_not_found(:modern),
+           "Resource not found: #{uri}"
+         ), state}
       end
 
       @impl ExMCP.Server.Handler
@@ -630,8 +634,8 @@ defmodule ExMCP.Server.Handler do
       end
 
       @impl ExMCP.Server.Handler
-      def handle_get_prompt(_name, _arguments, state) do
-        {:error, "Prompt retrieval not implemented", state}
+      def handle_get_prompt(name, _arguments, state) do
+        {:error, ExMCP.Error.protocol_error(-32602, "Prompt not found: #{name}"), state}
       end
 
       @impl ExMCP.Server.Handler
@@ -873,8 +877,8 @@ defmodule ExMCP.Server.Handler do
         unless Module.defines?(env.module, {:handle_call_tool, 3}, :def) do
           quote do
             @impl ExMCP.Server.Handler
-            def handle_call_tool(_name, _arguments, state) do
-              {:error, "Tool not found", state}
+            def handle_call_tool(name, _arguments, state) do
+              {:error, ExMCP.Error.protocol_error(-32602, "Unknown tool: #{name}"), state}
             end
           end
         end
