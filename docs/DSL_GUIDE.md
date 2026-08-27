@@ -71,6 +71,8 @@ Bare `:array` is **not** valid — the item type is required so the generated
 
 You can also pass a full JSON Schema with `input_schema` (DSL instruction,
 snake_case). That becomes the MCP `inputSchema` field on the wire.
+`input_schema` and `output_schema` are **JSON Schema 2020-12** documents
+(`https://json-schema.org/draft/2020-12/schema`).
 
 Declared params are normalized so handlers can use atom keys and defaults.
 
@@ -95,6 +97,38 @@ normalizes several plain return shapes from `run` / `read` / `render`:
 | `ToolResult.structured(text, map)` | text + `structuredContent` |
 | `{:error, reason}` | tool/resource/prompt error shape |
 | `{:ok, result}` or `{:ok, result, state}` | both accepted |
+
+### Image, audio, and embedded resource results
+
+A `run` handler may return several content blocks. Build image, audio, and
+embedded-resource items with `ExMCP.Content` (base64 payload plus MIME type):
+
+```elixir
+tool "preview", "Return a thumbnail, clip, and attached spec" do
+  run fn _args, state ->
+    image = File.read!("priv/preview.png") |> Base.encode64()
+    audio = File.read!("priv/clip.mp3") |> Base.encode64()
+
+    {:ok,
+     %{
+       content: [
+         ExMCP.Content.image(image, "image/png"),
+         ExMCP.Content.audio(audio, "audio/mp3"),
+         ExMCP.Content.resource(%{
+           uri: "file:///spec.pdf",
+           name: "Spec",
+           mimeType: "application/pdf"
+         })
+       ]
+     }, state}
+  end
+end
+
+{:ok, result} = ExMCP.Client.call_tool(client, "preview", %{})
+```
+
+`ExMCP.Content.image/2`, `ExMCP.Content.audio/2`, and `ExMCP.Content.resource/1` are protocol content
+builders, not image-processing APIs.
 
 ## Compile-time checks
 
@@ -142,6 +176,24 @@ resource "config://app", "Application configuration" do
 end
 ```
 
+### Binary (blob) resources
+
+Return `blob` (base64) instead of `text` for binary bodies. The DSL copies
+`uri` and `mimeType` onto a `%{blob: ...}` map the same way it does for text:
+
+```elixir
+resource "asset://logo.png", "Product logo" do
+  mime_type "image/png"
+
+  read fn %{uri: uri}, state ->
+    blob = File.read!("priv/logo.png") |> Base.encode64()
+    {:ok, %{uri: uri, blob: blob, mimeType: "image/png"}, state}
+  end
+end
+
+{:ok, contents} = ExMCP.Client.read_resource(client, "asset://logo.png")
+```
+
 Resource templates use URI variables and optional typed params:
 
 ```elixir
@@ -179,6 +231,44 @@ end
 ```
 
 Returning a string creates a single user text message.
+
+### Image and embedded resource prompt messages
+
+`render` may put image or embedded-resource content on a message, not only
+text:
+
+```elixir
+prompt "review_screenshot", "Review a screenshot" do
+  render fn _args, state ->
+    image = File.read!("priv/shot.png") |> Base.encode64()
+
+    {:ok,
+     %{
+       messages: [
+         %{role: "user", content: ExMCP.Content.image(image, "image/png")},
+         %{
+           role: "user",
+           content:
+             ExMCP.Content.resource(%{
+               uri: "file:///notes.md",
+               name: "Notes",
+               mimeType: "text/markdown"
+             })
+         }
+       ]
+     }, state}
+  end
+end
+```
+
+### Getting a prompt with no arguments
+
+`ExMCP.Client.get_prompt/2` defaults arguments to `%{}`:
+
+```elixir
+{:ok, prompt} = ExMCP.Client.get_prompt(client, "review_screenshot")
+{:ok, prompt} = ExMCP.Client.get_prompt(client, "code_review", %{"code" => "def add(a, b), do: a + b"})
+```
 
 ## Metadata
 

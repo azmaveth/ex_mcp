@@ -193,6 +193,8 @@ end
 ```
 
 See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) for more patterns.
+Elicitation, sampling, roots, ping, progress, and cancellation are in the
+[Protocol Guide](docs/PROTOCOL_GUIDE.md).
 
 ### Standalone Client
 

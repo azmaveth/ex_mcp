@@ -249,6 +249,53 @@ should use Streamable HTTP and leave this option off. Selecting
 `:prefer_legacy` or `:prefer_modern` does not enable this transport;
 `:modern_only` disables it even if the compatibility flag is present.
 
+### Client: GET `/sse` + POST `/message`
+
+A 2024-11-05 client opens **GET `/sse` first**. The first event is
+`endpoint`; its data is the POST URI (default `/message`) plus `sessionId`.
+JSON-RPC then goes to that POST path. Responses and server requests arrive
+on the GET stream.
+
+```elixir
+# Server — two-endpoint transport (not Streamable HTTP)
+forward "/mcp", ExMCP.HttpPlug,
+  handler: MyApp.MCPServer,
+  protocol_mode: :legacy_only,
+  legacy_http_sse: true,
+  legacy_http_sse_path: "/sse",
+  legacy_http_sse_post_path: "/message"
+
+# After the endpoint event, POST JSON-RPC to the advertised URI.
+session_id = "server-issued-session"
+{:ok, {{_, status, _}, _headers, _body}} =
+  :httpc.request(
+    :post,
+    {~c"http://localhost:4000/message?sessionId=#{session_id}",
+     [{~c"content-type", ~c"application/json"}],
+     ~c"application/json",
+     Jason.encode!(%{
+       "jsonrpc" => "2.0",
+       "id" => 1,
+       "method" => "initialize",
+       "params" => %{
+         "protocolVersion" => "2024-11-05",
+         "capabilities" => %{},
+         "clientInfo" => %{name: "sse-client", version: "1.0.0"}
+       }
+     })},
+    [],
+    []
+  )
+```
+
+Open GET `/sse` with `Accept: text/event-stream` before that POST. This is
+**not** Streamable HTTP. `ExMCP.Client.start_link(transport: :http, use_sse:
+true)` GETs the same MCP endpoint after `initialize`; `use_sse: false`
+disables that standalone GET. `transport: :sse` is rejected
+(`"Unsupported transport :sse. Use :http with use_sse: true."`).
+`ExMCP.Client` does not implement the 2024-11-05 GET `/sse` then POST
+`/message` handshake.
+
 ## BEAM-Local
 
 The BEAM-local transport carries MCP-shaped maps/lists as Elixir terms between
