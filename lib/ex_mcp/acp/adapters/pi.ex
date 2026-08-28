@@ -12,7 +12,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   require Logger
 
   alias ExMCP.ACP.AdapterBridge.PortRunner
-  alias ExMCP.ACP.Adapters.Pi.{Prompt, SessionStore, Settings, SlashCommands, Startup, Tools}
+  alias ExMCP.ACP.Adapters.Pi.{Prompt, RPC, SessionStore, Settings, SlashCommands, Startup, Tools}
   alias ExMCP.ACP.{AdapterEvents, Envelope, PromptQueue, Types}
   alias ExMCP.Internal.Maps
 
@@ -220,7 +220,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
     next_cursor =
       if offset + page_size < length(all_sessions), do: Integer.to_string(offset + page_size)
 
-    {:ok, compact(%{"sessions" => sessions, "nextCursor" => next_cursor, "_meta" => %{}}), state}
+    {:ok, RPC.compact(%{"sessions" => sessions, "nextCursor" => next_cursor, "_meta" => %{}}),
+     state}
   end
 
   @impl true
@@ -247,11 +248,13 @@ defmodule ExMCP.ACP.Adapters.Pi do
       file_commands = SlashCommands.load(cwd, state.opts)
       settings = Settings.load(cwd, state.opts)
 
-      {switch_id, switch_session} = rpc("switch_session", %{"sessionPath" => session_file})
-      {messages_id, get_messages} = rpc("get_messages")
-      {state_id, get_state} = rpc("get_state")
-      {models_id, get_models} = rpc("get_available_models")
-      {commands_id, get_commands} = rpc("get_commands")
+      {switch_id, switch_session} =
+        rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})
+
+      {messages_id, get_messages} = rpc(RPC.method(:get_messages))
+      {state_id, get_state} = rpc(RPC.method(:get_state))
+      {models_id, get_models} = rpc(RPC.method(:get_available_models))
+      {commands_id, get_commands} = rpc(RPC.method(:get_commands))
 
       group = %{
         type: :session_load,
@@ -276,7 +279,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
         |> put_control(commands_id, :commands, group)
 
       deliver_pending(
-        encode_many([switch_session, get_messages, get_state, get_models, get_commands]),
+        RPC.encode_many([switch_session, get_messages, get_state, get_models, get_commands]),
         state
       )
     else
@@ -298,10 +301,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
       file_commands = SlashCommands.load(cwd, state.opts)
       settings = Settings.load(cwd, state.opts)
 
-      {switch_id, switch_session} = rpc("switch_session", %{"sessionPath" => session_file})
-      {state_id, get_state} = rpc("get_state")
-      {models_id, get_models} = rpc("get_available_models")
-      {commands_id, get_commands} = rpc("get_commands")
+      {switch_id, switch_session} =
+        rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})
+
+      {state_id, get_state} = rpc(RPC.method(:get_state))
+      {models_id, get_models} = rpc(RPC.method(:get_available_models))
+      {commands_id, get_commands} = rpc(RPC.method(:get_commands))
 
       group = %{
         type: :session_load,
@@ -324,7 +329,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
         |> put_control(models_id, :models, group)
         |> put_control(commands_id, :commands, group)
 
-      deliver_pending(encode_many([switch_session, get_state, get_models, get_commands]), state)
+      deliver_pending(
+        RPC.encode_many([switch_session, get_state, get_models, get_commands]),
+        state
+      )
     else
       {:error, reason} -> {:error, reason, state}
       _ -> {:error, "Unknown sessionId: #{session_id}", state}
@@ -344,7 +352,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {queued_responses, state} = cancel_queued_prompts(state)
     state = mark_pending_cancel_requested(state)
     messages = queued_responses ++ queue_cleared_messages(state, had_queued)
-    deliver_messages_and_write(messages, encode_rpc(%{"type" => "abort"}), state)
+    deliver_messages_and_write(messages, RPC.encode_notification(RPC.method(:abort)), state)
   end
 
   def translate_outbound(%{"method" => "session/close", "params" => params}, state) do
@@ -390,7 +398,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
       deliver_messages_and_ack(
         messages,
-        encode_rpc(%{"type" => "set_thinking_level", "level" => mode}),
+        RPC.encode_notification(RPC.method(:set_thinking_level), %{"level" => mode}),
         state
       )
     else
@@ -401,13 +409,18 @@ defmodule ExMCP.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
     case resolve_model(params["modelId"], state.available_models) do
       {:ok, provider, model_id, current_model_id} ->
-        rpc_msg = %{"type" => "set_model", "provider" => provider, "modelId" => model_id}
+        rpc_msg =
+          RPC.notification(RPC.method(:set_model), %{
+            "provider" => provider,
+            "modelId" => model_id
+          })
+
         state = %{state | current_model_id: current_model_id}
         session_id = params["sessionId"] || state.session_id
 
         deliver_messages_and_config_result(
           [config_options_update(session_id, state)],
-          encode_rpc(rpc_msg),
+          RPC.line(rpc_msg),
           state
         )
 
@@ -446,15 +459,15 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   @impl true
   def translate_inbound(line, state) do
-    trimmed = String.trim(line)
+    case RPC.decode_line(line) do
+      :unknown ->
+        {:skip, state}
 
-    if trimmed == "" do
-      {:skip, state}
-    else
-      case Jason.decode(trimmed) do
-        {:ok, event} -> process_event(event, state)
-        {:error, _reason} -> {:skip, state}
-      end
+      {:response, _id, {_status, event}} ->
+        process_event(event, state)
+
+      {:event, _type, event} ->
+        process_event(event, state)
     end
   end
 
@@ -735,10 +748,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp start_prompt(acp_id, message, images, params, state) do
-    msg_id = "msg-#{state.msg_counter + 1}"
+    {msg_id, next_counter} = RPC.next_prompt_id(state.msg_counter)
 
     rpc_msg =
-      %{"type" => "prompt", "id" => msg_id, "message" => message}
+      msg_id
+      |> RPC.request(RPC.method(:prompt), %{"message" => message})
       |> Maps.put_non_empty("images", images)
       |> Maps.put_present("streamingBehavior", params["streamingBehavior"])
 
@@ -748,10 +762,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
         pending_prompt: %{acp_id: acp_id, msg_id: msg_id, cancel_requested: false},
         text_acc: [],
         last_usage: %{},
-        msg_counter: state.msg_counter + 1
+        msg_counter: next_counter
     }
 
-    deliver_pending(encode_rpc(rpc_msg), state)
+    deliver_pending(RPC.line(rpc_msg), state)
   end
 
   defp start_session_new(acp_id, cwd, state) do
@@ -765,10 +779,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
     file_commands = SlashCommands.load(cwd, state.opts)
     settings = Settings.load(cwd, state.opts)
 
-    {new_id, new_session} = rpc("new_session")
-    {state_id, get_state} = rpc("get_state")
-    {models_id, get_models} = rpc("get_available_models")
-    {commands_id, get_commands} = rpc("get_commands")
+    {new_id, new_session} = rpc(RPC.method(:new_session))
+    {state_id, get_state} = rpc(RPC.method(:get_state))
+    {models_id, get_models} = rpc(RPC.method(:get_available_models))
+    {commands_id, get_commands} = rpc(RPC.method(:get_commands))
 
     group = %{
       type: :session_new,
@@ -788,7 +802,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
       |> put_control(models_id, :models, group)
       |> put_control(commands_id, :commands, group)
 
-    deliver_pending(encode_many([new_session, get_state, get_models, get_commands]), state)
+    deliver_pending(RPC.encode_many([new_session, get_state, get_models, get_commands]), state)
   end
 
   defp translate_slash_command({:ok, name, args}, acp_id, params, state) do
@@ -1018,7 +1032,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp start_control_command(type, acp_id, session_id, command, params, state, extra \\ %{}) do
-    {rpc_id, rpc_msg} = rpc(command, compact(params))
+    {rpc_id, rpc_msg} = rpc(command, RPC.compact(params))
 
     group =
       %{
@@ -1035,7 +1049,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
       |> put_group(group)
       |> put_control(rpc_id, :result, group)
 
-    deliver_pending(encode_rpc(rpc_msg), state)
+    deliver_pending(RPC.line(rpc_msg), state)
   end
 
   defp prompt_message(_acp_id, session_id, text, state) do
@@ -1125,10 +1139,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     {notification, current_tool_calls} =
       if Map.has_key?(state.current_tool_calls, tool_call_id) do
-        {AdapterEvents.tool_call_update(state.session_id, compact(update)),
+        {AdapterEvents.tool_call_update(state.session_id, RPC.compact(update)),
          Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
       else
-        {AdapterEvents.tool_call(state.session_id, compact(update)),
+        {AdapterEvents.tool_call(state.session_id, RPC.compact(update)),
          Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
       end
 
@@ -1159,7 +1173,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
         "rawOutput" => event["partialResult"]
       })
 
-    {:messages, [compact(notification)], state}
+    {:messages, [RPC.compact(notification)], state}
   end
 
   defp process_event(
@@ -1188,7 +1202,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
         current_tool_calls: Map.delete(state.current_tool_calls, tool_call_id)
     }
 
-    {:messages, [compact(notification)], state}
+    {:messages, [RPC.compact(notification)], state}
   end
 
   defp process_event(%{"type" => "agent_end"} = event, state) do
@@ -1386,7 +1400,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp cancel_extension_ui(pi_id, messages, state) do
-    data = encode_rpc(%{"type" => "extension_ui_response", "id" => pi_id, "cancelled" => true})
+    data = RPC.line(cancelled_extension_ui_response(pi_id))
     deliver_messages_and_write(messages, data, state)
   end
 
@@ -1397,7 +1411,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
       {request, pending} ->
         response = extension_ui_response(request, result)
-        deliver_pending(encode_rpc(response), %{state | pending_extension_ui: pending})
+        deliver_pending(RPC.line(response), %{state | pending_extension_ui: pending})
     end
   end
 
@@ -1407,15 +1421,15 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     case {request.kind, selected?, option_id} do
       {:confirm, true, "yes"} ->
-        %{"type" => "extension_ui_response", "id" => request.pi_id, "confirmed" => true}
+        RPC.request(request.pi_id, RPC.method(:extension_ui_response), %{"confirmed" => true})
 
       {:confirm, true, "no"} ->
-        %{"type" => "extension_ui_response", "id" => request.pi_id, "confirmed" => false}
+        RPC.request(request.pi_id, RPC.method(:extension_ui_response), %{"confirmed" => false})
 
       {:select, true, "choice-" <> index} ->
         with {index, ""} <- Integer.parse(index),
              value when is_binary(value) <- Enum.at(request.options, index) do
-          %{"type" => "extension_ui_response", "id" => request.pi_id, "value" => value}
+          RPC.request(request.pi_id, RPC.method(:extension_ui_response), %{"value" => value})
         else
           _invalid -> cancelled_extension_ui_response(request.pi_id)
         end
@@ -1426,7 +1440,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp cancelled_extension_ui_response(pi_id) do
-    %{"type" => "extension_ui_response", "id" => pi_id, "cancelled" => true}
+    RPC.request(pi_id, RPC.method(:extension_ui_response), %{"cancelled" => true})
   end
 
   defp handle_control_response(%{group_id: group_id, kind: kind, rpc_id: rpc_id}, event, state) do
@@ -1501,7 +1515,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
           "models" => models,
           "modes" => modes,
           "configOptions" => session_config_options(models, modes),
-          "_meta" => %{"ex_mcp" => %{"pi" => compact(%{"sessionFile" => session_file})}}
+          "_meta" => %{"ex_mcp" => %{"pi" => RPC.compact(%{"sessionFile" => session_file})}}
         })
 
       {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
@@ -1526,7 +1540,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp finish_control_group(%{type: :slash_autocompact_toggle_get} = group, state) do
     data = group.responses[:result] || %{}
     enabled = not truthy?(data["autoCompactionEnabled"])
-    {rpc_id, rpc_msg} = rpc("set_auto_compaction", %{"enabled" => enabled})
+    {rpc_id, rpc_msg} = rpc(RPC.method(:set_auto_compaction), %{"enabled" => enabled})
 
     group =
       group
@@ -1540,7 +1554,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
       |> put_group(group)
       |> put_control(rpc_id, :result, group)
 
-    {:skip_and_write, encode_rpc(rpc_msg), state}
+    {:skip_and_write, RPC.line(rpc_msg), state}
   end
 
   defp finish_control_group(group, state) do
@@ -1590,7 +1604,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
         "models" => models,
         "modes" => modes,
         "configOptions" => session_config_options(models, modes),
-        "_meta" => %{"ex_mcp" => %{"pi" => compact(%{"sessionFile" => session_file})}}
+        "_meta" => %{"ex_mcp" => %{"pi" => RPC.compact(%{"sessionFile" => session_file})}}
       })
 
     {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
@@ -1662,7 +1676,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
           "locations" => locations,
           "rawInput" => raw_input
         }
-        |> compact()
+        |> RPC.compact()
 
       if existing_status do
         {AdapterEvents.tool_call_update(state.session_id, update), state}
@@ -1779,7 +1793,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
               "content" => Tools.text_content(text),
               "rawOutput" => message
             })
-            |> compact()
+            |> RPC.compact()
           ]
 
         _ ->
@@ -2156,7 +2170,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
           "input" => command["input"]
         }
         |> SlashCommands.normalize_input()
-        |> compact()
+        |> RPC.compact()
       end)
 
     (pi_commands ++ SlashCommands.available_commands(file_commands))
@@ -2335,12 +2349,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp put_control(state, rpc_id, kind, group) do
     group_id = group[:group_id] || latest_group_id(state, group)
 
-    control = %{
-      rpc_id: rpc_id,
-      kind: kind,
-      group_id: group_id,
-      inserted_at: System.monotonic_time(:millisecond)
-    }
+    control =
+      rpc_id
+      |> RPC.control_entry(kind, group_id)
+      |> Map.put(:inserted_at, System.monotonic_time(:millisecond))
 
     %{state | pending_controls: Map.put(state.pending_controls, rpc_id, control)}
   end
@@ -2368,12 +2380,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp rpc(type, fields \\ %{}) do
-    id = "pi-#{System.unique_integer([:positive, :monotonic])}"
-    {id, fields |> Map.put("type", type) |> Map.put("id", id)}
+    id = RPC.rpc_id(System.unique_integer([:positive, :monotonic]))
+    {id, RPC.request(id, type, fields)}
   end
-
-  defp encode_many(messages), do: messages |> Enum.map(&encode_rpc/1) |> IO.iodata_to_binary()
-  defp encode_rpc(msg), do: Jason.encode!(compact(msg)) <> "\n"
 
   defp append_opt(args, opts, key, flag) do
     case Keyword.get(opts, key) do
@@ -2386,14 +2395,20 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp maybe_keyword_put(keyword, key, value), do: Keyword.put(keyword, key, value)
 
   defp translate_config_option("auto_compaction", value, state) when is_boolean(value) do
-    deliver_ack(encode_rpc(%{"type" => "set_auto_compaction", "enabled" => value}), state)
+    deliver_ack(
+      RPC.encode_notification(RPC.method(:set_auto_compaction), %{"enabled" => value}),
+      state
+    )
   end
 
   defp translate_config_option("auto_compaction", value, state) when value in ["true", "false"],
     do: translate_config_option("auto_compaction", value == "true", state)
 
   defp translate_config_option("auto_retry", value, state) when is_boolean(value) do
-    deliver_ack(encode_rpc(%{"type" => "set_auto_retry", "enabled" => value}), state)
+    deliver_ack(
+      RPC.encode_notification(RPC.method(:set_auto_retry), %{"enabled" => value}),
+      state
+    )
   end
 
   defp translate_config_option("auto_retry", value, state) when value in ["true", "false"],
@@ -2402,13 +2417,18 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp translate_config_option(@model_config_id, value, state) do
     case resolve_model(value, state.available_models) do
       {:ok, provider, model_id, current_model_id} ->
-        rpc_msg = %{"type" => "set_model", "provider" => provider, "modelId" => model_id}
+        rpc_msg =
+          RPC.notification(RPC.method(:set_model), %{
+            "provider" => provider,
+            "modelId" => model_id
+          })
+
         state = %{state | current_model_id: current_model_id}
         session_id = state.session_id
 
         deliver_messages_and_config_result(
           [config_options_update(session_id, state)],
-          encode_rpc(rpc_msg),
+          RPC.line(rpc_msg),
           state
         )
 
@@ -2429,7 +2449,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     deliver_messages_and_config_result(
       messages,
-      encode_rpc(%{"type" => "set_thinking_level", "level" => value}),
+      RPC.encode_notification(RPC.method(:set_thinking_level), %{"level" => value}),
       state
     )
   end
@@ -2439,12 +2459,18 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp translate_config_option("steering_mode", value, state)
        when value in ["all", "one-at-a-time"] do
-    deliver_ack(encode_rpc(%{"type" => "set_steering_mode", "mode" => value}), state)
+    deliver_ack(
+      RPC.encode_notification(RPC.method(:set_steering_mode), %{"mode" => value}),
+      state
+    )
   end
 
   defp translate_config_option("follow_up_mode", value, state)
        when value in ["all", "one-at-a-time"] do
-    deliver_ack(encode_rpc(%{"type" => "set_follow_up_mode", "mode" => value}), state)
+    deliver_ack(
+      RPC.encode_notification(RPC.method(:set_follow_up_mode), %{"mode" => value}),
+      state
+    )
   end
 
   defp translate_config_option(config_id, _value, state),
@@ -2464,14 +2490,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp maybe_set(state, _key, nil), do: state
   defp maybe_set(state, key, value), do: Map.put(state, key, value)
-
-  defp compact(map) when is_map(map) do
-    map
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-    |> Map.new()
-  end
-
-  defp compact(value), do: value
 
   defp boolean_options do
     [%{"value" => "true", "name" => "On"}, %{"value" => "false", "name" => "Off"}]

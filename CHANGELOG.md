@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Characterization tests for Codex native app-server envelopes, method names, inbound classification, and request-id correlation.
 - Standalone 1.x store-adapter ADR and ETS-only SessionManager event-store contract suite.
 - Opt-in SessionManager DETS store (`storage_backend: :dets` with `:storage_path`) and an unpublished Internal SessionStore seam. ETS remains the default.
+- Characterization tests for Pi native RPC envelopes, correlation ids, and inbound response classification.
 
 ### Fixed
 
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Extracted `ExMCP.ACP.Adapters.Codex.Protocol` for native app-server envelopes, method names, response classification, and request-id correlation.
+- Extracted `ExMCP.ACP.Adapters.Pi.RPC` for native RPC envelopes, correlation ids, and response classification.
 - Documented three 1.x contract mismatches: `storage_backend: :persistent_term`
   remains accepted and uses ETS (no-op durability) with a warning;
   `ExMCP.connect/2` still accepts a list but uses only the first spec;
