@@ -36,6 +36,13 @@ Supported options:
 - `:env` - environment variables as `{"KEY", "VALUE"}` tuples.
 - `:timeout` - client operation timeout.
 
+Stdio servers must write only JSON-RPC to stdout. Starting stdio mode
+configures VM-global Logger, Application, and OTP logger settings so
+protocol output is not contaminated. That change is process-wide for the
+BEAM VM, not scoped to the stdio connection. See
+[Configuration — Logging](CONFIGURATION.md#logging). 1.x keeps this
+global behavior; 2.0 may replace it.
+
 ## Streamable HTTP
 
 The HTTP transport supports two wire shapes on one MCP POST endpoint. A

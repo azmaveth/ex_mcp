@@ -589,6 +589,10 @@ config =
 {:ok, client} = ExMCP.connect(config)
 ```
 
+`ExMCP.connect/2` also accepts a URL string, a `{transport, opts}` tuple, or
+a list of those specs. Throughout 1.x a list is still accepted, but only the
+first spec is used. Remaining specs are ignored. This is not a failover.
+
 ## stdio
 
 ```elixir
@@ -1255,8 +1259,13 @@ feature (`logging/setLevel`, per-request log levels, and
 available throughout ExMCP 1.x. New observability integrations should use
 stderr for stdio diagnostics or OpenTelemetry for structured telemetry.
 
-For stdio servers, stdout must contain only JSON-RPC messages. ExMCP configures
-stdio logging when stdio mode starts.
+For stdio servers, stdout must contain only JSON-RPC messages. When stdio
+mode starts, `ExMCP.Internal.StdioLoggerConfig.configure/0` mutates
+VM-global Logger, Application, and OTP logger behavior (sets the primary
+level to `:emergency` and `:ex_mcp` `:stdio_mode`). This is process-wide
+for the BEAM VM, not scoped to the stdio connection: other applications
+and OTP processes in the same VM lose normal logging. 1.x keeps this
+global behavior; 2.0 may replace it.
 Send ad hoc diagnostics to stderr:
 
 ```elixir

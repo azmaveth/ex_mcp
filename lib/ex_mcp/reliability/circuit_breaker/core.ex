@@ -1,6 +1,15 @@
 defmodule ExMCP.Reliability.CircuitBreaker.Core do
   @moduledoc """
   Pure circuit-breaker state machine used by `ExMCP.Reliability.CircuitBreaker`.
+
+  All elapsed-duration decisions use an injected `now_ms` value. The process
+  shell passes `System.monotonic_time(:millisecond)` so open and half-open
+  timeouts cannot go backwards when the wall clock is adjusted. Stored
+  timestamps (`opened_at`, `last_failure_time`, `last_success_time`, and
+  `stats.created_at`) are on that same monotonic millisecond scale.
+
+  This module does not call `System` or `Process`. Callers must supply
+  `now_ms`; there is no default clock here.
   """
 
   defstruct [
@@ -15,13 +24,14 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
   ]
 
   @type state :: :closed | :open | :half_open
+  @type now_ms :: integer()
   @type t :: %__MODULE__{
           state: state(),
           failure_count: non_neg_integer(),
           success_count: non_neg_integer(),
-          last_failure_time: integer() | nil,
-          last_success_time: integer() | nil,
-          opened_at: integer() | nil,
+          last_failure_time: now_ms() | nil,
+          last_success_time: now_ms() | nil,
+          opened_at: now_ms() | nil,
           config: map(),
           stats: map()
         }
@@ -46,9 +56,12 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
 
   @doc """
   Creates a new circuit breaker with the given configuration.
+
+  `now_ms` is recorded as `stats.created_at`. Pass a monotonic millisecond
+  value from the process shell.
   """
-  @spec new(config() | map()) :: t()
-  def new(config \\ %{}) do
+  @spec new(config() | map(), now_ms()) :: t()
+  def new(config \\ %{}, now_ms) when is_integer(now_ms) do
     full_config = Map.merge(@default_config, config)
 
     %__MODULE__{
@@ -59,40 +72,39 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
       last_success_time: nil,
       opened_at: nil,
       config: full_config,
-      stats: init_stats()
+      stats: init_stats(now_ms)
     }
   end
 
   @doc """
   Checks if a request should be allowed based on the current circuit state.
   """
-  @spec allow_request?(t()) :: boolean()
-  def allow_request?(%__MODULE__{} = circuit_breaker) do
+  @spec allow_request?(t(), now_ms()) :: boolean()
+  def allow_request?(%__MODULE__{} = circuit_breaker, now_ms) when is_integer(now_ms) do
     circuit_breaker
-    |> check_state_transitions()
+    |> check_state_transitions(now_ms)
     |> allowed?()
   end
 
   @doc """
   Checks if a request should be allowed and returns both the result and updated state.
   """
-  @spec allow_request_with_state?(t()) :: {boolean(), t()}
-  def allow_request_with_state?(%__MODULE__{} = circuit_breaker) do
-    updated_cb = check_state_transitions(circuit_breaker)
+  @spec allow_request_with_state?(t(), now_ms()) :: {boolean(), t()}
+  def allow_request_with_state?(%__MODULE__{} = circuit_breaker, now_ms)
+      when is_integer(now_ms) do
+    updated_cb = check_state_transitions(circuit_breaker, now_ms)
     {allowed?(updated_cb), updated_cb}
   end
 
   @doc """
   Records a successful operation and updates the circuit breaker state.
   """
-  @spec record_success(t()) :: t()
-  def record_success(%__MODULE__{} = circuit_breaker) do
-    current_time = System.system_time(:millisecond)
-
+  @spec record_success(t(), now_ms()) :: t()
+  def record_success(%__MODULE__{} = circuit_breaker, now_ms) when is_integer(now_ms) do
     updated_cb = %{
       circuit_breaker
       | success_count: circuit_breaker.success_count + 1,
-        last_success_time: current_time,
+        last_success_time: now_ms,
         stats: update_stats(circuit_breaker.stats, :total_successes, 1)
     }
 
@@ -115,19 +127,17 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
   @doc """
   Records a failed operation and updates the circuit breaker state.
   """
-  @spec record_failure(t()) :: t()
-  def record_failure(%__MODULE__{} = circuit_breaker) do
-    current_time = System.system_time(:millisecond)
-
+  @spec record_failure(t(), now_ms()) :: t()
+  def record_failure(%__MODULE__{} = circuit_breaker, now_ms) when is_integer(now_ms) do
     updated_cb = %{
       circuit_breaker
       | failure_count: circuit_breaker.failure_count + 1,
-        last_failure_time: current_time,
+        last_failure_time: now_ms,
         stats: update_stats(circuit_breaker.stats, :total_failures, 1)
     }
 
     if should_open_circuit?(updated_cb) do
-      open_circuit(updated_cb)
+      open_circuit(updated_cb, now_ms)
     else
       updated_cb
     end
@@ -136,16 +146,14 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
   @doc """
   Forces the circuit breaker to a specific state.
   """
-  @spec force_state(t(), state()) :: t()
-  def force_state(%__MODULE__{} = circuit_breaker, new_state) do
-    current_time = System.system_time(:millisecond)
-
+  @spec force_state(t(), state(), now_ms()) :: t()
+  def force_state(%__MODULE__{} = circuit_breaker, new_state, now_ms) when is_integer(now_ms) do
     case new_state do
       :open ->
         %{
           circuit_breaker
           | state: :open,
-            opened_at: current_time,
+            opened_at: now_ms,
             stats: update_stats(circuit_breaker.stats, :manual_opens, 1)
         }
 
@@ -172,10 +180,10 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
   @doc """
   Gets the current state of the circuit breaker.
   """
-  @spec get_state(t()) :: state()
-  def get_state(%__MODULE__{} = circuit_breaker) do
+  @spec get_state(t(), now_ms()) :: state()
+  def get_state(%__MODULE__{} = circuit_breaker, now_ms) when is_integer(now_ms) do
     circuit_breaker
-    |> check_state_transitions()
+    |> check_state_transitions(now_ms)
     |> Map.fetch!(:state)
   end
 
@@ -230,11 +238,9 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
   defp allowed?(%__MODULE__{state: :open}), do: false
   defp allowed?(%__MODULE__{}), do: true
 
-  defp check_state_transitions(%__MODULE__{state: :open} = circuit_breaker) do
-    current_time = System.system_time(:millisecond)
-
+  defp check_state_transitions(%__MODULE__{state: :open} = circuit_breaker, now_ms) do
     if circuit_breaker.opened_at != nil and
-         current_time - circuit_breaker.opened_at >= circuit_breaker.config.reset_timeout do
+         elapsed_ms(now_ms, circuit_breaker.opened_at) >= circuit_breaker.config.reset_timeout do
       %{
         circuit_breaker
         | state: :half_open,
@@ -246,18 +252,23 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
     end
   end
 
-  defp check_state_transitions(%__MODULE__{state: :half_open} = circuit_breaker) do
-    current_time = System.system_time(:millisecond)
-
+  defp check_state_transitions(%__MODULE__{state: :half_open} = circuit_breaker, now_ms) do
     if circuit_breaker.last_success_time != nil and
-         current_time - circuit_breaker.last_success_time >= circuit_breaker.config.reset_timeout do
+         elapsed_ms(now_ms, circuit_breaker.last_success_time) >=
+           circuit_breaker.config.reset_timeout do
       close_circuit(circuit_breaker)
     else
       circuit_breaker
     end
   end
 
-  defp check_state_transitions(circuit_breaker), do: circuit_breaker
+  defp check_state_transitions(circuit_breaker, _now_ms), do: circuit_breaker
+
+  # Clamp so a backwards clock cannot produce a negative duration and trip
+  # open/half-open transitions earlier than the configured timeout.
+  defp elapsed_ms(now_ms, started_at) when is_integer(now_ms) and is_integer(started_at) do
+    max(0, now_ms - started_at)
+  end
 
   defp should_open_circuit?(%__MODULE__{} = circuit_breaker) do
     failure_threshold_exceeded =
@@ -279,13 +290,11 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
     failure_threshold_exceeded or failure_rate_exceeded
   end
 
-  defp open_circuit(%__MODULE__{} = circuit_breaker) do
-    current_time = System.system_time(:millisecond)
-
+  defp open_circuit(%__MODULE__{} = circuit_breaker, now_ms) do
     %{
       circuit_breaker
       | state: :open,
-        opened_at: current_time,
+        opened_at: now_ms,
         stats: update_stats(circuit_breaker.stats, :circuit_opens, 1)
     }
   end
@@ -301,7 +310,7 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
     }
   end
 
-  defp init_stats do
+  defp init_stats(now_ms) do
     %{
       total_successes: 0,
       total_failures: 0,
@@ -312,7 +321,7 @@ defmodule ExMCP.Reliability.CircuitBreaker.Core do
       manual_half_opens: 0,
       automatic_half_opens: 0,
       resets: 0,
-      created_at: System.system_time(:millisecond)
+      created_at: now_ms
     }
   end
 

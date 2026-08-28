@@ -43,9 +43,19 @@ defmodule ExMCP.SessionManager do
     (default: 1 MiB)
   - `:max_replay_bytes_per_session` - Maximum JSON-encoded replay bytes retained
     per session (default: 8 MiB)
-  - `:session_ttl_seconds` - Session TTL in seconds (default: 3600)
+  - `:session_ttl_seconds` - Session TTL in seconds (default: 3600).
+    Wall-clock idle expiry: `created_at` and `last_activity` are absolute
+    `System.system_time(:microsecond)` timestamps. Cleanup expires a session
+    when that wall clock is more than TTL seconds after `last_activity`.
+    This is intentional and is not monotonic elapsed time; changing it would
+    change the meaning of the public timestamps and of `:session_ttl_seconds`.
+    If the wall clock moves backwards, elapsed time is negative and the
+    session is not treated as expired — the correct absolute-expiry outcome.
   - `:cleanup_interval_ms` - Cleanup interval in milliseconds (default: 60000)
-  - `:storage_backend` - Storage backend (`:ets` or `:persistent_term`, default: `:ets`)
+  - `:storage_backend` - Storage backend (`:ets` or `:persistent_term`,
+    default: `:ets`). `:persistent_term` is accepted for 1.x compatibility
+    and currently uses ETS (no-op durability). A persistent_term backend is
+    not implemented.
 
   ## Usage
 
@@ -388,6 +398,12 @@ defmodule ExMCP.SessionManager do
       cleanup_interval_ms: Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval),
       storage_backend: Keyword.get(opts, :storage_backend, @default_storage_backend)
     }
+
+    if config.storage_backend == :persistent_term do
+      Logger.warning(
+        "storage_backend: :persistent_term is accepted for 1.x compatibility and currently uses ETS (no-op durability)"
+      )
+    end
 
     # Create unnamed ETS tables for session and event storage. The returned
     # table identifiers are process-owned, so tests remain isolated without
@@ -1146,6 +1162,13 @@ defmodule ExMCP.SessionManager do
     :ets.match_delete(state.request_ids_table, {{session_id, :_}})
   end
 
+  # Session TTL is wall-clock idle expiry by design. last_activity is an
+  # absolute System.system_time(:microsecond) timestamp on the public
+  # session record, so expiry compares civil time rather than monotonic
+  # elapsed duration. A backwards wall clock yields a negative difference
+  # and does not expire the session — the correct absolute-expiry result.
+  # Do not switch this to System.monotonic_time/1; that would change the
+  # meaning of :session_ttl_seconds and of created_at/last_activity.
   defp cleanup_expired_sessions(state) do
     now = System.system_time(:microsecond)
     ttl_microseconds = state.config.session_ttl_seconds * 1_000_000

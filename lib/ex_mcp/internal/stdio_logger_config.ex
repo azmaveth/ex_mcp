@@ -1,14 +1,27 @@
 defmodule ExMCP.Internal.StdioLoggerConfig do
-  @moduledoc false
+  @moduledoc """
+  Configures logging for the MCP stdio transport so stdout stays JSON-RPC only.
 
-  # Internal module for centralizing STDIO logging configuration
-  # to prevent stdout contamination in STDIO transport
+  `configure/0` mutates VM-global Logger, Application, and OTP logger
+  behavior: it sets `:ex_mcp` `:stdio_mode`, the Elixir `Logger` level, the
+  `:logger` application env, and the OTP primary logger level to
+  `:emergency`. The change is process-wide for the BEAM VM, not scoped to
+  the stdio connection. Unrelated host-application logging is suppressed.
+
+  1.x keeps this global behavior so stdio protocol output stays
+  uncontaminated. 2.0 may replace it with a dedicated IO device and stderr
+  logging.
+
+  This module is internal. Do not call it from application code unless you
+  intend to apply the same VM-global configuration.
+  """
 
   @doc """
   Configures logging for STDIO transport to prevent stdout contamination.
 
   The MCP STDIO transport requires that ONLY JSON-RPC messages appear on stdout.
-  This function suppresses all logging to ensure clean protocol communication.
+  This function suppresses all logging to ensure clean protocol communication
+  by mutating VM-global Logger/Application/OTP logger settings.
   """
   def configure do
     # Set stdio mode flag

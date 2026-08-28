@@ -220,8 +220,8 @@ defmodule ExMCP.Client.Operations.Resources do
   defp modern_client?(client) do
     with pid when is_pid(pid) <- GenServer.whereis(client),
          {:dictionary, dictionary} <- Process.info(pid, :dictionary),
-         {ExMCP.Client, :init, 1} <- Keyword.get(dictionary, :"$initial_call"),
-         {:ok, version} <- ExMCP.Client.negotiated_version(client) do
+         true <- :proplists.get_value({ExMCP.Client, :client}, dictionary) == true,
+         {:ok, version} when is_binary(version) <- ExMCP.Client.negotiated_version(client) do
       VersionRegistry.modern?(version)
     else
       _other -> false

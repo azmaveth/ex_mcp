@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Claude Code `tools: []` now passes `--tools ""` so the CLI disables built-in tools. Empty allow/deny lists still mean no opinion.
+- Characterization tests for handler callback process identity, cancellation, serialized state ordering, and two-server isolation.
+
+### Fixed
+
+- Circuit breaker elapsed-duration math uses injected monotonic `now_ms` from the process shell instead of reading wall time inside the core.
+
+### Changed
+
+- Documented three 1.x contract mismatches: `storage_backend: :persistent_term`
+  remains accepted and uses ETS (no-op durability) with a warning;
+  `ExMCP.connect/2` still accepts a list but uses only the first spec;
+  stdio logger configuration still mutates VM-global Logger behavior.
+- Resource subscribe/unsubscribe now decide modern vs legacy from `Client.get_status` protocol version after an explicit Client process marker, not `$initial_call`.
+
 ## [1.1.1] - 2026-08-27
 
 ### Added

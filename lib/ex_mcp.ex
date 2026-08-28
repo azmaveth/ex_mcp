@@ -323,6 +323,11 @@ defmodule ExMCP do
   This function provides a simplified interface to the MCP client with
   automatic connection configuration and transport selection.
 
+  A list of connection specs is still accepted throughout 1.x for
+  compatibility, but only the first spec is used. Remaining specs are
+  ignored. This is not a failover. Multi-transport fallback is not
+  implemented in 1.x.
+
   ## Options
 
   - `:timeout` - Connection timeout in milliseconds (default: 10_000)
@@ -337,7 +342,7 @@ defmodule ExMCP do
       # Stdio connection
       {:ok, client} = ExMCP.connect({:stdio, command: "my-server"})
 
-      # Multiple transports with fallback (uses first available)
+      # A list is accepted throughout 1.x, but only the first spec is used
       {:ok, client} = ExMCP.connect([
         "http://primary:8080",
         "http://backup:8080"
@@ -364,8 +369,8 @@ defmodule ExMCP do
   end
 
   def connect(connection_spec, opts) when is_list(connection_spec) do
-    # Multiple connections - use first valid connection
-    # Note: Full failover support should be implemented in the unified Client
+    # 1.x compatibility: a list is accepted but only the first spec is used.
+    # This is not a failover.
     case List.first(connection_spec) do
       nil -> {:error, :no_connections_specified}
       first_spec -> connect(first_spec, opts)

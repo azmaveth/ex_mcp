@@ -841,6 +841,7 @@ defmodule ExMCP.Client do
   def init(opts) do
     # Set up process
     Process.flag(:trap_exit, true)
+    Process.put({__MODULE__, :client}, true)
 
     # Build initial state from options
     state = build_initial_state(opts)

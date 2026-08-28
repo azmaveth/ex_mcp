@@ -4,6 +4,12 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   Provides a GenServer-based interface to the circuit breaker pattern for
   protecting MCP services from cascading failures.
+
+  The process shell is the clock owner. It injects
+  `System.monotonic_time(:millisecond)` as `now_ms` into
+  `ExMCP.Reliability.CircuitBreaker.Core` so elapsed open/half-open
+  durations cannot go backwards if the wall clock is adjusted. Operation
+  `:timeout` remains a process timeout and is unchanged.
   """
 
   use GenServer
@@ -163,7 +169,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   @impl GenServer
   def init(opts) do
     {error_filter, cb_opts} = Keyword.pop(opts, :error_filter, fn _ -> true end)
-    circuit_breaker = Core.new(Map.new(cb_opts))
+    circuit_breaker = Core.new(Map.new(cb_opts), now_ms())
 
     state = %{
       circuit_breaker: circuit_breaker,
@@ -175,7 +181,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   @impl GenServer
   def handle_call(:acquire, _from, state) do
-    {allowed, updated_cb} = Core.allow_request_with_state?(state.circuit_breaker)
+    {allowed, updated_cb} = Core.allow_request_with_state?(state.circuit_breaker, now_ms())
     updated_state = %{state | circuit_breaker: updated_cb}
 
     if allowed do
@@ -188,7 +194,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
 
   def handle_call(:get_state, _from, state) do
     # Check for state transitions and update the GenServer state
-    {_allowed, updated_cb} = Core.allow_request_with_state?(state.circuit_breaker)
+    {_allowed, updated_cb} = Core.allow_request_with_state?(state.circuit_breaker, now_ms())
     updated_state = %{state | circuit_breaker: updated_cb}
 
     # Get fresh stats from the updated circuit breaker
@@ -202,12 +208,12 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   end
 
   def handle_call(:open, _from, state) do
-    updated_cb = Core.force_state(state.circuit_breaker, :open)
+    updated_cb = Core.force_state(state.circuit_breaker, :open, now_ms())
     {:reply, :ok, %{state | circuit_breaker: updated_cb}}
   end
 
   def handle_call(:close, _from, state) do
-    updated_cb = Core.force_state(state.circuit_breaker, :closed)
+    updated_cb = Core.force_state(state.circuit_breaker, :closed, now_ms())
     {:reply, :ok, %{state | circuit_breaker: updated_cb}}
   end
 
@@ -223,12 +229,12 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   end
 
   def handle_cast(:open, state) do
-    updated_cb = Core.force_state(state.circuit_breaker, :open)
+    updated_cb = Core.force_state(state.circuit_breaker, :open, now_ms())
     {:noreply, %{state | circuit_breaker: updated_cb}}
   end
 
   def handle_cast(:close, state) do
-    updated_cb = Core.force_state(state.circuit_breaker, :closed)
+    updated_cb = Core.force_state(state.circuit_breaker, :closed, now_ms())
     {:noreply, %{state | circuit_breaker: updated_cb}}
   end
 
@@ -243,13 +249,16 @@ defmodule ExMCP.Reliability.CircuitBreaker do
   # ok results record success; {:error, _} returns and raised exceptions go
   # through the error filter; throws, exits and timeouts always count.
   defp record_outcome({:ok, {:error, reason}}, state), do: record_filtered(reason, state)
-  defp record_outcome({:ok, _value}, state), do: Core.record_success(state.circuit_breaker)
+
+  defp record_outcome({:ok, _value}, state),
+    do: Core.record_success(state.circuit_breaker, now_ms())
+
   defp record_outcome({:raised, error}, state), do: record_filtered(error, state)
-  defp record_outcome(_failure, state), do: Core.record_failure(state.circuit_breaker)
+  defp record_outcome(_failure, state), do: Core.record_failure(state.circuit_breaker, now_ms())
 
   defp record_filtered(reason, state) do
     if state.error_filter.(reason) do
-      Core.record_failure(state.circuit_breaker)
+      Core.record_failure(state.circuit_breaker, now_ms())
     else
       state.circuit_breaker
     end
@@ -259,4 +268,7 @@ defmodule ExMCP.Reliability.CircuitBreaker do
     {gen_opts, cb_opts} = Keyword.split(opts, [:name])
     {gen_opts, cb_opts}
   end
+
+  # Documented default clock for Core. Core itself has no System/Process calls.
+  defp now_ms, do: System.monotonic_time(:millisecond)
 end
