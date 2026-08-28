@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Claude Code `tools: []` now passes `--tools ""` so the CLI disables built-in tools. Empty allow/deny lists still mean no opinion.
 - Characterization tests for handler callback process identity, cancellation, serialized state ordering, and two-server isolation.
+- Standalone 1.x store-adapter ADR and ETS-only SessionManager event-store contract suite.
 
 ### Fixed
 
