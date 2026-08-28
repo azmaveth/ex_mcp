@@ -19,7 +19,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   require Logger
 
-  alias ExMCP.ACP.Adapters.Codex.{Config, Events, FileChanges, Sessions, SlashCommands}
+  alias ExMCP.ACP.Adapters.Codex.{Config, Events, FileChanges, Protocol, Sessions, SlashCommands}
   alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests}
   alias ExMCP.Internal.{Maps, NameValue, WorkspacePath}
 
@@ -181,7 +181,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     client_version = Keyword.get(state.opts, :client_version, "1.0.0")
 
     request =
-      encode_request(id, "initialize", %{
+      Protocol.encode_request(id, Protocol.method(:initialize), %{
         "clientInfo" => %{
           "name" => client_name,
           "version" => client_version
@@ -208,7 +208,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
       {:ok, codex_params} ->
         {id, state} = next_request_id(state)
-        request = encode_request(id, "account/login/start", codex_params)
+        request = Protocol.encode_request(id, Protocol.method(:account_login_start), codex_params)
         state = track_request(state, id, :authenticate, acp_id, %{method_id: method_id})
         {:ok, request, state}
 
@@ -222,7 +222,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   def translate_outbound(%{"method" => "logout"}, state) do
     {id, state} = next_request_id(state)
-    request = encode_request(id, "account/logout", %{})
+    request = Protocol.encode_request(id, Protocol.method(:account_logout), %{})
     state = track_request(state, id, :logout, nil)
     {:reply_and_write, %{}, request, state}
   end
@@ -244,7 +244,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
           |> Config.merge_thread_mode_wire_params(mode_id)
 
         {id, state} = next_request_id(state)
-        request = encode_request(id, "thread/start", wire_params)
+        request = Protocol.encode_request(id, Protocol.method(:thread_start), wire_params)
 
         state =
           track_request(state, id, :thread_start, acp_id, %{
@@ -281,7 +281,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
               |> Config.merge_thread_mode_wire_params(mode_id)
 
             {id, state} = next_request_id(state)
-            request = encode_request(id, "thread/resume", wire_params)
+            request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
 
             state =
               track_request(state, id, :thread_resume, acp_id, %{
@@ -322,7 +322,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
               |> Config.merge_thread_mode_wire_params(mode_id)
 
             {id, state} = next_request_id(state)
-            request = encode_request(id, "thread/resume", wire_params)
+            request = Protocol.encode_request(id, Protocol.method(:thread_resume), wire_params)
 
             state =
               track_request(state, id, :thread_resume, acp_id, %{
@@ -355,7 +355,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
           |> maybe_put("limit", params["limit"])
           |> maybe_put("archived", false)
 
-        request = encode_request(id, "thread/list", wire_params)
+        request = Protocol.encode_request(id, Protocol.method(:thread_list), wire_params)
         state = track_request(state, id, :session_list, acp_id)
         {:ok, request, state}
 
@@ -369,7 +369,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
          {:ok, session} <- Sessions.fetch(state, session_id) do
       {id, state} = next_request_id(state)
 
-      close_request = encode_request(id, "thread/unsubscribe", %{"threadId" => session_id})
+      close_request =
+        Protocol.encode_request(id, Protocol.method(:thread_unsubscribe), %{
+          "threadId" => session_id
+        })
+
       state = track_request(state, id, :thread_unsubscribe, nil, %{session_id: session_id})
 
       {state, data} =
@@ -377,7 +381,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
           {interrupt_id, state} = next_request_id(state)
 
           interrupt_request =
-            encode_request(interrupt_id, "turn/interrupt", %{
+            Protocol.encode_request(interrupt_id, Protocol.method(:turn_interrupt), %{
               "threadId" => session_id,
               "turnId" => session[:turn_id]
             })
@@ -407,7 +411,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
             {interrupt_id, state} = next_request_id(state)
 
             interrupt_request =
-              encode_request(interrupt_id, "turn/interrupt", %{
+              Protocol.encode_request(interrupt_id, Protocol.method(:turn_interrupt), %{
                 "threadId" => session_id,
                 "turnId" => session[:turn_id]
               })
@@ -425,7 +429,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
             {unsubscribe_id, state} = next_request_id(state)
 
             unsubscribe_request =
-              encode_request(unsubscribe_id, "thread/unsubscribe", %{"threadId" => session_id})
+              Protocol.encode_request(unsubscribe_id, Protocol.method(:thread_unsubscribe), %{
+                "threadId" => session_id
+              })
 
             state =
               track_request(state, unsubscribe_id, :thread_unsubscribe, nil, %{
@@ -440,7 +446,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
         {archive_id, state} = next_request_id(state)
 
         archive_request =
-          encode_request(archive_id, "thread/archive", %{"threadId" => session_id})
+          Protocol.encode_request(archive_id, Protocol.method(:thread_archive), %{
+            "threadId" => session_id
+          })
 
         {messages, pending_responses, state} =
           close_session_state(session_id, session, state)
@@ -481,7 +489,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
       {id, state} = next_request_id(state)
 
       request =
-        encode_request(id, "turn/interrupt", %{
+        Protocol.encode_request(id, Protocol.method(:turn_interrupt), %{
           "threadId" => session_id,
           "turnId" => turn_id
         })
@@ -558,7 +566,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
         case client_request_result(entry, response, state) do
           {:native, result, state} ->
-            {:ok, encode_response(entry.codex_id, result), state}
+            {:ok, Protocol.encode_response(entry.codex_id, result), state}
 
           {:defer, state} ->
             {:ok, :skip, state}
@@ -585,7 +593,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     native_responses =
       Enum.map(cancelled, fn {_acp_id, entry} ->
-        encode_response(entry.codex_id, cancelled_client_request_result(entry))
+        Protocol.encode_response(entry.codex_id, cancelled_client_request_result(entry))
       end)
 
     {closed_elicitations, open_elicitations} =
@@ -639,7 +647,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         additional_directories
       )
 
-    request = encode_request(id, "turn/start", wire_params)
+    request = Protocol.encode_request(id, Protocol.method(:turn_start), wire_params)
 
     state =
       state
@@ -650,9 +658,16 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp translate_slash_command({:compact, _rest}, acp_id, session_id, session, _params, state) do
-    track_prompt_command(acp_id, session_id, session, state, "thread/compact/start", %{
-      "threadId" => session_id
-    })
+    track_prompt_command(
+      acp_id,
+      session_id,
+      session,
+      state,
+      Protocol.method(:thread_compact_start),
+      %{
+        "threadId" => session_id
+      }
+    )
   end
 
   defp translate_slash_command({:init, _rest}, acp_id, session_id, session, params, state) do
@@ -727,7 +742,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp translate_slash_command({:logout, _rest}, acp_id, session_id, session, _params, state) do
     {id, state} = next_request_id(state)
-    request = encode_request(id, "account/logout", %{})
+    request = Protocol.encode_request(id, Protocol.method(:account_logout), %{})
 
     state =
       state
@@ -789,7 +804,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp review_command(acp_id, session_id, session, state, target) do
-    track_prompt_command(acp_id, session_id, session, state, "review/start", %{
+    track_prompt_command(acp_id, session_id, session, state, Protocol.method(:review_start), %{
       "threadId" => session_id,
       "target" => target,
       "delivery" => "inline"
@@ -798,7 +813,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp track_prompt_command(acp_id, session_id, session, state, method, params) do
     {id, state} = next_request_id(state)
-    request = encode_request(id, method, params)
+    request = Protocol.encode_request(id, method, params)
 
     state =
       state
@@ -822,41 +837,24 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   @impl true
   def translate_inbound(line, state) do
-    case Jason.decode(line) do
-      {:ok, msg} -> handle_inbound_message(msg, state)
-      {:error, _} -> {:skip, state}
+    case Protocol.decode_line(line) do
+      {:response, id, reply} ->
+        handle_response(state, id, reply)
+
+      {:request, id, method, params} ->
+        handle_server_request(id, method, params, state)
+
+      {:notification, method, params} ->
+        if closed_session_params?(params, state) do
+          {:skip, state}
+        else
+          handle_notification(method, params, state)
+        end
+
+      :unknown ->
+        {:skip, state}
     end
   end
-
-  defp handle_inbound_message(%{"id" => id, "result" => result}, state) do
-    handle_response(state, id, {:ok, result})
-  end
-
-  defp handle_inbound_message(%{"id" => id, "error" => error}, state) do
-    handle_response(state, id, {:error, error})
-  end
-
-  defp handle_inbound_message(%{"id" => id, "method" => method, "params" => params}, state)
-       when is_binary(method) do
-    handle_server_request(id, method, params || %{}, state)
-  end
-
-  defp handle_inbound_message(%{"method" => method, "params" => params}, state)
-       when is_binary(method) do
-    params = params || %{}
-
-    if closed_session_params?(params, state) do
-      {:skip, state}
-    else
-      handle_notification(method, params, state)
-    end
-  end
-
-  defp handle_inbound_message(%{"method" => method}, state) when is_binary(method) do
-    handle_notification(method, %{}, state)
-  end
-
-  defp handle_inbound_message(_msg, state), do: {:skip, state}
 
   defp handle_response(state, id, reply) do
     case PendingRequests.pop(state.pending_requests, id) do
@@ -871,9 +869,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_typed_response(:initialize, _entry, _reply, state) do
     {id, state} = next_request_id(%{state | phase: :ready})
-    request = encode_request(id, "model/list", %{"includeHidden" => false})
+
+    request =
+      Protocol.encode_request(id, Protocol.method(:model_list), %{"includeHidden" => false})
+
     state = track_request(state, id, :model_list, nil)
-    {:skip_and_write, [encode_notification("initialized"), request], state}
+
+    {:skip_and_write, [Protocol.encode_notification(Protocol.method(:initialized)), request],
+     state}
   end
 
   defp handle_typed_response(:model_list, _entry, {:ok, result}, state) do
@@ -1626,7 +1629,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_server_request(codex_id, method, %{"threadId" => session_id}, state)
        when is_map_key(state.closed_sessions, session_id) do
-    {:skip_and_write, encode_response(codex_id, late_server_request_result(method)), state}
+    {:skip_and_write, Protocol.encode_response(codex_id, late_server_request_result(method)),
+     state}
   end
 
   defp handle_server_request(codex_id, method, params, state)
@@ -1653,14 +1657,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_server_request(codex_id, "item/tool/requestUserInput", params, state) do
     cond do
       not client_supports_elicitation?(state, "form") ->
-        {:skip_and_write, encode_response(codex_id, %{"answers" => %{}}), state}
+        {:skip_and_write, Protocol.encode_response(codex_id, %{"answers" => %{}}), state}
 
       Enum.any?(List.wrap(params["questions"]), &(&1["isSecret"] == true)) ->
         Logger.warning(
           "Codex secret user-input request was not forwarded through form elicitation"
         )
 
-        {:skip_and_write, encode_response(codex_id, %{"answers" => %{}}), state}
+        {:skip_and_write, Protocol.encode_response(codex_id, %{"answers" => %{}}), state}
 
       true ->
         start_user_input_request(codex_id, params, state)
@@ -1676,14 +1680,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
     Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
 
     {:skip_and_write,
-     encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+     Protocol.encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
   end
 
   defp handle_server_request(codex_id, method, _params, state) do
     Logger.debug("[Codex Adapter] Rejecting unsupported app-server request: #{method}")
 
     {:skip_and_write,
-     encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
+     Protocol.encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
   end
 
   defp request_permission_from_client(codex_id, method, params, state) do
@@ -1972,7 +1976,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
         {cancel_id, state} = next_request_id(state)
 
         cancel =
-          encode_request(cancel_id, "account/login/cancel", %{"loginId" => entry.login_id})
+          Protocol.encode_request(cancel_id, Protocol.method(:account_login_cancel), %{
+            "loginId" => entry.login_id
+          })
 
         error =
           Envelope.error(entry.auth_acp_id, -32_603, "Codex authentication was cancelled")
@@ -3954,10 +3960,13 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   # General helpers
 
-  defp next_request_id(%{next_id: id} = state), do: {id, %{state | next_id: id + 1}}
+  defp next_request_id(%{next_id: id} = state) do
+    {id, next} = Protocol.next_id(id)
+    {id, %{state | next_id: next}}
+  end
 
   defp track_request(state, id, type, acp_id, meta \\ %{}) do
-    entry = %{type: type, acp_id: acp_id, meta: meta}
+    entry = Protocol.request_entry(type, acp_id, meta)
     %{state | pending_requests: PendingRequests.put(state.pending_requests, id, entry)}
   end
 
@@ -3980,22 +3989,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
        do: other
 
   defp normalize_stop_reason(_other), do: "end_turn"
-
-  defp encode_request(id, method, params) do
-    msg = %{"id" => id, "method" => method, "params" => params || %{}}
-    [Jason.encode!(msg), "\n"]
-  end
-
-  defp encode_response(id, result), do: [Jason.encode!(%{"id" => id, "result" => result}), "\n"]
-
-  defp encode_error(id, code, message) do
-    [Jason.encode!(%{"id" => id, "error" => %{"code" => code, "message" => message}}), "\n"]
-  end
-
-  defp encode_notification(method, params \\ nil) do
-    msg = %{"method" => method} |> maybe_put("params", params)
-    [Jason.encode!(msg), "\n"]
-  end
 
   defp maybe_put(map, key, value), do: Maps.put_non_empty(map, key, value)
 

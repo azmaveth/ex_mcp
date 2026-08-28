@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Claude Code `tools: []` now passes `--tools ""` so the CLI disables built-in tools. Empty allow/deny lists still mean no opinion.
 - Characterization tests for handler callback process identity, cancellation, serialized state ordering, and two-server isolation.
+- Characterization tests for Codex native app-server envelopes, method names, inbound classification, and request-id correlation.
 - Standalone 1.x store-adapter ADR and ETS-only SessionManager event-store contract suite.
 
 ### Fixed
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Extracted `ExMCP.ACP.Adapters.Codex.Protocol` for native app-server envelopes, method names, response classification, and request-id correlation.
 - Documented three 1.x contract mismatches: `storage_backend: :persistent_term`
   remains accepted and uses ETS (no-op durability) with a warning;
   `ExMCP.connect/2` still accepts a list but uses only the first spec;
