@@ -1260,9 +1260,9 @@ available throughout ExMCP 1.x. New observability integrations should use
 stderr for stdio diagnostics or OpenTelemetry for structured telemetry.
 
 For stdio servers, stdout must contain only JSON-RPC messages. When stdio
-mode starts, `ExMCP.Internal.StdioLoggerConfig.configure/0` mutates
-VM-global Logger, Application, and OTP logger behavior (sets the primary
-level to `:emergency` and `:ex_mcp` `:stdio_mode`). This is process-wide
+mode starts, ExMCP mutates VM-global Logger, Application, and OTP logger
+behavior (sets the primary level to `:emergency` and `:ex_mcp`
+`:stdio_mode`). This is process-wide
 for the BEAM VM, not scoped to the stdio connection: other applications
 and OTP processes in the same VM lose normal logging. 1.x keeps this
 global behavior; 2.0 may replace it.
