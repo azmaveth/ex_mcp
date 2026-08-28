@@ -1,9 +1,34 @@
 defmodule ExMCP.SessionStoreContract do
   @moduledoc false
 
-  # Test-only facade over the current SessionManager call surface.
+  # Test-only facade over the SessionManager call surface.
   # This is the accepted 1.x event-store contract from docs/STORE_ADAPTER.md.
-  # It is not a published Hex behaviour and must not appear in lib/.
+
+  @doc false
+  def start_dets_isolated!(opts \\ []) do
+    {path, opts} = Keyword.pop(opts, :storage_path)
+
+    path =
+      if is_binary(path) and path != "" do
+        path
+      else
+        dir =
+          Path.join(
+            System.tmp_dir!(),
+            "ex_mcp_session_dets_#{System.unique_integer([:positive])}"
+          )
+
+        File.mkdir_p!(dir)
+        ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
+        dir
+      end
+
+    opts
+    |> Keyword.put(:storage_backend, :dets)
+    |> Keyword.put(:storage_path, path)
+    |> start_isolated!()
+    |> Map.put(:storage_path, path)
+  end
 
   @doc false
   def start_isolated!(opts \\ []) do

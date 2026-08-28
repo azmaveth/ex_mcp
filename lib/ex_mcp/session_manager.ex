@@ -52,10 +52,13 @@ defmodule ExMCP.SessionManager do
     If the wall clock moves backwards, elapsed time is negative and the
     session is not treated as expired — the correct absolute-expiry outcome.
   - `:cleanup_interval_ms` - Cleanup interval in milliseconds (default: 60000)
-  - `:storage_backend` - Storage backend (`:ets` or `:persistent_term`,
-    default: `:ets`). `:persistent_term` is accepted for 1.x compatibility
-    and currently uses ETS (no-op durability). A persistent_term backend is
-    not implemented.
+  - `:storage_backend` - Storage backend (`:ets`, `:persistent_term`, or
+    `:dets`, default: `:ets`). ETS remains the default. `:persistent_term`
+    is accepted for 1.x compatibility and still uses ETS (no-op durability).
+    `:dets` is an opt-in durable backend and requires `:storage_path` (or
+    `:dets_path`): a directory owned by one SessionManager. Restarting that
+    process with the same path retains sessions and events. Two runtimes
+    must not share the same files.
 
   ## Usage
 
@@ -87,6 +90,7 @@ defmodule ExMCP.SessionManager do
   require Logger
 
   alias ExMCP.Internal.LogSummary
+  alias ExMCP.Internal.SessionStore
 
   # Default configuration
   @default_max_events 1000
@@ -100,15 +104,11 @@ defmodule ExMCP.SessionManager do
   @identity_keys [:principal_id, :tenant_id, :issuer, :audience]
   @lifecycle_keys [:initialized, :initialization_claimed]
 
-  # ETS table names
-  @sessions_table :session_manager_sessions
-  @events_table :session_manager_events
-  @request_ids_table :session_manager_request_ids
-
   defstruct [
     :sessions_table,
     :events_table,
     :request_ids_table,
+    :store,
     :config,
     :cleanup_timer,
     initialization_claims: %{},
@@ -150,7 +150,8 @@ defmodule ExMCP.SessionManager do
           max_replay_bytes_per_session: pos_integer(),
           session_ttl_seconds: pos_integer(),
           cleanup_interval_ms: pos_integer(),
-          storage_backend: :ets | :persistent_term
+          storage_backend: :ets | :persistent_term | :dets,
+          storage_path: String.t() | nil
         }
 
   ## Public API
@@ -396,7 +397,8 @@ defmodule ExMCP.SessionManager do
       max_replay_bytes_per_session: max_replay_bytes_per_session,
       session_ttl_seconds: Keyword.get(opts, :session_ttl_seconds, @default_session_ttl),
       cleanup_interval_ms: Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval),
-      storage_backend: Keyword.get(opts, :storage_backend, @default_storage_backend)
+      storage_backend: Keyword.get(opts, :storage_backend, @default_storage_backend),
+      storage_path: Keyword.get(opts, :storage_path) || Keyword.get(opts, :dets_path)
     }
 
     if config.storage_backend == :persistent_term do
@@ -405,29 +407,26 @@ defmodule ExMCP.SessionManager do
       )
     end
 
-    # Create unnamed ETS tables for session and event storage. The returned
-    # table identifiers are process-owned, so tests remain isolated without
-    # creating unreclaimable dynamic atoms for table names.
-    sessions_table = :ets.new(@sessions_table, [:set, :protected])
-    events_table = :ets.new(@events_table, [:ordered_set, :protected])
-    request_ids_table = :ets.new(@request_ids_table, [:set, :protected])
+    store = open_store!(config)
 
     # Start cleanup timer
     cleanup_timer =
       Process.send_after(self(), :cleanup_expired_sessions, config.cleanup_interval_ms)
 
     state = %__MODULE__{
-      sessions_table: sessions_table,
-      events_table: events_table,
-      request_ids_table: request_ids_table,
+      sessions_table: store.sessions,
+      events_table: store.events,
+      request_ids_table: store.request_ids,
+      store: store,
       config: config,
       cleanup_timer: cleanup_timer,
       initialization_claims: %{},
-      event_clock: 0
+      event_clock: SessionStore.event_clock(store)
     }
 
     Logger.info("SessionManager started",
       storage_backend: config.storage_backend,
+      storage_path: config.storage_path,
       max_sessions: config.max_sessions,
       max_request_ids: config.max_request_ids,
       session_ttl_seconds: config.session_ttl_seconds,
@@ -444,7 +443,7 @@ defmodule ExMCP.SessionManager do
   def handle_call({:create_session, metadata}, _from, state) do
     prune_terminated_sessions(state)
 
-    if :ets.info(state.sessions_table, :size) >= state.config.max_sessions do
+    if SessionStore.info(state.store, :sessions, :size) >= state.config.max_sessions do
       {:reply, {:error, :session_limit_exceeded}, state}
     else
       create_session(metadata, state)
@@ -455,7 +454,7 @@ defmodule ExMCP.SessionManager do
   def handle_call({:ensure_session, session_id, metadata}, _from, state) do
     now = System.system_time(:microsecond)
 
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         if session_identity_matches?(session, metadata) do
           session_data =
@@ -463,7 +462,7 @@ defmodule ExMCP.SessionManager do
             |> Map.merge(Map.take(metadata, [:transport, :client_info]))
             |> Map.put(:last_activity, now)
 
-          :ets.insert(state.sessions_table, {session_id, session_data})
+          SessionStore.insert(state.store, :sessions, {session_id, session_data})
           {:reply, :ok, state}
         else
           {:reply, {:error, :session_identity_mismatch}, state}
@@ -478,7 +477,7 @@ defmodule ExMCP.SessionManager do
   def handle_call({:ensure_initialized_session, session_id, metadata}, _from, state) do
     now = System.system_time(:microsecond)
 
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         cond do
           not session_identity_matches?(session, metadata) ->
@@ -493,7 +492,7 @@ defmodule ExMCP.SessionManager do
               |> Map.merge(Map.take(metadata, [:transport, :client_info]))
               |> Map.put(:last_activity, now)
 
-            :ets.insert(state.sessions_table, {session_id, updated})
+            SessionStore.insert(state.store, :sessions, {session_id, updated})
             {:reply, :ok, state}
         end
 
@@ -506,17 +505,17 @@ defmodule ExMCP.SessionManager do
   def handle_call({:claim_request_id, session_id, request_id}, _from, state) do
     key = {session_id, request_id}
 
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         cond do
-          :ets.member(state.request_ids_table, key) ->
+          SessionStore.member(state.store, :request_ids, key) ->
             {:reply, {:error, :duplicate_request_id}, state}
 
           session.request_id_count >= state.config.max_request_ids ->
             {:reply, {:error, :request_id_limit_exceeded}, state}
 
           true ->
-            true = :ets.insert_new(state.request_ids_table, {key})
+            true = SessionStore.insert_new(state.store, :request_ids, {key})
 
             updated_session = %{
               session
@@ -524,7 +523,7 @@ defmodule ExMCP.SessionManager do
                 last_activity: System.system_time(:microsecond)
             }
 
-            :ets.insert(state.sessions_table, {session_id, updated_session})
+            SessionStore.insert(state.store, :sessions, {session_id, updated_session})
             {:reply, :ok, state}
         end
 
@@ -535,7 +534,7 @@ defmodule ExMCP.SessionManager do
 
   @impl true
   def handle_call({:claim_initialization, session_id}, {owner, _tag}, state) do
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         cond do
           session.initialized ->
@@ -553,7 +552,7 @@ defmodule ExMCP.SessionManager do
                 last_activity: System.system_time(:microsecond)
             }
 
-            :ets.insert(state.sessions_table, {session_id, updated})
+            SessionStore.insert(state.store, :sessions, {session_id, updated})
 
             claim = %{owner: owner, monitor: monitor}
 
@@ -572,7 +571,7 @@ defmodule ExMCP.SessionManager do
 
   @impl true
   def handle_call({:complete_initialization, session_id, version}, {owner, _tag}, state) do
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         cond do
           not session.initialization_claimed ->
@@ -593,7 +592,7 @@ defmodule ExMCP.SessionManager do
                 last_activity: System.system_time(:microsecond)
             }
 
-            :ets.insert(state.sessions_table, {session_id, updated})
+            SessionStore.insert(state.store, :sessions, {session_id, updated})
             {:reply, :ok, release_initialization_claim(state, session_id)}
         end
 
@@ -630,7 +629,7 @@ defmodule ExMCP.SessionManager do
 
   @impl true
   def handle_call({:replay_events_after, session_id, last_event_id}, _from, state) do
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, _session}] ->
         events = get_events_after(state, session_id, last_event_id)
         {:reply, events, state}
@@ -642,7 +641,7 @@ defmodule ExMCP.SessionManager do
 
   @impl true
   def handle_call({:update_session, session_id, updates}, _from, state) do
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active} = session}] ->
         cond do
           not identity_update_allowed?(session, updates) ->
@@ -661,7 +660,7 @@ defmodule ExMCP.SessionManager do
               )
               |> Map.put(:last_activity, System.system_time(:microsecond))
 
-            :ets.insert(state.sessions_table, {session_id, updated_session})
+            SessionStore.insert(state.store, :sessions, {session_id, updated_session})
             {:reply, :ok, state}
         end
 
@@ -673,7 +672,7 @@ defmodule ExMCP.SessionManager do
   @impl true
   def handle_call({:terminate_session, session_id}, _from, state) do
     # Mark session as terminated
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, session}] ->
         terminated_session = %{
           session
@@ -682,7 +681,7 @@ defmodule ExMCP.SessionManager do
             replay_bytes: 0
         }
 
-        :ets.insert(state.sessions_table, {session_id, terminated_session})
+        SessionStore.insert(state.store, :sessions, {session_id, terminated_session})
 
         # Clean up events for this session
         cleanup_session_events(state, session_id)
@@ -700,7 +699,7 @@ defmodule ExMCP.SessionManager do
 
   @impl true
   def handle_call({:get_session, session_id}, _from, state) do
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, session}] ->
         {:reply, {:ok, session}, state}
 
@@ -712,7 +711,7 @@ defmodule ExMCP.SessionManager do
   @impl true
   def handle_call(:list_sessions, _from, state) do
     sessions =
-      :ets.tab2list(state.sessions_table)
+      SessionStore.all(state.store, :sessions)
       |> Enum.map(fn {_id, session} -> session end)
       |> Enum.filter(&(&1.status == :active))
 
@@ -721,13 +720,14 @@ defmodule ExMCP.SessionManager do
 
   @impl true
   def handle_call(:get_stats, _from, state) do
-    sessions = :ets.tab2list(state.sessions_table)
+    sessions = SessionStore.all(state.store, :sessions)
     active_sessions = Enum.count(sessions, fn {_id, session} -> session.status == :active end)
-    total_events = :ets.info(state.events_table, :size)
+    total_events = SessionStore.info(state.store, :events, :size)
 
     memory_usage =
-      :ets.info(state.sessions_table, :memory) + :ets.info(state.events_table, :memory) +
-        :ets.info(state.request_ids_table, :memory)
+      SessionStore.info(state.store, :sessions, :memory) +
+        SessionStore.info(state.store, :events, :memory) +
+        SessionStore.info(state.store, :request_ids, :memory)
 
     stats = %{
       total_sessions: length(sessions),
@@ -777,10 +777,7 @@ defmodule ExMCP.SessionManager do
       Process.cancel_timer(state.cleanup_timer)
     end
 
-    # Clean up ETS tables
-    :ets.delete(state.sessions_table)
-    :ets.delete(state.events_table)
-    :ets.delete(state.request_ids_table)
+    SessionStore.close(state.store)
 
     :ok
   end
@@ -810,7 +807,7 @@ defmodule ExMCP.SessionManager do
       audience: Map.get(metadata, :audience)
     }
 
-    :ets.insert(state.sessions_table, {session_id, session_data})
+    SessionStore.insert(state.store, :sessions, {session_id, session_data})
 
     Logger.debug("Created session",
       session_id_hash: LogSummary.fingerprint(session_id),
@@ -890,7 +887,7 @@ defmodule ExMCP.SessionManager do
   end
 
   defp terminate_abandoned_initialization(state, session_id) do
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, %{status: :active, initialized: false} = session}] ->
         terminated = %{
           session
@@ -900,7 +897,7 @@ defmodule ExMCP.SessionManager do
             replay_bytes: 0
         }
 
-        :ets.insert(state.sessions_table, {session_id, terminated})
+        SessionStore.insert(state.store, :sessions, {session_id, terminated})
         cleanup_session_events(state, session_id)
         cleanup_session_request_ids(state, session_id)
         ExMCP.SubscriptionRegistry.remove_session(session_id)
@@ -915,13 +912,13 @@ defmodule ExMCP.SessionManager do
   end
 
   defp prune_terminated_sessions(state) do
-    state.sessions_table
-    |> :ets.tab2list()
+    state.store
+    |> SessionStore.all(:sessions)
     |> Enum.each(fn
       {session_id, %{status: :terminated}} ->
         cleanup_session_events(state, session_id)
         cleanup_session_request_ids(state, session_id)
-        :ets.delete(state.sessions_table, session_id)
+        SessionStore.delete(state.store, :sessions, session_id)
 
       _active ->
         :ok
@@ -954,7 +951,7 @@ defmodule ExMCP.SessionManager do
     pattern = {{session_id, :"$1"}, :"$2"}
 
     events =
-      :ets.match(state.events_table, pattern)
+      SessionStore.match(state.store, :events, pattern)
       |> Enum.map(fn [_event_id, event_data] -> event_data end)
 
     if Enum.all?(events, &Map.get(&1, :__ex_mcp_managed__, false)) do
@@ -1019,7 +1016,7 @@ defmodule ExMCP.SessionManager do
   end
 
   defp store_event(state, session_id, event_data, managed?) do
-    case :ets.lookup(state.sessions_table, session_id) do
+    case SessionStore.lookup(state.store, :sessions, session_id) do
       [{^session_id, session}] when session.status == :active ->
         event_data = sanitize_event_metadata(event_data, managed?)
 
@@ -1035,7 +1032,7 @@ defmodule ExMCP.SessionManager do
             normalize_event_sequence(state, event_key, event_data)
 
           event_data = Map.put(event_data, :__ex_mcp_encoded_bytes__, encoded_bytes)
-          :ets.insert(state.events_table, {event_key, event_data})
+          SessionStore.insert(state.store, :events, {event_key, event_data})
 
           {retained_count, replay_bytes} = trim_events_to_limits(state, session_id)
 
@@ -1046,7 +1043,7 @@ defmodule ExMCP.SessionManager do
               replay_bytes: replay_bytes
           }
 
-          :ets.insert(state.sessions_table, {session_id, updated_session})
+          SessionStore.insert(state.store, :sessions, {session_id, updated_session})
           {:ok, state}
         else
           {:error, reason} -> {:error, reason, state}
@@ -1084,7 +1081,7 @@ defmodule ExMCP.SessionManager do
   defp enforce_event_size(_size, _maximum), do: {:error, :event_too_large}
 
   defp normalize_event_sequence(state, event_key, event_data) do
-    case :ets.lookup(state.events_table, event_key) do
+    case SessionStore.lookup(state.store, :events, event_key) do
       [{^event_key, existing}] ->
         sequence = Map.get(existing, :__ex_mcp_sequence__, state.event_clock)
         {Map.put(event_data, :__ex_mcp_sequence__, sequence), state, false}
@@ -1092,7 +1089,8 @@ defmodule ExMCP.SessionManager do
       [] ->
         sequence = state.event_clock + 1
         event_data = Map.put(event_data, :__ex_mcp_sequence__, sequence)
-        {event_data, %{state | event_clock: max(state.event_clock, sequence)}, true}
+        next = persist_event_clock(%{state | event_clock: max(state.event_clock, sequence)})
+        {event_data, next, true}
     end
   end
 
@@ -1108,7 +1106,7 @@ defmodule ExMCP.SessionManager do
       end)
 
     Enum.each(invalid_events, fn event ->
-      :ets.delete(state.events_table, {session_id, event.id})
+      SessionStore.delete(state.store, :events, {session_id, event.id})
     end)
 
     event_sizes = Enum.reverse(event_sizes)
@@ -1127,7 +1125,7 @@ defmodule ExMCP.SessionManager do
       end)
 
     Enum.each(discarded, fn event ->
-      :ets.delete(state.events_table, {session_id, event.id})
+      SessionStore.delete(state.store, :events, {session_id, event.id})
     end)
 
     {retained_count, retained_bytes}
@@ -1152,14 +1150,14 @@ defmodule ExMCP.SessionManager do
     # Delete all events for the session
     pattern = {{session_id, :"$1"}, :_}
 
-    :ets.match(state.events_table, pattern)
+    SessionStore.match(state.store, :events, pattern)
     |> Enum.each(fn [event_id] ->
-      :ets.delete(state.events_table, {session_id, event_id})
+      SessionStore.delete(state.store, :events, {session_id, event_id})
     end)
   end
 
   defp cleanup_session_request_ids(state, session_id) do
-    :ets.match_delete(state.request_ids_table, {{session_id, :_}})
+    SessionStore.match_delete(state.store, :request_ids, {{session_id, :_}})
   end
 
   # Session TTL is wall-clock idle expiry by design. last_activity is an
@@ -1174,7 +1172,7 @@ defmodule ExMCP.SessionManager do
     ttl_microseconds = state.config.session_ttl_seconds * 1_000_000
 
     expired_sessions =
-      :ets.tab2list(state.sessions_table)
+      SessionStore.all(state.store, :sessions)
       |> Enum.filter(fn {_id, session} ->
         session.status == :active and now - session.last_activity > ttl_microseconds
       end)
@@ -1194,7 +1192,7 @@ defmodule ExMCP.SessionManager do
             replay_bytes: 0
         }
 
-        :ets.insert(acc.sessions_table, {session_id, terminated_session})
+        SessionStore.insert(acc.store, :sessions, {session_id, terminated_session})
         cleanup_session_events(acc, session_id)
         cleanup_session_request_ids(acc, session_id)
         ExMCP.SubscriptionRegistry.remove_session(session_id)
@@ -1211,6 +1209,27 @@ defmodule ExMCP.SessionManager do
   defp validate_positive_limit!(name, value) do
     unless is_integer(value) and value > 0 do
       raise ArgumentError, "#{inspect(name)} must be a positive integer"
+    end
+  end
+
+  defp persist_event_clock(state) do
+    %{state | store: SessionStore.put_event_clock(state.store, state.event_clock)}
+  end
+
+  defp open_store!(config) do
+    case SessionStore.open(config) do
+      {:ok, store} ->
+        store
+
+      {:error, :storage_path_required} ->
+        raise ArgumentError, "storage_backend: :dets requires :storage_path (or :dets_path)"
+
+      {:error, :storage_in_use} ->
+        raise ArgumentError,
+              "storage_backend: :dets path is already open by another SessionManager"
+
+      {:error, reason} ->
+        raise ArgumentError, "failed to open session store: #{inspect(reason)}"
     end
   end
 end

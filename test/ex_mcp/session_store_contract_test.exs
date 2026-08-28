@@ -1,11 +1,10 @@
 defmodule ExMCP.SessionStoreContractTest do
   @moduledoc """
-  ETS-only event-store contract suite.
+  Event-store contract suite for the default ETS backend and opt-in DETS.
 
   Pins current `ExMCP.SessionManager` behavior as the accepted 1.x store
-  contract from `docs/STORE_ADAPTER.md`. Does not publish a behaviour or
-  change runtime code. Isolated managers use unique names so they do not
-  fight the application SessionManager.
+  contract from `docs/STORE_ADAPTER.md`. Isolated managers use unique names
+  so they do not fight the application SessionManager.
   """
   use ExUnit.Case, async: true
 
@@ -422,6 +421,385 @@ defmodule ExMCP.SessionStoreContractTest do
       assert session.status == :terminated
     end
   end
+
+  describe "DETS opt-in backend" do
+    test "append_event assigns unique store-owned IDs and returns the retained event" do
+      store = SessionStoreContract.start_dets_isolated!()
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      assert {:ok, first} =
+               SessionStoreContract.append_event(store.name, session_id, "message", %{index: 1})
+
+      assert {:ok, second} =
+               SessionStoreContract.append_event(store.name, session_id, "message", %{index: 2})
+
+      assert first.session_id == session_id
+      assert second.session_id == session_id
+      assert first.type == "message"
+      assert first.data == %{index: 1}
+      assert is_binary(first.id)
+      assert is_binary(second.id)
+      assert first.id != second.id
+      assert is_integer(first.timestamp)
+      assert first.id == "1-0"
+      assert second.id == "2-0"
+
+      assert [^first, ^second] =
+               SessionStoreContract.replay_events_after(store.name, session_id, nil)
+    end
+
+    test "serialized concurrent appends each receive a distinct store-owned ID" do
+      store = SessionStoreContract.start_dets_isolated!()
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      results =
+        1..8
+        |> Enum.map(fn i ->
+          Task.async(fn ->
+            SessionStoreContract.append_event(store.name, session_id, "message", %{i: i})
+          end)
+        end)
+        |> Task.await_many()
+
+      events = Enum.map(results, fn {:ok, event} -> event end)
+      ids = Enum.map(events, & &1.id)
+
+      assert length(events) == 8
+      assert ids == Enum.uniq(ids)
+
+      replayed = SessionStoreContract.replay_events_after(store.name, session_id, nil)
+      assert Enum.map(replayed, & &1.id) == Enum.sort_by(ids, &parse_store_id/1)
+    end
+
+    test "append_event refuses unknown or terminated sessions" do
+      store = SessionStoreContract.start_dets_isolated!()
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+      :ok = SessionStoreContract.terminate_session(store.name, session_id)
+
+      assert {:error, :session_not_found} =
+               SessionStoreContract.append_event(store.name, "missing", "message", %{})
+
+      assert {:error, :session_not_found} =
+               SessionStoreContract.append_event(store.name, session_id, "message", %{})
+    end
+
+    test "replays the suffix after an exact store-owned cursor" do
+      store = SessionStoreContract.start_dets_isolated!()
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      {:ok, first} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 1})
+
+      {:ok, second} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 2})
+
+      {:ok, third} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 3})
+
+      assert [] == SessionStoreContract.replay_events_after(store.name, session_id, third.id)
+
+      assert [^second, ^third] =
+               SessionStoreContract.replay_events_after(store.name, session_id, first.id)
+
+      assert [^first, ^second, ^third] =
+               SessionStoreContract.replay_events_after(store.name, session_id, nil)
+    end
+
+    test "unknown session returns session_not_found" do
+      store = SessionStoreContract.start_dets_isolated!()
+
+      assert {:error, :session_not_found} =
+               SessionStoreContract.replay_events_after(store.name, "missing", nil)
+    end
+
+    test "an unretained cursor uses compare-id fallback rather than resurrecting events" do
+      store = SessionStoreContract.start_dets_isolated!(max_events_per_session: 2)
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      {:ok, first} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 1})
+
+      {:ok, second} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 2})
+
+      {:ok, third} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 3})
+
+      assert [^second, ^third] =
+               SessionStoreContract.replay_events_after(store.name, session_id, nil)
+
+      assert [^second, ^third] =
+               SessionStoreContract.replay_events_after(store.name, session_id, first.id)
+
+      assert [^third] =
+               SessionStoreContract.replay_events_after(store.name, session_id, second.id)
+    end
+
+    test "keeps only the newest events when the count bound is exceeded" do
+      store = SessionStoreContract.start_dets_isolated!(max_events_per_session: 2)
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      Enum.each(1..4, fn n ->
+        assert {:ok, _} =
+                 SessionStoreContract.append_event(store.name, session_id, "message", %{n: n})
+      end)
+
+      replayed = SessionStoreContract.replay_events_after(store.name, session_id, nil)
+      assert Enum.map(replayed, & &1.data.n) == [3, 4]
+
+      {:ok, session} = SessionStoreContract.get_session(store.name, session_id)
+      assert session.event_count == 2
+    end
+
+    test "rejects a single event over the encoded byte cap" do
+      payload = String.duplicate("x", 64)
+      template = caller_event(String.duplicate("s", 22), "event-1", payload)
+      exact_bytes = encoded_bytes(template)
+
+      store =
+        SessionStoreContract.start_dets_isolated!(
+          max_event_bytes: exact_bytes,
+          max_replay_bytes_per_session: exact_bytes * 4
+        )
+
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+      exact = caller_event(session_id, "event-1", payload)
+      one_over = caller_event(session_id, "event-2", payload <> "x")
+
+      assert encoded_bytes(exact) == exact_bytes
+      assert :ok = SessionStoreContract.store_event(store.name, session_id, exact)
+
+      assert {:error, :event_too_large} =
+               SessionStoreContract.store_event(store.name, session_id, one_over)
+
+      assert [^exact] = SessionStoreContract.replay_events_after(store.name, session_id, nil)
+    end
+
+    test "created_at and last_activity are wall-clock system_time timestamps" do
+      store = SessionStoreContract.start_dets_isolated!()
+      before = System.system_time(:microsecond)
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+      after_create = System.system_time(:microsecond)
+      {:ok, session} = SessionStoreContract.get_session(store.name, session_id)
+
+      assert session.created_at >= before
+      assert session.created_at <= after_create
+      assert session.last_activity >= before
+      assert session.last_activity <= after_create
+
+      monotonic = System.monotonic_time(:microsecond)
+      assert abs(session.last_activity - before) < abs(session.last_activity - monotonic)
+    end
+
+    test "explicit terminate clears events and refuses further appends" do
+      store = SessionStoreContract.start_dets_isolated!()
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      {:ok, _event} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 1})
+
+      assert :ok = SessionStoreContract.terminate_session(store.name, session_id)
+      assert :ok = SessionStoreContract.terminate_session(store.name, "never-existed")
+
+      {:ok, session} = SessionStoreContract.get_session(store.name, session_id)
+      assert session.status == :terminated
+      assert session.event_count == 0
+      assert session.replay_bytes == 0
+
+      assert [] = SessionStoreContract.replay_events_after(store.name, session_id, nil)
+
+      assert {:error, :session_not_found} =
+               SessionStoreContract.append_event(store.name, session_id, "message", %{n: 2})
+    end
+
+    test "wall-clock idle TTL expires the session and drops its events" do
+      store =
+        SessionStoreContract.start_dets_isolated!(
+          session_ttl_seconds: 0,
+          cleanup_interval_ms: 50
+        )
+
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      {:ok, _event} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 1})
+
+      assert_eventually(fn ->
+        match?(
+          {:ok, %{status: :terminated, event_count: 0}},
+          SessionStoreContract.get_session(store.name, session_id)
+        )
+      end)
+
+      assert [] = SessionStoreContract.replay_events_after(store.name, session_id, nil)
+    end
+
+    test "store_event overwrites the same caller-supplied event ID in place" do
+      store = SessionStoreContract.start_dets_isolated!()
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      first = caller_event(session_id, "same-id", "one")
+      second = caller_event(session_id, "same-id", "two")
+
+      assert :ok = SessionStoreContract.store_event(store.name, session_id, first)
+      assert :ok = SessionStoreContract.store_event(store.name, session_id, second)
+
+      assert [^second] = SessionStoreContract.replay_events_after(store.name, session_id, nil)
+
+      {:ok, session} = SessionStoreContract.get_session(store.name, session_id)
+      assert session.event_count == 1
+    end
+
+    test "append_event is not content-addressed; duplicates allocate new IDs" do
+      store = SessionStoreContract.start_dets_isolated!()
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+      payload = %{same: "payload"}
+
+      {:ok, first} =
+        SessionStoreContract.append_event(store.name, session_id, "message", payload)
+
+      {:ok, second} =
+        SessionStoreContract.append_event(store.name, session_id, "message", payload)
+
+      assert first.id != second.id
+      assert first.data == second.data
+
+      assert [^first, ^second] =
+               SessionStoreContract.replay_events_after(store.name, session_id, nil)
+    end
+
+    test "claim_request_id is the JSON-RPC dedup story" do
+      store = SessionStoreContract.start_dets_isolated!(max_request_ids: 1)
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :http})
+
+      assert :ok = SessionStoreContract.claim_request_id(store.name, session_id, "req-1")
+
+      assert {:error, :duplicate_request_id} =
+               SessionStoreContract.claim_request_id(store.name, session_id, "req-1")
+
+      assert {:error, :request_id_limit_exceeded} =
+               SessionStoreContract.claim_request_id(store.name, session_id, "req-2")
+
+      other = SessionStoreContract.create_session(store.name, %{transport: :http})
+      assert :ok = SessionStoreContract.claim_request_id(store.name, other, "req-1")
+    end
+
+    test "restarting SessionManager with the same path retains sessions and events" do
+      store = SessionStoreContract.start_dets_isolated!()
+      session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+      {:ok, event} =
+        SessionStoreContract.append_event(store.name, session_id, "message", %{n: 1})
+
+      assert :ok = SessionStoreContract.claim_request_id(store.name, session_id, "req-1")
+
+      name = store.name
+      path = store.storage_path
+      :ok = ExUnit.Callbacks.stop_supervised(store.id)
+      refute Process.alive?(store.pid)
+
+      restarted =
+        SessionStoreContract.start_dets_isolated!(name: name, storage_path: path)
+
+      assert {:ok, session} = SessionStoreContract.get_session(restarted.name, session_id)
+      assert session.status == :active
+      assert [^event] = SessionStoreContract.replay_events_after(restarted.name, session_id, nil)
+
+      assert {:error, :duplicate_request_id} =
+               SessionStoreContract.claim_request_id(restarted.name, session_id, "req-1")
+
+      {:ok, next} =
+        SessionStoreContract.append_event(restarted.name, session_id, "message", %{n: 2})
+
+      assert next.id != event.id
+
+      assert [^event, ^next] =
+               SessionStoreContract.replay_events_after(restarted.name, session_id, nil)
+    end
+
+    test "two SessionManagers must not share the same DETS path" do
+      store = SessionStoreContract.start_dets_isolated!()
+      Process.flag(:trap_exit, true)
+
+      assert {:error, reason} =
+               SessionManager.start_link(
+                 storage_backend: :dets,
+                 storage_path: store.storage_path,
+                 name: nil
+               )
+
+      assert init_error_message(reason) =~ "already open" or
+               init_error_message(reason) =~ "storage_backend: :dets path"
+    end
+
+    test "storage_backend :dets requires a directory path" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, reason} =
+               SessionManager.start_link(storage_backend: :dets, name: nil)
+
+      assert init_error_message(reason) =~ "storage_path"
+    end
+
+    test "emits no store telemetry and does not log payloads" do
+      handler_id = "session-store-dets-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [
+            [:ex_mcp, :session_manager],
+            [:ex_mcp, :session_store],
+            [:ex_mcp, :session, :event],
+            [:ex_mcp, :store]
+          ],
+          fn event, measurements, metadata, _config ->
+            send(test_pid, {:store_telemetry, event, measurements, metadata})
+          end,
+          nil
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      secret = "session-store-dets-secret-payload"
+
+      log =
+        capture_log(fn ->
+          store = SessionStoreContract.start_dets_isolated!()
+          session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
+
+          {:ok, event} =
+            SessionStoreContract.append_event(store.name, session_id, "message", %{
+              secret: secret
+            })
+
+          assert [^event] =
+                   SessionStoreContract.replay_events_after(store.name, session_id, nil)
+
+          stats = SessionStoreContract.get_stats(store.name)
+          assert stats.total_sessions == 1
+          assert stats.active_sessions == 1
+          assert stats.total_events == 1
+          assert is_integer(stats.memory_usage)
+          refute Map.has_key?(stats, :events)
+          refute Map.has_key?(stats, :payloads)
+        end)
+
+      refute_received {:store_telemetry, _, _, _}
+      refute log =~ secret
+    end
+  end
+
+  defp init_error_message({exception, _stack}) when is_exception(exception) do
+    Exception.message(exception)
+  end
+
+  defp init_error_message(exception) when is_exception(exception) do
+    Exception.message(exception)
+  end
+
+  defp init_error_message(other), do: inspect(other)
 
   defp caller_event(session_id, event_id, payload) do
     %{

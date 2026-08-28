@@ -1,19 +1,19 @@
 # ExMCP 1.x Store Adapter
 
-- **Status:** Proposed — ADR and ETS contract suite only; no public
-  behaviour and no second backend
+- **Status:** Accepted — unpublished `ExMCP.Internal.SessionStore` seam
+  with default ETS and opt-in DETS
 - **Baseline:** ExMCP 1.x after `b62eca2` (the `storage_backend:
   :persistent_term` warning and wall-clock TTL notes)
-- **Scope:** lock the 1.x event-store contract against current
-  `ExMCP.SessionManager` behavior so a later seam can be additive
+- **Scope:** lock the 1.x event-store contract and introduce one opt-in
+  durable backend without changing default ETS behavior
 - **Last updated:** 2026-08-27
 - **Related:** [`V2_ROADMAP.md`](./V2_ROADMAP.md) §8.2 and Phase 4;
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md)
   session-storage option
 
 This is a repository design record, not user-facing Hex documentation.
-It does not publish a behaviour, change SessionManager runtime behavior,
-or implement a durable backend.
+SessionManager remains the public facade. The behaviour lives under
+`ExMCP.Internal` so `filter_modules` keeps it out of the Hex sidebar.
 
 ## 1. Purpose
 
@@ -32,8 +32,10 @@ This ADR:
 - names the gaps that tests pin as current behavior rather than
   inventing new runtime semantics.
 
-A second backend (durable `persistent_term`, Mnesia, Postgres,
-filesystem, or a clustered adapter) is out of scope for this change.
+The first extra backend is opt-in DETS (`storage_backend: :dets` plus
+`:storage_path` or `:dets_path`). `:persistent_term` remains accepted
+and still uses ETS (no-op durability) with the existing warning. Mnesia,
+Postgres, and clustered adapters remain out of scope.
 
 ## 2. Current 1.x owner
 
@@ -74,25 +76,28 @@ the meaning of the public timestamps and of `:session_ttl_seconds`.
 
 | Decision | Lock |
 |---|---|
-| Default store | ETS remains the only implemented backend and the default. |
+| Default store | ETS remains the default. Current ETS results, clocks, and restart-empties stay unchanged. |
 | Public API | Current `ExMCP.SessionManager` function names, arities, return shapes, and error atoms stay unchanged. |
 | Wire / SSE replay | Persist-before-delivery, `Last-Event-ID` exact-cursor replay, gap retention across disconnect, and opaque event IDs stay unchanged. |
-| `storage_backend: :persistent_term` | Remains accepted. Still uses ETS (no-op durability) and still warns. Option removal is 2.0-only. A real second backend is out of scope here. |
-| Seam timing | A replaceable adapter seam is allowed in a later 1.x minor only after this ADR and the ETS contract suite are accepted in-tree. The design does not wait for 2.0 runtime ownership. |
-| Transport isolation | Transports must not learn backend details. They keep calling SessionManager (or a later facade with the same shapes). No table names, adapter modules, or cursor encodings leak into Plug/SSE. |
+| `storage_backend: :persistent_term` | Remains accepted. Still uses ETS (no-op durability) and still warns. Do not give it real durability. Option removal is 2.0-only. |
+| Seam | Unpublished `ExMCP.Internal.SessionStore`. SessionManager remains the public facade. Do not Hex-group or extras-link Internal modules. |
+| Transport isolation | Transports must not learn backend details. They keep calling SessionManager. No table names, adapter modules, or cursor encodings leak into Plug/SSE. |
 | Session TTL | Wall-clock idle expiry stays. Do not "fix" it to `System.monotonic_time/1` in 1.x. |
-| Public behaviour | Do not publish a Hex-documented behaviour until this ADR is accepted in-tree **and** a later change introduces the seam. A test-only helper is not a public contract. |
-| Second backend | Out of scope. Filesystem, Mnesia, Postgres, durable `persistent_term`, and clustered adapters must pass the same contract suite before they ship. |
+| Public behaviour | Not published. Internal for this cut; a later 1.x minor may promote a public module if needed. |
+| Second backend | Opt-in DETS only. Mnesia, Postgres, durable `persistent_term`, and clustered adapters stay out of scope. |
 
-These are compatibility locks, not implementation tasks. This change
-adds documentation and tests only.
+These are compatibility locks. The follow-up that this ADR authorized
+adds the Internal seam and opt-in DETS without changing default ETS
+results.
 
 ## 4. Event-store contract (current ETS behavior)
 
 Phase 4 requires the event-store contract to cover the bullets below.
 The accepted 1.x meaning of each bullet is **what SessionManager does
-today**. The ETS-only suite in
-`test/ex_mcp/session_store_contract_test.exs` pins that meaning.
+today**. The suite in
+`test/ex_mcp/session_store_contract_test.exs` pins that meaning against
+ETS (including restart-empties) and DETS (same public outcomes except
+restart/ownership).
 Documented gaps are called out here and in the tests; they are not
 silently implemented.
 
@@ -191,16 +196,29 @@ Today the store **is** the SessionManager process:
 - a supervisor restart starts empty tables;
 - `storage_backend: :persistent_term` does not change that.
 
-This is the accepted 1.x restart behavior. The contract suite pins
-"stop + start with the same registered name loses sessions and
-events."
+This is the accepted 1.x **default ETS** restart behavior. The contract
+suite still pins "stop + start with the same registered name loses
+sessions and events" for ETS and for `:persistent_term`.
 
-A future durable adapter, when one exists, must document its own
-ownership and blast radius: restarting SessionManager or a transport
-listener must not silently discard an independently configured durable
-store, and two server runtimes must not share keys. That ownership
-split is **not** implemented now. Inventing it here would be a
-runtime change.
+Opt-in DETS documents a different ownership split:
+
+- `:storage_path` (or `:dets_path`) is a directory owned by one
+  SessionManager. Files inside it (`sessions.dets`, `events.dets`,
+  `request_ids.dets`, `meta.dets`) are an implementation detail.
+- Restarting SessionManager with the same path **must not** discard
+  the durable store. Sessions, events, claimed request IDs, and the
+  event clock are reopened.
+- Two runtimes must not share the same files. A second open fails
+  (`:storage_in_use`); DETS is single-writer.
+- Process-local initialization claims (owner monitors) cannot survive
+  a restart. DETS clears `initialization_claimed` on open when the
+  session is not yet initialized so a later initialize can proceed.
+- Isolated tests use unique temp directories and delete them on exit.
+
+DETS is used instead of a custom file-backed term store because the
+three tables are `:set`/`:ordered_set` with Elixir-side replay
+ordering. DETS has no `:ordered_set`, but SessionManager already sorts
+in process, so `:set` files are enough. No new Hex dependency.
 
 ### 4.7 Telemetry that excludes event payloads by default
 
@@ -218,17 +236,24 @@ that logs from append/store do not contain the event payload.
 `get_stats/0` remains the public observation surface: session counts,
 event count, and ETS memory words. It does not return payloads.
 
-## 5. Proposed future behaviour (unpublished)
+## 5. 1.x behaviour (unpublished Internal)
 
-Do not add this module to `lib/` or HexDocs until the ADR is accepted
-and a later 1.x change introduces the seam.
+The 1.x seam is `ExMCP.Internal.SessionStore`. It is not Hex-grouped
+and must not be linked from extras. Working name `ExMCP.SessionStore`
+stays reserved if a later cut publishes the facade.
 
-**Recommendation for the 1.x seam:** one unpublished behaviour,
-working name `ExMCP.SessionStore`, covering the state SessionManager's
-three ETS tables already own — sessions, replay events, and claimed
-request IDs. Do not split session / event / request-id / subscription
-behaviours until a second backend exists and the split removes real
-duplication. Subscriptions stay on `ExMCP.SubscriptionRegistry`.
+One behaviour covers the state SessionManager's three tables already
+own — sessions, replay events, and claimed request IDs. Do not split
+session / event / request-id / subscription behaviours until another
+backend exists and the split removes real duplication. Subscriptions
+stay on `ExMCP.SubscriptionRegistry`.
+
+Implementations:
+
+- `ExMCP.Internal.SessionStore.ETS` — default; unnamed process-owned
+  tables; `close/1` deletes them; restart starts empty.
+- `ExMCP.Internal.SessionStore.DETS` — opt-in; directory of DETS
+  files; `close/1` closes without deleting; restart reopens.
 
 Initialization claims, identity binding, and protocol-version
 immutability stay SessionManager (or later server-runtime) **policy**.
@@ -272,10 +297,10 @@ Not part of the store behaviour:
   `update_session/2` (policy on top of the session record);
 - table names, ETS types, or backend atoms.
 
-A later seam should inject the store into SessionManager (or a thin
-facade) so HttpPlug keeps calling the same functions. The default
-implementation remains the current ETS process. `:persistent_term`
-stays accepted and remains a no-op until a real backend exists.
+SessionManager injects the store so HttpPlug keeps calling the same
+functions. The default implementation remains ETS. `:persistent_term`
+stays accepted and remains a no-op for durability. `:dets` is the
+opt-in durable backend, not a replacement for that option.
 
 `V2_ROADMAP.md` §10.2 item 3 (one behaviour vs a split) is resolved
 for 1.x as: one session/event/request-id behaviour. Revisit the split
@@ -286,34 +311,32 @@ in 2.0 if per-server runtimes need independently owned stores.
 | Gap | Today | Lane |
 |---|---|---|
 | Store telemetry | None. Logs omit payloads. | Additive 1.x minor after this ADR: bounded metadata, payload capture opt-in. |
-| Durable second backend | `:persistent_term` accepted, ETS-only, warns. | Contract/backend may be additive in a later 1.x minor; option removal is 2.0-only. |
-| Adapter ownership independent of SessionManager | Process-owned ETS; restart loses state. | Specify with the first durable adapter. Changing restart semantics of the default ETS store is 2.0 unless an opt-in adapter is used. |
+| Durable second backend | Opt-in DETS. `:persistent_term` still ETS + warning. | Further adapters (Mnesia/Postgres/cluster) remain later; option removal is 2.0-only. |
+| Adapter ownership independent of SessionManager | Default ETS still process-owned and restart-empty. DETS owns a directory. | Changing default ETS restart semantics is 2.0 unless an opt-in adapter is used. |
 | Per-server store isolation | One application-wide SessionManager. | 2.0 runtime ownership (`V2_ROADMAP.md` §8.2). |
-| Public behaviour module | None. Test helper only. | Publish only with the 1.x seam, after this ADR is accepted. |
+| Public behaviour module | `ExMCP.Internal.SessionStore` only. | Publish only if a later 1.x cut needs a Hex-documented seam. |
 
 ## 7. Out of scope
 
 This change does not:
 
-- implement a second backend or give `:persistent_term` durability;
-- change SessionManager clocks, table types, or `storage_backend`
-  behavior;
+- give `:persistent_term` durability;
+- change default ETS clocks, table types, or restart-empty semantics;
 - publish `ExMCP.SessionStore` or any Hex-documented behaviour;
 - alter SSE wire/replay behavior or transport modules;
 - move session policy (identity, initialization) into a store;
 - "fix" wall-clock TTL to monotonic time;
+- implement Postgres, Mnesia, or clustered adapters;
 - bump `mix.exs`.
 
 ## 8. Acceptance
 
-This ADR is accepted in-tree when:
+The ADR-and-ETS-suite cut is accepted in-tree. This follow-up is
+accepted when:
 
-1. this file is merged without a public behaviour module;
-2. `test/ex_mcp/session_store_contract_test.exs` pins every Phase 4
-   bullet against current ETS SessionManager, including the telemetry
-   and restart gaps as current behavior; and
-3. existing SessionManager tests remain green and are not weakened.
-
-After that, a later 1.x minor may introduce the unpublished-then-public
-seam behind the same suite. A second backend may land only when it
-passes that suite without changing default ETS results.
+1. `ExMCP.Internal.SessionStore` exists and is not Hex-grouped;
+2. ETS remains the default and the contract suite still pins ETS
+   restart-empties and `:persistent_term` no-op durability;
+3. opt-in DETS passes the same Phase 4 bullets except restart
+   (retains across SessionManager restart; one owner per path); and
+4. existing SessionManager tests remain green and are not weakened.

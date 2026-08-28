@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Characterization tests for handler callback process identity, cancellation, serialized state ordering, and two-server isolation.
 - Characterization tests for Codex native app-server envelopes, method names, inbound classification, and request-id correlation.
 - Standalone 1.x store-adapter ADR and ETS-only SessionManager event-store contract suite.
+- Opt-in SessionManager DETS store (`storage_backend: :dets` with `:storage_path`) and an unpublished Internal SessionStore seam. ETS remains the default.
 
 ### Fixed
 
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ExMCP.connect/2` still accepts a list but uses only the first spec;
   stdio logger configuration still mutates VM-global Logger behavior.
 - Resource subscribe/unsubscribe now decide modern vs legacy from `Client.get_status` protocol version after an explicit Client process marker, not `$initial_call`.
+- SessionManager dispatches session, event, and request-id tables through an internal store adapter. Default ETS restart-empty behavior and `storage_backend: :persistent_term` no-op durability are unchanged.
 
 ## [1.1.1] - 2026-08-27
 
