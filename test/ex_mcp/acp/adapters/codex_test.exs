@@ -33,8 +33,21 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
     end
 
     test "matches upstream Codex ACP mode ids" do
-      ids = Codex.modes() |> Enum.map(& &1["id"])
+      modes = Codex.modes()
+      ids = Enum.map(modes, & &1["id"])
       assert ids == ["read-only", "agent", "agent-full-access"]
+
+      assert Enum.map(modes, &get_in(&1, ["_meta", "kind"])) == [
+               "standard",
+               "auto_review",
+               "full_access"
+             ]
+
+      assert Enum.map(modes, & &1["name"]) == [
+               "Ask for approval",
+               "Approve for me",
+               "Full access"
+             ]
     end
 
     test "advertises Codex auth methods" do
@@ -298,6 +311,41 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert session.accumulated_text == []
     end
 
+    test "session/prompt turn/start includes approvalsReviewer", %{state: state} do
+      state = put_test_session(state, "thread-1", %{mode_id: "read-only"})
+
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 71,
+        "params" => %{
+          "sessionId" => "thread-1",
+          "prompt" => [%{"type" => "text", "text" => "hi"}]
+        }
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(msg, state)
+      codex_msg = decode(data)
+
+      assert codex_msg["method"] == "turn/start"
+      assert codex_msg["params"]["approvalsReviewer"] == "user"
+      assert codex_msg["params"]["approvalPolicy"] == "on-request"
+      assert codex_msg["params"]["sandboxPolicy"]["type"] == "workspaceWrite"
+
+      state = put_test_session(state, "thread-2", %{mode_id: "agent"})
+
+      msg = %{
+        "method" => "session/prompt",
+        "id" => 72,
+        "params" => %{
+          "sessionId" => "thread-2",
+          "prompt" => [%{"type" => "text", "text" => "hi"}]
+        }
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(msg, state)
+      assert decode(data)["params"]["approvalsReviewer"] == "auto_review"
+    end
+
     test "session/prompt maps slash compact to native app-server request", %{state: state} do
       state = put_test_session(state, "thread-1")
 
@@ -528,6 +576,18 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       refute Map.has_key?(msg["result"], "metadata")
       assert get_in(msg, ["result", "_meta", "ex_mcp", "codex", "thread", "id"]) == "thread-abc"
       assert msg["result"]["modes"]["currentModeId"] == "agent"
+
+      assert Enum.map(msg["result"]["modes"]["availableModes"], &get_in(&1, ["_meta", "kind"])) ==
+               ["standard", "auto_review", "full_access"]
+
+      mode_option = Enum.find(msg["result"]["configOptions"], &(&1["id"] == "mode"))
+
+      assert Enum.map(mode_option["options"], &get_in(&1, ["_meta", "kind"])) == [
+               "standard",
+               "auto_review",
+               "full_access"
+             ]
+
       assert msg["result"]["models"]["currentModelId"] == "gpt-5"
       assert Enum.any?(msg["result"]["configOptions"], &(&1["id"] == "model"))
       assert new_state.sessions["thread-abc"].model == "gpt-5"
@@ -912,6 +972,14 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert request["params"]["sessionId"] == "thread-1"
       assert request["params"]["toolCall"]["toolName"] == "execute"
       assert request["params"]["toolCall"]["title"] == "mix test"
+      assert request["params"]["_meta"]["permission"]["title"] == "Run command?"
+
+      assert Enum.map(request["params"]["options"], & &1["optionId"]) == [
+               "allow_once",
+               "allow_for_session",
+               "decline",
+               "cancel"
+             ]
 
       response = %{
         "id" => request["id"],
@@ -922,6 +990,28 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       codex_response = decode(data)
 
       assert codex_response == %{"id" => 99, "result" => %{"decision" => "accept"}}
+      assert new_state.pending_client_requests == %{}
+    end
+
+    test "incomplete availableDecisions cancels without prompting", %{state: state} do
+      state = put_test_session(state, "thread-1")
+
+      line =
+        Jason.encode!(%{
+          "id" => 102,
+          "method" => "item/commandExecution/requestApproval",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turnId" => "turn-1",
+            "itemId" => "item-1",
+            "command" => "python3 fill_contract.py",
+            "startedAtMs" => 1,
+            "availableDecisions" => ["accept"]
+          }
+        })
+
+      assert {:skip_and_write, data, new_state} = Codex.translate_inbound(line, state)
+      assert decode(data) == %{"id" => 102, "result" => %{"decision" => "cancel"}}
       assert new_state.pending_client_requests == %{}
     end
 
@@ -946,6 +1036,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
             "itemId" => "item-1",
             "command" => "python3 fill_contract.py",
             "startedAtMs" => 1,
+            "proposedExecpolicyAmendment" => ["touch", "/tmp/contract.hwp"],
             "availableDecisions" => ["accept", structured_decision, "decline"]
           }
         })
@@ -953,11 +1044,22 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert {:messages, [request], state} = Codex.translate_inbound(line, state)
 
       assert [accept, structured, decline] = request["params"]["options"]
-      assert accept == %{"optionId" => "accept", "name" => "Accept", "kind" => "allow_once"}
-      assert decline == %{"optionId" => "decline", "name" => "Decline", "kind" => "reject_once"}
-      assert is_binary(structured["optionId"])
-      assert structured["name"] == "Accept With Execpolicy Amendment"
+
+      assert accept == %{
+               "optionId" => "allow_once",
+               "name" => "Yes, proceed",
+               "kind" => "allow_once"
+             }
+
+      assert decline == %{
+               "optionId" => "decline",
+               "name" => "No, continue without running it",
+               "kind" => "reject_once"
+             }
+
+      assert structured["optionId"] == "accept_execpolicy_amendment"
       assert structured["kind"] == "allow_always"
+      assert structured["name"] =~ "touch /tmp/contract.hwp"
 
       response = %{
         "id" => request["id"],
@@ -972,12 +1074,8 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert new_state.pending_client_requests == %{}
     end
 
-    test "structured file-change decisions are preserved", %{state: state} do
+    test "file change approvals offer allow once, session, and cancel", %{state: state} do
       state = put_test_session(state, "thread-1")
-
-      structured_decision = %{
-        "acceptWithGrantRoot" => %{"grantRoot" => "/tmp/project"}
-      }
 
       line =
         Jason.encode!(%{
@@ -986,33 +1084,38 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
           "params" => %{
             "threadId" => "thread-1",
             "turnId" => "turn-1",
-            "itemId" => "item-1",
-            "availableDecisions" => [structured_decision]
+            "itemId" => "item-1"
           }
         })
 
       assert {:messages, [request], state} = Codex.translate_inbound(line, state)
-      assert [option] = request["params"]["options"]
-      assert option["kind"] == "allow_always"
+
+      assert Enum.map(request["params"]["options"], & &1["optionId"]) == [
+               "allow_once",
+               "allow_for_session",
+               "cancel"
+             ]
+
+      refute Enum.any?(request["params"]["options"], &(&1["optionId"] == "decline"))
+      assert request["params"]["_meta"]["permission"]["title"] == "Make edits?"
 
       response = %{
         "id" => request["id"],
-        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => option["optionId"]}}
+        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "cancel"}}
       }
 
       assert {:ok, data, new_state} = Codex.translate_outbound(response, state)
 
-      assert decode(data) == %{"id" => 103, "result" => %{"decision" => structured_decision}}
+      assert decode(data) == %{"id" => 103, "result" => %{"decision" => "cancel"}}
       assert new_state.pending_client_requests == %{}
     end
 
-    test "structured permissions decisions preserve the complete response", %{state: state} do
+    test "permission grants copy the requested network and filesystem profile", %{state: state} do
       state = put_test_session(state, "thread-1")
 
-      structured_decision = %{
-        "permissions" => %{"network" => %{"enabled" => true}},
-        "scope" => "session",
-        "strictAutoReview" => true
+      permissions = %{
+        "network" => %{"enabled" => true},
+        "fileSystem" => %{"write" => ["/tmp/project"]}
       }
 
       line =
@@ -1023,69 +1126,147 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
             "threadId" => "thread-1",
             "turnId" => "turn-1",
             "itemId" => "item-1",
-            "availableDecisions" => [structured_decision]
-          }
-        })
-
-      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
-      assert [option] = request["params"]["options"]
-      assert option["kind"] == "allow_always"
-
-      response = %{
-        "id" => request["id"],
-        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => option["optionId"]}}
-      }
-
-      assert {:ok, data, new_state} = Codex.translate_outbound(response, state)
-
-      assert decode(data) == %{"id" => 104, "result" => structured_decision}
-      assert new_state.pending_client_requests == %{}
-    end
-
-    test "fabricated structured option ids are declined instead of forwarded", %{state: state} do
-      state = put_test_session(state, "thread-1")
-
-      available_decision = %{
-        "acceptWithExecpolicyAmendment" => %{
-          "execpolicy_amendment" => ["touch", "/tmp/contract.hwp"]
-        }
-      }
-
-      line =
-        Jason.encode!(%{
-          "id" => 102,
-          "method" => "item/commandExecution/requestApproval",
-          "params" => %{
-            "threadId" => "thread-1",
-            "turnId" => "turn-1",
-            "itemId" => "item-1",
-            "command" => "python3 fill_contract.py",
-            "startedAtMs" => 1,
-            "availableDecisions" => [available_decision]
+            "permissions" => permissions
           }
         })
 
       assert {:messages, [request], state} = Codex.translate_inbound(line, state)
 
-      fabricated_decision = %{
-        "acceptWithExecpolicyAmendment" => %{
-          "execpolicy_amendment" => ["rm", "-rf", "/tmp/contract.hwp"]
-        }
-      }
-
-      fabricated_option_id = "codex:decision:" <> Jason.encode!(fabricated_decision)
+      assert Enum.map(request["params"]["options"], & &1["optionId"]) == [
+               "allow_permissions_turn",
+               "allow_permissions_turn_strict_auto_review",
+               "allow_permissions_session",
+               "reject_permissions"
+             ]
 
       response = %{
         "id" => request["id"],
         "result" => %{
-          "outcome" => %{"outcome" => "selected", "optionId" => fabricated_option_id}
+          "outcome" => %{
+            "outcome" => "selected",
+            "optionId" => "allow_permissions_turn_strict_auto_review"
+          }
         }
       }
 
       assert {:ok, data, new_state} = Codex.translate_outbound(response, state)
 
-      assert decode(data) == %{"id" => 102, "result" => %{"decision" => "decline"}}
+      assert decode(data) == %{
+               "id" => 104,
+               "result" => %{
+                 "permissions" => permissions,
+                 "scope" => "turn",
+                 "strictAutoReview" => true
+               }
+             }
+
       assert new_state.pending_client_requests == %{}
+    end
+
+    test "permission cancel and reject include strictAutoReview false", %{state: state} do
+      state = put_test_session(state, "thread-1")
+
+      line =
+        Jason.encode!(%{
+          "id" => 105,
+          "method" => "item/permissions/requestApproval",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turnId" => "turn-1",
+            "itemId" => "item-1",
+            "permissions" => %{"network" => %{"enabled" => true}}
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+
+      reject = %{
+        "id" => request["id"],
+        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "reject_permissions"}}
+      }
+
+      assert {:ok, data, state} = Codex.translate_outbound(reject, state)
+
+      assert decode(data) == %{
+               "id" => 105,
+               "result" => %{
+                 "permissions" => %{},
+                 "scope" => "turn",
+                 "strictAutoReview" => false
+               }
+             }
+
+      line =
+        Jason.encode!(%{
+          "id" => 106,
+          "method" => "item/permissions/requestApproval",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turnId" => "turn-1",
+            "itemId" => "item-2",
+            "permissions" => %{"network" => %{"enabled" => true}}
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+
+      cancel = %{
+        "id" => request["id"],
+        "result" => %{"outcome" => %{"outcome" => "cancelled"}}
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(cancel, state)
+
+      assert decode(data) == %{
+               "id" => 106,
+               "result" => %{
+                 "permissions" => %{},
+                 "scope" => "turn",
+                 "strictAutoReview" => false
+               }
+             }
+    end
+
+    test "MCP persist options appear when _meta.persist is present", %{state: state} do
+      line =
+        Jason.encode!(%{
+          "id" => 107,
+          "method" => "mcpServer/elicitation/request",
+          "params" => %{
+            "threadId" => "thread-1",
+            "mode" => "openai/form",
+            "message" => "Allow tool call?",
+            "serverName" => "tool-server",
+            "_meta" => %{
+              "codex_approval_kind" => "mcp_tool_call",
+              "persist" => ["session", "always"]
+            }
+          }
+        })
+
+      assert {:messages, [request], state} = Codex.translate_inbound(line, state)
+      assert request["method"] == "session/request_permission"
+
+      assert Enum.map(request["params"]["options"], & &1["optionId"]) == [
+               "allow_once",
+               "allow_session",
+               "allow_always",
+               "cancel"
+             ]
+
+      refute Enum.any?(request["params"]["options"], &(&1["optionId"] == "decline"))
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "allow_session"}}
+      }
+
+      assert {:ok, data, _state} = Codex.translate_outbound(response, state)
+
+      assert decode(data) == %{
+               "id" => 107,
+               "result" => %{"action" => "accept", "_meta" => %{"persist" => "session"}}
+             }
     end
 
     test "deny network policy amendments round-trip as reject-always ACP options", %{
@@ -1109,15 +1290,18 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
             "itemId" => "item-1",
             "command" => "curl https://example.test",
             "startedAtMs" => 1,
-            "availableDecisions" => [structured_decision]
+            "networkApprovalContext" => %{"host" => "example.test", "protocol" => "https"},
+            "proposedNetworkPolicyAmendments" => [
+              %{"action" => "deny", "host" => "example.test"}
+            ],
+            "availableDecisions" => ["accept", structured_decision, "cancel"]
           }
         })
 
       assert {:messages, [request], state} = Codex.translate_inbound(line, state)
-      assert [structured] = request["params"]["options"]
-      assert is_binary(structured["optionId"])
-      assert structured["name"] == "Apply Network Policy Amendment"
-      assert structured["kind"] == "reject_always"
+      structured = Enum.find(request["params"]["options"], &(&1["kind"] == "reject_always"))
+      assert structured["optionId"] == "apply_network_policy_amendment:0"
+      assert structured["name"] == "No, and block this host in the future"
 
       response = %{
         "id" => request["id"],

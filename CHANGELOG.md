@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Codex ACP adapter 1.7.0 permission/mode parity: `approvalsReviewer`, mode `_meta.kind`, and TS permission presentation.
 - Extracted `ExMCP.ACP.Adapters.Codex.Protocol` for native app-server envelopes, method names, response classification, and request-id correlation.
 - Extracted `ExMCP.ACP.Adapters.Pi.RPC` for native RPC envelopes, correlation ids, and response classification.
 - Documented three 1.x contract mismatches: `storage_backend: :persistent_term`

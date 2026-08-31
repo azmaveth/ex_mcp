@@ -23,8 +23,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
   alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests}
   alias ExMCP.Internal.{Maps, NameValue, WorkspacePath}
 
-  @structured_decision_prefix "codex:decision:"
-
   defstruct [
     :model,
     :mode_id,
@@ -1690,7 +1688,32 @@ defmodule ExMCP.ACP.Adapters.Codex do
      Protocol.encode_error(codex_id, -32_601, "Unsupported app-server request: #{method}"), state}
   end
 
+  defp request_permission_from_client(
+         codex_id,
+         "item/commandExecution/requestApproval" = method,
+         params,
+         state
+       ) do
+    case command_decision_options(params) do
+      {:ok, pairs} ->
+        emit_permission_request(
+          codex_id,
+          method,
+          params,
+          Enum.map(pairs, fn {option, _decision} -> option end),
+          state
+        )
+
+      :error ->
+        {:skip_and_write, Protocol.encode_response(codex_id, %{"decision" => "cancel"}), state}
+    end
+  end
+
   defp request_permission_from_client(codex_id, method, params, state) do
+    emit_permission_request(codex_id, method, params, permission_options(method, params), state)
+  end
+
+  defp emit_permission_request(codex_id, method, params, options, state) do
     session_id = Sessions.id_from_params(params, state)
     acp_id = "codex-permission-#{System.unique_integer([:positive])}"
 
@@ -1700,8 +1723,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
         %{
           "sessionId" => session_id,
           "toolCall" => permission_tool_call(method, params),
-          "options" => permission_options(method, params),
-          "_meta" => %{"ex_mcp" => %{"codex" => %{"method" => method, "params" => params}}}
+          "options" => options,
+          "_meta" => permission_request_meta(method, params)
         },
         acp_id
       )
@@ -1720,6 +1743,51 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     {:messages, [request], state}
   end
+
+  defp permission_request_meta(method, params) do
+    %{
+      "ex_mcp" => %{"codex" => %{"method" => method, "params" => params}}
+    }
+    |> maybe_put_permission_meta(permission_prompt_meta(method, params))
+  end
+
+  defp maybe_put_permission_meta(meta, nil), do: meta
+  defp maybe_put_permission_meta(meta, permission), do: Map.put(meta, "permission", permission)
+
+  defp permission_prompt_meta(method, params)
+       when method in ["item/commandExecution/requestApproval", "execCommandApproval"] do
+    title =
+      if is_map(params["networkApprovalContext"]),
+        do: "Allow network access?",
+        else: "Run command?"
+
+    permission_title_meta(title, params["reason"])
+  end
+
+  defp permission_prompt_meta(method, params)
+       when method in ["item/fileChange/requestApproval", "applyPatchApproval"] do
+    permission_title_meta("Make edits?", params["reason"])
+  end
+
+  defp permission_prompt_meta("item/permissions/requestApproval", params) do
+    permission_title_meta("Grant permissions?", params["reason"])
+  end
+
+  defp permission_prompt_meta(_method, _params), do: nil
+
+  defp permission_title_meta(title, reason) do
+    %{"version" => 1, "title" => title}
+    |> maybe_put("description", trimmed_permission_text(reason))
+  end
+
+  defp trimmed_permission_text(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      text -> text
+    end
+  end
+
+  defp trimmed_permission_text(_value), do: nil
 
   defp normalize_elicitation_mode("form"), do: "form"
   defp normalize_elicitation_mode("url"), do: "url"
@@ -2631,6 +2699,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
             "name" => mode["name"],
             "description" => mode["description"]
           }
+          |> maybe_put("_meta", mode["_meta"])
         end)
     }
   end
@@ -3634,59 +3703,387 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp permission_title(_method, _params), do: "Codex Permission"
 
-  defp permission_options(_method, %{"availableDecisions" => decisions})
-       when is_list(decisions) do
-    Enum.map(decisions, &decision_to_option/1)
-  end
+  defp permission_options("item/fileChange/requestApproval", _params),
+    do: file_change_permission_options()
+
+  defp permission_options("item/permissions/requestApproval", _params),
+    do: permission_profile_options()
+
+  defp permission_options("mcpServer/elicitation/request", params),
+    do: mcp_permission_options(params)
 
   defp permission_options(_method, _params) do
     [
-      %{"optionId" => "allow_once", "name" => "Allow Once", "kind" => "allow_once"},
-      %{"optionId" => "allow_always", "name" => "Allow for Session", "kind" => "allow_always"},
-      %{"optionId" => "reject_once", "name" => "Reject", "kind" => "reject_once"}
+      permission_option("allow_once", "Allow Once", "allow_once"),
+      permission_option("allow_always", "Allow for Session", "allow_always"),
+      permission_option("reject_once", "Reject", "reject_once")
     ]
   end
 
-  defp decision_to_option(%{"id" => id, "name" => name}) do
-    %{"optionId" => id, "name" => name, "kind" => option_kind(id)}
+  defp permission_option(option_id, name, kind) do
+    %{"optionId" => option_id, "name" => name, "kind" => kind}
   end
 
-  defp decision_to_option(decision) when is_map(decision) do
+  defp file_change_permission_options do
+    [
+      permission_option("allow_once", "Yes, proceed", "allow_once"),
+      permission_option(
+        "allow_for_session",
+        "Yes, and don't ask again for these files",
+        "allow_always"
+      ),
+      permission_option("cancel", "No, and tell Codex what to do differently", "reject_once")
+    ]
+  end
+
+  defp permission_profile_options do
+    [
+      permission_option(
+        "allow_permissions_turn",
+        "Yes, grant these permissions for this turn",
+        "allow_once"
+      ),
+      permission_option(
+        "allow_permissions_turn_strict_auto_review",
+        "Yes, grant for this turn with strict auto review",
+        "allow_once"
+      ),
+      permission_option(
+        "allow_permissions_session",
+        "Yes, grant these permissions for this session",
+        "allow_always"
+      ),
+      permission_option("reject_permissions", "No, continue without permissions", "reject_once")
+    ]
+  end
+
+  defp mcp_permission_options(params) do
+    meta = params["_meta"] || %{}
+    persist = persist_options(meta)
+    tool_approval? = mcp_tool_approval?(meta)
+
+    allow_once =
+      if tool_approval? do
+        mcp_option("allow_once", "Allow", "allow_once", "Run the tool and continue.")
+      else
+        mcp_option("accept", "Allow", "allow_once", "Allow this request and continue.")
+      end
+
+    options = [allow_once]
+
+    options =
+      if "session" in persist do
+        options ++
+          [
+            mcp_option(
+              "allow_session",
+              "Allow for this session",
+              "allow_always",
+              if(tool_approval?,
+                do: "Run the tool and remember this choice for this session.",
+                else: "Allow this request and remember this choice for this session."
+              )
+            )
+          ]
+      else
+        options
+      end
+
+    options =
+      if "always" in persist do
+        options ++
+          [
+            mcp_option(
+              "allow_always",
+              "Always allow",
+              "allow_always",
+              if(tool_approval?,
+                do: "Run the tool and remember this choice for future tool calls.",
+                else: "Allow this request and remember this choice for future requests."
+              )
+            )
+          ]
+      else
+        options
+      end
+
+    if tool_approval? do
+      options ++ [mcp_option("cancel", "Cancel", "reject_once", "Cancel this tool call")]
+    else
+      options ++
+        [
+          mcp_option("decline", "Deny", "reject_once", "Decline this request and continue."),
+          mcp_option("cancel", "Cancel", "reject_once", "Cancel this request")
+        ]
+    end
+  end
+
+  defp mcp_option(option_id, name, kind, description) do
     %{
-      "optionId" => @structured_decision_prefix <> Jason.encode!(decision),
-      "name" => structured_decision_name(decision),
-      "kind" => structured_decision_kind(decision)
+      "optionId" => option_id,
+      "name" => name,
+      "kind" => kind,
+      "_meta" => %{"permission" => %{"version" => 1, "description" => description}}
     }
   end
 
-  defp decision_to_option(decision) when is_binary(decision) do
-    %{
-      "optionId" => decision,
-      "name" => humanize_option(decision),
-      "kind" => option_kind(decision)
-    }
+  defp persist_options(%{"persist" => "session"}), do: ["session"]
+  defp persist_options(%{"persist" => "always"}), do: ["always"]
+
+  defp persist_options(%{"persist" => persist}) when is_list(persist) do
+    Enum.filter(persist, &(&1 in ["session", "always"]))
   end
 
-  defp decision_to_option(decision), do: decision_to_option(to_string(decision))
+  defp persist_options(_meta), do: []
+
+  defp mcp_tool_approval?(%{"codex_approval_kind" => "mcp_tool_call"}), do: true
+  defp mcp_tool_approval?(_meta), do: false
+
+  defp command_decision_options(params) do
+    with {:ok, decisions} <- parse_available_command_decisions(params) do
+      {pairs, _network_index} =
+        Enum.reduce(decisions, {[], 0}, fn decision, {pairs, network_index} ->
+          case command_decision_option(decision, params, network_index) do
+            {:skip, network_index} ->
+              {pairs, network_index}
+
+            {option, mapped, network_index} ->
+              {pairs ++ [{option, mapped}], network_index}
+          end
+        end)
+
+      pairs = sort_command_decision_options(pairs)
+
+      if valid_command_option_set?(pairs) do
+        {:ok, pairs}
+      else
+        :error
+      end
+    end
+  end
+
+  defp parse_available_command_decisions(params) do
+    case Map.fetch(params, "availableDecisions") do
+      :error ->
+        {:ok, default_command_decisions(params)}
+
+      {:ok, nil} ->
+        {:ok, default_command_decisions(params)}
+
+      {:ok, decisions} when is_list(decisions) and decisions != [] ->
+        Enum.reduce_while(decisions, {:ok, []}, fn candidate, {:ok, acc} ->
+          case parse_command_decision(candidate, params) do
+            {:ok, decision} -> {:cont, {:ok, acc ++ [decision]}}
+            :error -> {:halt, :error}
+          end
+        end)
+
+      {:ok, _other} ->
+        :error
+    end
+  end
+
+  defp default_command_decisions(%{"networkApprovalContext" => network} = params)
+       when is_map(network) do
+    amendments =
+      params
+      |> Map.get("proposedNetworkPolicyAmendments")
+      |> List.wrap()
+      |> Enum.filter(&is_map/1)
+      |> Enum.map(fn amendment ->
+        %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}}
+      end)
+
+    ["accept", "acceptForSession"] ++ amendments ++ ["decline", "cancel"]
+  end
+
+  defp default_command_decisions(%{"additionalPermissions" => permissions})
+       when is_map(permissions) do
+    ["accept", "cancel"]
+  end
+
+  defp default_command_decisions(params) do
+    decisions = ["accept", "acceptForSession"]
+
+    decisions =
+      case params["proposedExecpolicyAmendment"] do
+        amendment when is_list(amendment) and amendment != [] ->
+          decisions ++
+            [
+              %{
+                "acceptWithExecpolicyAmendment" => %{"execpolicy_amendment" => amendment}
+              }
+            ]
+
+        _ ->
+          decisions
+      end
+
+    decisions ++ ["decline", "cancel"]
+  end
+
+  defp parse_command_decision(candidate, _params)
+       when candidate in ["accept", "acceptForSession", "decline", "cancel"] do
+    {:ok, candidate}
+  end
+
+  defp parse_command_decision(
+         %{"acceptWithExecpolicyAmendment" => %{"execpolicy_amendment" => amendment}} = decision,
+         params
+       )
+       when is_list(amendment) and amendment != [] do
+    if same_string_list?(amendment, params["proposedExecpolicyAmendment"]) do
+      {:ok, decision}
+    else
+      :error
+    end
+  end
+
+  defp parse_command_decision(
+         %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}} = decision,
+         params
+       ) do
+    host = amendment["host"]
+    action = amendment["action"]
+    network = params["networkApprovalContext"]
+
+    valid? =
+      is_binary(host) and action in ["allow", "deny"] and is_map(network) and
+        network["host"] == host and
+        Enum.any?(List.wrap(params["proposedNetworkPolicyAmendments"]), fn proposed ->
+          is_map(proposed) and proposed["host"] == host and proposed["action"] == action
+        end)
+
+    if valid?, do: {:ok, decision}, else: :error
+  end
+
+  defp parse_command_decision(_candidate, _params), do: :error
+
+  defp same_string_list?(left, right) when is_list(left) and is_list(right) do
+    length(left) == length(right) and Enum.all?(left, &is_binary/1) and left == right
+  end
+
+  defp same_string_list?(_left, _right), do: false
+
+  defp command_decision_option("accept", params, network_index) do
+    name =
+      if is_map(params["networkApprovalContext"]),
+        do: "Yes, just this once",
+        else: "Yes, proceed"
+
+    {permission_option("allow_once", name, "allow_once"), "accept", network_index}
+  end
+
+  defp command_decision_option("acceptForSession", params, network_index) do
+    name =
+      cond do
+        is_map(params["networkApprovalContext"]) ->
+          "Yes, and allow this host for this conversation"
+
+        is_map(params["additionalPermissions"]) ->
+          "Yes, and allow these permissions for this session"
+
+        true ->
+          "Yes, and don't ask again for this command in this session"
+      end
+
+    {permission_option("allow_for_session", name, "allow_always"), "acceptForSession",
+     network_index}
+  end
+
+  defp command_decision_option("decline", _params, network_index) do
+    {permission_option("decline", "No, continue without running it", "reject_once"), "decline",
+     network_index}
+  end
+
+  defp command_decision_option("cancel", _params, network_index) do
+    {permission_option("cancel", "No, and tell Codex what to do differently", "reject_once"),
+     "cancel", network_index}
+  end
+
+  defp command_decision_option(
+         %{"acceptWithExecpolicyAmendment" => %{"execpolicy_amendment" => amendment}} = decision,
+         _params,
+         network_index
+       ) do
+    prefix = Enum.join(amendment, " ")
+
+    if String.contains?(prefix, ["\n", "\r"]) do
+      {:skip, network_index}
+    else
+      {permission_option(
+         "accept_execpolicy_amendment",
+         "Yes, and don't ask again for commands that start with `#{prefix}`",
+         "allow_always"
+       ), decision, network_index}
+    end
+  end
+
+  defp command_decision_option(
+         %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}} = decision,
+         _params,
+         network_index
+       ) do
+    {name, kind} =
+      if amendment["action"] == "allow" do
+        {"Yes, and allow this host in the future", "allow_always"}
+      else
+        {"No, and block this host in the future", "reject_always"}
+      end
+
+    {permission_option("apply_network_policy_amendment:#{network_index}", name, kind), decision,
+     network_index + 1}
+  end
+
+  defp command_decision_option(_decision, _params, network_index), do: {:skip, network_index}
+
+  defp sort_command_decision_options(pairs) do
+    Enum.sort_by(pairs, fn {option, _decision} ->
+      case option["kind"] do
+        "allow_once" -> 0
+        "allow_always" -> 1
+        _ -> 2
+      end
+    end)
+  end
+
+  defp valid_command_option_set?(pairs) do
+    kinds = Enum.map(pairs, fn {option, _decision} -> option["kind"] end)
+    ids = Enum.map(pairs, fn {option, _decision} -> option["optionId"] end)
+
+    has_allow = Enum.any?(kinds, &(&1 in ["allow_once", "allow_always"]))
+    has_reject = Enum.any?(kinds, &(&1 in ["reject_once", "reject_always"]))
+    unique_ids? = length(Enum.uniq(ids)) == length(ids)
+
+    pairs != [] and has_allow and has_reject and unique_ids?
+  end
+
+  defp permission_response(
+         %{method: "item/commandExecution/requestApproval", params: params},
+         response
+       ) do
+    command_permission_response(params, response)
+  end
+
+  defp permission_response(%{method: "item/fileChange/requestApproval"}, response) do
+    file_change_permission_response(response)
+  end
+
+  defp permission_response(
+         %{method: "item/permissions/requestApproval", params: params},
+         response
+       ) do
+    permissions_approval_response(params, response)
+  end
+
+  defp permission_response(%{method: "mcpServer/elicitation/request", params: params}, response) do
+    mcp_permission_response(params, response)
+  end
 
   defp permission_response(%{method: method}, %{
          "result" => %{"outcome" => %{"outcome" => "cancelled"}}
        }) do
     codex_cancel_response(method)
-  end
-
-  defp permission_response(
-         %{
-           method: method,
-           params: %{"availableDecisions" => available_decisions}
-         },
-         %{"result" => %{"outcome" => %{"optionId" => option_id}}}
-       ) do
-    case selected_structured_decision(option_id, available_decisions) do
-      {:ok, decision} -> structured_permission_response(method, decision)
-      :plain -> codex_decision_response(method, option_id)
-      :error -> invalid_structured_permission_response(method)
-    end
   end
 
   defp permission_response(%{method: method}, %{
@@ -3701,24 +4098,133 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp permission_response(%{method: method}, _response), do: codex_cancel_response(method)
 
-  defp codex_decision_response(method, option_id)
-       when method in ["execCommandApproval", "applyPatchApproval"] do
-    %{"decision" => legacy_review_decision(option_id)}
+  defp command_permission_response(_params, %{
+         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
+       }) do
+    %{"decision" => "cancel"}
   end
 
-  defp codex_decision_response("item/permissions/requestApproval", option_id) do
-    if allow_option?(option_id) do
-      %{
-        "permissions" => %{},
-        "scope" => if(always_option?(option_id), do: "session", else: "turn")
-      }
-    else
-      %{"permissions" => %{}, "scope" => "turn"}
+  defp command_permission_response(params, %{
+         "result" => %{"outcome" => %{"optionId" => option_id}}
+       }) do
+    case command_decision_options(params) do
+      {:ok, pairs} ->
+        case Enum.find(pairs, fn {option, _decision} -> option["optionId"] == option_id end) do
+          {_option, decision} when is_binary(decision) -> %{"decision" => decision}
+          {_option, decision} when is_map(decision) -> %{"decision" => decision}
+          nil -> %{"decision" => "cancel"}
+        end
+
+      :error ->
+        %{"decision" => "cancel"}
     end
   end
 
-  defp codex_decision_response("mcpServer/elicitation/request", option_id) do
-    if allow_option?(option_id), do: %{"action" => "accept"}, else: %{"action" => "decline"}
+  defp command_permission_response(_params, _response), do: %{"decision" => "cancel"}
+
+  defp file_change_permission_response(%{
+         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
+       }) do
+    %{"decision" => "cancel"}
+  end
+
+  defp file_change_permission_response(%{"result" => %{"outcome" => %{"optionId" => option_id}}}) do
+    decision =
+      case option_id do
+        "allow_once" -> "accept"
+        "allow_for_session" -> "acceptForSession"
+        "cancel" -> "cancel"
+        _ -> "cancel"
+      end
+
+    %{"decision" => decision}
+  end
+
+  defp file_change_permission_response(_response), do: %{"decision" => "cancel"}
+
+  defp permissions_approval_response(_params, %{
+         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
+       }) do
+    reject_permissions_response()
+  end
+
+  defp permissions_approval_response(params, %{
+         "result" => %{"outcome" => %{"optionId" => option_id}}
+       }) do
+    requested = params["permissions"] || %{}
+
+    case option_id do
+      "allow_permissions_turn" ->
+        granted_permissions_response(requested, "turn", false)
+
+      "allow_permissions_turn_strict_auto_review" ->
+        granted_permissions_response(requested, "turn", true)
+
+      "allow_permissions_session" ->
+        granted_permissions_response(requested, "session", false)
+
+      _ ->
+        reject_permissions_response()
+    end
+  end
+
+  defp permissions_approval_response(_params, _response), do: reject_permissions_response()
+
+  defp granted_permissions_response(permissions, scope, strict_auto_review) do
+    %{
+      "permissions" => granted_permissions(permissions),
+      "scope" => scope,
+      "strictAutoReview" => strict_auto_review
+    }
+  end
+
+  defp reject_permissions_response do
+    %{"permissions" => %{}, "scope" => "turn", "strictAutoReview" => false}
+  end
+
+  defp granted_permissions(permissions) when is_map(permissions) do
+    Map.take(permissions, ["network", "fileSystem"])
+  end
+
+  defp granted_permissions(_permissions), do: %{}
+
+  defp mcp_permission_response(_params, %{
+         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
+       }) do
+    %{"action" => "cancel"}
+  end
+
+  defp mcp_permission_response(params, %{"result" => %{"outcome" => %{"optionId" => option_id}}}) do
+    meta = params["_meta"] || %{}
+    mcp_option_response(option_id, persist_options(meta), mcp_tool_approval?(meta))
+  end
+
+  defp mcp_permission_response(_params, _response), do: %{"action" => "cancel"}
+
+  defp mcp_option_response("allow_session", persist, _tool_approval?) do
+    mcp_persist_accept(persist, "session")
+  end
+
+  defp mcp_option_response("allow_always", persist, _tool_approval?) do
+    mcp_persist_accept(persist, "always")
+  end
+
+  defp mcp_option_response("allow_once", _persist, true), do: %{"action" => "accept"}
+  defp mcp_option_response("accept", _persist, false), do: %{"action" => "accept"}
+  defp mcp_option_response("decline", _persist, false), do: %{"action" => "decline"}
+  defp mcp_option_response(_option_id, _persist, _tool_approval?), do: %{"action" => "cancel"}
+
+  defp mcp_persist_accept(persist, scope) do
+    if scope in persist do
+      %{"action" => "accept", "_meta" => %{"persist" => scope}}
+    else
+      %{"action" => "cancel"}
+    end
+  end
+
+  defp codex_decision_response(method, option_id)
+       when method in ["execCommandApproval", "applyPatchApproval"] do
+    %{"decision" => legacy_review_decision(option_id)}
   end
 
   defp codex_decision_response(_method, option_id) do
@@ -3731,33 +4237,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp codex_cancel_response("mcpServer/elicitation/request"), do: %{"action" => "cancel"}
 
   defp codex_cancel_response("item/permissions/requestApproval"),
-    do: %{"permissions" => %{}, "scope" => "turn"}
+    do: reject_permissions_response()
 
   defp codex_cancel_response(_method), do: %{"decision" => "cancel"}
-
-  defp selected_structured_decision(option_id, available_decisions) do
-    if structured_decision_option_id?(option_id) do
-      with true <- is_list(available_decisions),
-           {:ok, decision} <- decode_structured_decision(option_id),
-           true <- Enum.member?(available_decisions, decision) do
-        {:ok, decision}
-      else
-        _ -> :error
-      end
-    else
-      :plain
-    end
-  end
-
-  defp structured_permission_response("item/permissions/requestApproval", decision),
-    do: decision
-
-  defp structured_permission_response(_method, decision), do: %{"decision" => decision}
-
-  defp invalid_structured_permission_response("item/permissions/requestApproval"),
-    do: codex_cancel_response("item/permissions/requestApproval")
-
-  defp invalid_structured_permission_response(_method), do: %{"decision" => "decline"}
 
   defp app_server_decision(option_id) do
     cond do
@@ -3768,85 +4250,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
-  defp structured_decision_option_id?(option_id) when is_binary(option_id),
-    do: String.starts_with?(option_id, @structured_decision_prefix)
-
-  defp structured_decision_option_id?(_option_id), do: false
-
-  defp decode_structured_decision(option_id) when is_binary(option_id) do
-    with true <- String.starts_with?(option_id, @structured_decision_prefix),
-         encoded <- String.replace_prefix(option_id, @structured_decision_prefix, ""),
-         {:ok, decision} when is_map(decision) <- Jason.decode(encoded) do
-      {:ok, decision}
-    else
-      _ -> :error
-    end
-  end
-
-  defp structured_decision_name(decision) do
-    case Map.keys(decision) do
-      [name] when is_binary(name) -> name |> Macro.underscore() |> humanize_option()
-      _ -> "Codex Decision"
-    end
-  end
-
-  defp structured_decision_kind(%{"acceptWithExecpolicyAmendment" => _amendment}),
-    do: "allow_always"
-
-  defp structured_decision_kind(%{"applyNetworkPolicyAmendment" => amendment}) do
-    policy = amendment["network_policy_amendment"] || amendment["networkPolicyAmendment"] || %{}
-
-    case policy["action"] do
-      "allow" -> "allow_always"
-      "deny" -> "reject_always"
-      _ -> "reject_once"
-    end
-  end
-
-  defp structured_decision_kind(%{"permissions" => permissions, "scope" => scope})
-       when is_map(permissions) do
-    if scope == "session", do: "allow_always", else: "allow_once"
-  end
-
-  defp structured_decision_kind(decision) when is_map(decision) do
-    case Map.keys(decision) do
-      [name] when is_binary(name) -> structured_option_kind(name)
-      _ -> "reject_once"
-    end
-  end
-
-  defp structured_option_kind(name) do
-    normalized = String.downcase(name)
-
-    cond do
-      String.contains?(normalized, ["deny", "decline", "reject", "cancel"]) ->
-        "reject_once"
-
-      String.contains?(normalized, ["accept", "allow", "approve"]) ->
-        if String.contains?(normalized, ["session", "amendment", "grant"]),
-          do: "allow_always",
-          else: "allow_once"
-
-      true ->
-        "reject_once"
-    end
-  end
-
   defp legacy_review_decision(option_id) do
     cond do
       always_option?(option_id) -> "approved_for_session"
       allow_option?(option_id) -> "approved"
       String.contains?(to_string(option_id), "cancel") -> "abort"
       true -> "denied"
-    end
-  end
-
-  defp option_kind(option_id) do
-    cond do
-      always_option?(option_id) -> "allow_always"
-      allow_option?(option_id) -> "allow_once"
-      String.contains?(to_string(option_id), "always") -> "reject_always"
-      true -> "reject_once"
     end
   end
 

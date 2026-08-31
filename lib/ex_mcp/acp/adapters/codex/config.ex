@@ -6,25 +6,30 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
   @default_mode "agent"
   @default_reasoning_effort "medium"
 
+  @workspace_write_policy %{
+    "type" => "workspaceWrite",
+    "writableRoots" => [],
+    "networkAccess" => false,
+    "excludeTmpdirEnvVar" => false,
+    "excludeSlashTmp" => false
+  }
+
   @mode_profiles %{
     "read-only" => %{
       approval: "on-request",
-      sandbox: "read-only",
-      sandbox_policy: %{"type" => "readOnly", "networkAccess" => false}
+      approvals_reviewer: "user",
+      sandbox: "workspace-write",
+      sandbox_policy: @workspace_write_policy
     },
     "agent" => %{
       approval: "on-request",
+      approvals_reviewer: "auto_review",
       sandbox: "workspace-write",
-      sandbox_policy: %{
-        "type" => "workspaceWrite",
-        "writableRoots" => [],
-        "networkAccess" => false,
-        "excludeTmpdirEnvVar" => false,
-        "excludeSlashTmp" => false
-      }
+      sandbox_policy: @workspace_write_policy
     },
     "agent-full-access" => %{
       approval: "never",
+      approvals_reviewer: "user",
       sandbox: "danger-full-access",
       sandbox_policy: %{"type" => "dangerFullAccess"}
     }
@@ -51,19 +56,21 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
     [
       %{
         "id" => "read-only",
-        "name" => "Read-only",
-        "description" => "Requires approval to edit files and run commands."
+        "name" => "Ask for approval",
+        "description" => "Always ask to edit external files and use the internet",
+        "_meta" => %{"kind" => "standard"}
       },
       %{
         "id" => "agent",
-        "name" => "Agent",
-        "description" => "Read and edit files, and run commands."
+        "name" => "Approve for me",
+        "description" => "Only ask for actions detected as potentially unsafe",
+        "_meta" => %{"kind" => "auto_review"}
       },
       %{
         "id" => "agent-full-access",
-        "name" => "Agent (full access)",
-        "description" =>
-          "Codex can edit files outside this workspace and run commands with network access. Exercise caution when using."
+        "name" => "Full access",
+        "description" => "Unrestricted access to the internet and any file on your computer",
+        "_meta" => %{"kind" => "full_access"}
       }
     ]
   end
@@ -111,10 +118,11 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
       nil ->
         map
 
-      %{sandbox_policy: sandbox_policy, approval: approval} ->
+      %{sandbox_policy: sandbox_policy, approval: approval, approvals_reviewer: reviewer} ->
         map
         |> Map.put("sandboxPolicy", add_writable_roots(sandbox_policy, additional_directories))
         |> Map.put("approvalPolicy", approval)
+        |> Map.put("approvalsReviewer", reviewer)
     end
   end
 
@@ -137,15 +145,26 @@ defmodule ExMCP.ACP.Adapters.Codex.Config do
   end
 
   defp mode_id_from_settings(%{"sandboxPolicy" => %{"type" => "readOnly"}}), do: "read-only"
-  defp mode_id_from_settings(%{"sandboxPolicy" => %{"type" => "workspaceWrite"}}), do: "agent"
+
+  defp mode_id_from_settings(%{"sandboxPolicy" => %{"type" => "workspaceWrite"}} = settings) do
+    workspace_write_mode(settings["approvalsReviewer"])
+  end
 
   defp mode_id_from_settings(%{"sandboxPolicy" => %{"type" => "dangerFullAccess"}}),
     do: "agent-full-access"
 
   defp mode_id_from_settings(%{"sandbox" => "read-only"}), do: "read-only"
-  defp mode_id_from_settings(%{"sandbox" => "workspace-write"}), do: "agent"
+
+  defp mode_id_from_settings(%{"sandbox" => "workspace-write"} = settings) do
+    workspace_write_mode(settings["approvalsReviewer"])
+  end
+
   defp mode_id_from_settings(%{"sandbox" => "danger-full-access"}), do: "agent-full-access"
   defp mode_id_from_settings(_settings), do: nil
+
+  defp workspace_write_mode("user"), do: "read-only"
+  defp workspace_write_mode("auto_review"), do: "agent"
+  defp workspace_write_mode(_reviewer), do: "agent"
 
   defp add_writable_roots(%{"type" => "workspaceWrite"} = sandbox_policy, additional_directories) do
     roots =
