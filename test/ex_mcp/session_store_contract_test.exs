@@ -217,13 +217,18 @@ defmodule ExMCP.SessionStoreContractTest do
       store =
         SessionStoreContract.start_isolated!(
           session_ttl_seconds: 0,
-          cleanup_interval_ms: 50
+          cleanup_interval_ms: 60_000
         )
 
       session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
 
       {:ok, _event} =
         SessionStoreContract.append_event(store.name, session_id, "message", %{n: 1})
+
+      # TTL 0 expires on any later wall-clock sample; do not race the timer
+      # between create and append under coverage load.
+      Process.sleep(1)
+      send(store.pid, :cleanup_expired_sessions)
 
       assert_eventually(fn ->
         match?(
@@ -616,13 +621,18 @@ defmodule ExMCP.SessionStoreContractTest do
       store =
         SessionStoreContract.start_dets_isolated!(
           session_ttl_seconds: 0,
-          cleanup_interval_ms: 50
+          cleanup_interval_ms: 60_000
         )
 
       session_id = SessionStoreContract.create_session(store.name, %{transport: :sse})
 
       {:ok, _event} =
         SessionStoreContract.append_event(store.name, session_id, "message", %{n: 1})
+
+      # TTL 0 expires on any later wall-clock sample; do not race the timer
+      # between create and append under coverage load.
+      Process.sleep(1)
+      send(store.pid, :cleanup_expired_sessions)
 
       assert_eventually(fn ->
         match?(

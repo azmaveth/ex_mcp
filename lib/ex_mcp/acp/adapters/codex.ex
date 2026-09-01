@@ -3940,7 +3940,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp parse_command_decision(
-         %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}} = decision,
+         %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}} =
+           decision,
          params
        ) do
     host = amendment["host"]
@@ -4020,7 +4021,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp command_decision_option(
-         %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}} = decision,
+         %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}} =
+           decision,
          _params,
          network_index
        ) do
