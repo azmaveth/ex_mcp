@@ -989,7 +989,9 @@ defmodule ExMCP.HttpPlug do
   defp parsed_json_body(conn, _body_limit), do: {:ok, "", conn}
 
   defp encode_parsed_body(params, conn, body_limit) do
-    case Jason.encode(params) do
+    json_library = Application.get_env(:phoenix, :json_library, Jason)
+
+    case json_library.encode(params) do
       {:ok, body} when byte_size(body) <= body_limit -> {:ok, body, conn}
       {:ok, _body} -> {:error, :body_too_large}
       {:error, _reason} -> {:ok, "", conn}
