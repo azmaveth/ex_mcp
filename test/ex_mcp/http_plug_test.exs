@@ -42,6 +42,12 @@ defmodule ExMCP.HttpPlugTest do
     end
   end
 
+  defmodule PhoenixJsonLibrary do
+    def decode!(body), do: Jason.decode!(body)
+    def encode!(value), do: Jason.encode!(value)
+    def encode_to_iodata!(value), do: Jason.encode!(value)
+  end
+
   defmodule RequestAwareServer do
     use ExMCP.Server.Handler
 
@@ -1551,8 +1557,6 @@ defmodule ExMCP.HttpPlugTest do
       assert Map.has_key?(response["result"], "capabilities")
     end
 
-    # A Phoenix endpoint runs `Plug.Parsers` before the router, so a plug mounted in the
-    # router - the documented integration - only ever sees an already-drained body.
     test "handles a request whose body Plug.Parsers already consumed" do
       request = %{
         "jsonrpc" => "2.0",
@@ -1577,6 +1581,40 @@ defmodule ExMCP.HttpPlugTest do
       assert response["id"] == 1
       refute response["error"]
       assert Map.has_key?(response["result"], "protocolVersion")
+    end
+
+    test "uses Phoenix's configured JSON library for a parsed body" do
+      previous = Application.fetch_env(:phoenix, :json_library)
+      Application.put_env(:phoenix, :json_library, PhoenixJsonLibrary)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, library} -> Application.put_env(:phoenix, :json_library, library)
+          :error -> Application.delete_env(:phoenix, :json_library)
+        end
+      end)
+
+      request = %{"jsonrpc" => "2.0", "method" => "initialize", "id" => 1}
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 200
+    end
+
+    test "preserves a parsed JSON-RPC _json extension member" do
+      request = %{"jsonrpc" => "2.0", "method" => "initialize", "id" => 1, "_json" => true}
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 200
     end
 
     test "an empty body is still a parse error once parsers have run" do

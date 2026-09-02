@@ -961,19 +961,11 @@ defmodule ExMCP.HttpPlug do
     end
   end
 
-  # A `Plug.Parsers` mounted ahead of this plug - the default in a Phoenix endpoint, which
-  # runs it before the router - has already drained the body, so `read_body/2` yields "".
-  # The payload it decoded is still on the conn and is all this plug needs, since every
-  # caller turns the bytes straight back into that same map. Re-encoding it keeps those
-  # callers unchanged.
-  #
-  # Only a JSON request carrying a non-empty parsed object qualifies, so nothing else
-  # changes meaning: `%Plug.Conn.Unfetched{}` means no parser ran, a urlencoded or multipart
-  # map is not a JSON-RPC payload, and an empty body keeps failing exactly as before.
-
-  # Plug wraps a non-object JSON body (a top-level array, say) as `%{"_json" => value}`.
-  # Non-object envelopes are rejected anyway, so leave that to the existing error path.
-  defp parsed_json_body(%Plug.Conn{body_params: %{"_json" => _value}} = conn, _body_limit) do
+  defp parsed_json_body(
+         %Plug.Conn{body_params: %{"_json" => _value} = params} = conn,
+         _body_limit
+       )
+       when map_size(params) == 1 do
     {:ok, "", conn}
   end
 
@@ -991,10 +983,16 @@ defmodule ExMCP.HttpPlug do
   defp encode_parsed_body(params, conn, body_limit) do
     json_library = Application.get_env(:phoenix, :json_library, Jason)
 
-    case json_library.encode(params) do
-      {:ok, body} when byte_size(body) <= body_limit -> {:ok, body, conn}
-      {:ok, _body} -> {:error, :body_too_large}
-      {:error, _reason} -> {:ok, "", conn}
+    try do
+      body = json_library.encode_to_iodata!(params) |> IO.iodata_to_binary()
+
+      if byte_size(body) <= body_limit do
+        {:ok, body, conn}
+      else
+        {:error, :body_too_large}
+      end
+    rescue
+      _exception -> {:ok, "", conn}
     end
   end
 
