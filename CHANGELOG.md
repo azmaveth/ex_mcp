@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `HttpPlug` no longer answers `-32700 Parse error` when an upstream `Plug.Parsers` has already drained the request body, which is what the README's Phoenix router mount does on every stock endpoint. It now falls back to the payload Phoenix parsed (`conn.body_params`) for JSON requests carrying a non-empty object. An empty body, a non-JSON content type, and a `%{"_json" => ...}` wrapper (a top-level array) keep their previous behaviour, and `conn.assigns[:raw_body]` still takes precedence when set.
 - Circuit breaker elapsed-duration math uses injected monotonic `now_ms` from the process shell instead of reading wall time inside the core.
 
 ### Changed

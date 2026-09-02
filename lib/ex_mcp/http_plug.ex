@@ -954,9 +954,55 @@ defmodule ExMCP.HttpPlug do
     body_limit = Map.get(opts, :body_limit, 1_000_000)
 
     case read_body(conn, length: body_limit, read_length: body_limit) do
+      {:ok, "", conn} -> parsed_json_body(conn, body_limit)
       {:ok, body, conn} -> {:ok, body, conn}
       {:more, _partial, _conn} -> {:error, :body_too_large}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp parsed_json_body(
+         %Plug.Conn{body_params: %{"_json" => _value} = params} = conn,
+         _body_limit
+       )
+       when map_size(params) == 1 do
+    {:ok, "", conn}
+  end
+
+  defp parsed_json_body(%Plug.Conn{body_params: params} = conn, body_limit)
+       when is_map(params) and not is_struct(params) and map_size(params) > 0 do
+    if json_request?(conn) do
+      encode_parsed_body(params, conn, body_limit)
+    else
+      {:ok, "", conn}
+    end
+  end
+
+  defp parsed_json_body(conn, _body_limit), do: {:ok, "", conn}
+
+  defp encode_parsed_body(params, conn, body_limit) do
+    json_library = Application.get_env(:phoenix, :json_library, Jason)
+
+    try do
+      body = json_library.encode_to_iodata!(params) |> IO.iodata_to_binary()
+
+      if byte_size(body) <= body_limit do
+        {:ok, body, conn}
+      else
+        {:error, :body_too_large}
+      end
+    rescue
+      _exception -> {:ok, "", conn}
+    end
+  end
+
+  defp json_request?(conn) do
+    case Plug.Conn.Utils.content_type(List.first(get_req_header(conn, "content-type"), "")) do
+      {:ok, "application", subtype, _params} ->
+        subtype == "json" or String.ends_with?(subtype, "+json")
+
+      _other ->
+        false
     end
   end
 
