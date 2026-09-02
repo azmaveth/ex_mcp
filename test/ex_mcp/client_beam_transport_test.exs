@@ -280,14 +280,8 @@ defmodule ExMCP.ClientBeamTransportTest do
     end
   end
 
-  defp stop_if_alive(pid) when is_pid(pid) do
-    # Elixir 1.20 deprecates the implicit try form for catch.
-    # credo:disable-for-next-line Credo.Check.Readability.PreferImplicitTry
-    try do
-      if Process.alive?(pid), do: GenServer.stop(pid)
-    catch
-      :exit, :noproc -> :ok
-      :exit, {:noproc, _} -> :ok
-    end
-  end
+  # The server is linked to the test process, so it can already be shutting
+  # down when on_exit runs; `safe_stop_process/1` swallows every exit reason,
+  # not only :noproc.
+  defp stop_if_alive(pid) when is_pid(pid), do: ExMCP.TestHelpers.safe_stop_process(pid)
 end

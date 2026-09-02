@@ -84,7 +84,7 @@ defmodule ExMCP.Integration.MRTRRoundTripTest do
         request_state: [active_key_id: "integration", keys: %{"integration" => @key}]
       )
 
-    on_exit(fn -> if Process.alive?(server), do: GenServer.stop(server) end)
+    on_exit(fn -> ExMCP.TestHelpers.safe_stop_process(server) end)
 
     {:ok, client} =
       Client.start_link(
