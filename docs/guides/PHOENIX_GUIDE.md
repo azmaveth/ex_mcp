@@ -197,6 +197,13 @@ defmodule MyAppWeb.Router do
 end
 ```
 
+`ExMCP.HttpPlug` routes relative to its mount point and halts the conn after
+responding, so `forward` is the right way to mount it. Bodies already consumed
+by the endpoint's `Plug.Parsers` are picked up from `conn.body_params`. One
+thing a forward cannot provide is the host-root RFC 9728 metadata path,
+`/.well-known/oauth-protected-resource/api/mcp`: when you enable OAuth, mount
+`ExMCP.Plugs.ProtectedResourceMetadata` at the host root for it.
+
 `:prefer_modern` accepts both MCP eras and advertises `2026-07-28`, the latest
 stable revision, first. Use `:modern_only` only when every client is modern;
 use `:legacy_only` as a rollback switch. The curl request below deliberately

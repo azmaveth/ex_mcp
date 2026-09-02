@@ -1,7 +1,17 @@
 if Code.ensure_loaded?(Plug) do
   defmodule ExMCP.Transport.HTTPServer do
+    @moduledoc deprecated:
+                 "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServer will be removed in 2.0.0."
     @moduledoc """
       HTTP server transport for MCP with security and CORS support.
+
+      > #### Deprecated {: .error}
+      >
+      > This module is deprecated and will be removed in 2.0.0. It reads the
+      > request body itself, so it cannot run behind `Plug.Parsers` (every POST
+      > forwarded from a stock Phoenix router fails with "Invalid JSON"), its
+      > SSE route only matches at the host root, and its `initialize` response
+      > is canned. Use `ExMCP.HttpPlug`, which handles all of these.
 
       This module provides a Plug-compatible HTTP server that handles MCP requests
       with comprehensive security features including:
@@ -71,10 +81,12 @@ if Code.ensure_loaded?(Plug) do
 
     @behaviour Plug
 
+    @deprecated "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServer will be removed in 2.0.0."
     @doc """
     Initializes the HTTP server with configuration.
     """
     def init(opts) do
+      warn_deprecated()
       handler = Keyword.fetch!(opts, :handler)
       security_config = Keyword.get(opts, :security, %{})
 
@@ -96,6 +108,7 @@ if Code.ensure_loaded?(Plug) do
       }
     end
 
+    @deprecated "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServer will be removed in 2.0.0."
     @doc """
     Handles HTTP requests for MCP.
     """
@@ -367,6 +380,19 @@ if Code.ensure_loaded?(Plug) do
         {:error, reason} ->
           Logger.error("JSON encoding error: #{inspect(reason)}")
           send_resp(conn, 500, "Internal server error")
+      end
+    end
+
+    # Phoenix `forward` calls `init/1` on every request, so warn once per VM
+    # rather than once per request.
+    defp warn_deprecated do
+      unless :persistent_term.get({__MODULE__, :deprecation_warned}, false) do
+        :persistent_term.put({__MODULE__, :deprecation_warned}, true)
+
+        Logger.warning(
+          "ExMCP.Transport.HTTPServer is deprecated and will be removed in 2.0.0. " <>
+            "Use ExMCP.HttpPlug instead."
+        )
       end
     end
   end

@@ -32,10 +32,22 @@ defmodule ExMCP.HttpPlug do
         server_info: %{name: "my-app", version: "1.0.0"}
       ], port: 4000)
 
-      # With Phoenix
-      plug ExMCP.HttpPlug,
-        handler: MyApp.MCPServer,
-        server_info: %{name: "my-app", version: "1.0.0"}
+      # With Phoenix (router)
+      scope "/api" do
+        forward "/mcp", ExMCP.HttpPlug,
+          handler: MyApp.MCPServer,
+          server_info: %{name: "my-app", version: "1.0.0"}
+      end
+
+  The plug answers every request it receives and halts the connection
+  afterwards, so mount it with `forward` (or behind your own path match when
+  placing it directly in an endpoint) rather than as an unconditional endpoint
+  plug. Routing is relative to the mount point: the MCP endpoint is the mount
+  root, and the RFC 9728 `/.well-known/oauth-protected-resource` metadata is
+  served under the mount. A router forward at `/api/mcp` therefore never sees
+  the host-root form that clients fetch
+  (`/.well-known/oauth-protected-resource/api/mcp`); mount
+  `ExMCP.Plugs.ProtectedResourceMetadata` at the host root to serve it.
 
   ## OAuth 2.1 Integration
 
@@ -293,11 +305,18 @@ defmodule ExMCP.HttpPlug do
   """
   @impl Plug
   def call(conn, opts) do
-    if request_host_allowed?(conn, opts) do
-      dispatch(conn, opts)
-    else
-      reject_disallowed_host(conn, opts)
-    end
+    conn =
+      if request_host_allowed?(conn, opts) do
+        dispatch(conn, opts)
+      else
+        reject_disallowed_host(conn, opts)
+      end
+
+    # The plug owns the response for every request it receives, so stop the
+    # pipeline here. Under a Phoenix/Plug `forward` this is a no-op; when the
+    # plug is placed directly in an endpoint it keeps the router from running
+    # against an already-sent conn.
+    halt(conn)
   end
 
   defp dispatch(conn, opts) do
@@ -321,10 +340,19 @@ defmodule ExMCP.HttpPlug do
   end
 
   defp modern_only_disallowed_method?(conn, %{protocol_mode: :modern_only} = opts) do
-    conn.method in ["GET", "DELETE"] and conn.request_path == opts.endpoint
+    conn.method in ["GET", "DELETE"] and mcp_endpoint_path?(conn, opts)
   end
 
   defp modern_only_disallowed_method?(_conn, _opts), do: false
+
+  # The MCP endpoint is the plug's mount root. `path_info` is relative to the
+  # mount (Phoenix and Plug.Router `forward` strip the prefix into
+  # `script_name`), so this holds wherever the plug is mounted. The `:path`
+  # option is still honoured for plugs placed directly in an endpoint, where
+  # nothing strips the prefix.
+  defp mcp_endpoint_path?(conn, opts) do
+    conn.path_info == [] or conn.path_info == split_path(opts.endpoint)
+  end
 
   defp do_dispatch("OPTIONS", _path, conn, opts) do
     Logger.debug("HttpPlug: OPTIONS request")
