@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-02
+
 ### Added
 
 - Claude Code `tools: []` now passes `--tools ""` so the CLI disables built-in tools. Empty allow/deny lists still mean no opinion.
