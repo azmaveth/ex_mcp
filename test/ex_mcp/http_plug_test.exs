@@ -1139,6 +1139,50 @@ defmodule ExMCP.HttpPlugTest do
       assert delete_conn.status == 405
       assert get_resp_header(get_conn, "allow") == ["POST"]
     end
+
+    test "rejects GET and DELETE at the mount root behind a router forward" do
+      opts = HttpPlug.init(handler: TestServer, protocol_mode: :modern_only)
+
+      # Phoenix `scope "/api/mcp" do forward "/", ExMCP.HttpPlug` strips the
+      # prefix into script_name and leaves an empty path_info.
+      forwarded = fn conn ->
+        %{conn | script_name: ["api", "mcp"], path_info: []}
+      end
+
+      get_conn =
+        conn(:get, "/api/mcp")
+        |> put_req_header("accept", "text/event-stream")
+        |> forwarded.()
+        |> HttpPlug.call(opts)
+
+      delete_conn =
+        conn(:delete, "/api/mcp")
+        |> put_req_header("mcp-session-id", "legacy-session")
+        |> forwarded.()
+        |> HttpPlug.call(opts)
+
+      assert get_conn.status == 405
+      assert delete_conn.status == 405
+      assert get_resp_header(get_conn, "allow") == ["POST"]
+    end
+  end
+
+  describe "pipeline termination" do
+    test "halts the conn after responding" do
+      opts = HttpPlug.init(handler: TestServer, sse_enabled: false)
+
+      post_conn =
+        conn(:post, "/", Jason.encode!(%{"jsonrpc" => "2.0", "method" => "ping", "id" => 1}))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(opts)
+
+      get_conn = conn(:get, "/") |> HttpPlug.call(opts)
+
+      assert post_conn.state == :sent
+      assert post_conn.halted
+      assert get_conn.state == :sent
+      assert get_conn.halted
+    end
   end
 
   describe "MCP POST requests" do

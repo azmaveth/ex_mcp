@@ -18,8 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `HttpPlug` rejects `GET`/`DELETE` in `:modern_only` mode with `405` at its mount root wherever it is mounted. The check compared the absolute request path with the `:path` option (default `/mcp`), so a router `forward` at any other prefix (the README's `/api/mcp` mount) answered `404` and `400` instead.
+- `HttpPlug` halts the conn after responding, as a terminal plug should. Mounting it directly in an endpoint no longer needs a manual `halt/1`.
 - `HttpPlug` no longer answers `-32700 Parse error` when an upstream `Plug.Parsers` has already drained the request body, which is what the README's Phoenix router mount does on every stock endpoint. It now falls back to the payload Phoenix parsed (`conn.body_params`) for JSON requests carrying a non-empty object. An empty body, a non-JSON content type, and a `%{"_json" => ...}` wrapper (a top-level array) keep their previous behaviour, and `conn.assigns[:raw_body]` still takes precedence when set.
 - Circuit breaker elapsed-duration math uses injected monotonic `now_ms` from the process shell instead of reading wall time inside the core.
+
+### Deprecated
+
+- `ExMCP.Transport.HTTPServer` and `ExMCP.Transport.HTTPServerWithVersion`, the simplified example transport. It reads the body itself and so fails behind `Plug.Parsers`, matches its SSE route only at the host root, and returns a canned `initialize`. Use `ExMCP.HttpPlug`. Both modules log a one-time warning and will be removed in 2.0.0.
 
 ### Changed
 

@@ -1,6 +1,14 @@
 defmodule ExMCP.Transport.HTTPServerWithVersion do
+  @moduledoc deprecated:
+               "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServerWithVersion will be removed in 2.0.0."
   @moduledoc """
   Example HTTP server configuration that includes protocol version validation.
+
+  > #### Deprecated {: .error}
+  >
+  > This module wraps the deprecated `ExMCP.Transport.HTTPServer` and will be
+  > removed in 2.0.0. `ExMCP.HttpPlug` validates the protocol version itself;
+  > use it directly.
 
   This module demonstrates how to integrate the protocol version plug
   with the existing HTTP server transport.
@@ -35,6 +43,7 @@ defmodule ExMCP.Transport.HTTPServerWithVersion do
 
   @behaviour Plug
 
+  @deprecated "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServerWithVersion will be removed in 2.0.0."
   @doc """
   Initialize with HTTPServer options.
   """
@@ -43,6 +52,7 @@ defmodule ExMCP.Transport.HTTPServerWithVersion do
     opts
   end
 
+  @deprecated "Use ExMCP.HttpPlug instead. ExMCP.Transport.HTTPServerWithVersion will be removed in 2.0.0."
   @doc """
   Call implementation that forwards to HTTPServer after protocol validation.
   """
@@ -53,7 +63,11 @@ defmodule ExMCP.Transport.HTTPServerWithVersion do
     if conn.halted do
       conn
     else
-      HTTPServer.call(conn, HTTPServer.init(opts))
+      # Both modules are deprecated together; go through apply/3 so this
+      # wrapper does not itself trip the deprecation warning under
+      # --warnings-as-errors.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(HTTPServer, :call, [conn, apply(HTTPServer, :init, [opts])])
     end
   end
 end
