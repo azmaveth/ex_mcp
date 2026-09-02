@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-02
+
 ### Added
 
 - Claude Code `tools: []` now passes `--tools ""` so the CLI disables built-in tools. Empty allow/deny lists still mean no opinion.
@@ -29,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- ACP reference pins advanced to Claude Agent ACP `7c66108` and Codex ACP `4823131`. The Codex 1.7.0 permission/mode parity below is ported; the later upstream changes the pins now cover (Claude stable mode catalog with `_meta.kind` and Auto-mode fallback, per-model token usage, deferred steering, native subagents/async tasks, and session forks; Codex native subagent sessions, session forks, and session title generation) are not yet implemented and are tracked in `docs/POST_1_0_MAINTENANCE_PLAN.md` as pending parity decisions.
 - Codex ACP adapter 1.7.0 permission/mode parity: `approvalsReviewer`, mode `_meta.kind`, and TS permission presentation.
 - Extracted `ExMCP.ACP.Adapters.Codex.Protocol` for native app-server envelopes, method names, response classification, and request-id correlation.
 - Extracted `ExMCP.ACP.Adapters.Pi.RPC` for native RPC envelopes, correlation ids, and response classification.

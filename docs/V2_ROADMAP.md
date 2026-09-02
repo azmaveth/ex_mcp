@@ -2,7 +2,7 @@
 
 - **Status:** Living roadmap — Phase 0 complete; Phase 1 contract design is next
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
-- **Last updated:** 2026-08-22
+- **Last updated:** 2026-09-02
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
@@ -348,6 +348,9 @@ Planned removals include:
 
 - `ExMCP.Server.Tools`, `Tools.Simplified`, and their companion modules after
   the DSL migration path is verified;
+- `ExMCP.Transport.HTTPServer` and `ExMCP.Transport.HTTPServerWithVersion`, the
+  simplified example transport deprecated in 1.2.0 in favour of
+  `ExMCP.HttpPlug`;
 - deprecated image transformation stubs that are outside MCP/ACP scope;
 - retained aliases and compatibility functions that have a documented 2.0
   replacement; and
@@ -409,7 +412,10 @@ another 1.x RC or document a patch-level correctness/security exception.
 | Correct bounded replay-buffer retention | Released in `1.0.0` | Correctness fix with regression coverage. |
 | Documentation, examples, diagnostics, and characterization tests | Backport | No runtime compatibility cost. |
 | Additive dispatch telemetry | Eligible for a 1.x minor | Preserve existing events; bounded metadata only; payload capture opt-in. |
-| Store adapter seam | Possible later 1.x minor | Only after a standalone store ADR and contract suite are accepted; the design need not wait for 2.0 runtime implementation. ETS must remain the default and current behavior unchanged. |
+| Store adapter seam | Released in `1.2.0` | The standalone store ADR and ETS contract suite were accepted first. `SessionManager` dispatches through an internal `SessionStore` seam with an opt-in DETS backend; ETS remains the default and existing behavior is unchanged. |
+| Circuit breaker monotonic clock injection | Released in `1.2.0` | Characterized correctness fix; timeout and telemetry behavior preserved. |
+| Explicit client protocol-version query replacing `$initial_call` | Released in `1.2.0` | Identical results for every supported client entry point. |
+| `HttpPlug` body fallback, mount-independent routing, and terminal halt | Released in `1.2.0` | Documented bug fixes with regression tests; no wire change. |
 | Internal dispatch deduplication | Case by case | Backport only when golden tests prove identical wire, errors, ordering, and lifecycle. |
 | Richer DSL constraints | Hold for 2.0 | Additive, but expands the stable public language before its design is settled. |
 | Result facade and client lifecycle helpers | Hold for 2.0 | Technically additive, but would create parallel APIs and long-term support obligations. |

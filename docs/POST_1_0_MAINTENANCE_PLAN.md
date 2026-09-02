@@ -1,11 +1,12 @@
 # Post-1.0 Maintenance Plan
 
-- **Status:** Stable 1.0 packaging work complete; larger maintenance items remain
+- **Status:** Stable 1.0 packaging and the focused contract cleanup are
+  complete; adapter modularization and functional-core extraction remain
   proposed and tracked
 - **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-08-22
+- **Last updated:** 2026-09-02
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
@@ -205,6 +206,32 @@ chosen explicitly before changing code:
 | Client capability detection | Resource operations inspect the process dictionary's `$initial_call` to infer a modern client. | Replace the heuristic with an explicit internal connection-info or capability query. | Eligible for 1.x only with identical results for all supported client entry points. |
 | Ambient inputs | Several paths read application/system environment, current directory, time, or generate IDs inside decision code. | Normalize configuration once at startup and pass resolved values into cores. | Internal injection is eligible for 1.x if precedence and generated wire values remain identical; precedence changes are 2.0-only. |
 
+### Status as of 2026-09-02
+
+Each row above was resolved on `master` after 1.1.1 and ships in 1.2.0 unless
+noted:
+
+- **Circuit breaker clocks:** resolved. `CircuitBreaker.Core` receives an
+  injected monotonic `now_ms` from the process shell and no longer reads wall
+  time for elapsed durations.
+- **Session storage option:** resolved as a contract plus adapter. A standalone
+  1.x store-adapter ADR and ETS-only contract suite were accepted,
+  `SessionManager` dispatches through an internal `SessionStore` seam, an
+  opt-in DETS backend (`storage_backend: :dets` with `:storage_path`) is
+  available, and `:persistent_term` remains accepted with a warning that it
+  uses ETS. ETS is still the default and its restart-empty behavior is
+  unchanged.
+- **Client fallback:** resolved as a documentation correction. `ExMCP.connect/2`
+  now documents that only the first spec of a list is used; the list form stays
+  accepted throughout 1.x.
+- **Stdio logging:** the VM-global hazard is documented for 1.x. Replacing the
+  behavior remains a 2.0 item.
+- **Client capability detection:** resolved. Resource subscribe/unsubscribe
+  decide modern versus legacy from `Client.get_status` protocol version behind
+  an explicit Client process marker; `$initial_call` is no longer inspected.
+- **Ambient inputs:** open. The clock injection above is the first instance;
+  remaining reads are handled case by case under the same 1.x rule.
+
 ## Dependency-direction cleanup
 
 At commit `4591af6`, `mix xref graph --format stats` reports eight dependency
@@ -360,6 +387,30 @@ These are genuine unreleased behavior changes rather than repository-move
 noise. Keeping the reviewed commits pinned makes the scheduled drift check
 continue to report the work until parity is deliberately accepted or ported.
 
+### 2026-09-01 pin refresh and remaining parity decisions
+
+The manifest was subsequently advanced to Claude Agent ACP
+`7c6610835f26f18cd162b78dff74a7b7cd74497a` and Codex ACP
+`4823131475b3b0d996ccc305e49dcf9fdaa6ee52`; Pi ACP is unchanged. The Codex
+1.7.0 permission and mode parity work (`approvalsReviewer`, mode `_meta.kind`,
+and TypeScript-style permission presentation) is ported with tests and covers
+the two Codex commits listed above. The pins now lead the reviewed behavior,
+so the drift check no longer reports the following upstream changes; each
+still needs an explicit parity decision and, where accepted, characterized
+adapter work before it is claimed as supported:
+
+- Claude `caf609b` stable mode catalog with `_meta.kind` and the Auto-mode
+  fallback to Accept edits with a client-visible warning;
+- Claude per-model token usage on prompt responses, deferred steering while
+  user input is pending, native subagents and async tasks, and
+  message-specific ACP session forks;
+- Codex native ACP subagent sessions, ACP session forks, and AI session title
+  generation with a `/rename` command.
+
+Record the decision for each item here before the next pin refresh; a pin
+that leads the reviewed behavior must not be advanced again until this list is
+resolved.
+
 ## ACP v1 completion and v2 monitoring
 
 The July 2026 stable ACP v1 additions are represented in the runtime and
@@ -393,11 +444,14 @@ existing, disabled-by-default Codex legacy compatibility option.
 2. Qualify and publish rc.8, then run the fresh final-candidate soak. **Complete.**
 3. Release stable 1.0 with no adapter decomposition mixed into the release diff. **Complete.**
 4. Resolve the focused contract mismatches as small correctness or documentation
-   changes.
+   changes. **Complete for the 1.x lane** (see the status list above); ambient
+   input injection continues case by case.
 5. Extract the shared HTTP reducer and the smallest high-value functional cores
    behind characterization tests.
-6. Modularize Codex one characterized boundary at a time.
-7. Modularize Pi one characterized boundary at a time.
+6. Modularize Codex one characterized boundary at a time. `Codex.Protocol` is
+   extracted; `Sessions`, `Permissions`, `Content`, and `MCP` remain.
+7. Modularize Pi one characterized boundary at a time. `Pi.RPC` is extracted;
+   `Sessions`, `Events`, `PromptFlow`, and `Config` remain.
 8. Reduce dependency cycles without changing public or lifecycle semantics.
 9. Re-evaluate shared app-server pieces while preparing the post-1.0 ZCode
    adapter; keep vendor-specific protocol semantics separate by default.
