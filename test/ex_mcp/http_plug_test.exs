@@ -1551,6 +1551,45 @@ defmodule ExMCP.HttpPlugTest do
       assert Map.has_key?(response["result"], "capabilities")
     end
 
+    # A Phoenix endpoint runs `Plug.Parsers` before the router, so a plug mounted in the
+    # router - the documented integration - only ever sees an already-drained body.
+    test "handles a request whose body Plug.Parsers already consumed" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2025-06-18",
+          "capabilities" => %{},
+          "clientInfo" => %{name: "test-client", version: "1.0.0"}
+        },
+        "id" => 1
+      }
+
+      conn =
+        conn(:post, "/", Jason.encode!(request))
+        |> put_req_header("content-type", "application/json")
+        |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      assert conn.status == 200
+
+      {:ok, response} = Jason.decode(conn.resp_body)
+      assert response["id"] == 1
+      refute response["error"]
+      assert Map.has_key?(response["result"], "protocolVersion")
+    end
+
+    test "an empty body is still a parse error once parsers have run" do
+      conn =
+        conn(:post, "/", "")
+        |> put_req_header("content-type", "application/json")
+        |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
+        |> HttpPlug.call(HttpPlug.init(handler: TestServer, sse_enabled: false))
+
+      {:ok, response} = Jason.decode(conn.resp_body)
+      assert response["error"]["code"] == -32_700
+    end
+
     test "handles tools/list request" do
       request = %{
         "jsonrpc" => "2.0",

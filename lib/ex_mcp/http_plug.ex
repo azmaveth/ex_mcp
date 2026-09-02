@@ -954,9 +954,55 @@ defmodule ExMCP.HttpPlug do
     body_limit = Map.get(opts, :body_limit, 1_000_000)
 
     case read_body(conn, length: body_limit, read_length: body_limit) do
+      {:ok, "", conn} -> parsed_json_body(conn, body_limit)
       {:ok, body, conn} -> {:ok, body, conn}
       {:more, _partial, _conn} -> {:error, :body_too_large}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # A `Plug.Parsers` mounted ahead of this plug - the default in a Phoenix endpoint, which
+  # runs it before the router - has already drained the body, so `read_body/2` yields "".
+  # The payload it decoded is still on the conn and is all this plug needs, since every
+  # caller turns the bytes straight back into that same map. Re-encoding it keeps those
+  # callers unchanged.
+  #
+  # Only a JSON request carrying a non-empty parsed object qualifies, so nothing else
+  # changes meaning: `%Plug.Conn.Unfetched{}` means no parser ran, a urlencoded or multipart
+  # map is not a JSON-RPC payload, and an empty body keeps failing exactly as before.
+
+  # Plug wraps a non-object JSON body (a top-level array, say) as `%{"_json" => value}`.
+  # Non-object envelopes are rejected anyway, so leave that to the existing error path.
+  defp parsed_json_body(%Plug.Conn{body_params: %{"_json" => _value}} = conn, _body_limit) do
+    {:ok, "", conn}
+  end
+
+  defp parsed_json_body(%Plug.Conn{body_params: params} = conn, body_limit)
+       when is_map(params) and not is_struct(params) and map_size(params) > 0 do
+    if json_request?(conn) do
+      encode_parsed_body(params, conn, body_limit)
+    else
+      {:ok, "", conn}
+    end
+  end
+
+  defp parsed_json_body(conn, _body_limit), do: {:ok, "", conn}
+
+  defp encode_parsed_body(params, conn, body_limit) do
+    case Jason.encode(params) do
+      {:ok, body} when byte_size(body) <= body_limit -> {:ok, body, conn}
+      {:ok, _body} -> {:error, :body_too_large}
+      {:error, _reason} -> {:ok, "", conn}
+    end
+  end
+
+  defp json_request?(conn) do
+    case Plug.Conn.Utils.content_type(List.first(get_req_header(conn, "content-type"), "")) do
+      {:ok, "application", subtype, _params} ->
+        subtype == "json" or String.ends_with?(subtype, "+json")
+
+      _other ->
+        false
     end
   end
 
