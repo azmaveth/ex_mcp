@@ -756,8 +756,6 @@ defmodule ConformanceRouter do
 
   @impl true
   def call(conn, _opts) do
-    SSESession.init()
-
     # DNS rebinding protection
     conn = DnsRebinding.call(conn, DnsRebinding.init([]))
     if conn.halted, do: conn, else: route(conn)
@@ -1183,6 +1181,11 @@ end
 
 port = String.to_integer(List.first(System.argv(), "3001"))
 IO.puts("Starting ExMCP conformance server on port #{port}...")
+
+# Create the SSE session table once, owned by this long-lived script process.
+# Creating it lazily from request processes raced concurrent first requests
+# (server-sse-multiple-streams) and tied the table's life to a single request.
+ExMCP.Server.SSESession.init()
 
 children = [{Plug.Cowboy, scheme: :http, plug: ConformanceRouter, options: [port: port]}]
 {:ok, _} = Supervisor.start_link(children, strategy: :one_for_one)

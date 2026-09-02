@@ -34,11 +34,28 @@ defmodule ExMCP.Server.SSESession do
   @default_wait_for_stream 3_000
   @wait_poll_ms 25
 
-  @doc "Initialize the session ETS table."
+  @doc """
+  Initialize the session ETS table.
+
+  Idempotent and safe to call concurrently: the first caller creates the table
+  and every other caller, including one that races the creator, is a no-op.
+  The table is owned by the process that creates it, so call this once from a
+  long-lived process such as the server's startup code, not from a
+  per-request process whose exit would drop the table.
+  """
   @spec init() :: :ok
   def init do
-    if :ets.info(@ets_table) == :undefined do
-      :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
+    if :ets.whereis(@ets_table) == :undefined do
+      try do
+        :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
+      rescue
+        error in ArgumentError ->
+          # Another process created the table between the check and
+          # `:ets.new/2`. Anything else is a real error.
+          if :ets.whereis(@ets_table) == :undefined do
+            reraise error, __STACKTRACE__
+          end
+      end
     end
 
     :ok
