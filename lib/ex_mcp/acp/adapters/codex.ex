@@ -2409,11 +2409,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
   # them, trust the stream: repeating the whole message is the duplication this
   # guards against, and the accumulator already holds what the client saw.
   defp unstreamed_text(text, streamed) do
-    size = byte_size(streamed)
-
-    case text do
-      <<^streamed::binary-size(size), rest::binary>> -> rest
-      _ -> ""
+    if String.starts_with?(text, streamed) do
+      binary_part(text, byte_size(streamed), byte_size(text) - byte_size(streamed))
+    else
+      ""
     end
   end
 
