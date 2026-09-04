@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Tracked Cowlib CVE-2026-43971 / `EEF-CVE-2026-43971` (#18). The lock still
+  resolves `cowlib` **2.19.0** through `plug_cowboy` → `cowboy`. Hex and the
+  upstream `2.19.0` tag have no patched release; a git pin of cowlib `master`
+  is not a safe Hex-package workaround. See the Security guide and GitHub #18.
+
 ## [1.2.0] - 2026-09-02
 
 ### Added

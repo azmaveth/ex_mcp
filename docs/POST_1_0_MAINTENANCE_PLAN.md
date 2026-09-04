@@ -6,7 +6,7 @@
 - **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-09-02
+- **Last updated:** 2026-09-04
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
@@ -435,6 +435,47 @@ contract enter the specification; until then, vendor-native compaction events
 remain adapter details rather than claims of protocol-level support. The
 removed experimental `env_var` auth variant remains available only through the
 existing, disabled-by-default Codex legacy compatibility option.
+
+## Cowlib CVE-2026-43971 tracking
+
+GitHub [#18](https://github.com/azmaveth/ex_mcp/issues/18) and Linear
+[AZM-5](https://linear.app/azmaveth/issue/AZM-5/ex-mcp-p0-track-cowlib-cve-2026-43971-github-18)
+track the Hex advisory that currently fails `mix hex.audit` in downstream
+root projects. Rechecked **2026-09-04**. Do not close those issues until a
+patched Cowlib is on Hex and a fresh downstream resolution passes
+`mix hex.audit` with the ExMCP exception removed.
+
+| Item | Status on 2026-09-04 |
+|---|---|
+| Locked version | `cowlib` **2.19.0** in `mix.lock` (`6dc66e3135b229193ea4dcb14294e79520c923d391315c9c962ef0b4bea72356`) |
+| How it enters the tree | Transitive only: `ex_mcp` → `plug_cowboy 2.9.0` → `cowboy 2.18.0` → `cowlib >= 2.19.0 and < 3.0.0`. ExMCP does not depend on or call cowlib APIs. |
+| Latest Hex / GitHub tag | Still **2.19.0** (Hex `updated_at` 2026-07-28). No `2.19.1` / `2.20.0`. Cowboy latest is **2.18.0**; `plug_cowboy` latest is **2.9.0**. |
+| Advisory | [GHSA-gg23-fwhr-prjh](https://github.com/advisories/GHSA-gg23-fwhr-prjh) / [EEF-CVE-2026-43971](https://osv.dev/vulnerability/EEF-CVE-2026-43971). Affects cowlib `>= 2.9.0` including **2.19.0**. No `first_patched_version`. |
+| Upstream fix | Merged on cowlib `master` as [`89da27ee`](https://github.com/ninenines/cowlib/commit/89da27ee4c241f5d649ba7d9b7f2188918af6cea) (2026-08-18). `master` is 8 commits ahead of `2.19.0` and also requires OTP 27+ and changes HPACK, header parsing, cookies, and SSE. |
+| Safe pin in this repo? | **No.** A git/path override does not publish on Hex and does not change downstream resolution. Pinning `master` would pull unrelated HTTP-stack changes and would not make `jido_mcp` (or any other root project) pass `mix hex.audit`. |
+
+Local mitigation stays as already shipped: the exact `EEF-CVE-2026-43971`
+name in `mix.exs` `hex.ignore_advisories`, plus
+`test/ex_mcp/security/dependency_advisory_mitigation_test.exs` which asserts
+that the ExMCP / Plug / Plug Cowboy / Cowboy server path does not import
+`cow_link:link/1`. That exception is ExMCP-local. It does not suppress the
+advisory for consumers. Do not add ignore rules, skip tags, or scanner
+disables to paper over this CVE.
+
+**Next action:** wait for a Hex Cowlib that contains `89da27ee` (or
+equivalent). Then bump the lock, remove `EEF-CVE-2026-43971` from
+`ignore_advisories`, keep the import regression test until the new version is
+proven, and close #18 / AZM-5 only after a fresh downstream `mix hex.audit`
+passes. The named-exception review deadline remains **2026-09-12**.
+
+Downstream applications that need the patched encoder before Hex publishes
+can override in *their* root `mix.exs`:
+
+```elixir
+{:cowlib, github: "ninenines/cowlib", override: true}
+```
+
+That is an application-level choice, not something ExMCP can ship.
 
 ## Execution order
 
