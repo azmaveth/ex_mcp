@@ -1315,7 +1315,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     messages =
       if session[:active_prompt_acp_id] do
         response =
-          case capacity_failure(session, text) do
+          case turn_failure(turn, params, session) || capacity_failure(session, text) do
             {:error, error} ->
               Envelope.error(session[:active_prompt_acp_id], error)
 
@@ -1349,6 +1349,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         |> Map.put(:accumulated_usage, nil)
         |> Map.put(:turn_id, nil)
         |> Map.put(:active_prompt_acp_id, nil)
+        |> Map.put(:last_error, nil)
       end)
 
     {:messages, Enum.reverse(messages), state}
@@ -1388,6 +1389,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_notification("error", params, state) do
     session_id = Sessions.id_from_params(params, state)
     error = params["error"] || %{}
+
+    # Remember the error for the turn: app-server reports transport and quota
+    # failures (401, usageLimitExceeded) as `error` notifications followed by a
+    # `turn/completed` whose turn is `failed`. The prompt must then fail with
+    # this message instead of resolving as an empty `end_turn` response.
+    state =
+      Sessions.update(state, session_id, fn session ->
+        Map.put(session, :last_error, error)
+      end)
 
     notification =
       AdapterEvents.session_info_update(session_id, %{
@@ -2205,9 +2215,34 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_item_completed(session_id, %{"type" => "agent_message"} = item, state) do
     text = item["text"] || item["message"] || ""
+    session = Map.get(state.sessions, session_id, %{})
+
+    streamed =
+      session
+      |> Map.get(:accumulated_text, [])
+      |> Enum.reverse()
+      |> IO.iodata_to_binary()
+
+    # app-server streams the message through `item/agentMessage/delta` and then
+    # repeats the full text on `item/completed`. Emit only what has not been
+    # streamed yet so chunk consumers do not see the text twice, and fold that
+    # remainder into the accumulator so the prompt's `_meta.text` matches the
+    # stream even when no deltas were sent at all.
+    remainder = unstreamed_text(text, streamed)
+
+    state =
+      if remainder == "" do
+        state
+      else
+        Sessions.update(state, session_id, fn session ->
+          Map.update(session, :accumulated_text, [remainder], &[remainder | &1])
+        end)
+      end
 
     notification =
-      AdapterEvents.agent_message_chunk(session_id, text, meta: %{"ex_mcp" => %{"final" => true}})
+      AdapterEvents.agent_message_chunk(session_id, remainder,
+        meta: %{"ex_mcp" => %{"final" => true}}
+      )
 
     {:messages, [notification], state}
   end
@@ -2364,6 +2399,21 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_item_completed(_session_id, _item, state), do: {:skip, state}
 
+  defp unstreamed_text(text, ""), do: text
+  defp unstreamed_text(text, streamed) when text == streamed, do: ""
+
+  # When deltas were streamed but the completed text is not an extension of
+  # them, trust the stream: repeating the whole message is the duplication this
+  # guards against, and the accumulator already holds what the client saw.
+  defp unstreamed_text(text, streamed) do
+    size = byte_size(streamed)
+
+    case text do
+      <<^streamed::binary-size(size), rest::binary>> -> rest
+      _ -> ""
+    end
+  end
+
   defp maybe_add_image_revised_prompt(content, prompt) when is_binary(prompt) and prompt != "" do
     content ++ [Events.tool_text_content("Revised prompt: #{prompt}")]
   end
@@ -2492,6 +2542,51 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp mark_prompt_activity(state, session_id) do
     Sessions.update(state, session_id, &Map.put(&1, :prompt_activity, true))
   end
+
+  # A turn that app-server reports as failed must fail the ACP prompt. Before
+  # this, `turn/completed` with `status: "failed"` (usageLimitExceeded, a 401
+  # response-stream disconnect, a system error) produced a successful ACP
+  # response with `stopReason: "end_turn"` and empty text, and callers had no
+  # way to tell "the model said nothing" from "the model never ran".
+  defp turn_failure(turn, params, session) do
+    status = turn["status"] || params["status"]
+    error = turn["error"] || (status in ["failed", "errored"] and session[:last_error]) || nil
+
+    if status in ["failed", "errored"] or is_map(error) do
+      error = if is_map(error), do: error, else: %{}
+      info = error["codexErrorInfo"]
+      kind = turn_failure_kind(info)
+
+      {:error,
+       %{
+         "code" => turn_failure_code(kind),
+         "message" => error["message"] || "Codex turn failed",
+         "data" =>
+           %{
+             "kind" => kind,
+             "provider" => "codex",
+             "turnStatus" => status
+           }
+           |> maybe_put("codexErrorInfo", info)
+           |> maybe_put("additionalDetails", error["additionalDetails"])
+       }}
+    else
+      nil
+    end
+  end
+
+  defp turn_failure_kind("usageLimitExceeded"), do: "rate_limit_exhausted"
+  defp turn_failure_kind(%{"usageLimitExceeded" => _}), do: "rate_limit_exhausted"
+
+  defp turn_failure_kind(%{"responseStreamDisconnected" => %{"httpStatusCode" => code}})
+       when code in [401, 403],
+       do: "unauthenticated"
+
+  defp turn_failure_kind(_info), do: "turn_failed"
+
+  defp turn_failure_code("rate_limit_exhausted"), do: -32_029
+  defp turn_failure_code("unauthenticated"), do: -32_031
+  defp turn_failure_code(_kind), do: -32_030
 
   defp capacity_failure(session, text) do
     if text == "" and session[:prompt_activity] != true and
@@ -4394,6 +4489,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp normalize_stop_reason("cancelled"), do: "cancelled"
   defp normalize_stop_reason("interrupted"), do: "cancelled"
   defp normalize_stop_reason("errored"), do: "refusal"
+  defp normalize_stop_reason("failed"), do: "refusal"
 
   defp normalize_stop_reason(other)
        when other in ["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"],
