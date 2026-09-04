@@ -24,11 +24,19 @@ defmodule ExMCP.ACP.Client.Handler do
               {:ok, state()}
 
   @doc """
-  Handles a session update with its original decoded JSON-RPC message.
+  Handles a session update with the decoded JSON-RPC message received by the
+  ACP client.
 
   When implemented, this optional callback is called instead of
   `c:handle_session_update/3`. The message retains unknown top-level and
-  parameter fields. It is the decoded map, not the original JSON bytes.
+  parameter fields from the ACP message. It is the decoded map, not the
+  original JSON bytes.
+
+  This is an ACP-boundary value. A native ACP agent supplies the message. When
+  the client uses `ExMCP.ACP.AdapterTransport`, `ExMCP.ACP.AdapterBridge` and
+  the selected adapter construct the ACP message from the agent's native
+  protocol. Native fields that the adapter does not map are not present.
+
   ExMCP validates the update and session before dispatch. Message data counts
   toward the existing handler update queue byte limit.
   """
@@ -53,13 +61,16 @@ defmodule ExMCP.ACP.Client.Handler do
             ) :: {:ok, outcome :: map(), state()}
 
   @doc """
-  Handles a permission request with its original decoded JSON-RPC message.
+  Handles a permission request with the decoded JSON-RPC message received by
+  the ACP client.
 
   When implemented, this optional callback is called instead of
   `c:handle_permission_request/4`. The message includes the original request
   ID and all received fields. ExMCP retains request correlation, validation,
   cancellation, and timeout ownership. Return the same outcome as the legacy
-  callback; do not send a JSON-RPC response from the handler.
+  callback; do not send a JSON-RPC response from the handler. This callback
+  has the same ACP-boundary limit as `c:handle_session_update/4`: an adapted
+  agent can supply only the fields that its adapter placed in the ACP request.
   """
   @callback handle_permission_request(
               session_id :: String.t(),
