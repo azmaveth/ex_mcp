@@ -42,9 +42,9 @@ defmodule ExMCP.ACP.Protocol do
           | {:error, map(), integer() | String.t() | nil}
           | {:error, :invalid_message}
   def parse_message(data) when is_binary(data) do
-    case Jason.decode(data) do
-      {:ok, decoded} -> parse_message(decoded)
-      {:error, _} -> {:error, :invalid_message}
+    case parse_message_with_context(data) do
+      {:ok, parsed, _message} -> parsed
+      error -> error
     end
   end
 
@@ -68,6 +68,21 @@ defmodule ExMCP.ACP.Protocol do
   end
 
   def parse_message(_), do: {:error, :invalid_message}
+
+  @doc false
+  def parse_message_with_context(data) when is_binary(data) do
+    case Jason.decode(data) do
+      {:ok, decoded} when is_map(decoded) -> parse_message_with_context(decoded)
+      _ -> {:error, :invalid_message}
+    end
+  end
+
+  def parse_message_with_context(message) do
+    case parse_message(message) do
+      {:error, :invalid_message} = error -> error
+      parsed -> {:ok, parsed, message}
+    end
+  end
 
   defp mixed_request_response?(message) do
     (Map.has_key?(message, "method") and

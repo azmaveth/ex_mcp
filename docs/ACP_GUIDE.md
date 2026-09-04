@@ -180,6 +180,7 @@ The adapter launches `zcode app-server`. Set `adapter_opts[:cli_path]` or the
 | `:handler_request_timeout` | `30_000` | Maximum lifetime for inbound handler callbacks |
 | `:max_update_queue` | `32` | Mailbox cutoff for handler and event-listener session updates; excess updates are dropped |
 | `:max_outbox_bytes` | `4_194_304` | Aggregate byte limit for an adapter bridge's undelivered messages |
+| `:native_events` | `:summary` | Adapter-bridged agents only: `_meta.ex_mcp.native` detail on derived messages (`:off`, `:summary`, or `:raw` to embed the decoded native event) |
 | `:name` | `nil` | GenServer name registration |
 
 ### Boolean Config Options
@@ -409,6 +410,38 @@ outside those roots, including escapes through existing symlinks. Nonexistent
 children below a trusted root are permitted so write/create handlers can work;
 custom handlers remain responsible for rechecking policy at the point of use.
 
+### ACP message context
+
+Handlers can also implement `handle_session_update/4` and
+`handle_permission_request/5`. These optional variants receive the decoded
+JSON-RPC message that reached the ACP client, immediately before the handler
+state argument. When a variant is present, ExMCP calls it instead of the
+corresponding legacy callback. Both arities are optional, but a handler must
+implement at least one of each pair or the client refuses to start it. Keep the
+legacy callbacks as well if the handler must run on older ExMCP versions.
+
+The message retains unknown top-level and parameter fields and the permission
+request ID from the received ACP message. It is a decoded map, not the original
+JSON bytes. This callback does not provide an unmodified native-provider event.
+For a native ACP agent, the value is the message that the agent wrote. For an
+agent used through `ExMCP.ACP.AdapterTransport`, `AdapterBridge` and the adapter
+construct the ACP message from the agent's native protocol. Native fields that
+the adapter does not map are already absent. An adapter can include selected
+native data in ACP extension fields when its contract supports that data.
+
+ExMCP performs validation and session authorization before dispatch. It still
+owns request correlation, cancellation, and handler deadlines. Return the same
+permission outcome as before; ExMCP builds the response.
+
+Both variants run through the existing handler runner. Retained update message
+data counts toward `:max_update_queue_bytes`, including fields outside the
+update. Legacy handlers and the event-listener message format are unchanged.
+
+For an adapted agent, the retained message already carries `_meta.ex_mcp.native`
+with the adapter name and sequence. Start the transport with
+`native_events: :raw` to also receive the decoded native provider event there;
+see "`_meta.ex_mcp` namespaces" below.
+
 ### Event Listener
 
 For simple use cases, receive session updates as process messages instead of implementing a full handler:
@@ -448,6 +481,25 @@ Adapter-specific status, error, and extension bridge details are attached under
 `_meta.ex_mcp` on spec-defined update types, usually `session_info_update`.
 Content chunks may include ACP's optional `messageId` field so clients can group
 streamed chunks into logical messages.
+
+### `_meta.ex_mcp` namespaces
+
+ExMCP keeps all of its extension data under one `_meta.ex_mcp` map so other ACP
+implementations can ignore it as a unit:
+
+| Key | Set by | Contents |
+|-----|--------|----------|
+| `_meta.ex_mcp.<adapter>` | The adapter (`claude_sdk`, `codex`, `pi`, `zcode`) | Provider-specific fields the adapter chose to surface, such as Claude Code's session UUID, tool names, cost, or auth errors |
+| `_meta.ex_mcp.native` | `AdapterBridge` | Provenance of the ACP message: the adapter `name`, a per-connection `sequence` number, and with `native_events: :raw` the decoded native `event` |
+| `_meta.ex_mcp.mcpCapabilities.beam` | Capability negotiation | BEAM-local MCP transport support |
+
+The `native` block is attached to every ACP message an adapter derives from one
+native agent line, so all messages from the same line share a `sequence`. Pass
+`native_events: :raw` to `AdapterTransport` (or `AdapterBridge`) to embed the
+full native event, `:off` to drop the block entirely. Raw events can be large;
+they count toward the client's `:max_update_queue_bytes` like any other
+retained update data. Adapters implement `c:ExMCP.ACP.Adapter.name/0` to name
+their namespace; the bridge derives it from the module name otherwise.
 
 ## Writing Custom Adapters
 

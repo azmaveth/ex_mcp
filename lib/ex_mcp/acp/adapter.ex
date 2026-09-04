@@ -15,6 +15,7 @@ defmodule ExMCP.ACP.Adapter do
 
   ## Optional Callbacks
 
+  - `name/0` — short adapter identifier used in `_meta.ex_mcp` namespaces
   - `capabilities/0` — return static agent capabilities
   - `post_connect/1` — called after Port is opened
   - `handle_adapter_message/2` — handle process messages for adapter-managed subprocesses
@@ -203,7 +204,18 @@ defmodule ExMCP.ACP.Adapter do
   @callback fork_session(params :: map(), state()) ::
               {:ok, map(), state()} | {:error, any(), state()}
 
+  @doc """
+  Short identifier for the adapter, such as `"claude_sdk"` or `"codex"`.
+
+  `AdapterBridge` reports it as `_meta.ex_mcp.native.adapter` on every ACP
+  message derived from a native line, and adapters use it as the key for their
+  own extension data under `_meta.ex_mcp`. When not implemented, the bridge
+  derives it from the module's last name segment in lower case.
+  """
+  @callback name() :: String.t()
+
   @optional_callbacks [
+    name: 0,
     capabilities: 0,
     post_connect: 1,
     env: 1,

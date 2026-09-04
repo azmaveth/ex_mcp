@@ -125,7 +125,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.ToolInfo do
       "content" => [%{"type" => "terminal", "terminalId" => id}],
       "_meta" => %{
         "terminal_info" => %{"terminal_id" => id},
-        "ex_mcp.claude_sdk" => %{"terminal" => true, "command" => command}
+        "ex_mcp" => %{"claude_sdk" => %{"terminal" => true, "command" => command}}
       }
     }
   end

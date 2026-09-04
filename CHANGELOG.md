@@ -7,8 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `handle_session_update/4` and `handle_permission_request/5` callbacks on
+  `ExMCP.ACP.Client.Handler` that receive the decoded JSON-RPC message the ACP client
+  received, so consumers can retain extension fields and the permission request ID.
+  ExMCP calls the context variant when the handler exports it and the legacy callback
+  otherwise; validation, session authority, request correlation, cancellation, and
+  handler deadlines are unchanged. For adapted agents the message is the ACP envelope
+  the adapter constructed, not the native provider event (#31, #32).
+
+- `_meta.ex_mcp.native` on every ACP message an adapter derives from a native agent
+  line: the adapter `name` and a per-connection `sequence`, plus the decoded native
+  `event` when `AdapterTransport`/`AdapterBridge` is started with `native_events: :raw`
+  (`:summary` is the default, `:off` disables the block). Adapters can implement the new
+  optional `ExMCP.ACP.Adapter.name/0` callback; the bridge derives a name from the module
+  otherwise.
+
+### Changed
+
+- `handle_session_update/3` and `handle_permission_request/4` on
+  `ExMCP.ACP.Client.Handler` are now optional, so a handler can implement only the
+  context-aware arities. A handler must still export at least one arity of each pair;
+  the client refuses to start one that does not, with
+  `{:handler_init_failed, {:missing_callback, name}}`. Existing handlers are unaffected.
+- **BREAKING:** Adapter extension data now lives under nested `_meta.ex_mcp.<adapter>`
+  maps everywhere. The Claude SDK adapter previously used a flat `"ex_mcp.claude_sdk"`
+  key, and the Codex, Pi, and ZCode capability advertisements used flat `"ex_mcp.codex"`,
+  `"ex_mcp.pi"`, and `"ex_mcp.zcode"` keys. Consumers reading those keys must read
+  `_meta["ex_mcp"]["claude_sdk"]` (and so on) instead; the documented dotted paths such
+  as `_meta.ex_mcp.claude_sdk.sessionId` are unchanged and now match the wire shape.
+- `ExMCP.ACP.Protocol.parse_message/1` rejects a JSON string that contains encoded JSON
+  instead of decoding it a second time (#32).
+
 ### Fixed
 
+- Bump `mint` to 1.10.0, which fixes EEF-CVE-2026-82728 and EEF-CVE-2026-82729, and
+  `castore` to 1.0.21. `mix hex.audit` reports only the three accepted Cowlib 2.19.0
+  exceptions again.
 - The Codex ACP adapter fails the active prompt when `codex app-server` reports a failed turn. Previously an `error` notification (`usageLimitExceeded`, a `401` response-stream disconnect, a system error) followed by `turn/completed` with `status: "failed"` resolved the prompt as a successful `end_turn` with empty text, so callers could not tell "the model said nothing" from "the model never ran" (observed with codex-cli 0.151). The prompt now gets a JSON-RPC error carrying the Codex message, `codexErrorInfo`, and a `kind` of `rate_limit_exhausted` (`-32029`), `unauthenticated` (`-32031`), or `turn_failed` (`-32030`); the last `error` notification is used when the turn carries no error of its own.
 - The Codex ACP adapter no longer repeats an agent message. `item/completed` for an agent message emitted the full text again after it had been streamed through `item/agentMessage/delta`, so chunk consumers saw it twice (`PONGPONG`). The final chunk now carries only the text not already streamed, and that remainder is folded into the accumulated prompt text so `_meta.ex_mcp.text` matches the stream even when no deltas were sent.
 

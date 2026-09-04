@@ -116,7 +116,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   describe "capabilities/0" do
     test "returns ACP-native capabilities and adapter metadata" do
       caps = Pi.capabilities()
-      pi_meta = caps["_meta"]["ex_mcp.pi"]
+      pi_meta = caps["_meta"]["ex_mcp"]["pi"]
 
       assert caps["loadSession"] == true
       assert caps["promptCapabilities"]["image"] == true
