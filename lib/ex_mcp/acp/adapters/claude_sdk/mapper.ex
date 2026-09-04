@@ -171,10 +171,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         "toolCallId" => event["tool_use_id"],
         "status" => "in_progress",
         "_meta" => %{
-          "ex_mcp.claude_sdk" => %{
-            "toolName" => event["tool_name"],
-            "elapsedTimeSeconds" => event["elapsed_time_seconds"],
-            "taskId" => event["task_id"]
+          "ex_mcp" => %{
+            "claude_sdk" => %{
+              "toolName" => event["tool_name"],
+              "elapsedTimeSeconds" => event["elapsed_time_seconds"],
+              "taskId" => event["task_id"]
+            }
           }
         }
       }
@@ -184,7 +186,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   def reduce_message(%{"type" => "tool_use_summary"} = event, state) do
-    update = %{"_meta" => %{"ex_mcp.claude_sdk" => %{"toolUseSummary" => event["summary"]}}}
+    update = %{
+      "_meta" => %{"ex_mcp" => %{"claude_sdk" => %{"toolUseSummary" => event["summary"]}}}
+    }
 
     {[AdapterEvents.session_info_update(session_id(state), update)], [], state}
   end
@@ -192,9 +196,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   def reduce_message(%{"type" => "rate_limit_event"} = event, state) do
     update = %{
       "_meta" => %{
-        "ex_mcp.claude_sdk" => %{
-          "status" => "rate_limited",
-          "rateLimitInfo" => event["rate_limit_info"]
+        "ex_mcp" => %{
+          "claude_sdk" => %{
+            "status" => "rate_limited",
+            "rateLimitInfo" => event["rate_limit_info"]
+          }
         }
       }
     }
@@ -321,14 +327,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp replay_meta(event) do
     %{
-      "ex_mcp.claude_sdk" =>
-        %{
-          "replay" => true,
-          "messageUuid" => message_uuid(event),
-          "parentUuid" => event["parentUuid"] || event["parent_uuid"],
-          "timestamp" => event["timestamp"]
-        }
-        |> compact()
+      "ex_mcp" => %{
+        "claude_sdk" =>
+          %{
+            "replay" => true,
+            "messageUuid" => message_uuid(event),
+            "parentUuid" => event["parentUuid"] || event["parent_uuid"],
+            "timestamp" => event["timestamp"]
+          }
+          |> compact()
+      }
     }
   end
 
@@ -798,7 +806,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         usage_update(acp_session_id, usage, result, state),
         config_option_update(state),
         AdapterEvents.session_info_update(acp_session_id, %{
-          "_meta" => %{"ex_mcp.claude_sdk" => %{"status" => "waiting_for_subagents"}}
+          "_meta" => %{"ex_mcp" => %{"claude_sdk" => %{"status" => "waiting_for_subagents"}}}
         }),
         result_text_chunk(acp_session_id, text, state)
       ]
@@ -834,15 +842,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         "stopReason" => stop_reason(result),
         "usage" => usage,
         "_meta" => %{
-          "ex_mcp.claude_sdk" =>
-            %{
-              "text" => text,
-              "sessionId" => claude_session_id,
-              "modelUsage" => result["modelUsage"],
-              "totalCostUsd" => result["total_cost_usd"],
-              "errors" => result["errors"]
-            }
-            |> compact()
+          "ex_mcp" => %{
+            "claude_sdk" =>
+              %{
+                "text" => text,
+                "sessionId" => claude_session_id,
+                "modelUsage" => result["modelUsage"],
+                "totalCostUsd" => result["total_cost_usd"],
+                "errors" => result["errors"]
+              }
+              |> compact()
+          }
         }
       }
       |> maybe_put_error_meta(result)
@@ -852,7 +862,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         usage_update(acp_session_id, usage, result, state),
         config_option_update(state),
         AdapterEvents.session_info_update(acp_session_id, %{
-          "_meta" => %{"ex_mcp.claude_sdk" => %{"status" => "completed"}}
+          "_meta" => %{"ex_mcp" => %{"claude_sdk" => %{"status" => "completed"}}}
         }),
         result_text_chunk(acp_session_id, text, state)
       ]
@@ -907,16 +917,18 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       [
         AdapterEvents.session_info_update(session_id(state), %{
           "_meta" => %{
-            "ex_mcp.claude_sdk" =>
-              %{
-                "status" => "initialized",
-                "sessionId" => state.claude_session_id,
-                "claudeCodeVersion" => event["claude_code_version"],
-                "cwd" => event["cwd"],
-                "tools" => event["tools"],
-                "mcpServers" => event["mcp_servers"]
-              }
-              |> compact()
+            "ex_mcp" => %{
+              "claude_sdk" =>
+                %{
+                  "status" => "initialized",
+                  "sessionId" => state.claude_session_id,
+                  "claudeCodeVersion" => event["claude_code_version"],
+                  "cwd" => event["cwd"],
+                  "tools" => event["tools"],
+                  "mcpServers" => event["mcp_servers"]
+                }
+                |> compact()
+            }
           }
         }),
         current_mode_update(state),
@@ -934,13 +946,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     update =
       %{
         "_meta" => %{
-          "ex_mcp.claude_sdk" =>
-            %{
-              "status" => event["status"],
-              "compactResult" => event["compact_result"],
-              "compactError" => event["compact_error"]
-            }
-            |> compact()
+          "ex_mcp" => %{
+            "claude_sdk" =>
+              %{
+                "status" => event["status"],
+                "compactResult" => event["compact_result"],
+                "compactError" => event["compact_error"]
+              }
+              |> compact()
+          }
         }
       }
 
@@ -952,7 +966,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp handle_system(%{"subtype" => "session_state_changed"} = event, state) do
-    update = %{"_meta" => %{"ex_mcp.claude_sdk" => %{"sessionState" => event["state"]}}}
+    update = %{"_meta" => %{"ex_mcp" => %{"claude_sdk" => %{"sessionState" => event["state"]}}}}
     info = AdapterEvents.session_info_update(session_id(state), update)
 
     if event["state"] == "idle" and not is_nil(state.deferred_result) and
@@ -989,13 +1003,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         "status" => "failed",
         "rawOutput" => event["message"],
         "_meta" => %{
-          "ex_mcp.claude_sdk" =>
-            %{
-              "toolName" => event["tool_name"],
-              "decisionReason" => event["decision_reason"],
-              "decisionReasonType" => event["decision_reason_type"]
-            }
-            |> compact()
+          "ex_mcp" => %{
+            "claude_sdk" =>
+              %{
+                "toolName" => event["tool_name"],
+                "decisionReason" => event["decision_reason"],
+                "decisionReasonType" => event["decision_reason_type"]
+              }
+              |> compact()
+          }
         }
       }
 
@@ -1004,7 +1020,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp handle_system(%{"subtype" => subtype} = event, state) do
     update = %{
-      "_meta" => %{"ex_mcp.claude_sdk" => %{"systemSubtype" => subtype, "event" => event}}
+      "_meta" => %{"ex_mcp" => %{"claude_sdk" => %{"systemSubtype" => subtype, "event" => event}}}
     }
 
     {[AdapterEvents.session_info_update(session_id(state), update)], [], state}
@@ -1067,7 +1083,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
           "exit_code" => exit_code,
           "signal" => nil
         },
-        "ex_mcp.claude_sdk" => %{"isError" => is_error}
+        "ex_mcp" => %{"claude_sdk" => %{"isError" => is_error}}
       }
     }
     |> compact()
@@ -1083,10 +1099,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
       "rawOutput" => parse_tool_result_raw(result["content"]),
       "_meta" =>
         %{
-          "ex_mcp.claude_sdk" => %{
-            "isError" => is_error,
-            "toolName" => tool[:name],
-            "toolInput" => tool[:input]
+          "ex_mcp" => %{
+            "claude_sdk" => %{
+              "isError" => is_error,
+              "toolName" => tool[:name],
+              "toolInput" => tool[:input]
+            }
           }
         }
         |> compact()
@@ -1557,11 +1575,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   defp maybe_put_error_meta(response, %{"error" => error}) when error in @auth_errors do
-    put_in(response, ["_meta", "ex_mcp.claude_sdk", "authError"], error)
+    put_in(response, ["_meta", "ex_mcp", "claude_sdk", "authError"], error)
   end
 
   defp maybe_put_error_meta(response, %{"subtype" => subtype}) when is_binary(subtype) do
-    put_in(response, ["_meta", "ex_mcp.claude_sdk", "resultSubtype"], subtype)
+    put_in(response, ["_meta", "ex_mcp", "claude_sdk", "resultSubtype"], subtype)
   end
 
   defp maybe_put_error_meta(response, _result), do: response

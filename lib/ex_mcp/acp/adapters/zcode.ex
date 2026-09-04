@@ -17,6 +17,9 @@ defmodule ExMCP.ACP.Adapters.ZCode do
 
   @behaviour ExMCP.ACP.Adapter
 
+  @impl true
+  def name, do: "zcode"
+
   require Logger
 
   alias ExMCP.ACP.Adapters.ZCode.{Config, Mapper, Protocol, Sessions}
@@ -80,7 +83,7 @@ defmodule ExMCP.ACP.Adapters.ZCode do
         "acp" => false,
         "http" => true,
         "sse" => true,
-        "_meta" => %{"ex_mcp.zcode" => %{"stdioMcpServers" => true}}
+        "_meta" => %{"ex_mcp" => %{"zcode" => %{"stdioMcpServers" => true}}}
       },
       "sessionCapabilities" => %{
         "list" => %{},
@@ -90,9 +93,11 @@ defmodule ExMCP.ACP.Adapters.ZCode do
         "fork" => %{}
       },
       "_meta" => %{
-        "ex_mcp.zcode" => %{
-          "streaming" => true,
-          "serverRequests" => true
+        "ex_mcp" => %{
+          "zcode" => %{
+            "streaming" => true,
+            "serverRequests" => true
+          }
         }
       }
     }

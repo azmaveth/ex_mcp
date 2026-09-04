@@ -510,7 +510,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
   defp maybe_put_meta(session, meta) when map_size(meta) == 0, do: session
 
   defp maybe_put_meta(session, meta),
-    do: Map.put(session, "_meta", %{"ex_mcp.claude_sdk" => meta})
+    do: Map.put(session, "_meta", %{"ex_mcp" => %{"claude_sdk" => meta}})
 
   defp sidechain?(head) do
     head

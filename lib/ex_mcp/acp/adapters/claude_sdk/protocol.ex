@@ -222,7 +222,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
             "optionId" => "allow_always",
             "name" => "Always allow",
             "kind" => "allow_always",
-            "_meta" => %{"ex_mcp.claude_sdk" => %{"updatedPermissions" => suggestions}}
+            "_meta" => %{"ex_mcp" => %{"claude_sdk" => %{"updatedPermissions" => suggestions}}}
           }
         ]
       end

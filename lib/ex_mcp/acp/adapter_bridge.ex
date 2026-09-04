@@ -29,7 +29,7 @@ defmodule ExMCP.ACP.AdapterBridge do
   use GenServer
 
   alias ExMCP.ACP.AdapterBridge.PortRunner
-  alias ExMCP.ACP.{Capabilities, Envelope}
+  alias ExMCP.ACP.{Capabilities, Envelope, Meta}
   alias ExMCP.Internal.{Maps, Options}
 
   @type t :: GenServer.server()
@@ -55,6 +55,9 @@ defmodule ExMCP.ACP.AdapterBridge do
     one_shot_tasks: %{},
     one_shot_monitors: %{},
     buffer: "",
+    native_events: :summary,
+    native_sequence: 0,
+    adapter_name: nil,
     status: :connecting
   ]
 
@@ -100,6 +103,8 @@ defmodule ExMCP.ACP.AdapterBridge do
       adapter_mod: adapter_mod,
       adapter_state: adapter_state,
       adapter_opts: adapter_opts,
+      adapter_name: adapter_name(adapter_mod),
+      native_events: native_events_option(opts),
       outbox: :queue.new(),
       waiters: :queue.new(),
       max_buffer_bytes:
@@ -419,11 +424,17 @@ defmodule ExMCP.ACP.AdapterBridge do
     end
   end
 
+  # The adapter's own `name/0` when it has one; otherwise the module's last
+  # segment in lower case. Used for agentInfo.name and `_meta.ex_mcp.native`.
   defp adapter_name(mod) do
-    mod
-    |> Module.split()
-    |> List.last()
-    |> String.downcase()
+    if function_exported?(mod, :name, 0) do
+      mod.name()
+    else
+      mod
+      |> Module.split()
+      |> List.last()
+      |> String.downcase()
+    end
   end
 
   # Synthesize responses for ACP methods that adapted agents don't handle natively.
@@ -1075,11 +1086,11 @@ defmodule ExMCP.ACP.AdapterBridge do
     case state.adapter_mod.translate_inbound(line, state.adapter_state) do
       {:messages, messages, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
-        push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        push_native_messages(state, messages, line)
 
       {:messages_and_write, messages, write_data, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        state = push_native_messages(state, messages, line)
         _ = write_to_port(state, write_data)
         state
 
@@ -1104,10 +1115,70 @@ defmodule ExMCP.ACP.AdapterBridge do
     case state.adapter_mod.translate_inbound(buffer, state.adapter_state) do
       {:messages, messages, new_adapter_state} ->
         state = %{state | adapter_state: new_adapter_state}
-        push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        push_native_messages(state, messages, buffer)
 
       _ ->
         state
+    end
+  end
+
+  # Every ACP message an adapter derives from one native line is tagged under
+  # `_meta.ex_mcp.native` with the adapter name and a per-bridge sequence
+  # number, plus the decoded native event when `native_events: :raw` is set.
+  # Messages the adapter produces outside `translate_inbound/2` (post_connect,
+  # adapter-managed processes, synthesized responses) are not derived from a
+  # native line and are left untouched.
+  defp push_native_messages(state, [], _line), do: state
+
+  defp push_native_messages(%{native_events: :off} = state, messages, _line),
+    do: push_messages(state, Enum.map(messages, &Jason.encode!/1))
+
+  defp push_native_messages(state, messages, line) do
+    sequence = state.native_sequence + 1
+
+    native =
+      %{"adapter" => state.adapter_name, "sequence" => sequence}
+      |> maybe_put_native_event(state.native_events, line)
+
+    encoded = Enum.map(messages, &(&1 |> put_native_meta(native) |> Jason.encode!()))
+    push_messages(%{state | native_sequence: sequence}, encoded)
+  end
+
+  defp maybe_put_native_event(native, :raw, line) do
+    case Jason.decode(line) do
+      {:ok, event} -> Map.put(native, "event", event)
+      {:error, _} -> Map.put(native, "raw", line)
+    end
+  end
+
+  defp maybe_put_native_event(native, _mode, _line), do: native
+
+  defp put_native_meta(
+         %{"method" => "session/update", "params" => %{"update" => update} = params} = message,
+         native
+       )
+       when is_map(update) do
+    update = Meta.put_ex_mcp(update, %{"native" => native})
+    %{message | "params" => %{params | "update" => update}}
+  end
+
+  defp put_native_meta(%{"method" => _, "params" => params} = message, native)
+       when is_map(params),
+       do: %{message | "params" => Meta.put_ex_mcp(params, %{"native" => native})}
+
+  defp put_native_meta(%{"result" => result} = message, native) when is_map(result),
+    do: %{message | "result" => Meta.put_ex_mcp(result, %{"native" => native})}
+
+  defp put_native_meta(message, _native), do: message
+
+  defp native_events_option(opts) do
+    case Keyword.get(opts, :native_events, :summary) do
+      mode when mode in [:off, :summary, :raw] ->
+        mode
+
+      other ->
+        raise ArgumentError,
+              "native_events must be :off, :summary, or :raw, got: #{inspect(other)}"
     end
   end
 

@@ -9,6 +9,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   @behaviour ExMCP.ACP.Adapter
 
+  @impl true
+  def name, do: "pi"
+
   require Logger
 
   alias ExMCP.ACP.AdapterBridge.PortRunner
@@ -96,18 +99,20 @@ defmodule ExMCP.ACP.Adapters.Pi do
         "embeddedContext" => System.get_env("PI_ACP_ENABLE_EMBEDDED_CONTEXT") == "true"
       },
       "_meta" => %{
-        "ex_mcp.pi" => %{
-          "sessionStore" => SessionStore.default_map_path(),
-          "thinkingLevels" => @thinking_levels,
-          "features" => %{
-            "slashCommands" => true,
-            "terminalAuth" => true,
-            "modelSelection" => true,
-            "sessionLoad" => true,
-            "sessionResume" => true,
-            "sessionClose" => true,
-            "sessionDelete" => true,
-            "structuredDiffs" => true
+        "ex_mcp" => %{
+          "pi" => %{
+            "sessionStore" => SessionStore.default_map_path(),
+            "thinkingLevels" => @thinking_levels,
+            "features" => %{
+              "slashCommands" => true,
+              "terminalAuth" => true,
+              "modelSelection" => true,
+              "sessionLoad" => true,
+              "sessionResume" => true,
+              "sessionClose" => true,
+              "sessionDelete" => true,
+              "structuredDiffs" => true
+            }
           }
         }
       }
