@@ -477,6 +477,13 @@ can override in *their* root `mix.exs`:
 
 That is an application-level choice, not something ExMCP can ship.
 
+The 2026-09-04 `mix hex.audit` quality job also started failing on Mint 1.9.3
+(`EEF-CVE-2026-82728`, `EEF-CVE-2026-82729`), which Hex published the same
+day. Those advisories are unrelated to #18. Mint **1.10.0** is on Hex, has
+no advertised breaking changes, and remediates both, so the lock was bumped
+instead of adding ignore rules. Do not treat that Mint bump as a Cowlib
+workaround.
+
 ## Execution order
 
 1. Land rc.8's credential-free ACP CLI lifecycle coverage, Pi isolation fix,

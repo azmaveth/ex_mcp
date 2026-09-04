@@ -84,7 +84,7 @@ defmodule ExMCP.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:mint, "~> 1.6"},
+      {:mint, "~> 1.10"},
       {:mint_web_socket, "~> 1.0"},
       {:castore, "~> 1.0"},
       {:telemetry, "~> 1.2"},
