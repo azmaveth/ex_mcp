@@ -26,14 +26,16 @@ defmodule ExMCP.MixProject do
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts"
       ],
-      # Cowlib 2.19.0 is the newest compatible release. These remaining
-      # advisories are mitigated by Plug/Cowboy response-header validation;
-      # ExMCP does not call cow_cookie:cookie/1; and the ExMCP/Plug/Cowboy
-      # server stack does not call cow_link:link/1. Those assumptions are
-      # locked by dependency_advisory_mitigation_test.exs. Security owner:
-      # project maintainers; review/remove these exceptions by 2026-09-12 or
+      # Cowlib 2.19.0 is still the newest compatible Hex release (rechecked
+      # 2026-09-04; GitHub #18 / Linear AZM-5). These remaining advisories
+      # are mitigated by Plug/Cowboy response-header validation; ExMCP does
+      # not call cow_cookie:cookie/1; and the ExMCP/Plug/Cowboy server stack
+      # does not call cow_link:link/1. Those assumptions are locked by
+      # dependency_advisory_mitigation_test.exs. Security owner: project
+      # maintainers; review/remove these exceptions by 2026-09-12 or
       # immediately when a patched Cowlib is published. Keep the exceptions
-      # exact so `mix hex.audit` still fails on every new advisory.
+      # exact so `mix hex.audit` still fails on every new advisory. Do not
+      # add ignore rules or skip tags for this CVE.
       hex: [
         ignore_advisories: [
           "EEF-CVE-2026-43966",
@@ -82,7 +84,7 @@ defmodule ExMCP.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:mint, "~> 1.6"},
+      {:mint, "~> 1.10"},
       {:mint_web_socket, "~> 1.0"},
       {:castore, "~> 1.0"},
       {:telemetry, "~> 1.2"},

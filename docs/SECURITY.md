@@ -562,3 +562,17 @@ browser origin.
 
 Pass explicit application context into the handler state or arguments and reject
 unauthorized tool/resource calls inside the handler.
+
+**`mix hex.audit` reports Cowlib CVE-2026-43971**
+
+ExMCP does not depend on cowlib directly. HTTP servers pull it in as
+`plug_cowboy` → `cowboy` → cowlib **2.19.0**, which is still the newest Hex
+release and is listed as affected by
+[CVE-2026-43971](https://osv.dev/vulnerability/EEF-CVE-2026-43971)
+(`cow_link:link/1` Link-header encoding). The source fix is on cowlib
+`master` only. ExMCP does not call that encoder; a BEAM-import test locks
+that assumption. The library's own named Hex exception does **not** silence
+the advisory in your root project. Wait for a patched Hex Cowlib, or
+override cowlib in the consuming application if you need the encoder fix
+before then. Tracking: GitHub
+[#18](https://github.com/azmaveth/ex_mcp/issues/18).

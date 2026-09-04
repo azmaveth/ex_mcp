@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Tracked Cowlib CVE-2026-43971 / `EEF-CVE-2026-43971` (#18). The lock still
+  resolves `cowlib` **2.19.0** through `plug_cowboy` → `cowboy`. Hex and the
+  upstream `2.19.0` tag have no patched release; a git pin of cowlib `master`
+  is not a safe Hex-package workaround. See the Security guide and GitHub #18.
+- Bumped the locked Mint client from 1.9.3 to **1.10.0** (constraint `~> 1.10`)
+  so `mix hex.audit` passes without ignore rules. 1.10.0 remediates
+  CVE-2026-82728 and CVE-2026-82729, published 2026-09-04; Mint documents the
+  release as containing no breaking changes.
+
 ## [1.2.0] - 2026-09-02
 
 ### Added
