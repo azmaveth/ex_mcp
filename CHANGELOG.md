@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump `mint` to 1.10.0, which fixes EEF-CVE-2026-82728 and EEF-CVE-2026-82729, and
   `castore` to 1.0.21. `mix hex.audit` reports only the three accepted Cowlib 2.19.0
   exceptions again.
+- The Codex ACP adapter fails the active prompt when `codex app-server` reports a failed turn. Previously an `error` notification (`usageLimitExceeded`, a `401` response-stream disconnect, a system error) followed by `turn/completed` with `status: "failed"` resolved the prompt as a successful `end_turn` with empty text, so callers could not tell "the model said nothing" from "the model never ran" (observed with codex-cli 0.151). The prompt now gets a JSON-RPC error carrying the Codex message, `codexErrorInfo`, and a `kind` of `rate_limit_exhausted` (`-32029`), `unauthenticated` (`-32031`), or `turn_failed` (`-32030`); the last `error` notification is used when the turn carries no error of its own.
+- The Codex ACP adapter no longer repeats an agent message. `item/completed` for an agent message emitted the full text again after it had been streamed through `item/agentMessage/delta`, so chunk consumers saw it twice (`PONGPONG`). The final chunk now carries only the text not already streamed, and that remainder is folded into the accumulated prompt text so `_meta.ex_mcp.text` matches the stream even when no deltas were sent.
 
 ## [1.2.0] - 2026-09-02
 

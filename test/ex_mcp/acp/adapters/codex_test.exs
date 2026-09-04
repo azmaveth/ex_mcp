@@ -753,6 +753,258 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert new_state.sessions["thread-1"].accumulated_text == []
     end
 
+    test "a failed turn fails the active prompt with the codex error instead of empty success", %{
+      state: state
+    } do
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      # codex-cli 0.151 app-server: an `error` notification, then `turn/completed`
+      # whose turn is `failed`. Before the fix this resolved as `end_turn` + "".
+      error =
+        Jason.encode!(%{
+          "method" => "error",
+          "params" => %{
+            "threadId" => "thread-1",
+            "error" => %{
+              "message" => "You've hit your usage limit. Try again at Sep 6th, 2026 9:27 PM.",
+              "codexErrorInfo" => "usageLimitExceeded",
+              "additionalDetails" => nil
+            },
+            "willRetry" => false
+          }
+        })
+
+      assert {:messages, [info], state} = Codex.translate_inbound(error, state)
+      assert info["params"]["update"]["sessionUpdate"] == "session_info_update"
+      assert state.sessions["thread-1"].last_error["codexErrorInfo"] == "usageLimitExceeded"
+
+      completed =
+        Jason.encode!(%{
+          "method" => "turn/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turn" => %{
+              "id" => "turn-1",
+              "status" => "failed",
+              "error" => %{
+                "message" => "You've hit your usage limit. Try again at Sep 6th, 2026 9:27 PM.",
+                "codexErrorInfo" => "usageLimitExceeded"
+              }
+            }
+          }
+        })
+
+      assert {:messages, messages, new_state} = Codex.translate_inbound(completed, state)
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+
+      assert response["id"] == 30
+      refute Map.has_key?(response, "result")
+      assert response["error"]["code"] == -32_029
+      assert response["error"]["message"] =~ "usage limit"
+      assert response["error"]["data"]["kind"] == "rate_limit_exhausted"
+      assert response["error"]["data"]["codexErrorInfo"] == "usageLimitExceeded"
+      assert response["error"]["data"]["turnStatus"] == "failed"
+      assert new_state.sessions["thread-1"].active_prompt_acp_id == nil
+      assert new_state.sessions["thread-1"].last_error == nil
+    end
+
+    test "a failed turn without its own error uses the last error notification", %{state: state} do
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      error =
+        Jason.encode!(%{
+          "method" => "error",
+          "params" => %{
+            "threadId" => "thread-1",
+            "error" => %{
+              "message" =>
+                "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header",
+              "codexErrorInfo" => %{"responseStreamDisconnected" => %{"httpStatusCode" => 401}}
+            }
+          }
+        })
+
+      assert {:messages, _messages, state} = Codex.translate_inbound(error, state)
+
+      completed =
+        Jason.encode!(%{
+          "method" => "turn/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turn" => %{"id" => "turn-1", "status" => "failed"}
+          }
+        })
+
+      assert {:messages, messages, _new_state} = Codex.translate_inbound(completed, state)
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+
+      assert response["id"] == 30
+      assert response["error"]["code"] == -32_031
+      assert response["error"]["message"] =~ "401 Unauthorized"
+      assert response["error"]["data"]["kind"] == "unauthenticated"
+    end
+
+    test "a failed turn with no error detail still fails the prompt", %{state: state} do
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      completed =
+        Jason.encode!(%{
+          "method" => "turn/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turn" => %{"id" => "turn-1", "status" => "failed"}
+          }
+        })
+
+      assert {:messages, messages, _new_state} = Codex.translate_inbound(completed, state)
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+
+      assert response["id"] == 30
+      assert response["error"]["code"] == -32_030
+      assert response["error"]["message"] == "Codex turn failed"
+      assert response["error"]["data"]["kind"] == "turn_failed"
+    end
+
+    test "a completed agent message emits only the text not already streamed", %{state: state} do
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      delta =
+        Jason.encode!(%{
+          "method" => "item/agentMessage/delta",
+          "params" => %{"threadId" => "thread-1", "itemId" => "item-1", "delta" => "PONG"}
+        })
+
+      assert {:messages, [chunk], state} = Codex.translate_inbound(delta, state)
+      assert chunk["params"]["update"]["content"]["text"] == "PONG"
+
+      completed =
+        Jason.encode!(%{
+          "method" => "item/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "item" => %{"type" => "agentMessage", "id" => "item-1", "text" => "PONG"}
+          }
+        })
+
+      assert {:messages, [final], state} = Codex.translate_inbound(completed, state)
+      assert final["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+      assert final["params"]["update"]["content"]["text"] == ""
+      assert final["params"]["update"]["_meta"]["ex_mcp"]["final"] == true
+      assert state.sessions["thread-1"].accumulated_text == ["PONG"]
+
+      turn_done =
+        Jason.encode!(%{
+          "method" => "turn/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "turn" => %{"id" => "turn-1", "status" => "completed"}
+          }
+        })
+
+      assert {:messages, messages, _state} = Codex.translate_inbound(turn_done, state)
+      response = Enum.find(messages, &Map.has_key?(&1, "id"))
+      assert response["result"]["_meta"]["ex_mcp"]["text"] == "PONG"
+    end
+
+    test "a completed agent message with no streamed deltas is emitted and accumulated in full",
+         %{
+           state: state
+         } do
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      completed =
+        Jason.encode!(%{
+          "method" => "item/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "item" => %{"type" => "agentMessage", "id" => "item-1", "text" => "PONG"}
+          }
+        })
+
+      assert {:messages, [final], state} = Codex.translate_inbound(completed, state)
+      assert final["params"]["update"]["content"]["text"] == "PONG"
+      assert state.sessions["thread-1"].accumulated_text == ["PONG"]
+    end
+
+    test "later agent messages in the same turn are not swallowed by earlier ones", %{
+      state: state
+    } do
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      inbound = fn state, method, params ->
+        Codex.translate_inbound(
+          Jason.encode!(%{"method" => method, "params" => Map.put(params, "threadId", "thread-1")}),
+          state
+        )
+      end
+
+      # First message: fully streamed, then completed with the same text.
+      assert {:messages, [_], state} =
+               inbound.(state, "item/agentMessage/delta", %{
+                 "itemId" => "item-1",
+                 "delta" => "Hello"
+               })
+
+      assert {:messages, [first], state} =
+               inbound.(state, "item/completed", %{
+                 "item" => %{"type" => "agentMessage", "id" => "item-1", "text" => "Hello"}
+               })
+
+      assert first["params"]["update"]["content"]["text"] == ""
+
+      # Second message in the same turn arrives without deltas: it must be
+      # emitted in full, not compared against the first message's text.
+      assert {:messages, [second], state} =
+               inbound.(state, "item/completed", %{
+                 "item" => %{"type" => "agentMessage", "id" => "item-2", "text" => "World"}
+               })
+
+      assert second["params"]["update"]["content"]["text"] == "World"
+
+      # Third message streams part of its text, then completes with the rest.
+      assert {:messages, [_], state} =
+               inbound.(state, "item/agentMessage/delta", %{
+                 "itemId" => "item-3",
+                 "delta" => "Aga"
+               })
+
+      assert {:messages, [third], state} =
+               inbound.(state, "item/completed", %{
+                 "item" => %{"type" => "agentMessage", "id" => "item-3", "text" => "Again"}
+               })
+
+      assert third["params"]["update"]["content"]["text"] == "in"
+      assert state.sessions["thread-1"].accumulated_text == ["in", "Aga", "World", "Hello"]
+      assert state.sessions["thread-1"].streamed_items == %{}
+    end
+
+    test "a completed agent message that extends the stream emits only the remainder", %{
+      state: state
+    } do
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      delta =
+        Jason.encode!(%{
+          "method" => "item/agentMessage/delta",
+          "params" => %{"threadId" => "thread-1", "itemId" => "item-1", "delta" => "Hel"}
+        })
+
+      assert {:messages, [_chunk], state} = Codex.translate_inbound(delta, state)
+
+      completed =
+        Jason.encode!(%{
+          "method" => "item/completed",
+          "params" => %{
+            "threadId" => "thread-1",
+            "item" => %{"type" => "agentMessage", "id" => "item-1", "text" => "Hello"}
+          }
+        })
+
+      assert {:messages, [final], state} = Codex.translate_inbound(completed, state)
+      assert final["params"]["update"]["content"]["text"] == "lo"
+      assert state.sessions["thread-1"].accumulated_text == ["lo", "Hel"]
+    end
+
     test "an exhausted rate limit with no model activity fails the active prompt", %{state: state} do
       rate_limits = %{
         "limitId" => "codex_spark",
